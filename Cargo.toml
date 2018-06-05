@@ -1,0 +1,8 @@
+[package]
+name = "gantz"
+version = "0.1.0"
+authors = ["mitchmindtree <mitchell.nordine@gmail.com>"]
+
+[dependencies]
+gantz-derive = { path = "gantz-derive" }
+petgraph = "0.4"
