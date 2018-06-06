@@ -3,6 +3,7 @@ name = "gantz-derive"
 version = "0.1.0"
 authors = ["mitchmindtree <mitchell.nordine@gmail.com>"]
 description = "A crate providing procedural macros for the gantz library"
+readme = "README.md"
 license = "MIT OR Apache-2.0"
 keywords = ["graph", "node", "derive", "procedural", "macro"]
 repository = "https://github.com/nannou-org/gantz.git"
