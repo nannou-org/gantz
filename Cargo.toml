@@ -2,7 +2,13 @@
 name = "gantz"
 version = "0.1.0"
 authors = ["mitchmindtree <mitchell.nordine@gmail.com>"]
+description = "A crate for creating and evaluating executable directed graphs at runtime."
+readme = "README.md"
+keywords = ["graph", "node", "graphical", "programming"]
+license = "MIT OR Apache-2"
+repository = "https://github.com/nannou-org/gantz.git"
+homepage = "https://github.com/nannou-org/gantz"
 
 [dependencies]
-gantz-derive = { path = "gantz-derive" }
+gantz-derive = "0.1"
 petgraph = "0.4"
