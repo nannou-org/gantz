@@ -5,7 +5,7 @@ authors = ["mitchmindtree <mitchell.nordine@gmail.com>"]
 description = "A crate for creating and evaluating executable directed graphs at runtime."
 readme = "README.md"
 keywords = ["graph", "node", "graphical", "programming"]
-license = "MIT OR Apache-2"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/nannou-org/gantz.git"
 homepage = "https://github.com/nannou-org/gantz"
 
