@@ -32,5 +32,6 @@ pub mod graph;
 pub mod node;
 pub mod project;
 
+pub use graph::Edge;
 pub use node::Node;
 pub use project::Project;
