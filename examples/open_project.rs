@@ -64,17 +64,17 @@ impl gantz::Node for Debug {
 }
 
 #[typetag::serde]
-impl gantz::node::SerdeNode for One {
+impl gantz::project::SerdeNode for One {
     fn node(&self) -> &gantz::Node { self }
 }
 
 #[typetag::serde]
-impl gantz::node::SerdeNode for Add {
+impl gantz::project::SerdeNode for Add {
     fn node(&self) -> &gantz::Node { self }
 }
 
 #[typetag::serde]
-impl gantz::node::SerdeNode for Debug {
+impl gantz::project::SerdeNode for Debug {
     fn node(&self) -> &gantz::Node { self }
 }
 

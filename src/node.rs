@@ -48,13 +48,6 @@ pub trait Node {
     }
 }
 
-/// A wrapper around the **Node** trait that allows for serializing and deserializing node trait
-/// objects.
-#[typetag::serde(tag = "type")]
-pub trait SerdeNode {
-    fn node(&self) -> &Node;
-}
-
 /// Items that need to be known in order to generate a push evaluation function for a node.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PushEval {

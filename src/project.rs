@@ -1,5 +1,5 @@
 use crate::graph;
-use crate::node::{self, Node, SerdeNode};
+use crate::node::{self, Node};
 use quote::ToTokens;
 use std::{fs, io, ops};
 use std::collections::BTreeMap;
@@ -24,6 +24,13 @@ pub struct Project {
     directory: PathBuf,
     /// All nodes that have been imported into the project ready for use.
     nodes: NodeCollection,
+}
+
+/// A wrapper around the **Node** trait that allows for serializing and deserializing node trait
+/// objects.
+#[typetag::serde(tag = "type")]
+pub trait SerdeNode {
+    fn node(&self) -> &Node;
 }
 
 /// A unique identifier representing an imported node.
