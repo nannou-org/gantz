@@ -1,5 +1,6 @@
 use crate::graph;
-use crate::node::Node;
+use crate::node::{self, Node, SerdeNode};
+use quote::ToTokens;
 use std::{fs, io, ops};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -30,7 +31,7 @@ pub struct Project {
 pub struct NodeId(u64);
 
 /// The BTreeMap used for storing imported nodes.
-pub type NodeTree = BTreeMap<NodeId, NodeContainer>;
+pub type NodeTree = BTreeMap<NodeId, NodeKind>;
 
 /// Stores all nodes that have been created within or imported into the project.
 #[derive(Default, Deserialize, Serialize)]
@@ -38,22 +39,24 @@ pub struct NodeCollection {
     map: NodeTree,
 }
 
-/// A node, either derived from rust code or composed from a graph of other nodes.
-#[derive(Deserialize, Serialize)]
-pub struct NodeContainer {
-    kind: NodeKind,
-    package_id: cargo::core::PackageId,
-}
-
 /// A graph composed of IDs into the `NodeCollection`.
-pub type NodeIdGraph = graph::Petgraph<NodeId>;
+pub type NodeIdGraph = graph::StableGraph<NodeId>;
 
-/// Whether the node is an endpoint (has no more `Node` dependencies) or is a `Graph` composed of
-/// other `Node`s.
+/// Whether the node is a **Core** node (has no other internal **Node** dependencies) or is a
+/// **Graph** node, composed entirely of other gantz **Node**s.
 #[derive(Deserialize, Serialize)]
 pub enum NodeKind {
-    Endpoint(Box<Node>),
-    Graph(NodeIdGraph),
+    Core(Box<SerdeNode>),
+    Graph {
+        graph: NodeIdGraph,
+        package_id: cargo::core::PackageId,
+    },
+}
+
+// A **Node** type constructed as a reference to some other node.
+enum NodeRef<'a> {
+    Core(&'a Node),
+    Graph(graph::StableGraph<NodeRef<'a>>),
 }
 
 /// Errors that may occur while creating a node crate.
@@ -129,10 +132,10 @@ pub enum ProjectOpenError {
         #[fail(cause)]
         err: CreateOrCheckProjectDirectoryError,
     },
-    #[fail(display = "failed to create or check existing crate for project root node: {}", err)]
-    NodeCrate {
+    #[fail(display = "failed to add the graph node to the collection: {}", err)]
+    AddGraphNodeToCollection {
         #[fail(cause)]
-        err: OpenNodePackageError,
+        err: AddGraphNodeToCollectionError,
     },
 }
 
@@ -148,6 +151,38 @@ pub enum JsonFileError {
     Json {
         #[fail(cause)]
         err: serde_json::Error,
+    },
+}
+
+/// Errors that may occur while creating a node crate.
+#[derive(Debug, Fail, From)]
+pub enum GraphNodeReplaceSrcError {
+    #[fail(display = "an IO error occurred: {}", err)]
+    Io {
+        #[fail(cause)]
+        err: io::Error,
+    },
+    #[fail(display = "a cargo error occurred: {}", err)]
+    Cargo {
+        #[fail(cause)]
+        err: failure::Error,
+    },
+    #[fail(display = "no matching `package_id` in workspace that matches graph node `package_id`")]
+    NoMatchingPackageId,
+}
+
+/// Errors that may occur while adding a graph node to a project's **NodeCollection**.
+#[derive(Debug, Fail, From)]
+pub enum AddGraphNodeToCollectionError {
+    #[fail(display = "failed to open node cargo package: {}", err)]
+    OpenNodePackage {
+        #[fail(cause)]
+        err: OpenNodePackageError,
+    },
+    #[fail(display = "failed to update the src/lib.rs of the graph node: {}", err)]
+    GraphNodeReplaceSrc {
+        #[fail(cause)]
+        err: GraphNodeReplaceSrcError,
     },
 }
 
@@ -191,10 +226,9 @@ impl Project {
             Err(_err) => {
                 let mut nodes = NodeCollection::default();
                 let graph = NodeIdGraph::default();
-                let kind = NodeKind::Graph(graph);
-                let workspace_dir = workspace_dir(&directory);
+                let ws_dir = workspace_dir(&directory);
                 let proj_name = project_name(&directory);
-                add_node_to_collection(workspace_dir, proj_name, &cargo_config, kind, &mut nodes)?;
+                add_graph_node_to_collection(ws_dir, proj_name, &cargo_config, graph, &mut nodes)?;
                 nodes
             }
         };
@@ -207,16 +241,70 @@ impl Project {
         Ok(project)
     }
 
-    /// Add the given node to the collection and return it's unique identifier.
-    pub fn add_node(
+    /// Add the given core node to the collection and return its unique identifier.
+    pub fn add_core_node(&mut self, node: Box<SerdeNode>) -> NodeId {
+        let kind = NodeKind::Core(node);
+        let node_id = self.nodes.insert(kind);
+        node_id
+    }
+
+    /// Add the given node to the collection and return its unique identifier.
+    pub fn add_graph_node(
         &mut self,
-        kind: NodeKind,
+        graph: NodeIdGraph,
         node_name: &str,
-    ) -> Result<NodeId, OpenNodePackageError> {
+    ) -> Result<NodeId, AddGraphNodeToCollectionError> {
         let ws_dir = self.workspace_dir();
         let Project { ref cargo_config, ref mut nodes, .. } = *self;
-        let (n_id, _) = add_node_to_collection(ws_dir, node_name, cargo_config, kind, nodes)?;
+        let n_id = add_graph_node_to_collection(ws_dir, node_name, cargo_config, graph, nodes)?;
         Ok(n_id)
+    }
+
+    /// Read-only access to the project's **NodeCollection**.
+    pub fn nodes(&self) -> &NodeCollection {
+        &self.nodes
+    }
+
+    /// The **NodeId** for the root graph node.
+    pub fn root_node_id(&self) -> NodeId {
+        NodeId(0)
+    }
+
+    /// The core node at the given **NodeId**.
+    ///
+    /// Returns `None` if there are no nodes for the given **NodeId** or if a node exists but it is
+    /// not a **Core** node.
+    pub fn core_node(&self, id: &NodeId) -> Option<&Box<SerdeNode>> {
+        self.nodes.get(id).and_then(|kind| match kind {
+            NodeKind::Core(ref node) => Some(node),
+            _ => None,
+        })
+    }
+
+    /// The graph node at the given **NodeId**.
+    ///
+    /// Returns `None` if there are no nodes for the given **NodeId** or if a node exists but it is
+    /// not a **Graph** node.
+    pub fn graph_node(&self, id: &NodeId) -> Option<(&NodeIdGraph, &cargo::core::PackageId)> {
+        self.nodes.get(id).and_then(|kind| match kind {
+            NodeKind::Graph { ref graph, ref package_id } => Some((graph, package_id)),
+            _ => None,
+        })
+    }
+
+    /// Update the graph associated with the graph node at the given **NodeId**.
+    pub fn update_graph<F>(&mut self, id: &NodeId, update: F) -> Result<(), GraphNodeReplaceSrcError>
+    where
+        F: FnOnce(&mut NodeIdGraph),
+    {
+        match self.nodes.map.get_mut(id) {
+            Some(NodeKind::Graph { ref mut graph, .. }) => update(graph),
+            _ => return Ok(()),
+        }
+        let file = graph_node_src(id, &self.nodes).expect("no graph node for NodeId");
+        let ws_dir = self.workspace_dir();
+        graph_node_replace_src(ws_dir, &self.cargo_config, id, &self.nodes, file)?;
+        Ok(())
     }
 
     /// The project directory.
@@ -256,10 +344,47 @@ impl NodeCollection {
     }
 
     // Insert the given node and return the unique `NodeId` key associated with it.
-    fn insert(&mut self, node: NodeContainer) -> NodeId {
+    fn insert(&mut self, node: NodeKind) -> NodeId {
         let id = self.next_node_id();
         self.map.insert(id, node);
         id
+    }
+}
+
+impl<'a> Node for NodeRef<'a> {
+    fn n_inputs(&self) -> u32 {
+        match self {
+            NodeRef::Core(node) => node.n_inputs(),
+            NodeRef::Graph(graph) => graph.n_inputs(),
+        }
+    }
+
+    fn n_outputs(&self) -> u32 {
+        match self {
+            NodeRef::Core(node) => node.n_outputs(),
+            NodeRef::Graph(graph) => graph.n_outputs(),
+        }
+    }
+
+    fn expr(&self, args: Vec<syn::Expr>) -> syn::Expr {
+        match self {
+            NodeRef::Core(node) => node.expr(args),
+            NodeRef::Graph(graph) => graph.expr(args),
+        }
+    }
+
+    fn push_eval(&self) -> Option<node::PushEval> {
+        match self {
+            NodeRef::Core(node) => node.push_eval(),
+            NodeRef::Graph(graph) => graph.push_eval(),
+        }
+    }
+
+    fn pull_eval(&self) -> Option<node::PullEval> {
+        match self {
+            NodeRef::Core(node) => node.pull_eval(),
+            NodeRef::Graph(graph) => graph.pull_eval(),
+        }
     }
 }
 
@@ -314,6 +439,22 @@ where
     P: AsRef<Path>,
 {
     workspace_dir.as_ref().join(node_crate_name(node_name))
+}
+
+/// Given a node crate directory, return the path to the src directory.
+pub fn node_crate_src<P>(node_crate_dir: P) -> PathBuf
+where
+    P: AsRef<Path>,
+{
+    node_crate_dir.as_ref().join("src")
+}
+
+/// Given a node crate directory, return the path to the lib.rs file.
+pub fn node_crate_lib_rs<P>(node_crate_src: P) -> PathBuf
+where
+    P: AsRef<Path>,
+{
+    node_crate_src.as_ref().join("lib.rs")
 }
 
 // Check the project at the given directory or create it if it does not exist.
@@ -395,7 +536,7 @@ fn open_node_package<P>(
     workspace_dir: P,
     node_name: &str,
     cargo_config: &cargo::Config,
-) -> Result<cargo::core::Package, OpenNodePackageError>
+) -> Result<cargo::core::PackageId, OpenNodePackageError>
 where
     P: AsRef<Path>,
 {
@@ -413,12 +554,12 @@ where
         if let toml::Value::Table(ref mut table) = toml {
             if let Some(toml::Value::Table(ref mut workspace)) = table.get_mut("workspace") {
                 if let Some(toml::Value::Array(ref mut members)) = workspace.get_mut("members") {
-                    members.push(node_crate_name.into());
+                    members.push(node_crate_name.clone().into());
                 }
             }
         }
         let toml_string = toml::to_string_pretty(&toml)?;
-        fs::write(workspace_manifest_path, &toml_string)?;
+        fs::write(&workspace_manifest_path, &toml_string)?;
     }
 
     // If the directory doesn't exist yet, create it.
@@ -443,28 +584,88 @@ where
     }
 
     // Verify the package after creation (or if it already exists) by reading it.
-    let manifest_path = node_crate_dir_path.join("Cargo.toml");
-    let src_id = cargo::core::SourceId::crates_io(&cargo_config)?;
-    let (pkg, _nested) = cargo::ops::read_package(&manifest_path, src_id, &cargo_config)?;
+    let workspace = cargo::core::Workspace::new(&workspace_manifest_path, &cargo_config)?;
+    let pkg = workspace
+        .members()
+        .find(|pkg| format!("{}", pkg.name()) == node_crate_name)
+        .expect("failed to find workspace package with matching name");
 
-    Ok(pkg)
+    Ok(pkg.package_id())
 }
 
 // Add the given node to the node collection and return the unique `NodeId` and generated
 // cargo workspace package associated with it.
-fn add_node_to_collection<P>(
+fn add_graph_node_to_collection<P>(
     workspace_dir: P,
     node_name: &str,
     cargo_config: &cargo::Config,
-    kind: NodeKind,
+    graph: NodeIdGraph,
     nodes: &mut NodeCollection,
-) -> Result<(NodeId, cargo::core::Package), OpenNodePackageError>
+) -> Result<NodeId, AddGraphNodeToCollectionError>
 where
     P: AsRef<Path>,
 {
-    let pkg = open_node_package(workspace_dir, node_name, cargo_config)?;
-    let package_id = pkg.package_id();
-    let container = NodeContainer { kind, package_id };
-    let node_id = nodes.insert(container);
-    Ok((node_id, pkg))
+    let package_id = open_node_package(&workspace_dir, node_name, cargo_config)?;
+    let kind = NodeKind::Graph { graph, package_id };
+    let node_id = nodes.insert(kind);
+    let file = graph_node_src(&node_id, nodes).expect("no graph node for NodeId");
+    graph_node_replace_src(workspace_dir, cargo_config, &node_id, nodes, file)?;
+    Ok(node_id)
+}
+
+
+// Given a `NodeIdGraph` and `NodeCollection`, return a graph capable of evaluation.
+fn id_graph_to_node_graph<'a>(g: &NodeIdGraph, ns: &'a NodeCollection) -> graph::StableGraph<NodeRef<'a>> {
+    g.map(
+        |_, n_id| {
+            match ns[n_id] {
+                NodeKind::Core(ref node) => NodeRef::Core(node.node()),
+                NodeKind::Graph { ref graph, .. } => {
+                    NodeRef::Graph(id_graph_to_node_graph(graph, ns))
+                }
+            }
+        },
+        |_, edge| {
+            edge.clone()
+        },
+    )
+}
+
+// Generate a src file for the graph node associated with the given `NodeId`.
+//
+// Returns `None` if there is no graph node associated with the given `NodeId`.
+fn graph_node_src(id: &NodeId, nodes: &NodeCollection) -> Option<syn::File> {
+    if let Some(NodeKind::Graph { ref graph, .. }) = nodes.get(id) {
+        let graph = id_graph_to_node_graph(graph, nodes);
+        return Some(graph::codegen::file(&graph));
+    }
+    None
+}
+
+// Replace the `src/lib.rs` file for the given graph node with the given file. For use in
+// conjunction with `graph_node_src`.
+fn graph_node_replace_src<P>(
+    workspace_dir: P,
+    cargo_config: &cargo::Config,
+    id: &NodeId,
+    nodes: &NodeCollection,
+    file: syn::File,
+) -> Result<(), GraphNodeReplaceSrcError>
+where
+    P: AsRef<Path>,
+{
+    if let Some(NodeKind::Graph { ref package_id, .. }) = nodes.get(id) {
+        let ws_manifest_path = workspace_manifest_path(workspace_dir);
+        let workspace = cargo::core::Workspace::new(&ws_manifest_path, &cargo_config)?;
+        let pkg = workspace
+            .members()
+            .find(|pkg| pkg.package_id() == *package_id)
+            .ok_or(GraphNodeReplaceSrcError::NoMatchingPackageId)?;
+        let node_crate_dir = pkg.root();
+        let node_crate_lib_rs = node_crate_lib_rs(node_crate_src(node_crate_dir));
+        let src_string = format!("{}", file.into_token_stream());
+        let src_bytes = src_string.as_bytes();
+        std::fs::write(&node_crate_lib_rs, src_bytes)?;
+    }
+    Ok(())
 }

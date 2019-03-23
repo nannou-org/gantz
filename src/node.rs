@@ -9,7 +9,6 @@
 /// - Any number of outputs, where each output is of some rust type or generic type.
 /// - A function that takes the inputs as arguments and returns an Outputs struct containing a
 ///   field for each of the outputs.
-#[typetag::serde(tag = "type")]
 pub trait Node {
     /// The number of inputs to the node.
     fn n_inputs(&self) -> u32;
@@ -17,9 +16,59 @@ pub trait Node {
     /// The number of outputs to the node.
     fn n_outputs(&self) -> u32;
 
-    /// Tokens representing the rust code that will evaluate to an instance of `Self::Outputs`.
-    fn expr_tokens(&self, args: Vec<syn::Expr>) -> syn::Expr;
+    /// Tokens representing the rust code that will evaluate to a tuple containing all outputs.
+    ///
+    /// TODO: Consider making `args` a `Vec` of `Option`s and returning an `Option` expr to allow
+    /// for generating execution paths where only a certain set of inputs have been triggered.
+    /// Returning `None` could indicate that there is no valid `Expr` for the current set of
+    /// triggered inputs. This would probably be better than than using `default` as is currently
+    /// the case. Would also allow for 
+    fn expr(&self, args: Vec<syn::Expr>) -> syn::Expr;
+
+    /// Specifies whether or not code should be generated to allow for push evaluation from
+    /// instances of this node. Enabling push evaluation allows applications to call into
+    /// the gantz graph by loading the resulting generated code at runtime.
+    ///
+    /// Within a **Graph** node, a new function will be generated for each node that signals
+    /// **Some**.  If **Some**, a function will be generated with the given **FnDecl** that
+    /// represents pushing evaluation from this node.
+    ///
+    /// Gantz will **panic!** if the returned **FnDecl** has a return type other than `()`.
+    ///
+    /// By default, this is **None**.
+    fn push_eval(&self) -> Option<PushEval> {
+        None
+    }
+
+    /// The same as `push_eval` but allows for generating code for pull evaluation instead.
+    ///
+    /// *TODO: Finish this.*
+    fn pull_eval(&self) -> Option<PullEval> {
+        None
+    }
 }
+
+/// A wrapper around the **Node** trait that allows for serializing and deserializing node trait
+/// objects.
+#[typetag::serde(tag = "type")]
+pub trait SerdeNode {
+    fn node(&self) -> &Node;
+}
+
+/// Items that need to be known in order to generate a push evaluation function for a node.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct PushEval {
+    /// The type for each argument.
+    pub fn_decl: syn::FnDecl,
+    /// The name for the function.
+    pub fn_name: String,
+    /// Attributes for the generated `ItemFn`.
+    pub fn_attrs: Vec<syn::Attribute>,
+}
+
+/// Items that need to be known in order to generate a pull evaluation function for a node.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct PullEval;
 
 /// Represents an input of a node via an index.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
@@ -29,12 +78,66 @@ pub struct Input(pub u32);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct Output(pub u32);
 
-// pub enum Kind {
-//     /// A rust expression of some sort.
-//     ///
-//     /// - **fn** - inputs are function arguments, output is the return type.
-//     /// - **const** - single output nodes that always output the same value.
-//     RustExpr,
-//     /// A graph (or "subgraph") with inlets and outlets.
-//     GantzGraph,
-// }
+impl<'a, N> Node for &'a N
+where
+    N: Node,
+{
+    fn n_inputs(&self) -> u32 {
+        (**self).n_inputs()
+    }
+
+    fn n_outputs(&self) -> u32 {
+        (**self).n_outputs()
+    }
+
+    fn expr(&self, args: Vec<syn::Expr>) -> syn::Expr {
+        (**self).expr(args)
+    }
+
+    fn push_eval(&self) -> Option<PushEval> {
+        (**self).push_eval()
+    }
+
+    fn pull_eval(&self) -> Option<PullEval> {
+        (**self).pull_eval()
+    }
+}
+
+macro_rules! impl_node_for_ptr {
+    ($($Ty:ident)::*) => {
+        impl Node for $($Ty)::*<Node> {
+            fn n_inputs(&self) -> u32 {
+                (**self).n_inputs()
+            }
+
+            fn n_outputs(&self) -> u32 {
+                (**self).n_outputs()
+            }
+
+            fn expr(&self, args: Vec<syn::Expr>) -> syn::Expr {
+                (**self).expr(args)
+            }
+
+            fn push_eval(&self) -> Option<PushEval> {
+                (**self).push_eval()
+            }
+
+            fn pull_eval(&self) -> Option<PullEval> {
+                (**self).pull_eval()
+            }
+        }
+    };
+}
+
+impl_node_for_ptr!(Box);
+impl_node_for_ptr!(std::rc::Rc);
+impl_node_for_ptr!(std::sync::Arc);
+
+impl From<syn::ItemFn> for PushEval {
+    fn from(item_fn: syn::ItemFn) -> Self {
+        let syn::ItemFn { attrs: fn_attrs, decl, ident, .. } = item_fn;
+        let fn_decl = *decl;
+        let fn_name = format!("{}", ident);
+        PushEval { fn_decl, fn_name, fn_attrs }
+    }
+}
