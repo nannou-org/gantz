@@ -110,12 +110,6 @@ pub mod codegen {
         // Track the evaluation steps.
         let mut eval_steps = vec![];
 
-        // // The first node cannot have any inputs.
-        // match dfs_post_order.next(g) {
-        //     None => return vec![],
-        //     Some(node) => eval_steps.push(EvalStep { node, args: vec![] }),
-        // };
-
         // Step through each of the nodes.
         while let Some(node) = dfs_post_order.next(g) {
             // Fetch the node reference.
@@ -127,7 +121,7 @@ pub mod codegen {
             let mut args: Vec<_> = (0..child.weight().n_inputs()).map(|_| None).collect();
 
             // Create an argument for each input to this child. 
-            // TODO: Need some way of caching previously evaluated inputs to use as defaults.
+            // TODO: Need some way of caching previously evaluated inputs to use as defaults?
             // TODO: Need some way of deciding what to use as an argument in the case of
             //       multiple input connections.
             for e_ref in g.edges_directed(node, petgraph::Incoming) {
@@ -305,10 +299,17 @@ pub mod codegen {
 
         // Construct the final function item.
         let block = Box::new(syn::Block { stmts, brace_token: Default::default() });
-        let node::PushEval { fn_decl, fn_name, fn_attrs } = push_eval;
+        let node::PushEval { fn_decl, fn_name, mut fn_attrs } = push_eval;
         let decl = Box::new(fn_decl);
         let ident = syn::Ident::new(&fn_name, proc_macro2::Span::call_site());
         let vis = syn::Visibility::Public(syn::VisPublic { pub_token: Default::default() });
+
+        // Add the `#[no_mangle]` attr to the function so that the symbol retains its name.
+        let no_mangle = no_mangle_attr();
+        if !fn_attrs.iter().any(|attr| *attr == no_mangle) {
+            fn_attrs.push(no_mangle);
+        }
+
         let item_fn = syn::ItemFn {
             attrs: fn_attrs,
             vis,
@@ -359,6 +360,19 @@ pub mod codegen {
             .collect();
         let file = syn::File { shebang: None, attrs: vec![], items };
         file
+    }
+
+    // Create the `#[no_mangle]` attribute.
+    fn no_mangle_attr() -> syn::Attribute {
+        let ident = syn::Ident::new("no_mangle", proc_macro2::Span::call_site());
+        let arguments = syn::PathArguments::None;
+        let segments = Some(syn::PathSegment { ident, arguments }).into_iter().collect();
+        let path = syn::Path { leading_colon: None, segments };
+        let style = syn::AttrStyle::Outer;
+        let pound_token = Default::default();
+        let bracket_token = Default::default();
+        let tts = Default::default();
+        syn::Attribute { pound_token, style, bracket_token, path, tts }
     }
 
     // impl<N> Graph<N>
