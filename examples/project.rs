@@ -79,6 +79,7 @@ impl gantz::project::SerdeNode for Debug {
 }
 
 fn main() {
+    // Create a project called `foo` in `./examples/foo`
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples").join("foo");
     let mut project = gantz::Project::open(path.into()).unwrap();
 
