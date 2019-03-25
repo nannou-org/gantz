@@ -121,9 +121,6 @@ pub mod codegen {
             let mut args: Vec<_> = (0..child.weight().n_inputs()).map(|_| None).collect();
 
             // Create an argument for each input to this child. 
-            // TODO: Need some way of caching previously evaluated inputs to use as defaults?
-            // TODO: Need some way of deciding what to use as an argument in the case of
-            //       multiple input connections.
             for e_ref in g.edges_directed(node, petgraph::Incoming) {
                 let w = e_ref.weight();
 
@@ -160,6 +157,22 @@ pub mod codegen {
             eval_steps.push(EvalStep { node, args });
         }
         eval_steps
+    }
+
+    /// Pull evaluation from the specified node.
+    ///
+    /// Evaluation order is equivalent to depth-first-search order, ending with the specified node.
+    ///
+    /// Expects any directed graph whose edges are of type `Edge` and whose nodes implement `Node`.
+    /// Direction of edges indicate the flow of data through the graph.
+    pub fn pull_eval_steps<G>(g: G, n: G::NodeId) -> Vec<EvalStep<G::NodeId>>
+    where
+        G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
+        G: Data<EdgeWeight = Edge>,
+        <G::NodeRef as NodeRef>::Weight: Node,
+    {
+        // TODO
+        unimplemented!()
     }
 
     /// Given a function argument, return its type if known.
@@ -340,6 +353,22 @@ pub mod codegen {
             .collect()
     }
 
+    /// Generate a function for performing pull evaluation from the given node with the given
+    /// evaluation steps.
+    pub fn pull_eval_fn<G>(
+        g: G,
+        pull_eval: node::PullEval,
+        steps: &[EvalStep<G::NodeId>],
+    ) -> syn::ItemFn
+    where
+        G: GraphRef + IntoNodeReferences + NodeIndexable,
+        G::NodeId: Eq + Hash,
+        <G::NodeRef as NodeRef>::Weight: Node,
+    {
+        // TODO
+        unimplemented!();
+    }
+
     /// Given a gantz graph, generate the rust code src file with all the necessary functions for
     /// executing it.
     pub fn file<G>(g: G) -> syn::File
@@ -374,49 +403,4 @@ pub mod codegen {
         let tts = Default::default();
         syn::Attribute { pound_token, style, bracket_token, path, tts }
     }
-
-    // impl<N> Graph<N>
-    // where
-    //     N: Node,
-    // {
-    //     /// Push evaluation from the specified node.
-    //     ///
-    //     /// Evaluation order is equivalent to depth-first-search post order.
-    //     pub fn push_eval_steps(&self, node: NodeIndex) -> Vec<EvalStep> {
-    //         let mut eval_steps = vec![];
-    //         let mut dfs_post_order = petgraph::visit::DfsPostOrder::new(&self.graph, node);
-    //         match dfs_post_order.next(&self.graph) {
-    //             None => return vec![],
-    //             Some(node) => eval_steps.push(EvalStep { node, args: vec![] }),
-    //         };
-    //         while let Some(node) = dfs_post_order.next(&self.graph) {
-    //             let child = &self.graph[node];
-    //             let mut args: Vec<_> = (0..child.n_inputs()).map(|_| None).collect();
-    //             // TODO: Need some way of caching previously evaluated inputs to use as defaults.
-    //             // TODO: Need some way of deciding what to use as an argument in the case of
-    //             //       multiple input connections.
-    //             for e_ref in self.graph.edges_directed(node, petgraph::Incoming) {
-    //                 let w = e_ref.weight();
-    //                 let arg = ExprInput {
-    //                     node: petgraph::visit::EdgeRef::source(&e_ref),
-    //                     output: w.output,
-    //                     requires_clone: false, // TODO: calculate properly.
-    //                 };
-    //                 args[w.input.0 as usize] = Some(arg);
-    //             }
-    //             eval_steps.push(EvalStep { node, args });
-    //         }
-    //         eval_steps
-    //     }
-
-    //     /// Pull evaluation steps starting from the specified outputs on the given node.
-    //     ///
-    //     /// This causes the graph to performa DFS through each of the inlets to find the deepest
-    //     /// nodes. Evaluation occurs as though a "push" was sent simultaneously to each of the
-    //     /// deepest nodes. Outlets are only calculated once per node. If an output value is
-    //     /// required more than once, it will be borrowed accordingly.
-    //     pub fn pull_eval_steps(&self, _node: NodeIndex) -> Vec<EvalStep> {
-    //         unimplemented!();
-    //     }
-    // }
 }
