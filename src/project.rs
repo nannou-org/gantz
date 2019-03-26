@@ -1,5 +1,5 @@
 use crate::graph;
-use crate::node::{self, Node};
+use crate::node::{self, Node, SerdeNode};
 use quote::ToTokens;
 use std::{fs, io, ops};
 use std::collections::{BTreeMap, HashMap};
@@ -36,13 +36,6 @@ pub struct TempProject {
     // An `Option` is used so that we can ensure the `Project` is dropped before cleaning up the
     // directory. This will always be `Some` for the lifetime of the `TempProject` until drop.
     project: Option<Project>,
-}
-
-/// A wrapper around the **Node** trait that allows for serializing and deserializing node trait
-/// objects.
-#[typetag::serde(tag = "type")]
-pub trait SerdeNode {
-    fn node(&self) -> &Node;
 }
 
 /// A unique identifier representing an imported node.
@@ -608,7 +601,7 @@ where
 
 /// Given some UTF-8 node name, return the name of the crate.
 pub fn node_crate_name(node_name: &str) -> String {
-    format!("{}{}", NODE_CRATE_PREFIX, slug::slugify(node_name))
+    format!("{}{}", NODE_CRATE_PREFIX, slug::slugify(node_name).replace("-", "_"))
 }
 
 /// Given the workspace directory and some UTF-8 node name, return the path to the crate directory.
@@ -866,7 +859,10 @@ where
 }
 
 // Given a `NodeIdGraph` and `NodeCollection`, return a graph capable of evaluation.
-fn id_graph_to_node_graph<'a>(g: &NodeIdGraph, ns: &'a NodeCollection) -> graph::StableGraph<NodeRef<'a>> {
+fn id_graph_to_node_graph<'a>(
+    g: &NodeIdGraph,
+    ns: &'a NodeCollection,
+) -> graph::StableGraph<NodeRef<'a>> {
     g.map(
         |_, n_id| {
             match ns[n_id] {

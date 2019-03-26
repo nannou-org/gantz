@@ -64,17 +64,17 @@ impl gantz::Node for Debug {
 }
 
 #[typetag::serde]
-impl gantz::project::SerdeNode for One {
+impl gantz::node::SerdeNode for One {
     fn node(&self) -> &gantz::Node { self }
 }
 
 #[typetag::serde]
-impl gantz::project::SerdeNode for Add {
+impl gantz::node::SerdeNode for Add {
     fn node(&self) -> &gantz::Node { self }
 }
 
 #[typetag::serde]
-impl gantz::project::SerdeNode for Debug {
+impl gantz::node::SerdeNode for Debug {
     fn node(&self) -> &gantz::Node { self }
 }
 
@@ -84,7 +84,7 @@ fn main() {
     let mut project = gantz::Project::open(path.into()).unwrap();
 
     // Instantiate the core nodes.
-    let one = Box::new(One) as Box<gantz::project::SerdeNode>;
+    let one = Box::new(One) as Box<gantz::node::SerdeNode>;
     let add = Box::new(Add) as Box<_>;
     let debug = Box::new(Debug) as Box<_>;
 

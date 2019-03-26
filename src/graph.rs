@@ -15,8 +15,19 @@ pub struct Edge {
     pub input: node::Input,
 }
 
-/// The petgraph type used to represent the **Graph**.
+/// The petgraph type used to represent a gantz graph.
+pub type Graph<N> = petgraph::Graph<N, Edge, petgraph::Directed, Index>;
+
+/// The petgraph type used to represent a stable gantz graph.
 pub type StableGraph<N> = petgraph::stable_graph::StableGraph<N, Edge, petgraph::Directed, Index>;
+
+impl Edge {
+    /// Create an edge representing a connection from the given node `Output` to the given node
+    /// `Input`.
+    pub fn new(output: node::Output, input: node::Input) -> Self {
+        Edge { output, input }
+    }
+}
 
 impl<N> Node for StableGraph<N>
 where
@@ -35,11 +46,23 @@ where
     }
 }
 
+impl<A, B> From<(A, B)> for Edge
+where
+    A: Into<node::Output>,
+    B: Into<node::Input>,
+{
+    fn from((a, b): (A, B)) -> Self {
+        let output = a.into();
+        let input = b.into();
+        Edge { output, input }
+    }
+}
+
 pub mod codegen {
     use crate::node::{self, Node};
     use petgraph::visit::{Data, EdgeRef, GraphRef, IntoEdgesDirected, IntoNodeReferences,
-                          NodeIndexable, NodeRef, Visitable};
-    use std::collections::HashMap;
+                          NodeIndexable, NodeRef, Visitable, Walker};
+    use std::collections::{HashMap, HashSet};
     use std::hash::Hash;
     use super::Edge;
     use syn::punctuated::Punctuated;
@@ -102,16 +125,24 @@ pub mod codegen {
     where
         G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
         G: Data<EdgeWeight = Edge>,
+        G::NodeId: Eq + Hash,
         <G::NodeRef as NodeRef>::Weight: Node,
     {
+        // First, find all nodes reachable by a `DFS` from this node.
+        let dfs: HashSet<G::NodeId> = petgraph::visit::Dfs::new(g, n).iter(g).collect();
+
         // The order of evaluation is DFS post order.
-        let mut dfs_post_order = petgraph::visit::Dfs::new(g, n);
+        let mut traversal = petgraph::visit::Topo::new(g);
 
         // Track the evaluation steps.
         let mut eval_steps = vec![];
 
         // Step through each of the nodes.
-        while let Some(node) = dfs_post_order.next(g) {
+        while let Some(node) = traversal.next(g) {
+            if !dfs.contains(&node) {
+                continue;
+            }
+
             // Fetch the node reference.
             let child = g.node_references()
                 .nth(g.to_index(node))

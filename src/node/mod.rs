@@ -1,3 +1,11 @@
+pub mod expr;
+pub mod push;
+pub mod serde;
+
+pub use self::expr::{Expr, NewExprError};
+pub use self::push::{Push, WithPushEval};
+pub use self::serde::SerdeNode;
+
 /// Gantz allows for constructing executable directed graphs by composing together **Node**s.
 /// 
 /// **Node**s are a way to allow users to abstract and encapsulate logic into smaller, re-usable
@@ -49,13 +57,15 @@ pub trait Node {
 }
 
 /// Items that need to be known in order to generate a push evaluation function for a node.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct PushEval {
     /// The type for each argument.
+    #[serde(with = "crate::node::serde::fn_decl")]
     pub fn_decl: syn::FnDecl,
     /// The name for the function.
     pub fn_name: String,
     /// Attributes for the generated `ItemFn`.
+    #[serde(with = "crate::node::serde::fn_attrs")]
     pub fn_attrs: Vec<syn::Attribute>,
 }
 
@@ -133,4 +143,23 @@ impl From<syn::ItemFn> for PushEval {
         let fn_name = format!("{}", ident);
         PushEval { fn_decl, fn_name, fn_attrs }
     }
+}
+
+impl From<u32> for Input {
+    fn from(u: u32) -> Self {
+        Input(u)
+    }
+}
+
+impl From<u32> for Output {
+    fn from(u: u32) -> Self {
+        Output(u)
+    }
+}
+
+/// Create a node from the given Rust expression.
+///
+/// Shorthand for `node::Expr::new`.
+pub fn expr(expr: &str) -> Result<Expr, NewExprError> {
+    Expr::new(expr)
 }
