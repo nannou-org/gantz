@@ -26,6 +26,18 @@ pub struct Project {
     nodes: NodeCollection,
 }
 
+/// A wrapper around a `Project` that behaves exactly like a `Project` but removes the project
+/// directory and all its contents on `Drop`.
+///
+/// It also provides an alternate constructor that allows for specifying only the project name
+/// rather than the entire path. In this case, the temporary project will be created within the
+/// directory returned by `std::env::temp_dir()`.
+pub struct TempProject {
+    // An `Option` is used so that we can ensure the `Project` is dropped before cleaning up the
+    // directory. This will always be `Some` for the lifetime of the `TempProject` until drop.
+    project: Option<Project>,
+}
+
 /// A wrapper around the **Node** trait that allows for serializing and deserializing node trait
 /// objects.
 #[typetag::serde(tag = "type")]
@@ -429,6 +441,23 @@ impl Project {
     }
 }
 
+impl TempProject {
+    /// Create a new temporary project with the given project name.
+    ///
+    /// The project will be created within the directory returned by `std::env::temp_dir()` and
+    /// will be removed when the `TempProject` is `Drop`ped.
+    pub fn open_with_name(name: &str) -> Result<Self, ProjectOpenError> {
+        let proj_dir = std::env::temp_dir().join(name);
+        Self::open(proj_dir)
+    }
+
+    /// The same as `Project::open` but creates a temporary project.
+    pub fn open(directory: PathBuf) -> Result<Self, ProjectOpenError> {
+        let project = Some(Project::open(directory)?);
+        Ok(TempProject { project })
+    }
+}
+
 impl NodeCollection {
     // Load a node collection from the given path.
     fn load<P>(path: P) -> Result<Self, JsonFileError>
@@ -494,10 +523,31 @@ impl<'a> Node for NodeRef<'a> {
     }
 }
 
+impl ops::Deref for TempProject {
+    type Target = Project;
+    fn deref(&self) -> &Self::Target {
+        self.project.as_ref().expect("inner `project` was `None`")
+    }
+}
+
+impl ops::DerefMut for TempProject {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.project.as_mut().expect("inner `project` was `None`")
+    }
+}
+
 impl ops::Deref for NodeCollection {
     type Target = NodeTree;
     fn deref(&self) -> &Self::Target {
         &self.map
+    }
+}
+
+impl Drop for TempProject {
+    fn drop(&mut self) {
+        let dir = self.dir().to_path_buf();
+        std::mem::drop(self.project.take());
+        std::fs::remove_dir_all(dir).ok();
     }
 }
 
