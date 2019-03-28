@@ -21,12 +21,9 @@
 //!
 //! ## Current Questions
 
-#[macro_use]
-extern crate derive_more;
-#[macro_use]
-extern crate failure;
-#[macro_use]
-extern crate serde;
+use derive_more::From;
+use failure::Fail;
+use serde::{self, Deserialize, Serialize};
 
 pub mod graph;
 pub mod node;

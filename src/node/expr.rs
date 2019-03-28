@@ -1,7 +1,7 @@
+use super::{Deserialize, Fail, From, Serialize};
 use crate::node::Node;
 use proc_macro2::{TokenStream, TokenTree};
-use quote::{TokenStreamExt, ToTokens};
-use serde::{Deserialize, Serialize};
+use quote::{ToTokens, TokenStreamExt};
 use std::fmt;
 use std::str::FromStr;
 

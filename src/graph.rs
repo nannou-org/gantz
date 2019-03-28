@@ -1,3 +1,4 @@
+use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
 
 /// The type used to represent node and edge indices.
