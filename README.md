@@ -12,10 +12,14 @@ Designer, Houdini and others. <sup>Named after
 ## Goals
 
 - [x] A simple way of creating custom nodes from rust code using `derive`.
-- [ ] Solve handling of generics and trait objects within custom nodes.
-- [ ] `Serialize` and `Deserialize` implementations via serde.
+- [x] Solve handling of generics and trait objects within custom nodes.
+- [x] `Serialize` and `Deserialize` implementations via serde and typetag.
+- [x] Project workspace creation.
 - [x] **Push** evaluation through the graph.
-- [ ] **Pull** evaluation through the graph.
+- [ ] **Pull** evaluation through the graph (#16).
+- [x] Stateless node codegen.
+- [ ] Stateful node codegen #19.
+- [ ] Conditional evaluation #21.
 - Provide a suite of commonly required "std" nodes out of the box:
   - [ ] Primitive types and casts.
   - [ ] Mappings to `std::ops`: `Add`, `Sub`, `Mul`, `Div`, etc.
