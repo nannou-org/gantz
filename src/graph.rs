@@ -1,5 +1,7 @@
-use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
+use petgraph::visit::GraphBase;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::ops::{Deref, DerefMut};
 
 /// The type used to represent node and edge indices.
 pub type Index = usize;
@@ -16,6 +18,31 @@ pub struct Edge {
     pub input: node::Input,
 }
 
+/// A node that itself is implemented in terms of a graph of nodes.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GraphNode<G>
+where
+    G: GraphBase,
+{
+    /// The graph used to evaluate the node.
+    pub graph: G,
+    /// The types of each of the inputs into the graph node.
+    ///
+    /// TODO: Inlets and outlets should possibly use normal `Node`s and these should be their
+    /// indices. This way we can retrieve the type from the graph, cast it to `Inlet`/`Outlet` and
+    /// check for types while also allowing inlets and outlets to partake in the graph evaluation
+    /// process.
+    pub inlets: Vec<G::NodeId>,
+    /// The types of each of the outputs into the graph node.
+    pub outlets: Vec<G::NodeId>,
+}
+
+/// A node that may act as an inlet into a graph node.
+pub struct Inlet {
+    /// The type of value that can be input into the graph.
+    pub ty: syn::Type,
+}
+
 /// The petgraph type used to represent a gantz graph.
 pub type Graph<N> = petgraph::Graph<N, Edge, petgraph::Directed, Index>;
 
@@ -30,20 +57,162 @@ impl Edge {
     }
 }
 
-impl<N> Node for StableGraph<N>
+impl<G> Node for GraphNode<G>
 where
-    N: Node,
+    G: petgraph::visit::Data,
+    G::NodeWeight: Node,
 {
-    fn n_inputs(&self) -> u32 {
-        unimplemented!("requires implementing graph inlet nodes")
+    fn evaluator(&self) -> node::Evaluator {
+        let fn_token = syn::token::Fn { span: proc_macro2::Span::call_site() };
+        let generics = unimplemented!("if any inlets/outlets use generics, this should too");
+        let paren_token = syn::token::Paren { span: proc_macro2::Span::call_site() };
+        let variadic = None;
+        let inputs = unimplemented!("to be inferred from inlet nodes");
+        let output = unimplemented!("to be inferred from outlet nodes");
+        let _fn_decl = syn::FnDecl { fn_token, generics, paren_token, inputs, variadic, output };
+        let fn_item = unimplemented!();
+        node::Evaluator::Fn { fn_item }
     }
+}
 
-    fn n_outputs(&self) -> u32 {
-        unimplemented!("requires implementing graph outlet nodes")
+// Manual implementation of `Deserialize` as it cannot be derived for a struct with associated
+// types without unnecessary trait bounds on the struct itself.
+impl<'de, G> Deserialize<'de> for GraphNode<G>
+where
+    G: GraphBase + Deserialize<'de>,
+    G::NodeId: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::{self, MapAccess, SeqAccess, Visitor};
+
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Field { Graph, Inlets, Outlets }
+
+        struct GraphNodeVisitor<G>(std::marker::PhantomData<G>);
+
+        impl<'de, G> Visitor<'de> for GraphNodeVisitor<G>
+        where
+            G: GraphBase + Deserialize<'de>,
+            G::NodeId: Deserialize<'de>,
+        {
+            type Value = GraphNode<G>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct GraphNode")
+            }
+
+            fn visit_seq<V>(self, mut seq: V) -> Result<GraphNode<G>, V::Error>
+            where
+                V: SeqAccess<'de>,
+            {
+                let graph = seq.next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+                let inlets = seq.next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+                let outlets = seq.next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+                Ok(GraphNode { graph, inlets, outlets })
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<GraphNode<G>, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut graph = None;
+                let mut inlets = None;
+                let mut outlets = None;
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Graph => {
+                            if graph.is_some() {
+                                return Err(de::Error::duplicate_field("graph"));
+                            }
+                            graph = Some(map.next_value()?);
+                        }
+                        Field::Inlets => {
+                            if inlets.is_some() {
+                                return Err(de::Error::duplicate_field("inlets"));
+                            }
+                            inlets = Some(map.next_value()?);
+                        }
+                        Field::Outlets => {
+                            if outlets.is_some() {
+                                return Err(de::Error::duplicate_field("outlets"));
+                            }
+                            outlets = Some(map.next_value()?);
+                        }
+                    }
+                }
+                let graph = graph.ok_or_else(|| de::Error::missing_field("graph"))?;
+                let inlets = inlets.ok_or_else(|| de::Error::missing_field("inlets"))?;
+                let outlets = outlets.ok_or_else(|| de::Error::missing_field("outlets"))?;
+                Ok(GraphNode { graph, inlets, outlets })
+            }
+        }
+
+        const FIELDS: &[&str] = &["graph", "inlets", "outlets"];
+        let visitor: GraphNodeVisitor<G> = GraphNodeVisitor(std::marker::PhantomData);
+        deserializer.deserialize_struct("GraphNode", FIELDS, visitor)
     }
+}
 
-    fn expr(&self, _args: Vec<syn::Expr>) -> syn::Expr {
-        unimplemented!("requires implementing graph inlet and outlet nodes")
+// Manual implementation of `Serialize` as it cannot be derived for a struct with associated
+// types without unnecessary trait bounds on the struct itself.
+impl<G> Serialize for GraphNode<G>
+where
+    G: GraphBase + Serialize,
+    G::NodeId: Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("GraphNode", 3)?;
+        state.serialize_field("graph", &self.graph)?;
+        state.serialize_field("inlets", &self.inlets)?;
+        state.serialize_field("outlets", &self.outlets)?;
+        state.end()
+    }
+}
+
+// impl Node for Inlet {
+//     fn evaluator(&self) -> node::Evaluator {
+//         let n_inputs = 1;
+//         let n_outputs = 1;
+//         let ty = self.ty.clone();
+//         let gen_expr = Box::new(move |mut args: Vec<syn::Expr>| {
+//             assert_eq!(args.len(), 1, "must be a single input (from the calling fn) for an inlet");
+//             let in_expr = args.remove(0);
+//             syn::parse_quote! {
+//                 let in_expr_checked: #ty = in_expr;
+//                 in_expr_checked
+//             }
+//         });
+//         node::Evaluator::Expr { n_inputs, n_outputs, gen_expr }
+//     }
+// }
+
+impl<G> Deref for GraphNode<G>
+where
+    G: GraphBase,
+{
+    type Target = G;
+    fn deref(&self) -> &Self::Target {
+        &self.graph
+    }
+}
+
+impl<G> DerefMut for GraphNode<G>
+where
+    G: GraphBase,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.graph
     }
 }
 
@@ -90,7 +259,39 @@ pub mod codegen {
         pub requires_clone: bool,
     }
 
-    /// Given a graph with of gantz nodes, return `NodeId`s of those that require push evaluation.
+    /// Shorthand for the node evaluator map passed between codegen stages.
+    pub type NodeEvaluatorMap<Id> = HashMap<Id, node::Evaluator>;
+
+    /// Given a graph of gantz nodes, produce the `Evaluator` associated with each.
+    pub fn node_evaluators<G>(g: G) -> NodeEvaluatorMap<G::NodeId>
+    where
+        G: IntoNodeReferences,
+        <G::NodeRef as NodeRef>::Weight: Node,
+        G::NodeId: Eq + Hash,
+    {
+        g.node_references()
+            .map(|n| (n.id(), n.weight().evaluator()))
+            .collect()
+    }
+
+    /// Given a set of node evaluators, return only those that have function definitions.
+    pub fn node_evaluator_fns<Id>(
+        evaluators: &NodeEvaluatorMap<Id>,
+    ) -> impl Iterator<Item = (&Id, &syn::ItemFn)>
+    where
+        Id: Eq + Hash,
+    {
+        evaluators
+            .iter()
+            .filter_map(|(id, eval)| {
+                match eval {
+                    node::Evaluator::Fn { ref fn_item } => Some((id, fn_item)),
+                    node::Evaluator::Expr { .. } => None,
+                }
+            })
+    }
+
+    /// Given a graph of gantz nodes, return `NodeId`s of those that require push evaluation.
     ///
     /// Expects any graph type whose nodes implement `Node`.
     pub fn push_nodes<G>(g: G) -> Vec<(G::NodeId, node::PushEval)>
@@ -122,7 +323,11 @@ pub mod codegen {
     ///
     /// Expects any directed graph whose edges are of type `Edge` and whose nodes implement `Node`.
     /// Direction of edges indicate the flow of data through the graph.
-    pub fn push_eval_steps<G>(g: G, n: G::NodeId) -> Vec<EvalStep<G::NodeId>>
+    pub fn push_eval_steps<G>(
+        g: G,
+        node_evaluators: &NodeEvaluatorMap<G::NodeId>,
+        n: G::NodeId,
+    ) -> Vec<EvalStep<G::NodeId>>
     where
         G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
         G: Data<EdgeWeight = Edge>,
@@ -144,15 +349,11 @@ pub mod codegen {
                 continue;
             }
 
-            // Fetch the node reference.
-            let child = g.node_references()
-                .nth(g.to_index(node))
-                .expect("no node for index");
-
             // Initialise the arguments to `None` for each input.
-            let mut args: Vec<_> = (0..child.weight().n_inputs()).map(|_| None).collect();
+            let child_evaluator = &node_evaluators[&node];
+            let mut args: Vec<_> = (0..child_evaluator.n_inputs()).map(|_| None).collect();
 
-            // Create an argument for each input to this child. 
+            // Create an argument for each input to this child.
             for e_ref in g.edges_directed(node, petgraph::Incoming) {
                 let w = e_ref.weight();
 
@@ -160,7 +361,7 @@ pub mod codegen {
                 // value will need to be cloned when passed to this input.
                 let requires_clone = {
                     let parent = e_ref.source();
-                    // TODO: Connection order should match 
+                    // TODO: Connection order should match
                     let mut connection_ix = 0;
                     let mut total_connections_from_output = 0;
                     for (i, pe_ref) in g.edges_directed(parent, petgraph::Outgoing).enumerate() {
@@ -197,7 +398,11 @@ pub mod codegen {
     ///
     /// Expects any directed graph whose edges are of type `Edge` and whose nodes implement `Node`.
     /// Direction of edges indicate the flow of data through the graph.
-    pub fn pull_eval_steps<G>(g: G, n: G::NodeId) -> Vec<EvalStep<G::NodeId>>
+    pub fn pull_eval_steps<G>(
+        _g: G,
+        _node_evaluators: &NodeEvaluatorMap<G::NodeId>,
+        _n: G::NodeId,
+    ) -> Vec<EvalStep<G::NodeId>>
     where
         G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
         G: Data<EdgeWeight = Edge>,
@@ -222,19 +427,13 @@ pub mod codegen {
         g: G,
         push_eval: node::PushEval,
         steps: &[EvalStep<G::NodeId>],
+        node_evaluators: &NodeEvaluatorMap<G::NodeId>,
     ) -> syn::ItemFn
     where
         G: GraphRef + IntoNodeReferences + NodeIndexable,
         G::NodeId: Eq + Hash,
         <G::NodeRef as NodeRef>::Weight: Node,
     {
-        // For each evaluation step, generate a statement where the expression for the node at that
-        // evaluation step is evaluated and the outputs are destructured from a tuple.
-        let mut stmts: Vec<syn::Stmt> = vec![];
-
-        // Keep track of each of the lvalues for each of the statements. These are used to pass
-        let mut lvalues: HashMap<(G::NodeId, node::Output), syn::Ident> = Default::default();
-
         type LValues<NI> = HashMap<(NI, node::Output), syn::Ident>;
 
         // A function for constructing a variable name.
@@ -292,9 +491,14 @@ pub mod codegen {
             }
         }
 
-        for (si, step) in steps.iter().enumerate() {
-            let n_ref = g.node_references().nth(g.to_index(step.node)).expect("no node for index");
+        // For each evaluation step, generate a statement where the expression for the node at that
+        // evaluation step is evaluated and the outputs are destructured from a tuple.
+        let mut stmts: Vec<syn::Stmt> = vec![];
 
+        // Keep track of each of the lvalues for each of the statements. These are used to pass
+        let mut lvalues: HashMap<(G::NodeId, node::Output), syn::Ident> = Default::default();
+
+        for (si, step) in steps.iter().enumerate() {
             // Retrieve an expression for each argument to the current node's expression.
             //
             // E.g. `_n1_v0`, `_n3_v1.clone()` or `Default::default()`.
@@ -302,9 +506,9 @@ pub mod codegen {
                 .map(|arg| input_expr(g, arg.as_ref(), &lvalues))
                 .collect();
 
-            let nw = n_ref.weight();
-            let n_outputs = nw.n_outputs();
-            let expr: syn::Expr = nw.expr(args);
+            let ne = &node_evaluators[&step.node];
+            let n_outputs = ne.n_outputs();
+            let expr: syn::Expr = ne.expr(args);
 
             // Create the lvals pattern, either `PatWild` for no outputs, `Ident` for single output
             // or `Tuple` for multiple. Keep track of each the lvalue ident for each output of the
@@ -372,7 +576,11 @@ pub mod codegen {
 
     /// Given a list of push evaluation nodes and their evaluation steps, generate a function for
     /// performing push evaluation for each node.
-    pub fn push_eval_fns<'a, G, I>( g: G, push_eval_nodes: I,) -> Vec<syn::ItemFn>
+    pub fn push_eval_fns<'a, G, I>(
+        g: G,
+        push_eval_nodes: I,
+        node_evaluators: &NodeEvaluatorMap<G::NodeId>,
+    ) -> Vec<syn::ItemFn>
     where
         G: GraphRef + IntoNodeReferences + NodeIndexable,
         G::NodeId: 'a + Eq + Hash,
@@ -381,16 +589,17 @@ pub mod codegen {
     {
         push_eval_nodes
             .into_iter()
-            .map(|(_n, eval, steps)| push_eval_fn(g, eval, steps))
+            .map(|(_n, eval, steps)| push_eval_fn(g, eval, steps, node_evaluators))
             .collect()
     }
 
     /// Generate a function for performing pull evaluation from the given node with the given
     /// evaluation steps.
     pub fn pull_eval_fn<G>(
-        g: G,
-        pull_eval: node::PullEval,
-        steps: &[EvalStep<G::NodeId>],
+        _g: G,
+        _pull_eval: node::PushEval,
+        _steps: &[EvalStep<G::NodeId>],
+        _node_evaluators: &NodeEvaluatorMap<G::NodeId>,
     ) -> syn::ItemFn
     where
         G: GraphRef + IntoNodeReferences + NodeIndexable,
@@ -403,22 +612,30 @@ pub mod codegen {
 
     /// Given a gantz graph, generate the rust code src file with all the necessary functions for
     /// executing it.
-    pub fn file<G>(g: G) -> syn::File
+    pub fn file<G>(g: G, _inlets: &[G::NodeId], _outlets: &[G::NodeId]) -> syn::File
     where
         G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
         G: Data<EdgeWeight = Edge>,
         G::NodeId: Eq + Hash,
         <G::NodeRef as NodeRef>::Weight: Node,
     {
+        let node_evaluators = node_evaluators(g);
+        let node_evaluator_fn_items = node_evaluator_fns(&node_evaluators);
         let push_nodes = push_nodes(g);
-        let items = push_nodes
+
+        let push_node_fn_items = push_nodes
             .into_iter()
             .map(|(n, eval)| {
-                let steps = push_eval_steps(g, n);
-                let item_fn = push_eval_fn(g, eval, &steps);
+                let steps = push_eval_steps(g, &node_evaluators, n);
+                let item_fn = push_eval_fn(g, eval, &steps, &node_evaluators);
                 syn::Item::Fn(item_fn)
-            })
+            });
+
+        let items = node_evaluator_fn_items
+            .map(|(_, item_fn)| syn::Item::Fn(item_fn.clone()))
+            .chain(push_node_fn_items)
             .collect();
+
         let file = syn::File { shebang: None, attrs: vec![], items };
         file
     }

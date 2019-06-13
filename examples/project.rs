@@ -11,17 +11,11 @@ struct Add;
 struct Debug;
 
 impl gantz::Node for One {
-    fn n_inputs(&self) -> u32 {
-        0
-    }
-
-    fn n_outputs(&self) -> u32 {
-        1
-    }
-
-    fn expr(&self, args: Vec<syn::Expr>) -> syn::Expr {
-        assert!(args.is_empty());
-        syn::parse_quote! { 1 }
+    fn evaluator(&self) -> gantz::node::Evaluator {
+        let n_inputs = 0;
+        let n_outputs = 1;
+        let gen_expr = Box::new(|_| syn::parse_quote! { 1 });
+        gantz::node::Evaluator::Expr { n_inputs, n_outputs, gen_expr }
     }
 
     fn push_eval(&self) -> Option<gantz::node::PushEval> {
@@ -31,35 +25,28 @@ impl gantz::Node for One {
 }
 
 impl gantz::Node for Add {
-    fn n_inputs(&self) -> u32 {
-        2
-    }
-
-    fn n_outputs(&self) -> u32 {
-        1
-    }
-
-    fn expr(&self, args: Vec<syn::Expr>) -> syn::Expr {
-        assert_eq!(args.len(), 2);
-        let l = &args[0];
-        let r = &args[1];
-        syn::parse_quote! { #l + #r }
+    fn evaluator(&self) -> gantz::node::Evaluator {
+        let n_inputs = 2;
+        let n_outputs = 1;
+        let gen_expr = Box::new(move |args: Vec<syn::Expr>| {
+            let l = &args[0];
+            let r = &args[1];
+            syn::parse_quote! { #l + #r }
+        });
+        gantz::node::Evaluator::Expr { n_inputs, n_outputs, gen_expr }
     }
 }
 
 impl gantz::Node for Debug {
-    fn n_inputs(&self) -> u32 {
-        1
-    }
-
-    fn n_outputs(&self) -> u32 {
-        0
-    }
-
-    fn expr(&self, args: Vec<syn::Expr>) -> syn::Expr {
-        assert_eq!(args.len(), 1);
-        let input = &args[0];
-        syn::parse_quote! { println!("{:?}", #input) }
+    fn evaluator(&self) -> gantz::node::Evaluator {
+        let n_inputs = 1;
+        let n_outputs = 0;
+        let gen_expr = Box::new(move |args: Vec<syn::Expr>| {
+            assert_eq!(args.len(), 1);
+            let input = &args[0];
+            syn::parse_quote! { println!("{:?}", #input) }
+        });
+        gantz::node::Evaluator::Expr { n_inputs, n_outputs, gen_expr }
     }
 }
 
