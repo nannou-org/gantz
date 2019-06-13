@@ -59,16 +59,8 @@ impl<N> Node for Push<N>
 where
     N: Node,
 {
-    fn n_inputs(&self) -> u32 {
-        self.node.n_inputs()
-    }
-
-    fn n_outputs(&self) -> u32 {
-        self.node.n_outputs()
-    }
-
-    fn expr(&self, args: Vec<syn::Expr>) -> syn::Expr {
-        self.node.expr(args)
+    fn evaluator(&self) -> node::Evaluator {
+        self.node.evaluator()
     }
 
     fn push_eval(&self) -> Option<node::PushEval> {

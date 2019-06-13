@@ -9,31 +9,25 @@ pub use self::push::{Push, WithPushEval};
 pub use self::serde::SerdeNode;
 
 /// Gantz allows for constructing executable directed graphs by composing together **Node**s.
-/// 
+///
 /// **Node**s are a way to allow users to abstract and encapsulate logic into smaller, re-usable
 /// components, similar to a function in a coded programming language.
-/// 
+///
 /// Every Node is made up of the following:
-/// 
+///
 /// - Any number of inputs, where each input is of some rust type or generic type.
 /// - Any number of outputs, where each output is of some rust type or generic type.
 /// - A function that takes the inputs as arguments and returns an Outputs struct containing a
 ///   field for each of the outputs.
 pub trait Node {
-    /// The number of inputs to the node.
-    fn n_inputs(&self) -> u32;
-
-    /// The number of outputs to the node.
-    fn n_outputs(&self) -> u32;
-
-    /// Tokens representing the rust code that will evaluate to a tuple containing all outputs.
+    /// The approach taken for evaluating a nodes inputs to its outputs.
     ///
-    /// TODO: Consider making `args` a `Vec` of `Option`s and returning an `Option` expr to allow
-    /// for generating execution paths where only a certain set of inputs have been triggered.
-    /// Returning `None` could indicate that there is no valid `Expr` for the current set of
-    /// triggered inputs. This would probably be better than than using `default` as is currently
-    /// the case. Would also allow for 
-    fn expr(&self, args: Vec<syn::Expr>) -> syn::Expr;
+    /// This can either be an expression or a function - the key difference being that the types of
+    /// a function's inputs and outputs are known before compilation begins. As a result, functions
+    /// can lead to gantz generating more modular, compiler-friendly code, while raw expressions
+    /// have the benefit of being more ergonomic for the implementer as types aren't resolved until
+    /// the compilation process begins.
+    fn evaluator(&self) -> Evaluator;
 
     /// Specifies whether or not code should be generated to allow for push evaluation from
     /// instances of this node. Enabling push evaluation allows applications to call into
@@ -56,6 +50,36 @@ pub trait Node {
     fn pull_eval(&self) -> Option<PullEval> {
         None
     }
+}
+
+/// The method of evaluation used for a node.
+///
+/// The key distinction between the `Fn` and `Expr` variants is whether or not types of the inputs
+/// and outputs are known before a node is connected to a graph or if instead these types should be
+/// inferred.
+pub enum Evaluator {
+    /// Functions have the benefit of knowing the types of their inputs and outputs.
+    ///
+    /// Knowing the types of a node's inputs and outputs allow us to:
+    ///
+    /// - Generate more modular code for a node.
+    /// - Create better user feedback and error messages.
+    /// - Implement `Node` for `Graph`.
+    Fn {
+        /// A free-standing function, including its name, declaration, the block and other
+        /// attributes.
+        fn_item: syn::ItemFn,
+    },
+    /// Expressions have the benefit of not needing to know the exact types of a node's inputs and
+    /// outputs. This simplifies the implementation of the `Node` trait for users.
+    Expr {
+        /// The function for producing an expression given the input expressions.
+        gen_expr: Box<dyn Fn(Vec<syn::Expr>) -> syn::Expr>,
+        /// The number of inputs to the expression.
+        n_inputs: u32,
+        /// The number of outputs to the expression.
+        n_outputs: u32,
+    },
 }
 
 /// Items that need to be known in order to generate a push evaluation function for a node.
@@ -83,20 +107,40 @@ pub struct Input(pub u32);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct Output(pub u32);
 
+impl Evaluator {
+    /// The number of inputs to the node.
+    pub fn n_inputs(&self) -> u32 {
+        match *self {
+            Evaluator::Fn { ref fn_item } => count_fn_inputs(&fn_item.decl) as _,
+            Evaluator::Expr { n_inputs, .. } => n_inputs as _,
+        }
+    }
+
+    /// The number of outputs to the node.
+    pub fn n_outputs(&self) -> u32 {
+        match *self {
+            Evaluator::Fn { ref fn_item } => count_fn_outputs(&fn_item.decl) as _,
+            Evaluator::Expr { n_outputs, .. } => n_outputs as _,
+        }
+    }
+
+    /// Tokens representing the rust code that will evaluate to a tuple containing all outputs.
+    ///
+    /// TODO: Handle case where only a subset of inputs are connected. See issue #17.
+    pub fn expr(&self, args: Vec<syn::Expr>) -> syn::Expr {
+        match *self {
+            Evaluator::Fn { ref fn_item } => fn_call_expr(fn_item, args),
+            Evaluator::Expr { ref gen_expr, .. } => (*gen_expr)(args),
+        }
+    }
+}
+
 impl<'a, N> Node for &'a N
 where
     N: Node,
 {
-    fn n_inputs(&self) -> u32 {
-        (**self).n_inputs()
-    }
-
-    fn n_outputs(&self) -> u32 {
-        (**self).n_outputs()
-    }
-
-    fn expr(&self, args: Vec<syn::Expr>) -> syn::Expr {
-        (**self).expr(args)
+    fn evaluator(&self) -> Evaluator {
+        (**self).evaluator()
     }
 
     fn push_eval(&self) -> Option<PushEval> {
@@ -110,17 +154,9 @@ where
 
 macro_rules! impl_node_for_ptr {
     ($($Ty:ident)::*) => {
-        impl Node for $($Ty)::*<Node> {
-            fn n_inputs(&self) -> u32 {
-                (**self).n_inputs()
-            }
-
-            fn n_outputs(&self) -> u32 {
-                (**self).n_outputs()
-            }
-
-            fn expr(&self, args: Vec<syn::Expr>) -> syn::Expr {
-                (**self).expr(args)
+        impl Node for $($Ty)::*<dyn Node> {
+            fn evaluator(&self) -> Evaluator {
+                (**self).evaluator()
             }
 
             fn push_eval(&self) -> Option<PushEval> {
@@ -164,4 +200,47 @@ impl From<u32> for Output {
 /// Shorthand for `node::Expr::new`.
 pub fn expr(expr: &str) -> Result<Expr, NewExprError> {
     Expr::new(expr)
+}
+
+// Count the number of arguments to the given function.
+//
+// This is used to determine the number of inputs to the function.
+fn count_fn_inputs(fn_decl: &syn::FnDecl) -> usize {
+    fn_decl.inputs.len()
+}
+
+// Count the number of arguments to the given function.
+//
+// This is used to determine the number of inputs to the function.
+fn count_fn_outputs(fn_decl: &syn::FnDecl) -> usize {
+    match fn_decl.output {
+        syn::ReturnType::Default => 0,
+        syn::ReturnType::Type(ref _r_arrow, ref ty) => match **ty {
+            syn::Type::Tuple(ref tuple) => tuple.elems.len(),
+            _ => 1,
+        }
+    }
+}
+
+// Create a rust expression that calls the given `fn_decl` function with the given `args`
+// expressions as its inputs.
+fn fn_call_expr(fn_item: &syn::ItemFn, args: Vec<syn::Expr>) -> syn::Expr {
+    let n_inputs = count_fn_inputs(&fn_item.decl);
+    assert_eq!(n_inputs, args.len(), "the number of args to a function node must match n_inputs");
+    let ident = fn_item.ident.clone();
+    let arguments = syn::PathArguments::None;
+    let segment = syn::PathSegment { ident, arguments };
+    let segments = std::iter::once(segment).collect();
+    let leading_colon = None;
+    let path = syn::Path { leading_colon, segments };
+    let attrs = vec![];
+    let qself = None;
+    let func_path = syn::ExprPath { attrs, qself, path };
+    let attrs = vec![];
+    let func = Box::new(syn::Expr::Path(func_path));
+    let paren_token = syn::token::Paren { span: proc_macro2::Span::call_site() };
+    let args = args.into_iter().collect();
+    let expr_call = syn::ExprCall { attrs, func, paren_token, args };
+    let expr = syn::Expr::Call(expr_call);
+    expr
 }

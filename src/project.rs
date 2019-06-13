@@ -1,5 +1,5 @@
 use super::{Deserialize, Fail, From, Serialize};
-use crate::graph;
+use crate::graph::{self, GraphNode};
 use crate::node::{self, Node, SerdeNode};
 use quote::ToTokens;
 use std::collections::{BTreeMap, HashMap};
@@ -55,25 +55,29 @@ pub struct NodeCollection {
 /// A graph composed of IDs into the `NodeCollection`.
 pub type NodeIdGraph = graph::StableGraph<NodeId>;
 
+pub type NodeIdGraphNode = GraphNode<NodeIdGraph>;
+
 /// Whether the node is a **Core** node (has no other internal **Node** dependencies) or is a
 /// **Graph** node, composed entirely of other gantz **Node**s.
 #[derive(Deserialize, Serialize)]
 pub enum NodeKind {
-    Core(Box<SerdeNode>),
-    Graph(GraphNode),
+    Core(Box<dyn SerdeNode>),
+    Graph(ProjectGraph),
 }
 
-/// A node composed of a graph of other nodes.
+/// A gantz node graph useful within gantz `Project`s.
+///
+/// This can be thought of as a node that is a graph composed of other nodes.
 #[derive(Deserialize, Serialize)]
-pub struct GraphNode {
-    pub graph: NodeIdGraph,
+pub struct ProjectGraph {
+    pub graph: NodeIdGraphNode,
     pub package_id: cargo::core::PackageId,
 }
 
 // A **Node** type constructed as a reference to some other node.
 enum NodeRef<'a> {
-    Core(&'a Node),
-    Graph(graph::StableGraph<NodeRef<'a>>),
+    Core(&'a dyn Node),
+    Graph(GraphNode<graph::StableGraph<NodeRef<'a>>>),
 }
 
 /// Errors that may occur while creating a node crate.
@@ -245,7 +249,7 @@ pub enum GraphNodeCompileError {
     NoMatchingPackageId,
 }
 
-/// Errors that might occur while updating a `GraphNode`'s graph.
+/// Errors that might occur while updating a `ProjectGraph`'s graph.
 #[derive(Debug, Fail, From)]
 pub enum UpdateGraphError {
     #[fail(display = "failed to replace graph node src: {}", err)]
@@ -300,10 +304,13 @@ impl Project {
             Err(_err) => {
                 let mut nodes = NodeCollection::default();
                 let graph = NodeIdGraph::default();
+                let inlets = vec![];
+                let outlets = vec![];
+                let graph_node = GraphNode { graph, inlets, outlets };
                 let ws_dir = workspace_dir(&directory);
                 let proj_name = project_name(&directory);
                 let node_id =
-                    add_graph_node_to_collection(&ws_dir, proj_name, &cargo_config, graph, &mut nodes)?;
+                    add_graph_node_to_collection(&ws_dir, proj_name, &cargo_config, graph_node, &mut nodes)?;
                 if let Some(NodeKind::Graph(ref node)) = nodes.get(&node_id) {
                     graph_node_compile(&ws_dir, &cargo_config, node)?;
                 }
@@ -320,7 +327,7 @@ impl Project {
     }
 
     /// Add the given core node to the collection and return its unique identifier.
-    pub fn add_core_node(&mut self, node: Box<SerdeNode>) -> NodeId {
+    pub fn add_core_node(&mut self, node: Box<dyn SerdeNode>) -> NodeId {
         let kind = NodeKind::Core(node);
         let node_id = self.nodes.insert(kind);
         node_id
@@ -329,7 +336,7 @@ impl Project {
     /// Add the given node to the collection and return its unique identifier.
     pub fn add_graph_node(
         &mut self,
-        graph: NodeIdGraph,
+        graph: NodeIdGraphNode,
         node_name: &str,
     ) -> Result<NodeId, AddGraphNodeToCollectionError> {
         let ws_dir = self.workspace_dir();
@@ -352,7 +359,7 @@ impl Project {
     ///
     /// Returns `None` if there are no nodes for the given **NodeId** or if a node exists but it is
     /// not a **Core** node.
-    pub fn core_node(&self, id: &NodeId) -> Option<&Box<SerdeNode>> {
+    pub fn core_node(&self, id: &NodeId) -> Option<&Box<dyn SerdeNode>> {
         self.nodes.get(id).and_then(|kind| match kind {
             NodeKind::Core(ref node) => Some(node),
             _ => None,
@@ -363,7 +370,7 @@ impl Project {
     ///
     /// Returns `None` if there are no nodes for the given **NodeId** or if a node exists but it is
     /// not a **Graph** node.
-    pub fn graph_node(&self, id: &NodeId) -> Option<&GraphNode> {
+    pub fn graph_node(&self, id: &NodeId) -> Option<&ProjectGraph> {
         self.nodes.get(id).and_then(|kind| match kind {
             NodeKind::Graph(ref graph) => Some(graph),
             _ => None,
@@ -373,7 +380,7 @@ impl Project {
     /// Update the graph associated with the graph node at the given **NodeId**.
     pub fn update_graph<F>(&mut self, id: &NodeId, update: F) -> Result<(), UpdateGraphError>
     where
-        F: FnOnce(&mut NodeIdGraph),
+        F: FnOnce(&mut NodeIdGraphNode),
     {
         match self.nodes.map.get_mut(id) {
             Some(NodeKind::Graph(ref mut node)) => update(&mut node.graph),
@@ -481,24 +488,10 @@ impl NodeCollection {
 }
 
 impl<'a> Node for NodeRef<'a> {
-    fn n_inputs(&self) -> u32 {
+    fn evaluator(&self) -> node::Evaluator {
         match self {
-            NodeRef::Core(node) => node.n_inputs(),
-            NodeRef::Graph(graph) => graph.n_inputs(),
-        }
-    }
-
-    fn n_outputs(&self) -> u32 {
-        match self {
-            NodeRef::Core(node) => node.n_outputs(),
-            NodeRef::Graph(graph) => graph.n_outputs(),
-        }
-    }
-
-    fn expr(&self, args: Vec<syn::Expr>) -> syn::Expr {
-        match self {
-            NodeRef::Core(node) => node.expr(args),
-            NodeRef::Graph(graph) => graph.expr(args),
+            NodeRef::Core(node) => node.evaluator(),
+            NodeRef::Graph(graph) => graph.evaluator(),
         }
     }
 
@@ -797,14 +790,14 @@ fn add_graph_node_to_collection<P>(
     workspace_dir: P,
     node_name: &str,
     cargo_config: &cargo::Config,
-    graph: NodeIdGraph,
+    graph: NodeIdGraphNode,
     nodes: &mut NodeCollection,
 ) -> Result<NodeId, AddGraphNodeToCollectionError>
 where
     P: AsRef<Path>,
 {
     let package_id = open_node_package(&workspace_dir, node_name, cargo_config)?;
-    let kind = NodeKind::Graph(GraphNode { graph, package_id });
+    let kind = NodeKind::Graph(ProjectGraph { graph, package_id });
     let node_id = nodes.insert(kind);
     let file = graph_node_src(&node_id, nodes).expect("no graph node for NodeId");
     graph_node_replace_src(&workspace_dir, cargo_config, &node_id, nodes, file)?;
@@ -839,7 +832,7 @@ where
 fn graph_node_compile<'conf, P>(
     workspace_dir: P,
     cargo_config: &'conf cargo::Config,
-    node: &GraphNode,
+    node: &ProjectGraph,
 ) -> Result<cargo::core::compiler::Compilation<'conf>, GraphNodeCompileError>
 where
     P: AsRef<Path>,
@@ -859,12 +852,14 @@ where
     Ok(compilation)
 }
 
-// Given a `NodeIdGraph` and `NodeCollection`, return a graph capable of evaluation.
+// Given a `NodeIdGraphNode` and `NodeCollection`, return a graph capable of evaluation.
 fn id_graph_to_node_graph<'a>(
-    g: &NodeIdGraph,
+    g: &NodeIdGraphNode,
     ns: &'a NodeCollection,
-) -> graph::StableGraph<NodeRef<'a>> {
-    g.map(
+) -> GraphNode<graph::StableGraph<NodeRef<'a>>> {
+    let inlets = g.inlets.clone();
+    let outlets = g.outlets.clone();
+    let graph = g.graph.map(
         |_, n_id| {
             match ns[n_id] {
                 NodeKind::Core(ref node) => NodeRef::Core(node.node()),
@@ -876,7 +871,8 @@ fn id_graph_to_node_graph<'a>(
         |_, edge| {
             edge.clone()
         },
-    )
+    );
+    GraphNode { graph, inlets, outlets }
 }
 
 // Generate a src file for the graph node associated with the given `NodeId`.
@@ -885,7 +881,7 @@ fn id_graph_to_node_graph<'a>(
 fn graph_node_src(id: &NodeId, nodes: &NodeCollection) -> Option<syn::File> {
     if let Some(NodeKind::Graph(ref node)) = nodes.get(id) {
         let graph = id_graph_to_node_graph(&node.graph, nodes);
-        return Some(graph::codegen::file(&graph));
+        return Some(graph::codegen::file(&graph.graph, &graph.inlets, &graph.outlets));
     }
     None
 }
