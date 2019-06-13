@@ -74,7 +74,7 @@ pub enum Evaluator {
     /// outputs. This simplifies the implementation of the `Node` trait for users.
     Expr {
         /// The function for producing an expression given the input expressions.
-        gen_expr: Box<Fn(Vec<syn::Expr>) -> syn::Expr>,
+        gen_expr: Box<dyn Fn(Vec<syn::Expr>) -> syn::Expr>,
         /// The number of inputs to the expression.
         n_inputs: u32,
         /// The number of outputs to the expression.
@@ -154,7 +154,7 @@ where
 
 macro_rules! impl_node_for_ptr {
     ($($Ty:ident)::*) => {
-        impl Node for $($Ty)::*<Node> {
+        impl Node for $($Ty)::*<dyn Node> {
             fn evaluator(&self) -> Evaluator {
                 (**self).evaluator()
             }

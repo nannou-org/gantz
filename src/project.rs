@@ -61,7 +61,7 @@ pub type NodeIdGraphNode = GraphNode<NodeIdGraph>;
 /// **Graph** node, composed entirely of other gantz **Node**s.
 #[derive(Deserialize, Serialize)]
 pub enum NodeKind {
-    Core(Box<SerdeNode>),
+    Core(Box<dyn SerdeNode>),
     Graph(ProjectGraph),
 }
 
@@ -76,7 +76,7 @@ pub struct ProjectGraph {
 
 // A **Node** type constructed as a reference to some other node.
 enum NodeRef<'a> {
-    Core(&'a Node),
+    Core(&'a dyn Node),
     Graph(GraphNode<graph::StableGraph<NodeRef<'a>>>),
 }
 
@@ -327,7 +327,7 @@ impl Project {
     }
 
     /// Add the given core node to the collection and return its unique identifier.
-    pub fn add_core_node(&mut self, node: Box<SerdeNode>) -> NodeId {
+    pub fn add_core_node(&mut self, node: Box<dyn SerdeNode>) -> NodeId {
         let kind = NodeKind::Core(node);
         let node_id = self.nodes.insert(kind);
         node_id
@@ -359,7 +359,7 @@ impl Project {
     ///
     /// Returns `None` if there are no nodes for the given **NodeId** or if a node exists but it is
     /// not a **Core** node.
-    pub fn core_node(&self, id: &NodeId) -> Option<&Box<SerdeNode>> {
+    pub fn core_node(&self, id: &NodeId) -> Option<&Box<dyn SerdeNode>> {
         self.nodes.get(id).and_then(|kind| match kind {
             NodeKind::Core(ref node) => Some(node),
             _ => None,

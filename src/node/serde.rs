@@ -4,17 +4,17 @@ use crate::node::{self, Node};
 /// objects.
 #[typetag::serde(tag = "type")]
 pub trait SerdeNode {
-    fn node(&self) -> &Node;
+    fn node(&self) -> &dyn Node;
 }
 
 #[typetag::serde]
 impl SerdeNode for node::Expr {
-    fn node(&self) -> &Node { self }
+    fn node(&self) -> &dyn Node { self }
 }
 
 #[typetag::serde]
 impl SerdeNode for node::Push<node::Expr> {
-    fn node(&self) -> &Node { self }
+    fn node(&self) -> &dyn Node { self }
 }
 
 pub mod fn_decl {
