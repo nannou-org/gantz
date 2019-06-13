@@ -56,7 +56,7 @@ fn test_graph1() {
     let assert_eq = node_assert_eq();
 
     // Add the nodes to the project.
-    let push = project.add_core_node(Box::new(push) as Box<SerdeNode>);
+    let push = project.add_core_node(Box::new(push) as Box<dyn SerdeNode>);
     let one = project.add_core_node(Box::new(one) as Box<_>);
     let add = project.add_core_node(Box::new(add) as Box<_>);
     let two = project.add_core_node(Box::new(two) as Box<_>);
@@ -110,7 +110,7 @@ impl gantz::Node for Mul {
 
 #[typetag::serde]
 impl gantz::node::SerdeNode for Mul {
-    fn node(&self) -> &gantz::Node { self }
+    fn node(&self) -> &dyn gantz::Node { self }
 }
 
 // A simple test graph that multiplies two "two"s and checks that it equals "two".
@@ -154,7 +154,7 @@ fn test_graph2_evaluator_fn() {
     assert_eq!(mul_eval.n_outputs(), 1);
 
     // Add the nodes to the project.
-    let push = project.add_core_node(Box::new(push) as Box<SerdeNode>);
+    let push = project.add_core_node(Box::new(push) as Box<dyn SerdeNode>);
     let two = project.add_core_node(Box::new(two) as Box<_>);
     let mul = project.add_core_node(Box::new(mul) as Box<_>);
     let four = project.add_core_node(Box::new(four) as Box<_>);
