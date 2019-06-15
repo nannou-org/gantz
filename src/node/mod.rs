@@ -176,10 +176,19 @@ impl_node_for_ptr!(std::sync::Arc);
 
 impl From<syn::ItemFn> for PushEval {
     fn from(item_fn: syn::ItemFn) -> Self {
-        let syn::ItemFn { attrs: fn_attrs, decl, ident, .. } = item_fn;
+        let syn::ItemFn {
+            attrs: fn_attrs,
+            decl,
+            ident,
+            ..
+        } = item_fn;
         let fn_decl = *decl;
         let fn_name = format!("{}", ident);
-        PushEval { fn_decl, fn_name, fn_attrs }
+        PushEval {
+            fn_decl,
+            fn_name,
+            fn_attrs,
+        }
     }
 }
 
@@ -218,7 +227,7 @@ fn count_fn_outputs(fn_decl: &syn::FnDecl) -> usize {
         syn::ReturnType::Type(ref _r_arrow, ref ty) => match **ty {
             syn::Type::Tuple(ref tuple) => tuple.elems.len(),
             _ => 1,
-        }
+        },
     }
 }
 
@@ -226,21 +235,35 @@ fn count_fn_outputs(fn_decl: &syn::FnDecl) -> usize {
 // expressions as its inputs.
 fn fn_call_expr(fn_item: &syn::ItemFn, args: Vec<syn::Expr>) -> syn::Expr {
     let n_inputs = count_fn_inputs(&fn_item.decl);
-    assert_eq!(n_inputs, args.len(), "the number of args to a function node must match n_inputs");
+    assert_eq!(
+        n_inputs,
+        args.len(),
+        "the number of args to a function node must match n_inputs"
+    );
     let ident = fn_item.ident.clone();
     let arguments = syn::PathArguments::None;
     let segment = syn::PathSegment { ident, arguments };
     let segments = std::iter::once(segment).collect();
     let leading_colon = None;
-    let path = syn::Path { leading_colon, segments };
+    let path = syn::Path {
+        leading_colon,
+        segments,
+    };
     let attrs = vec![];
     let qself = None;
     let func_path = syn::ExprPath { attrs, qself, path };
     let attrs = vec![];
     let func = Box::new(syn::Expr::Path(func_path));
-    let paren_token = syn::token::Paren { span: proc_macro2::Span::call_site() };
+    let paren_token = syn::token::Paren {
+        span: proc_macro2::Span::call_site(),
+    };
     let args = args.into_iter().collect();
-    let expr_call = syn::ExprCall { attrs, func, paren_token, args };
+    let expr_call = syn::ExprCall {
+        attrs,
+        func,
+        paren_token,
+        args,
+    };
     let expr = syn::Expr::Call(expr_call);
     expr
 }

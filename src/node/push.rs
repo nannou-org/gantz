@@ -31,7 +31,7 @@ pub trait WithPushEval: Sized + Node {
     /// Internally, this calls `with_push_eval_fn` with a function that looks like `fn #name() {}`.
     fn with_push_eval_name(self, fn_name: &str) -> Push<Self> {
         let fn_ident = syn::Ident::new(fn_name, proc_macro2::Span::call_site());
-        self.with_push_eval_fn(syn::parse_quote!{ fn #fn_ident() {} })
+        self.with_push_eval_fn(syn::parse_quote! { fn #fn_ident() {} })
     }
 }
 
