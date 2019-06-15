@@ -1,9 +1,12 @@
 language: rust
+before_script:
+- rustup component add rustfmt
 rust:
-    - nightly
-    - beta
-    - stable
+- nightly
+- beta
+- stable
 script:
-    - cargo build -v
-    - cargo test -v
-    - cargo doc -v
+- cargo fmt --all -- --check
+- cargo build -v
+- cargo test -v
+- cargo doc -v
