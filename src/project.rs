@@ -166,7 +166,10 @@ pub enum ProjectOpenError {
         #[fail(cause)]
         err: failure::Error,
     },
-    #[fail(display = "failed to create or check existing project directory: {}", err)]
+    #[fail(
+        display = "failed to create or check existing project directory: {}",
+        err
+    )]
     Project {
         #[fail(cause)]
         err: CreateOrCheckProjectDirectoryError,
@@ -180,7 +183,7 @@ pub enum ProjectOpenError {
     GraphNodeCompile {
         #[fail(cause)]
         err: GraphNodeCompileError,
-    }
+    },
 }
 
 /// Errors that might occur when saving or loading JSON from a file.
@@ -247,7 +250,7 @@ pub enum UpdateTomlFileError {
     TomlSerialize {
         #[fail(cause)]
         err: toml::ser::Error,
-    }
+    },
 }
 
 /// Errors that might occur while compiling the project workspace.
@@ -329,11 +332,20 @@ impl Project {
                 let graph = NodeIdGraph::default();
                 let inlets = vec![];
                 let outlets = vec![];
-                let graph_node = GraphNode { graph, inlets, outlets };
+                let graph_node = GraphNode {
+                    graph,
+                    inlets,
+                    outlets,
+                };
                 let ws_dir = workspace_dir(&directory);
                 let proj_name = project_name(&directory);
-                let node_id =
-                    add_graph_node_to_collection(&ws_dir, proj_name, &cargo_config, graph_node, &mut nodes)?;
+                let node_id = add_graph_node_to_collection(
+                    &ws_dir,
+                    proj_name,
+                    &cargo_config,
+                    graph_node,
+                    &mut nodes,
+                )?;
                 if let Some(NodeKind::Graph(ref node)) = nodes.get(&node_id) {
                     graph_node_compile(&ws_dir, &cargo_config, node)?;
                 }
@@ -363,7 +375,11 @@ impl Project {
         node_name: &str,
     ) -> Result<NodeId, AddGraphNodeToCollectionError> {
         let ws_dir = self.workspace_dir();
-        let Project { ref cargo_config, ref mut nodes, .. } = *self;
+        let Project {
+            ref cargo_config,
+            ref mut nodes,
+            ..
+        } = *self;
         let n_id = add_graph_node_to_collection(ws_dir, node_name, cargo_config, graph, nodes)?;
         Ok(n_id)
     }
@@ -634,7 +650,11 @@ where
 
 /// Given some UTF-8 node name, return the name of the crate.
 pub fn node_crate_name(node_name: &str) -> String {
-    format!("{}{}", NODE_CRATE_PREFIX, slug::slugify(node_name).replace("-", "_"))
+    format!(
+        "{}{}",
+        NODE_CRATE_PREFIX,
+        slug::slugify(node_name).replace("-", "_")
+    )
 }
 
 /// Given the workspace directory and some UTF-8 node name, return the path to the crate directory.
@@ -774,7 +794,9 @@ where
     let workspace_manifest_path = manifest_path(workspace_dir);
     let exists = {
         let workspace = cargo::core::Workspace::new(&workspace_manifest_path, &cargo_config)?;
-        workspace.members().any(|pkg| format!("{}", pkg.name()) == node_crate_name)
+        workspace
+            .members()
+            .any(|pkg| format!("{}", pkg.name()) == node_crate_name)
     };
     if !exists {
         update_toml_file(&workspace_manifest_path, |toml| {
@@ -847,7 +869,10 @@ where
 fn workspace_compile<P>(
     workspace_dir: P,
     cargo_config: &cargo::Config,
-) -> Result<HashMap<cargo::core::PackageId, cargo::core::compiler::Compilation>, WorkspaceCompileError>
+) -> Result<
+    HashMap<cargo::core::PackageId, cargo::core::compiler::Compilation>,
+    WorkspaceCompileError,
+>
 where
     P: AsRef<Path>,
 {
@@ -878,7 +903,8 @@ where
 {
     let ws_manifest_path = manifest_path(workspace_dir);
     let ws = cargo::core::Workspace::new(&ws_manifest_path, &cargo_config)?;
-    let pkg = ws.members()
+    let pkg = ws
+        .members()
         .find(|pkg| pkg.package_id() == node.package_id)
         .ok_or(GraphNodeCompileError::NoMatchingPackageId)?;
     let pkg_manifest_path = pkg.manifest_path();
@@ -899,21 +925,19 @@ fn id_graph_to_node_graph<'a>(
     let inlets = g.graph.inlets.clone();
     let outlets = g.graph.outlets.clone();
     let graph = g.graph.map(
-        |_, n_id| {
-            match ns[n_id] {
-                NodeKind::Core(ref node) => NodeRef::Core(node.node()),
-                NodeKind::Graph(ref node) => {
-                    NodeRef::Graph(id_graph_to_node_graph(node, ns))
-                }
-            }
+        |_, n_id| match ns[n_id] {
+            NodeKind::Core(ref node) => NodeRef::Core(node.node()),
+            NodeKind::Graph(ref node) => NodeRef::Graph(id_graph_to_node_graph(node, ns)),
         },
-        |_, edge| {
-            edge.clone()
-        },
+        |_, edge| edge.clone(),
     );
     let package_id = g.package_id;
     let graph = ProjectNodeRefGraph { graph, package_id };
-    GraphNode { graph, inlets, outlets }
+    GraphNode {
+        graph,
+        inlets,
+        outlets,
+    }
 }
 
 // Generate a src file for the graph node associated with the given `NodeId`.
@@ -922,7 +946,11 @@ fn id_graph_to_node_graph<'a>(
 fn graph_node_src(id: &NodeId, nodes: &NodeCollection) -> Option<syn::File> {
     if let Some(NodeKind::Graph(ref node)) = nodes.get(id) {
         let graph = id_graph_to_node_graph(node, nodes);
-        return Some(graph::codegen::file(&graph.graph.graph, &graph.inlets, &graph.outlets));
+        return Some(graph::codegen::file(
+            &graph.graph.graph,
+            &graph.inlets,
+            &graph.outlets,
+        ));
     }
     None
 }

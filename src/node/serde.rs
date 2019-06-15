@@ -9,12 +9,16 @@ pub trait SerdeNode {
 
 #[typetag::serde]
 impl SerdeNode for node::Expr {
-    fn node(&self) -> &dyn Node { self }
+    fn node(&self) -> &dyn Node {
+        self
+    }
 }
 
 #[typetag::serde]
 impl SerdeNode for node::Push<node::Expr> {
-    fn node(&self) -> &dyn Node { self }
+    fn node(&self) -> &dyn Node {
+        self
+    }
 }
 
 pub mod fn_decl {
@@ -26,14 +30,19 @@ pub mod fn_decl {
     {
         let item_fn = syn::ItemFn {
             attrs: vec![],
-            vis: syn::Visibility::Public(syn::VisPublic { pub_token: Default::default() }),
+            vis: syn::Visibility::Public(syn::VisPublic {
+                pub_token: Default::default(),
+            }),
             constness: None,
             unsafety: None,
             asyncness: None,
             abi: None,
             ident: syn::Ident::new("foo", proc_macro2::Span::call_site()),
             decl: Box::new(t.clone()),
-            block: Box::new(syn::Block { stmts: vec![], brace_token: <_>::default() }),
+            block: Box::new(syn::Block {
+                stmts: vec![],
+                brace_token: <_>::default(),
+            }),
         };
         super::tts::serialize(&item_fn, s)
     }
@@ -43,7 +52,7 @@ pub mod fn_decl {
         D: Deserializer<'de>,
     {
         let tts = super::tts::deserialize(d)?;
-        let syn::ItemFn { decl, .. } = syn::parse_quote!{ #tts };
+        let syn::ItemFn { decl, .. } = syn::parse_quote! { #tts };
         Ok(*decl)
     }
 }
@@ -55,17 +64,22 @@ pub mod fn_attrs {
     where
         S: Serializer,
     {
-        let syn::ItemFn { decl, .. } = syn::parse_quote!{ fn foo() {} };
+        let syn::ItemFn { decl, .. } = syn::parse_quote! { fn foo() {} };
         let item_fn = syn::ItemFn {
             attrs: t.clone(),
-            vis: syn::Visibility::Public(syn::VisPublic { pub_token: Default::default() }),
+            vis: syn::Visibility::Public(syn::VisPublic {
+                pub_token: Default::default(),
+            }),
             constness: None,
             unsafety: None,
             asyncness: None,
             abi: None,
             ident: syn::Ident::new("foo", proc_macro2::Span::call_site()),
             decl: decl,
-            block: Box::new(syn::Block { stmts: vec![], brace_token: <_>::default() }),
+            block: Box::new(syn::Block {
+                stmts: vec![],
+                brace_token: <_>::default(),
+            }),
         };
         super::tts::serialize(&item_fn, s)
     }
@@ -75,7 +89,7 @@ pub mod fn_attrs {
         D: Deserializer<'de>,
     {
         let tts = super::tts::deserialize(d)?;
-        let syn::ItemFn { attrs, .. } = syn::parse_quote!{ #tts };
+        let syn::ItemFn { attrs, .. } = syn::parse_quote! { #tts };
         Ok(attrs)
     }
 }
@@ -119,7 +133,7 @@ pub mod ty {
         D: Deserializer<'de>,
     {
         let tts = super::tts::deserialize(d)?;
-        let ty: syn::Type = syn::parse_quote!{ #tts };
+        let ty: syn::Type = syn::parse_quote! { #tts };
         Ok(ty)
     }
 }

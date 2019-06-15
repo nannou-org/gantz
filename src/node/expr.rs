@@ -1,9 +1,9 @@
+use super::{Deserialize, Fail, From, Serialize};
 use crate::node::{self, Node};
 use proc_macro2::{TokenStream, TokenTree};
 use quote::{ToTokens, TokenStreamExt};
 use std::fmt;
 use std::str::FromStr;
-use super::{Deserialize, Fail, From, Serialize};
 
 /// A simple node that allows for representing rust expressions as nodes within a gantz graph.
 ///
@@ -61,7 +61,7 @@ impl Expr {
         // Count the number of inputs.
         let n_inputs = count_hashes(&tokens);
         // Interpolate the `TokenStream` with some temp `{}` expressions.
-        let unit_expr: syn::Expr = syn::parse_quote!{ {} };
+        let unit_expr: syn::Expr = syn::parse_quote! { {} };
         let test_expr_tokens = interpolate_tokens(&tokens, vec![unit_expr; n_inputs as usize]);
         let test_expr_str = format!("{}", test_expr_tokens);
         let _: syn::Expr = syn::parse_str(&test_expr_str)?;
@@ -80,7 +80,11 @@ impl Node for Expr {
             let expr_tokens = interpolate_tokens(&tokens, args_tokens);
             syn::parse_quote! { #expr_tokens }
         });
-        node::Evaluator::Expr { n_inputs, n_outputs, gen_expr }
+        node::Evaluator::Expr {
+            n_inputs,
+            n_outputs,
+            gen_expr,
+        }
     }
 }
 

@@ -2,9 +2,9 @@ use crate::node::{self, Node, SerdeNode};
 use petgraph::visit::GraphBase;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Deref, DerefMut};
-use syn::FnArg;
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
+use syn::FnArg;
 
 /// The type used to represent node and edge indices.
 pub type Index = usize;
@@ -138,7 +138,11 @@ where
 
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "lowercase")]
-        enum Field { Graph, Inlets, Outlets }
+        enum Field {
+            Graph,
+            Inlets,
+            Outlets,
+        }
 
         struct GraphNodeVisitor<G>(std::marker::PhantomData<G>);
 
@@ -157,13 +161,20 @@ where
             where
                 V: SeqAccess<'de>,
             {
-                let graph = seq.next_element()?
+                let graph = seq
+                    .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(0, &self))?;
-                let inlets = seq.next_element()?
+                let inlets = seq
+                    .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(1, &self))?;
-                let outlets = seq.next_element()?
+                let outlets = seq
+                    .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(2, &self))?;
-                Ok(GraphNode { graph, inlets, outlets })
+                Ok(GraphNode {
+                    graph,
+                    inlets,
+                    outlets,
+                })
             }
 
             fn visit_map<V>(self, mut map: V) -> Result<GraphNode<G>, V::Error>
@@ -198,7 +209,11 @@ where
                 let graph = graph.ok_or_else(|| de::Error::missing_field("graph"))?;
                 let inlets = inlets.ok_or_else(|| de::Error::missing_field("inlets"))?;
                 let outlets = outlets.ok_or_else(|| de::Error::missing_field("outlets"))?;
-                Ok(GraphNode { graph, inlets, outlets })
+                Ok(GraphNode {
+                    graph,
+                    inlets,
+                    outlets,
+                })
             }
         }
 
@@ -234,7 +249,11 @@ impl Node for InletNode {
         let n_outputs = 1;
         //let ty = self.ty.clone();
         let gen_expr = Box::new(move |mut args: Vec<syn::Expr>| {
-            assert_eq!(args.len(), 1, "must be a single input (from the calling fn) for an inlet");
+            assert_eq!(
+                args.len(),
+                1,
+                "must be a single input (from the calling fn) for an inlet"
+            );
             let in_expr = args.remove(0);
             syn::parse_quote! {
                 //let in_expr_checked: #ty = #in_expr;
@@ -242,7 +261,11 @@ impl Node for InletNode {
                 #in_expr
             }
         });
-        node::Evaluator::Expr { n_inputs, n_outputs, gen_expr }
+        node::Evaluator::Expr {
+            n_inputs,
+            n_outputs,
+            gen_expr,
+        }
     }
 }
 
@@ -252,7 +275,11 @@ impl Node for OutletNode {
         let n_outputs = 1;
         //let ty = self.ty.clone();
         let gen_expr = Box::new(move |mut args: Vec<syn::Expr>| {
-            assert_eq!(args.len(), 1, "must be a single input (from the calling fn) for an inlet");
+            assert_eq!(
+                args.len(),
+                1,
+                "must be a single input (from the calling fn) for an inlet"
+            );
             let out_expr = args.remove(0);
             syn::parse_quote! {
                 //let out_expr_checked: #ty = #in_expr;
@@ -260,7 +287,11 @@ impl Node for OutletNode {
                 #out_expr
             }
         });
-        node::Evaluator::Expr { n_inputs, n_outputs, gen_expr }
+        node::Evaluator::Expr {
+            n_inputs,
+            n_outputs,
+            gen_expr,
+        }
     }
 }
 
@@ -310,20 +341,36 @@ where
 }
 
 fn graph_node_evaluator_fn_decl<Id>(inlets: &[Inlet<Id>], outlets: &[Outlet<Id>]) -> syn::FnDecl {
-    let fn_token = syn::token::Fn { span: proc_macro2::Span::call_site() };
+    let fn_token = syn::token::Fn {
+        span: proc_macro2::Span::call_site(),
+    };
     let generics = {
         // TODO: Eventually we'll want some way of inspecting inlets/outlets for these.
         let lt_token = None;
         let params = syn::punctuated::Punctuated::new();
         let gt_token = None;
         let where_clause = None;
-        syn::Generics { lt_token, params, gt_token, where_clause }
+        syn::Generics {
+            lt_token,
+            params,
+            gt_token,
+            where_clause,
+        }
     };
-    let paren_token = syn::token::Paren { span: proc_macro2::Span::call_site() };
+    let paren_token = syn::token::Paren {
+        span: proc_macro2::Span::call_site(),
+    };
     let variadic = None;
     let inputs = graph_node_evaluator_fn_inputs(inlets);
     let output = graph_node_evaluator_fn_output(outlets);
-    syn::FnDecl { fn_token, generics, paren_token, inputs, variadic, output }
+    syn::FnDecl {
+        fn_token,
+        generics,
+        paren_token,
+        inputs,
+        variadic,
+        output,
+    }
 }
 
 fn graph_node_evaluator_fn_inputs<Id>(inlets: &[Inlet<Id>]) -> Punctuated<FnArg, Comma> {
@@ -336,11 +383,20 @@ fn graph_node_evaluator_fn_inputs<Id>(inlets: &[Inlet<Id>]) -> Punctuated<FnArg,
             let mutability = None;
             let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
             let subpat = None;
-            let pat_ident = syn::PatIdent { by_ref, mutability, ident, subpat };
+            let pat_ident = syn::PatIdent {
+                by_ref,
+                mutability,
+                ident,
+                subpat,
+            };
             let pat = pat_ident.into();
             let colon_token = Default::default();
             let ty = inlet.ty.clone();
-            let arg_captured = syn::ArgCaptured { pat, colon_token, ty };
+            let arg_captured = syn::ArgCaptured {
+                pat,
+                colon_token,
+                ty,
+            };
             syn::FnArg::from(arg_captured)
         })
         .collect()
@@ -366,12 +422,14 @@ fn graph_node_evaluator_fn_output<Id>(outlets: &[Outlet<Id>]) -> syn::ReturnType
 }
 
 pub mod codegen {
+    use super::{Edge, Inlet, Outlet};
     use crate::node::{self, Node};
-    use petgraph::visit::{Data, EdgeRef, GraphRef, IntoEdgesDirected, IntoNodeReferences,
-                          NodeIndexable, NodeRef, Visitable, Walker};
+    use petgraph::visit::{
+        Data, EdgeRef, GraphRef, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, NodeRef,
+        Visitable, Walker,
+    };
     use std::collections::{HashMap, HashSet};
     use std::hash::Hash;
-    use super::{Edge, Inlet, Outlet};
     use syn::punctuated::Punctuated;
 
     /// An evaluation step ready for translation to rust code.
@@ -418,14 +476,10 @@ pub mod codegen {
     where
         Id: Eq + Hash,
     {
-        evaluators
-            .iter()
-            .filter_map(|(id, eval)| {
-                match eval {
-                    node::Evaluator::Fn { ref fn_item } => Some((id, fn_item)),
-                    node::Evaluator::Expr { .. } => None,
-                }
-            })
+        evaluators.iter().filter_map(|(id, eval)| match eval {
+            node::Evaluator::Fn { ref fn_item } => Some((id, fn_item)),
+            node::Evaluator::Expr { .. } => None,
+        })
     }
 
     /// Given a graph of gantz nodes, return `NodeId`s of those that require push evaluation.
@@ -639,7 +693,9 @@ pub mod codegen {
             // Retrieve an expression for each argument to the current node's expression.
             //
             // E.g. `_n1_v0`, `_n3_v1.clone()` or `Default::default()`.
-            let args: Vec<syn::Expr> = step.args.iter()
+            let args: Vec<syn::Expr> = step
+                .args
+                .iter()
                 .map(|arg| input_expr(g, arg.as_ref(), &lvalues))
                 .collect();
 
@@ -676,7 +732,7 @@ pub mod codegen {
                 }
             };
 
-            let stmt: syn::Stmt = syn::parse_quote!{
+            let stmt: syn::Stmt = syn::parse_quote! {
                 let #lvals = #expr;
             };
 
@@ -684,11 +740,20 @@ pub mod codegen {
         }
 
         // Construct the final function item.
-        let block = Box::new(syn::Block { stmts, brace_token: Default::default() });
-        let node::PushEval { fn_decl, fn_name, mut fn_attrs } = push_eval;
+        let block = Box::new(syn::Block {
+            stmts,
+            brace_token: Default::default(),
+        });
+        let node::PushEval {
+            fn_decl,
+            fn_name,
+            mut fn_attrs,
+        } = push_eval;
         let decl = Box::new(fn_decl);
         let ident = syn::Ident::new(&fn_name, proc_macro2::Span::call_site());
-        let vis = syn::Visibility::Public(syn::VisPublic { pub_token: Default::default() });
+        let vis = syn::Visibility::Public(syn::VisPublic {
+            pub_token: Default::default(),
+        });
 
         // Add the `#[no_mangle]` attr to the function so that the symbol retains its name.
         let no_mangle = no_mangle_attr();
@@ -760,20 +825,22 @@ pub mod codegen {
         let node_evaluator_fn_items = node_evaluator_fns(&node_evaluators);
         let push_nodes = push_nodes(g);
 
-        let push_node_fn_items = push_nodes
-            .into_iter()
-            .map(|(n, eval)| {
-                let steps = push_eval_steps(g, &node_evaluators, n);
-                let item_fn = push_eval_fn(g, eval, &steps, &node_evaluators);
-                syn::Item::Fn(item_fn)
-            });
+        let push_node_fn_items = push_nodes.into_iter().map(|(n, eval)| {
+            let steps = push_eval_steps(g, &node_evaluators, n);
+            let item_fn = push_eval_fn(g, eval, &steps, &node_evaluators);
+            syn::Item::Fn(item_fn)
+        });
 
         let items = node_evaluator_fn_items
             .map(|(_, item_fn)| syn::Item::Fn(item_fn.clone()))
             .chain(push_node_fn_items)
             .collect();
 
-        let file = syn::File { shebang: None, attrs: vec![], items };
+        let file = syn::File {
+            shebang: None,
+            attrs: vec![],
+            items,
+        };
         file
     }
 
@@ -781,12 +848,23 @@ pub mod codegen {
     fn no_mangle_attr() -> syn::Attribute {
         let ident = syn::Ident::new("no_mangle", proc_macro2::Span::call_site());
         let arguments = syn::PathArguments::None;
-        let segments = Some(syn::PathSegment { ident, arguments }).into_iter().collect();
-        let path = syn::Path { leading_colon: None, segments };
+        let segments = Some(syn::PathSegment { ident, arguments })
+            .into_iter()
+            .collect();
+        let path = syn::Path {
+            leading_colon: None,
+            segments,
+        };
         let style = syn::AttrStyle::Outer;
         let pound_token = Default::default();
         let bracket_token = Default::default();
         let tts = Default::default();
-        syn::Attribute { pound_token, style, bracket_token, path, tts }
+        syn::Attribute {
+            pound_token,
+            style,
+            bracket_token,
+            path,
+            tts,
+        }
     }
 }

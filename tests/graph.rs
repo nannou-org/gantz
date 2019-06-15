@@ -1,7 +1,7 @@
 // Tests for the graph module.
 
-use gantz::Edge;
 use gantz::node::{self, SerdeNode, WithPushEval};
+use gantz::Edge;
 use serde::{Deserialize, Serialize};
 
 fn node_push() -> node::Push<node::Expr> {
@@ -64,22 +64,27 @@ fn test_graph1() {
 
     // Compose the graph.
     let root = project.root_node_id();
-    project.update_graph(&root, |g| {
-        let push = g.add_node(push);
-        let one = g.add_node(one);
-        let add = g.add_node(add);
-        let two = g.add_node(two);
-        let assert_eq = g.add_node(assert_eq);
-        g.add_edge(push, one, Edge::from((0, 0)));
-        g.add_edge(push, two, Edge::from((0, 0)));
-        g.add_edge(one, add, Edge::from((0, 0)));
-        g.add_edge(one, add, Edge::from((0, 1)));
-        g.add_edge(add, assert_eq, Edge::from((0, 0)));
-        g.add_edge(two, assert_eq, Edge::from((0, 1)));
-    }).unwrap();
+    project
+        .update_graph(&root, |g| {
+            let push = g.add_node(push);
+            let one = g.add_node(one);
+            let add = g.add_node(add);
+            let two = g.add_node(two);
+            let assert_eq = g.add_node(assert_eq);
+            g.add_edge(push, one, Edge::from((0, 0)));
+            g.add_edge(push, two, Edge::from((0, 0)));
+            g.add_edge(one, add, Edge::from((0, 0)));
+            g.add_edge(one, add, Edge::from((0, 1)));
+            g.add_edge(add, assert_eq, Edge::from((0, 0)));
+            g.add_edge(two, assert_eq, Edge::from((0, 1)));
+        })
+        .unwrap();
 
     // Retrieve the path to the compiled library.
-    let dylib_path = project.graph_node_dylib(&root).unwrap().expect("no dylib or node");
+    let dylib_path = project
+        .graph_node_dylib(&root)
+        .unwrap()
+        .expect("no dylib or node");
     let lib = libloading::Library::new(&dylib_path).expect("failed to load library");
     let symbol_name = "push".as_bytes();
     unsafe {
@@ -110,7 +115,9 @@ impl gantz::Node for Mul {
 
 #[typetag::serde]
 impl gantz::node::SerdeNode for Mul {
-    fn node(&self) -> &dyn gantz::Node { self }
+    fn node(&self) -> &dyn gantz::Node {
+        self
+    }
 }
 
 // A simple test graph that multiplies two "two"s and checks that it equals "two".
@@ -162,22 +169,27 @@ fn test_graph2_evaluator_fn() {
 
     // Compose the graph.
     let root = project.root_node_id();
-    project.update_graph(&root, |g| {
-        let push = g.add_node(push);
-        let two = g.add_node(two);
-        let mul = g.add_node(mul);
-        let four = g.add_node(four);
-        let assert_eq = g.add_node(assert_eq);
-        g.add_edge(push, two, Edge::from((0, 0)));
-        g.add_edge(push, four, Edge::from((0, 0)));
-        g.add_edge(two, mul, Edge::from((0, 0)));
-        g.add_edge(two, mul, Edge::from((0, 1)));
-        g.add_edge(mul, assert_eq, Edge::from((0, 0)));
-        g.add_edge(four, assert_eq, Edge::from((0, 1)));
-    }).unwrap();
+    project
+        .update_graph(&root, |g| {
+            let push = g.add_node(push);
+            let two = g.add_node(two);
+            let mul = g.add_node(mul);
+            let four = g.add_node(four);
+            let assert_eq = g.add_node(assert_eq);
+            g.add_edge(push, two, Edge::from((0, 0)));
+            g.add_edge(push, four, Edge::from((0, 0)));
+            g.add_edge(two, mul, Edge::from((0, 0)));
+            g.add_edge(two, mul, Edge::from((0, 1)));
+            g.add_edge(mul, assert_eq, Edge::from((0, 0)));
+            g.add_edge(four, assert_eq, Edge::from((0, 1)));
+        })
+        .unwrap();
 
     // Retrieve the path to the compiled library.
-    let dylib_path = project.graph_node_dylib(&root).unwrap().expect("no dylib or node");
+    let dylib_path = project
+        .graph_node_dylib(&root)
+        .unwrap()
+        .expect("no dylib or node");
     let lib = libloading::Library::new(&dylib_path).expect("failed to load library");
     let symbol_name = "push".as_bytes();
     unsafe {
