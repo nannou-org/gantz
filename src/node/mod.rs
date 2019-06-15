@@ -1,10 +1,12 @@
 use super::{Deserialize, Fail, From, Serialize};
 
 pub mod expr;
+pub mod pull;
 pub mod push;
 pub mod serde;
 
 pub use self::expr::{Expr, NewExprError};
+pub use self::pull::{Pull, WithPullEval};
 pub use self::push::{Push, WithPushEval};
 pub use self::serde::SerdeNode;
 
@@ -17,8 +19,8 @@ pub use self::serde::SerdeNode;
 ///
 /// - Any number of inputs, where each input is of some rust type or generic type.
 /// - Any number of outputs, where each output is of some rust type or generic type.
-/// - A function that takes the inputs as arguments and returns an Outputs struct containing a
-///   field for each of the outputs.
+/// - An expression that takes the inputs as arguments and returns the outputs (via a tuple in
+///   the case of more than one).
 pub trait Node {
     /// The approach taken for evaluating a nodes inputs to its outputs.
     ///
@@ -33,6 +35,9 @@ pub trait Node {
     /// instances of this node. Enabling push evaluation allows applications to call into
     /// the gantz graph by loading the resulting generated code at runtime.
     ///
+    /// Push evaluation order is equivalent to a topological ordering of the connected component
+    /// that starts from the `push_eval` node.
+    ///
     /// Within a **Graph** node, a new function will be generated for each node that signals
     /// **Some**.  If **Some**, a function will be generated with the given **FnDecl** that
     /// represents pushing evaluation from this node.
@@ -40,14 +45,25 @@ pub trait Node {
     /// Gantz will **panic!** if the returned **FnDecl** has a return type other than `()`.
     ///
     /// By default, this is **None**.
-    fn push_eval(&self) -> Option<PushEval> {
+    fn push_eval(&self) -> Option<EvalFn> {
         None
     }
 
-    /// The same as `push_eval` but allows for generating code for pull evaluation instead.
+    /// Specifies whether or not code should be generated to allow for pull evaluation from
+    /// instances of this node. Enabling pull evaluation allows applications to call into
+    /// the gantz graph by loading the resulting generated code at runtime.
     ///
-    /// *TODO: Finish this.*
-    fn pull_eval(&self) -> Option<PullEval> {
+    /// Pull evaluation order is equivalent to a topological ordering of the connected component
+    /// that ends at the `pull_eval` node.
+    ///
+    /// Within a **Graph** node, a new function will be generated for each node that signals
+    /// **Some**.  If **Some**, a function will be generated with the given **FnDecl** that
+    /// represents pulling evaluation from this node.
+    ///
+    /// Gantz will **panic!** if the returned **FnDecl** has a return type other than `()`.
+    ///
+    /// By default, this is **None**.
+    fn pull_eval(&self) -> Option<EvalFn> {
         None
     }
 }
@@ -84,7 +100,7 @@ pub enum Evaluator {
 
 /// Items that need to be known in order to generate a push evaluation function for a node.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
-pub struct PushEval {
+pub struct EvalFn {
     /// The type for each argument.
     #[serde(with = "crate::node::serde::fn_decl")]
     pub fn_decl: syn::FnDecl,
@@ -94,10 +110,6 @@ pub struct PushEval {
     #[serde(with = "crate::node::serde::fn_attrs")]
     pub fn_attrs: Vec<syn::Attribute>,
 }
-
-/// Items that need to be known in order to generate a pull evaluation function for a node.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PullEval;
 
 /// Represents an input of a node via an index.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
@@ -143,11 +155,11 @@ where
         (**self).evaluator()
     }
 
-    fn push_eval(&self) -> Option<PushEval> {
+    fn push_eval(&self) -> Option<EvalFn> {
         (**self).push_eval()
     }
 
-    fn pull_eval(&self) -> Option<PullEval> {
+    fn pull_eval(&self) -> Option<EvalFn> {
         (**self).pull_eval()
     }
 }
@@ -159,11 +171,11 @@ macro_rules! impl_node_for_ptr {
                 (**self).evaluator()
             }
 
-            fn push_eval(&self) -> Option<PushEval> {
+            fn push_eval(&self) -> Option<EvalFn> {
                 (**self).push_eval()
             }
 
-            fn pull_eval(&self) -> Option<PullEval> {
+            fn pull_eval(&self) -> Option<EvalFn> {
                 (**self).pull_eval()
             }
         }
@@ -174,7 +186,7 @@ impl_node_for_ptr!(Box);
 impl_node_for_ptr!(std::rc::Rc);
 impl_node_for_ptr!(std::sync::Arc);
 
-impl From<syn::ItemFn> for PushEval {
+impl From<syn::ItemFn> for EvalFn {
     fn from(item_fn: syn::ItemFn) -> Self {
         let syn::ItemFn {
             attrs: fn_attrs,
@@ -184,7 +196,7 @@ impl From<syn::ItemFn> for PushEval {
         } = item_fn;
         let fn_decl = *decl;
         let fn_name = format!("{}", ident);
-        PushEval {
+        EvalFn {
             fn_decl,
             fn_name,
             fn_attrs,

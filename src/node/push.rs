@@ -8,13 +8,13 @@ use crate::node::{self, Node};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Push<N> {
     node: N,
-    push_eval: node::PushEval,
+    push_eval: node::EvalFn,
 }
 
 /// A trait implemented for all `Node` types allowing to enable push evaluation.
 pub trait WithPushEval: Sized + Node {
     /// Consume `self` and return a `Node` that has push evaluation enabled.
-    fn with_push_eval(self, push_eval: node::PushEval) -> Push<Self>;
+    fn with_push_eval(self, push_eval: node::EvalFn) -> Push<Self>;
 
     /// Enable push evaluation using the given push evaluation function.
     ///
@@ -40,7 +40,7 @@ where
     N: Node,
 {
     /// Given some node, return a `Push` node enabling push evaluation.
-    pub fn new(node: N, push_eval: node::PushEval) -> Self {
+    pub fn new(node: N, push_eval: node::EvalFn) -> Self {
         Push { node, push_eval }
     }
 }
@@ -50,7 +50,7 @@ where
     N: Node,
 {
     /// Consume `self` and return an equivalent node with push evaluation enabled.
-    fn with_push_eval(self, push_eval: node::PushEval) -> Push<Self> {
+    fn with_push_eval(self, push_eval: node::EvalFn) -> Push<Self> {
         Push::new(self, push_eval)
     }
 }
@@ -63,11 +63,11 @@ where
         self.node.evaluator()
     }
 
-    fn push_eval(&self) -> Option<node::PushEval> {
+    fn push_eval(&self) -> Option<node::EvalFn> {
         Some(self.push_eval.clone())
     }
 
-    fn pull_eval(&self) -> Option<node::PullEval> {
+    fn pull_eval(&self) -> Option<node::EvalFn> {
         self.node.pull_eval()
     }
 }

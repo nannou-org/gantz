@@ -485,7 +485,7 @@ pub mod codegen {
     /// Given a graph of gantz nodes, return `NodeId`s of those that require push evaluation.
     ///
     /// Expects any graph type whose nodes implement `Node`.
-    pub fn push_nodes<G>(g: G) -> Vec<(G::NodeId, node::PushEval)>
+    pub fn push_nodes<G>(g: G) -> Vec<(G::NodeId, node::EvalFn)>
     where
         G: IntoNodeReferences,
         <G::NodeRef as NodeRef>::Weight: Node,
@@ -495,10 +495,10 @@ pub mod codegen {
             .collect()
     }
 
-    /// Given a graph with of gantz nodes, return `NodeId`s of those that require pull evaluation.
+    /// Given a graph of gantz nodes, return `NodeId`s of those that require pull evaluation.
     ///
     /// Expects any graph type whose nodes implement `Node`.
-    pub fn pull_nodes<G>(g: G) -> Vec<(G::NodeId, node::PullEval)>
+    pub fn pull_nodes<G>(g: G) -> Vec<(G::NodeId, node::EvalFn)>
     where
         G: IntoNodeReferences,
         <G::NodeRef as NodeRef>::Weight: Node,
@@ -510,36 +510,64 @@ pub mod codegen {
 
     /// Push evaluation from the specified node.
     ///
-    /// Evaluation order is equivalent to depth-first-search post order.
+    /// Evaluation order is equivalent to a topological ordering of the connected component
+    /// starting from the given node.
     ///
     /// Expects any directed graph whose edges are of type `Edge` and whose nodes implement `Node`.
     /// Direction of edges indicate the flow of data through the graph.
-    pub fn push_eval_steps<G>(
+    pub fn push_eval_order<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+    where
+        G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
+        G::NodeId: Eq + Hash,
+    {
+        // First, find all nodes reachable by a `DFS` from this node.
+        let dfs: HashSet<G::NodeId> = petgraph::visit::Dfs::new(g, n).iter(g).collect();
+
+        // The order of evaluation is topological order of nodes touching the DFS.
+        petgraph::visit::Topo::new(g)
+            .iter(g)
+            .filter(move |node| dfs.contains(&node))
+    }
+
+    /// Pull evaluation from the specified node.
+    ///
+    /// Evaluation order is equivalent to a topological ordering of the connected component that
+    /// ends at the given node.
+    ///
+    /// Expects any directed graph whose edges are of type `Edge` and whose nodes implement `Node`.
+    /// Direction of edges indicate the flow of data through the graph.
+    pub fn pull_eval_order<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+    where
+        G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
+        G::NodeId: Eq + Hash,
+    {
+        // First, find all nodes reachable by a `DFS` from this node.
+        let rev_g = petgraph::visit::Reversed(&g);
+        let dfs: HashSet<G::NodeId> = petgraph::visit::Dfs::new(rev_g, n).iter(rev_g).collect();
+
+        // The order of evaluation is topological order of nodes touching the reverse DFS.
+        petgraph::visit::Topo::new(g)
+            .iter(g)
+            .filter(move |node| dfs.contains(&node))
+    }
+
+    /// Given a node evaluation order, produce the series of evaluation steps required.
+    pub fn eval_steps<G, I>(
         g: G,
         node_evaluators: &NodeEvaluatorMap<G::NodeId>,
-        n: G::NodeId,
+        eval_order: I,
     ) -> Vec<EvalStep<G::NodeId>>
     where
         G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
         G: Data<EdgeWeight = Edge>,
         G::NodeId: Eq + Hash,
         <G::NodeRef as NodeRef>::Weight: Node,
+        I: IntoIterator<Item = G::NodeId>,
     {
-        // First, find all nodes reachable by a `DFS` from this node.
-        let dfs: HashSet<G::NodeId> = petgraph::visit::Dfs::new(g, n).iter(g).collect();
-
-        // The order of evaluation is DFS post order.
-        let mut traversal = petgraph::visit::Topo::new(g);
-
-        // Track the evaluation steps.
         let mut eval_steps = vec![];
 
         // Step through each of the nodes.
-        while let Some(node) = traversal.next(g) {
-            if !dfs.contains(&node) {
-                continue;
-            }
-
+        for node in eval_order {
             // Initialise the arguments to `None` for each input.
             let child_evaluator = &node_evaluators[&node];
             let mut args: Vec<_> = (0..child_evaluator.n_inputs()).map(|_| None).collect();
@@ -580,27 +608,8 @@ pub mod codegen {
             // Add the step.
             eval_steps.push(EvalStep { node, args });
         }
-        eval_steps
-    }
 
-    /// Pull evaluation from the specified node.
-    ///
-    /// Evaluation order is equivalent to depth-first-search order, ending with the specified node.
-    ///
-    /// Expects any directed graph whose edges are of type `Edge` and whose nodes implement `Node`.
-    /// Direction of edges indicate the flow of data through the graph.
-    pub fn pull_eval_steps<G>(
-        _g: G,
-        _node_evaluators: &NodeEvaluatorMap<G::NodeId>,
-        _n: G::NodeId,
-    ) -> Vec<EvalStep<G::NodeId>>
-    where
-        G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
-        G: Data<EdgeWeight = Edge>,
-        <G::NodeRef as NodeRef>::Weight: Node,
-    {
-        // TODO
-        unimplemented!()
+        eval_steps
     }
 
     /// Given a function argument, return its type if known.
@@ -612,11 +621,10 @@ pub mod codegen {
         }
     }
 
-    /// Generate a function for performing push evaluation from the given node with the given
-    /// evaluation steps.
-    pub fn push_eval_fn<G>(
+    /// Generate a function for performing evaluation of the given steps.
+    pub fn eval_fn<G>(
         g: G,
-        push_eval: node::PushEval,
+        eval_fn: node::EvalFn,
         steps: &[EvalStep<G::NodeId>],
         node_evaluators: &NodeEvaluatorMap<G::NodeId>,
     ) -> syn::ItemFn
@@ -665,7 +673,7 @@ pub mod codegen {
             G::NodeId: Eq + Hash,
         {
             match arg {
-                None => syn::parse_quote! { Default::default() },
+                None => syn::parse_quote! { () },
                 Some(arg) => {
                     let ident = lvals.get(&(arg.node, arg.output)).unwrap_or_else(|| {
                         panic!(
@@ -744,11 +752,11 @@ pub mod codegen {
             stmts,
             brace_token: Default::default(),
         });
-        let node::PushEval {
+        let node::EvalFn {
             fn_decl,
             fn_name,
             mut fn_attrs,
-        } = push_eval;
+        } = eval_fn;
         let decl = Box::new(fn_decl);
         let ident = syn::Ident::new(&fn_name, proc_macro2::Span::call_site());
         let vis = syn::Visibility::Public(syn::VisPublic {
@@ -778,38 +786,21 @@ pub mod codegen {
 
     /// Given a list of push evaluation nodes and their evaluation steps, generate a function for
     /// performing push evaluation for each node.
-    pub fn push_eval_fns<'a, G, I>(
+    pub fn eval_fns<'a, G, I>(
         g: G,
-        push_eval_nodes: I,
+        eval_nodes: I,
         node_evaluators: &NodeEvaluatorMap<G::NodeId>,
     ) -> Vec<syn::ItemFn>
     where
         G: GraphRef + IntoNodeReferences + NodeIndexable,
         G::NodeId: 'a + Eq + Hash,
         <G::NodeRef as NodeRef>::Weight: Node,
-        I: IntoIterator<Item = (G::NodeId, node::PushEval, &'a [EvalStep<G::NodeId>])>,
+        I: IntoIterator<Item = (G::NodeId, node::EvalFn, &'a [EvalStep<G::NodeId>])>,
     {
-        push_eval_nodes
+        eval_nodes
             .into_iter()
-            .map(|(_n, eval, steps)| push_eval_fn(g, eval, steps, node_evaluators))
+            .map(|(_n, eval, steps)| eval_fn(g, eval, steps, node_evaluators))
             .collect()
-    }
-
-    /// Generate a function for performing pull evaluation from the given node with the given
-    /// evaluation steps.
-    pub fn pull_eval_fn<G>(
-        _g: G,
-        _pull_eval: node::PushEval,
-        _steps: &[EvalStep<G::NodeId>],
-        _node_evaluators: &NodeEvaluatorMap<G::NodeId>,
-    ) -> syn::ItemFn
-    where
-        G: GraphRef + IntoNodeReferences + NodeIndexable,
-        G::NodeId: Eq + Hash,
-        <G::NodeRef as NodeRef>::Weight: Node,
-    {
-        // TODO
-        unimplemented!();
     }
 
     /// Given a gantz graph, generate the rust code src file with all the necessary functions for
@@ -823,16 +814,26 @@ pub mod codegen {
     {
         let node_evaluators = node_evaluators(g);
         let node_evaluator_fn_items = node_evaluator_fns(&node_evaluators);
+        let pull_nodes = pull_nodes(g);
         let push_nodes = push_nodes(g);
 
+        let pull_node_fn_items = pull_nodes.into_iter().map(|(n, eval)| {
+            let order = pull_eval_order(g, n);
+            let steps = eval_steps(g, &node_evaluators, order);
+            let item_fn = eval_fn(g, eval, &steps, &node_evaluators);
+            syn::Item::Fn(item_fn)
+        });
+
         let push_node_fn_items = push_nodes.into_iter().map(|(n, eval)| {
-            let steps = push_eval_steps(g, &node_evaluators, n);
-            let item_fn = push_eval_fn(g, eval, &steps, &node_evaluators);
+            let order = push_eval_order(&g, n);
+            let steps = eval_steps(g, &node_evaluators, order);
+            let item_fn = eval_fn(g, eval, &steps, &node_evaluators);
             syn::Item::Fn(item_fn)
         });
 
         let items = node_evaluator_fn_items
             .map(|(_, item_fn)| syn::Item::Fn(item_fn.clone()))
+            .chain(pull_node_fn_items)
             .chain(push_node_fn_items)
             .collect();
 
