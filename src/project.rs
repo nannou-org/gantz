@@ -1,6 +1,7 @@
 use super::{Deserialize, Fail, From, Serialize};
 use crate::graph::{self, GraphNode};
 use crate::node::{self, Node, SerdeNode};
+use petgraph::visit::GraphBase;
 use quote::ToTokens;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -55,7 +56,27 @@ pub struct NodeCollection {
 /// A graph composed of IDs into the `NodeCollection`.
 pub type NodeIdGraph = graph::StableGraph<NodeId>;
 
+/// A **NodeIdGraph** along with its inlets and outlets.
 pub type NodeIdGraphNode = GraphNode<NodeIdGraph>;
+
+/// A graph to references to the actual **Node** implementations.
+///
+/// This graph is constructed at the time of code generation using the project's **NodeIdGraph**
+/// and the **NodeCollection**.
+type NodeRefGraph<'a> = graph::StableGraph<NodeRef<'a>>;
+
+/// A **NodeRefGraph** along with the cargo **PackageId** for the graph within this project.
+///
+/// This type implements the **EvaluatorFnBlock** implementation, enabling
+/// **ProjectNodeRefGraphNode** to implement the **Node** type.
+// TODO: Implement `GraphBase` and `EvaluatorFnBlock`.
+struct ProjectNodeRefGraph<'a> {
+    graph: NodeRefGraph<'a>,
+    package_id: cargo::core::PackageId,
+}
+
+/// Shorthand for a **GraphNode** wrapped around a **ProjectNodeRefGraph**.
+type ProjectNodeRefGraphNode<'a> = GraphNode<ProjectNodeRefGraph<'a>>;
 
 /// Whether the node is a **Core** node (has no other internal **Node** dependencies) or is a
 /// **Graph** node, composed entirely of other gantz **Node**s.
@@ -74,10 +95,12 @@ pub struct ProjectGraph {
     pub package_id: cargo::core::PackageId,
 }
 
-// A **Node** type constructed as a reference to some other node.
+/// A **Node** type constructed as a reference to a type implementing **Node**.
+///
+/// A graph of **NodeRef**s are created at the time of codegen in order to.
 enum NodeRef<'a> {
     Core(&'a dyn Node),
-    Graph(GraphNode<graph::StableGraph<NodeRef<'a>>>),
+    Graph(ProjectNodeRefGraphNode<'a>),
 }
 
 /// Errors that may occur while creating a node crate.
@@ -487,6 +510,22 @@ impl NodeCollection {
     }
 }
 
+impl<'a> GraphBase for ProjectNodeRefGraph<'a> {
+    type EdgeId = <NodeRefGraph<'a> as GraphBase>::EdgeId;
+    type NodeId = <NodeRefGraph<'a> as GraphBase>::NodeId;
+}
+
+impl<'a> graph::EvaluatorFnBlock for ProjectNodeRefGraph<'a> {
+    fn evaluator_fn_block(&self, _fn_decl: &syn::FnDecl) -> syn::Block {
+        // TODO: Block should look something like this:
+        //
+        // - Use the inputs to the `fn_decl` to set the state of the `inlet` nodes.
+        // - Call the `push_eval` function from the dynamic library associated with this graph.
+        // - Retrievel the state for each `outlet` node and return them at the end of the block.
+        unimplemented!("TODO: generate a block that evaluates the graph")
+    }
+}
+
 impl<'a> Node for NodeRef<'a> {
     fn evaluator(&self) -> node::Evaluator {
         match self {
@@ -854,17 +893,17 @@ where
 
 // Given a `NodeIdGraphNode` and `NodeCollection`, return a graph capable of evaluation.
 fn id_graph_to_node_graph<'a>(
-    g: &NodeIdGraphNode,
+    g: &ProjectGraph,
     ns: &'a NodeCollection,
-) -> GraphNode<graph::StableGraph<NodeRef<'a>>> {
-    let inlets = g.inlets.clone();
-    let outlets = g.outlets.clone();
+) -> ProjectNodeRefGraphNode<'a> {
+    let inlets = g.graph.inlets.clone();
+    let outlets = g.graph.outlets.clone();
     let graph = g.graph.map(
         |_, n_id| {
             match ns[n_id] {
                 NodeKind::Core(ref node) => NodeRef::Core(node.node()),
                 NodeKind::Graph(ref node) => {
-                    NodeRef::Graph(id_graph_to_node_graph(&node.graph, ns))
+                    NodeRef::Graph(id_graph_to_node_graph(node, ns))
                 }
             }
         },
@@ -872,6 +911,8 @@ fn id_graph_to_node_graph<'a>(
             edge.clone()
         },
     );
+    let package_id = g.package_id;
+    let graph = ProjectNodeRefGraph { graph, package_id };
     GraphNode { graph, inlets, outlets }
 }
 
@@ -880,8 +921,8 @@ fn id_graph_to_node_graph<'a>(
 // Returns `None` if there is no graph node associated with the given `NodeId`.
 fn graph_node_src(id: &NodeId, nodes: &NodeCollection) -> Option<syn::File> {
     if let Some(NodeKind::Graph(ref node)) = nodes.get(id) {
-        let graph = id_graph_to_node_graph(&node.graph, nodes);
-        return Some(graph::codegen::file(&graph.graph, &graph.inlets, &graph.outlets));
+        let graph = id_graph_to_node_graph(node, nodes);
+        return Some(graph::codegen::file(&graph.graph.graph, &graph.inlets, &graph.outlets));
     }
     None
 }

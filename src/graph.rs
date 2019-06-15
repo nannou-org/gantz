@@ -1,13 +1,25 @@
-use crate::node::{self, Node};
+use crate::node::{self, Node, SerdeNode};
 use petgraph::visit::GraphBase;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Deref, DerefMut};
+use syn::FnArg;
+use syn::punctuated::Punctuated;
+use syn::token::Comma;
 
 /// The type used to represent node and edge indices.
 pub type Index = usize;
 
 pub type EdgeIndex = petgraph::graph::EdgeIndex<Index>;
 pub type NodeIndex = petgraph::graph::NodeIndex<Index>;
+
+/// A trait required by graphs that support nesting graphs of the same type as nodes.
+pub trait EvaluatorFnBlock {
+    /// The `Evaluator` function block used to evaluate the graph from its inputs to its outputs.
+    ///
+    /// The function declaration is provided in order to allow the implementer to inspect the
+    /// function inputs and output and create a function body accordingly.
+    fn evaluator_fn_block(&self, fn_decl: &syn::FnDecl) -> syn::Block;
+}
 
 /// Describes a connection between two nodes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
@@ -32,16 +44,38 @@ where
     /// indices. This way we can retrieve the type from the graph, cast it to `Inlet`/`Outlet` and
     /// check for types while also allowing inlets and outlets to partake in the graph evaluation
     /// process.
-    pub inlets: Vec<G::NodeId>,
+    pub inlets: Vec<Inlet<G::NodeId>>,
     /// The types of each of the outputs into the graph node.
-    pub outlets: Vec<G::NodeId>,
+    pub outlets: Vec<Outlet<G::NodeId>>,
 }
 
-/// A node that may act as an inlet into a graph node.
-pub struct Inlet {
-    /// The type of value that can be input into the graph.
+/// An inlet to a nested graph.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Inlet<Id> {
+    /// The unique ID associated with this inlet's node in the graph.
+    pub node_id: Id,
+    /// The expected type for this inlet.
+    #[serde(with = "crate::node::serde::ty")]
     pub ty: syn::Type,
 }
+
+/// An outlet from a nested graph.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Outlet<Id> {
+    /// The unique ID associated with this outlet's node in the graph.
+    pub node_id: Id,
+    /// The expected type for this outlet.
+    #[serde(with = "crate::node::serde::ty")]
+    pub ty: syn::Type,
+}
+
+/// A node that may act as an inlet into a graph.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
+pub struct InletNode;
+
+/// A node that may act as an outlet from a graph.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
+pub struct OutletNode;
 
 /// The petgraph type used to represent a gantz graph.
 pub type Graph<N> = petgraph::Graph<N, Edge, petgraph::Directed, Index>;
@@ -59,18 +93,32 @@ impl Edge {
 
 impl<G> Node for GraphNode<G>
 where
-    G: petgraph::visit::Data,
-    G::NodeWeight: Node,
+    G: GraphBase + EvaluatorFnBlock,
 {
     fn evaluator(&self) -> node::Evaluator {
-        let fn_token = syn::token::Fn { span: proc_macro2::Span::call_site() };
-        let generics = unimplemented!("if any inlets/outlets use generics, this should too");
-        let paren_token = syn::token::Paren { span: proc_macro2::Span::call_site() };
-        let variadic = None;
-        let inputs = unimplemented!("to be inferred from inlet nodes");
-        let output = unimplemented!("to be inferred from outlet nodes");
-        let _fn_decl = syn::FnDecl { fn_token, generics, paren_token, inputs, variadic, output };
-        let fn_item = unimplemented!();
+        let attrs = vec![];
+        let vis = syn::Visibility::Inherited;
+        let constness = None;
+        let asyncness = None;
+        let unsafety = None;
+        let abi = None;
+        // TODO: Make sure codegen makes the ident unique.
+        // This will have to be considered in evaluator expr generation too.
+        let name = format!("graph_node_evaluator_fn");
+        let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
+        let decl = Box::new(graph_node_evaluator_fn_decl(&self.inlets, &self.outlets));
+        let block = Box::new(self.graph.evaluator_fn_block(&decl));
+        let fn_item = syn::ItemFn {
+            attrs,
+            vis,
+            constness,
+            asyncness,
+            unsafety,
+            abi,
+            ident,
+            decl,
+            block,
+        };
         node::Evaluator::Fn { fn_item }
     }
 }
@@ -114,7 +162,7 @@ where
                 let inlets = seq.next_element()?
                     .ok_or_else(|| de::Error::invalid_length(1, &self))?;
                 let outlets = seq.next_element()?
-                    .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+                    .ok_or_else(|| de::Error::invalid_length(2, &self))?;
                 Ok(GraphNode { graph, inlets, outlets })
             }
 
@@ -180,22 +228,55 @@ where
     }
 }
 
-// impl Node for Inlet {
-//     fn evaluator(&self) -> node::Evaluator {
-//         let n_inputs = 1;
-//         let n_outputs = 1;
-//         let ty = self.ty.clone();
-//         let gen_expr = Box::new(move |mut args: Vec<syn::Expr>| {
-//             assert_eq!(args.len(), 1, "must be a single input (from the calling fn) for an inlet");
-//             let in_expr = args.remove(0);
-//             syn::parse_quote! {
-//                 let in_expr_checked: #ty = in_expr;
-//                 in_expr_checked
-//             }
-//         });
-//         node::Evaluator::Expr { n_inputs, n_outputs, gen_expr }
-//     }
-// }
+impl Node for InletNode {
+    fn evaluator(&self) -> node::Evaluator {
+        let n_inputs = 1;
+        let n_outputs = 1;
+        //let ty = self.ty.clone();
+        let gen_expr = Box::new(move |mut args: Vec<syn::Expr>| {
+            assert_eq!(args.len(), 1, "must be a single input (from the calling fn) for an inlet");
+            let in_expr = args.remove(0);
+            syn::parse_quote! {
+                //let in_expr_checked: #ty = #in_expr;
+                //in_expr_checked
+                #in_expr
+            }
+        });
+        node::Evaluator::Expr { n_inputs, n_outputs, gen_expr }
+    }
+}
+
+impl Node for OutletNode {
+    fn evaluator(&self) -> node::Evaluator {
+        let n_inputs = 1;
+        let n_outputs = 1;
+        //let ty = self.ty.clone();
+        let gen_expr = Box::new(move |mut args: Vec<syn::Expr>| {
+            assert_eq!(args.len(), 1, "must be a single input (from the calling fn) for an inlet");
+            let out_expr = args.remove(0);
+            syn::parse_quote! {
+                //let out_expr_checked: #ty = #in_expr;
+                //out_expr_checked
+                #out_expr
+            }
+        });
+        node::Evaluator::Expr { n_inputs, n_outputs, gen_expr }
+    }
+}
+
+#[typetag::serde]
+impl SerdeNode for InletNode {
+    fn node(&self) -> &dyn Node {
+        self
+    }
+}
+
+#[typetag::serde]
+impl SerdeNode for OutletNode {
+    fn node(&self) -> &dyn Node {
+        self
+    }
+}
 
 impl<G> Deref for GraphNode<G>
 where
@@ -228,13 +309,69 @@ where
     }
 }
 
+fn graph_node_evaluator_fn_decl<Id>(inlets: &[Inlet<Id>], outlets: &[Outlet<Id>]) -> syn::FnDecl {
+    let fn_token = syn::token::Fn { span: proc_macro2::Span::call_site() };
+    let generics = {
+        // TODO: Eventually we'll want some way of inspecting inlets/outlets for these.
+        let lt_token = None;
+        let params = syn::punctuated::Punctuated::new();
+        let gt_token = None;
+        let where_clause = None;
+        syn::Generics { lt_token, params, gt_token, where_clause }
+    };
+    let paren_token = syn::token::Paren { span: proc_macro2::Span::call_site() };
+    let variadic = None;
+    let inputs = graph_node_evaluator_fn_inputs(inlets);
+    let output = graph_node_evaluator_fn_output(outlets);
+    syn::FnDecl { fn_token, generics, paren_token, inputs, variadic, output }
+}
+
+fn graph_node_evaluator_fn_inputs<Id>(inlets: &[Inlet<Id>]) -> Punctuated<FnArg, Comma> {
+    inlets
+        .iter()
+        .enumerate()
+        .map(|(i, inlet)| {
+            let name = format!("inlet{}", i);
+            let by_ref = None;
+            let mutability = None;
+            let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
+            let subpat = None;
+            let pat_ident = syn::PatIdent { by_ref, mutability, ident, subpat };
+            let pat = pat_ident.into();
+            let colon_token = Default::default();
+            let ty = inlet.ty.clone();
+            let arg_captured = syn::ArgCaptured { pat, colon_token, ty };
+            syn::FnArg::from(arg_captured)
+        })
+        .collect()
+}
+
+fn graph_node_evaluator_fn_output<Id>(outlets: &[Outlet<Id>]) -> syn::ReturnType {
+    match outlets.len() {
+        0 => syn::ReturnType::Default,
+        1 => {
+            let r_arrow = Default::default();
+            let ty = Box::new(outlets[0].ty.clone());
+            syn::ReturnType::Type(r_arrow, ty)
+        }
+        _ => {
+            let paren_token = Default::default();
+            let elems = outlets.iter().map(|outlet| outlet.ty.clone()).collect();
+            let ty_tuple = syn::TypeTuple { paren_token, elems };
+            let r_arrow = Default::default();
+            let ty = Box::new(syn::Type::Tuple(ty_tuple));
+            syn::ReturnType::Type(r_arrow, ty)
+        }
+    }
+}
+
 pub mod codegen {
     use crate::node::{self, Node};
     use petgraph::visit::{Data, EdgeRef, GraphRef, IntoEdgesDirected, IntoNodeReferences,
                           NodeIndexable, NodeRef, Visitable, Walker};
     use std::collections::{HashMap, HashSet};
     use std::hash::Hash;
-    use super::Edge;
+    use super::{Edge, Inlet, Outlet};
     use syn::punctuated::Punctuated;
 
     /// An evaluation step ready for translation to rust code.
@@ -612,7 +749,7 @@ pub mod codegen {
 
     /// Given a gantz graph, generate the rust code src file with all the necessary functions for
     /// executing it.
-    pub fn file<G>(g: G, _inlets: &[G::NodeId], _outlets: &[G::NodeId]) -> syn::File
+    pub fn file<G>(g: G, _inlets: &[Inlet<G::NodeId>], _outlets: &[Outlet<G::NodeId>]) -> syn::File
     where
         G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
         G: Data<EdgeWeight = Edge>,

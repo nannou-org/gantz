@@ -103,3 +103,23 @@ pub mod tts {
         Ok(TokenStream::from_str(&string).expect("failed to parse string as token stream"))
     }
 }
+
+pub mod ty {
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(ty: &syn::Type, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        super::tts::serialize(ty, s)
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<syn::Type, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let tts = super::tts::deserialize(d)?;
+        let ty: syn::Type = syn::parse_quote!{ #tts };
+        Ok(ty)
+    }
+}
