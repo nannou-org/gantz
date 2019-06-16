@@ -1,6 +1,6 @@
 // Tests for the graph module.
 
-use gantz::node::{self, SerdeNode, WithPushEval};
+use gantz::node::{self, SerdeNode, WithPullEval, WithPushEval};
 use gantz::Edge;
 use serde::{Deserialize, Serialize};
 
@@ -197,5 +197,131 @@ fn test_graph2_evaluator_fn() {
             lib.get(symbol_name).expect("failed to load symbol");
         // Execute the gantz graph.
         push_eval_fn();
+    }
+}
+
+// A simple test graph that adds two "one"s and checks that it equals "two".
+//
+//    -+-----
+//    | one |
+//    -+-----
+//     |\
+//     | \
+//     |  \
+//    -+---+-  -+-----
+//    | add |  | two |
+//    -+-----  -+-----
+//     |        |
+//     |       --
+//     |       |
+//    -+-------+-
+//    |assert_eq| // pull_eval
+//    -----------
+#[test]
+fn test_graph3_pull_eval() {
+    // Create a temp project.
+    let mut project = gantz::TempProject::open_with_name("test_graph3_pull_eval").unwrap();
+
+    // Instantiate the nodes.
+    let one = node_int(1);
+    let add = node_add();
+    let two = node_int(2);
+    let assert_eq = node_assert_eq().with_pull_eval_name("assert_eq");
+
+    // Add the nodes to the project.
+    let one = project.add_core_node(Box::new(one) as Box<_>);
+    let add = project.add_core_node(Box::new(add) as Box<_>);
+    let two = project.add_core_node(Box::new(two) as Box<_>);
+    let assert_eq = project.add_core_node(Box::new(assert_eq) as Box<_>);
+
+    // Compose the graph.
+    let root = project.root_node_id();
+    project
+        .update_graph(&root, |g| {
+            let one = g.add_node(one);
+            let add = g.add_node(add);
+            let two = g.add_node(two);
+            let assert_eq = g.add_node(assert_eq);
+            g.add_edge(one, add, Edge::from((0, 0)));
+            g.add_edge(one, add, Edge::from((0, 1)));
+            g.add_edge(add, assert_eq, Edge::from((0, 0)));
+            g.add_edge(two, assert_eq, Edge::from((0, 1)));
+        })
+        .unwrap();
+
+    // Retrieve the path to the compiled library.
+    let dylib_path = project
+        .graph_node_dylib(&root)
+        .unwrap()
+        .expect("no dylib or node");
+    let lib = libloading::Library::new(&dylib_path).expect("failed to load library");
+    let symbol_name = "assert_eq".as_bytes();
+    unsafe {
+        let pull_eval_fn: libloading::Symbol<fn()> =
+            lib.get(symbol_name).expect("failed to load symbol");
+        // Execute the gantz graph.
+        pull_eval_fn();
+    }
+}
+
+// A simple test graph that is expected to `panic!`.
+//
+//    -+-----
+//    | one |
+//    -+-----
+//     |\----
+//     | \   \
+//     |  \   \
+//    -+---+-  |
+//    | add |  |
+//    -+-----  |
+//     |       |
+//     |       |
+//     |       |
+//    -+-------+-
+//    |assert_eq| // pull_eval & panic!
+//    -----------
+#[test]
+#[should_panic]
+fn test_graph4_should_panic() {
+    // Create a temp project.
+    let mut project = gantz::TempProject::open_with_name("test_graph4_should_panic").unwrap();
+
+    // Instantiate the nodes.
+    let one = node_int(1);
+    let add = node_add();
+    let assert_eq = node_assert_eq().with_pull_eval_name("assert_eq");
+
+    // Add the nodes to the project.
+    let one = project.add_core_node(Box::new(one) as Box<_>);
+    let add = project.add_core_node(Box::new(add) as Box<_>);
+    let assert_eq = project.add_core_node(Box::new(assert_eq) as Box<_>);
+
+    // Compose the graph.
+    let root = project.root_node_id();
+    project
+        .update_graph(&root, |g| {
+            let one = g.add_node(one);
+            let add = g.add_node(add);
+            let assert_eq = g.add_node(assert_eq);
+            g.add_edge(one, add, Edge::from((0, 0)));
+            g.add_edge(one, add, Edge::from((0, 1)));
+            g.add_edge(add, assert_eq, Edge::from((0, 0)));
+            g.add_edge(one, assert_eq, Edge::from((0, 1)));
+        })
+        .unwrap();
+
+    // Retrieve the path to the compiled library.
+    let dylib_path = project
+        .graph_node_dylib(&root)
+        .unwrap()
+        .expect("no dylib or node");
+    let lib = libloading::Library::new(&dylib_path).expect("failed to load library");
+    let symbol_name = "assert_eq".as_bytes();
+    unsafe {
+        let pull_eval_fn: libloading::Symbol<fn()> =
+            lib.get(symbol_name).expect("failed to load symbol");
+        // Execute the gantz graph.
+        pull_eval_fn();
     }
 }

@@ -550,14 +550,14 @@ impl<'a> Node for NodeRef<'a> {
         }
     }
 
-    fn push_eval(&self) -> Option<node::PushEval> {
+    fn push_eval(&self) -> Option<node::EvalFn> {
         match self {
             NodeRef::Core(node) => node.push_eval(),
             NodeRef::Graph(graph) => graph.push_eval(),
         }
     }
 
-    fn pull_eval(&self) -> Option<node::PullEval> {
+    fn pull_eval(&self) -> Option<node::EvalFn> {
         match self {
             NodeRef::Core(node) => node.pull_eval(),
             NodeRef::Graph(graph) => graph.pull_eval(),

@@ -22,7 +22,7 @@ impl gantz::Node for One {
         }
     }
 
-    fn push_eval(&self) -> Option<gantz::node::PushEval> {
+    fn push_eval(&self) -> Option<gantz::node::EvalFn> {
         let item_fn: syn::ItemFn = syn::parse_quote! { fn one_push_eval() {} };
         Some(item_fn.into())
     }
