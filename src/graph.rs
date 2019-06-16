@@ -517,7 +517,7 @@ pub mod codegen {
     /// Direction of edges indicate the flow of data through the graph.
     pub fn push_eval_order<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
     where
-        G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
+        G: IntoEdgesDirected + IntoNodeReferences + Visitable,
         G::NodeId: Eq + Hash,
     {
         // First, find all nodes reachable by a `DFS` from this node.
@@ -538,7 +538,7 @@ pub mod codegen {
     /// Direction of edges indicate the flow of data through the graph.
     pub fn pull_eval_order<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
     where
-        G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
+        G: IntoEdgesDirected + IntoNodeReferences + Visitable,
         G::NodeId: Eq + Hash,
     {
         // First, find all nodes reachable by a `DFS` from this node.
@@ -558,7 +558,7 @@ pub mod codegen {
         eval_order: I,
     ) -> Vec<EvalStep<G::NodeId>>
     where
-        G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
+        G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable,
         G: Data<EdgeWeight = Edge>,
         G::NodeId: Eq + Hash,
         <G::NodeRef as NodeRef>::Weight: Node,
