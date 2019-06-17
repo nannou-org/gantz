@@ -142,9 +142,9 @@ fn main() {
     let lib = libloading::Library::new(&dylib_path).expect("failed to load library");
     let symbol_name = "one_push_eval".as_bytes();
     unsafe {
-        let foo_one_push_eval_fn: libloading::Symbol<fn()> =
+        let foo_one_push_eval_fn: libloading::Symbol<fn(&mut [&mut dyn std::any::Any])> =
             lib.get(symbol_name).expect("failed to load symbol");
         // Execute the gantz graph (prints `2` to stdout).
-        foo_one_push_eval_fn();
+        foo_one_push_eval_fn(&mut []);
     }
 }

@@ -381,25 +381,10 @@ fn graph_node_evaluator_fn_inputs<Id>(inlets: &[Inlet<Id>]) -> Punctuated<FnArg,
         .enumerate()
         .map(|(i, inlet)| {
             let name = format!("inlet{}", i);
-            let by_ref = None;
-            let mutability = None;
             let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
-            let subpat = None;
-            let pat_ident = syn::PatIdent {
-                by_ref,
-                mutability,
-                ident,
-                subpat,
-            };
-            let pat = pat_ident.into();
-            let colon_token = Default::default();
             let ty = inlet.ty.clone();
-            let arg_captured = syn::ArgCaptured {
-                pat,
-                colon_token,
-                ty,
-            };
-            syn::FnArg::from(arg_captured)
+            let fn_arg: syn::FnArg = syn::parse_quote! { #ident: #ty };
+            fn_arg
         })
         .collect()
 }
