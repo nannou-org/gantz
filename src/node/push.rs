@@ -70,4 +70,8 @@ where
     fn pull_eval(&self) -> Option<node::EvalFn> {
         self.node.pull_eval()
     }
+
+    fn state_type(&self) -> Option<syn::Type> {
+        self.node.state_type()
+    }
 }

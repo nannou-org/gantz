@@ -88,10 +88,10 @@ fn test_graph1() {
     let lib = libloading::Library::new(&dylib_path).expect("failed to load library");
     let symbol_name = "push".as_bytes();
     unsafe {
-        let push_eval_fn: libloading::Symbol<fn()> =
+        let push_eval_fn: libloading::Symbol<fn(&mut [&mut dyn std::any::Any])> =
             lib.get(symbol_name).expect("failed to load symbol");
         // Execute the gantz graph.
-        push_eval_fn();
+        push_eval_fn(&mut []);
     }
 }
 
@@ -193,10 +193,10 @@ fn test_graph2_evaluator_fn() {
     let lib = libloading::Library::new(&dylib_path).expect("failed to load library");
     let symbol_name = "push".as_bytes();
     unsafe {
-        let push_eval_fn: libloading::Symbol<fn()> =
+        let push_eval_fn: libloading::Symbol<fn(&mut [&mut dyn std::any::Any])> =
             lib.get(symbol_name).expect("failed to load symbol");
         // Execute the gantz graph.
-        push_eval_fn();
+        push_eval_fn(&mut []);
     }
 }
 
@@ -257,10 +257,10 @@ fn test_graph3_pull_eval() {
     let lib = libloading::Library::new(&dylib_path).expect("failed to load library");
     let symbol_name = "assert_eq".as_bytes();
     unsafe {
-        let pull_eval_fn: libloading::Symbol<fn()> =
+        let pull_eval_fn: libloading::Symbol<fn(&mut [&mut dyn std::any::Any])> =
             lib.get(symbol_name).expect("failed to load symbol");
         // Execute the gantz graph.
-        pull_eval_fn();
+        pull_eval_fn(&mut []);
     }
 }
 
@@ -319,9 +319,9 @@ fn test_graph4_should_panic() {
     let lib = libloading::Library::new(&dylib_path).expect("failed to load library");
     let symbol_name = "assert_eq".as_bytes();
     unsafe {
-        let pull_eval_fn: libloading::Symbol<fn()> =
+        let pull_eval_fn: libloading::Symbol<fn(&mut [&mut dyn std::any::Any])> =
             lib.get(symbol_name).expect("failed to load symbol");
         // Execute the gantz graph.
-        pull_eval_fn();
+        pull_eval_fn(&mut []);
     }
 }

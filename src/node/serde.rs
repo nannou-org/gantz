@@ -28,6 +28,13 @@ impl SerdeNode for node::Pull<node::Expr> {
     }
 }
 
+#[typetag::serde]
+impl SerdeNode for node::State<node::Expr> {
+    fn node(&self) -> &dyn Node {
+        self
+    }
+}
+
 pub mod fn_decl {
     use serde::{Deserializer, Serializer};
 

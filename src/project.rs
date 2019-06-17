@@ -563,6 +563,13 @@ impl<'a> Node for NodeRef<'a> {
             NodeRef::Graph(graph) => graph.pull_eval(),
         }
     }
+
+    fn state_type(&self) -> Option<syn::Type> {
+        match self {
+            NodeRef::Core(node) => node.state_type(),
+            NodeRef::Graph(graph) => graph.state_type(),
+        }
+    }
 }
 
 impl ops::Deref for TempProject {

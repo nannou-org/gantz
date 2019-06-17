@@ -266,12 +266,65 @@ where
         }
     }
 
+    // Create the lvals pattern, either `PatWild` for no outputs, `Ident` for single output or
+    // `Tuple` for multiple.
+    //
+    // Also keeps track of each the lvalue ident for each output of the node so that they may be
+    // passed to following node exprs.
+    fn lvalues_pat<Id>(
+        step_ix: usize,
+        step: &EvalStep<Id>,
+        n_outputs: u32,
+        lvalues: &mut LValues<Id>,
+    ) -> syn::Pat
+    where
+        Id: Copy + Eq + Hash,
+    {
+        let v_name = |vi| var_name(step_ix, vi);
+        let mut insert_lval = |vi, name: &str| {
+            insert_lvalue(step.node, vi, name, lvalues);
+        };
+        match n_outputs {
+            0 => syn::parse_quote! { () },
+            1 => {
+                let vi = 0;
+                let v = v_name(vi);
+                insert_lval(vi, &v);
+                var_pat(&v)
+            }
+            vs => {
+                let punct = (0..vs)
+                    .map(|vi| {
+                        let v = v_name(vi);
+                        insert_lval(vi, &v);
+                        var_pat(&v)
+                    })
+                    .collect::<Punctuated<syn::Pat, syn::Token![,]>>();
+                syn::parse_quote! { (#punct) }
+            }
+        }
+    }
+
+    // A function that produces the `node_states` argument that is to be appended to the evaluation
+    // function `inputs`.
+    //
+    // TODO: Eventually we should use a more user-friendly type for passing through state.
+    fn node_states_fn_arg() -> syn::FnArg {
+        syn::parse_quote! { _node_states: &mut [&mut dyn std::any::Any] }
+    }
+
     // For each evaluation step, generate a statement where the expression for the node at that
     // evaluation step is evaluated and the outputs are destructured from a tuple.
     let mut stmts: Vec<syn::Stmt> = vec![];
 
-    // Keep track of each of the lvalues for each of the statements. These are used to pass
-    let mut lvalues: HashMap<(G::NodeId, node::Output), syn::Ident> = Default::default();
+    // Keep track of each of the lvalues for each of the statements.
+    let mut lvalues: LValues<G::NodeId> = Default::default();
+
+    // The next index into the node_states slice.
+    //
+    // TODO: This should be calculated ahead of this function in an easy-to-access manner so that
+    // users can pre-prepare node states properly.
+    let mut node_state_idx: usize = 0;
 
     for (si, step) in steps.iter().enumerate() {
         // Retrieve an expression for each argument to the current node's expression.
@@ -282,42 +335,33 @@ where
             .iter()
             .map(|arg| input_expr(g, arg.as_ref(), &lvalues))
             .collect();
-
         let ne = &node_evaluators[&step.node];
         let n_outputs = ne.n_outputs();
+        let lhs: syn::Pat = lvalues_pat(si, step, n_outputs, &mut lvalues);
         let expr: syn::Expr = ne.expr(args);
+        let maybe_ty = g
+            .node_references()
+            .nth(g.to_index(step.node))
+            .expect("no node for step's node index")
+            .weight()
+            .state_type();
 
-        // Create the lvals pattern, either `PatWild` for no outputs, `Ident` for single output
-        // or `Tuple` for multiple. Keep track of each the lvalue ident for each output of the
-        // node so that they may be passed to following node exprs.
-        let lvals: syn::Pat = {
-            let v_name = |vi| var_name(si, vi);
-            let mut insert_lval = |vi, name: &str| {
-                insert_lvalue(step.node, vi, name, &mut lvalues);
-            };
-            match n_outputs {
-                0 => syn::parse_quote! { () },
-                1 => {
-                    let vi = 0;
-                    let v = v_name(vi);
-                    insert_lval(vi, &v);
-                    var_pat(&v)
-                }
-                vs => {
-                    let punct = (0..vs)
-                        .map(|vi| {
-                            let v = v_name(vi);
-                            insert_lval(vi, &v);
-                            var_pat(&v)
-                        })
-                        .collect::<Punctuated<syn::Pat, syn::Token![,]>>();
-                    syn::parse_quote! { (#punct) }
-                }
+        let rhs: syn::Expr = match maybe_ty {
+            None => expr,
+            Some(node_state_ty) => {
+                let expr = syn::parse_quote! {{
+                    let state: &mut #node_state_ty = _node_states[#node_state_idx]
+                        .downcast_mut::<#node_state_ty>()
+                        .expect("failed to downcast to expected node state type");
+                    #expr;
+                }};
+                node_state_idx += 1;
+                expr
             }
         };
 
         let stmt: syn::Stmt = syn::parse_quote! {
-            let #lvals = #expr;
+            let #lhs = #rhs;
         };
 
         stmts.push(stmt);
@@ -329,10 +373,14 @@ where
         brace_token: Default::default(),
     });
     let node::EvalFn {
-        fn_decl,
+        mut fn_decl,
         fn_name,
         mut fn_attrs,
     } = eval_fn;
+
+    // Append the argument for acquiring node states.
+    fn_decl.inputs.push(node_states_fn_arg());
+
     let decl = Box::new(fn_decl);
     let ident = syn::Ident::new(&fn_name, proc_macro2::Span::call_site());
     let vis = syn::Visibility::Public(syn::VisPublic {

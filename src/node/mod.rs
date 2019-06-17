@@ -4,11 +4,13 @@ pub mod expr;
 pub mod pull;
 pub mod push;
 pub mod serde;
+pub mod state;
 
 pub use self::expr::{Expr, NewExprError};
 pub use self::pull::{Pull, WithPullEval};
 pub use self::push::{Push, WithPushEval};
 pub use self::serde::SerdeNode;
+pub use self::state::{State, WithStateType};
 
 /// Gantz allows for constructing executable directed graphs by composing together **Node**s.
 ///
@@ -66,6 +68,17 @@ pub trait Node {
     fn pull_eval(&self) -> Option<EvalFn> {
         None
     }
+
+    /// If the node type requires access to some persistent state when evaluating its expression,
+    /// return the expected type of that state here.
+    ///
+    /// Code generation will ensure that a local binding named `state` of type `&mut T` (where `T`
+    /// is the type returned by this function) will be available to the node's expression.
+    ///
+    /// By default, this is **None** indicating a stateless node.
+    fn state_type(&self) -> Option<syn::Type> {
+        None
+    }
 }
 
 /// The method of evaluation used for a node.
@@ -99,6 +112,10 @@ pub enum Evaluator {
 }
 
 /// Items that need to be known in order to generate a push evaluation function for a node.
+///
+/// Note that all function declarations will have a single `node_states: node::States` argument
+/// appended to their `inputs` list in order to ensure the state associated with each node may be
+/// passed down the call stack. This means that when loading the symbol for the
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct EvalFn {
     /// The type for each argument.
