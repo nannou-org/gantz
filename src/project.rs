@@ -1,5 +1,5 @@
 use super::{Deserialize, Fail, From, Serialize};
-use crate::graph::{self, GraphNode};
+use crate::graph::{self, Edge, GraphNode};
 use crate::node::{self, Node, SerdeNode};
 use petgraph::visit::GraphBase;
 use quote::ToTokens;
@@ -53,8 +53,16 @@ pub struct NodeCollection {
     map: NodeTree,
 }
 
+/// The type used to represent node and edge indices.
+pub type Index = usize;
+pub type EdgeIndex = petgraph::graph::EdgeIndex<Index>;
+pub type NodeIndex = petgraph::graph::NodeIndex<Index>;
+
+/// The petgraph type used to represent a stable gantz graph.
+pub type StableGraph<N> = petgraph::stable_graph::StableGraph<N, Edge, petgraph::Directed, Index>;
+
 /// A graph composed of IDs into the `NodeCollection`.
-pub type NodeIdGraph = graph::StableGraph<NodeId>;
+pub type NodeIdGraph = StableGraph<NodeId>;
 
 /// A **NodeIdGraph** along with its inlets and outlets.
 pub type NodeIdGraphNode = GraphNode<NodeIdGraph>;
@@ -63,7 +71,7 @@ pub type NodeIdGraphNode = GraphNode<NodeIdGraph>;
 ///
 /// This graph is constructed at the time of code generation using the project's **NodeIdGraph**
 /// and the **NodeCollection**.
-type NodeRefGraph<'a> = graph::StableGraph<NodeRef<'a>>;
+type NodeRefGraph<'a> = StableGraph<NodeRef<'a>>;
 
 /// A **NodeRefGraph** along with the cargo **PackageId** for the graph within this project.
 ///
@@ -532,13 +540,27 @@ impl<'a> GraphBase for ProjectNodeRefGraph<'a> {
 }
 
 impl<'a> graph::EvaluatorFnBlock for ProjectNodeRefGraph<'a> {
-    fn evaluator_fn_block(&self, _fn_decl: &syn::FnDecl) -> syn::Block {
+    fn evaluator_fn_block(&self, fn_decl: &syn::FnDecl) -> syn::Block {
+        let mut stmts = vec![];
+
         // TODO: Block should look something like this:
         //
         // - Use the inputs to the `fn_decl` to set the state of the `inlet` nodes.
         // - Call the `push_eval` function from the dynamic library associated with this graph.
         // - Retrievel the state for each `outlet` node and return them at the end of the block.
-        unimplemented!("TODO: generate a block that evaluates the graph")
+        unimplemented!("TODO: generate a block that evaluates the graph");
+
+
+        let brace_token = Default::default();
+        let block = syn::Block { brace_token, stmts };
+        block
+    }
+}
+
+impl<'a> graph::Graph for ProjectNodeRefGraph<'a> {
+    type Node = NodeRef<'a>;
+    fn node(&self, id: Self::NodeId) -> Option<&Self::Node> {
+        self.graph.node_weight(id)
     }
 }
 

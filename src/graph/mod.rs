@@ -8,19 +8,40 @@ use syn::FnArg;
 
 pub mod codegen;
 
-/// The type used to represent node and edge indices.
-pub type Index = usize;
-
-pub type EdgeIndex = petgraph::graph::EdgeIndex<Index>;
-pub type NodeIndex = petgraph::graph::NodeIndex<Index>;
-
-/// A trait required by graphs that support nesting graphs of the same type as nodes.
+/// Required by graphs that support nesting graphs of the same type as nodes.
 pub trait EvaluatorFnBlock {
     /// The `Evaluator` function block used to evaluate the graph from its inputs to its outputs.
     ///
     /// The function declaration is provided in order to allow the implementer to inspect the
     /// function inputs and output and create a function body accordingly.
     fn evaluator_fn_block(&self, fn_decl: &syn::FnDecl) -> syn::Block;
+}
+
+/// Types that may be used as a graph within a **GraphNode**.
+pub trait Graph: GraphBase + EvaluatorFnBlock {
+    /// The node type used within the inner graph.
+    type Node: Node;
+    /// Return a reference to the node at the given node ID.
+    fn node(&self, id: Self::NodeId) -> Option<&Self::Node>;
+}
+
+impl<'a, T> EvaluatorFnBlock for &'a T
+where
+    T: EvaluatorFnBlock,
+{
+    fn evaluator_fn_block(&self, fn_decl: &syn::FnDecl) -> syn::Block {
+        (*self).evaluator_fn_block(fn_decl)
+    }
+}
+
+impl<'a, T> Graph for &'a T
+where
+    T: Graph,
+{
+    type Node = T::Node;
+    fn node(&self, id: Self::NodeId) -> Option<&Self::Node> {
+        (*self).node(id)
+    }
 }
 
 /// Describes a connection between two nodes.
@@ -46,16 +67,14 @@ where
     /// indices. This way we can retrieve the type from the graph, cast it to `Inlet`/`Outlet` and
     /// check for types while also allowing inlets and outlets to partake in the graph evaluation
     /// process.
-    pub inlets: Vec<Inlet<G::NodeId>>,
+    pub inlets: Vec<G::NodeId>,
     /// The types of each of the outputs into the graph node.
-    pub outlets: Vec<Outlet<G::NodeId>>,
+    pub outlets: Vec<G::NodeId>,
 }
 
 /// An inlet to a nested graph.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Inlet<Id> {
-    /// The unique ID associated with this inlet's node in the graph.
-    pub node_id: Id,
+pub struct Inlet {
     /// The expected type for this inlet.
     #[serde(with = "crate::node::serde::ty")]
     pub ty: syn::Type,
@@ -63,27 +82,11 @@ pub struct Inlet<Id> {
 
 /// An outlet from a nested graph.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Outlet<Id> {
-    /// The unique ID associated with this outlet's node in the graph.
-    pub node_id: Id,
+pub struct Outlet {
     /// The expected type for this outlet.
     #[serde(with = "crate::node::serde::ty")]
     pub ty: syn::Type,
 }
-
-/// A node that may act as an inlet into a graph.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
-pub struct InletNode;
-
-/// A node that may act as an outlet from a graph.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
-pub struct OutletNode;
-
-/// The petgraph type used to represent a gantz graph.
-pub type Graph<N> = petgraph::Graph<N, Edge, petgraph::Directed, Index>;
-
-/// The petgraph type used to represent a stable gantz graph.
-pub type StableGraph<N> = petgraph::stable_graph::StableGraph<N, Edge, petgraph::Directed, Index>;
 
 impl Edge {
     /// Create an edge representing a connection from the given node `Output` to the given node
@@ -95,7 +98,7 @@ impl Edge {
 
 impl<G> Node for GraphNode<G>
 where
-    G: GraphBase + EvaluatorFnBlock,
+    G: Graph,
 {
     fn evaluator(&self) -> node::Evaluator {
         let attrs = vec![];
@@ -108,7 +111,7 @@ where
         // This will have to be considered in evaluator expr generation too.
         let name = format!("graph_node_evaluator_fn");
         let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
-        let decl = Box::new(graph_node_evaluator_fn_decl(&self.inlets, &self.outlets));
+        let decl = Box::new(graph_node_evaluator_fn_decl(&self.graph, &self.inlets, &self.outlets));
         let block = Box::new(self.graph.evaluator_fn_block(&decl));
         let fn_item = syn::ItemFn {
             attrs,
@@ -245,22 +248,16 @@ where
     }
 }
 
-impl Node for InletNode {
+impl Node for Inlet {
     fn evaluator(&self) -> node::Evaluator {
-        let n_inputs = 1;
+        let n_inputs = 0;
         let n_outputs = 1;
-        //let ty = self.ty.clone();
-        let gen_expr = Box::new(move |mut args: Vec<syn::Expr>| {
-            assert_eq!(
-                args.len(),
-                1,
-                "must be a single input (from the calling fn) for an inlet"
-            );
-            let in_expr = args.remove(0);
+        let ty = self.ty.clone();
+        let gen_expr = Box::new(move |args: Vec<syn::Expr>| {
+            assert!(args.is_empty(), "there cannot be any inputs to an inlet node");
             syn::parse_quote! {
-                //let in_expr_checked: #ty = #in_expr;
-                //in_expr_checked
-                #in_expr
+                let state: &mut #ty = state;
+                state.clone()
             }
         });
         node::Evaluator::Expr {
@@ -271,23 +268,18 @@ impl Node for InletNode {
     }
 }
 
-impl Node for OutletNode {
+impl Node for Outlet {
     fn evaluator(&self) -> node::Evaluator {
         let n_inputs = 1;
-        let n_outputs = 1;
-        //let ty = self.ty.clone();
+        let n_outputs = 0;
+        let ty = self.ty.clone();
         let gen_expr = Box::new(move |mut args: Vec<syn::Expr>| {
-            assert_eq!(
-                args.len(),
-                1,
-                "must be a single input (from the calling fn) for an inlet"
-            );
-            let out_expr = args.remove(0);
-            syn::parse_quote! {
-                //let out_expr_checked: #ty = #in_expr;
-                //out_expr_checked
-                #out_expr
-            }
+            assert_eq!(args.len(), 1, "must be a single input for an outlet");
+            let in_expr = args.remove(0);
+            syn::parse_quote! {{
+                let state: &mut #ty = state;
+                *state = #in_expr;
+            }}
         });
         node::Evaluator::Expr {
             n_inputs,
@@ -298,14 +290,14 @@ impl Node for OutletNode {
 }
 
 #[typetag::serde]
-impl SerdeNode for InletNode {
+impl SerdeNode for Inlet {
     fn node(&self) -> &dyn Node {
         self
     }
 }
 
 #[typetag::serde]
-impl SerdeNode for OutletNode {
+impl SerdeNode for Outlet {
     fn node(&self) -> &dyn Node {
         self
     }
@@ -342,7 +334,14 @@ where
     }
 }
 
-fn graph_node_evaluator_fn_decl<Id>(inlets: &[Inlet<Id>], outlets: &[Outlet<Id>]) -> syn::FnDecl {
+fn graph_node_evaluator_fn_decl<G>(
+    g: G,
+    inlets: &[G::NodeId],
+    outlets: &[G::NodeId],
+) -> syn::FnDecl
+where
+    G: Graph,
+{
     let fn_token = syn::token::Fn {
         span: proc_macro2::Span::call_site(),
     };
@@ -363,8 +362,8 @@ fn graph_node_evaluator_fn_decl<Id>(inlets: &[Inlet<Id>], outlets: &[Outlet<Id>]
         span: proc_macro2::Span::call_site(),
     };
     let variadic = None;
-    let inputs = graph_node_evaluator_fn_inputs(inlets);
-    let output = graph_node_evaluator_fn_output(outlets);
+    let inputs = graph_node_evaluator_fn_inputs(&g, inlets);
+    let output = graph_node_evaluator_fn_output(&g, outlets);
     syn::FnDecl {
         fn_token,
         generics,
@@ -375,31 +374,50 @@ fn graph_node_evaluator_fn_decl<Id>(inlets: &[Inlet<Id>], outlets: &[Outlet<Id>]
     }
 }
 
-fn graph_node_evaluator_fn_inputs<Id>(inlets: &[Inlet<Id>]) -> Punctuated<FnArg, Comma> {
+fn expect_node_state_type<G>(g: G, n: G::NodeId) -> syn::Type
+where
+    G: Graph,
+{
+    g.node(n)
+        .expect("no node for the given id")
+        .state_type()
+        .expect("no state type for node at id")
+}
+
+fn graph_node_evaluator_fn_inputs<G>(g: G, inlets: &[G::NodeId]) -> Punctuated<FnArg, Comma>
+where
+    G: Graph,
+{
     inlets
         .iter()
         .enumerate()
-        .map(|(i, inlet)| {
+        .map(|(i, &n)| {
             let name = format!("inlet{}", i);
             let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
-            let ty = inlet.ty.clone();
+            let ty = expect_node_state_type(&g, n);
             let fn_arg: syn::FnArg = syn::parse_quote! { #ident: #ty };
             fn_arg
         })
         .collect()
 }
 
-fn graph_node_evaluator_fn_output<Id>(outlets: &[Outlet<Id>]) -> syn::ReturnType {
+fn graph_node_evaluator_fn_output<G>(g: G, outlets: &[G::NodeId]) -> syn::ReturnType
+where
+    G: Graph,
+{
     match outlets.len() {
         0 => syn::ReturnType::Default,
         1 => {
             let r_arrow = Default::default();
-            let ty = Box::new(outlets[0].ty.clone());
+            let ty = Box::new(expect_node_state_type(g, outlets[0]));
             syn::ReturnType::Type(r_arrow, ty)
         }
         _ => {
             let paren_token = Default::default();
-            let elems = outlets.iter().map(|outlet| outlet.ty.clone()).collect();
+            let elems = outlets
+                .iter()
+                .map(|&id| expect_node_state_type(&g, id))
+                .collect();
             let ty_tuple = syn::TypeTuple { paren_token, elems };
             let r_arrow = Default::default();
             let ty = Box::new(syn::Type::Tuple(ty_tuple));
