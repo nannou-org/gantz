@@ -545,28 +545,6 @@ impl NodeCollection {
     }
 }
 
-impl NodeIdGraphNode {
-    /// Adds the given `NodeId` to the graph as an inlet node.
-    ///
-    /// This is the same as `G::add_node`, but also adds the resulting node index to the
-    /// `GraphNode`'s `inlets` list.
-    pub fn add_inlet(&mut self, id: NodeId) -> NodeIndex {
-        let idx = self.add_node(id);
-        self.inlets.push(idx);
-        idx
-    }
-
-    /// Adds the given `NodeId` to the graph as an outlet node.
-    ///
-    /// This is the same as `G::add_node`, but also adds the resulting node index to the
-    /// `GraphNode`'s `outlet` list.
-    pub fn add_outlet(&mut self, id: NodeId) -> NodeIndex {
-        let idx = self.add_node(id);
-        self.outlets.push(idx);
-        idx
-    }
-}
-
 impl<'a> GraphBase for ProjectNodeRefGraph<'a> {
     type EdgeId = <NodeRefGraph<'a> as GraphBase>::EdgeId;
     type NodeId = <NodeRefGraph<'a> as GraphBase>::NodeId;
@@ -627,6 +605,8 @@ impl<'a> graph::EvaluatorFnBlock for ProjectNodeRefGraph<'a> {
         };
 
         let block = syn::parse_quote! {{
+            let (node_states, full_graph_eval_fn_symbol) = state;
+
             // Assign inlet values.
             #(
                 state.node_states[#inlet_state_indices] = #inlet_values;
@@ -635,8 +615,9 @@ impl<'a> graph::EvaluatorFnBlock for ProjectNodeRefGraph<'a> {
             // Evaluate the full graph.
             type FullGraphEvalFn<'a> = libloading::Symbol<'a, fn(&mut [&mut dyn std::any::Any])>;
             let eval_fn = state.full_graph_eval_fn_symbol
-                .downcast_ref::<FullGraphEvalFn>()
+                .downcast_ref::<FullGraphEvalFn<'static>>()
                 .expect("`full_graph_eval_fn_symbol` did not match the expected type");
+
             eval_fn(&mut state.node_states[..]);
 
             // Retrieve the outlet values.
@@ -655,15 +636,15 @@ impl<'a> graph::Graph for ProjectNodeRefGraph<'a> {
     }
 }
 
-/// The `State` type expected by the `Project` graph type.
-pub struct GraphState<'a> {
-    /// The list of states necessary for the graph's child stateful nodes.
-    pub node_states: &'a mut [&'a mut dyn std::any::Any],
-    /// A reference to the function symbol for running the full graph.
-    ///
-    /// E.g. `&'a libloading::Symbol<'static, fn(X, Y) -> Z>`
-    pub full_graph_eval_fn_symbol: &'a dyn ::std::any::Any,
-}
+// /// The `State` type expected by the `Project` graph type.
+// pub struct GraphState<'a> {
+//     /// The list of states necessary for the graph's child stateful nodes.
+//     pub node_states: &'a mut [&'a mut dyn std::any::Any],
+//     /// A reference to the function symbol for running the full graph.
+//     ///
+//     /// E.g. `&'a libloading::Symbol<'static, fn(X, Y) -> Z>`
+//     pub full_graph_eval_fn_symbol: &'a dyn std::any::Any,
+// }
 
 impl<'a> Node for NodeRef<'a> {
     fn evaluator(&self) -> node::Evaluator {
@@ -694,7 +675,10 @@ impl<'a> Node for NodeRef<'a> {
                 // TODO: State type must include:
                 // - Node states.
                 // - Dynamic library function symbols.
-                let ty = syn::parse_quote!(GraphState<'static>);
+                //let ty = syn::parse_quote!(GraphState<'static>);
+                let ty = syn::parse_quote! {
+                    (&'static mut [&'static mut dyn std::any::Any], &'static dyn std::any::Any)
+                };
                 Some(ty)
             }
         }

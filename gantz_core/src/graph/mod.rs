@@ -1,5 +1,5 @@
 use crate::node::{self, Node, SerdeNode};
-use petgraph::visit::GraphBase;
+use petgraph::visit::{Data, GraphBase};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::ops::{Deref, DerefMut};
 use syn::punctuated::Punctuated;
@@ -28,6 +28,15 @@ pub trait Graph: EvaluatorFnBlock {
     type Node: Node;
     /// Return a reference to the node at the given node ID.
     fn node(&self, id: Self::NodeId) -> Option<&Self::Node>;
+}
+
+/// A trait implemented for graph types capable of adding nodes and returning a unique ID
+/// associated with the added node.
+///
+/// This trait allows `gantz` to provide the `GraphNode::add_inlet` and `add_outlet` methods.
+pub trait AddNode: Data {
+    /// Add a node with the given weight and return its unique ID.
+    fn add_node(&mut self, n: Self::NodeWeight) -> Self::NodeId;
 }
 
 /// Describes a connection between two nodes.
@@ -98,6 +107,31 @@ impl Outlet {
     /// The same as `new` but parses the type from the given `str`.
     pub fn parse(ty: &str) -> syn::Result<Self> {
         Ok(Self::new(syn::parse_str(ty)?))
+    }
+}
+
+impl<G> GraphNode<G>
+where
+    G: AddNode,
+{
+    /// Adds the given `NodeId` to the graph as an inlet node.
+    ///
+    /// This is the same as `G::add_node`, but also adds the resulting node index to the
+    /// `GraphNode`'s `inlets` list.
+    pub fn add_inlet(&mut self, n: G::NodeWeight) -> G::NodeId {
+        let id = self.add_node(n);
+        self.inlets.push(id);
+        id
+    }
+
+    /// Adds the given `NodeId` to the graph as an outlet node.
+    ///
+    /// This is the same as `G::add_node`, but also adds the resulting node index to the
+    /// `GraphNode`'s `outlet` list.
+    pub fn add_outlet(&mut self, n: G::NodeWeight) -> G::NodeId {
+        let id = self.add_node(n);
+        self.outlets.push(id);
+        id
     }
 }
 
@@ -349,6 +383,26 @@ impl Node for Outlet {
 
     fn state_type(&self) -> Option<syn::Type> {
         Some(self.ty.clone())
+    }
+}
+
+impl<N, E, Ty, Ix> AddNode for petgraph::Graph<N, E, Ty, Ix>
+where
+    Ty: petgraph::EdgeType,
+    Ix: petgraph::graph::IndexType,
+{
+    fn add_node(&mut self, n: N) -> petgraph::graph::NodeIndex<Ix> {
+        petgraph::Graph::add_node(self, n)
+    }
+}
+
+impl<N, E, Ty, Ix> AddNode for petgraph::stable_graph::StableGraph<N, E, Ty, Ix>
+where
+    Ty: petgraph::EdgeType,
+    Ix: petgraph::graph::IndexType,
+{
+    fn add_node(&mut self, n: N) -> petgraph::graph::NodeIndex<Ix> {
+        petgraph::stable_graph::StableGraph::add_node(self, n)
     }
 }
 

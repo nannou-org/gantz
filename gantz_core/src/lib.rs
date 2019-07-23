@@ -18,17 +18,11 @@
 //!    find all connected nodes that either 1. Have no inlets or 2. have inlets that connect to
 //!    already visited nodes. Once these "starting" nodes are found, evaluation is "pushed" from
 //!    each of these nodes in the order in which they were visited.
-//!
-//! ## Current Questions
 
-use derive_more::From;
-use failure::Fail;
 use serde::{self, Deserialize, Serialize};
 
 pub mod graph;
 pub mod node;
-pub mod project;
 
 pub use graph::Edge;
 pub use node::Node;
-pub use project::{Project, TempProject};
