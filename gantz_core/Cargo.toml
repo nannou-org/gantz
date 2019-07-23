@@ -1,18 +1,21 @@
 [package]
-name = "gantz-derive"
+name = "gantz_core"
 version = "0.1.0"
 authors = ["mitchmindtree <mitchell.nordine@gmail.com>"]
-description = "A crate providing procedural macros for the gantz library"
+description = "Core traits and other items for gantz."
 readme = "README.md"
+keywords = ["graph", "node", "graphical", "programming"]
 license = "MIT OR Apache-2.0"
-keywords = ["graph", "node", "derive", "procedural", "macro"]
 repository = "https://github.com/nannou-org/gantz.git"
 homepage = "https://github.com/nannou-org/gantz"
-
-[lib]
-proc-macro = true
+edition = "2018"
 
 [dependencies]
+derive_more = "0.14"
+failure = "0.1"
+petgraph = { version = "0.4", features = ["serde-1"] }
 proc-macro2 = "0.4"
 quote = "0.6"
-syn = { version = "0.14", features = ["extra-traits", "full"] }
+serde = "1"
+syn = "0.15"
+typetag = "0.1"

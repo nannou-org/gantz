@@ -1,4 +1,4 @@
-use super::{Deserialize, Fail, From, Serialize};
+use super::{Deserialize, Serialize};
 
 pub mod expr;
 pub mod pull;
