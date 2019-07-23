@@ -37,7 +37,7 @@ pub type NodeEvaluatorMap<Id> = HashMap<Id, node::Evaluator>;
 pub fn node_evaluators<G>(g: G) -> NodeEvaluatorMap<G::NodeId>
 where
     G: IntoNodeReferences,
-    <G::NodeRef as NodeRef>::Weight: Node,
+    G::NodeWeight: Node,
     G::NodeId: Eq + Hash,
 {
     g.node_references()
@@ -64,7 +64,7 @@ where
 pub fn push_nodes<G>(g: G) -> Vec<(G::NodeId, node::EvalFn)>
 where
     G: IntoNodeReferences,
-    <G::NodeRef as NodeRef>::Weight: Node,
+    G::NodeWeight: Node,
 {
     g.node_references()
         .filter_map(|n| n.weight().push_eval().map(|eval| (n.id(), eval)))
@@ -77,7 +77,7 @@ where
 pub fn pull_nodes<G>(g: G) -> Vec<(G::NodeId, node::EvalFn)>
 where
     G: IntoNodeReferences,
-    <G::NodeRef as NodeRef>::Weight: Node,
+    G::NodeWeight: Node,
 {
     g.node_references()
         .filter_map(|n| n.weight().pull_eval().map(|eval| (n.id(), eval)))
@@ -260,7 +260,7 @@ pub fn eval_stmts<G>(
 where
     G: GraphRef + IntoNodeReferences + NodeIndexable,
     G::NodeId: Eq + Hash,
-    <G::NodeRef as NodeRef>::Weight: Node,
+    G::NodeWeight: Node,
 {
     type LValues<NI> = HashMap<(NI, node::Output), syn::Ident>;
 
@@ -476,7 +476,7 @@ pub fn eval_fns<'a, G, I>(
 where
     G: GraphRef + IntoNodeReferences + NodeIndexable,
     G::NodeId: 'a + Eq + Hash,
-    <G::NodeRef as NodeRef>::Weight: Node,
+    G::NodeWeight: Node,
     I: IntoIterator<Item = (G::NodeId, node::EvalFn, &'a [EvalStep<G::NodeId>])>,
 {
     eval_nodes
@@ -495,7 +495,7 @@ where
     G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G: Data<EdgeWeight = Edge>,
     G::NodeId: Eq + Hash,
-    <G::NodeRef as NodeRef>::Weight: Node,
+    G::NodeWeight: Node,
 {
     let node_evaluators = node_evaluators(g);
     let node_evaluator_fn_items = node_evaluator_fns(&node_evaluators);
@@ -530,6 +530,19 @@ where
         items,
     };
     file
+}
+
+/// The total set of crate dependencies required for all nodes within the given graph.
+///
+/// This is useful for filling the `[dependencies]` entry of a generated crate's `Cargo.toml`.
+pub fn crate_deps<G>(g: G) -> HashSet<node::CrateDep>
+where
+    G: IntoNodeReferences,
+    G::NodeWeight: Node,
+{
+    g.node_references()
+        .flat_map(|n| n.weight().crate_deps())
+        .collect()
 }
 
 // Create the `#[no_mangle]` attribute.

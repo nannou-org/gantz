@@ -74,4 +74,8 @@ where
     fn state_type(&self) -> Option<syn::Type> {
         self.node.state_type()
     }
+
+    fn crate_deps(&self) -> Vec<node::CrateDep> {
+        self.node.crate_deps()
+    }
 }
