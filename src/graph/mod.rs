@@ -9,39 +9,25 @@ use syn::FnArg;
 pub mod codegen;
 
 /// Required by graphs that support nesting graphs of the same type as nodes.
-pub trait EvaluatorFnBlock {
+pub trait EvaluatorFnBlock: GraphBase {
     /// The `Evaluator` function block used to evaluate the graph from its inputs to its outputs.
     ///
     /// The function declaration is provided in order to allow the implementer to inspect the
     /// function inputs and output and create a function body accordingly.
-    fn evaluator_fn_block(&self, fn_decl: &syn::FnDecl) -> syn::Block;
+    fn evaluator_fn_block(
+        &self,
+        inlets: &[Self::NodeId],
+        outlets: &[Self::NodeId],
+        fn_decl: &syn::FnDecl,
+    ) -> syn::Block;
 }
 
 /// Types that may be used as a graph within a **GraphNode**.
-pub trait Graph: GraphBase + EvaluatorFnBlock {
+pub trait Graph: EvaluatorFnBlock {
     /// The node type used within the inner graph.
     type Node: Node;
     /// Return a reference to the node at the given node ID.
     fn node(&self, id: Self::NodeId) -> Option<&Self::Node>;
-}
-
-impl<'a, T> EvaluatorFnBlock for &'a T
-where
-    T: EvaluatorFnBlock,
-{
-    fn evaluator_fn_block(&self, fn_decl: &syn::FnDecl) -> syn::Block {
-        (*self).evaluator_fn_block(fn_decl)
-    }
-}
-
-impl<'a, T> Graph for &'a T
-where
-    T: Graph,
-{
-    type Node = T::Node;
-    fn node(&self, id: Self::NodeId) -> Option<&Self::Node> {
-        (*self).node(id)
-    }
 }
 
 /// Describes a connection between two nodes.
@@ -62,11 +48,6 @@ where
     /// The graph used to evaluate the node.
     pub graph: G,
     /// The types of each of the inputs into the graph node.
-    ///
-    /// TODO: Inlets and outlets should possibly use normal `Node`s and these should be their
-    /// indices. This way we can retrieve the type from the graph, cast it to `Inlet`/`Outlet` and
-    /// check for types while also allowing inlets and outlets to partake in the graph evaluation
-    /// process.
     pub inlets: Vec<G::NodeId>,
     /// The types of each of the outputs into the graph node.
     pub outlets: Vec<G::NodeId>,
@@ -96,6 +77,54 @@ impl Edge {
     }
 }
 
+impl Inlet {
+    /// Construct an inlet with the given type.
+    pub fn new(ty: syn::Type) -> Self {
+        Inlet { ty }
+    }
+
+    /// The same as `new` but parses the type from the given `str`.
+    pub fn parse(ty: &str) -> syn::Result<Self> {
+        Ok(Self::new(syn::parse_str(ty)?))
+    }
+}
+
+impl Outlet {
+    /// Construct an outlet with the given type.
+    pub fn new(ty: syn::Type) -> Self {
+        Outlet { ty }
+    }
+
+    /// The same as `new` but parses the type from the given `str`.
+    pub fn parse(ty: &str) -> syn::Result<Self> {
+        Ok(Self::new(syn::parse_str(ty)?))
+    }
+}
+
+impl<'a, T> EvaluatorFnBlock for &'a T
+where
+    T: EvaluatorFnBlock,
+{
+    fn evaluator_fn_block(
+        &self,
+        inlets: &[Self::NodeId],
+        outlets: &[Self::NodeId],
+        fn_decl: &syn::FnDecl,
+    ) -> syn::Block {
+        (*self).evaluator_fn_block(inlets, outlets, fn_decl)
+    }
+}
+
+impl<'a, T> Graph for &'a T
+where
+    T: Graph,
+{
+    type Node = T::Node;
+    fn node(&self, id: Self::NodeId) -> Option<&Self::Node> {
+        (*self).node(id)
+    }
+}
+
 impl<G> Node for GraphNode<G>
 where
     G: Graph,
@@ -112,7 +141,7 @@ where
         let name = format!("graph_node_evaluator_fn");
         let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
         let decl = Box::new(graph_node_evaluator_fn_decl(&self.graph, &self.inlets, &self.outlets));
-        let block = Box::new(self.graph.evaluator_fn_block(&decl));
+        let block = Box::new(self.graph.evaluator_fn_block(&self.inlets, &self.outlets, &decl));
         let fn_item = syn::ItemFn {
             attrs,
             vis,
@@ -125,6 +154,18 @@ where
             block,
         };
         node::Evaluator::Fn { fn_item }
+    }
+}
+
+impl<G> Default for GraphNode<G>
+where
+    G: GraphBase + Default,
+{
+    fn default() -> Self {
+        let graph = Default::default();
+        let inlets = Default::default();
+        let outlets = Default::default();
+        GraphNode { graph, inlets, outlets }
     }
 }
 
@@ -266,6 +307,10 @@ impl Node for Inlet {
             gen_expr,
         }
     }
+
+    fn state_type(&self) -> Option<syn::Type> {
+        Some(self.ty.clone())
+    }
 }
 
 impl Node for Outlet {
@@ -286,6 +331,10 @@ impl Node for Outlet {
             n_outputs,
             gen_expr,
         }
+    }
+
+    fn state_type(&self) -> Option<syn::Type> {
+        Some(self.ty.clone())
     }
 }
 
@@ -396,6 +445,7 @@ where
             let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
             let ty = expect_node_state_type(&g, n);
             let fn_arg: syn::FnArg = syn::parse_quote! { #ident: #ty };
+            println!("graph inlet fn_arg: `{:?}`", fn_arg);
             fn_arg
         })
         .collect()
