@@ -1,5 +1,5 @@
 use super::{Deserialize, Fail, From, Serialize};
-use crate::graph::{self, GraphNode};
+use crate::graph::{self, Edge, GraphNode};
 use crate::node::{self, Node, SerdeNode};
 use petgraph::visit::GraphBase;
 use quote::ToTokens;
@@ -53,8 +53,16 @@ pub struct NodeCollection {
     map: NodeTree,
 }
 
+/// The type used to represent node and edge indices.
+pub type Index = usize;
+pub type EdgeIndex = petgraph::graph::EdgeIndex<Index>;
+pub type NodeIndex = petgraph::graph::NodeIndex<Index>;
+
+/// The petgraph type used to represent a stable gantz graph.
+pub type StableGraph<N> = petgraph::stable_graph::StableGraph<N, Edge, petgraph::Directed, Index>;
+
 /// A graph composed of IDs into the `NodeCollection`.
-pub type NodeIdGraph = graph::StableGraph<NodeId>;
+pub type NodeIdGraph = StableGraph<NodeId>;
 
 /// A **NodeIdGraph** along with its inlets and outlets.
 pub type NodeIdGraphNode = GraphNode<NodeIdGraph>;
@@ -63,20 +71,20 @@ pub type NodeIdGraphNode = GraphNode<NodeIdGraph>;
 ///
 /// This graph is constructed at the time of code generation using the project's **NodeIdGraph**
 /// and the **NodeCollection**.
-type NodeRefGraph<'a> = graph::StableGraph<NodeRef<'a>>;
+type NodeRefGraph<'a> = StableGraph<NodeRef<'a>>;
 
 /// A **NodeRefGraph** along with the cargo **PackageId** for the graph within this project.
 ///
 /// This type implements the **EvaluatorFnBlock** implementation, enabling
 /// **ProjectNodeRefGraphNode** to implement the **Node** type.
 // TODO: Implement `GraphBase` and `EvaluatorFnBlock`.
-struct ProjectNodeRefGraph<'a> {
-    graph: NodeRefGraph<'a>,
-    package_id: cargo::core::PackageId,
+pub struct ProjectNodeRefGraph<'a> {
+    pub graph: NodeRefGraph<'a>,
+    pub package_id: cargo::core::PackageId,
 }
 
 /// Shorthand for a **GraphNode** wrapped around a **ProjectNodeRefGraph**.
-type ProjectNodeRefGraphNode<'a> = GraphNode<ProjectNodeRefGraph<'a>>;
+pub type ProjectNodeRefGraphNode<'a> = GraphNode<ProjectNodeRefGraph<'a>>;
 
 /// Whether the node is a **Core** node (has no other internal **Node** dependencies) or is a
 /// **Graph** node, composed entirely of other gantz **Node**s.
@@ -98,7 +106,7 @@ pub struct ProjectGraph {
 /// A **Node** type constructed as a reference to a type implementing **Node**.
 ///
 /// A graph of **NodeRef**s are created at the time of codegen in order to.
-enum NodeRef<'a> {
+pub enum NodeRef<'a> {
     Core(&'a dyn Node),
     Graph(ProjectNodeRefGraphNode<'a>),
 }
@@ -409,11 +417,22 @@ impl Project {
     ///
     /// Returns `None` if there are no nodes for the given **NodeId** or if a node exists but it is
     /// not a **Graph** node.
-    pub fn graph_node(&self, id: &NodeId) -> Option<&ProjectGraph> {
+    pub fn graph_node<'a>(&'a self, id: &NodeId) -> Option<&'a ProjectGraph> {
         self.nodes.get(id).and_then(|kind| match kind {
             NodeKind::Graph(ref graph) => Some(graph),
             _ => None,
         })
+    }
+
+    /// Similar to `graph_node`, but returns a graph containing node references rather than IDs.
+    ///
+    /// The returned graph will also contain information about its inlets and outlets.
+    ///
+    /// Returns `None` if there are no nodes for the given **NodeId** or if a node exists but is
+    /// not a **Graph** node.
+    pub fn ref_graph_node<'a>(&'a self, id: &NodeId) -> Option<ProjectNodeRefGraphNode<'a>> {
+        let g = self.graph_node(id)?;
+        Some(id_graph_to_node_graph(g, &self.nodes))
     }
 
     /// Update the graph associated with the graph node at the given **NodeId**.
@@ -526,20 +545,124 @@ impl NodeCollection {
     }
 }
 
+impl NodeIdGraphNode {
+    /// Adds the given `NodeId` to the graph as an inlet node.
+    ///
+    /// This is the same as `G::add_node`, but also adds the resulting node index to the
+    /// `GraphNode`'s `inlets` list.
+    pub fn add_inlet(&mut self, id: NodeId) -> NodeIndex {
+        let idx = self.add_node(id);
+        self.inlets.push(idx);
+        idx
+    }
+
+    /// Adds the given `NodeId` to the graph as an outlet node.
+    ///
+    /// This is the same as `G::add_node`, but also adds the resulting node index to the
+    /// `GraphNode`'s `outlet` list.
+    pub fn add_outlet(&mut self, id: NodeId) -> NodeIndex {
+        let idx = self.add_node(id);
+        self.outlets.push(idx);
+        idx
+    }
+}
+
 impl<'a> GraphBase for ProjectNodeRefGraph<'a> {
     type EdgeId = <NodeRefGraph<'a> as GraphBase>::EdgeId;
     type NodeId = <NodeRefGraph<'a> as GraphBase>::NodeId;
 }
 
 impl<'a> graph::EvaluatorFnBlock for ProjectNodeRefGraph<'a> {
-    fn evaluator_fn_block(&self, _fn_decl: &syn::FnDecl) -> syn::Block {
-        // TODO: Block should look something like this:
-        //
-        // - Use the inputs to the `fn_decl` to set the state of the `inlet` nodes.
-        // - Call the `push_eval` function from the dynamic library associated with this graph.
-        // - Retrievel the state for each `outlet` node and return them at the end of the block.
-        unimplemented!("TODO: generate a block that evaluates the graph")
+    fn evaluator_fn_block(
+        &self,
+        inlets: &[Self::NodeId],
+        outlets: &[Self::NodeId],
+        fn_decl: &syn::FnDecl,
+    ) -> syn::Block {
+        println!("evaluator_fn_block");
+
+        let push = inlets.iter().cloned();
+        let pull = outlets.iter().cloned();
+        let eval_order = graph::codegen::eval_order(&self.graph, push, pull);
+        let state_order: HashMap<_, _> = graph::codegen::state_order(&self.graph, eval_order)
+            .enumerate()
+            .map(|(ix, n_id)| (n_id, ix))
+            .collect();
+
+        println!("inlets: {:?}", inlets);
+        println!("outlets: {:?}", outlets);
+        println!("state order: {:?}", state_order);
+
+        // The order within the state slice for each inlet node.
+        let inlet_state_indices = inlets.iter().map(|&inlet| state_order[&inlet]);
+        let mut outlet_state_indices = outlets.iter().map(|&outlet| state_order[&outlet]);
+
+        // Retrieve the inlet values from the fn_decl args.
+        let inlet_values = fn_decl.inputs.iter().map(|arg| match arg {
+            syn::FnArg::Captured(ref arg) => match arg.pat {
+                syn::Pat::Ident(ref pat) => pat.ident.clone(),
+                _ => unreachable!("graph eval fn_decl contained non-`Ident` arg pattern"),
+            },
+            _ => unreachable!("graph eval fn_decl should only use captured `FnArg`s"),
+        });
+
+        // - `()` for no outlets.
+        // - `#outlet` for single outlet.
+        // - `(#(#outlet),*)` for multiple outlets.
+        let return_outlets: syn::Expr = match outlets.len() {
+            0 => {
+                syn::parse_quote! { () }
+            }
+            1 => {
+                let outlet_ix = outlet_state_indices
+                    .next()
+                    .expect("expected 1 index, found none");
+                syn::parse_quote! { state.node_states[#outlet_ix] }
+            }
+            _ => {
+                syn::parse_quote! {
+                    (#(state.node_states[#outlet_state_indices]),*)
+                }
+            }
+        };
+
+        let block = syn::parse_quote! {{
+            // Assign inlet values.
+            #(
+                state.node_states[#inlet_state_indices] = #inlet_values;
+            )*
+
+            // Evaluate the full graph.
+            type FullGraphEvalFn<'a> = libloading::Symbol<'a, fn(&mut [&mut dyn std::any::Any])>;
+            let eval_fn = state.full_graph_eval_fn_symbol
+                .downcast_ref::<FullGraphEvalFn>()
+                .expect("`full_graph_eval_fn_symbol` did not match the expected type");
+            eval_fn(&mut state.node_states[..]);
+
+            // Retrieve the outlet values.
+            #return_outlets
+        }};
+
+        block
     }
+}
+
+impl<'a> graph::Graph for ProjectNodeRefGraph<'a> {
+    type Node = NodeRef<'a>;
+
+    fn node(&self, id: Self::NodeId) -> Option<&Self::Node> {
+        self.graph.node_weight(id)
+    }
+}
+
+/// The `State` type expected by the `Project` graph type.
+pub struct GraphState<'a> {
+    /// The list of states necessary for the graph's child stateful nodes.
+    pub node_states: &'a mut [&'a mut dyn std::any::Any],
+    /// A reference to the function symbol for running the full graph.
+    ///
+    /// E.g. `&'a libloading::Symbol<'static, fn(X, Y) -> Z>`
+    pub full_graph_eval_fn_symbol: &'a dyn ::std::any::Any,
 }
 
 impl<'a> Node for NodeRef<'a> {
@@ -567,7 +690,13 @@ impl<'a> Node for NodeRef<'a> {
     fn state_type(&self) -> Option<syn::Type> {
         match self {
             NodeRef::Core(node) => node.state_type(),
-            NodeRef::Graph(graph) => graph.state_type(),
+            NodeRef::Graph(_graph) => {
+                // TODO: State type must include:
+                // - Node states.
+                // - Dynamic library function symbols.
+                let ty = syn::parse_quote!(GraphState<'static>);
+                Some(ty)
+            }
         }
     }
 }
@@ -589,6 +718,13 @@ impl ops::Deref for NodeCollection {
     type Target = NodeTree;
     fn deref(&self) -> &Self::Target {
         &self.map
+    }
+}
+
+impl<'a> ops::Deref for ProjectNodeRefGraph<'a> {
+    type Target = NodeRefGraph<'a>;
+    fn deref(&self) -> &Self::Target {
+        &self.graph
     }
 }
 
@@ -873,7 +1009,7 @@ where
 }
 
 // Compile all crates within the workspace.
-fn workspace_compile<P>(
+fn _workspace_compile<P>(
     workspace_dir: P,
     cargo_config: &cargo::Config,
 ) -> Result<
@@ -918,7 +1054,7 @@ where
     let pkg_ws = cargo::core::Workspace::new(&pkg_manifest_path, &cargo_config)?;
     let mode = cargo::core::compiler::CompileMode::Build;
     let mut options = cargo::ops::CompileOptions::new(&cargo_config, mode)?;
-    options.build_config.message_format = cargo::core::compiler::MessageFormat::Json;
+    options.build_config.message_format = cargo::core::compiler::MessageFormat::Human;
     options.build_config.release = true;
     let compilation = cargo::ops::compile(&pkg_ws, &options)?;
     Ok(compilation)

@@ -1,8 +1,8 @@
-use super::{Edge, Inlet, Outlet};
+use super::Edge;
 use crate::node::{self, Node};
 use petgraph::visit::{
-    Data, EdgeRef, GraphRef, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, NodeRef,
-    Visitable, Walker,
+    Data, Dfs, EdgeRef, GraphRef, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, NodeRef,
+    Topo, Visitable, Walker,
 };
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
@@ -84,6 +84,23 @@ where
         .collect()
 }
 
+/// An iterator yielding all nodes reachable via pushing from the given node.
+pub fn push_reachable<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+where
+    G: IntoEdgesDirected + Visitable,
+{
+    Dfs::new(g, n).iter(g)
+}
+
+/// An iterator yielding all nodes reachable via pulling from the given node.
+pub fn pull_reachable<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+where
+    G: IntoEdgesDirected + Visitable,
+{
+    let rev_g = petgraph::visit::Reversed(g);
+    Dfs::new(rev_g, n).iter(rev_g)
+}
+
 /// Push evaluation from the specified node.
 ///
 /// Evaluation order is equivalent to a topological ordering of the connected component
@@ -96,13 +113,8 @@ where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
     G::NodeId: Eq + Hash,
 {
-    // First, find all nodes reachable by a `DFS` from this node.
-    let dfs: HashSet<G::NodeId> = petgraph::visit::Dfs::new(g, n).iter(g).collect();
-
-    // The order of evaluation is topological order of nodes touching the DFS.
-    petgraph::visit::Topo::new(g)
-        .iter(g)
-        .filter(move |node| dfs.contains(&node))
+    let dfs: HashSet<G::NodeId> = push_reachable(g, n).collect();
+    Topo::new(g).iter(g).filter(move |node| dfs.contains(&node))
 }
 
 /// Pull evaluation from the specified node.
@@ -117,14 +129,48 @@ where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
     G::NodeId: Eq + Hash,
 {
-    // First, find all nodes reachable by a `DFS` from this node.
-    let rev_g = petgraph::visit::Reversed(&g);
-    let dfs: HashSet<G::NodeId> = petgraph::visit::Dfs::new(rev_g, n).iter(rev_g).collect();
+    let dfs: HashSet<G::NodeId> = pull_reachable(g, n).collect();
+    Topo::new(g).iter(g).filter(move |node| dfs.contains(&node))
+}
 
-    // The order of evaluation is topological order of nodes touching the reverse DFS.
-    petgraph::visit::Topo::new(g)
-        .iter(g)
-        .filter(move |node| dfs.contains(&node))
+/// The evaluation order for given any number of simultaneously pushing and pulling nodes.
+///
+/// Evaluation order is equivalent to a topological ordering of the connected components reachable
+/// via DFS from each push node and reversed-edge DFS from each pull node.
+///
+/// Expects any directed graph whose edges are of type `Edge` and whose nodes implement `Node`.
+/// Direction of edges indicate the flow of data through the graph.
+pub fn eval_order<G, A, B>(g: G, push: A, pull: B) -> impl Iterator<Item = G::NodeId>
+where
+    G: IntoEdgesDirected + IntoNodeReferences + Visitable,
+    G::NodeId: Eq + Hash,
+    A: IntoIterator<Item = G::NodeId>,
+    B: IntoIterator<Item = G::NodeId>,
+{
+    let mut reachable = HashSet::new();
+    reachable.extend(push.into_iter().flat_map(|n| push_reachable(g, n)));
+    reachable.extend(pull.into_iter().flat_map(|n| pull_reachable(g, n)));
+    Topo::new(g).iter(g).filter(move |n| reachable.contains(&n))
+}
+
+/// Given a node evaluation order, this filters out all non-stateful nodes.
+///
+/// This order of the yielded node IDs matches the expected order in which state should be laid out
+/// when passed to the generated evaluation function.
+pub fn state_order<G, I>(g: G, eval_order: I) -> impl Iterator<Item = G::NodeId>
+where
+    G: IntoNodeReferences + NodeIndexable,
+    I: IntoIterator<Item = G::NodeId>,
+    G::NodeWeight: Node,
+{
+    eval_order.into_iter().filter(move |&n| {
+        g.node_references()
+            .nth(g.to_index(n))
+            .expect("node in `eval_order` does not exist within the given graph")
+            .weight()
+            .state_type()
+            .is_some()
+    })
 }
 
 /// Given a node evaluation order, produce the series of evaluation steps required.
@@ -134,22 +180,30 @@ pub fn eval_steps<G, I>(
     eval_order: I,
 ) -> Vec<EvalStep<G::NodeId>>
 where
-    G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable,
+    G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable,
     G: Data<EdgeWeight = Edge>,
     G::NodeId: Eq + Hash,
-    <G::NodeRef as NodeRef>::Weight: Node,
+    G::NodeWeight: Node,
     I: IntoIterator<Item = G::NodeId>,
 {
     let mut eval_steps = vec![];
+    let mut visited = HashSet::new();
 
     // Step through each of the nodes.
     for node in eval_order {
+        visited.insert(node);
+
         // Initialise the arguments to `None` for each input.
         let child_evaluator = &node_evaluators[&node];
         let mut args: Vec<_> = (0..child_evaluator.n_inputs()).map(|_| None).collect();
 
         // Create an argument for each input to this child.
         for e_ref in g.edges_directed(node, petgraph::Incoming) {
+            // Only consider edges to nodes that we have already visited.
+            if !visited.contains(&e_ref.source()) {
+                continue;
+            }
+
             let w = e_ref.weight();
 
             // Check how many connections their are from the parent's output and see if the
@@ -197,13 +251,12 @@ pub fn ty_from_fn_arg(arg: &syn::FnArg) -> Option<syn::Type> {
     }
 }
 
-/// Generate a function for performing evaluation of the given steps.
-pub fn eval_fn<G>(
+/// Generate a sequence of evaluation statements, one for each given evaluation step.
+pub fn eval_stmts<G>(
     g: G,
-    eval_fn: node::EvalFn,
     steps: &[EvalStep<G::NodeId>],
     node_evaluators: &NodeEvaluatorMap<G::NodeId>,
-) -> syn::ItemFn
+) -> Vec<syn::Stmt>
 where
     G: GraphRef + IntoNodeReferences + NodeIndexable,
     G::NodeId: Eq + Hash,
@@ -305,14 +358,6 @@ where
         }
     }
 
-    // A function that produces the `node_states` argument that is to be appended to the evaluation
-    // function `inputs`.
-    //
-    // TODO: Eventually we should use a more user-friendly type for passing through state.
-    fn node_states_fn_arg() -> syn::FnArg {
-        syn::parse_quote! { _node_states: &mut [&mut dyn std::any::Any] }
-    }
-
     // For each evaluation step, generate a statement where the expression for the node at that
     // evaluation step is evaluated and the outputs are destructured from a tuple.
     let mut stmts: Vec<syn::Stmt> = vec![];
@@ -367,31 +412,44 @@ where
         stmts.push(stmt);
     }
 
-    // Construct the final function item.
-    let block = Box::new(syn::Block {
-        stmts,
-        brace_token: Default::default(),
-    });
+    stmts
+}
+
+/// Generate a function for performing evaluation of the given statements.
+///
+/// The given `Vec<syn::Stmt>` should be generated via the `eval_stmts` function.
+///
+/// This function modifies given `EvalFn` fields in two ways:
+///
+/// - Adds a `#[no_mangle]` attribute if one doesn't already exist.
+/// - Adds a `_node_states: &mut [&mut dyn std::any::Any]` input to the function declaration to
+///   allow for passing through unique state associated with each node.
+pub fn eval_fn(eval_fn: node::EvalFn, stmts: Vec<syn::Stmt>) -> syn::ItemFn {
+    let brace_token = Default::default();
+    let block = Box::new(syn::Block { stmts, brace_token });
+
     let node::EvalFn {
+        mut fn_attrs,
         mut fn_decl,
         fn_name,
-        mut fn_attrs,
     } = eval_fn;
-
-    // Append the argument for acquiring node states.
-    fn_decl.inputs.push(node_states_fn_arg());
-
-    let decl = Box::new(fn_decl);
-    let ident = syn::Ident::new(&fn_name, proc_macro2::Span::call_site());
-    let vis = syn::Visibility::Public(syn::VisPublic {
-        pub_token: Default::default(),
-    });
 
     // Add the `#[no_mangle]` attr to the function so that the symbol retains its name.
     let no_mangle = no_mangle_attr();
     if !fn_attrs.iter().any(|attr| *attr == no_mangle) {
         fn_attrs.push(no_mangle);
     }
+
+    // Append the argument for acquiring node states.
+    let node_states = node_states_fn_arg();
+    if !fn_decl.inputs.iter().any(|input| *input == node_states) {
+        fn_decl.inputs.push(node_states);
+    }
+
+    let decl = Box::new(fn_decl);
+    let ident = syn::Ident::new(&fn_name, proc_macro2::Span::call_site());
+    let pub_token = Default::default();
+    let vis = syn::Visibility::Public(syn::VisPublic { pub_token });
 
     let item_fn = syn::ItemFn {
         attrs: fn_attrs,
@@ -423,13 +481,16 @@ where
 {
     eval_nodes
         .into_iter()
-        .map(|(_n, eval, steps)| eval_fn(g, eval, steps, node_evaluators))
+        .map(|(_n, eval, steps)| {
+            let stmts = eval_stmts(g, steps, node_evaluators);
+            eval_fn(eval, stmts)
+        })
         .collect()
 }
 
 /// Given a gantz graph, generate the rust code src file with all the necessary functions for
 /// executing it.
-pub fn file<G>(g: G, _inlets: &[Inlet<G::NodeId>], _outlets: &[Outlet<G::NodeId>]) -> syn::File
+pub fn file<G>(g: G, _inlets: &[G::NodeId], _outlets: &[G::NodeId]) -> syn::File
 where
     G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G: Data<EdgeWeight = Edge>,
@@ -438,27 +499,29 @@ where
 {
     let node_evaluators = node_evaluators(g);
     let node_evaluator_fn_items = node_evaluator_fns(&node_evaluators);
+
     let pull_nodes = pull_nodes(g);
     let push_nodes = push_nodes(g);
-
-    let pull_node_fn_items = pull_nodes.into_iter().map(|(n, eval)| {
+    let pull_node_eval_steps = pull_nodes.into_iter().map(|(n, eval)| {
         let order = pull_eval_order(g, n);
         let steps = eval_steps(g, &node_evaluators, order);
-        let item_fn = eval_fn(g, eval, &steps, &node_evaluators);
-        syn::Item::Fn(item_fn)
+        (steps, eval)
     });
-
-    let push_node_fn_items = push_nodes.into_iter().map(|(n, eval)| {
-        let order = push_eval_order(&g, n);
+    let push_node_eval_steps = push_nodes.into_iter().map(|(n, eval)| {
+        let order = push_eval_order(g, n);
         let steps = eval_steps(g, &node_evaluators, order);
-        let item_fn = eval_fn(g, eval, &steps, &node_evaluators);
+        (steps, eval)
+    });
+    let push_pull_eval_steps = pull_node_eval_steps.chain(push_node_eval_steps);
+    let push_pull_eval_fn_items = push_pull_eval_steps.map(|(steps, eval)| {
+        let stmts = eval_stmts(g, &steps, &node_evaluators);
+        let item_fn = eval_fn(eval, stmts);
         syn::Item::Fn(item_fn)
     });
 
     let items = node_evaluator_fn_items
         .map(|(_, item_fn)| syn::Item::Fn(item_fn.clone()))
-        .chain(pull_node_fn_items)
-        .chain(push_node_fn_items)
+        .chain(push_pull_eval_fn_items)
         .collect();
 
     let file = syn::File {
@@ -491,4 +554,12 @@ fn no_mangle_attr() -> syn::Attribute {
         path,
         tts,
     }
+}
+
+// A function that produces the `node_states` argument that is to be appended to the evaluation
+// function `inputs`.
+//
+// TODO: Eventually we should use a more user-friendly type for passing through state.
+fn node_states_fn_arg() -> syn::FnArg {
+    syn::parse_quote! { _node_states: &mut [&mut dyn std::any::Any] }
 }
