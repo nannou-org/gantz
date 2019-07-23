@@ -594,23 +594,17 @@ impl<'a> graph::EvaluatorFnBlock for ProjectNodeRefGraph<'a> {
         println!("state order: {:?}", state_order);
 
         // The order within the state slice for each inlet node.
-        let inlet_state_indices = inlets
-            .iter()
-            .map(|&inlet| state_order[&inlet]);
-        let mut outlet_state_indices = outlets
-            .iter()
-            .map(|&outlet| state_order[&outlet]);
+        let inlet_state_indices = inlets.iter().map(|&inlet| state_order[&inlet]);
+        let mut outlet_state_indices = outlets.iter().map(|&outlet| state_order[&outlet]);
 
         // Retrieve the inlet values from the fn_decl args.
-        let inlet_values = fn_decl.inputs
-            .iter()
-            .map(|arg| match arg {
-                syn::FnArg::Captured(ref arg) => match arg.pat {
-                    syn::Pat::Ident(ref pat) => pat.ident.clone(),
-                    _ => unreachable!("graph eval fn_decl contained non-`Ident` arg pattern"),
-                },
-                _ => unreachable!("graph eval fn_decl should only use captured `FnArg`s"),
-            });
+        let inlet_values = fn_decl.inputs.iter().map(|arg| match arg {
+            syn::FnArg::Captured(ref arg) => match arg.pat {
+                syn::Pat::Ident(ref pat) => pat.ident.clone(),
+                _ => unreachable!("graph eval fn_decl contained non-`Ident` arg pattern"),
+            },
+            _ => unreachable!("graph eval fn_decl should only use captured `FnArg`s"),
+        });
 
         // - `()` for no outlets.
         // - `#outlet` for single outlet.
@@ -620,7 +614,9 @@ impl<'a> graph::EvaluatorFnBlock for ProjectNodeRefGraph<'a> {
                 syn::parse_quote! { () }
             }
             1 => {
-                let outlet_ix = outlet_state_indices.next().expect("expected 1 index, found none");
+                let outlet_ix = outlet_state_indices
+                    .next()
+                    .expect("expected 1 index, found none");
                 syn::parse_quote! { state.node_states[#outlet_ix] }
             }
             _ => {
@@ -666,7 +662,7 @@ pub struct GraphState<'a> {
     /// A reference to the function symbol for running the full graph.
     ///
     /// E.g. `&'a libloading::Symbol<'static, fn(X, Y) -> Z>`
-    pub full_graph_eval_fn_symbol: &'a dyn::std::any::Any,
+    pub full_graph_eval_fn_symbol: &'a dyn ::std::any::Any,
 }
 
 impl<'a> Node for NodeRef<'a> {
@@ -700,7 +696,7 @@ impl<'a> Node for NodeRef<'a> {
                 // - Dynamic library function symbols.
                 let ty = syn::parse_quote!(GraphState<'static>);
                 Some(ty)
-            },
+            }
         }
     }
 }

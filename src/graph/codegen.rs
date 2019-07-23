@@ -163,16 +163,14 @@ where
     I: IntoIterator<Item = G::NodeId>,
     G::NodeWeight: Node,
 {
-    eval_order
-        .into_iter()
-        .filter(move |&n| {
-            g.node_references()
-                .nth(g.to_index(n))
-                .expect("node in `eval_order` does not exist within the given graph")
-                .weight()
-                .state_type()
-                .is_some()
-        })
+    eval_order.into_iter().filter(move |&n| {
+        g.node_references()
+            .nth(g.to_index(n))
+            .expect("node in `eval_order` does not exist within the given graph")
+            .weight()
+            .state_type()
+            .is_some()
+    })
 }
 
 /// Given a node evaluation order, produce the series of evaluation steps required.

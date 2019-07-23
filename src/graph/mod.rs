@@ -140,8 +140,15 @@ where
         // This will have to be considered in evaluator expr generation too.
         let name = format!("graph_node_evaluator_fn");
         let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
-        let decl = Box::new(graph_node_evaluator_fn_decl(&self.graph, &self.inlets, &self.outlets));
-        let block = Box::new(self.graph.evaluator_fn_block(&self.inlets, &self.outlets, &decl));
+        let decl = Box::new(graph_node_evaluator_fn_decl(
+            &self.graph,
+            &self.inlets,
+            &self.outlets,
+        ));
+        let block = Box::new(
+            self.graph
+                .evaluator_fn_block(&self.inlets, &self.outlets, &decl),
+        );
         let fn_item = syn::ItemFn {
             attrs,
             vis,
@@ -165,7 +172,11 @@ where
         let graph = Default::default();
         let inlets = Default::default();
         let outlets = Default::default();
-        GraphNode { graph, inlets, outlets }
+        GraphNode {
+            graph,
+            inlets,
+            outlets,
+        }
     }
 }
 
@@ -295,7 +306,10 @@ impl Node for Inlet {
         let n_outputs = 1;
         let ty = self.ty.clone();
         let gen_expr = Box::new(move |args: Vec<syn::Expr>| {
-            assert!(args.is_empty(), "there cannot be any inputs to an inlet node");
+            assert!(
+                args.is_empty(),
+                "there cannot be any inputs to an inlet node"
+            );
             syn::parse_quote! {
                 let state: &mut #ty = state;
                 state.clone()
@@ -383,11 +397,7 @@ where
     }
 }
 
-fn graph_node_evaluator_fn_decl<G>(
-    g: G,
-    inlets: &[G::NodeId],
-    outlets: &[G::NodeId],
-) -> syn::FnDecl
+fn graph_node_evaluator_fn_decl<G>(g: G, inlets: &[G::NodeId], outlets: &[G::NodeId]) -> syn::FnDecl
 where
     G: Graph,
 {
