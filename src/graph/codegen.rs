@@ -84,6 +84,23 @@ where
         .collect()
 }
 
+/// An iterator yielding all nodes reachable via pushing from the given node.
+pub fn push_reachable<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+where
+    G: IntoEdgesDirected + Visitable,
+{
+    Dfs::new(g, n).iter(g)
+}
+
+/// An iterator yielding all nodes reachable via pulling from the given node.
+pub fn pull_reachable<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+where
+    G: IntoEdgesDirected + Visitable,
+{
+    let rev_g = petgraph::visit::Reversed(g);
+    Dfs::new(rev_g, n).iter(rev_g)
+}
+
 /// Push evaluation from the specified node.
 ///
 /// Evaluation order is equivalent to a topological ordering of the connected component
@@ -96,10 +113,7 @@ where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
     G::NodeId: Eq + Hash,
 {
-    // First, find all nodes reachable by a `DFS` from this node.
-    let dfs: HashSet<G::NodeId> = Dfs::new(g, n).iter(g).collect();
-
-    // The order of evaluation is topological order of nodes touching the DFS.
+    let dfs: HashSet<G::NodeId> = push_reachable(g, n).collect();
     Topo::new(g).iter(g).filter(move |node| dfs.contains(&node))
 }
 
@@ -115,11 +129,7 @@ where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
     G::NodeId: Eq + Hash,
 {
-    // First, find all nodes reachable by a `DFS` from this node.
-    let rev_g = petgraph::visit::Reversed(&g);
-    let dfs: HashSet<G::NodeId> = Dfs::new(rev_g, n).iter(rev_g).collect();
-
-    // The order of evaluation is topological order of nodes touching the reverse DFS.
+    let dfs: HashSet<G::NodeId> = pull_reachable(g, n).collect();
     Topo::new(g).iter(g).filter(move |node| dfs.contains(&node))
 }
 
@@ -138,16 +148,31 @@ where
     B: IntoIterator<Item = G::NodeId>,
 {
     let mut reachable = HashSet::new();
-
-    // Collect reachable nodes from push sources.
-    reachable.extend(push.into_iter().flat_map(|n| Dfs::new(g, n).iter(g)));
-
-    // Collect reachable nodes from pull sources.
-    let rev_g = petgraph::visit::Reversed(&g);
-    reachable.extend(pull.into_iter().flat_map(|n| Dfs::new(rev_g, n).iter(rev_g)));
-
-    // The order of evaluation is topological order of reachable nodes.
+    reachable.extend(push.into_iter().flat_map(|n| push_reachable(g, n)));
+    reachable.extend(pull.into_iter().flat_map(|n| pull_reachable(g, n)));
     Topo::new(g).iter(g).filter(move |n| reachable.contains(&n))
+}
+
+/// Given a node evaluation order, this filters out all non-stateful nodes.
+///
+/// This order of the yielded node IDs matches the expected order in which state should be laid out
+/// when passed to the generated evaluation function.
+pub fn state_order<G, I>(g: G, eval_order: I) -> impl Iterator<Item = G::NodeId>
+where
+    G: IntoNodeReferences + NodeIndexable,
+    I: IntoIterator<Item = G::NodeId>,
+    G::NodeWeight: Node,
+{
+    eval_order
+        .into_iter()
+        .filter(move |&n| {
+            g.node_references()
+                .nth(g.to_index(n))
+                .expect("node in `eval_order` does not exist within the given graph")
+                .weight()
+                .state_type()
+                .is_some()
+        })
 }
 
 /// Given a node evaluation order, produce the series of evaluation steps required.
@@ -157,22 +182,30 @@ pub fn eval_steps<G, I>(
     eval_order: I,
 ) -> Vec<EvalStep<G::NodeId>>
 where
-    G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable,
+    G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable,
     G: Data<EdgeWeight = Edge>,
     G::NodeId: Eq + Hash,
-    <G::NodeRef as NodeRef>::Weight: Node,
+    G::NodeWeight: Node,
     I: IntoIterator<Item = G::NodeId>,
 {
     let mut eval_steps = vec![];
+    let mut visited = HashSet::new();
 
     // Step through each of the nodes.
     for node in eval_order {
+        visited.insert(node);
+
         // Initialise the arguments to `None` for each input.
         let child_evaluator = &node_evaluators[&node];
         let mut args: Vec<_> = (0..child_evaluator.n_inputs()).map(|_| None).collect();
 
         // Create an argument for each input to this child.
         for e_ref in g.edges_directed(node, petgraph::Incoming) {
+            // Only consider edges to nodes that we have already visited.
+            if !visited.contains(&e_ref.source()) {
+                continue;
+            }
+
             let w = e_ref.weight();
 
             // Check how many connections their are from the parent's output and see if the
