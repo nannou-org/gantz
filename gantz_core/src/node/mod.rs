@@ -1,6 +1,6 @@
+use super::{Deserialize, Serialize};
 use failure::Fail;
 use std::str::FromStr;
-use super::{Deserialize, Serialize};
 
 pub mod deps;
 pub mod expr;

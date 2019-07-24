@@ -1,6 +1,6 @@
+use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
 use std::str::FromStr;
-use super::{Deserialize, Serialize};
 
 /// A wrapper around a `Node` that adds a set of crate dependencies.
 ///

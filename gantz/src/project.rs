@@ -4,8 +4,8 @@ use crate::node::{self, Node, SerdeNode};
 use petgraph::visit::GraphBase;
 use quote::ToTokens;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::str::FromStr;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::{fs, io, ops};
 
 /// A gantz **Project** represents the context in which the user composes their gantz graph
@@ -231,18 +231,22 @@ pub enum GraphNodeInsertDepsError {
         err: UpdateTomlFileError,
     },
     #[fail(display = "the `CrateDep` could not be parsed as a valid dependency table")]
-    InvalidCrateDep {
-        dep: node::CrateDep,
-    },
-    #[fail(display = "failed to parse `CrateDep`'s `source` field as valid toml value: {}", err)]
+    InvalidCrateDep { dep: node::CrateDep },
+    #[fail(
+        display = "failed to parse `CrateDep`'s `source` field as valid toml value: {}",
+        err
+    )]
     InvalidCrateDepSource {
         #[fail(cause)]
         err: toml::de::Error,
     },
-    #[fail(display = "failed to retrieve graph node package root directory: {}", err)]
+    #[fail(
+        display = "failed to retrieve graph node package root directory: {}",
+        err
+    )]
     PackageRoot {
         #[fail(cause)]
-        err: PackageRootError
+        err: PackageRootError,
     },
 }
 
@@ -254,11 +258,14 @@ pub enum GraphNodeReplaceSrcError {
         #[fail(cause)]
         err: io::Error,
     },
-    #[fail(display = "failed to retrieve graph node package root directory: {}", err)]
+    #[fail(
+        display = "failed to retrieve graph node package root directory: {}",
+        err
+    )]
     PackageRoot {
         #[fail(cause)]
-        err: PackageRootError
-    }
+        err: PackageRootError,
+    },
 }
 
 /// Errors that may occur while adding a graph node to a project's **NodeCollection**.
@@ -269,7 +276,10 @@ pub enum AddGraphNodeToCollectionError {
         #[fail(cause)]
         err: OpenNodePackageError,
     },
-    #[fail(display = "failed to insert deps to the Cargo.toml of the graph node: {}", err)]
+    #[fail(
+        display = "failed to insert deps to the Cargo.toml of the graph node: {}",
+        err
+    )]
     GraphNodeInsertDeps {
         #[fail(cause)]
         err: GraphNodeInsertDepsError,
@@ -597,22 +607,18 @@ impl NodeCollection {
     // Returns `None` if there is no node for the given ID or if there is a node but it is not a
     // graph.
     fn id_graph(&self, id: &NodeId) -> Option<&ProjectGraph> {
-        self.get(id)
-            .and_then(|n| n.graph())
+        self.get(id).and_then(|n| n.graph())
     }
 
     // The same as `id_graph` but provides mutable access to the graph.
     fn id_graph_mut(&mut self, id: &NodeId) -> Option<&mut ProjectGraph> {
-        self.map
-            .get_mut(id)
-            .and_then(|n| n.graph_mut())
+        self.map.get_mut(id).and_then(|n| n.graph_mut())
     }
 
     // The same as `id_graph`, but returns the fully referenced graph without the `NodeId`
     // indirection.
     fn ref_graph(&self, id: &NodeId) -> Option<ProjectNodeRefGraphNode> {
-        self.id_graph(id)
-            .map(|g| id_graph_to_node_graph(g, self))
+        self.id_graph(id).map(|g| id_graph_to_node_graph(g, self))
     }
 }
 
@@ -787,9 +793,7 @@ impl<'a> Node for NodeRef<'a> {
         match self {
             NodeRef::Core(node) => node.crate_deps(),
             NodeRef::Graph(_graph) => {
-                vec![
-                    node::CrateDep::from_str(r#"libloading = "0.5""#).unwrap(),
-                ]
+                vec![node::CrateDep::from_str(r#"libloading = "0.5""#).unwrap()]
             }
         }
     }
@@ -1097,7 +1101,9 @@ where
     let package_id = open_node_package(&workspace_dir, node_name, cargo_config)?;
     let kind = NodeKind::Graph(ProjectGraph { graph, package_id });
     let node_id = nodes.insert(kind);
-    let graph = nodes.ref_graph(&node_id).expect("no grap node for the given ID");
+    let graph = nodes
+        .ref_graph(&node_id)
+        .expect("no graph node for the given ID");
     let deps = graph_node_deps(&graph);
     let file = graph_node_src(&graph);
     graph_node_insert_deps(&workspace_dir, cargo_config, graph.package_id, deps)?;
@@ -1182,11 +1188,7 @@ fn id_graph_to_node_graph<'a>(
 
 // Given a graph node, generate the src for the graph.
 fn graph_node_src(g: &ProjectNodeRefGraphNode) -> syn::File {
-    graph::codegen::file(
-        &g.graph.graph,
-        &g.inlets,
-        &g.outlets,
-    )
+    graph::codegen::file(&g.graph.graph, &g.inlets, &g.outlets)
 }
 
 // Find the set of crate dependencies required for a the graph node with the given `NodeId`.
@@ -1232,7 +1234,7 @@ where
             toml::Value::Table(map) => match map.into_iter().next() {
                 Some((_name, src)) => src,
                 _ => unreachable!("cannot create dependency map with no entries"),
-            }
+            },
             _ => return Err(GraphNodeInsertDepsError::InvalidCrateDep { dep }),
         };
         dep_map.insert(dep.name, src);
@@ -1259,8 +1261,7 @@ where
             if let Some(existing_src) = toml_dep_map.get(&name) {
                 // TODO: Return an error.
                 assert_eq!(
-                    &src,
-                    existing_src,
+                    &src, existing_src,
                     "cannot include two separate versions of the same crate",
                 );
             }

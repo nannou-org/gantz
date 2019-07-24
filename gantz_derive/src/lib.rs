@@ -1,9 +1,10 @@
-#![recursion_limit="128"]
+#![recursion_limit = "128"]
 
 extern crate proc_macro;
 extern crate proc_macro2;
 extern crate syn;
-#[macro_use] extern crate quote;
+#[macro_use]
+extern crate quote;
 
 mod node;
 
