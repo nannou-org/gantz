@@ -9,6 +9,7 @@ pub mod push;
 pub mod serde;
 pub mod state;
 
+pub use self::deps::{Deps, WithCrateDeps};
 pub use self::expr::{Expr, NewExprError};
 pub use self::pull::{Pull, WithPullEval};
 pub use self::push::{Push, WithPushEval};
