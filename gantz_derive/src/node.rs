@@ -27,7 +27,8 @@ struct Outlet {
 // Check the given attrs for an attribute with the given `ident`.
 // If there is one, return the source code describing the inlets struct.
 fn src_from_attr(attrs: &[syn::Attribute], ident: &str) -> Option<String> {
-    attrs.iter()
+    attrs
+        .iter()
         .find(|attr| {
             attr.path
                 .segments
@@ -42,7 +43,10 @@ fn src_from_attr(attrs: &[syn::Attribute], ident: &str) -> Option<String> {
             // Check for the "equals" symbol.
             match iter.next() {
                 Some(TokenTree::Punct(ref p)) if p.as_char() == '=' => (),
-                t => panic!("unexpected token when parsing `{}` attr:\nexpected: `=`\nfound: {:?}", ident, t),
+                t => panic!(
+                    "unexpected token when parsing `{}` attr:\nexpected: `=`\nfound: {:?}",
+                    ident, t
+                ),
             }
 
             // Retrieve the source string.
@@ -52,8 +56,11 @@ fn src_from_attr(attrs: &[syn::Attribute], ident: &str) -> Option<String> {
                     let src_lit_str: syn::LitStr = syn::parse_str(&src_with_quotes).unwrap();
                     let src_string = src_lit_str.value();
                     src_string
-                },
-                t => panic!("unexpected token when parsing `{}` attr:\nexpected source string\nfound: {:?}", ident, t),
+                }
+                t => panic!(
+                    "unexpected token when parsing `{}` attr:\nexpected source string\nfound: {:?}",
+                    ident, t
+                ),
             }
         })
 }
@@ -76,7 +83,8 @@ fn attr_process_fn(
     attr_ident: &str,
     io_ident: &syn::Ident,
 ) -> Option<String> {
-    node_attrs.iter()
+    node_attrs
+        .iter()
         .filter(|attr| {
             attr.path
                 .segments
@@ -89,7 +97,10 @@ fn attr_process_fn(
             // Retrieve the token stream from the group within the parens.
             let tts = match attr.tts.clone().into_iter().next() {
                 Some(TokenTree::Group(group)) => group.stream(),
-                t => panic!("unexpected token when parsing `{}` attr: {:?}", attr_ident, t),
+                t => panic!(
+                    "unexpected token when parsing `{}` attr: {:?}",
+                    attr_ident, t
+                ),
             };
 
             // Check one iter elem at a time.
@@ -104,17 +115,24 @@ fn attr_process_fn(
             // Check for the "equals" symbol.
             match iter.next() {
                 Some(TokenTree::Punct(ref p)) if p.as_char() == '=' => (),
-                t => panic!("unexpected token when parsing `{}` attr:\nexpected: `=`\nfound: {:?}", attr_ident, t),
+                t => panic!(
+                    "unexpected token when parsing `{}` attr:\nexpected: `=`\nfound: {:?}",
+                    attr_ident, t
+                ),
             }
 
             // Retrieve the process function name as a `String`.
             match iter.next() {
                 Some(TokenTree::Literal(lit)) => {
                     let process_fn_with_quotes = format!("{}", lit);
-                    let process_fn_lit_str: syn::LitStr = syn::parse_str(&process_fn_with_quotes).unwrap();
+                    let process_fn_lit_str: syn::LitStr =
+                        syn::parse_str(&process_fn_with_quotes).unwrap();
                     Some(process_fn_lit_str.value())
-                },
-                t => panic!("unexpected token when parsing `{}` attr:\nexpected source string\nfound: {:?}", attr_ident, t),
+                }
+                t => panic!(
+                    "unexpected token when parsing `{}` attr:\nexpected source string\nfound: {:?}",
+                    attr_ident, t
+                ),
             }
         })
         .next()
@@ -129,34 +147,42 @@ fn inlet_process_fn(node_attrs: &[syn::Attribute], field_ident: &syn::Ident) -> 
 fn outlet_process_fn(node_attrs: &[syn::Attribute], variant_ident: &syn::Ident) -> String {
     match attr_process_fn(node_attrs, "process_outlet", variant_ident) {
         Some(string) => string,
-        None => panic!("could not find `process_outlet` attribute for variant `{}`", variant_ident),
+        None => panic!(
+            "could not find `process_outlet` attribute for variant `{}`",
+            variant_ident
+        ),
     }
 }
 
 // Retrieve a vec of `Inlet`s that can be used for code generation from the given struct.
 fn inlets(inlets_struct: &syn::ItemStruct, node_attrs: &[syn::Attribute]) -> Vec<Inlet> {
     match inlets_struct.fields {
-        syn::Fields::Named(ref fields) => {
-            fields
-                .named
-                .iter()
-                .map(|field| {
-                    let name = field.ident.as_ref()
-                        .expect("`inlets` struct field has no ident")
-                        .clone();
-                    let ty = field.ty.clone();
-                    let process_fn = inlet_process_fn(&node_attrs, &name);
-                    Inlet { name, ty, process_fn }
-                })
-                .collect()
-        },
+        syn::Fields::Named(ref fields) => fields
+            .named
+            .iter()
+            .map(|field| {
+                let name = field
+                    .ident
+                    .as_ref()
+                    .expect("`inlets` struct field has no ident")
+                    .clone();
+                let ty = field.ty.clone();
+                let process_fn = inlet_process_fn(&node_attrs, &name);
+                Inlet {
+                    name,
+                    ty,
+                    process_fn,
+                }
+            })
+            .collect(),
         _ => panic!("`inlets` struct must have named fields"),
     }
 }
 
 // Retrieve a vec of `Outlet`s that can be used for code generation from the given enum.
 fn outlets(outlets_enum: &syn::ItemEnum, node_attrs: &[syn::Attribute]) -> Vec<Outlet> {
-    outlets_enum.variants
+    outlets_enum
+        .variants
         .iter()
         .map(|variant| {
             let name = variant.ident.clone();
@@ -164,11 +190,15 @@ fn outlets(outlets_enum: &syn::ItemEnum, node_attrs: &[syn::Attribute]) -> Vec<O
                 syn::Fields::Unnamed(ref fields) => match fields.unnamed.iter().next() {
                     Some(field) => field.ty.clone(),
                     _ => panic!("expected one unnamed field per `outlets` enum variant"),
-                }
+                },
                 _ => panic!("expected one unnamed field per `outlets` enum variant"),
             };
             let process_fn = outlet_process_fn(&node_attrs, &name);
-            Outlet { name, ty, process_fn }
+            Outlet {
+                name,
+                ty,
+                process_fn,
+            }
         })
         .collect()
 }
@@ -202,17 +232,19 @@ pub fn struct_defs_and_impl_items(
     let maybe_outlets_src = outlets_src(&ast.attrs);
 
     // Parse the inlets src for the inlets struct if there is one.
-    let maybe_inlets_struct = maybe_inlets_src
-        .map(|src| syn::parse_str::<syn::ItemStruct>(&src).unwrap());
+    let maybe_inlets_struct =
+        maybe_inlets_src.map(|src| syn::parse_str::<syn::ItemStruct>(&src).unwrap());
     // Parse the outlets src for the outlets enum if there is one.
-    let maybe_outlets_enum = maybe_outlets_src
-        .map(|src| syn::parse_str::<syn::ItemEnum>(&src).unwrap());
+    let maybe_outlets_enum =
+        maybe_outlets_src.map(|src| syn::parse_str::<syn::ItemEnum>(&src).unwrap());
 
     // Parse the struct for each inlet.
-    let inlets = maybe_inlets_struct.as_ref()
+    let inlets = maybe_inlets_struct
+        .as_ref()
         .map(|inlets_struct| inlets(inlets_struct, &ast.attrs))
         .unwrap_or_default();
-    let outlets = maybe_outlets_enum.as_ref()
+    let outlets = maybe_outlets_enum
+        .as_ref()
         .map(|outlets_enum| outlets(outlets_enum, &ast.attrs))
         .unwrap_or_default();
 
@@ -222,7 +254,8 @@ pub fn struct_defs_and_impl_items(
 
     // We always require an `inlets` type of some kind in order to satisfy the signature of the
     // `process_outlet` methods. If there is no type, use the unit type.
-    let inlets_ty: syn::Type = maybe_inlets_struct.as_ref()
+    let inlets_ty: syn::Type = maybe_inlets_struct
+        .as_ref()
         .map(|inlets_struct| {
             let ident = inlets_struct.ident.clone();
             syn::parse(ident.into_token_stream().into()).unwrap()
@@ -231,7 +264,8 @@ pub fn struct_defs_and_impl_items(
 
     // We always require an `outlets` type of some kind in order to satisfy the `node::Container`
     // signature when performing the `node::State` impl. If there is no type, use the unit type.
-    let outlets_ty: syn::Type = maybe_outlets_enum.as_ref()
+    let outlets_ty: syn::Type = maybe_outlets_enum
+        .as_ref()
         .map(|outlets_enum| {
             let ident = outlets_enum.ident.clone();
             syn::parse(ident.into_token_stream().into()).unwrap()
@@ -274,32 +308,29 @@ pub fn struct_defs_and_impl_items(
     // specified index.
     let proc_inlet_at_index_method = maybe_inlets_struct.as_ref().map(|_inlets_struct| {
         // An iterator producing an arm for each branch in the match expr.
-        let match_arms = inlets
-            .iter()
-            .enumerate()
-            .map(|(i, inlet)| {
-                let i = i as u32;
-                let inlet_name = &inlet.name;
-                let inlet_ty = &inlet.ty;
-                let process_fn = match inlet.process_fn.as_ref() {
-                    None => {
-                        let method_ident = assign_inlet_method_ident(i);
-                        quote! { #ident::#method_ident }
-                    },
-                    Some(process_fn) => {
-                        let method_path: syn::ExprPath = syn::parse_str(&process_fn).unwrap();
-                        quote! { #method_path }
-                    },
-                };
-                quote! {
-                    #i => {
-                        let incoming_value = incoming
-                            .downcast_ref::<#inlet_ty>()
-                            .expect("unexpected inlet type");
-                        #process_fn(self, &mut inlets.#inlet_name, incoming_value);
-                    },
+        let match_arms = inlets.iter().enumerate().map(|(i, inlet)| {
+            let i = i as u32;
+            let inlet_name = &inlet.name;
+            let inlet_ty = &inlet.ty;
+            let process_fn = match inlet.process_fn.as_ref() {
+                None => {
+                    let method_ident = assign_inlet_method_ident(i);
+                    quote! { #ident::#method_ident }
                 }
-            });
+                Some(process_fn) => {
+                    let method_path: syn::ExprPath = syn::parse_str(&process_fn).unwrap();
+                    quote! { #method_path }
+                }
+            };
+            quote! {
+                #i => {
+                    let incoming_value = incoming
+                        .downcast_ref::<#inlet_ty>()
+                        .expect("unexpected inlet type");
+                    #process_fn(self, &mut inlets.#inlet_name, incoming_value);
+                },
+            }
+        });
         quote! {
             impl #impl_generics #ident #ty_generics #where_clause {
                 fn proc_inlet_at_index(
@@ -321,19 +352,16 @@ pub fn struct_defs_and_impl_items(
     // index.
     let proc_outlet_at_index_method = maybe_outlets_enum.as_ref().map(|_outlets_enum| {
         // An iterator producing an arm for each branch in the match expr.
-        let match_arms = outlets
-            .iter()
-            .enumerate()
-            .map(|(i, outlet)| {
-                let i = i as u32;
-                let outlet_name = &outlet.name;
-                let process_fn: syn::ExprPath = syn::parse_str(&outlet.process_fn).unwrap();
-                quote! {
-                    #i => {
-                        #outlets_ty::#outlet_name(#process_fn(self, inlets))
-                    },
-                }
-            });
+        let match_arms = outlets.iter().enumerate().map(|(i, outlet)| {
+            let i = i as u32;
+            let outlet_name = &outlet.name;
+            let process_fn: syn::ExprPath = syn::parse_str(&outlet.process_fn).unwrap();
+            quote! {
+                #i => {
+                    #outlets_ty::#outlet_name(#process_fn(self, inlets))
+                },
+            }
+        });
         quote! {
             impl #impl_generics #ident #ty_generics #where_clause {
                 fn proc_outlet_at_index(
@@ -432,16 +460,8 @@ pub fn struct_defs_and_impl_items(
     let impl_items = remaining_inlet_assignment_methods
         .into_iter()
         .flat_map(|it| it)
-        .chain({
-            proc_inlet_at_index_method
-                .into_iter()
-                .flat_map(|tts| tts)
-        })
-        .chain({
-            proc_outlet_at_index_method
-                .into_iter()
-                .flat_map(|tts| tts)
-        })
+        .chain({ proc_inlet_at_index_method.into_iter().flat_map(|tts| tts) })
+        .chain({ proc_outlet_at_index_method.into_iter().flat_map(|tts| tts) })
         .chain(outlet_ref_method.into_iter())
         .chain(node_state_trait_impl)
         .collect::<TokenStream>();

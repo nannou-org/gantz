@@ -1,7 +1,7 @@
-use derive_more::From;
-use failure::Fail;
 use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
+use derive_more::From;
+use failure::Fail;
 use proc_macro2::{TokenStream, TokenTree};
 use quote::{ToTokens, TokenStreamExt};
 use std::fmt;
