@@ -398,7 +398,7 @@ where
                     let state: &mut #node_state_ty = _node_states[#node_state_idx]
                         .downcast_mut::<#node_state_ty>()
                         .expect("failed to downcast to expected node state type");
-                    #expr;
+                    #expr
                 }};
                 node_state_idx += 1;
                 expr
@@ -490,7 +490,7 @@ where
 
 /// Given a gantz graph, generate the rust code src file with all the necessary functions for
 /// executing it.
-pub fn file<G>(g: G, _inlets: &[G::NodeId], _outlets: &[G::NodeId]) -> syn::File
+pub fn file<G>(g: G, inlets: &[G::NodeId], outlets: &[G::NodeId]) -> syn::File
 where
     G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G: Data<EdgeWeight = Edge>,
@@ -499,6 +499,16 @@ where
 {
     let node_evaluators = node_evaluators(g);
     let node_evaluator_fn_items = node_evaluator_fns(&node_evaluators);
+
+    let full_eval_steps = match (inlets.is_empty(), outlets.is_empty()) {
+        (true, true) => None,
+        _ => {
+            let eval = super::full_eval_fn();
+            let order = eval_order(g, inlets.iter().cloned(), outlets.iter().cloned());
+            let steps = eval_steps(g, &node_evaluators, order);
+            Some((steps, eval))
+        }
+    };
 
     let pull_nodes = pull_nodes(g);
     let push_nodes = push_nodes(g);
@@ -512,8 +522,11 @@ where
         let steps = eval_steps(g, &node_evaluators, order);
         (steps, eval)
     });
-    let push_pull_eval_steps = pull_node_eval_steps.chain(push_node_eval_steps);
-    let push_pull_eval_fn_items = push_pull_eval_steps.map(|(steps, eval)| {
+    let all_eval_steps = full_eval_steps
+        .into_iter()
+        .chain(pull_node_eval_steps)
+        .chain(push_node_eval_steps);
+    let all_eval_fn_items = all_eval_steps.map(|(steps, eval)| {
         let stmts = eval_stmts(g, &steps, &node_evaluators);
         let item_fn = eval_fn(eval, stmts);
         syn::Item::Fn(item_fn)
@@ -521,7 +534,7 @@ where
 
     let items = node_evaluator_fn_items
         .map(|(_, item_fn)| syn::Item::Fn(item_fn.clone()))
-        .chain(push_pull_eval_fn_items)
+        .chain(all_eval_fn_items)
         .collect();
 
     let file = syn::File {
