@@ -681,13 +681,29 @@ impl<'a> graph::EvaluatorFnBlock for ProjectNodeRefGraph<'a> {
         let mut outlet_state_indices = outlets.iter().map(|&outlet| state_order[&outlet]);
 
         // Retrieve the inlet values from the fn_decl args.
-        let inlet_values = fn_decl.inputs.iter().map(|arg| match arg {
-            syn::FnArg::Captured(ref arg) => match arg.pat {
-                syn::Pat::Ident(ref pat) => pat.ident.clone(),
-                _ => unreachable!("graph eval fn_decl contained non-`Ident` arg pattern"),
-            },
-            _ => unreachable!("graph eval fn_decl should only use captured `FnArg`s"),
-        });
+        let mut inlet_values = Vec::with_capacity(inlets.len());
+        let mut inlet_types = Vec::with_capacity(inlets.len());
+        for arg in fn_decl.inputs.iter() {
+            match *arg {
+                syn::FnArg::Captured(ref arg) => {
+                    match arg.pat {
+                        syn::Pat::Ident(ref pat) => inlet_values.push(pat.ident.clone()),
+                        _ => unreachable!("graph eval fn_decl contained non-`Ident` arg pattern"),
+                    }
+                    inlet_types.push(arg.ty.clone());
+                }
+                _ => unreachable!("graph eval fn_decl should only use captured `FnArg`s"),
+            }
+        }
+
+        // Retrieve the outlet types from the fn_decl return type.
+        let mut outlet_types = vec![];
+        if let syn::ReturnType::Type(_, ref ty) = fn_decl.output {
+            match **ty {
+                syn::Type::Tuple(ref tuple) => outlet_types.extend(tuple.elems.iter().cloned()),
+                _ => outlet_types.push(*ty.clone()),
+            }
+        }
 
         // - `()` for no outlets.
         // - `#outlet` for single outlet.
@@ -700,11 +716,22 @@ impl<'a> graph::EvaluatorFnBlock for ProjectNodeRefGraph<'a> {
                 let outlet_ix = outlet_state_indices
                     .next()
                     .expect("expected 1 index, found none");
-                syn::parse_quote! { state.node_states[#outlet_ix] }
+                let outlet_ty = outlet_types.pop().expect("expected 1 index, found none");
+                syn::parse_quote! {
+                    node_states[#outlet_ix]
+                        .downcast_ref::<#outlet_ty>()
+                        .expect("unexpected outlet type")
+                        .clone()
+                }
             }
             _ => {
                 syn::parse_quote! {
-                    (#(state.node_states[#outlet_state_indices]),*)
+                    (#(
+                        node_states[#outlet_state_indices]
+                            .downcast_ref::<#outlet_types()>
+                            .expect("unexpected outlet type")
+                            .clone()
+                    ),*)
                 }
             }
         };
@@ -714,16 +741,18 @@ impl<'a> graph::EvaluatorFnBlock for ProjectNodeRefGraph<'a> {
 
             // Assign inlet values.
             #(
-                state.node_states[#inlet_state_indices] = #inlet_values;
+                *node_states[#inlet_state_indices]
+                    .downcast_mut::<#inlet_types>()
+                    .expect("unexpected inlet type") = #inlet_values;
             )*
 
             // Evaluate the full graph.
             type FullGraphEvalFn<'a> = libloading::Symbol<'a, fn(&mut [&mut dyn std::any::Any])>;
-            let eval_fn = state.full_graph_eval_fn_symbol
+            let eval_fn = full_graph_eval_fn_symbol
                 .downcast_ref::<FullGraphEvalFn<'static>>()
                 .expect("`full_graph_eval_fn_symbol` did not match the expected type");
 
-            eval_fn(&mut state.node_states[..]);
+            eval_fn(&mut node_states[..]);
 
             // Retrieve the outlet values.
             #return_outlets
@@ -738,6 +767,20 @@ impl<'a> graph::Graph for ProjectNodeRefGraph<'a> {
 
     fn node(&self, id: Self::NodeId) -> Option<&Self::Node> {
         self.graph.node_weight(id)
+    }
+
+    fn state_type(&self) -> syn::Type {
+        // State type must include:
+        // - Node states.
+        // - Dynamic library function symbols.
+        //
+        // TODO: Use a nicer type to produce nicer codegen. This will require implementing the type
+        // in a separate crate that is accessible both to this crate as well as to the generated
+        // code. For now, this gross type gets around that.
+        let ty = syn::parse_quote! {
+            (&'static mut [&'static mut dyn std::any::Any], &'static dyn std::any::Any)
+        };
+        ty
     }
 }
 
@@ -776,16 +819,7 @@ impl<'a> Node for NodeRef<'a> {
     fn state_type(&self) -> Option<syn::Type> {
         match self {
             NodeRef::Core(node) => node.state_type(),
-            NodeRef::Graph(_graph) => {
-                // TODO: State type must include:
-                // - Node states.
-                // - Dynamic library function symbols.
-                //let ty = syn::parse_quote!(GraphState<'static>);
-                let ty = syn::parse_quote! {
-                    (&'static mut [&'static mut dyn std::any::Any], &'static dyn std::any::Any)
-                };
-                Some(ty)
-            }
+            NodeRef::Graph(graph) => graph.state_type(),
         }
     }
 

@@ -33,6 +33,9 @@ pub struct ExprInput<NI> {
 /// Shorthand for the node evaluator map passed between codegen stages.
 pub type NodeEvaluatorMap<Id> = HashMap<Id, node::Evaluator>;
 
+/// Shorthand for the node state type map passed between codegen stages.
+pub type NodeStateTypeMap<Id> = HashMap<Id, syn::Type>;
+
 /// Given a graph of gantz nodes, produce the `Evaluator` associated with each.
 pub fn node_evaluators<G>(g: G) -> NodeEvaluatorMap<G::NodeId>
 where
@@ -45,15 +48,41 @@ where
         .collect()
 }
 
-/// Given a set of node evaluators, return only those that have function definitions.
-pub fn node_evaluator_fns<Id>(
-    evaluators: &NodeEvaluatorMap<Id>,
-) -> impl Iterator<Item = (&Id, &syn::ItemFn)>
+/// Given a graph of gantz nodes, produce a map from stateful node IDs to their associated state
+/// types.
+pub fn node_state_types<G>(g: G) -> NodeStateTypeMap<G::NodeId>
 where
-    Id: Eq + Hash,
+    G: IntoNodeReferences,
+    G::NodeWeight: Node,
+    G::NodeId: Eq + Hash,
 {
-    evaluators.iter().filter_map(|(id, eval)| match eval {
-        node::Evaluator::Fn { ref fn_item } => Some((id, fn_item)),
+    g.node_references()
+        .filter_map(|n| n.weight().state_type().map(|ty| (n.id(), ty)))
+        .collect()
+}
+
+/// Given a set of node evaluators, return only those that have function definitions.
+///
+/// Evaluator function variants associated with stateful nodes will have a state argument
+/// implicitly added to their function signature.
+pub fn node_evaluator_fns<'a, Id>(
+    state_types: &'a NodeStateTypeMap<Id>,
+    evaluators: &'a NodeEvaluatorMap<Id>,
+) -> impl 'a + Iterator<Item = (&'a Id, syn::ItemFn)>
+where
+    Id: 'a + Eq + Hash,
+{
+    evaluators.iter().filter_map(move |(id, eval)| match eval {
+        node::Evaluator::Fn { ref fn_item } => {
+            let mut fn_item = fn_item.clone();
+            if let Some(ty) = state_types.get(&id) {
+                fn_item
+                    .decl
+                    .inputs
+                    .push(syn::parse_quote! { state: &mut #ty });
+            }
+            Some((id, fn_item))
+        }
         node::Evaluator::Expr { .. } => None,
     })
 }
@@ -255,6 +284,7 @@ pub fn ty_from_fn_arg(arg: &syn::FnArg) -> Option<syn::Type> {
 pub fn eval_stmts<G>(
     g: G,
     steps: &[EvalStep<G::NodeId>],
+    node_state_types: &NodeStateTypeMap<G::NodeId>,
     node_evaluators: &NodeEvaluatorMap<G::NodeId>,
 ) -> Vec<syn::Stmt>
 where
@@ -383,15 +413,15 @@ where
         let ne = &node_evaluators[&step.node];
         let n_outputs = ne.n_outputs();
         let lhs: syn::Pat = lvalues_pat(si, step, n_outputs, &mut lvalues);
-        let expr: syn::Expr = ne.expr(args);
-        let maybe_ty = g
+        let n_id = g
             .node_references()
             .nth(g.to_index(step.node))
             .expect("no node for step's node index")
-            .weight()
-            .state_type();
+            .id();
+        let maybe_state_ty = node_state_types.get(&n_id);
+        let expr: syn::Expr = ne.expr(args, maybe_state_ty.is_some());
 
-        let rhs: syn::Expr = match maybe_ty {
+        let rhs: syn::Expr = match maybe_state_ty {
             None => expr,
             Some(node_state_ty) => {
                 let expr = syn::parse_quote! {{
@@ -471,6 +501,7 @@ pub fn eval_fn(eval_fn: node::EvalFn, stmts: Vec<syn::Stmt>) -> syn::ItemFn {
 pub fn eval_fns<'a, G, I>(
     g: G,
     eval_nodes: I,
+    node_state_types: &NodeStateTypeMap<G::NodeId>,
     node_evaluators: &NodeEvaluatorMap<G::NodeId>,
 ) -> Vec<syn::ItemFn>
 where
@@ -482,7 +513,7 @@ where
     eval_nodes
         .into_iter()
         .map(|(_n, eval, steps)| {
-            let stmts = eval_stmts(g, steps, node_evaluators);
+            let stmts = eval_stmts(g, steps, node_state_types, node_evaluators);
             eval_fn(eval, stmts)
         })
         .collect()
@@ -497,8 +528,9 @@ where
     G::NodeId: Eq + Hash,
     G::NodeWeight: Node,
 {
+    let node_state_types = node_state_types(g);
     let node_evaluators = node_evaluators(g);
-    let node_evaluator_fn_items = node_evaluator_fns(&node_evaluators);
+    let node_evaluator_fn_items = node_evaluator_fns(&node_state_types, &node_evaluators);
 
     let full_eval_steps = match (inlets.is_empty(), outlets.is_empty()) {
         (true, true) => None,
@@ -527,7 +559,7 @@ where
         .chain(pull_node_eval_steps)
         .chain(push_node_eval_steps);
     let all_eval_fn_items = all_eval_steps.map(|(steps, eval)| {
-        let stmts = eval_stmts(g, &steps, &node_evaluators);
+        let stmts = eval_stmts(g, &steps, &node_state_types, &node_evaluators);
         let item_fn = eval_fn(eval, stmts);
         syn::Item::Fn(item_fn)
     });
