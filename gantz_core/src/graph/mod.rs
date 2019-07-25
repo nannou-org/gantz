@@ -28,6 +28,13 @@ pub trait Graph: EvaluatorFnBlock {
     type Node: Node;
     /// Return a reference to the node at the given node ID.
     fn node(&self, id: Self::NodeId) -> Option<&Self::Node>;
+    /// The state type associated with the graph accessible and updatable during evaluation.
+    ///
+    /// The produced type should probably provide access to the state of the graph's inner nodes.
+    ///
+    /// This method is used to determine the `Node::state_type` result within the implementation of
+    /// `Node` for `GraphNode`.
+    fn state_type(&self) -> syn::Type;
 }
 
 /// A trait implemented for graph types capable of adding nodes and returning a unique ID
@@ -160,6 +167,9 @@ where
     fn node(&self, id: Self::NodeId) -> Option<&Self::Node> {
         (*self).node(id)
     }
+    fn state_type(&self) -> syn::Type {
+        (*self).state_type()
+    }
 }
 
 impl<G> Node for GraphNode<G>
@@ -177,8 +187,10 @@ where
         // This will have to be considered in evaluator expr generation too.
         let name = format!("graph_node_evaluator_fn");
         let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
-        let decl = Box::new(graph_node_evaluator_fn_decl(
+        let state_ty = Graph::state_type(&self.graph);
+        let mut decl = Box::new(graph_node_evaluator_fn_decl(
             &self.graph,
+            &state_ty,
             &self.inlets,
             &self.outlets,
         ));
@@ -186,6 +198,7 @@ where
             self.graph
                 .evaluator_fn_block(&self.inlets, &self.outlets, &decl),
         );
+        decl.inputs.pop();
         let fn_item = syn::ItemFn {
             attrs,
             vis,
@@ -198,6 +211,10 @@ where
             block,
         };
         node::Evaluator::Fn { fn_item }
+    }
+
+    fn state_type(&self) -> Option<syn::Type> {
+        Some(Graph::state_type(&self.graph))
     }
 }
 
@@ -469,7 +486,12 @@ pub fn full_eval_fn() -> node::EvalFn {
     item_fn.into()
 }
 
-fn graph_node_evaluator_fn_decl<G>(g: G, inlets: &[G::NodeId], outlets: &[G::NodeId]) -> syn::FnDecl
+fn graph_node_evaluator_fn_decl<G>(
+    g: G,
+    state_ty: &syn::Type,
+    inlets: &[G::NodeId],
+    outlets: &[G::NodeId],
+) -> syn::FnDecl
 where
     G: Graph,
 {
@@ -493,7 +515,9 @@ where
         span: proc_macro2::Span::call_site(),
     };
     let variadic = None;
-    let inputs = graph_node_evaluator_fn_inputs(&g, inlets);
+    let state_arg = graph_node_evaluator_fn_state_arg(state_ty);
+    let mut inputs = graph_node_evaluator_fn_inputs(&g, inlets);
+    inputs.push(state_arg);
     let output = graph_node_evaluator_fn_output(&g, outlets);
     syn::FnDecl {
         fn_token,
@@ -515,6 +539,13 @@ where
         .expect("no state type for node at id")
 }
 
+fn graph_node_evaluator_fn_state_arg(state_ty: &syn::Type) -> FnArg {
+    let name = "state";
+    let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
+    let fn_arg = syn::parse_quote! { #ident: #state_ty };
+    fn_arg
+}
+
 fn graph_node_evaluator_fn_inputs<G>(g: G, inlets: &[G::NodeId]) -> Punctuated<FnArg, Comma>
 where
     G: Graph,
@@ -527,7 +558,6 @@ where
             let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
             let ty = expect_node_state_type(&g, n);
             let fn_arg: syn::FnArg = syn::parse_quote! { #ident: #ty };
-            println!("graph inlet fn_arg: `{:?}`", fn_arg);
             fn_arg
         })
         .collect()

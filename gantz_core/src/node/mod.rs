@@ -205,9 +205,9 @@ impl Evaluator {
     /// Tokens representing the rust code that will evaluate to a tuple containing all outputs.
     ///
     /// TODO: Handle case where only a subset of inputs are connected. See issue #17.
-    pub fn expr(&self, args: Vec<syn::Expr>) -> syn::Expr {
+    pub fn expr(&self, args: Vec<syn::Expr>, stateful: bool) -> syn::Expr {
         match *self {
-            Evaluator::Fn { ref fn_item } => fn_call_expr(fn_item, args),
+            Evaluator::Fn { ref fn_item } => fn_call_expr(fn_item, args, stateful),
             Evaluator::Expr { ref gen_expr, .. } => (*gen_expr)(args),
         }
     }
@@ -228,6 +228,14 @@ where
     fn pull_eval(&self) -> Option<EvalFn> {
         (**self).pull_eval()
     }
+
+    fn state_type(&self) -> Option<syn::Type> {
+        (**self).state_type()
+    }
+
+    fn crate_deps(&self) -> Vec<CrateDep> {
+        (**self).crate_deps()
+    }
 }
 
 macro_rules! impl_node_for_ptr {
@@ -243,6 +251,14 @@ macro_rules! impl_node_for_ptr {
 
             fn pull_eval(&self) -> Option<EvalFn> {
                 (**self).pull_eval()
+            }
+
+            fn state_type(&self) -> Option<syn::Type> {
+                (**self).state_type()
+            }
+
+            fn crate_deps(&self) -> Vec<CrateDep> {
+                (**self).crate_deps()
             }
         }
     };
@@ -322,7 +338,7 @@ fn count_fn_outputs(fn_decl: &syn::FnDecl) -> usize {
 
 // Create a rust expression that calls the given `fn_decl` function with the given `args`
 // expressions as its inputs.
-fn fn_call_expr(fn_item: &syn::ItemFn, args: Vec<syn::Expr>) -> syn::Expr {
+fn fn_call_expr(fn_item: &syn::ItemFn, args: Vec<syn::Expr>, stateful: bool) -> syn::Expr {
     let n_inputs = count_fn_inputs(&fn_item.decl);
     assert_eq!(
         n_inputs,
@@ -346,7 +362,11 @@ fn fn_call_expr(fn_item: &syn::ItemFn, args: Vec<syn::Expr>) -> syn::Expr {
     let paren_token = syn::token::Paren {
         span: proc_macro2::Span::call_site(),
     };
-    let args = args.into_iter().collect();
+    let maybe_state_expr = match stateful {
+        true => Some(syn::parse_quote! { state }),
+        false => None,
+    };
+    let args = args.into_iter().chain(maybe_state_expr).collect();
     let expr_call = syn::ExprCall {
         attrs,
         func,
