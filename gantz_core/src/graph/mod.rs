@@ -39,6 +39,9 @@ pub trait AddNode: Data {
     fn add_node(&mut self, n: Self::NodeWeight) -> Self::NodeId;
 }
 
+/// The name of the function generated for performing full evaluation of the graph.
+pub const FULL_EVAL_FN_NAME: &str = "full_eval";
+
 /// Describes a connection between two nodes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct Edge {
@@ -338,16 +341,14 @@ impl Node for Inlet {
     fn evaluator(&self) -> node::Evaluator {
         let n_inputs = 0;
         let n_outputs = 1;
-        let ty = self.ty.clone();
         let gen_expr = Box::new(move |args: Vec<syn::Expr>| {
             assert!(
                 args.is_empty(),
                 "there cannot be any inputs to an inlet node"
             );
-            syn::parse_quote! {
-                let state: &mut #ty = state;
+            syn::parse_quote! {{
                 state.clone()
-            }
+            }}
         });
         node::Evaluator::Expr {
             n_inputs,
@@ -449,6 +450,23 @@ where
         let input = b.into();
         Edge { output, input }
     }
+}
+
+/// The identifier used for graph full eval functions.
+pub fn full_eval_fn_ident() -> syn::Ident {
+    syn::Ident::new(FULL_EVAL_FN_NAME, proc_macro2::Span::call_site())
+}
+
+/// The function signature for performing full evaluation of a graph.
+///
+/// A `full_eval_fn` is generated once for every nested graph that contains one or more inlets or
+/// outlets.
+pub fn full_eval_fn() -> node::EvalFn {
+    let ident = full_eval_fn_ident();
+    let item_fn: syn::ItemFn = syn::parse_quote! {
+        fn #ident() {}
+    };
+    item_fn.into()
 }
 
 fn graph_node_evaluator_fn_decl<G>(g: G, inlets: &[G::NodeId], outlets: &[G::NodeId]) -> syn::FnDecl
