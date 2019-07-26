@@ -54,7 +54,7 @@ impl Expr {
     ///
     /// ```rust
     /// fn main() {
-    ///     let _node = gantz::node::Expr::new("#foo + #bar").unwrap();
+    ///     let _node = gantz_core::node::Expr::new("#foo + #bar").unwrap();
     /// }
     /// ```
     pub fn new(expr: &str) -> Result<Self, NewExprError> {
