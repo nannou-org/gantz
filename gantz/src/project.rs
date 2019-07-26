@@ -747,12 +747,12 @@ impl<'a> graph::EvaluatorFnBlock for ProjectNodeRefGraph<'a> {
             )*
 
             // Evaluate the full graph.
-            type FullGraphEvalFn<'a> = libloading::Symbol<'a, fn(&mut [&mut dyn std::any::Any])>;
-            let eval_fn = full_graph_eval_fn_symbol
-                .downcast_ref::<FullGraphEvalFn<'static>>()
-                .expect("`full_graph_eval_fn_symbol` did not match the expected type");
-
-            eval_fn(&mut node_states[..]);
+            unsafe {
+                let unit_ptr: *mut () = *full_graph_eval_fn_symbol;
+                let eval_ptr: *mut libloading::Symbol<'static, fn(&mut [&mut dyn std::any::Any])> =
+                    unit_ptr as *mut _;
+                (*eval_ptr)(&mut node_states[..]);
+            };
 
             // Retrieve the outlet values.
             #return_outlets
@@ -778,7 +778,8 @@ impl<'a> graph::Graph for ProjectNodeRefGraph<'a> {
         // in a separate crate that is accessible both to this crate as well as to the generated
         // code. For now, this gross type gets around that.
         let ty = syn::parse_quote! {
-            (&'static mut [&'static mut dyn std::any::Any], &'static dyn std::any::Any)
+            (&'static mut [&'static mut dyn std::any::Any], *mut ())
+            //(&'static mut [&'static mut dyn std::any::Any], &'static mut dyn std::any::Any)
         };
         ty
     }

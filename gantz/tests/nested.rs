@@ -129,12 +129,44 @@ fn test_graph_nested_stateless() {
         .graph_node_dylib(&root)
         .unwrap()
         .expect("no dylib or node");
-    let lib = libloading::Library::new(&root_dylib_path).expect("failed to load root library");
+    let graph_a_dylib_path = project
+        .graph_node_dylib(&graph_a)
+        .unwrap()
+        .expect("no dylib or node");
+    let root_lib = libloading::Library::new(&root_dylib_path).expect("failed to load root library");
+    let graph_a_lib =
+        libloading::Library::new(&graph_a_dylib_path).expect("failed to load graph a library");
     let symbol_name = "push".as_bytes();
     unsafe {
         let push_eval_fn: libloading::Symbol<fn(&mut [&mut dyn std::any::Any])> =
-            lib.get(symbol_name).expect("failed to load symbol");
+            root_lib.get(symbol_name).expect("failed to load symbol");
+
+        let graph_a_full_eval: libloading::Symbol<fn(&mut [&mut dyn std::any::Any])> = graph_a_lib
+            .get(gantz::graph::FULL_EVAL_FN_NAME.as_bytes())
+            .expect("failed to load symbol");
+        let mut graph_a_full_eval: libloading::Symbol<'static, fn(&mut [&mut dyn std::any::Any])> =
+            std::mem::transmute(graph_a_full_eval);
+
+        let mut inlet0 = 0i32;
+        let mut inlet1 = 0i32;
+        let mut outlet0 = 0i32;
+
+        let graph_a_node_state = &mut [
+            &mut inlet0 as &mut dyn std::any::Any,
+            &mut inlet1 as _,
+            &mut outlet0 as _,
+        ][..];
+        let mut graph_a: (&'static mut [&'static mut dyn std::any::Any], *mut ()) = (
+            std::mem::transmute(graph_a_node_state),
+            &mut graph_a_full_eval as *mut _ as *mut _,
+            //std::mem::transmute(&mut graph_a_full_eval as &mut dyn std::any::Any),
+        );
+
+        let node_states = &mut [&mut graph_a as &mut dyn std::any::Any];
+
         // Execute the gantz graph.
-        push_eval_fn(&mut []);
+        {
+            push_eval_fn(node_states);
+        }
     }
 }
