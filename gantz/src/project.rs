@@ -1,12 +1,13 @@
-use super::{Deserialize, Fail, From, Serialize};
 use crate::graph::{self, Edge, GraphNode};
 use crate::node::{self, Node, SerdeNode};
 use petgraph::visit::GraphBase;
 use quote::ToTokens;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{fs, io, ops};
+use thiserror::Error;
 
 /// A gantz **Project** represents the context in which the user composes their gantz graph
 /// together at runtime.
@@ -113,242 +114,227 @@ pub enum NodeRef<'a> {
 }
 
 /// Errors that may occur while creating a node crate.
-#[derive(Debug, Fail, From)]
+#[derive(Debug, Error)]
 pub enum OpenNodePackageError {
-    #[fail(display = "an IO error occurred: {}", err)]
+    #[error("an IO error occurred: {err}")]
     Io {
-        #[fail(cause)]
+        #[from]
         err: io::Error,
     },
-    #[fail(display = "a cargo error occurred: {}", err)]
+    #[error("a cargo error occurred: {err}")]
     Cargo {
-        #[fail(cause)]
-        err: failure::Error,
+        #[from]
+        err: anyhow::Error,
     },
-    #[fail(display = "failed to update the manifest toml: {}", err)]
+    #[error("failed to update the manifest toml: {err}")]
     UpdateTomlFile {
-        #[fail(cause)]
+        #[from]
         err: UpdateTomlFileError,
     },
 }
 
 /// Errors that may occur while checking an existing workspace or creating a new one.
-#[derive(Debug, Fail, From)]
+#[derive(Debug, Error)]
 pub enum CreateOrCheckWorkspaceError {
-    #[fail(display = "an IO error occurred: {}", err)]
+    #[error("an IO error occurred: {err}")]
     Io {
-        #[fail(cause)]
+        #[from]
         err: io::Error,
     },
-    #[fail(display = "cargo failed to open the workspace: {}", err)]
+    #[error("cargo failed to open the workspace: {err}")]
     Cargo {
-        #[fail(cause)]
-        err: failure::Error,
+        #[from]
+        err: anyhow::Error,
     },
 }
 
 /// Errors that may occur while checking an existing project directory or creating a new one.
-#[derive(Debug, Fail, From)]
+#[derive(Debug, Error)]
 pub enum CreateOrCheckProjectDirectoryError {
-    #[fail(display = "an IO error occurred: {}", err)]
+    #[error("an IO error occurred: {err}")]
     Io {
-        #[fail(cause)]
+        #[from]
         err: io::Error,
     },
-    #[fail(display = "cargo failed to open the workspace: {}", err)]
+    #[error("cargo failed to open the workspace: {err}")]
     Workspace {
-        #[fail(cause)]
+        #[from]
         err: CreateOrCheckWorkspaceError,
     },
 }
 
 /// Errors that may occur while creating a new project.
-#[derive(Debug, Fail, From)]
+#[derive(Debug, Error)]
 pub enum ProjectOpenError {
-    #[fail(display = "an IO error occurred: {}", err)]
+    #[error("an IO error occurred: {err}")]
     Io {
-        #[fail(cause)]
+        #[from]
         err: io::Error,
     },
-    #[fail(display = "failed to initialise cargo config: {}", err)]
+    #[error("failed to initialise cargo config: {err}")]
     CargoConfig {
-        #[fail(cause)]
-        err: failure::Error,
+        #[from]
+        err: anyhow::Error,
     },
-    #[fail(
-        display = "failed to create or check existing project directory: {}",
-        err
-    )]
+    #[error("failed to create or check existing project directory: {err}")]
     Project {
-        #[fail(cause)]
+        #[from]
         err: CreateOrCheckProjectDirectoryError,
     },
-    #[fail(display = "failed to add the graph node to the collection: {}", err)]
+    #[error("failed to add the graph node to the collection: {err}")]
     AddGraphNodeToCollection {
-        #[fail(cause)]
+        #[from]
         err: AddGraphNodeToCollectionError,
     },
-    #[fail(display = "failed to compile the root graph node: {}", err)]
+    #[error("failed to compile the root graph node: {err}")]
     GraphNodeCompile {
-        #[fail(cause)]
+        #[from]
         err: GraphNodeCompileError,
     },
 }
 
 /// Errors that might occur when saving or loading JSON from a file.
-#[derive(Debug, Fail, From)]
+#[derive(Debug, Error)]
 pub enum JsonFileError {
-    #[fail(display = "an IO error occurred: {}", err)]
+    #[error("an IO error occurred: {err}")]
     Io {
-        #[fail(cause)]
+        #[from]
         err: io::Error,
     },
-    #[fail(display = "a JSON error occurred: {}", err)]
+    #[error("a JSON error occurred: {err}")]
     Json {
-        #[fail(cause)]
+        #[from]
         err: serde_json::Error,
     },
 }
 
 /// Errors that may occur while retrieving the root directory of a package within the workspace.
-#[derive(Debug, Fail, From)]
+#[derive(Debug, Error)]
 pub enum PackageRootError {
-    #[fail(display = "a cargo error occurred: {}", err)]
+    #[error("a cargo error occurred: {err}")]
     Cargo {
-        #[fail(cause)]
-        err: failure::Error,
+        #[from]
+        err: anyhow::Error,
     },
-    #[fail(display = "no matching `package_id` in workspace that matches graph node `package_id`")]
+    #[error("no matching `package_id` in workspace that matches graph node `package_id`")]
     NoMatchingPackageId,
 }
 
 /// Errors that may occur when updating the dependencies of a graph node.
-#[derive(Debug, Fail, From)]
+#[derive(Debug, Error)]
 pub enum GraphNodeInsertDepsError {
-    #[fail(display = "failed to update the Cargo.toml file: {}", err)]
+    #[error("failed to update the Cargo.toml file: {err}")]
     UpdateTomlFile {
-        #[fail(cause)]
+        #[from]
         err: UpdateTomlFileError,
     },
-    #[fail(display = "the `CrateDep` could not be parsed as a valid dependency table")]
+    #[error("the `CrateDep` could not be parsed as a valid dependency table")]
     InvalidCrateDep { dep: node::CrateDep },
-    #[fail(
-        display = "failed to parse `CrateDep`'s `source` field as valid toml value: {}",
-        err
-    )]
+    #[error("failed to parse `CrateDep`'s `source` field as valid toml value: {err}")]
     InvalidCrateDepSource {
-        #[fail(cause)]
+        #[from]
         err: toml::de::Error,
     },
-    #[fail(
-        display = "failed to retrieve graph node package root directory: {}",
-        err
-    )]
+    #[error("failed to retrieve graph node package root directory: {err}")]
     PackageRoot {
-        #[fail(cause)]
+        #[from]
         err: PackageRootError,
     },
 }
 
 /// Errors that may occur while replacing the source within a graph node crate.
-#[derive(Debug, Fail, From)]
+#[derive(Debug, Error)]
 pub enum GraphNodeReplaceSrcError {
-    #[fail(display = "an IO error occurred: {}", err)]
+    #[error("an IO error occurred: {err}")]
     Io {
-        #[fail(cause)]
+        #[from]
         err: io::Error,
     },
-    #[fail(
-        display = "failed to retrieve graph node package root directory: {}",
-        err
-    )]
+    #[error("failed to retrieve graph node package root directory: {err}")]
     PackageRoot {
-        #[fail(cause)]
+        #[from]
         err: PackageRootError,
     },
 }
 
 /// Errors that may occur while adding a graph node to a project's **NodeCollection**.
-#[derive(Debug, Fail, From)]
+#[derive(Debug, Error)]
 pub enum AddGraphNodeToCollectionError {
-    #[fail(display = "failed to open node cargo package: {}", err)]
+    #[error("failed to open node cargo package: {err}")]
     OpenNodePackage {
-        #[fail(cause)]
+        #[from]
         err: OpenNodePackageError,
     },
-    #[fail(
-        display = "failed to insert deps to the Cargo.toml of the graph node: {}",
-        err
-    )]
+    #[error("failed to insert deps to the Cargo.toml of the graph node: {err}")]
     GraphNodeInsertDeps {
-        #[fail(cause)]
+        #[from]
         err: GraphNodeInsertDepsError,
     },
-    #[fail(display = "failed to update the src/lib.rs of the graph node: {}", err)]
+    #[error("failed to update the src/lib.rs of the graph node: {err}")]
     GraphNodeReplaceSrc {
-        #[fail(cause)]
+        #[from]
         err: GraphNodeReplaceSrcError,
     },
 }
 
 /// Errors that might occur while updating the contents of a toml file.
-#[derive(Debug, Fail, From)]
+#[derive(Debug, Error)]
 pub enum UpdateTomlFileError {
-    #[fail(display = "an IO error occurred: {}", err)]
+    #[error("an IO error occurred: {err}")]
     Io {
-        #[fail(cause)]
+        #[from]
         err: io::Error,
     },
-    #[fail(display = "failed to deserialize the toml: {}", err)]
+    #[error("failed to deserialize the toml: {err}")]
     TomlDeserialize {
-        #[fail(cause)]
+        #[from]
         err: toml::de::Error,
     },
-    #[fail(display = "failed to serialize the toml: {}", err)]
+    #[error("failed to serialize the toml: {err}")]
     TomlSerialize {
-        #[fail(cause)]
+        #[from]
         err: toml::ser::Error,
     },
 }
 
 /// Errors that might occur while compiling the project workspace.
-#[derive(Debug, Fail, From)]
+#[derive(Debug, Error)]
 pub enum WorkspaceCompileError {
-    #[fail(display = "a cargo error occurred: {}", err)]
+    #[error("a cargo error occurred: {err}")]
     Cargo {
-        #[fail(cause)]
-        err: failure::Error,
+        #[from]
+        err: anyhow::Error,
     },
 }
 
 /// Errors that might occur while compiling a graph node.
-#[derive(Debug, Fail, From)]
+#[derive(Debug, Error)]
 pub enum GraphNodeCompileError {
-    #[fail(display = "a cargo error occurred: {}", err)]
+    #[error("a cargo error occurred: {err}")]
     Cargo {
-        #[fail(cause)]
-        err: failure::Error,
+        #[from]
+        err: anyhow::Error,
     },
-    #[fail(display = "no matching `package_id` in workspace that matches graph node `package_id`")]
+    #[error("no matching `package_id` in workspace that matches graph node `package_id`")]
     NoMatchingPackageId,
 }
 
 /// Errors that might occur while updating a `ProjectGraph`'s graph.
-#[derive(Debug, Fail, From)]
+#[derive(Debug, Error)]
 pub enum UpdateGraphError {
-    #[fail(display = "failed to update grap node dependencies: {}", err)]
+    #[error("failed to update grap node dependencies: {err}")]
     GraphNodeInsertDeps {
-        #[fail(cause)]
+        #[from]
         err: GraphNodeInsertDepsError,
     },
-    #[fail(display = "failed to replace graph node src: {}", err)]
+    #[error("failed to replace graph node src: {err}")]
     GraphNodeReplaceSrc {
-        #[fail(cause)]
+        #[from]
         err: GraphNodeReplaceSrcError,
     },
-    #[fail(display = "failed to compile graph node: {}", err)]
+    #[error("failed to compile graph node: {err}")]
     GraphNodeCompile {
-        #[fail(cause)]
+        #[from]
         err: GraphNodeCompileError,
     },
 }
@@ -666,7 +652,7 @@ impl<'a> graph::EvaluatorFnBlock for ProjectNodeRefGraph<'a> {
         &self,
         inlets: &[Self::NodeId],
         outlets: &[Self::NodeId],
-        fn_decl: &syn::FnDecl,
+        signature: &syn::Signature,
     ) -> syn::Block {
         let push = inlets.iter().cloned();
         let pull = outlets.iter().cloned();
@@ -680,25 +666,25 @@ impl<'a> graph::EvaluatorFnBlock for ProjectNodeRefGraph<'a> {
         let inlet_state_indices = inlets.iter().map(|&inlet| state_order[&inlet]);
         let mut outlet_state_indices = outlets.iter().map(|&outlet| state_order[&outlet]);
 
-        // Retrieve the inlet values from the fn_decl args.
+        // Retrieve the inlet values from the signature args.
         let mut inlet_values = Vec::with_capacity(inlets.len());
         let mut inlet_types = Vec::with_capacity(inlets.len());
-        for arg in fn_decl.inputs.iter() {
+        for arg in signature.inputs.iter() {
             match *arg {
-                syn::FnArg::Captured(ref arg) => {
-                    match arg.pat {
+                syn::FnArg::Typed(ref arg) => {
+                    match *arg.pat {
                         syn::Pat::Ident(ref pat) => inlet_values.push(pat.ident.clone()),
-                        _ => unreachable!("graph eval fn_decl contained non-`Ident` arg pattern"),
+                        _ => unreachable!("graph eval signature contained non-`Ident` arg pattern"),
                     }
                     inlet_types.push(arg.ty.clone());
                 }
-                _ => unreachable!("graph eval fn_decl should only use captured `FnArg`s"),
+                _ => unreachable!("graph eval signature should only use captured `FnArg`s"),
             }
         }
 
-        // Retrieve the outlet types from the fn_decl return type.
+        // Retrieve the outlet types from the signature return type.
         let mut outlet_types = vec![];
-        if let syn::ReturnType::Type(_, ref ty) = fn_decl.output {
+        if let syn::ReturnType::Type(_, ref ty) = signature.output {
             match **ty {
                 syn::Type::Tuple(ref tuple) => outlet_types.extend(tuple.elems.iter().cloned()),
                 _ => outlet_types.push(*ty.clone()),
@@ -1165,8 +1151,8 @@ where
         let pkg_ws = cargo::core::Workspace::new(&pkg_manifest_path, &cargo_config)?;
         let mode = cargo::core::compiler::CompileMode::Build;
         let mut options = cargo::ops::CompileOptions::new(&cargo_config, mode)?;
-        options.build_config.message_format = cargo::core::compiler::MessageFormat::Json;
-        options.build_config.release = true;
+        options.build_config.message_format = cargo::core::compiler::MessageFormat::Human;
+        options.build_config.requested_profile = "release".into();
         let compilation = cargo::ops::compile(&pkg_ws, &options)?;
         compilations.insert(pkg.package_id(), compilation);
     }
@@ -1193,7 +1179,7 @@ where
     let mode = cargo::core::compiler::CompileMode::Build;
     let mut options = cargo::ops::CompileOptions::new(&cargo_config, mode)?;
     options.build_config.message_format = cargo::core::compiler::MessageFormat::Human;
-    options.build_config.release = true;
+    options.build_config.requested_profile = "release".into();
     let compilation = cargo::ops::compile(&pkg_ws, &options)?;
     Ok(compilation)
 }

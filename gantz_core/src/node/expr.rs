@@ -1,11 +1,10 @@
 use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
-use derive_more::From;
-use failure::Fail;
 use proc_macro2::{TokenStream, TokenTree};
 use quote::{ToTokens, TokenStreamExt};
 use std::fmt;
 use std::str::FromStr;
+use thiserror::Error;
 
 /// A simple node that allows for representing rust expressions as nodes within a gantz graph.
 ///
@@ -35,13 +34,13 @@ pub struct Expr {
 }
 
 /// An error occurred while constructing the `Expr` node.
-#[derive(Debug, Fail, From)]
+#[derive(Debug, Error)]
 pub enum NewExprError {
-    #[fail(display = "failed to parse the `str` as a valid `TokenStream`")]
+    #[error("failed to parse the `str` as a valid `TokenStream`")]
     InvalidTokenStream,
-    #[fail(display = "failed to parse the `str` as a valid expr: {}", err)]
+    #[error("failed to parse the `str` as a valid expr: {err}")]
     InvalidExpr {
-        #[fail(cause)]
+        #[from]
         err: syn::Error,
     },
 }

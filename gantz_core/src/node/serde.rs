@@ -35,10 +35,10 @@ impl SerdeNode for node::State<node::Expr> {
     }
 }
 
-pub mod fn_decl {
+pub mod signature {
     use serde::{Deserializer, Serializer};
 
-    pub fn serialize<S>(t: &syn::FnDecl, s: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(t: &syn::Signature, s: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -47,12 +47,7 @@ pub mod fn_decl {
             vis: syn::Visibility::Public(syn::VisPublic {
                 pub_token: Default::default(),
             }),
-            constness: None,
-            unsafety: None,
-            asyncness: None,
-            abi: None,
-            ident: syn::Ident::new("foo", proc_macro2::Span::call_site()),
-            decl: Box::new(t.clone()),
+            sig: t.clone(),
             block: Box::new(syn::Block {
                 stmts: vec![],
                 brace_token: <_>::default(),
@@ -61,13 +56,13 @@ pub mod fn_decl {
         super::tts::serialize(&item_fn, s)
     }
 
-    pub fn deserialize<'de, D>(d: D) -> Result<syn::FnDecl, D::Error>
+    pub fn deserialize<'de, D>(d: D) -> Result<syn::Signature, D::Error>
     where
         D: Deserializer<'de>,
     {
         let tts = super::tts::deserialize(d)?;
-        let syn::ItemFn { decl, .. } = syn::parse_quote! { #tts };
-        Ok(*decl)
+        let syn::ItemFn { sig, .. } = syn::parse_quote! { #tts };
+        Ok(sig)
     }
 }
 
@@ -78,18 +73,13 @@ pub mod fn_attrs {
     where
         S: Serializer,
     {
-        let syn::ItemFn { decl, .. } = syn::parse_quote! { fn foo() {} };
+        let syn::ItemFn { sig, .. } = syn::parse_quote! { fn foo() {} };
         let item_fn = syn::ItemFn {
             attrs: t.clone(),
             vis: syn::Visibility::Public(syn::VisPublic {
                 pub_token: Default::default(),
             }),
-            constness: None,
-            unsafety: None,
-            asyncness: None,
-            abi: None,
-            ident: syn::Ident::new("foo", proc_macro2::Span::call_site()),
-            decl: decl,
+            sig,
             block: Box::new(syn::Block {
                 stmts: vec![],
                 brace_token: <_>::default(),
