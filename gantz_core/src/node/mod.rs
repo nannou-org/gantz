@@ -1,6 +1,6 @@
 use super::{Deserialize, Serialize};
-use failure::Fail;
 use std::str::FromStr;
+use thiserror::Error;
 
 pub mod deps;
 pub mod expr;
@@ -45,10 +45,10 @@ pub trait Node {
     /// that starts from the `push_eval` node.
     ///
     /// Within a **Graph** node, a new function will be generated for each node that signals
-    /// **Some**.  If **Some**, a function will be generated with the given **FnDecl** that
+    /// **Some**.  If **Some**, a function will be generated with the given **Signature** that
     /// represents pushing evaluation from this node.
     ///
-    /// Gantz will **panic!** if the returned **FnDecl** has a return type other than `()`.
+    /// Gantz will **panic!** if the returned **Signature** has a return type other than `()`.
     ///
     /// By default, this is **None**.
     fn push_eval(&self) -> Option<EvalFn> {
@@ -63,10 +63,10 @@ pub trait Node {
     /// that ends at the `pull_eval` node.
     ///
     /// Within a **Graph** node, a new function will be generated for each node that signals
-    /// **Some**.  If **Some**, a function will be generated with the given **FnDecl** that
+    /// **Some**.  If **Some**, a function will be generated with the given **Signature** that
     /// represents pulling evaluation from this node.
     ///
-    /// Gantz will **panic!** if the returned **FnDecl** has a return type other than `()`.
+    /// Gantz will **panic!** if the returned **Signature** has a return type other than `()`.
     ///
     /// By default, this is **None**.
     fn pull_eval(&self) -> Option<EvalFn> {
@@ -110,7 +110,7 @@ pub enum Evaluator {
     /// - Create better user feedback and error messages.
     /// - Implement `Node` for `Graph`.
     Fn {
-        /// A free-standing function, including its name, declaration, the block and other
+        /// A free-standing function, including its name, signature, the block and other
         /// attributes.
         fn_item: syn::ItemFn,
     },
@@ -128,16 +128,14 @@ pub enum Evaluator {
 
 /// Items that need to be known in order to generate a push evaluation function for a node.
 ///
-/// Note that all function declarations will have a single `node_states: node::States` argument
+/// Note that all function signatures will have a single `node_states: node::States` argument
 /// appended to their `inputs` list in order to ensure the state associated with each node may be
 /// passed down the call stack. This means that when loading the symbol for the
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct EvalFn {
     /// The type for each argument.
-    #[serde(with = "crate::node::serde::fn_decl")]
-    pub fn_decl: syn::FnDecl,
-    /// The name for the function.
-    pub fn_name: String,
+    #[serde(with = "crate::node::serde::signature")]
+    pub signature: syn::Signature,
     /// Attributes for the generated `ItemFn`.
     #[serde(with = "crate::node::serde::fn_attrs")]
     pub fn_attrs: Vec<syn::Attribute>,
@@ -181,15 +179,15 @@ pub struct Input(pub u32);
 pub struct Output(pub u32);
 
 /// Failure to parse a `str` as a `CrateDep`.
-#[derive(Clone, Debug, Fail)]
-#[fail(display = "failed to parse the `str` as a valid `CrateDep`")]
+#[derive(Clone, Debug, Error)]
+#[error("failed to parse the `str` as a valid `CrateDep`")]
 pub struct ParseCrateDepError;
 
 impl Evaluator {
     /// The number of inputs to the node.
     pub fn n_inputs(&self) -> u32 {
         match *self {
-            Evaluator::Fn { ref fn_item } => count_fn_inputs(&fn_item.decl) as _,
+            Evaluator::Fn { ref fn_item } => count_fn_inputs(&fn_item.sig) as _,
             Evaluator::Expr { n_inputs, .. } => n_inputs as _,
         }
     }
@@ -197,7 +195,7 @@ impl Evaluator {
     /// The number of outputs to the node.
     pub fn n_outputs(&self) -> u32 {
         match *self {
-            Evaluator::Fn { ref fn_item } => count_fn_outputs(&fn_item.decl) as _,
+            Evaluator::Fn { ref fn_item } => count_fn_outputs(&fn_item.sig) as _,
             Evaluator::Expr { n_outputs, .. } => n_outputs as _,
         }
     }
@@ -272,15 +270,11 @@ impl From<syn::ItemFn> for EvalFn {
     fn from(item_fn: syn::ItemFn) -> Self {
         let syn::ItemFn {
             attrs: fn_attrs,
-            decl,
-            ident,
+            sig: signature,
             ..
         } = item_fn;
-        let fn_decl = *decl;
-        let fn_name = format!("{}", ident);
         EvalFn {
-            fn_decl,
-            fn_name,
+            signature,
             fn_attrs,
         }
     }
@@ -319,15 +313,15 @@ pub fn expr(expr: &str) -> Result<Expr, NewExprError> {
 // Count the number of arguments to the given function.
 //
 // This is used to determine the number of inputs to the function.
-fn count_fn_inputs(fn_decl: &syn::FnDecl) -> usize {
-    fn_decl.inputs.len()
+fn count_fn_inputs(signature: &syn::Signature) -> usize {
+    signature.inputs.len()
 }
 
 // Count the number of arguments to the given function.
 //
 // This is used to determine the number of inputs to the function.
-fn count_fn_outputs(fn_decl: &syn::FnDecl) -> usize {
-    match fn_decl.output {
+fn count_fn_outputs(signature: &syn::Signature) -> usize {
+    match signature.output {
         syn::ReturnType::Default => 0,
         syn::ReturnType::Type(ref _r_arrow, ref ty) => match **ty {
             syn::Type::Tuple(ref tuple) => tuple.elems.len(),
@@ -336,16 +330,16 @@ fn count_fn_outputs(fn_decl: &syn::FnDecl) -> usize {
     }
 }
 
-// Create a rust expression that calls the given `fn_decl` function with the given `args`
+// Create a rust expression that calls the given `signature` function with the given `args`
 // expressions as its inputs.
 fn fn_call_expr(fn_item: &syn::ItemFn, args: Vec<syn::Expr>, stateful: bool) -> syn::Expr {
-    let n_inputs = count_fn_inputs(&fn_item.decl);
+    let n_inputs = count_fn_inputs(&fn_item.sig);
     assert_eq!(
         n_inputs,
         args.len(),
         "the number of args to a function node must match n_inputs"
     );
-    let ident = fn_item.ident.clone();
+    let ident = fn_item.sig.ident.clone();
     let arguments = syn::PathArguments::None;
     let segment = syn::PathSegment { ident, arguments };
     let segments = std::iter::once(segment).collect();

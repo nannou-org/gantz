@@ -18,7 +18,7 @@ pub trait EvaluatorFnBlock: GraphBase {
         &self,
         inlets: &[Self::NodeId],
         outlets: &[Self::NodeId],
-        fn_decl: &syn::FnDecl,
+        signature: &syn::Signature,
     ) -> syn::Block;
 }
 
@@ -153,9 +153,9 @@ where
         &self,
         inlets: &[Self::NodeId],
         outlets: &[Self::NodeId],
-        fn_decl: &syn::FnDecl,
+        signature: &syn::Signature,
     ) -> syn::Block {
-        (*self).evaluator_fn_block(inlets, outlets, fn_decl)
+        (*self).evaluator_fn_block(inlets, outlets, signature)
     }
 }
 
@@ -179,16 +179,8 @@ where
     fn evaluator(&self) -> node::Evaluator {
         let attrs = vec![];
         let vis = syn::Visibility::Inherited;
-        let constness = None;
-        let asyncness = None;
-        let unsafety = None;
-        let abi = None;
-        // TODO: Make sure codegen makes the ident unique.
-        // This will have to be considered in evaluator expr generation too.
-        let name = format!("graph_node_evaluator_fn");
-        let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
         let state_ty = Graph::state_type(&self.graph);
-        let mut decl = Box::new(graph_node_evaluator_fn_decl(
+        let mut sig = Box::new(graph_node_evaluator_signature(
             &self.graph,
             &state_ty,
             &self.inlets,
@@ -196,18 +188,13 @@ where
         ));
         let block = Box::new(
             self.graph
-                .evaluator_fn_block(&self.inlets, &self.outlets, &decl),
+                .evaluator_fn_block(&self.inlets, &self.outlets, &sig),
         );
-        decl.inputs.pop();
+        sig.inputs.pop();
         let fn_item = syn::ItemFn {
             attrs,
             vis,
-            constness,
-            asyncness,
-            unsafety,
-            abi,
-            ident,
-            decl,
+            sig: *sig,
             block,
         };
         node::Evaluator::Fn { fn_item }
@@ -486,41 +473,39 @@ pub fn full_eval_fn() -> node::EvalFn {
     item_fn.into()
 }
 
-fn graph_node_evaluator_fn_decl<G>(
+fn graph_node_evaluator_signature<G>(
     g: G,
     state_ty: &syn::Type,
     inlets: &[G::NodeId],
     outlets: &[G::NodeId],
-) -> syn::FnDecl
+) -> syn::Signature
 where
     G: Graph,
 {
-    let fn_token = syn::token::Fn {
-        span: proc_macro2::Span::call_site(),
-    };
-    let generics = {
-        // TODO: Eventually we'll want some way of inspecting inlets/outlets for these.
-        let lt_token = None;
-        let params = syn::punctuated::Punctuated::new();
-        let gt_token = None;
-        let where_clause = None;
-        syn::Generics {
-            lt_token,
-            params,
-            gt_token,
-            where_clause,
-        }
-    };
-    let paren_token = syn::token::Paren {
-        span: proc_macro2::Span::call_site(),
-    };
+    let constness = None;
+    let asyncness = None;
+    let unsafety = None;
+    let abi = None;
+    let fn_token = syn::token::Fn::default();
+    // TODO: Make sure codegen makes the ident unique.
+    // This will have to be considered in evaluator expr generation too.
+    let name = format!("graph_node_evaluator_fn");
+    let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
+    // TODO: Eventually we'll want some way of inspecting inlets/outlets for these.
+    let generics = syn::Generics::default();
+    let paren_token = syn::token::Paren::default();
     let variadic = None;
     let state_arg = graph_node_evaluator_fn_state_arg(state_ty);
     let mut inputs = graph_node_evaluator_fn_inputs(&g, inlets);
     inputs.push(state_arg);
     let output = graph_node_evaluator_fn_output(&g, outlets);
-    syn::FnDecl {
+    syn::Signature {
+        constness,
+        asyncness,
+        unsafety,
+        abi,
         fn_token,
+        ident,
         generics,
         paren_token,
         inputs,

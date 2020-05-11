@@ -11,11 +11,10 @@ homepage = "https://github.com/nannou-org/gantz"
 edition = "2018"
 
 [dependencies]
-derive_more = "0.14"
-failure = "0.1"
-petgraph = { version = "0.4", features = ["serde-1"] }
-proc-macro2 = "0.4"
-quote = "0.6"
+petgraph = { version = "0.5", features = ["serde-1"] }
+proc-macro2 = "1"
+quote = "1"
 serde = "1"
-syn = "0.15"
+syn = { version = "1", features = ["extra-traits"] }
+thiserror = "1"
 typetag = "0.1"

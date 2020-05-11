@@ -77,7 +77,7 @@ where
             let mut fn_item = fn_item.clone();
             if let Some(ty) = state_types.get(&id) {
                 fn_item
-                    .decl
+                    .sig
                     .inputs
                     .push(syn::parse_quote! { state: &mut #ty });
             }
@@ -274,8 +274,7 @@ where
 /// Given a function argument, return its type if known.
 pub fn ty_from_fn_arg(arg: &syn::FnArg) -> Option<syn::Type> {
     match arg {
-        syn::FnArg::Captured(cap) => Some(cap.ty.clone()),
-        syn::FnArg::Ignored(ty) => Some(ty.clone()),
+        syn::FnArg::Typed(ref pat_ty) => Some((*pat_ty.ty).clone()),
         _ => None,
     }
 }
@@ -313,6 +312,7 @@ where
     fn var_pat(name: &str) -> syn::Pat {
         let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
         let pat_ident = syn::PatIdent {
+            attrs: vec![],
             by_ref: None,
             mutability: None,
             subpat: None,
@@ -452,7 +452,7 @@ where
 /// This function modifies given `EvalFn` fields in two ways:
 ///
 /// - Adds a `#[no_mangle]` attribute if one doesn't already exist.
-/// - Adds a `_node_states: &mut [&mut dyn std::any::Any]` input to the function declaration to
+/// - Adds a `_node_states: &mut [&mut dyn std::any::Any]` input to the function signature to
 ///   allow for passing through unique state associated with each node.
 pub fn eval_fn(eval_fn: node::EvalFn, stmts: Vec<syn::Stmt>) -> syn::ItemFn {
     let brace_token = Default::default();
@@ -460,8 +460,7 @@ pub fn eval_fn(eval_fn: node::EvalFn, stmts: Vec<syn::Stmt>) -> syn::ItemFn {
 
     let node::EvalFn {
         mut fn_attrs,
-        mut fn_decl,
-        fn_name,
+        mut signature,
     } = eval_fn;
 
     // Add the `#[no_mangle]` attr to the function so that the symbol retains its name.
@@ -472,24 +471,18 @@ pub fn eval_fn(eval_fn: node::EvalFn, stmts: Vec<syn::Stmt>) -> syn::ItemFn {
 
     // Append the argument for acquiring node states.
     let node_states = node_states_fn_arg();
-    if !fn_decl.inputs.iter().any(|input| *input == node_states) {
-        fn_decl.inputs.push(node_states);
+    if !signature.inputs.iter().any(|input| *input == node_states) {
+        signature.inputs.push(node_states);
     }
 
-    let decl = Box::new(fn_decl);
-    let ident = syn::Ident::new(&fn_name, proc_macro2::Span::call_site());
+    let sig = signature;
     let pub_token = Default::default();
     let vis = syn::Visibility::Public(syn::VisPublic { pub_token });
 
     let item_fn = syn::ItemFn {
         attrs: fn_attrs,
         vis,
-        constness: None,
-        unsafety: None,
-        asyncness: None,
-        abi: None,
-        ident,
-        decl,
+        sig,
         block,
     };
 
@@ -569,9 +562,11 @@ where
         .chain(all_eval_fn_items)
         .collect();
 
+    let attrs = vec![allow_unused_braces_attr()];
+
     let file = syn::File {
         shebang: None,
-        attrs: vec![],
+        attrs,
         items,
     };
     file
@@ -590,28 +585,12 @@ where
         .collect()
 }
 
-// Create the `#[no_mangle]` attribute.
 fn no_mangle_attr() -> syn::Attribute {
-    let ident = syn::Ident::new("no_mangle", proc_macro2::Span::call_site());
-    let arguments = syn::PathArguments::None;
-    let segments = Some(syn::PathSegment { ident, arguments })
-        .into_iter()
-        .collect();
-    let path = syn::Path {
-        leading_colon: None,
-        segments,
-    };
-    let style = syn::AttrStyle::Outer;
-    let pound_token = Default::default();
-    let bracket_token = Default::default();
-    let tts = Default::default();
-    syn::Attribute {
-        pound_token,
-        style,
-        bracket_token,
-        path,
-        tts,
-    }
+    syn::parse_quote! { #[no_mangle] }
+}
+
+fn allow_unused_braces_attr() -> syn::Attribute {
+    syn::parse_quote! { #![allow(unused_braces)] }
 }
 
 // A function that produces the `node_states` argument that is to be appended to the evaluation
