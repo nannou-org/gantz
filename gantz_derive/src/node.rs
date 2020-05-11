@@ -460,8 +460,8 @@ pub fn struct_defs_and_impl_items(
     let impl_items = remaining_inlet_assignment_methods
         .into_iter()
         .flat_map(|it| it)
-        .chain({ proc_inlet_at_index_method.into_iter().flat_map(|tts| tts) })
-        .chain({ proc_outlet_at_index_method.into_iter().flat_map(|tts| tts) })
+        .chain(proc_inlet_at_index_method.into_iter().flat_map(|tts| tts))
+        .chain(proc_outlet_at_index_method.into_iter().flat_map(|tts| tts))
         .chain(outlet_ref_method.into_iter())
         .chain(node_state_trait_impl)
         .collect::<TokenStream>();
