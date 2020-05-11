@@ -1,4 +1,4 @@
-# gantz [![Build Status](https://travis-ci.org/nannou-org/gantz.svg?branch=master)](https://travis-ci.org/nannou-org/gantz) [![Crates.io](https://img.shields.io/crates/v/gantz.svg)](https://crates.io/crates/gantz) [![Crates.io](https://img.shields.io/crates/l/gantz.svg)](https://github.com/nannou-org/gantz/blob/master/LICENSE-MIT) [![docs.rs](https://docs.rs/gantz/badge.svg)](https://docs.rs/gantz/)
+# gantz [![Actions Status](https://github.com/nannou-org/gantz/workflows/gantz/badge.svg)](https://github.com/nannou-org/gantz/actions) [![Crates.io](https://img.shields.io/crates/v/gantz.svg)](https://crates.io/crates/gantz) [![Crates.io](https://img.shields.io/crates/l/gantz.svg)](https://github.com/nannou-org/gantz/blob/master/LICENSE-MIT) [![docs.rs](https://docs.rs/gantz/badge.svg)](https://docs.rs/gantz/)
 
 A crate for creating and evaluating executable directed graphs at runtime. In
 other words, gantz allows users to compose programs described by interconnected
