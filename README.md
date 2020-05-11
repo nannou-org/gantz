@@ -1,4 +1,4 @@
-# gantz [![Actions Status](https://github.com/nannou-org/gantz/workflows/gantz/badge.svg)](https://github.com/nannou-org/gantz/actions) [![Crates.io](https://img.shields.io/crates/v/gantz.svg)](https://crates.io/crates/gantz) [![Crates.io](https://img.shields.io/crates/l/gantz.svg)](https://github.com/nannou-org/gantz/blob/master/LICENSE-MIT) [![docs.rs](https://docs.rs/gantz/badge.svg)](https://docs.rs/gantz/)
+# gantz [![Actions Status](https://github.com/nannou-org/gantz/workflows/gantz/badge.svg)](https://github.com/nannou-org/gantz/actions) [![Crates.io](https://img.shields.io/crates/l/gantz.svg)](https://github.com/nannou-org/gantz/blob/master/LICENSE-MIT)
 
 A crate for creating and evaluating executable directed graphs at runtime. In
 other words, gantz allows users to compose programs described by interconnected
@@ -7,7 +7,7 @@ nodes on the fly.
 Gantz is inspired by a desire for a more flexible, high-performance, open-source
 alternative to graphical programming environments such as Max/MSP, Touch
 Designer, Houdini and others. <sup>Named after
-[*gantz graf*](https://youtu.be/ev3vENli7wQ).</sup>
+[*gantz graf*][gantz_graf].</sup>
 
 *NOTE: gantz is currently a research project and is not ready for any kind of
 real-world use.*
@@ -42,12 +42,17 @@ tests.
 
 ## Included Crates
 
-- **gantz_core** contains the core traits and items necessary for any gantz
-  implementation. The current approach heavily revolves around rust-code
-  generation, however this crate may get generalised in the future to allow for
-  more easily targeting other languages.
-- **gantz** provides implementations for the core traits and a high-level
-  **Project** API for convenient use.
+### gantz_core [![Crates.io][1]][2] [![docs.rs][3]][4]
+
+Contains the core traits and items necessary for any gantz implementation. The
+current approach heavily revolves around rust-code generation, however this
+crate may get generalised in the future to allow for more easily targeting other
+languages.
+
+### gantz [![Crates.io][5]][6] [![docs.rs][7]][8]
+
+Provides implementations for the core traits and a high-level **Project** API
+for convenient use.
 
 This repo does not provide any GUI itself - this will likely be implemented in a
 separate repository using nannou.
@@ -103,3 +108,13 @@ at your option.
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
 dual licensed as above, without any additional terms or conditions.
+
+[gantz_graf]: https://youtu.be/ev3vENli7wQ
+[1]: https://img.shields.io/crates/v/gantz_core.svg
+[2]: https://crates.io/crates/gantz_core
+[3]: https://docs.rs/gantz_core/badge.svg
+[4]: https://docs.rs/gantz_core/
+[5]: https://img.shields.io/crates/v/gantz.svg
+[6]: https://crates.io/crates/gantz
+[7]: https://docs.rs/gantz/badge.svg
+[8]: https://docs.rs/gantz/
