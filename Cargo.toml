@@ -1,6 +1,20 @@
 [workspace]
-members = [
-    "gantz_core",
-    "gantz_derive",
-    "gantz",
-]
+members = [ "crates/*" ]
+resolver = "3"
+
+[workspace.package]
+authors = ["nannou-org"]
+edition = "2024"
+homepage = "https://github.com/nannou-org/gantz"
+license = "Apache-2.0"
+repository = "https://github.com/nannou-org/gantz"
+
+[workspace.dependencies]
+env_logger = "0.10"
+petgraph = "0.6"
+serde = { version = "1", features = ["derive"] }
+gantz_core = { path = "crates/gantz_core" }
+steel-core = { git = "https://github.com/mattwparas/steel.git" }
+steel-derive = { git = "https://github.com/mattwparas/steel.git" }
+thiserror = "2"
+typetag = "0.2"

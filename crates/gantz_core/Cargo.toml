@@ -1,0 +1,19 @@
+[package]
+name = "gantz_core"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+petgraph.workspace = true
+serde.workspace = true
+steel-core.workspace = true
+thiserror.workspace = true
+typetag.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true
+steel-derive.workspace = true
