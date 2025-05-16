@@ -1,0 +1,52 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo:
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-D warnings"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - command: build --target wasm32-unknown-unknown --locked --all-features --workspace
+          - command: check --locked --all
+          - command: doc --all-features --locked --no-deps
+          - command: fmt --all -- --check
+          - command: test --locked --all
+          - command: test --no-default-features --locked --all
+          - command: test --all-features --locked --all
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo ${{ matrix.command }}
+
+  cargo-publish:
+    needs: cargo
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    env:
+      CRATESIO_TOKEN: ${{ secrets.CRATESIO_TOKEN }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: cargo publish gantz_core
+        continue-on-error: true
+        run: cargo publish --token $CRATESIO_TOKEN --manifest-path gantz_core/Cargo.toml
