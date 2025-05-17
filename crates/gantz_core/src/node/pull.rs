@@ -1,10 +1,11 @@
 use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
+use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// A wrapper around a `Node` that enables pull evaluation.
 ///
-/// The implementation of `Node` will match the inner node type `N`, but with a unique
-/// implementation of `Node::pull_eval`.
+/// The implementation of `Node` will match the inner node type `N`, but with a
+/// unique implementation of [`Node::pull_eval`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Pull<N> {
     node: N,
@@ -16,22 +17,10 @@ pub trait WithPullEval: Sized + Node {
     /// Consume `self` and return a `Node` that has pull evaluation enabled.
     fn with_pull_eval(self, pull_eval: node::EvalFn) -> Pull<Self>;
 
-    /// Enable pull evaluation using the given pull evaluation function.
-    ///
-    /// Internally, this calls `with_pull_eval`.
-    ///
-    /// Note: Only the name, function declaration and attributes are used - the function definition
-    /// is ignored.
-    fn with_pull_eval_fn(self, item_fn: syn::ItemFn) -> Pull<Self> {
-        self.with_pull_eval(item_fn.into())
-    }
-
-    /// Enable pull evaluation.
-    ///
-    /// Internally, this calls `with_pull_eval_fn` with a function that looks like `fn #name() {}`.
-    fn with_pull_eval_name(self, fn_name: &str) -> Pull<Self> {
-        let fn_ident = syn::Ident::new(fn_name, proc_macro2::Span::call_site());
-        self.with_pull_eval_fn(syn::parse_quote! { fn #fn_ident() {} })
+    /// Enable pull evaluation by generating a function with the given name.
+    fn with_pull_eval_name(self, name: impl Into<String>) -> Pull<Self> {
+        let eval_fn = node::EvalFn { name: name.into() };
+        self.with_pull_eval(eval_fn)
     }
 }
 
@@ -59,8 +48,16 @@ impl<N> Node for Pull<N>
 where
     N: Node,
 {
-    fn evaluator(&self) -> node::Evaluator {
-        self.node.evaluator()
+    fn n_inputs(&self) -> usize {
+        self.node.n_inputs()
+    }
+
+    fn n_outputs(&self) -> usize {
+        self.node.n_outputs()
+    }
+
+    fn expr(&self, inputs: &[Option<ExprKind>]) -> ExprKind {
+        self.node.expr(inputs)
     }
 
     fn push_eval(&self) -> Option<node::EvalFn> {
@@ -71,11 +68,7 @@ where
         Some(self.pull_eval.clone())
     }
 
-    fn state_type(&self) -> Option<syn::Type> {
-        self.node.state_type()
-    }
-
-    fn crate_deps(&self) -> Vec<node::CrateDep> {
-        self.node.crate_deps()
+    fn register_state(&self, path: &[node::Id], vm: &mut Engine) {
+        self.node.register_state(path, vm)
     }
 }

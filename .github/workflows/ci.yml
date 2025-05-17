@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo:
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-D warnings"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - command: check --locked --all
+          - command: doc --all-features --locked --no-deps
+          - command: fmt --all -- --check
+          - command: test --locked --all
+          - command: test --no-default-features --locked --all
+          - command: test --all-features --locked --all
+          # TODO: Re-enable this - currently failing due to getrandom wasm err.
+          # - command: build --target wasm32-unknown-unknown --locked --all-features --workspace
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo ${{ matrix.command }}
+
+  # TODO: Re-add this when `steel-core` is published so we can publish.
+  # cargo-publish:
+  #   runs-on: ubuntu-latest
+  #   needs: cargo
+  #   steps:
+  #     - uses: actions/checkout@v3
+  #     - uses: dtolnay/rust-toolchain@stable
+  #     - uses: Swatinem/rust-cache@v2
+  #     - uses: katyo/publish-crates@v2
+  #       id: publish-crates
+  #       with:
+  #         registry-token: ${{ secrets.CRATESIO_TOKEN }}
+  #         dry-run: ${{ github.event_name != 'push' }}
+  #         ignore-unpublished-changes: true
+  #     - name: List published crates
+  #       if: ${{ steps.publish-crates.outputs.published != '' }}
+  #       run: |
+  #         LIST="${{ join(fromJSON(steps.publish-crates.outputs.published).*.name, ', ') }}"
+  #         echo "Published crates: $LIST"

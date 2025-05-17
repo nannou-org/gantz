@@ -23,21 +23,21 @@ language.
 
 Every **Node** is made up of the following:
 
-- Any number of inputs, where each input is of some rust type or generic type.
-- Any number of outputs, where each output is of some rust type or generic type.
+- Any number of inputs, where each input is some value.
+- Any number of outputs, where each output is some value.
 - An expression or function that takes the inputs as arguments and returns the
-  outputs in a tuple.
+  outputs in a list.
 
 **Graphs** describe the composition of one or more nodes. A graph may contain
 one or more nested graphs represented as nodes, forming the main method of
 abstraction within gantz.
 
-A **Project** provides an API for easily creating graphs, compiling them into
-Rust dynamic libraries and loading them ready for evaluation, all at runtime.
-The project manages a single cargo workspace that contains a single crate for
-each graph.
+Graphs are compiled to [steel], an embeddable scheme written in Rust designed
+for embedding in Rust applications. This allows for fast dynamic evaluation,
+while providing the option to specialise node implementations using native Rust
+functions where necessary.
 
-See the `gantz/tests` directory for some very basic, early proof-of-concept
+See the `gantz_core/tests` directory for some very basic, early proof-of-concept
 tests.
 
 ## Included Crates
@@ -45,21 +45,13 @@ tests.
 ### gantz_core [![Crates.io][1]][2] [![docs.rs][3]][4]
 
 Contains the core traits and items necessary for any gantz implementation. The
-current approach heavily revolves around rust-code generation, however this
+current approach heavily revolves around steel code generation, however this
 crate may get generalised in the future to allow for more easily targeting other
 languages.
 
-### gantz [![Crates.io][5]][6] [![docs.rs][7]][8]
-
-Provides implementations for the core traits and a high-level **Project** API
-for convenient use.
-
-This repo does not provide any GUI itself - this will likely be implemented in a
-separate repository using nannou.
-
 ## Goals
 
-- [x] A simple function for creating nodes from rust expressions.
+- [x] A simple function for creating nodes from steel expressions.
 - [x] Allow for handling generics and trait objects within custom nodes.
 - [x] `Serialize` and `Deserialize` for nodes and graphs via serde and typetag.
 - [x] Project workspace creation.
@@ -72,12 +64,10 @@ separate repository using nannou.
 - [ ] Conditional evaluation #21.
 - [ ] Evaluation boundaries #22.
 - [ ] Dynamic node I/O configurations #31.
-- [ ] A convenient API for managing node state #44.
-- [ ] A way to easily generate node types from existing `fn`s in other crates.
+- [ ] A derive macro for generating node types from existing Rust `fn`s.
 
-After each of these goals are met, a new repository will be created where gantz
-will be extended using [**nannou**](https://github.com/nannou-org/nannou) to
-provide higher-level tools including:
+After each of these goals are met, the plan is to use this foundation to create
+some higher-level tooling along the lines of the following:
 
 - [ ] A GUI for creating, editing and saving graphs and custom nodes at runtime.
 - [ ] Node packaging and sharing tools, likely built on cargo and crates.io.
@@ -110,11 +100,8 @@ for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
 dual licensed as above, without any additional terms or conditions.
 
 [gantz_graf]: https://youtu.be/ev3vENli7wQ
+[steel]: https://github.com/mattwparas/steel
 [1]: https://img.shields.io/crates/v/gantz_core.svg
 [2]: https://crates.io/crates/gantz_core
 [3]: https://docs.rs/gantz_core/badge.svg
 [4]: https://docs.rs/gantz_core/
-[5]: https://img.shields.io/crates/v/gantz.svg
-[6]: https://crates.io/crates/gantz
-[7]: https://docs.rs/gantz/badge.svg
-[8]: https://docs.rs/gantz/
