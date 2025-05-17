@@ -11,9 +11,11 @@ repository = "https://github.com/nannou-org/gantz"
 
 [workspace.dependencies]
 env_logger = "0.10"
+gantz_core = { path = "crates/gantz_core" }
+gantz_std = { path = "crates/gantz_std" }
+log = { version = "0.4", features = ["serde"] }
 petgraph = "0.6"
 serde = { version = "1", features = ["derive"] }
-gantz_core = { path = "crates/gantz_core" }
 steel-core = { git = "https://github.com/mattwparas/steel.git" }
 steel-derive = { git = "https://github.com/mattwparas/steel.git" }
 thiserror = "2"
