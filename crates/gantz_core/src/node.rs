@@ -1,7 +1,8 @@
-pub use expr::{Expr, NewExprError};
+pub use expr::{Expr, ExprError};
 pub use pull::{Pull, WithPullEval};
 pub use push::{Push, WithPushEval};
 use serde::{Deserialize, Serialize};
+pub use serde::SerdeNode;
 pub use state::{NodeState, State, WithStateType};
 use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 
@@ -177,9 +178,9 @@ impl From<u16> for Output {
     }
 }
 
-/// Create a node from the given Rust expression.
+/// Create a node from the given Steel expression.
 ///
 /// Shorthand for `node::Expr::new`.
-pub fn expr(expr: impl Into<String>) -> Result<Expr, NewExprError> {
+pub fn expr(expr: impl Into<String>) -> Result<Expr, ExprError> {
     Expr::new(expr)
 }
