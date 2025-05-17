@@ -10,8 +10,12 @@ license = "Apache-2.0"
 repository = "https://github.com/nannou-org/gantz"
 
 [workspace.dependencies]
+egui = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons", default-features = false }
+egui_extras = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons", default-features = false }
+egui_graph = { path = "../egui_graph" }
 env_logger = "0.10"
 gantz_core = { path = "crates/gantz_core" }
+gantz_egui = { path = "crates/gantz_egui" }
 gantz_std = { path = "crates/gantz_std" }
 log = { version = "0.4", features = ["serde"] }
 petgraph = "0.6"
