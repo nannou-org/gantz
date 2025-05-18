@@ -14,6 +14,10 @@ impl gantz_core::Node for Number {
         1
     }
 
+    fn push_eval(&self) -> Option<gantz_core::node::EvalFn> {
+        Some(gantz_core::node::EvalFn)
+    }
+
     fn expr(&self, inputs: &[Option<ExprKind>]) -> ExprKind {
         let expr = match inputs.get(0) {
             // If an input value was provided, use it to update state and
