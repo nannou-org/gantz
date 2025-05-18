@@ -1,4 +1,4 @@
-use gantz_core::steel::{parser::ast::ExprKind, steel_vm::engine::Engine, SteelVal};
+use gantz_core::steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 use serde::{Deserialize, Serialize};
 
 /// A number stored in state. Can be updated via the first input.
@@ -38,7 +38,7 @@ impl gantz_core::Node for Number {
 
 #[typetag::serde]
 impl gantz_core::node::SerdeNode for Number {
-    fn node(&self) ->  &dyn gantz_core::Node {
+    fn node(&self) -> &dyn gantz_core::Node {
         self
     }
 }

@@ -29,7 +29,7 @@ impl gantz_core::Node for Add {
 
 #[typetag::serde]
 impl gantz_core::node::SerdeNode for Add {
-    fn node(&self) ->  &dyn gantz_core::Node {
+    fn node(&self) -> &dyn gantz_core::Node {
         self
     }
 }

@@ -39,7 +39,7 @@ impl gantz_core::Node for Log {
 
 #[typetag::serde]
 impl gantz_core::node::SerdeNode for Log {
-    fn node(&self) ->  &dyn gantz_core::Node {
+    fn node(&self) -> &dyn gantz_core::Node {
         self
     }
 }

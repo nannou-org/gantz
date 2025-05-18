@@ -1,6 +1,10 @@
 #[doc(inline)]
 use gantz_core::node;
-use steel::{rvals::{FromSteelVal, IntoSteelVal}, steel_vm::engine::Engine, SteelErr, SteelVal};
+use steel::{
+    SteelErr, SteelVal,
+    rvals::{FromSteelVal, IntoSteelVal},
+    steel_vm::engine::Engine,
+};
 
 mod impls;
 

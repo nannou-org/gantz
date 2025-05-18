@@ -1,6 +1,6 @@
 pub use node::Node;
-pub use steel;
 use serde::{Deserialize, Serialize};
+pub use steel;
 
 /// The ident used to represent the root state.
 /// This is the state of the top-level graph.
