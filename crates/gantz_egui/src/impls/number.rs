@@ -10,7 +10,10 @@ impl NodeUi for gantz_std::number::Number {
             SteelVal::IntV(ref mut i) => ui.add(egui::DragValue::new(i)),
             _ => ui.add(egui::Label::new("ERR")),
         };
-        ctx.register(val).unwrap();
+        if res.changed() {
+            ctx.register(val).unwrap();
+            ctx.push_eval();
+        }
         res
     }
 }
