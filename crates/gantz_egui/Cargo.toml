@@ -13,4 +13,6 @@ gantz_std.workspace = true
 egui.workspace = true
 egui_extras.workspace = true
 egui_graph.workspace = true
+serde.workspace = true
 steel-core.workspace = true
+typetag.workspace = true

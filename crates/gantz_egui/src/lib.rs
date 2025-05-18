@@ -45,10 +45,8 @@ impl<'a> NodeCtx<'a> {
     }
 
     /// Extract the node's state from the VM.
-    pub fn extract(&self) -> Option<SteelVal> {
-        // TODO: Add this once `extract_value` is changed to take a node path.
-        // node::state::extract_value(self.vm, self.path)
-        todo!()
+    pub fn extract(&self) -> Result<Option<SteelVal>, SteelErr> {
+        node::state::extract_value(self.vm, self.path)
 
     }
 
