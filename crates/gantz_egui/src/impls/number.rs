@@ -11,7 +11,7 @@ impl NodeUi for gantz_std::number::Number {
             _ => ui.add(egui::Label::new("ERR")),
         };
         if res.changed() {
-            ctx.register_value(val).unwrap();
+            ctx.update_value(val).unwrap();
             ctx.push_eval();
         }
         res

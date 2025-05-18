@@ -32,7 +32,7 @@ impl gantz_core::Node for Number {
     }
 
     fn register_state(&self, path: &[gantz_core::node::Id], vm: &mut Engine) {
-        gantz_core::node::state::register_value(vm, path, SteelVal::NumV(0.0)).unwrap()
+        gantz_core::node::state::update_value(vm, path, SteelVal::NumV(0.0)).unwrap()
     }
 }
 

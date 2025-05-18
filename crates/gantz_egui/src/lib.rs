@@ -63,13 +63,13 @@ impl<'a> NodeCtx<'a> {
     }
 
     /// Register the given value as the node's new state.
-    pub fn register_value(&mut self, val: SteelVal) -> Result<(), SteelErr> {
-        node::state::register_value(self.vm, self.path, val)
+    pub fn update_value(&mut self, val: SteelVal) -> Result<(), SteelErr> {
+        node::state::update_value(self.vm, self.path, val)
     }
 
     /// Register the given value as the node's new state.
-    pub fn register<T: IntoSteelVal>(&mut self, val: T) -> Result<(), SteelErr> {
-        node::state::register(self.vm, self.path, val)
+    pub fn update<T: IntoSteelVal>(&mut self, val: T) -> Result<(), SteelErr> {
+        node::state::update(self.vm, self.path, val)
     }
 
     /// Queue a call to the generated push evaluation function for this node.
