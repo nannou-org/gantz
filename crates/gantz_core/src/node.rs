@@ -4,7 +4,7 @@ pub use push::{Push, WithPushEval};
 pub use serde::SerdeNode;
 use serde::{Deserialize, Serialize};
 pub use state::{NodeState, State, WithStateType};
-use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
+use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 pub mod expr;
 pub mod pull;
@@ -86,7 +86,7 @@ pub trait Node {
     /// must use this to initialise their state.
     ///
     /// By default, the node is assumed to be stateless, and this does nothing.
-    fn register(&self, path: &[Id], vm: &mut Engine) {}
+    fn register(&self, _path: &[Id], _vm: &mut Engine) {}
 }
 
 /// Type used to represent a node's ID within a graph.
