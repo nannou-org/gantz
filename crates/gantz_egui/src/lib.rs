@@ -1,6 +1,6 @@
 #[doc(inline)]
 use gantz_core::node;
-use steel::{SteelErr, SteelVal, steel_vm::engine::Engine};
+use steel::{rvals::{FromSteelVal, IntoSteelVal}, steel_vm::engine::Engine, SteelErr, SteelVal};
 
 mod impls;
 
@@ -53,13 +53,23 @@ impl<'a> NodeCtx<'a> {
     }
 
     /// Extract the node's state from the VM.
-    pub fn extract(&self) -> Result<Option<SteelVal>, SteelErr> {
+    pub fn extract_value(&self) -> Result<Option<SteelVal>, SteelErr> {
         node::state::extract_value(self.vm, self.path)
     }
 
+    /// Extract and unwrap the node's unique state from the VM.
+    pub fn extract<T: FromSteelVal>(&self) -> Result<Option<T>, SteelErr> {
+        node::state::extract(self.vm, self.path)
+    }
+
     /// Register the given value as the node's new state.
-    pub fn register(&mut self, val: SteelVal) -> Result<(), SteelErr> {
+    pub fn register_value(&mut self, val: SteelVal) -> Result<(), SteelErr> {
         node::state::register_value(self.vm, self.path, val)
+    }
+
+    /// Register the given value as the node's new state.
+    pub fn register<T: IntoSteelVal>(&mut self, val: T) -> Result<(), SteelErr> {
+        node::state::register(self.vm, self.path, val)
     }
 
     /// Queue a call to the generated push evaluation function for this node.
