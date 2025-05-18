@@ -87,10 +87,7 @@ pub type Id = usize;
 /// Represents a function that can be called to begin evaluation of the graph
 /// from some node.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct EvalFn {
-    /// The name of the function to generate.
-    pub name: String,
-}
+pub struct EvalFn;
 
 /// Represents an input of a node via an index.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]

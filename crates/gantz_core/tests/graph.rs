@@ -1,5 +1,6 @@
 // Tests for the graph module.
 
+use gantz_core::codegen::{pull_eval_fn_name, push_eval_fn_name};
 use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
 use std::fmt::Debug;
@@ -7,7 +8,7 @@ use steel::SteelVal;
 use steel::steel_vm::engine::Engine;
 
 fn node_push() -> node::Push<node::Expr> {
-    node::expr("'()").unwrap().with_push_eval_name("push")
+    node::expr("'()").unwrap().with_push_eval()
 }
 
 fn node_int(i: i32) -> node::Expr {
@@ -87,7 +88,8 @@ fn test_graph_push_eval() {
 
     // Register the `push` eval function, then call it.
     vm.run(format!("{expr}")).unwrap();
-    vm.call_function_by_name_with_args("push", vec![]).unwrap();
+    vm.call_function_by_name_with_args(&push_eval_fn_name(push.index()), vec![])
+        .unwrap();
 }
 
 // A simple test graph that adds two "one"s and checks that it equals "two".
@@ -115,7 +117,7 @@ fn test_graph_pull_eval() {
     let one = node_int(1);
     let add = node_add();
     let two = node_int(2);
-    let assert_eq = node_assert_eq().with_pull_eval_name("assert_eq");
+    let assert_eq = node_assert_eq().with_pull_eval();
 
     // Add the nodes to the project.
     let one = g.add_node(Box::new(one) as Box<dyn DebugNode>);
@@ -143,7 +145,7 @@ fn test_graph_pull_eval() {
     }
 
     // Call the eval fn.
-    vm.call_function_by_name_with_args("assert_eq", vec![])
+    vm.call_function_by_name_with_args(&pull_eval_fn_name(assert_eq.index()), vec![])
         .unwrap();
 }
 
@@ -172,7 +174,7 @@ fn test_graph_pull_eval_should_panic() {
     // Instantiate the nodes.
     let one = node_int(1);
     let add = node_add();
-    let assert_eq = node_assert_eq().with_pull_eval_name("assert_eq");
+    let assert_eq = node_assert_eq().with_pull_eval();
 
     // Add the nodes to the project.
     let one = g.add_node(Box::new(one) as Box<dyn DebugNode>);
@@ -197,6 +199,6 @@ fn test_graph_pull_eval_should_panic() {
     for expr in module {
         vm.run(expr.to_pretty(100)).unwrap();
     }
-    vm.call_function_by_name_with_args("assert_eq", vec![])
+    vm.call_function_by_name_with_args(&pull_eval_fn_name(assert_eq.index()), vec![])
         .unwrap();
 }

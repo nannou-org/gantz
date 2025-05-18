@@ -2,6 +2,7 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
+    codegen::push_eval_fn_name,
     node::{self, Node, NodeState, WithPushEval, WithStateType},
 };
 use std::fmt::Debug;
@@ -12,10 +13,8 @@ use steel::{
 use steel_derive::Steel;
 
 /// Simple node for pushing evaluation through the graph.
-fn node_push(push_eval_name: &str) -> node::Push<node::Expr> {
-    node::expr("'()")
-        .unwrap()
-        .with_push_eval_name(push_eval_name)
+fn node_push() -> node::Push<node::Expr> {
+    node::expr("'()").unwrap().with_push_eval()
 }
 
 // A simple counter node.
@@ -74,8 +73,7 @@ fn test_graph_with_counter() {
     let mut g = petgraph::graph::DiGraph::new();
 
     // Instantiate the nodes.
-    let eval_name = "push";
-    let push = node_push(eval_name);
+    let push = node_push();
     let counter = node_counter();
 
     // Add the nodes to the graph.
@@ -99,7 +97,7 @@ fn test_graph_with_counter() {
 
     // Call the push eval fn 3 times to increment the counter thrice.
     for _ in 0..3 {
-        vm.call_function_by_name_with_args(eval_name, vec![])
+        vm.call_function_by_name_with_args(&push_eval_fn_name(push.index()), vec![])
             .unwrap();
     }
 
@@ -138,12 +136,9 @@ fn test_graph_with_counters() {
     let mut g = petgraph::graph::DiGraph::new();
 
     // Instantiate the nodes.
-    let push_a_name = "push_a";
-    let push_b_name = "push_b";
-    let push_c_name = "push_c";
-    let push_a = node_push(push_a_name);
-    let push_b = node_push(push_b_name);
-    let push_c = node_push(push_c_name);
+    let push_a = node_push();
+    let push_b = node_push();
+    let push_c = node_push();
 
     // Add the nodes to the project.
     let p_a = g.add_node(Box::new(push_a) as Box<dyn DebugNode>);
@@ -175,11 +170,11 @@ fn test_graph_with_counters() {
     }
 
     // Call a, b then c.
-    vm.call_function_by_name_with_args(push_a_name, vec![])
+    vm.call_function_by_name_with_args(&push_eval_fn_name(p_a.index()), vec![])
         .unwrap();
-    vm.call_function_by_name_with_args(push_b_name, vec![])
+    vm.call_function_by_name_with_args(&push_eval_fn_name(p_b.index()), vec![])
         .unwrap();
-    vm.call_function_by_name_with_args(push_c_name, vec![])
+    vm.call_function_by_name_with_args(&push_eval_fn_name(p_c.index()), vec![])
         .unwrap();
 
     // A should be incremented once, b twice, and c thrice.
