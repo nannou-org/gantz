@@ -24,14 +24,15 @@ impl gantz_core::Node for Log {
         let Some(Some(input)) = inputs.get(0) else {
             return ExprKind::empty();
         };
-        let level = match self.level {
+        let _level = match self.level {
             log::Level::Error => "error",
             log::Level::Warn => "warn",
             log::Level::Info => "info",
             log::Level::Debug => "debug",
             log::Level::Trace => "trace",
         };
-        let expr = format!("(log/{level}! {input})");
+        // TODO: Switch to proper logging. Reference steel logging.scm example.
+        let expr = format!("(displayln {input})");
         Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
     }
 }
