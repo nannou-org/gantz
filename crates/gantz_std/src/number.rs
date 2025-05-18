@@ -31,7 +31,11 @@ impl gantz_core::Node for Number {
         Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
     }
 
-    fn register_state(&self, path: &[gantz_core::node::Id], vm: &mut Engine) {
+    fn stateful(&self) -> bool {
+        true
+    }
+
+    fn register(&self, path: &[gantz_core::node::Id], vm: &mut Engine) {
         gantz_core::node::state::update_value(vm, path, SteelVal::NumV(0.0)).unwrap()
     }
 }
