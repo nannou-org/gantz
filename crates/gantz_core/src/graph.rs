@@ -195,7 +195,7 @@ where
 
     fn register_state(&self, path: &[node::Id], vm: &mut Engine) {
         // Register the graph's state map.
-        node::state::register_value(vm, path, SteelVal::empty_hashmap())
+        node::state::update_value(vm, path, SteelVal::empty_hashmap())
             .expect("failed to register graph hashmap");
 
         // Register each of the child nodes.

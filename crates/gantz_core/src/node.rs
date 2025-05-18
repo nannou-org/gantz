@@ -77,7 +77,7 @@ pub trait Node {
     /// By default, the node is assumed to be stateless, and this just
     /// registers a void value.
     fn register_state(&self, path: &[Id], vm: &mut Engine) {
-        state::register_value(vm, path, SteelVal::Void).unwrap()
+        state::update_value(vm, path, SteelVal::Void).unwrap()
     }
 }
 

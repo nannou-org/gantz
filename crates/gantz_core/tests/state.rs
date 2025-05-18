@@ -102,10 +102,27 @@ fn test_graph_with_counter() {
     }
 
     // Check the counter was incremented thrice.
-    let res = node::state::extract::<Counter>(&vm, counter.index())
+    let res = node::state::extract::<Counter>(&vm, &[counter.index()])
         .unwrap()
         .unwrap();
     assert_eq!(res, Counter(3));
+
+    // Set the value back to `0`.
+    node::state::update(&mut vm, &[counter.index()], Counter(0)).unwrap();
+    let res = node::state::extract::<Counter>(&vm, &[counter.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(res, Counter(0));
+
+    // Check that calling the function again works based on the new state.
+    vm.call_function_by_name_with_args(&push_eval_fn_name(push.index()), vec![])
+        .unwrap();
+
+    // The value should now be 1.
+    let res = node::state::extract::<Counter>(&vm, &[counter.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(res, Counter(1));
 }
 
 // A slightly more complex test of state.
@@ -178,13 +195,13 @@ fn test_graph_with_counters() {
         .unwrap();
 
     // A should be incremented once, b twice, and c thrice.
-    let a = node::state::extract::<Counter>(&vm, c_a.index())
+    let a = node::state::extract::<Counter>(&vm, &[c_a.index()])
         .unwrap()
         .unwrap();
-    let b = node::state::extract::<Counter>(&vm, c_b.index())
+    let b = node::state::extract::<Counter>(&vm, &[c_b.index()])
         .unwrap()
         .unwrap();
-    let c = node::state::extract::<Counter>(&vm, c_c.index())
+    let c = node::state::extract::<Counter>(&vm, &[c_c.index()])
         .unwrap()
         .unwrap();
     assert_eq!([a, b, c], [Counter(1), Counter(2), Counter(3)]);
