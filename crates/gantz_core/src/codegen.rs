@@ -385,7 +385,8 @@ pub fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
     let fn_def = format!(
         "(define ({}) \
            (define {GRAPH_STATE} {ROOT_STATE}) \
-           {stmts_str})",
+           {stmts_str} \
+           (set! {ROOT_STATE} {GRAPH_STATE}))",
         eval_fn_name
     );
 
