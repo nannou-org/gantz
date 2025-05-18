@@ -60,7 +60,11 @@ where
         self.node.pull_eval()
     }
 
-    fn register_state(&self, path: &[node::Id], vm: &mut Engine) {
-        self.node.register_state(path, vm)
+    fn stateful(&self) -> bool {
+        self.node.stateful()
+    }
+
+    fn register(&self, path: &[node::Id], vm: &mut Engine) {
+        self.node.register(path, vm)
     }
 }

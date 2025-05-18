@@ -103,7 +103,11 @@ where
         self.node.pull_eval()
     }
 
-    fn register_state(&self, path: &[node::Id], vm: &mut Engine) {
+    fn stateful(&self) -> bool {
+        true
+    }
+
+    fn register(&self, path: &[node::Id], vm: &mut Engine) {
         S::register(vm);
         let val = default_node_state_steel_val::<S>();
         update(vm, path, val).unwrap();
@@ -118,7 +122,7 @@ where
 {
     for n in g.node_references() {
         let id = g.to_index(n.id());
-        n.weight().register_state(&[id], vm);
+        n.weight().register(&[id], vm);
     }
 }
 

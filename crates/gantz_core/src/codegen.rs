@@ -332,8 +332,10 @@ where
         let node_state_key = node_state_key(node_ix);
 
         // Get the node's expression.
-        let node_expr = node.weight().expr(&input_exprs);
-        let node_expr = wrap_node_expr_with_state(&node_expr, &node_state_key);
+        let mut node_expr = node.weight().expr(&input_exprs);
+        if node.weight().stateful() {
+            node_expr = wrap_node_expr_with_state(&node_expr, &node_state_key);
+        }
 
         // Create a binding statement for each output
         match n_outputs {

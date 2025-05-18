@@ -71,14 +71,22 @@ pub trait Node {
         None
     }
 
-    /// Function for registering necessary stateful types and functions and
-    /// initialising any default values as necessary.
+    /// Whether or not the node requires access to state.
     ///
-    /// By default, the node is assumed to be stateless, and this just
-    /// registers a void value.
-    fn register_state(&self, path: &[Id], vm: &mut Engine) {
-        state::update_value(vm, path, SteelVal::Void).unwrap()
+    /// Nodes returning `true` will have a special `state` variable accessible
+    /// within their [`Node::expr`] provided during codegen.
+    fn stateful(&self) -> bool {
+        false
     }
+
+    /// Function for registering necessary types, functions and initialising any
+    /// default values as necessary.
+    ///
+    /// Nodes returning `true` from their [`Node::stateful`] implementation
+    /// must use this to initialise their state.
+    ///
+    /// By default, the node is assumed to be stateless, and this does nothing.
+    fn register(&self, path: &[Id], vm: &mut Engine) {}
 }
 
 /// Type used to represent a node's ID within a graph.
@@ -121,8 +129,12 @@ where
         (**self).pull_eval()
     }
 
-    fn register_state(&self, path: &[Id], vm: &mut Engine) {
-        (**self).register_state(path, vm)
+    fn stateful(&self) -> bool {
+        (**self).stateful()
+    }
+
+    fn register(&self, path: &[Id], vm: &mut Engine) {
+        (**self).register(path, vm)
     }
 }
 
@@ -152,8 +164,12 @@ macro_rules! impl_node_for_ptr {
                 (**self).pull_eval()
             }
 
-            fn register_state(&self, path: &[Id], vm: &mut Engine) {
-                (**self).register_state(path, vm)
+            fn stateful(&self) -> bool {
+                (**self).stateful()
+            }
+
+            fn register(&self, path: &[Id], vm: &mut Engine) {
+                (**self).register(path, vm)
             }
         }
     };
