@@ -7,6 +7,7 @@ use steel::{
 };
 
 mod impls;
+pub mod widget;
 
 /// A trait providing an egui `Ui` implementation for gantz nodes.
 pub trait NodeUi {
