@@ -13,6 +13,10 @@ impl gantz_core::Node for Bang {
     fn expr(&self, _inputs: &[Option<ExprKind>]) -> ExprKind {
         Engine::emit_ast("'()").unwrap().into_iter().next().unwrap()
     }
+
+    fn push_eval(&self) -> Option<gantz_core::node::EvalFn> {
+        Some(gantz_core::node::EvalFn)
+    }
 }
 
 #[typetag::serde]
