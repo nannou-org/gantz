@@ -177,20 +177,43 @@ pub fn register<S: IntoSteelVal>(
 }
 
 /// Extract the value for the node with the given ID.
-// TODO: Change `node_id: usize` to `node_path: &[usize]` to support nesting.
-pub fn extract_value(vm: &Engine, node_id: usize) -> Result<Option<SteelVal>, SteelErr> {
-    let SteelVal::HashMapV(graph_state) = vm.extract_value(ROOT_STATE)? else {
-        return Ok(None);
+pub fn extract_value(vm: &Engine, node_path: &[usize]) -> Result<Option<SteelVal>, SteelErr> {
+    let SteelVal::HashMapV(root_state) = vm.extract_value(ROOT_STATE)? else {
+        return Err(SteelErr::new(
+            ErrorKind::Generic,
+            "`ROOT_STATE` was not a hashmap".to_string(),
+        ));
     };
-    let ix = isize::try_from(node_id).expect("node ID out of range");
-    let key = &SteelVal::IntV(ix);
-    Ok(graph_state.get(key).cloned())
+
+    // Traverse the state tree to extract the node value at the given path.
+    fn get_value(
+        graph_state: &SteelHashMap,
+        node_path: &[usize],
+    ) -> Result<Option<SteelVal>, SteelErr> {
+        match node_path {
+            &[] => Err(SteelErr::new(ErrorKind::Generic, "empty node path".into())),
+            &[node_id] => {
+                let id = node_id.try_into().expect("node_id out of range");
+                let key = SteelVal::IntV(id);
+                Ok(graph_state.get(&key).cloned())
+            }
+            &[graph_id, ..] => {
+                let id = graph_id.try_into().expect("node_id out of range");
+                let key = SteelVal::IntV(id);
+                let Some(SteelVal::HashMapV(state)) = graph_state.get(&key) else {
+                    return Ok(None);
+                };
+                get_value(state, &node_path[1..])
+            }
+        }
+    }
+
+    get_value(&root_state, node_path)
 }
 
 /// Extract the value for the node with the given ID.
-// TODO: Change `node_id: usize` to `node_path: &[usize]` to support nesting.
-pub fn extract<S: FromSteelVal>(vm: &Engine, node_id: usize) -> Result<Option<S>, SteelErr> {
-    let Some(val) = extract_value(vm, node_id)? else {
+pub fn extract<S: FromSteelVal>(vm: &Engine, node_path: &[usize]) -> Result<Option<S>, SteelErr> {
+    let Some(val) = extract_value(vm, node_path)? else {
         return Ok(None);
     };
     S::from_steelval(&val).map(Some)

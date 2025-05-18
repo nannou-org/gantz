@@ -17,7 +17,7 @@ use thiserror::Error;
 ///
 /// will result in a single node with two inputs (`$foo` and `$bar`) and a
 /// single output which is the result of the expression.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct Expr {
     src: String,
     /// The total inputs, derived from the `$` count in the src.
