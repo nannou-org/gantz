@@ -17,6 +17,7 @@ env_logger = "0.10"
 gantz_core = { path = "crates/gantz_core" }
 gantz_egui = { path = "crates/gantz_egui" }
 gantz_std = { path = "crates/gantz_std" }
+humantime = "2.2"
 log = { version = "0.4", features = ["serde"] }
 petgraph = "0.6"
 serde = { version = "1", features = ["derive"] }
