@@ -193,9 +193,13 @@ where
         self.outlets.len()
     }
 
-    fn register_state(&self, path: &[node::Id], vm: &mut Engine) {
+    fn stateful(&self) -> bool {
+        true
+    }
+
+    fn register(&self, path: &[node::Id], vm: &mut Engine) {
         // Register the graph's state map.
-        node::state::register_value(vm, path, SteelVal::empty_hashmap())
+        node::state::update_value(vm, path, SteelVal::empty_hashmap())
             .expect("failed to register graph hashmap");
 
         // Register each of the child nodes.
@@ -203,7 +207,7 @@ where
         for n in self.graph.node_references() {
             let id = self.graph.to_index(n.id());
             path.push(id);
-            n.weight().register_state(&path, vm);
+            n.weight().register(&path, vm);
             path.pop();
         }
     }

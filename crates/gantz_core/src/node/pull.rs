@@ -9,19 +9,12 @@ use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Pull<N> {
     node: N,
-    pull_eval: node::EvalFn,
 }
 
 /// A trait implemented for all `Node` types allowing to enable pull evaluation.
 pub trait WithPullEval: Sized + Node {
     /// Consume `self` and return a `Node` that has pull evaluation enabled.
-    fn with_pull_eval(self, pull_eval: node::EvalFn) -> Pull<Self>;
-
-    /// Enable pull evaluation by generating a function with the given name.
-    fn with_pull_eval_name(self, name: impl Into<String>) -> Pull<Self> {
-        let eval_fn = node::EvalFn { name: name.into() };
-        self.with_pull_eval(eval_fn)
-    }
+    fn with_pull_eval(self) -> Pull<Self>;
 }
 
 impl<N> Pull<N>
@@ -29,8 +22,8 @@ where
     N: Node,
 {
     /// Given some node, return a `Pull` node enabling pull evaluation.
-    pub fn new(node: N, pull_eval: node::EvalFn) -> Self {
-        Pull { node, pull_eval }
+    pub fn new(node: N) -> Self {
+        Pull { node }
     }
 }
 
@@ -38,9 +31,10 @@ impl<N> WithPullEval for N
 where
     N: Node,
 {
-    /// Consume `self` and return an equivalent node with pull evaluation enabled.
-    fn with_pull_eval(self, pull_eval: node::EvalFn) -> Pull<Self> {
-        Pull::new(self, pull_eval)
+    /// Consume `self` and return an equivalent node with pull evaluation
+    /// enabled.
+    fn with_pull_eval(self) -> Pull<Self> {
+        Pull::new(self)
     }
 }
 
@@ -65,10 +59,14 @@ where
     }
 
     fn pull_eval(&self) -> Option<node::EvalFn> {
-        Some(self.pull_eval.clone())
+        Some(node::EvalFn)
     }
 
-    fn register_state(&self, path: &[node::Id], vm: &mut Engine) {
-        self.node.register_state(path, vm)
+    fn stateful(&self) -> bool {
+        self.node.stateful()
+    }
+
+    fn register(&self, path: &[node::Id], vm: &mut Engine) {
+        self.node.register(path, vm)
     }
 }

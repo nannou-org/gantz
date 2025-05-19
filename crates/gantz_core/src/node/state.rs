@@ -103,10 +103,14 @@ where
         self.node.pull_eval()
     }
 
-    fn register_state(&self, path: &[node::Id], vm: &mut Engine) {
+    fn stateful(&self) -> bool {
+        true
+    }
+
+    fn register(&self, path: &[node::Id], vm: &mut Engine) {
         S::register(vm);
         let val = default_node_state_steel_val::<S>();
-        register(vm, path, val).unwrap();
+        update(vm, path, val).unwrap();
     }
 }
 
@@ -118,12 +122,12 @@ where
 {
     for n in g.node_references() {
         let id = g.to_index(n.id());
-        n.weight().register_state(&[id], vm);
+        n.weight().register(&[id], vm);
     }
 }
 
 /// Sets the given node's state to the given value.
-pub fn register_value(vm: &mut Engine, node_path: &[usize], val: SteelVal) -> Result<(), SteelErr> {
+pub fn update_value(vm: &mut Engine, node_path: &[usize], val: SteelVal) -> Result<(), SteelErr> {
     let SteelVal::HashMapV(mut root_state) = vm.extract_value(ROOT_STATE)? else {
         return Err(SteelErr::new(
             ErrorKind::Generic,
@@ -132,7 +136,7 @@ pub fn register_value(vm: &mut Engine, node_path: &[usize], val: SteelVal) -> Re
     };
 
     // Traverse the state tree to update the node value at the given path.
-    fn update_value(
+    fn update_hashmap_value(
         graph_state: &mut SteelHashMap,
         node_path: &[usize],
         val: SteelVal,
@@ -152,7 +156,8 @@ pub fn register_value(vm: &mut Engine, node_path: &[usize], val: SteelVal) -> Re
                     let Some(SteelVal::HashMapV(mut state)) = opt else {
                         panic!("graph state was not a hashmap");
                     };
-                    update_value(&mut state, &node_path[1..], val).expect("failed to update value");
+                    update_hashmap_value(&mut state, &node_path[1..], val)
+                        .expect("failed to update value");
                     Some(SteelVal::HashMapV(state))
                 };
                 *graph_state = Gc::new(graph_state.alter(update, key)).into();
@@ -161,36 +166,59 @@ pub fn register_value(vm: &mut Engine, node_path: &[usize], val: SteelVal) -> Re
         }
     }
 
-    update_value(&mut root_state, node_path, val)?;
-    vm.register_value(ROOT_STATE, SteelVal::HashMapV(root_state));
+    update_hashmap_value(&mut root_state, node_path, val)?;
+    vm.update_value(ROOT_STATE, SteelVal::HashMapV(root_state));
     Ok(())
 }
 
 /// Sets the given node's state to the given value.
 // TODO: Change `node_id: usize` to `node_path: &[usize]` to support nesting.
-pub fn register<S: IntoSteelVal>(
+pub fn update<S: IntoSteelVal>(
     vm: &mut Engine,
     node_path: &[usize],
     val: S,
 ) -> Result<(), SteelErr> {
-    register_value(vm, node_path, val.into_steelval()?)
+    update_value(vm, node_path, val.into_steelval()?)
 }
 
 /// Extract the value for the node with the given ID.
-// TODO: Change `node_id: usize` to `node_path: &[usize]` to support nesting.
-pub fn extract_value(vm: &Engine, node_id: usize) -> Result<Option<SteelVal>, SteelErr> {
-    let SteelVal::HashMapV(graph_state) = vm.extract_value(ROOT_STATE)? else {
-        return Ok(None);
+pub fn extract_value(vm: &Engine, node_path: &[usize]) -> Result<Option<SteelVal>, SteelErr> {
+    let SteelVal::HashMapV(root_state) = vm.extract_value(ROOT_STATE)? else {
+        return Err(SteelErr::new(
+            ErrorKind::Generic,
+            "`ROOT_STATE` was not a hashmap".to_string(),
+        ));
     };
-    let ix = isize::try_from(node_id).expect("node ID out of range");
-    let key = &SteelVal::IntV(ix);
-    Ok(graph_state.get(key).cloned())
+
+    // Traverse the state tree to extract the node value at the given path.
+    fn extract_hashmap_value(
+        graph_state: &SteelHashMap,
+        node_path: &[usize],
+    ) -> Result<Option<SteelVal>, SteelErr> {
+        match node_path {
+            &[] => Err(SteelErr::new(ErrorKind::Generic, "empty node path".into())),
+            &[node_id] => {
+                let id = node_id.try_into().expect("node_id out of range");
+                let key = SteelVal::IntV(id);
+                Ok(graph_state.get(&key).cloned())
+            }
+            &[graph_id, ..] => {
+                let id = graph_id.try_into().expect("node_id out of range");
+                let key = SteelVal::IntV(id);
+                let Some(SteelVal::HashMapV(state)) = graph_state.get(&key) else {
+                    return Ok(None);
+                };
+                extract_hashmap_value(state, &node_path[1..])
+            }
+        }
+    }
+
+    extract_hashmap_value(&root_state, node_path)
 }
 
 /// Extract the value for the node with the given ID.
-// TODO: Change `node_id: usize` to `node_path: &[usize]` to support nesting.
-pub fn extract<S: FromSteelVal>(vm: &Engine, node_id: usize) -> Result<Option<S>, SteelErr> {
-    let Some(val) = extract_value(vm, node_id)? else {
+pub fn extract<S: FromSteelVal>(vm: &Engine, node_path: &[usize]) -> Result<Option<S>, SteelErr> {
+    let Some(val) = extract_value(vm, node_path)? else {
         return Ok(None);
     };
     S::from_steelval(&val).map(Some)

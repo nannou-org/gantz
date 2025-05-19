@@ -1,9 +1,10 @@
-pub use expr::{Expr, NewExprError};
+pub use expr::{Expr, ExprError};
 pub use pull::{Pull, WithPullEval};
 pub use push::{Push, WithPushEval};
+pub use serde::SerdeNode;
 use serde::{Deserialize, Serialize};
 pub use state::{NodeState, State, WithStateType};
-use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
+use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 pub mod expr;
 pub mod pull;
@@ -70,14 +71,22 @@ pub trait Node {
         None
     }
 
-    /// Function for registering necessary stateful types and functions and
-    /// initialising any default values as necessary.
+    /// Whether or not the node requires access to state.
     ///
-    /// By default, the node is assumed to be stateless, and this just
-    /// registers a void value.
-    fn register_state(&self, path: &[Id], vm: &mut Engine) {
-        state::register_value(vm, path, SteelVal::Void).unwrap()
+    /// Nodes returning `true` will have a special `state` variable accessible
+    /// within their [`Node::expr`] provided during codegen.
+    fn stateful(&self) -> bool {
+        false
     }
+
+    /// Function for registering necessary types, functions and initialising any
+    /// default values as necessary.
+    ///
+    /// Nodes returning `true` from their [`Node::stateful`] implementation
+    /// must use this to initialise their state.
+    ///
+    /// By default, the node is assumed to be stateless, and this does nothing.
+    fn register(&self, _path: &[Id], _vm: &mut Engine) {}
 }
 
 /// Type used to represent a node's ID within a graph.
@@ -86,10 +95,7 @@ pub type Id = usize;
 /// Represents a function that can be called to begin evaluation of the graph
 /// from some node.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct EvalFn {
-    /// The name of the function to generate.
-    pub name: String,
-}
+pub struct EvalFn;
 
 /// Represents an input of a node via an index.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
@@ -123,8 +129,12 @@ where
         (**self).pull_eval()
     }
 
-    fn register_state(&self, path: &[Id], vm: &mut Engine) {
-        (**self).register_state(path, vm)
+    fn stateful(&self) -> bool {
+        (**self).stateful()
+    }
+
+    fn register(&self, path: &[Id], vm: &mut Engine) {
+        (**self).register(path, vm)
     }
 }
 
@@ -154,8 +164,12 @@ macro_rules! impl_node_for_ptr {
                 (**self).pull_eval()
             }
 
-            fn register_state(&self, path: &[Id], vm: &mut Engine) {
-                (**self).register_state(path, vm)
+            fn stateful(&self) -> bool {
+                (**self).stateful()
+            }
+
+            fn register(&self, path: &[Id], vm: &mut Engine) {
+                (**self).register(path, vm)
             }
         }
     };
@@ -177,9 +191,9 @@ impl From<u16> for Output {
     }
 }
 
-/// Create a node from the given Rust expression.
+/// Create a node from the given Steel expression.
 ///
 /// Shorthand for `node::Expr::new`.
-pub fn expr(expr: impl Into<String>) -> Result<Expr, NewExprError> {
+pub fn expr(expr: impl Into<String>) -> Result<Expr, ExprError> {
     Expr::new(expr)
 }

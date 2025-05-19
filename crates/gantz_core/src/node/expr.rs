@@ -17,7 +17,7 @@ use thiserror::Error;
 ///
 /// will result in a single node with two inputs (`$foo` and `$bar`) and a
 /// single output which is the result of the expression.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct Expr {
     src: String,
     /// The total inputs, derived from the `$` count in the src.
@@ -28,7 +28,7 @@ pub struct Expr {
 
 /// An error occurred while constructing the `Expr` node.
 #[derive(Debug, Error)]
-pub enum NewExprError {
+pub enum ExprError {
     /// Failed to parse a valid expression.
     #[error("failed to parse a valid expr: {err}")]
     InvalidExpr {
@@ -51,7 +51,7 @@ impl Expr {
     ///     let _node = gantz_core::node::Expr::new("(+ $foo $bar)").unwrap();
     /// }
     /// ```
-    pub fn new(src: impl Into<String>) -> Result<Self, NewExprError> {
+    pub fn new(src: impl Into<String>) -> Result<Self, ExprError> {
         let src: String = src.into();
         // Create a token stream.
         let skip_comments = true;
@@ -66,6 +66,11 @@ impl Expr {
             n_inputs,
             n_outputs,
         })
+    }
+
+    /// The source string that was used to create this node.
+    pub fn src(&self) -> &str {
+        &self.src
     }
 }
 
@@ -151,7 +156,7 @@ impl fmt::Display for Expr {
 }
 
 impl FromStr for Expr {
-    type Err = NewExprError;
+    type Err = ExprError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::new(s)
     }

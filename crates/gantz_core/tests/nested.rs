@@ -2,6 +2,7 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
+    codegen::push_eval_fn_name,
     graph::{self, GraphNode},
     node::{self, Node, WithPushEval},
 };
@@ -9,7 +10,7 @@ use std::fmt::Debug;
 use steel::{SteelVal, steel_vm::engine::Engine};
 
 fn node_push() -> node::Push<node::Expr> {
-    node::expr("'()").unwrap().with_push_eval_name("push")
+    node::expr("'()").unwrap().with_push_eval()
 }
 
 fn node_int(i: i32) -> node::Expr {
@@ -117,5 +118,6 @@ fn test_graph_nested_stateless() {
 
     // Register the `push` eval function, then call it.
     vm.run(format!("{expr}")).unwrap();
-    vm.call_function_by_name_with_args("push", vec![]).ok();
+    vm.call_function_by_name_with_args(&push_eval_fn_name(push.index()), vec![])
+        .ok();
 }

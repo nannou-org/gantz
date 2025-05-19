@@ -50,13 +50,18 @@ pub fn node_state_key(node_id: usize) -> ExprKind {
 /// evaluation.
 ///
 /// Expects any graph type whose nodes implement `Node`.
-pub fn push_nodes<G>(g: G) -> Vec<(G::NodeId, node::EvalFn)>
+pub fn push_nodes<G>(g: G) -> Vec<(G::NodeId, String)>
 where
-    G: IntoNodeReferences,
+    G: IntoNodeReferences + NodeIndexable,
     G::NodeWeight: Node,
 {
     g.node_references()
-        .filter_map(|n| n.weight().push_eval().map(|eval| (n.id(), eval)))
+        .filter_map(|n| {
+            let id = n.id();
+            let ix = g.to_index(id);
+            let name = push_eval_fn_name(ix);
+            n.weight().push_eval().map(|_eval| (id, name))
+        })
         .collect()
 }
 
@@ -64,13 +69,18 @@ where
 /// evaluation.
 ///
 /// Expects any graph type whose nodes implement `Node`.
-pub fn pull_nodes<G>(g: G) -> Vec<(G::NodeId, node::EvalFn)>
+pub fn pull_nodes<G>(g: G) -> Vec<(G::NodeId, String)>
 where
-    G: IntoNodeReferences,
+    G: IntoNodeReferences + NodeIndexable,
     G::NodeWeight: Node,
 {
     g.node_references()
-        .filter_map(|n| n.weight().pull_eval().map(|eval| (n.id(), eval)))
+        .filter_map(|n| {
+            let id = n.id();
+            let ix = g.to_index(id);
+            let name = pull_eval_fn_name(ix);
+            n.weight().pull_eval().map(|_eval| (id, name))
+        })
         .collect()
 }
 
@@ -322,8 +332,10 @@ where
         let node_state_key = node_state_key(node_ix);
 
         // Get the node's expression.
-        let node_expr = node.weight().expr(&input_exprs);
-        let node_expr = wrap_node_expr_with_state(&node_expr, &node_state_key);
+        let mut node_expr = node.weight().expr(&input_exprs);
+        if node.weight().stateful() {
+            node_expr = wrap_node_expr_with_state(&node_expr, &node_state_key);
+        }
 
         // Create a binding statement for each output
         match n_outputs {
@@ -346,10 +358,20 @@ where
     stmts
 }
 
+/// The name used for the pull evaluation function generated for the given node.
+pub fn pull_eval_fn_name(id: node::Id) -> String {
+    format!("pull_eval_{id}")
+}
+
+/// The name used for the push evaluation function generated for the given node.
+pub fn push_eval_fn_name(id: node::Id) -> String {
+    format!("push_eval_{id}")
+}
+
 /// Generate a function for performing evaluation of the given statements.
 ///
 /// The given `Vec<ExprKind>` should be generated via the `eval_stmts` function.
-pub fn eval_fn(eval_fn: node::EvalFn, stmts: Vec<ExprKind>) -> ExprKind {
+pub fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
     // Create the body of the function as a sequence of expressions
     let stmts_str = stmts
         .iter()
@@ -363,8 +385,9 @@ pub fn eval_fn(eval_fn: node::EvalFn, stmts: Vec<ExprKind>) -> ExprKind {
     let fn_def = format!(
         "(define ({}) \
            (define {GRAPH_STATE} {ROOT_STATE}) \
-           {stmts_str})",
-        eval_fn.name
+           {stmts_str} \
+           (set! {ROOT_STATE} {GRAPH_STATE}))",
+        eval_fn_name
     );
 
     // Parse the function definition into Steel AST
@@ -382,13 +405,13 @@ where
     G: GraphRef + IntoNodeReferences + NodeIndexable,
     G::NodeId: 'a + Eq + Hash,
     G::NodeWeight: Node,
-    I: IntoIterator<Item = (G::NodeId, node::EvalFn, &'a [EvalStep<G::NodeId>])>,
+    I: IntoIterator<Item = (G::NodeId, String, &'a [EvalStep<G::NodeId>])>,
 {
     eval_nodes
         .into_iter()
-        .map(|(_n, eval, steps)| {
+        .map(|(_n, eval_fn_name, steps)| {
             let stmts = eval_stmts(g, steps);
-            eval_fn(eval, stmts)
+            eval_fn(&eval_fn_name, stmts)
         })
         .collect()
 }
@@ -408,12 +431,10 @@ where
             /// The name of the function generated for performing full
             /// evaluation of the graph.
             const FULL_EVAL_FN_NAME: &str = "full_eval";
-            let eval = node::EvalFn {
-                name: FULL_EVAL_FN_NAME.to_string(),
-            };
+            let eval_fn_name = FULL_EVAL_FN_NAME.to_string();
             let order = eval_order(g, inlets.iter().cloned(), outlets.iter().cloned());
             let steps = eval_steps(g, order);
-            Some((steps, eval))
+            Some((steps, eval_fn_name))
         }
     };
 
@@ -434,9 +455,9 @@ where
         .into_iter()
         .chain(pull_node_eval_steps)
         .chain(push_node_eval_steps)
-        .map(|(steps, eval)| {
+        .map(|(steps, eval_fn_name)| {
             let stmts = eval_stmts(g, &steps);
-            eval_fn(eval, stmts)
+            eval_fn(&eval_fn_name, stmts)
         })
         .collect()
 }
