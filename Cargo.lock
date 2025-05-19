@@ -1440,6 +1440,7 @@ dependencies = [
  "gantz_std",
  "log",
  "petgraph",
+ "serde_json",
  "steel-core",
 ]
 
@@ -1450,6 +1451,7 @@ dependencies = [
  "env_logger",
  "petgraph",
  "serde",
+ "serde_json",
  "steel-core",
  "steel-derive",
  "thiserror 2.0.12",
@@ -2702,6 +2704,8 @@ checksum = "b4c5cc86750666a3ed20bdaf5ca2a0344f9c67674cae0515bec2da16fbaa47db"
 dependencies = [
  "fixedbitset",
  "indexmap 2.9.0",
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]
