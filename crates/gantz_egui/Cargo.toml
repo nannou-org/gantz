@@ -10,7 +10,6 @@ repository.workspace = true
 [dependencies]
 egui.workspace = true
 egui_extras.workspace = true
-egui_graph.workspace = true
 gantz_core.workspace = true
 gantz_std.workspace = true
 humantime.workspace = true
