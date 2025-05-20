@@ -3,6 +3,10 @@ use steel::SteelVal;
 use crate::{NodeCtx, NodeUi};
 
 impl NodeUi for gantz_std::number::Number {
+    fn name(&self) -> &str {
+        "number"
+    }
+
     fn ui(&mut self, mut ctx: NodeCtx, ui: &mut egui::Ui) -> egui::Response {
         let mut val = ctx.extract_value().unwrap().unwrap();
         let res = match val {

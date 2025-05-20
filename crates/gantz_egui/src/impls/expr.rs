@@ -76,6 +76,10 @@ impl<'a> egui::Widget for ExprEdit<'a> {
 }
 
 impl NodeUi for gantz_core::node::Expr {
+    fn name(&self) -> &str {
+        "expr"
+    }
+
     fn ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> egui::Response {
         let id = egui::Id::new("ExprEdit").with(ctx.path());
         ui.add(ExprEdit::new(self, id))

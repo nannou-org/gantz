@@ -11,11 +11,22 @@ pub mod widget;
 
 /// A trait providing an egui `Ui` implementation for gantz nodes.
 pub trait NodeUi {
+    /// The name used to present the node within the inspector.
+    fn name(&self) -> &str;
+
     /// Instantiate the `Ui` for the given node.
     ///
     /// The node's path into the state tree and the VM are provided to allow for
     /// access to the node's state.
     fn ui(&mut self, _ctx: NodeCtx, _ui: &mut egui::Ui) -> egui::Response;
+
+    /// UI for the node to be presented within the node inspector.
+    ///
+    /// By default, this presents the node's path and its current state within
+    /// the VM.
+    fn inspector_ui(&mut self, _ctx: NodeCtx, _ui: &mut egui::Ui) -> Option<egui::Response> {
+        None
+    }
 }
 
 /// A wrapper around a node's path and the VM providing easy access to the
@@ -37,10 +48,41 @@ impl<'a, N> NodeUi for &'a mut N
 where
     N: ?Sized + NodeUi,
 {
+    fn name(&self) -> &str {
+        (**self).name()
+    }
+
     fn ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> egui::Response {
         (**self).ui(ctx, ui)
     }
+
+    fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> Option<egui::Response> {
+        (**self).inspector_ui(ctx, ui)
+    }
 }
+
+macro_rules! impl_node_ui_for_ptr {
+    ($($Ty:ident)::*) => {
+        impl<T> NodeUi for $($Ty)::*<T>
+        where
+            T: ?Sized + NodeUi,
+        {
+            fn name(&self) -> &str {
+                (**self).name()
+            }
+
+            fn ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> egui::Response {
+                (**self).ui(ctx, ui)
+            }
+
+            fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> Option<egui::Response> {
+                (**self).inspector_ui(ctx, ui)
+            }
+        }
+    };
+}
+
+impl_node_ui_for_ptr!(Box);
 
 impl<'a> NodeCtx<'a> {
     pub fn new(path: &'a [node::Id], vm: &'a mut Engine, cmds: &'a mut Vec<Cmd>) -> Self {
