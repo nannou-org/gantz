@@ -16,4 +16,5 @@ humantime.workspace = true
 log.workspace = true
 serde.workspace = true
 steel-core.workspace = true
+sublime_fuzzy.workspace = true
 typetag.workspace = true
