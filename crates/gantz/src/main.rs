@@ -39,6 +39,16 @@ struct State {
     auto_layout: bool,
     node_id_map: HashMap<egui::Id, NodeIndex>,
     center_view: bool,
+    views: Views,
+    command_palette: gantz::egui::widget::command_palette::CommandPalette,
+}
+
+#[derive(Default)]
+struct Views {
+    node_inspector: bool,
+    logs: bool,
+    steel: bool,
+    graph_config: bool,
 }
 
 #[derive(Default)]
@@ -87,7 +97,24 @@ impl NodeTypeRegistry {
 pub fn node_type_registry() -> NodeTypeRegistry {
     let mut reg = NodeTypeRegistry::default();
     reg.register("add", || Box::new(gantz_std::ops::Add::default()) as Box<_>);
+    reg.register("bang", || Box::new(gantz_std::Bang::default()) as Box<_>);
+    reg.register("expr", || {
+        Box::new(gantz_core::node::Expr::new("()").unwrap()) as Box<_>
+    });
+    reg.register("log", || Box::new(gantz_std::Log::default()) as Box<_>);
+    reg.register("number", || {
+        Box::new(gantz_std::Number::default()) as Box<_>
+    });
     reg
+}
+
+#[derive(Clone, Copy)]
+struct Cmd<'a>(&'a str);
+
+impl<'a> gantz::egui::widget::command_palette::Command for Cmd<'a> {
+    fn text(&self) -> &str {
+        self.0
+    }
 }
 
 impl App {
@@ -115,11 +142,16 @@ impl App {
             cmds: vec![],
             interaction: Default::default(),
             flow: egui::Direction::TopDown,
-            auto_layout: true,
+            auto_layout: false,
             node_id_map: Default::default(),
             center_view: false,
+            views: Views::default(),
+            command_palette: gantz::egui::widget::command_palette::CommandPalette::default(),
         };
-        let view = Default::default();
+
+        let mut view = egui_graph::View::default();
+        view.layout = layout(&state.graph, state.flow, ctx);
+
         App { view, state }
     }
 }
@@ -234,11 +266,38 @@ fn gui(ctx: &egui::Context, view: &mut egui_graph::View, state: &mut State) {
     egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
-            graph_config(ui, view, state);
-            log_view(ui, state);
-            steel_view(ui, state);
             graph(ui, view, state);
+            command_palette(ui, state);
+            if state.views.graph_config {
+                graph_config(ui, view, state);
+            }
+            if state.views.steel {
+                steel_view(ui, state);
+            }
+            if state.views.logs {
+                log_view(ui, state);
+            }
+            if state.views.node_inspector {
+                node_inspector(ui, state);
+            }
         });
+}
+
+fn command_palette(ui: &mut egui::Ui, state: &mut State) {
+    if !ui.ctx().wants_keyboard_input() {
+        if ui.ctx().input(|i| i.key_pressed(egui::Key::Space)) {
+            state.command_palette.toggle();
+        }
+    }
+    let cmds = state.node_ty_reg.keys().map(|k| Cmd(&k[..]));
+    if let Some(Cmd(node_ty)) = state.command_palette.show(ui.ctx(), cmds) {
+        // Add a node of the selected type.
+        let new_fn = &state.node_ty_reg[node_ty];
+        let node = (new_fn)();
+        let id = state.graph.add_node(node);
+        let ix = id.index();
+        state.graph[id].register(&[ix], &mut state.vm);
+    }
 }
 
 fn graph(ui: &mut egui::Ui, view: &mut egui_graph::View, state: &mut State) {
@@ -247,6 +306,46 @@ fn graph(ui: &mut egui::Ui, view: &mut egui_graph::View, state: &mut State) {
         .show(view, ui, |ui, show| {
             show.nodes(ui, |nctx, ui| nodes(nctx, ui, state))
                 .edges(ui, |ectx, ui| edges(ectx, ui, state));
+        });
+
+    // FIXME: This should be floating on top of the Graph widget.
+    let space = ui.style().interaction.interact_radius * 3.0;
+    egui::Window::new("label_toggle_window")
+        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-space, -space))
+        .title_bar(false)
+        .resizable(false)
+        .collapsible(false)
+        .frame(egui::Frame::NONE)
+        .show(ui.ctx(), |ui| {
+            fn toggle<'a>(s: &str, b: &'a mut bool) -> gantz::egui::widget::LabelToggle<'a> {
+                let text = egui::RichText::new(s).size(24.0);
+                gantz::egui::widget::LabelToggle::new(text, b)
+            }
+            let grid_w = 120.0;
+            let n_cols = 4;
+            let gap_space = ui.spacing().item_spacing.x * (n_cols as f32 - 1.0);
+            let col_w = (grid_w - gap_space) / n_cols as f32;
+            egui::Grid::new("view_toggles")
+                .min_col_width(col_w)
+                .max_col_width(col_w)
+                .show(ui, |ui| {
+                    ui.vertical_centered_justified(|ui| {
+                        ui.add(toggle("N", &mut state.views.node_inspector))
+                            .on_hover_text("Node Inspector");
+                    });
+                    ui.vertical_centered_justified(|ui| {
+                        ui.add(toggle("L", &mut state.views.logs))
+                            .on_hover_text("Log View");
+                    });
+                    ui.vertical_centered_justified(|ui| {
+                        ui.add(toggle("λ", &mut state.views.steel))
+                            .on_hover_text("Steel View");
+                    });
+                    ui.vertical_centered_justified(|ui| {
+                        ui.add(toggle("G", &mut state.views.graph_config))
+                            .on_hover_text("Graph Configuration");
+                    });
+                });
         });
 }
 
@@ -348,6 +447,28 @@ fn edges(ectx: &mut egui_graph::EdgesCtx, ui: &mut egui::Ui, state: &mut State) 
     }
 }
 
+fn node_inspector(ui: &mut egui::Ui, state: &mut State) {
+    // In your egui update loop:
+    egui::Window::new("Node Inspector").show(ui.ctx(), |ui| {
+        let mut ids = state
+            .interaction
+            .selection
+            .nodes
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        ids.sort();
+        for id in ids {
+            ui.group(|ui| {
+                let node = &mut state.graph[id];
+                let path = &[id.index()];
+                let ctx = gantz::egui::NodeCtx::new(&path[..], &mut state.vm, &mut state.cmds);
+                gantz::egui::widget::NodeInspector::new(node, ctx).show(ui);
+            });
+        }
+    });
+}
+
 fn log_view(ui: &mut egui::Ui, state: &State) {
     // In your egui update loop:
     egui::Window::new("Logs").show(ui.ctx(), |ui| {
@@ -359,24 +480,19 @@ fn log_view(ui: &mut egui::Ui, state: &State) {
 fn steel_view(ui: &mut egui::Ui, state: &mut State) {
     egui::Window::new("Module").show(ui.ctx(), |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
-            let s = state.module.iter().map(|expr| expr.to_pretty(80)).collect::<Vec<String>>().join("\n\n");
+            let s = state
+                .module
+                .iter()
+                .map(|expr| expr.to_pretty(80))
+                .collect::<Vec<String>>()
+                .join("\n\n");
             gantz::egui::widget::steel_view(ui, &s);
         });
     });
 }
 
 fn graph_config(ui: &mut egui::Ui, view: &mut egui_graph::View, state: &mut State) {
-    let mut frame = egui::Frame::window(ui.style());
-    frame.shadow.spread = 0;
-    frame.shadow.offset = [0, 0];
     egui::Window::new("Graph Config")
-        .frame(frame)
-        .anchor(
-            egui::Align2::LEFT_TOP,
-            ui.spacing().window_margin.left_top(),
-        )
-        .collapsible(false)
-        .title_bar(false)
         .auto_sized()
         .show(ui.ctx(), |ui| {
             ui.label("GRAPH CONFIG");
