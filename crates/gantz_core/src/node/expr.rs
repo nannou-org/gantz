@@ -1,5 +1,5 @@
 use super::{Deserialize, Serialize};
-use crate::node::Node;
+use crate::node::{self, Node};
 use std::{fmt, str::FromStr};
 use steel::{
     parser::{ast::ExprKind, lexer::TokenStream},
@@ -146,6 +146,16 @@ impl Node for Expr {
                 .next()
                 .unwrap()
         }
+    }
+
+    /// Only generate the state binding if the expr references `state`.
+    fn stateful(&self) -> bool {
+        self.src().contains("state")
+    }
+
+    /// Registers a state slot just in case `state` is referenced by the expr.
+    fn register(&self, path: &[super::Id], vm: &mut Engine) {
+        node::state::update_value(vm, path, steel::SteelVal::Void).unwrap();
     }
 }
 
