@@ -63,10 +63,3 @@ impl gantz_core::Node for Log {
         vm.register_fn("log/trace", trace);
     }
 }
-
-#[typetag::serde]
-impl gantz_core::node::SerdeNode for Log {
-    fn node(&self) -> &dyn gantz_core::Node {
-        self
-    }
-}

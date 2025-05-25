@@ -1,6 +1,7 @@
 //! A library of standard plugins for gantz.
 
 pub use bang::Bang;
+pub use log::Log;
 pub use number::Number;
 
 pub mod bang;

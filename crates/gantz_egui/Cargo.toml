@@ -10,10 +10,17 @@ repository.workspace = true
 [dependencies]
 egui.workspace = true
 egui_extras.workspace = true
+egui_graph.workspace = true
 gantz_core.workspace = true
 gantz_std.workspace = true
 humantime.workspace = true
 log.workspace = true
-serde.workspace = true
+petgraph.workspace = true
 steel-core.workspace = true
+sublime_fuzzy.workspace = true
+
+[dev-dependencies]
+dyn-hash.workspace = true
+eframe.workspace = true
+serde.workspace = true
 typetag.workspace = true

@@ -12,8 +12,9 @@ petgraph.workspace = true
 serde.workspace = true
 steel-core.workspace = true
 thiserror.workspace = true
-typetag.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true
+serde_json.workspace = true
 steel-derive.workspace = true
+typetag.workspace = true

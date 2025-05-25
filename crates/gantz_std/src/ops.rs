@@ -26,10 +26,3 @@ impl gantz_core::Node for Add {
         Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
     }
 }
-
-#[typetag::serde]
-impl gantz_core::node::SerdeNode for Add {
-    fn node(&self) -> &dyn gantz_core::Node {
-        self
-    }
-}

@@ -39,10 +39,3 @@ impl gantz_core::Node for Number {
         gantz_core::node::state::update_value(vm, path, SteelVal::NumV(0.0)).unwrap()
     }
 }
-
-#[typetag::serde]
-impl gantz_core::node::SerdeNode for Number {
-    fn node(&self) -> &dyn gantz_core::Node {
-        self
-    }
-}
