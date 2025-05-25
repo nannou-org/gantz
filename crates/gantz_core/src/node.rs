@@ -1,7 +1,6 @@
 pub use expr::{Expr, ExprError};
 pub use pull::{Pull, WithPullEval};
 pub use push::{Push, WithPushEval};
-pub use serde::SerdeNode;
 use serde::{Deserialize, Serialize};
 pub use state::{NodeState, State, WithStateType};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
@@ -9,7 +8,6 @@ use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 pub mod expr;
 pub mod pull;
 pub mod push;
-pub mod serde;
 pub mod state;
 
 pub trait Node {

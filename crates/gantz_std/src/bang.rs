@@ -18,10 +18,3 @@ impl gantz_core::Node for Bang {
         Some(gantz_core::node::EvalFn)
     }
 }
-
-#[typetag::serde]
-impl gantz_core::node::SerdeNode for Bang {
-    fn node(&self) -> &dyn gantz_core::Node {
-        self
-    }
-}

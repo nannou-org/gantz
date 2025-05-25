@@ -1437,6 +1437,7 @@ dependencies = [
  "serde_json",
  "steel-core",
  "steel-derive",
+ "thiserror 2.0.12",
  "typetag",
 ]
 
