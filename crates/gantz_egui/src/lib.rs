@@ -27,6 +27,11 @@ pub trait NodeUi {
     fn inspector_ui(&mut self, _ctx: NodeCtx, _ui: &mut egui::Ui) -> Option<egui::Response> {
         None
     }
+
+    /// The layout direction of the node's inputs to outputs.
+    fn flow(&self) -> egui::Direction {
+        egui::Direction::TopDown
+    }
 }
 
 /// A wrapper around a node's path and the VM providing easy access to the

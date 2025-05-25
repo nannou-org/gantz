@@ -1,10 +1,15 @@
 //! A collection of useful widgets for gantz.
 
+pub use command_palette::CommandPalette;
+pub use gantz::{Gantz, GantzState};
+pub use graph_scene::{GraphScene, GraphSceneState};
 pub use label_toggle::LabelToggle;
 pub use log_view::LogView;
 pub use node_inspector::NodeInspector;
 
 pub mod command_palette;
+pub mod gantz;
+pub mod graph_scene;
 pub mod label_toggle;
 pub mod log_view;
 pub mod node_inspector;
