@@ -7,9 +7,11 @@
 use dyn_hash::DynHash;
 use eframe::egui;
 use gantz_core::{Edge, steel::steel_vm::engine::Engine};
+use gantz_egui::widget::gantz::{INLET_NAME, OUTLET_NAME};
 use petgraph::visit::EdgeRef;
 use petgraph::visit::{IntoEdgeReferences, IntoNodeReferences, NodeRef};
 use std::{
+    any::Any,
     collections::BTreeMap,
     hash::{Hash, Hasher},
 };
@@ -29,12 +31,19 @@ fn main() -> Result<(), eframe::Error> {
 
 /// A top-level blanket trait providing trait object serialization.
 #[typetag::serde(tag = "type")]
-trait Node: DynHash + gantz_core::Node + gantz_egui::NodeUi {}
+trait Node: Any + DynHash + gantz_core::Node + gantz_egui::NodeUi {}
 
 dyn_hash::hash_trait_object!(Node);
 
 #[typetag::serde]
 impl Node for gantz_core::node::Expr {}
+#[typetag::serde]
+impl Node for gantz_core::graph::GraphNode<Graph> {}
+#[typetag::serde]
+impl Node for gantz_core::graph::Inlet {}
+#[typetag::serde]
+impl Node for gantz_core::graph::Outlet {}
+
 #[typetag::serde]
 impl Node for gantz_std::ops::Add {}
 #[typetag::serde]
@@ -43,6 +52,20 @@ impl Node for gantz_std::Bang {}
 impl Node for gantz_std::Log {}
 #[typetag::serde]
 impl Node for gantz_std::Number {}
+
+#[typetag::serde]
+impl Node for Box<dyn Node> {}
+
+// To allow for navigating between nested graphs in a graph scene, we need to be
+// able to downcast a node to a graph node.
+impl gantz_egui::widget::graph_scene::ToGraphMut for Box<dyn Node> {
+    type Node = Self;
+    fn to_graph_mut(
+        &mut self,
+    ) -> Option<&mut gantz_egui::widget::graph_scene::GraphNode<Self::Node>> {
+        ((&mut **self) as &mut dyn Any).downcast_mut()
+    }
+}
 
 // ----------------------------------------------
 // Node Registry
@@ -83,6 +106,13 @@ fn node_type_registry() -> NodeTypeRegistry {
     reg.register("expr", || {
         Box::new(gantz_core::node::Expr::new("()").unwrap()) as Box<_>
     });
+    reg.register("graph", || Box::new(GraphNode::default()) as Box<_>);
+    reg.register(INLET_NAME, || {
+        Box::new(gantz_core::graph::Inlet::default()) as Box<_>
+    });
+    reg.register(OUTLET_NAME, || {
+        Box::new(gantz_core::graph::Outlet::default()) as Box<_>
+    });
     reg.register("log", || Box::new(gantz_std::Log::default()) as Box<_>);
     reg.register("number", || {
         Box::new(gantz_std::Number::default()) as Box<_>
@@ -95,10 +125,11 @@ fn node_type_registry() -> NodeTypeRegistry {
 // ----------------------------------------------
 
 type Graph = gantz_egui::widget::graph_scene::Graph<Box<dyn Node>>;
+type GraphNode = gantz_core::graph::GraphNode<Graph>;
 
 /// Setup a simple demo graph.
-fn new_graph() -> Graph {
-    let mut graph = Graph::default();
+fn new_graph() -> GraphNode {
+    let mut graph = GraphNode::default();
 
     let button = graph.add_node(Box::new(gantz_std::Bang::default()) as Box<dyn Node>);
     let n0 = graph.add_node(Box::new(gantz_std::Number::default()) as Box<_>);
@@ -126,7 +157,7 @@ struct App {
 }
 
 struct State {
-    graph: Graph,
+    graph: GraphNode,
     graph_hash: u64,
     compiled_module: String,
     gantz: gantz_egui::widget::GantzState,
@@ -147,14 +178,14 @@ impl App {
         // VM setup
         let mut vm = Engine::new();
         vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
-        gantz_core::node::state::register_graph(&graph, &mut vm);
+        gantz_core::node::state::register_graph(&graph.graph, &mut vm);
         let module = compile_graph(&graph, &mut vm);
         let compiled_module = fmt_compiled_module(&module);
 
         // GUI setup
         let ctx = &cc.egui_ctx;
         ctx.set_fonts(egui::FontDefinitions::default());
-        let gantz = gantz_egui::widget::GantzState::new_with_layout(&graph, ctx);
+        let gantz = gantz_egui::widget::GantzState::new();
 
         let state = State {
             gantz,
@@ -182,14 +213,15 @@ impl eframe::App for App {
         }
 
         // Process any pending commands generated from the UI.
-        process_cmds(&mut self.state.gantz.graph_scene.cmds, &mut self.state.vm);
+        process_cmds(&mut self.state.gantz, &mut self.state.vm);
     }
 }
 
 // Drain the commands provided by the UI and process them.
-fn process_cmds(cmds: &mut Vec<gantz_egui::Cmd>, vm: &mut Engine) {
+fn process_cmds(state: &mut gantz_egui::widget::GantzState, vm: &mut Engine) {
     // Process any pending commands.
-    for cmd in cmds.drain(..) {
+    for cmd in state.graph_scene.cmds.drain(..) {
+        log::debug!("{cmd:?}");
         match cmd {
             gantz_egui::Cmd::PushEval(path) => {
                 let fn_name = gantz_core::codegen::push_eval_fn_name(path[0]);
@@ -202,6 +234,9 @@ fn process_cmds(cmds: &mut Vec<gantz_egui::Cmd>, vm: &mut Engine) {
                 if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
                     log::error!("{e}");
                 }
+            }
+            gantz_egui::Cmd::OpenGraph(path) => {
+                state.path = path;
             }
         }
     }

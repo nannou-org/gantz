@@ -1,10 +1,11 @@
-use gantz_core::Node;
-use steel::steel_vm::engine::Engine;
-
+use super::graph_scene::ToGraphMut;
 use crate::{
-    NodeCtx, NodeUi,
+    Cmd, NodeCtx, NodeUi,
     widget::{self, GraphScene, GraphSceneState, graph_scene},
 };
+use gantz_core::{Node, node};
+use std::collections::HashMap;
+use steel::steel_vm::engine::Engine;
 
 /// A registry of available nodes.
 pub trait NodeTypeRegistry {
@@ -38,13 +39,14 @@ where
     T: NodeTypeRegistry,
 {
     node_ty_reg: &'a T,
-    graph: &'a mut graph_scene::Graph<T::Node>,
+    root: &'a mut graph_scene::GraphNode<T::Node>,
 }
 
 pub struct GantzState {
     pub graph_scene: GraphSceneState,
-    pub view: egui_graph::View,
-    pub views: Views,
+    pub path: Vec<node::Id>,
+    pub graphs: Graphs,
+    pub view_toggles: ViewToggles,
     pub command_palette: widget::CommandPalette,
     pub auto_layout: bool,
     pub layout_flow: egui::Direction,
@@ -52,8 +54,16 @@ pub struct GantzState {
     pub logger: widget::log_view::Logger,
 }
 
+/// UI state relevant to each nested graph within the tree.
+pub type Graphs = HashMap<Vec<node::Id>, GraphState>;
+
+/// UI state relevant to a graph at a certain path within the root.
+pub struct GraphState {
+    pub view: egui_graph::View,
+}
+
 #[derive(Default)]
-pub struct Views {
+pub struct ViewToggles {
     pub node_inspector: bool,
     pub logs: bool,
     pub steel: bool,
@@ -65,14 +75,17 @@ struct NodeTyCmd<'a, T> {
     name: &'a str,
 }
 
+pub const INLET_NAME: &str = "inlet";
+pub const OUTLET_NAME: &str = "outlet";
+
 impl<'a, T> Gantz<'a, T>
 where
     T: NodeTypeRegistry,
-    T::Node: NodeUi,
+    T::Node: NodeUi + graph_scene::ToGraphMut<Node = T::Node>,
 {
     /// Instantiate the full top-level gantz widget.
-    pub fn new(node_ty_reg: &'a T, graph: &'a mut graph_scene::Graph<T::Node>) -> Self {
-        Self { node_ty_reg, graph }
+    pub fn new(node_ty_reg: &'a T, root: &'a mut graph_scene::GraphNode<T::Node>) -> Self {
+        Self { node_ty_reg, root }
     }
 
     /// Present the gantz UI.
@@ -83,18 +96,18 @@ where
         vm: &mut Engine,
         ui: &mut egui::Ui,
     ) {
-        graph_scene(self.graph, state, vm, ui);
-        command_palette(self.node_ty_reg, self.graph, state, vm, ui);
-        if state.views.graph_config {
-            graph_config(self.graph, state, ui);
+        graph_scene(self.root, state, vm, ui);
+        command_palette(self.node_ty_reg, self.root, state, vm, ui);
+        if state.view_toggles.graph_config {
+            graph_config(self.root, state, ui);
         }
-        if state.views.logs {
+        if state.view_toggles.logs {
             log_view(&state.logger, ui);
         }
-        if state.views.node_inspector {
-            node_inspector(self.graph, vm, state, ui);
+        if state.view_toggles.node_inspector {
+            node_inspector(self.root, vm, state, ui);
         }
-        if state.views.steel {
+        if state.view_toggles.steel {
             steel_view(compiled_steel, ui);
         }
     }
@@ -103,27 +116,24 @@ where
 impl GantzState {
     pub const DEFAULT_DIRECTION: egui::Direction = egui::Direction::TopDown;
 
-    /// Shorthand for initialising graph state with the initial layout
-    /// automatically determined for the given graph.
-    // TODO: This layout is currently estimated but doesn't actually run the UI.
-    // Should consider dry-running the UI once if possible.
-    pub fn new_with_layout<N>(graph: &graph_scene::Graph<N>, ctx: &egui::Context) -> Self {
-        let mut view = egui_graph::View::default();
-        view.layout = widget::graph_scene::layout(graph, Self::DEFAULT_DIRECTION, ctx);
-        Self::from_view(view)
+    /// Shorthand for initialising graph state, with no intial layout so that on
+    /// the first pass, the layout is automatically determined.
+    pub fn new() -> Self {
+        Self::from_graphs(Default::default())
     }
 
-    pub fn from_view(view: egui_graph::View) -> Self {
+    pub fn from_graphs(graphs: Graphs) -> Self {
         let logger = widget::log_view::setup_logging();
         Self {
+            graph_scene: Default::default(),
+            path: vec![],
+            graphs,
             auto_layout: false,
             center_view: false,
             command_palette: widget::CommandPalette::default(),
-            graph_scene: Default::default(),
             layout_flow: Self::DEFAULT_DIRECTION,
             logger,
-            view,
-            views: Views::default(),
+            view_toggles: ViewToggles::default(),
         }
     }
 }
@@ -152,21 +162,79 @@ impl<'a, T> Clone for NodeTyCmd<'a, T> {
 impl<'a, T> Copy for NodeTyCmd<'a, T> {}
 
 fn graph_scene<N>(
-    graph: &mut graph_scene::Graph<N>,
+    graph: &mut graph_scene::GraphNode<N>,
     state: &mut GantzState,
     vm: &mut Engine,
     ui: &mut egui::Ui,
 ) where
-    N: Node + NodeUi,
+    N: Node + NodeUi + graph_scene::ToGraphMut<Node = N>,
 {
-    GraphScene::new(graph)
-        .auto_layout(state.auto_layout)
-        .layout_flow(state.layout_flow)
-        .center_view(state.center_view)
-        .show(&mut state.view, &mut state.graph_scene, vm, ui);
+    // Show the `GraphScene` for the graph at the current path.
+    match graph_scene::index_path_graph_mut(graph, &state.path) {
+        None => log::error!("path {:?} is not a graph", state.path),
+        Some(graph) => {
+            // Retrieve the view associated with this graph.
+            let graph_state = state.graphs.entry(state.path.to_vec()).or_insert_with(|| {
+                let mut view = egui_graph::View::default();
+                view.layout = widget::graph_scene::layout(graph, state.layout_flow, ui.ctx());
+                GraphState { view }
+            });
 
-    // FIXME: This should be floating on top of the Graph widget.
+            GraphScene::new(graph, &state.path)
+                .with_id(egui::Id::new(&state.path))
+                .auto_layout(state.auto_layout)
+                .layout_flow(state.layout_flow)
+                .center_view(state.center_view)
+                .show(&mut graph_state.view, &mut state.graph_scene, vm, ui);
+        }
+    };
+
+    // Floating path index labels over the bottom-left corner of the scene.
     let space = ui.style().interaction.interact_radius * 3.0;
+    egui::Window::new("path_label_window")
+        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(space, -space))
+        .title_bar(false)
+        .resizable(false)
+        .collapsible(false)
+        .frame(egui::Frame::NONE)
+        .show(ui.ctx(), |ui| {
+            fn button<'a>(s: &str) -> widget::LabelButton {
+                let text = egui::RichText::new(s).size(24.0);
+                widget::LabelButton::new(text)
+            }
+            let col_w = ui.style().interaction.interact_radius * 4.0;
+            egui::Grid::new("path_labels")
+                .min_col_width(col_w)
+                .max_col_width(col_w)
+                .show(ui, |ui| {
+                    ui.vertical_centered_justified(|ui| {
+                        if ui.add(button("R")).on_hover_text("Root Graph").clicked() {
+                            state.graph_scene.cmds.push(Cmd::OpenGraph(vec![]));
+                            state.graph_scene.interaction.selection.clear();
+                        }
+                    });
+                    for ix in 0..state.path.len() {
+                        let id = state.path[ix];
+                        ui.vertical_centered_justified(|ui| {
+                            let s = format!("{}", id);
+                            let path = &state.path[..ix + 1];
+                            let current_path = path == state.path;
+                            if ui
+                                .add(button(&s))
+                                .on_hover_text(format!("Graph at {path:?}"))
+                                .clicked()
+                            {
+                                if !current_path {
+                                    state.graph_scene.cmds.push(Cmd::OpenGraph(path.to_vec()));
+                                    state.graph_scene.interaction.selection.clear();
+                                }
+                            }
+                        });
+                    }
+                })
+        });
+
+    // Floating toggles over the bottom right corner of the graph scene.
     egui::Window::new("label_toggle_window")
         .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-space, -space))
         .title_bar(false)
@@ -187,19 +255,19 @@ fn graph_scene<N>(
                 .max_col_width(col_w)
                 .show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("N", &mut state.views.node_inspector))
+                        ui.add(toggle("N", &mut state.view_toggles.node_inspector))
                             .on_hover_text("Node Inspector");
                     });
                     ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("L", &mut state.views.logs))
+                        ui.add(toggle("L", &mut state.view_toggles.logs))
                             .on_hover_text("Log View");
                     });
                     ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("λ", &mut state.views.steel))
+                        ui.add(toggle("λ", &mut state.view_toggles.steel))
                             .on_hover_text("Steel View");
                     });
                     ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("G", &mut state.views.graph_config))
+                        ui.add(toggle("G", &mut state.view_toggles.graph_config))
                             .on_hover_text("Graph Configuration");
                     });
                 });
@@ -208,12 +276,13 @@ fn graph_scene<N>(
 
 fn command_palette<T>(
     node_ty_reg: &T,
-    graph: &mut graph_scene::Graph<T::Node>,
+    root: &mut graph_scene::GraphNode<T::Node>,
     state: &mut GantzState,
     vm: &mut Engine,
     ui: &mut egui::Ui,
 ) where
     T: NodeTypeRegistry,
+    T::Node: ToGraphMut<Node = T::Node>,
 {
     // If space is pressed, toggle command palette visibility.
     if !ui.ctx().wants_keyboard_input() {
@@ -228,19 +297,34 @@ fn command_palette<T>(
         name: &k[..],
     });
 
+    // We'll only want to apply commands to the currently selected graph.
+    let graph = graph_scene::index_path_graph_mut(root, &state.path).unwrap();
+
     // If a command was emitted, add the node.
     if let Some(cmd) = state.command_palette.show(ui.ctx(), cmds) {
         // Add a node of the selected type.
         let Some(node) = node_ty_reg.new_node(cmd.name) else {
             return;
         };
-        let id = graph.add_node(node);
+
+        // If adding an inlet or outlet, use the dedicated special-case methods.
+        let id = match cmd.name {
+            INLET_NAME => graph.add_inlet(node),
+            OUTLET_NAME => graph.add_outlet(node),
+            _ => graph.add_node(node),
+        };
         let ix = id.index();
-        graph[id].register(&[ix], vm);
+
+        // Determine the node's path and register it within the VM.
+        let node_path: Vec<_> = state.path.iter().copied().chain(Some(ix)).collect();
+        graph[id].register(&node_path, vm);
     }
 }
 
-fn graph_config<N>(graph: &mut graph_scene::Graph<N>, state: &mut GantzState, ui: &mut egui::Ui) {
+fn graph_config<N>(root: &mut graph_scene::GraphNode<N>, state: &mut GantzState, ui: &mut egui::Ui)
+where
+    N: ToGraphMut<Node = N>,
+{
     egui::Window::new("Graph Config")
         .auto_sized()
         .show(ui.ctx(), |ui| {
@@ -250,7 +334,10 @@ fn graph_config<N>(graph: &mut graph_scene::Graph<N>, state: &mut GantzState, ui
                 ui.separator();
                 ui.add_enabled_ui(!state.auto_layout, |ui| {
                     if ui.button("Layout Once").clicked() {
-                        state.view.layout = graph_scene::layout(graph, state.layout_flow, ui.ctx());
+                        let graph = graph_scene::index_path_graph_mut(root, &state.path).unwrap();
+                        let graph_state = state.graphs.get_mut(&state.path).unwrap();
+                        graph_state.view.layout =
+                            graph_scene::layout(graph, state.layout_flow, ui.ctx());
                     }
                 });
             });
@@ -264,7 +351,8 @@ fn graph_config<N>(graph: &mut graph_scene::Graph<N>, state: &mut GantzState, ui
                 );
                 ui.radio_value(&mut state.layout_flow, egui::Direction::TopDown, "Down");
             });
-            ui.label(format!("Scene: {:?}", state.view.scene_rect));
+            let graph_state = &state.graphs[&state.path];
+            ui.label(format!("Scene: {:?}", graph_state.view.scene_rect));
         });
 }
 
@@ -276,15 +364,16 @@ fn log_view(logger: &widget::log_view::Logger, ui: &mut egui::Ui) {
 }
 
 fn node_inspector<N>(
-    graph: &mut graph_scene::Graph<N>,
+    root: &mut graph_scene::GraphNode<N>,
     vm: &mut Engine,
     state: &mut GantzState,
     ui: &mut egui::Ui,
 ) where
-    N: Node + NodeUi,
+    N: Node + NodeUi + ToGraphMut<Node = N>,
 {
     // In your egui update loop:
     egui::Window::new("Node Inspector").show(ui.ctx(), |ui| {
+        let graph = graph_scene::index_path_graph_mut(root, &state.path).unwrap();
         let mut ids = state
             .graph_scene
             .interaction
@@ -296,8 +385,11 @@ fn node_inspector<N>(
         ids.sort();
         for id in ids {
             ui.group(|ui| {
-                let node = &mut graph[id];
-                let path = &[id.index()];
+                let Some(node) = graph.node_weight_mut(id) else {
+                    return;
+                };
+                let ix = id.index();
+                let path: Vec<_> = state.path.iter().copied().chain(Some(ix)).collect();
                 let ctx = NodeCtx::new(&path[..], vm, &mut state.graph_scene.cmds);
                 widget::NodeInspector::new(node, ctx).show(ui);
             });
