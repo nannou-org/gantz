@@ -2,6 +2,9 @@
 
 mod bang;
 mod expr;
+mod graph;
+mod inlet;
 mod log;
 mod number;
 mod ops;
+mod outlet;

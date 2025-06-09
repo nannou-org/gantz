@@ -3,17 +3,26 @@ use egui_graph::{
     self,
     node::{EdgeEvent, SocketKind},
 };
-use gantz_core::{Edge, Node};
+use gantz_core::{Edge, Node, node};
 use petgraph::{
     self,
     visit::{EdgeRef, IntoNodeIdentifiers, NodeIndexable},
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use steel::steel_vm::engine::Engine;
+
+/// For node types that may represent a nested [`Graph`].
+pub trait ToGraphMut {
+    /// The type of the node used within the [`Graph`].
+    type Node;
+    /// If this node is a nested graph, return a mutable reference to it.
+    fn to_graph_mut(&mut self) -> Option<&mut GraphNode<Self::Node>>;
+}
 
 /// The graph type excepted by the `GraphScene` widget.
 // TODO: Provide a `Graph` trait instead for more flexibility?
 pub type Graph<N> = petgraph::stable_graph::StableGraph<N, Edge, petgraph::Directed, usize>;
+pub type GraphNode<N> = gantz_core::graph::GraphNode<Graph<N>>;
 
 pub type EdgeIndex = petgraph::graph::EdgeIndex<usize>;
 pub type NodeIndex = petgraph::graph::NodeIndex<usize>;
@@ -22,6 +31,7 @@ pub type NodeIndex = petgraph::graph::NodeIndex<usize>;
 /// gantz graph.
 pub struct GraphScene<'a, N> {
     graph: &'a mut Graph<N>,
+    path: &'a [node::Id],
     id: egui::Id,
     auto_layout: bool,
     layout_flow: egui::Direction,
@@ -32,7 +42,6 @@ pub struct GraphScene<'a, N> {
 /// outside the widget.
 #[derive(Default)]
 pub struct GraphSceneState {
-    pub node_id_map: HashMap<egui::Id, NodeIndex>,
     pub interaction: Interaction,
     /// Commands queued within the graph scene widget to be handled externally.
     pub cmds: Vec<Cmd>,
@@ -54,10 +63,18 @@ impl<'a, N> GraphScene<'a, N>
 where
     N: Node + NodeUi,
 {
-    /// Create a graph scene for the given gantz graph.
-    pub fn new(graph: &'a mut Graph<N>) -> Self {
+    /// Create a graph scene for the given graph that resides at the given path
+    /// from the root.
+    ///
+    /// E.g. to present the root graph, provide the root graph and an empty
+    /// slice.
+    ///
+    /// NOTE: this means the `path` is not an index into the graph, but is the
+    /// path that this braph resides at within some root graph.
+    pub fn new(graph: &'a mut Graph<N>, path: &'a [node::Id]) -> Self {
         Self {
             graph,
+            path,
             id: egui::Id::new("gantz-graph-scene"),
             auto_layout: false,
             layout_flow: egui::Direction::TopDown,
@@ -112,9 +129,18 @@ where
         egui_graph::Graph::new(self.id)
             .center_view(self.center_view)
             .show(view, ui, |ui, show| {
-                show.nodes(ui, |nctx, ui| nodes(self.graph, nctx, state, vm, ui))
-                    .edges(ui, |ectx, ui| edges(self.graph, ectx, state, ui));
+                show.nodes(ui, |nctx, ui| {
+                    nodes(self.graph, self.path, nctx, state, vm, ui)
+                })
+                .edges(ui, |ectx, ui| edges(self.graph, ectx, state, ui));
             });
+    }
+}
+
+impl Selection {
+    pub fn clear(&mut self) {
+        self.edges.clear();
+        self.nodes.clear();
     }
 }
 
@@ -124,6 +150,9 @@ pub fn layout<N>(
     flow: egui::Direction,
     ctx: &egui::Context,
 ) -> egui_graph::Layout {
+    if graph.node_count() == 0 {
+        return Default::default();
+    }
     ctx.memory(|m| {
         let nodes = graph.node_indices().map(|n| {
             // FIXME: This ID doesn't directly corellate with node size.
@@ -144,6 +173,7 @@ pub fn layout<N>(
 
 fn nodes<N>(
     graph: &mut Graph<N>,
+    path: &[node::Id],
     nctx: &mut egui_graph::NodesCtx,
     state: &mut GraphSceneState,
     vm: &mut Engine,
@@ -152,23 +182,23 @@ fn nodes<N>(
     N: Node + NodeUi,
 {
     let node_ids: Vec<_> = graph.node_identifiers().collect();
+    let mut path = path.to_vec();
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node = &mut graph[n_id];
         let inputs = node.n_inputs();
         let outputs = node.n_outputs();
         let egui_id = egui::Id::new(n_id);
-        state.node_id_map.insert(egui_id, n_id);
         let response = egui_graph::node::Node::from_id(egui_id)
             .inputs(inputs)
             .outputs(outputs)
             .flow(node.flow())
             .show(nctx, ui, |ui| {
-                let path = vec![n_ix];
-                let node_ctx = crate::NodeCtx::new(&path, vm, &mut state.cmds);
-
+                path.push(n_ix);
                 // Instantiate the node's UI.
+                let node_ctx = crate::NodeCtx::new(&path, vm, &mut state.cmds);
                 node.ui(node_ctx, ui);
+                path.pop();
             });
 
         if response.changed() {
@@ -208,7 +238,6 @@ fn nodes<N>(
             // If the delete key was pressed while selected, remove it.
             if response.removed() {
                 graph.remove_node(n_id);
-                state.node_id_map.remove(&egui_id);
             }
         }
     }
@@ -247,4 +276,46 @@ fn edges<N>(
     if let Some(edge) = ectx.in_progress(ui) {
         edge.show(ui);
     }
+}
+
+/// Index into the given graph using the given path.
+///
+/// Returns `None` in the case that `path` is empty, or if there is no node at a
+/// given `node::Id` in the path.
+pub fn index_path_node_mut<'a, N>(graph: &'a mut Graph<N>, path: &[node::Id]) -> Option<&'a mut N>
+where
+    N: ToGraphMut<Node = N>,
+{
+    if path.is_empty() {
+        return None;
+    }
+
+    let node_id = petgraph::graph::NodeIndex::new(path[0]);
+    let node = graph.node_weight_mut(node_id)?;
+    if path.len() == 1 {
+        // If this is the end of the path, return the node
+        return Some(node);
+    }
+
+    // If there are more elements in the path, this node should be a graph node
+    // Try to get the nested graph and continue traversing
+    let nested = node.to_graph_mut()?;
+    index_path_node_mut(&mut nested.graph, &path[1..])
+}
+
+/// Index into the given graph using the given path.
+///
+/// Returns `None` in the case that `path` is empty, or if there is no node at a
+/// given `node::Id` in the path.
+pub fn index_path_graph_mut<'a, N>(
+    graph: &'a mut GraphNode<N>,
+    path: &[node::Id],
+) -> Option<&'a mut GraphNode<N>>
+where
+    N: ToGraphMut<Node = N>,
+{
+    if path.is_empty() {
+        return Some(graph);
+    }
+    index_path_node_mut(graph, path).and_then(|node| node.to_graph_mut())
 }

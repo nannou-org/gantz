@@ -44,9 +44,11 @@ pub struct NodeCtx<'a> {
 
 /// Commands that can be emitted by nodes that are processed after the GUI pass
 /// is complete.
+#[derive(Debug)]
 pub enum Cmd {
     PushEval(Vec<node::Id>),
     PullEval(Vec<node::Id>),
+    OpenGraph(Vec<node::Id>),
 }
 
 impl<'a, N> NodeUi for &'a mut N

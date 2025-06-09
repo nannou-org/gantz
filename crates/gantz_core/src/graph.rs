@@ -3,11 +3,12 @@ use crate::{
     node::{self, Node},
 };
 use petgraph::visit::{
-    Data, GraphBase, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, NodeRef, Visitable,
+    Data, EdgeRef, GraphBase, IntoEdgeReferences, IntoEdgesDirected, IntoNodeReferences,
+    NodeIndexable, NodeRef, Visitable,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
-    hash::Hash,
+    hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
 };
 use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
@@ -41,7 +42,7 @@ pub trait AddNode: Data {
 pub const FULL_EVAL_FN_NAME: &str = "full_eval";
 
 /// A node that itself is implemented in terms of a graph of nodes.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GraphNode<G>
 where
     G: GraphBase,
@@ -171,6 +172,49 @@ where
     }
 }
 
+impl<G> Default for GraphNode<G>
+where
+    G: GraphBase + Default,
+{
+    fn default() -> Self {
+        let graph = Default::default();
+        let inlets = Default::default();
+        let outlets = Default::default();
+        GraphNode {
+            graph,
+            inlets,
+            outlets,
+        }
+    }
+}
+
+impl<G> Hash for GraphNode<G>
+where
+    G: Data,
+    for<'a> &'a G: Data<EdgeWeight = G::EdgeWeight, NodeWeight = G::NodeWeight>
+        + GraphBase<EdgeId = G::EdgeId, NodeId = G::NodeId>
+        + IntoEdgeReferences
+        + IntoNodeReferences,
+    G::EdgeId: Hash,
+    G::EdgeWeight: Hash,
+    G::NodeId: Hash,
+    G::NodeWeight: Hash,
+{
+    fn hash<H>(&self, hasher: &mut H)
+    where
+        H: Hasher,
+    {
+        for n in self.graph.node_references() {
+            n.id().hash(hasher);
+            n.weight().hash(hasher);
+        }
+        for e in self.graph.edge_references() {
+            e.id().hash(hasher);
+            e.weight().hash(hasher);
+        }
+    }
+}
+
 impl<G> Node for GraphNode<G>
 where
     G: Data + NodeIndexable,
@@ -209,22 +253,6 @@ where
             path.push(id);
             n.weight().register(&path, vm);
             path.pop();
-        }
-    }
-}
-
-impl<G> Default for GraphNode<G>
-where
-    G: GraphBase + Default,
-{
-    fn default() -> Self {
-        let graph = Default::default();
-        let inlets = Default::default();
-        let outlets = Default::default();
-        GraphNode {
-            graph,
-            inlets,
-            outlets,
         }
     }
 }
@@ -366,6 +394,14 @@ impl Node for Inlet {
     fn n_outputs(&self) -> usize {
         1
     }
+
+    fn stateful(&self) -> bool {
+        true
+    }
+
+    fn register(&self, path: &[node::Id], vm: &mut Engine) {
+        node::state::update_value(vm, path, steel::SteelVal::Void).unwrap();
+    }
 }
 
 impl Node for Outlet {
@@ -389,6 +425,14 @@ impl Node for Outlet {
 
     fn n_outputs(&self) -> usize {
         0
+    }
+
+    fn stateful(&self) -> bool {
+        true
+    }
+
+    fn register(&self, path: &[node::Id], vm: &mut Engine) {
+        node::state::update_value(vm, path, steel::SteelVal::Void).unwrap();
     }
 }
 
