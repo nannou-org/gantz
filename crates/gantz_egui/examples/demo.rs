@@ -244,7 +244,7 @@ fn process_cmds(state: &mut gantz_egui::widget::GantzState, vm: &mut Engine) {
 
 fn compile_graph(graph: &Graph, vm: &mut Engine) -> Vec<ExprKind> {
     // Generate the steel module.
-    let module = gantz_core::codegen::module(graph, &[], &[]);
+    let module = gantz_core::codegen::module(graph, &[], &[], &[]);
     // Compile the eval fns.
     for expr in &module {
         if let Err(e) = vm.run(expr.to_pretty(80)) {

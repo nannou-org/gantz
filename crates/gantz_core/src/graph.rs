@@ -1,6 +1,7 @@
 use crate::{
     Edge, GRAPH_STATE,
     node::{self, Node},
+    visit,
 };
 use petgraph::visit::{
     Data, EdgeRef, GraphBase, IntoEdgeReferences, IntoEdgesDirected, IntoNodeReferences,
@@ -132,7 +133,8 @@ where
         // Use codegen to create the evaluation order, steps, and statements
         let order = codegen::eval_order(self, inlets.iter().cloned(), outlets.iter().cloned());
         let steps = codegen::eval_steps(self, order);
-        let stmts = codegen::eval_stmts(self, &steps);
+        // FIXME: path
+        let stmts = codegen::eval_stmts(self, &[], &steps);
 
         // Combine inlet bindings with graph evaluation steps
         let all_stmts = inlet_bindings
@@ -254,6 +256,12 @@ where
             n.weight().register(&path, vm);
             path.pop();
         }
+    }
+
+    fn visit(&self, visitor: &mut dyn node::Visitor, path: &[node::Id]) {
+        visitor.visit_pre(self, path);
+        visit(&self.graph, path, visitor);
+        visitor.visit_post(self, path);
     }
 }
 
@@ -473,4 +481,28 @@ where
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.graph
     }
+}
+
+/// Visit all nodes in the graph, and all nested nodes in depth-first order.
+pub fn visit<G>(graph: G, path: &[node::Id], visitor: &mut dyn node::Visitor)
+where
+    G: IntoNodeReferences + NodeIndexable,
+    G::NodeWeight: Node,
+{
+    let mut path = path.to_vec();
+    for n in graph.node_references() {
+        let id = graph.to_index(n.id());
+        path.push(id);
+        node::visit(n.weight(), &path, visitor);
+        path.pop();
+    }
+}
+
+/// Register the given graph of nodes, including any nested nodes.
+pub fn register<G>(graph: G, path: &[node::Id], vm: &mut Engine)
+where
+    G: IntoNodeReferences + NodeIndexable,
+    G::NodeWeight: Node,
+{
+    visit(graph, path, &mut visit::Register(vm));
 }

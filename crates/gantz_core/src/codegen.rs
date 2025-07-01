@@ -135,8 +135,8 @@ where
     Topo::new(g).iter(g).filter(move |node| dfs.contains(&node))
 }
 
-/// The evaluation order for given any number of simultaneously pushing and
-/// pulling nodes.
+/// The evaluation order given any number of simultaneously pushing and pulling
+/// nodes.
 ///
 /// Evaluation order is equivalent to a topological ordering of the connected
 /// components reachable via DFS from each push node and reversed-edge DFS from
@@ -226,9 +226,123 @@ where
     eval_steps
 }
 
+/// Generate a function name for a node based on its path in the graph.
+fn node_fn_name(node_path: &[node::Id], inputs: &[bool]) -> String {
+    let path_string = node_path
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join("_");
+    let inputs_prefix = if inputs.is_empty() { "" } else { "_i" };
+    let inputs_string = inputs
+        .iter()
+        .map(|&b| if b { "1" } else { "0" })
+        .collect::<Vec<_>>()
+        .join("");
+    format!("node_fn_{path_string}{inputs_prefix}{inputs_string}")
+}
+
+/// Generate a function for a single node with the given set of connected inputs.
+fn node_fn<N>(node: &N, node_path: &[node::Id], inputs: &[bool]) -> ExprKind
+where
+    N: Node,
+{
+    fn input_name(i: usize) -> String {
+        format!("input{i}")
+    }
+
+    // Create function parameters for graph state and inputs
+    let input_args = inputs
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| b.then(|| input_name(i)))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // Create input expressions for the node's expr method
+    let input_exprs: Vec<Option<ExprKind>> = inputs
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| {
+            b.then(|| {
+                let expr_str = input_name(i);
+                let expr_kind = Engine::emit_ast(&expr_str)
+                    .expect("Failed to emit AST for input")
+                    .into_iter()
+                    .next()
+                    .unwrap();
+                Some(expr_kind)
+            })
+        })
+        .collect();
+
+    // Get the node's expression
+    let node_expr = node.expr(&input_exprs);
+
+    // Construct the full function definition
+    let fn_name = node_fn_name(node_path, inputs);
+    let fn_args = match input_args.len() {
+        0 => format!("{GRAPH_STATE}"),
+        _ => format!("{input_args} {GRAPH_STATE}"),
+    };
+    let fn_body = if node.stateful() {
+        let node_ix = node_path
+            .last()
+            .copied()
+            .expect("node_path must be non-empty");
+        let key = node_state_key(node_ix);
+        format!(
+            "(let ((state (hash-ref {GRAPH_STATE} {key})))
+               (let ((output {node_expr}))
+                 (set! {GRAPH_STATE} (hash-insert {GRAPH_STATE} {key} state))
+                 output))"
+        )
+    } else {
+        format!("{node_expr}")
+    };
+    let fn_def = format!("(define ({fn_name} {fn_args}) {fn_body})");
+
+    Engine::emit_ast(&fn_def)
+        .expect("Failed to emit AST for node function")
+        .into_iter()
+        .next()
+        .unwrap()
+}
+
+/// Whether or not each of the given node's inputs are connected.
+fn node_inputs_connected<G>(g: G, node: G::NodeId, n_inputs: usize) -> Vec<bool>
+where
+    G: Data<EdgeWeight = Edge> + GraphRef + IntoEdgesDirected,
+    G::NodeWeight: Node,
+{
+    let mut args = vec![false; n_inputs];
+    for e_ref in g.edges_directed(node, petgraph::Incoming) {
+        let w = e_ref.weight();
+        args[w.input.0 as usize] = true;
+    }
+    args
+}
+
+/// Generate functions for all nodes and their input configurations in the graph.
+pub fn node_fns<G>(g: G, path: &[node::Id]) -> Vec<ExprKind>
+where
+    G: Data<EdgeWeight = Edge> + GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable,
+    G::NodeWeight: Node,
+{
+    g.node_references()
+        .map(|n_ref| {
+            let id = g.to_index(n_ref.id());
+            let node_path: Vec<_> = path.iter().copied().chain(Some(id)).collect();
+            let n_inputs = n_ref.weight().n_inputs();
+            let inputs = node_inputs_connected(g, n_ref.id(), n_inputs);
+            node_fn(n_ref.weight(), &node_path, &inputs)
+        })
+        .collect()
+}
+
 /// Generate a sequence of evaluation statements, one for each given evaluation
 /// step.
-pub fn eval_stmts<G>(g: G, steps: &[EvalStep<G::NodeId>]) -> Vec<ExprKind>
+pub fn eval_stmts<G>(g: G, path: &[node::Id], steps: &[EvalStep<G::NodeId>]) -> Vec<ExprKind>
 where
     G: Data + GraphRef + IntoNodeReferences + NodeIndexable,
     G::NodeId: Eq + Hash,
@@ -329,27 +443,38 @@ where
 
         // Work out the node's state variable name.
         let node_ix = g.to_index(step.node);
-        let node_state_key = node_state_key(node_ix);
 
         // Get the node's expression.
-        let mut node_expr = node.weight().expr(&input_exprs);
-        if node.weight().stateful() {
-            node_expr = wrap_node_expr_with_state(&node_expr, &node_state_key);
-        }
+        let node_path: Vec<_> = path.iter().copied().chain(Some(node_ix)).collect();
+        let node_inputs: Vec<_> = step.args.iter().map(|arg| arg.is_some()).collect();
+        let node_fn_name = node_fn_name(&node_path, &node_inputs);
+        let mut args: Vec<String> = input_exprs
+            .iter()
+            .filter_map(|opt| opt.as_ref().map(|expr| format!("{expr}")))
+            .collect();
+        // if node.weight().stateful() {
+            args.push(GRAPH_STATE.to_string());
+        // }
+        let node_fn_call_expr_str = format!("({node_fn_name} {})", args.join(" "));
+        let node_fn_call_expr = Engine::emit_ast(&node_fn_call_expr_str)
+            .expect("failed to emit AST")
+            .into_iter()
+            .next()
+            .unwrap();
 
         // Create a binding statement for each output
         match n_outputs {
-            0 => stmts.push(node_expr),
+            0 => stmts.push(node_fn_call_expr),
             1 => {
                 let output_var = var_name(step_ix, 0);
-                let define_expr = create_define_expr(output_var, node_expr);
+                let define_expr = create_define_expr(output_var, node_fn_call_expr);
                 stmts.push(define_expr);
             }
             _ => {
                 let output_vars: Vec<String> = (0..n_outputs)
                     .map(|i| var_name(step_ix, i as u16))
                     .collect();
-                let define_values_expr = create_define_values_expr(output_vars, node_expr);
+                let define_values_expr = create_define_values_expr(output_vars, node_fn_call_expr);
                 stmts.push(define_values_expr);
             }
         }
@@ -400,7 +525,7 @@ pub fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
 
 /// Given a list of push evaluation nodes and their evaluation steps, generate a
 /// function for performing push evaluation for each node.
-pub fn eval_fns<'a, G, I>(g: G, eval_nodes: I) -> Vec<ExprKind>
+pub fn eval_fns<'a, G, I>(g: G, path: &[node::Id], eval_nodes: I) -> Vec<ExprKind>
 where
     G: GraphRef + IntoNodeReferences + NodeIndexable,
     G::NodeId: 'a + Eq + Hash,
@@ -410,7 +535,7 @@ where
     eval_nodes
         .into_iter()
         .map(|(_n, eval_fn_name, steps)| {
-            let stmts = eval_stmts(g, steps);
+            let stmts = eval_stmts(g, path, steps);
             eval_fn(&eval_fn_name, stmts)
         })
         .collect()
@@ -418,7 +543,12 @@ where
 
 /// Given a graph, generate the full module with all the necessary functions for
 /// executing it.
-pub fn module<G>(g: G, inlets: &[G::NodeId], outlets: &[G::NodeId]) -> Vec<ExprKind>
+pub fn module<G>(
+    g: G,
+    path: &[node::Id],
+    inlets: &[G::NodeId],
+    outlets: &[G::NodeId],
+) -> Vec<ExprKind>
 where
     G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G: Data<EdgeWeight = Edge>,
@@ -438,6 +568,8 @@ where
         }
     };
 
+    let node_fns = node_fns(g, path);
+
     let pull_nodes = pull_nodes(g);
     let push_nodes = push_nodes(g);
     let pull_node_eval_steps = pull_nodes.into_iter().map(|(n, eval)| {
@@ -451,13 +583,15 @@ where
         (steps, eval)
     });
 
-    full_eval_steps
+    let eval_exprs: Vec<_> = full_eval_steps
         .into_iter()
         .chain(pull_node_eval_steps)
         .chain(push_node_eval_steps)
         .map(|(steps, eval_fn_name)| {
-            let stmts = eval_stmts(g, &steps);
+            let stmts = eval_stmts(g, path, &steps);
             eval_fn(&eval_fn_name, stmts)
         })
-        .collect()
+        .collect();
+
+    node_fns.into_iter().chain(eval_exprs).collect()
 }

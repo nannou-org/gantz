@@ -1,3 +1,6 @@
+use crate::visit;
+#[doc(inline)]
+pub use crate::visit::Visitor;
 pub use expr::{Expr, ExprError};
 pub use pull::{Pull, WithPullEval};
 pub use push::{Push, WithPushEval};
@@ -85,6 +88,17 @@ pub trait Node {
     ///
     /// By default, the node is assumed to be stateless, and this does nothing.
     fn register(&self, _path: &[Id], _vm: &mut Engine) {}
+
+    /// Traverse all nested nodes, depth-first, with the given [`Visitor`].
+    ///
+    /// For each nested node:
+    ///
+    /// 1. `Visitor::visit_pre`
+    /// 2. `Node::visit`
+    /// 3. `Visitor::visit_post`
+    ///
+    /// To visit this node and all nested nodes, use the [`visit`] function.
+    fn visit(&self, _visitor: &mut dyn Visitor, _path: &[Id]) {}
 }
 
 /// Type used to represent a node's ID within a graph.
@@ -194,4 +208,16 @@ impl From<u16> for Output {
 /// Shorthand for `node::Expr::new`.
 pub fn expr(expr: impl Into<String>) -> Result<Expr, ExprError> {
     Expr::new(expr)
+}
+
+/// Visit this node and all nested nodes.
+pub fn visit(node: &dyn Node, path: &[Id], visitor: &mut dyn Visitor) {
+    visitor.visit_pre(node, path);
+    node.visit(visitor, path);
+    visitor.visit_post(node, path);
+}
+
+/// Register the given node and all nested nodes.
+pub fn register(node: &dyn Node, path: &[Id], vm: &mut Engine) {
+    visit(node, path, &mut visit::Register(vm));
 }
