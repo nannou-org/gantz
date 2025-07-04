@@ -7,12 +7,23 @@ use petgraph::visit::{
     Topo, Visitable, Walker,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     hash::Hash,
 };
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
+/// Represents a node and its input configuration within a graph.
+#[derive(Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct NodeConf<NI> {
+    /// The node being evaluated.
+    pub node: NI,
+    /// The set of the node's inputs, and whether they're connected.
+    pub inputs: Vec<bool>,
+}
+
 /// An evaluation step ready for translation to code.
+///
+/// Represents evaluation of a node with some set of the inputs connected.
 #[derive(Debug)]
 pub struct EvalStep<NI> {
     /// The node to be evaluated.
@@ -309,33 +320,41 @@ where
         .unwrap()
 }
 
-/// Whether or not each of the given node's inputs are connected.
-fn node_inputs_connected<G>(g: G, node: G::NodeId, n_inputs: usize) -> Vec<bool>
+/// Collect all unique node configurations for all unique evaluation paths that
+/// exist in the graph.
+pub fn node_confs<'a, NI, I>(
+    eval_stepss: I,
+) -> BTreeSet<NodeConf<NI>>
 where
-    G: Data<EdgeWeight = Edge> + GraphRef + IntoEdgesDirected,
-    G::NodeWeight: Node,
+    NI: 'a + Copy + Ord,
+    I: IntoIterator<Item = &'a [EvalStep<NI>]>,
 {
-    let mut args = vec![false; n_inputs];
-    for e_ref in g.edges_directed(node, petgraph::Incoming) {
-        let w = e_ref.weight();
-        args[w.input.0 as usize] = true;
-    }
-    args
+    eval_stepss
+        .into_iter()
+        .flat_map(|steps| steps.iter().map(|step| NodeConf {
+            node: step.node,
+            inputs: step.args.iter().map(|arg| arg.is_some()).collect(),
+        }))
+        .collect()
 }
 
-/// Generate functions for all nodes and their input configurations in the graph.
-pub fn node_fns<G>(g: G, path: &[node::Id]) -> Vec<ExprKind>
+/// Generate functions for all nodes and all of their input configurations for
+/// all push/pull evaluation paths in the graph.
+pub fn node_fns<'a, G, I>(g: G, path: &[node::Id], confs: I) -> Vec<ExprKind>
 where
     G: Data<EdgeWeight = Edge> + GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable,
+    G::NodeId: 'a,
     G::NodeWeight: Node,
+    I: IntoIterator<Item = &'a NodeConf<G::NodeId>>,
 {
-    g.node_references()
-        .map(|n_ref| {
-            let id = g.to_index(n_ref.id());
+    confs
+        .into_iter()
+        .map(|conf| {
+            let id = g.to_index(conf.node);
             let node_path: Vec<_> = path.iter().copied().chain(Some(id)).collect();
-            let n_inputs = n_ref.weight().n_inputs();
-            let inputs = node_inputs_connected(g, n_ref.id(), n_inputs);
-            node_fn(n_ref.weight(), &node_path, &inputs)
+            // FIXME: Use some node indexing trait.
+            let n_ref = g.node_references().find(|n| n.id() == conf.node).unwrap();
+            node_fn(n_ref.weight(), &node_path, &conf.inputs)
         })
         .collect()
 }
@@ -453,7 +472,7 @@ where
             .filter_map(|opt| opt.as_ref().map(|expr| format!("{expr}")))
             .collect();
         // if node.weight().stateful() {
-            args.push(GRAPH_STATE.to_string());
+        args.push(GRAPH_STATE.to_string());
         // }
         let node_fn_call_expr_str = format!("({node_fn_name} {})", args.join(" "));
         let node_fn_call_expr = Engine::emit_ast(&node_fn_call_expr_str)
@@ -523,22 +542,43 @@ pub fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
         .unwrap()
 }
 
-/// Given a list of push evaluation nodes and their evaluation steps, generate a
-/// function for performing push evaluation for each node.
-pub fn eval_fns<'a, G, I>(g: G, path: &[node::Id], eval_nodes: I) -> Vec<ExprKind>
+/// Produce all sequential evaluation orders for all entry points to the graph.
+///
+/// Each path is yielded alongside its associated function name.
+///
+/// In order, this will include steps for full_eval (if any inlet or outlets
+/// exist), pull_eval and then push_eval.
+pub fn eval_orders<'a, G>(
+    g: G,
+    inlets: &'a [G::NodeId],
+    outlets: &'a [G::NodeId],
+) -> impl 'a + Iterator<Item = (String, Vec<G::NodeId>)>
 where
-    G: GraphRef + IntoNodeReferences + NodeIndexable,
-    G::NodeId: 'a + Eq + Hash,
+    G: 'a + GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
+    G::NodeId: Eq + Hash,
     G::NodeWeight: Node,
-    I: IntoIterator<Item = (G::NodeId, String, &'a [EvalStep<G::NodeId>])>,
 {
-    eval_nodes
+    let full_eval_order = (!inlets.is_empty() || !outlets.is_empty()).then(|| {
+        const FULL_EVAL_FN_NAME: &str = "full_eval";
+        let eval_name = FULL_EVAL_FN_NAME.to_string();
+        let order: Vec<_> =
+            eval_order(g, inlets.iter().cloned(), outlets.iter().cloned()).collect();
+        (eval_name, order)
+    });
+    let pull_nodes = pull_nodes(g);
+    let push_nodes = push_nodes(g);
+    let pull_eval_orders = pull_nodes.into_iter().map(move |(n, eval_name)| {
+        let order: Vec<_> = pull_eval_order(g, n).collect();
+        (eval_name, order)
+    });
+    let push_eval_orders = push_nodes.into_iter().map(move |(n, eval_name)| {
+        let order: Vec<_> = push_eval_order(g, n).collect();
+        (eval_name, order)
+    });
+    full_eval_order
         .into_iter()
-        .map(|(_n, eval_fn_name, steps)| {
-            let stmts = eval_stmts(g, path, steps);
-            eval_fn(&eval_fn_name, stmts)
-        })
-        .collect()
+        .chain(pull_eval_orders)
+        .chain(push_eval_orders)
 }
 
 /// Given a graph, generate the full module with all the necessary functions for
@@ -550,48 +590,31 @@ pub fn module<G>(
     outlets: &[G::NodeId],
 ) -> Vec<ExprKind>
 where
-    G: GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
-    G: Data<EdgeWeight = Edge>,
-    G::NodeId: Eq + Hash,
+    G: Data<EdgeWeight = Edge>
+        + GraphRef
+        + IntoEdgesDirected
+        + IntoNodeReferences
+        + NodeIndexable
+        + Visitable,
+    G::NodeId: Eq + Hash + Ord,
     G::NodeWeight: Node,
 {
-    let full_eval_steps = match (inlets.is_empty(), outlets.is_empty()) {
-        (true, true) => None,
-        _ => {
-            /// The name of the function generated for performing full
-            /// evaluation of the graph.
-            const FULL_EVAL_FN_NAME: &str = "full_eval";
-            let eval_fn_name = FULL_EVAL_FN_NAME.to_string();
-            let order = eval_order(g, inlets.iter().cloned(), outlets.iter().cloned());
-            let steps = eval_steps(g, order);
-            Some((steps, eval_fn_name))
-        }
-    };
-
-    let node_fns = node_fns(g, path);
-
-    let pull_nodes = pull_nodes(g);
-    let push_nodes = push_nodes(g);
-    let pull_node_eval_steps = pull_nodes.into_iter().map(|(n, eval)| {
-        let order = pull_eval_order(g, n);
-        let steps = eval_steps(g, order);
-        (steps, eval)
-    });
-    let push_node_eval_steps = push_nodes.into_iter().map(|(n, eval)| {
-        let order = push_eval_order(g, n);
-        let steps = eval_steps(g, order);
-        (steps, eval)
-    });
-
-    let eval_exprs: Vec<_> = full_eval_steps
-        .into_iter()
-        .chain(pull_node_eval_steps)
-        .chain(push_node_eval_steps)
-        .map(|(steps, eval_fn_name)| {
-            let stmts = eval_stmts(g, path, &steps);
-            eval_fn(&eval_fn_name, stmts)
-        })
+    let eval_orders: Vec<_> = eval_orders(g, inlets, outlets).collect();
+    let eval_stepss: Vec<_> = eval_orders
+        .iter()
+        .map(|(_, order)| eval_steps(g, order.iter().copied()))
         .collect();
 
-    node_fns.into_iter().chain(eval_exprs).collect()
+    let node_confs = node_confs(eval_stepss.iter().map(|steps| &steps[..]));
+    let node_fns = node_fns(g, path, &node_confs);
+
+    let eval_fns = eval_orders
+        .iter()
+        .zip(&eval_stepss)
+        .map(|((eval_name, _), steps)| {
+            let stmts = eval_stmts(g, path, &steps);
+            eval_fn(&eval_name, stmts)
+        });
+
+    node_fns.into_iter().chain(eval_fns).collect()
 }
