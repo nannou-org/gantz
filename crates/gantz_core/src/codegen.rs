@@ -258,17 +258,21 @@ fn node_fn<N>(node: &N, node_path: &[node::Id], inputs: &[bool]) -> ExprKind
 where
     N: Node,
 {
+    // The binding used to receive the node's state as an argument, and whose
+    // resulting value is returned from the body of the function and used to
+    // update the state map.
+    const STATE: &str = "state";
+
     fn input_name(i: usize) -> String {
         format!("input{i}")
     }
 
     // Create function parameters for graph state and inputs
-    let input_args = inputs
+    let mut input_args = inputs
         .iter()
         .enumerate()
         .filter_map(|(i, b)| b.then(|| input_name(i)))
-        .collect::<Vec<_>>()
-        .join(" ");
+        .collect::<Vec<_>>();
 
     // Create input expressions for the node's expr method
     let input_exprs: Vec<Option<ExprKind>> = inputs
@@ -292,25 +296,13 @@ where
 
     // Construct the full function definition
     let fn_name = node_fn_name(node_path, inputs);
-    let fn_args = match input_args.len() {
-        0 => format!("{GRAPH_STATE}"),
-        _ => format!("{input_args} {GRAPH_STATE}"),
-    };
     let fn_body = if node.stateful() {
-        let node_ix = node_path
-            .last()
-            .copied()
-            .expect("node_path must be non-empty");
-        let key = node_state_key(node_ix);
-        format!(
-            "(let ((state (hash-ref {GRAPH_STATE} {key})))
-               (let ((output {node_expr}))
-                 (set! {GRAPH_STATE} (hash-insert {GRAPH_STATE} {key} state))
-                 output))"
-        )
+        input_args.push(STATE.to_string());
+        format!("(let ((output {node_expr})) (list output state))")
     } else {
         format!("{node_expr}")
     };
+    let fn_args = input_args.join(" ");
     let fn_def = format!("(define ({fn_name} {fn_args}) {fn_body})");
 
     Engine::emit_ast(&fn_def)
@@ -322,19 +314,19 @@ where
 
 /// Collect all unique node configurations for all unique evaluation paths that
 /// exist in the graph.
-pub fn node_confs<'a, NI, I>(
-    eval_stepss: I,
-) -> BTreeSet<NodeConf<NI>>
+pub fn node_confs<'a, NI, I>(eval_stepss: I) -> BTreeSet<NodeConf<NI>>
 where
     NI: 'a + Copy + Ord,
     I: IntoIterator<Item = &'a [EvalStep<NI>]>,
 {
     eval_stepss
         .into_iter()
-        .flat_map(|steps| steps.iter().map(|step| NodeConf {
-            node: step.node,
-            inputs: step.args.iter().map(|arg| arg.is_some()).collect(),
-        }))
+        .flat_map(|steps| {
+            steps.iter().map(|step| NodeConf {
+                node: step.node,
+                inputs: step.args.iter().map(|arg| arg.is_some()).collect(),
+            })
+        })
         .collect()
 }
 
@@ -369,6 +361,8 @@ where
 {
     type OutputVars<NI> = HashMap<(NI, node::Output), String>;
 
+    const STATE: &str = "state";
+
     // Track output variables
     let mut output_vars: OutputVars<G::NodeId> = HashMap::new();
     let mut stmts = Vec::new();
@@ -378,24 +372,20 @@ where
         format!("__node{}_output{}", node_ix, out_ix)
     }
 
-    // Update wrap_node_expr_with_state to extract state from the hashmap
-    fn wrap_node_expr_with_state(node_expr: &ExprKind, key: &ExprKind) -> ExprKind {
-        // 1. Gets the current state
-        // 2. Evaluate the node expr (which may modify the local state var)
-        // 3. Updates the hashmap with the potentially modified state
-        // 4. Returns the result of the node expression
-        let expr_str = format!(
-            "(let ((state (hash-ref {GRAPH_STATE} {key})))
-               (let ((result {node_expr}))
-                 (set! {GRAPH_STATE} (hash-insert {GRAPH_STATE} {key} state))
-                 result))"
-        );
-
-        Engine::emit_ast(&expr_str)
-            .expect("failed to emit AST")
-            .into_iter()
-            .next()
-            .unwrap()
+    // Given a node's function call expression, wrap it in an expression
+    // that provides access to its state.
+    fn wrap_node_fn_call_with_state(call_expr: &str, node_ix: usize) -> String {
+        const NEWSTATE: &str = "newstate";
+        const OUTPUT: &str = "output";
+        // Get the node's state key.
+        let key = node_state_key(node_ix);
+        format!(
+            "(let (({STATE} (hash-ref {GRAPH_STATE} {key})))
+               (let ((results {call_expr}))
+                 (let (({OUTPUT} (car results)) ({NEWSTATE} (cadr results)))
+                    (set! {GRAPH_STATE} (hash-insert {GRAPH_STATE} {key} {NEWSTATE}))
+                    {OUTPUT})))"
+        )
     }
 
     // Helper to create a define expression for a single output.
@@ -460,21 +450,28 @@ where
             })
             .collect();
 
-        // Work out the node's state variable name.
+        // Get the node's function name.
         let node_ix = g.to_index(step.node);
-
-        // Get the node's expression.
         let node_path: Vec<_> = path.iter().copied().chain(Some(node_ix)).collect();
         let node_inputs: Vec<_> = step.args.iter().map(|arg| arg.is_some()).collect();
         let node_fn_name = node_fn_name(&node_path, &node_inputs);
+
+        // Prepare function arguments.
         let mut args: Vec<String> = input_exprs
             .iter()
             .filter_map(|opt| opt.as_ref().map(|expr| format!("{expr}")))
             .collect();
-        // if node.weight().stateful() {
-        args.push(GRAPH_STATE.to_string());
-        // }
-        let node_fn_call_expr_str = format!("({node_fn_name} {})", args.join(" "));
+        if node.weight().stateful() {
+            args.push(STATE.to_string());
+        }
+
+        // The expression for the node function call.
+        let mut node_fn_call_expr_str = format!("({node_fn_name} {})", args.join(" "));
+
+        // Create the expression for the node.
+        if node.weight().stateful() {
+            node_fn_call_expr_str = wrap_node_fn_call_with_state(&node_fn_call_expr_str, node_ix);
+        };
         let node_fn_call_expr = Engine::emit_ast(&node_fn_call_expr_str)
             .expect("failed to emit AST")
             .into_iter()
@@ -599,15 +596,18 @@ where
     G::NodeId: Eq + Hash + Ord,
     G::NodeWeight: Node,
 {
+    // Create the plan for generating eval and node fns.
     let eval_orders: Vec<_> = eval_orders(g, inlets, outlets).collect();
     let eval_stepss: Vec<_> = eval_orders
         .iter()
         .map(|(_, order)| eval_steps(g, order.iter().copied()))
         .collect();
 
+    // Generate the node functions.
     let node_confs = node_confs(eval_stepss.iter().map(|steps| &steps[..]));
     let node_fns = node_fns(g, path, &node_confs);
 
+    // Generate the eval functions.
     let eval_fns = eval_orders
         .iter()
         .zip(&eval_stepss)
@@ -616,5 +616,6 @@ where
             eval_fn(&eval_name, stmts)
         });
 
+    // Combine all generated functions.
     node_fns.into_iter().chain(eval_fns).collect()
 }
