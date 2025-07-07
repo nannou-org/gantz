@@ -105,9 +105,7 @@ fn test_graph_nested_stateless() {
     gb.add_edge(forty_two, assert_eq, Edge::from((0, 1)));
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::codegen::module(&gb, &[], &[]);
-    assert_eq!(module.len(), 1);
-    let expr = module.into_iter().next().unwrap();
+    let module = gantz_core::codegen::module(&gb, &[], &[], &[]);
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -116,8 +114,12 @@ fn test_graph_nested_stateless() {
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     node::state::register_graph(&gb, &mut vm);
 
+    // Register the fns.
+    for f in module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
     // Register the `push` eval function, then call it.
-    vm.run(format!("{expr}")).unwrap();
     vm.call_function_by_name_with_args(&push_eval_fn_name(push.index()), vec![])
         .ok();
 }

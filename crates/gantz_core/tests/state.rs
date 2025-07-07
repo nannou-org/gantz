@@ -82,7 +82,7 @@ fn test_graph_with_counter() {
     g.add_edge(push, counter, Edge::from((0, 0)));
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::codegen::module(&g, &[], &[]);
+    let module = gantz_core::codegen::module(&g, &[], &[], &[]);
     assert_eq!(module.len(), 1);
 
     // Initialise the VM.
@@ -171,7 +171,7 @@ fn test_graph_with_counters() {
     g.add_edge(p_c, c_c, Edge::from((0, 0)));
 
     // Generate the module, which should have one expr for each `push`.
-    let module = gantz_core::codegen::module(&g, &[], &[]);
+    let module = gantz_core::codegen::module(&g, &[], &[], &[]);
     assert_eq!(module.len(), 3);
 
     // Initialise the VM.

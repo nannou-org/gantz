@@ -75,9 +75,9 @@ fn test_graph_push_eval() {
     g.add_edge(two, assert_eq, Edge::from((0, 1)));
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::codegen::module(&g, &[], &[]);
-    assert_eq!(module.len(), 1);
-    let expr = module.into_iter().next().unwrap();
+    let module = gantz_core::codegen::module(&g, &[], &[], &[]);
+    // Function per node alongside the single push eval function.
+    assert_eq!(module.len(), g.node_count() + 1);
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -86,8 +86,10 @@ fn test_graph_push_eval() {
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     node::state::register_graph(&g, &mut vm);
 
-    // Register the `push` eval function, then call it.
-    vm.run(format!("{expr}")).unwrap();
+    // Register the functions, then call push_eval.
+    for f in module {
+        vm.run(format!("{f}")).unwrap();
+    }
     vm.call_function_by_name_with_args(&push_eval_fn_name(push.index()), vec![])
         .unwrap();
 }
@@ -130,7 +132,7 @@ fn test_graph_pull_eval() {
     g.add_edge(two, assert_eq, Edge::from((0, 1)));
 
     // Generate the steel module.
-    let module = gantz_core::codegen::module(&g, &[], &[]);
+    let module = gantz_core::codegen::module(&g, &[], &[], &[]);
 
     // Prepare the VM.
     let mut vm = Engine::new_base();
@@ -168,7 +170,7 @@ fn test_graph_pull_eval() {
 //    -----------
 #[test]
 #[should_panic]
-fn test_graph_pull_eval_should_panic() {
+fn test_graph_eval_should_panic() {
     let mut g = petgraph::graph::DiGraph::new();
 
     // Instantiate the nodes.
@@ -186,7 +188,7 @@ fn test_graph_pull_eval_should_panic() {
     g.add_edge(one, assert_eq, Edge::from((0, 1)));
 
     // Generate the steel module.
-    let module = gantz_core::codegen::module(&g, &[], &[]);
+    let module = gantz_core::codegen::module(&g, &[], &[], &[]);
 
     // Prepare the VM.
     let mut vm = Engine::new_base();
