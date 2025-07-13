@@ -53,7 +53,10 @@ impl<T> RoseTree<T> {
     pub(crate) fn map_ref<'a, U>(&'a self, f: &mut impl FnMut(&'a T) -> U) -> RoseTree<U> {
         let Self { elem, nested } = self;
         let elem = f(elem);
-        let nested = nested.into_iter().map(|(&k, r)| (k, r.map_ref(f))).collect();
+        let nested = nested
+            .into_iter()
+            .map(|(&k, r)| (k, r.map_ref(f)))
+            .collect();
         RoseTree { elem, nested }
     }
 

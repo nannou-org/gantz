@@ -1,4 +1,7 @@
-use crate::{node::{self, Node}, Edge};
+use crate::{
+    Edge,
+    node::{self, Node},
+};
 use steel::steel_vm::engine::Engine;
 
 /// For types used to traverse nested graphs of [`Node`]s.

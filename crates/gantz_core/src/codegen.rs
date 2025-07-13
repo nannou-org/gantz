@@ -514,9 +514,7 @@ pub fn node_fn(node: &dyn Node, node_path: &[node::Id], inputs: &[bool]) -> Expr
     let input_exprs: Vec<Option<String>> = inputs
         .iter()
         .enumerate()
-        .map(|(i, b)| {
-            b.then(|| input_name(i))
-        })
+        .map(|(i, b)| b.then(|| input_name(i)))
         .collect();
 
     // Get the node's expression
