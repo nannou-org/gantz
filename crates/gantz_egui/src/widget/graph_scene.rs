@@ -3,7 +3,10 @@ use egui_graph::{
     self,
     node::{EdgeEvent, SocketKind},
 };
-use gantz_core::{Edge, Node, node};
+use gantz_core::{
+    Edge, Node,
+    node::{self, GraphNode, graph::Graph},
+};
 use petgraph::{
     self,
     visit::{EdgeRef, IntoNodeIdentifiers, NodeIndexable},
@@ -18,11 +21,6 @@ pub trait ToGraphMut {
     /// If this node is a nested graph, return a mutable reference to it.
     fn to_graph_mut(&mut self) -> Option<&mut GraphNode<Self::Node>>;
 }
-
-/// The graph type excepted by the `GraphScene` widget.
-// TODO: Provide a `Graph` trait instead for more flexibility?
-pub type Graph<N> = petgraph::stable_graph::StableGraph<N, Edge, petgraph::Directed, usize>;
-pub type GraphNode<N> = gantz_core::graph::GraphNode<Graph<N>>;
 
 pub type EdgeIndex = petgraph::graph::EdgeIndex<usize>;
 pub type NodeIndex = petgraph::graph::NodeIndex<usize>;

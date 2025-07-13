@@ -1,6 +1,6 @@
-use crate::{Cmd, NodeCtx, NodeUi, widget::graph_scene::Graph};
+use crate::{Cmd, NodeCtx, NodeUi};
 
-impl<N> NodeUi for gantz_core::graph::GraphNode<Graph<N>> {
+impl<N> NodeUi for gantz_core::node::GraphNode<N> {
     fn name(&self) -> &str {
         "graph"
     }

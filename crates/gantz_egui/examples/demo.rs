@@ -38,11 +38,11 @@ dyn_hash::hash_trait_object!(Node);
 #[typetag::serde]
 impl Node for gantz_core::node::Expr {}
 #[typetag::serde]
-impl Node for gantz_core::graph::GraphNode<Graph> {}
+impl Node for gantz_core::node::GraphNode<Box<dyn Node>> {}
 #[typetag::serde]
-impl Node for gantz_core::graph::Inlet {}
+impl Node for gantz_core::node::graph::Inlet {}
 #[typetag::serde]
-impl Node for gantz_core::graph::Outlet {}
+impl Node for gantz_core::node::graph::Outlet {}
 
 #[typetag::serde]
 impl Node for gantz_std::ops::Add {}
@@ -60,9 +60,7 @@ impl Node for Box<dyn Node> {}
 // able to downcast a node to a graph node.
 impl gantz_egui::widget::graph_scene::ToGraphMut for Box<dyn Node> {
     type Node = Self;
-    fn to_graph_mut(
-        &mut self,
-    ) -> Option<&mut gantz_egui::widget::graph_scene::GraphNode<Self::Node>> {
+    fn to_graph_mut(&mut self) -> Option<&mut gantz_core::node::GraphNode<Self::Node>> {
         ((&mut **self) as &mut dyn Any).downcast_mut()
     }
 }
@@ -108,10 +106,10 @@ fn node_type_registry() -> NodeTypeRegistry {
     });
     reg.register("graph", || Box::new(GraphNode::default()) as Box<_>);
     reg.register(INLET_NAME, || {
-        Box::new(gantz_core::graph::Inlet::default()) as Box<_>
+        Box::new(gantz_core::node::graph::Inlet::default()) as Box<_>
     });
     reg.register(OUTLET_NAME, || {
-        Box::new(gantz_core::graph::Outlet::default()) as Box<_>
+        Box::new(gantz_core::node::graph::Outlet::default()) as Box<_>
     });
     reg.register("log", || Box::new(gantz_std::Log::default()) as Box<_>);
     reg.register("number", || {
@@ -124,8 +122,8 @@ fn node_type_registry() -> NodeTypeRegistry {
 // Graph
 // ----------------------------------------------
 
-type Graph = gantz_egui::widget::graph_scene::Graph<Box<dyn Node>>;
-type GraphNode = gantz_core::graph::GraphNode<Graph>;
+type Graph = gantz_core::node::graph::Graph<Box<dyn Node>>;
+type GraphNode = gantz_core::node::GraphNode<Box<dyn Node>>;
 
 /// Setup a simple demo graph.
 fn new_graph() -> GraphNode {
@@ -224,13 +222,13 @@ fn process_cmds(state: &mut gantz_egui::widget::GantzState, vm: &mut Engine) {
         log::debug!("{cmd:?}");
         match cmd {
             gantz_egui::Cmd::PushEval(path) => {
-                let fn_name = gantz_core::codegen::push_eval_fn_name(path[0]);
+                let fn_name = gantz_core::codegen::push_eval_fn_name(&path);
                 if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
                     log::error!("{e}");
                 }
             }
             gantz_egui::Cmd::PullEval(path) => {
-                let fn_name = gantz_core::codegen::pull_eval_fn_name(path[0]);
+                let fn_name = gantz_core::codegen::pull_eval_fn_name(&path);
                 if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
                     log::error!("{e}");
                 }
@@ -244,7 +242,7 @@ fn process_cmds(state: &mut gantz_egui::widget::GantzState, vm: &mut Engine) {
 
 fn compile_graph(graph: &Graph, vm: &mut Engine) -> Vec<ExprKind> {
     // Generate the steel module.
-    let module = gantz_core::codegen::module(graph, &[], &[], &[]);
+    let module = gantz_core::codegen::module(graph);
     // Compile the eval fns.
     for expr in &module {
         if let Err(e) = vm.run(expr.to_pretty(80)) {
