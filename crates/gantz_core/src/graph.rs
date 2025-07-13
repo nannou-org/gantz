@@ -3,9 +3,13 @@ use crate::{
     node::{self, Node},
     visit,
 };
-use petgraph::visit::{
-    Data, EdgeRef, GraphBase, IntoEdgeReferences, IntoEdgesDirected, IntoNodeReferences,
-    NodeIndexable, NodeRef, Visitable,
+use petgraph::{
+    Directed,
+    graph::{EdgeIndex, NodeIndex},
+    visit::{
+        Data, EdgeRef, IntoEdgeReferences, IntoEdgesDirected, IntoNodeReferences, NodeIndexable,
+        NodeRef, Topo, Visitable,
+    },
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
@@ -14,46 +18,25 @@ use std::{
 };
 use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 
-/// Required by graphs that support nesting graphs of the same type as nodes.
-///
-/// Used by the `GraphNode`'s `Node::expr` implementation.
-pub trait NestedExpr: GraphBase {
-    /// The expression used to evaluate a nested graph from its inputs to its
-    /// outputs.
-    fn nested_expr(
-        &self,
-        inlets: &[Self::NodeId],
-        outlets: &[Self::NodeId],
-        inputs: &[Option<ExprKind>],
-    ) -> ExprKind;
-}
+/// The graph type used by the graph node to represent its nested graph.
+pub type Graph<N> = petgraph::stable_graph::StableGraph<N, Edge, Directed, Index>;
 
-/// A trait implemented for graph types capable of adding nodes and returning a
-/// unique ID associated with the added node.
-///
-/// This trait allows for providing the `GraphNode::add_inlet` and
-/// `add_outlet` methods.
-pub trait AddNode: Data {
-    /// Add a node with the given weight and return its unique ID.
-    fn add_node(&mut self, n: Self::NodeWeight) -> Self::NodeId;
-}
-
-/// The name of the function generated for performing full evaluation of the
-/// graph.
-pub const FULL_EVAL_FN_NAME: &str = "full_eval";
+/// The type used for indexing into the graph.
+pub type Index = usize;
+/// The type used to index into a graph's node's.
+pub type NodeIx = NodeIndex<Index>;
+/// The type used to index into a graph's edge's.
+pub type EdgeIx = EdgeIndex<Index>;
 
 /// A node that itself is implemented in terms of a graph of nodes.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GraphNode<G>
-where
-    G: GraphBase,
-{
-    /// The graph used to evaluate the node.
-    pub graph: G,
+#[derive(Clone, Debug)]
+pub struct GraphNode<N> {
+    /// The nested graph.
+    pub graph: Graph<N>,
     /// The types of each of the inputs into the graph node.
-    pub inlets: Vec<G::NodeId>,
+    pub inlets: Vec<NodeIx>,
     /// The types of each of the outputs into the graph node.
-    pub outlets: Vec<G::NodeId>,
+    pub outlets: Vec<NodeIx>,
 }
 
 /// An inlet to a nested graph.
@@ -68,16 +51,13 @@ pub struct Inlet;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Outlet;
 
-impl<G> GraphNode<G>
-where
-    G: AddNode,
-{
+impl<N> GraphNode<N> {
     /// Adds the given `NodeId` to the graph as an inlet node.
     ///
     /// This is the same as `G::add_node`, but also adds the resulting node index to the
     /// `GraphNode`'s `inlets` list.
-    pub fn add_inlet(&mut self, n: G::NodeWeight) -> G::NodeId {
-        let id = self.add_node(n);
+    pub fn add_inlet(&mut self, n: N) -> NodeIx {
+        let id = self.graph.add_node(n);
         self.inlets.push(id);
         id
     }
@@ -86,98 +66,14 @@ where
     ///
     /// This is the same as `G::add_node`, but also adds the resulting node index to the
     /// `GraphNode`'s `outlet` list.
-    pub fn add_outlet(&mut self, n: G::NodeWeight) -> G::NodeId {
-        let id = self.add_node(n);
+    pub fn add_outlet(&mut self, n: N) -> NodeIx {
+        let id = self.graph.add_node(n);
         self.outlets.push(id);
         id
     }
 }
 
-impl<'a, G> AddNode for &'a mut G
-where
-    G: AddNode,
-{
-    fn add_node(&mut self, n: Self::NodeWeight) -> Self::NodeId {
-        (**self).add_node(n)
-    }
-}
-
-impl<G> NestedExpr for G
-where
-    G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable + Data<EdgeWeight = Edge>,
-    G::NodeWeight: Node,
-    G::NodeId: Eq + Hash,
-{
-    fn nested_expr(
-        &self,
-        inlets: &[Self::NodeId],
-        outlets: &[Self::NodeId],
-        inputs: &[Option<ExprKind>],
-    ) -> ExprKind {
-        use crate::codegen;
-
-        // Create statements to set inlet node states from inputs
-        let mut inlet_bindings = Vec::new();
-        for (i, &inlet_id) in inlets.iter().enumerate() {
-            if i < inputs.len() && inputs[i].is_some() {
-                let input_expr = inputs[i].as_ref().unwrap();
-                let node_ix = self.to_index(inlet_id);
-                let binding = format!(
-                    "(set! {GRAPH_STATE} \
-                       (hash-insert {GRAPH_STATE} '{node_ix} {input_expr}))",
-                );
-                inlet_bindings.push(binding);
-            }
-        }
-
-        // Use codegen to create the evaluation order, steps, and statements
-        let order = codegen::eval_order(self, inlets.iter().cloned(), outlets.iter().cloned());
-        let steps = codegen::eval_steps(self, order);
-        // FIXME: path
-        let stmts = codegen::eval_stmts(self, &[], &steps);
-
-        // Combine inlet bindings with graph evaluation steps
-        let all_stmts = inlet_bindings
-            .into_iter()
-            .chain(stmts.iter().map(|stmt| format!("{}", stmt)))
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        // For the return values, access the states of the outlet nodes
-        let outlet_values = outlets
-            .iter()
-            .map(|&outlet_id| {
-                let node_ix = self.to_index(outlet_id);
-                format!("(hash-ref {GRAPH_STATE} '{node_ix})")
-            })
-            .collect::<Vec<_>>();
-
-        // Construct the final expression based on number of outputs
-        let outlet_values_expr = if outlet_values.len() > 1 {
-            let ret_values = outlet_values.join(" ");
-            format!("(values {})", ret_values)
-        } else if outlet_values.len() == 1 {
-            format!("{}", outlet_values[0])
-        } else {
-            format!("'()")
-        };
-
-        let expr_str = format!(
-            "(begin (define __graph_state state) {} {outlet_values_expr})",
-            all_stmts
-        );
-        Engine::emit_ast(&expr_str)
-            .expect("failed to emit AST for nested expr")
-            .into_iter()
-            .next()
-            .unwrap()
-    }
-}
-
-impl<G> Default for GraphNode<G>
-where
-    G: GraphBase + Default,
-{
+impl<N> Default for GraphNode<N> {
     fn default() -> Self {
         let graph = Default::default();
         let inlets = Default::default();
@@ -190,17 +86,9 @@ where
     }
 }
 
-impl<G> Hash for GraphNode<G>
+impl<N> Hash for GraphNode<N>
 where
-    G: Data,
-    for<'a> &'a G: Data<EdgeWeight = G::EdgeWeight, NodeWeight = G::NodeWeight>
-        + GraphBase<EdgeId = G::EdgeId, NodeId = G::NodeId>
-        + IntoEdgeReferences
-        + IntoNodeReferences,
-    G::EdgeId: Hash,
-    G::EdgeWeight: Hash,
-    G::NodeId: Hash,
-    G::NodeWeight: Hash,
+    N: Hash,
 {
     fn hash<H>(&self, hasher: &mut H)
     where
@@ -217,18 +105,18 @@ where
     }
 }
 
-impl<G> Node for GraphNode<G>
+impl<N> Node for GraphNode<N>
 where
-    G: Data + NodeIndexable,
-    G::NodeWeight: Node,
-    for<'a> &'a G: Data<NodeWeight = G::NodeWeight>
-        + GraphBase<NodeId = G::NodeId>
-        + IntoNodeReferences
-        + NestedExpr,
+    N: Node,
 {
-    fn expr(&self, inputs: &[Option<ExprKind>]) -> ExprKind {
-        let g: &G = &self.graph;
-        g.nested_expr(&self.inlets, &self.outlets, inputs)
+    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
+        nested_expr(
+            &self.graph,
+            ctx.path(),
+            &self.inlets,
+            &self.outlets,
+            ctx.inputs(),
+        )
     }
 
     fn n_inputs(&self) -> usize {
@@ -247,30 +135,34 @@ where
         // Register the graph's state map.
         node::state::update_value(vm, path, SteelVal::empty_hashmap())
             .expect("failed to register graph hashmap");
-
-        // Register each of the child nodes.
-        let mut path = path.to_vec();
-        for n in self.graph.node_references() {
-            let id = self.graph.to_index(n.id());
-            path.push(id);
-            n.weight().register(&path, vm);
-            path.pop();
-        }
     }
 
-    fn visit(&self, visitor: &mut dyn node::Visitor, path: &[node::Id]) {
-        visitor.visit_pre(self, path);
-        visit(&self.graph, path, visitor);
-        visitor.visit_post(self, path);
+    fn visit(&self, ctx: visit::Ctx, visitor: &mut dyn node::Visitor) {
+        visit(&self.graph, ctx.path(), visitor);
     }
 }
 
+impl<N: PartialEq> PartialEq for GraphNode<N> {
+    fn eq(&self, other: &Self) -> bool {
+        self.graph
+            .node_references()
+            .zip(other.graph.node_references())
+            .all(|(a, b)| a == b)
+            && self
+                .graph
+                .edge_references()
+                .zip(other.graph.edge_references())
+                .all(|(a, b)| a == b)
+    }
+}
+
+impl<N: Eq> Eq for GraphNode<N> {}
+
 // Manual implementation of `Deserialize` as it cannot be derived for a struct with associated
 // types without unnecessary trait bounds on the struct itself.
-impl<'de, G> Deserialize<'de> for GraphNode<G>
+impl<'de, N> Deserialize<'de> for GraphNode<N>
 where
-    G: GraphBase + Deserialize<'de>,
-    G::NodeId: Deserialize<'de>,
+    N: Deserialize<'de>,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -288,18 +180,17 @@ where
 
         struct GraphNodeVisitor<G>(std::marker::PhantomData<G>);
 
-        impl<'de, G> Visitor<'de> for GraphNodeVisitor<G>
+        impl<'de, N> Visitor<'de> for GraphNodeVisitor<Graph<N>>
         where
-            G: GraphBase + Deserialize<'de>,
-            G::NodeId: Deserialize<'de>,
+            N: Deserialize<'de>,
         {
-            type Value = GraphNode<G>;
+            type Value = GraphNode<N>;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 formatter.write_str("struct GraphNode")
             }
 
-            fn visit_seq<V>(self, mut seq: V) -> Result<GraphNode<G>, V::Error>
+            fn visit_seq<V>(self, mut seq: V) -> Result<GraphNode<N>, V::Error>
             where
                 V: SeqAccess<'de>,
             {
@@ -319,7 +210,7 @@ where
                 })
             }
 
-            fn visit_map<V>(self, mut map: V) -> Result<GraphNode<G>, V::Error>
+            fn visit_map<V>(self, mut map: V) -> Result<GraphNode<N>, V::Error>
             where
                 V: MapAccess<'de>,
             {
@@ -360,17 +251,16 @@ where
         }
 
         const FIELDS: &[&str] = &["graph", "inlets", "outlets"];
-        let visitor: GraphNodeVisitor<G> = GraphNodeVisitor(std::marker::PhantomData);
+        let visitor: GraphNodeVisitor<Graph<N>> = GraphNodeVisitor(std::marker::PhantomData);
         deserializer.deserialize_struct("GraphNode", FIELDS, visitor)
     }
 }
 
 // Manual implementation of `Serialize` as it cannot be derived for a struct with associated
 // types without unnecessary trait bounds on the struct itself.
-impl<G> Serialize for GraphNode<G>
+impl<N> Serialize for GraphNode<N>
 where
-    G: GraphBase + Serialize,
-    G::NodeId: Serialize,
+    N: Serialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -387,7 +277,7 @@ where
 
 impl Node for Inlet {
     /// Simply returns the state value as this node's output
-    fn expr(&self, _inputs: &[Option<ExprKind>]) -> ExprKind {
+    fn expr(&self, _ctx: node::ExprCtx) -> ExprKind {
         Engine::emit_ast("state")
             .expect("failed to emit AST")
             .into_iter()
@@ -403,6 +293,10 @@ impl Node for Inlet {
         1
     }
 
+    fn inlet(&self) -> bool {
+        true
+    }
+
     fn stateful(&self) -> bool {
         true
     }
@@ -414,9 +308,9 @@ impl Node for Inlet {
 
 impl Node for Outlet {
     // Stores the input value in the state.
-    fn expr(&self, inputs: &[Option<ExprKind>]) -> ExprKind {
-        let input = match &inputs[0] {
-            Some(expr) => expr.to_string(),
+    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
+        let input = match &ctx.inputs()[0] {
+            Some(expr) => expr.clone(),
             None => "'()".to_string(),
         };
         let expr_str = format!("(begin (set! state {}) state)", input);
@@ -435,6 +329,10 @@ impl Node for Outlet {
         0
     }
 
+    fn outlet(&self) -> bool {
+        true
+    }
+
     fn stateful(&self) -> bool {
         true
     }
@@ -444,65 +342,125 @@ impl Node for Outlet {
     }
 }
 
-impl<N, E, Ty, Ix> AddNode for petgraph::Graph<N, E, Ty, Ix>
-where
-    Ty: petgraph::EdgeType,
-    Ix: petgraph::graph::IndexType,
-{
-    fn add_node(&mut self, n: N) -> petgraph::graph::NodeIndex<Ix> {
-        petgraph::Graph::add_node(self, n)
-    }
-}
-
-impl<N, E, Ty, Ix> AddNode for petgraph::stable_graph::StableGraph<N, E, Ty, Ix>
-where
-    Ty: petgraph::EdgeType,
-    Ix: petgraph::graph::IndexType,
-{
-    fn add_node(&mut self, n: N) -> petgraph::graph::NodeIndex<Ix> {
-        petgraph::stable_graph::StableGraph::add_node(self, n)
-    }
-}
-
-impl<G> Deref for GraphNode<G>
-where
-    G: GraphBase,
-{
-    type Target = G;
+impl<N> Deref for GraphNode<N> {
+    type Target = Graph<N>;
     fn deref(&self) -> &Self::Target {
         &self.graph
     }
 }
 
-impl<G> DerefMut for GraphNode<G>
-where
-    G: GraphBase,
-{
+impl<N> DerefMut for GraphNode<N> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.graph
     }
 }
 
-/// Visit all nodes in the graph, and all nested nodes in depth-first order.
-pub fn visit<G>(graph: G, path: &[node::Id], visitor: &mut dyn node::Visitor)
+/// The implementation of the `GraphNode`'s `Node::expr` fn.
+fn nested_expr<G>(
+    g: G,
+    path: &[node::Id],
+    inlets: &[G::NodeId],
+    outlets: &[G::NodeId],
+    inputs: &[Option<String>],
+) -> ExprKind
 where
-    G: IntoNodeReferences + NodeIndexable,
+    G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable + Data<EdgeWeight = Edge>,
+    G::NodeWeight: Node,
+    G::NodeId: Eq + Hash,
+{
+    use crate::codegen;
+
+    // Create statements to set inlet node states from inputs
+    let mut inlet_bindings = Vec::new();
+    for (i, &inlet_id) in inlets.iter().enumerate() {
+        if i < inputs.len() && inputs[i].is_some() {
+            let input_expr = inputs[i].as_ref().unwrap();
+            let node_ix = g.to_index(inlet_id);
+            let binding = format!(
+                "(set! {GRAPH_STATE} \
+                   (hash-insert {GRAPH_STATE} '{node_ix} {input_expr}))",
+            );
+            inlet_bindings.push(binding);
+        }
+    }
+
+    // Use codegen to create the evaluation order, steps, and statements
+    let flow = codegen::Flow::from_graph(g);
+    let order = codegen::eval_order(g, inlets.iter().cloned(), outlets.iter().cloned())
+        .map(|id| g.to_index(id));
+    let steps: Vec<_> = codegen::eval_steps(&flow, order).collect();
+    let stmts = codegen::eval_stmts(path, &steps, &flow.outputs, &flow.stateful);
+
+    // Combine inlet bindings with graph evaluation steps
+    let all_stmts = inlet_bindings
+        .into_iter()
+        .chain(stmts.iter().map(|stmt| format!("{}", stmt)))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // For the return values, access the states of the outlet nodes
+    let outlet_values = outlets
+        .iter()
+        .map(|&outlet_id| {
+            let node_ix = g.to_index(outlet_id);
+            format!("(hash-ref {GRAPH_STATE} '{node_ix})")
+        })
+        .collect::<Vec<_>>();
+
+    // Construct the final expression based on number of outputs
+    let outlet_values_expr = if outlet_values.len() > 1 {
+        let ret_values = outlet_values.join(" ");
+        format!("(values {})", ret_values)
+    } else if outlet_values.len() == 1 {
+        format!("{}", outlet_values[0])
+    } else {
+        format!("'()")
+    };
+
+    let expr_str = format!(
+        "(begin (define __graph_state state) {} {outlet_values_expr})",
+        all_stmts
+    );
+    Engine::emit_ast(&expr_str)
+        .expect("failed to emit AST for nested expr")
+        .into_iter()
+        .next()
+        .unwrap()
+}
+
+// --------------------------------------------------------
+
+/// Visit all nodes in the graph in toposort order, and all nested nodes in
+/// depth-first order.
+pub fn visit<G>(g: G, path: &[node::Id], visitor: &mut dyn node::Visitor)
+where
+    G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G::NodeWeight: Node,
 {
     let mut path = path.to_vec();
-    for n in graph.node_references() {
-        let id = graph.to_index(n.id());
-        path.push(id);
-        node::visit(n.weight(), &path, visitor);
+    let mut topo = Topo::new(g);
+    while let Some(n) = topo.next(g) {
+        let ix = g.to_index(n);
+        path.push(ix);
+        let inputs: Vec<_> = g
+            .edges_directed(n, petgraph::Direction::Incoming)
+            .map(|e_ref| (g.to_index(e_ref.source()), e_ref.weight().clone()))
+            .collect();
+        let ctx = visit::Ctx::new(&path, &inputs);
+
+        // FIXME: index directly.
+        let nref = g.node_references().find(|nref| nref.id() == n).unwrap();
+
+        node::visit(ctx, nref.weight(), visitor);
         path.pop();
     }
 }
 
 /// Register the given graph of nodes, including any nested nodes.
-pub fn register<G>(graph: G, path: &[node::Id], vm: &mut Engine)
+pub fn register<G>(g: G, path: &[node::Id], vm: &mut Engine)
 where
-    G: IntoNodeReferences + NodeIndexable,
+    G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G::NodeWeight: Node,
 {
-    visit(graph, path, &mut visit::Register(vm));
+    visit(g, path, &mut visit::Register(vm));
 }

@@ -1,4 +1,5 @@
 pub use edge::Edge;
+pub use graph::Graph;
 pub use node::Node;
 pub use steel;
 
@@ -6,7 +7,7 @@ pub mod codegen;
 pub mod edge;
 pub mod graph;
 pub mod node;
-mod visit;
+pub mod visit;
 
 /// The ident used to represent the root state.
 /// This is the state of the top-level graph.

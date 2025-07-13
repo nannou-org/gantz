@@ -1,98 +1,114 @@
 use crate::{
     Edge, GRAPH_STATE, ROOT_STATE,
     node::{self, Node},
+    visit::{self, Visitor},
 };
+#[doc(inline)]
+pub use flow::Flow;
 use petgraph::visit::{
-    Data, Dfs, EdgeRef, GraphRef, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, NodeRef,
-    Topo, Visitable, Walker,
+    Data, Dfs, EdgeRef, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, Topo, Visitable,
+    Walker,
 };
+pub(crate) use rosetree::RoseTree;
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     hash::Hash,
 };
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
-/// Represents a node and its input configuration within a graph.
-#[derive(Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct NodeConf<NI> {
-    /// The node being evaluated.
-    pub node: NI,
-    /// The set of the node's inputs, and whether they're connected.
-    pub inputs: Vec<bool>,
+mod flow;
+mod rosetree;
+
+/// A representation of how to evaluate a graph.
+///
+/// Produced via [`eval_plan`].
+#[derive(Debug)]
+pub struct EvalPlan<'a> {
+    /// The gantz graph `Flow` from which this `EvalPlan` was produced.
+    flow: &'a Flow,
+    /// Order of evaluation from all inlets to all outlets.
+    // TODO: Knowing the connectedness of the inlets/outlets would be useful
+    // for generating only the necessary node configs.
+    // Empty in the case that the graph has no inlets or outlets (i.e. is not
+    // nested).
+    nested_steps: Vec<EvalStep>,
+    /// The order of node evaluation for each push_eval node.
+    push_steps: BTreeMap<node::Id, Vec<EvalStep>>,
+    /// The order of node evaluation for each pull_eval node.
+    pull_steps: BTreeMap<node::Id, Vec<EvalStep>>,
 }
 
 /// An evaluation step ready for translation to code.
 ///
 /// Represents evaluation of a node with some set of the inputs connected.
 #[derive(Debug)]
-pub struct EvalStep<NI> {
+pub struct EvalStep {
     /// The node to be evaluated.
-    pub node: NI,
+    pub node: node::Id,
     /// Arguments to the node's function call.
     ///
     /// The `len` of the outer vec will always be equal to the number of inputs
     /// on `node`.
-    pub args: Vec<Option<ExprInput<NI>>>,
+    pub args: Vec<Option<ExprInput>>,
 }
 
 /// An argument to a node's function call.
 #[derive(Debug)]
-pub struct ExprInput<NI> {
+pub struct ExprInput {
     /// The node from which the value was generated.
-    pub node: NI,
+    pub node: node::Id,
     /// The output on the source node associated with the generated value.
     pub output: node::Output,
-    /// Whether or not using the value in this argument requires cloning.
-    pub requires_clone: bool,
 }
 
-// An expression for a node's key into the graph state hashmap.
-pub fn node_state_key(node_id: usize) -> ExprKind {
-    // Create a symbol or other hashable key to use in the hashmap
-    let key_str = format!("'{node_id}");
-    Engine::emit_ast(&key_str)
-        .expect("failed to emit AST")
-        .into_iter()
-        .next()
-        .unwrap()
-}
-
-/// Given a graph of gantz nodes, return `NodeId`s of those that require push
-/// evaluation.
+/// The set of all node input configurations for a single graph.
 ///
-/// Expects any graph type whose nodes implement `Node`.
-pub fn push_nodes<G>(g: G) -> Vec<(G::NodeId, String)>
-where
-    G: IntoNodeReferences + NodeIndexable,
-    G::NodeWeight: Node,
-{
-    g.node_references()
-        .filter_map(|n| {
-            let id = n.id();
-            let ix = g.to_index(id);
-            let name = push_eval_fn_name(ix);
-            n.weight().push_eval().map(|_eval| (id, name))
-        })
-        .collect()
+/// These are used to determine which set of functions to generate for each
+/// node.
+type NodeConfs = BTreeSet<(node::Id, Vec<bool>)>;
+
+/// A visitor used to collect all node functions from a tree of nested gantz
+/// graphs.
+struct NodeFns<'a> {
+    tree: &'a RoseTree<NodeConfs>,
+    fns: Vec<ExprKind>,
 }
 
-/// Given a graph of gantz nodes, return `NodeId`s of those that require pull
-/// evaluation.
-///
-/// Expects any graph type whose nodes implement `Node`.
-pub fn pull_nodes<G>(g: G) -> Vec<(G::NodeId, String)>
-where
-    G: IntoNodeReferences + NodeIndexable,
-    G::NodeWeight: Node,
-{
-    g.node_references()
-        .filter_map(|n| {
-            let id = n.id();
-            let ix = g.to_index(id);
-            let name = pull_eval_fn_name(ix);
-            n.weight().pull_eval().map(|_eval| (id, name))
-        })
-        .collect()
+impl<'a> NodeFns<'a> {
+    /// Initialise the `NodeFns` visitor.
+    fn new(tree: &'a RoseTree<NodeConfs>) -> Self {
+        let fns = vec![];
+        Self { tree, fns }
+    }
+}
+
+impl<'pl> Visitor for NodeFns<'pl> {
+    // We use `visit_post` so that the nested are generated before parents.
+    fn visit_post(&mut self, ctx: visit::Ctx, node: &dyn Node) {
+        use std::ops::Bound::Included;
+        let node_path = ctx.path();
+        let plan_path = &node_path[..node_path.len() - 1];
+        let tree = self.tree.tree(&plan_path).unwrap();
+        let id = ctx.id();
+        let n_inputs = node.n_inputs();
+        let start = (id, vec![]);
+        let end = (id, vec![true; n_inputs]);
+        let range = (Included(start), Included(end));
+        let input_confs = tree.elem.range(range);
+        for (_id, conf) in input_confs {
+            self.fns.push(node_fn(node, node_path, &conf));
+        }
+    }
+}
+
+/// The name used for the pull evaluation fn generated for the given node.
+pub fn pull_eval_fn_name(path: &[node::Id]) -> String {
+    format!("pull_eval_{}", path_string(path))
+}
+
+/// The name used for the push evaluation fn generated for the given node.
+pub fn push_eval_fn_name(path: &[node::Id]) -> String {
+    format!("push_eval_{}", path_string(path))
 }
 
 /// An iterator yielding all nodes reachable via pushing from the given node.
@@ -171,200 +187,105 @@ where
 
 /// Given a node evaluation order, produce the series of evaluation steps
 /// required.
-pub fn eval_steps<G, I>(g: G, eval_order: I) -> Vec<EvalStep<G::NodeId>>
+pub fn eval_steps<I>(flow: &Flow, eval_order: I) -> impl Iterator<Item = EvalStep>
 where
-    G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable,
-    G: Data<EdgeWeight = Edge>,
-    G::NodeId: Eq + Hash,
-    G::NodeWeight: Node,
-    I: IntoIterator<Item = G::NodeId>,
+    I: IntoIterator<Item = node::Id>,
 {
-    let mut eval_steps = vec![];
-    let mut visited = HashSet::new();
-
     // Step through each of the nodes.
-    for node in eval_order {
-        visited.insert(node);
+    let mut visited = HashSet::new();
+    eval_order.into_iter().map(move |n| {
+        visited.insert(n);
 
         // Initialise the arguments to `None` for each input.
-        // FIXME: Use some node-indexing trait instead.
-        let n = g.node_references().find(|n| n.id() == node).unwrap();
-        let n_inputs = n.weight().n_inputs();
+        let n_inputs = flow.inputs.get(&n).copied().unwrap_or(0);
         let mut args: Vec<_> = (0..n_inputs).map(|_| None).collect();
 
         // Create an argument for each input to this child.
-        for e_ref in g.edges_directed(node, petgraph::Incoming) {
+        for e_ref in flow.graph.edges_directed(n, petgraph::Incoming) {
             // Only consider edges to nodes that we have already visited.
             if !visited.contains(&e_ref.source()) {
                 continue;
             }
-
-            let w = e_ref.weight();
-
-            // Check how many connections their are from the parent's output and
-            // see if the value will need to be cloned when passed to this input.
-            let requires_clone = {
-                let parent = e_ref.source();
-                // TODO: Connection order should match
-                let mut connection_ix = 0;
-                let mut total_connections_from_output = 0;
-                for (i, pe_ref) in g.edges_directed(parent, petgraph::Outgoing).enumerate() {
-                    let pw = pe_ref.weight();
-                    if pw == w {
-                        connection_ix = i;
-                    }
-                    if pw.output == w.output {
-                        total_connections_from_output += 1;
-                    }
-                }
-                total_connections_from_output > 1
-                    && connection_ix < (total_connections_from_output - 1)
-            };
-
-            // Assign the expression argument for this input.
-            let arg = ExprInput {
-                node: e_ref.source(),
-                output: w.output,
-                requires_clone,
-            };
-            args[w.input.0 as usize] = Some(arg);
+            for edge in e_ref.weight() {
+                // Assign the expression argument for this input.
+                let arg = ExprInput {
+                    node: e_ref.source(),
+                    output: edge.output,
+                };
+                args[edge.input.0 as usize] = Some(arg);
+            }
         }
-
-        // Add the step.
-        eval_steps.push(EvalStep { node, args });
-    }
-
-    eval_steps
+        EvalStep { node: n, args }
+    })
 }
 
-/// Generate a function name for a node based on its path in the graph.
-fn node_fn_name(node_path: &[node::Id], inputs: &[bool]) -> String {
-    let path_string = node_path
+/// Create the evaluation plan for the graph associated with the given flow.
+pub fn eval_plan(flow: &Flow) -> EvalPlan {
+    let pull_steps = flow
+        .pull
         .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join("_");
-    let inputs_prefix = if inputs.is_empty() { "" } else { "_i" };
-    let inputs_string = inputs
-        .iter()
-        .map(|&b| if b { "1" } else { "0" })
-        .collect::<Vec<_>>()
-        .join("");
-    format!("node_fn_{path_string}{inputs_prefix}{inputs_string}")
-}
-
-/// Generate a function for a single node with the given set of connected inputs.
-fn node_fn<N>(node: &N, node_path: &[node::Id], inputs: &[bool]) -> ExprKind
-where
-    N: Node,
-{
-    // The binding used to receive the node's state as an argument, and whose
-    // resulting value is returned from the body of the function and used to
-    // update the state map.
-    const STATE: &str = "state";
-
-    fn input_name(i: usize) -> String {
-        format!("input{i}")
-    }
-
-    // Create function parameters for graph state and inputs
-    let mut input_args = inputs
-        .iter()
-        .enumerate()
-        .filter_map(|(i, b)| b.then(|| input_name(i)))
-        .collect::<Vec<_>>();
-
-    // Create input expressions for the node's expr method
-    let input_exprs: Vec<Option<ExprKind>> = inputs
-        .iter()
-        .enumerate()
-        .filter_map(|(i, b)| {
-            b.then(|| {
-                let expr_str = input_name(i);
-                let expr_kind = Engine::emit_ast(&expr_str)
-                    .expect("Failed to emit AST for input")
-                    .into_iter()
-                    .next()
-                    .unwrap();
-                Some(expr_kind)
-            })
+        .map(|&n| {
+            let order = pull_eval_order(&flow.graph, n);
+            let steps = eval_steps(flow, order).collect();
+            (n, steps)
         })
         .collect();
 
-    // Get the node's expression
-    let node_expr = node.expr(&input_exprs);
+    let push_steps = flow
+        .push
+        .iter()
+        .map(|&n| {
+            let order = push_eval_order(&flow.graph, n);
+            let steps = eval_steps(flow, order).collect();
+            (n, steps)
+        })
+        .collect();
 
-    // Construct the full function definition
-    let fn_name = node_fn_name(node_path, inputs);
-    let fn_body = if node.stateful() {
-        input_args.push(STATE.to_string());
-        format!("(let ((output {node_expr})) (list output state))")
-    } else {
-        format!("{node_expr}")
+    let nested_steps = {
+        let order = eval_order(
+            &flow.graph,
+            flow.inlets.iter().cloned(),
+            flow.outlets.iter().cloned(),
+        );
+        eval_steps(flow, order).collect()
     };
-    let fn_args = input_args.join(" ");
-    let fn_def = format!("(define ({fn_name} {fn_args}) {fn_body})");
 
-    Engine::emit_ast(&fn_def)
-        .expect("Failed to emit AST for node function")
+    EvalPlan {
+        flow,
+        push_steps,
+        pull_steps,
+        nested_steps,
+    }
+}
+
+// An expression for a node's key into the graph state hashmap.
+pub fn node_state_key(node_id: usize) -> ExprKind {
+    // Create a symbol or other hashable key to use in the hashmap
+    let key_str = format!("'{node_id}");
+    Engine::emit_ast(&key_str)
+        .expect("failed to emit AST")
         .into_iter()
         .next()
         .unwrap()
 }
 
-/// Collect all unique node configurations for all unique evaluation paths that
-/// exist in the graph.
-pub fn node_confs<'a, NI, I>(eval_stepss: I) -> BTreeSet<NodeConf<NI>>
-where
-    NI: 'a + Copy + Ord,
-    I: IntoIterator<Item = &'a [EvalStep<NI>]>,
-{
-    eval_stepss
-        .into_iter()
-        .flat_map(|steps| {
-            steps.iter().map(|step| NodeConf {
-                node: step.node,
-                inputs: step.args.iter().map(|arg| arg.is_some()).collect(),
-            })
-        })
-        .collect()
-}
-
-/// Generate functions for all nodes and all of their input configurations for
-/// all push/pull evaluation paths in the graph.
-pub fn node_fns<'a, G, I>(g: G, path: &[node::Id], confs: I) -> Vec<ExprKind>
-where
-    G: Data<EdgeWeight = Edge> + GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable,
-    G::NodeId: 'a,
-    G::NodeWeight: Node,
-    I: IntoIterator<Item = &'a NodeConf<G::NodeId>>,
-{
-    confs
-        .into_iter()
-        .map(|conf| {
-            let id = g.to_index(conf.node);
-            let node_path: Vec<_> = path.iter().copied().chain(Some(id)).collect();
-            // FIXME: Use some node indexing trait.
-            let n_ref = g.node_references().find(|n| n.id() == conf.node).unwrap();
-            node_fn(n_ref.weight(), &node_path, &conf.inputs)
-        })
-        .collect()
-}
-
-/// Generate a sequence of evaluation statements, one for each given evaluation
-/// step.
-pub fn eval_stmts<G>(g: G, path: &[node::Id], steps: &[EvalStep<G::NodeId>]) -> Vec<ExprKind>
-where
-    G: Data + GraphRef + IntoNodeReferences + NodeIndexable,
-    G::NodeId: Eq + Hash,
-    G::NodeWeight: Node,
-{
-    type OutputVars<NI> = HashMap<(NI, node::Output), String>;
+/// Generate a sequence of evaluation statements for an eval function, one
+/// statement for each given evaluation step.
+///
+/// The given `path`, `outputs` and `stateful` are associated with the graph
+/// in which the eval fn is invoked.
+pub fn eval_stmts(
+    path: &[node::Id],
+    steps: &[EvalStep],
+    outputs: &BTreeMap<node::Id, usize>,
+    stateful: &BTreeSet<node::Id>,
+) -> Vec<ExprKind> {
+    type OutputVars = HashMap<(node::Id, node::Output), String>;
 
     const STATE: &str = "state";
 
     // Track output variables
-    let mut output_vars: OutputVars<G::NodeId> = HashMap::new();
+    let mut output_vars: OutputVars = HashMap::new();
     let mut stmts = Vec::new();
 
     // Function to generate variable names
@@ -382,7 +303,7 @@ where
         format!(
             "(let (({STATE} (hash-ref {GRAPH_STATE} {key})))
                (let ((results {call_expr}))
-                 (let (({OUTPUT} (car results)) ({NEWSTATE} (cadr results)))
+                 (let (({OUTPUT} (car results)) ({NEWSTATE} (car (cdr results))))
                     (set! {GRAPH_STATE} (hash-insert {GRAPH_STATE} {key} {NEWSTATE}))
                     {OUTPUT})))"
         )
@@ -420,9 +341,7 @@ where
     }
 
     for (step_ix, step) in steps.iter().enumerate() {
-        // FIXME: Use some node indexing trait.
-        let node = g.node_references().find(|n| n.id() == step.node).unwrap();
-        let n_outputs = node.weight().n_outputs();
+        let n_outputs = outputs.get(&step.node).copied().unwrap_or(0);
 
         // Create variables for this node's outputs
         for out_ix in 0..n_outputs {
@@ -439,20 +358,13 @@ where
                     // Get the variable name for this input
                     let var_name = output_vars.get(&(arg.node, arg.output)).unwrap();
                     // Create an expression referencing this variable
-                    if arg.requires_clone {
-                        // TODO: Is cloning of objects implicit in steel?
-                        // create_clone_expr(var_name)
-                        create_var_expr(var_name)
-                    } else {
-                        create_var_expr(var_name)
-                    }
+                    create_var_expr(var_name)
                 })
             })
             .collect();
 
         // Get the node's function name.
-        let node_ix = g.to_index(step.node);
-        let node_path: Vec<_> = path.iter().copied().chain(Some(node_ix)).collect();
+        let node_path: Vec<_> = path.iter().copied().chain(Some(step.node)).collect();
         let node_inputs: Vec<_> = step.args.iter().map(|arg| arg.is_some()).collect();
         let node_fn_name = node_fn_name(&node_path, &node_inputs);
 
@@ -461,7 +373,8 @@ where
             .iter()
             .filter_map(|opt| opt.as_ref().map(|expr| format!("{expr}")))
             .collect();
-        if node.weight().stateful() {
+        let is_stateful = stateful.contains(&step.node);
+        if is_stateful {
             args.push(STATE.to_string());
         }
 
@@ -469,8 +382,8 @@ where
         let mut node_fn_call_expr_str = format!("({node_fn_name} {})", args.join(" "));
 
         // Create the expression for the node.
-        if node.weight().stateful() {
-            node_fn_call_expr_str = wrap_node_fn_call_with_state(&node_fn_call_expr_str, node_ix);
+        if is_stateful {
+            node_fn_call_expr_str = wrap_node_fn_call_with_state(&node_fn_call_expr_str, step.node);
         };
         let node_fn_call_expr = Engine::emit_ast(&node_fn_call_expr_str)
             .expect("failed to emit AST")
@@ -499,20 +412,10 @@ where
     stmts
 }
 
-/// The name used for the pull evaluation function generated for the given node.
-pub fn pull_eval_fn_name(id: node::Id) -> String {
-    format!("pull_eval_{id}")
-}
-
-/// The name used for the push evaluation function generated for the given node.
-pub fn push_eval_fn_name(id: node::Id) -> String {
-    format!("push_eval_{id}")
-}
-
 /// Generate a function for performing evaluation of the given statements.
 ///
 /// The given `Vec<ExprKind>` should be generated via the `eval_stmts` function.
-pub fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
+fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
     // Create the body of the function as a sequence of expressions
     let stmts_str = stmts
         .iter()
@@ -539,83 +442,163 @@ pub fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
         .unwrap()
 }
 
-/// Produce all sequential evaluation orders for all entry points to the graph.
-///
-/// Each path is yielded alongside its associated function name.
-///
-/// In order, this will include steps for full_eval (if any inlet or outlets
-/// exist), pull_eval and then push_eval.
-pub fn eval_orders<'a, G>(
-    g: G,
-    inlets: &'a [G::NodeId],
-    outlets: &'a [G::NodeId],
-) -> impl 'a + Iterator<Item = (String, Vec<G::NodeId>)>
+/// Collect all unique node configurations for all unique evaluation paths that
+/// exist in the graph.
+pub fn node_confs<'a, I>(eval_stepss: I) -> BTreeSet<(node::Id, Vec<bool>)>
 where
-    G: 'a + GraphRef + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
-    G::NodeId: Eq + Hash,
-    G::NodeWeight: Node,
+    I: IntoIterator<Item = &'a [EvalStep]>,
 {
-    let full_eval_order = (!inlets.is_empty() || !outlets.is_empty()).then(|| {
-        const FULL_EVAL_FN_NAME: &str = "full_eval";
-        let eval_name = FULL_EVAL_FN_NAME.to_string();
-        let order: Vec<_> =
-            eval_order(g, inlets.iter().cloned(), outlets.iter().cloned()).collect();
-        (eval_name, order)
-    });
-    let pull_nodes = pull_nodes(g);
-    let push_nodes = push_nodes(g);
-    let pull_eval_orders = pull_nodes.into_iter().map(move |(n, eval_name)| {
-        let order: Vec<_> = pull_eval_order(g, n).collect();
-        (eval_name, order)
-    });
-    let push_eval_orders = push_nodes.into_iter().map(move |(n, eval_name)| {
-        let order: Vec<_> = push_eval_order(g, n).collect();
-        (eval_name, order)
-    });
-    full_eval_order
+    eval_stepss
         .into_iter()
-        .chain(pull_eval_orders)
-        .chain(push_eval_orders)
+        .flat_map(|steps| {
+            steps.iter().map(|step| {
+                let conf = step.args.iter().map(|arg| arg.is_some()).collect();
+                (step.node, conf)
+            })
+        })
+        .collect()
 }
 
-/// Given a graph, generate the full module with all the necessary functions for
-/// executing it.
-pub fn module<G>(
-    g: G,
-    path: &[node::Id],
-    inlets: &[G::NodeId],
-    outlets: &[G::NodeId],
-) -> Vec<ExprKind>
-where
-    G: Data<EdgeWeight = Edge>
-        + GraphRef
-        + IntoEdgesDirected
-        + IntoNodeReferences
-        + NodeIndexable
-        + Visitable,
-    G::NodeId: Eq + Hash + Ord,
-    G::NodeWeight: Node,
-{
-    // Create the plan for generating eval and node fns.
-    let eval_orders: Vec<_> = eval_orders(g, inlets, outlets).collect();
-    let eval_stepss: Vec<_> = eval_orders
+/// Construct a rose tree of node configs from a tree of eval plans.
+fn node_confs_tree(eval_tree: &RoseTree<EvalPlan>) -> RoseTree<NodeConfs> {
+    eval_tree.map_ref(&mut |eval| {
+        let all_steps = eval
+            .pull_steps
+            .values()
+            .chain(eval.push_steps.values())
+            .chain(Some(&eval.nested_steps))
+            .map(|v| &v[..]);
+        node_confs(all_steps)
+    })
+}
+
+/// The string used to represent a path in a fn name.
+fn path_string(path: &[node::Id]) -> String {
+    path.iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
+/// Generate a function name for a node based on its path in the graph.
+fn node_fn_name(node_path: &[node::Id], inputs: &[bool]) -> String {
+    let path_string = path_string(node_path);
+    let inputs_prefix = if inputs.is_empty() { "" } else { "_i" };
+    let inputs_string = inputs
         .iter()
-        .map(|(_, order)| eval_steps(g, order.iter().copied()))
+        .map(|&b| if b { "1" } else { "0" })
+        .collect::<Vec<_>>()
+        .join("");
+    format!("node_fn_{path_string}{inputs_prefix}{inputs_string}")
+}
+
+/// Generate a function for a single node with the given set of connected inputs.
+pub fn node_fn(node: &dyn Node, node_path: &[node::Id], inputs: &[bool]) -> ExprKind {
+    // The binding used to receive the node's state as an argument, and whose
+    // resulting value is returned from the body of the function and used to
+    // update the state map.
+    const STATE: &str = "state";
+
+    fn input_name(i: usize) -> String {
+        format!("input{i}")
+    }
+
+    // Create function parameters for graph state and inputs
+    let mut input_args = inputs
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| b.then(|| input_name(i)))
+        .collect::<Vec<_>>();
+
+    // Create input expressions for the node's expr method
+    let input_exprs: Vec<Option<String>> = inputs
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            b.then(|| input_name(i))
+        })
         .collect();
 
-    // Generate the node functions.
-    let node_confs = node_confs(eval_stepss.iter().map(|steps| &steps[..]));
-    let node_fns = node_fns(g, path, &node_confs);
+    // Get the node's expression
+    let ctx = node::ExprCtx::new(node_path, &input_exprs);
+    let node_expr = node.expr(ctx);
 
-    // Generate the eval functions.
-    let eval_fns = eval_orders
-        .iter()
-        .zip(&eval_stepss)
-        .map(|((eval_name, _), steps)| {
-            let stmts = eval_stmts(g, path, &steps);
-            eval_fn(&eval_name, stmts)
+    // Construct the full function definition
+    let fn_name = node_fn_name(node_path, inputs);
+    let fn_body = if node.stateful() {
+        input_args.push(STATE.to_string());
+        format!("(let ((output {node_expr})) (list output state))")
+    } else {
+        format!("{node_expr}")
+    };
+    let fn_args = input_args.join(" ");
+    let fn_def = format!("(define ({fn_name} {fn_args}) {fn_body})");
+
+    Engine::emit_ast(&fn_def)
+        .expect("Failed to emit AST for node function")
+        .into_iter()
+        .next()
+        .unwrap()
+}
+
+/// Given a gantz graph and a rose tree with the associated node configs,
+/// produce a function for every node configuration in the graph.
+fn node_fns<G>(g: G, node_confs_tree: &RoseTree<NodeConfs>) -> Vec<ExprKind>
+where
+    G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
+    G::NodeWeight: Node,
+{
+    let mut node_fns = NodeFns::new(&node_confs_tree);
+    crate::graph::visit(g, &[], &mut node_fns);
+    node_fns.fns
+}
+
+/// Given a tree of eval plans for a gantz graph (and its nested graphs),
+/// generate all push, pull and nested eval fns for the graph.
+fn eval_fns(eval_tree: &RoseTree<EvalPlan>) -> Vec<ExprKind> {
+    let mut eval_fns = vec![];
+    eval_tree.visit(&[], &mut |path, eval| {
+        let pull_steps = eval.pull_steps.iter().map(|(&id, steps)| {
+            let node_path: Vec<_> = path.iter().copied().chain(Some(id)).collect();
+            let name = pull_eval_fn_name(&node_path);
+            (name, steps)
         });
+        let push_steps = eval.push_steps.iter().map(|(&id, steps)| {
+            let node_path: Vec<_> = path.iter().copied().chain(Some(id)).collect();
+            let name = push_eval_fn_name(&node_path);
+            (name, steps)
+        });
+        let fns = pull_steps.chain(push_steps).map(|(name, steps)| {
+            let stmts = eval_stmts(path, &steps, &eval.flow.outputs, &eval.flow.stateful);
+            eval_fn(&name, stmts)
+        });
+        eval_fns.extend(fns);
+    });
+    eval_fns
+}
 
-    // Combine all generated functions.
+/// Given a root gantz graph, generate the full module with all the necessary
+/// functions for executing it. This includes:
+///
+/// 1. A function for each node (and for each node input configuration).
+/// 2. A function for each node requiring push/pull evaluation.
+/// 3. The above for all nested graphs.
+pub fn module<G>(g: G) -> Vec<ExprKind>
+where
+    G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
+    G::NodeWeight: Node,
+{
+    // Create a `Flow` for each graph (including nested) in a tree.
+    let mut flow_tree = RoseTree::<Flow>::default();
+    crate::graph::visit(g, &[], &mut flow_tree);
+    let eval_tree = flow_tree.map_ref(&mut eval_plan);
+
+    // Collect node fns.
+    let node_confs_tree = node_confs_tree(&eval_tree);
+    let node_fns = node_fns(g, &node_confs_tree);
+
+    // Collect eval fns.
+    let eval_fns = eval_fns(&eval_tree);
+
     node_fns.into_iter().chain(eval_fns).collect()
 }

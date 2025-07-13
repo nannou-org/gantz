@@ -79,7 +79,7 @@ fn test_graph_nested_stateless() {
     env_logger::init();
 
     // Graph A, nested within a node.
-    let mut ga = GraphNode::<petgraph::graph::DiGraph<_, _, usize>>::default();
+    let mut ga = GraphNode::default();
     let inlet_a = ga.add_inlet(Box::new(graph::Inlet) as Box<dyn DebugNode>);
     let inlet_b = ga.add_inlet(Box::new(graph::Inlet) as Box<_>);
     let mul = ga.add_node(Box::new(node_mul()) as Box<_>);
@@ -89,7 +89,7 @@ fn test_graph_nested_stateless() {
     ga.add_edge(mul, outlet, Edge::from((0, 0)));
 
     // Graph B.
-    let mut gb = petgraph::graph::DiGraph::new();
+    let mut gb = gantz_core::Graph::default();
     let push = gb.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let six = gb.add_node(Box::new(node_int(6)) as Box<_>);
     let seven = gb.add_node(Box::new(node_int(7)) as Box<_>);
@@ -105,7 +105,7 @@ fn test_graph_nested_stateless() {
     gb.add_edge(forty_two, assert_eq, Edge::from((0, 1)));
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::codegen::module(&gb, &[], &[], &[]);
+    let module = gantz_core::codegen::module(&gb);
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -120,6 +120,6 @@ fn test_graph_nested_stateless() {
     }
 
     // Register the `push` eval function, then call it.
-    vm.call_function_by_name_with_args(&push_eval_fn_name(push.index()), vec![])
+    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
         .ok();
 }

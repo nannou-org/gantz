@@ -1,6 +1,5 @@
-use crate::visit;
 #[doc(inline)]
-pub use crate::visit::Visitor;
+pub use crate::visit::{self, Visitor};
 pub use expr::{Expr, ExprError};
 pub use pull::{Pull, WithPullEval};
 pub use push::{Push, WithPushEval};
@@ -34,7 +33,7 @@ pub trait Node {
     /// If [`Node::n_outputs`] is 1, the expr should result in a single value.
     ///
     /// If [`Node::n_outputs`] is > 1, the expr should result in a list of values.
-    fn expr(&self, inputs: &[Option<ExprKind>]) -> ExprKind;
+    fn expr(&self, ctx: ExprCtx) -> ExprKind;
 
     /// Specifies whether or not code should be generated to allow for push
     /// evaluation from instances of this node. Enabling push evaluation allows
@@ -72,6 +71,16 @@ pub trait Node {
         None
     }
 
+    /// Whether or not this node acts as an inlet for some nested graph.
+    fn inlet(&self) -> bool {
+        false
+    }
+
+    /// Whether or not this node acts as an outlet for some nested graph.
+    fn outlet(&self) -> bool {
+        false
+    }
+
     /// Whether or not the node requires access to state.
     ///
     /// Nodes returning `true` will have a special `state` variable accessible
@@ -97,12 +106,32 @@ pub trait Node {
     /// 2. `Node::visit`
     /// 3. `Visitor::visit_post`
     ///
-    /// To visit this node and all nested nodes, use the [`visit`] function.
-    fn visit(&self, _visitor: &mut dyn Visitor, _path: &[Id]) {}
+    /// Note that implementations should *only* visit nested nodes and not the
+    /// node itself. To visit the node *and* all nested nodes, use the [`visit`]
+    /// function.
+    fn visit(&self, _ctx: visit::Ctx, _visitor: &mut dyn Visitor) {}
 }
 
 /// Type used to represent a node's ID within a graph.
 pub type Id = usize;
+
+/// Context provided to the [`Node::expr`] fn.
+pub struct ExprCtx<'a> {
+    /// The path of this node relative to the root of the gantz graph.
+    ///
+    /// This is primarily provided to allow `GraphNode`s (or custom graph node
+    /// implementations) to generate the correct function names for their
+    /// nested nodes.
+    ///
+    /// Besides this special case, `path` should not be used so that node's
+    /// maintain consistent behaviour whether nested or not.
+    path: &'a [Id],
+    /// An element for each input to the node.
+    ///
+    /// If the input is connected, it is `Some(name)` where `name` is a binding
+    /// to the incoming value.
+    inputs: &'a [Option<String>],
+}
 
 /// Represents a function that can be called to begin evaluation of the graph
 /// from some node.
@@ -117,6 +146,32 @@ pub struct Input(pub u16);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct Output(pub u16);
 
+impl<'a> ExprCtx<'a> {
+    pub(crate) fn new(path: &'a [Id], inputs: &'a [Option<String>]) -> Self {
+        Self { path, inputs }
+    }
+
+    /// The path of this node relative to the root of the gantz graph.
+    ///
+    /// This is primarily provided to allow `GraphNode`s (or custom graph node
+    /// implementations) to generate the correct function names for their
+    /// nested nodes.
+    ///
+    /// Besides this special case, `path` should not be used so that node's
+    /// maintain consistent behaviour whether nested or not.
+    pub fn path(&self) -> &[Id] {
+        self.path
+    }
+
+    /// An element for each input to the node.
+    ///
+    /// If the input is connected, it is `Some(name)` where `name` is a binding
+    /// to the incoming value.
+    pub fn inputs(&self) -> &[Option<String>] {
+        self.inputs
+    }
+}
+
 impl<'a, N> Node for &'a N
 where
     N: ?Sized + Node,
@@ -129,8 +184,8 @@ where
         (**self).n_outputs()
     }
 
-    fn expr(&self, inputs: &[Option<ExprKind>]) -> ExprKind {
-        (**self).expr(inputs)
+    fn expr(&self, ctx: ExprCtx) -> ExprKind {
+        (**self).expr(ctx)
     }
 
     fn push_eval(&self) -> Option<EvalFn> {
@@ -141,12 +196,24 @@ where
         (**self).pull_eval()
     }
 
+    fn inlet(&self) -> bool {
+        (**self).inlet()
+    }
+
+    fn outlet(&self) -> bool {
+        (**self).outlet()
+    }
+
     fn stateful(&self) -> bool {
         (**self).stateful()
     }
 
     fn register(&self, path: &[Id], vm: &mut Engine) {
         (**self).register(path, vm)
+    }
+
+    fn visit(&self, ctx: visit::Ctx, visitor: &mut dyn Visitor) {
+        (**self).visit(ctx, visitor)
     }
 }
 
@@ -164,8 +231,8 @@ macro_rules! impl_node_for_ptr {
                 (**self).n_outputs()
             }
 
-            fn expr(&self, inputs: &[Option<ExprKind>]) -> ExprKind {
-                (**self).expr(inputs)
+            fn expr(&self, ctx: ExprCtx) -> ExprKind {
+                (**self).expr(ctx)
             }
 
             fn push_eval(&self) -> Option<EvalFn> {
@@ -176,12 +243,24 @@ macro_rules! impl_node_for_ptr {
                 (**self).pull_eval()
             }
 
+            fn inlet(&self) -> bool {
+                (**self).inlet()
+            }
+
+            fn outlet(&self) -> bool {
+                (**self).outlet()
+            }
+
             fn stateful(&self) -> bool {
                 (**self).stateful()
             }
 
             fn register(&self, path: &[Id], vm: &mut Engine) {
                 (**self).register(path, vm)
+            }
+
+            fn visit(&self, ctx: visit::Ctx, visitor: &mut dyn Visitor) {
+                (**self).visit(ctx, visitor)
             }
         }
     };
@@ -211,13 +290,13 @@ pub fn expr(expr: impl Into<String>) -> Result<Expr, ExprError> {
 }
 
 /// Visit this node and all nested nodes.
-pub fn visit(node: &dyn Node, path: &[Id], visitor: &mut dyn Visitor) {
-    visitor.visit_pre(node, path);
-    node.visit(visitor, path);
-    visitor.visit_post(node, path);
+pub fn visit(ctx: visit::Ctx, node: &dyn Node, visitor: &mut dyn Visitor) {
+    visitor.visit_pre(ctx, node);
+    node.visit(ctx, visitor);
+    visitor.visit_post(ctx, node);
 }
 
 /// Register the given node and all nested nodes.
-pub fn register(node: &dyn Node, path: &[Id], vm: &mut Engine) {
-    visit(node, path, &mut visit::Register(vm));
+pub fn register(ctx: visit::Ctx, node: &dyn Node, vm: &mut Engine) {
+    visit(ctx, node, &mut visit::Register(vm));
 }
