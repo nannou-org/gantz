@@ -3,8 +3,7 @@
 use gantz_core::{
     Edge, ROOT_STATE,
     codegen::push_eval_fn_name,
-    graph::{self, GraphNode},
-    node::{self, Node, WithPushEval},
+    node::{self, GraphNode, Node, WithPushEval},
 };
 use std::fmt::Debug;
 use steel::{SteelVal, steel_vm::engine::Engine};
@@ -80,16 +79,16 @@ fn test_graph_nested_stateless() {
 
     // Graph A, nested within a node.
     let mut ga = GraphNode::default();
-    let inlet_a = ga.add_inlet(Box::new(graph::Inlet) as Box<dyn DebugNode>);
-    let inlet_b = ga.add_inlet(Box::new(graph::Inlet) as Box<_>);
+    let inlet_a = ga.add_inlet(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let inlet_b = ga.add_inlet(Box::new(node::graph::Inlet) as Box<_>);
     let mul = ga.add_node(Box::new(node_mul()) as Box<_>);
-    let outlet = ga.add_outlet(Box::new(graph::Outlet) as Box<_>);
+    let outlet = ga.add_outlet(Box::new(node::graph::Outlet) as Box<_>);
     ga.add_edge(inlet_a, mul, Edge::from((0, 0)));
     ga.add_edge(inlet_b, mul, Edge::from((0, 1)));
     ga.add_edge(mul, outlet, Edge::from((0, 0)));
 
     // Graph B.
-    let mut gb = gantz_core::Graph::default();
+    let mut gb = petgraph::graph::DiGraph::new();
     let push = gb.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let six = gb.add_node(Box::new(node_int(6)) as Box<_>);
     let seven = gb.add_node(Box::new(node_int(7)) as Box<_>);

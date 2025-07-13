@@ -1,6 +1,7 @@
 #[doc(inline)]
 pub use crate::visit::{self, Visitor};
 pub use expr::{Expr, ExprError};
+pub use graph::GraphNode;
 pub use pull::{Pull, WithPullEval};
 pub use push::{Push, WithPushEval};
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,7 @@ pub use state::{NodeState, State, WithStateType};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 pub mod expr;
+pub mod graph;
 pub mod pull;
 pub mod push;
 pub mod state;
