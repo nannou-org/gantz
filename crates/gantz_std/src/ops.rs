@@ -14,11 +14,12 @@ impl gantz_core::Node for Add {
         1
     }
 
-    fn expr(&self, inputs: &[Option<ExprKind>]) -> ExprKind {
+    fn expr(&self, ctx: gantz_core::node::ExprCtx) -> ExprKind {
+        let inputs = ctx.inputs();
         let (l, r) = match (inputs.get(0), inputs.get(1)) {
-            (Some(Some(l)), Some(Some(r))) => (l.to_string(), r.to_string()),
-            (Some(Some(l)), _) => (l.to_string(), "0".to_string()),
-            (_, Some(Some(r))) => ("0".to_string(), r.to_string()),
+            (Some(Some(l)), Some(Some(r))) => (&l[..], &r[..]),
+            (Some(Some(l)), _) => (&l[..], "0"),
+            (_, Some(Some(r))) => ("0", &r[..]),
             // FIXME: Need a way of handling these error cases.
             _ => return ExprKind::empty(),
         };

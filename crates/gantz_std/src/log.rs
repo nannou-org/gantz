@@ -24,8 +24,8 @@ impl gantz_core::Node for Log {
         1
     }
 
-    fn expr(&self, inputs: &[Option<ExprKind>]) -> ExprKind {
-        let Some(Some(input)) = inputs.get(0) else {
+    fn expr(&self, ctx: gantz_core::node::ExprCtx) -> ExprKind {
+        let Some(Some(input)) = ctx.inputs().get(0) else {
             return ExprKind::empty();
         };
         let level = match self.level {

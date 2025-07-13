@@ -10,7 +10,7 @@ impl gantz_core::Node for Bang {
         1
     }
 
-    fn expr(&self, _inputs: &[Option<ExprKind>]) -> ExprKind {
+    fn expr(&self, _ctx: gantz_core::node::ExprCtx) -> ExprKind {
         Engine::emit_ast("'()").unwrap().into_iter().next().unwrap()
     }
 
