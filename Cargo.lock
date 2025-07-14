@@ -461,6 +461,12 @@ checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
 name = "base64"
+version = "0.21.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
+
+[[package]]
+name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
@@ -980,6 +986,7 @@ dependencies = [
  "glow",
  "glutin",
  "glutin-winit",
+ "home",
  "image",
  "js-sys",
  "log",
@@ -990,6 +997,8 @@ dependencies = [
  "percent-encoding",
  "profiling",
  "raw-window-handle",
+ "ron 0.8.1",
+ "serde",
  "static_assertions",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -1013,6 +1022,7 @@ dependencies = [
  "log",
  "nohash-hasher",
  "profiling",
+ "ron 0.8.1",
  "serde",
 ]
 
@@ -1048,6 +1058,7 @@ dependencies = [
  "log",
  "profiling",
  "raw-window-handle",
+ "serde",
  "smithay-clipboard",
  "web-time",
  "webbrowser",
@@ -1455,6 +1466,7 @@ dependencies = [
  "humantime",
  "log",
  "petgraph",
+ "ron 0.10.1",
  "serde",
  "steel-core",
  "sublime_fuzzy",
@@ -2751,7 +2763,7 @@ version = "1.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eac26e981c03a6e53e0aee43c113e3202f5581d5360dae7bd2c70e800dd0451d"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "indexmap 2.9.0",
  "quick-xml 0.32.0",
  "serde",
@@ -3000,6 +3012,31 @@ name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
+
+[[package]]
+name = "ron"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b91f7eff05f748767f183df4320a63d6936e9c6107d97c9e6bdd9784f4289c94"
+dependencies = [
+ "base64 0.21.7",
+ "bitflags 2.9.1",
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
+name = "ron"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "beceb6f7bf81c73e73aeef6dd1356d9a1b2b4909e1f0fc3e59b034f9572d7b7f"
+dependencies = [
+ "base64 0.22.1",
+ "bitflags 2.9.1",
+ "serde",
+ "serde_derive",
+ "unicode-ident",
+]
 
 [[package]]
 name = "rustc-hash"

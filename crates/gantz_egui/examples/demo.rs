@@ -6,7 +6,7 @@
 
 use dyn_hash::DynHash;
 use eframe::egui;
-use gantz_core::{Edge, steel::steel_vm::engine::Engine};
+use gantz_core::steel::steel_vm::engine::Engine;
 use gantz_egui::widget::gantz::{INLET_NAME, OUTLET_NAME};
 use petgraph::visit::EdgeRef;
 use petgraph::visit::{IntoEdgeReferences, IntoNodeReferences, NodeRef};
@@ -125,27 +125,6 @@ fn node_type_registry() -> NodeTypeRegistry {
 type Graph = gantz_core::node::graph::Graph<Box<dyn Node>>;
 type GraphNode = gantz_core::node::GraphNode<Box<dyn Node>>;
 
-/// Setup a simple demo graph.
-fn new_graph() -> GraphNode {
-    let mut graph = GraphNode::default();
-
-    let button = graph.add_node(Box::new(gantz_std::Bang::default()) as Box<dyn Node>);
-    let n0 = graph.add_node(Box::new(gantz_std::Number::default()) as Box<_>);
-    let n1 = graph.add_node(Box::new(gantz_std::Number::default()) as Box<_>);
-    let add = graph.add_node(Box::new(gantz_std::ops::Add::default()) as Box<_>);
-    let n2 = graph.add_node(Box::new(gantz_std::Number::default()) as Box<_>);
-    let log = graph.add_node(Box::new(gantz_std::log::Log::default()) as Box<_>);
-
-    graph.add_edge(button, n0, Edge::from((0, 0)));
-    graph.add_edge(button, n1, Edge::from((0, 0)));
-    graph.add_edge(n0, add, Edge::from((0, 0)));
-    graph.add_edge(n1, add, Edge::from((0, 1)));
-    graph.add_edge(add, n2, Edge::from((0, 0)));
-    graph.add_edge(n2, log, Edge::from((0, 0)));
-
-    graph
-}
-
 // ----------------------------------------------
 // Model
 // ----------------------------------------------
@@ -158,6 +137,7 @@ struct State {
     graph: GraphNode,
     graph_hash: u64,
     compiled_module: String,
+    logger: gantz_egui::widget::log_view::Logger,
     gantz: gantz_egui::widget::GantzState,
     node_ty_reg: NodeTypeRegistry,
     vm: Engine,
@@ -168,9 +148,41 @@ struct State {
 // ----------------------------------------------
 
 impl App {
+    /// The key at which the graph is to be saved/loaded.
+    const GRAPH_KEY: &str = "graph";
+    /// The key at which the gantz widget state is to be saved/loaded.
+    const GANTZ_GUI_STATE_KEY: &str = "gantz-widget-state";
+
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // Graph setup
-        let graph = new_graph();
+        // Setup logging.
+        let logger = gantz_egui::widget::log_view::Logger::default();
+        log::set_boxed_logger(Box::new(logger.clone())).unwrap();
+        log::set_max_level(log::LevelFilter::Info);
+
+        // Load the graph or fallback to a default empty one.
+        let graph = cc
+            .storage
+            .as_ref()
+            .and_then(|storage| {
+                let Some(graph_str) = storage.get_string(Self::GRAPH_KEY) else {
+                    log::info!("No existing graph to load");
+                    return None;
+                };
+                match ron::de::from_str(&graph_str) {
+                    Ok(graph) => {
+                        log::info!("Successfully loaded graph from storage");
+                        Some(graph)
+                    }
+                    Err(e) => {
+                        log::error!("Failed to deserialize graph: {e}");
+                        None
+                    }
+                }
+            })
+            .unwrap_or_else(|| {
+                log::info!("Initialising default graph");
+                GraphNode::default()
+            });
         let graph_hash = graph_hash(&graph);
 
         // VM setup
@@ -183,9 +195,34 @@ impl App {
         // GUI setup
         let ctx = &cc.egui_ctx;
         ctx.set_fonts(egui::FontDefinitions::default());
-        let gantz = gantz_egui::widget::GantzState::new();
+
+        // Load the gantz GUI state or fallback to default.
+        let gantz = cc
+            .storage
+            .as_ref()
+            .and_then(|storage| {
+                let Some(gantz_str) = storage.get_string(Self::GANTZ_GUI_STATE_KEY) else {
+                    log::info!("No existing gantz GUI state to load");
+                    return None;
+                };
+                match ron::de::from_str(&gantz_str) {
+                    Ok(gantz) => {
+                        log::info!("Successfully loaded gantz GUI state from storage");
+                        Some(gantz)
+                    }
+                    Err(e) => {
+                        log::error!("Failed to deserialize gantz GUI state: {e}");
+                        None
+                    }
+                }
+            })
+            .unwrap_or_else(|| {
+                log::info!("Initialising default gantz GUI state");
+                gantz_egui::widget::GantzState::new()
+            });
 
         let state = State {
+            logger,
             gantz,
             graph,
             graph_hash,
@@ -212,6 +249,35 @@ impl eframe::App for App {
 
         // Process any pending commands generated from the UI.
         process_cmds(&mut self.state.gantz, &mut self.state.vm);
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        // Save the graph.
+        let graph_str = match ron::to_string(&self.state.graph) {
+            Err(e) => {
+                log::error!("Failed to serialize and save graph: {e}");
+                return;
+            }
+            Ok(s) => s,
+        };
+        storage.set_string(Self::GRAPH_KEY, graph_str);
+        log::info!("Successfully persisted graph");
+
+        // Save the gantz GUI state.
+        let gantz_str = match ron::to_string(&self.state.gantz) {
+            Err(e) => {
+                log::error!("Failed to serialize and save gantz GUI state: {e}");
+                return;
+            }
+            Ok(s) => s,
+        };
+        storage.set_string(Self::GANTZ_GUI_STATE_KEY, gantz_str);
+        log::info!("Successfully persisted gantz GUI state");
+    }
+
+    // Persist GUI state.
+    fn persist_egui_memory(&self) -> bool {
+        true
     }
 }
 
@@ -281,6 +347,7 @@ fn gui(ctx: &egui::Context, state: &mut State) {
         .show(ctx, |ui| {
             gantz_egui::widget::Gantz::new(&state.node_ty_reg, &mut state.graph).show(
                 &mut state.gantz,
+                &state.logger,
                 &state.compiled_module,
                 &mut state.vm,
                 ui,

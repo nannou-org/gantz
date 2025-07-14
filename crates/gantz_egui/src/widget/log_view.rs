@@ -52,6 +52,8 @@ pub struct Logger {
 }
 
 impl Logger {
+    pub const DEFAULT_MAX_ENTRIES: usize = 1_000;
+
     pub fn new(max_entries: usize) -> Self {
         Self {
             entries: Arc::new(Mutex::new(VecDeque::new())),
@@ -65,6 +67,12 @@ impl Logger {
 
     pub fn clear(&self) {
         self.entries.lock().unwrap().clear();
+    }
+}
+
+impl Default for Logger {
+    fn default() -> Self {
+        Self::new(Self::DEFAULT_MAX_ENTRIES)
     }
 }
 
@@ -222,11 +230,4 @@ impl LogView {
         // Store the modified state back in memory
         ui.memory_mut(|mem| mem.data.insert_temp(state_id, state));
     }
-}
-
-pub fn setup_logging() -> Logger {
-    let logger = Logger::new(1000);
-    log::set_boxed_logger(Box::new(logger.clone())).unwrap();
-    log::set_max_level(log::LevelFilter::Info);
-    logger
 }
