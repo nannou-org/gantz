@@ -50,8 +50,8 @@ where
         self.node.n_outputs()
     }
 
-    fn expr(&self, inputs: &[Option<ExprKind>]) -> ExprKind {
-        self.node.expr(inputs)
+    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
+        self.node.expr(ctx)
     }
 
     fn push_eval(&self) -> Option<node::EvalFn> {
@@ -60,6 +60,14 @@ where
 
     fn pull_eval(&self) -> Option<node::EvalFn> {
         Some(node::EvalFn)
+    }
+
+    fn inlet(&self) -> bool {
+        self.node.inlet()
+    }
+
+    fn outlet(&self) -> bool {
+        self.node.outlet()
     }
 
     fn stateful(&self) -> bool {

@@ -82,8 +82,7 @@ fn test_graph_with_counter() {
     g.add_edge(push, counter, Edge::from((0, 0)));
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::codegen::module(&g, &[], &[]);
-    assert_eq!(module.len(), 1);
+    let module = gantz_core::codegen::module(&g);
 
     // Initialise the VM.
     let mut vm = Engine::new_base();
@@ -93,11 +92,13 @@ fn test_graph_with_counter() {
     node::state::register_graph(&g, &mut vm);
 
     // Initialise the eval fn.
-    vm.run(format!("{}", &module[0])).unwrap();
+    for f in module {
+        vm.run(format!("{f}")).unwrap();
+    }
 
     // Call the push eval fn 3 times to increment the counter thrice.
     for _ in 0..3 {
-        vm.call_function_by_name_with_args(&push_eval_fn_name(push.index()), vec![])
+        vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
             .unwrap();
     }
 
@@ -115,7 +116,7 @@ fn test_graph_with_counter() {
     assert_eq!(res, Counter(0));
 
     // Check that calling the function again works based on the new state.
-    vm.call_function_by_name_with_args(&push_eval_fn_name(push.index()), vec![])
+    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
         .unwrap();
 
     // The value should now be 1.
@@ -171,8 +172,7 @@ fn test_graph_with_counters() {
     g.add_edge(p_c, c_c, Edge::from((0, 0)));
 
     // Generate the module, which should have one expr for each `push`.
-    let module = gantz_core::codegen::module(&g, &[], &[]);
-    assert_eq!(module.len(), 3);
+    let module = gantz_core::codegen::module(&g);
 
     // Initialise the VM.
     let mut vm = Engine::new_base();
@@ -182,16 +182,16 @@ fn test_graph_with_counters() {
     node::state::register_graph(&g, &mut vm);
 
     // Initialise the eval fns.
-    for eval_fn in &module {
-        vm.run(format!("{}", &eval_fn)).unwrap();
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
     }
 
     // Call a, b then c.
-    vm.call_function_by_name_with_args(&push_eval_fn_name(p_a.index()), vec![])
+    vm.call_function_by_name_with_args(&push_eval_fn_name(&[p_a.index()]), vec![])
         .unwrap();
-    vm.call_function_by_name_with_args(&push_eval_fn_name(p_b.index()), vec![])
+    vm.call_function_by_name_with_args(&push_eval_fn_name(&[p_b.index()]), vec![])
         .unwrap();
-    vm.call_function_by_name_with_args(&push_eval_fn_name(p_c.index()), vec![])
+    vm.call_function_by_name_with_args(&push_eval_fn_name(&[p_c.index()]), vec![])
         .unwrap();
 
     // A should be incremented once, b twice, and c thrice.

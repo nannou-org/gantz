@@ -39,7 +39,7 @@ where
     T: NodeTypeRegistry,
 {
     node_ty_reg: &'a T,
-    root: &'a mut graph_scene::GraphNode<T::Node>,
+    root: &'a mut gantz_core::node::GraphNode<T::Node>,
 }
 
 pub struct GantzState {
@@ -84,7 +84,7 @@ where
     T::Node: NodeUi + graph_scene::ToGraphMut<Node = T::Node>,
 {
     /// Instantiate the full top-level gantz widget.
-    pub fn new(node_ty_reg: &'a T, root: &'a mut graph_scene::GraphNode<T::Node>) -> Self {
+    pub fn new(node_ty_reg: &'a T, root: &'a mut gantz_core::node::GraphNode<T::Node>) -> Self {
         Self { node_ty_reg, root }
     }
 
@@ -162,7 +162,7 @@ impl<'a, T> Clone for NodeTyCmd<'a, T> {
 impl<'a, T> Copy for NodeTyCmd<'a, T> {}
 
 fn graph_scene<N>(
-    graph: &mut graph_scene::GraphNode<N>,
+    graph: &mut gantz_core::node::GraphNode<N>,
     state: &mut GantzState,
     vm: &mut Engine,
     ui: &mut egui::Ui,
@@ -276,7 +276,7 @@ fn graph_scene<N>(
 
 fn command_palette<T>(
     node_ty_reg: &T,
-    root: &mut graph_scene::GraphNode<T::Node>,
+    root: &mut gantz_core::node::GraphNode<T::Node>,
     state: &mut GantzState,
     vm: &mut Engine,
     ui: &mut egui::Ui,
@@ -321,8 +321,11 @@ fn command_palette<T>(
     }
 }
 
-fn graph_config<N>(root: &mut graph_scene::GraphNode<N>, state: &mut GantzState, ui: &mut egui::Ui)
-where
+fn graph_config<N>(
+    root: &mut gantz_core::node::GraphNode<N>,
+    state: &mut GantzState,
+    ui: &mut egui::Ui,
+) where
     N: ToGraphMut<Node = N>,
 {
     egui::Window::new("Graph Config")
@@ -364,7 +367,7 @@ fn log_view(logger: &widget::log_view::Logger, ui: &mut egui::Ui) {
 }
 
 fn node_inspector<N>(
-    root: &mut graph_scene::GraphNode<N>,
+    root: &mut gantz_core::node::GraphNode<N>,
     vm: &mut Engine,
     state: &mut GantzState,
     ui: &mut egui::Ui,

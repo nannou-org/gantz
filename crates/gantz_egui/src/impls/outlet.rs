@@ -1,6 +1,6 @@
 use crate::{NodeCtx, NodeUi};
 
-impl NodeUi for gantz_core::graph::Outlet {
+impl NodeUi for gantz_core::node::graph::Outlet {
     fn name(&self) -> &str {
         "out"
     }

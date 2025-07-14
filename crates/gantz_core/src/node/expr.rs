@@ -80,7 +80,7 @@ fn count_dollars(tts: TokenStream) -> usize {
 
 /// Consecutively replace each identifier starting with `$` with the expression
 /// in the list in order. Return the resulting tokens.
-fn interpolate_tokens(tts: TokenStream, inputs: &[Option<ExprKind>]) -> String {
+fn interpolate_tokens(tts: TokenStream, inputs: &[Option<String>]) -> String {
     let mut inputs = inputs.iter();
     let tokens = tts.map(move |token| {
         let mut tts = vec![];
@@ -117,14 +117,14 @@ impl Node for Expr {
         self.n_outputs
     }
 
-    fn expr(&self, inputs: &[Option<ExprKind>]) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
         // Create a token stream.
         let skip_comments = true;
         let source_id = None;
         let tts = TokenStream::new(&self.src, skip_comments, source_id);
 
         // Replace the `$var`s with their input expressions.
-        let new_src = interpolate_tokens(tts, inputs);
+        let new_src = interpolate_tokens(tts, ctx.inputs());
 
         // Convert the interpolated string to an expr.
         let exprs = Engine::emit_ast(&new_src).expect("failed to emit AST");

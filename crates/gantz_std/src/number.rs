@@ -18,8 +18,8 @@ impl gantz_core::Node for Number {
         Some(gantz_core::node::EvalFn)
     }
 
-    fn expr(&self, inputs: &[Option<ExprKind>]) -> ExprKind {
-        let expr = match inputs.get(0) {
+    fn expr(&self, ctx: gantz_core::node::ExprCtx) -> ExprKind {
+        let expr = match ctx.inputs().get(0) {
             // If an input value was provided, use it to update state and
             // forward that value.
             Some(Some(val)) => {

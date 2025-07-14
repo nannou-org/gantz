@@ -1,6 +1,6 @@
 use crate::{NodeCtx, NodeUi};
 
-impl NodeUi for gantz_core::graph::Inlet {
+impl NodeUi for gantz_core::node::graph::Inlet {
     fn name(&self) -> &str {
         "in"
     }

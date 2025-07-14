@@ -1087,7 +1087,7 @@ dependencies = [
 [[package]]
 name = "egui_graph"
 version = "0.4.0"
-source = "git+https://github.com/mitchmindtree/egui_graph.git?branch=develop#ba5fa50578359a13de8d6f1b8237e625c3b43691"
+source = "git+https://github.com/mitchmindtree/egui_graph.git?branch=develop#fa813eee6142b47e27fa06964244db985a3c321f"
 dependencies = [
  "egui",
  "layout-rs",

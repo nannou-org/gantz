@@ -3,8 +3,7 @@
 use gantz_core::{
     Edge, ROOT_STATE,
     codegen::push_eval_fn_name,
-    graph::{self, GraphNode},
-    node::{self, Node, WithPushEval},
+    node::{self, GraphNode, Node, WithPushEval},
 };
 use std::fmt::Debug;
 use steel::{SteelVal, steel_vm::engine::Engine};
@@ -79,11 +78,11 @@ fn test_graph_nested_stateless() {
     env_logger::init();
 
     // Graph A, nested within a node.
-    let mut ga = GraphNode::<petgraph::graph::DiGraph<_, _, usize>>::default();
-    let inlet_a = ga.add_inlet(Box::new(graph::Inlet) as Box<dyn DebugNode>);
-    let inlet_b = ga.add_inlet(Box::new(graph::Inlet) as Box<_>);
+    let mut ga = GraphNode::default();
+    let inlet_a = ga.add_inlet(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let inlet_b = ga.add_inlet(Box::new(node::graph::Inlet) as Box<_>);
     let mul = ga.add_node(Box::new(node_mul()) as Box<_>);
-    let outlet = ga.add_outlet(Box::new(graph::Outlet) as Box<_>);
+    let outlet = ga.add_outlet(Box::new(node::graph::Outlet) as Box<_>);
     ga.add_edge(inlet_a, mul, Edge::from((0, 0)));
     ga.add_edge(inlet_b, mul, Edge::from((0, 1)));
     ga.add_edge(mul, outlet, Edge::from((0, 0)));
@@ -105,9 +104,7 @@ fn test_graph_nested_stateless() {
     gb.add_edge(forty_two, assert_eq, Edge::from((0, 1)));
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::codegen::module(&gb, &[], &[]);
-    assert_eq!(module.len(), 1);
-    let expr = module.into_iter().next().unwrap();
+    let module = gantz_core::codegen::module(&gb);
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -116,8 +113,12 @@ fn test_graph_nested_stateless() {
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     node::state::register_graph(&gb, &mut vm);
 
+    // Register the fns.
+    for f in module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
     // Register the `push` eval function, then call it.
-    vm.run(format!("{expr}")).unwrap();
-    vm.call_function_by_name_with_args(&push_eval_fn_name(push.index()), vec![])
+    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
         .ok();
 }

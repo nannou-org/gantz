@@ -52,10 +52,6 @@ fn test_serde_basic_expr() {
     assert_eq!(n.n_outputs(), 1);
     assert!(n.push_eval().is_none());
     assert!(n.pull_eval().is_none());
-
-    // Check expression result format
-    let expr = n.expr(&[None, None]);
-    assert_eq!(format!("{}", expr), "(+ (quote ()) (quote ()))");
 }
 
 // Test serializing and deserializing a Push node
@@ -79,10 +75,6 @@ fn test_serde_push_node() {
     assert_eq!(n.n_outputs(), 1);
     assert!(n.push_eval().is_some());
     assert!(n.pull_eval().is_none());
-
-    // Check expression result format
-    let expr = n.expr(&[None, None]);
-    assert_eq!(format!("{}", expr), "(+ (quote ()) (quote ()))");
 }
 
 // Test serializing and deserializing a vector of various node types
