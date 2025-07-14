@@ -38,20 +38,22 @@ pub struct GraphScene<'a, N> {
 
 /// State associated with the [`GraphScene`] widget that can be useful to access
 /// outside the widget.
-#[derive(Default)]
+#[derive(Default, serde::Deserialize, serde::Serialize)]
 pub struct GraphSceneState {
     pub interaction: Interaction,
     /// Commands queued within the graph scene widget to be handled externally.
+    #[serde(default, skip)]
     pub cmds: Vec<Cmd>,
 }
 
-#[derive(Default)]
+#[derive(Default, serde::Deserialize, serde::Serialize)]
 pub struct Interaction {
     pub selection: Selection,
+    #[serde(default, skip)]
     pub edge_in_progress: Option<(NodeIndex, SocketKind, usize)>,
 }
 
-#[derive(Default)]
+#[derive(Default, serde::Deserialize, serde::Serialize)]
 pub struct Selection {
     pub nodes: HashSet<NodeIndex>,
     pub edges: HashSet<EdgeIndex>,

@@ -17,7 +17,7 @@ pub trait Command: Copy + Sized {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, serde::Deserialize, serde::Serialize)]
 pub struct CommandPalette {
     visible: bool,
     query: String,

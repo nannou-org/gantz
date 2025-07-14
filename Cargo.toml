@@ -11,17 +11,18 @@ repository = "https://github.com/nannou-org/gantz"
 
 [workspace.dependencies]
 dyn-hash = "0.2.2"
-eframe = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons" }
+eframe = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons", features = ["persistence"] }
 egui = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons", default-features = false }
 egui_extras = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons", default-features = false, features = ["syntect"] }
 egui_graph = { git = "https://github.com/mitchmindtree/egui_graph.git", branch = "develop" }
 env_logger = "0.10"
 gantz_core = { path = "crates/gantz_core" }
-gantz_egui = { path = "crates/gantz_egui" }
+gantz_egui = { path = "crates/gantz_egui", features = ["serde"] }
 gantz_std = { path = "crates/gantz_std" }
 humantime = "2.2"
 log = { version = "0.4", features = ["serde"] }
 petgraph = { version = "0.6", features = ["serde-1"] }
+ron = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 steel-core = { git = "https://github.com/mattwparas/steel.git" }

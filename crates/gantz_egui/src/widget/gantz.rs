@@ -42,6 +42,7 @@ where
     root: &'a mut gantz_core::node::GraphNode<T::Node>,
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
 pub struct GantzState {
     pub graph_scene: GraphSceneState,
     pub path: Vec<node::Id>,
@@ -51,18 +52,18 @@ pub struct GantzState {
     pub auto_layout: bool,
     pub layout_flow: egui::Direction,
     pub center_view: bool,
-    pub logger: widget::log_view::Logger,
 }
 
 /// UI state relevant to each nested graph within the tree.
 pub type Graphs = HashMap<Vec<node::Id>, GraphState>;
 
 /// UI state relevant to a graph at a certain path within the root.
+#[derive(serde::Deserialize, serde::Serialize)]
 pub struct GraphState {
     pub view: egui_graph::View,
 }
 
-#[derive(Default)]
+#[derive(Default, serde::Deserialize, serde::Serialize)]
 pub struct ViewToggles {
     pub node_inspector: bool,
     pub logs: bool,
@@ -92,6 +93,7 @@ where
     pub fn show(
         self,
         state: &mut GantzState,
+        logger: &widget::log_view::Logger,
         compiled_steel: &str,
         vm: &mut Engine,
         ui: &mut egui::Ui,
@@ -102,7 +104,7 @@ where
             graph_config(self.root, state, ui);
         }
         if state.view_toggles.logs {
-            log_view(&state.logger, ui);
+            log_view(logger, ui);
         }
         if state.view_toggles.node_inspector {
             node_inspector(self.root, vm, state, ui);
@@ -123,7 +125,6 @@ impl GantzState {
     }
 
     pub fn from_graphs(graphs: Graphs) -> Self {
-        let logger = widget::log_view::setup_logging();
         Self {
             graph_scene: Default::default(),
             path: vec![],
@@ -132,7 +133,6 @@ impl GantzState {
             center_view: false,
             command_palette: widget::CommandPalette::default(),
             layout_flow: Self::DEFAULT_DIRECTION,
-            logger,
             view_toggles: ViewToggles::default(),
         }
     }
