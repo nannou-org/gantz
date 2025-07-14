@@ -1,3 +1,6 @@
+//! A simple [`Edge`] type describing the outlet and inlet of source and
+//! destination nodes respectively.
+
 use crate::node;
 use serde::{Deserialize, Serialize};
 

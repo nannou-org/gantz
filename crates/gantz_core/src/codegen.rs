@@ -1,3 +1,6 @@
+//! Items related to generating steel code from a gantz graph, primarily the
+//! [`module`] fn.
+
 use crate::{
     Edge, GRAPH_STATE, ROOT_STATE,
     node::{self, Node},
@@ -23,7 +26,7 @@ mod rosetree;
 ///
 /// Produced via [`eval_plan`].
 #[derive(Debug)]
-pub struct EvalPlan<'a> {
+struct EvalPlan<'a> {
     /// The gantz graph `Flow` from which this `EvalPlan` was produced.
     flow: &'a Flow,
     /// Order of evaluation from all inlets to all outlets.
@@ -42,23 +45,23 @@ pub struct EvalPlan<'a> {
 ///
 /// Represents evaluation of a node with some set of the inputs connected.
 #[derive(Debug)]
-pub struct EvalStep {
+pub(crate) struct EvalStep {
     /// The node to be evaluated.
-    pub node: node::Id,
+    pub(crate) node: node::Id,
     /// Arguments to the node's function call.
     ///
     /// The `len` of the outer vec will always be equal to the number of inputs
     /// on `node`.
-    pub args: Vec<Option<ExprInput>>,
+    pub(crate) args: Vec<Option<ExprInput>>,
 }
 
 /// An argument to a node's function call.
 #[derive(Debug)]
-pub struct ExprInput {
+pub(crate) struct ExprInput {
     /// The node from which the value was generated.
-    pub node: node::Id,
+    pub(crate) node: node::Id,
     /// The output on the source node associated with the generated value.
-    pub output: node::Output,
+    pub(crate) output: node::Output,
 }
 
 /// The set of all node input configurations for a single graph.
@@ -112,7 +115,7 @@ pub fn push_eval_fn_name(path: &[node::Id]) -> String {
 }
 
 /// An iterator yielding all nodes reachable via pushing from the given node.
-pub fn push_reachable<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+fn push_reachable<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
 where
     G: IntoEdgesDirected + Visitable,
 {
@@ -120,7 +123,7 @@ where
 }
 
 /// An iterator yielding all nodes reachable via pulling from the given node.
-pub fn pull_reachable<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+fn pull_reachable<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
 where
     G: IntoEdgesDirected + Visitable,
 {
@@ -136,7 +139,7 @@ where
 /// Expects any directed graph whose edges are of type `Edge` and whose nodes
 /// implement `Node`. Direction of edges indicate the flow of data through the
 /// graph.
-pub fn push_eval_order<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+fn push_eval_order<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
 where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
     G::NodeId: Eq + Hash,
@@ -153,7 +156,7 @@ where
 /// Expects any directed graph whose edges are of type `Edge` and whose nodes
 /// implement `Node`. Direction of edges indicate the flow of data through the
 /// graph.
-pub fn pull_eval_order<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+fn pull_eval_order<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
 where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
     G::NodeId: Eq + Hash,
@@ -172,7 +175,7 @@ where
 /// Expects any directed graph whose edges are of type `Edge` and whose nodes
 /// implement `Node`. Direction of edges indicate the flow of data through the
 /// graph.
-pub fn eval_order<G, A, B>(g: G, push: A, pull: B) -> impl Iterator<Item = G::NodeId>
+pub(crate) fn eval_order<G, A, B>(g: G, push: A, pull: B) -> impl Iterator<Item = G::NodeId>
 where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
     G::NodeId: Eq + Hash,
@@ -187,7 +190,7 @@ where
 
 /// Given a node evaluation order, produce the series of evaluation steps
 /// required.
-pub fn eval_steps<I>(flow: &Flow, eval_order: I) -> impl Iterator<Item = EvalStep>
+pub(crate) fn eval_steps<I>(flow: &Flow, eval_order: I) -> impl Iterator<Item = EvalStep>
 where
     I: IntoIterator<Item = node::Id>,
 {
@@ -220,7 +223,7 @@ where
 }
 
 /// Create the evaluation plan for the graph associated with the given flow.
-pub fn eval_plan(flow: &Flow) -> EvalPlan {
+fn eval_plan(flow: &Flow) -> EvalPlan {
     let pull_steps = flow
         .pull
         .iter()
@@ -259,7 +262,7 @@ pub fn eval_plan(flow: &Flow) -> EvalPlan {
 }
 
 // An expression for a node's key into the graph state hashmap.
-pub fn node_state_key(node_id: usize) -> ExprKind {
+fn node_state_key(node_id: usize) -> ExprKind {
     // Create a symbol or other hashable key to use in the hashmap
     let key_str = format!("'{node_id}");
     Engine::emit_ast(&key_str)
@@ -274,7 +277,7 @@ pub fn node_state_key(node_id: usize) -> ExprKind {
 ///
 /// The given `path`, `outputs` and `stateful` are associated with the graph
 /// in which the eval fn is invoked.
-pub fn eval_stmts(
+pub(crate) fn eval_stmts(
     path: &[node::Id],
     steps: &[EvalStep],
     outputs: &BTreeMap<node::Id, usize>,
@@ -444,7 +447,7 @@ fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
 
 /// Collect all unique node configurations for all unique evaluation paths that
 /// exist in the graph.
-pub fn node_confs<'a, I>(eval_stepss: I) -> BTreeSet<(node::Id, Vec<bool>)>
+fn node_confs<'a, I>(eval_stepss: I) -> BTreeSet<(node::Id, Vec<bool>)>
 where
     I: IntoIterator<Item = &'a [EvalStep]>,
 {
@@ -493,7 +496,7 @@ fn node_fn_name(node_path: &[node::Id], inputs: &[bool]) -> String {
 }
 
 /// Generate a function for a single node with the given set of connected inputs.
-pub fn node_fn(node: &dyn Node, node_path: &[node::Id], inputs: &[bool]) -> ExprKind {
+fn node_fn(node: &dyn Node, node_path: &[node::Id], inputs: &[bool]) -> ExprKind {
     // The binding used to receive the node's state as an argument, and whose
     // resulting value is returned from the body of the function and used to
     // update the state map.
@@ -576,7 +579,9 @@ fn eval_fns(eval_tree: &RoseTree<EvalPlan>) -> Vec<ExprKind> {
 }
 
 /// Given a root gantz graph, generate the full module with all the necessary
-/// functions for executing it. This includes:
+/// functions for executing it.
+///
+/// This includes:
 ///
 /// 1. A function for each node (and for each node input configuration).
 /// 2. A function for each node requiring push/pull evaluation.

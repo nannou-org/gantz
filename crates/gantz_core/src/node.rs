@@ -1,3 +1,5 @@
+//! The primary [`Node`] abstraction and related items.
+
 #[doc(inline)]
 pub use crate::visit::{self, Visitor};
 pub use expr::{Expr, ExprError};
@@ -14,6 +16,7 @@ pub mod pull;
 pub mod push;
 pub mod state;
 
+/// The definitive abstraction of a gantz graph, the gantz `Node` trait.
 pub trait Node {
     /// The number of inputs to the node.
     fn n_inputs(&self) -> usize {

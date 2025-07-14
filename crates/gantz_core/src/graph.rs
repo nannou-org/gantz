@@ -1,4 +1,5 @@
-//! Provides [`visit`] and [`register`] fns for generic gantz graphs.
+//! Provides [`visit`](crate::graph::visit) and [`register`] fns for generic
+//! gantz graphs.
 
 use crate::{
     Edge,

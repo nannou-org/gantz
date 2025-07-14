@@ -1,3 +1,5 @@
+//! Items related to traversing nested graphs of gantz nodes.
+
 use crate::{
     Edge,
     node::{self, Node},

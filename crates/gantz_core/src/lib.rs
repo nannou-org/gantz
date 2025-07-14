@@ -13,4 +13,4 @@ pub mod visit;
 pub const ROOT_STATE: &str = "__root_state";
 /// The ident used to represent the state of a graph.
 /// Note that this can be either nested or top-level.
-pub const GRAPH_STATE: &str = "__graph_state";
+const GRAPH_STATE: &str = "__graph_state";
