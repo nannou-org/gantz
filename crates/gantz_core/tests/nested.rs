@@ -79,10 +79,10 @@ fn test_graph_nested_stateless() {
 
     // Graph A, nested within a node.
     let mut ga = GraphNode::default();
-    let inlet_a = ga.add_inlet(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-    let inlet_b = ga.add_inlet(Box::new(node::graph::Inlet) as Box<_>);
+    let inlet_a = ga.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let inlet_b = ga.add_node(Box::new(node::graph::Inlet) as Box<_>);
     let mul = ga.add_node(Box::new(node_mul()) as Box<_>);
-    let outlet = ga.add_outlet(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
     ga.add_edge(inlet_a, mul, Edge::from((0, 0)));
     ga.add_edge(inlet_b, mul, Edge::from((0, 1)));
     ga.add_edge(mul, outlet, Edge::from((0, 0)));
@@ -111,14 +111,128 @@ fn test_graph_nested_stateless() {
 
     // Initialise the node state vars.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    node::state::register_graph(&gb, &mut vm);
+    gantz_core::graph::register(&gb, &[], &mut vm);
 
     // Register the fns.
     for f in module {
         vm.run(f.to_pretty(100)).unwrap();
     }
 
-    // Register the `push` eval function, then call it.
+    // Call the `push` eval function.
     vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
-        .ok();
+        .unwrap();
+}
+
+// A simple test for nested graph support where the nested graph is stateful.
+//
+// GRAPH A
+//
+//    ---------
+//    | Inlet |
+//    -+-------
+//     |
+//    -+---------
+//    | Counter |
+//    -+---------
+//     |
+//    -+--------
+//    | Outlet |
+//    ----------
+//
+// GRAPH B
+//
+//    --------
+//    | push | // push_eval
+//    -+------
+//     |
+//    -+---------
+//    | GRAPH A |
+//    -+---------
+//     |
+//    -+--------
+//    | number |
+//    ----------
+//
+// We push evaluation from the root graph B's `push` node, and then check that
+// the value is incremented by checking the state of the `number` node.
+#[test]
+fn test_graph_nested_counter() {
+    // The counter node for the nested graph.
+    let counter = node::expr(
+        "
+        (begin
+          $bang
+          (set! state
+            (if (number? state) (+ state 1) 0))
+          state)
+    ",
+    )
+    .unwrap();
+
+    // The number node for receiving the result.
+    let number = node::expr(
+        "
+        (let ((x $x))
+          (set! state (if (number? x) x state))
+          state)
+    ",
+    )
+    .unwrap();
+
+    // Graph A.
+    let mut ga = GraphNode::default();
+    let inlet = ga.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let counter = ga.add_node(Box::new(counter) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    ga.add_edge(inlet, counter, Edge::from((0, 0)));
+    ga.add_edge(counter, outlet, Edge::from((0, 0)));
+
+    // Graph B.
+    let mut gb = petgraph::graph::DiGraph::new();
+    let push = gb.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let graph_a = gb.add_node(Box::new(ga) as Box<_>);
+    let number = gb.add_node(Box::new(number) as Box<_>);
+    gb.add_edge(push, graph_a, Edge::from((0, 0)));
+    gb.add_edge(graph_a, number, Edge::from((0, 0)));
+
+    // Generate the module, which should have just one top-level expr for `push`.
+    let module = gantz_core::codegen::module(&gb);
+
+    // Create the VM.
+    let mut vm = Engine::new_base();
+
+    // Initialise the node state vars.
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&gb, &[], &mut vm);
+
+    // Register the fns.
+    for f in module {
+        println!("{}\n", f.to_pretty(100));
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
+    // Increment the nested counter by pushing evaluation. The first is `0`, the
+    // second is `1`.
+    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
+        .unwrap();
+    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
+        .unwrap();
+
+    // First, check that the nested expr's state is `1`.
+    let counter_state = node::state::extract::<u32>(&vm, &[graph_a.index(), counter.index()])
+        .expect("failed to extract counter state")
+        .expect("counter state was `None`");
+    assert_eq!(counter_state, 1);
+
+    // Now check that the outlet's state is `1`.
+    let outlet_state = node::state::extract::<u32>(&vm, &[graph_a.index(), outlet.index()])
+        .expect("failed to extract outlet state")
+        .expect("outlet state was `None`");
+    assert_eq!(outlet_state, 1);
+
+    // Check that the number in the root graph was updated from the outlet.
+    let number_state = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract number state")
+        .expect("number state was `None`");
+    assert_eq!(number_state, 1);
 }

@@ -84,7 +84,7 @@ fn test_graph_push_eval() {
 
     // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    node::state::register_graph(&g, &mut vm);
+    gantz_core::graph::register(&g, &[], &mut vm);
 
     // Register the functions, then call push_eval.
     for f in module {
@@ -139,7 +139,7 @@ fn test_graph_pull_eval() {
 
     // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    node::state::register_graph(&g, &mut vm);
+    gantz_core::graph::register(&g, &[], &mut vm);
 
     // Prepare the eval fn.
     for expr in module {
@@ -195,7 +195,7 @@ fn test_graph_eval_should_panic() {
 
     // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    node::state::register_graph(&g, &mut vm);
+    gantz_core::graph::register(&g, &[], &mut vm);
 
     // Run the module.
     for expr in module {

@@ -21,12 +21,12 @@ fn node_push() -> node::Push<node::Expr> {
 //
 // Increases its `u32` state by `1` each time it receives an input of any type.
 fn node_counter() -> node::State<node::Expr, Counter> {
-    // FIXME: Change this to return the value before its incremented.
     let expr = r#"
         (begin
           $push
-          (counter-increment state)
-          (counter-value state))
+          (let ((value (counter-value state)))
+            (counter-increment state)
+            state))
     "#;
     node::expr(expr).unwrap().with_state_type::<Counter>()
 }
@@ -89,7 +89,7 @@ fn test_graph_with_counter() {
 
     // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    node::state::register_graph(&g, &mut vm);
+    gantz_core::graph::register(&g, &[], &mut vm);
 
     // Initialise the eval fn.
     for f in module {
@@ -179,7 +179,7 @@ fn test_graph_with_counters() {
 
     // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    node::state::register_graph(&g, &mut vm);
+    gantz_core::graph::register(&g, &[], &mut vm);
 
     // Initialise the eval fns.
     for f in &module {

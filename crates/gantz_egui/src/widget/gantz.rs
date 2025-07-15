@@ -76,9 +76,6 @@ struct NodeTyCmd<'a, T> {
     name: &'a str,
 }
 
-pub const INLET_NAME: &str = "inlet";
-pub const OUTLET_NAME: &str = "outlet";
-
 impl<'a, T> Gantz<'a, T>
 where
     T: NodeTypeRegistry,
@@ -306,13 +303,7 @@ fn command_palette<T>(
         let Some(node) = node_ty_reg.new_node(cmd.name) else {
             return;
         };
-
-        // If adding an inlet or outlet, use the dedicated special-case methods.
-        let id = match cmd.name {
-            INLET_NAME => graph.add_inlet(node),
-            OUTLET_NAME => graph.add_outlet(node),
-            _ => graph.add_node(node),
-        };
+        let id = graph.add_node(node);
         let ix = id.index();
 
         // Determine the node's path and register it within the VM.

@@ -35,10 +35,6 @@ pub type EdgeIx = EdgeIndex<Index>;
 pub struct GraphNode<N> {
     /// The nested graph.
     pub graph: Graph<N>,
-    /// The types of each of the inputs into the graph node.
-    pub inlets: Vec<NodeIx>,
-    /// The types of each of the outputs into the graph node.
-    pub outlets: Vec<NodeIx>,
 }
 
 /// An inlet to a nested graph.
@@ -53,38 +49,10 @@ pub struct Inlet;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Outlet;
 
-impl<N> GraphNode<N> {
-    /// Adds the given `NodeId` to the graph as an inlet node.
-    ///
-    /// This is the same as `G::add_node`, but also adds the resulting node index to the
-    /// `GraphNode`'s `inlets` list.
-    pub fn add_inlet(&mut self, n: N) -> NodeIx {
-        let id = self.graph.add_node(n);
-        self.inlets.push(id);
-        id
-    }
-
-    /// Adds the given `NodeId` to the graph as an outlet node.
-    ///
-    /// This is the same as `G::add_node`, but also adds the resulting node index to the
-    /// `GraphNode`'s `outlet` list.
-    pub fn add_outlet(&mut self, n: N) -> NodeIx {
-        let id = self.graph.add_node(n);
-        self.outlets.push(id);
-        id
-    }
-}
-
 impl<N> Default for GraphNode<N> {
     fn default() -> Self {
         let graph = Default::default();
-        let inlets = Default::default();
-        let outlets = Default::default();
-        GraphNode {
-            graph,
-            inlets,
-            outlets,
-        }
+        GraphNode { graph }
     }
 }
 
@@ -112,21 +80,15 @@ where
     N: Node,
 {
     fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
-        nested_expr(
-            &self.graph,
-            ctx.path(),
-            &self.inlets,
-            &self.outlets,
-            ctx.inputs(),
-        )
+        nested_expr(&self.graph, ctx.path(), ctx.inputs())
     }
 
     fn n_inputs(&self) -> usize {
-        self.inlets.len()
+        inlets(&self.graph).count()
     }
 
     fn n_outputs(&self) -> usize {
-        self.outlets.len()
+        outlets(&self.graph).count()
     }
 
     fn stateful(&self) -> bool {
@@ -176,8 +138,6 @@ where
         #[serde(field_identifier, rename_all = "lowercase")]
         enum Field {
             Graph,
-            Inlets,
-            Outlets,
         }
 
         struct GraphNodeVisitor<G>(std::marker::PhantomData<G>);
@@ -199,17 +159,7 @@ where
                 let graph = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(0, &self))?;
-                let inlets = seq
-                    .next_element()?
-                    .ok_or_else(|| de::Error::invalid_length(1, &self))?;
-                let outlets = seq
-                    .next_element()?
-                    .ok_or_else(|| de::Error::invalid_length(2, &self))?;
-                Ok(GraphNode {
-                    graph,
-                    inlets,
-                    outlets,
-                })
+                Ok(GraphNode { graph })
             }
 
             fn visit_map<V>(self, mut map: V) -> Result<GraphNode<N>, V::Error>
@@ -217,8 +167,6 @@ where
                 V: MapAccess<'de>,
             {
                 let mut graph = None;
-                let mut inlets = None;
-                let mut outlets = None;
                 while let Some(key) = map.next_key()? {
                     match key {
                         Field::Graph => {
@@ -227,32 +175,14 @@ where
                             }
                             graph = Some(map.next_value()?);
                         }
-                        Field::Inlets => {
-                            if inlets.is_some() {
-                                return Err(de::Error::duplicate_field("inlets"));
-                            }
-                            inlets = Some(map.next_value()?);
-                        }
-                        Field::Outlets => {
-                            if outlets.is_some() {
-                                return Err(de::Error::duplicate_field("outlets"));
-                            }
-                            outlets = Some(map.next_value()?);
-                        }
                     }
                 }
                 let graph = graph.ok_or_else(|| de::Error::missing_field("graph"))?;
-                let inlets = inlets.ok_or_else(|| de::Error::missing_field("inlets"))?;
-                let outlets = outlets.ok_or_else(|| de::Error::missing_field("outlets"))?;
-                Ok(GraphNode {
-                    graph,
-                    inlets,
-                    outlets,
-                })
+                Ok(GraphNode { graph })
             }
         }
 
-        const FIELDS: &[&str] = &["graph", "inlets", "outlets"];
+        const FIELDS: &[&str] = &["graph"];
         let visitor: GraphNodeVisitor<Graph<N>> = GraphNodeVisitor(std::marker::PhantomData);
         deserializer.deserialize_struct("GraphNode", FIELDS, visitor)
     }
@@ -271,8 +201,6 @@ where
         use serde::ser::SerializeStruct;
         let mut state = serializer.serialize_struct("GraphNode", 3)?;
         state.serialize_field("graph", &self.graph)?;
-        state.serialize_field("inlets", &self.inlets)?;
-        state.serialize_field("outlets", &self.outlets)?;
         state.end()
     }
 }
@@ -357,14 +285,26 @@ impl<N> DerefMut for GraphNode<N> {
     }
 }
 
+/// Count the number of inlet nodes in the given graph.
+pub fn inlets<G>(g: G) -> impl Iterator<Item = G::NodeRef>
+where
+    G: Data + IntoNodeReferences,
+    G::NodeWeight: Node,
+{
+    g.node_references().filter(|n_ref| n_ref.weight().inlet())
+}
+
+/// Count the number of outlet nodes in the given graph.
+pub fn outlets<G>(g: G) -> impl Iterator<Item = G::NodeRef>
+where
+    G: Data + IntoNodeReferences,
+    G::NodeWeight: Node,
+{
+    g.node_references().filter(|n_ref| n_ref.weight().outlet())
+}
+
 /// The implementation of the `GraphNode`'s `Node::expr` fn.
-fn nested_expr<G>(
-    g: G,
-    path: &[node::Id],
-    inlets: &[G::NodeId],
-    outlets: &[G::NodeId],
-    inputs: &[Option<String>],
-) -> ExprKind
+fn nested_expr<G>(g: G, path: &[node::Id], inputs: &[Option<String>]) -> ExprKind
 where
     G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable + Data<EdgeWeight = Edge>,
     G::NodeWeight: Node,
@@ -373,6 +313,7 @@ where
     use crate::codegen;
 
     // Create statements to set inlet node states from inputs
+    let inlets: Vec<_> = inlets(g).map(|n_ref| n_ref.id()).collect();
     let mut inlet_bindings = Vec::new();
     for (i, &inlet_id) in inlets.iter().enumerate() {
         if i < inputs.len() && inputs[i].is_some() {
@@ -388,6 +329,7 @@ where
 
     // Use codegen to create the evaluation order, steps, and statements
     let flow = codegen::Flow::from_graph(g);
+    let outlets: Vec<_> = outlets(g).map(|n_ref| n_ref.id()).collect();
     let order = codegen::eval_order(g, inlets.iter().cloned(), outlets.iter().cloned())
         .map(|id| g.to_index(id));
     let steps: Vec<_> = codegen::eval_steps(&flow, order).collect();
@@ -420,7 +362,10 @@ where
     };
 
     let expr_str = format!(
-        "(begin (define __graph_state state) {} {outlet_values_expr})",
+        "(begin (define __graph_state state)
+           {}
+           (set! state __graph_state)
+           {outlet_values_expr})",
         all_stmts
     );
     Engine::emit_ast(&expr_str)

@@ -7,7 +7,6 @@
 use dyn_hash::DynHash;
 use eframe::egui;
 use gantz_core::steel::steel_vm::engine::Engine;
-use gantz_egui::widget::gantz::{INLET_NAME, OUTLET_NAME};
 use petgraph::visit::EdgeRef;
 use petgraph::visit::{IntoEdgeReferences, IntoNodeReferences, NodeRef};
 use std::{
@@ -105,10 +104,10 @@ fn node_type_registry() -> NodeTypeRegistry {
         Box::new(gantz_core::node::Expr::new("()").unwrap()) as Box<_>
     });
     reg.register("graph", || Box::new(GraphNode::default()) as Box<_>);
-    reg.register(INLET_NAME, || {
+    reg.register("inlet", || {
         Box::new(gantz_core::node::graph::Inlet::default()) as Box<_>
     });
-    reg.register(OUTLET_NAME, || {
+    reg.register("outlet", || {
         Box::new(gantz_core::node::graph::Outlet::default()) as Box<_>
     });
     reg.register("log", || Box::new(gantz_std::Log::default()) as Box<_>);
@@ -165,12 +164,12 @@ impl App {
             .as_ref()
             .and_then(|storage| {
                 let Some(graph_str) = storage.get_string(Self::GRAPH_KEY) else {
-                    log::info!("No existing graph to load");
+                    log::debug!("No existing graph to load");
                     return None;
                 };
                 match ron::de::from_str(&graph_str) {
                     Ok(graph) => {
-                        log::info!("Successfully loaded graph from storage");
+                        log::debug!("Successfully loaded graph from storage");
                         Some(graph)
                     }
                     Err(e) => {
@@ -180,7 +179,7 @@ impl App {
                 }
             })
             .unwrap_or_else(|| {
-                log::info!("Initialising default graph");
+                log::debug!("Initialising default graph");
                 GraphNode::default()
             });
         let graph_hash = graph_hash(&graph);
@@ -188,7 +187,7 @@ impl App {
         // VM setup
         let mut vm = Engine::new();
         vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
-        gantz_core::node::state::register_graph(&graph.graph, &mut vm);
+        gantz_core::graph::register(&graph.graph, &[], &mut vm);
         let module = compile_graph(&graph, &mut vm);
         let compiled_module = fmt_compiled_module(&module);
 
@@ -202,12 +201,12 @@ impl App {
             .as_ref()
             .and_then(|storage| {
                 let Some(gantz_str) = storage.get_string(Self::GANTZ_GUI_STATE_KEY) else {
-                    log::info!("No existing gantz GUI state to load");
+                    log::debug!("No existing gantz GUI state to load");
                     return None;
                 };
                 match ron::de::from_str(&gantz_str) {
                     Ok(gantz) => {
-                        log::info!("Successfully loaded gantz GUI state from storage");
+                        log::debug!("Successfully loaded gantz GUI state from storage");
                         Some(gantz)
                     }
                     Err(e) => {
@@ -217,7 +216,7 @@ impl App {
                 }
             })
             .unwrap_or_else(|| {
-                log::info!("Initialising default gantz GUI state");
+                log::debug!("Initialising default gantz GUI state");
                 gantz_egui::widget::GantzState::new()
             });
 
@@ -261,7 +260,7 @@ impl eframe::App for App {
             Ok(s) => s,
         };
         storage.set_string(Self::GRAPH_KEY, graph_str);
-        log::info!("Successfully persisted graph");
+        log::debug!("Successfully persisted graph");
 
         // Save the gantz GUI state.
         let gantz_str = match ron::to_string(&self.state.gantz) {
@@ -272,7 +271,7 @@ impl eframe::App for App {
             Ok(s) => s,
         };
         storage.set_string(Self::GANTZ_GUI_STATE_KEY, gantz_str);
-        log::info!("Successfully persisted gantz GUI state");
+        log::debug!("Successfully persisted gantz GUI state");
     }
 
     // Persist GUI state.

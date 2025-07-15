@@ -3,7 +3,6 @@ use crate::{
     ROOT_STATE,
     node::{self, Node},
 };
-use petgraph::visit::{IntoNodeReferences, NodeIndexable, NodeRef};
 use steel::{
     SteelErr, SteelVal,
     gc::Gc,
@@ -119,18 +118,6 @@ where
         S::register(vm);
         let val = default_node_state_steel_val::<S>();
         update(vm, path, val).unwrap();
-    }
-}
-
-/// Register all node state types within the given VM.
-pub fn register_graph<G>(g: G, vm: &mut Engine)
-where
-    G: IntoNodeReferences + NodeIndexable,
-    G::NodeWeight: Node,
-{
-    for n in g.node_references() {
-        let id = g.to_index(n.id());
-        n.weight().register(&[id], vm);
     }
 }
 
