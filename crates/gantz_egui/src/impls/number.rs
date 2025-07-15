@@ -1,6 +1,5 @@
-use steel::SteelVal;
-
 use crate::{NodeCtx, NodeUi};
+use steel::SteelVal;
 
 impl NodeUi for gantz_std::number::Number {
     fn name(&self) -> &str {
