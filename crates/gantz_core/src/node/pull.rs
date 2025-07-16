@@ -2,7 +2,7 @@ use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
-/// A wrapper around a `Node` that enables pull evaluation.
+/// A wrapper around a `Node` that enables pull evaluation across all inputs.
 ///
 /// The implementation of `Node` will match the inner node type `N`, but with a
 /// unique implementation of [`Node::pull_eval`].
@@ -54,12 +54,12 @@ where
         self.node.expr(ctx)
     }
 
-    fn push_eval(&self) -> Option<node::EvalFn> {
+    fn push_eval(&self) -> Vec<node::PushEval> {
         self.node.push_eval()
     }
 
-    fn pull_eval(&self) -> Option<node::EvalFn> {
-        Some(node::EvalFn)
+    fn pull_eval(&self) -> Vec<node::PullEval> {
+        vec![node::PullEval::All]
     }
 
     fn inlet(&self) -> bool {

@@ -15,9 +15,9 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct Flow {
     pub graph: FlowGraph,
     /// The set of nodes that require a push evaluation fn.
-    pub push: BTreeSet<node::Id>,
+    pub push: BTreeMap<node::Id, Vec<node::PushEval>>,
     /// The set of nodes that require a pull evaluation fn.
-    pub pull: BTreeSet<node::Id>,
+    pub pull: BTreeMap<node::Id, Vec<node::PullEval>>,
     /// The set of nodes that require access to state.
     pub stateful: BTreeSet<node::Id>,
     /// The set of nodes that act as inlets (for nested graphs).
@@ -88,11 +88,13 @@ impl Flow {
         }
 
         // Register push/pull eval for the node if necessary.
-        if node.push_eval().is_some() {
-            self.push.insert(id);
+        let push_eval = node.push_eval();
+        if !push_eval.is_empty() {
+            self.push.insert(id, push_eval);
         }
-        if node.pull_eval().is_some() {
-            self.pull.insert(id);
+        let pull_eval = node.pull_eval();
+        if !pull_eval.is_empty() {
+            self.pull.insert(id, pull_eval);
         }
         if node.inlet() {
             self.inlets.insert(id);

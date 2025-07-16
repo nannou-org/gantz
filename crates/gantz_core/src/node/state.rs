@@ -94,11 +94,11 @@ where
         self.node.expr(ctx)
     }
 
-    fn push_eval(&self) -> Option<node::EvalFn> {
+    fn push_eval(&self) -> Vec<node::PushEval> {
         self.node.push_eval()
     }
 
-    fn pull_eval(&self) -> Option<node::EvalFn> {
+    fn pull_eval(&self) -> Vec<node::PullEval> {
         self.node.pull_eval()
     }
 
