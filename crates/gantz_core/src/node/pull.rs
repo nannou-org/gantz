@@ -9,21 +9,33 @@ use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Pull<N> {
     node: N,
+    set: node::PullEval,
 }
 
 /// A trait implemented for all `Node` types allowing to enable pull evaluation.
 pub trait WithPullEval: Sized + Node {
+    /// Consume `self` and return a `Node` that has push evaluation enabled.
+    fn with_pull_eval_set(self, set: node::PullEval) -> Pull<Self>;
     /// Consume `self` and return a `Node` that has pull evaluation enabled.
-    fn with_pull_eval(self) -> Pull<Self>;
+    fn with_pull_eval(self) -> Pull<Self> {
+        self.with_pull_eval_set(node::PullEval::All)
+    }
 }
 
 impl<N> Pull<N>
 where
     N: Node,
 {
-    /// Given some node, return a `Pull` node enabling pull evaluation.
-    pub fn new(node: N) -> Self {
-        Pull { node }
+    /// Given some node, return a `Pull` node enabling pull evaluation across
+    /// all outputs.
+    pub fn all(node: N) -> Self {
+        Pull::set(node, node::PullEval::All)
+    }
+
+    /// Given some node, return a `Pull` node enabling pull evaluation across
+    /// some subset of the outputs.
+    pub fn set(node: N, set: node::PullEval) -> Self {
+        Pull { node, set }
     }
 }
 
@@ -33,8 +45,8 @@ where
 {
     /// Consume `self` and return an equivalent node with pull evaluation
     /// enabled.
-    fn with_pull_eval(self) -> Pull<Self> {
-        Pull::new(self)
+    fn with_pull_eval_set(self, set: node::EvalSet) -> Pull<Self> {
+        Pull::set(self, set)
     }
 }
 
@@ -59,7 +71,7 @@ where
     }
 
     fn pull_eval(&self) -> Vec<node::PullEval> {
-        vec![node::PullEval::All]
+        vec![self.set.clone()]
     }
 
     fn inlet(&self) -> bool {

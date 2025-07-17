@@ -5,6 +5,7 @@ use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
 use std::fmt::Debug;
 use steel::SteelVal;
+use steel::parser::ast::ExprKind;
 use steel::steel_vm::engine::Engine;
 
 fn node_push() -> node::Push<node::Expr> {
@@ -203,4 +204,90 @@ fn test_graph_eval_should_panic() {
     }
     vm.call_function_by_name_with_args(&pull_eval_fn_name(&[assert_eq.index()]), vec![])
         .unwrap();
+}
+
+// Test for pushing evaluation with a subset of outputs enabled
+#[test]
+fn test_graph_push_eval_subset() {
+    let mut g = petgraph::graph::DiGraph::new();
+
+    // Source node with two outputs, one for each value.
+    #[derive(Debug)]
+    struct Src(u32, u32);
+
+    impl Node for Src {
+        fn push_eval(&self) -> Vec<node::PushEval> {
+            // Generate 3 push eval fns.
+            vec![
+                // Push only the first output.
+                node::PushEval::Set(vec![true, false]),
+                // Push only the second output.
+                node::PushEval::Set(vec![false, true]),
+                // Push both outputs.
+                node::PushEval::Set(vec![true, true]),
+            ]
+        }
+
+        fn n_outputs(&self) -> usize {
+            2
+        }
+
+        fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
+            let Src(a, b) = *self;
+            let expr = match ctx.outputs() {
+                // Only return left if only left is connected.
+                &[true, false] => format!("(begin {a})"),
+                // Only return right if only right is connected.
+                &[false, true] => format!("(begin {b})"),
+                // Otherwise return both in a list.
+                _ => format!("(list {a} {b})"),
+            };
+            Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
+        }
+    }
+
+    let source = Src(6, 7);
+    let store_a = node::expr("(begin (set! state $x) state)").unwrap();
+    let store_b = node::expr("(begin (set! state $x) state)").unwrap();
+
+    // Add nodes to the graph.
+    let source = g.add_node(Box::new(source) as Box<dyn DebugNode>);
+    let store_a = g.add_node(Box::new(store_a) as Box<_>);
+    let store_b = g.add_node(Box::new(store_b) as Box<_>);
+
+    // Connect outputs to store nodes
+    g.add_edge(source, store_a, Edge::from((0, 0)));
+    g.add_edge(source, store_b, Edge::from((1, 0)));
+
+    // Generate the module
+    let module = gantz_core::codegen::module(&g);
+
+    // Create the VM
+    let mut vm = Engine::new_base();
+
+    // Initialize the state
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&g, &[], &mut vm);
+
+    // Register all functions
+    for f in module {
+        println!("{}\n", f.to_pretty(100));
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
+    // Call the push_eval function - should only evaluate the first output path
+    // FIXME: Update push_eval_fn_name
+    vm.call_function_by_name_with_args(&push_eval_fn_name(&[source.index()]), vec![])
+        .unwrap();
+
+    // Check the state of each store node
+    let store_a_val = node::state::extract::<i32>(&vm, &[store_a.index()]).unwrap();
+    let store_b_val = node::state::extract::<i32>(&vm, &[store_b.index()]).unwrap();
+
+    // First output was enabled for push, so its state should be 6
+    assert_eq!(store_a_val, Some(6));
+
+    // Second output was not enabled for push, so its state should be None
+    // (never evaluated)
+    assert_eq!(store_b_val, None);
 }

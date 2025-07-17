@@ -118,7 +118,7 @@ pub trait Node {
 }
 
 /// A set of connections over which to push/pull evaluation.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub enum EvalSet {
     /// Requires a fn for evaluation from all connections.
     #[default]
@@ -204,6 +204,13 @@ impl<'a> ExprCtx<'a> {
     }
 
     /// An element for each output from the node.
+    ///
+    /// If an output is `true`, it means a value is expected for the output.
+    ///
+    /// Note that even if an output is connected, it may not be `true` if it is
+    /// not included in the eval path.
+    ///
+    /// Note that even if
     ///
     /// If the output is connected, it is `true`.
     pub fn outputs(&self) -> &[bool] {

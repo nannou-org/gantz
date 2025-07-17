@@ -9,8 +9,8 @@ use crate::{
 #[doc(inline)]
 pub use flow::Flow;
 use petgraph::visit::{
-    Data, Dfs, EdgeRef, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, Topo, Visitable,
-    Walker,
+    Data, Dfs, EdgeRef, GraphBase, GraphRef, IntoEdgesDirected, IntoNeighbors, IntoNodeReferences,
+    NodeIndexable, Topo, Visitable, Walker,
 };
 pub(crate) use rosetree::RoseTree;
 use std::{
@@ -21,6 +21,16 @@ use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 mod flow;
 mod rosetree;
+
+/// Allows for remaining generic over graph type edges that represent one or
+/// more gantz [`Edge`]s.
+///
+/// This is necessary to support calling the `reachable` fns with both the
+/// `Flow` graph and graphs of different types.
+pub trait Edges {
+    /// Produce an iterator yielding all the [`Edge`]s.
+    fn edges(&self) -> impl Iterator<Item = Edge>;
+}
 
 /// A representation of how to evaluate a graph.
 ///
@@ -116,6 +126,18 @@ impl<'pl> Visitor for NodeFns<'pl> {
     }
 }
 
+impl Edges for Edge {
+    fn edges(&self) -> impl Iterator<Item = Edge> {
+        std::iter::once(*self)
+    }
+}
+
+impl Edges for Vec<Edge> {
+    fn edges(&self) -> impl Iterator<Item = Edge> {
+        self.iter().copied()
+    }
+}
+
 /// The name used for the pull evaluation fn generated for the given node.
 pub fn pull_eval_fn_name(path: &[node::Id]) -> String {
     format!("pull_eval_{}", path_string(path))
@@ -126,21 +148,183 @@ pub fn push_eval_fn_name(path: &[node::Id]) -> String {
     format!("push_eval_{}", path_string(path))
 }
 
-/// An iterator yielding all nodes reachable via pushing from the given node.
-fn push_reachable<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+/// Given a graph and an eval src, return the set of direct neighbors that
+/// will be included in the initial traversal.
+fn eval_neighbors<G>(
+    g: G,
+    n: G::NodeId,
+    ev: &node::EvalSet,
+    src_conn: impl Fn(&Edge) -> usize,
+) -> HashSet<G::NodeId>
 where
-    G: IntoEdgesDirected + Visitable,
+    G: IntoEdgesDirected,
+    G::EdgeWeight: Edges,
+    G::NodeId: Eq + Hash,
 {
-    Dfs::new(g, n).iter(g)
+    let mut set = HashSet::new();
+    for e_ref in g.edges_directed(n, petgraph::Outgoing) {
+        for edge in e_ref.weight().edges() {
+            let include = match ev {
+                node::EvalSet::All => true,
+                node::EvalSet::Set(conns) => conns[src_conn(&edge)],
+            };
+            if include {
+                set.insert(e_ref.target());
+            }
+        }
+    }
+    set
 }
 
-/// An iterator yielding all nodes reachable via pulling from the given node.
-fn pull_reachable<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+/// Given a graph and a `PushEval` src, return the set of direct neighbors that
+/// will be included in the initial traversal.
+fn push_eval_neighbors<G>(g: G, n: G::NodeId, ev: &node::PushEval) -> HashSet<G::NodeId>
 where
-    G: IntoEdgesDirected + Visitable,
+    G: IntoEdgesDirected,
+    G::EdgeWeight: Edges,
+    G::NodeId: Eq + Hash,
+{
+    eval_neighbors(g, n, ev, |edge| edge.output.0 as usize)
+}
+
+/// Given a graph and a `PullEval` src, return the set of direct neighbors that
+/// will be included in the initial traversal.
+fn pull_eval_neighbors<G>(g: G, n: G::NodeId, ev: &node::PullEval) -> HashSet<G::NodeId>
+where
+    G: IntoEdgesDirected,
+    G::EdgeWeight: Edges,
+    G::NodeId: Eq + Hash,
 {
     let rev_g = petgraph::visit::Reversed(g);
-    Dfs::new(rev_g, n).iter(rev_g)
+    eval_neighbors(rev_g, n, ev, |edge| edge.input.0 as usize)
+}
+
+/// An iterator yielding all nodes reachable via pushing from the given node
+/// over the given set of neighbors.
+fn reachable<G>(
+    g: G,
+    src: G::NodeId,
+    src_neighbors: &HashSet<G::NodeId>,
+) -> impl Iterator<Item = G::NodeId>
+where
+    G: IntoEdgesDirected + Visitable,
+    G::NodeId: Eq + Hash,
+{
+    /// A filter around a graph's `IntoNeighbors` implementation that discludes
+    /// edges from the root that are not in the given src neighbors set.
+    #[derive(Clone, Copy)]
+    struct EvalFilter<'a, G: GraphBase> {
+        g: G,
+        /// The node that is the source of evaluation.
+        src: G::NodeId,
+        /// The eval src node's neighbors that are included in the eval set.
+        src_neighbors: &'a HashSet<G::NodeId>,
+    }
+
+    /// The iterator filter applied to the inner graph's neighbors iterator.
+    /// If we're iterating over the eval src's neighbors, this will only yield
+    /// those specified in the included set.
+    struct EvalFilterNeighbors<'a, I: Iterator> {
+        neighbors: I,
+        // Whether or not `neighbors` are from the eval src.
+        is_src: bool,
+        /// The eval src node's neighbors that are included in the eval set.
+        src_neighbors: &'a HashSet<I::Item>,
+    }
+
+    impl<'a, G> GraphBase for EvalFilter<'a, G>
+    where
+        G: GraphBase,
+    {
+        type NodeId = G::NodeId;
+        type EdgeId = G::EdgeId;
+    }
+
+    impl<'a, G: GraphRef> GraphRef for EvalFilter<'a, G> {}
+
+    impl<'a, G> Visitable for EvalFilter<'a, G>
+    where
+        G: GraphRef + Visitable,
+    {
+        type Map = G::Map;
+        fn visit_map(&self) -> Self::Map {
+            self.g.visit_map()
+        }
+        fn reset_map(&self, map: &mut Self::Map) {
+            self.g.reset_map(map);
+        }
+    }
+
+    impl<'a, I> Iterator for EvalFilterNeighbors<'a, I>
+    where
+        I: Iterator,
+        I::Item: Eq + Hash,
+    {
+        type Item = I::Item;
+        fn next(&mut self) -> Option<Self::Item> {
+            while let Some(n) = self.neighbors.next() {
+                if !self.is_src || self.src_neighbors.contains(&n) {
+                    return Some(n);
+                }
+            }
+            None
+        }
+    }
+
+    impl<'a, G> IntoNeighbors for EvalFilter<'a, G>
+    where
+        G: IntoNeighbors,
+        G::NodeId: Eq + Hash,
+    {
+        type Neighbors = EvalFilterNeighbors<'a, G::Neighbors>;
+        fn neighbors(self, a: Self::NodeId) -> Self::Neighbors {
+            let neighbors = self.g.neighbors(a);
+            EvalFilterNeighbors {
+                neighbors,
+                is_src: self.src == a,
+                src_neighbors: &self.src_neighbors,
+            }
+        }
+    }
+
+    // Wrap the graph in a filter to only include src neighbors that appear in
+    // the eval set.
+    let g = EvalFilter {
+        g,
+        src,
+        src_neighbors,
+    };
+
+    Dfs::new(g, src).iter(g)
+}
+
+/// An iterator yielding all nodes reachable via pushing from the given node
+/// over the given set of direct neighbors.
+fn push_reachable<G>(
+    g: G,
+    n: G::NodeId,
+    nbs: &HashSet<G::NodeId>,
+) -> impl Iterator<Item = G::NodeId>
+where
+    G: IntoEdgesDirected + Visitable,
+    G::NodeId: Eq + Hash,
+{
+    reachable(g, n, nbs)
+}
+
+/// An iterator yielding all nodes reachable via pulling from the given node
+/// over the given set of direct neighbors.
+fn pull_reachable<G>(
+    g: G,
+    n: G::NodeId,
+    nbs: &HashSet<G::NodeId>,
+) -> impl Iterator<Item = G::NodeId>
+where
+    G: IntoEdgesDirected + Visitable,
+    G::NodeId: Eq + Hash,
+{
+    let rev_g = petgraph::visit::Reversed(g);
+    reachable(rev_g, n, nbs)
 }
 
 /// Push evaluation from the specified node.
@@ -151,12 +335,16 @@ where
 /// Expects any directed graph whose edges are of type `Edge` and whose nodes
 /// implement `Node`. Direction of edges indicate the flow of data through the
 /// graph.
-fn push_eval_order<G>(g: G, n: G::NodeId, ev: &node::PushEval) -> impl Iterator<Item = G::NodeId>
+fn push_eval_order<G>(
+    g: G,
+    n: G::NodeId,
+    nbs: &HashSet<G::NodeId>,
+) -> impl Iterator<Item = G::NodeId>
 where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
     G::NodeId: Eq + Hash,
 {
-    let dfs: HashSet<G::NodeId> = push_reachable(g, n).collect();
+    let dfs: HashSet<G::NodeId> = push_reachable(g, n, nbs).collect();
     Topo::new(g).iter(g).filter(move |node| dfs.contains(&node))
 }
 
@@ -168,12 +356,16 @@ where
 /// Expects any directed graph whose edges are of type `Edge` and whose nodes
 /// implement `Node`. Direction of edges indicate the flow of data through the
 /// graph.
-fn pull_eval_order<G>(g: G, n: G::NodeId, ev: &node::PullEval) -> impl Iterator<Item = G::NodeId>
+fn pull_eval_order<G>(
+    g: G,
+    n: G::NodeId,
+    nbs: &HashSet<G::NodeId>,
+) -> impl Iterator<Item = G::NodeId>
 where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
     G::NodeId: Eq + Hash,
 {
-    let dfs: HashSet<G::NodeId> = pull_reachable(g, n).collect();
+    let dfs: HashSet<G::NodeId> = pull_reachable(g, n, nbs).collect();
     Topo::new(g).iter(g).filter(move |node| dfs.contains(&node))
 }
 
@@ -190,13 +382,20 @@ where
 pub(crate) fn eval_order<G, A, B>(g: G, push: A, pull: B) -> impl Iterator<Item = G::NodeId>
 where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
+    G::EdgeWeight: Edges,
     G::NodeId: Eq + Hash,
     A: IntoIterator<Item = G::NodeId>,
     B: IntoIterator<Item = G::NodeId>,
 {
     let mut reachable = HashSet::new();
-    reachable.extend(push.into_iter().flat_map(|n| push_reachable(g, n)));
-    reachable.extend(pull.into_iter().flat_map(|n| pull_reachable(g, n)));
+    reachable.extend(push.into_iter().flat_map(|n| {
+        let ps = push_eval_neighbors(g, n, &node::PushEval::All);
+        push_reachable(g, n, &ps).collect::<Vec<_>>()
+    }));
+    reachable.extend(pull.into_iter().flat_map(|n| {
+        let pl = pull_eval_neighbors(g, n, &node::PullEval::All);
+        pull_reachable(g, n, &pl).collect::<Vec<_>>()
+    }));
     Topo::new(g).iter(g).filter(move |n| reachable.contains(&n))
 }
 
@@ -253,7 +452,8 @@ fn eval_plan(flow: &Flow) -> EvalPlan {
         .iter()
         .flat_map(|(&n, evs)| {
             evs.iter().map(move |ev| {
-                let order = pull_eval_order(&flow.graph, n, ev);
+                let nbs = pull_eval_neighbors(&flow.graph, n, ev);
+                let order = pull_eval_order(&flow.graph, n, &nbs);
                 let steps = eval_steps(flow, order).collect();
                 (n, steps)
             })
@@ -265,7 +465,8 @@ fn eval_plan(flow: &Flow) -> EvalPlan {
         .iter()
         .flat_map(|(&n, evs)| {
             evs.iter().map(move |ev| {
-                let order = push_eval_order(&flow.graph, n, ev);
+                let nbs = push_eval_neighbors(&flow.graph, n, ev);
+                let order = push_eval_order(&flow.graph, n, &nbs);
                 let steps = eval_steps(flow, order).collect();
                 (n, steps)
             })
