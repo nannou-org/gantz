@@ -50,8 +50,8 @@ fn test_serde_basic_expr() {
     let n = deserialized;
     assert_eq!(n.n_inputs(), 2);
     assert_eq!(n.n_outputs(), 1);
-    assert!(n.push_eval().is_none());
-    assert!(n.pull_eval().is_none());
+    assert!(n.push_eval().is_empty());
+    assert!(n.pull_eval().is_empty());
 }
 
 // Test serializing and deserializing a Push node
@@ -73,8 +73,8 @@ fn test_serde_push_node() {
     let n = deserialized;
     assert_eq!(n.n_inputs(), 2);
     assert_eq!(n.n_outputs(), 1);
-    assert!(n.push_eval().is_some());
-    assert!(n.pull_eval().is_none());
+    assert!(!n.push_eval().is_empty());
+    assert!(n.pull_eval().is_empty());
 }
 
 // Test serializing and deserializing a vector of various node types
@@ -98,14 +98,14 @@ fn test_serde_node_vector() {
     assert_eq!(nodes.len(), deserialized.len());
 
     // First node should be basic expr
-    assert!(deserialized[0].push_eval().is_none());
-    assert!(deserialized[0].pull_eval().is_none());
+    assert!(deserialized[0].push_eval().is_empty());
+    assert!(deserialized[0].pull_eval().is_empty());
 
     // Second node should be push node
-    assert!(deserialized[1].push_eval().is_some());
-    assert!(deserialized[1].pull_eval().is_none());
+    assert!(!deserialized[1].push_eval().is_empty());
+    assert!(deserialized[1].pull_eval().is_empty());
 
     // Third node should be pull node
-    assert!(deserialized[2].push_eval().is_none());
-    assert!(deserialized[2].pull_eval().is_some());
+    assert!(deserialized[2].push_eval().is_empty());
+    assert!(!deserialized[2].pull_eval().is_empty());
 }

@@ -9,8 +9,8 @@ use crate::{
 #[doc(inline)]
 pub use flow::Flow;
 use petgraph::visit::{
-    Data, Dfs, EdgeRef, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, Topo, Visitable,
-    Walker,
+    Data, Dfs, EdgeRef, GraphBase, GraphRef, IntoEdgesDirected, IntoNeighbors, IntoNodeReferences,
+    NodeIndexable, Topo, Visitable, Walker,
 };
 pub(crate) use rosetree::RoseTree;
 use std::{
@@ -21,6 +21,16 @@ use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 mod flow;
 mod rosetree;
+
+/// Allows for remaining generic over graph type edges that represent one or
+/// more gantz [`Edge`]s.
+///
+/// This is necessary to support calling the `reachable` fns with both the
+/// `Flow` graph and graphs of different types.
+pub trait Edges {
+    /// Produce an iterator yielding all the [`Edge`]s.
+    fn edges(&self) -> impl Iterator<Item = Edge>;
+}
 
 /// A representation of how to evaluate a graph.
 ///
@@ -52,7 +62,9 @@ pub(crate) struct EvalStep {
     ///
     /// The `len` of the outer vec will always be equal to the number of inputs
     /// on `node`.
-    pub(crate) args: Vec<Option<ExprInput>>,
+    pub(crate) inputs: Vec<Option<ExprInput>>,
+    /// The set of connected outputs.
+    pub(crate) outputs: Vec<bool>,
 }
 
 /// An argument to a node's function call.
@@ -64,11 +76,18 @@ pub(crate) struct ExprInput {
     pub(crate) output: node::Output,
 }
 
-/// The set of all node input configurations for a single graph.
+/// The set of all node input/output configurations for a single graph.
 ///
 /// These are used to determine which set of functions to generate for each
 /// node.
-type NodeConfs = BTreeSet<(node::Id, Vec<bool>)>;
+type NodeConfs = BTreeSet<(node::Id, NodeConf)>;
+
+/// The connectedness of a node for a particular evaluation step.
+#[derive(Clone, Eq, PartialEq, PartialOrd, Ord)]
+struct NodeConf {
+    inputs: Vec<bool>,
+    outputs: Vec<bool>,
+}
 
 /// A visitor used to collect all node functions from a tree of nested gantz
 /// graphs.
@@ -88,19 +107,34 @@ impl<'a> NodeFns<'a> {
 impl<'pl> Visitor for NodeFns<'pl> {
     // We use `visit_post` so that the nested are generated before parents.
     fn visit_post(&mut self, ctx: visit::Ctx, node: &dyn Node) {
-        use std::ops::Bound::Included;
+        use std::ops::Bound::{Excluded, Included};
         let node_path = ctx.path();
         let plan_path = &node_path[..node_path.len() - 1];
         let tree = self.tree.tree(&plan_path).unwrap();
         let id = ctx.id();
-        let n_inputs = node.n_inputs();
-        let start = (id, vec![]);
-        let end = (id, vec![true; n_inputs]);
-        let range = (Included(start), Included(end));
+        let empty_conf = NodeConf {
+            inputs: vec![],
+            outputs: vec![],
+        };
+        let start = (id, empty_conf.clone());
+        let end = (id.checked_add(1).expect("node id out of range"), empty_conf);
+        let range = (Included(start), Excluded(end));
         let input_confs = tree.elem.range(range);
         for (_id, conf) in input_confs {
             self.fns.push(node_fn(node, node_path, &conf));
         }
+    }
+}
+
+impl Edges for Edge {
+    fn edges(&self) -> impl Iterator<Item = Edge> {
+        std::iter::once(*self)
+    }
+}
+
+impl Edges for Vec<Edge> {
+    fn edges(&self) -> impl Iterator<Item = Edge> {
+        self.iter().copied()
     }
 }
 
@@ -114,21 +148,183 @@ pub fn push_eval_fn_name(path: &[node::Id]) -> String {
     format!("push_eval_{}", path_string(path))
 }
 
-/// An iterator yielding all nodes reachable via pushing from the given node.
-fn push_reachable<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+/// Given a graph and an eval src, return the set of direct neighbors that
+/// will be included in the initial traversal.
+fn eval_neighbors<G>(
+    g: G,
+    n: G::NodeId,
+    ev: &node::EvalConf,
+    src_conn: impl Fn(&Edge) -> usize,
+) -> HashSet<G::NodeId>
 where
-    G: IntoEdgesDirected + Visitable,
+    G: IntoEdgesDirected,
+    G::EdgeWeight: Edges,
+    G::NodeId: Eq + Hash,
 {
-    Dfs::new(g, n).iter(g)
+    let mut set = HashSet::new();
+    for e_ref in g.edges_directed(n, petgraph::Outgoing) {
+        for edge in e_ref.weight().edges() {
+            let include = match ev {
+                node::EvalConf::All => true,
+                node::EvalConf::Set(conns) => conns[src_conn(&edge)],
+            };
+            if include {
+                set.insert(e_ref.target());
+            }
+        }
+    }
+    set
 }
 
-/// An iterator yielding all nodes reachable via pulling from the given node.
-fn pull_reachable<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+/// Given a graph and a `EvalConf` src, return the set of direct neighbors that
+/// will be included in the initial traversal.
+fn push_eval_neighbors<G>(g: G, n: G::NodeId, ev: &node::EvalConf) -> HashSet<G::NodeId>
 where
-    G: IntoEdgesDirected + Visitable,
+    G: IntoEdgesDirected,
+    G::EdgeWeight: Edges,
+    G::NodeId: Eq + Hash,
+{
+    eval_neighbors(g, n, ev, |edge| edge.output.0 as usize)
+}
+
+/// Given a graph and a `EvalConf` src, return the set of direct neighbors that
+/// will be included in the initial traversal.
+fn pull_eval_neighbors<G>(g: G, n: G::NodeId, ev: &node::EvalConf) -> HashSet<G::NodeId>
+where
+    G: IntoEdgesDirected,
+    G::EdgeWeight: Edges,
+    G::NodeId: Eq + Hash,
 {
     let rev_g = petgraph::visit::Reversed(g);
-    Dfs::new(rev_g, n).iter(rev_g)
+    eval_neighbors(rev_g, n, ev, |edge| edge.input.0 as usize)
+}
+
+/// An iterator yielding all nodes reachable via pushing from the given node
+/// over the given set of neighbors.
+fn reachable<G>(
+    g: G,
+    src: G::NodeId,
+    src_neighbors: &HashSet<G::NodeId>,
+) -> impl Iterator<Item = G::NodeId>
+where
+    G: IntoEdgesDirected + Visitable,
+    G::NodeId: Eq + Hash,
+{
+    /// A filter around a graph's `IntoNeighbors` implementation that discludes
+    /// edges from the root that are not in the given src neighbors set.
+    #[derive(Clone, Copy)]
+    struct EvalFilter<'a, G: GraphBase> {
+        g: G,
+        /// The node that is the source of evaluation.
+        src: G::NodeId,
+        /// The eval src node's neighbors that are included in the eval set.
+        src_neighbors: &'a HashSet<G::NodeId>,
+    }
+
+    /// The iterator filter applied to the inner graph's neighbors iterator.
+    /// If we're iterating over the eval src's neighbors, this will only yield
+    /// those specified in the included set.
+    struct EvalFilterNeighbors<'a, I: Iterator> {
+        neighbors: I,
+        // Whether or not `neighbors` are from the eval src.
+        is_src: bool,
+        /// The eval src node's neighbors that are included in the eval set.
+        src_neighbors: &'a HashSet<I::Item>,
+    }
+
+    impl<'a, G> GraphBase for EvalFilter<'a, G>
+    where
+        G: GraphBase,
+    {
+        type NodeId = G::NodeId;
+        type EdgeId = G::EdgeId;
+    }
+
+    impl<'a, G: GraphRef> GraphRef for EvalFilter<'a, G> {}
+
+    impl<'a, G> Visitable for EvalFilter<'a, G>
+    where
+        G: GraphRef + Visitable,
+    {
+        type Map = G::Map;
+        fn visit_map(&self) -> Self::Map {
+            self.g.visit_map()
+        }
+        fn reset_map(&self, map: &mut Self::Map) {
+            self.g.reset_map(map);
+        }
+    }
+
+    impl<'a, I> Iterator for EvalFilterNeighbors<'a, I>
+    where
+        I: Iterator,
+        I::Item: Eq + Hash,
+    {
+        type Item = I::Item;
+        fn next(&mut self) -> Option<Self::Item> {
+            while let Some(n) = self.neighbors.next() {
+                if !self.is_src || self.src_neighbors.contains(&n) {
+                    return Some(n);
+                }
+            }
+            None
+        }
+    }
+
+    impl<'a, G> IntoNeighbors for EvalFilter<'a, G>
+    where
+        G: IntoNeighbors,
+        G::NodeId: Eq + Hash,
+    {
+        type Neighbors = EvalFilterNeighbors<'a, G::Neighbors>;
+        fn neighbors(self, a: Self::NodeId) -> Self::Neighbors {
+            let neighbors = self.g.neighbors(a);
+            EvalFilterNeighbors {
+                neighbors,
+                is_src: self.src == a,
+                src_neighbors: &self.src_neighbors,
+            }
+        }
+    }
+
+    // Wrap the graph in a filter to only include src neighbors that appear in
+    // the eval set.
+    let g = EvalFilter {
+        g,
+        src,
+        src_neighbors,
+    };
+
+    Dfs::new(g, src).iter(g)
+}
+
+/// An iterator yielding all nodes reachable via pushing from the given node
+/// over the given set of direct neighbors.
+fn push_reachable<G>(
+    g: G,
+    n: G::NodeId,
+    nbs: &HashSet<G::NodeId>,
+) -> impl Iterator<Item = G::NodeId>
+where
+    G: IntoEdgesDirected + Visitable,
+    G::NodeId: Eq + Hash,
+{
+    reachable(g, n, nbs)
+}
+
+/// An iterator yielding all nodes reachable via pulling from the given node
+/// over the given set of direct neighbors.
+fn pull_reachable<G>(
+    g: G,
+    n: G::NodeId,
+    nbs: &HashSet<G::NodeId>,
+) -> impl Iterator<Item = G::NodeId>
+where
+    G: IntoEdgesDirected + Visitable,
+    G::NodeId: Eq + Hash,
+{
+    let rev_g = petgraph::visit::Reversed(g);
+    reachable(rev_g, n, nbs)
 }
 
 /// Push evaluation from the specified node.
@@ -139,12 +335,16 @@ where
 /// Expects any directed graph whose edges are of type `Edge` and whose nodes
 /// implement `Node`. Direction of edges indicate the flow of data through the
 /// graph.
-fn push_eval_order<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+fn push_eval_order<G>(
+    g: G,
+    n: G::NodeId,
+    nbs: &HashSet<G::NodeId>,
+) -> impl Iterator<Item = G::NodeId>
 where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
     G::NodeId: Eq + Hash,
 {
-    let dfs: HashSet<G::NodeId> = push_reachable(g, n).collect();
+    let dfs: HashSet<G::NodeId> = push_reachable(g, n, nbs).collect();
     Topo::new(g).iter(g).filter(move |node| dfs.contains(&node))
 }
 
@@ -156,12 +356,16 @@ where
 /// Expects any directed graph whose edges are of type `Edge` and whose nodes
 /// implement `Node`. Direction of edges indicate the flow of data through the
 /// graph.
-fn pull_eval_order<G>(g: G, n: G::NodeId) -> impl Iterator<Item = G::NodeId>
+fn pull_eval_order<G>(
+    g: G,
+    n: G::NodeId,
+    nbs: &HashSet<G::NodeId>,
+) -> impl Iterator<Item = G::NodeId>
 where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
     G::NodeId: Eq + Hash,
 {
-    let dfs: HashSet<G::NodeId> = pull_reachable(g, n).collect();
+    let dfs: HashSet<G::NodeId> = pull_reachable(g, n, nbs).collect();
     Topo::new(g).iter(g).filter(move |node| dfs.contains(&node))
 }
 
@@ -178,13 +382,20 @@ where
 pub(crate) fn eval_order<G, A, B>(g: G, push: A, pull: B) -> impl Iterator<Item = G::NodeId>
 where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
+    G::EdgeWeight: Edges,
     G::NodeId: Eq + Hash,
     A: IntoIterator<Item = G::NodeId>,
     B: IntoIterator<Item = G::NodeId>,
 {
     let mut reachable = HashSet::new();
-    reachable.extend(push.into_iter().flat_map(|n| push_reachable(g, n)));
-    reachable.extend(pull.into_iter().flat_map(|n| pull_reachable(g, n)));
+    reachable.extend(push.into_iter().flat_map(|n| {
+        let ps = push_eval_neighbors(g, n, &node::EvalConf::All);
+        push_reachable(g, n, &ps).collect::<Vec<_>>()
+    }));
+    reachable.extend(pull.into_iter().flat_map(|n| {
+        let pl = pull_eval_neighbors(g, n, &node::EvalConf::All);
+        pull_reachable(g, n, &pl).collect::<Vec<_>>()
+    }));
     Topo::new(g).iter(g).filter(move |n| reachable.contains(&n))
 }
 
@@ -199,11 +410,9 @@ where
     eval_order.into_iter().map(move |n| {
         visited.insert(n);
 
-        // Initialise the arguments to `None` for each input.
+        // Collect the inputs, initialising the set to `None`.
         let n_inputs = flow.inputs.get(&n).copied().unwrap_or(0);
-        let mut args: Vec<_> = (0..n_inputs).map(|_| None).collect();
-
-        // Create an argument for each input to this child.
+        let mut inputs: Vec<_> = (0..n_inputs).map(|_| None).collect();
         for e_ref in flow.graph.edges_directed(n, petgraph::Incoming) {
             // Only consider edges to nodes that we have already visited.
             if !visited.contains(&e_ref.source()) {
@@ -215,10 +424,24 @@ where
                     node: e_ref.source(),
                     output: edge.output,
                 };
-                args[edge.input.0 as usize] = Some(arg);
+                inputs[edge.input.0 as usize] = Some(arg);
             }
         }
-        EvalStep { node: n, args }
+
+        // Collect the set of connected outputs.
+        let n_outputs = flow.outputs.get(&n).copied().unwrap_or(0);
+        let mut outputs: Vec<_> = (0..n_outputs).map(|_| false).collect();
+        for e_ref in flow.graph.edges_directed(n, petgraph::Outgoing) {
+            for edge in e_ref.weight() {
+                outputs[edge.output.0 as usize] |= true;
+            }
+        }
+
+        EvalStep {
+            node: n,
+            inputs,
+            outputs,
+        }
     })
 }
 
@@ -227,20 +450,26 @@ fn eval_plan(flow: &Flow) -> EvalPlan {
     let pull_steps = flow
         .pull
         .iter()
-        .map(|&n| {
-            let order = pull_eval_order(&flow.graph, n);
-            let steps = eval_steps(flow, order).collect();
-            (n, steps)
+        .flat_map(|(&n, evs)| {
+            evs.iter().map(move |ev| {
+                let nbs = pull_eval_neighbors(&flow.graph, n, ev);
+                let order = pull_eval_order(&flow.graph, n, &nbs);
+                let steps = eval_steps(flow, order).collect();
+                (n, steps)
+            })
         })
         .collect();
 
     let push_steps = flow
         .push
         .iter()
-        .map(|&n| {
-            let order = push_eval_order(&flow.graph, n);
-            let steps = eval_steps(flow, order).collect();
-            (n, steps)
+        .flat_map(|(&n, evs)| {
+            evs.iter().map(move |ev| {
+                let nbs = push_eval_neighbors(&flow.graph, n, ev);
+                let order = push_eval_order(&flow.graph, n, &nbs);
+                let steps = eval_steps(flow, order).collect();
+                (n, steps)
+            })
         })
         .collect();
 
@@ -354,7 +583,7 @@ pub(crate) fn eval_stmts(
 
         // Prepare input expressions for the node
         let input_exprs: Vec<_> = step
-            .args
+            .inputs
             .iter()
             .map(|arg_opt| {
                 arg_opt.as_ref().map(|arg| {
@@ -368,8 +597,8 @@ pub(crate) fn eval_stmts(
 
         // Get the node's function name.
         let node_path: Vec<_> = path.iter().copied().chain(Some(step.node)).collect();
-        let node_inputs: Vec<_> = step.args.iter().map(|arg| arg.is_some()).collect();
-        let node_fn_name = node_fn_name(&node_path, &node_inputs);
+        let node_inputs: Vec<_> = step.inputs.iter().map(|arg| arg.is_some()).collect();
+        let node_fn_name = node_fn_name(&node_path, &node_inputs, &step.outputs);
 
         // Prepare function arguments.
         let mut args: Vec<String> = input_exprs
@@ -447,7 +676,7 @@ fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
 
 /// Collect all unique node configurations for all unique evaluation paths that
 /// exist in the graph.
-fn node_confs<'a, I>(eval_stepss: I) -> BTreeSet<(node::Id, Vec<bool>)>
+fn node_confs<'a, I>(eval_stepss: I) -> NodeConfs
 where
     I: IntoIterator<Item = &'a [EvalStep]>,
 {
@@ -455,7 +684,9 @@ where
         .into_iter()
         .flat_map(|steps| {
             steps.iter().map(|step| {
-                let conf = step.args.iter().map(|arg| arg.is_some()).collect();
+                let inputs = step.inputs.iter().map(|input| input.is_some()).collect();
+                let outputs = step.outputs.clone();
+                let conf = NodeConf { inputs, outputs };
                 (step.node, conf)
             })
         })
@@ -484,19 +715,19 @@ fn path_string(path: &[node::Id]) -> String {
 }
 
 /// Generate a function name for a node based on its path in the graph.
-fn node_fn_name(node_path: &[node::Id], inputs: &[bool]) -> String {
+fn node_fn_name(node_path: &[node::Id], inputs: &[bool], outputs: &[bool]) -> String {
     let path_string = path_string(node_path);
+    let bin_string =
+        |bin: &[bool]| -> String { bin.iter().map(|&b| if b { "1" } else { "0" }).collect() };
     let inputs_prefix = if inputs.is_empty() { "" } else { "_i" };
-    let inputs_string = inputs
-        .iter()
-        .map(|&b| if b { "1" } else { "0" })
-        .collect::<Vec<_>>()
-        .join("");
-    format!("node_fn_{path_string}{inputs_prefix}{inputs_string}")
+    let outputs_prefix = if outputs.is_empty() { "" } else { "_o" };
+    let inputs_string = bin_string(inputs);
+    let outputs_string = bin_string(outputs);
+    format!("node_fn_{path_string}{inputs_prefix}{inputs_string}{outputs_prefix}{outputs_string}")
 }
 
 /// Generate a function for a single node with the given set of connected inputs.
-fn node_fn(node: &dyn Node, node_path: &[node::Id], inputs: &[bool]) -> ExprKind {
+fn node_fn(node: &dyn Node, node_path: &[node::Id], conf: &NodeConf) -> ExprKind {
     // The binding used to receive the node's state as an argument, and whose
     // resulting value is returned from the body of the function and used to
     // update the state map.
@@ -507,25 +738,27 @@ fn node_fn(node: &dyn Node, node_path: &[node::Id], inputs: &[bool]) -> ExprKind
     }
 
     // Create function parameters for graph state and inputs
-    let mut input_args = inputs
+    let mut input_args = conf
+        .inputs
         .iter()
         .enumerate()
         .filter_map(|(i, b)| b.then(|| input_name(i)))
         .collect::<Vec<_>>();
 
     // Create input expressions for the node's expr method
-    let input_exprs: Vec<Option<String>> = inputs
+    let input_exprs: Vec<Option<String>> = conf
+        .inputs
         .iter()
         .enumerate()
         .map(|(i, b)| b.then(|| input_name(i)))
         .collect();
 
     // Get the node's expression
-    let ctx = node::ExprCtx::new(node_path, &input_exprs);
+    let ctx = node::ExprCtx::new(node_path, &input_exprs, &conf.outputs);
     let node_expr = node.expr(ctx);
 
     // Construct the full function definition
-    let fn_name = node_fn_name(node_path, inputs);
+    let fn_name = node_fn_name(node_path, &conf.inputs, &conf.outputs);
     let fn_body = if node.stateful() {
         input_args.push(STATE.to_string());
         format!("(let ((output {node_expr})) (list output state))")
