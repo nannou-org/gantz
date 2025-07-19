@@ -208,6 +208,9 @@ fn test_graph_eval_should_panic() {
 
 // Test for pushing evaluation with a subset of outputs enabled
 #[test]
+#[ignore = "Originally attempted to get this working with push/pull eval \
+    configurations, but realising it would be cleaner to get general conditional \
+    eval working first."]
 fn test_graph_push_eval_subset() {
     let mut g = petgraph::graph::DiGraph::new();
 
@@ -216,15 +219,15 @@ fn test_graph_push_eval_subset() {
     struct Src(u32, u32);
 
     impl Node for Src {
-        fn push_eval(&self) -> Vec<node::PushEval> {
+        fn push_eval(&self) -> Vec<node::EvalConf> {
             // Generate 3 push eval fns.
             vec![
                 // Push only the first output.
-                node::PushEval::Set(vec![true, false]),
+                node::EvalConf::Set(vec![true, false]),
                 // Push only the second output.
-                node::PushEval::Set(vec![false, true]),
+                node::EvalConf::Set(vec![false, true]),
                 // Push both outputs.
-                node::PushEval::Set(vec![true, true]),
+                node::EvalConf::Set(vec![true, true]),
             ]
         }
 

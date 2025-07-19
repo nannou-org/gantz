@@ -9,16 +9,16 @@ use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Push<N> {
     node: N,
-    set: node::PushEval,
+    conf: node::EvalConf,
 }
 
 /// A trait implemented for all `Node` types allowing to enable push evaluation.
 pub trait WithPushEval: Sized + Node {
     /// Consume `self` and return a `Node` that has push evaluation enabled.
-    fn with_push_eval_set(self, set: node::PushEval) -> Push<Self>;
+    fn with_push_eval_conf(self, conf: node::EvalConf) -> Push<Self>;
     /// Consume `self` and return a `Node` that has push evaluation enabled.
     fn with_push_eval(self) -> Push<Self> {
-        self.with_push_eval_set(node::PushEval::All)
+        self.with_push_eval_conf(node::EvalConf::All)
     }
 }
 
@@ -29,13 +29,13 @@ where
     /// Given some node, return a `Push` node enabling push evaluation across
     /// all outputs.
     pub fn all(node: N) -> Self {
-        Push::set(node, node::PushEval::All)
+        Push::new(node, node::EvalConf::All)
     }
 
     /// Given some node, return a `Push` node enabling push evaluation across
     /// some subset of the outputs.
-    pub fn set(node: N, set: node::PushEval) -> Self {
-        Push { node, set }
+    pub fn new(node: N, conf: node::EvalConf) -> Self {
+        Push { node, conf }
     }
 }
 
@@ -43,8 +43,8 @@ impl<N> WithPushEval for N
 where
     N: Node,
 {
-    fn with_push_eval_set(self, set: node::EvalSet) -> Push<Self> {
-        Push::set(self, set)
+    fn with_push_eval_conf(self, conf: node::EvalConf) -> Push<Self> {
+        Push::new(self, conf)
     }
 }
 
@@ -64,11 +64,11 @@ where
         self.node.expr(ctx)
     }
 
-    fn push_eval(&self) -> Vec<node::PushEval> {
-        vec![self.set.clone()]
+    fn push_eval(&self) -> Vec<node::EvalConf> {
+        vec![self.conf.clone()]
     }
 
-    fn pull_eval(&self) -> Vec<node::PullEval> {
+    fn pull_eval(&self) -> Vec<node::EvalConf> {
         self.node.pull_eval()
     }
 

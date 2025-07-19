@@ -15,9 +15,9 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct Flow {
     pub graph: FlowGraph,
     /// The set of nodes that require a push evaluation fn.
-    pub push: BTreeMap<node::Id, Vec<node::PushEval>>,
+    pub push: BTreeMap<node::Id, Vec<node::EvalConf>>,
     /// The set of nodes that require a pull evaluation fn.
-    pub pull: BTreeMap<node::Id, Vec<node::PullEval>>,
+    pub pull: BTreeMap<node::Id, Vec<node::EvalConf>>,
     /// The set of nodes that require access to state.
     pub stateful: BTreeSet<node::Id>,
     /// The set of nodes that act as inlets (for nested graphs).

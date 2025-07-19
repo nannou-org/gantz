@@ -153,7 +153,7 @@ pub fn push_eval_fn_name(path: &[node::Id]) -> String {
 fn eval_neighbors<G>(
     g: G,
     n: G::NodeId,
-    ev: &node::EvalSet,
+    ev: &node::EvalConf,
     src_conn: impl Fn(&Edge) -> usize,
 ) -> HashSet<G::NodeId>
 where
@@ -165,8 +165,8 @@ where
     for e_ref in g.edges_directed(n, petgraph::Outgoing) {
         for edge in e_ref.weight().edges() {
             let include = match ev {
-                node::EvalSet::All => true,
-                node::EvalSet::Set(conns) => conns[src_conn(&edge)],
+                node::EvalConf::All => true,
+                node::EvalConf::Set(conns) => conns[src_conn(&edge)],
             };
             if include {
                 set.insert(e_ref.target());
@@ -176,9 +176,9 @@ where
     set
 }
 
-/// Given a graph and a `PushEval` src, return the set of direct neighbors that
+/// Given a graph and a `EvalConf` src, return the set of direct neighbors that
 /// will be included in the initial traversal.
-fn push_eval_neighbors<G>(g: G, n: G::NodeId, ev: &node::PushEval) -> HashSet<G::NodeId>
+fn push_eval_neighbors<G>(g: G, n: G::NodeId, ev: &node::EvalConf) -> HashSet<G::NodeId>
 where
     G: IntoEdgesDirected,
     G::EdgeWeight: Edges,
@@ -187,9 +187,9 @@ where
     eval_neighbors(g, n, ev, |edge| edge.output.0 as usize)
 }
 
-/// Given a graph and a `PullEval` src, return the set of direct neighbors that
+/// Given a graph and a `EvalConf` src, return the set of direct neighbors that
 /// will be included in the initial traversal.
-fn pull_eval_neighbors<G>(g: G, n: G::NodeId, ev: &node::PullEval) -> HashSet<G::NodeId>
+fn pull_eval_neighbors<G>(g: G, n: G::NodeId, ev: &node::EvalConf) -> HashSet<G::NodeId>
 where
     G: IntoEdgesDirected,
     G::EdgeWeight: Edges,
@@ -389,11 +389,11 @@ where
 {
     let mut reachable = HashSet::new();
     reachable.extend(push.into_iter().flat_map(|n| {
-        let ps = push_eval_neighbors(g, n, &node::PushEval::All);
+        let ps = push_eval_neighbors(g, n, &node::EvalConf::All);
         push_reachable(g, n, &ps).collect::<Vec<_>>()
     }));
     reachable.extend(pull.into_iter().flat_map(|n| {
-        let pl = pull_eval_neighbors(g, n, &node::PullEval::All);
+        let pl = pull_eval_neighbors(g, n, &node::EvalConf::All);
         pull_reachable(g, n, &pl).collect::<Vec<_>>()
     }));
     Topo::new(g).iter(g).filter(move |n| reachable.contains(&n))

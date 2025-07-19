@@ -49,12 +49,12 @@ pub trait Node {
     /// connected component that starts from the `push_eval` node.
     ///
     /// Within a **Graph** node, a new function will be generated for each
-    /// `PushEval` set for each node. If **Some**, a function will be generated
+    /// `EvalConf` set for each node. If **Some**, a function will be generated
     /// with the given **Signature** that represents pushing evaluation from
     /// this node.
     ///
     /// By default, this is an empty vec.
-    fn push_eval(&self) -> Vec<PushEval> {
+    fn push_eval(&self) -> Vec<EvalConf> {
         vec![]
     }
 
@@ -72,7 +72,7 @@ pub trait Node {
     /// node.
     ///
     /// By default, this is an empty vec.
-    fn pull_eval(&self) -> Vec<PullEval> {
+    fn pull_eval(&self) -> Vec<EvalConf> {
         vec![]
     }
 
@@ -119,7 +119,7 @@ pub trait Node {
 
 /// A set of connections over which to push/pull evaluation.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub enum EvalSet {
+pub enum EvalConf {
     /// Requires a fn for evaluation from all connections.
     #[default]
     All,
@@ -128,12 +128,6 @@ pub enum EvalSet {
     /// An element for each connection, `true` if eval-enabled.
     Set(Vec<bool>),
 }
-
-/// A set of outputs over which to push evaluation.
-pub type PushEval = EvalSet;
-
-/// A set of inputs over which to pull evaluation.
-pub type PullEval = EvalSet;
 
 /// Type used to represent a node's ID within a graph.
 pub type Id = usize;
@@ -234,11 +228,11 @@ where
         (**self).expr(ctx)
     }
 
-    fn push_eval(&self) -> Vec<PushEval> {
+    fn push_eval(&self) -> Vec<EvalConf> {
         (**self).push_eval()
     }
 
-    fn pull_eval(&self) -> Vec<PullEval> {
+    fn pull_eval(&self) -> Vec<EvalConf> {
         (**self).pull_eval()
     }
 
@@ -281,11 +275,11 @@ macro_rules! impl_node_for_ptr {
                 (**self).expr(ctx)
             }
 
-            fn push_eval(&self) -> Vec<PushEval> {
+            fn push_eval(&self) -> Vec<EvalConf> {
                 (**self).push_eval()
             }
 
-            fn pull_eval(&self) -> Vec<PullEval> {
+            fn pull_eval(&self) -> Vec<EvalConf> {
                 (**self).pull_eval()
             }
 
