@@ -371,7 +371,7 @@ where
             if !visited.contains(&e_ref.source()) {
                 continue;
             }
-            for edge in e_ref.weight() {
+            for (edge, _kind) in e_ref.weight() {
                 // Assign the expression argument for this input.
                 let arg = ExprInput {
                     node: e_ref.source(),
@@ -385,7 +385,7 @@ where
         let n_outputs = flow.outputs.get(&n).copied().unwrap_or(0);
         let mut outputs: Vec<_> = (0..n_outputs).map(|_| false).collect();
         for e_ref in flow.graph.edges_directed(n, petgraph::Outgoing) {
-            for edge in e_ref.weight() {
+            for (edge, _kind) in e_ref.weight() {
                 outputs[edge.output.0 as usize] |= true;
             }
         }

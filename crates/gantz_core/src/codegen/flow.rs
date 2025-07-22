@@ -14,6 +14,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Debug, Default)]
 pub struct Flow {
     pub graph: FlowGraph,
+    /// The set of nodes that require branching on their outputs.
+    pub branches: BTreeMap<node::Id, Vec<node::EvalConf>>,
     /// The set of nodes that require a push evaluation fn.
     pub push: BTreeMap<node::Id, Vec<node::EvalConf>>,
     /// The set of nodes that require a pull evaluation fn.
@@ -30,11 +32,21 @@ pub struct Flow {
     pub outputs: BTreeMap<node::Id, usize>,
 }
 
+/// Whether an edge is known to always be traversed, or whether it is
+/// conditional.
+#[derive(Debug)]
+pub enum EdgeKind {
+    /// The edge is known to always be connected.
+    Static,
+    /// The edge is conditional on node branching.
+    Conditional,
+}
+
 /// Represents a single flow graph.
 ///
 /// Note that we use a `Vec<Edge>` in order to represent multiple edges
 /// between the same two nodes.
-type FlowGraph = petgraph::graphmap::GraphMap<node::Id, Vec<Edge>, Directed>;
+type FlowGraph = petgraph::graphmap::GraphMap<node::Id, Vec<(Edge, EdgeKind)>, Directed>;
 
 impl Flow {
     /// Construct a `Flow` for a single gantz graph.
@@ -70,8 +82,11 @@ impl Flow {
         for (n, edge) in inputs {
             loop {
                 if let Some(edges) = self.graph.edge_weight_mut(n, id) {
-                    edges.push(edge);
-                    break;
+                    let n_branches = self.branches.get(&n).map(|bs| &bs[..]);
+                    if let Some(kind) = edge_kind(n_branches, edge.output.0 as usize) {
+                        edges.push((edge, kind));
+                        break;
+                    }
                 }
                 self.graph.add_edge(n, id, vec![]);
             }
@@ -85,6 +100,12 @@ impl Flow {
         }
         if outputs > 0 {
             self.outputs.insert(id, outputs);
+        }
+
+        // Track node branching.
+        let branches = node.branches();
+        if !branches.is_empty() {
+            self.branches.insert(id, branches);
         }
 
         // Register push/pull eval for the node if necessary.
@@ -121,5 +142,35 @@ impl Visitor for RoseTree<Flow> {
         // Insert the node.
         let id = ctx.id();
         tree.elem.add_node(id, node, ctx.inputs().iter().copied());
+    }
+}
+
+impl super::Edges for Vec<(Edge, EdgeKind)> {
+    fn edges(&self) -> impl Iterator<Item = Edge> {
+        self.iter().map(|(e, _k)| *e)
+    }
+}
+
+/// Given the branching of the source node and the output index of a connected
+/// edge, returns the `EdgeKind` of that edge, or `None` if there is no branch
+/// under which the edge can be reached.
+fn edge_kind(confs: Option<&[node::EvalConf]>, out_ix: usize) -> Option<EdgeKind> {
+    let Some(confs) = confs else {
+        return Some(EdgeKind::Static);
+    };
+    let mut reachable = false;
+    let mut conditional = false;
+    for conf in confs {
+        let active = match conf {
+            node::EvalConf::All => true,
+            node::EvalConf::Set(branch) => *branch.get(out_ix).expect("missing output in branch"),
+        };
+        reachable |= active;
+        conditional |= !active;
+    }
+    match (reachable, conditional) {
+        (false, _) => None,
+        (true, true) => Some(EdgeKind::Conditional),
+        (true, false) => Some(EdgeKind::Static),
     }
 }

@@ -36,9 +36,17 @@ pub trait Node {
     /// This is intended for nodes that conditionally activate outputs based on
     /// some received input.
     ///
-    /// By default, node's have a single branch with all outputs enabled.
+    /// If the returned `Vec` is empty, we assume the node has no branching, and
+    /// simply evaluates to all outputs.
+    ///
+    /// If the returned `Vec` is non-empty, the expression returned from
+    /// [`Node::expr`] method must return a list with two elements where the
+    /// first element is the index of the selected branch, and the second
+    /// element is the node's output value(s).
+    ///
+    /// By default, this is `vec![]`.
     fn branches(&self) -> Vec<EvalConf> {
-        vec![EvalConf::All]
+        vec![]
     }
 
     /// The expression that, given the expressions of connected inputs,
