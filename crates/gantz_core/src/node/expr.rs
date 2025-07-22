@@ -1,7 +1,10 @@
 use super::{Deserialize, Serialize};
-use crate::node::{self, Node, NodeExpr};
+use crate::node::{self, Node};
 use std::{fmt, str::FromStr};
-use steel::{parser::lexer::TokenStream, steel_vm::engine::Engine};
+use steel::{
+    parser::{ast::ExprKind, lexer::TokenStream},
+    steel_vm::engine::Engine,
+};
 use thiserror::Error;
 
 /// A simple node that allows for representing expressions as nodes.
@@ -115,7 +118,7 @@ impl Node for Expr {
         self.n_outputs
     }
 
-    fn expr(&self, ctx: node::ExprCtx) -> NodeExpr {
+    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
         // Create a token stream.
         let skip_comments = true;
         let source_id = None;
@@ -129,7 +132,7 @@ impl Node for Expr {
 
         // If there's one expression, return it.
         if exprs.len() == 1 {
-            exprs.into_iter().next().unwrap().into()
+            exprs.into_iter().next().unwrap()
         // If there are multiple expressions, combine them with begin?
         } else {
             let exprs = exprs
@@ -143,7 +146,6 @@ impl Node for Expr {
                 .into_iter()
                 .next()
                 .unwrap()
-                .into()
         }
     }
 

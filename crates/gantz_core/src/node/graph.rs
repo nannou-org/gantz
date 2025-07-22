@@ -2,7 +2,7 @@
 
 use crate::{
     Edge, GRAPH_STATE,
-    node::{self, Node, NodeExpr},
+    node::{self, Node},
     visit,
 };
 use petgraph::{
@@ -18,7 +18,7 @@ use std::{
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
 };
-use steel::{SteelVal, steel_vm::engine::Engine};
+use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// The graph type used by the graph node to represent its nested graph.
 pub type Graph<N> = petgraph::stable_graph::StableGraph<N, Edge, Directed, Index>;
@@ -79,7 +79,11 @@ impl<N> Node for GraphNode<N>
 where
     N: Node,
 {
-    fn expr(&self, ctx: node::ExprCtx) -> NodeExpr {
+    fn branches(&self) -> Vec<node::EvalConf> {
+        todo!("branch based on inner node branching")
+    }
+
+    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
         nested_expr(&self.graph, ctx.path(), ctx.inputs())
     }
 
@@ -207,7 +211,7 @@ where
 
 impl Node for Inlet {
     /// Simply returns the state value as this node's output
-    fn expr(&self, _ctx: node::ExprCtx) -> NodeExpr {
+    fn expr(&self, _ctx: node::ExprCtx) -> ExprKind {
         Engine::emit_ast("state")
             .expect("failed to emit AST")
             .into_iter()
@@ -239,7 +243,7 @@ impl Node for Inlet {
 
 impl Node for Outlet {
     // Stores the input value in the state.
-    fn expr(&self, ctx: node::ExprCtx) -> NodeExpr {
+    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
         let input = match &ctx.inputs()[0] {
             Some(expr) => expr.clone(),
             None => "'()".to_string(),
@@ -306,7 +310,7 @@ where
 }
 
 /// The implementation of the `GraphNode`'s `Node::expr` fn.
-fn nested_expr<G>(g: G, path: &[node::Id], inputs: &[Option<String>]) -> NodeExpr
+fn nested_expr<G>(g: G, path: &[node::Id], inputs: &[Option<String>]) -> ExprKind
 where
     G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable + Data<EdgeWeight = Edge>,
     G::NodeWeight: Node,

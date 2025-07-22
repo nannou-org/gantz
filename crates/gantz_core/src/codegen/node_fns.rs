@@ -1,3 +1,12 @@
+//! Items related to the generation of node functions.
+//!
+//! In gantz, a function is generated for every unique configuration of every
+//! node. That is, for each unique set of connected inputs and outputs of a
+//! node, a function is generated.
+//!
+//! These configurations are collected by traversing from each of the push/pull
+//! evaluation entrypoints.
+
 use super::{EvalPlan, EvalStep, RoseTree};
 use crate::{
     Edge,
@@ -137,9 +146,9 @@ pub(crate) fn node_fn(node: &dyn Node, node_path: &[node::Id], conf: &NodeConf) 
     let fn_name = node_fn_name(node_path, &conf.inputs, &conf.outputs);
     let fn_body = if node.stateful() {
         input_args.push(STATE.to_string());
-        format!("(let ((output {})) (list output state))", node_expr.kind())
+        format!("(let ((output {node_expr})) (list output state))")
     } else {
-        format!("{}", node_expr.kind())
+        format!("{node_expr}")
     };
     let fn_args = input_args.join(" ");
     let fn_def = format!("(define ({fn_name} {fn_args}) {fn_body})");

@@ -1,6 +1,6 @@
 use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
-use steel::steel_vm::engine::Engine;
+use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// A wrapper around a `Node` that enables pull evaluation across all inputs.
 ///
@@ -62,7 +62,11 @@ where
         self.node.n_outputs()
     }
 
-    fn expr(&self, ctx: node::ExprCtx) -> node::NodeExpr {
+    fn branches(&self) -> Vec<node::EvalConf> {
+        self.node.branches()
+    }
+
+    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
         self.node.expr(ctx)
     }
 

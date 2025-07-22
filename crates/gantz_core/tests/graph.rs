@@ -1,10 +1,11 @@
 // Tests for the graph module.
 
 use gantz_core::codegen::{pull_eval_fn_name, push_eval_fn_name};
-use gantz_core::node::{self, Node, NodeExpr, WithPullEval, WithPushEval};
+use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
 use std::fmt::Debug;
 use steel::SteelVal;
+use steel::parser::ast::ExprKind;
 use steel::steel_vm::engine::Engine;
 
 fn node_push() -> node::Push<node::Expr> {
@@ -195,7 +196,14 @@ fn test_graph_push_cond_eval() {
             2
         }
 
-        fn expr(&self, ctx: node::ExprCtx) -> NodeExpr {
+        fn branches(&self) -> Vec<node::EvalConf> {
+            vec![
+                node::EvalConf::Set(vec![true, false]),
+                node::EvalConf::Set(vec![false, true]),
+            ]
+        }
+
+        fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
             let x = ctx.inputs()[0].as_deref().expect("must have one input");
             let expr = format!(
                 r#"
@@ -204,17 +212,7 @@ fn test_graph_push_cond_eval() {
                   (list 1 '())) ; 1 index for right branch, '() for empty value
             "#
             );
-            let kind = Engine::emit_ast(&expr)
-                .unwrap()
-                .into_iter()
-                .next()
-                .unwrap()
-                .into();
-            let branches = vec![
-                node::EvalConf::Set(vec![true, false]),
-                node::EvalConf::Set(vec![false, true]),
-            ];
-            NodeExpr::with_branches(kind, branches)
+            Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
         }
     }
 
@@ -360,7 +358,7 @@ fn test_graph_push_eval_subset() {
             2
         }
 
-        fn expr(&self, ctx: node::ExprCtx) -> NodeExpr {
+        fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
             let Src(a, b) = *self;
             let expr = match ctx.outputs() {
                 // Only return left if only left is connected.
@@ -370,12 +368,7 @@ fn test_graph_push_eval_subset() {
                 // Otherwise return both in a list.
                 _ => format!("(list {a} {b})"),
             };
-            Engine::emit_ast(&expr)
-                .unwrap()
-                .into_iter()
-                .next()
-                .unwrap()
-                .into()
+            Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
         }
     }
 

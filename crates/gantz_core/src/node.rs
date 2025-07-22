@@ -28,6 +28,19 @@ pub trait Node {
         0
     }
 
+    /// The list of possible branches from this node.
+    ///
+    /// Each branch is represented as a set of outputs that are enabled for that
+    /// branch.
+    ///
+    /// This is intended for nodes that conditionally activate outputs based on
+    /// some received input.
+    ///
+    /// By default, node's have a single branch with all outputs enabled.
+    fn branches(&self) -> Vec<EvalConf> {
+        vec![EvalConf::All]
+    }
+
     /// The expression that, given the expressions of connected inputs,
     /// produces the output(s).
     ///
@@ -38,7 +51,7 @@ pub trait Node {
     /// If [`Node::n_outputs`] is 1, the expr should result in a single value.
     ///
     /// If [`Node::n_outputs`] is > 1, the expr should result in a list of values.
-    fn expr(&self, ctx: ExprCtx) -> NodeExpr;
+    fn expr(&self, ctx: ExprCtx) -> ExprKind;
 
     /// Specifies whether or not code should be generated to allow for push
     /// evaluation from instances of this node. Enabling push evaluation allows
@@ -132,26 +145,6 @@ pub enum EvalConf {
 /// Type used to represent a node's ID within a graph.
 pub type Id = usize;
 
-/// An expression produced by a node with optional branching on the outputs.
-#[derive(Clone, Debug)]
-pub struct NodeExpr {
-    /// A steel expression.
-    ///
-    /// If the node has branching outputs, the expression must return a
-    /// 2-element list with:
-    ///
-    /// 1. an index representing the first branch and
-    /// 2. the value (or values in a list) in the second element.
-    kind: ExprKind,
-    /// The set of possible branches.
-    ///
-    /// If `Some`, each branch represents a set of enabled outputs for that
-    /// branch.
-    ///
-    /// If `None`, assumes no branching and that result includes all outputs.
-    branches: Option<Vec<EvalConf>>,
-}
-
 /// Context provided to the [`Node::expr`] fn.
 pub struct ExprCtx<'a> {
     /// The path of this node relative to the root of the gantz graph.
@@ -187,30 +180,6 @@ pub struct Input(pub u16);
 /// Represents an output of a node via an index.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct Output(pub u16);
-
-impl NodeExpr {
-    /// A new branchless expression.
-    pub fn new(kind: ExprKind) -> Self {
-        let branches = None;
-        Self { kind, branches }
-    }
-
-    /// A new expression with conditional branching.
-    pub fn with_branches(kind: ExprKind, branches: Vec<EvalConf>) -> Self {
-        let branches = Some(branches);
-        Self { kind, branches }
-    }
-
-    /// The expression itself.
-    pub fn kind(&self) -> &ExprKind {
-        &self.kind
-    }
-
-    /// If the node requires branching, this is the set of possible branches.
-    pub fn branches(&self) -> Option<&[EvalConf]> {
-        self.branches.as_deref()
-    }
-}
 
 impl<'a> ExprCtx<'a> {
     pub(crate) fn new(path: &'a [Id], inputs: &'a [Option<String>], outputs: &'a [bool]) -> Self {
@@ -256,12 +225,6 @@ impl<'a> ExprCtx<'a> {
     }
 }
 
-impl From<ExprKind> for NodeExpr {
-    fn from(kind: ExprKind) -> Self {
-        Self::new(kind)
-    }
-}
-
 impl<'a, N> Node for &'a N
 where
     N: ?Sized + Node,
@@ -274,7 +237,11 @@ where
         (**self).n_outputs()
     }
 
-    fn expr(&self, ctx: ExprCtx) -> NodeExpr {
+    fn branches(&self) -> Vec<EvalConf> {
+        (**self).branches()
+    }
+
+    fn expr(&self, ctx: ExprCtx) -> ExprKind {
         (**self).expr(ctx)
     }
 
@@ -321,7 +288,11 @@ macro_rules! impl_node_for_ptr {
                 (**self).n_outputs()
             }
 
-            fn expr(&self, ctx: ExprCtx) -> NodeExpr {
+            fn branches(&self) -> Vec<EvalConf> {
+                (**self).branches()
+            }
+
+            fn expr(&self, ctx: ExprCtx) -> ExprKind {
                 (**self).expr(ctx)
             }
 
