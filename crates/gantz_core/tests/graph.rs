@@ -23,6 +23,18 @@ fn node_assert_eq() -> node::Expr {
     node::expr("(assert! (equal? $l $r))").unwrap()
 }
 
+// Stores the received number in state and returns it.
+fn node_number() -> node::Expr {
+    node::expr(
+        "
+        (let ((x $x))
+          (set! state (if (number? x) x state))
+          state)
+    ",
+    )
+    .unwrap()
+}
+
 // Helper trait for debugging the graph.
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
@@ -151,6 +163,120 @@ fn test_graph_pull_eval() {
         .unwrap();
 }
 
+// A simple test graph that checks conditional runtime evaluation.
+//
+//    ---------- ----------
+//    | push_0 | | push_1 |
+//    -+-------- -+--------
+//     |          |
+//     |-----------
+//     |
+//    -+------------
+//    | select_0_1 | // pushes left on 0, right on 1
+//    -+----------+-
+//     |          |
+//    -+-----    -+-------
+//    | six |    | seven |
+//    -+-----    -+-------
+//     |          |
+//     |-----------
+//     |
+//    -+--------
+//    | number |
+//    ----------
+#[test]
+#[ignore = "Requires handling node output branching"]
+fn test_graph_push_cond_eval() {
+    #[derive(Debug)]
+    struct Select;
+
+    impl Node for Select {
+        fn n_outputs(&self) -> usize {
+            2
+        }
+
+        fn expr(&self, ctx: node::ExprCtx) -> NodeExpr {
+            let x = ctx.inputs()[0].as_deref().expect("must have one input");
+            let expr = format!(
+                r#"
+                (if (equals? 0 {x})
+                  (list 0 '())  ; 0 index for left branch, '() for empty value
+                  (list 1 '())) ; 1 index for right branch, '() for empty value
+            "#
+            );
+            let kind = Engine::emit_ast(&expr)
+                .unwrap()
+                .into_iter()
+                .next()
+                .unwrap()
+                .into();
+            let branches = vec![
+                node::EvalConf::Set(vec![true, false]),
+                node::EvalConf::Set(vec![false, true]),
+            ];
+            NodeExpr::with_branches(kind, branches)
+        }
+    }
+
+    let mut g = petgraph::graph::DiGraph::new();
+
+    // Instantiate the nodes.
+    let push_0 = node_int(0).with_push_eval();
+    let push_1 = node_int(1).with_push_eval();
+    let select = Select;
+    let six = node_int(6);
+    let seven = node_int(7);
+    let number = node_number();
+
+    // Create the graph.
+    let push_0 = g.add_node(Box::new(push_0) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(push_1) as Box<_>);
+    let select = g.add_node(Box::new(select) as Box<_>);
+    let six = g.add_node(Box::new(six) as Box<_>);
+    let seven = g.add_node(Box::new(seven) as Box<_>);
+    let number = g.add_node(Box::new(number) as Box<_>);
+    g.add_edge(push_0, select, Edge::from((0, 0)));
+    g.add_edge(push_1, select, Edge::from((0, 0)));
+    g.add_edge(select, six, Edge::from((0, 0)));
+    g.add_edge(select, seven, Edge::from((1, 0)));
+    g.add_edge(six, number, Edge::from((0, 0)));
+    g.add_edge(seven, number, Edge::from((0, 0)));
+
+    // Generate the module.
+    let module = gantz_core::codegen::module(&g);
+    // Function per node alongside the two push eval functions.
+    assert_eq!(module.len(), g.node_count() + 2);
+
+    // Create the VM.
+    let mut vm = Engine::new_base();
+
+    // Initialise the node state.
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&g, &[], &mut vm);
+
+    // Register the functions, then call push_eval.
+    for f in module {
+        println!("{}\n", f.to_pretty(100));
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    // First, call `push_0` and check the result is `6`.
+    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push_0.index()]), vec![])
+        .unwrap();
+    let number_state = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract number state")
+        .expect("number state was `None`");
+    assert_eq!(number_state, 6);
+
+    // First, call `push_1` and check the result is `7`.
+    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push_1.index()]), vec![])
+        .unwrap();
+    let number_state = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract number state")
+        .expect("number state was `None`");
+    assert_eq!(number_state, 7);
+}
+
 // A simple test graph that is expected to `panic!`.
 //
 //    -+-----
@@ -244,7 +370,12 @@ fn test_graph_push_eval_subset() {
                 // Otherwise return both in a list.
                 _ => format!("(list {a} {b})"),
             };
-            Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap().into()
+            Engine::emit_ast(&expr)
+                .unwrap()
+                .into_iter()
+                .next()
+                .unwrap()
+                .into()
         }
     }
 
