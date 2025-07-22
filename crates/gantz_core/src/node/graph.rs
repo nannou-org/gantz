@@ -2,7 +2,7 @@
 
 use crate::{
     Edge, GRAPH_STATE,
-    node::{self, Node},
+    node::{self, Node, NodeExpr},
     visit,
 };
 use petgraph::{
@@ -18,7 +18,7 @@ use std::{
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
 };
-use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
+use steel::{SteelVal, steel_vm::engine::Engine};
 
 /// The graph type used by the graph node to represent its nested graph.
 pub type Graph<N> = petgraph::stable_graph::StableGraph<N, Edge, Directed, Index>;
@@ -79,7 +79,7 @@ impl<N> Node for GraphNode<N>
 where
     N: Node,
 {
-    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx) -> NodeExpr {
         nested_expr(&self.graph, ctx.path(), ctx.inputs())
     }
 
@@ -207,12 +207,13 @@ where
 
 impl Node for Inlet {
     /// Simply returns the state value as this node's output
-    fn expr(&self, _ctx: node::ExprCtx) -> ExprKind {
+    fn expr(&self, _ctx: node::ExprCtx) -> NodeExpr {
         Engine::emit_ast("state")
             .expect("failed to emit AST")
             .into_iter()
             .next()
             .unwrap()
+            .into()
     }
 
     fn n_inputs(&self) -> usize {
@@ -238,7 +239,7 @@ impl Node for Inlet {
 
 impl Node for Outlet {
     // Stores the input value in the state.
-    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx) -> NodeExpr {
         let input = match &ctx.inputs()[0] {
             Some(expr) => expr.clone(),
             None => "'()".to_string(),
@@ -249,6 +250,7 @@ impl Node for Outlet {
             .into_iter()
             .next()
             .unwrap()
+            .into()
     }
 
     fn n_inputs(&self) -> usize {
@@ -304,7 +306,7 @@ where
 }
 
 /// The implementation of the `GraphNode`'s `Node::expr` fn.
-fn nested_expr<G>(g: G, path: &[node::Id], inputs: &[Option<String>]) -> ExprKind
+fn nested_expr<G>(g: G, path: &[node::Id], inputs: &[Option<String>]) -> NodeExpr
 where
     G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable + Data<EdgeWeight = Edge>,
     G::NodeWeight: Node,
@@ -373,4 +375,5 @@ where
         .into_iter()
         .next()
         .unwrap()
+        .into()
 }

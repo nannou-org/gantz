@@ -1,6 +1,6 @@
 use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
-use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
+use steel::steel_vm::engine::Engine;
 
 /// A wrapper around a `Node` that enables pull evaluation across all inputs.
 ///
@@ -62,7 +62,7 @@ where
         self.node.n_outputs()
     }
 
-    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx) -> node::NodeExpr {
         self.node.expr(ctx)
     }
 

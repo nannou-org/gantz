@@ -6,7 +6,6 @@ use crate::{
 use steel::{
     SteelErr, SteelVal,
     gc::Gc,
-    parser::ast::ExprKind,
     rerrs::ErrorKind,
     rvals::{FromSteelVal, IntoSteelVal, SteelHashMap},
     steel_vm::engine::Engine,
@@ -90,7 +89,7 @@ where
         self.node.n_outputs()
     }
 
-    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx) -> node::NodeExpr {
         self.node.expr(ctx)
     }
 

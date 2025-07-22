@@ -761,9 +761,9 @@ fn node_fn(node: &dyn Node, node_path: &[node::Id], conf: &NodeConf) -> ExprKind
     let fn_name = node_fn_name(node_path, &conf.inputs, &conf.outputs);
     let fn_body = if node.stateful() {
         input_args.push(STATE.to_string());
-        format!("(let ((output {node_expr})) (list output state))")
+        format!("(let ((output {})) (list output state))", node_expr.kind())
     } else {
-        format!("{node_expr}")
+        format!("{}", node_expr.kind())
     };
     let fn_args = input_args.join(" ");
     let fn_def = format!("(define ({fn_name} {fn_args}) {fn_body})");

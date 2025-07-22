@@ -1,11 +1,10 @@
 // Tests for the graph module.
 
 use gantz_core::codegen::{pull_eval_fn_name, push_eval_fn_name};
-use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
+use gantz_core::node::{self, Node, NodeExpr, WithPullEval, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
 use std::fmt::Debug;
 use steel::SteelVal;
-use steel::parser::ast::ExprKind;
 use steel::steel_vm::engine::Engine;
 
 fn node_push() -> node::Push<node::Expr> {
@@ -235,7 +234,7 @@ fn test_graph_push_eval_subset() {
             2
         }
 
-        fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
+        fn expr(&self, ctx: node::ExprCtx) -> NodeExpr {
             let Src(a, b) = *self;
             let expr = match ctx.outputs() {
                 // Only return left if only left is connected.
@@ -245,7 +244,7 @@ fn test_graph_push_eval_subset() {
                 // Otherwise return both in a list.
                 _ => format!("(list {a} {b})"),
             };
-            Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
+            Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap().into()
         }
     }
 

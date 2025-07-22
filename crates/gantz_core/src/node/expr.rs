@@ -1,10 +1,7 @@
 use super::{Deserialize, Serialize};
-use crate::node::{self, Node};
+use crate::node::{self, Node, NodeExpr};
 use std::{fmt, str::FromStr};
-use steel::{
-    parser::{ast::ExprKind, lexer::TokenStream},
-    steel_vm::engine::Engine,
-};
+use steel::{parser::lexer::TokenStream, steel_vm::engine::Engine};
 use thiserror::Error;
 
 /// A simple node that allows for representing expressions as nodes.
@@ -23,6 +20,7 @@ pub struct Expr {
     /// The total inputs, derived from the `$` count in the src.
     n_inputs: usize,
     /// The total outputs, i.e. the number of `ExprKind`s in the emitted AST.
+    /// FIXME: This isn't consistent with `Node::expr`.
     n_outputs: usize,
 }
 
@@ -117,7 +115,7 @@ impl Node for Expr {
         self.n_outputs
     }
 
-    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx) -> NodeExpr {
         // Create a token stream.
         let skip_comments = true;
         let source_id = None;
@@ -131,7 +129,7 @@ impl Node for Expr {
 
         // If there's one expression, return it.
         if exprs.len() == 1 {
-            exprs.into_iter().next().unwrap()
+            exprs.into_iter().next().unwrap().into()
         // If there are multiple expressions, combine them with begin?
         } else {
             let exprs = exprs
@@ -145,6 +143,7 @@ impl Node for Expr {
                 .into_iter()
                 .next()
                 .unwrap()
+                .into()
         }
     }
 
