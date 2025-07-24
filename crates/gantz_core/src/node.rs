@@ -1,6 +1,8 @@
 //! The primary [`Node`] abstraction and related items.
 
 #[doc(inline)]
+pub use conns::Conns;
+#[doc(inline)]
 pub use crate::visit::{self, Visitor};
 pub use expr::{Expr, ExprError};
 pub use graph::GraphNode;
@@ -10,6 +12,7 @@ use serde::{Deserialize, Serialize};
 pub use state::{NodeState, State, WithStateType};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
+mod conns;
 pub mod expr;
 pub mod graph;
 pub mod pull;
@@ -147,7 +150,7 @@ pub enum EvalConf {
     /// Requires a fn for evaluation from a subset of the connections.
     ///
     /// An element for each connection, `true` if eval-enabled.
-    Set(Vec<bool>),
+    Set(Conns),
 }
 
 /// Type used to represent a node's ID within a graph.

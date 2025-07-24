@@ -1,12 +1,13 @@
+//! Items related to collecting a high-level "meta" view of a gantz graph.
+
 use crate::{
     Edge,
     codegen::RoseTree,
     node::{self, Node},
     visit::{self, Visitor},
 };
-use petgraph::{
-    Directed,
-    visit::{Data, EdgeRef, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, NodeRef},
+use petgraph::visit::{
+    Data, EdgeRef, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, NodeRef,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -50,7 +51,7 @@ pub enum EdgeKind {
 ///
 /// Note that we use a `Vec<Edge>` in order to represent multiple edges
 /// between the same two nodes.
-type MetaGraph = petgraph::graphmap::GraphMap<node::Id, Vec<(Edge, EdgeKind)>, Directed>;
+type MetaGraph = petgraph::graphmap::DiGraphMap<node::Id, Vec<(Edge, EdgeKind)>>;
 
 impl Meta {
     /// Construct a `Meta` for a single gantz graph.
@@ -167,7 +168,7 @@ fn edge_kind(confs: Option<&[node::EvalConf]>, out_ix: usize) -> Option<EdgeKind
     for conf in confs {
         let active = match conf {
             node::EvalConf::All => true,
-            node::EvalConf::Set(branch) => *branch.get(out_ix).expect("missing output in branch"),
+            node::EvalConf::Set(branch) => branch.get(out_ix).expect("missing output in branch"),
         };
         reachable |= active;
         conditional |= !active;

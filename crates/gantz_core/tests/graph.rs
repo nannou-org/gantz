@@ -198,8 +198,8 @@ fn test_graph_push_cond_eval() {
 
         fn branches(&self) -> Vec<node::EvalConf> {
             vec![
-                node::EvalConf::Set(vec![true, false]),
-                node::EvalConf::Set(vec![false, true]),
+                node::EvalConf::Set([true, false].try_into().unwrap()),
+                node::EvalConf::Set([false, true].try_into().unwrap()),
             ]
         }
 
@@ -346,11 +346,11 @@ fn test_graph_push_eval_subset() {
             // Generate 3 push eval fns.
             vec![
                 // Push only the first output.
-                node::EvalConf::Set(vec![true, false]),
+                node::EvalConf::Set([true, false].try_into().unwrap()),
                 // Push only the second output.
-                node::EvalConf::Set(vec![false, true]),
+                node::EvalConf::Set([false, true].try_into().unwrap()),
                 // Push both outputs.
-                node::EvalConf::Set(vec![true, true]),
+                node::EvalConf::Set([true, true].try_into().unwrap()),
             ]
         }
 

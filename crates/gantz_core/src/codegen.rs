@@ -119,7 +119,7 @@ where
         for edge in e_ref.weight().edges() {
             let include = match ev {
                 node::EvalConf::All => true,
-                node::EvalConf::Set(conns) => conns[src_conn(&edge)],
+                node::EvalConf::Set(conns) => conns.get(src_conn(&edge)).unwrap(),
             };
             if include {
                 set.insert(e_ref.target());
