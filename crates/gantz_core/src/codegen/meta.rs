@@ -10,10 +10,14 @@ use petgraph::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Represents the overall flow/structure of a single gantz graph.
+/// Represents a high-level description and flow of a gantz graph.
+///
+/// This is produced as the first stage of code-generation and acts as a
+/// high-level overview of the gantz graph that can be used for faster
+/// traversal and .
 #[derive(Debug, Default)]
-pub struct Flow {
-    pub graph: FlowGraph,
+pub struct Meta {
+    pub graph: MetaGraph,
     /// The set of nodes that require branching on their outputs.
     pub branches: BTreeMap<node::Id, Vec<node::EvalConf>>,
     /// The set of nodes that require a push evaluation fn.
@@ -46,16 +50,16 @@ pub enum EdgeKind {
 ///
 /// Note that we use a `Vec<Edge>` in order to represent multiple edges
 /// between the same two nodes.
-type FlowGraph = petgraph::graphmap::GraphMap<node::Id, Vec<(Edge, EdgeKind)>, Directed>;
+type MetaGraph = petgraph::graphmap::GraphMap<node::Id, Vec<(Edge, EdgeKind)>, Directed>;
 
-impl Flow {
-    /// Construct a `Flow` for a single gantz graph.
+impl Meta {
+    /// Construct a `Meta` for a single gantz graph.
     pub fn from_graph<G>(g: G) -> Self
     where
         G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable,
         G::NodeWeight: Node,
     {
-        let mut flow = Flow::default();
+        let mut flow = Meta::default();
         for n_ref in g.node_references() {
             let n = n_ref.id();
             let inputs = g
@@ -68,7 +72,7 @@ impl Flow {
         flow
     }
 
-    /// Add the node with the given ID and inputs to the `Flow`.
+    /// Add the node with the given ID and inputs to the `Meta`.
     pub fn add_node(
         &mut self,
         id: node::Id,
@@ -129,9 +133,9 @@ impl Flow {
     }
 }
 
-/// Allow for constructing a rose-tree of `Flow`s (one for each graph) using
+/// Allow for constructing a rose-tree of `Meta`s (one for each graph) using
 /// the `Node::visit` implementation.
-impl Visitor for RoseTree<Flow> {
+impl Visitor for RoseTree<Meta> {
     fn visit_pre(&mut self, ctx: visit::Ctx, node: &dyn Node) {
         let node_path = ctx.path();
 

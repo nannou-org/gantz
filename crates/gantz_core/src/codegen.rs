@@ -6,7 +6,7 @@ use crate::{
     node::{self, Node},
 };
 #[doc(inline)]
-pub use flow::Flow;
+pub use meta::Meta;
 use node_fns::{node_confs_tree, node_fn_name, node_fns};
 use petgraph::visit::{
     Data, Dfs, EdgeRef, GraphBase, GraphRef, IntoEdgesDirected, IntoNeighbors, IntoNodeReferences,
@@ -19,7 +19,7 @@ use std::{
 };
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
-mod flow;
+mod meta;
 mod node_fns;
 mod rosetree;
 
@@ -27,7 +27,7 @@ mod rosetree;
 /// more gantz [`Edge`]s.
 ///
 /// This is necessary to support calling the `reachable` fns with both the
-/// `Flow` graph and graphs of different types.
+/// `Meta` graph and graphs of different types.
 pub trait Edges {
     /// Produce an iterator yielding all the [`Edge`]s.
     fn edges(&self) -> impl Iterator<Item = Edge>;
@@ -38,8 +38,8 @@ pub trait Edges {
 /// Produced via [`eval_plan`].
 #[derive(Debug)]
 struct EvalPlan<'a> {
-    /// The gantz graph `Flow` from which this `EvalPlan` was produced.
-    flow: &'a Flow,
+    /// The gantz graph `Meta` from which this `EvalPlan` was produced.
+    meta: &'a Meta,
 
     /// Order of evaluation from all inlets to all outlets.
     ///
@@ -354,7 +354,7 @@ where
 
 /// Given a node evaluation order, produce the series of evaluation steps
 /// required.
-pub(crate) fn eval_steps<I>(flow: &Flow, eval_order: I) -> impl Iterator<Item = EvalStep>
+pub(crate) fn eval_steps<I>(meta: &Meta, eval_order: I) -> impl Iterator<Item = EvalStep>
 where
     I: IntoIterator<Item = node::Id>,
 {
@@ -364,9 +364,9 @@ where
         visited.insert(n);
 
         // Collect the inputs, initialising the set to `None`.
-        let n_inputs = flow.inputs.get(&n).copied().unwrap_or(0);
+        let n_inputs = meta.inputs.get(&n).copied().unwrap_or(0);
         let mut inputs: Vec<_> = (0..n_inputs).map(|_| None).collect();
-        for e_ref in flow.graph.edges_directed(n, petgraph::Incoming) {
+        for e_ref in meta.graph.edges_directed(n, petgraph::Incoming) {
             // Only consider edges to nodes that we have already visited.
             if !visited.contains(&e_ref.source()) {
                 continue;
@@ -382,9 +382,9 @@ where
         }
 
         // Collect the set of connected outputs.
-        let n_outputs = flow.outputs.get(&n).copied().unwrap_or(0);
+        let n_outputs = meta.outputs.get(&n).copied().unwrap_or(0);
         let mut outputs: Vec<_> = (0..n_outputs).map(|_| false).collect();
-        for e_ref in flow.graph.edges_directed(n, petgraph::Outgoing) {
+        for e_ref in meta.graph.edges_directed(n, petgraph::Outgoing) {
             for (edge, _kind) in e_ref.weight() {
                 outputs[edge.output.0 as usize] |= true;
             }
@@ -398,29 +398,29 @@ where
     })
 }
 
-/// Create the evaluation plan for the graph associated with the given flow.
-fn eval_plan(flow: &Flow) -> EvalPlan {
-    let pull_steps = flow
+/// Create the evaluation plan for the graph associated with the given meta.
+fn eval_plan(meta: &Meta) -> EvalPlan {
+    let pull_steps = meta
         .pull
         .iter()
         .flat_map(|(&n, evs)| {
             evs.iter().map(move |ev| {
-                let nbs = pull_eval_neighbors(&flow.graph, n, ev);
-                let order = pull_eval_order(&flow.graph, n, &nbs);
-                let steps = eval_steps(flow, order).collect();
+                let nbs = pull_eval_neighbors(&meta.graph, n, ev);
+                let order = pull_eval_order(&meta.graph, n, &nbs);
+                let steps = eval_steps(meta, order).collect();
                 (n, steps)
             })
         })
         .collect();
 
-    let push_steps = flow
+    let push_steps = meta
         .push
         .iter()
         .flat_map(|(&n, evs)| {
             evs.iter().map(move |ev| {
-                let nbs = push_eval_neighbors(&flow.graph, n, ev);
-                let order = push_eval_order(&flow.graph, n, &nbs);
-                let steps = eval_steps(flow, order).collect();
+                let nbs = push_eval_neighbors(&meta.graph, n, ev);
+                let order = push_eval_order(&meta.graph, n, &nbs);
+                let steps = eval_steps(meta, order).collect();
                 (n, steps)
             })
         })
@@ -428,15 +428,15 @@ fn eval_plan(flow: &Flow) -> EvalPlan {
 
     let nested_steps = {
         let order = eval_order(
-            &flow.graph,
-            flow.inlets.iter().cloned(),
-            flow.outlets.iter().cloned(),
+            &meta.graph,
+            meta.inlets.iter().cloned(),
+            meta.outlets.iter().cloned(),
         );
-        eval_steps(flow, order).collect()
+        eval_steps(meta, order).collect()
     };
 
     EvalPlan {
-        flow,
+        meta,
         push_steps,
         pull_steps,
         nested_steps,
@@ -651,7 +651,7 @@ fn eval_fns(eval_tree: &RoseTree<EvalPlan>) -> Vec<ExprKind> {
             (name, steps)
         });
         let fns = pull_steps.chain(push_steps).map(|(name, steps)| {
-            let stmts = eval_stmts(path, &steps, &eval.flow.outputs, &eval.flow.stateful);
+            let stmts = eval_stmts(path, &steps, &eval.meta.outputs, &eval.meta.stateful);
             eval_fn(&name, stmts)
         });
         eval_fns.extend(fns);
@@ -672,10 +672,10 @@ where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G::NodeWeight: Node,
 {
-    // Create a `Flow` for each graph (including nested) in a tree.
-    let mut flow_tree = RoseTree::<Flow>::default();
-    crate::graph::visit(g, &[], &mut flow_tree);
-    let eval_tree = flow_tree.map_ref(&mut eval_plan);
+    // Create a `Meta` for each graph (including nested) in a tree.
+    let mut meta_tree = RoseTree::<Meta>::default();
+    crate::graph::visit(g, &[], &mut meta_tree);
+    let eval_tree = meta_tree.map_ref(&mut eval_plan);
 
     // Collect node fns.
     let node_confs_tree = node_confs_tree(&eval_tree);

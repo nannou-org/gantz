@@ -334,12 +334,12 @@ where
     }
 
     // Use codegen to create the evaluation order, steps, and statements
-    let flow = codegen::Flow::from_graph(g);
+    let meta = codegen::Meta::from_graph(g);
     let outlets: Vec<_> = outlets(g).map(|n_ref| n_ref.id()).collect();
     let order = codegen::eval_order(g, inlets.iter().cloned(), outlets.iter().cloned())
         .map(|id| g.to_index(id));
-    let steps: Vec<_> = codegen::eval_steps(&flow, order).collect();
-    let stmts = codegen::eval_stmts(path, &steps, &flow.outputs, &flow.stateful);
+    let steps: Vec<_> = codegen::eval_steps(&meta, order).collect();
+    let stmts = codegen::eval_stmts(path, &steps, &meta.outputs, &meta.stateful);
 
     // Combine inlet bindings with graph evaluation steps
     let all_stmts = inlet_bindings
