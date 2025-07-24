@@ -336,8 +336,16 @@ where
     // Use codegen to create the evaluation order, steps, and statements
     let meta = codegen::Meta::from_graph(g);
     let outlets: Vec<_> = outlets(g).map(|n_ref| n_ref.id()).collect();
-    let order = codegen::eval_order(g, inlets.iter().cloned(), outlets.iter().cloned())
-        .map(|id| g.to_index(id));
+    let order = codegen::eval_order(
+        g,
+        inlets
+            .iter()
+            .map(|&n| (n, node::Conns::connected(1).unwrap())),
+        outlets
+            .iter()
+            .map(|&n| (n, node::Conns::connected(1).unwrap())),
+    )
+    .map(|id| g.to_index(id));
     let steps: Vec<_> = codegen::eval_steps(&meta, order).collect();
     let stmts = codegen::eval_stmts(path, &steps, &meta.outputs, &meta.stateful);
 

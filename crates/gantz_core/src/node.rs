@@ -22,11 +22,15 @@ pub mod state;
 /// The definitive abstraction of a gantz graph, the gantz `Node` trait.
 pub trait Node {
     /// The number of inputs to the node.
+    ///
+    /// The maximum number is [`Conns::MAX`].
     fn n_inputs(&self) -> usize {
         0
     }
 
     /// The number of outputs from the node.
+    ///
+    /// The maximum number is [`Conns::MAX`].
     fn n_outputs(&self) -> usize {
         0
     }

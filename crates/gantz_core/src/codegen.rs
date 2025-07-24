@@ -106,7 +106,7 @@ pub fn push_eval_fn_name(path: &[node::Id]) -> String {
 fn eval_neighbors<G>(
     g: G,
     n: G::NodeId,
-    ev: &node::EvalConf,
+    conns: &node::Conns,
     src_conn: impl Fn(&Edge) -> usize,
 ) -> HashSet<G::NodeId>
 where
@@ -117,10 +117,8 @@ where
     let mut set = HashSet::new();
     for e_ref in g.edges_directed(n, petgraph::Outgoing) {
         for edge in e_ref.weight().edges() {
-            let include = match ev {
-                node::EvalConf::All => true,
-                node::EvalConf::Set(conns) => conns.get(src_conn(&edge)).unwrap(),
-            };
+            let conn_ix = src_conn(&edge);
+            let include = conns.get(conn_ix).unwrap();
             if include {
                 set.insert(e_ref.target());
             }
@@ -131,7 +129,7 @@ where
 
 /// Given a graph and a `EvalConf` src, return the set of direct neighbors that
 /// will be included in the initial traversal.
-fn push_eval_neighbors<G>(g: G, n: G::NodeId, ev: &node::EvalConf) -> HashSet<G::NodeId>
+fn push_eval_neighbors<G>(g: G, n: G::NodeId, ev: &node::Conns) -> HashSet<G::NodeId>
 where
     G: IntoEdgesDirected,
     G::EdgeWeight: Edges,
@@ -142,7 +140,7 @@ where
 
 /// Given a graph and a `EvalConf` src, return the set of direct neighbors that
 /// will be included in the initial traversal.
-fn pull_eval_neighbors<G>(g: G, n: G::NodeId, ev: &node::EvalConf) -> HashSet<G::NodeId>
+fn pull_eval_neighbors<G>(g: G, n: G::NodeId, ev: &node::Conns) -> HashSet<G::NodeId>
 where
     G: IntoEdgesDirected,
     G::EdgeWeight: Edges,
@@ -337,16 +335,16 @@ where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
     G::EdgeWeight: Edges,
     G::NodeId: Eq + Hash,
-    A: IntoIterator<Item = G::NodeId>,
-    B: IntoIterator<Item = G::NodeId>,
+    A: IntoIterator<Item = (G::NodeId, node::Conns)>,
+    B: IntoIterator<Item = (G::NodeId, node::Conns)>,
 {
     let mut reachable = HashSet::new();
-    reachable.extend(push.into_iter().flat_map(|n| {
-        let ps = push_eval_neighbors(g, n, &node::EvalConf::All);
+    reachable.extend(push.into_iter().flat_map(|(n, conns)| {
+        let ps = push_eval_neighbors(g, n, &conns);
         push_reachable(g, n, &ps).collect::<Vec<_>>()
     }));
-    reachable.extend(pull.into_iter().flat_map(|n| {
-        let pl = pull_eval_neighbors(g, n, &node::EvalConf::All);
+    reachable.extend(pull.into_iter().flat_map(|(n, conns)| {
+        let pl = pull_eval_neighbors(g, n, &conns);
         pull_reachable(g, n, &pl).collect::<Vec<_>>()
     }));
     Topo::new(g).iter(g).filter(move |n| reachable.contains(&n))
@@ -403,9 +401,9 @@ fn eval_plan(meta: &Meta) -> EvalPlan {
     let pull_steps = meta
         .pull
         .iter()
-        .flat_map(|(&n, evs)| {
-            evs.iter().map(move |ev| {
-                let nbs = pull_eval_neighbors(&meta.graph, n, ev);
+        .flat_map(|(&n, confs)| {
+            confs.iter().map(move |conns| {
+                let nbs = pull_eval_neighbors(&meta.graph, n, conns);
                 let order = pull_eval_order(&meta.graph, n, &nbs);
                 let steps = eval_steps(meta, order).collect();
                 (n, steps)
@@ -416,9 +414,9 @@ fn eval_plan(meta: &Meta) -> EvalPlan {
     let push_steps = meta
         .push
         .iter()
-        .flat_map(|(&n, evs)| {
-            evs.iter().map(move |ev| {
-                let nbs = push_eval_neighbors(&meta.graph, n, ev);
+        .flat_map(|(&n, confs)| {
+            confs.iter().map(move |conns| {
+                let nbs = push_eval_neighbors(&meta.graph, n, conns);
                 let order = push_eval_order(&meta.graph, n, &nbs);
                 let steps = eval_steps(meta, order).collect();
                 (n, steps)
@@ -429,8 +427,8 @@ fn eval_plan(meta: &Meta) -> EvalPlan {
     let nested_steps = {
         let order = eval_order(
             &meta.graph,
-            meta.inlets.iter().cloned(),
-            meta.outlets.iter().cloned(),
+            meta.inlets.iter().map(|&n| (n, node::Conns::connected(1).unwrap())),
+            meta.outlets.iter().map(|&n| (n, node::Conns::connected(1).unwrap())),
         );
         eval_steps(meta, order).collect()
     };

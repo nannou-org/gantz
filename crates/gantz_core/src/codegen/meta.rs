@@ -20,11 +20,11 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct Meta {
     pub graph: MetaGraph,
     /// The set of nodes that require branching on their outputs.
-    pub branches: BTreeMap<node::Id, Vec<node::EvalConf>>,
+    pub branches: BTreeMap<node::Id, Vec<node::Conns>>,
     /// The set of nodes that require a push evaluation fn.
-    pub push: BTreeMap<node::Id, Vec<node::EvalConf>>,
+    pub push: BTreeMap<node::Id, Vec<node::Conns>>,
     /// The set of nodes that require a pull evaluation fn.
-    pub pull: BTreeMap<node::Id, Vec<node::EvalConf>>,
+    pub pull: BTreeMap<node::Id, Vec<node::Conns>>,
     /// The set of nodes that require access to state.
     pub stateful: BTreeSet<node::Id>,
     /// The set of nodes that act as inlets (for nested graphs).
@@ -110,17 +110,35 @@ impl Meta {
         // Track node branching.
         let branches = node.branches();
         if !branches.is_empty() {
-            self.branches.insert(id, branches);
+            self.branches.insert(
+                id,
+                branches
+                    .iter()
+                    .map(|conf| conns_from_eval_conf(conf, outputs))
+                    .collect(),
+            );
         }
 
         // Register push/pull eval for the node if necessary.
         let push_eval = node.push_eval();
         if !push_eval.is_empty() {
-            self.push.insert(id, push_eval);
+            self.push.insert(
+                id,
+                push_eval
+                    .iter()
+                    .map(|conf| conns_from_eval_conf(conf, outputs))
+                    .collect(),
+            );
         }
         let pull_eval = node.pull_eval();
         if !pull_eval.is_empty() {
-            self.pull.insert(id, pull_eval);
+            self.pull.insert(
+                id,
+                pull_eval
+                    .iter()
+                    .map(|conf| conns_from_eval_conf(conf, inputs))
+                    .collect(),
+            );
         }
         if node.inlet() {
             self.inlets.insert(id);
@@ -156,20 +174,26 @@ impl super::Edges for Vec<(Edge, EdgeKind)> {
     }
 }
 
+/// Given an eval conf and a known number of connections, convert the conf to
+/// the set of conns.
+fn conns_from_eval_conf(conf: &node::EvalConf, n_conns: usize) -> node::Conns {
+    match conf {
+        node::EvalConf::All => node::Conns::try_from_iter((0..n_conns).map(|_| true)).unwrap(),
+        node::EvalConf::Set(conns) => *conns,
+    }
+}
+
 /// Given the branching of the source node and the output index of a connected
 /// edge, returns the `EdgeKind` of that edge, or `None` if there is no branch
 /// under which the edge can be reached.
-fn edge_kind(confs: Option<&[node::EvalConf]>, out_ix: usize) -> Option<EdgeKind> {
+fn edge_kind(confs: Option<&[node::Conns]>, out_ix: usize) -> Option<EdgeKind> {
     let Some(confs) = confs else {
         return Some(EdgeKind::Static);
     };
     let mut reachable = false;
     let mut conditional = false;
-    for conf in confs {
-        let active = match conf {
-            node::EvalConf::All => true,
-            node::EvalConf::Set(branch) => branch.get(out_ix).expect("missing output in branch"),
-        };
+    for branch in confs {
+        let active = branch.get(out_ix).expect("missing output in branch");
         reachable |= active;
         conditional |= !active;
     }

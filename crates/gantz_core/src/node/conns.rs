@@ -49,6 +49,19 @@ impl Conns {
         }
     }
 
+    /// Creates a new `Conns` with the given number of connections.
+    ///
+    /// All connections are initialised as connected.
+    ///
+    /// Returns `Err` if `len` is out of range of [`MAX`].
+    pub fn connected(len: usize) -> Result<Self, OutOfBoundsError> {
+        let mut conns = Self::unconnected(len)?;
+        for i in 0..len {
+            conns.set(i, true).unwrap();
+        }
+        Ok(conns)
+    }
+
     /// Creates a new `Conns` with the given slice of connection states.
     ///
     /// Returns `Err` if `len` is out of range of [`MAX`].
