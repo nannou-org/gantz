@@ -11,6 +11,33 @@ use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 mod node_fn;
 
+/// Binding used for `state` local to each node fn.
+const STATE: &str = "state";
+
+/// The expression for a call to a node function.
+fn node_fn_call(
+    node_path: &[node::Id],
+    inputs: &[Option<String>],
+    outputs: &[bool],
+    stateful: bool,
+) -> ExprKind {
+    // Prepare function arguments.
+    let mut args: Vec<String> = inputs.iter().filter_map(Clone::clone).collect();
+    if stateful {
+        args.push(STATE.to_string());
+    }
+
+    // The expression for the node function call.
+    let node_inputs: Vec<_> = inputs.iter().map(|arg| arg.is_some()).collect();
+    let node_fn_name = node_fn::name(&node_path, &node_inputs, outputs);
+    let node_fn_call_expr_str = format!("({node_fn_name} {})", args.join(" "));
+    Engine::emit_ast(&node_fn_call_expr_str)
+        .expect("failed to emit AST")
+        .into_iter()
+        .next()
+        .unwrap()
+}
+
 /// A statement within a sequence of statements for a top-level entrypoint or
 /// nested graph function.
 ///
@@ -21,14 +48,12 @@ mod node_fn;
 ///   arguments to the node inputs.
 ///
 /// Returns the statement, alongside the name(s) of the output binding(s).
-pub fn eval_stmt(
+fn eval_stmt(
     node_path: &[node::Id],
     inputs: &[Option<String>],
     outputs: &[bool],
     stateful: bool,
 ) -> (ExprKind, Vec<String>) {
-    const STATE: &str = "state";
-
     // Function to generate variable names
     fn var_name(node_ix: node::Id, out_ix: u16) -> String {
         format!("__node{}_output{}", node_ix, out_ix)
@@ -91,17 +116,9 @@ pub fn eval_stmt(
         .map(|i| var_name(node_ix, i as u16))
         .collect();
 
-    let node_inputs: Vec<_> = inputs.iter().map(|arg| arg.is_some()).collect();
-    let node_fn_name = node_fn::name(&node_path, &node_inputs, outputs);
-
-    // Prepare function arguments.
-    let mut args: Vec<String> = inputs.iter().filter_map(Clone::clone).collect();
-    if stateful {
-        args.push(STATE.to_string());
-    }
-
     // The expression for the node function call.
-    let mut node_fn_call_expr_str = format!("({node_fn_name} {})", args.join(" "));
+    let node_fn_call_expr = node_fn_call(node_path, inputs, outputs, stateful);
+    let mut node_fn_call_expr_str = format!("{node_fn_call_expr}");
 
     // Create the expression for the node.
     if stateful {
