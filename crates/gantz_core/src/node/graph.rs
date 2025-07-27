@@ -347,7 +347,7 @@ where
     )
     .map(|id| g.to_index(id));
     let steps: Vec<_> = codegen::eval_steps(&meta, order).collect();
-    let stmts = codegen::eval_stmts(path, &steps, &meta.outputs, &meta.stateful);
+    let stmts = codegen::eval_stmts(path, &steps, &meta.stateful);
 
     // Combine inlet bindings with graph evaluation steps
     let all_stmts = inlet_bindings

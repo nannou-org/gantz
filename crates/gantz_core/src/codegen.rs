@@ -427,8 +427,13 @@ fn eval_plan(meta: &Meta) -> EvalPlan {
     let nested_steps = {
         let order = eval_order(
             &meta.graph,
-            meta.inlets.iter().map(|&n| (n, node::Conns::connected(1).unwrap())),
-            meta.outlets.iter().map(|&n| (n, node::Conns::connected(1).unwrap())),
+            // FIXME: shouldn't hardcode these `Conns` counts...
+            meta.inlets
+                .iter()
+                .map(|&n| (n, node::Conns::connected(1).unwrap())),
+            meta.outlets
+                .iter()
+                .map(|&n| (n, node::Conns::connected(1).unwrap())),
         );
         eval_steps(meta, order).collect()
     };
@@ -452,27 +457,26 @@ fn node_state_key(node_id: usize) -> ExprKind {
         .unwrap()
 }
 
-/// Generate a sequence of evaluation statements for an eval function, one
-/// statement for each given evaluation step.
+/// A statement within a sequence of statements for a top-level entrypoint or
+/// nested graph function.
 ///
-/// The given `path`, `outputs` and `stateful` are associated with the graph
-/// in which the eval fn is invoked.
-pub(crate) fn eval_stmts(
-    path: &[node::Id],
-    steps: &[EvalStep],
-    outputs: &BTreeMap<node::Id, usize>,
-    stateful: &BTreeSet<node::Id>,
-) -> Vec<ExprKind> {
-    type OutputVars = HashMap<(node::Id, node::Output), String>;
-
+/// ### Parameters
+///
+/// - `node_path`: the node's nesting path relative to the root graph.
+/// - `inputs`: the names of the output bindings that are being provided as
+///   arguments to the node inputs.
+///
+/// Returns the statement, alongside the name(s) of the output binding(s).
+pub fn eval_stmt(
+    node_path: &[node::Id],
+    inputs: &[Option<String>],
+    outputs: &[bool],
+    stateful: bool,
+) -> (ExprKind, Vec<String>) {
     const STATE: &str = "state";
 
-    // Track output variables
-    let mut output_vars: OutputVars = HashMap::new();
-    let mut stmts = Vec::new();
-
     // Function to generate variable names
-    fn var_name(node_ix: usize, out_ix: u16) -> String {
+    fn var_name(node_ix: node::Id, out_ix: u16) -> String {
         format!("__node{}_output{}", node_ix, out_ix)
     }
 
@@ -514,84 +518,96 @@ pub(crate) fn eval_stmts(
             .unwrap()
     }
 
-    // Create an expression that references a variable name
-    fn create_var_expr(var_name: &str) -> ExprKind {
-        Engine::emit_ast(var_name)
-            .expect("failed to emit AST")
-            .into_iter()
-            .next()
-            .unwrap()
+    // The node index is the last element of the path.
+    let node_ix = *node_path.last().expect("node_path must not be empty");
+
+    // Create variables for this node's outputs
+    let output_vars: Vec<_> = (0..outputs.len())
+        .map(|i| var_name(node_ix, i as u16))
+        .collect();
+
+    let node_inputs: Vec<_> = inputs.iter().map(|arg| arg.is_some()).collect();
+    let node_fn_name = node_fn_name(&node_path, &node_inputs, outputs);
+
+    // Prepare function arguments.
+    let mut args: Vec<String> = inputs.iter().filter_map(Clone::clone).collect();
+    if stateful {
+        args.push(STATE.to_string());
     }
 
-    for (step_ix, step) in steps.iter().enumerate() {
-        let n_outputs = outputs.get(&step.node).copied().unwrap_or(0);
+    // The expression for the node function call.
+    let mut node_fn_call_expr_str = format!("({node_fn_name} {})", args.join(" "));
 
-        // Create variables for this node's outputs
-        for out_ix in 0..n_outputs {
-            let var = var_name(step_ix, out_ix as u16);
-            output_vars.insert((step.node, node::Output(out_ix as u16)), var);
+    // Create the expression for the node.
+    if stateful {
+        node_fn_call_expr_str = wrap_node_fn_call_with_state(&node_fn_call_expr_str, node_ix);
+    };
+    let node_fn_call_expr = Engine::emit_ast(&node_fn_call_expr_str)
+        .expect("failed to emit AST")
+        .into_iter()
+        .next()
+        .unwrap();
+
+    // Create a binding statement for each output
+    let stmt = match outputs.len() {
+        0 => node_fn_call_expr,
+        1 => {
+            let output_var = var_name(node_ix, 0);
+            let define_expr = create_define_expr(output_var, node_fn_call_expr);
+            define_expr
         }
+        _ => {
+            let output_vars: Vec<String> = (0..outputs.len())
+                .map(|i| var_name(node_ix, i as u16))
+                .collect();
+            let define_values_expr = create_define_values_expr(output_vars, node_fn_call_expr);
+            define_values_expr
+        }
+    };
 
-        // Prepare input expressions for the node
-        let input_exprs: Vec<_> = step
+    (stmt, output_vars)
+}
+
+/// Generate a sequence of evaluation statements for an eval function, one
+/// statement for each given evaluation step.
+///
+/// The given `path`, `outputs` and `stateful` are associated with the graph
+/// in which the eval fn is invoked.
+pub(crate) fn eval_stmts(
+    path: &[node::Id],
+    steps: &[EvalStep],
+    stateful: &BTreeSet<node::Id>,
+) -> Vec<ExprKind> {
+    // Track output variables
+    let mut output_vars: HashMap<(node::Id, node::Output), String> = HashMap::new();
+    let mut stmts = Vec::new();
+    for step in steps {
+        // Prepare input expressions for this node
+        let inputs: Vec<_> = step
             .inputs
             .iter()
             .map(|arg_opt| {
                 arg_opt.as_ref().map(|arg| {
-                    // Get the variable name for this input
                     let var_name = output_vars.get(&(arg.node, arg.output)).unwrap();
-                    // Create an expression referencing this variable
-                    create_var_expr(var_name)
+                    var_name.to_string()
                 })
             })
             .collect();
 
-        // Get the node's function name.
         let node_path: Vec<_> = path.iter().copied().chain(Some(step.node)).collect();
-        let node_inputs: Vec<_> = step.inputs.iter().map(|arg| arg.is_some()).collect();
-        let node_fn_name = node_fn_name(&node_path, &node_inputs, &step.outputs);
+        let stateful = stateful.contains(&step.node);
 
-        // Prepare function arguments.
-        let mut args: Vec<String> = input_exprs
-            .iter()
-            .filter_map(|opt| opt.as_ref().map(|expr| format!("{expr}")))
-            .collect();
-        let is_stateful = stateful.contains(&step.node);
-        if is_stateful {
-            args.push(STATE.to_string());
+        // Produce the statement.
+        let (stmt, stmt_outputs) = eval_stmt(&node_path, &inputs, &step.outputs, stateful);
+
+        // Keep track of the output bindings.
+        for (out_ix, out_var) in stmt_outputs.into_iter().enumerate() {
+            let output = node::Output(out_ix.try_into().unwrap());
+            output_vars.insert((step.node, output), out_var);
         }
 
-        // The expression for the node function call.
-        let mut node_fn_call_expr_str = format!("({node_fn_name} {})", args.join(" "));
-
-        // Create the expression for the node.
-        if is_stateful {
-            node_fn_call_expr_str = wrap_node_fn_call_with_state(&node_fn_call_expr_str, step.node);
-        };
-        let node_fn_call_expr = Engine::emit_ast(&node_fn_call_expr_str)
-            .expect("failed to emit AST")
-            .into_iter()
-            .next()
-            .unwrap();
-
-        // Create a binding statement for each output
-        match n_outputs {
-            0 => stmts.push(node_fn_call_expr),
-            1 => {
-                let output_var = var_name(step_ix, 0);
-                let define_expr = create_define_expr(output_var, node_fn_call_expr);
-                stmts.push(define_expr);
-            }
-            _ => {
-                let output_vars: Vec<String> = (0..n_outputs)
-                    .map(|i| var_name(step_ix, i as u16))
-                    .collect();
-                let define_values_expr = create_define_values_expr(output_vars, node_fn_call_expr);
-                stmts.push(define_values_expr);
-            }
-        }
+        stmts.push(stmt);
     }
-
     stmts
 }
 
@@ -649,7 +665,7 @@ fn eval_fns(eval_tree: &RoseTree<EvalPlan>) -> Vec<ExprKind> {
             (name, steps)
         });
         let fns = pull_steps.chain(push_steps).map(|(name, steps)| {
-            let stmts = eval_stmts(path, &steps, &eval.meta.outputs, &eval.meta.stateful);
+            let stmts = eval_stmts(path, &steps, &eval.meta.stateful);
             eval_fn(&name, stmts)
         });
         eval_fns.extend(fns);
