@@ -7,9 +7,9 @@
 //! These configurations are collected by traversing from each of the push/pull
 //! evaluation entrypoints.
 
-use super::{EvalPlan, EvalStep, RoseTree};
 use crate::{
     Edge,
+    compile::{EvalPlan, EvalStep, RoseTree, codegen::path_string},
     node::{self, Node},
     visit::{self, Visitor},
 };
@@ -25,7 +25,7 @@ type NodeConfs = BTreeSet<(node::Id, NodeConf)>;
 
 /// The connectedness of a node for a particular evaluation step.
 #[derive(Clone, Eq, PartialEq, PartialOrd, Ord)]
-pub(super) struct NodeConf {
+pub(crate) struct NodeConf {
     inputs: Vec<bool>,
     outputs: Vec<bool>,
 }
@@ -87,7 +87,7 @@ where
 }
 
 /// Construct a rose tree of node configs from a tree of eval plans.
-pub(super) fn node_confs_tree(eval_tree: &RoseTree<EvalPlan>) -> RoseTree<NodeConfs> {
+pub(crate) fn node_confs_tree(eval_tree: &RoseTree<EvalPlan>) -> RoseTree<NodeConfs> {
     eval_tree.map_ref(&mut |eval| {
         let all_steps = eval
             .pull_steps
@@ -100,8 +100,8 @@ pub(super) fn node_confs_tree(eval_tree: &RoseTree<EvalPlan>) -> RoseTree<NodeCo
 }
 
 /// Generate a function name for a node based on its path in the graph.
-pub(crate) fn node_fn_name(node_path: &[node::Id], inputs: &[bool], outputs: &[bool]) -> String {
-    let path_string = super::path_string(node_path);
+pub(crate) fn name(node_path: &[node::Id], inputs: &[bool], outputs: &[bool]) -> String {
+    let path_string = path_string(node_path);
     let bin_string =
         |bin: &[bool]| -> String { bin.iter().map(|&b| if b { "1" } else { "0" }).collect() };
     let inputs_prefix = if inputs.is_empty() { "" } else { "_i" };
@@ -143,7 +143,7 @@ pub(crate) fn node_fn(node: &dyn Node, node_path: &[node::Id], conf: &NodeConf) 
     let node_expr = node.expr(ctx);
 
     // Construct the full function definition
-    let fn_name = node_fn_name(node_path, &conf.inputs, &conf.outputs);
+    let fn_name = name(node_path, &conf.inputs, &conf.outputs);
     let fn_body = if node.stateful() {
         input_args.push(STATE.to_string());
         format!("(let ((output {node_expr})) (list output state))")
