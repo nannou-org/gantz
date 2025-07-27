@@ -117,7 +117,7 @@ pub trait Node {
     /// Whether or not the node requires access to state.
     ///
     /// Nodes returning `true` will have a special `state` variable accessible
-    /// within their [`Node::expr`] provided during codegen.
+    /// within their [`Node::expr`] provided during compilation.
     fn stateful(&self) -> bool {
         false
     }

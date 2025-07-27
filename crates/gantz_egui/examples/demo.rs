@@ -287,13 +287,13 @@ fn process_cmds(state: &mut gantz_egui::widget::GantzState, vm: &mut Engine) {
         log::debug!("{cmd:?}");
         match cmd {
             gantz_egui::Cmd::PushEval(path) => {
-                let fn_name = gantz_core::codegen::push_eval_fn_name(&path);
+                let fn_name = gantz_core::compile::push_eval_fn_name(&path);
                 if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
                     log::error!("{e}");
                 }
             }
             gantz_egui::Cmd::PullEval(path) => {
-                let fn_name = gantz_core::codegen::pull_eval_fn_name(&path);
+                let fn_name = gantz_core::compile::pull_eval_fn_name(&path);
                 if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
                     log::error!("{e}");
                 }
@@ -307,7 +307,7 @@ fn process_cmds(state: &mut gantz_egui::widget::GantzState, vm: &mut Engine) {
 
 fn compile_graph(graph: &Graph, vm: &mut Engine) -> Vec<ExprKind> {
     // Generate the steel module.
-    let module = gantz_core::codegen::module(graph);
+    let module = gantz_core::compile::module(graph);
     // Compile the eval fns.
     for expr in &module {
         if let Err(e) = vm.run(expr.to_pretty(80)) {

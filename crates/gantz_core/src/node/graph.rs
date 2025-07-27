@@ -316,7 +316,7 @@ where
     G::NodeWeight: Node,
     G::NodeId: Eq + Hash,
 {
-    use crate::codegen;
+    use crate::compile;
 
     // Create statements to set inlet node states from inputs
     let inlets: Vec<_> = inlets(g).map(|n_ref| n_ref.id()).collect();
@@ -333,10 +333,10 @@ where
         }
     }
 
-    // Use codegen to create the evaluation order, steps, and statements
-    let meta = codegen::Meta::from_graph(g);
+    // Use compile to create the evaluation order, steps, and statements
+    let meta = compile::Meta::from_graph(g);
     let outlets: Vec<_> = outlets(g).map(|n_ref| n_ref.id()).collect();
-    let order = codegen::eval_order(
+    let order = compile::eval_order(
         g,
         inlets
             .iter()
@@ -346,8 +346,8 @@ where
             .map(|&n| (n, node::Conns::connected(1).unwrap())),
     )
     .map(|id| g.to_index(id));
-    let steps: Vec<_> = codegen::eval_steps(&meta, order).collect();
-    let stmts = codegen::eval_stmts(path, &steps, &meta.stateful);
+    let steps: Vec<_> = compile::eval_steps(&meta, order).collect();
+    let stmts = compile::eval_stmts(path, &steps, &meta.stateful);
 
     // Combine inlet bindings with graph evaluation steps
     let all_stmts = inlet_bindings

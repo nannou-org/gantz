@@ -2,7 +2,7 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
-    codegen::push_eval_fn_name,
+    compile::push_eval_fn_name,
     node::{self, GraphNode, Node, WithPushEval},
 };
 use std::fmt::Debug;
@@ -115,7 +115,7 @@ fn test_graph_nested_stateless() {
     gb.add_edge(forty_two, assert_eq, Edge::from((0, 1)));
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::codegen::module(&gb);
+    let module = gantz_core::compile::module(&gb);
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -197,7 +197,7 @@ fn test_graph_nested_counter() {
     gb.add_edge(graph_a, number, Edge::from((0, 0)));
 
     // Generate the module.
-    let module = gantz_core::codegen::module(&gb);
+    let module = gantz_core::compile::module(&gb);
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -284,7 +284,7 @@ fn test_graph_nested_push_eval() {
     gb.add_edge(graph_a, number, Edge::from((0, 0)));
 
     // Generate the module.
-    let module = gantz_core::codegen::module(&gb);
+    let module = gantz_core::compile::module(&gb);
 
     // Create the VM.
     let mut vm = Engine::new_base();

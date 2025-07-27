@@ -2,7 +2,7 @@
 
 use crate::{
     Edge,
-    codegen::RoseTree,
+    compile::RoseTree,
     node::{self, Node},
     visit::{self, Visitor},
 };

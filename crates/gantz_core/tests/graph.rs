@@ -1,6 +1,6 @@
 // Tests for the graph module.
 
-use gantz_core::codegen::{pull_eval_fn_name, push_eval_fn_name};
+use gantz_core::compile::{pull_eval_fn_name, push_eval_fn_name};
 use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
 use std::fmt::Debug;
@@ -88,7 +88,7 @@ fn test_graph_push_eval() {
     g.add_edge(two, assert_eq, Edge::from((0, 1)));
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::codegen::module(&g);
+    let module = gantz_core::compile::module(&g);
     // Function per node alongside the single push eval function.
     assert_eq!(module.len(), g.node_count() + 1);
 
@@ -145,7 +145,7 @@ fn test_graph_pull_eval() {
     g.add_edge(two, assert_eq, Edge::from((0, 1)));
 
     // Generate the steel module.
-    let module = gantz_core::codegen::module(&g);
+    let module = gantz_core::compile::module(&g);
 
     // Prepare the VM.
     let mut vm = Engine::new_base();
@@ -241,7 +241,7 @@ fn test_graph_push_cond_eval() {
     g.add_edge(seven, number, Edge::from((0, 0)));
 
     // Generate the module.
-    let module = gantz_core::codegen::module(&g);
+    let module = gantz_core::compile::module(&g);
     // Function per node alongside the two push eval functions.
     assert_eq!(module.len(), g.node_count() + 2);
 
@@ -312,7 +312,7 @@ fn test_graph_eval_should_panic() {
     g.add_edge(one, assert_eq, Edge::from((0, 1)));
 
     // Generate the steel module.
-    let module = gantz_core::codegen::module(&g);
+    let module = gantz_core::compile::module(&g);
 
     // Prepare the VM.
     let mut vm = Engine::new_base();
@@ -386,7 +386,7 @@ fn test_graph_push_eval_subset() {
     g.add_edge(source, store_b, Edge::from((1, 0)));
 
     // Generate the module
-    let module = gantz_core::codegen::module(&g);
+    let module = gantz_core::compile::module(&g);
 
     // Create the VM
     let mut vm = Engine::new_base();
