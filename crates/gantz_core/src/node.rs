@@ -1,9 +1,9 @@
 //! The primary [`Node`] abstraction and related items.
 
 #[doc(inline)]
-pub use conns::Conns;
-#[doc(inline)]
 pub use crate::visit::{self, Visitor};
+#[doc(inline)]
+pub use conns::Conns;
 pub use expr::{Expr, ExprError};
 pub use graph::GraphNode;
 pub use pull::{Pull, WithPullEval};

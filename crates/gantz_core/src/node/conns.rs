@@ -23,7 +23,10 @@ pub struct OutOfBoundsError;
 
 /// Error type for parsing bit strings.
 #[derive(Clone, Copy, Debug, Error, Eq, Hash, PartialEq, PartialOrd, Ord)]
-#[error("invalid bit string: must contain {} or less '0' and/or '1' chars", Conns::MAX)]
+#[error(
+    "invalid bit string: must contain {} or less '0' and/or '1' chars",
+    Conns::MAX
+)]
 pub struct ParseBitStringError;
 
 impl Conns {
