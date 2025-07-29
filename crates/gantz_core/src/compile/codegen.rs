@@ -18,7 +18,7 @@ const STATE: &str = "state";
 fn node_fn_call(
     node_path: &[node::Id],
     inputs: &[Option<String>],
-    outputs: &[bool],
+    outputs: &node::Conns,
     stateful: bool,
 ) -> ExprKind {
     // Prepare function arguments.
@@ -28,7 +28,7 @@ fn node_fn_call(
     }
 
     // The expression for the node function call.
-    let node_inputs: Vec<_> = inputs.iter().map(|arg| arg.is_some()).collect();
+    let node_inputs = node::Conns::try_from_iter(inputs.iter().map(|arg| arg.is_some())).unwrap();
     let node_fn_name = node_fn::name(&node_path, &node_inputs, outputs);
     let node_fn_call_expr_str = format!("({node_fn_name} {})", args.join(" "));
     Engine::emit_ast(&node_fn_call_expr_str)
@@ -51,7 +51,7 @@ fn node_fn_call(
 fn eval_stmt(
     node_path: &[node::Id],
     inputs: &[Option<String>],
-    outputs: &[bool],
+    outputs: &node::Conns,
     stateful: bool,
 ) -> (ExprKind, Vec<String>) {
     // Function to generate variable names
@@ -180,7 +180,8 @@ pub(crate) fn eval_stmts(
         let stateful = stateful.contains(&step.node);
 
         // Produce the statement.
-        let (stmt, stmt_outputs) = eval_stmt(&node_path, &inputs, &step.outputs, stateful);
+        let outputs = node::Conns::try_from_slice(&step.outputs).unwrap();
+        let (stmt, stmt_outputs) = eval_stmt(&node_path, &inputs, &outputs, stateful);
 
         // Keep track of the output bindings.
         for (out_ix, out_var) in stmt_outputs.into_iter().enumerate() {

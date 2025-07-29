@@ -100,14 +100,14 @@ pub(crate) fn node_confs_tree(eval_tree: &RoseTree<EvalPlan>) -> RoseTree<NodeCo
 }
 
 /// Generate a function name for a node based on its path in the graph.
-pub(crate) fn name(node_path: &[node::Id], inputs: &[bool], outputs: &[bool]) -> String {
+///
+/// E.g. `node_fn_0_1_2_i0101_o1100
+pub(crate) fn name(node_path: &[node::Id], inputs: &node::Conns, outputs: &node::Conns) -> String {
     let path_string = path_string(node_path);
-    let bin_string =
-        |bin: &[bool]| -> String { bin.iter().map(|&b| if b { "1" } else { "0" }).collect() };
     let inputs_prefix = if inputs.is_empty() { "" } else { "_i" };
     let outputs_prefix = if outputs.is_empty() { "" } else { "_o" };
-    let inputs_string = bin_string(inputs);
-    let outputs_string = bin_string(outputs);
+    let inputs_string = format!("{inputs}");
+    let outputs_string = format!("{outputs}");
     format!("node_fn_{path_string}{inputs_prefix}{inputs_string}{outputs_prefix}{outputs_string}")
 }
 
@@ -143,7 +143,10 @@ pub(crate) fn node_fn(node: &dyn Node, node_path: &[node::Id], conf: &NodeConf) 
     let node_expr = node.expr(ctx);
 
     // Construct the full function definition
-    let fn_name = name(node_path, &conf.inputs, &conf.outputs);
+    // FIXME: Remove this when switching to `flow::NodeConf`.
+    let inputs = node::Conns::try_from_slice(&conf.inputs).unwrap();
+    let outputs = node::Conns::try_from_slice(&conf.outputs).unwrap();
+    let fn_name = name(node_path, &inputs, &outputs);
     let fn_body = if node.stateful() {
         input_args.push(STATE.to_string());
         format!("(let ((output {node_expr})) (list output state))")
