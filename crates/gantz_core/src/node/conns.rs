@@ -133,6 +133,16 @@ impl Conns {
     pub fn iter_bit_chars(&self) -> impl Iterator<Item = char> {
         self.iter().map(|b| if b { '1' } else { '0' })
     }
+
+    /// The number of connections.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Whether or not there are no connections.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
 }
 
 impl<'a> convert::TryFrom<&'a [bool]> for Conns {
