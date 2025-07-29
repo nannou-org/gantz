@@ -11,11 +11,11 @@ use petgraph::visit::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Represents a high-level description and flow of a gantz graph.
+/// Represents a high-level representation of a gantz graph.
 ///
 /// This is produced as the first stage of code-generation and acts as a
 /// high-level overview of the gantz graph that can be used for faster
-/// traversal and .
+/// traversal and node metadata lookup.
 #[derive(Debug, Default)]
 pub struct Meta {
     pub graph: MetaGraph,
@@ -39,7 +39,7 @@ pub struct Meta {
 
 /// Whether an edge is known to always be traversed, or whether it is
 /// conditional.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum EdgeKind {
     /// The edge is known to always be connected.
     Static,
