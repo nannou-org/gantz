@@ -104,11 +104,11 @@ pub(crate) fn node_confs_tree(eval_tree: &RoseTree<EvalPlan>) -> RoseTree<NodeCo
 /// E.g. `node_fn_0_1_2_i0101_o1100
 pub(crate) fn name(node_path: &[node::Id], inputs: &node::Conns, outputs: &node::Conns) -> String {
     let path_string = path_string(node_path);
-    let inputs_prefix = if inputs.is_empty() { "" } else { "_i" };
-    let outputs_prefix = if outputs.is_empty() { "" } else { "_o" };
+    let inputs_prefix = if inputs.is_empty() { "" } else { "-i" };
+    let outputs_prefix = if outputs.is_empty() { "" } else { "-o" };
     let inputs_string = format!("{inputs}");
     let outputs_string = format!("{outputs}");
-    format!("node_fn_{path_string}{inputs_prefix}{inputs_string}{outputs_prefix}{outputs_string}")
+    format!("node-fn-{path_string}{inputs_prefix}{inputs_string}{outputs_prefix}{outputs_string}")
 }
 
 /// Generate a function for a single node with the given set of connected inputs.

@@ -56,7 +56,7 @@ fn eval_stmt(
 ) -> (ExprKind, Vec<String>) {
     // Function to generate variable names
     fn var_name(node_ix: node::Id, out_ix: u16) -> String {
-        format!("__node{}_output{}", node_ix, out_ix)
+        format!("node-{}-o{}", node_ix, out_ix)
     }
 
     // An expression for a node's key into the graph state hashmap.
@@ -229,17 +229,17 @@ fn path_string(path: &[node::Id]) -> String {
     path.iter()
         .map(|id| id.to_string())
         .collect::<Vec<_>>()
-        .join("_")
+        .join(":")
 }
 
 /// The name used for the pull evaluation fn generated for the given node.
 pub fn pull_eval_fn_name(path: &[node::Id]) -> String {
-    format!("pull_eval_{}", path_string(path))
+    format!("pull-fn-{}", path_string(path))
 }
 
 /// The name used for the push evaluation fn generated for the given node.
 pub fn push_eval_fn_name(path: &[node::Id]) -> String {
-    format!("push_eval_{}", path_string(path))
+    format!("push-fn-{}", path_string(path))
 }
 
 /// Given a tree of eval plans for a gantz graph (and its nested graphs),

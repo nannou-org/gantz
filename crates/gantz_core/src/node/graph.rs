@@ -377,9 +377,9 @@ where
     };
 
     let expr_str = format!(
-        "(begin (define __graph_state state)
+        "(begin (define {GRAPH_STATE} state)
            {}
-           (set! state __graph_state)
+           (set! state {GRAPH_STATE})
            {outlet_values_expr})",
         all_stmts
     );
