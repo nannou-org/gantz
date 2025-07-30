@@ -10,7 +10,7 @@ pub(crate) use codegen::eval_stmts;
 #[doc(inline)]
 pub use codegen::{pull_eval_fn_name, push_eval_fn_name};
 #[doc(inline)]
-pub use meta::Meta;
+pub use meta::{EdgeKind, Meta};
 use petgraph::visit::{
     Data, Dfs, EdgeRef, GraphBase, GraphRef, IntoEdgesDirected, IntoNeighbors, IntoNodeReferences,
     NodeIndexable, Topo, Visitable, Walker,

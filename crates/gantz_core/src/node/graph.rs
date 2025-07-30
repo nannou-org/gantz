@@ -80,7 +80,8 @@ where
     N: Node,
 {
     fn branches(&self) -> Vec<node::EvalConf> {
-        todo!("branch based on inner node branching")
+        // TODO: generate branches based on inner node branching
+        vec![]
     }
 
     fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
