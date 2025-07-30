@@ -2,6 +2,8 @@
 
 #[doc(inline)]
 pub use crate::visit::{self, Visitor};
+#[doc(inline)]
+pub use conns::Conns;
 pub use expr::{Expr, ExprError};
 pub use graph::GraphNode;
 pub use pull::{Pull, WithPullEval};
@@ -10,6 +12,7 @@ use serde::{Deserialize, Serialize};
 pub use state::{NodeState, State, WithStateType};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
+mod conns;
 pub mod expr;
 pub mod graph;
 pub mod pull;
@@ -19,13 +22,38 @@ pub mod state;
 /// The definitive abstraction of a gantz graph, the gantz `Node` trait.
 pub trait Node {
     /// The number of inputs to the node.
+    ///
+    /// The maximum number is [`Conns::MAX`].
     fn n_inputs(&self) -> usize {
         0
     }
 
     /// The number of outputs from the node.
+    ///
+    /// The maximum number is [`Conns::MAX`].
     fn n_outputs(&self) -> usize {
         0
+    }
+
+    /// The list of possible branches from this node.
+    ///
+    /// Each branch is represented as a set of outputs that are enabled for that
+    /// branch.
+    ///
+    /// This is intended for nodes that conditionally activate outputs based on
+    /// some received input.
+    ///
+    /// If the returned `Vec` is empty, we assume the node has no branching, and
+    /// simply evaluates to all outputs.
+    ///
+    /// If the returned `Vec` is non-empty, the expression returned from
+    /// [`Node::expr`] method must return a list with two elements where the
+    /// first element is the index of the selected branch, and the second
+    /// element is the node's output value(s).
+    ///
+    /// By default, this is `vec![]`.
+    fn branches(&self) -> Vec<EvalConf> {
+        vec![]
     }
 
     /// The expression that, given the expressions of connected inputs,
@@ -89,7 +117,7 @@ pub trait Node {
     /// Whether or not the node requires access to state.
     ///
     /// Nodes returning `true` will have a special `state` variable accessible
-    /// within their [`Node::expr`] provided during codegen.
+    /// within their [`Node::expr`] provided during compilation.
     fn stateful(&self) -> bool {
         false
     }
@@ -126,7 +154,7 @@ pub enum EvalConf {
     /// Requires a fn for evaluation from a subset of the connections.
     ///
     /// An element for each connection, `true` if eval-enabled.
-    Set(Vec<bool>),
+    Set(Conns),
 }
 
 /// Type used to represent a node's ID within a graph.
@@ -224,6 +252,10 @@ where
         (**self).n_outputs()
     }
 
+    fn branches(&self) -> Vec<EvalConf> {
+        (**self).branches()
+    }
+
     fn expr(&self, ctx: ExprCtx) -> ExprKind {
         (**self).expr(ctx)
     }
@@ -269,6 +301,10 @@ macro_rules! impl_node_for_ptr {
 
             fn n_outputs(&self) -> usize {
                 (**self).n_outputs()
+            }
+
+            fn branches(&self) -> Vec<EvalConf> {
+                (**self).branches()
             }
 
             fn expr(&self, ctx: ExprCtx) -> ExprKind {

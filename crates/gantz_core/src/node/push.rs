@@ -60,6 +60,10 @@ where
         self.node.n_outputs()
     }
 
+    fn branches(&self) -> Vec<node::EvalConf> {
+        self.node.branches()
+    }
+
     fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
         self.node.expr(ctx)
     }

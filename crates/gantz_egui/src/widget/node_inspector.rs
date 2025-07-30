@@ -68,11 +68,11 @@ pub fn table(
                 });
             });
 
-            let eval = match (node.push_eval(), node.pull_eval()) {
-                (Some(_), Some(_)) => Some("push, pull"),
-                (Some(_), None) => Some("push"),
-                (None, Some(_)) => Some("pull"),
-                (None, None) => None,
+            let eval = match (!node.push_eval().is_empty(), !node.pull_eval().is_empty()) {
+                (true, true) => Some("push, pull"),
+                (true, false) => Some("push"),
+                (false, true) => Some("pull"),
+                (false, false) => None,
             };
 
             if let Some(eval) = eval {

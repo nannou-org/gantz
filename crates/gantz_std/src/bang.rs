@@ -14,7 +14,7 @@ impl gantz_core::Node for Bang {
         Engine::emit_ast("'()").unwrap().into_iter().next().unwrap()
     }
 
-    fn push_eval(&self) -> Option<gantz_core::node::EvalFn> {
-        Some(gantz_core::node::EvalFn)
+    fn push_eval(&self) -> Vec<gantz_core::node::EvalConf> {
+        vec![gantz_core::node::EvalConf::All]
     }
 }

@@ -79,6 +79,11 @@ impl<N> Node for GraphNode<N>
 where
     N: Node,
 {
+    fn branches(&self) -> Vec<node::EvalConf> {
+        // TODO: generate branches based on inner node branching
+        vec![]
+    }
+
     fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
         nested_expr(&self.graph, ctx.path(), ctx.inputs())
     }
@@ -213,6 +218,7 @@ impl Node for Inlet {
             .into_iter()
             .next()
             .unwrap()
+            .into()
     }
 
     fn n_inputs(&self) -> usize {
@@ -249,6 +255,7 @@ impl Node for Outlet {
             .into_iter()
             .next()
             .unwrap()
+            .into()
     }
 
     fn n_inputs(&self) -> usize {
@@ -310,7 +317,7 @@ where
     G::NodeWeight: Node,
     G::NodeId: Eq + Hash,
 {
-    use crate::codegen;
+    use crate::compile;
 
     // Create statements to set inlet node states from inputs
     let inlets: Vec<_> = inlets(g).map(|n_ref| n_ref.id()).collect();
@@ -327,13 +334,21 @@ where
         }
     }
 
-    // Use codegen to create the evaluation order, steps, and statements
-    let flow = codegen::Flow::from_graph(g);
+    // Use compile to create the evaluation order, steps, and statements
+    let meta = compile::Meta::from_graph(g);
     let outlets: Vec<_> = outlets(g).map(|n_ref| n_ref.id()).collect();
-    let order = codegen::eval_order(g, inlets.iter().cloned(), outlets.iter().cloned())
-        .map(|id| g.to_index(id));
-    let steps: Vec<_> = codegen::eval_steps(&flow, order).collect();
-    let stmts = codegen::eval_stmts(path, &steps, &flow.outputs, &flow.stateful);
+    let order = compile::eval_order(
+        g,
+        inlets
+            .iter()
+            .map(|&n| (n, node::Conns::connected(1).unwrap())),
+        outlets
+            .iter()
+            .map(|&n| (n, node::Conns::connected(1).unwrap())),
+    )
+    .map(|id| g.to_index(id));
+    let steps: Vec<_> = compile::eval_steps(&meta, order).collect();
+    let stmts = compile::eval_stmts(path, &steps, &meta.stateful);
 
     // Combine inlet bindings with graph evaluation steps
     let all_stmts = inlet_bindings
@@ -373,4 +388,5 @@ where
         .into_iter()
         .next()
         .unwrap()
+        .into()
 }

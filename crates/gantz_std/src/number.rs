@@ -14,8 +14,8 @@ impl gantz_core::Node for Number {
         1
     }
 
-    fn push_eval(&self) -> Option<gantz_core::node::EvalFn> {
-        Some(gantz_core::node::EvalFn)
+    fn push_eval(&self) -> Vec<gantz_core::node::EvalConf> {
+        vec![gantz_core::node::EvalConf::All]
     }
 
     fn expr(&self, ctx: gantz_core::node::ExprCtx) -> ExprKind {
