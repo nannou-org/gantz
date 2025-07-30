@@ -2,6 +2,8 @@
 
 #[doc(inline)]
 pub use crate::visit::{self, Visitor};
+#[doc(inline)]
+pub use conns::Conns;
 pub use expr::{Expr, ExprError};
 pub use graph::GraphNode;
 pub use pull::{Pull, WithPullEval};
@@ -10,6 +12,7 @@ use serde::{Deserialize, Serialize};
 pub use state::{NodeState, State, WithStateType};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
+mod conns;
 pub mod expr;
 pub mod graph;
 pub mod pull;
@@ -19,13 +22,38 @@ pub mod state;
 /// The definitive abstraction of a gantz graph, the gantz `Node` trait.
 pub trait Node {
     /// The number of inputs to the node.
+    ///
+    /// The maximum number is [`Conns::MAX`].
     fn n_inputs(&self) -> usize {
         0
     }
 
     /// The number of outputs from the node.
+    ///
+    /// The maximum number is [`Conns::MAX`].
     fn n_outputs(&self) -> usize {
         0
+    }
+
+    /// The list of possible branches from this node.
+    ///
+    /// Each branch is represented as a set of outputs that are enabled for that
+    /// branch.
+    ///
+    /// This is intended for nodes that conditionally activate outputs based on
+    /// some received input.
+    ///
+    /// If the returned `Vec` is empty, we assume the node has no branching, and
+    /// simply evaluates to all outputs.
+    ///
+    /// If the returned `Vec` is non-empty, the expression returned from
+    /// [`Node::expr`] method must return a list with two elements where the
+    /// first element is the index of the selected branch, and the second
+    /// element is the node's output value(s).
+    ///
+    /// By default, this is `vec![]`.
+    fn branches(&self) -> Vec<EvalConf> {
+        vec![]
     }
 
     /// The expression that, given the expressions of connected inputs,
@@ -42,20 +70,20 @@ pub trait Node {
 
     /// Specifies whether or not code should be generated to allow for push
     /// evaluation from instances of this node. Enabling push evaluation allows
-    /// applications to call into the graph by loading the resulting generated
+    /// applications to call into the graph by calling the resulting generated
     /// code at runtime.
     ///
     /// Push evaluation order is equivalent to a topological ordering of the
     /// connected component that starts from the `push_eval` node.
     ///
-    /// Within a **Graph** node, a new function will be generated for each node
-    /// that signals **Some**.  If **Some**, a function will be generated with
-    /// the given **Signature** that represents pushing evaluation from this
-    /// node.
+    /// Within a **Graph** node, a new function will be generated for each
+    /// `EvalConf` set for each node. If **Some**, a function will be generated
+    /// with the given **Signature** that represents pushing evaluation from
+    /// this node.
     ///
-    /// By default, this is **None**.
-    fn push_eval(&self) -> Option<EvalFn> {
-        None
+    /// By default, this is an empty vec.
+    fn push_eval(&self) -> Vec<EvalConf> {
+        vec![]
     }
 
     /// Specifies whether or not code should be generated to allow for pull
@@ -71,9 +99,9 @@ pub trait Node {
     /// the given **Signature** that represents pulling evaluation from this
     /// node.
     ///
-    /// By default, this is **None**.
-    fn pull_eval(&self) -> Option<EvalFn> {
-        None
+    /// By default, this is an empty vec.
+    fn pull_eval(&self) -> Vec<EvalConf> {
+        vec![]
     }
 
     /// Whether or not this node acts as an inlet for some nested graph.
@@ -89,7 +117,7 @@ pub trait Node {
     /// Whether or not the node requires access to state.
     ///
     /// Nodes returning `true` will have a special `state` variable accessible
-    /// within their [`Node::expr`] provided during codegen.
+    /// within their [`Node::expr`] provided during compilation.
     fn stateful(&self) -> bool {
         false
     }
@@ -117,6 +145,18 @@ pub trait Node {
     fn visit(&self, _ctx: visit::Ctx, _visitor: &mut dyn Visitor) {}
 }
 
+/// A set of connections over which to push/pull evaluation.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub enum EvalConf {
+    /// Requires a fn for evaluation from all connections.
+    #[default]
+    All,
+    /// Requires a fn for evaluation from a subset of the connections.
+    ///
+    /// An element for each connection, `true` if eval-enabled.
+    Set(Conns),
+}
+
 /// Type used to represent a node's ID within a graph.
 pub type Id = usize;
 
@@ -136,6 +176,11 @@ pub struct ExprCtx<'a> {
     /// If the input is connected, it is `Some(name)` where `name` is a binding
     /// to the incoming value.
     inputs: &'a [Option<String>],
+    /// An element for each input to the node.
+    ///
+    /// If the input is connected, it is `Some(name)` where `name` is a binding
+    /// to the incoming value.
+    outputs: &'a [bool],
 }
 
 /// Represents a function that can be called to begin evaluation of the graph
@@ -152,8 +197,12 @@ pub struct Input(pub u16);
 pub struct Output(pub u16);
 
 impl<'a> ExprCtx<'a> {
-    pub(crate) fn new(path: &'a [Id], inputs: &'a [Option<String>]) -> Self {
-        Self { path, inputs }
+    pub(crate) fn new(path: &'a [Id], inputs: &'a [Option<String>], outputs: &'a [bool]) -> Self {
+        Self {
+            path,
+            inputs,
+            outputs,
+        }
     }
 
     /// The path of this node relative to the root of the gantz graph.
@@ -175,6 +224,20 @@ impl<'a> ExprCtx<'a> {
     pub fn inputs(&self) -> &[Option<String>] {
         self.inputs
     }
+
+    /// An element for each output from the node.
+    ///
+    /// If an output is `true`, it means a value is expected for the output.
+    ///
+    /// Note that even if an output is connected, it may not be `true` if it is
+    /// not included in the eval path.
+    ///
+    /// Note that even if
+    ///
+    /// If the output is connected, it is `true`.
+    pub fn outputs(&self) -> &[bool] {
+        self.outputs
+    }
 }
 
 impl<'a, N> Node for &'a N
@@ -189,15 +252,19 @@ where
         (**self).n_outputs()
     }
 
+    fn branches(&self) -> Vec<EvalConf> {
+        (**self).branches()
+    }
+
     fn expr(&self, ctx: ExprCtx) -> ExprKind {
         (**self).expr(ctx)
     }
 
-    fn push_eval(&self) -> Option<EvalFn> {
+    fn push_eval(&self) -> Vec<EvalConf> {
         (**self).push_eval()
     }
 
-    fn pull_eval(&self) -> Option<EvalFn> {
+    fn pull_eval(&self) -> Vec<EvalConf> {
         (**self).pull_eval()
     }
 
@@ -236,15 +303,19 @@ macro_rules! impl_node_for_ptr {
                 (**self).n_outputs()
             }
 
+            fn branches(&self) -> Vec<EvalConf> {
+                (**self).branches()
+            }
+
             fn expr(&self, ctx: ExprCtx) -> ExprKind {
                 (**self).expr(ctx)
             }
 
-            fn push_eval(&self) -> Option<EvalFn> {
+            fn push_eval(&self) -> Vec<EvalConf> {
                 (**self).push_eval()
             }
 
-            fn pull_eval(&self) -> Option<EvalFn> {
+            fn pull_eval(&self) -> Vec<EvalConf> {
                 (**self).pull_eval()
             }
 

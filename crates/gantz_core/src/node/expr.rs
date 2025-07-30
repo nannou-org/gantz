@@ -23,6 +23,7 @@ pub struct Expr {
     /// The total inputs, derived from the `$` count in the src.
     n_inputs: usize,
     /// The total outputs, i.e. the number of `ExprKind`s in the emitted AST.
+    /// FIXME: This isn't consistent with `Node::expr`.
     n_outputs: usize,
 }
 

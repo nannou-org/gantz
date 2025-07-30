@@ -90,15 +90,19 @@ where
         self.node.n_outputs()
     }
 
+    fn branches(&self) -> Vec<node::EvalConf> {
+        self.node.branches()
+    }
+
     fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
         self.node.expr(ctx)
     }
 
-    fn push_eval(&self) -> Option<node::EvalFn> {
+    fn push_eval(&self) -> Vec<node::EvalConf> {
         self.node.push_eval()
     }
 
-    fn pull_eval(&self) -> Option<node::EvalFn> {
+    fn pull_eval(&self) -> Vec<node::EvalConf> {
         self.node.pull_eval()
     }
 

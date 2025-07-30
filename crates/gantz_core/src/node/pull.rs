@@ -2,28 +2,40 @@ use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
-/// A wrapper around a `Node` that enables pull evaluation.
+/// A wrapper around a `Node` that enables pull evaluation across all inputs.
 ///
 /// The implementation of `Node` will match the inner node type `N`, but with a
 /// unique implementation of [`Node::pull_eval`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Pull<N> {
     node: N,
+    conf: node::EvalConf,
 }
 
 /// A trait implemented for all `Node` types allowing to enable pull evaluation.
 pub trait WithPullEval: Sized + Node {
+    /// Consume `self` and return a `Node` that has push evaluation enabled.
+    fn with_pull_eval_conf(self, conf: node::EvalConf) -> Pull<Self>;
     /// Consume `self` and return a `Node` that has pull evaluation enabled.
-    fn with_pull_eval(self) -> Pull<Self>;
+    fn with_pull_eval(self) -> Pull<Self> {
+        self.with_pull_eval_conf(node::EvalConf::All)
+    }
 }
 
 impl<N> Pull<N>
 where
     N: Node,
 {
-    /// Given some node, return a `Pull` node enabling pull evaluation.
-    pub fn new(node: N) -> Self {
-        Pull { node }
+    /// Given some node, return a `Pull` node enabling pull evaluation across
+    /// all outputs.
+    pub fn all(node: N) -> Self {
+        Pull::new(node, node::EvalConf::All)
+    }
+
+    /// Given some node, return a `Pull` node enabling pull evaluation across
+    /// some subset of the outputs.
+    pub fn new(node: N, conf: node::EvalConf) -> Self {
+        Pull { node, conf }
     }
 }
 
@@ -33,8 +45,8 @@ where
 {
     /// Consume `self` and return an equivalent node with pull evaluation
     /// enabled.
-    fn with_pull_eval(self) -> Pull<Self> {
-        Pull::new(self)
+    fn with_pull_eval_conf(self, conf: node::EvalConf) -> Pull<Self> {
+        Pull::new(self, conf)
     }
 }
 
@@ -50,16 +62,20 @@ where
         self.node.n_outputs()
     }
 
+    fn branches(&self) -> Vec<node::EvalConf> {
+        self.node.branches()
+    }
+
     fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
         self.node.expr(ctx)
     }
 
-    fn push_eval(&self) -> Option<node::EvalFn> {
+    fn push_eval(&self) -> Vec<node::EvalConf> {
         self.node.push_eval()
     }
 
-    fn pull_eval(&self) -> Option<node::EvalFn> {
-        Some(node::EvalFn)
+    fn pull_eval(&self) -> Vec<node::EvalConf> {
+        vec![self.conf.clone()]
     }
 
     fn inlet(&self) -> bool {
