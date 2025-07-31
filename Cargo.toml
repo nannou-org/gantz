@@ -11,27 +11,22 @@ repository = "https://github.com/nannou-org/gantz"
 
 [workspace.dependencies]
 dyn-hash = "0.2.2"
-eframe = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons", features = ["persistence"] }
-egui = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons", default-features = false }
-egui_extras = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons", default-features = false, features = ["syntect"] }
-egui_graph = { git = "https://github.com/mitchmindtree/egui_graph.git", branch = "develop" }
+eframe = { version = "0.32", features = ["persistence"] }
+egui = { version = "0.32", default-features = false }
+egui_extras = { version = "0.32", default-features = false, features = ["syntect"] }
+egui_graph = "0.6"
 env_logger = "0.10"
-gantz_core = { path = "crates/gantz_core" }
-gantz_egui = { path = "crates/gantz_egui", features = ["serde"] }
-gantz_std = { path = "crates/gantz_std" }
+gantz_core = { version = "0.1.0", path = "crates/gantz_core" }
+gantz_egui = { version = "0.1.0", path = "crates/gantz_egui", features = ["serde"] }
+gantz_std = { version = "0.1.0", path = "crates/gantz_std" }
 humantime = "2.2"
 log = { version = "0.4", features = ["serde"] }
 petgraph = { version = "0.6", features = ["serde-1"] }
 ron = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-steel-core = { git = "https://github.com/mattwparas/steel.git" }
-steel-derive = { git = "https://github.com/mattwparas/steel.git" }
+steel-core = "0.7"
+steel-derive = "0.6"
 sublime_fuzzy = "0.7"
 thiserror = "2"
 typetag = "0.2"
-
-[patch.crates-io]
-eframe = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons" }
-egui = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons" }
-egui_extras = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons" }

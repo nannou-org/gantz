@@ -1,6 +1,7 @@
 [package]
 name = "gantz_std"
 version = "0.1.0"
+description = "A standard library of commonly useful nodes for gantz, an environment for creative systems."
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
