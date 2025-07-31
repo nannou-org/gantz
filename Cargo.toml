@@ -11,10 +11,10 @@ repository = "https://github.com/nannou-org/gantz"
 
 [workspace.dependencies]
 dyn-hash = "0.2.2"
-eframe = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons", features = ["persistence"] }
-egui = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons", default-features = false }
-egui_extras = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons", default-features = false, features = ["syntect"] }
-egui_graph = { git = "https://github.com/mitchmindtree/egui_graph.git", branch = "develop" }
+eframe = { version = "0.32", features = ["persistence"] }
+egui = { version = "0.32", default-features = false }
+egui_extras = { version = "0.32", default-features = false, features = ["syntect"] }
+egui_graph = "0.6"
 env_logger = "0.10"
 gantz_core = { path = "crates/gantz_core" }
 gantz_egui = { path = "crates/gantz_egui", features = ["serde"] }
@@ -30,8 +30,3 @@ steel-derive = { git = "https://github.com/mattwparas/steel.git", rev = "e308663
 sublime_fuzzy = "0.7"
 thiserror = "2"
 typetag = "0.2"
-
-[patch.crates-io]
-eframe = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons" }
-egui = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons" }
-egui_extras = { git = "https://github.com/mitchmindtree/egui.git", branch = "scene-drag-pan-buttons" }
