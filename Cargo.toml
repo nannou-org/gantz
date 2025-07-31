@@ -25,8 +25,8 @@ petgraph = { version = "0.6", features = ["serde-1"] }
 ron = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-steel-core = { git = "https://github.com/mattwparas/steel.git" }
-steel-derive = { git = "https://github.com/mattwparas/steel.git" }
+steel-core = { git = "https://github.com/mattwparas/steel.git", rev = "e308663bcb50275288261a37659c9562909246e0" }
+steel-derive = { git = "https://github.com/mattwparas/steel.git", rev = "e308663bcb50275288261a37659c9562909246e0" }
 sublime_fuzzy = "0.7"
 thiserror = "2"
 typetag = "0.2"
