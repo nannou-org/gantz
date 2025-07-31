@@ -23,6 +23,7 @@ use std::{
 use steel::parser::ast::ExprKind;
 
 mod codegen;
+mod flow;
 mod meta;
 mod rosetree;
 
