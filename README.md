@@ -10,10 +10,10 @@ Goals include:
 
 - **The zen of the empty graph**. A feeling of endless creative possibility
   when you open gantz.
-- **Interactive programming with realtime feedback**. Modify the graph while it
+- **Interactive programming, realtime feedback**. Modify the graph while it
   runs and immediately feel the results.
-- **Functions as values**. Take inspiration from functional programming and
-  explore how higher-order functions can enable [higher-order
+- **Functions as values**. Inspired by functional programming, explore how
+  higher-order functions can enable [higher-order
   patterns](https://slab.org/2025/02/01/tidal-a-history-in-types/).
 
 *NOTE: gantz is currently a research project and is not ready for any kind of
@@ -25,11 +25,11 @@ The following gantz crates are included in this repo.
 
 | Crate | Release | Description |
 |---|---|---|
-| `**gantz_core**` | [![crates.io][gantz_core]][gantz_core_svg] | The core node and graph abstractions. |
-| `**gantz_std**` | [![crates.io][gantz_std]][gantz_std_svg] | A standard library of commonly useful nodes. |
-| `**gantz_egui**` | [![crates.io][gantz_egui]][gantz_egui_svg] | UI traits and widgets that make up the gantz GUI. |
-| `**bevy_gantz**` | [![crates.io][bevy_gantz]][bevy_gantz_svg] | **TODO** A bevy plugin for gantz. |
-| `**gantz**` | [![crates.io][gantz]][gantz_svg] | **TODO** The top-level gantz app. |
+| **`gantz_core`** | [![Crates.io](https://img.shields.io/crates/v/gantz_core.svg)](https://crates.io/crates/gantz_core) | The core node and graph abstractions. |
+| **`gantz_std`** | [![Crates.io](https://img.shields.io/crates/v/gantz_std.svg)](https://crates.io/crates/gantz_std) | A standard library of commonly useful nodes. |
+| **`gantz_egui`** | [![Crates.io](https://img.shields.io/crates/v/gantz_egui.svg)](https://crates.io/crates/gantz_egui) | UI traits and widgets that make up the gantz GUI. |
+| **`bevy_gantz`** | [![Crates.io](https://img.shields.io/crates/v/bevy_gantz.svg)](https://crates.io/crates/bevy_gantz) | **TODO** A bevy plugin for gantz. |
+| **`gantz`** | [![Crates.io](https://img.shields.io/crates/v/gantz.svg)](https://crates.io/crates/gantz) | **TODO** The top-level gantz app. |
 
 ## Design Overview
 
@@ -71,13 +71,3 @@ tests.
 
 [gantz_graf]: https://youtu.be/ev3vENli7wQ
 [steel]: https://github.com/mattwparas/steel
-[gantz_core]: https://crates.io/crates/gantz_core
-[gantz_core_svg]: https://img.shields.io/crates/v/gantz_core.svg
-[gantz_std]: https://crates.io/crates/gantz_std
-[gantz_std_svg]: https://img.shields.io/crates/v/gantz_std.svg
-[gantz_egui]: https://crates.io/crates/gantz_egui
-[gantz_egui_svg]: https://img.shields.io/crates/v/gantz_egui.svg
-[bevy_gantz]: https://crates.io/crates/bevy_gantz
-[bevy_gantz_svg]: https://img.shields.io/crates/v/bevy_gantz.svg
-[gantz]: https://crates.io/crates/gantz
-[gantz_svg]: https://img.shields.io/crates/v/gantz.svg
