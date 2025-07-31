@@ -1,6 +1,7 @@
 [package]
 name = "gantz_core"
 version = "0.1.0"
+description = "The core types and traits for gantz, an environment for creative systems."
 edition.workspace = true
 authors.workspace = true
 homepage.workspace = true
