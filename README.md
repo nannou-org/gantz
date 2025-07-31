@@ -25,16 +25,18 @@ The following gantz crates are included in this repo.
 
 | Crate | Release | Description |
 |---|---|---|
-| **gantz_core** | [![crates.io][gantz_core]][gantz_core_svg] | The core node and graph abstractions. |
-| **gantz_std** | [![crates.io][gantz_std]][gantz_std_svg] | A standard library of commonly useful nodes. |
-| **gantz_egui** | [![crates.io][gantz_egui]][gantz_egui_svg] | UI traits and widgets that make up the gantz GUI. |
-| **bevy_gantz** | [![crates.io][bevy_gantz]][bevy_gantz_svg] | **TODO** A bevy plugin for gantz. |
-| **gantz** | [![crates.io][gantz]][gantz_svg] | **TODO** The top-level gantz app. |
+| `**gantz_core**` | [![crates.io][gantz_core]][gantz_core_svg] | The core node and graph abstractions. |
+| `**gantz_std**` | [![crates.io][gantz_std]][gantz_std_svg] | A standard library of commonly useful nodes. |
+| `**gantz_egui**` | [![crates.io][gantz_egui]][gantz_egui_svg] | UI traits and widgets that make up the gantz GUI. |
+| `**bevy_gantz**` | [![crates.io][bevy_gantz]][bevy_gantz_svg] | **TODO** A bevy plugin for gantz. |
+| `**gantz**` | [![crates.io][gantz]][gantz_svg] | **TODO** The top-level gantz app. |
 
 ## Design Overview
 
 gantz allows for constructing executable directed graphs by composing together
 **Nodes**.
+
+### Nodes
 
 **Nodes** are a way to allow users to abstract and encapsulate logic into
 smaller, re-usable components, similar to a function in a coded programming
@@ -47,6 +49,8 @@ functions and more.
 
 Nodes can opt-in to state, branching on their outputs, and acting as
 entrypoints to the graph.
+
+### Graphs
 
 **Graphs** describe the composition of one or more nodes. A graph may contain
 one or more nested graphs represented as nodes, forming the main method of
@@ -73,3 +77,7 @@ tests.
 [gantz_std_svg]: https://img.shields.io/crates/v/gantz_std.svg
 [gantz_egui]: https://crates.io/crates/gantz_egui
 [gantz_egui_svg]: https://img.shields.io/crates/v/gantz_egui.svg
+[bevy_gantz]: https://crates.io/crates/bevy_gantz
+[bevy_gantz_svg]: https://img.shields.io/crates/v/bevy_gantz.svg
+[gantz]: https://crates.io/crates/gantz
+[gantz_svg]: https://img.shields.io/crates/v/gantz.svg
