@@ -10,6 +10,8 @@ pub(crate) use codegen::eval_stmts;
 #[doc(inline)]
 pub use codegen::{pull_eval_fn_name, push_eval_fn_name};
 #[doc(inline)]
+pub use flow::Flow;
+#[doc(inline)]
 pub use meta::{EdgeKind, Meta};
 use petgraph::visit::{
     Data, Dfs, EdgeRef, GraphBase, GraphRef, IntoEdgesDirected, IntoNeighbors, IntoNodeReferences,
@@ -456,7 +458,12 @@ where
     // Create a `Meta` for each graph (including nested) in a tree.
     let mut meta_tree = RoseTree::<Meta>::default();
     crate::graph::visit(g, &[], &mut meta_tree);
+    dbg!(&meta_tree);
     let eval_tree = meta_tree.map_ref(&mut eval_plan);
+
+    // Derive control flow graphs from the meta graphs.
+    let flow_tree = meta_tree.map_ref(&mut Flow::from_meta);
+    dbg!(&flow_tree);
 
     // Collect node fns.
     let node_confs_tree = codegen::node_confs_tree(&eval_tree);
