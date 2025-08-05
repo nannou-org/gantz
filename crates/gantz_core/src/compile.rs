@@ -47,13 +47,6 @@ struct EvalPlan<'a> {
     /// The gantz graph `Meta` from which this `EvalPlan` was produced.
     meta: &'a Meta,
 
-    /// Order of evaluation from all inlets to all outlets.
-    ///
-    /// Empty in the case that the graph has no inlets or outlets (i.e. is not
-    /// nested).
-    // TODO: Knowing the connectedness of the inlets/outlets would be useful
-    // for generating only the necessary node configs.
-    nested_steps: Vec<EvalStep>,
     /// The order of node evaluation for each push_eval node.
     push_steps: BTreeMap<node::Id, Vec<EvalStep>>,
     /// The order of node evaluation for each pull_eval node.
@@ -420,25 +413,10 @@ fn eval_plan(meta: &Meta) -> EvalPlan {
         })
         .collect();
 
-    let nested_steps = {
-        let order = eval_order(
-            &meta.graph,
-            // FIXME: shouldn't hardcode these `Conns` counts...
-            meta.inlets
-                .iter()
-                .map(|&n| (n, node::Conns::connected(1).unwrap())),
-            meta.outlets
-                .iter()
-                .map(|&n| (n, node::Conns::connected(1).unwrap())),
-        );
-        eval_steps(meta, order).collect()
-    };
-
     EvalPlan {
         meta,
         push_steps,
         pull_steps,
-        nested_steps,
     }
 }
 
