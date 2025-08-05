@@ -5,7 +5,7 @@ use crate::{
     compile::{EvalPlan, EvalStep, RoseTree},
     node,
 };
-pub(crate) use node_fn::{node_confs_tree, node_fns};
+pub(crate) use node_fn::{node_fns, unique_node_confs};
 use std::collections::{BTreeSet, HashMap};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 

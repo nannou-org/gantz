@@ -1,11 +1,14 @@
 //! Items related to constructing a view of the control flow of a gantz graph.
 
-use super::{EdgeKind, Meta};
+use super::{
+    Meta, MetaGraph, pull_eval_neighbors, pull_eval_order, push_eval_neighbors, push_eval_order,
+    push_reachable,
+};
 use crate::node;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    fmt,
+    collections::{BTreeMap, HashMap, HashSet},
+    fmt, ops,
 };
 
 /// Represents all control flow graphs for all entrypoints in a single gantz graph.
@@ -49,30 +52,18 @@ pub type NodeConfGraph = petgraph::graphmap::DiGraphMap<NodeConf, BranchConns>;
 ///
 /// Maps directly to a node function.
 #[derive(Copy, Clone, Eq, Hash, PartialEq, PartialOrd, Ord)]
-struct NodeConf {
-    id: node::Id,
-    conns: NodeConns,
+pub struct NodeConf {
+    pub id: node::Id,
+    pub conns: NodeConns,
 }
 
 /// The connectedness of a node for a particular evaluation step.
 #[derive(Copy, Clone, Eq, Hash, PartialEq, PartialOrd, Ord)]
-pub(super) struct NodeConns {
-    /// The active inputs (conditional connections may or may not be active).
-    inputs: node::Conns,
+pub struct NodeConns {
+    /// The active inputs.
+    pub inputs: node::Conns,
     /// Includes all connected outputs (whether conditional or not).
-    outputs: node::Conns,
-}
-
-impl fmt::Debug for NodeConf {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({:?}: {:?})", self.id, self.conns)
-    }
-}
-
-impl fmt::Debug for NodeConns {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "([{}], [{}])", self.inputs, self.outputs)
-    }
+    pub outputs: node::Conns,
 }
 
 impl Flow {
@@ -110,7 +101,8 @@ impl Flow {
             )
             .collect();
             let included: HashSet<_> = order.iter().copied().collect();
-            let conf_graph = node_conf_graph(meta, order, &included);
+            let mg = reachable_subgraph(&meta.graph, &included);
+            let conf_graph = node_conf_graph(meta, &mg, None);
             flow_graph(&conf_graph)
         };
 
@@ -118,31 +110,62 @@ impl Flow {
     }
 }
 
+impl fmt::Debug for NodeConf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "({:?}: {:?})", self.id, self.conns)
+    }
+}
+
+impl fmt::Debug for NodeConns {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "([{}], [{}])", self.inputs, self.outputs)
+    }
+}
+
+impl ops::Deref for Block {
+    type Target = Vec<NodeConf>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl ops::DerefMut for Block {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 /// Given the meta graph and a node registered as a `push_eval` entrypoint,
 /// produce the control flow graph.
 fn push_eval_flow_graph(meta: &Meta, n: node::Id, conns: &node::Conns) -> FlowGraph {
-    use super::{push_eval_neighbors, push_eval_order};
-
     // Iterate over the meta nodes that are included in topo order.
     let nbs = push_eval_neighbors(&meta.graph, n, conns);
     let order: Vec<_> = push_eval_order(&meta.graph, n, &nbs).collect();
     let included: HashSet<_> = order.iter().copied().collect();
-    let conf_graph = node_conf_graph(meta, order, &included);
-    dbg!(&conf_graph);
+    let mg = reachable_subgraph(&meta.graph, &included);
+    let conf_graph = node_conf_graph(meta, &mg, None);
     flow_graph(&conf_graph)
 }
 
 /// Given the meta graph and a node registered as a `pull_eval` entrypoint,
 /// produce the control flow graph.
 fn pull_eval_flow_graph(meta: &Meta, n: node::Id, conns: &node::Conns) -> FlowGraph {
-    use super::{pull_eval_neighbors, pull_eval_order};
-
     // Iterate over the meta nodes that are included in topo order.
     let nbs = pull_eval_neighbors(&meta.graph, n, conns);
+    // FIXME: Can just get reachable here - we handle order in `node_conf_graph`.
     let order: Vec<_> = pull_eval_order(&meta.graph, n, &nbs).collect();
     let included: HashSet<_> = order.iter().copied().collect();
-    let conf_graph = node_conf_graph(meta, order, &included);
+    let mg = reachable_subgraph(&meta.graph, &included);
+    let conf_graph = node_conf_graph(meta, &mg, None);
     flow_graph(&conf_graph)
+}
+
+/// Filter unreachable nodes from the given metagraph.
+fn reachable_subgraph(g: &MetaGraph, reachable: &HashSet<node::Id>) -> MetaGraph {
+    g.all_edges()
+        .filter(|(a, b, _)| reachable.contains(a) && reachable.contains(b))
+        .map(|(a, b, w)| (a, b, w.clone()))
+        .collect()
 }
 
 /// Given a node configuration flow graph, return the reduced control flow graph
@@ -206,277 +229,98 @@ fn flow_graph_edge_contraction(g: &mut FlowGraph) {
     }
 }
 
-/// Given the topological order of
-fn node_conf_graph(
-    meta: &Meta,
-    order: impl IntoIterator<Item = node::Id>,
-    included: &HashSet<node::Id>,
-) -> NodeConfGraph {
-    let mut g = NodeConfGraph::new();
-    let mut visited: BTreeMap<node::Id, Vec<NodeConf>> = Default::default();
-    // For each node, add a `NodeConf` for every permutation of inputs/outputs
-    // required, and an edge for each input node's branches.
-    for n in order {
-        // Retrieve all possible configuration permutations for this node.
-        let confs = node_conf_perms(meta, n, |n| included.contains(&n));
-
-        // Track the permutations for each node.
-        let vconfs = visited.entry(n).or_default();
-        for conf in &confs {
-            vconfs.push(*conf);
-        }
-
-        let input_edges = node_input_edges(meta, n, &confs, &included, &visited);
-        for (a, b, branch) in input_edges {
-            g.add_edge(a, b, branch);
-            visited.entry(n).or_default().push(b);
+/// Given some node within a given meta graph with an expected total number of
+/// inputs, return the list of inputs that are actually connected.
+fn node_inputs(g: &MetaGraph, n: node::Id, n_inputs: usize) -> node::Conns {
+    let mut inputs = node::Conns::unconnected(n_inputs).unwrap();
+    for e_ref in g.edges_directed(n, petgraph::Incoming) {
+        for (edge, _kind) in e_ref.weight() {
+            inputs.set(edge.input.0 as usize, true).unwrap();
         }
     }
-    g
+    inputs
 }
 
-/// The input edges of all configurations of this node.
-///
-/// All connected outputs (whether conditional or not).
-fn node_input_edges(
-    meta: &Meta,
-    dst: node::Id,
-    dst_conf_perms: &[NodeConf],
-    included: &HashSet<node::Id>,
-    visited: &BTreeMap<node::Id, Vec<NodeConf>>,
-) -> BTreeSet<(NodeConf, NodeConf, BranchConns)> {
-    let mut input_edges = BTreeSet::new();
-
-    // For each configuragion of each source node, determine all branching edges
-    // to each relevant configuration of this node.
-    for e_ref in meta.graph.edges_directed(dst, petgraph::Incoming) {
-        let src = e_ref.source();
-        let Some(src_confs) = visited.get(&src) else {
-            continue;
-        };
-
-        // For every edge between this pair, create an edge for each conf
-        // permutation. Doubles will automatically be deduped.
-        for (edge, kind) in e_ref.weight() {
-            let src_out = edge.output.0 as usize;
-            let dst_in = edge.input.0 as usize;
-
-            for &src_conf in src_confs {
-                // Skip src confs that don't touch this output.
-                if !src_conf.conns.outputs.get(src_out).unwrap() {
-                    continue;
-                }
-
-                for &dst_conf in dst_conf_perms {
-                    // Skip dst confs that don't touch this input.
-                    if !dst_conf.conns.inputs.get(dst_in).unwrap() {
-                        continue;
-                    }
-
-                    // For each of the src branches that touch this, add an
-                    // edge. If the src declares no branching, there is only a
-                    // single edge from all outputs connected on the src.
-                    let src_branches = meta.branches.get(&src).cloned().unwrap_or_else(|| {
-                        let n_outputs = meta.outputs.get(&src).copied().unwrap_or(0);
-                        vec![node::Conns::connected(n_outputs).unwrap()]
-                    });
-                    for src_branch in src_branches {
-                        if src_branch.get(src_out).unwrap() {
-                            input_edges.insert((src_conf, dst_conf, src_branch));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    input_edges
-}
-
-/// Retrieve all possible configuration permutations for this node.
-///
-/// This will include:
-///
-/// - All `inputs` permutations over its conditional input edges.
-/// - One `outputs` for all connected output edges (conditional or not).
-fn node_conf_perms(meta: &Meta, n: node::Id, included: impl Fn(node::Id) -> bool) -> Vec<NodeConf> {
-    // 1. Collect all permutations of inputs as `Vec<node::Conns>`.
-    let n_inputs = meta.inputs.get(&n).copied().unwrap_or(0);
-    let mut input_kinds: Vec<Option<EdgeKind>> = vec![None; n_inputs];
-    for e_ref in meta.graph.edges_directed(n, petgraph::Incoming) {
-        // Only consider edges to nodes included in the traversal.
-        if !included(e_ref.source()) {
-            continue;
-        }
-        for (edge, kind) in e_ref.weight() {
-            input_kinds[edge.input.0 as usize] = Some(kind.clone());
-        }
-    }
-    let inputs = conns_permutations(&input_kinds);
-
-    // 2. The only output should include all connected output edges.
-    // Note: Branches are handled at runtime, so we omit those until adding edges.
-    let n_outputs = meta.outputs.get(&n).copied().unwrap_or(0);
+/// Given some node within a given meta graph with an expected total number of
+/// outputs, return the list of outputs that are actually connected.
+fn node_outputs(g: &MetaGraph, n: node::Id, n_outputs: usize) -> node::Conns {
     let mut outputs = node::Conns::unconnected(n_outputs).unwrap();
-    for e_ref in meta.graph.edges_directed(n, petgraph::Outgoing) {
-        // Only consider edges to nodes included in the traversal.
-        if !included(e_ref.target()) {
-            continue;
-        }
+    for e_ref in g.edges_directed(n, petgraph::Outgoing) {
         for (edge, _kind) in e_ref.weight() {
             outputs.set(edge.output.0 as usize, true).unwrap();
         }
     }
-
-    // 3. Create a conf for each input permutation with the output.
-    inputs
-        .iter()
-        .map(move |&inputs| {
-            let conns = NodeConns { inputs, outputs };
-            NodeConf { id: n, conns }
-        })
-        .collect()
+    outputs
 }
 
-/// For the given edge kinds, produce all conditional permutations.
-fn conns_permutations(edges: &[Option<EdgeKind>]) -> Vec<node::Conns> {
-    // Find all conditional edge positions.
-    let cond_positions: Vec<usize> = edges
-        .iter()
-        .enumerate()
-        .filter_map(|(i, edge)| match edge {
-            Some(EdgeKind::Conditional) => Some(i),
-            _ => None,
-        })
-        .collect();
+/// For the given meta graph `mg`, produce its control flow graph.
+///
+/// The given meta graph should only contain the nodes reachable in the desired
+/// evaluation path.
+//
+// FIXME:
+// - The first edge from branching nodes should use `branch` - is this
+//   happening?
+// - Refactor this to not use recursion on branching.
+// TODO:
+// - Refactor to avoid gross `first_node_conns` input.
+fn node_conf_graph(
+    meta: &Meta,
+    mg: &MetaGraph,
+    first_node_conns: Option<NodeConns>,
+) -> NodeConfGraph {
+    let mut g = NodeConfGraph::new();
 
-    let num_conds = cond_positions.len();
-    let num_perms = 1 << num_conds;
-    let mut perms = Vec::with_capacity(num_perms);
+    // Walk nodes in topological order until we hit a branch.
+    let mut topo = petgraph::visit::Topo::new(mg);
+    let mut last = None;
+    while let Some(n) = topo.next(mg) {
+        // Determine the configuration and add it.
+        let n_inputs = meta.inputs.get(&n).copied().unwrap_or(0);
+        let n_outputs = meta.outputs.get(&n).copied().unwrap_or(0);
+        let inputs = node_inputs(&mg, n, n_inputs);
+        let outputs = node_outputs(&mg, n, n_outputs);
+        let conns = NodeConns { inputs, outputs };
+        let mut conf = NodeConf { id: n, conns };
 
-    // Generate all 2^n permutations.
-    for perm_ix in 0..num_perms {
-        let mut perm = node::Conns::unconnected(edges.len()).unwrap();
-        for (i, edge) in edges.iter().enumerate() {
-            let Some(kind) = edge else {
-                continue;
-            };
-            let value = match kind {
-                EdgeKind::Static => true,
-                EdgeKind::Conditional => {
-                    // Find which conditional this is and check the corresponding bit.
-                    let cond_ix = cond_positions.iter().position(|&pos| pos == i).unwrap();
-                    (perm_ix >> cond_ix) & 1 == 1
-                }
-            };
-            perm.set(i, value);
+        // Add an edge from the prev node.
+        if let Some(prev) = last {
+            g.add_edge(prev, conf, outputs);
+
+        // If there is no last node, this is the first node.
+        } else {
+            // If a set of outputs were provided for the first node, this is for
+            // the beginning node in a branch.
+            if let Some(conns) = first_node_conns {
+                conf.conns = conns;
+            }
+            g.add_node(conf);
         }
-        perms.push(perm);
+
+        // If this is not the first node, and the node branches,
+        // determine all possible branching outputs from this node.
+        if let (Some(branches), true) = (meta.branches.get(&n), last.is_some()) {
+            // For each branch, collect the subgraph.
+            // FIXME: Make this non-recursive.
+
+            for branch in branches {
+                let nbs = push_eval_neighbors(mg, n, branch);
+                let reachable: HashSet<_> = push_reachable(mg, n, &nbs).collect();
+                let sub_mg = reachable_subgraph(mg, &reachable);
+                // FIXME: This adds the branching node, but with a subset of
+                // outputs. We only want the branching node at the end of the
+                // block with all connected outputs in the config, then the
+                // *edges* should have the branch subsets.
+                let sub_ncg = node_conf_graph(meta, &sub_mg, Some(conns));
+                g.extend(sub_ncg.all_edges().map(|(a, b, &w)| (a, b, w)));
+            }
+
+            // We've handled the branches in the recursive cases - we're done.
+            break;
+        }
+
+        last = Some(conf);
     }
 
-    perms
-}
-
-mod tests {
-    use super::*;
-
-    // Meta:
-    //
-    // -----
-    // | 0 | // push
-    // -+---
-    //  |
-    // -+---
-    // | 1 |
-    // -+-+-
-    //  | |
-    //  | -----  // both edges conditional
-    //  |     |
-    // -+--- -+---
-    // | 2 | | 3 |
-    // ----- -----
-    //
-    // Flow:
-    //
-    // -----
-    // | 0 |
-    // -+---
-    //  |
-    // -----
-    // | 1 |
-    // -----
-    //
-    //
-    //
-    //
-    #[test]
-    fn flow_graph() {
-        // let meta = Meta {
-        // graph:
-        // };
-    }
-
-    #[test]
-    fn test_generate_edge_permutations() {
-        // Test case: [Static, Conditional, None, Conditional]
-        let edges = vec![
-            Some(EdgeKind::Static),
-            Some(EdgeKind::Conditional),
-            None,
-            Some(EdgeKind::Conditional),
-        ];
-
-        let permutations = conns_permutations(&edges);
-
-        // Should have 2^2 = 4 permutations (2 conditional edges)
-        assert_eq!(permutations.len(), 4);
-
-        // Expected permutations:
-        // [true, false, false, false] - both conditionals false
-        // [true, true, false, false]  - first conditional true, second false
-        // [true, false, false, true]  - first conditional false, second true
-        // [true, true, false, true]   - both conditionals true
-
-        let expected = vec![
-            node::Conns::try_from([true, false, false, false]).unwrap(),
-            node::Conns::try_from([true, true, false, false]).unwrap(),
-            node::Conns::try_from([true, false, false, true]).unwrap(),
-            node::Conns::try_from([true, true, false, true]).unwrap(),
-        ];
-
-        assert_eq!(permutations, expected);
-    }
-
-    #[test]
-    fn test_no_conditionals() {
-        let edges = vec![Some(EdgeKind::Static), None, Some(EdgeKind::Static)];
-
-        let permutations = conns_permutations(&edges);
-
-        // Should have exactly 1 permutation
-        assert_eq!(permutations.len(), 1);
-        assert_eq!(
-            permutations[0],
-            node::Conns::try_from([true, false, true]).unwrap()
-        );
-    }
-
-    #[test]
-    fn test_all_conditionals() {
-        let edges = vec![Some(EdgeKind::Conditional), Some(EdgeKind::Conditional)];
-
-        let permutations = conns_permutations(&edges);
-
-        // Should have 2^2 = 4 permutations
-        assert_eq!(permutations.len(), 4);
-
-        let expected = vec![
-            node::Conns::try_from([false, false]).unwrap(),
-            node::Conns::try_from([true, false]).unwrap(),
-            node::Conns::try_from([false, true]).unwrap(),
-            node::Conns::try_from([true, true]).unwrap(),
-        ];
-
-        assert_eq!(permutations, expected);
-    }
+    g
 }
