@@ -180,7 +180,7 @@ pub struct ExprCtx<'a> {
     ///
     /// If the input is connected, it is `Some(name)` where `name` is a binding
     /// to the incoming value.
-    outputs: &'a [bool],
+    outputs: &'a Conns,
 }
 
 /// Represents a function that can be called to begin evaluation of the graph
@@ -197,7 +197,7 @@ pub struct Input(pub u16);
 pub struct Output(pub u16);
 
 impl<'a> ExprCtx<'a> {
-    pub(crate) fn new(path: &'a [Id], inputs: &'a [Option<String>], outputs: &'a [bool]) -> Self {
+    pub(crate) fn new(path: &'a [Id], inputs: &'a [Option<String>], outputs: &'a Conns) -> Self {
         Self {
             path,
             inputs,
@@ -235,7 +235,7 @@ impl<'a> ExprCtx<'a> {
     /// Note that even if
     ///
     /// If the output is connected, it is `true`.
-    pub fn outputs(&self) -> &[bool] {
+    pub fn outputs(&self) -> &Conns {
         self.outputs
     }
 }

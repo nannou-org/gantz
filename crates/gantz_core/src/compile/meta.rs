@@ -51,7 +51,7 @@ pub enum EdgeKind {
 ///
 /// Note that we use a `Vec<Edge>` in order to represent multiple edges
 /// between the same two nodes.
-type MetaGraph = petgraph::graphmap::DiGraphMap<node::Id, Vec<(Edge, EdgeKind)>>;
+pub type MetaGraph = petgraph::graphmap::DiGraphMap<node::Id, Vec<(Edge, EdgeKind)>>;
 
 impl Meta {
     /// Construct a `Meta` for a single gantz graph.

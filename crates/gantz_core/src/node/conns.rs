@@ -65,6 +65,14 @@ impl Conns {
         Ok(conns)
     }
 
+    /// Creates a new empty `Conns`.
+    pub fn empty() -> Self {
+        Self {
+            bytes: [0u8; Self::MAX_BYTES],
+            len: 0,
+        }
+    }
+
     /// Creates a new `Conns` with the given slice of connection states.
     ///
     /// Returns `Err` if `len` is out of range of [`MAX`].

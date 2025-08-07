@@ -192,6 +192,10 @@ fn test_graph_push_cond_eval() {
     struct Select;
 
     impl Node for Select {
+        fn n_inputs(&self) -> usize {
+            1
+        }
+
         fn n_outputs(&self) -> usize {
             2
         }
@@ -207,7 +211,7 @@ fn test_graph_push_cond_eval() {
             let x = ctx.inputs()[0].as_deref().expect("must have one input");
             let expr = format!(
                 r#"
-                (if (equals? 0 {x})
+                (if (equal? 0 {x})
                   (list 0 '())  ; 0 index for left branch, '() for empty value
                   (list 1 '())) ; 1 index for right branch, '() for empty value
             "#
@@ -254,7 +258,6 @@ fn test_graph_push_cond_eval() {
 
     // Register the functions, then call push_eval.
     for f in module {
-        println!("{}\n", f.to_pretty(100));
         vm.run(format!("{f}")).unwrap();
     }
 
@@ -360,11 +363,12 @@ fn test_graph_push_eval_subset() {
 
         fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
             let Src(a, b) = *self;
-            let expr = match ctx.outputs() {
+            let outputs = ctx.outputs();
+            let expr = match (outputs.get(0).unwrap(), outputs.get(1).unwrap()) {
                 // Only return left if only left is connected.
-                &[true, false] => format!("(begin {a})"),
+                (true, false) => format!("(begin {a})"),
                 // Only return right if only right is connected.
-                &[false, true] => format!("(begin {b})"),
+                (false, true) => format!("(begin {b})"),
                 // Otherwise return both in a list.
                 _ => format!("(list {a} {b})"),
             };
@@ -397,7 +401,6 @@ fn test_graph_push_eval_subset() {
 
     // Register all functions
     for f in module {
-        println!("{}\n", f.to_pretty(100));
         vm.run(f.to_pretty(100)).unwrap();
     }
 

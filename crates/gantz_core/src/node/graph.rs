@@ -337,18 +337,16 @@ where
     // Use compile to create the evaluation order, steps, and statements
     let meta = compile::Meta::from_graph(g);
     let outlets: Vec<_> = outlets(g).map(|n_ref| n_ref.id()).collect();
-    let order = compile::eval_order(
-        g,
+    let flow_graph = compile::flow_graph(
+        &meta,
         inlets
             .iter()
-            .map(|&n| (n, node::Conns::connected(1).unwrap())),
+            .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
         outlets
             .iter()
-            .map(|&n| (n, node::Conns::connected(1).unwrap())),
-    )
-    .map(|id| g.to_index(id));
-    let steps: Vec<_> = compile::eval_steps(&meta, order).collect();
-    let stmts = compile::eval_stmts(path, &steps, &meta.stateful);
+            .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
+    );
+    let stmts = compile::eval_fn_body(path, &meta.graph, &meta.stateful, &flow_graph);
 
     // Combine inlet bindings with graph evaluation steps
     let all_stmts = inlet_bindings
