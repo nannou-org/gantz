@@ -211,7 +211,7 @@ fn test_graph_push_cond_eval() {
             let x = ctx.inputs()[0].as_deref().expect("must have one input");
             let expr = format!(
                 r#"
-                (if (equals? 0 {x})
+                (if (equal? 0 {x})
                   (list 0 '())  ; 0 index for left branch, '() for empty value
                   (list 1 '())) ; 1 index for right branch, '() for empty value
             "#
@@ -258,7 +258,6 @@ fn test_graph_push_cond_eval() {
 
     // Register the functions, then call push_eval.
     for f in module {
-        println!("{}\n", f.to_pretty(100));
         vm.run(format!("{f}")).unwrap();
     }
 
@@ -402,7 +401,6 @@ fn test_graph_push_eval_subset() {
 
     // Register all functions
     for f in module {
-        println!("{}\n", f.to_pretty(100));
         vm.run(f.to_pretty(100)).unwrap();
     }
 

@@ -1,9 +1,6 @@
 //! Items related to constructing a view of the control flow of a gantz graph.
 
-use super::{
-    Meta, MetaGraph, pull_eval_neighbors, pull_eval_order, push_eval_neighbors, push_eval_order,
-    push_reachable,
-};
+use super::{Meta, MetaGraph, push_eval_neighbors, push_reachable};
 use crate::node;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use std::{
@@ -89,22 +86,15 @@ impl Flow {
             })
             .collect();
 
-        let nested = {
-            let order: Vec<_> = super::eval_order(
-                &meta.graph,
-                meta.inlets
-                    .iter()
-                    .map(|&n| (n, node::Conns::connected(1).unwrap())),
-                meta.outlets
-                    .iter()
-                    .map(|&n| (n, node::Conns::connected(1).unwrap())),
-            )
-            .collect();
-            let included: HashSet<_> = order.iter().copied().collect();
-            let mg = reachable_subgraph(&meta.graph, &included);
-            let conf_graph = node_conf_graph(meta, &mg, None);
-            flow_graph(&conf_graph)
-        };
+        let nested = flow_graph(
+            meta,
+            meta.inlets
+                .iter()
+                .map(|&n| (n, node::Conns::connected(1).unwrap())),
+            meta.outlets
+                .iter()
+                .map(|&n| (n, node::Conns::connected(1).unwrap())),
+        );
 
         Self { nested, push, pull }
     }
@@ -135,29 +125,30 @@ impl ops::DerefMut for Block {
     }
 }
 
-/// Given the meta graph and a node registered as a `push_eval` entrypoint,
-/// produce the control flow graph.
-fn push_eval_flow_graph(meta: &Meta, n: node::Id, conns: &node::Conns) -> FlowGraph {
-    // Iterate over the meta nodes that are included in topo order.
-    let nbs = push_eval_neighbors(&meta.graph, n, conns);
-    let order: Vec<_> = push_eval_order(&meta.graph, n, &nbs).collect();
+/// Given a meta graph and set of push and pull eval fn nodes, construct a full
+/// control flow graph.
+pub fn flow_graph(
+    meta: &Meta,
+    push: impl IntoIterator<Item = (node::Id, node::Conns)>,
+    pull: impl IntoIterator<Item = (node::Id, node::Conns)>,
+) -> FlowGraph {
+    let order: Vec<_> = super::eval_order(&meta.graph, push, pull).collect();
     let included: HashSet<_> = order.iter().copied().collect();
     let mg = reachable_subgraph(&meta.graph, &included);
     let conf_graph = node_conf_graph(meta, &mg, None);
-    flow_graph(&conf_graph)
+    flow_graph_from_conf_graph(&conf_graph)
+}
+
+/// Given the meta graph and a node registered as a `push_eval` entrypoint,
+/// produce the control flow graph.
+fn push_eval_flow_graph(meta: &Meta, n: node::Id, conns: &node::Conns) -> FlowGraph {
+    flow_graph(meta, Some((n, *conns)), std::iter::empty())
 }
 
 /// Given the meta graph and a node registered as a `pull_eval` entrypoint,
 /// produce the control flow graph.
 fn pull_eval_flow_graph(meta: &Meta, n: node::Id, conns: &node::Conns) -> FlowGraph {
-    // Iterate over the meta nodes that are included in topo order.
-    let nbs = pull_eval_neighbors(&meta.graph, n, conns);
-    // FIXME: Can just get reachable here - we handle order in `node_conf_graph`.
-    let order: Vec<_> = pull_eval_order(&meta.graph, n, &nbs).collect();
-    let included: HashSet<_> = order.iter().copied().collect();
-    let mg = reachable_subgraph(&meta.graph, &included);
-    let conf_graph = node_conf_graph(meta, &mg, None);
-    flow_graph(&conf_graph)
+    flow_graph(meta, std::iter::empty(), Some((n, *conns)))
 }
 
 /// Filter unreachable nodes from the given metagraph.
@@ -170,7 +161,7 @@ fn reachable_subgraph(g: &MetaGraph, reachable: &HashSet<node::Id>) -> MetaGraph
 
 /// Given a node configuration flow graph, return the reduced control flow graph
 /// of basic blocks.
-fn flow_graph(cg: &NodeConfGraph) -> FlowGraph {
+fn flow_graph_from_conf_graph(cg: &NodeConfGraph) -> FlowGraph {
     // Initialise the flow graph with the same nodes and edges.
     let mut g = FlowGraph::with_capacity(cg.node_count(), cg.edge_count());
     let mut visited = HashMap::with_capacity(cg.node_count());
