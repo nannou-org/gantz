@@ -2,7 +2,7 @@
 
 use crate::{
     GRAPH_STATE, ROOT_STATE,
-    compile::{Block, Flow, FlowGraph, Meta, MetaGraph, RoseTree},
+    compile::{Block, Flow, FlowGraph, Meta, MetaGraph, NodeConns, RoseTree},
     node,
 };
 pub(crate) use node_fn::{node_fns, unique_node_confs};
@@ -10,7 +10,7 @@ use petgraph::{
     graph::NodeIndex,
     visit::{EdgeRef, IntoNodeReferences, NodeRef},
 };
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 mod node_fn;
@@ -42,6 +42,34 @@ fn node_fn_call(
         .unwrap()
 }
 
+/// Function to generate node output variable names.
+fn output_var_name(node_ix: node::Id, out_ix: u16) -> String {
+    format!("node-{}-o{}", node_ix, out_ix)
+}
+
+/// The names of the arguments for a call to the node with the given ID with the
+/// given connected inputs.
+fn node_fn_call_arg_srcs(
+    g: &MetaGraph,
+    reachable: &HashSet<node::Id>,
+    n: node::Id,
+    inputs: &node::Conns,
+) -> Vec<Option<(node::Id, node::Output)>> {
+    let mut args = vec![None; inputs.len()];
+    for e_ref in g.edges_directed(n, petgraph::Incoming) {
+        for (edge, _kind) in e_ref.weight() {
+            if inputs.get(edge.input.0 as usize).unwrap() && reachable.contains(&e_ref.source()) {
+                args[edge.input.0 as usize] = Some((e_ref.source(), edge.output));
+            }
+        }
+    }
+    assert_eq!(
+        inputs.iter().filter(|&b| b).count(),
+        args.iter().filter(|opt| opt.is_some()).count(),
+    );
+    args
+}
+
 /// A statement within a sequence of statements for a top-level entrypoint or
 /// nested graph function.
 ///
@@ -51,18 +79,15 @@ fn node_fn_call(
 /// - `inputs`: the names of the output bindings that are being provided as
 ///   arguments to the node inputs.
 ///
-/// Returns the statement, alongside the name(s) of the output binding(s).
+/// Returns the statement.
 fn eval_stmt(
+    mg: &MetaGraph,
+    reachable: &HashSet<node::Id>,
     node_path: &[node::Id],
-    inputs: &[Option<String>],
+    inputs: &node::Conns,
     outputs: &node::Conns,
     stateful: bool,
-) -> (ExprKind, Vec<String>) {
-    // Function to generate variable names
-    fn var_name(node_ix: node::Id, out_ix: u16) -> String {
-        format!("node-{}-o{}", node_ix, out_ix)
-    }
-
+) -> ExprKind {
     // An expression for a node's key into the graph state hashmap.
     fn node_state_key(node_id: usize) -> ExprKind {
         // Create a symbol or other hashable key to use in the hashmap
@@ -115,13 +140,18 @@ fn eval_stmt(
     // The node index is the last element of the path.
     let node_ix = *node_path.last().expect("node_path must not be empty");
 
-    // Create variables for this node's outputs
-    let output_vars: Vec<_> = (0..outputs.len())
-        .map(|i| var_name(node_ix, i as u16))
+    // Determine the input arg names.
+    let input_args: Vec<_> = node_fn_call_arg_srcs(mg, reachable, node_ix, inputs)
+        .into_iter()
+        .map(|src_opt| {
+            src_opt
+                .as_ref()
+                .map(|&(node, output)| output_var_name(node, output.0))
+        })
         .collect();
 
     // The expression for the node function call.
-    let node_fn_call_expr = node_fn_call(node_path, inputs, outputs, stateful);
+    let node_fn_call_expr = node_fn_call(node_path, &input_args, outputs, stateful);
     let mut node_fn_call_expr_str = format!("{node_fn_call_expr}");
 
     // Create the expression for the node.
@@ -138,20 +168,20 @@ fn eval_stmt(
     let stmt = match outputs.len() {
         0 => node_fn_call_expr,
         1 => {
-            let output_var = var_name(node_ix, 0);
+            let output_var = output_var_name(node_ix, 0);
             let define_expr = create_define_expr(output_var, node_fn_call_expr);
             define_expr
         }
         _ => {
             let output_vars: Vec<String> = (0..outputs.len())
-                .map(|i| var_name(node_ix, i as u16))
+                .map(|i| output_var_name(node_ix, i as u16))
                 .collect();
             let define_values_expr = create_define_values_expr(output_vars, node_fn_call_expr);
             define_values_expr
         }
     };
 
-    (stmt, output_vars)
+    stmt
 }
 
 /// Generate a function for performing evaluation of the given statements.
@@ -202,29 +232,6 @@ pub fn push_eval_fn_name(path: &[node::Id]) -> String {
     format!("push-fn-{}", path_string(path))
 }
 
-/// The names of the arguments for a call to the node with the given ID with the
-/// given connected inputs.
-fn node_fn_call_arg_srcs(
-    g: &MetaGraph,
-    reachable: &HashSet<node::Id>,
-    n: node::Id,
-    inputs: &node::Conns,
-) -> Vec<Option<(node::Id, node::Output)>> {
-    let mut args = vec![None; inputs.len()];
-    for e_ref in g.edges_directed(n, petgraph::Incoming) {
-        for (edge, _kind) in e_ref.weight() {
-            if inputs.get(edge.input.0 as usize).unwrap() && reachable.contains(&e_ref.source()) {
-                args[edge.input.0 as usize] = Some((e_ref.source(), edge.output));
-            }
-        }
-    }
-    assert_eq!(
-        inputs.iter().filter(|&b| b).count(),
-        args.iter().filter(|opt| opt.is_some()).count(),
-    );
-    args
-}
-
 /// Generate a sequence of node fn call statements from the given flow graph
 /// basic block.
 pub(crate) fn eval_fn_block_stmts(
@@ -234,38 +241,14 @@ pub(crate) fn eval_fn_block_stmts(
     reachable: &HashSet<node::Id>,
     block: &Block,
 ) -> Vec<ExprKind> {
-    // Track output variables
-    let mut output_vars: HashMap<(node::Id, node::Output), String> = HashMap::new();
     let mut stmts = Vec::new();
     for conf in &block.0 {
-        // Determine the arg names for the fn call..
-        let input_srcs = node_fn_call_arg_srcs(mg, reachable, conf.id, &conf.conns.inputs);
-        let inputs: Vec<Option<String>> = input_srcs
-            .iter()
-            .map(|src_opt| {
-                src_opt.as_ref().map(|&(node, output)| {
-                    let var_name = output_vars.get(&(node, output)).unwrap();
-                    var_name.to_string()
-                })
-            })
-            .collect();
-
         let node_path: Vec<_> = path.iter().copied().chain(Some(conf.id)).collect();
         let stateful = stateful.contains(&conf.id);
-
-        // Produce the statement.
-        let outputs = conf.conns.outputs;
-        let (stmt, stmt_outputs) = eval_stmt(&node_path, &inputs, &outputs, stateful);
-
-        // Keep track of the output bindings.
-        for (out_ix, out_var) in stmt_outputs.into_iter().enumerate() {
-            let output = node::Output(out_ix.try_into().unwrap());
-            output_vars.insert((conf.id, output), out_var);
-        }
-
+        let NodeConns { inputs, outputs } = conf.conns;
+        let stmt = eval_stmt(mg, reachable, &node_path, &inputs, &outputs, stateful);
         stmts.push(stmt);
     }
-
     stmts
 }
 
