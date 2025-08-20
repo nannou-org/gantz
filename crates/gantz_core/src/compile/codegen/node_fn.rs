@@ -9,7 +9,7 @@
 
 use crate::{
     Edge,
-    compile::{EvalPlan, EvalStep, RoseTree, codegen::path_string},
+    compile::{Flow, NodeConf, NodeConns, RoseTree, codegen::path_string},
     node::{self, Node},
     visit::{self, Visitor},
 };
@@ -21,14 +21,7 @@ use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 ///
 /// These are used to determine which set of functions to generate for each
 /// node.
-type NodeConfs = BTreeSet<(node::Id, NodeConf)>;
-
-/// The connectedness of a node for a particular evaluation step.
-#[derive(Clone, Eq, PartialEq, PartialOrd, Ord)]
-pub(crate) struct NodeConf {
-    inputs: Vec<bool>,
-    outputs: Vec<bool>,
-}
+type NodeConfs = BTreeSet<NodeConf>;
 
 /// A visitor used to collect all node functions from a tree of nested gantz
 /// graphs.
@@ -53,50 +46,46 @@ impl<'pl> Visitor for NodeFns<'pl> {
         let plan_path = &node_path[..node_path.len() - 1];
         let tree = self.tree.tree(&plan_path).unwrap();
         let id = ctx.id();
-        let empty_conf = NodeConf {
-            inputs: vec![],
-            outputs: vec![],
+        let empty_conns = NodeConns {
+            inputs: node::Conns::empty(),
+            outputs: node::Conns::empty(),
         };
-        let start = (id, empty_conf.clone());
-        let end = (id.checked_add(1).expect("node id out of range"), empty_conf);
+        let start = NodeConf {
+            id,
+            conns: empty_conns.clone(),
+        };
+        let end_id = id.checked_add(1).expect("node id out of range");
+        let end = NodeConf {
+            id: end_id,
+            conns: empty_conns,
+        };
         let range = (Included(start), Excluded(end));
         let input_confs = tree.elem.range(range);
-        for (_id, conf) in input_confs {
-            self.fns.push(node_fn(node, node_path, &conf));
+        for conf in input_confs {
+            self.fns.push(node_fn(node, node_path, &conf.conns));
         }
     }
 }
 
-/// Collect all unique node configurations for all unique evaluation paths that
-/// exist in the graph.
-fn node_confs<'a, I>(eval_stepss: I) -> NodeConfs
-where
-    I: IntoIterator<Item = &'a [EvalStep]>,
-{
-    eval_stepss
-        .into_iter()
-        .flat_map(|steps| {
-            steps.iter().map(|step| {
-                let inputs = step.inputs.iter().map(|input| input.is_some()).collect();
-                let outputs = step.outputs.clone();
-                let conf = NodeConf { inputs, outputs };
-                (step.node, conf)
-            })
-        })
-        .collect()
-}
-
-/// Construct a rose tree of node configs from a tree of eval plans.
-pub(crate) fn node_confs_tree(eval_tree: &RoseTree<EvalPlan>) -> RoseTree<NodeConfs> {
-    eval_tree.map_ref(&mut |eval| {
-        let all_steps = eval
-            .pull_steps
+/// The set of unique node configurations appearing within all evaluation paths.
+pub(crate) fn unique_node_confs(flow: &Flow) -> NodeConfs {
+    let mut confs = BTreeSet::new();
+    confs.extend(
+        flow.push
             .values()
-            .chain(eval.push_steps.values())
-            .chain(Some(&eval.nested_steps))
-            .map(|v| &v[..]);
-        node_confs(all_steps)
-    })
+            .flat_map(|g| g.node_weights().flat_map(|blk| blk.iter().copied())),
+    );
+    confs.extend(
+        flow.pull
+            .values()
+            .flat_map(|g| g.node_weights().flat_map(|blk| blk.iter().copied())),
+    );
+    confs.extend(
+        flow.nested
+            .node_weights()
+            .flat_map(|blk| blk.iter().copied()),
+    );
+    confs
 }
 
 /// Generate a function name for a node based on its path in the graph.
@@ -112,7 +101,7 @@ pub(crate) fn name(node_path: &[node::Id], inputs: &node::Conns, outputs: &node:
 }
 
 /// Generate a function for a single node with the given set of connected inputs.
-pub(crate) fn node_fn(node: &dyn Node, node_path: &[node::Id], conf: &NodeConf) -> ExprKind {
+pub(crate) fn node_fn(node: &dyn Node, node_path: &[node::Id], conns: &NodeConns) -> ExprKind {
     // The binding used to receive the node's state as an argument, and whose
     // resulting value is returned from the body of the function and used to
     // update the state map.
@@ -123,7 +112,7 @@ pub(crate) fn node_fn(node: &dyn Node, node_path: &[node::Id], conf: &NodeConf) 
     }
 
     // Create function parameters for graph state and inputs
-    let mut input_args = conf
+    let mut input_args = conns
         .inputs
         .iter()
         .enumerate()
@@ -131,7 +120,7 @@ pub(crate) fn node_fn(node: &dyn Node, node_path: &[node::Id], conf: &NodeConf) 
         .collect::<Vec<_>>();
 
     // Create input expressions for the node's expr method
-    let input_exprs: Vec<Option<String>> = conf
+    let input_exprs: Vec<Option<String>> = conns
         .inputs
         .iter()
         .enumerate()
@@ -139,14 +128,12 @@ pub(crate) fn node_fn(node: &dyn Node, node_path: &[node::Id], conf: &NodeConf) 
         .collect();
 
     // Get the node's expression
-    let ctx = node::ExprCtx::new(node_path, &input_exprs, &conf.outputs);
+    let ctx = node::ExprCtx::new(node_path, &input_exprs, &conns.outputs);
     let node_expr = node.expr(ctx);
 
     // Construct the full function definition
     // FIXME: Remove this when switching to `flow::NodeConf`.
-    let inputs = node::Conns::try_from_slice(&conf.inputs).unwrap();
-    let outputs = node::Conns::try_from_slice(&conf.outputs).unwrap();
-    let fn_name = name(node_path, &inputs, &outputs);
+    let fn_name = name(node_path, &conns.inputs, &conns.outputs);
     let fn_body = if node.stateful() {
         input_args.push(STATE.to_string());
         format!("(let ((output {node_expr})) (list output state))")

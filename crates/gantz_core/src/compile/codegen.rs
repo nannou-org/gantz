@@ -2,11 +2,15 @@
 
 use crate::{
     GRAPH_STATE, ROOT_STATE,
-    compile::{EvalPlan, EvalStep, RoseTree},
+    compile::{Block, Flow, FlowGraph, Meta, MetaGraph, RoseTree},
     node,
 };
-pub(crate) use node_fn::{node_confs_tree, node_fns};
-use std::collections::{BTreeSet, HashMap};
+pub(crate) use node_fn::{node_fns, unique_node_confs};
+use petgraph::{
+    graph::NodeIndex,
+    visit::{EdgeRef, IntoNodeReferences, NodeRef},
+};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 mod node_fn;
@@ -150,50 +154,6 @@ fn eval_stmt(
     (stmt, output_vars)
 }
 
-/// Generate a sequence of evaluation statements for an eval function, one
-/// statement for each given evaluation step.
-///
-/// The given `path`, `outputs` and `stateful` are associated with the graph
-/// in which the eval fn is invoked.
-pub(crate) fn eval_stmts(
-    path: &[node::Id],
-    steps: &[EvalStep],
-    stateful: &BTreeSet<node::Id>,
-) -> Vec<ExprKind> {
-    // Track output variables
-    let mut output_vars: HashMap<(node::Id, node::Output), String> = HashMap::new();
-    let mut stmts = Vec::new();
-    for step in steps {
-        // Prepare input expressions for this node
-        let inputs: Vec<_> = step
-            .inputs
-            .iter()
-            .map(|arg_opt| {
-                arg_opt.as_ref().map(|arg| {
-                    let var_name = output_vars.get(&(arg.node, arg.output)).unwrap();
-                    var_name.to_string()
-                })
-            })
-            .collect();
-
-        let node_path: Vec<_> = path.iter().copied().chain(Some(step.node)).collect();
-        let stateful = stateful.contains(&step.node);
-
-        // Produce the statement.
-        let outputs = node::Conns::try_from_slice(&step.outputs).unwrap();
-        let (stmt, stmt_outputs) = eval_stmt(&node_path, &inputs, &outputs, stateful);
-
-        // Keep track of the output bindings.
-        for (out_ix, out_var) in stmt_outputs.into_iter().enumerate() {
-            let output = node::Output(out_ix.try_into().unwrap());
-            output_vars.insert((step.node, output), out_var);
-        }
-
-        stmts.push(stmt);
-    }
-    stmts
-}
-
 /// Generate a function for performing evaluation of the given statements.
 ///
 /// The given `Vec<ExprKind>` should be generated via the `eval_stmts` function.
@@ -242,26 +202,152 @@ pub fn push_eval_fn_name(path: &[node::Id]) -> String {
     format!("push-fn-{}", path_string(path))
 }
 
+/// The names of the arguments for a call to the node with the given ID with the
+/// given connected inputs.
+fn node_fn_call_arg_srcs(
+    g: &MetaGraph,
+    reachable: &HashSet<node::Id>,
+    n: node::Id,
+    inputs: &node::Conns,
+) -> Vec<Option<(node::Id, node::Output)>> {
+    let mut args = vec![None; inputs.len()];
+    for e_ref in g.edges_directed(n, petgraph::Incoming) {
+        for (edge, _kind) in e_ref.weight() {
+            if inputs.get(edge.input.0 as usize).unwrap() && reachable.contains(&e_ref.source()) {
+                args[edge.input.0 as usize] = Some((e_ref.source(), edge.output));
+            }
+        }
+    }
+    assert_eq!(
+        inputs.iter().filter(|&b| b).count(),
+        args.iter().filter(|opt| opt.is_some()).count(),
+    );
+    args
+}
+
+/// Generate a sequence of node fn call statements from the given flow graph
+/// basic block.
+pub(crate) fn eval_fn_block_stmts(
+    path: &[node::Id],
+    mg: &MetaGraph,
+    stateful: &BTreeSet<node::Id>,
+    reachable: &HashSet<node::Id>,
+    block: &Block,
+) -> Vec<ExprKind> {
+    // Track output variables
+    let mut output_vars: HashMap<(node::Id, node::Output), String> = HashMap::new();
+    let mut stmts = Vec::new();
+    for conf in &block.0 {
+        // Determine the arg names for the fn call..
+        let input_srcs = node_fn_call_arg_srcs(mg, reachable, conf.id, &conf.conns.inputs);
+        let inputs: Vec<Option<String>> = input_srcs
+            .iter()
+            .map(|src_opt| {
+                src_opt.as_ref().map(|&(node, output)| {
+                    let var_name = output_vars.get(&(node, output)).unwrap();
+                    var_name.to_string()
+                })
+            })
+            .collect();
+
+        let node_path: Vec<_> = path.iter().copied().chain(Some(conf.id)).collect();
+        let stateful = stateful.contains(&conf.id);
+
+        // Produce the statement.
+        let outputs = conf.conns.outputs;
+        let (stmt, stmt_outputs) = eval_stmt(&node_path, &inputs, &outputs, stateful);
+
+        // Keep track of the output bindings.
+        for (out_ix, out_var) in stmt_outputs.into_iter().enumerate() {
+            let output = node::Output(out_ix.try_into().unwrap());
+            output_vars.insert((conf.id, output), out_var);
+        }
+
+        stmts.push(stmt);
+    }
+
+    stmts
+}
+
+/// Find the entrypoint to the flow graph.
+fn flow_graph_entry(fg: &FlowGraph) -> Option<NodeIndex<u32>> {
+    let mut iter = fg
+        .node_references()
+        .map(|n_ref| n_ref.id())
+        .filter(|&n| fg.edges_directed(n, petgraph::Incoming).next().is_none());
+    let entry = iter.next();
+    assert!(
+        iter.next().is_none(),
+        "flow graph should have only one entry"
+    );
+    entry
+}
+
+/// The set of unique nodes in the flow graph.
+fn flow_graph_nodes(fg: &FlowGraph) -> HashSet<node::Id> {
+    let mut set = HashSet::new();
+    for n_ref in fg.node_references() {
+        set.extend(n_ref.weight().iter().map(|conf| conf.id));
+    }
+    set
+}
+
+/// Given the flow graph for an entry point eval fn, generate the body for the
+/// fn. as a list of statements.
+pub fn eval_fn_body(
+    path: &[node::Id],
+    mg: &MetaGraph,
+    stateful: &BTreeSet<node::Id>,
+    fg: &FlowGraph,
+) -> Vec<ExprKind> {
+    // Find the entry node. Collect the set of reachable nodes to filter out
+    // unreachable nodes from the meta graph.
+    let entry = flow_graph_entry(fg).unwrap();
+    let reachable = flow_graph_nodes(fg);
+
+    // Walk the CFG depth-first generating all stmts for blocks and branches.
+    // FIXME: do DFS manually and handle branches.
+    let mut dfs = petgraph::visit::Dfs::new(fg, entry.id());
+    let mut stmts = vec![];
+    while let Some(n) = dfs.next(fg) {
+        let block = &fg[n];
+        stmts.extend(eval_fn_block_stmts(path, mg, stateful, &reachable, block));
+    }
+    stmts
+}
+
+//// Generate all push and pull fns for the given control flow graph.
+pub(crate) fn eval_fns_from_flow(
+    path: &[node::Id],
+    mg: &MetaGraph,
+    stateful: &BTreeSet<node::Id>,
+    flow: &Flow,
+) -> Vec<ExprKind> {
+    let pull_fgs = flow.pull.iter().map(|(&(id, _conns), fg)| {
+        let node_path: Vec<_> = path.iter().copied().chain(Some(id)).collect();
+        let name = pull_eval_fn_name(&node_path);
+        (name, fg)
+    });
+    let push_fgs = flow.push.iter().map(|(&(id, _conns), fg)| {
+        let node_path: Vec<_> = path.iter().copied().chain(Some(id)).collect();
+        let name = push_eval_fn_name(&node_path);
+        (name, fg)
+    });
+    pull_fgs
+        .chain(push_fgs)
+        .map(|(name, fg)| {
+            let stmts = eval_fn_body(path, mg, stateful, fg);
+            eval_fn(&name, stmts)
+        })
+        .collect()
+}
+
 /// Given a tree of eval plans for a gantz graph (and its nested graphs),
 /// generate all push, pull and nested eval fns for the graph.
-pub(crate) fn eval_fns(eval_tree: &RoseTree<EvalPlan>) -> Vec<ExprKind> {
+pub(crate) fn eval_fns(flow_tree: &RoseTree<(&Meta, Flow)>) -> Vec<ExprKind> {
     let mut eval_fns = vec![];
-    eval_tree.visit(&[], &mut |path, eval| {
-        let pull_steps = eval.pull_steps.iter().map(|(&id, steps)| {
-            let node_path: Vec<_> = path.iter().copied().chain(Some(id)).collect();
-            let name = pull_eval_fn_name(&node_path);
-            (name, steps)
-        });
-        let push_steps = eval.push_steps.iter().map(|(&id, steps)| {
-            let node_path: Vec<_> = path.iter().copied().chain(Some(id)).collect();
-            let name = push_eval_fn_name(&node_path);
-            (name, steps)
-        });
-        let fns = pull_steps.chain(push_steps).map(|(name, steps)| {
-            let stmts = eval_stmts(path, &steps, &eval.meta.stateful);
-            eval_fn(&name, stmts)
-        });
-        eval_fns.extend(fns);
+    flow_tree.visit(&[], &mut |path, (meta, flow)| {
+        eval_fns.extend(eval_fns_from_flow(path, &meta.graph, &meta.stateful, flow));
     });
     eval_fns
 }
