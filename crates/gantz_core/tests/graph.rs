@@ -186,7 +186,6 @@ fn test_graph_pull_eval() {
 //    | number |
 //    ----------
 #[test]
-#[ignore = "Requires handling node output branching"]
 fn test_graph_push_cond_eval() {
     #[derive(Debug)]
     struct Select;
