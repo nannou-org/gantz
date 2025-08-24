@@ -31,10 +31,16 @@ pub struct Block(pub Vec<NodeConf>);
 ///
 /// Nodes represent basic blocks of node function calls, edges represent the
 /// unique output branching that leads between blocks.
-pub type FlowGraph = petgraph::stable_graph::StableDiGraph<Block, BranchConns>;
+pub type FlowGraph = petgraph::stable_graph::StableDiGraph<Block, Branch>;
 
-/// One of the
-type BranchConns = node::Conns;
+/// A branch from a node.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+pub struct Branch {
+    /// The index that indicates the branch was taken.
+    pub ix: usize,
+    /// The active outputs for the branch.
+    pub conns: node::Conns,
+}
 
 /// A control flow graph describing indifidual node function call dependency.
 ///
@@ -43,7 +49,7 @@ type BranchConns = node::Conns;
 ///
 /// This is derived from the `Meta` graph and is used to construct the
 /// `FlowGraph` via edge contraction.
-pub type NodeConfGraph = petgraph::graphmap::DiGraphMap<NodeConf, BranchConns>;
+pub type NodeConfGraph = petgraph::graphmap::DiGraphMap<NodeConf, Branch>;
 
 /// A node within the control flow graph.
 ///
@@ -254,11 +260,12 @@ fn node_outputs(g: &MetaGraph, n: node::Id, n_outputs: usize) -> node::Conns {
 //   happening?
 // - Refactor this to not use recursion on branching.
 // TODO:
-// - Refactor to avoid gross `first_node_conns` input.
+// - Refactor to avoid gross `first_node_conns` and `first_branch_ix` inputs.
 fn node_conf_graph(
     meta: &Meta,
     mg: &MetaGraph,
-    first_node_conns: Option<NodeConns>,
+    // The `NodeConns` is the conns of the branching node.
+    mut from_branch: Option<(NodeConns, Branch)>,
 ) -> NodeConfGraph {
     let mut g = NodeConfGraph::new();
 
@@ -276,13 +283,17 @@ fn node_conf_graph(
 
         // Add an edge from the prev node.
         if let Some(prev) = last {
-            g.add_edge(prev, conf, outputs);
+            let branch = from_branch.take().map(|(_, b)| b).unwrap_or_else(|| {
+                let conns = outputs;
+                Branch { ix: 0, conns }
+            });
+            g.add_edge(prev, conf, branch);
 
         // If there is no last node, this is the first node.
         } else {
             // If a set of outputs were provided for the first node, this is for
             // the beginning node in a branch.
-            if let Some(conns) = first_node_conns {
+            if let Some((conns, _branch)) = from_branch {
                 conf.conns = conns;
             }
             g.add_node(conf);
@@ -294,15 +305,16 @@ fn node_conf_graph(
             // For each branch, collect the subgraph.
             // FIXME: Make this non-recursive.
 
-            for branch in branches {
+            for (ix, branch) in branches.iter().enumerate() {
                 let nbs = push_eval_neighbors(mg, n, branch);
                 let reachable: HashSet<_> = push_reachable(mg, n, &nbs).collect();
                 let sub_mg = reachable_subgraph(mg, &reachable);
+                let branch = Branch { ix, conns: *branch };
                 // FIXME: This adds the branching node, but with a subset of
                 // outputs. We only want the branching node at the end of the
                 // block with all connected outputs in the config, then the
                 // *edges* should have the branch subsets.
-                let sub_ncg = node_conf_graph(meta, &sub_mg, Some(conns));
+                let sub_ncg = node_conf_graph(meta, &sub_mg, Some((conns, branch)));
                 g.extend(sub_ncg.all_edges().map(|(a, b, &w)| (a, b, w)));
             }
 
