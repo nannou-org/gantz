@@ -20,10 +20,18 @@ pub trait NodeUi {
     /// access to the node's state.
     fn ui(&mut self, _ctx: NodeCtx, _ui: &mut egui::Ui) -> egui::Response;
 
-    /// UI for the node to be presented within the node inspector.
+    /// Optionally add additional rows to the node's inspector UI.
     ///
-    /// By default, this presents the node's path and its current state within
-    /// the VM.
+    /// By default, only the node's path and its current state within the VM are
+    /// shown. Adding to the given `body` by providing an implementation of this
+    /// method will append extra rows.
+    fn inspector_rows(&mut self, _ctx: &NodeCtx, _body: &mut egui_extras::TableBody) {}
+
+    /// Extra UI for the node to be presented within the node inspector
+    /// following the default table.
+    ///
+    /// See [`NodeUi::inspector_rows`] for how to simply append rows to the
+    /// table.
     fn inspector_ui(&mut self, _ctx: NodeCtx, _ui: &mut egui::Ui) -> Option<egui::Response> {
         None
     }
@@ -51,6 +59,11 @@ pub enum Cmd {
     OpenGraph(Vec<node::Id>),
 }
 
+/// Used to represent the content address
+///
+/// TODO: Replace this with [u8; 20] and use SHA1 or something.
+pub type ContentAddr = u64;
+
 impl<'a, N> NodeUi for &'a mut N
 where
     N: ?Sized + NodeUi,
@@ -61,6 +74,10 @@ where
 
     fn ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> egui::Response {
         (**self).ui(ctx, ui)
+    }
+
+    fn inspector_rows(&mut self, ctx: &NodeCtx, body: &mut egui_extras::TableBody) {
+        (**self).inspector_rows(ctx, body)
     }
 
     fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> Option<egui::Response> {
@@ -80,6 +97,10 @@ macro_rules! impl_node_ui_for_ptr {
 
             fn ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> egui::Response {
                 (**self).ui(ctx, ui)
+            }
+
+            fn inspector_rows(&mut self, ctx: &NodeCtx, body: &mut egui_extras::TableBody) {
+                (**self).inspector_rows(ctx, body)
             }
 
             fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> Option<egui::Response> {

@@ -34,14 +34,18 @@ where
     }
 }
 
+pub fn table_row_h(ui: &egui::Ui) -> f32 {
+    ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().item_spacing.y
+}
+
 pub fn table(
-    node: &(impl Node + NodeUi),
+    node: &mut (impl Node + NodeUi),
     ctx: &NodeCtx,
     ui: &mut egui::Ui,
 ) -> ScrollAreaOutput<()> {
     ui.strong(node.name());
     ui.add_space(ui.spacing().item_spacing.y);
-    let row_h = ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().item_spacing.y;
+    let row_h = table_row_h(ui);
     TableBuilder::new(ui)
         .column(Column::auto().at_least(50.0).resizable(true))
         .column(Column::remainder().at_least(120.0))
@@ -104,6 +108,8 @@ pub fn table(
                     });
                 });
             }
+
+            node.inspector_rows(ctx, &mut body);
         })
 }
 
