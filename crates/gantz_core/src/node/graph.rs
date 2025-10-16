@@ -68,25 +68,25 @@ where
     }
 }
 
-impl<N> Node for GraphNode<N>
+impl<Env, N> Node<Env> for GraphNode<N>
 where
-    N: Node,
+    N: Node<Env>,
 {
-    fn branches(&self) -> Vec<node::EvalConf> {
+    fn n_inputs(&self, _: &Env) -> usize {
+        inlets(&self.graph).count()
+    }
+
+    fn n_outputs(&self, _: &Env) -> usize {
+        outlets(&self.graph).count()
+    }
+
+    fn branches(&self, _: &Env) -> Vec<node::EvalConf> {
         // TODO: generate branches based on inner node branching
         vec![]
     }
 
-    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
-        nested_expr(&self.graph, ctx.path(), ctx.inputs())
-    }
-
-    fn n_inputs(&self) -> usize {
-        inlets(&self.graph).count()
-    }
-
-    fn n_outputs(&self) -> usize {
-        outlets(&self.graph).count()
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+        nested_expr(ctx.env(), &self.graph, ctx.path(), ctx.inputs())
     }
 
     fn stateful(&self) -> bool {
@@ -99,8 +99,8 @@ where
             .expect("failed to register graph hashmap");
     }
 
-    fn visit(&self, ctx: visit::Ctx, visitor: &mut dyn node::Visitor) {
-        crate::graph::visit(&self.graph, ctx.path(), visitor);
+    fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
+        crate::graph::visit(ctx.env(), &self.graph, ctx.path(), visitor);
     }
 }
 
@@ -195,9 +195,9 @@ where
     }
 }
 
-impl Node for Inlet {
+impl<Env> Node<Env> for Inlet {
     /// Simply returns the state value as this node's output
-    fn expr(&self, _ctx: node::ExprCtx) -> ExprKind {
+    fn expr(&self, _ctx: node::ExprCtx<Env>) -> ExprKind {
         Engine::emit_ast("state")
             .expect("failed to emit AST")
             .into_iter()
@@ -206,11 +206,11 @@ impl Node for Inlet {
             .into()
     }
 
-    fn n_inputs(&self) -> usize {
+    fn n_inputs(&self, _env: &Env) -> usize {
         0
     }
 
-    fn n_outputs(&self) -> usize {
+    fn n_outputs(&self, _env: &Env) -> usize {
         1
     }
 
@@ -227,9 +227,9 @@ impl Node for Inlet {
     }
 }
 
-impl Node for Outlet {
+impl<Env> Node<Env> for Outlet {
     // Stores the input value in the state.
-    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
         let input = match &ctx.inputs()[0] {
             Some(expr) => expr.clone(),
             None => "'()".to_string(),
@@ -243,11 +243,11 @@ impl Node for Outlet {
             .into()
     }
 
-    fn n_inputs(&self) -> usize {
+    fn n_inputs(&self, _env: &Env) -> usize {
         1
     }
 
-    fn n_outputs(&self) -> usize {
+    fn n_outputs(&self, _env: &Env) -> usize {
         0
     }
 
@@ -288,28 +288,28 @@ pub fn graph_partial_eq<N: PartialEq>(a: &Graph<N>, b: &Graph<N>) -> bool {
 }
 
 /// Count the number of inlet nodes in the given graph.
-pub fn inlets<G>(g: G) -> impl Iterator<Item = G::NodeRef>
+pub fn inlets<Env, G>(g: G) -> impl Iterator<Item = G::NodeRef>
 where
     G: Data + IntoNodeReferences,
-    G::NodeWeight: Node,
+    G::NodeWeight: Node<Env>,
 {
     g.node_references().filter(|n_ref| n_ref.weight().inlet())
 }
 
 /// Count the number of outlet nodes in the given graph.
-pub fn outlets<G>(g: G) -> impl Iterator<Item = G::NodeRef>
+pub fn outlets<Env, G>(g: G) -> impl Iterator<Item = G::NodeRef>
 where
     G: Data + IntoNodeReferences,
-    G::NodeWeight: Node,
+    G::NodeWeight: Node<Env>,
 {
     g.node_references().filter(|n_ref| n_ref.weight().outlet())
 }
 
 /// The implementation of the `GraphNode`'s `Node::expr` fn.
-pub fn nested_expr<G>(g: G, path: &[node::Id], inputs: &[Option<String>]) -> ExprKind
+pub fn nested_expr<Env, G>(env: &Env, g: G, path: &[node::Id], inputs: &[Option<String>]) -> ExprKind
 where
     G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable + Data<EdgeWeight = Edge>,
-    G::NodeWeight: Node,
+    G::NodeWeight: Node<Env>,
     G::NodeId: Eq + Hash,
 {
     use crate::compile;
@@ -330,7 +330,7 @@ where
     }
 
     // Use compile to create the evaluation order, steps, and statements
-    let meta = compile::Meta::from_graph(g);
+    let meta = compile::Meta::from_graph(env, g);
     let outlets: Vec<_> = outlets(g).map(|n_ref| n_ref.id()).collect();
     let flow_graph = compile::flow_graph(
         &meta,

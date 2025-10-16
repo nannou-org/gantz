@@ -36,10 +36,10 @@ where
 
 /// Visit all nodes in the graph in toposort order, and all nested nodes in
 /// depth-first order.
-pub fn visit<G>(g: G, path: &[node::Id], visitor: &mut dyn node::Visitor)
+pub fn visit<Env, G>(env: &Env, g: G, path: &[node::Id], visitor: &mut dyn node::Visitor<Env>)
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
-    G::NodeWeight: Node,
+    G::NodeWeight: Node<Env>,
 {
     let mut path = path.to_vec();
     let mut topo = Topo::new(g);
@@ -50,7 +50,7 @@ where
             .edges_directed(n, petgraph::Direction::Incoming)
             .map(|e_ref| (g.to_index(e_ref.source()), e_ref.weight().clone()))
             .collect();
-        let ctx = visit::Ctx::new(&path, &inputs);
+        let ctx = visit::Ctx::new(env, &path, &inputs);
 
         // FIXME: index directly.
         let nref = g.node_references().find(|nref| nref.id() == n).unwrap();
@@ -61,10 +61,10 @@ where
 }
 
 /// Register the given graph of nodes, including any nested nodes.
-pub fn register<G>(g: G, path: &[node::Id], vm: &mut Engine)
+pub fn register<Env, G>(env: &Env, g: G, path: &[node::Id], vm: &mut Engine)
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
-    G::NodeWeight: Node,
+    G::NodeWeight: Node<Env>,
 {
-    visit(g, path, &mut visit::Register(vm));
+    visit(env, g, path, &mut visit::Register(vm));
 }

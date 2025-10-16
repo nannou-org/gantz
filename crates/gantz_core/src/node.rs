@@ -20,18 +20,23 @@ pub mod push;
 pub mod state;
 
 /// The definitive abstraction of a gantz graph, the gantz `Node` trait.
-pub trait Node {
+///
+/// The `Env` input parameter allows for providing a shared input to all
+/// nodes throughout the graph. This can be used for sharing immutable data
+/// between nodes without the need for shared references like `Arc` or `Rc`
+/// allowing graphs to remain serializable.
+pub trait Node<Env> {
     /// The number of inputs to the node.
     ///
     /// The maximum number is [`Conns::MAX`].
-    fn n_inputs(&self) -> usize {
+    fn n_inputs(&self, _env: &Env) -> usize {
         0
     }
 
     /// The number of outputs from the node.
     ///
     /// The maximum number is [`Conns::MAX`].
-    fn n_outputs(&self) -> usize {
+    fn n_outputs(&self, _env: &Env) -> usize {
         0
     }
 
@@ -52,7 +57,7 @@ pub trait Node {
     /// element is the node's output value(s).
     ///
     /// By default, this is `vec![]`.
-    fn branches(&self) -> Vec<EvalConf> {
+    fn branches(&self, _env: &Env) -> Vec<EvalConf> {
         vec![]
     }
 
@@ -66,7 +71,7 @@ pub trait Node {
     /// If [`Node::n_outputs`] is 1, the expr should result in a single value.
     ///
     /// If [`Node::n_outputs`] is > 1, the expr should result in a list of values.
-    fn expr(&self, ctx: ExprCtx) -> ExprKind;
+    fn expr(&self, ctx: ExprCtx<Env>) -> ExprKind;
 
     /// Specifies whether or not code should be generated to allow for push
     /// evaluation from instances of this node. Enabling push evaluation allows
@@ -82,7 +87,7 @@ pub trait Node {
     /// this node.
     ///
     /// By default, this is an empty vec.
-    fn push_eval(&self) -> Vec<EvalConf> {
+    fn push_eval(&self, _env: &Env) -> Vec<EvalConf> {
         vec![]
     }
 
@@ -100,7 +105,7 @@ pub trait Node {
     /// node.
     ///
     /// By default, this is an empty vec.
-    fn pull_eval(&self) -> Vec<EvalConf> {
+    fn pull_eval(&self, _env: &Env) -> Vec<EvalConf> {
         vec![]
     }
 
@@ -142,7 +147,7 @@ pub trait Node {
     /// Note that implementations should *only* visit nested nodes and not the
     /// node itself. To visit the node *and* all nested nodes, use the [`visit`]
     /// function.
-    fn visit(&self, _ctx: visit::Ctx, _visitor: &mut dyn Visitor) {}
+    fn visit(&self, _ctx: visit::Ctx<Env>, _visitor: &mut dyn Visitor<Env>) {}
 }
 
 /// A set of connections over which to push/pull evaluation.
@@ -161,7 +166,9 @@ pub enum EvalConf {
 pub type Id = usize;
 
 /// Context provided to the [`Node::expr`] fn.
-pub struct ExprCtx<'a> {
+pub struct ExprCtx<'a, Env> {
+    /// Access to the environment provided to the node.
+    env: &'a Env,
     /// The path of this node relative to the root of the gantz graph.
     ///
     /// This is primarily provided to allow `GraphNode`s (or custom graph node
@@ -196,13 +203,24 @@ pub struct Input(pub u16);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct Output(pub u16);
 
-impl<'a> ExprCtx<'a> {
-    pub(crate) fn new(path: &'a [Id], inputs: &'a [Option<String>], outputs: &'a Conns) -> Self {
+impl<'a, Env> ExprCtx<'a, Env> {
+    pub(crate) fn new(
+        env: &'a Env,
+        path: &'a [Id],
+        inputs: &'a [Option<String>],
+        outputs: &'a Conns,
+    ) -> Self {
         Self {
+            env,
             path,
             inputs,
             outputs,
         }
+    }
+
+    /// Access the environment provided to the node.
+    pub fn env(&self) -> &Env {
+        self.env
     }
 
     /// The path of this node relative to the root of the gantz graph.
@@ -240,32 +258,32 @@ impl<'a> ExprCtx<'a> {
     }
 }
 
-impl<'a, N> Node for &'a N
+impl<'a, Env, N> Node<Env> for &'a N
 where
-    N: ?Sized + Node,
+    N: ?Sized + Node<Env>,
 {
-    fn n_inputs(&self) -> usize {
-        (**self).n_inputs()
+    fn n_inputs(&self, env: &Env) -> usize {
+        (**self).n_inputs(env)
     }
 
-    fn n_outputs(&self) -> usize {
-        (**self).n_outputs()
+    fn n_outputs(&self, env: &Env) -> usize {
+        (**self).n_outputs(env)
     }
 
-    fn branches(&self) -> Vec<EvalConf> {
-        (**self).branches()
+    fn branches(&self, env: &Env) -> Vec<EvalConf> {
+        (**self).branches(env)
     }
 
-    fn expr(&self, ctx: ExprCtx) -> ExprKind {
+    fn expr(&self, ctx: ExprCtx<Env>) -> ExprKind {
         (**self).expr(ctx)
     }
 
-    fn push_eval(&self) -> Vec<EvalConf> {
-        (**self).push_eval()
+    fn push_eval(&self, env: &Env) -> Vec<EvalConf> {
+        (**self).push_eval(env)
     }
 
-    fn pull_eval(&self) -> Vec<EvalConf> {
-        (**self).pull_eval()
+    fn pull_eval(&self, env: &Env) -> Vec<EvalConf> {
+        (**self).pull_eval(env)
     }
 
     fn inlet(&self) -> bool {
@@ -284,39 +302,39 @@ where
         (**self).register(path, vm)
     }
 
-    fn visit(&self, ctx: visit::Ctx, visitor: &mut dyn Visitor) {
+    fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn Visitor<Env>) {
         (**self).visit(ctx, visitor)
     }
 }
 
 macro_rules! impl_node_for_ptr {
     ($($Ty:ident)::*) => {
-        impl<T> Node for $($Ty)::*<T>
+        impl<Env, T> Node<Env> for $($Ty)::*<T>
         where
-            T: ?Sized + Node,
+            T: ?Sized + Node<Env>,
         {
-            fn n_inputs(&self) -> usize {
-                (**self).n_inputs()
+            fn n_inputs(&self, env: &Env) -> usize {
+                (**self).n_inputs(env)
             }
 
-            fn n_outputs(&self) -> usize {
-                (**self).n_outputs()
+            fn n_outputs(&self, env: &Env) -> usize {
+                (**self).n_outputs(env)
             }
 
-            fn branches(&self) -> Vec<EvalConf> {
-                (**self).branches()
+            fn branches(&self, env: &Env) -> Vec<EvalConf> {
+                (**self).branches(env)
             }
 
-            fn expr(&self, ctx: ExprCtx) -> ExprKind {
+            fn expr(&self, ctx: ExprCtx<Env>) -> ExprKind {
                 (**self).expr(ctx)
             }
 
-            fn push_eval(&self) -> Vec<EvalConf> {
-                (**self).push_eval()
+            fn push_eval(&self, env: &Env) -> Vec<EvalConf> {
+                (**self).push_eval(env)
             }
 
-            fn pull_eval(&self) -> Vec<EvalConf> {
-                (**self).pull_eval()
+            fn pull_eval(&self, env: &Env) -> Vec<EvalConf> {
+                (**self).pull_eval(env)
             }
 
             fn inlet(&self) -> bool {
@@ -335,7 +353,7 @@ macro_rules! impl_node_for_ptr {
                 (**self).register(path, vm)
             }
 
-            fn visit(&self, ctx: visit::Ctx, visitor: &mut dyn Visitor) {
+            fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn Visitor<Env>) {
                 (**self).visit(ctx, visitor)
             }
         }
@@ -366,13 +384,13 @@ pub fn expr(expr: impl Into<String>) -> Result<Expr, ExprError> {
 }
 
 /// Visit this node and all nested nodes.
-pub fn visit(ctx: visit::Ctx, node: &dyn Node, visitor: &mut dyn Visitor) {
+pub fn visit<Env>(ctx: visit::Ctx<Env>, node: &dyn Node<Env>, visitor: &mut dyn Visitor<Env>) {
     visitor.visit_pre(ctx, node);
     node.visit(ctx, visitor);
     visitor.visit_post(ctx, node);
 }
 
 /// Register the given node and all nested nodes.
-pub fn register(ctx: visit::Ctx, node: &dyn Node, vm: &mut Engine) {
+pub fn register<Env>(ctx: visit::Ctx<Env>, node: &dyn Node<Env>, vm: &mut Engine) {
     visit(ctx, node, &mut visit::Register(vm));
 }

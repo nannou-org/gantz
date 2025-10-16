@@ -31,31 +31,33 @@ pub trait NodeState: Default + FromSteelVal + IntoSteelVal {
 
 /// A trait implemented for all **Node** types allowing to add some state accessible to its
 /// expression. This is particularly useful for adding state to **Expr** nodes.
-pub trait WithStateType: Node + Sized {
+pub trait WithStateType<Env>: Node<Env> + Sized {
     /// Consume `self` and return a `Node` that has state of type `state_type`.
-    fn with_state_type<S: NodeState>(self) -> State<Self, S> {
-        State::<Self, S>::new(self)
+    fn with_state_type<S: NodeState>(self) -> State<Env, Self, S> {
+        State::<Env, Self, S>::new(self)
     }
 }
 
 /// A wrapper around a **Node** that adds some persistent state.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct State<N, S> {
+pub struct State<Env, N, S> {
+    pub env: core::marker::PhantomData<Env>,
     /// The node being wrapped with state.
     pub node: N,
     /// The type of state used by the node.
     pub state: core::marker::PhantomData<S>,
 }
 
-impl<N, S> State<N, S> {
+impl<Env, N, S> State<Env, N, S> {
     /// Given some node, return a **State** node enabling access to state of the
     /// given type.
     pub fn new(node: N) -> Self
     where
-        N: Node,
+        N: Node<Env>,
         S: NodeState,
     {
         State {
+            env: core::marker::PhantomData,
             node,
             state: core::marker::PhantomData,
         }
@@ -68,42 +70,42 @@ fn default_node_state_steel_val<S: NodeState>() -> SteelVal {
         .expect("default `NodeState` to `SteelVal` conversion should never fail")
 }
 
-impl<N> WithStateType for N
+impl<Env, N> WithStateType<Env> for N
 where
-    N: Node,
+    N: Node<Env>,
 {
-    fn with_state_type<S: NodeState>(self) -> State<Self, S> {
-        State::<Self, S>::new(self)
+    fn with_state_type<S: NodeState>(self) -> State<Env, Self, S> {
+        State::<Env, Self, S>::new(self)
     }
 }
 
-impl<N, S> Node for State<N, S>
+impl<Env, N, S> Node<Env> for State<Env, N, S>
 where
-    N: Node,
+    N: Node<Env>,
     S: NodeState,
 {
-    fn n_inputs(&self) -> usize {
-        self.node.n_inputs()
+    fn n_inputs(&self, env: &Env) -> usize {
+        self.node.n_inputs(env)
     }
 
-    fn n_outputs(&self) -> usize {
-        self.node.n_outputs()
+    fn n_outputs(&self, env: &Env) -> usize {
+        self.node.n_outputs(env)
     }
 
-    fn branches(&self) -> Vec<node::EvalConf> {
-        self.node.branches()
+    fn branches(&self, env: &Env) -> Vec<node::EvalConf> {
+        self.node.branches(env)
     }
 
-    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
         self.node.expr(ctx)
     }
 
-    fn push_eval(&self) -> Vec<node::EvalConf> {
-        self.node.push_eval()
+    fn push_eval(&self, env: &Env) -> Vec<node::EvalConf> {
+        self.node.push_eval(env)
     }
 
-    fn pull_eval(&self) -> Vec<node::EvalConf> {
-        self.node.pull_eval()
+    fn pull_eval(&self, env: &Env) -> Vec<node::EvalConf> {
+        self.node.pull_eval(env)
     }
 
     fn inlet(&self) -> bool {
