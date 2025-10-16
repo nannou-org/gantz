@@ -1,6 +1,5 @@
-use std::hash::{Hash, Hasher};
-
-use crate::{Cmd, ContentAddr, NodeCtx, NodeUi, widget::node_inspector};
+use crate::{fmt_content_addr, graph_content_addr, widget::node_inspector, Cmd, NodeCtx, NodeUi};
+use std::hash::Hash;
 
 impl<N> NodeUi for gantz_core::node::GraphNode<N>
 where
@@ -25,21 +24,10 @@ where
                 ui.label("CA");
             });
             row.col(|ui| {
-                let ca = content_addr(self);
-                let ca_string = format!("{ca:#016x}");
+                let ca = graph_content_addr(self);
+                let ca_string = fmt_content_addr(ca);
                 ui.add(egui::Label::new(egui::RichText::new(ca_string).monospace()));
             });
         });
     }
-}
-
-/// Produce the content address for a given graph node.
-fn content_addr<N>(g: &gantz_core::node::GraphNode<N>) -> ContentAddr
-where
-    N: Hash,
-{
-    // TODO: Use a more stable/reproducible hash method.
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    g.hash(&mut hasher);
-    hasher.finish()
 }

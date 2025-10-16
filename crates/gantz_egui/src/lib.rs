@@ -1,5 +1,8 @@
-#[doc(inline)]
-use gantz_core::node;
+//! A suite of widgets, nodes and implementations for creating a GUI around
+//! gantz using `egui`.
+
+use std::hash::{Hash, Hasher};
+
 use steel::{
     SteelErr, SteelVal,
     rvals::{FromSteelVal, IntoSteelVal},
@@ -7,6 +10,7 @@ use steel::{
 };
 
 mod impls;
+pub mod node;
 pub mod widget;
 
 /// A trait providing an egui `Ui` implementation for gantz nodes.
@@ -164,4 +168,20 @@ impl<'a> NodeCtx<'a> {
     pub fn pull_eval(&mut self) {
         self.cmds.push(Cmd::PullEval(self.path.to_vec()));
     }
+}
+
+/// Produce the content address for a given graph.
+pub fn graph_content_addr<N>(g: &gantz_core::node::graph::Graph<N>) -> ContentAddr
+where
+    N: Hash,
+{
+    // TODO: Use a more stable/reproducible hash method.
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    gantz_core::graph::hash(g, &mut hasher);
+    hasher.finish()
+}
+
+/// Format the given content address into a hex string.
+pub fn fmt_content_addr(ca: ContentAddr) -> String {
+    format!("{ca:#016x}")
 }

@@ -52,6 +52,10 @@ impl Node for gantz_std::Log {}
 #[typetag::serde]
 impl Node for gantz_std::Number {}
 
+// FIXME
+// #[typetag::serde]
+// impl Node for gantz_egui::node::NamedGraph<Box<dyn Node>> {}
+
 #[typetag::serde]
 impl Node for Box<dyn Node> {}
 
