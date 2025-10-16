@@ -9,8 +9,8 @@ use petgraph::{
     Directed,
     graph::{EdgeIndex, NodeIndex},
     visit::{
-        Data, EdgeRef, IntoEdgeReferences, IntoEdgesDirected, IntoNodeReferences, NodeIndexable,
-        NodeRef, Visitable,
+        Data, IntoEdgeReferences, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, NodeRef,
+        Visitable,
     },
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -64,14 +64,7 @@ where
     where
         H: Hasher,
     {
-        for n in self.graph.node_references() {
-            n.id().hash(hasher);
-            n.weight().hash(hasher);
-        }
-        for e in self.graph.edge_references() {
-            e.id().hash(hasher);
-            e.weight().hash(hasher);
-        }
+        crate::graph::hash(&self.graph, hasher);
     }
 }
 
@@ -113,15 +106,7 @@ where
 
 impl<N: PartialEq> PartialEq for GraphNode<N> {
     fn eq(&self, other: &Self) -> bool {
-        self.graph
-            .node_references()
-            .zip(other.graph.node_references())
-            .all(|(a, b)| a == b)
-            && self
-                .graph
-                .edge_references()
-                .zip(other.graph.edge_references())
-                .all(|(a, b)| a == b)
+        graph_partial_eq(self, other)
     }
 }
 
@@ -292,6 +277,16 @@ impl<N> DerefMut for GraphNode<N> {
     }
 }
 
+/// A `PartialEq` implementation for [`Graph`].
+pub fn graph_partial_eq<N: PartialEq>(a: &Graph<N>, b: &Graph<N>) -> bool {
+    a.node_references()
+        .zip(b.node_references())
+        .all(|(a, b)| a == b)
+        && a.edge_references()
+            .zip(b.edge_references())
+            .all(|(a, b)| a == b)
+}
+
 /// Count the number of inlet nodes in the given graph.
 pub fn inlets<G>(g: G) -> impl Iterator<Item = G::NodeRef>
 where
@@ -311,7 +306,7 @@ where
 }
 
 /// The implementation of the `GraphNode`'s `Node::expr` fn.
-fn nested_expr<G>(g: G, path: &[node::Id], inputs: &[Option<String>]) -> ExprKind
+pub fn nested_expr<G>(g: G, path: &[node::Id], inputs: &[Option<String>]) -> ExprKind
 where
     G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable + Data<EdgeWeight = Edge>,
     G::NodeWeight: Node,
