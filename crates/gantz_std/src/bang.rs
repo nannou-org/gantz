@@ -5,16 +5,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct Bang;
 
-impl gantz_core::Node for Bang {
-    fn n_outputs(&self) -> usize {
+impl<Env> gantz_core::Node<Env> for Bang {
+    fn n_outputs(&self, _: &Env) -> usize {
         1
     }
 
-    fn expr(&self, _ctx: gantz_core::node::ExprCtx) -> ExprKind {
+    fn expr(&self, _ctx: gantz_core::node::ExprCtx<Env>) -> ExprKind {
         Engine::emit_ast("'()").unwrap().into_iter().next().unwrap()
     }
 
-    fn push_eval(&self) -> Vec<gantz_core::node::EvalConf> {
+    fn push_eval(&self, _: &Env) -> Vec<gantz_core::node::EvalConf> {
         vec![gantz_core::node::EvalConf::All]
     }
 }
