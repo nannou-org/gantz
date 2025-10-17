@@ -9,4 +9,4 @@ pub use graph::NamedGraph;
 #[doc(inline)]
 pub use gantz_core::node::{Id, state};
 
-mod graph;
+pub mod graph;

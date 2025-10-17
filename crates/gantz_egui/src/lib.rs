@@ -14,41 +14,42 @@ pub mod node;
 pub mod widget;
 
 /// A trait providing an egui `Ui` implementation for gantz nodes.
-pub trait NodeUi {
+pub trait NodeUi<Env> {
     /// The name used to present the node within the inspector.
-    fn name(&self) -> &str;
+    fn name(&self, _env: &Env) -> &str;
 
     /// Instantiate the `Ui` for the given node.
     ///
     /// The node's path into the state tree and the VM are provided to allow for
     /// access to the node's state.
-    fn ui(&mut self, _ctx: NodeCtx, _ui: &mut egui::Ui) -> egui::Response;
+    fn ui(&mut self, _ctx: NodeCtx<Env>, _ui: &mut egui::Ui) -> egui::Response;
 
     /// Optionally add additional rows to the node's inspector UI.
     ///
     /// By default, only the node's path and its current state within the VM are
     /// shown. Adding to the given `body` by providing an implementation of this
     /// method will append extra rows.
-    fn inspector_rows(&mut self, _ctx: &NodeCtx, _body: &mut egui_extras::TableBody) {}
+    fn inspector_rows(&mut self, _ctx: &NodeCtx<Env>, _body: &mut egui_extras::TableBody) {}
 
     /// Extra UI for the node to be presented within the node inspector
     /// following the default table.
     ///
     /// See [`NodeUi::inspector_rows`] for how to simply append rows to the
     /// table.
-    fn inspector_ui(&mut self, _ctx: NodeCtx, _ui: &mut egui::Ui) -> Option<egui::Response> {
+    fn inspector_ui(&mut self, _ctx: NodeCtx<Env>, _ui: &mut egui::Ui) -> Option<egui::Response> {
         None
     }
 
     /// The layout direction of the node's inputs to outputs.
-    fn flow(&self) -> egui::Direction {
+    fn flow(&self, _env: &Env) -> egui::Direction {
         egui::Direction::TopDown
     }
 }
 
 /// A wrapper around a node's path and the VM providing easy access to the
 /// node's state.
-pub struct NodeCtx<'a> {
+pub struct NodeCtx<'a, Env> {
+    env: &'a Env,
     path: &'a [node::Id],
     vm: &'a mut Engine,
     cmds: &'a mut Vec<Cmd>,
@@ -68,47 +69,55 @@ pub enum Cmd {
 /// TODO: Replace this with [u8; 20] and use SHA1 or something.
 pub type ContentAddr = u64;
 
-impl<'a, N> NodeUi for &'a mut N
+impl<'a, Env, N> NodeUi<Env> for &'a mut N
 where
-    N: ?Sized + NodeUi,
+    N: ?Sized + NodeUi<Env>,
 {
-    fn name(&self) -> &str {
-        (**self).name()
+    fn name(&self, env: &Env) -> &str {
+        (**self).name(env)
     }
 
-    fn ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> egui::Response {
+    fn ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> egui::Response {
         (**self).ui(ctx, ui)
     }
 
-    fn inspector_rows(&mut self, ctx: &NodeCtx, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(&mut self, ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {
         (**self).inspector_rows(ctx, body)
     }
 
-    fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> Option<egui::Response> {
+    fn inspector_ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> Option<egui::Response> {
         (**self).inspector_ui(ctx, ui)
+    }
+
+    fn flow(&self, env: &Env) -> egui::Direction {
+        (**self).flow(env)
     }
 }
 
 macro_rules! impl_node_ui_for_ptr {
     ($($Ty:ident)::*) => {
-        impl<T> NodeUi for $($Ty)::*<T>
+        impl<Env, T> NodeUi<Env> for $($Ty)::*<T>
         where
-            T: ?Sized + NodeUi,
+            T: ?Sized + NodeUi<Env>,
         {
-            fn name(&self) -> &str {
-                (**self).name()
+            fn name(&self, env: &Env) -> &str {
+                (**self).name(env)
             }
 
-            fn ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> egui::Response {
+            fn ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> egui::Response {
                 (**self).ui(ctx, ui)
             }
 
-            fn inspector_rows(&mut self, ctx: &NodeCtx, body: &mut egui_extras::TableBody) {
+            fn inspector_rows(&mut self, ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {
                 (**self).inspector_rows(ctx, body)
             }
 
-            fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> Option<egui::Response> {
+            fn inspector_ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> Option<egui::Response> {
                 (**self).inspector_ui(ctx, ui)
+            }
+
+            fn flow(&self, env: &Env) -> egui::Direction {
+                (**self).flow(env)
             }
         }
     };
@@ -116,9 +125,14 @@ macro_rules! impl_node_ui_for_ptr {
 
 impl_node_ui_for_ptr!(Box);
 
-impl<'a> NodeCtx<'a> {
-    pub fn new(path: &'a [node::Id], vm: &'a mut Engine, cmds: &'a mut Vec<Cmd>) -> Self {
-        Self { path, vm, cmds }
+impl<'a, Env> NodeCtx<'a, Env> {
+    pub fn new(env: &'a Env, path: &'a [node::Id], vm: &'a mut Engine, cmds: &'a mut Vec<Cmd>) -> Self {
+        Self { env, path, vm, cmds }
+    }
+
+    /// Provide access to the node's input environment.
+    pub fn env(&self) -> &Env {
+        self.env
     }
 
     /// The node's full path into the state tree.

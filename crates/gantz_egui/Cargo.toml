@@ -22,6 +22,7 @@ steel-core.workspace = true
 sublime_fuzzy.workspace = true
 
 [dev-dependencies]
+dyn-clone.workspace = true
 dyn-hash.workspace = true
 eframe.workspace = true
 ron.workspace = true

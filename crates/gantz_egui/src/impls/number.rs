@@ -1,12 +1,12 @@
 use crate::{NodeCtx, NodeUi};
 use steel::SteelVal;
 
-impl NodeUi for gantz_std::number::Number {
-    fn name(&self) -> &str {
+impl<Env> NodeUi<Env> for gantz_std::number::Number {
+    fn name(&self, _: &Env) -> &str {
         "number"
     }
 
-    fn ui(&mut self, mut ctx: NodeCtx, ui: &mut egui::Ui) -> egui::Response {
+    fn ui(&mut self, mut ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> egui::Response {
         let mut val = ctx.extract_value().unwrap().unwrap();
         let res = match val {
             SteelVal::NumV(ref mut f) => ui.add(egui::DragValue::new(f)),

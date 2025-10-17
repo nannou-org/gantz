@@ -1,8 +1,5 @@
-use crate::{fmt_content_addr, widget::node_inspector, Cmd, ContentAddr, NodeCtx, NodeUi};
-use std::{
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
+use crate::{Cmd, ContentAddr, NodeCtx, NodeUi, fmt_content_addr, widget::node_inspector};
+use serde::{Deserialize, Serialize};
 use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// A node abstraction composed from a graph of other nodes.
@@ -13,45 +10,55 @@ use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 ///
 /// Similar to [`gantz_core::node::GraphNode`], but with a precalculated CA and
 /// optional name.
-pub struct NamedGraph<N> {
+#[derive(Clone, Eq, Hash, PartialEq, Deserialize, Serialize)]
+pub struct NamedGraph {
     name: String,
     ca: ContentAddr,
-    // FIXME: can't include this and be `Serialize`/`Deserialize`.
-    // Need a way to pass through the node map / registry during `expr`.
-    graph: Arc<gantz_core::node::graph::Graph<N>>,
 }
 
-impl<N> Hash for NamedGraph<N>
-where
-    N: Hash,
-{
-    fn hash<H>(&self, hasher: &mut H)
-    where
-        H: Hasher,
-    {
-        gantz_core::graph::hash(&*self.graph, hasher);
+/// The set of node name and content address lookup methods required by the
+/// environment for `NamedGraph` nodes.
+pub trait GraphRegistry {
+    /// The node type of the registered graphs.
+    type Node;
+    /// Given the content address of a graph, return a reference to the
+    /// associated graph.
+    fn graph(&self, ca: ContentAddr) -> Option<&gantz_core::node::graph::Graph<Self::Node>>;
+}
+
+impl NamedGraph {
+    /// Construct a `NamedGraph` node.
+    pub fn new(name: String, ca: ContentAddr) -> Self {
+        Self { name, ca }
     }
 }
 
-impl<N> gantz_core::Node for NamedGraph<N>
+impl<Env, N> gantz_core::Node<Env> for NamedGraph
 where
-    N: gantz_core::Node,
+    Env: GraphRegistry<Node = N>,
+    N: gantz_core::Node<Env>,
 {
-    fn branches(&self) -> Vec<gantz_core::node::EvalConf> {
+    fn branches(&self, _env: &Env) -> Vec<gantz_core::node::EvalConf> {
         // TODO: generate branches based on inner node branching
         vec![]
     }
 
-    fn expr(&self, ctx: gantz_core::node::ExprCtx) -> ExprKind {
-        gantz_core::node::graph::nested_expr(&*self.graph, ctx.path(), ctx.inputs())
+    fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> ExprKind {
+        let env = ctx.env();
+        let g = env.graph(self.ca).expect("failed to lookup graph by name");
+        gantz_core::node::graph::nested_expr(env, g, ctx.path(), ctx.inputs())
     }
 
-    fn n_inputs(&self) -> usize {
-        gantz_core::node::graph::inlets(&*self.graph).count()
+    fn n_inputs(&self, env: &Env) -> usize {
+        env.graph(self.ca)
+            .map(|g| gantz_core::node::graph::inlets(g).count())
+            .unwrap_or(0)
     }
 
-    fn n_outputs(&self) -> usize {
-        gantz_core::node::graph::outlets(&*self.graph).count()
+    fn n_outputs(&self, env: &Env) -> usize {
+        env.graph(self.ca)
+            .map(|g| gantz_core::node::graph::outlets(g).count())
+            .unwrap_or(0)
     }
 
     fn stateful(&self) -> bool {
@@ -64,20 +71,23 @@ where
             .expect("failed to register graph hashmap");
     }
 
-    fn visit(&self, ctx: gantz_core::visit::Ctx, visitor: &mut dyn gantz_core::node::Visitor) {
-        gantz_core::graph::visit(&*self.graph, ctx.path(), visitor);
+    fn visit(
+        &self,
+        ctx: gantz_core::visit::Ctx<Env>,
+        visitor: &mut dyn gantz_core::node::Visitor<Env>,
+    ) {
+        let env = ctx.env();
+        let g = env.graph(self.ca).expect("failed to lookup graph by name");
+        gantz_core::graph::visit(env, g, ctx.path(), visitor);
     }
 }
 
-impl<N> NodeUi for NamedGraph<N>
-where
-    N: Hash,
-{
-    fn name(&self) -> &str {
+impl<Env> NodeUi<Env> for NamedGraph {
+    fn name(&self, _: &Env) -> &str {
         self.name.as_str()
     }
 
-    fn ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> egui::Response {
+    fn ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> egui::Response {
         let res = ui.add(egui::Label::new(&self.name).selectable(false));
         if ui.response().double_clicked() {
             ctx.cmds.push(Cmd::OpenGraph(ctx.path().to_vec()));
@@ -85,7 +95,7 @@ where
         res
     }
 
-    fn inspector_rows(&mut self, _ctx: &NodeCtx, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(&mut self, _ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {
         let row_h = node_inspector::table_row_h(body.ui_mut());
         body.row(row_h, |mut row| {
             row.col(|ui| {
