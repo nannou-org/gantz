@@ -10,6 +10,7 @@ license = "Apache-2.0"
 repository = "https://github.com/nannou-org/gantz"
 
 [workspace.dependencies]
+dyn-clone = "1"
 dyn-hash = "0.2.2"
 eframe = { version = "0.32", features = ["persistence"] }
 egui = { version = "0.32", default-features = false }

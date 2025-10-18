@@ -7,24 +7,25 @@ use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 /// The implementation of `Node` will match the inner node type `N`, but with a
 /// unique implementation of [`Node::push_eval`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Push<N> {
+pub struct Push<Env, N> {
+    env: core::marker::PhantomData<Env>,
     node: N,
     conf: node::EvalConf,
 }
 
 /// A trait implemented for all `Node` types allowing to enable push evaluation.
-pub trait WithPushEval: Sized + Node {
+pub trait WithPushEval<Env>: Sized + Node<Env> {
     /// Consume `self` and return a `Node` that has push evaluation enabled.
-    fn with_push_eval_conf(self, conf: node::EvalConf) -> Push<Self>;
+    fn with_push_eval_conf(self, conf: node::EvalConf) -> Push<Env, Self>;
     /// Consume `self` and return a `Node` that has push evaluation enabled.
-    fn with_push_eval(self) -> Push<Self> {
+    fn with_push_eval(self) -> Push<Env, Self> {
         self.with_push_eval_conf(node::EvalConf::All)
     }
 }
 
-impl<N> Push<N>
+impl<Env, N> Push<Env, N>
 where
-    N: Node,
+    N: Node<Env>,
 {
     /// Given some node, return a `Push` node enabling push evaluation across
     /// all outputs.
@@ -35,45 +36,46 @@ where
     /// Given some node, return a `Push` node enabling push evaluation across
     /// some subset of the outputs.
     pub fn new(node: N, conf: node::EvalConf) -> Self {
-        Push { node, conf }
+        let env = core::marker::PhantomData;
+        Push { env, node, conf }
     }
 }
 
-impl<N> WithPushEval for N
+impl<Env, N> WithPushEval<Env> for N
 where
-    N: Node,
+    N: Node<Env>,
 {
-    fn with_push_eval_conf(self, conf: node::EvalConf) -> Push<Self> {
+    fn with_push_eval_conf(self, conf: node::EvalConf) -> Push<Env, Self> {
         Push::new(self, conf)
     }
 }
 
-impl<N> Node for Push<N>
+impl<Env, N> Node<Env> for Push<Env, N>
 where
-    N: Node,
+    N: Node<Env>,
 {
-    fn n_inputs(&self) -> usize {
-        self.node.n_inputs()
+    fn n_inputs(&self, env: &Env) -> usize {
+        self.node.n_inputs(env)
     }
 
-    fn n_outputs(&self) -> usize {
-        self.node.n_outputs()
+    fn n_outputs(&self, env: &Env) -> usize {
+        self.node.n_outputs(env)
     }
 
-    fn branches(&self) -> Vec<node::EvalConf> {
-        self.node.branches()
+    fn branches(&self, env: &Env) -> Vec<node::EvalConf> {
+        self.node.branches(env)
     }
 
-    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
         self.node.expr(ctx)
     }
 
-    fn push_eval(&self) -> Vec<node::EvalConf> {
+    fn push_eval(&self, _: &Env) -> Vec<node::EvalConf> {
         vec![self.conf.clone()]
     }
 
-    fn pull_eval(&self) -> Vec<node::EvalConf> {
-        self.node.pull_eval()
+    fn pull_eval(&self, env: &Env) -> Vec<node::EvalConf> {
+        self.node.pull_eval(env)
     }
 
     fn inlet(&self) -> bool {

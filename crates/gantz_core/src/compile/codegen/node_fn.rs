@@ -38,9 +38,9 @@ impl<'a> NodeFns<'a> {
     }
 }
 
-impl<'pl> Visitor for NodeFns<'pl> {
+impl<'pl, Env> Visitor<Env> for NodeFns<'pl> {
     // We use `visit_post` so that the nested are generated before parents.
-    fn visit_post(&mut self, ctx: visit::Ctx, node: &dyn Node) {
+    fn visit_post(&mut self, ctx: visit::Ctx<Env>, node: &dyn Node<Env>) {
         use std::ops::Bound::{Excluded, Included};
         let node_path = ctx.path();
         let plan_path = &node_path[..node_path.len() - 1];
@@ -62,7 +62,8 @@ impl<'pl> Visitor for NodeFns<'pl> {
         let range = (Included(start), Excluded(end));
         let input_confs = tree.elem.range(range);
         for conf in input_confs {
-            self.fns.push(node_fn(node, node_path, &conf.conns));
+            self.fns
+                .push(node_fn(ctx.env(), node, node_path, &conf.conns));
         }
     }
 }
@@ -101,7 +102,12 @@ pub(crate) fn name(node_path: &[node::Id], inputs: &node::Conns, outputs: &node:
 }
 
 /// Generate a function for a single node with the given set of connected inputs.
-pub(crate) fn node_fn(node: &dyn Node, node_path: &[node::Id], conns: &NodeConns) -> ExprKind {
+pub(crate) fn node_fn<Env>(
+    env: &Env,
+    node: &dyn Node<Env>,
+    node_path: &[node::Id],
+    conns: &NodeConns,
+) -> ExprKind {
     // The binding used to receive the node's state as an argument, and whose
     // resulting value is returned from the body of the function and used to
     // update the state map.
@@ -128,7 +134,7 @@ pub(crate) fn node_fn(node: &dyn Node, node_path: &[node::Id], conns: &NodeConns
         .collect();
 
     // Get the node's expression
-    let ctx = node::ExprCtx::new(node_path, &input_exprs, &conns.outputs);
+    let ctx = node::ExprCtx::new(env, node_path, &input_exprs, &conns.outputs);
     let node_expr = node.expr(ctx);
 
     // Construct the full function definition
@@ -152,12 +158,16 @@ pub(crate) fn node_fn(node: &dyn Node, node_path: &[node::Id], conns: &NodeConns
 
 /// Given a gantz graph and a rose tree with the associated node configs,
 /// produce a function for every node configuration in the graph.
-pub(crate) fn node_fns<G>(g: G, node_confs_tree: &RoseTree<NodeConfs>) -> Vec<ExprKind>
+pub(crate) fn node_fns<Env, G>(
+    env: &Env,
+    g: G,
+    node_confs_tree: &RoseTree<NodeConfs>,
+) -> Vec<ExprKind>
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
-    G::NodeWeight: Node,
+    G::NodeWeight: Node<Env>,
 {
     let mut node_fns = NodeFns::new(&node_confs_tree);
-    crate::graph::visit(g, &[], &mut node_fns);
+    crate::graph::visit(env, g, &[], &mut node_fns);
     node_fns.fns
 }

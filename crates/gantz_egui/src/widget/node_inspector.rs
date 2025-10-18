@@ -4,9 +4,9 @@ use egui_extras::{Column, TableBuilder};
 use gantz_core::node::{self, Node};
 
 /// A widget for presenting more detailed information and control for a node.
-pub struct NodeInspector<'a, N> {
+pub struct NodeInspector<'a, Env, N> {
     node: &'a mut N,
-    ctx: NodeCtx<'a>,
+    ctx: NodeCtx<'a, Env>,
 }
 
 /// The response returned from [`NodeInspector::show`].
@@ -15,11 +15,11 @@ pub struct NodeInspectorResponse {
     pub node_response: Option<egui::Response>,
 }
 
-impl<'a, N> NodeInspector<'a, N>
+impl<'a, Env, N> NodeInspector<'a, Env, N>
 where
-    N: Node + NodeUi,
+    N: Node<Env> + NodeUi<Env>,
 {
-    pub fn new(node: &'a mut N, ctx: NodeCtx<'a>) -> Self {
+    pub fn new(node: &'a mut N, ctx: NodeCtx<'a, Env>) -> Self {
         Self { node, ctx }
     }
 
@@ -38,12 +38,12 @@ pub fn table_row_h(ui: &egui::Ui) -> f32 {
     ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().item_spacing.y
 }
 
-pub fn table(
-    node: &mut (impl Node + NodeUi),
-    ctx: &NodeCtx,
+pub fn table<Env>(
+    node: &mut (impl Node<Env> + NodeUi<Env>),
+    ctx: &NodeCtx<Env>,
     ui: &mut egui::Ui,
 ) -> ScrollAreaOutput<()> {
-    ui.strong(node.name());
+    ui.strong(node.name(ctx.env()));
     ui.add_space(ui.spacing().item_spacing.y);
     let row_h = table_row_h(ui);
     TableBuilder::new(ui)
@@ -66,13 +66,16 @@ pub fn table(
                 row.col(|ui| {
                     ui.label(format!(
                         "{} inputs, {} outputs",
-                        node.n_inputs(),
-                        node.n_outputs()
+                        node.n_inputs(ctx.env()),
+                        node.n_outputs(ctx.env())
                     ));
                 });
             });
 
-            let eval = match (!node.push_eval().is_empty(), !node.pull_eval().is_empty()) {
+            let eval = match (
+                !node.push_eval(ctx.env()).is_empty(),
+                !node.pull_eval(ctx.env()).is_empty(),
+            ) {
                 (true, true) => Some("push, pull"),
                 (true, false) => Some("push"),
                 (false, true) => Some("pull"),

@@ -19,12 +19,12 @@ impl Default for Log {
     }
 }
 
-impl gantz_core::Node for Log {
-    fn n_inputs(&self) -> usize {
+impl<Env> gantz_core::Node<Env> for Log {
+    fn n_inputs(&self, _: &Env) -> usize {
         1
     }
 
-    fn expr(&self, ctx: gantz_core::node::ExprCtx) -> ExprKind {
+    fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> ExprKind {
         let Some(Some(input)) = ctx.inputs().get(0) else {
             return ExprKind::empty();
         };

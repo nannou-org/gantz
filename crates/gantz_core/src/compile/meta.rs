@@ -55,10 +55,10 @@ pub type MetaGraph = petgraph::graphmap::DiGraphMap<node::Id, Vec<(Edge, EdgeKin
 
 impl Meta {
     /// Construct a `Meta` for a single gantz graph.
-    pub fn from_graph<G>(g: G) -> Self
+    pub fn from_graph<Env, G>(env: &Env, g: G) -> Self
     where
         G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable,
-        G::NodeWeight: Node,
+        G::NodeWeight: Node<Env>,
     {
         let mut flow = Meta::default();
         for n_ref in g.node_references() {
@@ -68,16 +68,17 @@ impl Meta {
                 .map(|e_ref| (g.to_index(e_ref.source()), e_ref.weight().clone()));
             let id = g.to_index(n);
             let node = n_ref.weight();
-            flow.add_node(id, node, inputs);
+            flow.add_node(env, id, node, inputs);
         }
         flow
     }
 
     /// Add the node with the given ID and inputs to the `Meta`.
-    pub fn add_node(
+    pub fn add_node<Env>(
         &mut self,
+        env: &Env,
         id: node::Id,
-        node: &dyn Node,
+        node: &dyn Node<Env>,
         inputs: impl IntoIterator<Item = (node::Id, Edge)>,
     ) {
         // Add the node.
@@ -98,8 +99,8 @@ impl Meta {
         }
 
         // Register whether the node has inputs or outputs.
-        let inputs = node.n_inputs();
-        let outputs = node.n_outputs();
+        let inputs = node.n_inputs(env);
+        let outputs = node.n_outputs(env);
         if inputs > 0 {
             self.inputs.insert(id, inputs);
         }
@@ -108,7 +109,7 @@ impl Meta {
         }
 
         // Track node branching.
-        let branches = node.branches();
+        let branches = node.branches(env);
         if !branches.is_empty() {
             self.branches.insert(
                 id,
@@ -120,7 +121,7 @@ impl Meta {
         }
 
         // Register push/pull eval for the node if necessary.
-        let push_eval = node.push_eval();
+        let push_eval = node.push_eval(env);
         if !push_eval.is_empty() {
             self.push.insert(
                 id,
@@ -130,7 +131,7 @@ impl Meta {
                     .collect(),
             );
         }
-        let pull_eval = node.pull_eval();
+        let pull_eval = node.pull_eval(env);
         if !pull_eval.is_empty() {
             self.pull.insert(
                 id,
@@ -154,8 +155,8 @@ impl Meta {
 
 /// Allow for constructing a rose-tree of `Meta`s (one for each graph) using
 /// the `Node::visit` implementation.
-impl Visitor for RoseTree<Meta> {
-    fn visit_pre(&mut self, ctx: visit::Ctx, node: &dyn Node) {
+impl<Env> Visitor<Env> for RoseTree<Meta> {
+    fn visit_pre(&mut self, ctx: visit::Ctx<Env>, node: &dyn Node<Env>) {
         let node_path = ctx.path();
 
         // Ensure the plan for the graph owning this node exists, retrieve it.
@@ -164,7 +165,8 @@ impl Visitor for RoseTree<Meta> {
 
         // Insert the node.
         let id = ctx.id();
-        tree.elem.add_node(id, node, ctx.inputs().iter().copied());
+        tree.elem
+            .add_node(ctx.env(), id, node, ctx.inputs().iter().copied());
     }
 }
 

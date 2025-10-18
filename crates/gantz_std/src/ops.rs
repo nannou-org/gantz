@@ -5,16 +5,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct Add;
 
-impl gantz_core::Node for Add {
-    fn n_inputs(&self) -> usize {
+impl<Env> gantz_core::Node<Env> for Add {
+    fn n_inputs(&self, _: &Env) -> usize {
         2
     }
 
-    fn n_outputs(&self) -> usize {
+    fn n_outputs(&self, _: &Env) -> usize {
         1
     }
 
-    fn expr(&self, ctx: gantz_core::node::ExprCtx) -> ExprKind {
+    fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> ExprKind {
         let inputs = ctx.inputs();
         let (l, r) = match (inputs.get(0), inputs.get(1)) {
             (Some(Some(l)), Some(Some(r))) => (&l[..], &r[..]),

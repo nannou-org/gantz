@@ -8,9 +8,11 @@ use std::collections::HashMap;
 use steel::steel_vm::engine::Engine;
 
 /// A registry of available nodes.
+///
+/// This should be implemented for the `Node`'s input `Env` type.
 pub trait NodeTypeRegistry {
     /// The gantz node type that can be produced by the registry.
-    type Node: Node;
+    type Node;
 
     /// The unique name of each node available.
     fn node_types(&self) -> impl Iterator<Item = &str>;
@@ -34,12 +36,12 @@ pub trait NodeTypeRegistry {
 }
 
 /// The top-level gantz widget.
-pub struct Gantz<'a, T>
+pub struct Gantz<'a, Env>
 where
-    T: NodeTypeRegistry,
+    Env: NodeTypeRegistry,
 {
-    node_ty_reg: &'a T,
-    root: &'a mut gantz_core::node::GraphNode<T::Node>,
+    env: &'a Env,
+    root: &'a mut gantz_core::node::GraphNode<Env::Node>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -71,19 +73,19 @@ pub struct ViewToggles {
     pub graph_config: bool,
 }
 
-struct NodeTyCmd<'a, T> {
-    reg: &'a T,
+struct NodeTyCmd<'a, Env> {
+    env: &'a Env,
     name: &'a str,
 }
 
-impl<'a, T> Gantz<'a, T>
+impl<'a, Env> Gantz<'a, Env>
 where
-    T: NodeTypeRegistry,
-    T::Node: NodeUi + graph_scene::ToGraphMut<Node = T::Node>,
+    Env: NodeTypeRegistry,
+    Env::Node: gantz_core::Node<Env> + NodeUi<Env> + graph_scene::ToGraphMut<Node = Env::Node>,
 {
     /// Instantiate the full top-level gantz widget.
-    pub fn new(node_ty_reg: &'a T, root: &'a mut gantz_core::node::GraphNode<T::Node>) -> Self {
-        Self { node_ty_reg, root }
+    pub fn new(env: &'a Env, root: &'a mut gantz_core::node::GraphNode<Env::Node>) -> Self {
+        Self { env, root }
     }
 
     /// Present the gantz UI.
@@ -95,8 +97,8 @@ where
         vm: &mut Engine,
         ui: &mut egui::Ui,
     ) {
-        graph_scene(self.root, state, vm, ui);
-        command_palette(self.node_ty_reg, self.root, state, vm, ui);
+        graph_scene(self.env, self.root, state, vm, ui);
+        command_palette(self.env, self.root, state, vm, ui);
         if state.view_toggles.graph_config {
             graph_config(self.root, state, ui);
         }
@@ -104,7 +106,7 @@ where
             log_view(logger, ui);
         }
         if state.view_toggles.node_inspector {
-            node_inspector(self.root, vm, state, ui);
+            node_inspector(self.env, self.root, vm, state, ui);
         }
         if state.view_toggles.steel {
             steel_view(compiled_steel, ui);
@@ -135,36 +137,46 @@ impl GantzState {
     }
 }
 
-impl<'a, T: NodeTypeRegistry> widget::command_palette::Command for NodeTyCmd<'a, T> {
+impl<'a, Env> widget::command_palette::Command for NodeTyCmd<'a, Env>
+where
+    Env: NodeTypeRegistry,
+{
     fn text(&self) -> &str {
         self.name
     }
 
     fn tooltip(&self) -> &str {
-        self.reg.command_tooltip(self.name)
+        self.env.command_tooltip(self.name)
     }
 
     fn formatted_kb_shortcut(&self, ctx: &egui::Context) -> Option<String> {
-        self.reg.command_formatted_kb_shortcut(ctx, self.name)
+        self.env.command_formatted_kb_shortcut(ctx, self.name)
     }
 }
 
 impl<'a, T> Clone for NodeTyCmd<'a, T> {
     fn clone(&self) -> Self {
-        let Self { reg, name } = self;
-        Self { reg, name }
+        let Self { env, name } = self;
+        Self { env, name }
     }
 }
 
 impl<'a, T> Copy for NodeTyCmd<'a, T> {}
 
-fn graph_scene<N>(
+impl Default for GantzState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn graph_scene<Env, N>(
+    env: &Env,
     graph: &mut gantz_core::node::GraphNode<N>,
     state: &mut GantzState,
     vm: &mut Engine,
     ui: &mut egui::Ui,
 ) where
-    N: Node + NodeUi + graph_scene::ToGraphMut<Node = N>,
+    N: Node<Env> + NodeUi<Env> + graph_scene::ToGraphMut<Node = N>,
 {
     // Show the `GraphScene` for the graph at the current path.
     match graph_scene::index_path_graph_mut(graph, &state.path) {
@@ -177,7 +189,7 @@ fn graph_scene<N>(
                 GraphState { view }
             });
 
-            GraphScene::new(graph, &state.path)
+            GraphScene::new(env, graph, &state.path)
                 .with_id(egui::Id::new(&state.path))
                 .auto_layout(state.auto_layout)
                 .layout_flow(state.layout_flow)
@@ -271,15 +283,15 @@ fn graph_scene<N>(
         });
 }
 
-fn command_palette<T>(
-    node_ty_reg: &T,
-    root: &mut gantz_core::node::GraphNode<T::Node>,
+fn command_palette<Env>(
+    env: &Env,
+    root: &mut gantz_core::node::GraphNode<Env::Node>,
     state: &mut GantzState,
     vm: &mut Engine,
     ui: &mut egui::Ui,
 ) where
-    T: NodeTypeRegistry,
-    T::Node: ToGraphMut<Node = T::Node>,
+    Env: NodeTypeRegistry,
+    Env::Node: gantz_core::Node<Env> + ToGraphMut<Node = Env::Node>,
 {
     // If space is pressed, toggle command palette visibility.
     if !ui.ctx().wants_keyboard_input() {
@@ -289,10 +301,7 @@ fn command_palette<T>(
     }
 
     // Map the node types to commands for the command palette.
-    let cmds = node_ty_reg.node_types().map(|k| NodeTyCmd {
-        reg: node_ty_reg,
-        name: &k[..],
-    });
+    let cmds = env.node_types().map(|k| NodeTyCmd { env, name: &k[..] });
 
     // We'll only want to apply commands to the currently selected graph.
     let graph = graph_scene::index_path_graph_mut(root, &state.path).unwrap();
@@ -300,7 +309,7 @@ fn command_palette<T>(
     // If a command was emitted, add the node.
     if let Some(cmd) = state.command_palette.show(ui.ctx(), cmds) {
         // Add a node of the selected type.
-        let Some(node) = node_ty_reg.new_node(cmd.name) else {
+        let Some(node) = env.new_node(cmd.name) else {
             return;
         };
         let id = graph.add_node(node);
@@ -357,13 +366,14 @@ fn log_view(logger: &widget::log_view::Logger, ui: &mut egui::Ui) {
     });
 }
 
-fn node_inspector<N>(
+fn node_inspector<Env, N>(
+    env: &Env,
     root: &mut gantz_core::node::GraphNode<N>,
     vm: &mut Engine,
     state: &mut GantzState,
     ui: &mut egui::Ui,
 ) where
-    N: Node + NodeUi + ToGraphMut<Node = N>,
+    N: Node<Env> + NodeUi<Env> + ToGraphMut<Node = N>,
 {
     // In your egui update loop:
     egui::Window::new("Node Inspector").show(ui.ctx(), |ui| {
@@ -384,7 +394,7 @@ fn node_inspector<N>(
                 };
                 let ix = id.index();
                 let path: Vec<_> = state.path.iter().copied().chain(Some(ix)).collect();
-                let ctx = NodeCtx::new(&path[..], vm, &mut state.graph_scene.cmds);
+                let ctx = NodeCtx::new(env, &path[..], vm, &mut state.graph_scene.cmds);
                 widget::NodeInspector::new(node, ctx).show(ui);
             });
         }

@@ -8,7 +8,7 @@ use gantz_core::{
 use std::fmt::Debug;
 use steel::{SteelVal, steel_vm::engine::Engine};
 
-fn node_push() -> node::Push<node::Expr> {
+fn node_push() -> node::Push<(), node::Expr> {
     node::expr("'()").unwrap().with_push_eval()
 }
 
@@ -36,8 +36,8 @@ fn node_number() -> node::Expr {
 }
 
 // Helper trait for debugging the graph.
-trait DebugNode: Debug + Node {}
-impl<T> DebugNode for T where T: Debug + Node {}
+trait DebugNode: Debug + Node<()> {}
+impl<T> DebugNode for T where T: Debug + Node<()> {}
 
 // A simple test for nested graph support.
 //
@@ -114,15 +114,18 @@ fn test_graph_nested_stateless() {
     gb.add_edge(graph_a, assert_eq, Edge::from((0, 0)));
     gb.add_edge(forty_two, assert_eq, Edge::from((0, 1)));
 
+    // No need to share an environment between nodes for this test.
+    let env = ();
+
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::compile::module(&gb);
+    let module = gantz_core::compile::module(&env, &gb);
 
     // Create the VM.
     let mut vm = Engine::new_base();
 
     // Initialise the node state vars.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&gb, &[], &mut vm);
+    gantz_core::graph::register(&env, &gb, &[], &mut vm);
 
     // Register the fns.
     for f in module {
@@ -196,15 +199,18 @@ fn test_graph_nested_counter() {
     gb.add_edge(push, graph_a, Edge::from((0, 0)));
     gb.add_edge(graph_a, number, Edge::from((0, 0)));
 
+    // No need to share an environment between nodes for this test.
+    let env = ();
+
     // Generate the module.
-    let module = gantz_core::compile::module(&gb);
+    let module = gantz_core::compile::module(&env, &gb);
 
     // Create the VM.
     let mut vm = Engine::new_base();
 
     // Initialise the node state vars.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&gb, &[], &mut vm);
+    gantz_core::graph::register(&env, &gb, &[], &mut vm);
 
     // Register the fns.
     for f in module {
@@ -283,15 +289,18 @@ fn test_graph_nested_push_eval() {
     let number = gb.add_node(Box::new(node_number()) as Box<_>);
     gb.add_edge(graph_a, number, Edge::from((0, 0)));
 
+    // No need to share an environment between nodes for this test.
+    let env = ();
+
     // Generate the module.
-    let module = gantz_core::compile::module(&gb);
+    let module = gantz_core::compile::module(&env, &gb);
 
     // Create the VM.
     let mut vm = Engine::new_base();
 
     // Initialise the node state vars.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&gb, &[], &mut vm);
+    gantz_core::graph::register(&env, &gb, &[], &mut vm);
 
     // Register the fns.
     for f in module {

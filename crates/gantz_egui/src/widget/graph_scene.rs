@@ -27,7 +27,8 @@ pub type NodeIndex = petgraph::graph::NodeIndex<usize>;
 
 /// A widget used for presenting a graph scene for viewing and manipulating a
 /// gantz graph.
-pub struct GraphScene<'a, N> {
+pub struct GraphScene<'a, Env, N> {
+    env: &'a Env,
     graph: &'a mut Graph<N>,
     path: &'a [node::Id],
     id: egui::Id,
@@ -59,9 +60,9 @@ pub struct Selection {
     pub edges: HashSet<EdgeIndex>,
 }
 
-impl<'a, N> GraphScene<'a, N>
+impl<'a, Env, N> GraphScene<'a, Env, N>
 where
-    N: Node + NodeUi,
+    N: Node<Env> + NodeUi<Env>,
 {
     /// Create a graph scene for the given graph that resides at the given path
     /// from the root.
@@ -71,8 +72,9 @@ where
     ///
     /// NOTE: this means the `path` is not an index into the graph, but is the
     /// path that this braph resides at within some root graph.
-    pub fn new(graph: &'a mut Graph<N>, path: &'a [node::Id]) -> Self {
+    pub fn new(env: &'a Env, graph: &'a mut Graph<N>, path: &'a [node::Id]) -> Self {
         Self {
+            env,
             graph,
             path,
             id: egui::Id::new("gantz-graph-scene"),
@@ -130,7 +132,7 @@ where
             .center_view(self.center_view)
             .show(view, ui, |ui, show| {
                 show.nodes(ui, |nctx, ui| {
-                    nodes(self.graph, self.path, nctx, state, vm, ui)
+                    nodes(self.env, self.graph, self.path, nctx, state, vm, ui)
                 })
                 .edges(ui, |ectx, ui| edges(self.graph, ectx, state, ui));
             });
@@ -171,7 +173,8 @@ pub fn layout<N>(
     })
 }
 
-fn nodes<N>(
+fn nodes<Env, N>(
+    env: &Env,
     graph: &mut Graph<N>,
     path: &[node::Id],
     nctx: &mut egui_graph::NodesCtx,
@@ -179,24 +182,24 @@ fn nodes<N>(
     vm: &mut Engine,
     ui: &mut egui::Ui,
 ) where
-    N: Node + NodeUi,
+    N: Node<Env> + NodeUi<Env>,
 {
     let node_ids: Vec<_> = graph.node_identifiers().collect();
     let mut path = path.to_vec();
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node = &mut graph[n_id];
-        let inputs = node.n_inputs();
-        let outputs = node.n_outputs();
+        let inputs = node.n_inputs(env);
+        let outputs = node.n_outputs(env);
         let egui_id = egui::Id::new(n_id);
         let response = egui_graph::node::Node::from_id(egui_id)
             .inputs(inputs)
             .outputs(outputs)
-            .flow(node.flow())
+            .flow(node.flow(env))
             .show(nctx, ui, |ui| {
                 path.push(n_ix);
                 // Instantiate the node's UI.
-                let node_ctx = crate::NodeCtx::new(&path, vm, &mut state.cmds);
+                let node_ctx = crate::NodeCtx::new(env, &path, vm, &mut state.cmds);
                 node.ui(node_ctx, ui);
                 path.pop();
             });

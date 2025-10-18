@@ -262,21 +262,21 @@ where
 /// 1. A function for each node (and for each node input configuration).
 /// 2. A function for each node requiring push/pull evaluation.
 /// 3. The above for all nested graphs.
-pub fn module<G>(g: G) -> Vec<ExprKind>
+pub fn module<Env, G>(env: &Env, g: G) -> Vec<ExprKind>
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
-    G::NodeWeight: Node,
+    G::NodeWeight: Node<Env>,
 {
     // Create a `Meta` for each graph (including nested) in a tree.
     let mut meta_tree = RoseTree::<Meta>::default();
-    crate::graph::visit(g, &[], &mut meta_tree);
+    crate::graph::visit(env, g, &[], &mut meta_tree);
 
     // Derive control flow graphs from the meta graphs.
     let flow_tree = meta_tree.map_ref(&mut |meta| (meta, Flow::from_meta(meta)));
 
     // Collect node fns.
     let node_confs_tree = flow_tree.map_ref(&mut |(_, flow)| codegen::unique_node_confs(flow));
-    let node_fns = codegen::node_fns(g, &node_confs_tree);
+    let node_fns = codegen::node_fns(env, g, &node_confs_tree);
 
     // Collect eval fns.
     let eval_fns = codegen::eval_fns(&flow_tree);

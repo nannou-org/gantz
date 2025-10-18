@@ -4,14 +4,14 @@
 /// A wrapper around the **Node** trait that allows for serializing and
 /// deserializing node trait objects.
 #[typetag::serde(tag = "type")]
-trait SerdeNode: Node {}
+trait SerdeNode: Node<()> {}
 
 #[typetag::serde]
 impl SerdeNode for node::Expr {}
 #[typetag::serde]
-impl SerdeNode for node::Push<node::Expr> {}
+impl SerdeNode for node::Push<(), node::Expr> {}
 #[typetag::serde]
-impl SerdeNode for node::Pull<node::Expr> {}
+impl SerdeNode for node::Pull<(), node::Expr> {}
 
 use gantz_core::node::{self, Expr, Node, Pull, Push, WithPullEval, WithPushEval};
 use serde_json;
@@ -22,12 +22,12 @@ fn basic_expr() -> Expr {
 }
 
 // Helper function to create a pushable expression node
-fn push_expr() -> Push<Expr> {
+fn push_expr() -> Push<(), Expr> {
     node::expr("(+ $a $b)").unwrap().with_push_eval()
 }
 
 // Helper function to create a pullable expression node
-fn pull_expr() -> Pull<Expr> {
+fn pull_expr() -> Pull<(), Expr> {
     node::expr("(+ $a $b)").unwrap().with_pull_eval()
 }
 
@@ -46,12 +46,15 @@ fn test_serde_basic_expr() {
     let deserialized: Box<dyn SerdeNode> =
         serde_json::from_str(&serialized).expect("Failed to deserialize");
 
+    // No environment required.
+    let env = ();
+
     // Check properties
     let n = deserialized;
-    assert_eq!(n.n_inputs(), 2);
-    assert_eq!(n.n_outputs(), 1);
-    assert!(n.push_eval().is_empty());
-    assert!(n.pull_eval().is_empty());
+    assert_eq!(n.n_inputs(&env), 2);
+    assert_eq!(n.n_outputs(&env), 1);
+    assert!(n.push_eval(&env).is_empty());
+    assert!(n.pull_eval(&env).is_empty());
 }
 
 // Test serializing and deserializing a Push node
@@ -69,12 +72,15 @@ fn test_serde_push_node() {
     let deserialized: Box<dyn SerdeNode> =
         serde_json::from_str(&serialized).expect("Failed to deserialize");
 
+    // No environment required.
+    let env = ();
+
     // Check properties
     let n = deserialized;
-    assert_eq!(n.n_inputs(), 2);
-    assert_eq!(n.n_outputs(), 1);
-    assert!(!n.push_eval().is_empty());
-    assert!(n.pull_eval().is_empty());
+    assert_eq!(n.n_inputs(&env), 2);
+    assert_eq!(n.n_outputs(&env), 1);
+    assert!(!n.push_eval(&env).is_empty());
+    assert!(n.pull_eval(&env).is_empty());
 }
 
 // Test serializing and deserializing a vector of various node types
@@ -94,18 +100,21 @@ fn test_serde_node_vector() {
     let deserialized: Vec<Box<dyn SerdeNode>> =
         serde_json::from_str(&serialized).expect("Failed to deserialize vector");
 
+    // No environment required.
+    let env = ();
+
     // Check count
     assert_eq!(nodes.len(), deserialized.len());
 
     // First node should be basic expr
-    assert!(deserialized[0].push_eval().is_empty());
-    assert!(deserialized[0].pull_eval().is_empty());
+    assert!(deserialized[0].push_eval(&env).is_empty());
+    assert!(deserialized[0].pull_eval(&env).is_empty());
 
     // Second node should be push node
-    assert!(!deserialized[1].push_eval().is_empty());
-    assert!(deserialized[1].pull_eval().is_empty());
+    assert!(!deserialized[1].push_eval(&env).is_empty());
+    assert!(deserialized[1].pull_eval(&env).is_empty());
 
     // Third node should be pull node
-    assert!(deserialized[2].push_eval().is_empty());
-    assert!(!deserialized[2].pull_eval().is_empty());
+    assert!(deserialized[2].push_eval(&env).is_empty());
+    assert!(!deserialized[2].pull_eval(&env).is_empty());
 }

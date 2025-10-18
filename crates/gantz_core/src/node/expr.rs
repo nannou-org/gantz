@@ -109,16 +109,16 @@ fn interpolate_tokens(tts: TokenStream, inputs: &[Option<String>]) -> String {
     tokens.collect::<Vec<_>>().join(" ")
 }
 
-impl Node for Expr {
-    fn n_inputs(&self) -> usize {
+impl<Env> Node<Env> for Expr {
+    fn n_inputs(&self, _: &Env) -> usize {
         self.n_inputs
     }
 
-    fn n_outputs(&self) -> usize {
+    fn n_outputs(&self, _: &Env) -> usize {
         self.n_outputs
     }
 
-    fn expr(&self, ctx: node::ExprCtx) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
         // Create a token stream.
         let skip_comments = true;
         let source_id = None;

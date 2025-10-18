@@ -9,16 +9,18 @@ use steel::steel_vm::engine::Engine;
 /// For types used to traverse nested graphs of [`Node`]s.
 ///
 /// This is used for both node state registration and code generation.
-pub trait Visitor {
+pub trait Visitor<Env> {
     /// Called prior to traversing nested nodes.
-    fn visit_pre(&mut self, _ctx: Ctx, _node: &dyn Node) {}
+    fn visit_pre(&mut self, _ctx: Ctx<Env>, _node: &dyn Node<Env>) {}
     /// Called following traversal of nested nodes.
-    fn visit_post(&mut self, _ctx: Ctx, _node: &dyn Node) {}
+    fn visit_post(&mut self, _ctx: Ctx<Env>, _node: &dyn Node<Env>) {}
 }
 
 /// The context provided for each node during the traversal.
-#[derive(Clone, Copy, Debug)]
-pub struct Ctx<'a> {
+#[derive(Debug)]
+pub struct Ctx<'a, Env> {
+    /// A reference to the environment provided to the nodes.
+    env: &'a Env,
     /// The path at which this node is nested relative to the root.
     path: &'a [node::Id],
     /// A slice with an element for every input, `Some` if connected.
@@ -33,11 +35,16 @@ pub struct Ctx<'a> {
 /// - `gantz_core::graph::register`
 pub(crate) struct Register<'vm>(pub(crate) &'vm mut Engine);
 
-impl<'a> Ctx<'a> {
+impl<'a, Env> Ctx<'a, Env> {
     /// Create a `Ctx` instance. Exclusively for use by `Visitor`
     /// implementations.
-    pub fn new(path: &'a [node::Id], inputs: &'a [(node::Id, Edge)]) -> Self {
-        Self { path, inputs }
+    pub fn new(env: &'a Env, path: &'a [node::Id], inputs: &'a [(node::Id, Edge)]) -> Self {
+        Self { env, path, inputs }
+    }
+
+    /// Access to the environment provided to the nodes.
+    pub fn env(&self) -> &Env {
+        self.env
     }
 
     /// The path at which this node is nested relative to the root.
@@ -58,10 +65,22 @@ impl<'a> Ctx<'a> {
     }
 }
 
+impl<'a, Env> Clone for Ctx<'a, Env> {
+    fn clone(&self) -> Self {
+        Self {
+            env: self.env,
+            path: self.path,
+            inputs: self.inputs,
+        }
+    }
+}
+
+impl<'a, Env> Copy for Ctx<'a, Env> {}
+
 /// The `Register` visitor just calls `register` for each node, prior to
 /// traversing its nested nodes.
-impl<'vm> Visitor for Register<'vm> {
-    fn visit_pre(&mut self, ctx: Ctx, node: &dyn Node) {
+impl<'vm, Env> Visitor<Env> for Register<'vm> {
+    fn visit_pre(&mut self, ctx: Ctx<Env>, node: &dyn Node<Env>) {
         node.register(ctx.path(), self.0);
     }
 }

@@ -5,20 +5,20 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct Number;
 
-impl gantz_core::Node for Number {
-    fn n_inputs(&self) -> usize {
+impl<Env> gantz_core::Node<Env> for Number {
+    fn n_inputs(&self, _: &Env) -> usize {
         1
     }
 
-    fn n_outputs(&self) -> usize {
+    fn n_outputs(&self, _: &Env) -> usize {
         1
     }
 
-    fn push_eval(&self) -> Vec<gantz_core::node::EvalConf> {
+    fn push_eval(&self, _: &Env) -> Vec<gantz_core::node::EvalConf> {
         vec![gantz_core::node::EvalConf::All]
     }
 
-    fn expr(&self, ctx: gantz_core::node::ExprCtx) -> ExprKind {
+    fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> ExprKind {
         let expr = match ctx.inputs().get(0) {
             // If an input value was provided, use it to update state and
             // forward that value.
