@@ -4,9 +4,8 @@
 //! Provides new node items, while re-exporting some of the `gantz_core::node`
 //! items for convenience.
 
-pub use graph::NamedGraph;
-
 #[doc(inline)]
 pub use gantz_core::node::{Id, state};
+pub use graph::NamedGraph;
 
 pub mod graph;

@@ -301,10 +301,7 @@ fn command_palette<Env>(
     }
 
     // Map the node types to commands for the command palette.
-    let cmds = env.node_types().map(|k| NodeTyCmd {
-        env,
-        name: &k[..],
-    });
+    let cmds = env.node_types().map(|k| NodeTyCmd { env, name: &k[..] });
 
     // We'll only want to apply commands to the currently selected graph.
     let graph = graph_scene::index_path_graph_mut(root, &state.path).unwrap();

@@ -224,7 +224,12 @@ impl App {
             })
             .unwrap_or_else(|| {
                 log::error!("Unable to access storage");
-                (Default::default(), Default::default(), None, Default::default())
+                (
+                    Default::default(),
+                    Default::default(),
+                    None,
+                    Default::default(),
+                )
             });
 
         // Lookup the active graph or fallback to an empty default.
@@ -490,16 +495,14 @@ fn load_gantz_gui_state(storage: &dyn eframe::Storage) -> gantz_egui::widget::Ga
             log::debug!("No existing gantz GUI state to load");
             None
         })
-        .and_then(|gantz_str| {
-            match ron::de::from_str(&gantz_str) {
-                Ok(gantz) => {
-                    log::debug!("Successfully loaded gantz GUI state from storage");
-                    Some(gantz)
-                }
-                Err(e) => {
-                    log::error!("Failed to deserialize gantz GUI state: {e}");
-                    None
-                }
+        .and_then(|gantz_str| match ron::de::from_str(&gantz_str) {
+            Ok(gantz) => {
+                log::debug!("Successfully loaded gantz GUI state from storage");
+                Some(gantz)
+            }
+            Err(e) => {
+                log::error!("Failed to deserialize gantz GUI state: {e}");
+                None
             }
         })
         .unwrap_or_else(|| {

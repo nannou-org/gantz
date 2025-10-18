@@ -62,7 +62,8 @@ impl<'pl, Env> Visitor<Env> for NodeFns<'pl> {
         let range = (Included(start), Excluded(end));
         let input_confs = tree.elem.range(range);
         for conf in input_confs {
-            self.fns.push(node_fn(ctx.env(), node, node_path, &conf.conns));
+            self.fns
+                .push(node_fn(ctx.env(), node, node_path, &conf.conns));
         }
     }
 }

@@ -2,7 +2,6 @@
 //! gantz using `egui`.
 
 use std::hash::{Hash, Hasher};
-
 use steel::{
     SteelErr, SteelVal,
     rvals::{FromSteelVal, IntoSteelVal},
@@ -126,8 +125,18 @@ macro_rules! impl_node_ui_for_ptr {
 impl_node_ui_for_ptr!(Box);
 
 impl<'a, Env> NodeCtx<'a, Env> {
-    pub fn new(env: &'a Env, path: &'a [node::Id], vm: &'a mut Engine, cmds: &'a mut Vec<Cmd>) -> Self {
-        Self { env, path, vm, cmds }
+    pub fn new(
+        env: &'a Env,
+        path: &'a [node::Id],
+        vm: &'a mut Engine,
+        cmds: &'a mut Vec<Cmd>,
+    ) -> Self {
+        Self {
+            env,
+            path,
+            vm,
+            cmds,
+        }
     }
 
     /// Provide access to the node's input environment.

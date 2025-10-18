@@ -306,7 +306,12 @@ where
 }
 
 /// The implementation of the `GraphNode`'s `Node::expr` fn.
-pub fn nested_expr<Env, G>(env: &Env, g: G, path: &[node::Id], inputs: &[Option<String>]) -> ExprKind
+pub fn nested_expr<Env, G>(
+    env: &Env,
+    g: G,
+    path: &[node::Id],
+    inputs: &[Option<String>],
+) -> ExprKind
 where
     G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable + Data<EdgeWeight = Edge>,
     G::NodeWeight: Node<Env>,

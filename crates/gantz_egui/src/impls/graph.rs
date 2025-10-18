@@ -1,4 +1,4 @@
-use crate::{fmt_content_addr, graph_content_addr, widget::node_inspector, Cmd, NodeCtx, NodeUi};
+use crate::{Cmd, NodeCtx, NodeUi, fmt_content_addr, graph_content_addr, widget::node_inspector};
 use std::hash::Hash;
 
 impl<Env, N> NodeUi<Env> for gantz_core::node::GraphNode<N>

@@ -165,7 +165,8 @@ impl<Env> Visitor<Env> for RoseTree<Meta> {
 
         // Insert the node.
         let id = ctx.id();
-        tree.elem.add_node(ctx.env(), id, node, ctx.inputs().iter().copied());
+        tree.elem
+            .add_node(ctx.env(), id, node, ctx.inputs().iter().copied());
     }
 }
 

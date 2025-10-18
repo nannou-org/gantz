@@ -75,7 +75,7 @@ impl<'a, Env> Clone for Ctx<'a, Env> {
     }
 }
 
-impl<'a, Env> Copy for Ctx<'a, Env> { }
+impl<'a, Env> Copy for Ctx<'a, Env> {}
 
 /// The `Register` visitor just calls `register` for each node, prior to
 /// traversing its nested nodes.
