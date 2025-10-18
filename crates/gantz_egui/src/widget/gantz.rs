@@ -163,6 +163,12 @@ impl<'a, T> Clone for NodeTyCmd<'a, T> {
 
 impl<'a, T> Copy for NodeTyCmd<'a, T> {}
 
+impl Default for GantzState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn graph_scene<Env, N>(
     env: &Env,
     graph: &mut gantz_core::node::GraphNode<N>,

@@ -10,8 +10,10 @@ use eframe::egui;
 use gantz_core::steel::steel_vm::engine::Engine;
 use gantz_egui::ContentAddr;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::{any::Any, collections::BTreeMap};
+use std::{
+    any::Any,
+    collections::{BTreeMap, HashMap},
+};
 use steel::{SteelVal, parser::ast::ExprKind};
 
 // ----------------------------------------------
@@ -209,7 +211,7 @@ impl App {
         log::set_max_level(log::LevelFilter::Info);
 
         // Load the graphs and mappings from storage.
-        let (graphs, names, active_graph) = cc
+        let (graphs, names, active_graph, gantz) = cc
             .storage
             .as_ref()
             .map(|&storage| {
@@ -217,9 +219,13 @@ impl App {
                 let graphs = load_graphs(storage, graph_addrs.iter().copied());
                 let graph_names = load_graph_names(storage);
                 let active_graph = load_active_graph(storage);
-                (graphs, graph_names, active_graph)
+                let gantz = load_gantz_gui_state(storage);
+                (graphs, graph_names, active_graph, gantz)
             })
-            .unwrap_or_else(|| (Default::default(), Default::default(), None));
+            .unwrap_or_else(|| {
+                log::error!("Unable to access storage");
+                (Default::default(), Default::default(), None, Default::default())
+            });
 
         // Lookup the active graph or fallback to an empty default.
         let graph = match active_graph {
@@ -239,7 +245,7 @@ impl App {
             primitives,
         };
 
-        // VM setup
+        // VM setup.
         let mut vm = Engine::new();
         // TODO: Load state from storage?
         vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
@@ -250,31 +256,6 @@ impl App {
         // GUI setup.
         let ctx = &cc.egui_ctx;
         ctx.set_fonts(egui::FontDefinitions::default());
-
-        // Load the gantz GUI state or fallback to default.
-        let gantz = cc
-            .storage
-            .as_ref()
-            .and_then(|storage| {
-                let Some(gantz_str) = storage.get_string(Self::GANTZ_GUI_STATE_KEY) else {
-                    log::debug!("No existing gantz GUI state to load");
-                    return None;
-                };
-                match ron::de::from_str(&gantz_str) {
-                    Ok(gantz) => {
-                        log::debug!("Successfully loaded gantz GUI state from storage");
-                        Some(gantz)
-                    }
-                    Err(e) => {
-                        log::error!("Failed to deserialize gantz GUI state: {e}");
-                        None
-                    }
-                }
-            })
-            .unwrap_or_else(|| {
-                log::debug!("Initialising default gantz GUI state");
-                gantz_egui::widget::GantzState::new()
-            });
 
         let state = State {
             logger,
@@ -499,6 +480,32 @@ fn load_active_graph(storage: &dyn eframe::Storage) -> Option<ContentAddr> {
     let active_graph_str = storage.get_string(App::ACTIVE_GRAPH_KEY)?;
     // TODO: Use from_hex instead of `ron`.
     ron::de::from_str(&active_graph_str).ok()
+}
+
+/// Load the state of the gantz GUI from storage.
+fn load_gantz_gui_state(storage: &dyn eframe::Storage) -> gantz_egui::widget::GantzState {
+    storage
+        .get_string(App::GANTZ_GUI_STATE_KEY)
+        .or_else(|| {
+            log::debug!("No existing gantz GUI state to load");
+            None
+        })
+        .and_then(|gantz_str| {
+            match ron::de::from_str(&gantz_str) {
+                Ok(gantz) => {
+                    log::debug!("Successfully loaded gantz GUI state from storage");
+                    Some(gantz)
+                }
+                Err(e) => {
+                    log::error!("Failed to deserialize gantz GUI state: {e}");
+                    None
+                }
+            }
+        })
+        .unwrap_or_else(|| {
+            log::debug!("Initialising default gantz GUI state");
+            gantz_egui::widget::GantzState::new()
+        })
 }
 
 /// The key for a particular graph in storage.
