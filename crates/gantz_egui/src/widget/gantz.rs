@@ -1,7 +1,9 @@
-use super::graph_scene::ToGraphMut;
 use crate::{
-    Cmd, NodeCtx, NodeUi,
-    widget::{self, GraphScene, GraphSceneState, graph_scene},
+    Cmd, ContentAddr, NodeCtx, NodeUi,
+    widget::{
+        self, GraphScene, GraphSceneState,
+        graph_scene::{self, ToGraphMut},
+    },
 };
 use gantz_core::{Node, node};
 use std::collections::HashMap;
@@ -40,8 +42,9 @@ pub struct Gantz<'a, Env>
 where
     Env: NodeTypeRegistry,
 {
-    env: &'a Env,
+    env: &'a mut Env,
     root: &'a mut gantz_core::node::GraphNode<Env::Node>,
+    head: widget::graph_select::Head<'a>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -56,6 +59,36 @@ pub struct GantzState {
     pub center_view: bool,
 }
 
+/// Response from the top-level gantz widget.
+#[derive(Debug, Default)]
+pub struct GantzResponse {
+    pub graph_select: Option<widget::graph_select::GraphSelectResponse>,
+}
+
+impl GantzResponse {
+    /// Indicates the new graph button was clicked.
+    pub fn new_graph(&self) -> bool {
+        self.graph_select
+            .as_ref()
+            .map(|g| g.new_graph)
+            .unwrap_or(false)
+    }
+
+    /// If a graph was selected this is its content address and name (if named).
+    pub fn graph_selected(&self) -> Option<&(Option<String>, ContentAddr)> {
+        self.graph_select.as_ref().and_then(|g| g.selected.as_ref())
+    }
+
+    /// If `Some` indicates, the root graph name was updated.
+    ///
+    /// If `Some(None)`, the head graph's name was cleared.
+    pub fn graph_name_updated(&self) -> Option<Option<String>> {
+        self.graph_select
+            .as_ref()
+            .and_then(|g| g.name_updated.clone())
+    }
+}
+
 /// UI state relevant to each nested graph within the tree.
 pub type Graphs = HashMap<Vec<node::Id>, GraphState>;
 
@@ -67,6 +100,8 @@ pub struct GraphState {
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
 pub struct ViewToggles {
+    #[serde(default)]
+    pub graph_select: bool,
     pub node_inspector: bool,
     pub logs: bool,
     pub steel: bool,
@@ -80,12 +115,18 @@ struct NodeTyCmd<'a, Env> {
 
 impl<'a, Env> Gantz<'a, Env>
 where
-    Env: NodeTypeRegistry,
+    Env: widget::graph_select::GraphRegistry + NodeTypeRegistry,
     Env::Node: gantz_core::Node<Env> + NodeUi<Env> + graph_scene::ToGraphMut<Node = Env::Node>,
 {
     /// Instantiate the full top-level gantz widget.
-    pub fn new(env: &'a Env, root: &'a mut gantz_core::node::GraphNode<Env::Node>) -> Self {
-        Self { env, root }
+    ///
+    /// The head CA should match the `root`'s CA.
+    pub fn new(
+        env: &'a mut Env,
+        root: &'a mut gantz_core::node::GraphNode<Env::Node>,
+        head: widget::graph_select::Head<'a>,
+    ) -> Self {
+        Self { env, root, head }
     }
 
     /// Present the gantz UI.
@@ -96,9 +137,13 @@ where
         compiled_steel: &str,
         vm: &mut Engine,
         ui: &mut egui::Ui,
-    ) {
+    ) -> GantzResponse {
+        let mut response = GantzResponse::default();
         graph_scene(self.env, self.root, state, vm, ui);
         command_palette(self.env, self.root, state, vm, ui);
+        if state.view_toggles.graph_select {
+            response.graph_select = graph_select(self.env, self.head, ui);
+        }
         if state.view_toggles.graph_config {
             graph_config(self.root, state, ui);
         }
@@ -111,6 +156,7 @@ where
         if state.view_toggles.steel {
             steel_view(compiled_steel, ui);
         }
+        response
     }
 }
 
@@ -167,6 +213,20 @@ impl Default for GantzState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn graph_select<Env>(
+    env: &mut Env,
+    head: widget::graph_select::Head,
+    ui: &mut egui::Ui,
+) -> Option<widget::graph_select::GraphSelectResponse>
+where
+    Env: widget::graph_select::GraphRegistry,
+{
+    egui::Window::new("Graph Select")
+        .auto_sized()
+        .show(ui.ctx(), |ui| widget::GraphSelect::new(env, head).show(ui))
+        .and_then(|res| res.inner)
 }
 
 fn graph_scene<Env, N>(
@@ -255,14 +315,18 @@ fn graph_scene<Env, N>(
                 let text = egui::RichText::new(s).size(24.0);
                 widget::LabelToggle::new(text, b)
             }
-            let grid_w = 120.0;
-            let n_cols = 4;
+            let grid_w = 150.0;
+            let n_cols = 5;
             let gap_space = ui.spacing().item_spacing.x * (n_cols as f32 - 1.0);
             let col_w = (grid_w - gap_space) / n_cols as f32;
             egui::Grid::new("view_toggles")
                 .min_col_width(col_w)
                 .max_col_width(col_w)
                 .show(ui, |ui| {
+                    ui.vertical_centered_justified(|ui| {
+                        ui.add(toggle("G", &mut state.view_toggles.graph_select))
+                            .on_hover_text("Graph Select");
+                    });
                     ui.vertical_centered_justified(|ui| {
                         ui.add(toggle("N", &mut state.view_toggles.node_inspector))
                             .on_hover_text("Node Inspector");
@@ -276,7 +340,7 @@ fn graph_scene<Env, N>(
                             .on_hover_text("Steel View");
                     });
                     ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("G", &mut state.view_toggles.graph_config))
+                        ui.add(toggle("C", &mut state.view_toggles.graph_config))
                             .on_hover_text("Graph Configuration");
                     });
                 });

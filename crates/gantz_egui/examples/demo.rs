@@ -74,11 +74,24 @@ impl gantz_egui::widget::gantz::NodeTypeRegistry for Environment {
     }
 }
 
-// Provide the `NodeNameRegistry` implementation required by `gantz_egui`.
+// Provide the `GraphRegistry` implementation required by `gantz_egui`.
 impl gantz_egui::node::graph::GraphRegistry for Environment {
     type Node = Box<dyn Node>;
     fn graph(&self, ca: ContentAddr) -> Option<&gantz_core::node::graph::Graph<Self::Node>> {
         self.registry.graphs.get(&ca)
+    }
+}
+
+// Provide the `GraphRegistry` implementation required by the `GraphSelect` widget.
+impl gantz_egui::widget::graph_select::GraphRegistry for Environment {
+    fn addrs(&self) -> Vec<ContentAddr> {
+        let mut vec: Vec<_> = self.registry.graphs.keys().copied().collect();
+        vec.sort();
+        vec
+    }
+
+    fn names(&self) -> &BTreeMap<String, ContentAddr> {
+        &self.registry.names
     }
 }
 
@@ -183,6 +196,9 @@ struct App {
 struct State {
     graph: GraphNode,
     graph_ca: ContentAddr,
+    /// If we're working with a name, a mapping from the name to the graph's CA
+    /// will be persisted.
+    graph_name: Option<String>,
     compiled_module: String,
     logger: gantz_egui::widget::log_view::Logger,
     gantz: gantz_egui::widget::GantzState,
@@ -203,6 +219,8 @@ impl App {
     const GRAPH_NAMES_KEY: &str = "graph-names";
     /// The key at which the content address of the active graph is stored.
     const ACTIVE_GRAPH_KEY: &str = "active-graph";
+    /// The key at which the name of the active graph is stored.
+    const ACTIVE_GRAPH_NAME_KEY: &str = "active-graph-name";
 
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // Setup logging.
@@ -211,22 +229,31 @@ impl App {
         log::set_max_level(log::LevelFilter::Info);
 
         // Load the graphs and mappings from storage.
-        let (graphs, names, active_graph, gantz) = cc
+        let (graphs, names, active_graph, active_graph_name, gantz) = cc
             .storage
             .as_ref()
             .map(|&storage| {
                 let graph_addrs = load_graph_addrs(storage);
-                let graphs = load_graphs(storage, graph_addrs.iter().copied());
+                let mut graphs = load_graphs(storage, graph_addrs.iter().copied());
                 let graph_names = load_graph_names(storage);
                 let active_graph = load_active_graph(storage);
+                let active_graph_name = load_active_graph_name(storage);
                 let gantz = load_gantz_gui_state(storage);
-                (graphs, graph_names, active_graph, gantz)
+
+                // FIXME: Make this optional?
+                // Clear the graphs that are unnamed or inactive.
+                graphs.retain(|&ca, _g| {
+                    Some(ca) == active_graph || graph_names.values().any(|&n_ca| ca == n_ca)
+                });
+
+                (graphs, graph_names, active_graph, active_graph_name, gantz)
             })
             .unwrap_or_else(|| {
                 log::error!("Unable to access storage");
                 (
                     Default::default(),
                     Default::default(),
+                    None,
                     None,
                     Default::default(),
                 )
@@ -251,12 +278,7 @@ impl App {
         };
 
         // VM setup.
-        let mut vm = Engine::new();
-        // TODO: Load state from storage?
-        vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
-        gantz_core::graph::register(&env, &graph.graph, &[], &mut vm);
-        let module = compile_graph(&env, &graph, &mut vm);
-        let compiled_module = fmt_compiled_module(&module);
+        let (vm, compiled_module) = init_vm(&env, &graph.graph);
 
         // GUI setup.
         let ctx = &cc.egui_ctx;
@@ -267,6 +289,7 @@ impl App {
             gantz,
             graph,
             graph_ca,
+            graph_name: active_graph_name,
             env,
             compiled_module,
             vm,
@@ -286,6 +309,22 @@ impl eframe::App for App {
         let new_graph_ca = gantz_egui::graph_content_addr(&self.state.graph);
         if self.state.graph_ca != new_graph_ca {
             self.state.graph_ca = new_graph_ca;
+            // If there's some name tracking the graph changes, ensure the
+            // mapping is updated.
+            if let Some(name) = self.state.graph_name.as_ref() {
+                let graph = clone_graph(&self.state.graph.graph);
+                self.state
+                    .env
+                    .registry
+                    .graphs
+                    .entry(new_graph_ca)
+                    .or_insert(graph);
+                self.state
+                    .env
+                    .registry
+                    .names
+                    .insert(name.clone(), new_graph_ca);
+            }
             let module = compile_graph(&self.state.env, &self.state.graph, &mut self.state.vm);
             self.state.compiled_module = fmt_compiled_module(&module);
         }
@@ -308,11 +347,13 @@ impl eframe::App for App {
         let mut addrs: Vec<_> = self.state.env.registry.graphs.keys().copied().collect();
         addrs.sort();
         save_graph_addrs(storage, &addrs);
+
         save_graphs(storage, &self.state.env.registry.graphs);
         save_graph_names(storage, &self.state.env.registry.names);
 
         // Save the active graph.
         save_active_graph(storage, active_ca);
+        save_active_graph_name(storage, self.state.graph_name.as_deref());
 
         // Save the gantz GUI state.
         save_gantz_gui_state(storage, &self.state.gantz);
@@ -410,6 +451,19 @@ fn save_active_graph(storage: &mut dyn eframe::Storage, ca: ContentAddr) {
     log::debug!("Successfully persisted active graph CA");
 }
 
+/// Save the active graph name to storage.
+fn save_active_graph_name(storage: &mut dyn eframe::Storage, name: Option<&str>) {
+    let name_opt_str = match ron::to_string(&name) {
+        Err(e) => {
+            log::error!("Failed to serialize active graph CA: {e}");
+            return;
+        }
+        Ok(s) => s,
+    };
+    storage.set_string(App::ACTIVE_GRAPH_NAME_KEY, name_opt_str);
+    log::debug!("Successfully persisted active graph name");
+}
+
 /// Load the graph addresses from storage.
 fn load_graph_addrs(storage: &dyn eframe::Storage) -> Vec<ContentAddr> {
     let Some(graph_addrs_str) = storage.get_string(App::GRAPH_ADDRS_KEY) else {
@@ -487,6 +541,12 @@ fn load_active_graph(storage: &dyn eframe::Storage) -> Option<ContentAddr> {
     ron::de::from_str(&active_graph_str).ok()
 }
 
+/// Load the CA of the active graph if there is one.
+fn load_active_graph_name(storage: &dyn eframe::Storage) -> Option<String> {
+    let active_graph_name_str = storage.get_string(App::ACTIVE_GRAPH_NAME_KEY)?;
+    ron::de::from_str(&active_graph_name_str).ok().flatten()
+}
+
 /// Load the state of the gantz GUI from storage.
 fn load_gantz_gui_state(storage: &dyn eframe::Storage) -> gantz_egui::widget::GantzState {
     storage
@@ -514,6 +574,20 @@ fn load_gantz_gui_state(storage: &dyn eframe::Storage) -> gantz_egui::widget::Ga
 /// The key for a particular graph in storage.
 fn graph_key(ca: ContentAddr) -> String {
     format!("{}", gantz_egui::fmt_content_addr(ca))
+}
+
+/// Initialise the VM for the given environment and graph.
+///
+/// Also returns the compiled module for the initial state.
+///
+/// TODO: Allow loading state from storage.
+fn init_vm(env: &Environment, graph: &Graph) -> (Engine, String) {
+    let mut vm = Engine::new();
+    vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(env, graph, &[], &mut vm);
+    let module = compile_graph(env, graph, &mut vm);
+    let compiled_module = fmt_compiled_module(&module);
+    (vm, compiled_module)
 }
 
 // Drain the commands provided by the UI and process them.
@@ -565,12 +639,59 @@ fn gui(ctx: &egui::Context, state: &mut State) {
     egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
-            gantz_egui::widget::Gantz::new(&state.env, &mut state.graph).show(
-                &mut state.gantz,
-                &state.logger,
-                &state.compiled_module,
-                &mut state.vm,
-                ui,
-            );
+            let ca = state.graph_ca;
+            let name = state.graph_name.as_deref();
+            let head = gantz_egui::widget::graph_select::Head { ca, name };
+            let response = gantz_egui::widget::Gantz::new(&mut state.env, &mut state.graph, head)
+                .show(
+                    &mut state.gantz,
+                    &state.logger,
+                    &state.compiled_module,
+                    &mut state.vm,
+                    ui,
+                );
+
+            // The graph name was updated, ensure a mapping exists if necessary.
+            if let Some(name_opt) = response.graph_name_updated() {
+                // If a name was given, ensure it maps to the CA.
+                if let Some(ref name) = name_opt {
+                    state.env.registry.names.insert(name.to_string(), ca);
+                }
+                state.graph_name = name_opt.clone();
+            }
+
+            // A graph was selected.
+            if let Some((name, ca)) = response.graph_selected() {
+                // TODO: Load state for named graphs?
+                set_head(state, *ca, name.clone());
+            }
+
+            // Create a new empty graph and select it.
+            if response.new_graph() {
+                let graph = Graph::default();
+                let ca = gantz_egui::graph_content_addr(&graph);
+                state.env.registry.graphs.entry(ca).or_insert(graph);
+                set_head(state, ca, None);
+            }
         });
+}
+
+/// Set the active graph as the graph with the given CA.
+fn set_head(state: &mut State, ca: ContentAddr, name: Option<String>) {
+    let graph = &state.env.registry.graphs[&ca];
+
+    // Clone the graph.
+    let graph = clone_graph(graph);
+    state.graph_ca = ca;
+    state.graph_name = name;
+    state.graph = gantz_core::node::GraphNode { graph };
+
+    // Initialise the VM.
+    let (vm, compiled_module) = init_vm(&state.env, &state.graph.graph);
+    state.vm = vm;
+    state.compiled_module = compiled_module;
+
+    // Clear the graph GUI state (layout, etc).
+    state.gantz.path.clear();
+    state.gantz.graphs.clear();
 }

@@ -3,6 +3,7 @@
 pub use command_palette::CommandPalette;
 pub use gantz::{Gantz, GantzState};
 pub use graph_scene::{GraphScene, GraphSceneState};
+pub use graph_select::GraphSelect;
 pub use label_button::LabelButton;
 pub use label_toggle::LabelToggle;
 pub use log_view::LogView;
@@ -11,6 +12,7 @@ pub use node_inspector::NodeInspector;
 pub mod command_palette;
 pub mod gantz;
 pub mod graph_scene;
+pub mod graph_select;
 pub mod label_button;
 pub mod label_toggle;
 pub mod log_view;

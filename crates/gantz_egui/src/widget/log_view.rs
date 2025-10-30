@@ -185,42 +185,48 @@ impl LogView {
                 });
             })
             .body(|mut body| {
-                for entry in entries {
+                let row_h = 18.0;
+                let n_rows = entries.len();
+                let text_color = body.ui_mut().style().visuals.text_color();
+                body.rows(row_h, n_rows, |mut row| {
+                    let entry = &entries[row.index()];
                     let freshness = entry.freshness();
-                    let text_color = if freshness > 0.0 {
-                        let col = body.ui_mut().style().visuals.text_color();
+                    let fresh = freshness > 0.0;
+                    let text_color = if fresh {
                         let hl_col = egui::Color32::WHITE;
-                        body.ui_mut().ctx().request_repaint();
-                        col.lerp_to_gamma(hl_col, freshness)
+                        text_color.lerp_to_gamma(hl_col, freshness)
                     } else {
-                        body.ui_mut().style().visuals.text_color()
+                        text_color
                     };
-                    body.row(18.0, |mut row| {
-                        row.col(|ui| {
-                            let text = entry.format_timestamp();
-                            ui.colored_label(text_color, text);
-                        });
 
-                        row.col(|ui| {
-                            let (color, text) = match entry.level {
-                                Level::Error => (egui::Color32::from_rgb(255, 100, 100), "ERROR"),
-                                Level::Warn => (egui::Color32::from_rgb(255, 200, 100), "WARN"),
-                                Level::Info => (egui::Color32::from_rgb(100, 200, 255), "INFO"),
-                                Level::Debug => (egui::Color32::GRAY, "DEBUG"),
-                                Level::Trace => (egui::Color32::DARK_GRAY, "TRACE"),
-                            };
-                            ui.colored_label(color, text);
-                        });
-
-                        row.col(|ui| {
-                            ui.colored_label(text_color, &entry.target);
-                        });
-
-                        row.col(|ui| {
-                            ui.colored_label(text_color, &entry.message);
-                        });
+                    row.col(|ui| {
+                        let text = entry.format_timestamp();
+                        ui.colored_label(text_color, text);
                     });
-                }
+
+                    row.col(|ui| {
+                        let (color, text) = match entry.level {
+                            Level::Error => (egui::Color32::from_rgb(255, 100, 100), "ERROR"),
+                            Level::Warn => (egui::Color32::from_rgb(255, 200, 100), "WARN"),
+                            Level::Info => (egui::Color32::from_rgb(100, 200, 255), "INFO"),
+                            Level::Debug => (egui::Color32::GRAY, "DEBUG"),
+                            Level::Trace => (egui::Color32::DARK_GRAY, "TRACE"),
+                        };
+                        ui.colored_label(color, text);
+                    });
+
+                    row.col(|ui| {
+                        ui.colored_label(text_color, &entry.target);
+                    });
+
+                    row.col(|ui| {
+                        ui.colored_label(text_color, &entry.message);
+                    });
+
+                    if fresh {
+                        row.response().ctx.request_repaint();
+                    }
+                });
             });
 
         if state.auto_scroll {
