@@ -206,5 +206,5 @@ where
 
 /// Format the given content address into a hex string.
 pub fn fmt_content_addr(ca: ContentAddr) -> String {
-    format!("{ca:#016x}")
+    format!("{ca:#018x}")
 }
