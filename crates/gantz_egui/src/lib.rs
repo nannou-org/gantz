@@ -204,7 +204,14 @@ where
     hasher.finish()
 }
 
-/// Format the given content address into a hex string.
+/// Format the given content address into a full-length hex string.
 pub fn fmt_content_addr(ca: ContentAddr) -> String {
     format!("{ca:#018x}")
+}
+
+/// Format the given content address into a shorthand 8-char hex string.
+pub fn fmt_content_addr_short(ca: ContentAddr) -> String {
+    let mut s = format!("{ca:08x}");
+    s.truncate(8);
+    s
 }

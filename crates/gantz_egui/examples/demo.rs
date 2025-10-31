@@ -658,6 +658,12 @@ fn gui(ctx: &egui::Context, state: &mut State) {
                     state.env.registry.names.insert(name.to_string(), ca);
                 }
                 state.graph_name = name_opt.clone();
+            // The given graph name was removed.
+            } else if let Some(name) = response.graph_name_removed() {
+                if Some(&name) == state.graph_name.as_ref() {
+                    state.graph_name.take();
+                }
+                state.env.registry.names.remove(&name);
             }
 
             // A graph was selected.
