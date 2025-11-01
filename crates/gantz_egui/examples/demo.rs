@@ -323,7 +323,7 @@ impl eframe::App for App {
         }
 
         // Process any pending commands generated from the UI.
-        process_cmds(&mut self.state.gantz, &mut self.state.vm);
+        process_cmds(&mut self.state);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -584,25 +584,32 @@ fn init_vm(env: &Environment, graph: &Graph) -> (Engine, String) {
 }
 
 // Drain the commands provided by the UI and process them.
-fn process_cmds(state: &mut gantz_egui::widget::GantzState, vm: &mut Engine) {
+fn process_cmds(state: &mut State) {
     // Process any pending commands.
-    for cmd in state.graph_scene.cmds.drain(..) {
+    for cmd in std::mem::take(&mut state.gantz.graph_scene.cmds) {
         log::debug!("{cmd:?}");
         match cmd {
             gantz_egui::Cmd::PushEval(path) => {
                 let fn_name = gantz_core::compile::push_eval_fn_name(&path);
-                if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
+                if let Err(e) = state.vm.call_function_by_name_with_args(&fn_name, vec![]) {
                     log::error!("{e}");
                 }
             }
             gantz_egui::Cmd::PullEval(path) => {
                 let fn_name = gantz_core::compile::pull_eval_fn_name(&path);
-                if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
+                if let Err(e) = state.vm.call_function_by_name_with_args(&fn_name, vec![]) {
                     log::error!("{e}");
                 }
             }
             gantz_egui::Cmd::OpenGraph(path) => {
-                state.path = path;
+                state.gantz.path = path;
+            }
+            gantz_egui::Cmd::OpenNamedGraph(name, ca) => {
+                if let Some(&n_ca) = state.env.registry.names.get(&name) {
+                    if ca == n_ca {
+                        set_head(state, ca, Some(name));
+                    }
+                }
             }
         }
     }
