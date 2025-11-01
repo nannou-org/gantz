@@ -1,0 +1,15 @@
+[package]
+name = "bevy_gantz"
+version = "0.1.0"
+description = "A bevy plugin for gantz"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+gantz_core.workspace = true
+gantz_egui.workspace = true
+gantz_std.workspace = true
+steel-core.workspace = true

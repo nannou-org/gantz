@@ -18,7 +18,7 @@ egui_extras = { version = "0.33", default-features = false, features = ["syntect
 egui_graph = "0.7"
 env_logger = { version = "0.11", default-features = false }
 gantz_core = { version = "0.1.0", path = "crates/gantz_core" }
-gantz_egui = { version = "0.1.0", path = "crates/gantz_egui", features = ["serde"] }
+gantz_egui = { version = "0.1.0", path = "crates/gantz_egui" }
 gantz_std = { version = "0.1.0", path = "crates/gantz_std" }
 humantime = "2.3"
 log = { version = "0.4", features = ["serde"] }
