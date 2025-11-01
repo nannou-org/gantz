@@ -41,14 +41,14 @@ impl<'a> egui::Widget for ExprEdit<'a> {
                 language,
             );
             layout_job.wrap.max_width = wrap_width;
-            ui.fonts(|f| f.layout_job(layout_job))
+            ui.fonts_mut(|fonts| fonts.layout_job(layout_job))
         };
 
         // Find the longest line width.
         let mut max_line_width: f32 = 0.0;
         let font_sel = egui::FontSelection::from(egui::TextStyle::Monospace);
         let font_id = font_sel.resolve(ui.style());
-        ui.fonts(|fonts| {
+        ui.fonts_mut(|fonts| {
             for line in state.code.split('\n').clone() {
                 // Use the layout_no_wrap function to get width without wrapping
                 let galley = fonts.layout_no_wrap(

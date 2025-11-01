@@ -12,17 +12,17 @@ repository = "https://github.com/nannou-org/gantz"
 [workspace.dependencies]
 dyn-clone = "1"
 dyn-hash = "0.2.2"
-eframe = { version = "0.32", features = ["persistence"] }
-egui = { version = "0.32", default-features = false }
-egui_extras = { version = "0.32", default-features = false, features = ["syntect"] }
-egui_graph = "0.6"
-env_logger = "0.10"
+eframe = { version = "0.33", features = ["persistence"] }
+egui = { version = "0.33", default-features = false }
+egui_extras = { version = "0.33", default-features = false, features = ["syntect"] }
+egui_graph = "0.7"
+env_logger = { version = "0.11", default-features = false }
 gantz_core = { version = "0.1.0", path = "crates/gantz_core" }
 gantz_egui = { version = "0.1.0", path = "crates/gantz_egui", features = ["serde"] }
 gantz_std = { version = "0.1.0", path = "crates/gantz_std" }
-humantime = "2.2"
+humantime = "2.3"
 log = { version = "0.4", features = ["serde"] }
-petgraph = { version = "0.6", features = ["serde-1"] }
+petgraph = { version = "0.8", features = ["serde-1"] }
 ron = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

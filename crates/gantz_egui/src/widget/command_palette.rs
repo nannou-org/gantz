@@ -49,12 +49,12 @@ impl CommandPalette {
         // Collect commands early since we'll need them multiple times
         let commands: Vec<T> = commands.into_iter().collect();
 
-        let screen_rect = egui_ctx.screen_rect();
+        let content_rect = egui_ctx.content_rect();
         let width = 300.0;
-        let max_height = 320.0.at_most(screen_rect.height());
+        let max_height = 320.0.at_most(content_rect.height());
 
         egui::Window::new("Command Palette")
-            .fixed_pos(screen_rect.center() - 0.5 * max_height * egui::Vec2::Y)
+            .fixed_pos(content_rect.center() - 0.5 * max_height * egui::Vec2::Y)
             .fixed_size([width, max_height])
             .pivot(egui::Align2::CENTER_TOP)
             .resizable(false)
