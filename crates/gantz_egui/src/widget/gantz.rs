@@ -458,6 +458,10 @@ fn node_inspector<Env, N>(
             .copied()
             .collect::<Vec<_>>();
         ids.sort();
+
+        // Collect the inlets and outlets.
+        let (inlets, outlets) = crate::inlet_outlet_ids::<Env, _>(&graph.graph);
+
         for id in ids {
             ui.group(|ui| {
                 let Some(node) = graph.node_weight_mut(id) else {
@@ -465,7 +469,14 @@ fn node_inspector<Env, N>(
                 };
                 let ix = id.index();
                 let path: Vec<_> = state.path.iter().copied().chain(Some(ix)).collect();
-                let ctx = NodeCtx::new(env, &path[..], vm, &mut state.graph_scene.cmds);
+                let ctx = NodeCtx::new(
+                    env,
+                    &path[..],
+                    &inlets,
+                    &outlets,
+                    vm,
+                    &mut state.graph_scene.cmds,
+                );
                 widget::NodeInspector::new(node, ctx).show(ui);
             });
         }
