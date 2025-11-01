@@ -9,6 +9,7 @@ use dyn_hash::DynHash;
 use eframe::egui;
 use gantz_core::steel::steel_vm::engine::Engine;
 use gantz_egui::ContentAddr;
+use petgraph::visit::{IntoNodeReferences, NodeRef};
 use serde::{Deserialize, Serialize};
 use std::{
     any::Any,
@@ -229,48 +230,40 @@ impl App {
         log::set_max_level(log::LevelFilter::Info);
 
         // Load the graphs and mappings from storage.
-        let (graphs, names, active_graph, active_graph_name, gantz) = cc
+        let (registry, active_graph, active_graph_name, gantz) = cc
             .storage
             .as_ref()
             .map(|&storage| {
                 let graph_addrs = load_graph_addrs(storage);
-                let mut graphs = load_graphs(storage, graph_addrs.iter().copied());
-                let graph_names = load_graph_names(storage);
+                let graphs = load_graphs(storage, graph_addrs.iter().copied());
+                let names = load_graph_names(storage);
                 let active_graph = load_active_graph(storage);
                 let active_graph_name = load_active_graph_name(storage);
                 let gantz = load_gantz_gui_state(storage);
-
-                // FIXME: Make this optional?
-                // Clear the graphs that are unnamed or inactive.
-                graphs.retain(|&ca, _g| {
-                    Some(ca) == active_graph || graph_names.values().any(|&n_ca| ca == n_ca)
-                });
-
-                (graphs, graph_names, active_graph, active_graph_name, gantz)
+                let mut registry = NodeTypeRegistry { graphs, names };
+                prune_unused_graphs(&mut registry);
+                (registry, active_graph, active_graph_name, gantz)
             })
             .unwrap_or_else(|| {
                 log::error!("Unable to access storage");
-                (
-                    Default::default(),
-                    Default::default(),
-                    None,
-                    None,
-                    Default::default(),
-                )
+                (Default::default(), None, None, Default::default())
             });
 
         // Lookup the active graph or fallback to an empty default.
         let graph = match active_graph {
             None => GraphNode::default(),
             Some(ca) => {
-                let graph = graphs.get(&ca).map(|g| clone_graph(g)).unwrap_or_default();
+                let graph = registry
+                    .graphs
+                    .get(&ca)
+                    .map(|g| clone_graph(g))
+                    .unwrap_or_default();
                 GraphNode { graph }
             }
         };
         let graph_ca = gantz_egui::graph_content_addr(&graph);
 
         // Setup the environment that will be provided to all nodes.
-        let registry = NodeTypeRegistry { graphs, names };
         let primitives = primitives();
         let env = Environment {
             registry,
@@ -701,4 +694,40 @@ fn set_head(state: &mut State, ca: ContentAddr, name: Option<String>) {
     state.gantz.path.clear();
     state.gantz.graphs.clear();
     state.gantz.graph_scene.interaction.selection.clear();
+}
+
+/// Prune all unused graph entries from the registry.
+fn prune_unused_graphs(reg: &mut NodeTypeRegistry) {
+    let to_remove: Vec<_> = reg
+        .graphs
+        .keys()
+        .copied()
+        .filter(|&ca| !graph_in_use(reg, ca))
+        .collect();
+    for ca in to_remove {
+        reg.graphs.remove(&ca);
+    }
+}
+
+/// Tests whether or not the graph with the given content address is in use
+/// within the registry.
+///
+/// This is used to determine whether or not to remove unused graphs.
+fn graph_in_use(reg: &NodeTypeRegistry, ca: ContentAddr) -> bool {
+    reg.names.values().any(|&n_ca| ca == n_ca)
+        || reg.graphs.values().any(|g| graph_contains_ca(g, ca))
+}
+
+/// Whether or not the graph contains a subgraph with the given CA.
+fn graph_contains_ca(g: &Graph, ca: ContentAddr) -> bool {
+    g.node_references().any(|n_ref| {
+        let node = n_ref.weight();
+        ((&**node) as &dyn Any)
+            .downcast_ref::<GraphNode>()
+            .map(|graph| {
+                let graph_ca = gantz_egui::graph_content_addr(&graph.graph);
+                ca == graph_ca || graph_contains_ca(&graph.graph, ca)
+            })
+            .unwrap_or(false)
+    })
 }
