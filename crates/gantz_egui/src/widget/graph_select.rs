@@ -1,6 +1,6 @@
 //! A simple widget for selecting between, naming and creating new graphs.
 
-use crate::{ContentAddr, fmt_content_addr};
+use crate::{ContentAddr, fmt_content_addr, fmt_content_addr_short};
 use std::collections::{BTreeMap, HashSet};
 
 /// A widget for selecting between, naming, and creating new graphs.
@@ -46,6 +46,16 @@ pub struct GraphSelectResponse {
     pub selected: Option<(Option<String>, ContentAddr)>,
     /// The name was updated.
     pub name_updated: Option<Option<String>>,
+    /// The name mapping was removed.
+    pub name_removed: Option<String>,
+}
+
+/// Response returned from a row.
+struct RowResponse {
+    /// Response for the row.
+    row: egui::Response,
+    /// The response for the delete button.
+    delete: Option<egui::Response>,
 }
 
 impl<'a> GraphSelect<'a> {
@@ -99,9 +109,13 @@ impl<'a> GraphSelect<'a> {
             let mut visited = HashSet::new();
             for (name, &ca) in graph_names {
                 visited.insert(ca);
-                let res = graph_select_row(&self.head, name, ca, ui);
-                if res.clicked() && ca != self.head.ca {
+                let res = graph_select_row(&self.head, Some(name), ca, ui);
+                if res.row.clicked() && ca != self.head.ca {
                     response.selected = Some((Some(name.to_string()), ca));
+                } else if let Some(delete) = res.delete {
+                    if delete.clicked() {
+                        response.name_removed = Some(name.to_string());
+                    }
                 }
             }
 
@@ -112,8 +126,8 @@ impl<'a> GraphSelect<'a> {
                 .into_iter()
                 .filter(|ca| !visited.contains(ca))
             {
-                let res = graph_select_row(&self.head, "----------", ca, ui);
-                if res.clicked() && ca != self.head.ca {
+                let res = graph_select_row(&self.head, None, ca, ui);
+                if res.row.clicked() && ca != self.head.ca {
                     response.selected = Some((None, ca));
                 }
             }
@@ -174,34 +188,30 @@ fn head_name_text_edit(
     (name_res, new_name)
 }
 
-fn graph_select_row(head: &Head, name: &str, ca: ContentAddr, ui: &mut egui::Ui) -> egui::Response {
+fn graph_select_row(
+    head: &Head,
+    name_opt: Option<&str>,
+    ca: ContentAddr,
+    ui: &mut egui::Ui,
+) -> RowResponse {
     let w = ui.max_rect().width();
     let h = ui.style().interaction.interact_radius;
     let size = egui::Vec2::new(w, h);
-    let (rect, mut response) = ui.allocate_at_least(size, egui::Sense::click());
+    let (rect, mut row) = ui.allocate_at_least(size, egui::Sense::click());
 
     let builder = egui::UiBuilder::new()
         .sense(egui::Sense::click())
         .max_rect(rect);
-    ui.scope_builder(builder, |ui| {
-        let mut res = ui.response();
-        let hovered = res.hovered();
+    let (res, delete) = ui
+        .scope_builder(builder, |ui| {
+            let mut res = ui.response();
+            let hovered = res.hovered();
 
-        // Create a child UI for the labels positioned over the allocated rect
-        ui.horizontal(|ui| {
-            let mut text = egui::RichText::new(name.to_string());
-            text = if ca == head.ca && Some(name) == head.name {
-                text.strong()
-            } else if hovered {
-                text
-            } else {
-                text.weak()
-            };
-            let label = egui::Label::new(text).selectable(false);
-            res |= ui.add(label);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                let mut text = egui::RichText::new(fmt_content_addr(ca)).monospace();
-                text = if ca == head.ca {
+            // Create a child UI for the labels positioned over the allocated rect
+            ui.horizontal(|ui| {
+                let name = name_opt.unwrap_or("----------");
+                let mut text = egui::RichText::new(name.to_string());
+                text = if ca == head.ca && Some(name) == head.name {
                     text.strong()
                 } else if hovered {
                     text
@@ -210,11 +220,33 @@ fn graph_select_row(head: &Head, name: &str, ca: ContentAddr, ui: &mut egui::Ui)
                 };
                 let label = egui::Label::new(text).selectable(false);
                 res |= ui.add(label);
-            });
-        });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Show the address.
+                    let mut text = egui::RichText::new(fmt_content_addr_short(ca)).monospace();
+                    text = if ca == head.ca {
+                        text.strong()
+                    } else if hovered {
+                        text
+                    } else {
+                        text.weak()
+                    };
+                    let label = egui::Label::new(text).selectable(false);
+                    res |= ui.add(label);
 
-        response |= res;
-    });
+                    // Show an x for removing the name mapping.
+                    let delete = name_opt
+                        .is_some()
+                        .then(|| ui.add(egui::Button::new("×").frame_when_inactive(false)));
 
-    response
+                    (res, delete)
+                })
+                .inner
+            })
+            .inner
+        })
+        .inner;
+
+    row |= res;
+
+    RowResponse { row, delete }
 }

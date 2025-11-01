@@ -658,6 +658,12 @@ fn gui(ctx: &egui::Context, state: &mut State) {
                     state.env.registry.names.insert(name.to_string(), ca);
                 }
                 state.graph_name = name_opt.clone();
+            // The given graph name was removed.
+            } else if let Some(name) = response.graph_name_removed() {
+                if Some(&name) == state.graph_name.as_ref() {
+                    state.graph_name.take();
+                }
+                state.env.registry.names.remove(&name);
             }
 
             // A graph was selected.
@@ -670,7 +676,7 @@ fn gui(ctx: &egui::Context, state: &mut State) {
             if response.new_graph() {
                 let graph = Graph::default();
                 let ca = gantz_egui::graph_content_addr(&graph);
-                state.env.registry.graphs.entry(ca).or_insert(graph);
+                state.env.registry.graphs.insert(ca, graph);
                 set_head(state, ca, None);
             }
         });
@@ -694,4 +700,5 @@ fn set_head(state: &mut State, ca: ContentAddr, name: Option<String>) {
     // Clear the graph GUI state (layout, etc).
     state.gantz.path.clear();
     state.gantz.graphs.clear();
+    state.gantz.graph_scene.interaction.selection.clear();
 }

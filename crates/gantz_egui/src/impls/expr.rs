@@ -6,19 +6,28 @@ pub struct ExprEdit<'a> {
     pub id: egui::Id,
 }
 
+#[derive(Clone, Default)]
+struct ExprEditState {
+    expr_hash: u64,
+    code: String,
+}
+
 impl<'a> egui::Widget for ExprEdit<'a> {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
         let Self { expr, id } = self;
         let code_id = id.with("code");
 
-        // Take the working string if there is one, or use the expr src.
-        let mut code = ui
-            .memory_mut(|m| {
-                m.data
-                    .get_persisted_mut_or::<Option<String>>(code_id, None)
-                    .take()
-            })
-            .unwrap_or_else(|| expr.src().to_string());
+        // Retrieve the working state.
+        let mut state: ExprEditState = ui
+            .memory_mut(|m| m.data.remove_temp(code_id))
+            .unwrap_or_default();
+
+        // If the input hash has changed, reset the working code string.
+        let expr_hash = expr_hash(expr);
+        if expr_hash != state.expr_hash {
+            state.expr_hash = expr_hash;
+            state.code = expr.src().to_string();
+        }
 
         let language = "scm";
         let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
@@ -40,7 +49,7 @@ impl<'a> egui::Widget for ExprEdit<'a> {
         let font_sel = egui::FontSelection::from(egui::TextStyle::Monospace);
         let font_id = font_sel.resolve(ui.style());
         ui.fonts(|fonts| {
-            for line in code.split('\n').clone() {
+            for line in state.code.split('\n').clone() {
                 // Use the layout_no_wrap function to get width without wrapping
                 let galley = fonts.layout_no_wrap(
                     line.to_string(),
@@ -53,7 +62,7 @@ impl<'a> egui::Widget for ExprEdit<'a> {
         max_line_width += 7.0;
 
         let response = ui.add(
-            egui::TextEdit::multiline(&mut code)
+            egui::TextEdit::multiline(&mut state.code)
                 .id(id)
                 .code_editor()
                 .font(font_id)
@@ -63,13 +72,13 @@ impl<'a> egui::Widget for ExprEdit<'a> {
                 .layouter(&mut layouter),
         );
         if response.changed() {
-            if let Ok(new_expr) = gantz_core::node::expr(&code) {
+            if let Ok(new_expr) = gantz_core::node::expr(&state.code) {
                 *expr = new_expr;
             }
         }
 
         // Persist the WIP editing code.
-        ui.memory_mut(|m| m.data.insert_persisted(code_id, Some(code)));
+        ui.memory_mut(|m| m.data.insert_temp(code_id, state));
 
         response
     }
@@ -91,4 +100,11 @@ impl<'a> ExprEdit<'a> {
     pub fn new(expr: &'a mut gantz_core::node::Expr, id: egui::Id) -> Self {
         Self { expr, id }
     }
+}
+
+fn expr_hash(expr: &gantz_core::node::Expr) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::default();
+    expr.hash(&mut hasher);
+    hasher.finish()
 }

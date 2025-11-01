@@ -87,6 +87,13 @@ impl GantzResponse {
             .as_ref()
             .and_then(|g| g.name_updated.clone())
     }
+
+    /// The given graph name was removed.
+    pub fn graph_name_removed(&self) -> Option<String> {
+        self.graph_select
+            .as_ref()
+            .and_then(|g| g.name_removed.clone())
+    }
 }
 
 /// UI state relevant to each nested graph within the tree.
