@@ -45,8 +45,9 @@ where
 
     fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> ExprKind {
         let env = ctx.env();
-        let g = env.graph(self.ca).expect("failed to lookup graph by name");
-        gantz_core::node::graph::nested_expr(env, g, ctx.path(), ctx.inputs())
+        env.graph(self.ca)
+            .map(|g| gantz_core::node::graph::nested_expr(env, g, ctx.path(), ctx.inputs()))
+            .unwrap_or_else(ExprKind::empty)
     }
 
     fn n_inputs(&self, env: &Env) -> usize {
@@ -77,8 +78,9 @@ where
         visitor: &mut dyn gantz_core::node::Visitor<Env>,
     ) {
         let env = ctx.env();
-        let g = env.graph(self.ca).expect("failed to lookup graph by name");
-        gantz_core::graph::visit(env, g, ctx.path(), visitor);
+        if let Some(g) = env.graph(self.ca) {
+            gantz_core::graph::visit(env, g, ctx.path(), visitor);
+        }
     }
 }
 
@@ -88,6 +90,8 @@ impl<Env> NodeUi<Env> for NamedGraph {
     }
 
     fn ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> egui::Response {
+        // FIXME: Check if the graph actually exists, give feedback if it
+        // doesn't.
         let res = ui.add(egui::Label::new(&self.name).selectable(false));
         if ui.response().double_clicked() {
             ctx.cmds.push(Cmd::OpenGraph(ctx.path().to_vec()));
