@@ -47,7 +47,8 @@ where
         let env = ctx.env();
         env.graph(self.ca)
             .map(|g| gantz_core::node::graph::nested_expr(env, g, ctx.path(), ctx.inputs()))
-            .unwrap_or_else(ExprKind::empty)
+            // FIXME: Check if graph
+            .expect("failed to find graph for CA")
     }
 
     fn n_inputs(&self, env: &Env) -> usize {
@@ -90,11 +91,12 @@ impl<Env> NodeUi<Env> for NamedGraph {
     }
 
     fn ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> egui::Response {
-        // FIXME: Check if the graph actually exists, give feedback if it
-        // doesn't.
+        // FIXME: Check if the graph actually exists for the internal CA, give
+        // feedback if it doesn't.
         let res = ui.add(egui::Label::new(&self.name).selectable(false));
         if ui.response().double_clicked() {
-            ctx.cmds.push(Cmd::OpenGraph(ctx.path().to_vec()));
+            ctx.cmds
+                .push(Cmd::OpenNamedGraph(self.name.clone(), self.ca));
         }
         res
     }

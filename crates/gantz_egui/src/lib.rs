@@ -64,6 +64,7 @@ pub enum Cmd {
     PushEval(Vec<node::Id>),
     PullEval(Vec<node::Id>),
     OpenGraph(Vec<node::Id>),
+    OpenNamedGraph(String, ContentAddr),
 }
 
 /// Used to represent the content address
