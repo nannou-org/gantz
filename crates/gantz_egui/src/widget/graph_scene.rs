@@ -186,6 +186,7 @@ fn nodes<Env, N>(
 {
     let node_ids: Vec<_> = graph.node_identifiers().collect();
     let mut path = path.to_vec();
+    let (inlets, outlets) = crate::inlet_outlet_ids(graph);
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node = &mut graph[n_id];
@@ -199,7 +200,8 @@ fn nodes<Env, N>(
             .show(nctx, ui, |ui| {
                 path.push(n_ix);
                 // Instantiate the node's UI.
-                let node_ctx = crate::NodeCtx::new(env, &path, vm, &mut state.cmds);
+                let node_ctx =
+                    crate::NodeCtx::new(env, &path, &inlets, &outlets, vm, &mut state.cmds);
                 node.ui(node_ctx, ui);
                 path.pop();
             });

@@ -1,6 +1,7 @@
 //! A suite of widgets, nodes and implementations for creating a GUI around
 //! gantz using `egui`.
 
+use petgraph::visit::{IntoNodeReferences, NodeRef};
 use std::hash::{Hash, Hasher};
 use steel::{
     SteelErr, SteelVal,
@@ -50,6 +51,8 @@ pub trait NodeUi<Env> {
 pub struct NodeCtx<'a, Env> {
     env: &'a Env,
     path: &'a [node::Id],
+    inlets: &'a [node::Id],
+    outlets: &'a [node::Id],
     vm: &'a mut Engine,
     cmds: &'a mut Vec<Cmd>,
 }
@@ -128,12 +131,16 @@ impl<'a, Env> NodeCtx<'a, Env> {
     pub fn new(
         env: &'a Env,
         path: &'a [node::Id],
+        inlets: &'a [node::Id],
+        outlets: &'a [node::Id],
         vm: &'a mut Engine,
         cmds: &'a mut Vec<Cmd>,
     ) -> Self {
         Self {
             env,
             path,
+            inlets,
+            outlets,
             vm,
             cmds,
         }
@@ -191,6 +198,20 @@ impl<'a, Env> NodeCtx<'a, Env> {
     pub fn pull_eval(&mut self) {
         self.cmds.push(Cmd::PullEval(self.path.to_vec()));
     }
+
+    /// The IDs of the inlets within the current graph.
+    ///
+    /// Primarily exposed so that `Inlet` nodes can present their index.
+    pub fn inlets(&self) -> &[node::Id] {
+        self.inlets
+    }
+
+    /// The IDs of the outlets within the current graph.
+    ///
+    /// Primarily exposed so that `Outlet` nodes can present their index.
+    pub fn outlets(&self) -> &[node::Id] {
+        self.outlets
+    }
 }
 
 /// Produce the content address for a given graph.
@@ -214,4 +235,24 @@ pub fn fmt_content_addr_short(ca: ContentAddr) -> String {
     let mut s = format!("{ca:08x}");
     s.truncate(8);
     s
+}
+
+/// The IDs of the inlet and outlet nodes.
+pub(crate) fn inlet_outlet_ids<Env, N>(
+    g: &gantz_core::node::graph::Graph<N>,
+) -> (Vec<node::Id>, Vec<node::Id>)
+where
+    N: gantz_core::Node<Env>,
+{
+    let mut inlets = vec![];
+    let mut outlets = vec![];
+    for n_ref in g.node_references() {
+        if n_ref.weight().inlet() {
+            inlets.push(n_ref.id().index());
+        }
+        if n_ref.weight().outlet() {
+            outlets.push(n_ref.id().index());
+        }
+    }
+    (inlets, outlets)
 }
