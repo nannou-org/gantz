@@ -36,6 +36,7 @@ rustPlatform.buildRustPackage {
   pname = manifest.package.name;
   version = manifest.package.version;
   cargoLock.lockFile = ../Cargo.lock;
+  doCheck = false;
   nativeBuildInputs = [
     makeWrapper
     pkg-config

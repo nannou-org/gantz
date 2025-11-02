@@ -27,10 +27,12 @@
       overlays.default = final: prev: {
         gantz-unwrapped = prev.callPackage ./pkgs/gantz-unwrapped.nix { };
         gantz = final.callPackage ./pkgs/gantz.nix { };
+        gantz-wasm = prev.callPackage ./pkgs/gantz-wasm.nix { };
       };
 
       packages = perSystemPkgs (pkgs: {
         gantz = pkgs.gantz;
+        gantz-wasm = pkgs.gantz-wasm;
         default = pkgs.gantz;
       });
 
