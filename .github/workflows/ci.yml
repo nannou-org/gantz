@@ -12,10 +12,10 @@ concurrency:
 
 jobs:
   nix:
-    runs-on: ubuntu-latest
     permissions:
       id-token: "write"
       contents: "read"
+    runs-on: ubuntu-latest
     env:
       RUSTFLAGS: "-D warnings"
     strategy:
@@ -33,28 +33,32 @@ jobs:
           - command: fmt -- --ci
           - command: flake check --all-systems
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@v13
       - uses: Swatinem/rust-cache@v2
       - run: nix ${{ matrix.command }}
 
-  # TODO: Re-add this when `steel-core` is published so we can publish.
-  # cargo-publish:
-  #   runs-on: ubuntu-latest
-  #   needs: cargo
-  #   steps:
-  #     - uses: actions/checkout@v3
-  #     - uses: dtolnay/rust-toolchain@stable
-  #     - uses: Swatinem/rust-cache@v2
-  #     - uses: katyo/publish-crates@v2
-  #       id: publish-crates
-  #       with:
-  #         registry-token: ${{ secrets.CRATESIO_TOKEN }}
-  #         dry-run: ${{ github.event_name != 'push' }}
-  #         ignore-unpublished-changes: true
-  #     - name: List published crates
-  #       if: ${{ steps.publish-crates.outputs.published != '' }}
-  #       run: |
-  #         LIST="${{ join(fromJSON(steps.publish-crates.outputs.published).*.name, ', ') }}"
-  #         echo "Published crates: $LIST"
+  cargo-publish:
+    permissions:
+      id-token: "write"
+      contents: "read"
+    runs-on: ubuntu-latest
+    needs: nix
+    steps:
+      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+      - uses: nicknovitski/nix-develop@v1
+      - uses: Swatinem/rust-cache@v2
+      - uses: katyo/publish-crates@v2
+        id: publish-crates
+        with:
+          registry-token: ${{ secrets.CRATESIO_TOKEN }}
+          dry-run: ${{ github.event_name != 'push' }}
+          ignore-unpublished-changes: true
+      - name: List published crates
+        if: ${{ steps.publish-crates.outputs.published != '' }}
+        run: |
+          LIST="${{ join(fromJSON(steps.publish-crates.outputs.published).*.name, ', ') }}"
+          echo "Published crates: $LIST"
