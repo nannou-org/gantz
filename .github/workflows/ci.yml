@@ -28,10 +28,9 @@ jobs:
           - command: develop -c cargo test --locked --all
           - command: develop -c cargo test --no-default-features --locked --all
           - command: develop -c cargo test --all-features --locked --all
-          # TODO: Re-enable this - currently failing due to getrandom wasm err.
-          # - command: develop -c cargo build --target wasm32-unknown-unknown --locked --all-features --workspace
           - command: fmt -- --ci
-          - command: flake check --all-systems
+          - command: flake check --all-systems --no-update-lock-file
+          - command: build --print-build-logs --no-update-lock-file .#gantz-website
     steps:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
