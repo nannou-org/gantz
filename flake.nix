@@ -29,6 +29,8 @@
         gantz = final.callPackage ./pkgs/gantz.nix { };
         gantz-wasm = prev.callPackage ./pkgs/gantz-wasm.nix { };
         gantz-wasm-bindgen = final.callPackage ./pkgs/gantz-wasm-bindgen.nix { };
+        gantz-website = final.callPackage ./pkgs/gantz-website.nix { };
+        serve-gantz-website = final.callPackage ./pkgs/serve-gantz-website.nix { };
         wasm-bindgen-cli = prev.callPackage ./pkgs/wasm-bindgen-cli.nix { };
       };
 
@@ -36,6 +38,8 @@
         gantz = pkgs.gantz;
         gantz-wasm = pkgs.gantz-wasm;
         gantz-wasm-bindgen = pkgs.gantz-wasm-bindgen;
+        gantz-website = pkgs.gantz-website;
+        serve-gantz-website = pkgs.serve-gantz-website;
         wasm-bindgen-cli = pkgs.wasm-bindgen-cli;
         default = pkgs.gantz;
       });
