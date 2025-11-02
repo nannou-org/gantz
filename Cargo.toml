@@ -10,6 +10,20 @@ license = "Apache-2.0"
 repository = "https://github.com/nannou-org/gantz"
 
 [workspace.dependencies]
+bevy = { version = "0.17", default-features = false, features = [
+    "bevy_asset",
+    "bevy_camera",
+    "bevy_render",
+    "bevy_shader",
+    "bevy_window",
+    "multi_threaded",
+    # "trace", # FIXME: Re-add once this lands https://github.com/emilk/egui/pull/7646.
+    "wayland",
+    "webgl2",
+] }
+bevy_app = "0.17"
+bevy_egui = { version = "0.38" }
+bevy_gantz = { version = "0.1.0", path = "crates/bevy_gantz" }
 dyn-clone = "1"
 dyn-hash = "0.2.2"
 eframe = { version = "0.33", features = ["persistence"] }
