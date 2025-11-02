@@ -1,5 +1,4 @@
 {
-  gantz,
   gantz-unwrapped,
   lib,
   mkShell,
@@ -8,7 +7,6 @@
 mkShell {
   name = "gantz-dev";
   inputsFrom = [
-    gantz
     gantz-unwrapped
   ];
   env = lib.optionalAttrs stdenv.isLinux {
