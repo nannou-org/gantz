@@ -28,8 +28,8 @@ The following gantz crates are included in this repo.
 | **`gantz_core`** | [![Crates.io](https://img.shields.io/crates/v/gantz_core.svg)](https://crates.io/crates/gantz_core) | The core node and graph abstractions. |
 | **`gantz_std`** | [![Crates.io](https://img.shields.io/crates/v/gantz_std.svg)](https://crates.io/crates/gantz_std) | A standard library of commonly useful nodes. |
 | **`gantz_egui`** | [![Crates.io](https://img.shields.io/crates/v/gantz_egui.svg)](https://crates.io/crates/gantz_egui) | UI traits and widgets that make up the gantz GUI. |
-| **`bevy_gantz`** | [![Crates.io](https://img.shields.io/crates/v/bevy_gantz.svg)](https://crates.io/crates/bevy_gantz) | **TODO** A bevy plugin for gantz. |
-| **`gantz`** | [![Crates.io](https://img.shields.io/crates/v/gantz.svg)](https://crates.io/crates/gantz) | **TODO** The top-level gantz app. |
+| **`bevy_gantz`** | [![Crates.io](https://img.shields.io/crates/v/bevy_gantz.svg)](https://crates.io/crates/bevy_gantz) | A bevy plugin for gantz. |
+| **`gantz`** | [![Crates.io](https://img.shields.io/crates/v/gantz.svg)](https://crates.io/crates/gantz) | The top-level gantz app. |
 
 ## Design Overview
 

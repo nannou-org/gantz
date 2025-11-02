@@ -11,7 +11,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  cargo:
+  nix:
+    permissions:
+      id-token: "write"
+      contents: "read"
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: "-D warnings"
@@ -19,42 +22,43 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - command: check --locked --all
-          - command: doc --all-features --locked --no-deps
-          - command: fmt --all -- --check
-          - command: test --locked --all
-          - command: test --no-default-features --locked --all
-          - command: test --all-features --locked --all
+          - command: develop -c cargo check --locked --all
+          - command: develop -c cargo doc --all-features --locked --no-deps
+          - command: develop -c cargo fmt --all -- --check
+          - command: develop -c cargo test --locked --all
+          - command: develop -c cargo test --no-default-features --locked --all
+          - command: develop -c cargo test --all-features --locked --all
           # TODO: Re-enable this - currently failing due to getrandom wasm err.
-          # - command: build --target wasm32-unknown-unknown --locked --all-features --workspace
+          # - command: develop -c cargo build --target wasm32-unknown-unknown --locked --all-features --workspace
+          - command: fmt -- --ci
+          - command: flake check --all-systems
     steps:
-      - uses: actions/checkout@v3
-      # TODO: Replace this with nix
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y libwayland-dev libxkbcommon-dev
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
+      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
       - uses: Swatinem/rust-cache@v2
-      - run: cargo ${{ matrix.command }}
+      - run: nix ${{ matrix.command }}
 
-  # TODO: Re-add this when `steel-core` is published so we can publish.
-  # cargo-publish:
-  #   runs-on: ubuntu-latest
-  #   needs: cargo
-  #   steps:
-  #     - uses: actions/checkout@v3
-  #     - uses: dtolnay/rust-toolchain@stable
-  #     - uses: Swatinem/rust-cache@v2
-  #     - uses: katyo/publish-crates@v2
-  #       id: publish-crates
-  #       with:
-  #         registry-token: ${{ secrets.CRATESIO_TOKEN }}
-  #         dry-run: ${{ github.event_name != 'push' }}
-  #         ignore-unpublished-changes: true
-  #     - name: List published crates
-  #       if: ${{ steps.publish-crates.outputs.published != '' }}
-  #       run: |
-  #         LIST="${{ join(fromJSON(steps.publish-crates.outputs.published).*.name, ', ') }}"
-  #         echo "Published crates: $LIST"
+  cargo-publish:
+    permissions:
+      id-token: "write"
+      contents: "read"
+    runs-on: ubuntu-latest
+    needs: nix
+    steps:
+      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+      - uses: nicknovitski/nix-develop@v1
+      - uses: Swatinem/rust-cache@v2
+      - uses: katyo/publish-crates@v2
+        id: publish-crates
+        with:
+          registry-token: ${{ secrets.CRATESIO_TOKEN }}
+          dry-run: ${{ github.event_name != 'push' }}
+          ignore-unpublished-changes: true
+      - name: List published crates
+        if: ${{ steps.publish-crates.outputs.published != '' }}
+        run: |
+          LIST="${{ join(fromJSON(steps.publish-crates.outputs.published).*.name, ', ') }}"
+          echo "Published crates: $LIST"
