@@ -45,3 +45,12 @@ steel-derive = "0.6"
 sublime_fuzzy = "0.7"
 thiserror = "2"
 typetag = "0.2"
+
+[profile.wasm_release]
+inherits = "release"
+opt-level = 'z'  # Optimize for size
+lto = true       # Enable link-time optimization
+codegen-units = 1
+panic = 'abort'  # Remove panic unwinding to reduce size
+strip = true     # Remove debug symbols
+debug = false
