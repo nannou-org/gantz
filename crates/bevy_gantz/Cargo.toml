@@ -14,3 +14,4 @@ gantz_core.workspace = true
 gantz_egui.workspace = true
 gantz_std.workspace = true
 steel-core.workspace = true
+web-sys.workspace = true
