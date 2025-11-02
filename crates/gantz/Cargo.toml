@@ -1,0 +1,16 @@
+[package]
+name = "gantz"
+version = "0.1.0"
+description = "An environment for creative systems."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bevy.workspace = true
+bevy_egui.workspace = true
+bevy_gantz.workspace = true
+gantz_core.workspace = true
+gantz_egui.workspace = true
