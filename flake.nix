@@ -28,11 +28,15 @@
         gantz-unwrapped = prev.callPackage ./pkgs/gantz-unwrapped.nix { };
         gantz = final.callPackage ./pkgs/gantz.nix { };
         gantz-wasm = prev.callPackage ./pkgs/gantz-wasm.nix { };
+        gantz-wasm-bindgen = final.callPackage ./pkgs/gantz-wasm-bindgen.nix { };
+        wasm-bindgen-cli = prev.callPackage ./pkgs/wasm-bindgen-cli.nix { };
       };
 
       packages = perSystemPkgs (pkgs: {
         gantz = pkgs.gantz;
         gantz-wasm = pkgs.gantz-wasm;
+        gantz-wasm-bindgen = pkgs.gantz-wasm-bindgen;
+        wasm-bindgen-cli = pkgs.wasm-bindgen-cli;
         default = pkgs.gantz;
       });
 
