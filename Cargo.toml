@@ -13,15 +13,17 @@ repository = "https://github.com/nannou-org/gantz"
 bevy = { version = "0.17", default-features = false, features = [
     "bevy_asset",
     "bevy_camera",
+    "bevy_core_pipeline",
+    "bevy_log",
     "bevy_render",
     "bevy_shader",
     "bevy_window",
     "multi_threaded",
     # "trace", # FIXME: Re-add once this lands https://github.com/emilk/egui/pull/7646.
     "wayland",
+    "std",
     "webgl2",
 ] }
-bevy_app = "0.17"
 bevy_egui = { version = "0.38" }
 bevy_gantz = { version = "0.1.0", path = "crates/bevy_gantz" }
 dyn-clone = "1"
@@ -45,3 +47,13 @@ steel-derive = "0.6"
 sublime_fuzzy = "0.7"
 thiserror = "2"
 typetag = "0.2"
+web-sys = "0.3"
+
+[profile.wasm_release]
+inherits = "release"
+opt-level = 'z'  # Optimize for size
+lto = true       # Enable link-time optimization
+codegen-units = 1
+panic = 'abort'  # Remove panic unwinding to reduce size
+strip = true     # Remove debug symbols
+debug = false
