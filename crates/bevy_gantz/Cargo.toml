@@ -9,9 +9,15 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bevy_app.workspace = true
+bevy_ecs.workspace = true
 bevy_egui.workspace = true
+bevy_input.workspace = true
+bevy_time.workspace = true
+bevy_window.workspace = true
 gantz_core.workspace = true
 gantz_egui.workspace = true
 gantz_std.workspace = true
+serde.workspace = true
 steel-core.workspace = true
 web-sys.workspace = true

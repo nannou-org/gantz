@@ -24,8 +24,14 @@ bevy = { version = "0.17", default-features = false, features = [
     "std",
     "webgl2",
 ] }
+bevy_app = "0.17"
+bevy_ecs = "0.17"
 bevy_egui = { version = "0.38" }
 bevy_gantz = { version = "0.1.0", path = "crates/bevy_gantz" }
+bevy_input = "0.17"
+bevy_pkv = "0.14"
+bevy_time = "0.17"
+bevy_window = "0.17"
 dyn-clone = "1"
 dyn-hash = "0.2.2"
 eframe = { version = "0.33", features = ["persistence"] }
