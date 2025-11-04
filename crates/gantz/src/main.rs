@@ -87,6 +87,10 @@ fn window_plugin() -> WindowPlugin {
             title: "gantz".into(),
             name: Some("gantz".into()),
             fit_canvas_to_parent: true,
+            // NOTE: This vastly improves input-latency on wayland. If you
+            // notice tearing or simialr issues, open an issue so we can try and
+            // select the right `PresentMode` for each system!
+            present_mode: bevy::window::PresentMode::AutoNoVsync,
             ..default()
         }),
         ..default()
