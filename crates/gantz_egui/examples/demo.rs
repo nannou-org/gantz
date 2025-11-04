@@ -643,13 +643,8 @@ fn gui(ctx: &egui::Context, state: &mut State) {
             let name = state.graph_name.as_deref();
             let head = gantz_egui::widget::graph_select::Head { ca, name };
             let response = gantz_egui::widget::Gantz::new(&mut state.env, &mut state.graph, head)
-                .show(
-                    &mut state.gantz,
-                    Some(&state.logger),
-                    &state.compiled_module,
-                    &mut state.vm,
-                    ui,
-                );
+                .logger(state.logger.clone())
+                .show(&mut state.gantz, &state.compiled_module, &mut state.vm, ui);
 
             // The graph name was updated, ensure a mapping exists if necessary.
             if let Some(name_opt) = response.graph_name_updated() {

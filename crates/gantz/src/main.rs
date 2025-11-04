@@ -127,13 +127,9 @@ fn update_gui(
             let graph_name = active.graph_name.clone();
             let name = graph_name.as_deref();
             let head = gantz_egui::widget::graph_select::Head { ca, name };
-            let response = gantz_egui::widget::Gantz::new(&mut *env, &mut active.graph, head).show(
-                &mut gui_state.gantz,
-                None, // logger
-                &compiled_module.0,
-                &mut vm,
-                ui,
-            );
+            let response = gantz_egui::widget::Gantz::new(&mut *env, &mut active.graph, head)
+                // .trace_capture(trace_capture)
+                .show(&mut gui_state.gantz, &compiled_module.0, &mut vm, ui);
 
             // The graph name was updated, ensure a mapping exists if necessary.
             if let Some(name_opt) = response.graph_name_updated() {

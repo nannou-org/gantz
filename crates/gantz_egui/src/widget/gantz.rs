@@ -45,6 +45,13 @@ where
     env: &'a mut Env,
     root: &'a mut gantz_core::node::GraphNode<Env::Node>,
     head: widget::graph_select::Head<'a>,
+    log_source: Option<LogSource>,
+}
+
+enum LogSource {
+    Logger(widget::log_view::Logger),
+    #[cfg(feature = "tracing")]
+    TraceCapture(widget::trace_view::TraceCapture),
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -133,14 +140,28 @@ where
         root: &'a mut gantz_core::node::GraphNode<Env::Node>,
         head: widget::graph_select::Head<'a>,
     ) -> Self {
-        Self { env, root, head }
+        Self {
+            env,
+            root,
+            head,
+            log_source: None,
+        }
+    }
+
+    pub fn logger(mut self, logger: widget::log_view::Logger) -> Self {
+        self.log_source = Some(LogSource::Logger(logger));
+        self
+    }
+
+    pub fn trace_capture(mut self, trace_capture: widget::trace_view::TraceCapture) -> Self {
+        self.log_source = Some(LogSource::TraceCapture(trace_capture));
+        self
     }
 
     /// Present the gantz UI.
     pub fn show(
         self,
         state: &mut GantzState,
-        logger: Option<&widget::log_view::Logger>,
         compiled_steel: &str,
         vm: &mut Engine,
         ui: &mut egui::Ui,
@@ -155,8 +176,10 @@ where
             graph_config(self.root, state, ui);
         }
         if state.view_toggles.logs {
-            if let Some(logger) = logger {
-                log_view(logger, ui);
+            match &self.log_source {
+                None => (),
+                Some(LogSource::Logger(logger)) => log_view(logger, ui),
+                Some(LogSource::TraceCapture(trace_capture)) => trace_view(trace_capture, ui),
             }
         }
         if state.view_toggles.node_inspector {
@@ -436,6 +459,13 @@ fn log_view(logger: &widget::log_view::Logger, ui: &mut egui::Ui) {
     // In your egui update loop:
     egui::Window::new("Logs").show(ui.ctx(), |ui| {
         widget::log_view::LogView::new("log-view".into(), logger.clone()).show(ui);
+    });
+}
+
+fn trace_view(trace_capture: &widget::trace_view::TraceCapture, ui: &mut egui::Ui) {
+    // In your egui update loop:
+    egui::Window::new("Traces").show(ui.ctx(), |ui| {
+        widget::trace_view::TraceView::new("trace-view".into(), trace_capture.clone()).show(ui);
     });
 }
 
