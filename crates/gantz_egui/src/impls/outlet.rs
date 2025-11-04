@@ -20,7 +20,7 @@ impl<Env> NodeUi<Env> for gantz_core::node::graph::Outlet {
                 ui.label("index");
             });
             row.col(|ui| {
-                let ix = outlet_ix(ctx.path(), ctx.inlets());
+                let ix = outlet_ix(ctx.path(), ctx.outlets());
                 ui.label(format!("{ix}"));
             });
         });
@@ -31,9 +31,9 @@ impl<Env> NodeUi<Env> for gantz_core::node::graph::Outlet {
 ///
 /// Outlets are ordered by their appearance within the graph indices.
 fn outlet_ix(path: &[node::Id], outlets: &[node::Id]) -> usize {
-    let id = path.last().expect("inlet must have non-inlet path");
+    let id = path.last().expect("outlet must have non-outlet path");
     outlets
         .iter()
         .position(|in_id| id == in_id)
-        .expect("inlet ID must exist")
+        .expect("outlet ID must exist")
 }
