@@ -35,9 +35,14 @@ struct GuiState {
 #[derive(Resource)]
 struct CompiledModule(String);
 
+/// A resource for capturing tracing logs for the `TraceView` widget.
+#[derive(Default, Resource)]
+struct TraceCapture(gantz_egui::widget::trace_view::TraceCapture);
+
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins.set(window_plugin()))
+        .insert_resource(TraceCapture::default())
+        .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::new(0.25))
         .insert_resource(PkvStore::new("nannou-org", "gantz"))
@@ -64,6 +69,16 @@ fn main() {
             ),
         )
         .run();
+}
+
+fn log_plugin() -> bevy::log::LogPlugin {
+    bevy::log::LogPlugin {
+        custom_layer: move |app| {
+            let capture = app.world().resource_ref::<TraceCapture>();
+            Some(Box::new(capture.0.clone().layer()))
+        },
+        ..Default::default()
+    }
 }
 
 fn window_plugin() -> WindowPlugin {
@@ -112,6 +127,7 @@ fn setup_vm(world: &mut World) {
 }
 
 fn update_gui(
+    trace_capture: Res<TraceCapture>,
     mut ctxs: EguiContexts,
     mut env: ResMut<Environment>,
     mut active: ResMut<Active>,
@@ -127,13 +143,9 @@ fn update_gui(
             let graph_name = active.graph_name.clone();
             let name = graph_name.as_deref();
             let head = gantz_egui::widget::graph_select::Head { ca, name };
-            let response = gantz_egui::widget::Gantz::new(&mut *env, &mut active.graph, head).show(
-                &mut gui_state.gantz,
-                None, // logger
-                &compiled_module.0,
-                &mut vm,
-                ui,
-            );
+            let response = gantz_egui::widget::Gantz::new(&mut *env, &mut active.graph, head)
+                .trace_capture(trace_capture.0.clone())
+                .show(&mut gui_state.gantz, &compiled_module.0, &mut vm, ui);
 
             // The graph name was updated, ensure a mapping exists if necessary.
             if let Some(name_opt) = response.graph_name_updated() {
@@ -288,7 +300,7 @@ fn persist_resources(
 ///
 /// TODO: Allow loading state from storage.
 fn init_vm(env: &Environment, graph: &Graph) -> (Engine, CompiledModule) {
-    let mut vm = Engine::new();
+    let mut vm = Engine::new_base();
     vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(env, graph, &[], &mut vm);
     let module = compile_graph(env, graph, &mut vm);

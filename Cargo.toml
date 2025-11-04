@@ -19,9 +19,9 @@ bevy = { version = "0.17", default-features = false, features = [
     "bevy_shader",
     "bevy_window",
     "multi_threaded",
+    "std",
     # "trace", # FIXME: Re-add once this lands https://github.com/emilk/egui/pull/7646.
     "wayland",
-    "std",
     "webgl2",
 ] }
 bevy_app = "0.17"
@@ -34,7 +34,13 @@ bevy_time = "0.17"
 bevy_window = "0.17"
 dyn-clone = "1"
 dyn-hash = "0.2.2"
-eframe = { version = "0.33", features = ["persistence"] }
+eframe = { version = "0.33", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "persistence",
+    "wayland",
+    # "wgpu",
+] }
 egui = { version = "0.33", default-features = false }
 egui_extras = { version = "0.33", default-features = false, features = ["syntect"] }
 egui_graph = "0.7"
@@ -52,6 +58,8 @@ steel-core = "0.7"
 steel-derive = "0.6"
 sublime_fuzzy = "0.7"
 thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
 typetag = "0.2"
 web-sys = "0.3"
 

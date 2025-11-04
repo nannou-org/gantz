@@ -23,7 +23,7 @@ impl<Env> gantz_core::Node<Env> for Number {
             // If an input value was provided, use it to update state and
             // forward that value.
             Some(Some(val)) => {
-                format!("(begin (when (number? {val}) (set! state {val})) state)")
+                format!("(begin (if (number? {val}) (set! state {val}) void) state)")
             }
             // If no input value was provided, forward the value in state.
             _ => "(begin state)".to_string(),

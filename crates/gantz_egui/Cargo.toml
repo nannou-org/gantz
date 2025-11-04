@@ -8,6 +8,10 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["tracing"]
+tracing = ["dep:tracing", "dep:tracing-subscriber"]
+
 [dependencies]
 egui.workspace = true
 egui_extras.workspace = true
@@ -20,6 +24,8 @@ petgraph.workspace = true
 serde.workspace = true
 steel-core.workspace = true
 sublime_fuzzy.workspace = true
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
 dyn-clone.workspace = true
@@ -27,3 +33,8 @@ dyn-hash.workspace = true
 eframe.workspace = true
 ron.workspace = true
 typetag.workspace = true
+# FIXME: temporarily disabled, see #122.
+# Workaround for https://github.com/emilk/egui/issues/7106
+# wgpu = { version = "27", features = ["vulkan"] }
+# Enable window decorations on wayland.
+winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }

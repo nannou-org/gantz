@@ -17,6 +17,8 @@ pub mod label_button;
 pub mod label_toggle;
 pub mod log_view;
 pub mod node_inspector;
+#[cfg(feature = "tracing")]
+pub mod trace_view;
 
 /// Simple shorthand for viewing steel code.
 pub fn steel_view(ui: &mut egui::Ui, code: &str) {

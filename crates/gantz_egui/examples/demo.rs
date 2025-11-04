@@ -575,7 +575,7 @@ fn graph_key(ca: ContentAddr) -> String {
 ///
 /// TODO: Allow loading state from storage.
 fn init_vm(env: &Environment, graph: &Graph) -> (Engine, String) {
-    let mut vm = Engine::new();
+    let mut vm = Engine::new_base();
     vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(env, graph, &[], &mut vm);
     let module = compile_graph(env, graph, &mut vm);
@@ -643,13 +643,8 @@ fn gui(ctx: &egui::Context, state: &mut State) {
             let name = state.graph_name.as_deref();
             let head = gantz_egui::widget::graph_select::Head { ca, name };
             let response = gantz_egui::widget::Gantz::new(&mut state.env, &mut state.graph, head)
-                .show(
-                    &mut state.gantz,
-                    Some(&state.logger),
-                    &state.compiled_module,
-                    &mut state.vm,
-                    ui,
-                );
+                .logger(state.logger.clone())
+                .show(&mut state.gantz, &state.compiled_module, &mut state.vm, ui);
 
             // The graph name was updated, ensure a mapping exists if necessary.
             if let Some(name_opt) = response.graph_name_updated() {
