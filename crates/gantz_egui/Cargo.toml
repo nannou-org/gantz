@@ -35,3 +35,5 @@ ron.workspace = true
 typetag.workspace = true
 # Workaround for https://github.com/emilk/egui/issues/7106
 wgpu = { version = "27", default-features = false, features = ["vulkan"] }
+# Enable window decorations on wayland.
+winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
