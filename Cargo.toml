@@ -62,6 +62,7 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 typetag = "0.2"
 web-sys = "0.3"
+web-time = "1"
 
 [profile.wasm_release]
 inherits = "release"

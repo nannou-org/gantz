@@ -3,8 +3,8 @@ use log::{Level, Metadata, Record};
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
-    time::SystemTime,
 };
+use web_time::SystemTime;
 
 /// A table presenting the
 pub struct LogView {
@@ -30,7 +30,8 @@ pub struct LogEntry {
 
 impl LogEntry {
     fn format_timestamp(&self) -> String {
-        humantime::format_rfc3339_seconds(self.timestamp).to_string()
+        let time = crate::system_time_from_web(self.timestamp).expect("failed to convert");
+        humantime::format_rfc3339_seconds(time).to_string()
     }
 
     fn freshness(&self) -> f32 {
