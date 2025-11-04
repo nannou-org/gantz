@@ -2757,6 +2757,7 @@ dependencies = [
  "tracing-subscriber",
  "typetag",
  "wgpu 27.0.1",
+ "winit",
 ]
 
 [[package]]

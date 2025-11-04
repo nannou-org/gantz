@@ -35,9 +35,14 @@ struct GuiState {
 #[derive(Resource)]
 struct CompiledModule(String);
 
+/// A resource for capturing tracing logs for the `TraceView` widget.
+#[derive(Default, Resource)]
+struct TraceCapture(gantz_egui::widget::trace_view::TraceCapture);
+
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins.set(window_plugin()))
+        .insert_resource(TraceCapture::default())
+        .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::new(0.25))
         .insert_resource(PkvStore::new("nannou-org", "gantz"))
@@ -64,6 +69,16 @@ fn main() {
             ),
         )
         .run();
+}
+
+fn log_plugin() -> bevy::log::LogPlugin {
+    bevy::log::LogPlugin {
+        custom_layer: move |app| {
+            let capture = app.world().resource_ref::<TraceCapture>();
+            Some(Box::new(capture.0.clone().layer()))
+        },
+        ..Default::default()
+    }
 }
 
 fn window_plugin() -> WindowPlugin {
@@ -112,6 +127,7 @@ fn setup_vm(world: &mut World) {
 }
 
 fn update_gui(
+    trace_capture: Res<TraceCapture>,
     mut ctxs: EguiContexts,
     mut env: ResMut<Environment>,
     mut active: ResMut<Active>,
@@ -128,7 +144,7 @@ fn update_gui(
             let name = graph_name.as_deref();
             let head = gantz_egui::widget::graph_select::Head { ca, name };
             let response = gantz_egui::widget::Gantz::new(&mut *env, &mut active.graph, head)
-                // .trace_capture(trace_capture)
+                .trace_capture(trace_capture.0.clone())
                 .show(&mut gui_state.gantz, &compiled_module.0, &mut vm, ui);
 
             // The graph name was updated, ensure a mapping exists if necessary.

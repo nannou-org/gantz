@@ -19,9 +19,9 @@ bevy = { version = "0.17", default-features = false, features = [
     "bevy_shader",
     "bevy_window",
     "multi_threaded",
+    "std",
     # "trace", # FIXME: Re-add once this lands https://github.com/emilk/egui/pull/7646.
     "wayland",
-    "std",
     "webgl2",
 ] }
 bevy_app = "0.17"
