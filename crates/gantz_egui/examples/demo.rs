@@ -575,7 +575,7 @@ fn graph_key(ca: ContentAddr) -> String {
 ///
 /// TODO: Allow loading state from storage.
 fn init_vm(env: &Environment, graph: &Graph) -> (Engine, String) {
-    let mut vm = Engine::new();
+    let mut vm = Engine::new_base();
     vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(env, graph, &[], &mut vm);
     let module = compile_graph(env, graph, &mut vm);
