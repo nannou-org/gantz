@@ -2139,6 +2139,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "egui_glow",
+ "glow",
  "glutin",
  "glutin-winit",
  "home",
@@ -2150,7 +2151,6 @@ dependencies = [
  "objc2-foundation 0.2.2",
  "parking_lot",
  "percent-encoding",
- "pollster",
  "profiling",
  "raw-window-handle",
  "ron 0.11.0",
@@ -2160,7 +2160,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
- "wgpu 27.0.1",
  "windows-sys 0.61.2",
  "winit",
 ]
@@ -2756,7 +2755,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "typetag",
- "wgpu 27.0.1",
  "winit",
 ]
 
@@ -3599,7 +3597,6 @@ dependencies = [
  "num-traits",
  "once_cell",
  "rustc-hash 1.1.0",
- "spirv",
  "thiserror 2.0.17",
  "unicode-ident",
 ]
@@ -4224,12 +4221,6 @@ dependencies = [
  "rustix 1.1.2",
  "windows-sys 0.61.2",
 ]
-
-[[package]]
-name = "pollster"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
 
 [[package]]
 name = "portable-atomic"
@@ -6001,31 +5992,18 @@ version = "27.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b21cb61c57ee198bc4aff71aeadff4cbb80b927beb912506af9c780d64313ce"
 dependencies = [
- "android_system_properties",
- "arrayvec 0.7.6",
- "ash",
  "bitflags 2.10.0",
- "bytemuck",
  "cfg-if",
  "cfg_aliases",
- "gpu-alloc",
- "gpu-descriptor",
- "hashbrown 0.16.0",
- "libc",
  "libloading",
  "log",
  "naga 27.0.3",
- "ordered-float",
- "parking_lot",
  "portable-atomic",
  "portable-atomic-util",
- "profiling",
  "raw-window-handle",
  "renderdoc-sys",
- "smallvec",
  "thiserror 2.0.17",
  "wgpu-types 27.0.1",
- "windows 0.58.0",
 ]
 
 [[package]]

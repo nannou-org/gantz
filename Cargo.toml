@@ -36,9 +36,10 @@ dyn-clone = "1"
 dyn-hash = "0.2.2"
 eframe = { version = "0.33", default-features = false, features = [
     "default_fonts",
+    "glow",
     "persistence",
     "wayland",
-    "wgpu",
+    # "wgpu",
 ] }
 egui = { version = "0.33", default-features = false }
 egui_extras = { version = "0.33", default-features = false, features = ["syntect"] }

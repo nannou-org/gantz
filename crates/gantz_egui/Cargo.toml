@@ -33,7 +33,8 @@ dyn-hash.workspace = true
 eframe.workspace = true
 ron.workspace = true
 typetag.workspace = true
+# FIXME: temporarily disabled, see #122.
 # Workaround for https://github.com/emilk/egui/issues/7106
-wgpu = { version = "27", default-features = false, features = ["vulkan"] }
+# wgpu = { version = "27", features = ["vulkan"] }
 # Enable window decorations on wayland.
 winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
