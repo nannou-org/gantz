@@ -645,7 +645,7 @@ fn gui(ctx: &egui::Context, state: &mut State) {
             let response = gantz_egui::widget::Gantz::new(&mut state.env, &mut state.graph, head)
                 .show(
                     &mut state.gantz,
-                    &state.logger,
+                    Some(&state.logger),
                     &state.compiled_module,
                     &mut state.vm,
                     ui,

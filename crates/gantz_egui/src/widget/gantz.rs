@@ -140,7 +140,7 @@ where
     pub fn show(
         self,
         state: &mut GantzState,
-        logger: &widget::log_view::Logger,
+        logger: Option<&widget::log_view::Logger>,
         compiled_steel: &str,
         vm: &mut Engine,
         ui: &mut egui::Ui,
@@ -155,7 +155,9 @@ where
             graph_config(self.root, state, ui);
         }
         if state.view_toggles.logs {
-            log_view(logger, ui);
+            if let Some(logger) = logger {
+                log_view(logger, ui);
+            }
         }
         if state.view_toggles.node_inspector {
             node_inspector(self.env, self.root, vm, state, ui);
