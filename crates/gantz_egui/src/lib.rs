@@ -257,3 +257,8 @@ where
     }
     (inlets, outlets)
 }
+
+fn system_time_from_web(t: web_time::SystemTime) -> Option<std::time::SystemTime> {
+    let duration = t.duration_since(web_time::UNIX_EPOCH).ok()?;
+    std::time::UNIX_EPOCH.checked_add(duration)
+}

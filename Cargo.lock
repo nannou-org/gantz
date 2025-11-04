@@ -2755,6 +2755,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "typetag",
+ "web-time",
  "winit",
 ]
 

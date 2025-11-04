@@ -2,10 +2,10 @@ use egui_extras::{Column, TableBuilder};
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
-    time::SystemTime,
 };
 use tracing::{Level, level_filters::LevelFilter};
 use tracing_subscriber::Layer;
+use web_time::SystemTime;
 
 /// A table presenting traces captured from tracing
 pub struct TraceView {
@@ -47,7 +47,8 @@ struct MessageVisitor {
 
 impl TraceEntry {
     fn format_timestamp(&self) -> String {
-        humantime::format_rfc3339_seconds(self.timestamp).to_string()
+        let time = crate::system_time_from_web(self.timestamp).expect("failed to convert");
+        humantime::format_rfc3339_seconds(time).to_string()
     }
 
     fn freshness(&self) -> f32 {
