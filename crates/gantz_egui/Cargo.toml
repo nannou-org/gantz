@@ -16,6 +16,7 @@ tracing = ["dep:tracing", "dep:tracing-subscriber"]
 egui.workspace = true
 egui_extras.workspace = true
 egui_graph.workspace = true
+egui_tiles.workspace = true
 gantz_core.workspace = true
 gantz_std.workspace = true
 humantime.workspace = true

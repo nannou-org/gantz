@@ -2269,6 +2269,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_tiles"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebfac3ca35f5e4fe217d3b03312111b234fe55ce059faf62b4cb47f7cf6d54f1"
+dependencies = [
+ "ahash",
+ "egui",
+ "itertools",
+ "log",
+ "serde",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2743,6 +2756,7 @@ dependencies = [
  "egui",
  "egui_extras",
  "egui_graph",
+ "egui_tiles",
  "gantz_core",
  "gantz_std",
  "humantime",
