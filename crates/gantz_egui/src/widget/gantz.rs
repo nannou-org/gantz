@@ -6,6 +6,7 @@ use crate::{
     },
 };
 use gantz_core::{Node, node};
+use petgraph::visit::{IntoNodeReferences, NodeRef};
 use std::collections::HashMap;
 use steel::steel_vm::engine::Engine;
 
@@ -739,21 +740,15 @@ where
             .auto_shrink(egui::Vec2b::FALSE)
             .show(ui, |ui| {
                 let graph = graph_scene::index_path_graph_mut(root, &state.path).unwrap();
-                let mut ids = state
-                    .graph_scene
-                    .interaction
-                    .selection
-                    .nodes
-                    .iter()
-                    .copied()
-                    .collect::<Vec<_>>();
-                ids.sort();
-
+                let ids: Vec<_> = graph.node_references().map(|n_ref| n_ref.id()).collect();
                 // Collect the inlets and outlets.
                 let (inlets, outlets) = crate::inlet_outlet_ids::<Env, _>(&graph.graph);
-
                 for id in ids {
-                    ui.group(|ui| {
+                    let mut frame = egui::Frame::group(ui.style());
+                    if state.graph_scene.interaction.selection.nodes.contains(&id) {
+                        frame.stroke.color = ui.visuals().selection.stroke.color;
+                    }
+                    frame.show(ui, |ui| {
                         let Some(node) = graph.node_weight_mut(id) else {
                             return;
                         };
