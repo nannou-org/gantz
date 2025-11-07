@@ -19,6 +19,7 @@ struct GraphSelectState {
 }
 
 /// The currently active graph.
+#[derive(Clone, Copy)]
 pub struct Head<'a> {
     /// The currently selected graph's CA.
     pub ca: ContentAddr,
@@ -86,9 +87,6 @@ impl<'a> GraphSelect<'a> {
             state.last_head_name = self.head.name.map(str::to_string);
             state.working_graph_name = self.head.name.map(str::to_string).unwrap_or_default();
         }
-
-        // FIXME: Shouldn't need this.
-        ui.set_max_width(260.0);
 
         let mut response = GraphSelectResponse::default();
 
@@ -163,8 +161,9 @@ fn head_name_text_edit(
         None => false,
     };
     let hint_text = egui::RichText::new(&ca_string).monospace();
-    let mut text_edit =
-        egui::TextEdit::singleline(&mut state.working_graph_name).hint_text(hint_text);
+    let mut text_edit = egui::TextEdit::singleline(&mut state.working_graph_name)
+        .desired_width(ui.available_width())
+        .hint_text(hint_text);
 
     // If the name is taken, provide feedback via text color.
     if name_is_different && name_is_taken {
