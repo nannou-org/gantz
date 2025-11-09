@@ -25,6 +25,7 @@ The following gantz crates are included in this repo.
 
 | Crate | Release | Description |
 |---|---|---|
+| **`gantz_ca`** | [![Crates.io](https://img.shields.io/crates/v/gantz_ca.svg)](https://crates.io/crates/gantz_ca) | The gantz content addressing abstractions. |
 | **`gantz_core`** | [![Crates.io](https://img.shields.io/crates/v/gantz_core.svg)](https://crates.io/crates/gantz_core) | The core node and graph abstractions. |
 | **`gantz_std`** | [![Crates.io](https://img.shields.io/crates/v/gantz_std.svg)](https://crates.io/crates/gantz_std) | A standard library of commonly useful nodes. |
 | **`gantz_egui`** | [![Crates.io](https://img.shields.io/crates/v/gantz_egui.svg)](https://crates.io/crates/gantz_egui) | UI traits and widgets that make up the gantz GUI. |
