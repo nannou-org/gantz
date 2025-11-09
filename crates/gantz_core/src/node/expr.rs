@@ -162,7 +162,7 @@ impl<Env> Node<Env> for Expr {
 }
 
 impl CaHash for Expr {
-    fn hash(&self, hasher: &mut gantz_ca::blake3::Hasher) {
+    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         hasher.update(self.src.as_bytes());
     }
 }

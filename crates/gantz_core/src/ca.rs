@@ -33,7 +33,7 @@ where
     G::EdgeWeight: Edges,
     G::NodeWeight: CaHash,
 {
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = Hasher::new();
     hash_graph(g, &mut hasher);
     ContentAddr(hasher.finalize().into())
 }
@@ -46,13 +46,13 @@ where
     G::NodeId: Hash + Ord,
     G::EdgeWeight: Edges,
 {
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = Hasher::new();
     hash_graph_with_nodes(g, nodes, &mut hasher);
     ContentAddr(hasher.finalize().into())
 }
 
 /// The implementation of [`graph`] with hasher provided.
-pub fn hash_graph<G>(g: G, hasher: &mut blake3::Hasher)
+pub fn hash_graph<G>(g: G, hasher: &mut Hasher)
 where
     G: Data + IntoEdgeReferences + IntoNodeReferences + NodeIndexable,
     G::NodeId: Eq + Hash + Ord,
@@ -64,11 +64,8 @@ where
 }
 
 /// The implementation of [`graph_with_nodes`] with hasher provided.
-pub fn hash_graph_with_nodes<G>(
-    g: G,
-    nodes: &HashMap<G::NodeId, ContentAddr>,
-    hasher: &mut blake3::Hasher,
-) where
+pub fn hash_graph_with_nodes<G>(g: G, nodes: &HashMap<G::NodeId, ContentAddr>, hasher: &mut Hasher)
+where
     G: Data + IntoEdgeReferences + IntoNodeReferences + NodeIndexable,
     G::NodeId: Hash + Ord,
     G::EdgeWeight: Edges,

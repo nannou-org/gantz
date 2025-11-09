@@ -32,7 +32,7 @@ impl<Env> gantz_core::Node<Env> for Add {
 }
 
 impl CaHash for Add {
-    fn hash(&self, hasher: &mut gantz_core::ca::blake3::Hasher) {
+    fn hash(&self, hasher: &mut gantz_core::ca::Hasher) {
         "gantz_std::Add".hash(hasher);
     }
 }

@@ -1,5 +1,5 @@
 use crate::{Cmd, NodeCtx, NodeUi, widget::node_inspector};
-use gantz_core::ca::ContentAddr;
+use gantz_core::ca::{self, ContentAddr};
 use serde::{Deserialize, Serialize};
 use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 
@@ -87,7 +87,7 @@ where
 }
 
 impl gantz_core::ca::CaHash for NamedGraph {
-    fn hash(&self, hasher: &mut blake3::Hasher) {
+    fn hash(&self, hasher: &mut ca::Hasher) {
         self.ca.hash(hasher);
         self.name.hash(hasher);
     }

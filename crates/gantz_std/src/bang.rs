@@ -23,7 +23,7 @@ impl<Env> gantz_core::Node<Env> for Bang {
 }
 
 impl CaHash for Bang {
-    fn hash(&self, hasher: &mut gantz_core::ca::blake3::Hasher) {
+    fn hash(&self, hasher: &mut gantz_core::ca::Hasher) {
         "gantz_std::Bang".hash(hasher);
     }
 }

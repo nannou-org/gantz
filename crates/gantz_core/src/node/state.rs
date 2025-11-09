@@ -132,7 +132,7 @@ impl<Env, N, S> CaHash for State<Env, N, S>
 where
     N: CaHash,
 {
-    fn hash(&self, hasher: &mut gantz_ca::blake3::Hasher) {
+    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         "State".hash(hasher);
         self.node.hash(hasher);
     }

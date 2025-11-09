@@ -155,7 +155,7 @@ impl Conns {
 }
 
 impl CaHash for Conns {
-    fn hash(&self, hasher: &mut gantz_ca::blake3::Hasher) {
+    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         // Conns len is limited to 256.
         let len: u8 = self
             .len()

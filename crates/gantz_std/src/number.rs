@@ -44,7 +44,7 @@ impl<Env> gantz_core::Node<Env> for Number {
 }
 
 impl CaHash for Number {
-    fn hash(&self, hasher: &mut gantz_core::ca::blake3::Hasher) {
+    fn hash(&self, hasher: &mut gantz_core::ca::Hasher) {
         "gantz_std::Number".hash(hasher);
     }
 }

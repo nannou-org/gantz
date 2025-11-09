@@ -378,7 +378,7 @@ impl From<u16> for Output {
 }
 
 impl CaHash for EvalConf {
-    fn hash(&self, hasher: &mut gantz_ca::blake3::Hasher) {
+    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         const ALL_TAG: u8 = 0;
         const SET_TAG: u8 = 1;
         match self {

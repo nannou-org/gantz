@@ -1,6 +1,5 @@
 //! The content-addressing implementation for `gantz` graphs.
 
-pub use blake3;
 #[doc(inline)]
 pub use hash::CaHash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -17,6 +16,9 @@ pub struct ContentAddr(
 /// Provides a `Display` implementation that formats the CA into shorthand form.
 #[derive(Clone, Copy, Debug)]
 pub struct ContentAddrShort<'a>(&'a ContentAddr);
+
+/// The [`blake3`] hasher used for gantz' content addressing.
+pub type Hasher = blake3::Hasher;
 
 impl ContentAddr {
     /// Provides a `Display` implementation that formats the CA into shorthand form.
@@ -77,7 +79,7 @@ impl str::FromStr for ContentAddr {
 
 /// Hash some type implementing [`Hash`].
 pub fn content_addr<T: CaHash>(t: &T) -> ContentAddr {
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = Hasher::new();
     t.hash(&mut hasher);
     ContentAddr(hasher.finalize().into())
 }

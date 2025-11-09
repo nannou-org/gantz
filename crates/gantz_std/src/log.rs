@@ -68,7 +68,7 @@ impl<Env> gantz_core::Node<Env> for Log {
 }
 
 impl CaHash for Log {
-    fn hash(&self, hasher: &mut gantz_core::ca::blake3::Hasher) {
+    fn hash(&self, hasher: &mut gantz_core::ca::Hasher) {
         format!("gantz_std::Log::{:?}", self.level).hash(hasher);
     }
 }

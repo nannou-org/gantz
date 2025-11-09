@@ -100,7 +100,7 @@ impl<Env, N> CaHash for Push<Env, N>
 where
     N: CaHash,
 {
-    fn hash(&self, hasher: &mut gantz_ca::blake3::Hasher) {
+    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         "Push".hash(hasher);
         self.conf.hash(hasher);
         self.node.hash(hasher);
