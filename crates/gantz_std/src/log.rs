@@ -1,6 +1,9 @@
-use gantz_core::steel::{
-    parser::ast::ExprKind,
-    steel_vm::{engine::Engine, register_fn::RegisterFn},
+use gantz_core::{
+    ca::CaHash,
+    steel::{
+        parser::ast::ExprKind,
+        steel_vm::{engine::Engine, register_fn::RegisterFn},
+    },
 };
 use serde::{Deserialize, Serialize};
 use steel::SteelVal;
@@ -61,5 +64,11 @@ impl<Env> gantz_core::Node<Env> for Log {
         vm.register_fn("log/info", info);
         vm.register_fn("log/debug", debug);
         vm.register_fn("log/trace", trace);
+    }
+}
+
+impl CaHash for Log {
+    fn hash(&self, hasher: &mut gantz_core::ca::blake3::Hasher) {
+        format!("gantz_std::Log::{:?}", self.level).hash(hasher);
     }
 }

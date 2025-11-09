@@ -9,6 +9,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+gantz_ca.workspace = true
 petgraph.workspace = true
 serde.workspace = true
 steel-core.workspace = true

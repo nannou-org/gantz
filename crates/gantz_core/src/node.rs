@@ -5,6 +5,7 @@ pub use crate::visit::{self, Visitor};
 #[doc(inline)]
 pub use conns::Conns;
 pub use expr::{Expr, ExprError};
+use gantz_ca::CaHash;
 pub use graph::GraphNode;
 pub use pull::{Pull, WithPullEval};
 pub use push::{Push, WithPushEval};
@@ -373,6 +374,22 @@ impl From<u16> for Input {
 impl From<u16> for Output {
     fn from(u: u16) -> Self {
         Output(u)
+    }
+}
+
+impl CaHash for EvalConf {
+    fn hash(&self, hasher: &mut gantz_ca::blake3::Hasher) {
+        const ALL_TAG: u8 = 0;
+        const SET_TAG: u8 = 1;
+        match self {
+            Self::All => {
+                hasher.update(&[ALL_TAG]);
+            }
+            Self::Set(set) => {
+                hasher.update(&[SET_TAG]);
+                set.hash(hasher);
+            }
+        }
     }
 }
 

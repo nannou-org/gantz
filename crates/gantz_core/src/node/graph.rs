@@ -5,6 +5,7 @@ use crate::{
     node::{self, Node},
     visit,
 };
+use gantz_ca::CaHash;
 use petgraph::{
     Directed,
     graph::{EdgeIndex, NodeIndex},
@@ -261,6 +262,27 @@ impl<Env> Node<Env> for Outlet {
 
     fn register(&self, path: &[node::Id], vm: &mut Engine) {
         node::state::update_value(vm, path, steel::SteelVal::Void).unwrap();
+    }
+}
+
+impl<N> CaHash for GraphNode<N>
+where
+    N: CaHash,
+{
+    fn hash(&self, hasher: &mut gantz_ca::blake3::Hasher) {
+        crate::ca::hash_graph(&self.graph, hasher);
+    }
+}
+
+impl CaHash for Inlet {
+    fn hash(&self, hasher: &mut gantz_ca::blake3::Hasher) {
+        CaHash::hash("in", hasher);
+    }
+}
+
+impl CaHash for Outlet {
+    fn hash(&self, hasher: &mut gantz_ca::blake3::Hasher) {
+        CaHash::hash("out", hasher);
     }
 }
 

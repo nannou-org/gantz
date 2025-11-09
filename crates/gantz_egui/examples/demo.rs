@@ -5,10 +5,8 @@
 //! how to use these with the top-level `Gantz` widget in an egui app.
 
 use dyn_clone::DynClone;
-use dyn_hash::DynHash;
 use eframe::egui;
-use gantz_core::steel::steel_vm::engine::Engine;
-use gantz_egui::ContentAddr;
+use gantz_core::{ca::ContentAddr, steel::steel_vm::engine::Engine};
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -139,12 +137,15 @@ fn register_primitive(
 /// A top-level blanket trait providing trait object cloning, hashing, and serialization.
 #[typetag::serde(tag = "type")]
 trait Node:
-    Any + DynClone + DynHash + gantz_core::Node<Environment> + gantz_egui::NodeUi<Environment>
+    Any
+    + DynClone
+    + gantz_core::ca::CaHash
+    + gantz_core::Node<Environment>
+    + gantz_egui::NodeUi<Environment>
 {
 }
 
 dyn_clone::clone_trait_object!(Node);
-dyn_hash::hash_trait_object!(Node);
 
 #[typetag::serde]
 impl Node for gantz_core::node::Expr {}
@@ -261,7 +262,7 @@ impl App {
                 GraphNode { graph }
             }
         };
-        let graph_ca = gantz_egui::graph_content_addr(&graph);
+        let graph_ca = gantz_core::ca::graph(&*graph);
 
         // Setup the environment that will be provided to all nodes.
         let primitives = primitives();
@@ -299,7 +300,7 @@ impl eframe::App for App {
         // Check for changes to the graph.
         // FIXME: Rather than checking changed CA to monitor changes, ideally
         // `Gantz` widget can tell us this in a custom response.
-        let new_graph_ca = gantz_egui::graph_content_addr(&self.state.graph);
+        let new_graph_ca = gantz_core::ca::graph(&self.state.graph.graph);
         if self.state.graph_ca != new_graph_ca {
             self.state.graph_ca = new_graph_ca;
             // If there's some name tracking the graph changes, ensure the
@@ -328,7 +329,7 @@ impl eframe::App for App {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         // Ensure the active graph is registered.
-        let active_ca = gantz_egui::graph_content_addr(&self.state.graph.graph);
+        let active_ca = gantz_core::ca::graph(&self.state.graph.graph);
         self.state
             .env
             .registry
@@ -566,7 +567,7 @@ fn load_gantz_gui_state(storage: &dyn eframe::Storage) -> gantz_egui::widget::Ga
 
 /// The key for a particular graph in storage.
 fn graph_key(ca: ContentAddr) -> String {
-    format!("{}", gantz_egui::fmt_content_addr(ca))
+    format!("{ca}")
 }
 
 /// Initialise the VM for the given environment and graph.
@@ -670,7 +671,7 @@ fn gui(ctx: &egui::Context, state: &mut State) {
             // Create a new empty graph and select it.
             if response.new_graph() {
                 let graph = Graph::default();
-                let ca = gantz_egui::graph_content_addr(&graph);
+                let ca = gantz_core::ca::graph(&graph);
                 state.env.registry.graphs.insert(ca, graph);
                 set_head(state, ca, None);
             }
@@ -727,7 +728,7 @@ fn graph_contains_ca(g: &Graph, ca: ContentAddr) -> bool {
         ((&**node) as &dyn Any)
             .downcast_ref::<GraphNode>()
             .map(|graph| {
-                let graph_ca = gantz_egui::graph_content_addr(&graph.graph);
+                let graph_ca = gantz_core::ca::graph(&graph.graph);
                 ca == graph_ca || graph_contains_ca(&graph.graph, ca)
             })
             .unwrap_or(false)

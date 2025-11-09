@@ -5,7 +5,7 @@ use crate::node;
 use serde::{Deserialize, Serialize};
 
 /// Describes a connection between two nodes.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct Edge {
     /// The output of the node at the source of this edge.
     pub output: node::Output,

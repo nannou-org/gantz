@@ -1,8 +1,8 @@
 //! A suite of widgets, nodes and implementations for creating a GUI around
 //! gantz using `egui`.
 
+use gantz_core::ca::ContentAddr;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
-use std::hash::{Hash, Hasher};
 use steel::{
     SteelErr, SteelVal,
     rvals::{FromSteelVal, IntoSteelVal},
@@ -66,11 +66,6 @@ pub enum Cmd {
     OpenGraph(Vec<node::Id>),
     OpenNamedGraph(String, ContentAddr),
 }
-
-/// Used to represent the content address
-///
-/// TODO: Replace this with [u8; 20] and use SHA1 or something.
-pub type ContentAddr = u64;
 
 impl<'a, Env, N> NodeUi<Env> for &'a mut N
 where
@@ -213,29 +208,6 @@ impl<'a, Env> NodeCtx<'a, Env> {
     pub fn outlets(&self) -> &[node::Id] {
         self.outlets
     }
-}
-
-/// Produce the content address for a given graph.
-pub fn graph_content_addr<N>(g: &gantz_core::node::graph::Graph<N>) -> ContentAddr
-where
-    N: Hash,
-{
-    // TODO: Use a more stable/reproducible hash method.
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    gantz_core::graph::hash(g, &mut hasher);
-    hasher.finish()
-}
-
-/// Format the given content address into a full-length hex string.
-pub fn fmt_content_addr(ca: ContentAddr) -> String {
-    format!("{ca:#018x}")
-}
-
-/// Format the given content address into a shorthand 8-char hex string.
-pub fn fmt_content_addr_short(ca: ContentAddr) -> String {
-    let mut s = format!("{ca:08x}");
-    s.truncate(8);
-    s
 }
 
 /// The IDs of the inlet and outlet nodes.

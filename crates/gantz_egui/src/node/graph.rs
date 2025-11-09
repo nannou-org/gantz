@@ -1,4 +1,5 @@
-use crate::{Cmd, ContentAddr, NodeCtx, NodeUi, fmt_content_addr, widget::node_inspector};
+use crate::{Cmd, NodeCtx, NodeUi, widget::node_inspector};
+use gantz_core::ca::ContentAddr;
 use serde::{Deserialize, Serialize};
 use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 
@@ -12,8 +13,8 @@ use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 /// optional name.
 #[derive(Clone, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct NamedGraph {
-    name: String,
     ca: ContentAddr,
+    name: String,
 }
 
 /// The set of node name and content address lookup methods required by the
@@ -85,6 +86,13 @@ where
     }
 }
 
+impl gantz_core::ca::CaHash for NamedGraph {
+    fn hash(&self, hasher: &mut blake3::Hasher) {
+        self.ca.hash(hasher);
+        self.name.hash(hasher);
+    }
+}
+
 impl<Env> NodeUi<Env> for NamedGraph {
     fn name(&self, _: &Env) -> &str {
         self.name.as_str()
@@ -108,7 +116,7 @@ impl<Env> NodeUi<Env> for NamedGraph {
                 ui.label("CA");
             });
             row.col(|ui| {
-                let ca_string = fmt_content_addr(self.ca);
+                let ca_string = format!("{}", self.ca.display_short());
                 ui.add(egui::Label::new(egui::RichText::new(ca_string).monospace()));
             });
         });

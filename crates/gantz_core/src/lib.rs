@@ -2,6 +2,7 @@ pub use edge::Edge;
 pub use node::Node;
 pub use steel;
 
+pub mod ca;
 pub mod compile;
 pub mod edge;
 pub mod graph;
