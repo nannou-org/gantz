@@ -3,6 +3,7 @@ use crate::{
     ROOT_STATE,
     node::{self, Node},
 };
+use gantz_ca::CaHash;
 use steel::{
     SteelErr, SteelVal,
     gc::Gc,
@@ -124,6 +125,16 @@ where
         S::register(vm);
         let val = default_node_state_steel_val::<S>();
         update(vm, path, val).unwrap();
+    }
+}
+
+impl<Env, N, S> CaHash for State<Env, N, S>
+where
+    N: CaHash,
+{
+    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
+        "State".hash(hasher);
+        self.node.hash(hasher);
     }
 }
 

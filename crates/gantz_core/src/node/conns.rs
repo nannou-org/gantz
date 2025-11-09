@@ -4,6 +4,7 @@
 //! connection is connected.
 
 use core::{convert, fmt, str::FromStr};
+use gantz_ca::CaHash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
@@ -150,6 +151,18 @@ impl Conns {
     /// Whether or not there are no connections.
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+}
+
+impl CaHash for Conns {
+    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
+        // Conns len is limited to 256.
+        let len: u8 = self
+            .len()
+            .try_into()
+            .expect("len cannot be greater than u8::MAX");
+        len.hash(hasher);
+        self.bytes.hash(hasher);
     }
 }
 

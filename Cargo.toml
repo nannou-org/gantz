@@ -32,6 +32,7 @@ bevy_input = "0.17"
 bevy_pkv = "0.14"
 bevy_time = "0.17"
 bevy_window = "0.17"
+blake3 = "1"
 dyn-clone = "1"
 dyn-hash = "0.2.2"
 eframe = { version = "0.33", default-features = false, features = [
@@ -46,9 +47,11 @@ egui_extras = { version = "0.33", default-features = false, features = ["syntect
 egui_graph = "0.7"
 egui_tiles = "0.14"
 env_logger = { version = "0.11", default-features = false }
+gantz_ca = { version = "0.1.0", path = "crates/gantz_ca" }
 gantz_core = { version = "0.1.0", path = "crates/gantz_core" }
 gantz_egui = { version = "0.1.0", path = "crates/gantz_egui" }
 gantz_std = { version = "0.1.0", path = "crates/gantz_std" }
+hex = "0.4"
 humantime = "2.3"
 log = { version = "0.4", features = ["serde"] }
 petgraph = { version = "0.8", features = ["serde-1"] }

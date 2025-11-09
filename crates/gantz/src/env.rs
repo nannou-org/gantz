@@ -3,7 +3,7 @@ use crate::{
     node::Node,
 };
 use bevy::ecs::resource::Resource;
-use gantz_egui::ContentAddr;
+use gantz_core::ca::ContentAddr;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -144,7 +144,7 @@ fn graph_contains_ca(g: &Graph, ca: ContentAddr) -> bool {
         ((&**node) as &dyn Any)
             .downcast_ref::<GraphNode>()
             .map(|graph| {
-                let graph_ca = gantz_egui::graph_content_addr(&graph.graph);
+                let graph_ca = gantz_core::ca::graph(&graph.graph);
                 ca == graph_ca || graph_contains_ca(&graph.graph, ca)
             })
             .unwrap_or(false)

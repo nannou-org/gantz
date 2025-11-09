@@ -1,6 +1,6 @@
 //! A simple widget for selecting between, naming and creating new graphs.
 
-use crate::{ContentAddr, fmt_content_addr, fmt_content_addr_short};
+use gantz_core::ca::ContentAddr;
 use std::collections::{BTreeMap, HashSet};
 
 /// A widget for selecting between, naming, and creating new graphs.
@@ -150,7 +150,7 @@ fn head_name_text_edit(
     state: &mut GraphSelectState,
     ui: &mut egui::Ui,
 ) -> (egui::Response, Option<Option<String>>) {
-    let ca_string = fmt_content_addr(head.ca);
+    let ca_string = format!("{}", head.ca.display_short());
 
     // If this name is already assigned, but to a different CA, we'll colour the
     // name red and require `Ctrl + Enter` to overwrite the CA.
@@ -221,7 +221,8 @@ fn graph_select_row(
                 res |= ui.add(label);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Show the address.
-                    let mut text = egui::RichText::new(fmt_content_addr_short(ca)).monospace();
+                    let ca_string = format!("{}", ca.display_short());
+                    let mut text = egui::RichText::new(ca_string).monospace();
                     text = if ca == head.ca {
                         text.strong()
                     } else if hovered {

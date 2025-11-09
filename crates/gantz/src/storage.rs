@@ -6,7 +6,7 @@ use crate::{
 };
 use bevy::log;
 use bevy_pkv::PkvStore;
-use gantz_egui::ContentAddr;
+use gantz_core::ca::ContentAddr;
 use std::collections::{BTreeMap, HashMap};
 
 mod key {
@@ -22,8 +22,8 @@ mod key {
     pub const ACTIVE_GRAPH_NAME: &str = "active-graph-name";
 
     /// The key for a particular graph in storage.
-    pub fn graph(ca: gantz_egui::ContentAddr) -> String {
-        format!("{}", gantz_egui::fmt_content_addr(ca))
+    pub fn graph(ca: gantz_core::ca::ContentAddr) -> String {
+        format!("{}", ca)
     }
 }
 
@@ -263,7 +263,7 @@ pub fn load_active(storage: &PkvStore, reg: &NodeTypeRegistry) -> Active {
         })
         .unwrap_or_else(|| {
             let graph = Graph::default();
-            let ca = gantz_egui::graph_content_addr(&graph);
+            let ca = gantz_core::ca::graph(&graph);
             (ca, graph)
         });
     let graph = GraphNode { graph };

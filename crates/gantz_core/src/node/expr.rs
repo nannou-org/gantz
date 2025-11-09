@@ -1,5 +1,6 @@
 use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
+use gantz_ca::CaHash;
 use std::{fmt, str::FromStr};
 use steel::{
     parser::{ast::ExprKind, lexer::TokenStream},
@@ -157,6 +158,12 @@ impl<Env> Node<Env> for Expr {
     /// Registers a state slot just in case `state` is referenced by the expr.
     fn register(&self, path: &[super::Id], vm: &mut Engine) {
         node::state::update_value(vm, path, steel::SteelVal::Void).unwrap();
+    }
+}
+
+impl CaHash for Expr {
+    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
+        hasher.update(self.src.as_bytes());
     }
 }
 

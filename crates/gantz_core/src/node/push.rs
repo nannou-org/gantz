@@ -1,5 +1,6 @@
 use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
+use gantz_ca::CaHash;
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// A wrapper around a `Node` that enables push evaluation across all outputs.
@@ -92,5 +93,16 @@ where
 
     fn register(&self, path: &[node::Id], vm: &mut Engine) {
         self.node.register(path, vm)
+    }
+}
+
+impl<Env, N> CaHash for Push<Env, N>
+where
+    N: CaHash,
+{
+    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
+        "Push".hash(hasher);
+        self.conf.hash(hasher);
+        self.node.hash(hasher);
     }
 }

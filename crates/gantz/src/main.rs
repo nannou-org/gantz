@@ -6,7 +6,7 @@ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_gantz::debounced_input::{DebouncedInputEvent, DebouncedInputPlugin};
 use bevy_pkv::PkvStore;
 use env::Environment;
-use gantz_egui::ContentAddr;
+use gantz_core::ca::ContentAddr;
 use graph::{Graph, GraphNode};
 use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 
@@ -183,7 +183,7 @@ fn update_gui(
             // Create a new empty graph and select it.
             if response.new_graph() {
                 let graph = Graph::default();
-                let ca = gantz_egui::graph_content_addr(&graph);
+                let ca = gantz_core::ca::graph(&graph);
                 env.registry.graphs.insert(ca, graph);
                 set_head(
                     &mut env,
@@ -208,7 +208,7 @@ fn update_vm(
     // Check for changes to the graph.
     // FIXME: Rather than checking changed CA to monitor changes, ideally
     // `Gantz` widget can tell us this in a custom response.
-    let new_graph_ca = gantz_egui::graph_content_addr(&active.graph);
+    let new_graph_ca = gantz_core::ca::graph(&active.graph.graph);
     if active.graph_ca != new_graph_ca {
         active.graph_ca = new_graph_ca;
         // If there's some name tracking the graph changes, ensure the
@@ -276,7 +276,7 @@ fn persist_resources(
     mut storage: ResMut<PkvStore>,
 ) {
     // Ensure the active graph is registered.
-    let active_ca = gantz_egui::graph_content_addr(&active.graph.graph);
+    let active_ca = gantz_core::ca::graph(&active.graph.graph);
     env.registry
         .graphs
         .entry(active_ca)

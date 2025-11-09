@@ -13,12 +13,14 @@ default = ["tracing"]
 tracing = ["dep:tracing", "dep:tracing-subscriber"]
 
 [dependencies]
+blake3.workspace = true
 egui.workspace = true
 egui_extras.workspace = true
 egui_graph.workspace = true
 egui_tiles.workspace = true
 gantz_core.workspace = true
 gantz_std.workspace = true
+hex.workspace = true
 humantime.workspace = true
 log.workspace = true
 petgraph.workspace = true
@@ -31,7 +33,6 @@ web-time.workspace = true
 
 [dev-dependencies]
 dyn-clone.workspace = true
-dyn-hash.workspace = true
 eframe.workspace = true
 ron.workspace = true
 typetag.workspace = true

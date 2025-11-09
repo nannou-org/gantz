@@ -1,9 +1,8 @@
-use crate::{Cmd, NodeCtx, NodeUi, fmt_content_addr, graph_content_addr, widget::node_inspector};
-use std::hash::Hash;
+use crate::{Cmd, NodeCtx, NodeUi, widget::node_inspector};
 
 impl<Env, N> NodeUi<Env> for gantz_core::node::GraphNode<N>
 where
-    N: Hash,
+    N: gantz_core::ca::CaHash,
 {
     fn name(&self, _: &Env) -> &str {
         "graph"
@@ -24,8 +23,8 @@ where
                 ui.label("CA");
             });
             row.col(|ui| {
-                let ca = graph_content_addr(self);
-                let ca_string = fmt_content_addr(ca);
+                let ca = gantz_core::ca::graph(&self.graph);
+                let ca_string = format!("{}", ca.display_short());
                 ui.add(egui::Label::new(egui::RichText::new(ca_string).monospace()));
             });
         });
