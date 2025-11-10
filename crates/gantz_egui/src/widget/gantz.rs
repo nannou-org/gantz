@@ -55,11 +55,10 @@ enum LogSource {
     TraceCapture(widget::trace_view::TraceCapture),
 }
 
+/// All state for the widget.
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct GantzState {
-    pub graph_scene: GraphSceneState,
-    pub path: Vec<node::Id>,
-    pub graphs: Graphs,
+    pub open_graphs: OpenGraphs,
     pub view_toggles: ViewToggles,
     pub command_palette: widget::CommandPalette,
     pub auto_layout: bool,
@@ -67,11 +66,24 @@ pub struct GantzState {
     pub center_view: bool,
 }
 
+pub type OpenGraphs = HashMap<ContentAddr, OpenGraphState>;
+
+/// State associated with a single open root graph.
+#[derive(serde::Deserialize, serde::Serialize)]
+struct OpenGraphState {
+    /// The path to the currently visible graph within the open graph tree.
+    pub path: Vec<node::Id>,
+    /// State associated with the `GraphScene` widget.
+    pub scene: GraphSceneState,
+    /// State for each individual graph at each unique path within the tree.
+    pub graphs: GraphStates,
+}
+
 /// A pane within the tree.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum Pane {
     GraphConfig,
-    GraphScene,
+    GraphScene(usize),
     GraphSelect,
     Logs,
     NodeInspector,
@@ -97,7 +109,7 @@ pub struct GantzResponse {
 }
 
 /// UI state relevant to each nested graph within the tree.
-pub type Graphs = HashMap<Vec<node::Id>, GraphState>;
+pub type GraphStates = HashMap<Vec<node::Id>, GraphState>;
 
 /// UI state relevant to a graph at a certain path within the root.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -197,9 +209,6 @@ where
         // Check the `view_toggles` match the pane visibility.
         set_tile_visibility(&mut tree, &state.view_toggles);
 
-        // Simplify the tree, and ensure tabs are where they should be.
-        simplify_tree(&mut tree, ui.ctx());
-
         // Initialise the response.
         // We'll collect it during traversal of the tree of tiles.
         let mut response = GantzResponse::default();
@@ -230,11 +239,9 @@ impl GantzState {
         Self::from_graphs(Default::default())
     }
 
-    pub fn from_graphs(graphs: Graphs) -> Self {
+    pub fn from_open_graphs(open_graphs: OpenGraphs) -> Self {
         Self {
-            graph_scene: Default::default(),
-            path: vec![],
-            graphs,
+            open_graphs,
             auto_layout: false,
             center_view: false,
             command_palette: widget::CommandPalette::default(),
@@ -252,7 +259,13 @@ where
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
         match pane {
             Pane::GraphConfig => "Graph Config".into(),
-            Pane::GraphScene => "Graph Scene".into(),
+            Pane::GraphScene(ix) => self
+                .gantz
+                .head
+                .name
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("{}", self.gantz.head.ca.display_short()))
+                .into(),
             Pane::GraphSelect => "Graph Select".into(),
             Pane::Logs => match self.gantz.log_source {
                 None => "Logs (No Source)".into(),
@@ -290,8 +303,11 @@ where
     }
 
     fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
-        // We will manually simplify before calling `tree.ui`. See `simplify_tree`
-        egui_tiles::SimplificationOptions::OFF
+        // We use the tabs as "headings" for panes.
+        egui_tiles::SimplificationOptions {
+            all_panes_must_have_tabs: true,
+            ..Default::default()
+        }
     }
 
     fn pane_ui(
@@ -311,7 +327,7 @@ where
             Pane::GraphConfig => {
                 graph_config(gantz.root, state, ui);
             }
-            Pane::GraphScene => {
+            Pane::GraphScene(ix) => {
                 graph_scene(gantz.env, gantz.root, state, vm, ui);
                 command_palette(gantz.env, gantz.root, state, vm, ui);
             }
@@ -389,7 +405,7 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
 
     // The leaf panes.
     let graph_config = tiles.insert_pane(Pane::GraphConfig);
-    let graph_scene = tiles.insert_pane(Pane::GraphScene);
+    let graph_scene = tiles.insert_pane(Pane::GraphScene(0));
     let graph_select = tiles.insert_pane(Pane::GraphSelect);
     let logs = tiles.insert_pane(Pane::Logs);
     let node_inspector = tiles.insert_pane(Pane::NodeInspector);
@@ -426,41 +442,6 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
     egui_tiles::Tree::new("gantz-tiles-tree", root, tiles)
 }
 
-/// All panes should have tab bars besides the main graph scene.
-///
-/// In the case that a tile is being dragged, even the graph scene should show a
-/// tab bar in case the user wants to add a tab there.
-fn simplify_tree(tree: &mut egui_tiles::Tree<Pane>, ctx: &egui::Context) {
-    // Default options, but ensure panes have tabs.
-    tree.simplify(&egui_tiles::SimplificationOptions {
-        all_panes_must_have_tabs: true,
-        ..Default::default()
-    });
-    // If a tile is being dragged, show all tab bars.
-    if tree.dragged_id(ctx).is_some() {
-        return;
-    }
-    // Otherwise, find the graph scene ID.
-    let Some(graph_scene_id) = tree.tiles.find_pane(&Pane::GraphScene) else {
-        return;
-    };
-    // Find it's parent. This must be `Tabs` after the `simplify` pass above.
-    let parent_id = tree
-        .tiles
-        .parent_of(graph_scene_id)
-        .expect("parent must be `Tabs`");
-    // If the parent has one child, replace it with the graph scene.
-    let parent = tree
-        .tiles
-        .get_container(parent_id)
-        .expect("parent must be a container");
-    if parent.num_children() == 1 {
-        tree.tiles.remove(graph_scene_id);
-        tree.tiles
-            .insert(parent_id, egui_tiles::Tile::Pane(Pane::GraphScene));
-    }
-}
-
 /// Ensure the view toggles match the pane visibility.
 fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
     let ids: Vec<_> = tree.tiles.tile_ids().collect();
@@ -469,7 +450,7 @@ fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
         if let Some(pane) = tree.tiles.get_pane(&id) {
             match pane {
                 Pane::GraphConfig => tree.set_visible(id, view.graph_config),
-                Pane::GraphScene => (),
+                Pane::GraphScene(_) => (),
                 Pane::GraphSelect => tree.set_visible(id, view.graph_select),
                 Pane::Logs => tree.set_visible(id, view.logs),
                 Pane::NodeInspector => tree.set_visible(id, view.node_inspector),
