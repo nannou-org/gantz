@@ -21,7 +21,7 @@ impl Commit {
     pub fn timestamped(parent: Option<CommitAddr>, graph: GraphAddr) -> Self {
         let now = web_time::SystemTime::now();
         let timestamp = now
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .duration_since(web_time::UNIX_EPOCH)
             .unwrap_or(std::time::Duration::ZERO);
         Self {
             timestamp,
