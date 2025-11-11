@@ -48,7 +48,9 @@ impl Node for Box<dyn Node> {}
 // able to downcast a node to a graph node.
 impl gantz_egui::widget::graph_scene::ToGraphMut for Box<dyn Node> {
     type Node = Self;
-    fn to_graph_mut(&mut self) -> Option<&mut gantz_core::node::GraphNode<Self::Node>> {
-        ((&mut **self) as &mut dyn Any).downcast_mut()
+    fn to_graph_mut(&mut self) -> Option<&mut gantz_core::node::graph::Graph<Self::Node>> {
+        ((&mut **self) as &mut dyn Any)
+            .downcast_mut::<gantz_core::node::GraphNode<Self::Node>>()
+            .map(|node| &mut node.graph)
     }
 }

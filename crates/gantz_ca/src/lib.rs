@@ -1,7 +1,7 @@
 //! The content-addressing implementation for `gantz` graphs.
 
 #[doc(inline)]
-pub use ca::{content_addr, ContentAddr, ContentAddrShort};
+pub use ca::{ContentAddr, ContentAddrShort, content_addr};
 #[doc(inline)]
 pub use hash::{CaHash, Hasher};
 

@@ -1,4 +1,4 @@
-use crate::{ca, Cmd, NodeCtx, NodeUi, widget::node_inspector};
+use crate::{Cmd, NodeCtx, NodeUi, ca, widget::node_inspector};
 use serde::{Deserialize, Serialize};
 use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 

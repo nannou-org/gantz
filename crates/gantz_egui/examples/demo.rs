@@ -808,19 +808,9 @@ fn gui(ctx: &egui::Context, state: &mut State) {
 
             // Create a new empty graph and select it.
             if response.new_graph() {
-                // Add the empty graph.
-                let graph = Graph::default();
-                let graph_ca = ca::graph_addr(&graph);
-                state.env.registry.graphs.insert(graph_ca, graph);
-
-                // Create a fresh commit.
-                let parent = None;
-                let commit = ca::Commit::timestamped(parent, graph_ca);
-                let commit_ca = ca::commit_addr(&commit);
-                state.env.registry.commits.insert(commit_ca, commit);
-
-                // Set the head to the new commit.
-                set_head(state, ca::Head::Commit(commit_ca));
+                // Set the head to a new commit.
+                let new_head = init_head(&mut state.env.registry);
+                set_head(state, new_head);
             }
         });
 }
