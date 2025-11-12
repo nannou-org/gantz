@@ -8,7 +8,6 @@ use steel::{
     steel_vm::engine::Engine,
 };
 
-pub mod ca;
 mod impls;
 pub mod node;
 pub mod widget;
@@ -64,7 +63,7 @@ pub enum Cmd {
     PushEval(Vec<node::Id>),
     PullEval(Vec<node::Id>),
     OpenGraph(Vec<node::Id>),
-    OpenNamedGraph(String, ca::GraphAddr),
+    OpenNamedGraph(String, gantz_ca::GraphAddr),
 }
 
 impl<'a, Env, N> NodeUi<Env> for &'a mut N

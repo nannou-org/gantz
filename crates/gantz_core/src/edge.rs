@@ -2,6 +2,7 @@
 //! destination nodes respectively.
 
 use crate::node;
+use gantz_ca::CaHash;
 use serde::{Deserialize, Serialize};
 
 /// Describes a connection between two nodes.
@@ -30,5 +31,12 @@ where
         let output = a.into();
         let input = b.into();
         Edge { output, input }
+    }
+}
+
+impl CaHash for Edge {
+    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
+        self.output.0.hash(hasher);
+        self.input.0.hash(hasher);
     }
 }

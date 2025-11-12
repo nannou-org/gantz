@@ -18,6 +18,7 @@ egui.workspace = true
 egui_extras.workspace = true
 egui_graph.workspace = true
 egui_tiles.workspace = true
+gantz_ca.workspace = true
 gantz_core.workspace = true
 gantz_std.workspace = true
 hex.workspace = true

@@ -1,33 +1,32 @@
 //! A simple widget for selecting between, naming and creating new graphs.
 
-use crate::ca;
 use std::collections::{BTreeMap, HashSet};
 
 /// A widget for selecting between, naming, and creating new graphs.
 pub struct GraphSelect<'a> {
     id: egui::Id,
     graph_reg: &'a dyn GraphRegistry,
-    head: &'a ca::Head,
+    head: &'a gantz_ca::Head,
 }
 
 #[derive(Clone, Default)]
 struct GraphSelectState {
     /// The last head provided via argument.
     /// We track this to know if we should reset the working graph name.
-    last_head: Option<ca::Head>,
+    last_head: Option<gantz_ca::Head>,
     working_graph_name: String,
 }
 
 /// Methods required on the provided graph registry.
 pub trait GraphRegistry {
     /// All selectable commit addresses.
-    fn commits(&self) -> Vec<(&ca::CommitAddr, &ca::Commit)>;
+    fn commits(&self) -> Vec<(&gantz_ca::CommitAddr, &gantz_ca::Commit)>;
     /// An iterator yielding all name -> CA pairs.
     fn names(&self) -> &GraphNames;
 }
 
 /// The map from names to graph CAs.
-pub type GraphNames = BTreeMap<String, ca::CommitAddr>;
+pub type GraphNames = BTreeMap<String, gantz_ca::CommitAddr>;
 
 /// Commands emitted from the `GraphSelect` widget.
 #[derive(Debug, Default)]
@@ -35,7 +34,7 @@ pub struct GraphSelectResponse {
     /// Indicates the new graph button was clicked.
     pub new_graph: bool,
     /// If a graph was selected this is its content address and name (if named).
-    pub selected: Option<ca::Head>,
+    pub selected: Option<gantz_ca::Head>,
     /// The name was updated.
     pub name_updated: Option<Option<String>>,
     /// The name mapping was removed.
@@ -52,11 +51,11 @@ struct RowResponse {
 
 enum RowType<'a> {
     Named(&'a str),
-    Unnamed(&'a ca::commit::Timestamp),
+    Unnamed(&'a gantz_ca::Timestamp),
 }
 
 impl<'a> GraphSelect<'a> {
-    pub fn new(graph_reg: &'a dyn GraphRegistry, head: &'a ca::Head) -> Self {
+    pub fn new(graph_reg: &'a dyn GraphRegistry, head: &'a gantz_ca::Head) -> Self {
         let id = egui::Id::new("gantz-graph-select");
         Self {
             graph_reg,
@@ -82,8 +81,8 @@ impl<'a> GraphSelect<'a> {
         if Some(self.head.clone()) != state.last_head {
             state.last_head = Some(self.head.clone());
             match self.head {
-                ca::Head::Branch(name) => state.working_graph_name = name.clone(),
-                ca::Head::Commit(_) => state.working_graph_name.clear(),
+                gantz_ca::Head::Branch(name) => state.working_graph_name = name.clone(),
+                gantz_ca::Head::Commit(_) => state.working_graph_name.clear(),
             }
         }
 
@@ -92,16 +91,16 @@ impl<'a> GraphSelect<'a> {
         // Allow for editing the name.
         // Show the currently selected head, allow using a name.
         let graph_names = self.graph_reg.names();
-        let (head_name, head_ca): (Option<&str>, ca::CommitAddr) = match self.head {
-            ca::Head::Branch(name) => (Some(name.as_str()), graph_names[name]),
-            ca::Head::Commit(ca) => (None, *ca),
+        let (head_name, head_ca): (Option<&str>, gantz_ca::CommitAddr) = match self.head {
+            gantz_ca::Head::Branch(name) => (Some(name.as_str()), graph_names[name]),
+            gantz_ca::Head::Commit(ca) => (None, *ca),
         };
         let (_name_res, new_name) =
             head_name_text_edit(head_name, head_ca, graph_names, &mut state, ui);
         if let Some(name_opt) = new_name.as_ref() {
             response.selected = match name_opt {
-                None => Some(ca::Head::Commit(head_ca)),
-                Some(new_name) => Some(ca::Head::Branch(new_name.clone())),
+                None => Some(gantz_ca::Head::Commit(head_ca)),
+                Some(new_name) => Some(gantz_ca::Head::Branch(new_name.clone())),
             };
         }
         response.name_updated = new_name.clone();
@@ -123,7 +122,7 @@ impl<'a> GraphSelect<'a> {
                     visited.insert(ca);
                     let res = graph_select_row(head_name, head_ca, RowType::Named(name), ca, ui);
                     if res.row.clicked() && ca != head_ca {
-                        response.selected = Some(ca::Head::Branch(name.to_string()));
+                        response.selected = Some(gantz_ca::Head::Branch(name.to_string()));
                     } else if let Some(delete) = res.delete {
                         if delete.clicked() {
                             response.name_removed = Some(name.to_string());
@@ -147,7 +146,7 @@ impl<'a> GraphSelect<'a> {
                         ui,
                     );
                     if res.row.clicked() && ca != head_ca {
-                        response.selected = Some(ca::Head::Commit(ca));
+                        response.selected = Some(gantz_ca::Head::Commit(ca));
                     }
                 }
             });
@@ -167,7 +166,7 @@ impl<'a> GraphSelect<'a> {
 // Show the currently selected head, allow using a name.
 fn head_name_text_edit(
     head_name: Option<&str>,
-    head_ca: ca::CommitAddr,
+    head_ca: gantz_ca::CommitAddr,
     graph_names: &GraphNames,
     state: &mut GraphSelectState,
     ui: &mut egui::Ui,
@@ -211,9 +210,9 @@ fn head_name_text_edit(
 
 fn graph_select_row(
     head_name_opt: Option<&str>,
-    head_ca: ca::CommitAddr,
+    head_ca: gantz_ca::CommitAddr,
     row_type: RowType,
-    row_ca: ca::CommitAddr,
+    row_ca: gantz_ca::CommitAddr,
     ui: &mut egui::Ui,
 ) -> RowResponse {
     let w = ui.max_rect().width();
@@ -281,7 +280,7 @@ fn graph_select_row(
 }
 
 // Format the commit as a timestamp for listing unnamed commits.
-fn fmt_commit_timestamp(timestamp: ca::commit::Timestamp) -> String {
+fn fmt_commit_timestamp(timestamp: gantz_ca::Timestamp) -> String {
     std::time::UNIX_EPOCH
         .checked_add(timestamp)
         .map(|time| humantime::format_rfc3339_seconds(time).to_string())

@@ -9,6 +9,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+gantz_ca.workspace = true
 gantz_core.workspace = true
 log.workspace = true
 serde.workspace = true

@@ -7,7 +7,6 @@
 use dyn_clone::DynClone;
 use eframe::egui;
 use gantz_core::steel::steel_vm::engine::Engine;
-use gantz_egui::ca;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -42,11 +41,11 @@ struct Environment {
 #[derive(Default, Deserialize, Serialize)]
 struct NodeTypeRegistry {
     /// A mapping from content addresses to graphs.
-    graphs: HashMap<ca::GraphAddr, Graph>,
+    graphs: HashMap<gantz_ca::GraphAddr, Graph>,
     /// A mapping from addresses to commits.
-    commits: HashMap<ca::CommitAddr, ca::Commit>,
+    commits: HashMap<gantz_ca::CommitAddr, gantz_ca::Commit>,
     /// A mapping from names to graph content addresses.
-    names: BTreeMap<String, ca::CommitAddr>,
+    names: BTreeMap<String, gantz_ca::CommitAddr>,
 }
 
 /// Constructors for all primitive nodes.
@@ -80,21 +79,24 @@ impl gantz_egui::widget::gantz::NodeTypeRegistry for Environment {
 // Provide the `GraphRegistry` implementation required by `gantz_egui`.
 impl gantz_egui::node::graph::GraphRegistry for Environment {
     type Node = Box<dyn Node>;
-    fn graph(&self, ca: ca::GraphAddr) -> Option<&gantz_core::node::graph::Graph<Self::Node>> {
+    fn graph(
+        &self,
+        ca: gantz_ca::GraphAddr,
+    ) -> Option<&gantz_core::node::graph::Graph<Self::Node>> {
         self.registry.graphs.get(&ca)
     }
 }
 
 // Provide the `GraphRegistry` implementation required by the `GraphSelect` widget.
 impl gantz_egui::widget::graph_select::GraphRegistry for Environment {
-    fn commits(&self) -> Vec<(&ca::CommitAddr, &ca::Commit)> {
+    fn commits(&self) -> Vec<(&gantz_ca::CommitAddr, &gantz_ca::Commit)> {
         // Sort commits by newest to oldest.
         let mut commits: Vec<_> = self.registry.commits.iter().collect();
         commits.sort_by(|(_, a), (_, b)| b.timestamp.cmp(&a.timestamp));
         commits
     }
 
-    fn names(&self) -> &BTreeMap<String, ca::CommitAddr> {
+    fn names(&self) -> &BTreeMap<String, gantz_ca::CommitAddr> {
         &self.registry.names
     }
 }
@@ -142,11 +144,7 @@ fn register_primitive(
 /// A top-level blanket trait providing trait object cloning, hashing, and serialization.
 #[typetag::serde(tag = "type")]
 trait Node:
-    Any
-    + DynClone
-    + gantz_core::ca::CaHash
-    + gantz_core::Node<Environment>
-    + gantz_egui::NodeUi<Environment>
+    Any + DynClone + gantz_ca::CaHash + gantz_core::Node<Environment> + gantz_egui::NodeUi<Environment>
 {
 }
 
@@ -203,7 +201,7 @@ struct App {
 }
 
 struct State {
-    head: gantz_egui::ca::Head,
+    head: gantz_ca::Head,
     graph: Graph,
     compiled_module: String,
     logger: gantz_egui::widget::log_view::Logger,
@@ -305,7 +303,7 @@ impl eframe::App for App {
         // Check for changes to the graph and auto-commit them.
         // FIXME: Rather than checking changed CA to monitor changes, ideally
         // `Gantz` widget can tell us this in a custom response.
-        let new_graph_ca = ca::graph_addr(&self.state.graph);
+        let new_graph_ca = gantz_ca::graph_addr(&self.state.graph);
         let head_commit = head_commit(&self.state.env.registry, &self.state.head).unwrap();
         if head_commit.graph != new_graph_ca {
             commit_graph_to_head(
@@ -324,7 +322,7 @@ impl eframe::App for App {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         // Ensure the active graph is registered.
-        let active_ca = ca::graph_addr(&self.state.graph);
+        let active_ca = gantz_ca::graph_addr(&self.state.graph);
         self.state
             .env
             .registry
@@ -353,27 +351,34 @@ impl eframe::App for App {
     }
 }
 
+/// Create a timestamp for a commit.
+pub fn timestamp() -> std::time::Duration {
+    let now = web_time::SystemTime::now();
+    now.duration_since(web_time::UNIX_EPOCH)
+        .unwrap_or(std::time::Duration::ZERO)
+}
+
 /// Initialise head to an initial commit pointing to an empty graph.
-fn init_head(registry: &mut NodeTypeRegistry) -> ca::Head {
+fn init_head(registry: &mut NodeTypeRegistry) -> gantz_ca::Head {
     // Register an empty graph.
     let graph = Graph::default();
-    let graph_ca = ca::graph_addr(&graph);
+    let graph_ca = gantz_ca::graph_addr(&graph);
     registry.graphs.insert(graph_ca, graph);
 
     // Register an initial commit.
-    let commit = ca::Commit::timestamped(None, graph_ca);
-    let commit_ca = ca::commit_addr(&commit);
+    let commit = gantz_ca::Commit::new(timestamp(), None, graph_ca);
+    let commit_ca = gantz_ca::commit_addr(&commit);
     registry.commits.insert(commit_ca, commit);
 
-    ca::Head::Commit(commit_ca)
+    gantz_ca::Head::Commit(commit_ca)
 }
 
 /// Commit the given graph to the given head.
 fn commit_graph_to_head(
     reg: &mut NodeTypeRegistry,
-    head: &mut ca::Head,
+    head: &mut gantz_ca::Head,
     graph: &Graph,
-    graph_ca: ca::GraphAddr,
+    graph_ca: gantz_ca::GraphAddr,
 ) {
     // Ensure the graph is registerd.
     reg.graphs
@@ -382,14 +387,14 @@ fn commit_graph_to_head(
 
     // Create a new commit.
     let parent_ca = *head_commit_ca(&reg.names, head).unwrap();
-    let commit = ca::Commit::timestamped(Some(parent_ca), graph_ca);
-    let commit_ca = ca::commit_addr(&commit);
+    let commit = gantz_ca::Commit::new(timestamp(), Some(parent_ca), graph_ca);
+    let commit_ca = gantz_ca::commit_addr(&commit);
     reg.commits.insert(commit_ca, commit);
 
     // Update head, or insure the name mapping is up-to-date.
     match *head {
-        ca::Head::Commit(ref mut ca) => *ca = commit_ca,
-        ca::Head::Branch(ref name) => {
+        gantz_ca::Head::Commit(ref mut ca) => *ca = commit_ca,
+        gantz_ca::Head::Branch(ref name) => {
             reg.names.insert(name.to_string(), commit_ca);
         }
     }
@@ -401,7 +406,7 @@ fn clone_graph(graph: &Graph) -> Graph {
 }
 
 /// Save the list of known graph addresses to storage.
-fn save_graph_addrs(storage: &mut dyn eframe::Storage, addrs: &[ca::GraphAddr]) {
+fn save_graph_addrs(storage: &mut dyn eframe::Storage, addrs: &[gantz_ca::GraphAddr]) {
     let graph_addrs_str = match ron::to_string(addrs) {
         Err(e) => {
             log::error!("Failed to serialize graph addresses: {e}");
@@ -414,7 +419,7 @@ fn save_graph_addrs(storage: &mut dyn eframe::Storage, addrs: &[ca::GraphAddr]) 
 }
 
 /// Save the list of known commit addresses to storage.
-fn save_commit_addrs(storage: &mut dyn eframe::Storage, addrs: &[ca::CommitAddr]) {
+fn save_commit_addrs(storage: &mut dyn eframe::Storage, addrs: &[gantz_ca::CommitAddr]) {
     let commit_addrs_str = match ron::to_string(addrs) {
         Err(e) => {
             log::error!("Failed to serialize commit addresses: {e}");
@@ -427,21 +432,24 @@ fn save_commit_addrs(storage: &mut dyn eframe::Storage, addrs: &[ca::CommitAddr]
 }
 
 /// Save all graphs to storage, keyed via their content address.
-fn save_graphs(storage: &mut dyn eframe::Storage, graphs: &HashMap<ca::GraphAddr, Graph>) {
+fn save_graphs(storage: &mut dyn eframe::Storage, graphs: &HashMap<gantz_ca::GraphAddr, Graph>) {
     for (&ca, graph) in graphs {
         save_graph(storage, ca, graph);
     }
 }
 
 /// Save all commits to storage, keyed via their content address.
-fn save_commits(storage: &mut dyn eframe::Storage, commits: &HashMap<ca::CommitAddr, ca::Commit>) {
+fn save_commits(
+    storage: &mut dyn eframe::Storage,
+    commits: &HashMap<gantz_ca::CommitAddr, gantz_ca::Commit>,
+) {
     for (&ca, commit) in commits {
         save_commit(storage, ca, commit);
     }
 }
 
 /// Save the given graph to storage.
-fn save_graph(storage: &mut dyn eframe::Storage, ca: ca::GraphAddr, graph: &Graph) {
+fn save_graph(storage: &mut dyn eframe::Storage, ca: gantz_ca::GraphAddr, graph: &Graph) {
     let key = graph_key(ca);
     let graph_str = match ron::to_string(graph) {
         Err(e) => {
@@ -455,7 +463,11 @@ fn save_graph(storage: &mut dyn eframe::Storage, ca: ca::GraphAddr, graph: &Grap
 }
 
 /// Save the given commit to storage.
-fn save_commit(storage: &mut dyn eframe::Storage, ca: ca::CommitAddr, commit: &ca::Commit) {
+fn save_commit(
+    storage: &mut dyn eframe::Storage,
+    ca: gantz_ca::CommitAddr,
+    commit: &gantz_ca::Commit,
+) {
     let key = commit_key(ca);
     let commit_str = match ron::to_string(commit) {
         Err(e) => {
@@ -469,7 +481,7 @@ fn save_commit(storage: &mut dyn eframe::Storage, ca: ca::CommitAddr, commit: &c
 }
 
 /// Save the graph names to storage.
-fn save_names(storage: &mut dyn eframe::Storage, names: &BTreeMap<String, ca::CommitAddr>) {
+fn save_names(storage: &mut dyn eframe::Storage, names: &BTreeMap<String, gantz_ca::CommitAddr>) {
     let graph_names_str = match ron::to_string(names) {
         Err(e) => {
             log::error!("Failed to serialize graph names: {e}");
@@ -495,7 +507,7 @@ fn save_gantz_gui_state(storage: &mut dyn eframe::Storage, state: &gantz_egui::w
 }
 
 /// Save the head to storage.
-fn save_head(storage: &mut dyn eframe::Storage, head: &ca::Head) {
+fn save_head(storage: &mut dyn eframe::Storage, head: &gantz_ca::Head) {
     let head_str = match ron::to_string(head) {
         Err(e) => {
             log::error!("Failed to serialize and save head: {e}");
@@ -508,7 +520,7 @@ fn save_head(storage: &mut dyn eframe::Storage, head: &ca::Head) {
 }
 
 /// Load the graph addresses from storage.
-fn load_graph_addrs(storage: &dyn eframe::Storage) -> Vec<ca::GraphAddr> {
+fn load_graph_addrs(storage: &dyn eframe::Storage) -> Vec<gantz_ca::GraphAddr> {
     let Some(graph_addrs_str) = storage.get_string(App::GRAPH_ADDRS_KEY) else {
         log::debug!("No existing graph address list to load");
         return vec![];
@@ -526,7 +538,7 @@ fn load_graph_addrs(storage: &dyn eframe::Storage) -> Vec<ca::GraphAddr> {
 }
 
 /// Load the commit addresses from storage.
-fn load_commit_addrs(storage: &dyn eframe::Storage) -> Vec<ca::CommitAddr> {
+fn load_commit_addrs(storage: &dyn eframe::Storage) -> Vec<gantz_ca::CommitAddr> {
     let Some(commit_addrs_str) = storage.get_string(App::COMMIT_ADDRS_KEY) else {
         log::debug!("No existing commit address list to load");
         return vec![];
@@ -547,8 +559,8 @@ fn load_commit_addrs(storage: &dyn eframe::Storage) -> Vec<ca::CommitAddr> {
 /// those graphs into memory.
 fn load_graphs(
     storage: &dyn eframe::Storage,
-    addrs: impl IntoIterator<Item = ca::GraphAddr>,
-) -> HashMap<ca::GraphAddr, Graph> {
+    addrs: impl IntoIterator<Item = gantz_ca::GraphAddr>,
+) -> HashMap<gantz_ca::GraphAddr, Graph> {
     addrs
         .into_iter()
         .filter_map(|ca| Some((ca, load_graph(storage, ca)?)))
@@ -559,8 +571,8 @@ fn load_graphs(
 /// load those commits into memory.
 fn load_commits(
     storage: &dyn eframe::Storage,
-    addrs: impl IntoIterator<Item = ca::CommitAddr>,
-) -> HashMap<ca::CommitAddr, ca::Commit> {
+    addrs: impl IntoIterator<Item = gantz_ca::CommitAddr>,
+) -> HashMap<gantz_ca::CommitAddr, gantz_ca::Commit> {
     addrs
         .into_iter()
         .filter_map(|ca| Some((ca, load_commit(storage, ca)?)))
@@ -568,7 +580,7 @@ fn load_commits(
 }
 
 /// Load the graph with the given address from storage.
-fn load_graph(storage: &dyn eframe::Storage, ca: ca::GraphAddr) -> Option<Graph> {
+fn load_graph(storage: &dyn eframe::Storage, ca: gantz_ca::GraphAddr) -> Option<Graph> {
     let key = graph_key(ca);
     let Some(graph_str) = storage.get_string(&key) else {
         log::debug!("No graph found for content address {key}");
@@ -587,7 +599,10 @@ fn load_graph(storage: &dyn eframe::Storage, ca: ca::GraphAddr) -> Option<Graph>
 }
 
 /// Load the commit with the given address from storage.
-fn load_commit(storage: &dyn eframe::Storage, ca: ca::CommitAddr) -> Option<ca::Commit> {
+fn load_commit(
+    storage: &dyn eframe::Storage,
+    ca: gantz_ca::CommitAddr,
+) -> Option<gantz_ca::Commit> {
     let key = commit_key(ca);
     let Some(commit_str) = storage.get_string(&key) else {
         log::debug!("No commit found for address {key}");
@@ -606,7 +621,7 @@ fn load_commit(storage: &dyn eframe::Storage, ca: ca::CommitAddr) -> Option<ca::
 }
 
 /// Load the graph names from storage.
-fn load_names(storage: &dyn eframe::Storage) -> BTreeMap<String, ca::CommitAddr> {
+fn load_names(storage: &dyn eframe::Storage) -> BTreeMap<String, gantz_ca::CommitAddr> {
     let Some(graph_names_str) = storage.get_string(App::NAMES_KEY) else {
         log::debug!("No existing graph names list to load");
         return BTreeMap::default();
@@ -624,7 +639,7 @@ fn load_names(storage: &dyn eframe::Storage) -> BTreeMap<String, ca::CommitAddr>
 }
 
 /// Load the active head.
-fn load_head(storage: &dyn eframe::Storage) -> Option<ca::Head> {
+fn load_head(storage: &dyn eframe::Storage) -> Option<gantz_ca::Head> {
     let Some(head_str) = storage.get_string(App::HEAD_KEY) else {
         log::debug!("No existing head to load");
         return None;
@@ -666,12 +681,12 @@ fn load_gantz_gui_state(storage: &dyn eframe::Storage) -> gantz_egui::widget::Ga
 }
 
 /// The key for a particular graph in storage.
-fn graph_key(ca: ca::GraphAddr) -> String {
+fn graph_key(ca: gantz_ca::GraphAddr) -> String {
     format!("{ca}")
 }
 
 /// The key for a particular commit in storage.
-fn commit_key(ca: ca::CommitAddr) -> String {
+fn commit_key(ca: gantz_ca::CommitAddr) -> String {
     format!("{ca}")
 }
 
@@ -714,7 +729,7 @@ fn process_cmds(state: &mut State) {
                 if let Some(commit_ca) = state.env.registry.names.get(&name) {
                     let commit = &state.env.registry.commits[commit_ca];
                     if ca == commit.graph {
-                        set_head(state, ca::Head::Branch(name.to_string()));
+                        set_head(state, gantz_ca::Head::Branch(name.to_string()));
                     } else {
                         log::debug!(
                             "Attempted to open named graph, but the graph address has changed"
@@ -748,22 +763,25 @@ fn fmt_compiled_module(module: &[ExprKind]) -> String {
 
 /// Look-up the commit address pointed to by the given head.
 fn head_commit_ca<'a>(
-    names: &'a BTreeMap<String, ca::CommitAddr>,
-    head: &'a ca::Head,
-) -> Option<&'a ca::CommitAddr> {
+    names: &'a BTreeMap<String, gantz_ca::CommitAddr>,
+    head: &'a gantz_ca::Head,
+) -> Option<&'a gantz_ca::CommitAddr> {
     match head {
-        ca::Head::Branch(name) => names.get(name),
-        ca::Head::Commit(ca) => Some(ca),
+        gantz_ca::Head::Branch(name) => names.get(name),
+        gantz_ca::Head::Commit(ca) => Some(ca),
     }
 }
 
 /// Look-up the commit pointed to by the given head.
-fn head_commit<'a>(reg: &'a NodeTypeRegistry, head: &'a ca::Head) -> Option<&'a ca::Commit> {
+fn head_commit<'a>(
+    reg: &'a NodeTypeRegistry,
+    head: &'a gantz_ca::Head,
+) -> Option<&'a gantz_ca::Commit> {
     head_commit_ca(&reg.names, head).and_then(|ca| reg.commits.get(&ca))
 }
 
 /// Look-up the graph pointed to by the head.
-fn head_graph<'a>(reg: &'a NodeTypeRegistry, head: &'a ca::Head) -> Option<&'a Graph> {
+fn head_graph<'a>(reg: &'a NodeTypeRegistry, head: &'a gantz_ca::Head) -> Option<&'a Graph> {
     head_commit(reg, head).and_then(|commit| reg.graphs.get(&commit.graph))
 }
 
@@ -783,18 +801,18 @@ fn gui(ctx: &egui::Context, state: &mut State) {
                     // If a name was given, ensure it maps to the CA.
                     Some(name) => {
                         state.env.registry.names.insert(name.to_string(), commit_ca);
-                        state.head = ca::Head::Branch(name.to_string());
+                        state.head = gantz_ca::Head::Branch(name.to_string());
                     }
                     // Otherwise the name was cleared, so just point to the commit.
                     None => {
-                        state.head = ca::Head::Commit(commit_ca);
+                        state.head = gantz_ca::Head::Commit(commit_ca);
                     }
                 }
             // The given graph name was removed.
             } else if let Some(name) = response.graph_name_removed() {
-                if let ca::Head::Branch(ref head_name) = state.head {
+                if let gantz_ca::Head::Branch(ref head_name) = state.head {
                     if *head_name == name {
-                        state.head = ca::Head::Commit(commit_ca);
+                        state.head = gantz_ca::Head::Commit(commit_ca);
                     }
                 }
                 state.env.registry.names.remove(&name);
@@ -818,7 +836,7 @@ fn gui(ctx: &egui::Context, state: &mut State) {
 /// Set the active graph as the graph with the given CA.
 ///
 /// Panics if the given head does not exist.
-fn set_head(state: &mut State, new_head: ca::Head) {
+fn set_head(state: &mut State, new_head: gantz_ca::Head) {
     let new_head_commit_ca = head_commit_ca(&state.env.registry.names, &new_head).unwrap();
     let new_head_graph_ca = state.env.registry.commits[&new_head_commit_ca].graph;
     let graph = &state.env.registry.graphs[&new_head_graph_ca];
@@ -855,7 +873,7 @@ fn prune_unused_graphs(reg: &mut NodeTypeRegistry) {
 /// within the registry.
 ///
 /// This is used to determine whether or not to remove unused graphs.
-fn graph_in_use(reg: &NodeTypeRegistry, ca: ca::GraphAddr) -> bool {
+fn graph_in_use(reg: &NodeTypeRegistry, ca: gantz_ca::GraphAddr) -> bool {
     reg.names
         .values()
         .any(|commit_ca| ca == reg.commits[commit_ca].graph)
@@ -863,13 +881,13 @@ fn graph_in_use(reg: &NodeTypeRegistry, ca: ca::GraphAddr) -> bool {
 }
 
 /// Whether or not the graph contains a subgraph with the given CA.
-fn graph_contains_ca(g: &Graph, ca: ca::GraphAddr) -> bool {
+fn graph_contains_ca(g: &Graph, ca: gantz_ca::GraphAddr) -> bool {
     g.node_references().any(|n_ref| {
         let node = n_ref.weight();
         ((&**node) as &dyn Any)
             .downcast_ref::<GraphNode>()
             .map(|graph| {
-                let graph_ca = ca::graph_addr(&graph.graph);
+                let graph_ca = gantz_ca::graph_addr(&graph.graph);
                 ca == graph_ca || graph_contains_ca(&graph.graph, ca)
             })
             .unwrap_or(false)

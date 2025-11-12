@@ -1,12 +1,49 @@
 //! The gantz content-address implementation for graphs.
 
-use crate::compile::Edges;
-#[doc(inline)]
-pub use gantz_ca::*;
+pub use crate::{
+    ContentAddr, content_addr,
+    hash::{CaHash, Hasher},
+};
 use petgraph::visit::{
     Data, EdgeRef, IntoEdgeReferences, IntoNodeReferences, NodeIndexable, NodeRef,
 };
-use std::{collections::HashMap, hash::Hash};
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, fmt, hash::Hash, ops};
+
+/// The content address of a graph.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
+pub struct GraphAddr(ContentAddr);
+
+impl ops::Deref for GraphAddr {
+    type Target = ContentAddr;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<ContentAddr> for GraphAddr {
+    fn from(ca: ContentAddr) -> Self {
+        Self(ca)
+    }
+}
+
+impl From<GraphAddr> for ContentAddr {
+    fn from(addr: GraphAddr) -> Self {
+        addr.0
+    }
+}
+
+impl CaHash for GraphAddr {
+    fn hash(&self, hasher: &mut Hasher) {
+        CaHash::hash(&self.0, hasher);
+    }
+}
+
+impl fmt::Display for GraphAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// Calculate the content address of a graph.
 ///
@@ -26,29 +63,29 @@ use std::{collections::HashMap, hash::Hash};
 ///     - hash the target node index (u64, big-endian).
 ///     - hash the source node's output (u16, big-endian).
 ///     - hash the target node's input (u16, big-endian).
-pub fn graph<G>(g: G) -> ContentAddr
+pub fn addr<G>(g: G) -> GraphAddr
 where
     G: Data + IntoEdgeReferences + IntoNodeReferences + NodeIndexable,
     G::NodeId: Eq + Hash + Ord,
-    G::EdgeWeight: Edges,
+    G::EdgeWeight: CaHash + Ord,
     G::NodeWeight: CaHash,
 {
     let mut hasher = Hasher::new();
     hash_graph(g, &mut hasher);
-    ContentAddr(hasher.finalize().into())
+    GraphAddr(ContentAddr(hasher.finalize().into()))
 }
 
 /// A more efficient alternative to [`graph`] for when the node content
 /// addresses are already known.
-pub fn graph_with_nodes<G>(g: G, nodes: &HashMap<G::NodeId, ContentAddr>) -> ContentAddr
+pub fn addr_with_nodes<G>(g: G, nodes: &HashMap<G::NodeId, ContentAddr>) -> GraphAddr
 where
     G: Data + IntoEdgeReferences + IntoNodeReferences + NodeIndexable,
     G::NodeId: Hash + Ord,
-    G::EdgeWeight: Edges,
+    G::EdgeWeight: CaHash + Ord,
 {
     let mut hasher = Hasher::new();
     hash_graph_with_nodes(g, nodes, &mut hasher);
-    ContentAddr(hasher.finalize().into())
+    GraphAddr(ContentAddr(hasher.finalize().into()))
 }
 
 /// The implementation of [`graph`] with hasher provided.
@@ -56,10 +93,10 @@ pub fn hash_graph<G>(g: G, hasher: &mut Hasher)
 where
     G: Data + IntoEdgeReferences + IntoNodeReferences + NodeIndexable,
     G::NodeId: Eq + Hash + Ord,
-    G::EdgeWeight: Edges,
+    G::EdgeWeight: CaHash + Ord,
     G::NodeWeight: CaHash,
 {
-    let nodes = nodes(g);
+    let nodes = node_addrs(g);
     hash_graph_with_nodes(g, &nodes, hasher);
 }
 
@@ -68,7 +105,7 @@ pub fn hash_graph_with_nodes<G>(g: G, nodes: &HashMap<G::NodeId, ContentAddr>, h
 where
     G: Data + IntoEdgeReferences + IntoNodeReferences + NodeIndexable,
     G::NodeId: Hash + Ord,
-    G::EdgeWeight: Edges,
+    G::EdgeWeight: CaHash + Ord,
 {
     const OUT_OF_RANGE: &str = "graph node index exceeds u64::MAX";
 
@@ -88,23 +125,20 @@ where
     for e_ref in g.edge_references() {
         let src: u64 = g.to_index(e_ref.source()).try_into().expect(OUT_OF_RANGE);
         let dst: u64 = g.to_index(e_ref.target()).try_into().expect(OUT_OF_RANGE);
-        for edge in e_ref.weight().edges() {
-            edges.push((src, dst, edge));
-        }
+        edges.push((src, dst, e_ref));
     }
-    edges.sort();
+    edges.sort_by(|(sa, da, ea), (sb, db, eb)| (sa, da, ea.weight()).cmp(&(sb, db, eb.weight())));
 
     // Hash all edges as (src, dst, src-output, dst-input).
-    for (src, dst, edge) in edges {
+    for (src, dst, e_ref) in edges {
         CaHash::hash(&src, hasher);
         CaHash::hash(&dst, hasher);
-        CaHash::hash(&edge.output.0, hasher);
-        CaHash::hash(&edge.input.0, hasher);
+        CaHash::hash(e_ref.weight(), hasher);
     }
 }
 
 /// Hash all the nodes and return a map from node IDs to their content addresses.
-pub fn nodes<G>(g: G) -> HashMap<G::NodeId, ContentAddr>
+pub fn node_addrs<G>(g: G) -> HashMap<G::NodeId, ContentAddr>
 where
     G: Data + IntoNodeReferences + NodeIndexable,
     G::NodeId: Eq + std::hash::Hash,

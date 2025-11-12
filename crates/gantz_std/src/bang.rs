@@ -1,7 +1,4 @@
-use gantz_core::{
-    ca::CaHash,
-    steel::{parser::ast::ExprKind, steel_vm::engine::Engine},
-};
+use gantz_core::steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 use serde::{Deserialize, Serialize};
 
 /// A simple node for pushing evaluation through the graph.
@@ -22,8 +19,8 @@ impl<Env> gantz_core::Node<Env> for Bang {
     }
 }
 
-impl CaHash for Bang {
-    fn hash(&self, hasher: &mut gantz_core::ca::Hasher) {
+impl gantz_ca::CaHash for Bang {
+    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         "gantz_std::Bang".hash(hasher);
     }
 }

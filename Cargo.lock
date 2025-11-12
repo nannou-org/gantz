@@ -2738,6 +2738,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "hex",
+ "petgraph",
  "serde",
 ]
 
@@ -2767,6 +2768,7 @@ dependencies = [
  "egui_extras",
  "egui_graph",
  "egui_tiles",
+ "gantz_ca",
  "gantz_core",
  "gantz_std",
  "hex",
@@ -2788,6 +2790,7 @@ dependencies = [
 name = "gantz_std"
 version = "0.1.0"
 dependencies = [
+ "gantz_ca",
  "gantz_core",
  "log",
  "serde",

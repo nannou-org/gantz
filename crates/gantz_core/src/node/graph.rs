@@ -270,7 +270,7 @@ where
     N: CaHash,
 {
     fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        crate::ca::hash_graph(&self.graph, hasher);
+        gantz_ca::hash_graph(&self.graph, hasher);
     }
 }
 

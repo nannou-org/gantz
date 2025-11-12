@@ -1,7 +1,4 @@
-use gantz_core::{
-    ca::CaHash,
-    steel::{parser::ast::ExprKind, steel_vm::engine::Engine},
-};
+use gantz_core::steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 use serde::{Deserialize, Serialize};
 
 /// Simple `Add` operation node.
@@ -31,8 +28,8 @@ impl<Env> gantz_core::Node<Env> for Add {
     }
 }
 
-impl CaHash for Add {
-    fn hash(&self, hasher: &mut gantz_core::ca::Hasher) {
+impl gantz_ca::CaHash for Add {
+    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         "gantz_std::Add".hash(hasher);
     }
 }
