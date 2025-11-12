@@ -1,6 +1,7 @@
 //! A dedicated hash trait for constructing a content address.
 
-use crate::Hasher;
+/// The [`blake3`] hasher used for gantz' content addressing.
+pub type Hasher = blake3::Hasher;
 
 /// Types that can be hashed to produce a content address.
 pub trait CaHash {

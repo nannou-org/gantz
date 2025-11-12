@@ -1,19 +1,14 @@
-use crate::{Cmd, NodeCtx, NodeUi, widget::node_inspector};
-use gantz_core::ca::{self, ContentAddr};
+use crate::{Cmd, NodeCtx, NodeUi, ca, widget::node_inspector};
 use serde::{Deserialize, Serialize};
 use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// A node abstraction composed from a graph of other nodes.
 ///
-/// A thin wrapper around [`gantz_core::node::Graph`] that allows holding it
-/// via an `Arc`, giving the graph a unique name and provides the content
-/// address pre-computed to avoid hashing the graph on every update.
-///
-/// Similar to [`gantz_core::node::GraphNode`], but with a precalculated CA and
-/// optional name.
+/// Similar to [`gantz_core::node::GraphNode`], but sourced from the graph
+/// registry via its content address.
 #[derive(Clone, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct NamedGraph {
-    ca: ContentAddr,
+    graph: ca::GraphAddr,
     name: String,
 }
 
@@ -24,13 +19,13 @@ pub trait GraphRegistry {
     type Node;
     /// Given the content address of a graph, return a reference to the
     /// associated graph.
-    fn graph(&self, ca: ContentAddr) -> Option<&gantz_core::node::graph::Graph<Self::Node>>;
+    fn graph(&self, ca: ca::GraphAddr) -> Option<&gantz_core::node::graph::Graph<Self::Node>>;
 }
 
 impl NamedGraph {
     /// Construct a `NamedGraph` node.
-    pub fn new(name: String, ca: ContentAddr) -> Self {
-        Self { name, ca }
+    pub fn new(name: String, graph: ca::GraphAddr) -> Self {
+        Self { name, graph }
     }
 }
 
@@ -46,20 +41,20 @@ where
 
     fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> ExprKind {
         let env = ctx.env();
-        env.graph(self.ca)
+        env.graph(self.graph)
             .map(|g| gantz_core::node::graph::nested_expr(env, g, ctx.path(), ctx.inputs()))
             // FIXME: Check if graph
             .expect("failed to find graph for CA")
     }
 
     fn n_inputs(&self, env: &Env) -> usize {
-        env.graph(self.ca)
+        env.graph(self.graph)
             .map(|g| gantz_core::node::graph::inlets(g).count())
             .unwrap_or(0)
     }
 
     fn n_outputs(&self, env: &Env) -> usize {
-        env.graph(self.ca)
+        env.graph(self.graph)
             .map(|g| gantz_core::node::graph::outlets(g).count())
             .unwrap_or(0)
     }
@@ -80,7 +75,7 @@ where
         visitor: &mut dyn gantz_core::node::Visitor<Env>,
     ) {
         let env = ctx.env();
-        if let Some(g) = env.graph(self.ca) {
+        if let Some(g) = env.graph(self.graph) {
             gantz_core::graph::visit(env, g, ctx.path(), visitor);
         }
     }
@@ -88,7 +83,7 @@ where
 
 impl gantz_core::ca::CaHash for NamedGraph {
     fn hash(&self, hasher: &mut ca::Hasher) {
-        self.ca.hash(hasher);
+        self.graph.hash(hasher);
         self.name.hash(hasher);
     }
 }
@@ -104,7 +99,7 @@ impl<Env> NodeUi<Env> for NamedGraph {
         let res = ui.add(egui::Label::new(&self.name).selectable(false));
         if ui.response().double_clicked() {
             ctx.cmds
-                .push(Cmd::OpenNamedGraph(self.name.clone(), self.ca));
+                .push(Cmd::OpenNamedGraph(self.name.clone(), self.graph));
         }
         res
     }
@@ -116,7 +111,7 @@ impl<Env> NodeUi<Env> for NamedGraph {
                 ui.label("CA");
             });
             row.col(|ui| {
-                let ca_string = format!("{}", self.ca.display_short());
+                let ca_string = format!("{}", self.graph.display_short());
                 ui.add(egui::Label::new(egui::RichText::new(ca_string).monospace()));
             });
         });

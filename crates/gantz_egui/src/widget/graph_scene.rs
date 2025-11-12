@@ -5,7 +5,7 @@ use egui_graph::{
 };
 use gantz_core::{
     Edge, Node,
-    node::{self, GraphNode, graph::Graph},
+    node::{self, graph::Graph},
 };
 use petgraph::{
     self,
@@ -19,7 +19,7 @@ pub trait ToGraphMut {
     /// The type of the node used within the [`Graph`].
     type Node;
     /// If this node is a nested graph, return a mutable reference to it.
-    fn to_graph_mut(&mut self) -> Option<&mut GraphNode<Self::Node>>;
+    fn to_graph_mut(&mut self) -> Option<&mut Graph<Self::Node>>;
 }
 
 pub type EdgeIndex = petgraph::graph::EdgeIndex<usize>;
@@ -305,7 +305,7 @@ where
     // If there are more elements in the path, this node should be a graph node
     // Try to get the nested graph and continue traversing
     let nested = node.to_graph_mut()?;
-    index_path_node_mut(&mut nested.graph, &path[1..])
+    index_path_node_mut(nested, &path[1..])
 }
 
 /// Index into the given graph using the given path.
@@ -313,9 +313,9 @@ where
 /// Returns `None` in the case that `path` is empty, or if there is no node at a
 /// given `node::Id` in the path.
 pub fn index_path_graph_mut<'a, N>(
-    graph: &'a mut GraphNode<N>,
+    graph: &'a mut Graph<N>,
     path: &[node::Id],
-) -> Option<&'a mut GraphNode<N>>
+) -> Option<&'a mut Graph<N>>
 where
     N: ToGraphMut<Node = N>,
 {

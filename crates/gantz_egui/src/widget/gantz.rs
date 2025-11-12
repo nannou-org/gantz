@@ -1,5 +1,5 @@
 use crate::{
-    Cmd, ContentAddr, NodeCtx, NodeUi,
+    Cmd, NodeCtx, NodeUi, ca,
     widget::{
         self, GraphScene, GraphSceneState,
         graph_scene::{self, ToGraphMut},
@@ -44,8 +44,8 @@ where
     Env: NodeTypeRegistry,
 {
     env: &'a mut Env,
-    root: &'a mut gantz_core::node::GraphNode<Env::Node>,
-    head: widget::graph_select::Head<'a>,
+    root: &'a mut gantz_core::node::graph::Graph<Env::Node>,
+    head: &'a ca::Head,
     log_source: Option<LogSource>,
 }
 
@@ -129,7 +129,7 @@ impl GantzResponse {
     }
 
     /// If a graph was selected this is its content address and name (if named).
-    pub fn graph_selected(&self) -> Option<&(Option<String>, ContentAddr)> {
+    pub fn graph_selected(&self) -> Option<&ca::Head> {
         self.graph_select.as_ref().and_then(|g| g.selected.as_ref())
     }
 
@@ -160,8 +160,8 @@ where
     /// The head CA should match the `root`'s CA.
     pub fn new(
         env: &'a mut Env,
-        root: &'a mut gantz_core::node::GraphNode<Env::Node>,
-        head: widget::graph_select::Head<'a>,
+        root: &'a mut gantz_core::node::graph::Graph<Env::Node>,
+        head: &'a ca::Head,
     ) -> Self {
         Self {
             env,
@@ -502,7 +502,7 @@ fn pane_ui<R>(ui: &mut egui::Ui, pane: impl FnOnce(&mut egui::Ui) -> R) -> egui:
 
 fn graph_select<Env>(
     env: &mut Env,
-    head: widget::graph_select::Head,
+    head: &ca::Head,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse>
 where
@@ -513,7 +513,7 @@ where
 
 fn graph_scene<Env, N>(
     env: &Env,
-    graph: &mut gantz_core::node::GraphNode<N>,
+    graph: &mut gantz_core::node::graph::Graph<N>,
     state: &mut GantzState,
     vm: &mut Engine,
     ui: &mut egui::Ui,
@@ -636,7 +636,7 @@ fn graph_scene<Env, N>(
 
 fn command_palette<Env>(
     env: &Env,
-    root: &mut gantz_core::node::GraphNode<Env::Node>,
+    root: &mut gantz_core::node::graph::Graph<Env::Node>,
     state: &mut GantzState,
     vm: &mut Engine,
     ui: &mut egui::Ui,
@@ -673,7 +673,7 @@ fn command_palette<Env>(
 }
 
 fn graph_config<N>(
-    root: &mut gantz_core::node::GraphNode<N>,
+    root: &mut gantz_core::node::graph::Graph<N>,
     state: &mut GantzState,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<egui::Response>
@@ -727,7 +727,7 @@ fn trace_view(
 
 fn node_inspector<Env, N>(
     env: &Env,
-    root: &mut gantz_core::node::GraphNode<N>,
+    root: &mut gantz_core::node::graph::Graph<N>,
     vm: &mut Engine,
     state: &mut GantzState,
     ui: &mut egui::Ui,
@@ -742,7 +742,7 @@ where
                 let graph = graph_scene::index_path_graph_mut(root, &state.path).unwrap();
                 let ids: Vec<_> = graph.node_references().map(|n_ref| n_ref.id()).collect();
                 // Collect the inlets and outlets.
-                let (inlets, outlets) = crate::inlet_outlet_ids::<Env, _>(&graph.graph);
+                let (inlets, outlets) = crate::inlet_outlet_ids::<Env, _>(graph);
                 for id in ids {
                     let mut frame = egui::Frame::group(ui.style());
                     if state.graph_scene.interaction.selection.nodes.contains(&id) {

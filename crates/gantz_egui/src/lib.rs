@@ -1,7 +1,6 @@
 //! A suite of widgets, nodes and implementations for creating a GUI around
 //! gantz using `egui`.
 
-use gantz_core::ca::ContentAddr;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use steel::{
     SteelErr, SteelVal,
@@ -9,6 +8,7 @@ use steel::{
     steel_vm::engine::Engine,
 };
 
+pub mod ca;
 mod impls;
 pub mod node;
 pub mod widget;
@@ -64,7 +64,7 @@ pub enum Cmd {
     PushEval(Vec<node::Id>),
     PullEval(Vec<node::Id>),
     OpenGraph(Vec<node::Id>),
-    OpenNamedGraph(String, ContentAddr),
+    OpenNamedGraph(String, ca::GraphAddr),
 }
 
 impl<'a, Env, N> NodeUi<Env> for &'a mut N

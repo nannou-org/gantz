@@ -1,9 +1,9 @@
 use crate::{
-    graph::{Graph, GraphNode},
+    graph::{self, Graph, GraphNode},
     node::Node,
 };
 use bevy::ecs::resource::Resource;
-use gantz_core::ca::ContentAddr;
+use gantz_egui::ca;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -25,10 +25,12 @@ pub struct Environment {
 /// The registry for all named graphs, i.e. nodes composed from other nodes.
 #[derive(Default, Deserialize, Serialize)]
 pub struct NodeTypeRegistry {
-    /// A mapping from content addresses to graphs.
-    pub graphs: HashMap<ContentAddr, Graph>,
+    /// A mapping from graph addresses to graphs.
+    pub graphs: HashMap<ca::GraphAddr, Graph>,
+    /// A mapping from commit addresses to commits.
+    pub commits: HashMap<ca::CommitAddr, ca::Commit>,
     /// A mapping from names to graph content addresses.
-    pub names: BTreeMap<String, ContentAddr>,
+    pub names: BTreeMap<String, ca::CommitAddr>,
 }
 
 /// Constructors for all primitive nodes.
@@ -50,9 +52,10 @@ impl gantz_egui::widget::gantz::NodeTypeRegistry for Environment {
         self.registry
             .names
             .get(node_type)
-            .map(|&ca| {
-                let named = gantz_egui::node::NamedGraph::new(node_type.to_string(), ca);
-                Box::new(named) as Box<_>
+            .and_then(|commit_ca| {
+                let graph_ca = self.registry.commits.get(commit_ca)?.graph;
+                let named = gantz_egui::node::NamedGraph::new(node_type.to_string(), graph_ca);
+                Some(Box::new(named) as Box<_>)
             })
             .or_else(|| self.primitives.get(node_type).map(|f| (f)()))
     }
@@ -61,20 +64,21 @@ impl gantz_egui::widget::gantz::NodeTypeRegistry for Environment {
 // Provide the `GraphRegistry` implementation required by `gantz_egui`.
 impl gantz_egui::node::graph::GraphRegistry for Environment {
     type Node = Box<dyn Node>;
-    fn graph(&self, ca: ContentAddr) -> Option<&gantz_core::node::graph::Graph<Self::Node>> {
+    fn graph(&self, ca: ca::GraphAddr) -> Option<&gantz_core::node::graph::Graph<Self::Node>> {
         self.registry.graphs.get(&ca)
     }
 }
 
 // Provide the `GraphRegistry` implementation required by the `GraphSelect` widget.
 impl gantz_egui::widget::graph_select::GraphRegistry for Environment {
-    fn addrs(&self) -> Vec<ContentAddr> {
-        let mut vec: Vec<_> = self.registry.graphs.keys().copied().collect();
-        vec.sort();
-        vec
+    fn commits(&self) -> Vec<(&ca::CommitAddr, &ca::Commit)> {
+        // Sort commits by newest to oldest.
+        let mut commits: Vec<_> = self.registry.commits.iter().collect();
+        commits.sort_by(|(_, a), (_, b)| b.timestamp.cmp(&a.timestamp));
+        commits
     }
 
-    fn names(&self) -> &BTreeMap<String, ContentAddr> {
+    fn names(&self) -> &BTreeMap<String, ca::CommitAddr> {
         &self.registry.names
     }
 }
@@ -115,13 +119,77 @@ fn register_primitive(
     primitives.insert(name.into(), Box::new(new) as Box<_>)
 }
 
+/// Initialise head to a new initial commit pointing to an empty graph.
+pub fn init_head(registry: &mut NodeTypeRegistry) -> ca::Head {
+    // Register an empty graph.
+    let graph = Graph::default();
+    let graph_ca = ca::graph_addr(&graph);
+    registry.graphs.insert(graph_ca, graph);
+
+    // Register an initial commit.
+    let commit = ca::Commit::timestamped(None, graph_ca);
+    let commit_ca = ca::commit_addr(&commit);
+    registry.commits.insert(commit_ca, commit);
+
+    ca::Head::Commit(commit_ca)
+}
+
+/// Commit the given graph to the given head.
+pub fn commit_graph_to_head(
+    reg: &mut NodeTypeRegistry,
+    head: &mut ca::Head,
+    graph: &Graph,
+    graph_ca: ca::GraphAddr,
+) {
+    // Ensure the graph is registerd.
+    reg.graphs
+        .entry(graph_ca)
+        .or_insert_with(|| graph::clone(graph));
+
+    // Create a new commit.
+    let parent_ca = *head_commit_ca(&reg.names, head).unwrap();
+    let commit = ca::Commit::timestamped(Some(parent_ca), graph_ca);
+    let commit_ca = ca::commit_addr(&commit);
+    reg.commits.insert(commit_ca, commit);
+
+    // Update head, or insure the name mapping is up-to-date.
+    match *head {
+        ca::Head::Commit(ref mut ca) => *ca = commit_ca,
+        ca::Head::Branch(ref name) => {
+            reg.names.insert(name.to_string(), commit_ca);
+        }
+    }
+}
+
+/// Look-up the commit address pointed to by the given head.
+pub fn head_commit_ca<'a>(
+    names: &'a BTreeMap<String, ca::CommitAddr>,
+    head: &'a ca::Head,
+) -> Option<&'a ca::CommitAddr> {
+    match head {
+        ca::Head::Branch(name) => names.get(name),
+        ca::Head::Commit(ca) => Some(ca),
+    }
+}
+
+/// Look-up the commit pointed to by the given head.
+pub fn head_commit<'a>(reg: &'a NodeTypeRegistry, head: &'a ca::Head) -> Option<&'a ca::Commit> {
+    head_commit_ca(&reg.names, head).and_then(|ca| reg.commits.get(&ca))
+}
+
+/// Look-up the graph pointed to by the head.
+pub fn head_graph<'a>(reg: &'a NodeTypeRegistry, head: &'a ca::Head) -> Option<&'a Graph> {
+    head_commit(reg, head).and_then(|commit| reg.graphs.get(&commit.graph))
+}
+
 /// Prune all unused graph entries from the registry.
-pub fn prune_unused_graphs(reg: &mut NodeTypeRegistry, active_ca: ContentAddr) {
+pub fn prune_unused_graphs(reg: &mut NodeTypeRegistry, head: &ca::Head) {
+    let head_graph_ca = head_commit(&reg, head).map(|c| c.graph);
     let to_remove: Vec<_> = reg
         .graphs
         .keys()
         .copied()
-        .filter(|&ca| ca != active_ca && !graph_in_use(reg, ca))
+        .filter(|&ca| Some(ca) != head_graph_ca && !graph_in_use(reg, ca))
         .collect();
     for ca in to_remove {
         reg.graphs.remove(&ca);
@@ -132,21 +200,31 @@ pub fn prune_unused_graphs(reg: &mut NodeTypeRegistry, active_ca: ContentAddr) {
 /// within the registry.
 ///
 /// This is used to determine whether or not to remove unused graphs.
-fn graph_in_use(reg: &NodeTypeRegistry, ca: ContentAddr) -> bool {
-    reg.names.values().any(|&n_ca| ca == n_ca)
+fn graph_in_use(reg: &NodeTypeRegistry, ca: ca::GraphAddr) -> bool {
+    reg.names
+        .values()
+        .any(|commit_ca| ca == reg.commits[commit_ca].graph)
         || reg.graphs.values().any(|g| graph_contains_ca(g, ca))
 }
 
 /// Whether or not the graph contains a subgraph with the given CA.
-fn graph_contains_ca(g: &Graph, ca: ContentAddr) -> bool {
+fn graph_contains_ca(g: &Graph, ca: ca::GraphAddr) -> bool {
     g.node_references().any(|n_ref| {
         let node = n_ref.weight();
         ((&**node) as &dyn Any)
             .downcast_ref::<GraphNode>()
             .map(|graph| {
-                let graph_ca = gantz_core::ca::graph(&graph.graph);
+                let graph_ca = ca::graph_addr(&graph.graph);
                 ca == graph_ca || graph_contains_ca(&graph.graph, ca)
             })
             .unwrap_or(false)
     })
+}
+
+/// Prunes all commits pointing to graphs that no longer exist.
+///
+/// Intended for running after `prune_unused_graphs`.
+pub fn prune_graphless_commits(reg: &mut NodeTypeRegistry) {
+    reg.commits
+        .retain(|_ca, commit| reg.graphs.contains_key(&commit.graph));
 }

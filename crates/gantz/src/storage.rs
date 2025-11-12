@@ -1,61 +1,81 @@
 use crate::{
     Active,
     env::{self, Environment, NodeTypeRegistry},
-    graph::{self, Graph, GraphNode},
+    graph,
     node::Node,
 };
 use bevy::log;
 use bevy_pkv::PkvStore;
-use gantz_core::ca::ContentAddr;
+use gantz_egui::ca;
 use std::collections::{BTreeMap, HashMap};
 
 mod key {
     /// The key at which the gantz widget state is to be saved/loaded.
     pub const GANTZ_GUI_STATE: &str = "gantz-widget-state";
-    /// All known graph content addresses.
+    /// All known graph addresses.
     pub const GRAPH_ADDRS: &str = "graph-addrs";
+    /// All known commit addresses.
+    pub const COMMIT_ADDRS: &str = "commit-addrs";
     /// The key at which the mapping from names to graph CAs is stored.
-    pub const GRAPH_NAMES: &str = "graph-names";
-    /// The key at which the content address of the active graph is stored.
-    pub const ACTIVE_GRAPH: &str = "active-graph";
-    /// The key at which the name of the active graph is stored.
-    pub const ACTIVE_GRAPH_NAME: &str = "active-graph-name";
+    pub const NAMES: &str = "graph-names";
+    /// The key at which the current head is stored.
+    pub const HEAD: &str = "head";
 
     /// The key for a particular graph in storage.
-    pub fn graph(ca: gantz_core::ca::ContentAddr) -> String {
+    pub fn graph(ca: gantz_egui::ca::GraphAddr) -> String {
+        format!("{}", ca)
+    }
+
+    /// The key for a particular commit in storage.
+    pub fn commit(ca: gantz_egui::ca::CommitAddr) -> String {
         format!("{}", ca)
     }
 }
 
-/// Save the list of known content addresses to storage.
-pub fn save_graph_addrs(storage: &mut PkvStore, addrs: &[ContentAddr]) {
+/// Save the list of known graph addresses to storage.
+pub fn save_graph_addrs(storage: &mut PkvStore, addrs: &[ca::GraphAddr]) {
     let graph_addrs_str = match ron::to_string(addrs) {
         Err(e) => {
-            log::error!("Failed to serialize graph content addresses: {e}");
+            log::error!("Failed to serialize graph addresses: {e}");
             return;
         }
         Ok(s) => s,
     };
     match storage.set_string(key::GRAPH_ADDRS, &graph_addrs_str) {
-        Ok(()) => log::debug!("Successfully persisted known graph content addresses"),
-        Err(e) => log::error!("Failed to persist known graph content addresses: {e}"),
+        Ok(()) => log::debug!("Successfully persisted known graph addresses"),
+        Err(e) => log::error!("Failed to persist known graph addresses: {e}"),
+    }
+}
+
+/// Save the list of known commit addresses to storage.
+pub fn save_commit_addrs(storage: &mut PkvStore, addrs: &[ca::CommitAddr]) {
+    let commit_addrs_str = match ron::to_string(addrs) {
+        Err(e) => {
+            log::error!("Failed to serialize commit addresses: {e}");
+            return;
+        }
+        Ok(s) => s,
+    };
+    match storage.set_string(key::COMMIT_ADDRS, &commit_addrs_str) {
+        Ok(()) => log::debug!("Successfully persisted known commit addresses"),
+        Err(e) => log::error!("Failed to persist known commit addresses: {e}"),
     }
 }
 
 /// Save all graphs to storage, keyed via their content address.
 pub fn save_graphs(
     storage: &mut PkvStore,
-    graphs: &HashMap<ContentAddr, gantz_core::node::graph::Graph<Box<dyn Node>>>,
+    graphs: &HashMap<ca::GraphAddr, gantz_core::node::graph::Graph<Box<dyn Node>>>,
 ) {
     for (&ca, graph) in graphs {
         save_graph(storage, ca, graph);
     }
 }
 
-/// Save the list of known content addresses to storage.
+/// Save the graph to storage at the given address.
 pub fn save_graph(
     storage: &mut PkvStore,
-    ca: ContentAddr,
+    ca: ca::GraphAddr,
     graph: &gantz_core::node::graph::Graph<Box<dyn Node>>,
 ) {
     let key = key::graph(ca);
@@ -72,18 +92,41 @@ pub fn save_graph(
     }
 }
 
-/// Save the graph names to storage.
-pub fn save_graph_names(storage: &mut PkvStore, names: &BTreeMap<String, ContentAddr>) {
-    let graph_names_str = match ron::to_string(names) {
+/// Save all commits to storage, keyed via their content address.
+pub fn save_commits(storage: &mut PkvStore, commits: &HashMap<ca::CommitAddr, ca::Commit>) {
+    for (&ca, commit) in commits {
+        save_commit(storage, ca, commit);
+    }
+}
+
+/// Save the commit to storage at the given address.
+pub fn save_commit(storage: &mut PkvStore, ca: ca::CommitAddr, commit: &ca::Commit) {
+    let key = key::commit(ca);
+    let commit_str = match ron::to_string(commit) {
         Err(e) => {
-            log::error!("Failed to serialize graph names: {e}");
+            log::error!("Failed to serialize commit: {e}");
             return;
         }
         Ok(s) => s,
     };
-    match storage.set_string(key::GRAPH_NAMES, &graph_names_str) {
-        Ok(()) => log::debug!("Successfully persisted graph names"),
-        Err(e) => log::error!("Failed to persist graph names: {e}"),
+    match storage.set_string(&key, &commit_str) {
+        Ok(()) => log::debug!("Successfully persisted commit {key}"),
+        Err(e) => log::error!("Failed to persist commit {key}: {e}"),
+    }
+}
+
+/// Save the names to storage.
+pub fn save_names(storage: &mut PkvStore, names: &BTreeMap<String, ca::CommitAddr>) {
+    let names_str = match ron::to_string(names) {
+        Err(e) => {
+            log::error!("Failed to serialize names: {e}");
+            return;
+        }
+        Ok(s) => s,
+    };
+    match storage.set_string(key::NAMES, &names_str) {
+        Ok(()) => log::debug!("Successfully persisted names"),
+        Err(e) => log::error!("Failed to persist names: {e}"),
     }
 }
 
@@ -102,39 +145,23 @@ pub fn save_gantz_gui_state(storage: &mut PkvStore, state: &gantz_egui::widget::
     }
 }
 
-/// Save the active graph to storage.
-pub fn save_active_graph(storage: &mut PkvStore, ca: ContentAddr) {
-    // TODO: Use hex formatter rather than `ron`.
-    let active_graph_str = match ron::to_string(&ca) {
+/// Save the head to storage.
+pub fn save_head(storage: &mut PkvStore, head: &ca::Head) {
+    let head_str = match ron::to_string(head) {
         Err(e) => {
-            log::error!("Failed to serialize active graph CA: {e}");
+            log::error!("Failed to serialize and save head: {e}");
             return;
         }
         Ok(s) => s,
     };
-    match storage.set_string(key::ACTIVE_GRAPH, &active_graph_str) {
-        Ok(()) => log::debug!("Successfully persisted active graph CA"),
-        Err(e) => log::error!("Failed to persist active graph CA: {e}"),
-    }
-}
-
-/// Save the active graph name to storage.
-pub fn save_active_graph_name(storage: &mut PkvStore, name: Option<&str>) {
-    let name_opt_str = match ron::to_string(&name) {
-        Err(e) => {
-            log::error!("Failed to serialize active graph CA: {e}");
-            return;
-        }
-        Ok(s) => s,
-    };
-    match storage.set_string(key::ACTIVE_GRAPH_NAME, &name_opt_str) {
-        Ok(()) => log::debug!("Successfully persisted active graph name"),
-        Err(e) => log::error!("Failed to persist active graph name: {e}"),
+    match storage.set_string(key::HEAD, &head_str) {
+        Ok(()) => log::debug!("Successfully persisted head: {head:?}"),
+        Err(e) => log::error!("Failed to persist head: {e}"),
     }
 }
 
 /// Load the graph addresses from storage.
-pub fn load_graph_addrs(storage: &PkvStore) -> Vec<ContentAddr> {
+pub fn load_graph_addrs(storage: &PkvStore) -> Vec<ca::GraphAddr> {
     let Some(graph_addrs_str) = storage.get::<String>(key::GRAPH_ADDRS).ok() else {
         log::debug!("No existing graph address list to load");
         return vec![];
@@ -151,12 +178,30 @@ pub fn load_graph_addrs(storage: &PkvStore) -> Vec<ContentAddr> {
     }
 }
 
+/// Load the commit addresses from storage.
+pub fn load_commit_addrs(storage: &PkvStore) -> Vec<ca::CommitAddr> {
+    let Some(commit_addrs_str) = storage.get::<String>(key::COMMIT_ADDRS).ok() else {
+        log::debug!("No existing commit address list to load");
+        return vec![];
+    };
+    match ron::de::from_str(&commit_addrs_str) {
+        Ok(addrs) => {
+            log::debug!("Successfully loaded commit addresses from storage");
+            addrs
+        }
+        Err(e) => {
+            log::error!("Failed to deserialize commit addresses: {e}");
+            vec![]
+        }
+    }
+}
+
 /// Given access to storage and an iterator yielding known graph content
 /// addresses, load those graphs into memory.
 pub fn load_graphs(
     storage: &PkvStore,
-    addrs: impl IntoIterator<Item = ContentAddr>,
-) -> HashMap<ContentAddr, gantz_core::node::graph::Graph<Box<dyn Node>>> {
+    addrs: impl IntoIterator<Item = ca::GraphAddr>,
+) -> HashMap<ca::GraphAddr, gantz_core::node::graph::Graph<Box<dyn Node>>> {
     addrs
         .into_iter()
         .filter_map(|ca| Some((ca, load_graph(storage, ca)?)))
@@ -166,11 +211,11 @@ pub fn load_graphs(
 /// Load the graph with the given content address from storage.
 pub fn load_graph(
     storage: &PkvStore,
-    ca: ContentAddr,
+    ca: ca::GraphAddr,
 ) -> Option<gantz_core::node::graph::Graph<Box<dyn Node>>> {
     let key = key::graph(ca);
     let Some(graph_str) = storage.get::<String>(&key).ok() else {
-        log::debug!("No graph found for content address {key}");
+        log::debug!("No graph found for address {key}");
         return None;
     };
     match ron::de::from_str(&graph_str) {
@@ -185,35 +230,71 @@ pub fn load_graph(
     }
 }
 
-/// Load the graph names from storage.
-pub fn load_graph_names(storage: &PkvStore) -> BTreeMap<String, ContentAddr> {
-    let Some(graph_names_str) = storage.get::<String>(key::GRAPH_NAMES).ok() else {
-        log::debug!("No existing graph names list to load");
+/// Given access to storage and an iterator yielding known commit content
+/// addresses, load those commits into memory.
+pub fn load_commits(
+    storage: &PkvStore,
+    addrs: impl IntoIterator<Item = ca::CommitAddr>,
+) -> HashMap<ca::CommitAddr, ca::Commit> {
+    addrs
+        .into_iter()
+        .filter_map(|ca| Some((ca, load_commit(storage, ca)?)))
+        .collect()
+}
+
+/// Load the commit with the given content address from storage.
+pub fn load_commit(storage: &PkvStore, ca: ca::CommitAddr) -> Option<ca::Commit> {
+    let key = key::commit(ca);
+    let Some(commit_str) = storage.get::<String>(&key).ok() else {
+        log::debug!("No commit found for address {key}");
+        return None;
+    };
+    match ron::de::from_str(&commit_str) {
+        Ok(commit) => {
+            log::debug!("Successfully loaded commit {key} from storage");
+            Some(commit)
+        }
+        Err(e) => {
+            log::error!("Failed to deserialize commit {key}: {e}");
+            None
+        }
+    }
+}
+
+/// Load the names from storage.
+pub fn load_names(storage: &PkvStore) -> BTreeMap<String, ca::CommitAddr> {
+    let Some(names_str) = storage.get::<String>(key::NAMES).ok() else {
+        log::debug!("No existing names list to load");
         return BTreeMap::default();
     };
-    match ron::de::from_str(&graph_names_str) {
+    match ron::de::from_str(&names_str) {
         Ok(names) => {
-            log::debug!("Successfully loaded graph names from storage");
+            log::debug!("Successfully loaded names from storage");
             names
         }
         Err(e) => {
-            log::error!("Failed to deserialize graph names: {e}");
+            log::error!("Failed to deserialize names: {e}");
             BTreeMap::default()
         }
     }
 }
 
-/// Load the CA of the active graph if there is one.
-pub fn load_active_graph(storage: &PkvStore) -> Option<ContentAddr> {
-    let active_graph_str = storage.get::<String>(key::ACTIVE_GRAPH).ok()?;
-    // TODO: Use from_hex instead of `ron`.
-    ron::de::from_str(&active_graph_str).ok()
-}
-
-/// Load the CA of the active graph if there is one.
-pub fn load_active_graph_name(storage: &PkvStore) -> Option<String> {
-    let active_graph_name_str = storage.get::<String>(key::ACTIVE_GRAPH_NAME).ok()?;
-    ron::de::from_str(&active_graph_name_str).ok().flatten()
+/// Load the active head.
+fn load_head(storage: &PkvStore) -> Option<ca::Head> {
+    let Some(head_str) = storage.get::<String>(key::HEAD).ok() else {
+        log::debug!("No existing head to load");
+        return None;
+    };
+    match ron::de::from_str(&head_str) {
+        Ok(head) => {
+            log::debug!("Successfully loaded head");
+            Some(head)
+        }
+        Err(e) => {
+            log::error!("Failed to deserialize head: {e}");
+            None
+        }
+    }
 }
 
 /// Load the state of the gantz GUI from storage.
@@ -242,10 +323,16 @@ pub fn load_gantz_gui_state(storage: &PkvStore) -> gantz_egui::widget::GantzStat
 }
 
 pub fn load_environment(storage: &PkvStore) -> Environment {
-    let graph_addrs = load_graph_addrs(&storage);
-    let graphs = load_graphs(&storage, graph_addrs.iter().copied());
-    let names = load_graph_names(&storage);
-    let registry = env::NodeTypeRegistry { graphs, names };
+    let graph_addrs = load_graph_addrs(storage);
+    let commit_addrs = load_commit_addrs(storage);
+    let graphs = load_graphs(storage, graph_addrs.iter().copied());
+    let commits = load_commits(storage, commit_addrs.iter().copied());
+    let names = load_names(storage);
+    let registry = env::NodeTypeRegistry {
+        graphs,
+        commits,
+        names,
+    };
     let primitives = env::primitives();
     Environment {
         primitives,
@@ -253,23 +340,14 @@ pub fn load_environment(storage: &PkvStore) -> Environment {
     }
 }
 
-pub fn load_active(storage: &PkvStore, reg: &NodeTypeRegistry) -> Active {
-    let graph_ca = load_active_graph(&storage);
-    let graph_name = load_active_graph_name(&storage);
-    let (graph_ca, graph) = graph_ca
-        .and_then(|ca| {
-            let graph = reg.graphs.get(&ca).map(|g| graph::clone(g))?;
-            Some((ca, graph))
-        })
-        .unwrap_or_else(|| {
-            let graph = Graph::default();
-            let ca = gantz_core::ca::graph(&graph);
-            (ca, graph)
-        });
-    let graph = GraphNode { graph };
-    Active {
-        graph,
-        graph_ca,
-        graph_name,
-    }
+pub fn load_active(storage: &PkvStore, reg: &mut NodeTypeRegistry) -> Active {
+    let head = match load_head(storage) {
+        None => env::init_head(reg),
+        Some(head) => match env::head_graph(reg, &head) {
+            None => env::init_head(reg),
+            Some(_) => head.clone(),
+        },
+    };
+    let graph = graph::clone(env::head_graph(reg, &head).unwrap());
+    Active { graph, head }
 }
