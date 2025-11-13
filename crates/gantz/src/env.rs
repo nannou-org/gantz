@@ -3,7 +3,7 @@ use crate::{
     node::Node,
 };
 use bevy::ecs::resource::Resource;
-use gantz_egui::ca;
+use gantz_ca as ca;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -119,6 +119,13 @@ fn register_primitive(
     primitives.insert(name.into(), Box::new(new) as Box<_>)
 }
 
+/// Create a timestamp for a commit.
+fn timestamp() -> std::time::Duration {
+    let now = web_time::SystemTime::now();
+    now.duration_since(web_time::UNIX_EPOCH)
+        .unwrap_or(std::time::Duration::ZERO)
+}
+
 /// Initialise head to a new initial commit pointing to an empty graph.
 pub fn init_head(registry: &mut NodeTypeRegistry) -> ca::Head {
     // Register an empty graph.
@@ -127,7 +134,7 @@ pub fn init_head(registry: &mut NodeTypeRegistry) -> ca::Head {
     registry.graphs.insert(graph_ca, graph);
 
     // Register an initial commit.
-    let commit = ca::Commit::timestamped(None, graph_ca);
+    let commit = ca::Commit::new(timestamp(), None, graph_ca);
     let commit_ca = ca::commit_addr(&commit);
     registry.commits.insert(commit_ca, commit);
 
@@ -148,7 +155,7 @@ pub fn commit_graph_to_head(
 
     // Create a new commit.
     let parent_ca = *head_commit_ca(&reg.names, head).unwrap();
-    let commit = ca::Commit::timestamped(Some(parent_ca), graph_ca);
+    let commit = ca::Commit::new(timestamp(), Some(parent_ca), graph_ca);
     let commit_ca = ca::commit_addr(&commit);
     reg.commits.insert(commit_ca, commit);
 

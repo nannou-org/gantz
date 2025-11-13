@@ -2722,6 +2722,7 @@ dependencies = [
  "bevy_pkv",
  "dyn-clone",
  "dyn-hash",
+ "gantz_ca",
  "gantz_core",
  "gantz_egui",
  "gantz_std",
@@ -2730,6 +2731,7 @@ dependencies = [
  "serde",
  "steel-core",
  "typetag",
+ "web-time",
 ]
 
 [[package]]

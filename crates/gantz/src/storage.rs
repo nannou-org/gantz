@@ -6,7 +6,7 @@ use crate::{
 };
 use bevy::log;
 use bevy_pkv::PkvStore;
-use gantz_egui::ca;
+use gantz_ca as ca;
 use std::collections::{BTreeMap, HashMap};
 
 mod key {
@@ -22,12 +22,12 @@ mod key {
     pub const HEAD: &str = "head";
 
     /// The key for a particular graph in storage.
-    pub fn graph(ca: gantz_egui::ca::GraphAddr) -> String {
+    pub fn graph(ca: gantz_ca::GraphAddr) -> String {
         format!("{}", ca)
     }
 
     /// The key for a particular commit in storage.
-    pub fn commit(ca: gantz_egui::ca::CommitAddr) -> String {
+    pub fn commit(ca: gantz_ca::CommitAddr) -> String {
         format!("{}", ca)
     }
 }

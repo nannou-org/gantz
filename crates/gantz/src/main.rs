@@ -6,7 +6,7 @@ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_gantz::debounced_input::{DebouncedInputEvent, DebouncedInputPlugin};
 use bevy_pkv::PkvStore;
 use env::Environment;
-use gantz_egui::ca;
+use gantz_ca as ca;
 use graph::Graph;
 use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 
