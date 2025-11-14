@@ -236,7 +236,7 @@ impl App {
                 let head = load_head(storage);
                 let gantz = load_gantz_gui_state(storage);
                 let mut registry = Registry::new(graphs, commits, names);
-                registry.prune_unnamed_graphs(graph_contains);
+                registry.prune_unnamed_graphs(head.as_ref(), graph_contains);
                 (registry, head, gantz)
             })
             .unwrap_or_else(|| {

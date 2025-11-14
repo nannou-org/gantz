@@ -111,8 +111,8 @@ fn setup_active(storage: Res<PkvStore>, mut env: ResMut<Environment>, mut cmds: 
 }
 
 fn prune_unused_graphs_and_commits(mut env: ResMut<Environment>, active: Res<Active>) {
-    env::prune_unused_graphs(&mut env.registry, &active.head);
-    env::prune_graphless_commits(&mut env.registry);
+    env.registry
+        .prune_unnamed_graphs(Some(&active.head), env::graph_contains);
 }
 
 fn setup_gui_state(storage: Res<PkvStore>, mut cmds: Commands) {
@@ -143,7 +143,7 @@ fn update_gui(
     egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
-            let commit_ca = *env::head_commit_ca(&env.registry.names, &active.head).unwrap();
+            let commit_ca = *env.registry.head_commit_ca(&active.head).unwrap();
             let Active {
                 ref mut graph,
                 ref head,
@@ -157,7 +157,7 @@ fn update_gui(
                 match name_opt {
                     // If a name was given, ensure it maps to the CA.
                     Some(name) => {
-                        env.registry.names.insert(name.to_string(), commit_ca);
+                        env.registry.insert_name(name.to_string(), commit_ca);
                         active.head = ca::Head::Branch(name.to_string());
                     }
                     // Otherwise the name was cleared, so just point to the commit.
@@ -172,7 +172,7 @@ fn update_gui(
                         active.head = ca::Head::Commit(commit_ca);
                     }
                 }
-                env.registry.names.remove(&name);
+                env.registry.remove_name(&name);
             }
 
             // A graph was selected.
@@ -191,7 +191,7 @@ fn update_gui(
             // Create a new empty graph and select it.
             if response.new_graph() {
                 // Set the head to a new commit.
-                let new_head = env::init_head(&mut env.registry);
+                let new_head = env.registry.init_head(env::timestamp());
                 set_head(
                     &mut env,
                     &mut active,
@@ -215,13 +215,18 @@ fn update_vm(
     // FIXME: Rather than checking changed CA to monitor changes, ideally
     // `Gantz` widget can tell us this in a custom response.
     let new_graph_ca = ca::graph_addr(&active.graph);
-    let head_commit = env::head_commit(&env.registry, &active.head).unwrap();
+    let head_commit = env.registry.head_commit(&active.head).unwrap();
     if head_commit.graph != new_graph_ca {
         let Active {
             ref graph,
             ref mut head,
         } = *active;
-        env::commit_graph_to_head(&mut env.registry, head, graph, new_graph_ca);
+        env.registry.commit_graph_to_head(
+            env::timestamp(),
+            new_graph_ca,
+            || graph::clone(graph),
+            head,
+        );
         let module = compile_graph(&env, &active.graph, &mut vm);
         *compiled_module = CompiledModule(fmt_compiled_module(&module));
     }
@@ -255,8 +260,7 @@ fn process_gantz_gui_cmds(
                 gui_state.gantz.path = path;
             }
             gantz_egui::Cmd::OpenNamedGraph(name, ca) => {
-                if let Some(commit_ca) = env.registry.names.get(&name) {
-                    let commit = &env.registry.commits[commit_ca];
+                if let Some(commit) = env.registry.named_commit(&name) {
                     if ca == commit.graph {
                         set_head(
                             &mut env,
@@ -278,32 +282,25 @@ fn process_gantz_gui_cmds(
 }
 
 fn persist_resources(
-    mut env: ResMut<Environment>,
+    env: Res<Environment>,
     active: Res<Active>,
     gui_state: Res<GuiState>,
     mut storage: ResMut<PkvStore>,
 ) {
-    // Ensure the active graph is registered.
-    let active_ca = ca::graph_addr(&active.graph);
-    env.registry
-        .graphs
-        .entry(active_ca)
-        .or_insert_with(|| graph::clone(&active.graph));
-
     // Save graphs.
-    let mut addrs: Vec<_> = env.registry.graphs.keys().copied().collect();
+    let mut addrs: Vec<_> = env.registry.graphs().keys().copied().collect();
     addrs.sort();
     storage::save_graph_addrs(&mut *storage, &addrs);
-    storage::save_graphs(&mut *storage, &env.registry.graphs);
+    storage::save_graphs(&mut *storage, &env.registry.graphs());
 
     // Save commits.
-    let mut addrs: Vec<_> = env.registry.commits.keys().copied().collect();
+    let mut addrs: Vec<_> = env.registry.commits().keys().copied().collect();
     addrs.sort();
     storage::save_commit_addrs(&mut *storage, &addrs);
-    storage::save_commits(&mut *storage, &env.registry.commits);
+    storage::save_commits(&mut *storage, env.registry.commits());
 
     // Save names.
-    storage::save_names(&mut *storage, &env.registry.names);
+    storage::save_names(&mut *storage, env.registry.names());
 
     // Save the active graph.
     storage::save_head(&mut *storage, &active.head);
@@ -355,9 +352,7 @@ fn set_head(
     gantz: &mut gantz_egui::widget::GantzState,
     new_head: ca::Head,
 ) {
-    let new_head_commit_ca = env::head_commit_ca(&env.registry.names, &new_head).unwrap();
-    let new_head_graph_ca = env.registry.commits[&new_head_commit_ca].graph;
-    let graph = &env.registry.graphs[&new_head_graph_ca];
+    let graph = env.registry.head_graph(&new_head).unwrap();
 
     // Clone the graph.
     active.graph = graph::clone(graph);

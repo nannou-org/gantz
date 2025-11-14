@@ -141,8 +141,13 @@ impl<G> Registry<G> {
     ///
     /// All `parent` fields in remaining commits that would be invalidated by
     /// the commit removal are set to `None`.
-    pub fn prune_unnamed_graphs(&mut self, graph_contains: impl Fn(&G, &GraphAddr) -> bool) {
-        prune_unnamed_graphs(self, graph_contains);
+    pub fn prune_unnamed_graphs(
+        &mut self,
+        head: Option<&Head>,
+        graph_contains: impl Fn(&G, &GraphAddr) -> bool,
+    ) {
+        let head_graph_ca = head.and_then(|head| self.head_commit(head).map(|commit| commit.graph));
+        prune_unnamed_graphs(self, head_graph_ca, graph_contains);
         prune_graphless_commits(self);
         detach_invalid_parents(&mut self.commits);
     }
@@ -236,12 +241,16 @@ fn commit_graph_to_head<G>(
 }
 
 /// Prune all unused graph entries from the registry.
-fn prune_unnamed_graphs<G>(reg: &mut Registry<G>, graph_contains: impl Fn(&G, &GraphAddr) -> bool) {
+fn prune_unnamed_graphs<G>(
+    reg: &mut Registry<G>,
+    head_graph_ca: Option<GraphAddr>,
+    graph_contains: impl Fn(&G, &GraphAddr) -> bool,
+) {
     let to_remove: Vec<_> = reg
         .graphs()
         .keys()
         .copied()
-        .filter(|ca| !graph_is_named(reg, ca, &graph_contains))
+        .filter(|ca| Some(*ca) != head_graph_ca && !graph_is_named(reg, ca, &graph_contains))
         .collect();
     for ca in to_remove {
         reg.graphs.remove(&ca);
