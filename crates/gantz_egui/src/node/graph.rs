@@ -1,4 +1,4 @@
-use crate::{Cmd, NodeCtx, NodeUi, ca, widget::node_inspector};
+use crate::{Cmd, NodeCtx, NodeUi, widget::node_inspector};
 use serde::{Deserialize, Serialize};
 use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 
@@ -8,7 +8,7 @@ use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 /// registry via its content address.
 #[derive(Clone, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct NamedGraph {
-    graph: ca::GraphAddr,
+    graph: gantz_ca::GraphAddr,
     name: String,
 }
 
@@ -19,12 +19,13 @@ pub trait GraphRegistry {
     type Node;
     /// Given the content address of a graph, return a reference to the
     /// associated graph.
-    fn graph(&self, ca: ca::GraphAddr) -> Option<&gantz_core::node::graph::Graph<Self::Node>>;
+    fn graph(&self, ca: gantz_ca::GraphAddr)
+    -> Option<&gantz_core::node::graph::Graph<Self::Node>>;
 }
 
 impl NamedGraph {
     /// Construct a `NamedGraph` node.
-    pub fn new(name: String, graph: ca::GraphAddr) -> Self {
+    pub fn new(name: String, graph: gantz_ca::GraphAddr) -> Self {
         Self { name, graph }
     }
 }
@@ -81,8 +82,8 @@ where
     }
 }
 
-impl gantz_core::ca::CaHash for NamedGraph {
-    fn hash(&self, hasher: &mut ca::Hasher) {
+impl gantz_ca::CaHash for NamedGraph {
+    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         self.graph.hash(hasher);
         self.name.hash(hasher);
     }

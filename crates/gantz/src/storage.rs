@@ -1,12 +1,12 @@
 use crate::{
     Active,
-    env::{self, Environment, NodeTypeRegistry},
+    env::{self, Environment},
     graph,
     node::Node,
 };
 use bevy::log;
 use bevy_pkv::PkvStore;
-use gantz_egui::ca;
+use gantz_ca as ca;
 use std::collections::{BTreeMap, HashMap};
 
 mod key {
@@ -22,12 +22,12 @@ mod key {
     pub const HEAD: &str = "head";
 
     /// The key for a particular graph in storage.
-    pub fn graph(ca: gantz_egui::ca::GraphAddr) -> String {
+    pub fn graph(ca: gantz_ca::GraphAddr) -> String {
         format!("{}", ca)
     }
 
     /// The key for a particular commit in storage.
-    pub fn commit(ca: gantz_egui::ca::CommitAddr) -> String {
+    pub fn commit(ca: gantz_ca::CommitAddr) -> String {
         format!("{}", ca)
     }
 }
@@ -328,11 +328,7 @@ pub fn load_environment(storage: &PkvStore) -> Environment {
     let graphs = load_graphs(storage, graph_addrs.iter().copied());
     let commits = load_commits(storage, commit_addrs.iter().copied());
     let names = load_names(storage);
-    let registry = env::NodeTypeRegistry {
-        graphs,
-        commits,
-        names,
-    };
+    let registry = env::Registry::new(graphs, commits, names);
     let primitives = env::primitives();
     Environment {
         primitives,
@@ -340,14 +336,14 @@ pub fn load_environment(storage: &PkvStore) -> Environment {
     }
 }
 
-pub fn load_active(storage: &PkvStore, reg: &mut NodeTypeRegistry) -> Active {
+pub fn load_active(storage: &PkvStore, reg: &mut env::Registry) -> Active {
     let head = match load_head(storage) {
-        None => env::init_head(reg),
-        Some(head) => match env::head_graph(reg, &head) {
-            None => env::init_head(reg),
+        None => reg.init_head(env::timestamp()),
+        Some(head) => match reg.head_graph(&head) {
+            None => reg.init_head(env::timestamp()),
             Some(_) => head.clone(),
         },
     };
-    let graph = graph::clone(env::head_graph(reg, &head).unwrap());
+    let graph = graph::clone(reg.head_graph(&head).unwrap());
     Active { graph, head }
 }

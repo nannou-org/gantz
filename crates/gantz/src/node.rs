@@ -9,7 +9,7 @@ pub trait Node:
     Any
     + DynClone
     + DynHash
-    + gantz_core::ca::CaHash
+    + gantz_ca::CaHash
     + gantz_core::Node<Environment>
     + gantz_egui::NodeUi<Environment>
     + Send

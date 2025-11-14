@@ -1,5 +1,5 @@
 use crate::{
-    Cmd, NodeCtx, NodeUi, ca,
+    Cmd, NodeCtx, NodeUi,
     widget::{
         self, GraphScene, GraphSceneState,
         graph_scene::{self, ToGraphMut},
@@ -45,7 +45,7 @@ where
 {
     env: &'a mut Env,
     root: &'a mut gantz_core::node::graph::Graph<Env::Node>,
-    head: &'a ca::Head,
+    head: &'a gantz_ca::Head,
     log_source: Option<LogSource>,
 }
 
@@ -129,7 +129,7 @@ impl GantzResponse {
     }
 
     /// If a graph was selected this is its content address and name (if named).
-    pub fn graph_selected(&self) -> Option<&ca::Head> {
+    pub fn graph_selected(&self) -> Option<&gantz_ca::Head> {
         self.graph_select.as_ref().and_then(|g| g.selected.as_ref())
     }
 
@@ -161,7 +161,7 @@ where
     pub fn new(
         env: &'a mut Env,
         root: &'a mut gantz_core::node::graph::Graph<Env::Node>,
-        head: &'a ca::Head,
+        head: &'a gantz_ca::Head,
     ) -> Self {
         Self {
             env,
@@ -502,7 +502,7 @@ fn pane_ui<R>(ui: &mut egui::Ui, pane: impl FnOnce(&mut egui::Ui) -> R) -> egui:
 
 fn graph_select<Env>(
     env: &mut Env,
-    head: &ca::Head,
+    head: &gantz_ca::Head,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse>
 where
