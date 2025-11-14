@@ -11,8 +11,11 @@ pub use graph::{
 };
 #[doc(inline)]
 pub use hash::{CaHash, Hasher};
+#[doc(inline)]
+pub use registry::Registry;
 
 mod ca;
 mod commit;
 mod graph;
 mod hash;
+mod registry;
