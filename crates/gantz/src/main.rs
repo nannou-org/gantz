@@ -152,21 +152,8 @@ fn update_gui(
                 .trace_capture(trace_capture.0.clone())
                 .show(&mut gui_state.gantz, &compiled_module.0, &mut vm, ui);
 
-            // The graph name was updated, ensure a mapping exists if necessary.
-            if let Some(name_opt) = response.graph_name_updated() {
-                match name_opt {
-                    // If a name was given, ensure it maps to the CA.
-                    Some(name) => {
-                        env.registry.insert_name(name.to_string(), commit_ca);
-                        active.head = ca::Head::Branch(name.to_string());
-                    }
-                    // Otherwise the name was cleared, so just point to the commit.
-                    None => {
-                        active.head = ca::Head::Commit(commit_ca);
-                    }
-                }
             // The given graph name was removed.
-            } else if let Some(name) = response.graph_name_removed() {
+            if let Some(name) = response.graph_name_removed() {
                 if let ca::Head::Branch(ref head_name) = active.head {
                     if *head_name == name {
                         active.head = ca::Head::Commit(commit_ca);

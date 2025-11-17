@@ -133,15 +133,6 @@ impl GantzResponse {
         self.graph_select.as_ref().and_then(|g| g.selected.as_ref())
     }
 
-    /// If `Some` indicates, the root graph name was updated.
-    ///
-    /// If `Some(None)`, the head graph's name was cleared.
-    pub fn graph_name_updated(&self) -> Option<Option<String>> {
-        self.graph_select
-            .as_ref()
-            .and_then(|g| g.name_updated.clone())
-    }
-
     /// The given graph name was removed.
     pub fn graph_name_removed(&self) -> Option<String> {
         self.graph_select
@@ -508,7 +499,7 @@ fn graph_select<Env>(
 where
     Env: widget::graph_select::GraphRegistry,
 {
-    pane_ui(ui, |ui| widget::GraphSelect::new(env, head).show(ui))
+    pane_ui(ui, |ui| widget::GraphSelect::new(env, &[head.clone()]).show(ui))
 }
 
 fn graph_scene<Env, N>(

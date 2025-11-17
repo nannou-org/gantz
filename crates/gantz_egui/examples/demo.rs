@@ -711,21 +711,8 @@ fn gui(ctx: &egui::Context, state: &mut State) {
                     .logger(state.logger.clone())
                     .show(&mut state.gantz, &state.compiled_module, &mut state.vm, ui);
 
-            // The graph name was updated, ensure a mapping exists if necessary.
-            if let Some(name_opt) = response.graph_name_updated() {
-                match name_opt {
-                    // If a name was given, ensure it maps to the CA.
-                    Some(name) => {
-                        state.env.registry.insert_name(name.to_string(), commit_ca);
-                        state.head = gantz_ca::Head::Branch(name.to_string());
-                    }
-                    // Otherwise the name was cleared, so just point to the commit.
-                    None => {
-                        state.head = gantz_ca::Head::Commit(commit_ca);
-                    }
-                }
             // The given graph name was removed.
-            } else if let Some(name) = response.graph_name_removed() {
+            if let Some(name) = response.graph_name_removed() {
                 if let gantz_ca::Head::Branch(ref head_name) = state.head {
                     if *head_name == name {
                         state.head = gantz_ca::Head::Commit(commit_ca);
