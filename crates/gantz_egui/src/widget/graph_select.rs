@@ -1,6 +1,7 @@
 //! A simple widget for selecting between, naming and creating new graphs.
 
 use std::collections::{BTreeMap, HashSet};
+use time::{OffsetDateTime, UtcOffset, format_description};
 
 /// A widget for selecting between, naming, and creating new graphs.
 pub struct GraphSelect<'a> {
@@ -283,6 +284,16 @@ fn graph_select_row(
 fn fmt_commit_timestamp(timestamp: gantz_ca::Timestamp) -> String {
     std::time::UNIX_EPOCH
         .checked_add(timestamp)
-        .map(|time| humantime::format_rfc3339_seconds(time).to_string())
+        .and_then(|system_time| {
+            let datetime = OffsetDateTime::from(system_time);
+            let local_datetime = match UtcOffset::current_local_offset() {
+                Ok(offset) => datetime.to_offset(offset),
+                Err(_) => datetime,
+            };
+
+            let format =
+                format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]").ok()?;
+            local_datetime.format(&format).ok()
+        })
         .unwrap_or_else(|| "<invalid-timestamp>".to_string())
 }
