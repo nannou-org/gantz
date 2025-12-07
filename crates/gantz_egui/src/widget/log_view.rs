@@ -4,7 +4,7 @@ use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
 };
-use time::{OffsetDateTime, UtcOffset, format_description};
+use time::{OffsetDateTime, format_description};
 use web_time::SystemTime;
 
 /// A table presenting the
@@ -33,12 +33,11 @@ impl LogEntry {
     fn format_timestamp(&self) -> String {
         let system_time = crate::system_time_from_web(self.timestamp).expect("failed to convert");
         let datetime = OffsetDateTime::from(system_time);
-        let local_datetime = match UtcOffset::current_local_offset() {
-            Ok(offset) => datetime.to_offset(offset),
-            Err(_) => datetime,
-        };
+        let local_datetime = crate::widget::to_local_datetime(datetime);
+
         let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
             .expect("invalid format");
+
         local_datetime
             .format(&format)
             .unwrap_or_else(|_| "<invalid-timestamp>".to_string())
