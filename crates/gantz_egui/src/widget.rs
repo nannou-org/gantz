@@ -1,5 +1,7 @@
 //! A collection of useful widgets for gantz.
 
+use time::{OffsetDateTime, UtcOffset};
+
 pub use command_palette::CommandPalette;
 pub use gantz::{Gantz, GantzState};
 pub use graph_scene::{GraphScene, GraphSceneState};
@@ -19,6 +21,13 @@ pub mod log_view;
 pub mod node_inspector;
 #[cfg(feature = "tracing")]
 pub mod trace_view;
+
+/// Convert a UTC datetime to local timezone, with fallback to UTC if unavailable.
+pub(crate) fn to_local_datetime(datetime: OffsetDateTime) -> OffsetDateTime {
+    UtcOffset::current_local_offset()
+        .map(|offset| datetime.to_offset(offset))
+        .unwrap_or(datetime)
+}
 
 /// Simple shorthand for viewing steel code.
 pub fn steel_view(ui: &mut egui::Ui, code: &str) {
