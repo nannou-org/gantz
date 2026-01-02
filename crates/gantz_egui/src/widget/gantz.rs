@@ -44,8 +44,7 @@ where
     Env: NodeTypeRegistry,
 {
     env: &'a mut Env,
-    root: &'a mut gantz_core::node::graph::Graph<Env::Node>,
-    head: &'a gantz_ca::Head,
+    heads: &'a mut [(gantz_ca::Head, &'a mut gantz_core::node::graph::Graph<Env::Node>)],
     log_source: Option<LogSource>,
 }
 
@@ -58,7 +57,10 @@ enum LogSource {
 /// All state for the widget.
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct GantzState {
-    pub open_graphs: OpenGraphs,
+    /// State for each open head.
+    pub open_heads: OpenHeadStates,
+    /// The index of the currently focused head (into the `heads` slice).
+    pub focused_head: usize,
     pub view_toggles: ViewToggles,
     pub command_palette: widget::CommandPalette,
     pub auto_layout: bool,
@@ -66,11 +68,11 @@ pub struct GantzState {
     pub center_view: bool,
 }
 
-pub type OpenGraphs = HashMap<ContentAddr, OpenGraphState>;
+pub type OpenHeadStates = HashMap<gantz_ca::Head, OpenHeadState>;
 
 /// State associated with a single open root graph.
-#[derive(serde::Deserialize, serde::Serialize)]
-struct OpenGraphState {
+#[derive(Default, serde::Deserialize, serde::Serialize)]
+pub struct OpenHeadState {
     /// The path to the currently visible graph within the open graph tree.
     pub path: Vec<node::Id>,
     /// State associated with the `GraphScene` widget.
@@ -163,13 +165,11 @@ where
     /// The head CA should match the `root`'s CA.
     pub fn new(
         env: &'a mut Env,
-        root: &'a mut gantz_core::node::graph::Graph<Env::Node>,
-        head: &'a gantz_ca::Head,
+        heads: &'a mut [(gantz_ca::Head, &'a mut gantz_core::node::graph::Graph<Env::Node>)],
     ) -> Self {
         Self {
             env,
-            root,
-            head,
+            heads,
             log_source: None,
         }
     }
@@ -236,12 +236,13 @@ impl GantzState {
     /// Shorthand for initialising graph state, with no intial layout so that on
     /// the first pass, the layout is automatically determined.
     pub fn new() -> Self {
-        Self::from_graphs(Default::default())
+        Self::from_open_heads(Default::default())
     }
 
-    pub fn from_open_graphs(open_graphs: OpenGraphs) -> Self {
+    pub fn from_open_heads(open_heads: OpenHeadStates) -> Self {
         Self {
-            open_graphs,
+            open_heads,
+            focused_head: 0,
             auto_layout: false,
             center_view: false,
             command_palette: widget::CommandPalette::default(),
@@ -259,13 +260,13 @@ where
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
         match pane {
             Pane::GraphConfig => "Graph Config".into(),
-            Pane::GraphScene(ix) => self
-                .gantz
-                .head
-                .name
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("{}", self.gantz.head.ca.display_short()))
-                .into(),
+            Pane::GraphScene(ix) => {
+                let (head, _) = &self.gantz.heads[*ix];
+                match head {
+                    gantz_ca::Head::Branch(name) => name.into(),
+                    gantz_ca::Head::Commit(ca) => format!("{}", ca.display_short()).into(),
+                }
+            }
             Pane::GraphSelect => "Graph Select".into(),
             Pane::Logs => match self.gantz.log_source {
                 None => "Logs (No Source)".into(),
@@ -325,14 +326,47 @@ where
         } = *self;
         match pane {
             Pane::GraphConfig => {
-                graph_config(gantz.root, state, ui);
+                graph_config(state, ui);
             }
             Pane::GraphScene(ix) => {
-                graph_scene(gantz.env, gantz.root, state, vm, ui);
-                command_palette(gantz.env, gantz.root, state, vm, ui);
+                let ix = *ix;
+                let (head, root) = &mut gantz.heads[ix];
+                // Destructure state to allow separate borrows to different fields.
+                let GantzState {
+                    open_heads,
+                    view_toggles,
+                    command_palette,
+                    auto_layout,
+                    layout_flow,
+                    center_view,
+                    ..
+                } = state;
+                let head_state = open_heads.entry(head.clone()).or_default();
+                graph_scene(
+                    gantz.env,
+                    root,
+                    head_state,
+                    *auto_layout,
+                    *layout_flow,
+                    *center_view,
+                    view_toggles,
+                    vm,
+                    ui,
+                );
+                // Re-borrow head_state after graph_scene (it was consumed above).
+                let head_state = open_heads.get_mut(head).unwrap();
+                crate::widget::gantz::command_palette(
+                    gantz.env,
+                    root,
+                    head_state,
+                    command_palette,
+                    vm,
+                    ui,
+                );
             }
             Pane::GraphSelect => {
-                let res = graph_select(gantz.env, gantz.head, ui);
+                let heads: Vec<_> = gantz.heads.iter().map(|(h, _)| h.clone()).collect();
+                let res = graph_select(gantz.env, &heads, ui);
                 gantz_response.graph_select = Some(res.inner);
             }
             Pane::Logs => match &gantz.log_source {
@@ -345,7 +379,12 @@ where
                 }
             },
             Pane::NodeInspector => {
-                node_inspector(gantz.env, gantz.root, vm, state, ui);
+                // Use the focused head for the node inspector.
+                let focused = state.focused_head;
+                if let Some((head, root)) = gantz.heads.get_mut(focused) {
+                    let head_state = state.open_heads.entry(head.clone()).or_default();
+                    node_inspector(gantz.env, root, vm, head_state, ui);
+                }
             }
             Pane::Steel => {
                 steel_view(compiled_steel, ui);
@@ -474,19 +513,23 @@ fn pane_ui<R>(ui: &mut egui::Ui, pane: impl FnOnce(&mut egui::Ui) -> R) -> egui:
 
 fn graph_select<Env>(
     env: &mut Env,
-    head: &gantz_ca::Head,
+    heads: &[gantz_ca::Head],
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse>
 where
     Env: widget::graph_select::GraphRegistry,
 {
-    pane_ui(ui, |ui| widget::GraphSelect::new(env, &[head.clone()]).show(ui))
+    pane_ui(ui, |ui| widget::GraphSelect::new(env, heads).show(ui))
 }
 
 fn graph_scene<Env, N>(
     env: &Env,
     graph: &mut gantz_core::node::graph::Graph<N>,
-    state: &mut GantzState,
+    head_state: &mut OpenHeadState,
+    auto_layout: bool,
+    layout_flow: egui::Direction,
+    center_view: bool,
+    view_toggles: &mut ViewToggles,
     vm: &mut Engine,
     ui: &mut egui::Ui,
 ) where
@@ -496,22 +539,25 @@ fn graph_scene<Env, N>(
     let rect = ui.available_rect_before_wrap();
 
     // Show the `GraphScene` for the graph at the current path.
-    match graph_scene::index_path_graph_mut(graph, &state.path) {
-        None => log::error!("path {:?} is not a graph", state.path),
+    match graph_scene::index_path_graph_mut(graph, &head_state.path) {
+        None => log::error!("path {:?} is not a graph", head_state.path),
         Some(graph) => {
             // Retrieve the view associated with this graph.
-            let graph_state = state.graphs.entry(state.path.to_vec()).or_insert_with(|| {
-                let mut view = egui_graph::View::default();
-                view.layout = widget::graph_scene::layout(graph, state.layout_flow, ui.ctx());
-                GraphState { view }
-            });
+            let graph_state = head_state
+                .graphs
+                .entry(head_state.path.to_vec())
+                .or_insert_with(|| {
+                    let mut view = egui_graph::View::default();
+                    view.layout = widget::graph_scene::layout(graph, layout_flow, ui.ctx());
+                    GraphState { view }
+                });
 
-            GraphScene::new(env, graph, &state.path)
-                .with_id(egui::Id::new(&state.path))
-                .auto_layout(state.auto_layout)
-                .layout_flow(state.layout_flow)
-                .center_view(state.center_view)
-                .show(&mut graph_state.view, &mut state.graph_scene, vm, ui);
+            GraphScene::new(env, graph, &head_state.path)
+                .with_id(egui::Id::new(&head_state.path))
+                .auto_layout(auto_layout)
+                .layout_flow(layout_flow)
+                .center_view(center_view)
+                .show(&mut graph_state.view, &mut head_state.scene, vm, ui);
         }
     };
 
@@ -536,24 +582,24 @@ fn graph_scene<Env, N>(
                 .show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
                         if ui.add(button("R")).on_hover_text("Root Graph").clicked() {
-                            state.graph_scene.cmds.push(Cmd::OpenGraph(vec![]));
-                            state.graph_scene.interaction.selection.clear();
+                            head_state.scene.cmds.push(Cmd::OpenGraph(vec![]));
+                            head_state.scene.interaction.selection.clear();
                         }
                     });
-                    for ix in 0..state.path.len() {
-                        let id = state.path[ix];
+                    for ix in 0..head_state.path.len() {
+                        let id = head_state.path[ix];
                         ui.vertical_centered_justified(|ui| {
                             let s = format!("{}", id);
-                            let path = &state.path[..ix + 1];
-                            let current_path = path == state.path;
+                            let path = &head_state.path[..ix + 1];
+                            let current_path = path == head_state.path;
                             if ui
                                 .add(button(&s))
                                 .on_hover_text(format!("Graph at {path:?}"))
                                 .clicked()
                             {
                                 if !current_path {
-                                    state.graph_scene.cmds.push(Cmd::OpenGraph(path.to_vec()));
-                                    state.graph_scene.interaction.selection.clear();
+                                    head_state.scene.cmds.push(Cmd::OpenGraph(path.to_vec()));
+                                    head_state.scene.interaction.selection.clear();
                                 }
                             }
                         });
@@ -583,23 +629,23 @@ fn graph_scene<Env, N>(
                 .max_col_width(col_w)
                 .show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("C", &mut state.view_toggles.graph_config))
+                        ui.add(toggle("C", &mut view_toggles.graph_config))
                             .on_hover_text("Graph Configuration");
                     });
                     ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("G", &mut state.view_toggles.graph_select))
+                        ui.add(toggle("G", &mut view_toggles.graph_select))
                             .on_hover_text("Graph Select");
                     });
                     ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("N", &mut state.view_toggles.node_inspector))
+                        ui.add(toggle("N", &mut view_toggles.node_inspector))
                             .on_hover_text("Node Inspector");
                     });
                     ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("L", &mut state.view_toggles.logs))
+                        ui.add(toggle("L", &mut view_toggles.logs))
                             .on_hover_text("Log View");
                     });
                     ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("λ", &mut state.view_toggles.steel))
+                        ui.add(toggle("λ", &mut view_toggles.steel))
                             .on_hover_text("Steel View");
                     });
                 });
@@ -609,7 +655,8 @@ fn graph_scene<Env, N>(
 fn command_palette<Env>(
     env: &Env,
     root: &mut gantz_core::node::graph::Graph<Env::Node>,
-    state: &mut GantzState,
+    head_state: &mut OpenHeadState,
+    cmd_palette: &mut widget::CommandPalette,
     vm: &mut Engine,
     ui: &mut egui::Ui,
 ) where
@@ -619,7 +666,7 @@ fn command_palette<Env>(
     // If space is pressed, toggle command palette visibility.
     if !ui.ctx().wants_keyboard_input() {
         if ui.ctx().input(|i| i.key_pressed(egui::Key::Space)) {
-            state.command_palette.toggle();
+            cmd_palette.toggle();
         }
     }
 
@@ -627,10 +674,10 @@ fn command_palette<Env>(
     let cmds = env.node_types().map(|k| NodeTyCmd { env, name: &k[..] });
 
     // We'll only want to apply commands to the currently selected graph.
-    let graph = graph_scene::index_path_graph_mut(root, &state.path).unwrap();
+    let graph = graph_scene::index_path_graph_mut(root, &head_state.path).unwrap();
 
     // If a command was emitted, add the node.
-    if let Some(cmd) = state.command_palette.show(ui.ctx(), cmds) {
+    if let Some(cmd) = cmd_palette.show(ui.ctx(), cmds) {
         // Add a node of the selected type.
         let Some(node) = env.new_node(cmd.name) else {
             return;
@@ -639,31 +686,18 @@ fn command_palette<Env>(
         let ix = id.index();
 
         // Determine the node's path and register it within the VM.
-        let node_path: Vec<_> = state.path.iter().copied().chain(Some(ix)).collect();
+        let node_path: Vec<_> = head_state.path.iter().copied().chain(Some(ix)).collect();
         graph[id].register(&node_path, vm);
     }
 }
 
-fn graph_config<N>(
-    root: &mut gantz_core::node::graph::Graph<N>,
+fn graph_config(
     state: &mut GantzState,
     ui: &mut egui::Ui,
-) -> egui::InnerResponse<egui::Response>
-where
-    N: ToGraphMut<Node = N>,
-{
+) -> egui::InnerResponse<egui::Response> {
     pane_ui(ui, |ui| {
         ui.horizontal(|ui| {
             ui.checkbox(&mut state.auto_layout, "Automatic Layout");
-            ui.separator();
-            ui.add_enabled_ui(!state.auto_layout, |ui| {
-                if ui.button("Layout Once").clicked() {
-                    let graph = graph_scene::index_path_graph_mut(root, &state.path).unwrap();
-                    let graph_state = state.graphs.get_mut(&state.path).unwrap();
-                    graph_state.view.layout =
-                        graph_scene::layout(graph, state.layout_flow, ui.ctx());
-                }
-            });
         });
         ui.checkbox(&mut state.center_view, "Center View");
         ui.horizontal(|ui| {
@@ -675,9 +709,6 @@ where
             );
             ui.radio_value(&mut state.layout_flow, egui::Direction::TopDown, "Down");
         });
-        if let Some(graph_state) = state.graphs.get(&state.path) {
-            ui.label(format!("Scene: {:?}", graph_state.view.scene_rect));
-        }
         ui.response()
     })
 }
@@ -701,7 +732,7 @@ fn node_inspector<Env, N>(
     env: &Env,
     root: &mut gantz_core::node::graph::Graph<N>,
     vm: &mut Engine,
-    state: &mut GantzState,
+    head_state: &mut OpenHeadState,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<()>
 where
@@ -711,13 +742,13 @@ where
         egui::ScrollArea::vertical()
             .auto_shrink(egui::Vec2b::FALSE)
             .show(ui, |ui| {
-                let graph = graph_scene::index_path_graph_mut(root, &state.path).unwrap();
+                let graph = graph_scene::index_path_graph_mut(root, &head_state.path).unwrap();
                 let ids: Vec<_> = graph.node_references().map(|n_ref| n_ref.id()).collect();
                 // Collect the inlets and outlets.
                 let (inlets, outlets) = crate::inlet_outlet_ids::<Env, _>(graph);
                 for id in ids {
                     let mut frame = egui::Frame::group(ui.style());
-                    if state.graph_scene.interaction.selection.nodes.contains(&id) {
+                    if head_state.scene.interaction.selection.nodes.contains(&id) {
                         frame.stroke.color = ui.visuals().selection.stroke.color;
                     }
                     frame.show(ui, |ui| {
@@ -725,14 +756,19 @@ where
                             return;
                         };
                         let ix = id.index();
-                        let path: Vec<_> = state.path.iter().copied().chain(Some(ix)).collect();
+                        let path: Vec<_> = head_state
+                            .path
+                            .iter()
+                            .copied()
+                            .chain(Some(ix))
+                            .collect();
                         let ctx = NodeCtx::new(
                             env,
                             &path[..],
                             &inlets,
                             &outlets,
                             vm,
-                            &mut state.graph_scene.cmds,
+                            &mut head_state.scene.cmds,
                         );
                         widget::NodeInspector::new(node, ctx).show(ui);
                     });

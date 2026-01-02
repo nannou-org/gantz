@@ -647,8 +647,9 @@ fn init_vm(env: &Environment, graph: &Graph) -> (Engine, String) {
 
 // Drain the commands provided by the UI and process them.
 fn process_cmds(state: &mut State) {
-    // Process any pending commands.
-    for cmd in std::mem::take(&mut state.gantz.graph_scene.cmds) {
+    // Process pending commands for the active head.
+    let head_state = state.gantz.open_heads.entry(state.head.clone()).or_default();
+    for cmd in std::mem::take(&mut head_state.scene.cmds) {
         log::debug!("{cmd:?}");
         match cmd {
             gantz_egui::Cmd::PushEval(path) => {
@@ -664,7 +665,9 @@ fn process_cmds(state: &mut State) {
                 }
             }
             gantz_egui::Cmd::OpenGraph(path) => {
-                state.gantz.path = path;
+                // Re-borrow head_state to modify path.
+                let head_state = state.gantz.open_heads.get_mut(&state.head).unwrap();
+                head_state.path = path;
             }
             gantz_egui::Cmd::OpenNamedGraph(name, ca) => {
                 if let Some(commit) = state.env.registry.named_commit(&name) {
@@ -706,8 +709,10 @@ fn gui(ctx: &egui::Context, state: &mut State) {
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
             let commit_ca = *state.env.registry.head_commit_ca(&state.head).unwrap();
+            // Create a single-element slice for the Gantz widget.
+            let mut heads = [(state.head.clone(), &mut state.graph)];
             let response =
-                gantz_egui::widget::Gantz::new(&mut state.env, &mut state.graph, &state.head)
+                gantz_egui::widget::Gantz::new(&mut state.env, &mut heads)
                     .logger(state.logger.clone())
                     .show(&mut state.gantz, &state.compiled_module, &mut state.vm, ui);
 
@@ -744,17 +749,18 @@ fn set_head(state: &mut State, new_head: gantz_ca::Head) {
 
     // Clone the graph.
     state.graph = clone_graph(graph);
-    state.head = new_head;
+    state.head = new_head.clone();
 
     // Initialise the VM.
     let (vm, compiled_module) = init_vm(&state.env, &state.graph);
     state.vm = vm;
     state.compiled_module = compiled_module;
 
-    // Clear the graph GUI state (layout, etc).
-    state.gantz.path.clear();
-    state.gantz.graphs.clear();
-    state.gantz.graph_scene.interaction.selection.clear();
+    // Clear the head's GUI state (layout, etc), or create default if not present.
+    let head_state = state.gantz.open_heads.entry(new_head).or_default();
+    head_state.path.clear();
+    head_state.graphs.clear();
+    head_state.scene.interaction.selection.clear();
 }
 
 /// Whether or not the graph contains a subgraph with the given CA.

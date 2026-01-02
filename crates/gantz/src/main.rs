@@ -148,7 +148,9 @@ fn update_gui(
                 ref mut graph,
                 ref head,
             } = *active;
-            let response = gantz_egui::widget::Gantz::new(&mut *env, graph, head)
+            // Create a single-element slice for the Gantz widget.
+            let mut heads = [(head.clone(), graph)];
+            let response = gantz_egui::widget::Gantz::new(&mut *env, &mut heads)
                 .trace_capture(trace_capture.0.clone())
                 .show(&mut gui_state.gantz, &compiled_module.0, &mut vm, ui);
 
@@ -227,8 +229,10 @@ fn process_gantz_gui_cmds(
     mut compiled_module: ResMut<CompiledModule>,
     mut gui_state: ResMut<GuiState>,
 ) {
-    // Process any pending commands.
-    for cmd in std::mem::take(&mut gui_state.gantz.graph_scene.cmds) {
+    // Process pending commands for each open head.
+    // For now, we only have one active head so we process its commands.
+    let head_state = gui_state.gantz.open_heads.entry(active.head.clone()).or_default();
+    for cmd in std::mem::take(&mut head_state.scene.cmds) {
         bevy::log::debug!("{cmd:?}");
         match cmd {
             gantz_egui::Cmd::PushEval(path) => {
@@ -244,7 +248,9 @@ fn process_gantz_gui_cmds(
                 }
             }
             gantz_egui::Cmd::OpenGraph(path) => {
-                gui_state.gantz.path = path;
+                // Re-borrow head_state to modify path.
+                let head_state = gui_state.gantz.open_heads.get_mut(&active.head).unwrap();
+                head_state.path = path;
             }
             gantz_egui::Cmd::OpenNamedGraph(name, ca) => {
                 if let Some(commit) = env.registry.named_commit(&name) {
@@ -343,15 +349,16 @@ fn set_head(
 
     // Clone the graph.
     active.graph = graph::clone(graph);
-    active.head = new_head;
+    active.head = new_head.clone();
 
     // Initialise the VM.
     let (new_vm, new_module) = init_vm(env, &active.graph);
     *vm = new_vm;
     *compiled_module = new_module;
 
-    // Clear the graph GUI state (layout, etc).
-    gantz.path.clear();
-    gantz.graphs.clear();
-    gantz.graph_scene.interaction.selection.clear();
+    // Clear the head's GUI state (layout, etc), or create default if not present.
+    let head_state = gantz.open_heads.entry(new_head).or_default();
+    head_state.path.clear();
+    head_state.graphs.clear();
+    head_state.scene.interaction.selection.clear();
 }
