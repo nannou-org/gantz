@@ -1,5 +1,5 @@
 use crate::{
-    Active,
+    Open,
     env::{self, Environment},
     graph,
     node::Node,
@@ -18,8 +18,8 @@ mod key {
     pub const COMMIT_ADDRS: &str = "commit-addrs";
     /// The key at which the mapping from names to graph CAs is stored.
     pub const NAMES: &str = "graph-names";
-    /// The key at which the current head is stored.
-    pub const HEAD: &str = "head";
+    /// The key at which the list of open heads is stored.
+    pub const OPEN_HEADS: &str = "open-heads";
 
     /// The key for a particular graph in storage.
     pub fn graph(ca: gantz_ca::GraphAddr) -> String {
@@ -145,18 +145,18 @@ pub fn save_gantz_gui_state(storage: &mut PkvStore, state: &gantz_egui::widget::
     }
 }
 
-/// Save the head to storage.
-pub fn save_head(storage: &mut PkvStore, head: &ca::Head) {
-    let head_str = match ron::to_string(head) {
+/// Save all open heads to storage.
+pub fn save_open_heads(storage: &mut PkvStore, heads: &[ca::Head]) {
+    let heads_str = match ron::to_string(heads) {
         Err(e) => {
-            log::error!("Failed to serialize and save head: {e}");
+            log::error!("Failed to serialize open heads: {e}");
             return;
         }
         Ok(s) => s,
     };
-    match storage.set_string(key::HEAD, &head_str) {
-        Ok(()) => log::debug!("Successfully persisted head: {head:?}"),
-        Err(e) => log::error!("Failed to persist head: {e}"),
+    match storage.set_string(key::OPEN_HEADS, &heads_str) {
+        Ok(()) => log::debug!("Successfully persisted {} open heads", heads.len()),
+        Err(e) => log::error!("Failed to persist open heads: {e}"),
     }
 }
 
@@ -279,19 +279,19 @@ pub fn load_names(storage: &PkvStore) -> BTreeMap<String, ca::CommitAddr> {
     }
 }
 
-/// Load the active head.
-fn load_head(storage: &PkvStore) -> Option<ca::Head> {
-    let Some(head_str) = storage.get::<String>(key::HEAD).ok() else {
-        log::debug!("No existing head to load");
+/// Load all open heads from storage.
+fn load_open_heads(storage: &PkvStore) -> Option<Vec<ca::Head>> {
+    let Some(heads_str) = storage.get::<String>(key::OPEN_HEADS).ok() else {
+        log::debug!("No existing open heads to load");
         return None;
     };
-    match ron::de::from_str(&head_str) {
-        Ok(head) => {
-            log::debug!("Successfully loaded head");
-            Some(head)
+    match ron::de::from_str(&heads_str) {
+        Ok(heads) => {
+            log::debug!("Successfully loaded open heads");
+            Some(heads)
         }
         Err(e) => {
-            log::error!("Failed to deserialize head: {e}");
+            log::error!("Failed to deserialize open heads: {e}");
             None
         }
     }
@@ -336,14 +336,26 @@ pub fn load_environment(storage: &PkvStore) -> Environment {
     }
 }
 
-pub fn load_active(storage: &PkvStore, reg: &mut env::Registry) -> Active {
-    let head = match load_head(storage) {
-        None => reg.init_head(env::timestamp()),
-        Some(head) => match reg.head_graph(&head) {
-            None => reg.init_head(env::timestamp()),
-            Some(_) => head.clone(),
-        },
-    };
-    let graph = graph::clone(reg.head_graph(&head).unwrap());
-    Active { graph, head }
+pub fn load_open(storage: &PkvStore, reg: &mut env::Registry) -> Open {
+    // Try to load all open heads from storage.
+    let heads: Vec<_> = load_open_heads(storage)
+        .unwrap_or_default()
+        .into_iter()
+        // Filter out heads that no longer exist in the registry.
+        .filter_map(|head| {
+            let graph = graph::clone(reg.head_graph(&head)?);
+            Some((head, graph))
+        })
+        .collect();
+
+    // If no valid heads remain, create a default one.
+    if heads.is_empty() {
+        let head = reg.init_head(env::timestamp());
+        let graph = graph::clone(reg.head_graph(&head).unwrap());
+        Open {
+            heads: vec![(head, graph)],
+        }
+    } else {
+        Open { heads }
+    }
 }

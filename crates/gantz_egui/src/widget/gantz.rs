@@ -81,16 +81,22 @@ pub struct OpenHeadState {
     pub graphs: GraphStates,
 }
 
-/// A pane within the tree.
+/// A pane within the outer tree.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum Pane {
     GraphConfig,
-    GraphScene(usize),
+    /// Contains the inner graph tree with all open graph tabs.
+    GraphScene,
     GraphSelect,
     Logs,
     NodeInspector,
     Steel,
 }
+
+/// A pane within the inner graph tree.
+/// The usize is the index into the heads slice.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+struct GraphPane(usize);
 
 /// The context passed to the `egui_tiles::Tree` widget.
 struct TreeBehaviour<'a, 'g, Env>
@@ -99,8 +105,10 @@ where
 {
     gantz: &'a mut Gantz<'g, Env>,
     state: &'a mut GantzState,
-    compiled_steel: &'a str,
-    vm: &'a mut Engine,
+    /// Per-head compiled steel modules.
+    compiled_modules: &'a [String],
+    /// Per-head VMs.
+    vms: &'a mut [Engine],
     gantz_response: &'a mut GantzResponse,
 }
 
@@ -187,11 +195,14 @@ where
     }
 
     /// Present the gantz UI.
+    ///
+    /// `compiled_modules` and `vms` should have the same length as `heads`,
+    /// with each index corresponding to the same head.
     pub fn show(
         mut self,
         state: &mut GantzState,
-        compiled_steel: &str,
-        vm: &mut Engine,
+        compiled_modules: &[String],
+        vms: &mut [Engine],
         ui: &mut egui::Ui,
     ) -> GantzResponse {
         // TODO: Load the tiling tree, or initialise.
@@ -209,6 +220,9 @@ where
         // Check the `view_toggles` match the pane visibility.
         set_tile_visibility(&mut tree, &state.view_toggles);
 
+        // Simplify the tree, and ensure tabs are where they should be.
+        simplify_tree(&mut tree, ui.ctx());
+
         // Initialise the response.
         // We'll collect it during traversal of the tree of tiles.
         let mut response = GantzResponse::default();
@@ -217,8 +231,8 @@ where
         let mut behaviour = TreeBehaviour {
             gantz: &mut self,
             state: &mut *state,
-            compiled_steel,
-            vm,
+            compiled_modules,
+            vms,
             gantz_response: &mut response,
         };
         tree.ui(&mut behaviour, ui);
@@ -260,13 +274,7 @@ where
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
         match pane {
             Pane::GraphConfig => "Graph Config".into(),
-            Pane::GraphScene(ix) => {
-                let (head, _) = &self.gantz.heads[*ix];
-                match head {
-                    gantz_ca::Head::Branch(name) => name.into(),
-                    gantz_ca::Head::Commit(ca) => format!("{}", ca.display_short()).into(),
-                }
-            }
+            Pane::GraphScene => "Graphs".into(),
             Pane::GraphSelect => "Graph Select".into(),
             Pane::Logs => match self.gantz.log_source {
                 None => "Logs (No Source)".into(),
@@ -304,11 +312,8 @@ where
     }
 
     fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
-        // We use the tabs as "headings" for panes.
-        egui_tiles::SimplificationOptions {
-            all_panes_must_have_tabs: true,
-            ..Default::default()
-        }
+        // We will manually simplify before calling `tree.ui`. See `simplify_tree`.
+        egui_tiles::SimplificationOptions::OFF
     }
 
     fn pane_ui(
@@ -320,49 +325,41 @@ where
         let Self {
             ref mut gantz,
             ref mut state,
-            compiled_steel,
-            ref mut vm,
+            compiled_modules,
+            ref mut vms,
             ref mut gantz_response,
         } = *self;
         match pane {
             Pane::GraphConfig => {
                 graph_config(state, ui);
             }
-            Pane::GraphScene(ix) => {
-                let ix = *ix;
-                let (head, root) = &mut gantz.heads[ix];
-                // Destructure state to allow separate borrows to different fields.
-                let GantzState {
-                    open_heads,
-                    view_toggles,
-                    command_palette,
-                    auto_layout,
-                    layout_flow,
-                    center_view,
-                    ..
-                } = state;
-                let head_state = open_heads.entry(head.clone()).or_default();
-                graph_scene(
-                    gantz.env,
-                    root,
-                    head_state,
-                    *auto_layout,
-                    *layout_flow,
-                    *center_view,
-                    view_toggles,
-                    vm,
-                    ui,
-                );
-                // Re-borrow head_state after graph_scene (it was consumed above).
-                let head_state = open_heads.get_mut(head).unwrap();
-                crate::widget::gantz::command_palette(
-                    gantz.env,
-                    root,
-                    head_state,
-                    command_palette,
-                    vm,
-                    ui,
-                );
+            Pane::GraphScene => {
+                // Retrieve the inner graph tree from persistent storage, or create empty.
+                let graph_tree_id = egui::Id::new("gantz-graph-tiles-tree");
+                let mut graph_tree: egui_tiles::Tree<GraphPane> = ui
+                    .memory_mut(|m| {
+                        m.data
+                            .get_persisted_mut_or_default::<Option<egui_tiles::Tree<GraphPane>>>(
+                                graph_tree_id,
+                            )
+                            .take()
+                    })
+                    .unwrap_or_else(create_empty_graph_tree);
+
+                // Sync the graph tree panes with the heads vec.
+                sync_graph_panes(&mut graph_tree, gantz.heads.len());
+
+                // Render the inner tree.
+                let mut graph_behaviour = GraphTreeBehaviour {
+                    env: gantz.env,
+                    heads: gantz.heads,
+                    state,
+                    vms,
+                };
+                graph_tree.ui(&mut graph_behaviour, ui);
+
+                // Persist the inner tree.
+                ui.memory_mut(|m| m.data.insert_persisted(graph_tree_id, Some(graph_tree)));
             }
             Pane::GraphSelect => {
                 let heads: Vec<_> = gantz.heads.iter().map(|(h, _)| h.clone()).collect();
@@ -382,14 +379,135 @@ where
                 // Use the focused head for the node inspector.
                 let focused = state.focused_head;
                 if let Some((head, root)) = gantz.heads.get_mut(focused) {
-                    let head_state = state.open_heads.entry(head.clone()).or_default();
-                    node_inspector(gantz.env, root, vm, head_state, ui);
+                    if let Some(vm) = vms.get_mut(focused) {
+                        let head_state = state.open_heads.entry(head.clone()).or_default();
+                        node_inspector(gantz.env, root, vm, head_state, ui);
+                    }
                 }
             }
             Pane::Steel => {
+                // Use the focused head's compiled module.
+                let focused = state.focused_head;
+                let compiled_steel = compiled_modules.get(focused).map(|s| &s[..]).unwrap_or("");
                 steel_view(compiled_steel, ui);
             }
         }
+        egui_tiles::UiResponse::None
+    }
+}
+
+/// The context passed to the inner graph `egui_tiles::Tree` widget.
+struct GraphTreeBehaviour<'a, 'g, Env>
+where
+    Env: NodeTypeRegistry,
+{
+    env: &'a mut Env,
+    heads: &'a mut [(gantz_ca::Head, &'g mut gantz_core::node::graph::Graph<Env::Node>)],
+    state: &'a mut GantzState,
+    /// Per-head VMs, indexed to match heads.
+    vms: &'a mut [Engine],
+}
+
+impl<'a, 'g, Env> egui_tiles::Behavior<GraphPane> for GraphTreeBehaviour<'a, 'g, Env>
+where
+    Env: widget::graph_select::GraphRegistry + NodeTypeRegistry,
+    Env::Node: gantz_core::Node<Env> + NodeUi<Env> + graph_scene::ToGraphMut<Node = Env::Node>,
+{
+    fn tab_title_for_pane(&mut self, pane: &GraphPane) -> egui::WidgetText {
+        let GraphPane(ix) = pane;
+        if let Some((head, _)) = self.heads.get(*ix) {
+            match head {
+                gantz_ca::Head::Branch(name) => name.into(),
+                gantz_ca::Head::Commit(ca) => format!("{}", ca.display_short()).into(),
+            }
+        } else {
+            "?".into()
+        }
+    }
+
+    fn tab_bar_color(&self, visuals: &egui::Visuals) -> egui::Color32 {
+        visuals.panel_fill
+    }
+
+    fn resize_stroke(
+        &self,
+        style: &egui::Style,
+        _resize_state: egui_tiles::ResizeState,
+    ) -> egui::Stroke {
+        let w = 2.0;
+        egui::Stroke::new(w, style.visuals.extreme_bg_color)
+    }
+
+    fn tab_outline_stroke(
+        &self,
+        _visuals: &egui::Visuals,
+        _tiles: &egui_tiles::Tiles<GraphPane>,
+        _tile_id: egui_tiles::TileId,
+        _state: &egui_tiles::TabState,
+    ) -> egui::Stroke {
+        egui::Stroke::NONE
+    }
+
+    fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
+        egui_tiles::SimplificationOptions {
+            all_panes_must_have_tabs: true,
+            ..Default::default()
+        }
+    }
+
+    fn pane_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        _tile_id: egui_tiles::TileId,
+        pane: &mut GraphPane,
+    ) -> egui_tiles::UiResponse {
+        let GraphPane(ix) = *pane;
+        let Some((head, root)) = self.heads.get_mut(ix) else {
+            ui.label("Graph not found");
+            return egui_tiles::UiResponse::None;
+        };
+        let Some(vm) = self.vms.get_mut(ix) else {
+            ui.label("VM not found");
+            return egui_tiles::UiResponse::None;
+        };
+
+        // Destructure state to allow separate borrows.
+        let GantzState {
+            open_heads,
+            view_toggles,
+            command_palette,
+            auto_layout,
+            layout_flow,
+            center_view,
+            ..
+        } = &mut *self.state;
+
+        let head_state = open_heads.entry(head.clone()).or_default();
+        graph_scene(
+            self.env,
+            root,
+            head,
+            head_state,
+            *auto_layout,
+            *layout_flow,
+            *center_view,
+            view_toggles,
+            vm,
+            ui,
+        );
+
+        // Re-borrow head_state and vm after graph_scene.
+        let head_state = open_heads.get_mut(head).unwrap();
+        let vm = self.vms.get_mut(ix).unwrap();
+        crate::widget::gantz::command_palette(
+            self.env,
+            root,
+            head_state,
+            command_palette,
+            vm,
+            ui,
+        );
+
         egui_tiles::UiResponse::None
     }
 }
@@ -444,7 +562,7 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
 
     // The leaf panes.
     let graph_config = tiles.insert_pane(Pane::GraphConfig);
-    let graph_scene = tiles.insert_pane(Pane::GraphScene(0));
+    let graph_scene = tiles.insert_pane(Pane::GraphScene);
     let graph_select = tiles.insert_pane(Pane::GraphSelect);
     let logs = tiles.insert_pane(Pane::Logs);
     let node_inspector = tiles.insert_pane(Pane::NodeInspector);
@@ -481,6 +599,89 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
     egui_tiles::Tree::new("gantz-tiles-tree", root, tiles)
 }
 
+/// Create an empty graph tree. Panes will be added by `sync_graph_panes`.
+fn create_empty_graph_tree() -> egui_tiles::Tree<GraphPane> {
+    egui_tiles::Tree::empty("graph-tiles")
+}
+
+/// Sync the graph tree panes with the number of heads.
+///
+/// Adds missing panes and removes orphaned ones.
+fn sync_graph_panes(tree: &mut egui_tiles::Tree<GraphPane>, heads_count: usize) {
+    use std::collections::HashSet;
+
+    // Collect existing GraphPane indices.
+    let existing: HashSet<usize> = tree
+        .tiles
+        .iter()
+        .filter_map(|(_, tile)| match tile {
+            egui_tiles::Tile::Pane(GraphPane(ix)) => Some(*ix),
+            _ => None,
+        })
+        .collect();
+
+    // Add missing panes.
+    for ix in 0..heads_count {
+        if !existing.contains(&ix) {
+            let pane_id = tree.tiles.insert_pane(GraphPane(ix));
+            // Add to root container, or set as root if tree is empty.
+            if let Some(root_id) = tree.root() {
+                tree.move_tile_to_container(pane_id, root_id, usize::MAX, true);
+            } else {
+                // Tree is empty, create a tabs container as root.
+                let root = tree.tiles.insert_tab_tile(vec![pane_id]);
+                tree.root = Some(root);
+            }
+        }
+    }
+
+    // Remove orphaned panes (index >= heads_count).
+    let orphaned: Vec<egui_tiles::TileId> = tree
+        .tiles
+        .iter()
+        .filter_map(|(id, tile)| match tile {
+            egui_tiles::Tile::Pane(GraphPane(ix)) if *ix >= heads_count => Some(*id),
+            _ => None,
+        })
+        .collect();
+    for id in orphaned {
+        tree.tiles.remove(id);
+    }
+}
+
+/// All panes should have tab bars besides the main graph scene.
+///
+/// In the case that a tile is being dragged, even the graph scene should show a
+/// tab bar in case the user wants to add a tab there.
+fn simplify_tree(tree: &mut egui_tiles::Tree<Pane>, ctx: &egui::Context) {
+    // Default options, but ensure panes have tabs.
+    tree.simplify(&egui_tiles::SimplificationOptions {
+        all_panes_must_have_tabs: true,
+        ..Default::default()
+    });
+    // If a tile is being dragged, show all tab bars.
+    if tree.dragged_id(ctx).is_some() {
+        return;
+    }
+    // Otherwise, find the graph scene ID.
+    let Some(graph_scene_id) = tree.tiles.find_pane(&Pane::GraphScene) else {
+        return;
+    };
+    // Find its parent. This must be `Tabs` after the `simplify` pass above.
+    let Some(parent_id) = tree.tiles.parent_of(graph_scene_id) else {
+        return;
+    };
+    // If the parent has one child, replace it with the graph scene.
+    let Some(parent) = tree.tiles.get_container(parent_id) else {
+        return;
+    };
+    if parent.num_children() == 1 {
+        tree.tiles.remove(graph_scene_id);
+        tree.tiles
+            .insert(parent_id, egui_tiles::Tile::Pane(Pane::GraphScene));
+    }
+}
+
 /// Ensure the view toggles match the pane visibility.
 fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
     let ids: Vec<_> = tree.tiles.tile_ids().collect();
@@ -489,7 +690,7 @@ fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
         if let Some(pane) = tree.tiles.get_pane(&id) {
             match pane {
                 Pane::GraphConfig => tree.set_visible(id, view.graph_config),
-                Pane::GraphScene(_) => (),
+                Pane::GraphScene => (),
                 Pane::GraphSelect => tree.set_visible(id, view.graph_select),
                 Pane::Logs => tree.set_visible(id, view.logs),
                 Pane::NodeInspector => tree.set_visible(id, view.node_inspector),
@@ -525,6 +726,7 @@ where
 fn graph_scene<Env, N>(
     env: &Env,
     graph: &mut gantz_core::node::graph::Graph<N>,
+    head: &gantz_ca::Head,
     head_state: &mut OpenHeadState,
     auto_layout: bool,
     layout_flow: egui::Direction,
@@ -552,8 +754,10 @@ fn graph_scene<Env, N>(
                     GraphState { view }
                 });
 
+            // Use both head and path for a unique ID per graph pane.
+            let id = egui::Id::new(head).with(&head_state.path);
             GraphScene::new(env, graph, &head_state.path)
-                .with_id(egui::Id::new(&head_state.path))
+                .with_id(id)
                 .auto_layout(auto_layout)
                 .layout_flow(layout_flow)
                 .center_view(center_view)
