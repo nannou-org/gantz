@@ -234,13 +234,25 @@ fn update_gui(
             }
 
             // Handle closed heads from tab close buttons.
-            for closed_head in response.closed_heads {
+            for closed_head in &response.closed_heads {
                 close_head(
                     &mut open,
                     &mut vms,
                     &mut compiled_modules,
                     &mut gui_state.gantz,
-                    &closed_head,
+                    closed_head,
+                );
+            }
+
+            // Handle new branch created from tab double-click.
+            if let Some((original_head, new_name)) = response.new_branch() {
+                create_branch_from_head(
+                    ctx,
+                    &mut env,
+                    &mut open,
+                    &mut gui_state.gantz,
+                    original_head,
+                    new_name.clone(),
                 );
             }
         });
@@ -507,6 +519,40 @@ fn close_head(
         // Update focused_head to remain valid.
         if ix <= gantz.focused_head {
             gantz.focused_head = gantz.focused_head.saturating_sub(1);
+        }
+    }
+}
+
+/// Create a new branch from an existing head and replace the open head with it.
+fn create_branch_from_head(
+    ctx: &egui::Context,
+    env: &mut Environment,
+    open: &mut Open,
+    gantz: &mut gantz_egui::widget::GantzState,
+    original_head: &ca::Head,
+    new_name: String,
+) {
+    // Get the commit CA from the original head.
+    let Some(commit_ca) = env.registry.head_commit_ca(original_head).copied() else {
+        bevy::log::error!("Failed to get commit address for head: {:?}", original_head);
+        return;
+    };
+
+    // Insert the new branch name into the registry.
+    env.registry.insert_name(new_name.clone(), commit_ca);
+
+    // Find the index of the original head and replace it.
+    let new_head = ca::Head::Branch(new_name);
+    if let Some(ix) = open.heads.iter().position(|(h, _)| h == original_head) {
+        let old_head = open.heads[ix].0.clone();
+        open.heads[ix].0 = new_head.clone();
+
+        // Update the graph pane to show the new head.
+        gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
+
+        // Move GUI state from old head to new head.
+        if let Some(state) = gantz.open_heads.remove(&old_head) {
+            gantz.open_heads.insert(new_head, state);
         }
     }
 }

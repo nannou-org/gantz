@@ -157,6 +157,19 @@ pub struct GantzResponse {
     pub graph_select: Option<widget::graph_select::GraphSelectResponse>,
     /// Heads that were closed via the tab close button.
     pub closed_heads: Vec<gantz_ca::Head>,
+    /// New branch created from tab double-click: (original_head, new_branch_name).
+    pub new_branch: Option<(gantz_ca::Head, String)>,
+}
+
+/// State for editing a tab name via double-click.
+#[derive(Clone, Default)]
+struct TabEditState {
+    /// The tile currently being edited, if any.
+    editing_tile_id: Option<egui_tiles::TileId>,
+    /// The text being edited.
+    edit_text: String,
+    /// Whether we need to request focus on the next frame.
+    request_focus: bool,
 }
 
 /// UI state relevant to each nested graph within the tree.
@@ -211,6 +224,11 @@ impl GantzResponse {
         self.graph_select
             .as_ref()
             .and_then(|g| g.name_removed.clone())
+    }
+
+    /// New branch created from tab double-click: (original_head, new_branch_name).
+    pub fn new_branch(&self) -> Option<&(gantz_ca::Head, String)> {
+        self.new_branch.as_ref()
     }
 }
 
@@ -424,6 +442,7 @@ where
                     state,
                     vms,
                     closed_heads: &mut gantz_response.closed_heads,
+                    new_branch: &mut gantz_response.new_branch,
                 };
                 graph_tree.ui(&mut graph_behaviour, ui);
 
@@ -525,6 +544,8 @@ where
     vms: &'a mut [Engine],
     /// Heads closed via the tab close button.
     closed_heads: &'a mut Vec<gantz_ca::Head>,
+    /// New branch created from tab double-click: (original_head, new_branch_name).
+    new_branch: &'a mut Option<(gantz_ca::Head, String)>,
 }
 
 impl<'a, 'g, Env> egui_tiles::Behavior<GraphPane> for GraphTreeBehaviour<'a, 'g, Env>
@@ -597,37 +618,117 @@ where
         tile_id: egui_tiles::TileId,
         state: &egui_tiles::TabState,
     ) -> egui::Response {
-        // Render the tab using our custom widget.
-        // Append a filled circle if this head is focused.
-        let mut title = self.tab_title_for_tile(tiles, tile_id).text().to_string();
-        if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
-            let heads = self.heads.iter().map(|(h, _)| h);
-            if crate::head_is_focused(heads, self.state.focused_head, head) {
-                title.push_str(" ⚫");
-            }
-        }
-        let res = widget::GraphTab::new(title, id)
-            .active(state.active)
-            .closable(state.closable)
-            .show(ui);
+        // Load tab edit state from temp memory.
+        let edit_state_id = egui::Id::new("tab_edit_state");
+        let mut edit_state: TabEditState = ui
+            .memory_mut(|m| m.data.get_temp(edit_state_id))
+            .unwrap_or_default();
 
-        // Update focused_head when this tab is clicked.
-        if res.tab.clicked() {
+        let is_editing = edit_state.editing_tile_id == Some(tile_id);
+
+        let response = if is_editing {
+            // Get the head for this tile.
+            let head = tiles.get_pane(&tile_id).map(|GraphPane(h)| h.clone());
+
+            // Check if the name already exists in the registry.
+            let name_exists = self.env.names().contains_key(&edit_state.edit_text);
+            let is_empty = edit_state.edit_text.is_empty();
+
+            // Allocate space for the text edit.
+            let desired_width = ui.available_width().min(150.0);
+            let text_color = if name_exists {
+                egui::Color32::RED
+            } else {
+                ui.visuals().text_color()
+            };
+
+            let text_edit = egui::TextEdit::singleline(&mut edit_state.edit_text)
+                .desired_width(desired_width)
+                .text_color(text_color);
+            let te_response = ui.add(text_edit);
+
+            // Request focus on the first frame after entering edit mode.
+            if edit_state.request_focus {
+                te_response.request_focus();
+                edit_state.request_focus = false;
+            }
+
+            // Check if editing is complete.
+            let enter_pressed = te_response.lost_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let focus_lost = te_response.lost_focus()
+                && !ui.input(|i| i.key_pressed(egui::Key::Escape));
+
+            if enter_pressed || focus_lost {
+                // Complete editing.
+                if !is_empty && !name_exists {
+                    // Valid name - emit new_branch event.
+                    if let Some(h) = head {
+                        *self.new_branch = Some((h, edit_state.edit_text.clone()));
+                    }
+                }
+                // Clear editing state.
+                edit_state.editing_tile_id = None;
+                edit_state.edit_text.clear();
+            } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                // Cancel editing.
+                edit_state.editing_tile_id = None;
+                edit_state.edit_text.clear();
+            }
+
+            te_response
+        } else {
+            // Render the tab using our custom widget.
+            // Append a filled circle if this head is focused.
+            let mut title = self.tab_title_for_tile(tiles, tile_id).text().to_string();
             if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
-                if let Some(ix) = self.heads.iter().position(|(h, _)| h == head) {
-                    self.state.focused_head = ix;
+                let heads = self.heads.iter().map(|(h, _)| h);
+                if crate::head_is_focused(heads, self.state.focused_head, head) {
+                    title.push_str(" ⚫");
                 }
             }
-        }
+            let res = widget::GraphTab::new(title, id)
+                .active(state.active)
+                .closable(state.closable)
+                .show(ui);
 
-        // Handle close button click directly, like egui_tiles default does.
-        if res.close.is_some_and(|r| r.clicked()) {
-            if self.on_tab_close(tiles, tile_id) {
-                tiles.remove(tile_id);
+            // Handle double-click to enter edit mode.
+            if res.tab.double_clicked() {
+                if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
+                    // Initialize edit text based on head type.
+                    let initial_text = match head {
+                        gantz_ca::Head::Branch(name) => name.clone(),
+                        gantz_ca::Head::Commit(_) => String::new(),
+                    };
+                    edit_state.editing_tile_id = Some(tile_id);
+                    edit_state.edit_text = initial_text;
+                    edit_state.request_focus = true;
+                }
             }
-        }
 
-        res.tab
+            // Update focused_head when this tab is clicked.
+            if res.tab.clicked() {
+                if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
+                    if let Some(ix) = self.heads.iter().position(|(h, _)| h == head) {
+                        self.state.focused_head = ix;
+                    }
+                }
+            }
+
+            // Handle close button click directly, like egui_tiles default does.
+            if res.close.is_some_and(|r| r.clicked()) {
+                if self.on_tab_close(tiles, tile_id) {
+                    tiles.remove(tile_id);
+                }
+            }
+
+            res.tab
+        };
+
+        // Store edit state back to temp memory.
+        ui.memory_mut(|m| m.data.insert_temp(edit_state_id, edit_state));
+
+        response
     }
 
     fn pane_ui(
