@@ -165,11 +165,7 @@ fn update_gui(
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
             // Build a slice of (Head, &mut Graph) for the Gantz widget.
-            let mut heads: Vec<_> = open
-                .heads
-                .iter_mut()
-                .map(|(h, g)| (h.clone(), g))
-                .collect();
+            let mut heads: Vec<_> = open.heads.iter_mut().map(|(h, g)| (h.clone(), g)).collect();
             let response = gantz_egui::widget::Gantz::new(&mut *env, &mut heads)
                 .trace_capture(trace_capture.0.clone())
                 .show(&mut gui_state.gantz, &compiled_modules.0, &mut vms.0, ui);
@@ -215,7 +211,13 @@ fn update_gui(
 
             // Close head.
             if let Some(head) = response.graph_closed() {
-                close_head(&mut open, &mut vms, &mut compiled_modules, &mut gui_state.gantz, head);
+                close_head(
+                    &mut open,
+                    &mut vms,
+                    &mut compiled_modules,
+                    &mut gui_state.gantz,
+                    head,
+                );
             }
 
             // Create a new empty graph and open it.
@@ -233,7 +235,13 @@ fn update_gui(
 
             // Handle closed heads from tab close buttons.
             for closed_head in response.closed_heads {
-                close_head(&mut open, &mut vms, &mut compiled_modules, &mut gui_state.gantz, &closed_head);
+                close_head(
+                    &mut open,
+                    &mut vms,
+                    &mut compiled_modules,
+                    &mut gui_state.gantz,
+                    &closed_head,
+                );
             }
         });
     Ok(())

@@ -44,7 +44,10 @@ where
     Env: NodeTypeRegistry,
 {
     env: &'a mut Env,
-    heads: &'a mut [(gantz_ca::Head, &'a mut gantz_core::node::graph::Graph<Env::Node>)],
+    heads: &'a mut [(
+        gantz_ca::Head,
+        &'a mut gantz_core::node::graph::Graph<Env::Node>,
+    )],
     log_source: Option<LogSource>,
 }
 
@@ -221,7 +224,10 @@ where
     /// The head CA should match the `root`'s CA.
     pub fn new(
         env: &'a mut Env,
-        heads: &'a mut [(gantz_ca::Head, &'a mut gantz_core::node::graph::Graph<Env::Node>)],
+        heads: &'a mut [(
+            gantz_ca::Head,
+            &'a mut gantz_core::node::graph::Graph<Env::Node>,
+        )],
     ) -> Self {
         Self {
             env,
@@ -329,12 +335,10 @@ where
                 Some(LogSource::Logger(_)) => "Logs".into(),
                 Some(LogSource::TraceCapture(_)) => "Tracing".into(),
             },
-            Pane::NodeInspector => {
-                match self.gantz.heads.get(self.state.focused_head) {
-                    Some((head, _)) => format!("Node Inspector - {head}").into(),
-                    None => "Node Inspector".into(),
-                }
-            }
+            Pane::NodeInspector => match self.gantz.heads.get(self.state.focused_head) {
+                Some((head, _)) => format!("Node Inspector - {head}").into(),
+                None => "Node Inspector".into(),
+            },
             Pane::Steel => "Steel".into(),
         }
     }
@@ -512,7 +516,10 @@ where
     Env: NodeTypeRegistry,
 {
     env: &'a mut Env,
-    heads: &'a mut [(gantz_ca::Head, &'g mut gantz_core::node::graph::Graph<Env::Node>)],
+    heads: &'a mut [(
+        gantz_ca::Head,
+        &'g mut gantz_core::node::graph::Graph<Env::Node>,
+    )],
     state: &'a mut GantzState,
     /// Per-head VMs, indexed to match heads.
     vms: &'a mut [Engine],
@@ -560,12 +567,20 @@ where
         }
     }
 
-    fn is_tab_closable(&self, _tiles: &egui_tiles::Tiles<GraphPane>, _tile_id: egui_tiles::TileId) -> bool {
+    fn is_tab_closable(
+        &self,
+        _tiles: &egui_tiles::Tiles<GraphPane>,
+        _tile_id: egui_tiles::TileId,
+    ) -> bool {
         // Allow closing tabs if there's more than one head open.
         self.heads.len() > 1
     }
 
-    fn on_tab_close(&mut self, tiles: &mut egui_tiles::Tiles<GraphPane>, tile_id: egui_tiles::TileId) -> bool {
+    fn on_tab_close(
+        &mut self,
+        tiles: &mut egui_tiles::Tiles<GraphPane>,
+        tile_id: egui_tiles::TileId,
+    ) -> bool {
         // Get the head from the pane being closed.
         if let Some(GraphPane(head)) = tiles.get_pane(&tile_id).cloned() {
             self.closed_heads.push(head);
@@ -665,14 +680,7 @@ where
         // Re-borrow head_state and vm after graph_scene.
         let head_state = open_heads.get_mut(head).unwrap();
         let vm = self.vms.get_mut(ix).unwrap();
-        crate::widget::gantz::command_palette(
-            self.env,
-            root,
-            head_state,
-            command_palette,
-            vm,
-            ui,
-        );
+        crate::widget::gantz::command_palette(self.env, root, head_state, command_palette, vm, ui);
 
         egui_tiles::UiResponse::None
     }
@@ -1035,10 +1043,7 @@ fn command_palette<Env>(
     }
 }
 
-fn graph_config(
-    state: &mut GantzState,
-    ui: &mut egui::Ui,
-) -> egui::InnerResponse<egui::Response> {
+fn graph_config(state: &mut GantzState, ui: &mut egui::Ui) -> egui::InnerResponse<egui::Response> {
     pane_ui(ui, |ui| {
         ui.horizontal(|ui| {
             ui.checkbox(&mut state.auto_layout, "Automatic Layout");
@@ -1100,12 +1105,8 @@ where
                             return;
                         };
                         let ix = id.index();
-                        let path: Vec<_> = head_state
-                            .path
-                            .iter()
-                            .copied()
-                            .chain(Some(ix))
-                            .collect();
+                        let path: Vec<_> =
+                            head_state.path.iter().copied().chain(Some(ix)).collect();
                         let ctx = NodeCtx::new(
                             env,
                             &path[..],

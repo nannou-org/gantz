@@ -30,7 +30,9 @@ impl GraphSceneResponse {
 
     /// Returns true if any node is being interacted with (clicked, dragged, changed, etc).
     pub fn any_node_interacted(&self) -> bool {
-        self.nodes.iter().any(|(_, r)| r.clicked() || r.dragged() || r.changed())
+        self.nodes
+            .iter()
+            .any(|(_, r)| r.clicked() || r.dragged() || r.changed())
     }
 }
 

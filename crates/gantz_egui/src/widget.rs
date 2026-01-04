@@ -1,7 +1,7 @@
 //! A collection of useful widgets for gantz.
 
 pub use command_palette::CommandPalette;
-pub use gantz::{update_graph_pane_head, Gantz, GantzState};
+pub use gantz::{Gantz, GantzState, update_graph_pane_head};
 pub use graph_scene::{GraphScene, GraphSceneState};
 pub use graph_select::GraphSelect;
 pub use graph_tab::{GraphTab, GraphTabResponse};

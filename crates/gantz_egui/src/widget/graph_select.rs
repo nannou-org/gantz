@@ -107,7 +107,14 @@ impl<'a> GraphSelect<'a> {
                     }
                     visited.insert(ca);
                     let head = gantz_ca::Head::Branch(name.to_string());
-                    let res = graph_select_row(self.heads, &head, RowType::Named(name), ca, self.focused_head, ui);
+                    let res = graph_select_row(
+                        self.heads,
+                        &head,
+                        RowType::Named(name),
+                        ca,
+                        self.focused_head,
+                        ui,
+                    );
                     if res.row.clicked() {
                         let ctrl = ui.input(|i| i.modifiers.ctrl);
                         if ctrl {
@@ -143,7 +150,8 @@ impl<'a> GraphSelect<'a> {
                     // Use the timestamp as a row name.
                     let head = gantz_ca::Head::Commit(*ca);
                     let row_type = RowType::Unnamed(&commit.timestamp);
-                    let res = graph_select_row(self.heads, &head, row_type, ca, self.focused_head, ui);
+                    let res =
+                        graph_select_row(self.heads, &head, row_type, ca, self.focused_head, ui);
                     if res.row.clicked() {
                         let ctrl = ui.input(|i| i.modifiers.ctrl);
                         if ctrl {
