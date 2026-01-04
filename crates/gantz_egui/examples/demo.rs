@@ -239,8 +239,7 @@ impl App {
                 let open_heads = load_open_heads(storage);
                 let gantz = load_gantz_gui_state(storage);
                 let mut registry = Registry::new(graphs, commits, names);
-                let first_head = open_heads.first();
-                registry.prune_unnamed_graphs(first_head, graph_contains);
+                registry.prune_unnamed_graphs(&open_heads, graph_contains);
                 (registry, open_heads, gantz)
             })
             .unwrap_or_else(|| {

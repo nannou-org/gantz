@@ -121,10 +121,8 @@ fn setup_open(storage: Res<PkvStore>, mut env: ResMut<Environment>, mut cmds: Co
 }
 
 fn prune_unused_graphs_and_commits(mut env: ResMut<Environment>, open: Res<Open>) {
-    // Prune based on the first open head (for now).
-    // TODO: Consider all open heads when pruning.
-    let head = open.heads.first().map(|(h, _)| h);
-    env.registry.prune_unnamed_graphs(head, env::graph_contains);
+    let heads = open.heads.iter().map(|(h, _)| h);
+    env.registry.prune_unnamed_graphs(heads, env::graph_contains);
 }
 
 fn setup_gui_state(storage: Res<PkvStore>, mut cmds: Commands) {
