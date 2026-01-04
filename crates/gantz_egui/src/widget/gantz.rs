@@ -387,6 +387,9 @@ where
                 graph_config(state, ui);
             }
             Pane::GraphScene => {
+                // We'll use this for positioning the floating toggle window.
+                let rect = ui.available_rect_before_wrap();
+
                 // Retrieve the inner graph tree from persistent storage, or create empty.
                 let graph_tree_id = egui::Id::new(GRAPH_TREE_ID);
                 let mut graph_tree: egui_tiles::Tree<GraphPane> = ui
@@ -422,6 +425,51 @@ where
 
                 // Persist the inner tree.
                 ui.memory_mut(|m| m.data.insert_persisted(graph_tree_id, Some(graph_tree)));
+
+                // Floating toggles over the bottom right corner of the graph scene pane.
+                let space = ui.style().interaction.interact_radius * 3.0;
+                egui::Window::new("view_toggle_window")
+                    .pivot(egui::Align2::RIGHT_BOTTOM)
+                    .fixed_pos(rect.right_bottom() + egui::vec2(-space, -space))
+                    .title_bar(false)
+                    .resizable(false)
+                    .collapsible(false)
+                    .frame(egui::Frame::NONE)
+                    .show(ui.ctx(), |ui| {
+                        fn toggle<'a>(s: &str, b: &'a mut bool) -> widget::LabelToggle<'a> {
+                            let text = egui::RichText::new(s).size(24.0);
+                            widget::LabelToggle::new(text, b)
+                        }
+                        let grid_w = 150.0;
+                        let n_cols = 5;
+                        let gap_space = ui.spacing().item_spacing.x * (n_cols as f32 - 1.0);
+                        let col_w = (grid_w - gap_space) / n_cols as f32;
+                        egui::Grid::new("view_toggles")
+                            .min_col_width(col_w)
+                            .max_col_width(col_w)
+                            .show(ui, |ui| {
+                                ui.vertical_centered_justified(|ui| {
+                                    ui.add(toggle("C", &mut state.view_toggles.graph_config))
+                                        .on_hover_text("Graph Configuration");
+                                });
+                                ui.vertical_centered_justified(|ui| {
+                                    ui.add(toggle("G", &mut state.view_toggles.graph_select))
+                                        .on_hover_text("Graph Select");
+                                });
+                                ui.vertical_centered_justified(|ui| {
+                                    ui.add(toggle("N", &mut state.view_toggles.node_inspector))
+                                        .on_hover_text("Node Inspector");
+                                });
+                                ui.vertical_centered_justified(|ui| {
+                                    ui.add(toggle("L", &mut state.view_toggles.logs))
+                                        .on_hover_text("Log View");
+                                });
+                                ui.vertical_centered_justified(|ui| {
+                                    ui.add(toggle("λ", &mut state.view_toggles.steel))
+                                        .on_hover_text("Steel View");
+                                });
+                            });
+                    });
             }
             Pane::GraphSelect => {
                 let heads: Vec<_> = gantz.heads.iter().map(|(h, _)| h.clone()).collect();
@@ -587,11 +635,11 @@ where
         let GantzState {
             open_heads,
             focused_head,
-            view_toggles,
             command_palette,
             auto_layout,
             layout_flow,
             center_view,
+            ..
         } = &mut *self.state;
 
         let head_state = open_heads.entry(head.clone()).or_default();
@@ -603,7 +651,6 @@ where
             *auto_layout,
             *layout_flow,
             *center_view,
-            view_toggles,
             vm,
             ui,
         );
@@ -862,14 +909,13 @@ fn graph_scene<Env, N>(
     auto_layout: bool,
     layout_flow: egui::Direction,
     center_view: bool,
-    view_toggles: &mut ViewToggles,
     vm: &mut Engine,
     ui: &mut egui::Ui,
 ) -> Option<graph_scene::GraphSceneResponse>
 where
     N: Node<Env> + NodeUi<Env> + graph_scene::ToGraphMut<Node = N>,
 {
-    // We'll use this for positioning the fixed path and toggle windows.
+    // We'll use this for positioning the fixed path labels window.
     let rect = ui.available_rect_before_wrap();
 
     // Show the `GraphScene` for the graph at the current path.
@@ -945,50 +991,6 @@ where
                         });
                     }
                 })
-        });
-
-    // Floating toggles over the bottom right corner of the graph scene.
-    egui::Window::new("label_toggle_window")
-        .pivot(egui::Align2::RIGHT_BOTTOM)
-        .fixed_pos(rect.right_bottom() + egui::vec2(-space, -space))
-        .title_bar(false)
-        .resizable(false)
-        .collapsible(false)
-        .frame(egui::Frame::NONE)
-        .show(ui.ctx(), |ui| {
-            fn toggle<'a>(s: &str, b: &'a mut bool) -> widget::LabelToggle<'a> {
-                let text = egui::RichText::new(s).size(24.0);
-                widget::LabelToggle::new(text, b)
-            }
-            let grid_w = 150.0;
-            let n_cols = 5;
-            let gap_space = ui.spacing().item_spacing.x * (n_cols as f32 - 1.0);
-            let col_w = (grid_w - gap_space) / n_cols as f32;
-            egui::Grid::new("view_toggles")
-                .min_col_width(col_w)
-                .max_col_width(col_w)
-                .show(ui, |ui| {
-                    ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("C", &mut view_toggles.graph_config))
-                            .on_hover_text("Graph Configuration");
-                    });
-                    ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("G", &mut view_toggles.graph_select))
-                            .on_hover_text("Graph Select");
-                    });
-                    ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("N", &mut view_toggles.node_inspector))
-                            .on_hover_text("Node Inspector");
-                    });
-                    ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("L", &mut view_toggles.logs))
-                            .on_hover_text("Log View");
-                    });
-                    ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("λ", &mut view_toggles.steel))
-                            .on_hover_text("Steel View");
-                    });
-                });
         });
 
     response
