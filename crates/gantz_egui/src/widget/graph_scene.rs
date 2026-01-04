@@ -1,7 +1,7 @@
 use crate::{Cmd, NodeUi};
 use egui_graph::{
     self,
-    node::{EdgeEvent, SocketKind},
+    node::{EdgeEvent, NodeResponse, SocketKind},
 };
 use gantz_core::{
     Edge, Node,
@@ -13,6 +13,26 @@ use petgraph::{
 };
 use std::collections::HashSet;
 use steel::steel_vm::engine::Engine;
+
+/// Response from the [`GraphScene`] widget.
+pub struct GraphSceneResponse {
+    /// The response from the underlying scene widget.
+    pub scene: egui::Response,
+    /// Responses from each node, keyed by node index.
+    pub nodes: Vec<(NodeIndex, NodeResponse)>,
+}
+
+impl GraphSceneResponse {
+    /// Returns true if any node was clicked.
+    pub fn any_node_clicked(&self) -> bool {
+        self.nodes.iter().any(|(_, r)| r.clicked())
+    }
+
+    /// Returns true if any node is being interacted with (clicked, dragged, changed, etc).
+    pub fn any_node_interacted(&self) -> bool {
+        self.nodes.iter().any(|(_, r)| r.clicked() || r.dragged() || r.changed())
+    }
+}
 
 /// For node types that may represent a nested [`Graph`].
 pub trait ToGraphMut {
@@ -118,24 +138,32 @@ where
     }
 
     /// Show the graph scene.
+    ///
+    /// Returns a response containing both the scene response and all node responses.
     pub fn show(
         self,
         view: &mut egui_graph::View,
         state: &mut GraphSceneState,
         vm: &mut Engine,
         ui: &mut egui::Ui,
-    ) {
+    ) -> GraphSceneResponse {
         if self.auto_layout {
             view.layout = layout(&*self.graph, self.layout_flow, ui.ctx());
         }
-        egui_graph::Graph::new(self.id)
+        let mut node_responses = Vec::new();
+        let scene = egui_graph::Graph::new(self.id)
             .center_view(self.center_view)
             .show(view, ui, |ui, show| {
                 show.nodes(ui, |nctx, ui| {
-                    nodes(self.env, self.graph, self.path, nctx, state, vm, ui)
+                    node_responses = nodes(self.env, self.graph, self.path, nctx, state, vm, ui);
                 })
                 .edges(ui, |ectx, ui| edges(self.graph, ectx, state, ui));
-            });
+            })
+            .response;
+        GraphSceneResponse {
+            scene,
+            nodes: node_responses,
+        }
     }
 }
 
@@ -181,12 +209,14 @@ fn nodes<Env, N>(
     state: &mut GraphSceneState,
     vm: &mut Engine,
     ui: &mut egui::Ui,
-) where
+) -> Vec<(NodeIndex, NodeResponse)>
+where
     N: Node<Env> + NodeUi<Env>,
 {
     let node_ids: Vec<_> = graph.node_identifiers().collect();
     let mut path = path.to_vec();
     let (inlets, outlets) = crate::inlet_outlet_ids(graph);
+    let mut responses = Vec::with_capacity(node_ids.len());
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node = &mut graph[n_id];
@@ -245,7 +275,10 @@ fn nodes<Env, N>(
                 graph.remove_node(n_id);
             }
         }
+
+        responses.push((n_id, response));
     }
+    responses
 }
 
 fn edges<N>(

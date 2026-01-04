@@ -7,6 +7,7 @@ pub struct GraphSelect<'a> {
     id: egui::Id,
     registry: &'a dyn GraphRegistry,
     heads: &'a [gantz_ca::Head],
+    focused_head: Option<usize>,
 }
 
 #[derive(Clone, Default)]
@@ -27,8 +28,12 @@ pub trait GraphRegistry {
 pub struct GraphSelectResponse {
     /// Indicates the new graph button was clicked.
     pub new_graph: bool,
-    /// If a graph was selected this is its head.
-    pub selected: Option<gantz_ca::Head>,
+    /// Single click: replace the focused head with this one.
+    pub replaced: Option<gantz_ca::Head>,
+    /// Ctrl+click on a head that is not open: open this head as a new tab.
+    pub opened: Option<gantz_ca::Head>,
+    /// Ctrl+click on a head that is already open: close this head.
+    pub closed: Option<gantz_ca::Head>,
     /// The name mapping was removed.
     pub name_removed: Option<String>,
 }
@@ -53,11 +58,18 @@ impl<'a> GraphSelect<'a> {
             registry,
             heads,
             id,
+            focused_head: None,
         }
     }
 
     pub fn with_id(mut self, id: egui::Id) -> Self {
         self.id = id;
+        self
+    }
+
+    /// Set the index of the focused head to show a focus indicator.
+    pub fn focused_head(mut self, focused_head: usize) -> Self {
+        self.focused_head = Some(focused_head);
         self
     }
 
@@ -94,9 +106,19 @@ impl<'a> GraphSelect<'a> {
                         continue;
                     }
                     visited.insert(ca);
-                    let res = graph_select_row(self.heads, RowType::Named(name), ca, &names, ui);
+                    let head = gantz_ca::Head::Branch(name.to_string());
+                    let res = graph_select_row(self.heads, &head, RowType::Named(name), ca, self.focused_head, ui);
                     if res.row.clicked() {
-                        response.selected = Some(gantz_ca::Head::Branch(name.to_string()));
+                        let ctrl = ui.input(|i| i.modifiers.ctrl);
+                        if ctrl {
+                            if self.heads.contains(&head) {
+                                response.closed = Some(head);
+                            } else {
+                                response.opened = Some(head);
+                            }
+                        } else {
+                            response.replaced = Some(head);
+                        }
                     } else if let Some(delete) = res.delete {
                         if delete.clicked() {
                             response.name_removed = Some(name.to_string());
@@ -119,10 +141,20 @@ impl<'a> GraphSelect<'a> {
                     }
 
                     // Use the timestamp as a row name.
+                    let head = gantz_ca::Head::Commit(*ca);
                     let row_type = RowType::Unnamed(&commit.timestamp);
-                    let res = graph_select_row(self.heads, row_type, ca, &names, ui);
+                    let res = graph_select_row(self.heads, &head, row_type, ca, self.focused_head, ui);
                     if res.row.clicked() {
-                        response.selected = Some(gantz_ca::Head::Commit(*ca));
+                        let ctrl = ui.input(|i| i.modifiers.ctrl);
+                        if ctrl {
+                            if self.heads.contains(&head) {
+                                response.closed = Some(head);
+                            } else {
+                                response.opened = Some(head);
+                            }
+                        } else {
+                            response.replaced = Some(head);
+                        }
                     }
                 }
             });
@@ -138,22 +170,12 @@ impl<'a> GraphSelect<'a> {
     }
 }
 
-fn heads_contain(
-    heads: &[gantz_ca::Head],
-    row_ca: &gantz_ca::CommitAddr,
-    names: &gantz_ca::registry::Names,
-) -> bool {
-    heads.iter().any(|head| match head {
-        gantz_ca::Head::Commit(ca) => row_ca == ca,
-        gantz_ca::Head::Branch(name) => names.get(name) == Some(row_ca),
-    })
-}
-
 fn graph_select_row(
-    heads: &[gantz_ca::Head],
+    open_heads: &[gantz_ca::Head],
+    head: &gantz_ca::Head,
     row_type: RowType,
     row_ca: &gantz_ca::CommitAddr,
-    names: &gantz_ca::registry::Names,
+    focused_head: Option<usize>,
     ui: &mut egui::Ui,
 ) -> RowResponse {
     let w = ui.max_rect().width();
@@ -171,13 +193,19 @@ fn graph_select_row(
 
             // Create a child UI for the labels positioned over the allocated rect
             ui.horizontal(|ui| {
-                let name = match row_type {
+                let mut name = match row_type {
                     RowType::Named(name) => name.to_string(),
                     RowType::Unnamed(&timestamp) => fmt_commit_timestamp(timestamp),
                 };
+                // Append focus indicator if this head is focused.
+                if let Some(focused) = focused_head {
+                    if crate::head_is_focused(open_heads.iter(), focused, head) {
+                        name.push_str(" ⚫");
+                    }
+                }
                 let mut text = egui::RichText::new(name.clone());
-                let heads_contain = heads_contain(heads, row_ca, names);
-                text = if heads_contain {
+                let is_open = open_heads.contains(head);
+                text = if is_open {
                     text.strong()
                 } else if hovered {
                     text
@@ -190,7 +218,7 @@ fn graph_select_row(
                     // Show the address.
                     let row_ca_string = format!("{}", row_ca.display_short());
                     let mut text = egui::RichText::new(row_ca_string).monospace();
-                    text = if heads_contain {
+                    text = if is_open {
                         text.strong()
                     } else if hovered {
                         text
@@ -203,11 +231,11 @@ fn graph_select_row(
                     // Show an x for removing the name mapping.
                     let delete = match row_type {
                         RowType::Named(_) => {
-                            let res = ui.add(egui::Button::new("×").frame_when_inactive(false));
-                            Some(res)
+                            Some(ui.add(egui::Button::new("×").frame_when_inactive(false)))
                         }
                         RowType::Unnamed(_) => None,
                     };
+
                     (res, delete)
                 })
                 .inner

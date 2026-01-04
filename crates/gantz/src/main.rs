@@ -188,8 +188,21 @@ fn update_gui(
                 env.registry.remove_name(&name);
             }
 
-            // A graph was selected - open it as a new tab (or focus if already open).
-            if let Some(new_head) = response.graph_selected() {
+            // Single click: replace the focused head with the selected one.
+            if let Some(new_head) = response.graph_replaced() {
+                replace_head(
+                    ctx,
+                    &mut env,
+                    &mut open,
+                    &mut vms,
+                    &mut compiled_modules,
+                    &mut gui_state.gantz,
+                    new_head.clone(),
+                );
+            }
+
+            // Open head as a new tab (or focus if already open).
+            if let Some(new_head) = response.graph_opened() {
                 open_head(
                     &mut env,
                     &mut open,
@@ -198,6 +211,11 @@ fn update_gui(
                     &mut gui_state.gantz,
                     new_head.clone(),
                 );
+            }
+
+            // Close head.
+            if let Some(head) = response.graph_closed() {
+                close_head(&mut open, &mut vms, &mut compiled_modules, &mut gui_state.gantz, head);
             }
 
             // Create a new empty graph and open it.
@@ -212,11 +230,17 @@ fn update_gui(
                     new_head,
                 );
             }
+
+            // Handle closed heads from tab close buttons.
+            for closed_head in response.closed_heads {
+                close_head(&mut open, &mut vms, &mut compiled_modules, &mut gui_state.gantz, &closed_head);
+            }
         });
     Ok(())
 }
 
 fn update_vm(
+    mut ctxs: EguiContexts,
     mut env: ResMut<Environment>,
     mut open: ResMut<Open>,
     mut vms: NonSendMut<HeadVms>,
@@ -229,12 +253,17 @@ fn update_vm(
         let new_graph_ca = ca::graph_addr(&*graph);
         let head_commit = env.registry.head_commit(head).unwrap();
         if head_commit.graph != new_graph_ca {
+            let old_head = head.clone();
             env.registry.commit_graph_to_head(
                 env::timestamp(),
                 new_graph_ca,
                 || graph::clone(graph),
                 head,
             );
+            // Update the graph pane if the head's commit CA changed.
+            if let Ok(ctx) = ctxs.ctx_mut() {
+                gantz_egui::widget::update_graph_pane_head(ctx, &old_head, head);
+            }
         }
 
         // Recompile this head's graph into its VM.
@@ -400,4 +429,76 @@ fn open_head(
 
     // Initialize GUI state for the new head.
     gantz.open_heads.entry(new_head).or_default();
+}
+
+/// Replace the focused head with a new head in-place.
+///
+/// If the new head is already open elsewhere, focuses that instead.
+fn replace_head(
+    ctx: &egui::Context,
+    env: &mut Environment,
+    open: &mut Open,
+    vms: &mut HeadVms,
+    compiled_modules: &mut CompiledModules,
+    gantz: &mut gantz_egui::widget::GantzState,
+    new_head: ca::Head,
+) {
+    // If the new head is already open, just focus it.
+    if let Some(ix) = open.heads.iter().position(|(h, _)| *h == new_head) {
+        gantz.focused_head = ix;
+        return;
+    }
+
+    let ix = gantz.focused_head;
+    let old_head = open.heads[ix].0.clone();
+
+    // Load the new graph.
+    let graph = env.registry.head_graph(&new_head).unwrap();
+    let new_graph = graph::clone(graph);
+
+    // Replace at the focused index.
+    open.heads[ix] = (new_head.clone(), new_graph.clone());
+
+    // Reinitialize the VM for the new graph.
+    let (new_vm, new_module) = init_vm(env, &new_graph);
+    vms.0[ix] = new_vm;
+    compiled_modules.0[ix] = new_module.0;
+
+    // Update the graph pane to show the new head.
+    gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
+
+    // Move GUI state from old head to new head.
+    if let Some(state) = gantz.open_heads.remove(&old_head) {
+        gantz.open_heads.insert(new_head, state);
+    } else {
+        gantz.open_heads.entry(new_head).or_default();
+    }
+}
+
+/// Close a head, removing it from the open tabs.
+///
+/// Does nothing if the head is not open or if it's the last open head.
+fn close_head(
+    open: &mut Open,
+    vms: &mut HeadVms,
+    compiled_modules: &mut CompiledModules,
+    gantz: &mut gantz_egui::widget::GantzState,
+    head: &ca::Head,
+) {
+    // Don't close if it's the last open head.
+    // TODO: Consider opening default empty graph when closing last head.
+    if open.heads.len() <= 1 {
+        return;
+    }
+    if let Some(ix) = open.heads.iter().position(|(h, _)| h == head) {
+        open.heads.remove(ix);
+        vms.0.remove(ix);
+        compiled_modules.0.remove(ix);
+        gantz.open_heads.remove(head);
+
+        // Update focused_head to remain valid.
+        if ix <= gantz.focused_head {
+            gantz.focused_head = gantz.focused_head.saturating_sub(1);
+        }
+    }
 }

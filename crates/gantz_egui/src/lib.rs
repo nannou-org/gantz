@@ -233,3 +233,18 @@ fn system_time_from_web(t: web_time::SystemTime) -> Option<std::time::SystemTime
     let duration = t.duration_since(web_time::UNIX_EPOCH).ok()?;
     std::time::UNIX_EPOCH.checked_add(duration)
 }
+
+/// Check if the given head is the currently focused head.
+///
+/// `focused_head` represents an index into the given `heads` iterator.
+pub fn head_is_focused<'a>(
+    heads: impl IntoIterator<Item = &'a gantz_ca::Head>,
+    focused_head: usize,
+    head: &gantz_ca::Head,
+) -> bool {
+    heads
+        .into_iter()
+        .position(|h| h == head)
+        .map(|ix| ix == focused_head)
+        .unwrap_or(false)
+}
