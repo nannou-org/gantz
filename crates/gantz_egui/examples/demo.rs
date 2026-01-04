@@ -318,12 +318,12 @@ impl eframe::App for App {
                 );
                 // Update the graph pane if the head's commit CA changed.
                 gantz_egui::widget::update_graph_pane_head(ctx, &old_head, head);
-            }
 
-            // Recompile this head's graph into its VM.
-            let vm = &mut self.state.vms[ix];
-            let module = compile_graph(&self.state.env, graph, vm);
-            self.state.compiled_modules[ix] = fmt_compiled_module(&module);
+                // Recompile this head's graph into its VM.
+                let vm = &mut self.state.vms[ix];
+                let module = compile_graph(&self.state.env, graph, vm);
+                self.state.compiled_modules[ix] = fmt_compiled_module(&module);
+            }
         }
 
         // Process any pending commands generated from the UI.

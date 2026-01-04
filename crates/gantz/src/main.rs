@@ -282,12 +282,12 @@ fn update_vm(
             if let Ok(ctx) = ctxs.ctx_mut() {
                 gantz_egui::widget::update_graph_pane_head(ctx, &old_head, head);
             }
-        }
 
-        // Recompile this head's graph into its VM.
-        let vm = &mut vms.0[ix];
-        let module = compile_graph(&env, graph, vm);
-        compiled_modules.0[ix] = fmt_compiled_module(&module);
+            // Recompile this head's graph into its VM.
+            let vm = &mut vms.0[ix];
+            let module = compile_graph(&env, graph, vm);
+            compiled_modules.0[ix] = fmt_compiled_module(&module);
+        }
     }
 }
 
