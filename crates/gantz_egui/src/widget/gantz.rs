@@ -357,7 +357,10 @@ where
                 Some((head, _)) => format!("Node Inspector - {head}").into(),
                 None => "Node Inspector".into(),
             },
-            Pane::Steel => "Steel".into(),
+            Pane::Steel => match self.gantz.heads.get(self.state.focused_head) {
+                Some((head, _)) => format!("Steel - {head}").into(),
+                None => "Steel".into(),
+            },
         }
     }
 
