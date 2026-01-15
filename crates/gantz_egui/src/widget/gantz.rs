@@ -1038,17 +1038,17 @@ where
         }
         Some(graph) => {
             // Retrieve the view associated with this graph.
+            // Use both head and path for a unique ID per graph pane.
+            let id = egui::Id::new(head).with(&head_state.path);
+
             let graph_state = head_state
                 .graphs
                 .entry(head_state.path.to_vec())
                 .or_insert_with(|| {
                     let mut view = egui_graph::View::default();
-                    view.layout = widget::graph_scene::layout(graph, layout_flow, ui.ctx());
+                    view.layout = widget::graph_scene::layout(graph, id, layout_flow, ui.ctx());
                     GraphState { view }
                 });
-
-            // Use both head and path for a unique ID per graph pane.
-            let id = egui::Id::new(head).with(&head_state.path);
             let response = GraphScene::new(env, graph, &head_state.path)
                 .with_id(id)
                 .auto_layout(auto_layout)
