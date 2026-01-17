@@ -153,15 +153,14 @@ where
             view.layout = layout(&*self.graph, self.id, self.layout_flow, ui.ctx());
         }
         let mut node_responses = Vec::new();
-        let graph_id = self.id;
         let scene = egui_graph::Graph::new(self.id)
             .center_view(self.center_view)
             .show(view, ui, |ui, show| {
                 show.nodes(ui, |nctx, ui| {
                     node_responses =
-                        nodes(self.env, self.graph, graph_id, self.path, nctx, state, vm, ui);
+                        nodes(self.env, self.graph, self.path, nctx, state, vm, ui);
                 })
-                .edges(ui, |ectx, ui| edges(self.graph, graph_id, ectx, state, ui));
+                .edges(ui, |ectx, ui| edges(self.graph, ectx, state, ui));
             })
             .response;
         GraphSceneResponse {
@@ -193,18 +192,24 @@ pub fn layout<N>(
     }
     ctx.memory(|m| {
         let nodes = graph.node_indices().map(|n| {
-            // FIXME: This ID doesn't directly corellate with node size.
-            let id = graph_id.with(n);
+            let node_id = egui_graph::NodeId::from_u64(n.index() as u64);
+            // Use the helper to get the egui::Id for area_rect lookup
+            let egui_id = egui_graph::node::egui_id(graph_id, node_id);
             let size = m
-                .area_rect(id)
+                .area_rect(egui_id)
                 .map(|a| a.size())
                 .unwrap_or([200.0, 50.0].into());
-            (id, size)
+            (node_id, size)
         });
         let edges = graph
             .edge_indices()
             .filter_map(|e| graph.edge_endpoints(e))
-            .map(|(a, b)| (graph_id.with(a), graph_id.with(b)));
+            .map(|(a, b)| {
+                (
+                    egui_graph::NodeId::from_u64(a.index() as u64),
+                    egui_graph::NodeId::from_u64(b.index() as u64),
+                )
+            });
         egui_graph::layout(nodes, edges, flow)
     })
 }
@@ -212,7 +217,6 @@ pub fn layout<N>(
 fn nodes<Env, N>(
     env: &Env,
     graph: &mut Graph<N>,
-    graph_id: egui::Id,
     path: &[node::Id],
     nctx: &mut egui_graph::NodesCtx,
     state: &mut GraphSceneState,
@@ -231,8 +235,8 @@ where
         let node = &mut graph[n_id];
         let inputs = node.n_inputs(env);
         let outputs = node.n_outputs(env);
-        let egui_id = graph_id.with(n_id);
-        let response = egui_graph::node::Node::from_id(egui_id)
+        let node_id = egui_graph::NodeId::from_u64(n_ix as u64);
+        let response = egui_graph::node::Node::from_id(node_id)
             .inputs(inputs)
             .outputs(outputs)
             .flow(node.flow(env))
@@ -247,7 +251,7 @@ where
 
         if response.changed() {
             // Update the selected nodes.
-            if egui_graph::is_node_selected(ui, nctx.graph_id, egui_id) {
+            if egui_graph::is_node_selected(ui, nctx.graph_id, node_id) {
                 state.interaction.selection.nodes.insert(n_id);
             } else {
                 state.interaction.selection.nodes.remove(&n_id);
@@ -292,7 +296,6 @@ where
 
 fn edges<N>(
     graph: &mut Graph<N>,
-    graph_id: egui::Id,
     ectx: &mut egui_graph::EdgesCtx,
     state: &mut GraphSceneState,
     ui: &mut egui::Ui,
@@ -302,8 +305,8 @@ fn edges<N>(
         let (na, nb) = graph.edge_endpoints(e).unwrap();
         let edge = *graph.edge_weight(e).unwrap();
         let (input, output) = (edge.input.0.into(), edge.output.0.into());
-        let a = graph_id.with(na);
-        let b = graph_id.with(nb);
+        let a = egui_graph::NodeId::from_u64(na.index() as u64);
+        let b = egui_graph::NodeId::from_u64(nb.index() as u64);
         let mut selected = state.interaction.selection.edges.contains(&e);
         let response =
             egui_graph::edge::Edge::new((a, output), (b, input), &mut selected).show(ectx, ui);
@@ -367,3 +370,4 @@ where
     }
     index_path_node_mut(graph, path).and_then(|node| node.to_graph_mut())
 }
+

@@ -54,3 +54,4 @@ impl gantz_egui::widget::graph_scene::ToGraphMut for Box<dyn Node> {
             .map(|node| &mut node.graph)
     }
 }
+

@@ -176,6 +176,7 @@ impl gantz_egui::widget::graph_scene::ToGraphMut for Box<dyn Node> {
     }
 }
 
+
 // ----------------------------------------------
 // Graph
 // ----------------------------------------------
@@ -318,6 +319,11 @@ impl eframe::App for App {
                 );
                 // Update the graph pane if the head's commit CA changed.
                 gantz_egui::widget::update_graph_pane_head(ctx, &old_head, head);
+
+                // Migrate open_heads entry from old key to new key.
+                if let Some(state) = self.state.gantz.open_heads.remove(&old_head) {
+                    self.state.gantz.open_heads.insert(head.clone(), state);
+                }
 
                 // Recompile this head's graph into its VM.
                 let vm = &mut self.state.vms[ix];

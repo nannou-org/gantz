@@ -261,6 +261,7 @@ fn update_vm(
     mut ctxs: EguiContexts,
     mut env: ResMut<Environment>,
     mut open: ResMut<Open>,
+    mut gui_state: ResMut<GuiState>,
     mut vms: NonSendMut<HeadVms>,
     mut compiled_modules: ResMut<CompiledModules>,
 ) {
@@ -281,6 +282,11 @@ fn update_vm(
             // Update the graph pane if the head's commit CA changed.
             if let Ok(ctx) = ctxs.ctx_mut() {
                 gantz_egui::widget::update_graph_pane_head(ctx, &old_head, head);
+            }
+
+            // Migrate open_heads entry from old key to new key.
+            if let Some(state) = gui_state.gantz.open_heads.remove(&old_head) {
+                gui_state.gantz.open_heads.insert(head.clone(), state);
             }
 
             // Recompile this head's graph into its VM.
