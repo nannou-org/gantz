@@ -443,6 +443,21 @@ where
                 // Persist the inner tree.
                 ui.memory_mut(|m| m.data.insert_persisted(graph_tree_id, Some(graph_tree)));
 
+                // Show the command palette once (not per-pane), operating on the focused head.
+                if let Some((head, root, _)) = gantz.heads.get_mut(state.focused_head) {
+                    let head_state = state.open_heads.entry(head.clone()).or_default();
+                    if let Some(vm) = vms.get_mut(state.focused_head) {
+                        command_palette(
+                            gantz.env,
+                            root,
+                            head_state,
+                            &mut state.command_palette,
+                            vm,
+                            ui,
+                        );
+                    }
+                }
+
                 // Floating toggles over the bottom right corner of the graph scene pane.
                 let space = ui.style().interaction.interact_radius * 3.0;
                 egui::Window::new("view_toggle_window")
@@ -746,7 +761,6 @@ where
         let GantzState {
             open_heads,
             focused_head,
-            command_palette,
             auto_layout,
             layout_flow,
             center_view,
@@ -773,11 +787,6 @@ where
                 *focused_head = ix;
             }
         }
-
-        // Re-borrow head_state and vm after graph_scene.
-        let head_state = open_heads.get_mut(head).unwrap();
-        let vm = self.vms.get_mut(ix).unwrap();
-        crate::widget::gantz::command_palette(self.env, root, head_state, command_palette, vm, ui);
 
         egui_tiles::UiResponse::None
     }
