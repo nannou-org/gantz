@@ -17,11 +17,11 @@ mod storage;
 
 /// The currently open graphs/heads.
 ///
-/// Each entry is a head (branch or commit) and its associated graph.
+/// Each entry is a head (branch or commit), its associated graph, and its views.
 /// Multiple heads can be open simultaneously, displayed as tabs.
 #[derive(Resource)]
 struct Open {
-    heads: Vec<(ca::Head, Graph)>,
+    heads: Vec<(ca::Head, Graph, env::GraphViews)>,
 }
 
 #[derive(Resource)]
@@ -116,13 +116,20 @@ fn setup_environment(storage: Res<PkvStore>, mut cmds: Commands) {
 }
 
 fn setup_open(storage: Res<PkvStore>, mut env: ResMut<Environment>, mut cmds: Commands) {
-    let open = storage::load_open(&*storage, &mut env.registry);
+    let open = storage::load_open(&*storage, &mut *env);
     cmds.insert_resource(open);
 }
 
 fn prune_unused_graphs_and_commits(mut env: ResMut<Environment>, open: Res<Open>) {
-    let heads = open.heads.iter().map(|(h, _)| h);
-    env.registry.prune_unnamed_graphs(heads, env::graph_contains);
+    let heads = open.heads.iter().map(|(h, _, _)| h);
+    env.registry
+        .prune_unnamed_graphs(heads, env::graph_contains);
+
+    // Prune views for commits that no longer exist.
+    let existing_commits: std::collections::HashSet<_> =
+        env.registry.commits().keys().copied().collect();
+    env.views
+        .retain(|commit_addr, _| existing_commits.contains(commit_addr));
 }
 
 fn setup_gui_state(storage: Res<PkvStore>, mut cmds: Commands) {
@@ -139,7 +146,7 @@ fn setup_vm(world: &mut World) {
     // Initialize a VM for each open head.
     let mut vms = Vec::with_capacity(open.heads.len());
     let mut compiled_modules = Vec::with_capacity(open.heads.len());
-    for (_, graph) in &open.heads {
+    for (_, graph, _) in &open.heads {
         let (vm, compiled_module) = init_vm(&*env, graph);
         vms.push(vm);
         compiled_modules.push(compiled_module.0);
@@ -162,8 +169,12 @@ fn update_gui(
     egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
-            // Build a slice of (Head, &mut Graph) for the Gantz widget.
-            let mut heads: Vec<_> = open.heads.iter_mut().map(|(h, g)| (h.clone(), g)).collect();
+            // Build a slice of (Head, &mut Graph, &mut GraphLayout) for the Gantz widget.
+            let mut heads: Vec<_> = open
+                .heads
+                .iter_mut()
+                .map(|(h, g, l)| (h.clone(), g, l))
+                .collect();
             let response = gantz_egui::widget::Gantz::new(&mut *env, &mut heads)
                 .trace_capture(trace_capture.0.clone())
                 .show(&mut gui_state.gantz, &compiled_modules.0, &mut vms.0, ui);
@@ -171,7 +182,7 @@ fn update_gui(
             // The given graph name was removed.
             if let Some(name) = response.graph_name_removed() {
                 // Update any open heads that reference this name.
-                for (head, _) in &mut open.heads {
+                for (head, _, _) in &mut open.heads {
                     if let ca::Head::Branch(head_name) = &*head {
                         if *head_name == name {
                             let commit_ca = *env.registry.head_commit_ca(head).unwrap();
@@ -268,7 +279,12 @@ fn update_vm(
     // Check for changes to each open graph and commit/recompile them.
     // FIXME: Rather than checking changed CA to monitor changes, ideally
     // `Gantz` widget can tell us this in a custom response.
-    for (ix, (head, graph)) in open.heads.iter_mut().enumerate() {
+    for (ix, (head, graph, views)) in open.heads.iter_mut().enumerate() {
+        // Always update the views in env.views for this head's commit.
+        if let Some(commit_addr) = env.registry.head_commit_ca(head).copied() {
+            env.views.insert(commit_addr, views.clone());
+        }
+
         let new_graph_ca = ca::graph_addr(&*graph);
         let head_commit = env.registry.head_commit(head).unwrap();
         if head_commit.graph != new_graph_ca {
@@ -310,7 +326,7 @@ fn process_gantz_gui_cmds(
         .heads
         .iter()
         .enumerate()
-        .map(|(ix, (h, _))| (ix, h.clone()))
+        .map(|(ix, (h, _, _))| (ix, h.clone()))
         .collect();
 
     for (ix, head) in heads_to_process {
@@ -380,8 +396,11 @@ fn persist_resources(
     storage::save_names(&mut *storage, env.registry.names());
 
     // Save all open heads.
-    let heads: Vec<_> = open.heads.iter().map(|(h, _)| h.clone()).collect();
+    let heads: Vec<_> = open.heads.iter().map(|(h, _, _)| h.clone()).collect();
     storage::save_open_heads(&mut *storage, &heads);
+
+    // Save all views (already updated in update_vm).
+    storage::save_views(&mut *storage, &env.views);
 
     // Save the gantz GUI state.
     storage::save_gantz_gui_state(&mut *storage, &gui_state.gantz);
@@ -433,7 +452,7 @@ fn open_head(
     new_head: ca::Head,
 ) {
     // Check if the head is already open.
-    if let Some(ix) = open.heads.iter().position(|(h, _)| *h == new_head) {
+    if let Some(ix) = open.heads.iter().position(|(h, _, _)| *h == new_head) {
         // Just focus the existing tab.
         gantz.focused_head = ix;
         return;
@@ -443,7 +462,15 @@ fn open_head(
     let graph = env.registry.head_graph(&new_head).unwrap();
     let new_graph = graph::clone(graph);
 
-    open.heads.push((new_head.clone(), new_graph.clone()));
+    // Load the views for this head's commit, or create empty.
+    let views = env
+        .registry
+        .head_commit_ca(&new_head)
+        .and_then(|ca| env.views.get(&ca).cloned())
+        .unwrap_or_default();
+
+    open.heads
+        .push((new_head.clone(), new_graph.clone(), views));
     gantz.focused_head = open.heads.len() - 1;
 
     // Initialise the VM for the new graph and add it to the per-head collections.
@@ -468,7 +495,7 @@ fn replace_head(
     new_head: ca::Head,
 ) {
     // If the new head is already open, just focus it.
-    if let Some(ix) = open.heads.iter().position(|(h, _)| *h == new_head) {
+    if let Some(ix) = open.heads.iter().position(|(h, _, _)| *h == new_head) {
         gantz.focused_head = ix;
         return;
     }
@@ -480,8 +507,15 @@ fn replace_head(
     let graph = env.registry.head_graph(&new_head).unwrap();
     let new_graph = graph::clone(graph);
 
+    // Load the views for this head's commit, or create empty.
+    let views = env
+        .registry
+        .head_commit_ca(&new_head)
+        .and_then(|ca| env.views.get(&ca).cloned())
+        .unwrap_or_default();
+
     // Replace at the focused index.
-    open.heads[ix] = (new_head.clone(), new_graph.clone());
+    open.heads[ix] = (new_head.clone(), new_graph.clone(), views);
 
     // Reinitialize the VM for the new graph.
     let (new_vm, new_module) = init_vm(env, &new_graph);
@@ -514,7 +548,7 @@ fn close_head(
     if open.heads.len() <= 1 {
         return;
     }
-    if let Some(ix) = open.heads.iter().position(|(h, _)| h == head) {
+    if let Some(ix) = open.heads.iter().position(|(h, _, _)| h == head) {
         open.heads.remove(ix);
         vms.0.remove(ix);
         compiled_modules.0.remove(ix);
@@ -547,7 +581,7 @@ fn create_branch_from_head(
 
     // Find the index of the original head and replace it.
     let new_head = ca::Head::Branch(new_name);
-    if let Some(ix) = open.heads.iter().position(|(h, _)| h == original_head) {
+    if let Some(ix) = open.heads.iter().position(|(h, _, _)| h == original_head) {
         let old_head = open.heads[ix].0.clone();
         open.heads[ix].0 = new_head.clone();
 

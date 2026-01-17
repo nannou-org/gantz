@@ -1,6 +1,6 @@
 use crate::{
     Open,
-    env::{self, Environment},
+    env::{self, Environment, GraphViews, Views},
     graph,
     node::Node,
 };
@@ -20,6 +20,8 @@ mod key {
     pub const NAMES: &str = "graph-names";
     /// The key at which the list of open heads is stored.
     pub const OPEN_HEADS: &str = "open-heads";
+    /// The key at which all graph views (layout + camera) are stored.
+    pub const VIEWS: &str = "views";
 
     /// The key for a particular graph in storage.
     pub fn graph(ca: gantz_ca::GraphAddr) -> String {
@@ -160,6 +162,21 @@ pub fn save_open_heads(storage: &mut PkvStore, heads: &[ca::Head]) {
     }
 }
 
+/// Save all graph views to storage under a single key.
+pub fn save_views(storage: &mut PkvStore, views: &Views) {
+    let views_str = match ron::to_string(views) {
+        Err(e) => {
+            log::error!("Failed to serialize views: {e}");
+            return;
+        }
+        Ok(s) => s,
+    };
+    match storage.set_string(key::VIEWS, &views_str) {
+        Ok(()) => log::debug!("Successfully persisted {} views", views.len()),
+        Err(e) => log::error!("Failed to persist views: {e}"),
+    }
+}
+
 /// Load the graph addresses from storage.
 pub fn load_graph_addrs(storage: &PkvStore) -> Vec<ca::GraphAddr> {
     let Some(graph_addrs_str) = storage.get::<String>(key::GRAPH_ADDRS).ok() else {
@@ -279,6 +296,24 @@ pub fn load_names(storage: &PkvStore) -> BTreeMap<String, ca::CommitAddr> {
     }
 }
 
+/// Load all graph views from storage.
+pub fn load_views(storage: &PkvStore) -> Views {
+    let Some(views_str) = storage.get::<String>(key::VIEWS).ok() else {
+        log::debug!("No existing views to load");
+        return Views::default();
+    };
+    match ron::de::from_str(&views_str) {
+        Ok(views) => {
+            log::debug!("Successfully loaded views from storage");
+            views
+        }
+        Err(e) => {
+            log::error!("Failed to deserialize views: {e}");
+            Views::default()
+        }
+    }
+}
+
 /// Load all open heads from storage.
 fn load_open_heads(storage: &PkvStore) -> Option<Vec<ca::Head>> {
     let Some(heads_str) = storage.get::<String>(key::OPEN_HEADS).ok() else {
@@ -328,32 +363,41 @@ pub fn load_environment(storage: &PkvStore) -> Environment {
     let graphs = load_graphs(storage, graph_addrs.iter().copied());
     let commits = load_commits(storage, commit_addrs.iter().copied());
     let names = load_names(storage);
+    let views = load_views(storage);
     let registry = env::Registry::new(graphs, commits, names);
     let primitives = env::primitives();
     Environment {
         primitives,
         registry,
+        views,
     }
 }
 
-pub fn load_open(storage: &PkvStore, reg: &mut env::Registry) -> Open {
+pub fn load_open(storage: &PkvStore, env: &mut Environment) -> Open {
     // Try to load all open heads from storage.
     let heads: Vec<_> = load_open_heads(storage)
         .unwrap_or_default()
         .into_iter()
         // Filter out heads that no longer exist in the registry.
         .filter_map(|head| {
-            let graph = graph::clone(reg.head_graph(&head)?);
-            Some((head, graph))
+            let graph = graph::clone(env.registry.head_graph(&head)?);
+            // Load the views for this head's commit, or create empty.
+            let views = env
+                .registry
+                .head_commit_ca(&head)
+                .and_then(|ca| env.views.get(&ca).cloned())
+                .unwrap_or_default();
+            Some((head, graph, views))
         })
         .collect();
 
     // If no valid heads remain, create a default one.
     if heads.is_empty() {
-        let head = reg.init_head(env::timestamp());
-        let graph = graph::clone(reg.head_graph(&head).unwrap());
+        let head = env.registry.init_head(env::timestamp());
+        let graph = graph::clone(env.registry.head_graph(&head).unwrap());
+        let views = GraphViews::default();
         Open {
-            heads: vec![(head, graph)],
+            heads: vec![(head, graph, views)],
         }
     } else {
         Open { heads }

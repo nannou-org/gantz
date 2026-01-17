@@ -4,8 +4,15 @@ use crate::{
 };
 use bevy::ecs::resource::Resource;
 use gantz_ca as ca;
+use gantz_core::node;
 use petgraph::visit::{IntoNodeReferences, NodeRef};
-use std::{any::Any, collections::BTreeMap};
+use std::{any::Any, collections::BTreeMap, collections::HashMap};
+
+/// View state (layout + camera) for a graph and all its nested subgraphs, keyed by path.
+pub type GraphViews = HashMap<Vec<node::Id>, egui_graph::View>;
+
+/// All graph views keyed by commit address.
+pub type Views = HashMap<ca::CommitAddr, GraphViews>;
 
 /// The type used to track mappings between node names, content addresses and
 /// graphs. Also provides access to the node registry. This can be thought of as
@@ -16,6 +23,8 @@ pub struct Environment {
     pub primitives: Primitives,
     /// The registry of all nodes composed from other nodes.
     pub registry: Registry,
+    /// Views (layout + camera) for all known commits, keyed by commit address.
+    pub views: Views,
 }
 
 /// The registry for all graphs, commits and commit names.

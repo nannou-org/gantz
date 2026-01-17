@@ -157,8 +157,7 @@ where
             .center_view(self.center_view)
             .show(view, ui, |ui, show| {
                 show.nodes(ui, |nctx, ui| {
-                    node_responses =
-                        nodes(self.env, self.graph, self.path, nctx, state, vm, ui);
+                    node_responses = nodes(self.env, self.graph, self.path, nctx, state, vm, ui);
                 })
                 .edges(ui, |ectx, ui| edges(self.graph, ectx, state, ui));
             })
@@ -370,4 +369,3 @@ where
     }
     index_path_node_mut(graph, path).and_then(|node| node.to_graph_mut())
 }
-
