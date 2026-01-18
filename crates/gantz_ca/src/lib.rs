@@ -18,4 +18,4 @@ mod ca;
 mod commit;
 mod graph;
 mod hash;
-mod registry;
+pub mod registry;

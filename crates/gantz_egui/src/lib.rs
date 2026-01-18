@@ -2,6 +2,7 @@
 //! gantz using `egui`.
 
 use petgraph::visit::{IntoNodeReferences, NodeRef};
+use std::collections::HashMap;
 use steel::{
     SteelErr, SteelVal,
     rvals::{FromSteelVal, IntoSteelVal},
@@ -11,6 +12,9 @@ use steel::{
 mod impls;
 pub mod node;
 pub mod widget;
+
+/// View state (layout + camera) for a graph and all its nested subgraphs, keyed by path.
+pub type GraphViews = HashMap<Vec<node::Id>, egui_graph::View>;
 
 /// A trait providing an egui `Ui` implementation for gantz nodes.
 pub trait NodeUi<Env> {
@@ -232,4 +236,19 @@ where
 fn system_time_from_web(t: web_time::SystemTime) -> Option<std::time::SystemTime> {
     let duration = t.duration_since(web_time::UNIX_EPOCH).ok()?;
     std::time::UNIX_EPOCH.checked_add(duration)
+}
+
+/// Check if the given head is the currently focused head.
+///
+/// `focused_head` represents an index into the given `heads` iterator.
+pub fn head_is_focused<'a>(
+    heads: impl IntoIterator<Item = &'a gantz_ca::Head>,
+    focused_head: usize,
+    head: &gantz_ca::Head,
+) -> bool {
+    heads
+        .into_iter()
+        .position(|h| h == head)
+        .map(|ix| ix == focused_head)
+        .unwrap_or(false)
 }

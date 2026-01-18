@@ -191,14 +191,20 @@ struct App {
     state: State,
 }
 
+/// View state (layout + camera) for a graph and all its nested subgraphs, keyed by path.
+type GraphViews = gantz_egui::GraphViews;
+
 struct State {
-    head: gantz_ca::Head,
-    graph: Graph,
-    compiled_module: String,
+    /// The currently open graphs/heads.
+    /// Each entry is a head (branch or commit), its associated graph, and view state.
+    heads: Vec<(gantz_ca::Head, Graph, GraphViews)>,
+    /// Per-head compiled modules, indexed to match `heads`.
+    compiled_modules: Vec<String>,
+    /// Per-head VMs, indexed to match `heads`.
+    vms: Vec<Engine>,
     logger: gantz_egui::widget::log_view::Logger,
     gantz: gantz_egui::widget::GantzState,
     env: Environment,
-    vm: Engine,
 }
 
 // ----------------------------------------------
@@ -214,8 +220,8 @@ impl App {
     const COMMIT_ADDRS_KEY: &str = "commit-addrs";
     /// The key at which the mapping from names to graph CAs is stored.
     const NAMES_KEY: &str = "graph-names";
-    /// The key at which the active head is stored.
-    const HEAD_KEY: &str = "head";
+    /// The key at which the list of open heads is stored.
+    const OPEN_HEADS_KEY: &str = "open-heads";
 
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // Setup logging.
@@ -224,7 +230,7 @@ impl App {
         log::set_max_level(log::LevelFilter::Info);
 
         // Load the graphs and mappings from storage.
-        let (mut registry, head, gantz) = cc
+        let (mut registry, open_heads, gantz) = cc
             .storage
             .as_ref()
             .map(|&storage| {
@@ -233,26 +239,36 @@ impl App {
                 let graphs = load_graphs(storage, graph_addrs.iter().copied());
                 let commits = load_commits(storage, commit_addrs.iter().copied());
                 let names = load_names(storage);
-                let head = load_head(storage);
+                let open_heads = load_open_heads(storage);
                 let gantz = load_gantz_gui_state(storage);
                 let mut registry = Registry::new(graphs, commits, names);
-                registry.prune_unnamed_graphs(head.as_ref(), graph_contains);
-                (registry, head, gantz)
+                registry.prune_unnamed_graphs(&open_heads, graph_contains);
+                (registry, open_heads, gantz)
             })
             .unwrap_or_else(|| {
                 log::error!("Unable to access storage");
-                (Default::default(), None, Default::default())
+                (Default::default(), vec![], Default::default())
             });
 
-        // Lookup the active graph or fallback to an empty default.
-        let head = match head {
-            None => registry.init_head(timestamp()),
-            Some(head) => match registry.head_graph(&head) {
-                None => registry.init_head(timestamp()),
-                Some(_) => head.clone(),
-            },
+        // Load all open heads, filtering out invalid ones.
+        let heads: Vec<_> = open_heads
+            .into_iter()
+            .filter_map(|head| {
+                let graph = clone_graph(registry.head_graph(&head)?);
+                let views = GraphViews::default();
+                Some((head, graph, views))
+            })
+            .collect();
+
+        // If no valid heads remain, create a default one.
+        let heads = if heads.is_empty() {
+            let head = registry.init_head(timestamp());
+            let graph = clone_graph(registry.head_graph(&head).unwrap());
+            let views = GraphViews::default();
+            vec![(head, graph, views)]
+        } else {
+            heads
         };
-        let graph = clone_graph(registry.head_graph(&head).unwrap());
 
         // Setup the environment that will be provided to all nodes.
         let primitives = primitives();
@@ -261,8 +277,14 @@ impl App {
             primitives,
         };
 
-        // VM setup.
-        let (vm, compiled_module) = init_vm(&env, &graph);
+        // VM setup - initialize a VM for each open head.
+        let mut vms = Vec::with_capacity(heads.len());
+        let mut compiled_modules = Vec::with_capacity(heads.len());
+        for (_, graph, _) in &heads {
+            let (vm, compiled_module) = init_vm(&env, graph);
+            vms.push(vm);
+            compiled_modules.push(compiled_module);
+        }
 
         // GUI setup.
         let ctx = &cc.egui_ctx;
@@ -271,11 +293,10 @@ impl App {
         let state = State {
             logger,
             gantz,
-            graph,
-            head,
+            heads,
             env,
-            compiled_module,
-            vm,
+            compiled_modules,
+            vms,
         };
 
         App { state }
@@ -286,26 +307,33 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         gui(ctx, &mut self.state);
 
-        // Check for changes to the graph and auto-commit them.
+        // Check for changes to each open graph and commit/recompile them.
         // FIXME: Rather than checking changed CA to monitor changes, ideally
         // `Gantz` widget can tell us this in a custom response.
-        let new_graph_ca = gantz_ca::graph_addr(&self.state.graph);
-        let head_commit = self
-            .state
-            .env
-            .registry
-            .head_commit(&self.state.head)
-            .unwrap();
-        if head_commit.graph != new_graph_ca {
-            let graph = &self.state.graph;
-            self.state.env.registry.commit_graph_to_head(
-                timestamp(),
-                new_graph_ca,
-                || graph.clone(),
-                &mut self.state.head,
-            );
-            let module = compile_graph(&self.state.env, &self.state.graph, &mut self.state.vm);
-            self.state.compiled_module = fmt_compiled_module(&module);
+        for (ix, (head, graph, _)) in self.state.heads.iter_mut().enumerate() {
+            let new_graph_ca = gantz_ca::graph_addr(&*graph);
+            let head_commit = self.state.env.registry.head_commit(head).unwrap();
+            if head_commit.graph != new_graph_ca {
+                let old_head = head.clone();
+                self.state.env.registry.commit_graph_to_head(
+                    timestamp(),
+                    new_graph_ca,
+                    || graph.clone(),
+                    head,
+                );
+                // Update the graph pane if the head's commit CA changed.
+                gantz_egui::widget::update_graph_pane_head(ctx, &old_head, head);
+
+                // Migrate open_heads entry from old key to new key.
+                if let Some(state) = self.state.gantz.open_heads.remove(&old_head) {
+                    self.state.gantz.open_heads.insert(head.clone(), state);
+                }
+
+                // Recompile this head's graph into its VM.
+                let vm = &mut self.state.vms[ix];
+                let module = compile_graph(&self.state.env, graph, vm);
+                self.state.compiled_modules[ix] = fmt_compiled_module(&module);
+            }
         }
 
         // Process any pending commands generated from the UI.
@@ -324,7 +352,11 @@ impl eframe::App for App {
         save_commits(storage, &self.state.env.registry.commits());
 
         save_names(storage, &self.state.env.registry.names());
-        save_head(storage, &self.state.head);
+
+        // Save all open heads.
+        let heads: Vec<_> = self.state.heads.iter().map(|(h, _, _)| h.clone()).collect();
+        save_open_heads(storage, &heads);
+
         save_gantz_gui_state(storage, &self.state.gantz);
     }
 
@@ -447,17 +479,17 @@ fn save_gantz_gui_state(storage: &mut dyn eframe::Storage, state: &gantz_egui::w
     log::debug!("Successfully persisted gantz GUI state");
 }
 
-/// Save the head to storage.
-fn save_head(storage: &mut dyn eframe::Storage, head: &gantz_ca::Head) {
-    let head_str = match ron::to_string(head) {
+/// Save all open heads to storage.
+fn save_open_heads(storage: &mut dyn eframe::Storage, heads: &[gantz_ca::Head]) {
+    let heads_str = match ron::to_string(heads) {
         Err(e) => {
-            log::error!("Failed to serialize and save head: {e}");
+            log::error!("Failed to serialize open heads: {e}");
             return;
         }
         Ok(s) => s,
     };
-    storage.set_string(App::HEAD_KEY, head_str);
-    log::debug!("Successfully persisted head: {head:?}");
+    storage.set_string(App::OPEN_HEADS_KEY, heads_str);
+    log::debug!("Successfully persisted {} open heads", heads.len());
 }
 
 /// Load the graph addresses from storage.
@@ -579,20 +611,20 @@ fn load_names(storage: &dyn eframe::Storage) -> BTreeMap<String, gantz_ca::Commi
     }
 }
 
-/// Load the active head.
-fn load_head(storage: &dyn eframe::Storage) -> Option<gantz_ca::Head> {
-    let Some(head_str) = storage.get_string(App::HEAD_KEY) else {
-        log::debug!("No existing head to load");
-        return None;
+/// Load all open heads from storage.
+fn load_open_heads(storage: &dyn eframe::Storage) -> Vec<gantz_ca::Head> {
+    let Some(heads_str) = storage.get_string(App::OPEN_HEADS_KEY) else {
+        log::debug!("No existing open heads to load");
+        return vec![];
     };
-    match ron::de::from_str(&head_str) {
-        Ok(head) => {
-            log::debug!("Successfully loaded head");
-            Some(head)
+    match ron::de::from_str(&heads_str) {
+        Ok(heads) => {
+            log::debug!("Successfully loaded open heads");
+            heads
         }
         Err(e) => {
-            log::error!("Failed to deserialize head: {e}");
-            None
+            log::error!("Failed to deserialize open heads: {e}");
+            vec![]
         }
     }
 }
@@ -647,33 +679,47 @@ fn init_vm(env: &Environment, graph: &Graph) -> (Engine, String) {
 
 // Drain the commands provided by the UI and process them.
 fn process_cmds(state: &mut State) {
-    // Process any pending commands.
-    for cmd in std::mem::take(&mut state.gantz.graph_scene.cmds) {
-        log::debug!("{cmd:?}");
-        match cmd {
-            gantz_egui::Cmd::PushEval(path) => {
-                let fn_name = gantz_core::compile::push_eval_fn_name(&path);
-                if let Err(e) = state.vm.call_function_by_name_with_args(&fn_name, vec![]) {
-                    log::error!("{e}");
+    // Collect heads with their indices to process.
+    let heads_to_process: Vec<_> = state
+        .heads
+        .iter()
+        .enumerate()
+        .map(|(ix, (h, _, _))| (ix, h.clone()))
+        .collect();
+
+    for (ix, head) in heads_to_process {
+        let head_state = state.gantz.open_heads.entry(head.clone()).or_default();
+        for cmd in std::mem::take(&mut head_state.scene.cmds) {
+            log::debug!("{cmd:?}");
+            match cmd {
+                gantz_egui::Cmd::PushEval(path) => {
+                    let fn_name = gantz_core::compile::push_eval_fn_name(&path);
+                    if let Err(e) = state.vms[ix].call_function_by_name_with_args(&fn_name, vec![])
+                    {
+                        log::error!("{e}");
+                    }
                 }
-            }
-            gantz_egui::Cmd::PullEval(path) => {
-                let fn_name = gantz_core::compile::pull_eval_fn_name(&path);
-                if let Err(e) = state.vm.call_function_by_name_with_args(&fn_name, vec![]) {
-                    log::error!("{e}");
+                gantz_egui::Cmd::PullEval(path) => {
+                    let fn_name = gantz_core::compile::pull_eval_fn_name(&path);
+                    if let Err(e) = state.vms[ix].call_function_by_name_with_args(&fn_name, vec![])
+                    {
+                        log::error!("{e}");
+                    }
                 }
-            }
-            gantz_egui::Cmd::OpenGraph(path) => {
-                state.gantz.path = path;
-            }
-            gantz_egui::Cmd::OpenNamedGraph(name, ca) => {
-                if let Some(commit) = state.env.registry.named_commit(&name) {
-                    if ca == commit.graph {
-                        set_head(state, gantz_ca::Head::Branch(name.to_string()));
-                    } else {
-                        log::debug!(
-                            "Attempted to open named graph, but the graph address has changed"
-                        );
+                gantz_egui::Cmd::OpenGraph(path) => {
+                    // Re-borrow head_state to modify path.
+                    let head_state = state.gantz.open_heads.get_mut(&head).unwrap();
+                    head_state.path = path;
+                }
+                gantz_egui::Cmd::OpenNamedGraph(name, graph_ca) => {
+                    if let Some(commit) = state.env.registry.named_commit(&name) {
+                        if graph_ca == commit.graph {
+                            open_head(state, gantz_ca::Head::Branch(name.to_string()));
+                        } else {
+                            log::debug!(
+                                "Attempted to open named graph, but the graph address has changed"
+                            );
+                        }
                     }
                 }
             }
@@ -705,69 +751,183 @@ fn gui(ctx: &egui::Context, state: &mut State) {
     egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
-            let commit_ca = *state.env.registry.head_commit_ca(&state.head).unwrap();
-            let response =
-                gantz_egui::widget::Gantz::new(&mut state.env, &mut state.graph, &state.head)
-                    .logger(state.logger.clone())
-                    .show(&mut state.gantz, &state.compiled_module, &mut state.vm, ui);
+            // Build a slice of (Head, &mut Graph, &mut GraphViews) for the Gantz widget.
+            let mut heads: Vec<_> = state
+                .heads
+                .iter_mut()
+                .map(|(h, g, l)| (h.clone(), g, l))
+                .collect();
+            let get_module = |ix| state.compiled_modules.get(ix).map(|s: &String| &s[..]);
+            let response = gantz_egui::widget::Gantz::new(&mut state.env, &mut heads)
+                .logger(state.logger.clone())
+                .show(&mut state.gantz, &get_module, &mut state.vms, ui);
 
-            // The graph name was updated, ensure a mapping exists if necessary.
-            if let Some(name_opt) = response.graph_name_updated() {
-                match name_opt {
-                    // If a name was given, ensure it maps to the CA.
-                    Some(name) => {
-                        state.env.registry.insert_name(name.to_string(), commit_ca);
-                        state.head = gantz_ca::Head::Branch(name.to_string());
-                    }
-                    // Otherwise the name was cleared, so just point to the commit.
-                    None => {
-                        state.head = gantz_ca::Head::Commit(commit_ca);
-                    }
-                }
             // The given graph name was removed.
-            } else if let Some(name) = response.graph_name_removed() {
-                if let gantz_ca::Head::Branch(ref head_name) = state.head {
-                    if *head_name == name {
-                        state.head = gantz_ca::Head::Commit(commit_ca);
+            if let Some(name) = response.graph_name_removed() {
+                // Update any open heads that reference this name.
+                for (head, _, _) in &mut state.heads {
+                    if let gantz_ca::Head::Branch(head_name) = &*head {
+                        if *head_name == name {
+                            let commit_ca = *state.env.registry.head_commit_ca(head).unwrap();
+                            *head = gantz_ca::Head::Commit(commit_ca);
+                        }
                     }
                 }
                 state.env.registry.remove_name(&name);
             }
 
-            // A graph was selected.
-            if let Some(new_head) = response.graph_selected() {
-                // TODO: Load state for named graphs?
-                set_head(state, new_head.clone());
+            // Single click: replace the focused head with the selected one.
+            if let Some(new_head) = response.graph_replaced() {
+                replace_head(ui.ctx(), state, new_head.clone());
             }
 
-            // Create a new empty graph and select it.
+            // Open as a new tab (or focus if already open).
+            if let Some(new_head) = response.graph_opened() {
+                open_head(state, new_head.clone());
+            }
+
+            // Close head.
+            if let Some(head) = response.graph_closed() {
+                close_head(state, head);
+            }
+
+            // Create a new empty graph and open it.
             if response.new_graph() {
-                // Set the head to a new commit.
                 let new_head = state.env.registry.init_head(timestamp());
-                set_head(state, new_head);
+                open_head(state, new_head);
+            }
+
+            // Handle closed heads from tab close buttons.
+            for closed_head in &response.closed_heads {
+                close_head(state, closed_head);
+            }
+
+            // Handle new branch created from tab double-click.
+            if let Some((original_head, new_name)) = response.new_branch() {
+                create_branch_from_head(ui.ctx(), state, original_head, new_name.clone());
             }
         });
 }
 
-/// Set the active graph as the graph with the given CA.
+/// Open a head as a new tab, or focus it if already open.
 ///
-/// Panics if the given head does not exist.
-fn set_head(state: &mut State, new_head: gantz_ca::Head) {
+/// This is only used when selecting from GraphSelect.
+fn open_head(state: &mut State, new_head: gantz_ca::Head) {
+    // Check if the head is already open.
+    if let Some(ix) = state.heads.iter().position(|(h, _, _)| *h == new_head) {
+        // Just focus the existing tab.
+        state.gantz.focused_head = ix;
+        return;
+    }
+
+    // Head is not open - add it as a new tab.
     let graph = state.env.registry.head_graph(&new_head).unwrap();
+    let new_graph = clone_graph(graph);
+    let views = GraphViews::default();
 
-    // Clone the graph.
-    state.graph = clone_graph(graph);
-    state.head = new_head;
+    state
+        .heads
+        .push((new_head.clone(), new_graph.clone(), views));
+    state.gantz.focused_head = state.heads.len() - 1;
 
-    // Initialise the VM.
-    let (vm, compiled_module) = init_vm(&state.env, &state.graph);
-    state.vm = vm;
-    state.compiled_module = compiled_module;
+    // Initialise the VM for the new graph and add to per-head collections.
+    let (vm, compiled_module) = init_vm(&state.env, &new_graph);
+    state.vms.push(vm);
+    state.compiled_modules.push(compiled_module);
 
-    // Clear the graph GUI state (layout, etc).
-    state.gantz.path.clear();
-    state.gantz.graphs.clear();
-    state.gantz.graph_scene.interaction.selection.clear();
+    // Initialize GUI state for the new head.
+    state.gantz.open_heads.entry(new_head).or_default();
+}
+
+/// Replace the focused head with a new head in-place.
+///
+/// If the new head is already open elsewhere, focuses that instead.
+fn replace_head(ctx: &egui::Context, state: &mut State, new_head: gantz_ca::Head) {
+    // If the new head is already open, just focus it.
+    if let Some(ix) = state.heads.iter().position(|(h, _, _)| *h == new_head) {
+        state.gantz.focused_head = ix;
+        return;
+    }
+
+    let ix = state.gantz.focused_head;
+    let old_head = state.heads[ix].0.clone();
+
+    // Load the new graph.
+    let graph = state.env.registry.head_graph(&new_head).unwrap();
+    let new_graph = clone_graph(graph);
+    let views = GraphViews::default();
+
+    // Replace at the focused index.
+    state.heads[ix] = (new_head.clone(), new_graph.clone(), views);
+
+    // Reinitialize the VM for the new graph.
+    let (new_vm, new_module) = init_vm(&state.env, &new_graph);
+    state.vms[ix] = new_vm;
+    state.compiled_modules[ix] = new_module;
+
+    // Update the graph pane to show the new head.
+    gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
+
+    // Move GUI state from old head to new head.
+    if let Some(gui_state) = state.gantz.open_heads.remove(&old_head) {
+        state.gantz.open_heads.insert(new_head, gui_state);
+    } else {
+        state.gantz.open_heads.entry(new_head).or_default();
+    }
+}
+
+/// Close a head, removing it from the open tabs.
+///
+/// Does nothing if the head is not open or if it's the last open head.
+fn close_head(state: &mut State, head: &gantz_ca::Head) {
+    // Don't close if it's the last open head.
+    // TODO: Consider opening default empty graph when closing last head.
+    if state.heads.len() <= 1 {
+        return;
+    }
+    if let Some(ix) = state.heads.iter().position(|(h, _, _)| h == head) {
+        state.heads.remove(ix);
+        state.vms.remove(ix);
+        state.compiled_modules.remove(ix);
+        state.gantz.open_heads.remove(head);
+
+        // Update focused_head to remain valid.
+        if ix <= state.gantz.focused_head {
+            state.gantz.focused_head = state.gantz.focused_head.saturating_sub(1);
+        }
+    }
+}
+
+/// Create a new branch from an existing head and replace the open head with it.
+fn create_branch_from_head(
+    ctx: &egui::Context,
+    state: &mut State,
+    original_head: &gantz_ca::Head,
+    new_name: String,
+) {
+    // Get the commit CA from the original head.
+    let Some(commit_ca) = state.env.registry.head_commit_ca(original_head).copied() else {
+        log::error!("Failed to get commit address for head: {:?}", original_head);
+        return;
+    };
+
+    // Insert the new branch name into the registry.
+    state.env.registry.insert_name(new_name.clone(), commit_ca);
+
+    // Find the index of the original head and replace it.
+    let new_head = gantz_ca::Head::Branch(new_name);
+    if let Some(ix) = state.heads.iter().position(|(h, _, _)| h == original_head) {
+        let old_head = state.heads[ix].0.clone();
+        state.heads[ix].0 = new_head.clone();
+
+        // Update the graph pane to show the new head.
+        gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
+
+        // Move GUI state from old head to new head.
+        if let Some(gui_state) = state.gantz.open_heads.remove(&old_head) {
+            state.gantz.open_heads.insert(new_head, gui_state);
+        }
+    }
 }
 
 /// Whether or not the graph contains a subgraph with the given CA.

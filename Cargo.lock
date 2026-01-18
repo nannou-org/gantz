@@ -2259,9 +2259,9 @@ dependencies = [
 
 [[package]]
 name = "egui_graph"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3053d06c626b66edc23aadfd147b0dca237106e52ede79d39338367a16af637c"
+checksum = "80a90111217c68511fc4dc31039989f8f27ac6ca89ce12cfa43ed68117ee8eb9"
 dependencies = [
  "egui",
  "layout-rs",
@@ -2722,6 +2722,7 @@ dependencies = [
  "bevy_pkv",
  "dyn-clone",
  "dyn-hash",
+ "egui_graph",
  "gantz_ca",
  "gantz_core",
  "gantz_egui",

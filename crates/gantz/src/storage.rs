@@ -1,6 +1,6 @@
 use crate::{
-    Active,
-    env::{self, Environment},
+    Open,
+    env::{self, Environment, GraphViews, Views},
     graph,
     node::Node,
 };
@@ -18,8 +18,10 @@ mod key {
     pub const COMMIT_ADDRS: &str = "commit-addrs";
     /// The key at which the mapping from names to graph CAs is stored.
     pub const NAMES: &str = "graph-names";
-    /// The key at which the current head is stored.
-    pub const HEAD: &str = "head";
+    /// The key at which the list of open heads is stored.
+    pub const OPEN_HEADS: &str = "open-heads";
+    /// The key at which all graph views (layout + camera) are stored.
+    pub const VIEWS: &str = "views";
 
     /// The key for a particular graph in storage.
     pub fn graph(ca: gantz_ca::GraphAddr) -> String {
@@ -141,22 +143,37 @@ pub fn save_gantz_gui_state(storage: &mut PkvStore, state: &gantz_egui::widget::
     };
     match storage.set_string(key::GANTZ_GUI_STATE, &gantz_str) {
         Ok(()) => log::debug!("Successfully persisted gantz GUI state"),
-        Err(e) => log::error!("Failed to persis gantz GUI state: {e}"),
+        Err(e) => log::error!("Failed to persist gantz GUI state: {e}"),
     }
 }
 
-/// Save the head to storage.
-pub fn save_head(storage: &mut PkvStore, head: &ca::Head) {
-    let head_str = match ron::to_string(head) {
+/// Save all open heads to storage.
+pub fn save_open_heads(storage: &mut PkvStore, heads: &[ca::Head]) {
+    let heads_str = match ron::to_string(heads) {
         Err(e) => {
-            log::error!("Failed to serialize and save head: {e}");
+            log::error!("Failed to serialize open heads: {e}");
             return;
         }
         Ok(s) => s,
     };
-    match storage.set_string(key::HEAD, &head_str) {
-        Ok(()) => log::debug!("Successfully persisted head: {head:?}"),
-        Err(e) => log::error!("Failed to persist head: {e}"),
+    match storage.set_string(key::OPEN_HEADS, &heads_str) {
+        Ok(()) => log::debug!("Successfully persisted {} open heads", heads.len()),
+        Err(e) => log::error!("Failed to persist open heads: {e}"),
+    }
+}
+
+/// Save all graph views to storage under a single key.
+pub fn save_views(storage: &mut PkvStore, views: &Views) {
+    let views_str = match ron::to_string(views) {
+        Err(e) => {
+            log::error!("Failed to serialize views: {e}");
+            return;
+        }
+        Ok(s) => s,
+    };
+    match storage.set_string(key::VIEWS, &views_str) {
+        Ok(()) => log::debug!("Successfully persisted {} views", views.len()),
+        Err(e) => log::error!("Failed to persist views: {e}"),
     }
 }
 
@@ -279,19 +296,37 @@ pub fn load_names(storage: &PkvStore) -> BTreeMap<String, ca::CommitAddr> {
     }
 }
 
-/// Load the active head.
-fn load_head(storage: &PkvStore) -> Option<ca::Head> {
-    let Some(head_str) = storage.get::<String>(key::HEAD).ok() else {
-        log::debug!("No existing head to load");
-        return None;
+/// Load all graph views from storage.
+pub fn load_views(storage: &PkvStore) -> Views {
+    let Some(views_str) = storage.get::<String>(key::VIEWS).ok() else {
+        log::debug!("No existing views to load");
+        return Views::default();
     };
-    match ron::de::from_str(&head_str) {
-        Ok(head) => {
-            log::debug!("Successfully loaded head");
-            Some(head)
+    match ron::de::from_str(&views_str) {
+        Ok(views) => {
+            log::debug!("Successfully loaded views from storage");
+            views
         }
         Err(e) => {
-            log::error!("Failed to deserialize head: {e}");
+            log::error!("Failed to deserialize views: {e}");
+            Views::default()
+        }
+    }
+}
+
+/// Load all open heads from storage.
+fn load_open_heads(storage: &PkvStore) -> Option<Vec<ca::Head>> {
+    let Some(heads_str) = storage.get::<String>(key::OPEN_HEADS).ok() else {
+        log::debug!("No existing open heads to load");
+        return None;
+    };
+    match ron::de::from_str(&heads_str) {
+        Ok(heads) => {
+            log::debug!("Successfully loaded open heads");
+            Some(heads)
+        }
+        Err(e) => {
+            log::error!("Failed to deserialize open heads: {e}");
             None
         }
     }
@@ -328,22 +363,43 @@ pub fn load_environment(storage: &PkvStore) -> Environment {
     let graphs = load_graphs(storage, graph_addrs.iter().copied());
     let commits = load_commits(storage, commit_addrs.iter().copied());
     let names = load_names(storage);
+    let views = load_views(storage);
     let registry = env::Registry::new(graphs, commits, names);
     let primitives = env::primitives();
     Environment {
         primitives,
         registry,
+        views,
     }
 }
 
-pub fn load_active(storage: &PkvStore, reg: &mut env::Registry) -> Active {
-    let head = match load_head(storage) {
-        None => reg.init_head(env::timestamp()),
-        Some(head) => match reg.head_graph(&head) {
-            None => reg.init_head(env::timestamp()),
-            Some(_) => head.clone(),
-        },
-    };
-    let graph = graph::clone(reg.head_graph(&head).unwrap());
-    Active { graph, head }
+pub fn load_open(storage: &PkvStore, env: &mut Environment) -> Open {
+    // Try to load all open heads from storage.
+    let heads: Vec<_> = load_open_heads(storage)
+        .unwrap_or_default()
+        .into_iter()
+        // Filter out heads that no longer exist in the registry.
+        .filter_map(|head| {
+            let graph = graph::clone(env.registry.head_graph(&head)?);
+            // Load the views for this head's commit, or create empty.
+            let views = env
+                .registry
+                .head_commit_ca(&head)
+                .and_then(|ca| env.views.get(&ca).cloned())
+                .unwrap_or_default();
+            Some((head, graph, views))
+        })
+        .collect();
+
+    // If no valid heads remain, create a default one.
+    if heads.is_empty() {
+        let head = env.registry.init_head(env::timestamp());
+        let graph = graph::clone(env.registry.head_graph(&head).unwrap());
+        let views = GraphViews::default();
+        Open {
+            heads: vec![(head, graph, views)],
+        }
+    } else {
+        Open { heads }
+    }
 }
