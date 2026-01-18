@@ -143,7 +143,7 @@ pub fn save_gantz_gui_state(storage: &mut PkvStore, state: &gantz_egui::widget::
     };
     match storage.set_string(key::GANTZ_GUI_STATE, &gantz_str) {
         Ok(()) => log::debug!("Successfully persisted gantz GUI state"),
-        Err(e) => log::error!("Failed to persis gantz GUI state: {e}"),
+        Err(e) => log::error!("Failed to persist gantz GUI state: {e}"),
     }
 }
 
