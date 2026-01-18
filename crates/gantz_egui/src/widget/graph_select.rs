@@ -101,7 +101,10 @@ impl<'a> GraphSelect<'a> {
                 let mut visited = HashSet::new();
                 for (name, ca) in names {
                     if !state.name_filter.is_empty()
-                        && !state.name_filter.split(" ").all(|s| name.contains(s))
+                        && !state
+                            .name_filter
+                            .split_whitespace()
+                            .all(|s| name.contains(s))
                     {
                         continue;
                     }
