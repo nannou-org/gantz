@@ -32,11 +32,11 @@ struct GuiState {
 /// The compiled module for a single graph as a `String`.
 struct CompiledModule(String);
 
-/// Per-head compiled modules as `String`s.
+/// Per-head compiled modules.
 ///
 /// Each entry corresponds to a head in the `Open` resource at the same index.
 #[derive(Resource)]
-struct CompiledModules(Vec<String>);
+struct CompiledModules(Vec<CompiledModule>);
 
 /// Per-head VMs.
 ///
@@ -149,7 +149,7 @@ fn setup_vm(world: &mut World) {
     for (_, graph, _) in &open.heads {
         let (vm, compiled_module) = init_vm(&*env, graph);
         vms.push(vm);
-        compiled_modules.push(compiled_module.0);
+        compiled_modules.push(compiled_module);
     }
 
     world.insert_non_send_resource(HeadVms(vms));
@@ -175,9 +175,10 @@ fn update_gui(
                 .iter_mut()
                 .map(|(h, g, l)| (h.clone(), g, l))
                 .collect();
+            let get_module = |ix: usize| compiled_modules.0.get(ix).map(|m| m.0.as_str());
             let response = gantz_egui::widget::Gantz::new(&mut *env, &mut heads)
                 .trace_capture(trace_capture.0.clone())
-                .show(&mut gui_state.gantz, &compiled_modules.0, &mut vms.0, ui);
+                .show(&mut gui_state.gantz, &get_module, &mut vms.0, ui);
 
             // The given graph name was removed.
             if let Some(name) = response.graph_name_removed() {
@@ -308,7 +309,7 @@ fn update_vm(
             // Recompile this head's graph into its VM.
             let vm = &mut vms.0[ix];
             let module = compile_graph(&env, graph, vm);
-            compiled_modules.0[ix] = fmt_compiled_module(&module);
+            compiled_modules.0[ix] = CompiledModule(fmt_compiled_module(&module));
         }
     }
 }
@@ -476,7 +477,7 @@ fn open_head(
     // Initialise the VM for the new graph and add it to the per-head collections.
     let (new_vm, new_module) = init_vm(env, &new_graph);
     vms.0.push(new_vm);
-    compiled_modules.0.push(new_module.0);
+    compiled_modules.0.push(new_module);
 
     // Initialize GUI state for the new head.
     gantz.open_heads.entry(new_head).or_default();
@@ -520,7 +521,7 @@ fn replace_head(
     // Reinitialize the VM for the new graph.
     let (new_vm, new_module) = init_vm(env, &new_graph);
     vms.0[ix] = new_vm;
-    compiled_modules.0[ix] = new_module.0;
+    compiled_modules.0[ix] = new_module;
 
     // Update the graph pane to show the new head.
     gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);

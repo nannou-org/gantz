@@ -137,16 +137,16 @@ pub fn update_graph_pane_head(
 }
 
 /// The context passed to the `egui_tiles::Tree` widget.
-struct TreeBehaviour<'a, 'g, Env>
+struct TreeBehaviour<'a, 's, 'g, Env>
 where
     Env: NodeTypeRegistry,
 {
     gantz: &'a mut Gantz<'g, Env>,
-    state: &'a mut GantzState,
-    /// Per-head compiled steel modules.
-    compiled_modules: &'a [String],
+    state: &'s mut GantzState,
+    /// Returns the compiled steel module for the head at the given index.
+    get_compiled_module: &'s dyn Fn(usize) -> Option<&'s str>,
     /// Per-head VMs.
-    vms: &'a mut [Engine],
+    vms: &'s mut [Engine],
     gantz_response: &'a mut GantzResponse,
 }
 
@@ -259,14 +259,13 @@ where
 
     /// Present the gantz UI.
     ///
-    /// `compiled_modules` and `vms` should have the same length as `heads`,
-    /// with each index corresponding to the same head.
-    pub fn show(
+    /// `get_compiled_module` and `vms` should correspond to `heads` by index.
+    pub fn show<'s>(
         mut self,
-        state: &mut GantzState,
-        compiled_modules: &[String],
-        vms: &mut [Engine],
-        ui: &mut egui::Ui,
+        state: &'s mut GantzState,
+        get_compiled_module: &'s dyn Fn(usize) -> Option<&'s str>,
+        vms: &'s mut [Engine],
+        ui: &'s mut egui::Ui,
     ) -> GantzResponse {
         // TODO: Load the tiling tree, or initialise.
         let tree_id = egui::Id::new("gantz-tiles-tree-storage");
@@ -294,7 +293,7 @@ where
         let mut behaviour = TreeBehaviour {
             gantz: &mut self,
             state: &mut *state,
-            compiled_modules,
+            get_compiled_module,
             vms,
             gantz_response: &mut response,
         };
@@ -329,7 +328,7 @@ impl GantzState {
     }
 }
 
-impl<'a, 'g, Env> egui_tiles::Behavior<Pane> for TreeBehaviour<'a, 'g, Env>
+impl<'a, 's, 'g, Env> egui_tiles::Behavior<Pane> for TreeBehaviour<'a, 's, 'g, Env>
 where
     Env: widget::graph_select::GraphRegistry + NodeTypeRegistry,
     Env::Node: gantz_core::Node<Env> + NodeUi<Env> + graph_scene::ToGraphMut<Node = Env::Node>,
@@ -394,7 +393,7 @@ where
         let Self {
             ref mut gantz,
             ref mut state,
-            compiled_modules,
+            get_compiled_module,
             ref mut vms,
             ref mut gantz_response,
         } = *self;
@@ -530,7 +529,7 @@ where
             Pane::Steel => {
                 // Use the focused head's compiled module.
                 let focused = state.focused_head;
-                let compiled_steel = compiled_modules.get(focused).map(|s| &s[..]).unwrap_or("");
+                let compiled_steel = get_compiled_module(focused).unwrap_or("");
                 steel_view(compiled_steel, ui);
             }
         }

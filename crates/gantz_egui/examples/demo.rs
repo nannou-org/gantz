@@ -757,14 +757,10 @@ fn gui(ctx: &egui::Context, state: &mut State) {
                 .iter_mut()
                 .map(|(h, g, l)| (h.clone(), g, l))
                 .collect();
+            let get_module = |ix| state.compiled_modules.get(ix).map(|s: &String| &s[..]);
             let response = gantz_egui::widget::Gantz::new(&mut state.env, &mut heads)
                 .logger(state.logger.clone())
-                .show(
-                    &mut state.gantz,
-                    &state.compiled_modules,
-                    &mut state.vms,
-                    ui,
-                );
+                .show(&mut state.gantz, &get_module, &mut state.vms, ui);
 
             // The given graph name was removed.
             if let Some(name) = response.graph_name_removed() {
