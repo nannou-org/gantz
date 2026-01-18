@@ -23,9 +23,6 @@ pub struct Expr {
     src: String,
     /// The total inputs, derived from the `$` count in the src.
     n_inputs: usize,
-    /// The total outputs, i.e. the number of `ExprKind`s in the emitted AST.
-    /// FIXME: This isn't consistent with `Node::expr`.
-    n_outputs: usize,
 }
 
 /// An error occurred while constructing the `Expr` node.
@@ -60,14 +57,12 @@ impl Expr {
         let source_id = None;
         let tts = TokenStream::new(&src, skip_comments, source_id);
         let n_inputs = count_dollars(tts);
-        // NOTE: We can actually parse here as `$foo` is a valid identifier.
+        // Validate that the source parses successfully.
         let exprs = Engine::emit_ast(&src)?;
-        let n_outputs = exprs.len();
-        Ok(Expr {
-            src,
-            n_inputs,
-            n_outputs,
-        })
+        if exprs.is_empty() {
+            return Err(ExprError::Empty);
+        }
+        Ok(Expr { src, n_inputs })
     }
 
     /// The source string that was used to create this node.
@@ -116,7 +111,7 @@ impl<Env> Node<Env> for Expr {
     }
 
     fn n_outputs(&self, _: &Env) -> usize {
-        self.n_outputs
+        1
     }
 
     fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
