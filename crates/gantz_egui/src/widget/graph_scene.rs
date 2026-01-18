@@ -239,13 +239,20 @@ where
             .inputs(inputs)
             .outputs(outputs)
             .flow(node.flow(env))
-            .show(nctx, ui, |ui| {
+            .show(nctx, ui, |nui_ctx| {
                 path.push(n_ix);
-                // Instantiate the node's UI.
+
+                // Create the gantz node context.
                 let node_ctx =
                     crate::NodeCtx::new(env, &path, &inlets, &outlets, vm, &mut state.cmds);
-                node.ui(node_ctx, ui);
+
+                // Instantiate the node UI, return its response.
+                let response = nui_ctx.framed(|ui| {
+                    node.ui(node_ctx, ui);
+                });
+
                 path.pop();
+                response
             });
 
         if response.changed() {
