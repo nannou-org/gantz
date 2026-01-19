@@ -153,7 +153,7 @@ where
             view.layout = layout(&*self.graph, self.id, self.layout_flow, ui.ctx());
         }
         let mut node_responses = Vec::new();
-        let scene = egui_graph::Graph::new(self.id)
+        let scene = egui_graph::Graph::from_id(self.id)
             .center_view(self.center_view)
             .show(view, ui, |ui, show| {
                 show.nodes(ui, |nctx, ui| {
@@ -189,28 +189,31 @@ pub fn layout<N>(
     if graph.node_count() == 0 {
         return Default::default();
     }
-    ctx.memory(|m| {
-        let nodes = graph.node_indices().map(|n| {
-            let node_id = egui_graph::NodeId::from_u64(n.index() as u64);
-            // Use the helper to get the egui::Id for area_rect lookup
-            let egui_id = egui_graph::node::egui_id(graph_id, node_id);
-            let size = m
-                .area_rect(egui_id)
-                .map(|a| a.size())
-                .unwrap_or([200.0, 50.0].into());
-            (node_id, size)
+    let nodes_vec = egui_graph::with_graph_memory(ctx, graph_id, |gmem| {
+        let node_sizes = gmem.node_sizes();
+        graph
+            .node_indices()
+            .map(|n| {
+                let node_id = egui_graph::NodeId::from_u64(n.index() as u64);
+                let size = node_sizes
+                    .get(&node_id)
+                    .cloned()
+                    .unwrap_or_else(|| [200.0, 50.0].into());
+                (node_id, size)
+            })
+            .collect::<Vec<_>>()
+    });
+    let nodes = nodes_vec.into_iter();
+    let edges = graph
+        .edge_indices()
+        .filter_map(|e| graph.edge_endpoints(e))
+        .map(|(a, b)| {
+            (
+                egui_graph::NodeId::from_u64(a.index() as u64),
+                egui_graph::NodeId::from_u64(b.index() as u64),
+            )
         });
-        let edges = graph
-            .edge_indices()
-            .filter_map(|e| graph.edge_endpoints(e))
-            .map(|(a, b)| {
-                (
-                    egui_graph::NodeId::from_u64(a.index() as u64),
-                    egui_graph::NodeId::from_u64(b.index() as u64),
-                )
-            });
-        egui_graph::layout(nodes, edges, flow)
-    })
+    egui_graph::layout(nodes, edges, flow)
 }
 
 fn nodes<Env, N>(
