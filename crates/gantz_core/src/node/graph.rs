@@ -197,11 +197,16 @@ where
 }
 
 impl<Env> Node<Env> for Inlet {
-    /// Returns the inlet binding variable created by the parent graph node.
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
-        let node_ix = ctx.path().last().expect("inlet must have a path");
-        let var_name = format!("inlet-{node_ix}");
-        Engine::emit_ast(&var_name)
+    /// This method should never be called during compilation.
+    ///
+    /// Inlet nodes are special-cased to enable statelessness:
+    /// - No node functions are generated for inlets (skipped in NodeFns visitor)
+    /// - Inlet values are provided via direct `(define inlet-{ix} ...)` bindings in nested_expr
+    /// - eval_stmt creates simple aliases to these bindings rather than calling node functions
+    ///
+    /// Returns `'()` as a safe fallback in case this is ever called outside normal compilation.
+    fn expr(&self, _ctx: node::ExprCtx<Env>) -> ExprKind {
+        Engine::emit_ast("'()")
             .expect("failed to emit AST")
             .into_iter()
             .next()
@@ -223,13 +228,16 @@ impl<Env> Node<Env> for Inlet {
 }
 
 impl<Env> Node<Env> for Outlet {
-    /// Passes through the input value directly.
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
-        let input = match &ctx.inputs()[0] {
-            Some(expr) => expr.clone(),
-            None => "'()".to_string(),
-        };
-        Engine::emit_ast(&input)
+    /// This method should never be called during compilation.
+    ///
+    /// Outlet nodes are special-cased to enable statelessness:
+    /// - No node functions are generated for outlets (skipped in NodeFns visitor)
+    /// - No evaluation statements are generated for outlets (skipped in eval_stmt)
+    /// - Outlet values are read directly from source node output bindings by nested_expr
+    ///
+    /// Returns `'()` as a safe fallback in case this is ever called outside normal compilation.
+    fn expr(&self, _ctx: node::ExprCtx<Env>) -> ExprKind {
+        Engine::emit_ast("'()")
             .expect("failed to emit AST")
             .into_iter()
             .next()
