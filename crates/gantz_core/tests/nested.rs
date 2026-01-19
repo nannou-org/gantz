@@ -231,11 +231,8 @@ fn test_graph_nested_counter() {
         .expect("counter state was `None`");
     assert_eq!(counter_state, 1);
 
-    // Now check that the outlet's state is `1`.
-    let outlet_state = node::state::extract::<u32>(&vm, &[graph_a.index(), outlet.index()])
-        .expect("failed to extract outlet state")
-        .expect("outlet state was `None`");
-    assert_eq!(outlet_state, 1);
+    // Outlets are stateless - they just pass through their input value.
+    // The value flows through to the downstream `number` node.
 
     // Check that the number in the root graph was updated from the outlet.
     let number_state = node::state::extract::<u32>(&vm, &[number.index()])

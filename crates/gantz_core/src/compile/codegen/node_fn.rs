@@ -41,6 +41,12 @@ impl<'a> NodeFns<'a> {
 impl<'pl, Env> Visitor<Env> for NodeFns<'pl> {
     // We use `visit_post` so that the nested are generated before parents.
     fn visit_post(&mut self, ctx: visit::Ctx<Env>, node: &dyn Node<Env>) {
+        // Skip generating node functions for inlet and outlet nodes - their
+        // values are handled directly by nested_expr bindings.
+        if node.inlet() || node.outlet() {
+            return;
+        }
+
         use std::ops::Bound::{Excluded, Included};
         let node_path = ctx.path();
         let plan_path = &node_path[..node_path.len() - 1];
