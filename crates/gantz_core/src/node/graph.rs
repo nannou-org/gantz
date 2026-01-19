@@ -40,13 +40,13 @@ pub struct GraphNode<N> {
 
 /// An inlet to a nested graph.
 ///
-/// Inlet values are received in the `Inlet`'s `state`.
+/// Inlet values are provided via `define` bindings by the parent graph node.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Inlet;
 
 /// An outlet from a nested graph.
 ///
-/// Outlet values are made available via the `Outlet`'s `state`
+/// Outlet values are passed through directly as the node's output.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Outlet;
 
@@ -197,9 +197,16 @@ where
 }
 
 impl<Env> Node<Env> for Inlet {
-    /// Simply returns the state value as this node's output
+    /// This method should never be called during compilation.
+    ///
+    /// Inlet nodes are special-cased to enable statelessness:
+    /// - No node functions are generated for inlets (skipped in NodeFns visitor)
+    /// - Inlet values are provided via direct `(define inlet-{ix} ...)` bindings in nested_expr
+    /// - eval_stmt creates simple aliases to these bindings rather than calling node functions
+    ///
+    /// Returns `'()` as a safe fallback in case this is ever called outside normal compilation.
     fn expr(&self, _ctx: node::ExprCtx<Env>) -> ExprKind {
-        Engine::emit_ast("state")
+        Engine::emit_ast("'()")
             .expect("failed to emit AST")
             .into_iter()
             .next()
@@ -218,25 +225,19 @@ impl<Env> Node<Env> for Inlet {
     fn inlet(&self) -> bool {
         true
     }
-
-    fn stateful(&self) -> bool {
-        true
-    }
-
-    fn register(&self, path: &[node::Id], vm: &mut Engine) {
-        node::state::update_value(vm, path, steel::SteelVal::Void).unwrap();
-    }
 }
 
 impl<Env> Node<Env> for Outlet {
-    // Stores the input value in the state.
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
-        let input = match &ctx.inputs()[0] {
-            Some(expr) => expr.clone(),
-            None => "'()".to_string(),
-        };
-        let expr_str = format!("(begin (set! state {}) state)", input);
-        Engine::emit_ast(&expr_str)
+    /// This method should never be called during compilation.
+    ///
+    /// Outlet nodes are special-cased to enable statelessness:
+    /// - No node functions are generated for outlets (skipped in NodeFns visitor)
+    /// - No evaluation statements are generated for outlets (skipped in eval_stmt)
+    /// - Outlet values are read directly from source node output bindings by nested_expr
+    ///
+    /// Returns `'()` as a safe fallback in case this is ever called outside normal compilation.
+    fn expr(&self, _ctx: node::ExprCtx<Env>) -> ExprKind {
+        Engine::emit_ast("'()")
             .expect("failed to emit AST")
             .into_iter()
             .next()
@@ -254,14 +255,6 @@ impl<Env> Node<Env> for Outlet {
 
     fn outlet(&self) -> bool {
         true
-    }
-
-    fn stateful(&self) -> bool {
-        true
-    }
-
-    fn register(&self, path: &[node::Id], vm: &mut Engine) {
-        node::state::update_value(vm, path, steel::SteelVal::Void).unwrap();
     }
 }
 
@@ -340,20 +333,20 @@ where
     G::NodeId: Eq + Hash,
 {
     use crate::compile;
+    use petgraph::visit::EdgeRef;
 
-    // Create statements to set inlet node states from inputs
+    // Create define bindings for inlet values.
     let inlets: Vec<_> = inlets(g).map(|n_ref| n_ref.id()).collect();
     let mut inlet_bindings = Vec::new();
     for (i, &inlet_id) in inlets.iter().enumerate() {
-        if i < inputs.len() && inputs[i].is_some() {
-            let input_expr = inputs[i].as_ref().unwrap();
-            let node_ix = g.to_index(inlet_id);
-            let binding = format!(
-                "(set! {GRAPH_STATE} \
-                   (hash-insert {GRAPH_STATE} '{node_ix} {input_expr}))",
-            );
-            inlet_bindings.push(binding);
-        }
+        let node_ix = g.to_index(inlet_id);
+        let input_expr = if i < inputs.len() && inputs[i].is_some() {
+            inputs[i].as_ref().unwrap().clone()
+        } else {
+            "'()".to_string()
+        };
+        let binding = format!("(define inlet-{node_ix} {input_expr})");
+        inlet_bindings.push(binding);
     }
 
     // Use compile to create the evaluation order, steps, and statements
@@ -368,7 +361,14 @@ where
             .iter()
             .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
     );
-    let stmts = compile::eval_fn_body(path, &meta.graph, &meta.stateful, &flow_graph);
+    let stmts = compile::eval_fn_body(
+        path,
+        &meta.graph,
+        &meta.stateful,
+        &meta.inlets,
+        &meta.outlets,
+        &flow_graph,
+    );
 
     // Combine inlet bindings with graph evaluation steps
     let all_stmts = inlet_bindings
@@ -377,12 +377,20 @@ where
         .collect::<Vec<_>>()
         .join(" ");
 
-    // For the return values, access the states of the outlet nodes
+    // For the return values, find the source node connected to each outlet's input.
     let outlet_values = outlets
         .iter()
         .map(|&outlet_id| {
-            let node_ix = g.to_index(outlet_id);
-            format!("(hash-ref {GRAPH_STATE} '{node_ix})")
+            // Find the edge coming into this outlet (input index 0).
+            let incoming: Vec<_> = g.edges_directed(outlet_id, petgraph::Incoming).collect();
+            if let Some(edge_ref) = incoming.first() {
+                let src_ix = g.to_index(edge_ref.source());
+                let src_out = edge_ref.weight().output.0;
+                format!("node-{src_ix}-o{src_out}")
+            } else {
+                // No incoming edge, outlet is disconnected.
+                "'()".to_string()
+            }
         })
         .collect::<Vec<_>>();
 
@@ -391,9 +399,9 @@ where
         let ret_values = outlet_values.join(" ");
         format!("(values {})", ret_values)
     } else if outlet_values.len() == 1 {
-        format!("{}", outlet_values[0])
+        outlet_values[0].clone()
     } else {
-        format!("'()")
+        "'()".to_string()
     };
 
     let expr_str = format!(

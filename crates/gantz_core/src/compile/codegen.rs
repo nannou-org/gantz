@@ -139,11 +139,13 @@ fn node_fn_call_args(
 fn eval_stmt(
     mg: &MetaGraph,
     reachable: &HashSet<node::Id>,
+    inlets: &BTreeSet<node::Id>,
+    outlets: &BTreeSet<node::Id>,
     node_path: &[node::Id],
     inputs: &node::Conns,
     outputs: &node::Conns,
     stateful: bool,
-) -> ExprKind {
+) -> Option<ExprKind> {
     // An expression for a node's key into the graph state hashmap.
     fn node_state_key(node_id: usize) -> ExprKind {
         // Create a symbol or other hashable key to use in the hashmap
@@ -185,6 +187,28 @@ fn eval_stmt(
     // The node index is the last element of the path.
     let node_ix = *node_path.last().expect("node_path must not be empty");
 
+    // For inlet nodes, create a direct binding to the inlet value instead of
+    // calling a node function. The inlet value is provided by the parent graph
+    // via a `(define inlet-{ix} ...)` binding.
+    if inlets.contains(&node_ix) {
+        let inlet_var = format!("inlet-{node_ix}");
+        let output_var = node_outputs_var(node_ix);
+        return Some(create_define_expr(
+            output_var,
+            Engine::emit_ast(&inlet_var)
+                .expect("failed to emit AST")
+                .into_iter()
+                .next()
+                .unwrap(),
+        ));
+    }
+
+    // Skip outlet nodes entirely - their values are read directly from source
+    // node output bindings by nested_expr.
+    if outlets.contains(&node_ix) {
+        return None;
+    }
+
     // Determine the input arg names.
     let input_args: Vec<_> = node_fn_call_args(mg, reachable, node_ix, inputs)
         .into_iter()
@@ -221,7 +245,7 @@ fn eval_stmt(
         }
     };
 
-    stmt
+    Some(stmt)
 }
 
 /// Create a statement that binds a var for each value in the node's outputs.
@@ -355,6 +379,8 @@ pub(crate) fn eval_fn_block_stmts(
     path: &[node::Id],
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
+    inlets: &BTreeSet<node::Id>,
+    outlets: &BTreeSet<node::Id>,
     reachable: &HashSet<node::Id>,
     block: &Block,
 ) -> Vec<ExprKind> {
@@ -364,8 +390,11 @@ pub(crate) fn eval_fn_block_stmts(
         let node_path: Vec<_> = path.iter().copied().chain(Some(conf.id)).collect();
         let stateful = stateful.contains(&conf.id);
         let NodeConns { inputs, outputs } = conf.conns;
-        let stmt = eval_stmt(mg, reachable, &node_path, &inputs, &outputs, stateful);
-        stmts.push(stmt);
+        if let Some(stmt) = eval_stmt(
+            mg, reachable, inlets, outlets, &node_path, &inputs, &outputs, stateful,
+        ) {
+            stmts.push(stmt);
+        }
 
         // If this is the last node fn call in the block, it must be either
         // branching or terminal, so there's no need to destructure here.
@@ -411,12 +440,14 @@ fn flow_node_stmts(
     flow_ix: NodeIndex,
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
+    inlets: &BTreeSet<node::Id>,
+    outlets: &BTreeSet<node::Id>,
     reachable: &HashSet<node::Id>,
     fg: &FlowGraph,
 ) -> Vec<ExprKind> {
     // Add the block.
     let block = &fg[flow_ix];
-    let mut stmts = eval_fn_block_stmts(path, mg, stateful, &reachable, block);
+    let mut stmts = eval_fn_block_stmts(path, mg, stateful, inlets, outlets, &reachable, block);
 
     // Collect the output branching edges.
     let mut edges: Vec<_> = fg
@@ -441,7 +472,9 @@ fn flow_node_stmts(
         stmts.extend(define_necessary_node_input_bindings(mg, conf.id));
 
         // Continue generating...
-        stmts.extend(flow_node_stmts(path, dst, mg, stateful, reachable, fg));
+        stmts.extend(flow_node_stmts(
+            path, dst, mg, stateful, inlets, outlets, reachable, fg,
+        ));
         return stmts;
     }
 
@@ -454,7 +487,7 @@ fn flow_node_stmts(
     // FIXME: This doesn't properly handle joins.
     let mut expr = "'()".to_string();
     while let Some((branch, dst)) = edges.pop() {
-        let dst_stmts = flow_node_stmts(path, dst, mg, stateful, reachable, fg);
+        let dst_stmts = flow_node_stmts(path, dst, mg, stateful, inlets, outlets, reachable, fg);
         let dst_expr = format!(
             "(begin {} {} '())",
             destructure_node_outputs_stmt(conf.id, branch.conns),
@@ -483,6 +516,8 @@ pub fn eval_fn_body(
     path: &[node::Id],
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
+    inlets: &BTreeSet<node::Id>,
+    outlets: &BTreeSet<node::Id>,
     fg: &FlowGraph,
 ) -> Vec<ExprKind> {
     // Find the entry node. Collect the set of reachable nodes to filter out
@@ -491,7 +526,16 @@ pub fn eval_fn_body(
         return vec![];
     };
     let reachable = flow_graph_nodes(fg);
-    flow_node_stmts(path, entry.id(), mg, stateful, &reachable, fg)
+    flow_node_stmts(
+        path,
+        entry.id(),
+        mg,
+        stateful,
+        inlets,
+        outlets,
+        &reachable,
+        fg,
+    )
 }
 
 //// Generate all push and pull fns for the given control flow graph.
@@ -499,6 +543,8 @@ pub(crate) fn eval_fns_from_flow(
     path: &[node::Id],
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
+    inlets: &BTreeSet<node::Id>,
+    outlets: &BTreeSet<node::Id>,
     flow: &Flow,
 ) -> Vec<ExprKind> {
     let pull_fgs = flow.pull.iter().map(|(&(id, _conns), fg)| {
@@ -514,7 +560,7 @@ pub(crate) fn eval_fns_from_flow(
     pull_fgs
         .chain(push_fgs)
         .map(|(name, fg)| {
-            let stmts = eval_fn_body(path, mg, stateful, fg);
+            let stmts = eval_fn_body(path, mg, stateful, inlets, outlets, fg);
             eval_fn(&name, stmts)
         })
         .collect()
@@ -525,7 +571,14 @@ pub(crate) fn eval_fns_from_flow(
 pub(crate) fn eval_fns(flow_tree: &RoseTree<(&Meta, Flow)>) -> Vec<ExprKind> {
     let mut eval_fns = vec![];
     flow_tree.visit(&[], &mut |path, (meta, flow)| {
-        eval_fns.extend(eval_fns_from_flow(path, &meta.graph, &meta.stateful, flow));
+        eval_fns.extend(eval_fns_from_flow(
+            path,
+            &meta.graph,
+            &meta.stateful,
+            &meta.inlets,
+            &meta.outlets,
+            flow,
+        ));
     });
     eval_fns
 }
