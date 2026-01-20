@@ -1,7 +1,7 @@
 use crate::{Cmd, NodeUi};
 use egui_graph::{
     self,
-    node::{EdgeEvent, NodeResponse, SocketKind},
+    node::{EdgeEvent, SocketKind},
 };
 use gantz_core::{
     Edge, Node,
@@ -21,6 +21,9 @@ pub struct GraphSceneResponse {
     /// Responses from each node, keyed by node index.
     pub nodes: Vec<(NodeIndex, NodeResponse)>,
 }
+
+/// An alias for the node response type returned from gantz nodes.
+pub type NodeResponse = egui_graph::node::NodeResponse<egui::Response>;
 
 impl GraphSceneResponse {
     /// Returns true if any node was clicked.
@@ -250,9 +253,7 @@ where
                     crate::NodeCtx::new(env, &path, &inlets, &outlets, vm, &mut state.cmds);
 
                 // Instantiate the node UI, return its response.
-                let response = nui_ctx.framed(|ui| {
-                    node.ui(node_ctx, ui);
-                });
+                let response = node.ui(node_ctx, nui_ctx);
 
                 path.pop();
                 response

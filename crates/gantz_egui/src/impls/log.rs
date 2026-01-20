@@ -11,8 +11,14 @@ impl<Env> NodeUi<Env> for gantz_std::log::Log {
         }
     }
 
-    fn ui(&mut self, _ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> egui::Response {
-        let level = format!("{:?}", self.level).to_lowercase();
-        ui.add(egui::Label::new(&level).selectable(false))
+    fn ui(
+        &mut self,
+        _ctx: NodeCtx<Env>,
+        uictx: egui_graph::NodeCtx,
+    ) -> egui::InnerResponse<egui::Response> {
+        uictx.framed(|ui| {
+            let level = format!("{:?}", self.level).to_lowercase();
+            ui.add(egui::Label::new(&level).selectable(false))
+        })
     }
 }

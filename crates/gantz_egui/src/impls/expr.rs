@@ -89,9 +89,15 @@ impl<Env> NodeUi<Env> for gantz_core::node::Expr {
         "expr"
     }
 
-    fn ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> egui::Response {
-        let id = egui::Id::new("ExprEdit").with(ctx.path());
-        ui.add(ExprEdit::new(self, id))
+    fn ui(
+        &mut self,
+        ctx: NodeCtx<Env>,
+        uictx: egui_graph::NodeCtx,
+    ) -> egui::InnerResponse<egui::Response> {
+        uictx.framed(|ui| {
+            let id = egui::Id::new("ExprEdit").with(ctx.path());
+            ui.add(ExprEdit::new(self, id))
+        })
     }
 }
 
