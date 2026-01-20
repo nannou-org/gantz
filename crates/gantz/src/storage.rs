@@ -5,6 +5,7 @@ use crate::{
     node::Node,
 };
 use bevy::log;
+use bevy_egui::egui;
 use bevy_pkv::PkvStore;
 use gantz_ca as ca;
 use std::collections::{BTreeMap, HashMap};
@@ -12,6 +13,8 @@ use std::collections::{BTreeMap, HashMap};
 mod key {
     /// The key at which the gantz widget state is to be saved/loaded.
     pub const GANTZ_GUI_STATE: &str = "gantz-widget-state";
+    /// The key at which egui memory (widget states) is saved/loaded.
+    pub const EGUI_MEMORY: &str = "egui-memory-ron";
     /// All known graph addresses.
     pub const GRAPH_ADDRS: &str = "graph-addrs";
     /// All known commit addresses.
@@ -401,5 +404,32 @@ pub fn load_open(storage: &PkvStore, env: &mut Environment) -> Open {
         }
     } else {
         Open { heads }
+    }
+}
+
+/// Save the egui Memory to storage.
+pub fn save_egui_memory(storage: &mut PkvStore, ctx: &egui::Context) {
+    match ctx.memory(ron::to_string) {
+        Ok(ron_string) => match storage.set_string(key::EGUI_MEMORY, &ron_string) {
+            Ok(()) => log::debug!("Successfully persisted egui memory"),
+            Err(e) => log::error!("Failed to persist egui memory: {e}"),
+        },
+        Err(e) => log::error!("Failed to serialize egui memory as RON: {e}"),
+    }
+}
+
+/// Load the egui Memory from storage.
+pub fn load_egui_memory(storage: &mut PkvStore, ctx: &egui::Context) {
+    match storage.get::<String>(key::EGUI_MEMORY) {
+        Ok(ron_string) => match ron::from_str(&ron_string) {
+            Ok(memory) => {
+                ctx.memory_mut(|m| *m = memory);
+                log::debug!("Successfully loaded egui memory");
+            }
+            Err(e) => log::warn!("Failed to parse egui memory RON: {e}"),
+        },
+        Err(e) => {
+            log::debug!("No egui memory found in storage (this is normal on first run): {e}");
+        }
     }
 }

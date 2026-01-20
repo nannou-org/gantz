@@ -164,8 +164,16 @@ fn update_gui(
     mut gui_state: ResMut<GuiState>,
     mut vms: NonSendMut<HeadVms>,
     mut compiled_modules: ResMut<CompiledModules>,
+    mut storage: ResMut<PkvStore>,
+    mut memory_loaded: Local<bool>,
 ) -> Result {
     let ctx = ctxs.ctx_mut()?;
+
+    // Load egui memory once on first frame
+    if !*memory_loaded {
+        storage::load_egui_memory(&mut *storage, ctx);
+        *memory_loaded = true;
+    }
     egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
@@ -380,6 +388,7 @@ fn persist_resources(
     open: Res<Open>,
     gui_state: Res<GuiState>,
     mut storage: ResMut<PkvStore>,
+    mut ctxs: EguiContexts,
 ) {
     // Save graphs.
     let mut addrs: Vec<_> = env.registry.graphs().keys().copied().collect();
@@ -405,6 +414,11 @@ fn persist_resources(
 
     // Save the gantz GUI state.
     storage::save_gantz_gui_state(&mut *storage, &gui_state.gantz);
+
+    // Save egui memory (widget states).
+    if let Ok(ctx) = ctxs.ctx_mut() {
+        storage::save_egui_memory(&mut *storage, ctx);
+    }
 }
 
 /// Initialise the VM for the given environment and graph.
