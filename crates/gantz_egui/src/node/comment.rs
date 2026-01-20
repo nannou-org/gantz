@@ -1,5 +1,6 @@
 //! A Comment node for documenting patches.
 
+use crate::widget::node_inspector;
 use crate::{NodeCtx, NodeUi};
 use gantz_core::node;
 use serde::{Deserialize, Serialize};
@@ -10,12 +11,17 @@ use steel::steel_vm::engine::Engine;
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct Comment {
     text: String,
+    size: [u16; 2],
 }
 
 impl Comment {
+    /// The default size if none is loaded from state.
+    pub const DEFAULT_SIZE: [u16; 2] = [100, 40];
+
     /// Create a new Comment node with the given text.
     pub fn new(text: String) -> Self {
-        Self { text }
+        let size = Self::DEFAULT_SIZE;
+        Self { text, size }
     }
 }
 
@@ -88,18 +94,22 @@ impl<Env> NodeUi<Env> for Comment {
         let node_egui_id = uictx.egui_id();
         let resize_id = node_egui_id.with("resize");
         let min_resize = egui::Vec2::splat(style.interaction.interact_radius);
+        let default_size = egui::vec2(self.size[0] as f32, self.size[1] as f32);
         let response = uictx.framed_with(frame, |ui| {
             egui::containers::Resize::default()
                 .id(resize_id)
                 .resizable(interaction.selected)
+                .default_size(default_size)
                 .min_size(min_resize)
                 .with_stroke(false)
                 .show(ui, |ui| {
+                    let size = ui.available_size();
+                    self.size = [size.x as u16, size.y as u16];
                     ui.add(
                         egui::TextEdit::multiline(&mut self.text)
                             .hint_text("Add comment...")
                             .frame(false)
-                            .desired_width(f32::INFINITY)
+                            .desired_width(f32::INFINITY),
                     )
                 })
         });
@@ -107,4 +117,15 @@ impl<Env> NodeUi<Env> for Comment {
         response
     }
 
+    fn inspector_rows(&mut self, _ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+        let row_h = node_inspector::table_row_h(body.ui_mut());
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("size");
+            });
+            row.col(|ui| {
+                ui.label(format!("{:?}", self.size));
+            });
+        });
+    }
 }
