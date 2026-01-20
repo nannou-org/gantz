@@ -259,14 +259,15 @@ where
                 response
             });
 
-        if response.changed() {
-            // Update the selected nodes.
-            if egui_graph::is_node_selected(ui, nctx.graph_id, node_id) {
-                state.interaction.selection.nodes.insert(n_id);
-            } else {
-                state.interaction.selection.nodes.remove(&n_id);
-            }
+        // Always update the selected nodes to stay in sync with egui_graph.
+        // TODO: Remove this workaround once egui_graph#47 is fixed.
+        if egui_graph::is_node_selected(ui, nctx.graph_id, node_id) {
+            state.interaction.selection.nodes.insert(n_id);
+        } else {
+            state.interaction.selection.nodes.remove(&n_id);
+        }
 
+        if response.changed() {
             // Check for an edge event.
             if let Some(ev) = response.edge_event() {
                 match ev {
