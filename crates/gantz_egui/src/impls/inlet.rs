@@ -6,11 +6,17 @@ impl<Env> NodeUi<Env> for gantz_core::node::graph::Inlet {
         "in"
     }
 
-    fn ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> egui::Response {
-        let name = self.name(ctx.env());
-        let ix = inlet_ix(ctx.path(), ctx.inlets());
-        let text = format!("{}[{}]", name, ix);
-        ui.add(egui::Label::new(text).selectable(false))
+    fn ui(
+        &mut self,
+        ctx: NodeCtx<Env>,
+        uictx: egui_graph::NodeCtx,
+    ) -> egui::InnerResponse<egui::Response> {
+        uictx.framed(|ui| {
+            let name = self.name(ctx.env());
+            let ix = inlet_ix(ctx.path(), ctx.inlets());
+            let text = format!("{}[{}]", name, ix);
+            ui.add(egui::Label::new(text).selectable(false))
+        })
     }
 
     fn inspector_rows(&mut self, ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {

@@ -94,15 +94,21 @@ impl<Env> NodeUi<Env> for NamedGraph {
         self.name.as_str()
     }
 
-    fn ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> egui::Response {
-        // FIXME: Check if the graph actually exists for the internal CA, give
-        // feedback if it doesn't.
-        let res = ui.add(egui::Label::new(&self.name).selectable(false));
-        if ui.response().double_clicked() {
-            ctx.cmds
-                .push(Cmd::OpenNamedGraph(self.name.clone(), self.graph));
-        }
-        res
+    fn ui(
+        &mut self,
+        ctx: NodeCtx<Env>,
+        uictx: egui_graph::NodeCtx,
+    ) -> egui::InnerResponse<egui::Response> {
+        uictx.framed(|ui| {
+            // FIXME: Check if the graph actually exists for the internal CA, give
+            // feedback if it doesn't.
+            let res = ui.add(egui::Label::new(&self.name).selectable(false));
+            if ui.response().double_clicked() {
+                ctx.cmds
+                    .push(Cmd::OpenNamedGraph(self.name.clone(), self.graph));
+            }
+            res
+        })
     }
 
     fn inspector_rows(&mut self, _ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {

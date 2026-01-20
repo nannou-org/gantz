@@ -42,6 +42,9 @@ impl Node for gantz_std::Number {}
 impl Node for gantz_egui::node::NamedGraph {}
 
 #[typetag::serde]
+impl Node for gantz_egui::node::Comment {}
+
+#[typetag::serde]
 impl Node for Box<dyn Node> {}
 
 // To allow for navigating between nested graphs in a graph scene, we need to be

@@ -8,12 +8,18 @@ where
         "graph"
     }
 
-    fn ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> egui::Response {
-        let res = ui.add(egui::Label::new("graph").selectable(false));
-        if ui.response().double_clicked() {
-            ctx.cmds.push(Cmd::OpenGraph(ctx.path().to_vec()));
-        }
-        res
+    fn ui(
+        &mut self,
+        ctx: NodeCtx<Env>,
+        uictx: egui_graph::NodeCtx,
+    ) -> egui::InnerResponse<egui::Response> {
+        uictx.framed(|ui| {
+            let res = ui.add(egui::Label::new("graph").selectable(false));
+            if ui.response().double_clicked() {
+                ctx.cmds.push(Cmd::OpenGraph(ctx.path().to_vec()));
+            }
+            res
+        })
     }
 
     fn inspector_rows(&mut self, _ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {

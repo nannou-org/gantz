@@ -24,8 +24,13 @@ pub trait NodeUi<Env> {
     /// Instantiate the `Ui` for the given node.
     ///
     /// The node's path into the state tree and the VM are provided to allow for
-    /// access to the node's state.
-    fn ui(&mut self, _ctx: NodeCtx<Env>, _ui: &mut egui::Ui) -> egui::Response;
+    /// access to the node's state. The egui_graph node context is provided to
+    /// allow customizing the frame and other node display properties.
+    fn ui(
+        &mut self,
+        ctx: NodeCtx<Env>,
+        uictx: egui_graph::NodeCtx,
+    ) -> egui::InnerResponse<egui::Response>;
 
     /// Optionally add additional rows to the node's inspector UI.
     ///
@@ -78,8 +83,12 @@ where
         (**self).name(env)
     }
 
-    fn ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> egui::Response {
-        (**self).ui(ctx, ui)
+    fn ui(
+        &mut self,
+        ctx: NodeCtx<Env>,
+        uictx: egui_graph::NodeCtx,
+    ) -> egui::InnerResponse<egui::Response> {
+        (**self).ui(ctx, uictx)
     }
 
     fn inspector_rows(&mut self, ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {
@@ -105,8 +114,8 @@ macro_rules! impl_node_ui_for_ptr {
                 (**self).name(env)
             }
 
-            fn ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> egui::Response {
-                (**self).ui(ctx, ui)
+            fn ui(&mut self, ctx: NodeCtx<Env>, uictx: egui_graph::NodeCtx) -> egui::InnerResponse<egui::Response> {
+                (**self).ui(ctx, uictx)
             }
 
             fn inspector_rows(&mut self, ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {
