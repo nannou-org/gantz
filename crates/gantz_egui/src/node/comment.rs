@@ -1,6 +1,5 @@
 //! A Comment node for documenting patches.
 
-use crate::widget::node_inspector;
 use crate::{NodeCtx, NodeUi};
 use gantz_core::node;
 use serde::{Deserialize, Serialize};
@@ -11,24 +10,12 @@ use steel::steel_vm::engine::Engine;
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct Comment {
     text: String,
-    // TODO: Remove this in favour of using a resizable frame. This will involve
-    // tweaks upstream in egui_graph to enable.
-    width: u16,
-    rows: u16,
 }
 
 impl Comment {
-    /// An arbitrary size for the default comment dimensions.
-    pub const DEFAULT_WIDTH: u16 = 150;
-    pub const DEFAULT_ROWS: u16 = 4;
-
     /// Create a new Comment node with the given text.
     pub fn new(text: String) -> Self {
-        Self {
-            text,
-            width: Self::DEFAULT_WIDTH,
-            rows: Self::DEFAULT_ROWS,
-        }
+        Self { text }
     }
 }
 
@@ -82,13 +69,14 @@ impl<Env> NodeUi<Env> for Comment {
         // Use the default margin as the stroke width, as this will be the only
         // draggable part of the node.
         let stroke_w = style.spacing.window_margin.top as f32;
-        let stroke = if interaction.selected {
-            egui::Stroke::new(stroke_w, style.visuals.selection.stroke.color)
+        let stroke_color = if interaction.selected {
+            style.visuals.selection.stroke.color
         } else if interaction.in_selection_rect || interaction.hovered {
-            egui::Stroke::new(stroke_w, style.visuals.weak_text_color())
+            style.visuals.weak_text_color()
         } else {
-            egui::Stroke::new(stroke_w, egui::Color32::TRANSPARENT)
+            egui::Color32::TRANSPARENT
         };
+        let stroke = egui::Stroke::new(stroke_w, stroke_color);
 
         // Use a custom, transparent frame for comment nodes.
         let frame = egui::Frame::new()
@@ -96,39 +84,27 @@ impl<Env> NodeUi<Env> for Comment {
             .corner_radius(style.visuals.window_corner_radius)
             .stroke(stroke);
 
-        // Use a transparent frame for comment nodes
+        // Use a transparent frame with resizable content
+        let node_egui_id = uictx.egui_id();
+        let resize_id = node_egui_id.with("resize");
+        let min_resize = egui::Vec2::splat(style.interaction.interact_radius);
         let response = uictx.framed_with(frame, |ui| {
-            ui.add(
-                egui::TextEdit::multiline(&mut self.text)
-                    .desired_width(self.width as f32)
-                    .hint_text("Add comment...")
-                    .frame(false)
-                    .desired_rows(self.rows.into())
-                    .min_size(egui::vec2(self.width as f32, 10.0)),
-            )
+            egui::containers::Resize::default()
+                .id(resize_id)
+                .resizable(interaction.selected)
+                .min_size(min_resize)
+                .with_stroke(false)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.text)
+                            .hint_text("Add comment...")
+                            .frame(false)
+                            .desired_width(f32::INFINITY)
+                    )
+                })
         });
 
         response
     }
 
-    fn inspector_rows(&mut self, _ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {
-        dbg!(&self);
-        let row_h = node_inspector::table_row_h(body.ui_mut());
-        body.row(row_h, |mut row| {
-            row.col(|ui| {
-                ui.label("width");
-            });
-            row.col(|ui| {
-                ui.add(egui::DragValue::new(&mut self.width).range(10..=3_000));
-            });
-        });
-        body.row(row_h, |mut row| {
-            row.col(|ui| {
-                ui.label("rows");
-            });
-            row.col(|ui| {
-                ui.add(egui::DragValue::new(&mut self.rows).range(1..=50));
-            });
-        });
-    }
 }
