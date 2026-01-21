@@ -12,6 +12,7 @@ pub use graph::GraphNode;
 pub use identity::{Identity, IDENTITY_NAME};
 pub use pull::{Pull, WithPullEval};
 pub use push::{Push, WithPushEval};
+pub use ref_::{Ref, NodeRegistry};
 use serde::{Deserialize, Serialize};
 pub use state::{NodeState, State, WithStateType};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};

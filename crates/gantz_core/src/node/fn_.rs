@@ -1,46 +1,23 @@
 //! A node that wraps another node as a first-class function value.
 
-use crate::node;
+use crate::node::{self, Node};
 use serde::{Deserialize, Serialize};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
-/// A node that emits a lambda function wrapping another named node.
-///
-/// This node can wrap both primitive nodes and registry graphs, emitting them
-/// as callable lambda functions rather than evaluating them directly.
+/// A node that emits a lambda function wrapping another node's expression.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
-pub struct Fn {
-    /// The address of a registered node.
-    pub addr: gantz_ca::ContentAddr,
-}
+pub struct Fn<N>(pub N);
 
-/// A registry of `Node`s, used by the [`Fn`] node to lookup a node by it's CA.
-pub trait NodeRegistry {
-    /// The node type.
-    type Node;
-    /// Returns a node for the given node address.
-    fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&Self::Node>;
-}
-
-impl Fn {
+impl<N> Fn<N> {
     /// Create a new Fn node that wraps the node at the given address.
-    pub fn new(addr: gantz_ca::ContentAddr) -> Self {
-        Self { addr }
+    pub fn new(node: N) -> Self {
+        Self(node)
     }
 }
 
-impl Default for Fn {
-    fn default() -> Self {
-        // Default to the identity function - a pure, stateless function
-        let addr = gantz_ca::content_addr(&node::Identity);
-        Self { addr }
-    }
-}
-
-impl<Env> node::Node<Env> for Fn
+impl<Env, N> Node<Env> for Fn<N>
 where
-    Env: NodeRegistry,
-    Env::Node: node::Node<Env>,
+    N: Node<Env>,
 {
     /// A single input for `Bang`-triggering.
     fn n_inputs(&self, _env: &Env) -> usize {
@@ -53,8 +30,10 @@ where
     }
 
     /// Produces an expression that, in response to a bang on its input, returns
-    /// a lambda that wraps the inner node's expression and receives a number of
-    /// arguments equal to the inner node's `Node::n_inputs` count.
+    /// a lambda that wraps the inner node's expression.
+    ///
+    /// The returned function receives a number of arguments equal to the inner
+    /// node's `Node::n_inputs` count.
     fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
         // Only emit a lambda in the case that some input is connected for
         // receiving bangs. Otherwise, we'll just emit an empty list.
@@ -64,9 +43,7 @@ where
 
         // Lookup the node for the given address.
         let env = ctx.env();
-        let node = env
-            .node(&self.addr)
-            .unwrap_or_else(|| panic!("no node found for address '{}'", self.addr));
+        let node = &self.0;
 
         // Validate the node (must be stateless and non-branching).
         if node.stateful() {
@@ -101,9 +78,9 @@ where
     }
 }
 
-impl gantz_ca::CaHash for Fn {
+impl<N: gantz_ca::CaHash> gantz_ca::CaHash for Fn<N> {
     fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         "gantz_core::node::Fn".hash(hasher);
-        self.addr.hash(hasher);
+        self.0.hash(hasher);
     }
 }

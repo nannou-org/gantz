@@ -1,7 +1,7 @@
 // Tests for the Fn and Apply nodes - first-class functions in gantz.
 
-use gantz_core::compile::{pull_eval_fn_name};
-use gantz_core::node::{self, Node, Fn, Apply, WithPullEval};
+use gantz_core::compile::pull_eval_fn_name;
+use gantz_core::node::{self, Apply, Fn, Node, Ref, WithPullEval};
 use gantz_core::{Edge, ROOT_STATE};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -14,7 +14,7 @@ struct TestEnv {
     nodes: HashMap<gantz_ca::ContentAddr, Box<dyn DebugNode>>,
 }
 
-impl node::fn_::NodeRegistry for TestEnv {
+impl node::ref_::NodeRegistry for TestEnv {
     type Node = Box<dyn DebugNode>;
     fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&Self::Node> {
         self.nodes.get(&ca).map(|boxed| &*boxed)
@@ -72,10 +72,10 @@ fn test_fn_apply_identity() {
 
     // Create nodes
     let bang = node_bang();
-    let fn_node = Fn::new(id_ca);
+    let fn_node = Fn::new(Ref::new(id_ca));
     let apply_node = Apply;
     let value = node_int(42);
-    let list = node_list_single();  // Wrap value in list for apply
+    let list = node_list_single(); // Wrap value in list for apply
     let expected = node_int(42);
     let assert_eq = node_assert_eq().with_pull_eval();
 
