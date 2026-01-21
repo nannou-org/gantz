@@ -158,6 +158,7 @@ impl<Env> Node<Env> for Expr {
 
 impl CaHash for Expr {
     fn hash(&self, hasher: &mut gantz_ca::Hasher) {
+        hasher.update("gantz_core::node::Expr".as_bytes());
         hasher.update(self.src.as_bytes());
     }
 }

@@ -30,6 +30,13 @@ impl Node for gantz_core::node::graph::Inlet {}
 impl Node for gantz_core::node::graph::Outlet {}
 
 #[typetag::serde]
+impl Node for gantz_core::node::Apply {}
+#[typetag::serde]
+impl Node for gantz_core::node::Fn {}
+#[typetag::serde]
+impl Node for gantz_core::node::Identity {}
+
+#[typetag::serde]
 impl Node for gantz_std::ops::Add {}
 #[typetag::serde]
 impl Node for gantz_std::Bang {}

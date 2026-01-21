@@ -2,22 +2,29 @@
 
 #[doc(inline)]
 pub use crate::visit::{self, Visitor};
+pub use apply::Apply;
 #[doc(inline)]
 pub use conns::Conns;
 pub use expr::{Expr, ExprError};
+pub use fn_::Fn;
 use gantz_ca::CaHash;
 pub use graph::GraphNode;
+pub use identity::{Identity, IDENTITY_NAME};
 pub use pull::{Pull, WithPullEval};
 pub use push::{Push, WithPushEval};
 use serde::{Deserialize, Serialize};
 pub use state::{NodeState, State, WithStateType};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
+pub mod apply;
 mod conns;
 pub mod expr;
+pub mod fn_;
 pub mod graph;
+pub mod identity;
 pub mod pull;
 pub mod push;
+pub mod ref_;
 pub mod state;
 
 /// The definitive abstraction of a gantz graph, the gantz `Node` trait.
@@ -364,6 +371,17 @@ macro_rules! impl_node_for_ptr {
 impl_node_for_ptr!(Box);
 impl_node_for_ptr!(std::rc::Rc);
 impl_node_for_ptr!(std::sync::Arc);
+
+impl<'a, Env> Clone for ExprCtx<'a, Env> {
+    fn clone(&self) -> Self {
+        Self {
+            env: self.env,
+            path: self.path,
+            inputs: self.inputs,
+            outputs: self.outputs,
+        }
+    }
+}
 
 impl From<u16> for Input {
     fn from(u: u16) -> Self {

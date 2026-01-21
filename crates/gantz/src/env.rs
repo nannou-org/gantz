@@ -66,6 +66,17 @@ impl gantz_egui::node::graph::GraphRegistry for Environment {
     }
 }
 
+// Provide the `GraphRegistry` implementation required by `gantz_core::node::Fn`.
+impl gantz_core::node::fn_::GraphRegistry for Environment {
+    type Node = Box<dyn Node>;
+    fn graph(&self, ca: ca::GraphAddr) -> Option<&gantz_core::node::graph::Graph<Self::Node>> {
+        self.registry.graphs().get(&ca)
+    }
+    fn new_primitive(&self, name: &str) -> Option<Self::Node> {
+        self.primitives.get(name).map(|f| (f)())
+    }
+}
+
 // Provide the `GraphRegistry` implementation required by the `GraphSelect` widget.
 impl gantz_egui::widget::graph_select::GraphRegistry for Environment {
     fn commits(&self) -> Vec<(&ca::CommitAddr, &ca::Commit)> {
@@ -86,18 +97,27 @@ pub fn primitives() -> Primitives {
     register_primitive(&mut p, "add", || {
         Box::new(gantz_std::ops::Add::default()) as Box<_>
     });
+    register_primitive(&mut p, "apply", || {
+        Box::new(gantz_core::node::Apply::default()) as Box<_>
+    });
     register_primitive(&mut p, "bang", || {
         Box::new(gantz_std::Bang::default()) as Box<_>
+    });
+    register_primitive(&mut p, "comment", || {
+        Box::new(gantz_egui::node::Comment::default()) as Box<_>
     });
     register_primitive(&mut p, "expr", || {
         Box::new(gantz_core::node::Expr::new("()").unwrap()) as Box<_>
     });
+    register_primitive(&mut p, "fn", || {
+        Box::new(gantz_core::node::Fn::default()) as Box<_>
+    });
     register_primitive(&mut p, "graph", || Box::new(GraphNode::default()) as Box<_>);
+    register_primitive(&mut p, gantz_core::node::IDENTITY_NAME, || {
+        Box::new(gantz_core::node::Identity::default()) as Box<_>
+    });
     register_primitive(&mut p, "inlet", || {
         Box::new(gantz_core::node::graph::Inlet::default()) as Box<_>
-    });
-    register_primitive(&mut p, "outlet", || {
-        Box::new(gantz_core::node::graph::Outlet::default()) as Box<_>
     });
     register_primitive(&mut p, "log", || {
         Box::new(gantz_std::Log::default()) as Box<_>
@@ -105,8 +125,8 @@ pub fn primitives() -> Primitives {
     register_primitive(&mut p, "number", || {
         Box::new(gantz_std::Number::default()) as Box<_>
     });
-    register_primitive(&mut p, "comment", || {
-        Box::new(gantz_egui::node::Comment::default()) as Box<_>
+    register_primitive(&mut p, "outlet", || {
+        Box::new(gantz_core::node::graph::Outlet::default()) as Box<_>
     });
     p
 }
