@@ -224,6 +224,7 @@ impl<'a, Env> NodeCtx<'a, Env> {
 
 /// The IDs of the inlet and outlet nodes.
 pub(crate) fn inlet_outlet_ids<Env, N>(
+    env: &Env,
     g: &gantz_core::node::graph::Graph<N>,
 ) -> (Vec<node::Id>, Vec<node::Id>)
 where
@@ -232,10 +233,10 @@ where
     let mut inlets = vec![];
     let mut outlets = vec![];
     for n_ref in g.node_references() {
-        if n_ref.weight().inlet() {
+        if n_ref.weight().inlet(env) {
             inlets.push(n_ref.id().index());
         }
-        if n_ref.weight().outlet() {
+        if n_ref.weight().outlet(env) {
             outlets.push(n_ref.id().index());
         }
     }

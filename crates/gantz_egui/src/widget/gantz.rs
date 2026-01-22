@@ -1152,7 +1152,7 @@ fn command_palette<Env>(
 
         // Determine the node's path and register it within the VM.
         let node_path: Vec<_> = head_state.path.iter().copied().chain(Some(ix)).collect();
-        graph[id].register(&node_path, vm);
+        graph[id].register(env, &node_path, vm);
     }
 }
 
@@ -1207,7 +1207,7 @@ where
                 let graph = graph_scene::index_path_graph_mut(root, &head_state.path).unwrap();
                 let ids: Vec<_> = graph.node_references().map(|n_ref| n_ref.id()).collect();
                 // Collect the inlets and outlets.
-                let (inlets, outlets) = crate::inlet_outlet_ids::<Env, _>(graph);
+                let (inlets, outlets) = crate::inlet_outlet_ids::<Env, _>(env, graph);
                 for id in ids {
                     let mut frame = egui::Frame::group(ui.style());
                     if head_state.scene.interaction.selection.nodes.contains(&id) {

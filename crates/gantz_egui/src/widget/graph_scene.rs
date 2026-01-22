@@ -233,7 +233,7 @@ where
 {
     let node_ids: Vec<_> = graph.node_identifiers().collect();
     let mut path = path.to_vec();
-    let (inlets, outlets) = crate::inlet_outlet_ids(graph);
+    let (inlets, outlets) = crate::inlet_outlet_ids(env, graph);
     let mut responses = Vec::with_capacity(node_ids.len());
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);

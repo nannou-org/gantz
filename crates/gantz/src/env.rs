@@ -138,7 +138,9 @@ impl gantz_egui::node::FnNodeNames for Environment {
             .filter(|name| {
                 self.name_ca(name)
                     .and_then(|ca| self.node(&ca))
-                    .map(|n| !n.stateful() && n.branches(self).is_empty() && n.n_outputs(self) == 1)
+                    .map(|n| {
+                        !n.stateful(self) && n.branches(self).is_empty() && n.n_outputs(self) == 1
+                    })
                     .unwrap_or(false)
             })
             .cloned()

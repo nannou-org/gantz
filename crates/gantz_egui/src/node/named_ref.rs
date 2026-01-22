@@ -80,20 +80,20 @@ where
         self.ref_.pull_eval(env)
     }
 
-    fn stateful(&self) -> bool {
-        <gantz_core::node::Ref as Node<Env>>::stateful(&self.ref_)
+    fn stateful(&self, env: &Env) -> bool {
+        <gantz_core::node::Ref as Node<Env>>::stateful(&self.ref_, env)
     }
 
-    fn register(&self, path: &[node::Id], vm: &mut Engine) {
-        <gantz_core::node::Ref as Node<Env>>::register(&self.ref_, path, vm)
+    fn register(&self, env: &Env, path: &[node::Id], vm: &mut Engine) {
+        <gantz_core::node::Ref as Node<Env>>::register(&self.ref_, env, path, vm)
     }
 
-    fn inlet(&self) -> bool {
-        <gantz_core::node::Ref as Node<Env>>::inlet(&self.ref_)
+    fn inlet(&self, env: &Env) -> bool {
+        <gantz_core::node::Ref as Node<Env>>::inlet(&self.ref_, env)
     }
 
-    fn outlet(&self) -> bool {
-        <gantz_core::node::Ref as Node<Env>>::outlet(&self.ref_)
+    fn outlet(&self, env: &Env) -> bool {
+        <gantz_core::node::Ref as Node<Env>>::outlet(&self.ref_, env)
     }
 
     fn visit(&self, ctx: gantz_core::visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {

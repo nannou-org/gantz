@@ -46,7 +46,7 @@ where
         let node = &self.0;
 
         // Validate the node (must be stateless and non-branching).
-        if node.stateful() {
+        if node.stateful(env) {
             panic!("nodes used as functions must be stateless");
         }
         if !node.branches(env).is_empty() {

@@ -81,6 +81,6 @@ impl<'a, Env> Copy for Ctx<'a, Env> {}
 /// traversing its nested nodes.
 impl<'vm, Env> Visitor<Env> for Register<'vm> {
     fn visit_pre(&mut self, ctx: Ctx<Env>, node: &dyn Node<Env>) {
-        node.register(ctx.path(), self.0);
+        node.register(ctx.env(), ctx.path(), self.0);
     }
 }

@@ -119,12 +119,12 @@ pub trait Node<Env> {
     }
 
     /// Whether or not this node acts as an inlet for some nested graph.
-    fn inlet(&self) -> bool {
+    fn inlet(&self, _env: &Env) -> bool {
         false
     }
 
     /// Whether or not this node acts as an outlet for some nested graph.
-    fn outlet(&self) -> bool {
+    fn outlet(&self, _env: &Env) -> bool {
         false
     }
 
@@ -132,7 +132,7 @@ pub trait Node<Env> {
     ///
     /// Nodes returning `true` will have a special `state` variable accessible
     /// within their [`Node::expr`] provided during compilation.
-    fn stateful(&self) -> bool {
+    fn stateful(&self, _env: &Env) -> bool {
         false
     }
 
@@ -143,7 +143,7 @@ pub trait Node<Env> {
     /// must use this to initialise their state.
     ///
     /// By default, the node is assumed to be stateless, and this does nothing.
-    fn register(&self, _path: &[Id], _vm: &mut Engine) {}
+    fn register(&self, _env: &Env, _path: &[Id], _vm: &mut Engine) {}
 
     /// Traverse all nested nodes, depth-first, with the given [`Visitor`].
     ///
@@ -295,20 +295,20 @@ where
         (**self).pull_eval(env)
     }
 
-    fn inlet(&self) -> bool {
-        (**self).inlet()
+    fn inlet(&self, env: &Env) -> bool {
+        (**self).inlet(env)
     }
 
-    fn outlet(&self) -> bool {
-        (**self).outlet()
+    fn outlet(&self, env: &Env) -> bool {
+        (**self).outlet(env)
     }
 
-    fn stateful(&self) -> bool {
-        (**self).stateful()
+    fn stateful(&self, env: &Env) -> bool {
+        (**self).stateful(env)
     }
 
-    fn register(&self, path: &[Id], vm: &mut Engine) {
-        (**self).register(path, vm)
+    fn register(&self, env: &Env, path: &[Id], vm: &mut Engine) {
+        (**self).register(env, path, vm)
     }
 
     fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn Visitor<Env>) {
@@ -346,20 +346,20 @@ macro_rules! impl_node_for_ptr {
                 (**self).pull_eval(env)
             }
 
-            fn inlet(&self) -> bool {
-                (**self).inlet()
+            fn inlet(&self, env: &Env) -> bool {
+                (**self).inlet(env)
             }
 
-            fn outlet(&self) -> bool {
-                (**self).outlet()
+            fn outlet(&self, env: &Env) -> bool {
+                (**self).outlet(env)
             }
 
-            fn stateful(&self) -> bool {
-                (**self).stateful()
+            fn stateful(&self, env: &Env) -> bool {
+                (**self).stateful(env)
             }
 
-            fn register(&self, path: &[Id], vm: &mut Engine) {
-                (**self).register(path, vm)
+            fn register(&self, env: &Env, path: &[Id], vm: &mut Engine) {
+                (**self).register(env, path, vm)
             }
 
             fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn Visitor<Env>) {

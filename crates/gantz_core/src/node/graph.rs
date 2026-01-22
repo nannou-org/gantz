@@ -79,12 +79,12 @@ impl<Env, N> Node<Env> for Graph<N>
 where
     N: Node<Env>,
 {
-    fn n_inputs(&self, _: &Env) -> usize {
-        inlets(self).count()
+    fn n_inputs(&self, env: &Env) -> usize {
+        inlets(env, self).count()
     }
 
-    fn n_outputs(&self, _: &Env) -> usize {
-        outlets(self).count()
+    fn n_outputs(&self, env: &Env) -> usize {
+        outlets(env, self).count()
     }
 
     fn branches(&self, _: &Env) -> Vec<node::EvalConf> {
@@ -96,11 +96,11 @@ where
         nested_expr(ctx.env(), self, ctx.path(), ctx.inputs())
     }
 
-    fn stateful(&self) -> bool {
+    fn stateful(&self, _env: &Env) -> bool {
         true
     }
 
-    fn register(&self, path: &[node::Id], vm: &mut Engine) {
+    fn register(&self, _env: &Env, path: &[node::Id], vm: &mut Engine) {
         // Register the graph's state map.
         node::state::update_value(vm, path, SteelVal::empty_hashmap())
             .expect("failed to register graph hashmap");
@@ -131,12 +131,12 @@ where
         self.graph.expr(ctx)
     }
 
-    fn stateful(&self) -> bool {
-        self.graph.stateful()
+    fn stateful(&self, env: &Env) -> bool {
+        self.graph.stateful(env)
     }
 
-    fn register(&self, path: &[node::Id], vm: &mut Engine) {
-        self.graph.register(path, vm)
+    fn register(&self, env: &Env, path: &[node::Id], vm: &mut Engine) {
+        self.graph.register(env, path, vm)
     }
 
     fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
@@ -261,7 +261,7 @@ impl<Env> Node<Env> for Inlet {
         1
     }
 
-    fn inlet(&self) -> bool {
+    fn inlet(&self, _env: &Env) -> bool {
         true
     }
 }
@@ -292,7 +292,7 @@ impl<Env> Node<Env> for Outlet {
         0
     }
 
-    fn outlet(&self) -> bool {
+    fn outlet(&self, _env: &Env) -> bool {
         true
     }
 }
@@ -342,21 +342,23 @@ pub fn graph_partial_eq<N: PartialEq>(a: &Graph<N>, b: &Graph<N>) -> bool {
 }
 
 /// Count the number of inlet nodes in the given graph.
-pub fn inlets<Env, G>(g: G) -> impl Iterator<Item = G::NodeRef>
+pub fn inlets<'a, Env, G>(env: &'a Env, g: G) -> impl Iterator<Item = G::NodeRef> + 'a
 where
-    G: Data + IntoNodeReferences,
+    G: Data + IntoNodeReferences + 'a,
     G::NodeWeight: Node<Env>,
 {
-    g.node_references().filter(|n_ref| n_ref.weight().inlet())
+    g.node_references()
+        .filter(|n_ref| n_ref.weight().inlet(env))
 }
 
 /// Count the number of outlet nodes in the given graph.
-pub fn outlets<Env, G>(g: G) -> impl Iterator<Item = G::NodeRef>
+pub fn outlets<'a, Env, G>(env: &'a Env, g: G) -> impl Iterator<Item = G::NodeRef> + 'a
 where
-    G: Data + IntoNodeReferences,
+    G: Data + IntoNodeReferences + 'a,
     G::NodeWeight: Node<Env>,
 {
-    g.node_references().filter(|n_ref| n_ref.weight().outlet())
+    g.node_references()
+        .filter(|n_ref| n_ref.weight().outlet(env))
 }
 
 /// The implementation of the `GraphNode`'s `Node::expr` fn.
@@ -375,9 +377,9 @@ where
     use petgraph::visit::EdgeRef;
 
     // Create define bindings for inlet values.
-    let inlets: Vec<_> = inlets(g).map(|n_ref| n_ref.id()).collect();
+    let inlet_ids: Vec<_> = inlets(env, g).map(|n_ref| n_ref.id()).collect();
     let mut inlet_bindings = Vec::new();
-    for (i, &inlet_id) in inlets.iter().enumerate() {
+    for (i, &inlet_id) in inlet_ids.iter().enumerate() {
         let node_ix = g.to_index(inlet_id);
         let input_expr = if i < inputs.len() && inputs[i].is_some() {
             inputs[i].as_ref().unwrap().clone()
@@ -390,13 +392,13 @@ where
 
     // Use compile to create the evaluation order, steps, and statements
     let meta = compile::Meta::from_graph(env, g);
-    let outlets: Vec<_> = outlets(g).map(|n_ref| n_ref.id()).collect();
+    let outlet_ids: Vec<_> = outlets(env, g).map(|n_ref| n_ref.id()).collect();
     let flow_graph = compile::flow_graph(
         &meta,
-        inlets
+        inlet_ids
             .iter()
             .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
-        outlets
+        outlet_ids
             .iter()
             .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
     );
@@ -417,7 +419,7 @@ where
         .join(" ");
 
     // For the return values, find the source node connected to each outlet's input.
-    let outlet_values = outlets
+    let outlet_values = outlet_ids
         .iter()
         .map(|&outlet_id| {
             // Find the edge coming into this outlet (input index 0).

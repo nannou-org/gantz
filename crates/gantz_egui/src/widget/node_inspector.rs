@@ -93,7 +93,7 @@ pub fn table<Env>(
                 });
             }
 
-            if node.stateful() {
+            if node.stateful(ctx.env()) {
                 body.row(row_h, |mut row| {
                     row.col(|ui| {
                         ui.label("state");

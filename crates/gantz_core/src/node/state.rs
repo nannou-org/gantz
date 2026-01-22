@@ -109,19 +109,19 @@ where
         self.node.pull_eval(env)
     }
 
-    fn inlet(&self) -> bool {
-        self.node.inlet()
+    fn inlet(&self, env: &Env) -> bool {
+        self.node.inlet(env)
     }
 
-    fn outlet(&self) -> bool {
-        self.node.outlet()
+    fn outlet(&self, env: &Env) -> bool {
+        self.node.outlet(env)
     }
 
-    fn stateful(&self) -> bool {
+    fn stateful(&self, _env: &Env) -> bool {
         true
     }
 
-    fn register(&self, path: &[node::Id], vm: &mut Engine) {
+    fn register(&self, _env: &Env, path: &[node::Id], vm: &mut Engine) {
         S::register(vm);
         let val = default_node_state_steel_val::<S>();
         update(vm, path, val).unwrap();

@@ -78,22 +78,22 @@ where
             .unwrap_or_default()
     }
 
-    // FIXME: Add env arg to `stateful`!
-    fn stateful(&self) -> bool {
-        false
+    fn stateful(&self, env: &Env) -> bool {
+        env.node(&self.0).map(|n| n.stateful(env)).unwrap_or(false)
     }
 
-    // FIXME: Add env arg to `register`!
-    fn register(&self, _path: &[node::Id], _vm: &mut Engine) {}
-
-    // FIXME: Add env arg to `inlet`!
-    fn inlet(&self) -> bool {
-        false
+    fn register(&self, env: &Env, path: &[node::Id], vm: &mut Engine) {
+        if let Some(n) = env.node(&self.0) {
+            n.register(env, path, vm);
+        }
     }
 
-    // FIXME: Add env arg to `outlet`!
-    fn outlet(&self) -> bool {
-        false
+    fn inlet(&self, env: &Env) -> bool {
+        env.node(&self.0).map(|n| n.inlet(env)).unwrap_or(false)
+    }
+
+    fn outlet(&self, env: &Env) -> bool {
+        env.node(&self.0).map(|n| n.outlet(env)).unwrap_or(false)
     }
 
     fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
