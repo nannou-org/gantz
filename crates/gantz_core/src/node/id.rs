@@ -1,4 +1,4 @@
-//! The identity function - returns its input unchanged.
+//! A node representing the identity function - returns its input unchanged.
 
 use crate::node;
 use serde::{Deserialize, Serialize};
