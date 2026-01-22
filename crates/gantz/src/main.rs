@@ -360,8 +360,9 @@ fn process_gantz_gui_cmds(
                     let head_state = gui_state.gantz.open_heads.get_mut(&head).unwrap();
                     head_state.path = path;
                 }
-                gantz_egui::Cmd::OpenNamedGraph(name, graph_ca) => {
+                gantz_egui::Cmd::OpenNamedNode(name, content_ca) => {
                     if let Some(commit) = env.registry.named_commit(&name) {
+                        let graph_ca = ca::GraphAddr::from(content_ca);
                         if graph_ca == commit.graph {
                             open_head(
                                 &mut env,
@@ -373,7 +374,7 @@ fn process_gantz_gui_cmds(
                             );
                         } else {
                             bevy::log::debug!(
-                                "Attempted to open named graph, but the graph address has changed"
+                                "Attempted to open named node, but the content address has changed"
                             );
                         }
                     }

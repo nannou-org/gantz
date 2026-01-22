@@ -61,18 +61,11 @@ impl gantz_egui::widget::gantz::NodeTypeRegistry for Environment {
             .get(node_type)
             .and_then(|commit_ca| {
                 let graph_ca = self.registry.commits().get(commit_ca)?.graph;
-                let named = gantz_egui::node::NamedGraph::new(node_type.to_string(), graph_ca);
+                let ref_ = gantz_core::node::Ref::new(graph_ca.into());
+                let named = gantz_egui::node::NamedRef::new(node_type.to_string(), ref_);
                 Some(Box::new(named) as Box<_>)
             })
             .or_else(|| self.primitives.get(node_type).map(|f| (f)()))
-    }
-}
-
-// Provide the `GraphRegistry` implementation required by `gantz_egui`.
-impl gantz_egui::node::graph::GraphRegistry for Environment {
-    type Node = Box<dyn Node>;
-    fn graph(&self, ca: ca::GraphAddr) -> Option<&gantz_core::node::graph::Graph<Self::Node>> {
-        self.registry.graphs().get(&ca)
     }
 }
 

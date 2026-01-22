@@ -1,6 +1,6 @@
 //! A node that references another node by name and content address.
 
-use crate::{NodeCtx, NodeUi, widget::node_inspector};
+use crate::{Cmd, NodeCtx, NodeUi, widget::node_inspector};
 use gantz_core::node::{self, Node};
 use serde::{Deserialize, Serialize};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
@@ -128,7 +128,7 @@ where
         let is_outdated = current_ca.map(|ca| ca != ref_ca).unwrap_or(false);
 
         // Use a slightly different frame stroke when outdated.
-        if is_outdated {
+        let response = if is_outdated {
             let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(200, 150, 50));
             let frame = egui::Frame::group(uictx.style()).stroke(stroke);
             uictx.framed_with(frame, |ui| {
@@ -143,7 +143,14 @@ where
             })
         } else {
             uictx.framed(|ui| ui.add(egui::Label::new(&self.name).selectable(false)))
+        };
+
+        // Open the node on double-click (handler decides if the node is openable).
+        if response.response.double_clicked() {
+            ctx.cmds.push(Cmd::OpenNamedNode(self.name.clone(), ref_ca));
         }
+
+        response
     }
 
     fn inspector_rows(&mut self, ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {

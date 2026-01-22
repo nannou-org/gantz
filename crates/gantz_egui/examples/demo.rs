@@ -60,21 +60,11 @@ impl gantz_egui::widget::gantz::NodeTypeRegistry for Environment {
             .get(node_type)
             .and_then(|commit_ca| {
                 let graph_ca = self.registry.commits().get(commit_ca)?.graph;
-                let named = gantz_egui::node::NamedGraph::new(node_type.to_string(), graph_ca);
+                let ref_ = gantz_core::node::Ref::new(graph_ca.into());
+                let named = gantz_egui::node::NamedRef::new(node_type.to_string(), ref_);
                 Some(Box::new(named) as Box<_>)
             })
             .or_else(|| self.primitives.get(node_type).map(|f| (f)()))
-    }
-}
-
-// Provide the `GraphRegistry` implementation required by `gantz_egui`.
-impl gantz_egui::node::graph::GraphRegistry for Environment {
-    type Node = Box<dyn Node>;
-    fn graph(
-        &self,
-        ca: gantz_ca::GraphAddr,
-    ) -> Option<&gantz_core::node::graph::Graph<Self::Node>> {
-        self.registry.graphs().get(&ca)
     }
 }
 
@@ -89,6 +79,28 @@ impl gantz_egui::widget::graph_select::GraphRegistry for Environment {
 
     fn names(&self) -> &BTreeMap<String, gantz_ca::CommitAddr> {
         &self.registry.names()
+    }
+}
+
+// Provide the `NodeRegistry` implementation required by `gantz_core::node::Ref`.
+impl gantz_core::node::ref_::NodeRegistry for Environment {
+    type Node = dyn gantz_core::Node<Self>;
+    fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&Self::Node> {
+        self.registry
+            .graphs()
+            .get(&gantz_ca::GraphAddr::from(*ca))
+            .map(|g| g as &dyn gantz_core::Node<Self>)
+    }
+}
+
+// Provide the `NameRegistry` implementation required by `gantz_egui::node::NamedRef`.
+impl gantz_egui::node::NameRegistry for Environment {
+    fn name_ca(&self, name: &str) -> Option<gantz_ca::ContentAddr> {
+        self.registry
+            .names()
+            .get(name)
+            .and_then(|commit_ca| self.registry.commits().get(commit_ca))
+            .map(|commit| gantz_ca::ContentAddr::from(commit.graph.0))
     }
 }
 
@@ -160,7 +172,7 @@ impl Node for gantz_std::Log {}
 impl Node for gantz_std::Number {}
 
 #[typetag::serde]
-impl Node for gantz_egui::node::NamedGraph {}
+impl Node for gantz_egui::node::NamedRef {}
 
 #[typetag::serde]
 impl Node for Box<dyn Node> {}
@@ -711,13 +723,14 @@ fn process_cmds(state: &mut State) {
                     let head_state = state.gantz.open_heads.get_mut(&head).unwrap();
                     head_state.path = path;
                 }
-                gantz_egui::Cmd::OpenNamedGraph(name, graph_ca) => {
+                gantz_egui::Cmd::OpenNamedNode(name, content_ca) => {
                     if let Some(commit) = state.env.registry.named_commit(&name) {
+                        let graph_ca = gantz_ca::GraphAddr::from(content_ca);
                         if graph_ca == commit.graph {
                             open_head(state, gantz_ca::Head::Branch(name.to_string()));
                         } else {
                             log::debug!(
-                                "Attempted to open named graph, but the graph address has changed"
+                                "Attempted to open named node, but the content address has changed"
                             );
                         }
                     }

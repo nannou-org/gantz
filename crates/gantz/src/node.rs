@@ -45,8 +45,6 @@ impl Node for gantz_std::Number {}
 #[typetag::serde]
 impl Node for gantz_egui::node::FnNamedRef {}
 #[typetag::serde]
-impl Node for gantz_egui::node::NamedGraph {}
-#[typetag::serde]
 impl Node for gantz_egui::node::NamedRef {}
 
 #[typetag::serde]

@@ -72,7 +72,7 @@ pub enum Cmd {
     PushEval(Vec<node::Id>),
     PullEval(Vec<node::Id>),
     OpenGraph(Vec<node::Id>),
-    OpenNamedGraph(String, gantz_ca::GraphAddr),
+    OpenNamedNode(String, gantz_ca::ContentAddr),
 }
 
 impl<'a, Env, N> NodeUi<Env> for &'a mut N

@@ -8,10 +8,8 @@ pub use comment::Comment;
 pub use fn_named_ref::{FnNamedRef, FnNodeNames};
 #[doc(inline)]
 pub use gantz_core::node::{Id, state};
-pub use graph::NamedGraph;
 pub use named_ref::{NameRegistry, NamedRef};
 
 pub mod comment;
 pub mod fn_named_ref;
-pub mod graph;
 pub mod named_ref;
