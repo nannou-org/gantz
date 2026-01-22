@@ -21,20 +21,17 @@ dyn_clone::clone_trait_object!(Node);
 dyn_hash::hash_trait_object!(Node);
 
 #[typetag::serde]
+impl Node for gantz_core::node::Apply {}
+#[typetag::serde]
 impl Node for gantz_core::node::Expr {}
 #[typetag::serde]
 impl Node for gantz_core::node::GraphNode<Box<dyn Node>> {}
 #[typetag::serde]
+impl Node for gantz_core::node::Identity {}
+#[typetag::serde]
 impl Node for gantz_core::node::graph::Inlet {}
 #[typetag::serde]
 impl Node for gantz_core::node::graph::Outlet {}
-
-#[typetag::serde]
-impl Node for gantz_core::node::Apply {}
-#[typetag::serde]
-impl Node for gantz_core::node::Fn {}
-#[typetag::serde]
-impl Node for gantz_core::node::Identity {}
 
 #[typetag::serde]
 impl Node for gantz_std::ops::Add {}
