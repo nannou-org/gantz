@@ -67,13 +67,15 @@ impl gantz_egui::node::graph::GraphRegistry for Environment {
 }
 
 // Provide the `GraphRegistry` implementation required by `gantz_core::node::Fn`.
-impl gantz_core::node::fn_::GraphRegistry for Environment {
-    type Node = Box<dyn Node>;
-    fn graph(&self, ca: ca::GraphAddr) -> Option<&gantz_core::node::graph::Graph<Self::Node>> {
-        self.registry.graphs().get(&ca)
-    }
-    fn new_primitive(&self, name: &str) -> Option<Self::Node> {
-        self.primitives.get(name).map(|f| (f)())
+impl gantz_core::node::ref_::NodeRegistry for Environment {
+    type Node = dyn gantz_core::Node<Self>;
+    fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&Self::Node> {
+        // TODO: Registry should also return built-in (primitive) nodes with
+        // matching CA. Ensure registry nodes shadow builtins.
+        self.registry
+            .graphs()
+            .get(&gantz_ca::GraphAddr::from(*ca))
+            .map(|g| g as &dyn gantz_core::Node<Self>)
     }
 }
 
@@ -108,9 +110,6 @@ pub fn primitives() -> Primitives {
     });
     register_primitive(&mut p, "expr", || {
         Box::new(gantz_core::node::Expr::new("()").unwrap()) as Box<_>
-    });
-    register_primitive(&mut p, "fn", || {
-        Box::new(gantz_core::node::Fn::default()) as Box<_>
     });
     register_primitive(&mut p, "graph", || Box::new(GraphNode::default()) as Box<_>);
     register_primitive(&mut p, gantz_core::node::IDENTITY_NAME, || {
