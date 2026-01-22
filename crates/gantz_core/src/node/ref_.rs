@@ -25,6 +25,11 @@ impl Ref {
     pub fn new(addr: gantz_ca::ContentAddr) -> Self {
         Self(addr)
     }
+
+    /// The content address of the referenced node.
+    pub fn content_addr(&self) -> gantz_ca::ContentAddr {
+        self.0
+    }
 }
 
 impl gantz_ca::CaHash for Ref {

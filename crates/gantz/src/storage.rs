@@ -358,8 +358,11 @@ pub fn load_environment(storage: &PkvStore) -> Environment {
     let views = load_views(storage);
     let registry = env::Registry::new(graphs, commits, names);
     let primitives = env::primitives();
+    let (primitive_instances, primitive_names) = env::primitive_instances_and_names(&primitives);
     Environment {
         primitives,
+        primitive_instances,
+        primitive_names,
         registry,
         views,
     }

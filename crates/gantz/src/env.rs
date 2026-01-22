@@ -21,11 +21,21 @@ pub type Views = HashMap<ca::CommitAddr, GraphViews>;
 pub struct Environment {
     /// Constructors for all primitive nodes.
     pub primitives: Primitives,
+    /// Instantiated primitives for lookup by content address.
+    pub primitive_instances: PrimitiveInstances,
+    /// Mapping from primitive content addresses to their names.
+    pub primitive_names: PrimitiveNames,
     /// The registry of all nodes composed from other nodes.
     pub registry: Registry,
     /// Views (layout + camera) for all known commits, keyed by commit address.
     pub views: Views,
 }
+
+/// Instantiated primitive nodes keyed by their content address.
+pub type PrimitiveInstances = HashMap<ca::ContentAddr, Box<dyn Node>>;
+
+/// Mapping from primitive content addresses to their names.
+pub type PrimitiveNames = HashMap<ca::ContentAddr, String>;
 
 /// The registry for all graphs, commits and commit names.
 pub type Registry = ca::Registry<Graph>;
@@ -66,16 +76,20 @@ impl gantz_egui::node::graph::GraphRegistry for Environment {
     }
 }
 
-// Provide the `GraphRegistry` implementation required by `gantz_core::node::Fn`.
+// Provide the `NodeRegistry` implementation required by `gantz_core::node::Ref`.
 impl gantz_core::node::ref_::NodeRegistry for Environment {
     type Node = dyn gantz_core::Node<Self>;
     fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&Self::Node> {
-        // TODO: Registry should also return built-in (primitive) nodes with
-        // matching CA. Ensure registry nodes shadow builtins.
+        // Graphs shadow primitives.
         self.registry
             .graphs()
             .get(&gantz_ca::GraphAddr::from(*ca))
             .map(|g| g as &dyn gantz_core::Node<Self>)
+            .or_else(|| {
+                self.primitive_instances
+                    .get(ca)
+                    .map(|n| &**n as &dyn gantz_core::Node<Self>)
+            })
     }
 }
 
@@ -90,6 +104,55 @@ impl gantz_egui::widget::graph_select::GraphRegistry for Environment {
 
     fn names(&self) -> &BTreeMap<String, ca::CommitAddr> {
         self.registry.names()
+    }
+}
+
+// Provide the `NameRegistry` implementation required by `gantz_egui::node::NamedRef`.
+impl gantz_egui::node::NameRegistry for Environment {
+    fn name_ca(&self, name: &str) -> Option<ca::ContentAddr> {
+        // Check registry names first (graphs shadow primitives).
+        if let Some(commit_ca) = self.registry.names().get(name) {
+            return self
+                .registry
+                .commits()
+                .get(commit_ca)
+                .map(|commit| ca::ContentAddr::from(commit.graph.0));
+        }
+        // Then check primitive names.
+        self.primitive_names
+            .iter()
+            .find(|(_, n)| *n == name)
+            .map(|(content_addr, _)| *content_addr)
+    }
+}
+
+// Provide the `FnNodeNames` implementation required by `Fn<NamedRef>` UI.
+impl gantz_egui::node::FnNodeNames for Environment {
+    fn fn_node_names(&self) -> Vec<String> {
+        use gantz_core::node::ref_::NodeRegistry;
+        use gantz_egui::node::NameRegistry;
+
+        // Collect all names (primitives + registry names).
+        let all_names = self
+            .primitive_names
+            .values()
+            .chain(self.registry.names().keys());
+
+        // Filter to Fn-compatible nodes (stateless, branchless, 1 output).
+        // TODO: Graph::stateful impl needs fixing to properly check nested nodes.
+        // TODO: Graph::branches impl needs fixing (follow-up PR).
+        let mut names: Vec<_> = all_names
+            .filter(|name| {
+                self.name_ca(name)
+                    .and_then(|ca| self.node(&ca))
+                    .map(|n| !n.stateful() && n.branches(self).is_empty() && n.n_outputs(self) == 1)
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+
+        names.sort();
+        names
     }
 }
 
@@ -110,6 +173,15 @@ pub fn primitives() -> Primitives {
     });
     register_primitive(&mut p, "expr", || {
         Box::new(gantz_core::node::Expr::new("()").unwrap()) as Box<_>
+    });
+    // Compute Identity's CA for the default Fn<NamedRef>.
+    let identity_ca = ca::content_addr(&gantz_core::node::Identity);
+    register_primitive(&mut p, "fn", move || {
+        let named_ref = gantz_egui::node::NamedRef::new(
+            gantz_core::node::IDENTITY_NAME.to_string(),
+            gantz_core::node::Ref::new(identity_ca),
+        );
+        Box::new(gantz_core::node::Fn::new(named_ref)) as Box<_>
     });
     register_primitive(&mut p, "graph", || Box::new(GraphNode::default()) as Box<_>);
     register_primitive(&mut p, gantz_core::node::IDENTITY_NAME, || {
@@ -136,6 +208,21 @@ fn register_primitive(
     new: impl 'static + Send + Sync + Fn() -> Box<dyn Node>,
 ) -> Option<Box<dyn Send + Sync + Fn() -> Box<dyn Node>>> {
     primitives.insert(name.into(), Box::new(new) as Box<_>)
+}
+
+/// Build the primitive instances and names maps from the primitives constructors.
+pub fn primitive_instances_and_names(
+    primitives: &Primitives,
+) -> (PrimitiveInstances, PrimitiveNames) {
+    let mut instances = PrimitiveInstances::default();
+    let mut names = PrimitiveNames::default();
+    for (name, ctor) in primitives.iter() {
+        let node = ctor();
+        let content_addr = ca::content_addr(&node);
+        instances.insert(content_addr, node);
+        names.insert(content_addr, name.clone());
+    }
+    (instances, names)
 }
 
 /// Create a timestamp for a commit.

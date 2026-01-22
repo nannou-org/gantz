@@ -1,0 +1,69 @@
+//! `Fn<NamedRef>` type alias and NodeUi implementation.
+
+use super::{NameRegistry, NamedRef};
+use crate::{NodeCtx, NodeUi, widget::node_inspector};
+
+/// A function node wrapping a named reference.
+pub type FnNamedRef = gantz_core::node::Fn<NamedRef>;
+
+/// Trait for environments that can provide Fn-compatible node names.
+pub trait FnNodeNames: NameRegistry {
+    /// Names of nodes that can be used with Fn.
+    /// Filters to: stateless, branchless, single-output nodes.
+    fn fn_node_names(&self) -> Vec<String>;
+}
+
+impl<Env> NodeUi<Env> for FnNamedRef
+where
+    Env: FnNodeNames,
+{
+    fn name(&self, _env: &Env) -> &str {
+        "fn"
+    }
+
+    fn ui(
+        &mut self,
+        _ctx: NodeCtx<Env>,
+        uictx: egui_graph::NodeCtx,
+    ) -> egui::InnerResponse<egui::Response> {
+        uictx.framed(|ui| {
+            ui.horizontal(|ui| {
+                let fn_res = ui.add(egui::Label::new("fn").selectable(false));
+                let name_text = egui::RichText::new(self.0.name()).italics();
+                let name_res = ui.add(egui::Label::new(name_text).selectable(false));
+                fn_res.union(name_res)
+            })
+            .inner
+        })
+    }
+
+    fn inspector_rows(&mut self, ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+        let row_h = node_inspector::table_row_h(body.ui_mut());
+
+        // ComboBox to select which node to reference.
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("Node");
+            });
+            row.col(|ui| {
+                let env = ctx.env();
+                let names = env.fn_node_names();
+                egui::ComboBox::from_id_salt("fn_node_select")
+                    .selected_text(self.0.name())
+                    .show_ui(ui, |ui| {
+                        for name in names.iter() {
+                            if ui.selectable_label(self.0.name() == name, name).clicked() {
+                                if let Some(ca) = env.name_ca(name) {
+                                    self.0 =
+                                        NamedRef::new(name.clone(), gantz_core::node::Ref::new(ca));
+                                }
+                            }
+                        }
+                    });
+            });
+        });
+
+        // Delegate to NamedRef's inspector rows for CA and update button.
+        self.0.inspector_rows(ctx, body);
+    }
+}
