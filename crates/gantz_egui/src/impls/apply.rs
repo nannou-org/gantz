@@ -10,8 +10,6 @@ impl<Env> NodeUi<Env> for gantz_core::node::Apply {
         _ctx: NodeCtx<Env>,
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
-        uictx.framed(|ui| {
-            ui.add(egui::Label::new("apply").selectable(false))
-        })
+        uictx.framed(|ui| ui.add(egui::Label::new("apply").selectable(false)))
     }
 }
