@@ -123,8 +123,11 @@ where
 
     fn register(&self, _env: &Env, path: &[node::Id], vm: &mut Engine) {
         S::register(vm);
-        let val = default_node_state_steel_val::<S>();
-        update(vm, path, val).unwrap();
+        // Only initialize state if not already present.
+        if extract_value(vm, path).ok().flatten().is_none() {
+            let val = default_node_state_steel_val::<S>();
+            update(vm, path, val).unwrap();
+        }
     }
 }
 

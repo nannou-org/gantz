@@ -314,8 +314,10 @@ fn update_vm(
                 gui_state.gantz.open_heads.insert(head.clone(), state);
             }
 
-            // Recompile this head's graph into its VM.
+            // Re-register and recompile this head's graph into its VM.
+            // Registration is idempotent - existing state is preserved.
             let vm = &mut vms.0[ix];
+            gantz_core::graph::register(&*env, &*graph, &[], vm);
             let module = compile_graph(&env, graph, vm);
             compiled_modules.0[ix] = CompiledModule(fmt_compiled_module(&module));
         }
