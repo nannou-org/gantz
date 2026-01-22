@@ -21,8 +21,6 @@ impl node::ref_::NodeRegistry for TestEnv {
     }
 }
 
-// Helper nodes for testing
-
 fn node_bang() -> node::expr::Expr {
     node::expr("'bang").unwrap()
 }
@@ -47,17 +45,24 @@ impl<T> DebugNode for T where T: Debug + Node<TestEnv> {}
 //
 //    --------
 //    | bang |
-//    --------
-//       |
-//    --------      ------
-//    |  fn  | ---> |apply| --> result
-//    |(id)  |      |     |
-//    --------      ------
-//                    ^
-//                    |
-//                  -----
-//                  | 42 |
-//                  -----
+//    -+------
+//     |
+//     |
+//    -+------
+//    |  fn  |  ------
+//    | (id) |  | 42 |
+//    -+------  -+----
+//     |         |
+//     |     -----
+//     |     |
+//    -+-----+-
+//    | apply |
+//    -+-------
+//     |
+//     |
+//    ----------
+//    | result |
+//    ----------
 #[test]
 fn test_fn_apply_identity() {
     let mut g = petgraph::graph::DiGraph::new();

@@ -15,7 +15,7 @@ pub struct Ref(gantz_ca::ContentAddr);
 /// content address.
 pub trait NodeRegistry {
     /// The node type.
-    type Node;
+    type Node: ?Sized;
     /// Returns a node for the given node address.
     fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&Self::Node>;
 }

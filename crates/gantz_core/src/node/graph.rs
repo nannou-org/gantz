@@ -69,16 +69,16 @@ where
     }
 }
 
-impl<Env, N> Node<Env> for GraphNode<N>
+impl<Env, N> Node<Env> for Graph<N>
 where
     N: Node<Env>,
 {
     fn n_inputs(&self, _: &Env) -> usize {
-        inlets(&self.graph).count()
+        inlets(self).count()
     }
 
     fn n_outputs(&self, _: &Env) -> usize {
-        outlets(&self.graph).count()
+        outlets(self).count()
     }
 
     fn branches(&self, _: &Env) -> Vec<node::EvalConf> {
@@ -87,7 +87,7 @@ where
     }
 
     fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
-        nested_expr(ctx.env(), &self.graph, ctx.path(), ctx.inputs())
+        nested_expr(ctx.env(), self, ctx.path(), ctx.inputs())
     }
 
     fn stateful(&self) -> bool {
@@ -101,7 +101,40 @@ where
     }
 
     fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
-        crate::graph::visit(ctx.env(), &self.graph, ctx.path(), visitor);
+        crate::graph::visit(ctx.env(), self, ctx.path(), visitor);
+    }
+}
+
+impl<Env, N> Node<Env> for GraphNode<N>
+where
+    N: Node<Env>,
+{
+    fn n_inputs(&self, env: &Env) -> usize {
+        self.graph.n_inputs(env)
+    }
+
+    fn n_outputs(&self, env: &Env) -> usize {
+        self.graph.n_outputs(env)
+    }
+
+    fn branches(&self, env: &Env) -> Vec<node::EvalConf> {
+        self.graph.branches(env)
+    }
+
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+        self.graph.expr(ctx)
+    }
+
+    fn stateful(&self) -> bool {
+        self.graph.stateful()
+    }
+
+    fn register(&self, path: &[node::Id], vm: &mut Engine) {
+        self.graph.register(path, vm)
+    }
+
+    fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
+        self.graph.visit(ctx, visitor)
     }
 }
 
