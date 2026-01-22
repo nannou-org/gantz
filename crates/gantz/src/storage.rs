@@ -1,8 +1,7 @@
 use crate::{
     Open,
     env::{self, Environment, GraphViews, Views},
-    graph,
-    node::Node,
+    graph::{self, Graph},
 };
 use bevy::log;
 use bevy_egui::egui;
@@ -68,21 +67,14 @@ pub fn save_commit_addrs(storage: &mut PkvStore, addrs: &[ca::CommitAddr]) {
 }
 
 /// Save all graphs to storage, keyed via their content address.
-pub fn save_graphs(
-    storage: &mut PkvStore,
-    graphs: &HashMap<ca::GraphAddr, gantz_core::node::graph::Graph<Box<dyn Node>>>,
-) {
+pub fn save_graphs(storage: &mut PkvStore, graphs: &HashMap<ca::GraphAddr, Graph>) {
     for (&ca, graph) in graphs {
         save_graph(storage, ca, graph);
     }
 }
 
 /// Save the graph to storage at the given address.
-pub fn save_graph(
-    storage: &mut PkvStore,
-    ca: ca::GraphAddr,
-    graph: &gantz_core::node::graph::Graph<Box<dyn Node>>,
-) {
+pub fn save_graph(storage: &mut PkvStore, ca: ca::GraphAddr, graph: &Graph) {
     let key = key::graph(ca);
     let graph_str = match ron::to_string(graph) {
         Err(e) => {
@@ -221,7 +213,7 @@ pub fn load_commit_addrs(storage: &PkvStore) -> Vec<ca::CommitAddr> {
 pub fn load_graphs(
     storage: &PkvStore,
     addrs: impl IntoIterator<Item = ca::GraphAddr>,
-) -> HashMap<ca::GraphAddr, gantz_core::node::graph::Graph<Box<dyn Node>>> {
+) -> HashMap<ca::GraphAddr, Graph> {
     addrs
         .into_iter()
         .filter_map(|ca| Some((ca, load_graph(storage, ca)?)))
@@ -229,10 +221,7 @@ pub fn load_graphs(
 }
 
 /// Load the graph with the given content address from storage.
-pub fn load_graph(
-    storage: &PkvStore,
-    ca: ca::GraphAddr,
-) -> Option<gantz_core::node::graph::Graph<Box<dyn Node>>> {
+pub fn load_graph(storage: &PkvStore, ca: ca::GraphAddr) -> Option<Graph> {
     let key = key::graph(ca);
     let Some(graph_str) = storage.get::<String>(&key).ok() else {
         log::debug!("No graph found for address {key}");
