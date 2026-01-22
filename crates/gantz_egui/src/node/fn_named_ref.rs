@@ -28,8 +28,8 @@ where
     ) -> egui::InnerResponse<egui::Response> {
         uictx.framed(|ui| {
             ui.horizontal(|ui| {
-                let fn_res = ui.add(egui::Label::new("fn").selectable(false));
-                let name_text = egui::RichText::new(self.0.name()).italics();
+                let fn_res = ui.add(egui::Label::new("λ").selectable(false));
+                let name_text = egui::RichText::new(self.0.name());
                 let name_res = ui.add(egui::Label::new(name_text).selectable(false));
                 fn_res.union(name_res)
             })
@@ -43,12 +43,13 @@ where
         // ComboBox to select which node to reference.
         body.row(row_h, |mut row| {
             row.col(|ui| {
-                ui.label("Node");
+                ui.label("node");
             });
             row.col(|ui| {
                 let env = ctx.env();
+                let salt = format!("λ-node-select-{:?}", ctx.path());
                 let names = env.fn_node_names();
-                egui::ComboBox::from_id_salt("fn_node_select")
+                egui::ComboBox::from_id_salt(salt)
                     .selected_text(self.0.name())
                     .show_ui(ui, |ui| {
                         for name in names.iter() {
