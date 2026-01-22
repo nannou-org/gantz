@@ -35,7 +35,7 @@ impl<Env> node::Node<Env> for Apply {
         let arguments = inputs.get(1).and_then(|opt| opt.as_ref());
         let args = arguments.map_or("'()", |s| &s[..]);
         let expr = function
-            .map(|f| format!("(if (procedure? {f}) (apply {f} {args}) '())"))
+            .map(|f| format!("(apply {f} {args})"))
             .unwrap_or_else(|| "'()".to_string());
         Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
     }
