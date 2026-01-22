@@ -32,6 +32,12 @@ pub type NodeIx = NodeIndex<Index>;
 pub type EdgeIx = EdgeIndex<Index>;
 
 /// A node that itself is implemented in terms of a graph of nodes.
+///
+/// While an implementation of [`Node`] is also provided for [`Graph`], the
+/// `Graph` type is defined in the petgraph crate. As a result, we cannot ensure
+/// it implements all of the upstream traits we require. By providing a
+/// dedicated `GraphNode` type, we can also provide implementations for any
+/// upstream traits we might need.
 #[derive(Clone, Debug)]
 pub struct GraphNode<N> {
     /// The nested graph.
