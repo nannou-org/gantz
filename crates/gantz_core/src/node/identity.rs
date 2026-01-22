@@ -32,11 +32,7 @@ impl<Env> node::Node<Env> for Identity {
             _ => "'()".to_string(),
         };
 
-        Engine::emit_ast(&expr)
-            .unwrap()
-            .into_iter()
-            .next()
-            .unwrap()
+        Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
     }
 }
 
@@ -45,4 +41,3 @@ impl gantz_ca::CaHash for Identity {
         "gantz_core::node::Identity".hash(hasher);
     }
 }
-
