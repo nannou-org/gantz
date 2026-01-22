@@ -132,7 +132,6 @@ impl gantz_egui::node::FnNodeNames for Environment {
             .chain(self.registry.names().keys());
 
         // Filter to Fn-compatible nodes (stateless, branchless, 1 output).
-        // TODO: Graph::stateful impl needs fixing to properly check nested nodes.
         // TODO: Graph::branches impl needs fixing (follow-up PR).
         let mut names: Vec<_> = all_names
             .filter(|name| {

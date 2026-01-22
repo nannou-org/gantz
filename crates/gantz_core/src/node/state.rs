@@ -165,8 +165,11 @@ pub fn update_value(vm: &mut Engine, node_path: &[usize], val: SteelVal) -> Resu
                 let id = graph_id.try_into().expect("node_id out of range");
                 let key = SteelVal::IntV(id);
                 let update = |opt: Option<SteelVal>| {
-                    let Some(SteelVal::HashMapV(mut state)) = opt else {
-                        panic!("graph state was not a hashmap");
+                    // Lazily initialize empty hashmap if not present.
+                    let mut state = match opt {
+                        Some(SteelVal::HashMapV(state)) => state,
+                        None => Gc::new(steel::HashMap::new()).into(),
+                        Some(_) => panic!("graph state was not a hashmap"),
                     };
                     update_hashmap_value(&mut state, &node_path[1..], val)
                         .expect("failed to update value");

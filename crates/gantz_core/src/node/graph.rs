@@ -19,7 +19,7 @@ use std::{
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
 };
-use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
+use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// The graph type used by the graph node to represent its nested graph.
 pub type Graph<N> = petgraph::stable_graph::StableGraph<N, Edge, Directed, Index>;
@@ -96,14 +96,14 @@ where
         nested_expr(ctx.env(), self, ctx.path(), ctx.inputs())
     }
 
-    fn stateful(&self, _env: &Env) -> bool {
-        true
+    fn stateful(&self, env: &Env) -> bool {
+        self.node_references()
+            .any(|n_ref| n_ref.weight().stateful(env))
     }
 
-    fn register(&self, _env: &Env, path: &[node::Id], vm: &mut Engine) {
-        // Register the graph's state map.
-        node::state::update_value(vm, path, SteelVal::empty_hashmap())
-            .expect("failed to register graph hashmap");
+    fn register(&self, _env: &Env, _path: &[node::Id], _vm: &mut Engine) {
+        // Graph state hashmaps are lazily initialized by `update_value` when
+        // nested stateful nodes register their state.
     }
 
     fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
@@ -445,13 +445,18 @@ where
         "'()".to_string()
     };
 
-    let expr_str = format!(
-        "(begin (define {GRAPH_STATE} state)
-           {}
-           (set! state {GRAPH_STATE})
-           {outlet_values_expr})",
-        all_stmts
-    );
+    // Only include state handling if the graph has stateful nodes.
+    let expr_str = if meta.stateful.is_empty() {
+        format!("(begin {} {outlet_values_expr})", all_stmts)
+    } else {
+        format!(
+            "(begin (define {GRAPH_STATE} state)
+               {}
+               (set! state {GRAPH_STATE})
+               {outlet_values_expr})",
+            all_stmts
+        )
+    };
     Engine::emit_ast(&expr_str)
         .expect("failed to emit AST for nested expr")
         .into_iter()
