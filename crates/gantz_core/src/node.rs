@@ -150,6 +150,17 @@ pub trait Node<Env> {
     /// By default, the node is assumed to be stateless, and this does nothing.
     fn register(&self, _env: &Env, _path: &[Id], _vm: &mut Engine) {}
 
+    /// Returns the content addresses of external nodes this node requires.
+    ///
+    /// Used during pruning to determine which commits/graphs are still in use.
+    /// Nodes that reference other graphs (like `Ref`, `NamedRef`) should return
+    /// the addresses they depend on.
+    ///
+    /// By default, returns an empty vec (no external dependencies).
+    fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
+        vec![]
+    }
+
     /// Traverse all nested nodes, depth-first, with the given [`Visitor`].
     ///
     /// For each nested node:
@@ -316,6 +327,10 @@ where
         (**self).register(env, path, vm)
     }
 
+    fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
+        (**self).required_addrs()
+    }
+
     fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn Visitor<Env>) {
         (**self).visit(ctx, visitor)
     }
@@ -365,6 +380,10 @@ macro_rules! impl_node_for_ptr {
 
             fn register(&self, env: &Env, path: &[Id], vm: &mut Engine) {
                 (**self).register(env, path, vm)
+            }
+
+            fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
+                (**self).required_addrs()
             }
 
             fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn Visitor<Env>) {

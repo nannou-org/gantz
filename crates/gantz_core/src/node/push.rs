@@ -94,6 +94,10 @@ where
     fn register(&self, env: &Env, path: &[node::Id], vm: &mut Engine) {
         self.node.register(env, path, vm)
     }
+
+    fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
+        self.node.required_addrs()
+    }
 }
 
 impl<Env, N> CaHash for Push<Env, N>

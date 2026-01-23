@@ -96,6 +96,10 @@ where
         env.node(&self.0).map(|n| n.outlet(env)).unwrap_or(false)
     }
 
+    fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
+        vec![self.0]
+    }
+
     fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
         if let Some(n) = ctx.env().node(&self.0) {
             n.visit(ctx, visitor);

@@ -108,6 +108,10 @@ where
         <gantz_core::node::Ref as Node<Env>>::outlet(&self.ref_, env)
     }
 
+    fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
+        vec![self.ref_.content_addr()]
+    }
+
     fn visit(&self, ctx: gantz_core::visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
         self.ref_.visit(ctx, visitor)
     }

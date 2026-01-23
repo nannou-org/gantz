@@ -122,14 +122,9 @@ fn setup_open(storage: Res<PkvStore>, mut env: ResMut<Environment>, mut cmds: Co
 
 fn prune_unused_graphs_and_commits(mut env: ResMut<Environment>, open: Res<Open>) {
     let heads = open.heads.iter().map(|(h, _, _)| h);
-    env.registry
-        .prune_unnamed_graphs(heads, env::graph_contains);
-
-    // Prune views for commits that no longer exist.
-    let existing_commits: std::collections::HashSet<_> =
-        env.registry.commits().keys().copied().collect();
-    env.views
-        .retain(|commit_addr, _| existing_commits.contains(commit_addr));
+    let required = gantz_core::reg::required_commits(&*env, &env.registry, heads);
+    env.registry.prune_unreachable(&required);
+    env.views.retain(|ca, _| required.contains(ca));
 }
 
 fn setup_gui_state(storage: Res<PkvStore>, mut cmds: Commands) {

@@ -5,8 +5,7 @@ use crate::{
 use bevy::ecs::resource::Resource;
 use gantz_ca as ca;
 use gantz_core::node;
-use petgraph::visit::{IntoNodeReferences, NodeRef};
-use std::{any::Any, collections::BTreeMap, collections::HashMap};
+use std::{collections::BTreeMap, collections::HashMap};
 
 /// View state (layout + camera) for a graph and all its nested subgraphs, keyed by path.
 pub type GraphViews = HashMap<Vec<node::Id>, egui_graph::View>;
@@ -220,18 +219,4 @@ pub fn timestamp() -> std::time::Duration {
     let now = web_time::SystemTime::now();
     now.duration_since(web_time::UNIX_EPOCH)
         .unwrap_or(std::time::Duration::ZERO)
-}
-
-/// Whether or not the graph contains a subgraph with the given CA.
-pub fn graph_contains(g: &Graph, ca: &ca::GraphAddr) -> bool {
-    g.node_references().any(|n_ref| {
-        let node = n_ref.weight();
-        ((&**node) as &dyn Any)
-            .downcast_ref::<GraphNode>()
-            .map(|graph| {
-                let graph_ca = ca::graph_addr(&graph.graph);
-                *ca == graph_ca || graph_contains(&graph.graph, ca)
-            })
-            .unwrap_or(false)
-    })
 }

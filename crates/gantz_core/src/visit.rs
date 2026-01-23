@@ -4,6 +4,7 @@ use crate::{
     Edge,
     node::{self, Node},
 };
+use std::collections::HashSet;
 use steel::steel_vm::engine::Engine;
 
 /// For types used to traverse nested graphs of [`Node`]s.
@@ -34,6 +35,12 @@ pub struct Ctx<'a, Env> {
 /// - `gantz_core::node::register`
 /// - `gantz_core::graph::register`
 pub(crate) struct Register<'vm>(pub(crate) &'vm mut Engine);
+
+/// Visitor that collects all required content addresses from nodes.
+pub(crate) struct RequiredAddrs<'a> {
+    /// The set of collected addresses.
+    pub addrs: &'a mut HashSet<gantz_ca::ContentAddr>,
+}
 
 impl<'a, Env> Ctx<'a, Env> {
     /// Create a `Ctx` instance. Exclusively for use by `Visitor`
@@ -82,5 +89,14 @@ impl<'a, Env> Copy for Ctx<'a, Env> {}
 impl<'vm, Env> Visitor<Env> for Register<'vm> {
     fn visit_pre(&mut self, ctx: Ctx<Env>, node: &dyn Node<Env>) {
         node.register(ctx.env(), ctx.path(), self.0);
+    }
+}
+
+impl<'a, Env> Visitor<Env> for RequiredAddrs<'a> {
+    fn visit_pre(&mut self, _ctx: Ctx<Env>, node: &dyn Node<Env>) {
+        self.addrs.extend(node.required_addrs());
+        // for addr in node.required_addrs() {
+        //     self.addrs.insert(addr);
+        // }
     }
 }

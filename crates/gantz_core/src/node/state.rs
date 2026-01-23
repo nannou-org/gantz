@@ -129,6 +129,10 @@ where
             update(vm, path, val).unwrap();
         }
     }
+
+    fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
+        self.node.required_addrs()
+    }
 }
 
 impl<Env, N, S> CaHash for State<Env, N, S>

@@ -7,7 +7,6 @@
 use dyn_clone::DynClone;
 use eframe::egui;
 use gantz_core::steel::steel_vm::engine::Engine;
-use petgraph::visit::{IntoNodeReferences, NodeRef};
 use std::{
     any::Any,
     collections::{BTreeMap, HashMap},
@@ -254,8 +253,7 @@ impl App {
                 let names = load_names(storage);
                 let open_heads = load_open_heads(storage);
                 let gantz = load_gantz_gui_state(storage);
-                let mut registry = Registry::new(graphs, commits, names);
-                registry.prune_unnamed_graphs(&open_heads, graph_contains);
+                let registry = Registry::new(graphs, commits, names);
                 (registry, open_heads, gantz)
             })
             .unwrap_or_else(|| {
@@ -285,10 +283,15 @@ impl App {
 
         // Setup the environment that will be provided to all nodes.
         let primitives = primitives();
-        let env = Environment {
+        let mut env = Environment {
             registry,
             primitives,
         };
+
+        // Prune unused graphs now that we have the environment for node lookups.
+        let heads_for_prune = heads.iter().map(|(h, _, _)| h);
+        let required = gantz_core::reg::required_commits(&env, &env.registry, heads_for_prune);
+        env.registry.prune_unreachable(&required);
 
         // VM setup - initialize a VM for each open head.
         let mut vms = Vec::with_capacity(heads.len());
@@ -947,18 +950,4 @@ fn create_branch_from_head(
             state.gantz.open_heads.insert(new_head, gui_state);
         }
     }
-}
-
-/// Whether or not the graph contains a subgraph with the given CA.
-fn graph_contains(g: &Graph, ca: &gantz_ca::GraphAddr) -> bool {
-    g.node_references().any(|n_ref| {
-        let node = n_ref.weight();
-        ((&**node) as &dyn Any)
-            .downcast_ref::<GraphNode>()
-            .map(|graph| {
-                let graph_ca = gantz_ca::graph_addr(&graph.graph);
-                *ca == graph_ca || graph_contains(&graph.graph, ca)
-            })
-            .unwrap_or(false)
-    })
 }

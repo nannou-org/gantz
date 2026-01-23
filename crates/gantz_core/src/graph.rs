@@ -1,7 +1,10 @@
 //! Provides [`visit`](crate::graph::visit) and [`register`] fns for generic
 //! gantz graphs.
 
-use std::hash::{Hash, Hasher};
+use std::{
+    collections::HashSet,
+    hash::{Hash, Hasher},
+};
 
 use crate::{
     Edge,
@@ -67,4 +70,15 @@ where
     G::NodeWeight: Node<Env>,
 {
     visit(env, g, path, &mut visit::Register(vm));
+}
+
+/// Collect all content addresses required by nodes in this graph.
+pub fn required_addrs<Env, G>(env: &Env, g: G) -> HashSet<gantz_ca::ContentAddr>
+where
+    G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
+    G::NodeWeight: Node<Env>,
+{
+    let mut addrs = HashSet::new();
+    visit(env, g, &[], &mut visit::RequiredAddrs { addrs: &mut addrs });
+    addrs
 }

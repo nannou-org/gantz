@@ -6,6 +6,7 @@ pub mod compile;
 pub mod edge;
 pub mod graph;
 pub mod node;
+pub mod reg;
 pub mod visit;
 
 /// The ident used to represent the root state.

@@ -80,6 +80,10 @@ where
             .unwrap()
     }
 
+    fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
+        self.0.required_addrs()
+    }
+
     fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
         self.0.visit(ctx, visitor);
     }
