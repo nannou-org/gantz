@@ -293,11 +293,17 @@ fn update_vm(
         let head_commit = env.registry.head_commit(head).unwrap();
         if head_commit.graph != new_graph_ca {
             let old_head = head.clone();
-            env.registry.commit_graph_to_head(
+            let old_commit_ca = env.registry.head_commit_ca(head).copied().unwrap();
+            let new_commit_ca = env.registry.commit_graph_to_head(
                 env::timestamp(),
                 new_graph_ca,
                 || graph::clone(graph),
                 head,
+            );
+            bevy::log::debug!(
+                "Graph changed: {} -> {}",
+                old_commit_ca.display_short(),
+                new_commit_ca.display_short()
             );
             // Update the graph pane if the head's commit CA changed.
             if let Ok(ctx) = ctxs.ctx_mut() {

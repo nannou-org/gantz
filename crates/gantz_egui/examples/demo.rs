@@ -331,11 +331,23 @@ impl eframe::App for App {
             let head_commit = self.state.env.registry.head_commit(head).unwrap();
             if head_commit.graph != new_graph_ca {
                 let old_head = head.clone();
-                self.state.env.registry.commit_graph_to_head(
+                let old_commit_ca = self
+                    .state
+                    .env
+                    .registry
+                    .head_commit_ca(head)
+                    .copied()
+                    .unwrap();
+                let new_commit_ca = self.state.env.registry.commit_graph_to_head(
                     timestamp(),
                     new_graph_ca,
                     || graph.clone(),
                     head,
+                );
+                log::debug!(
+                    "Graph changed: {} -> {}",
+                    old_commit_ca.display_short(),
+                    new_commit_ca.display_short()
                 );
                 // Update the graph pane if the head's commit CA changed.
                 gantz_egui::widget::update_graph_pane_head(ctx, &old_head, head);

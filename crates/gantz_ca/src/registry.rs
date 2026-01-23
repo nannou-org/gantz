@@ -124,8 +124,8 @@ impl<G> Registry<G> {
         graph_ca: GraphAddr,
         graph: impl FnOnce() -> G,
         head: &mut Head,
-    ) {
-        commit_graph_to_head(self, timestamp, graph_ca, graph, head);
+    ) -> CommitAddr {
+        commit_graph_to_head(self, timestamp, graph_ca, graph, head)
     }
 
     /// Insert the given name mapping into the registry.
@@ -231,7 +231,7 @@ fn commit_graph_to_head<G>(
     graph_ca: GraphAddr,
     graph: impl FnOnce() -> G,
     head: &mut Head,
-) {
+) -> CommitAddr {
     let parent_ca = *head_commit_ca(&reg.names, head).unwrap();
     let commit_ca = commit_graph(reg, timestamp, Some(parent_ca), graph_ca, graph);
     match *head {
@@ -240,6 +240,7 @@ fn commit_graph_to_head<G>(
             reg.names.insert(name.to_string(), commit_ca);
         }
     }
+    commit_ca
 }
 
 /// For all `parent` commits that are invalid (i.e. don't point to an existing
