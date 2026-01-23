@@ -179,6 +179,9 @@ pub fn primitives() -> Primitives {
     register_primitive(&mut p, "inlet", || {
         Box::new(gantz_core::node::graph::Inlet::default()) as Box<_>
     });
+    register_primitive(&mut p, "inspect", || {
+        Box::new(gantz_egui::node::Inspect::default()) as Box<_>
+    });
     register_primitive(&mut p, "log", || {
         Box::new(gantz_std::Log::default()) as Box<_>
     });

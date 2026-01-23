@@ -8,8 +8,10 @@ pub use comment::Comment;
 pub use fn_named_ref::{FnNamedRef, FnNodeNames};
 #[doc(inline)]
 pub use gantz_core::node::{Id, state};
+pub use inspect::Inspect;
 pub use named_ref::{NameRegistry, NamedRef, outdated_color};
 
 pub mod comment;
 pub mod fn_named_ref;
+pub mod inspect;
 pub mod named_ref;
