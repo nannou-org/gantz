@@ -1,6 +1,9 @@
 //! A node that wraps another node as a first-class function value.
 
-use crate::{node::{self, Node}, visit};
+use crate::{
+    node::{self, Node},
+    visit,
+};
 use serde::{Deserialize, Serialize};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
