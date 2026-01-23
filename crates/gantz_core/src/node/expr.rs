@@ -1,7 +1,7 @@
-use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
 use gantz_ca::CaHash;
-use std::{fmt, str::FromStr};
+use serde::{Deserialize, Serialize};
+use std::{collections::HashSet, fmt, str::FromStr};
 use steel::{
     parser::{ast::ExprKind, lexer::TokenStream},
     steel_vm::engine::Engine,
@@ -18,11 +18,34 @@ use thiserror::Error;
 ///
 /// will result in a single node with two inputs (`$foo` and `$bar`) and a
 /// single output which is the result of the expression.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
+///
+/// Variables are identified by unique names - if the same `$var` appears
+/// multiple times in the expression, it refers to the same inlet.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
 pub struct Expr {
     src: String,
-    /// The total inputs, derived from the `$` count in the src.
-    n_inputs: usize,
+    /// Unique `$` variable names in order of first appearance (cached).
+    /// Skipped during serialization and recomputed on deserialization.
+    #[serde(skip)]
+    vars: Vec<String>,
+}
+
+impl<'de> Deserialize<'de> for Expr {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct ExprData {
+            src: String,
+        }
+        let data = ExprData::deserialize(deserializer)?;
+        let vars = vars_from_src(&data.src);
+        Ok(Expr {
+            src: data.src,
+            vars,
+        })
+    }
 }
 
 /// An error occurred while constructing the `Expr` node.
@@ -52,17 +75,13 @@ impl Expr {
     /// ```
     pub fn new(src: impl Into<String>) -> Result<Self, ExprError> {
         let src: String = src.into();
-        // Create a token stream.
-        let skip_comments = true;
-        let source_id = None;
-        let tts = TokenStream::new(&src, skip_comments, source_id);
-        let n_inputs = count_dollars(tts);
+        let vars = vars_from_src(&src);
         // Validate that the source parses successfully.
         let exprs = Engine::emit_ast(&src)?;
         if exprs.is_empty() {
             return Err(ExprError::Empty);
         }
-        Ok(Expr { src, n_inputs })
+        Ok(Expr { src, vars })
     }
 
     /// The source string that was used to create this node.
@@ -71,43 +90,54 @@ impl Expr {
     }
 }
 
-fn count_dollars(tts: TokenStream) -> usize {
-    tts.filter(|token| token.source().starts_with("$")).count()
+/// Collect unique `$var` names in order of first appearance.
+fn collect_unique_vars(tts: TokenStream) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut vars = Vec::new();
+    for token in tts {
+        let src = token.source();
+        if src.starts_with("$") {
+            let var_name = src.to_string();
+            if seen.insert(var_name.clone()) {
+                vars.push(var_name);
+            }
+        }
+    }
+    vars
 }
 
-/// Consecutively replace each identifier starting with `$` with the expression
-/// in the list in order. Return the resulting tokens.
-fn interpolate_tokens(tts: TokenStream, inputs: &[Option<String>]) -> String {
-    let mut inputs = inputs.iter();
-    let tokens = tts.map(move |token| {
-        let mut tts = vec![];
-        let in_src;
-        if token.source().starts_with("$") {
-            let input = inputs.next().unwrap();
-            match input.as_ref() {
-                None => {
-                    tts.extend(TokenStream::new("'()", true, None));
-                }
-                Some(in_expr) => {
-                    in_src = format!("{in_expr}");
-                    let in_tts = TokenStream::new(&in_src, true, None);
-                    tts.extend(in_tts);
-                }
+/// Extract unique vars from a source string.
+fn vars_from_src(src: &str) -> Vec<String> {
+    collect_unique_vars(TokenStream::new(src, true, None))
+}
+
+/// Replace each `$var` with the corresponding input expression based on variable name.
+fn interpolate_tokens(tts: TokenStream, vars: &[String], inputs: &[Option<String>]) -> String {
+    // Build a map from var name to input index.
+    let var_to_index: std::collections::HashMap<&str, usize> = vars
+        .iter()
+        .enumerate()
+        .map(|(i, v)| (v.as_str(), i))
+        .collect();
+
+    let tokens = tts.map(|token| {
+        let src = token.source();
+        if src.starts_with("$") {
+            let index = var_to_index.get(src).unwrap();
+            match inputs.get(*index).and_then(|o| o.as_ref()) {
+                None => "'()".to_string(),
+                Some(in_expr) => in_expr.clone(),
             }
         } else {
-            tts.push(token);
+            src.to_string()
         }
-        tts.iter()
-            .map(|t| format!("{}", t.source()))
-            .collect::<Vec<_>>()
-            .join(" ")
     });
     tokens.collect::<Vec<_>>().join(" ")
 }
 
 impl<Env> Node<Env> for Expr {
     fn n_inputs(&self, _: &Env) -> usize {
-        self.n_inputs
+        self.vars.len()
     }
 
     fn n_outputs(&self, _: &Env) -> usize {
@@ -116,12 +146,10 @@ impl<Env> Node<Env> for Expr {
 
     fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
         // Create a token stream.
-        let skip_comments = true;
-        let source_id = None;
-        let tts = TokenStream::new(&self.src, skip_comments, source_id);
+        let tts = TokenStream::new(&self.src, true, None);
 
         // Replace the `$var`s with their input expressions.
-        let new_src = interpolate_tokens(tts, ctx.inputs());
+        let new_src = interpolate_tokens(tts, &self.vars, ctx.inputs());
 
         // Convert the interpolated string to an expr.
         let exprs = Engine::emit_ast(&new_src).expect("failed to emit AST");
@@ -177,19 +205,28 @@ impl FromStr for Expr {
 }
 
 #[test]
-fn test_count_dollars() {
-    let expr = TokenStream::new("(+ $l $r)", true, None);
-    assert_eq!(count_dollars(expr), 2);
+fn test_collect_unique_vars() {
+    // All unique vars.
+    let vars = vars_from_src("(+ $l $r)");
+    assert_eq!(vars, vec!["$l", "$r"]);
 
-    let expr = TokenStream::new("(* (sin $freq) $amp)", true, None);
-    assert_eq!(count_dollars(expr), 2);
+    // Duplicate vars - should only appear once.
+    let vars = vars_from_src("(+ $x $x)");
+    assert_eq!(vars, vec!["$x"]);
 
-    let expr = TokenStream::new("$foo", true, None);
-    assert_eq!(count_dollars(expr), 1);
+    // Mixed with duplicates - order of first appearance.
+    let vars = vars_from_src("(+ $x $y $x $z $y)");
+    assert_eq!(vars, vec!["$x", "$y", "$z"]);
 
-    let expr = TokenStream::new("($a, $b, $c, $d, $e)", true, None);
-    assert_eq!(count_dollars(expr), 5);
+    // No vars.
+    let vars = vars_from_src("(+ 1 2)");
+    assert_eq!(vars, Vec::<String>::new());
 
-    let expr = TokenStream::new("()", true, None);
-    assert_eq!(count_dollars(expr), 0);
+    // Single var.
+    let vars = vars_from_src("$foo");
+    assert_eq!(vars, vec!["$foo"]);
+
+    // Multiple unique vars.
+    let vars = vars_from_src("($a $b $c $d $e)");
+    assert_eq!(vars, vec!["$a", "$b", "$c", "$d", "$e"]);
 }
