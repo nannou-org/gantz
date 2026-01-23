@@ -1,6 +1,6 @@
 //! A node that wraps another node as a first-class function value.
 
-use crate::node::{self, Node};
+use crate::{node::{self, Node}, visit};
 use serde::{Deserialize, Serialize};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
@@ -75,6 +75,10 @@ where
             .into_iter()
             .next()
             .unwrap()
+    }
+
+    fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
+        self.0.visit(ctx, visitor);
     }
 }
 
