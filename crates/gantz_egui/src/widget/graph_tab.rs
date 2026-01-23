@@ -70,7 +70,8 @@ impl GraphTab {
         // Use ui.interact for proper drag support, like egui_tiles does.
         let tab_response = ui
             .interact(rect, id, egui::Sense::click_and_drag())
-            .on_hover_cursor(egui::CursorIcon::Grab);
+            .on_hover_cursor(egui::CursorIcon::Grab)
+            .on_hover_text("double-click to rename");
 
         let mut close_response = None;
 
