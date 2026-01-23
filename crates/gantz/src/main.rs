@@ -363,22 +363,21 @@ fn process_gantz_gui_cmds(
                     head_state.path = path;
                 }
                 gantz_egui::Cmd::OpenNamedNode(name, content_ca) => {
-                    if let Some(commit) = env.registry.named_commit(&name) {
-                        let graph_ca = ca::GraphAddr::from(content_ca);
-                        if graph_ca == commit.graph {
-                            open_head(
-                                &mut env,
-                                &mut open,
-                                &mut vms,
-                                &mut compiled_modules,
-                                &mut gui_state.gantz,
-                                ca::Head::Branch(name.to_string()),
-                            );
-                        } else {
-                            bevy::log::debug!(
-                                "Attempted to open named node, but the content address has changed"
-                            );
-                        }
+                    // The content_ca represents a CommitAddr for graph nodes.
+                    let commit_ca = ca::CommitAddr::from(content_ca);
+                    if env.registry.names().get(&name) == Some(&commit_ca) {
+                        open_head(
+                            &mut env,
+                            &mut open,
+                            &mut vms,
+                            &mut compiled_modules,
+                            &mut gui_state.gantz,
+                            ca::Head::Branch(name.to_string()),
+                        );
+                    } else {
+                        bevy::log::debug!(
+                            "Attempted to open named node, but the content address has changed"
+                        );
                     }
                 }
                 gantz_egui::Cmd::ForkNamedNode { new_name, ca } => {

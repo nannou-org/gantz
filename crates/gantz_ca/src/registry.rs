@@ -279,10 +279,12 @@ fn graph_is_named<G>(
     ca: &GraphAddr,
     graph_contains: impl Fn(&G, &GraphAddr) -> bool,
 ) -> bool {
-    reg.names
-        .values()
-        .any(|commit_ca| *ca == reg.commits()[commit_ca].graph)
-        || reg.graphs().values().any(|g| graph_contains(g, ca))
+    reg.names.values().any(|commit_ca| {
+        reg.commits()
+            .get(commit_ca)
+            .map(|c| *ca == c.graph)
+            .unwrap_or(false)
+    }) || reg.graphs().values().any(|g| graph_contains(g, ca))
 }
 
 /// Prunes all commits point to graphs that no longer exist.

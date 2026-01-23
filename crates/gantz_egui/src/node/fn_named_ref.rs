@@ -27,6 +27,19 @@ where
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
         let env = ctx.env();
+        let current_ca = env.name_ca(self.0.name());
+        let is_outdated = current_ca
+            .map(|ca| ca != self.0.content_addr())
+            .unwrap_or(false);
+
+        // Auto-sync if enabled and outdated.
+        if self.0.sync && is_outdated {
+            if let Some(ca) = current_ca {
+                self.0.set_ref(gantz_core::node::Ref::new(ca));
+            }
+        }
+
+        // Recalculate after potential sync.
         let is_outdated = env
             .name_ca(self.0.name())
             .map(|ca| ca != self.0.content_addr())

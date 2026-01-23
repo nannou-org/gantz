@@ -725,15 +725,14 @@ fn process_cmds(state: &mut State) {
                     head_state.path = path;
                 }
                 gantz_egui::Cmd::OpenNamedNode(name, content_ca) => {
-                    if let Some(commit) = state.env.registry.named_commit(&name) {
-                        let graph_ca = gantz_ca::GraphAddr::from(content_ca);
-                        if graph_ca == commit.graph {
-                            open_head(state, gantz_ca::Head::Branch(name.to_string()));
-                        } else {
-                            log::debug!(
-                                "Attempted to open named node, but the content address has changed"
-                            );
-                        }
+                    // The content_ca represents a CommitAddr for graph nodes.
+                    let commit_ca = gantz_ca::CommitAddr::from(content_ca);
+                    if state.env.registry.names().get(&name) == Some(&commit_ca) {
+                        open_head(state, gantz_ca::Head::Branch(name.to_string()));
+                    } else {
+                        log::debug!(
+                            "Attempted to open named node, but the content address has changed"
+                        );
                     }
                 }
                 gantz_egui::Cmd::ForkNamedNode { new_name, ca } => {

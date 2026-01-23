@@ -23,7 +23,7 @@ pub struct NamedRef {
     name: String,
     /// Whether to automatically sync to the latest commit.
     #[serde(default)]
-    sync: bool,
+    pub(crate) sync: bool,
 }
 
 /// Trait for environments that can check if a name maps to a content address.
@@ -230,9 +230,10 @@ where
                             if ui.button("fork").on_hover_text(fork_hover).clicked() {
                                 let new_name = format!("{}-{}", self.name, current_short);
                                 ctx.cmds.push(Cmd::ForkNamedNode {
-                                    new_name,
+                                    new_name: new_name.clone(),
                                     ca: self.ref_.content_addr(),
                                 });
+                                self.name = new_name;
                             }
                         });
                     });
