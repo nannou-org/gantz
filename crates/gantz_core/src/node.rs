@@ -139,6 +139,11 @@ pub trait Node<Env> {
     /// Function for registering necessary types, functions and initialising any
     /// default values as necessary.
     ///
+    /// This method is called each time the graph changes and must be idempotent.
+    /// Implementations should check whether state already exists before
+    /// initializing to avoid resetting existing state. See
+    /// [`state::init_value_if_absent`] and [`state::init_if_absent`].
+    ///
     /// Nodes returning `true` from their [`Node::stateful`] implementation
     /// must use this to initialise their state.
     ///

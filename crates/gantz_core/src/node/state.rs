@@ -241,3 +241,47 @@ pub fn extract<S: FromSteelVal>(vm: &Engine, node_path: &[usize]) -> Result<Opti
     };
     S::from_steelval(&val).map(Some)
 }
+
+/// Check if any value exists at the given path.
+pub fn value_exists(vm: &Engine, path: &[node::Id]) -> Result<bool, SteelErr> {
+    extract_value(vm, path).map(|opt| opt.is_some())
+}
+
+/// Check if a value of type `S` exists at the given path.
+///
+/// Returns `false` if no value exists, or if the value cannot be converted to `S`.
+pub fn exists<S: FromSteelVal>(vm: &Engine, path: &[node::Id]) -> Result<bool, SteelErr> {
+    match extract_value(vm, path)? {
+        None => Ok(false),
+        Some(val) => Ok(S::from_steelval(&val).is_ok()),
+    }
+}
+
+/// Initialize state with a raw `SteelVal` only if no state is currently present.
+///
+/// Ensures registration is idempotent - calling it multiple times won't reset existing state.
+pub fn init_value_if_absent(
+    vm: &mut Engine,
+    path: &[node::Id],
+    init: impl FnOnce() -> SteelVal,
+) -> Result<(), SteelErr> {
+    if !value_exists(vm, path)? {
+        update_value(vm, path, init())?;
+    }
+    Ok(())
+}
+
+/// Initialize state only if no value of type `S` is currently present.
+///
+/// Useful for nodes that require a specific state type.
+pub fn init_if_absent<S: NodeState>(
+    vm: &mut Engine,
+    path: &[node::Id],
+    init: impl FnOnce() -> S,
+) -> Result<(), SteelErr> {
+    if !exists::<S>(vm, path)? {
+        let val = init().into_steelval()?;
+        update_value(vm, path, val)?;
+    }
+    Ok(())
+}

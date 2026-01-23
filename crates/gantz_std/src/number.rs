@@ -36,7 +36,7 @@ impl<Env> gantz_core::Node<Env> for Number {
     }
 
     fn register(&self, _env: &Env, path: &[gantz_core::node::Id], vm: &mut Engine) {
-        gantz_core::node::state::update_value(vm, path, SteelVal::NumV(0.0)).unwrap()
+        gantz_core::node::state::init_value_if_absent(vm, path, || SteelVal::NumV(0.0)).unwrap()
     }
 }
 

@@ -180,7 +180,7 @@ impl<Env> Node<Env> for Expr {
 
     /// Registers a state slot just in case `state` is referenced by the expr.
     fn register(&self, _env: &Env, path: &[super::Id], vm: &mut Engine) {
-        node::state::update_value(vm, path, steel::SteelVal::Void).unwrap();
+        node::state::init_value_if_absent(vm, path, || steel::SteelVal::Void).unwrap();
     }
 }
 
