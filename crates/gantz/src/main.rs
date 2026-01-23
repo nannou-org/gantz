@@ -179,8 +179,9 @@ fn update_gui(
                 .map(|(h, g, l)| (h.clone(), g, l))
                 .collect();
             let get_module = |ix: usize| compiled_modules.0.get(ix).map(|m| m.0.as_str());
+            let level = bevy::log::tracing_subscriber::filter::LevelFilter::current();
             let response = gantz_egui::widget::Gantz::new(&mut *env, &mut heads)
-                .trace_capture(trace_capture.0.clone())
+                .trace_capture(trace_capture.0.clone(), level)
                 .show(&mut gui_state.gantz, &get_module, &mut vms.0, ui);
 
             // The given graph name was removed.
