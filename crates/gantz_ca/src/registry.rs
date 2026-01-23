@@ -75,6 +75,13 @@ impl<G> Registry<G> {
             .and_then(|commit| self.graphs.get(&commit.graph))
     }
 
+    /// Look-up the graph pointed to by the given commit address.
+    pub fn commit_graph_ref(&self, ca: &CommitAddr) -> Option<&G> {
+        self.commits
+            .get(ca)
+            .and_then(|commit| self.graphs.get(&commit.graph))
+    }
+
     /// Commit the graph at the given address.
     ///
     /// NOTE: Assumes `graph_ca` is a correct address for the graph resulting

@@ -1,6 +1,6 @@
 //! `Fn<NamedRef>` type alias and NodeUi implementation.
 
-use super::{NameRegistry, NamedRef};
+use super::{NameRegistry, NamedRef, outdated_color};
 use crate::{NodeCtx, NodeUi, widget::node_inspector};
 
 /// A function node wrapping a named reference.
@@ -23,13 +23,23 @@ where
 
     fn ui(
         &mut self,
-        _ctx: NodeCtx<Env>,
+        ctx: NodeCtx<Env>,
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
+        let env = ctx.env();
+        let is_outdated = env
+            .name_ca(self.0.name())
+            .map(|ca| ca != self.0.content_addr())
+            .unwrap_or(false);
+
         uictx.framed(|ui| {
             ui.horizontal(|ui| {
                 let fn_res = ui.add(egui::Label::new("λ").selectable(false));
-                let name_text = egui::RichText::new(self.0.name());
+                let name_text = if is_outdated {
+                    egui::RichText::new(self.0.name()).color(outdated_color())
+                } else {
+                    egui::RichText::new(self.0.name())
+                };
                 let name_res = ui.add(egui::Label::new(name_text).selectable(false));
                 fn_res.union(name_res)
             })
@@ -37,7 +47,7 @@ where
         })
     }
 
-    fn inspector_rows(&mut self, ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(&mut self, ctx: &mut NodeCtx<Env>, body: &mut egui_extras::TableBody) {
         let row_h = node_inspector::table_row_h(body.ui_mut());
 
         // ComboBox to select which node to reference.

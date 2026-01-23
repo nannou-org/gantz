@@ -56,8 +56,8 @@ where
             panic!("nodes used as functions must not branch");
         }
         let n_outputs = node.n_outputs(env);
-        if n_outputs != 1 {
-            panic!("nodes used as functions must have a single output");
+        if n_outputs > 1 {
+            panic!("nodes used as functions must have at most one output");
         }
 
         // Generate the node's expression with a placeholder path.

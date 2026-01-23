@@ -58,11 +58,11 @@ impl gantz_egui::widget::gantz::NodeTypeRegistry for Environment {
         self.registry
             .names()
             .get(node_type)
-            .and_then(|commit_ca| {
-                let graph_ca = self.registry.commits().get(commit_ca)?.graph;
-                let ref_ = gantz_core::node::Ref::new(graph_ca.into());
+            .map(|commit_ca| {
+                // Store CommitAddr directly (converted to ContentAddr).
+                let ref_ = gantz_core::node::Ref::new((*commit_ca).into());
                 let named = gantz_egui::node::NamedRef::new(node_type.to_string(), ref_);
-                Some(Box::new(named) as Box<_>)
+                Box::new(named) as Box<_>
             })
             .or_else(|| self.primitives.get(node_type).map(|f| (f)()))
     }
@@ -86,9 +86,10 @@ impl gantz_egui::widget::graph_select::GraphRegistry for Environment {
 impl gantz_core::node::ref_::NodeRegistry for Environment {
     type Node = dyn gantz_core::Node<Self>;
     fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&Self::Node> {
+        // Try commit lookup (for graph refs stored as CommitAddr).
+        let commit_ca = gantz_ca::CommitAddr::from(*ca);
         self.registry
-            .graphs()
-            .get(&gantz_ca::GraphAddr::from(*ca))
+            .commit_graph_ref(&commit_ca)
             .map(|g| g as &dyn gantz_core::Node<Self>)
     }
 }
@@ -96,11 +97,11 @@ impl gantz_core::node::ref_::NodeRegistry for Environment {
 // Provide the `NameRegistry` implementation required by `gantz_egui::node::NamedRef`.
 impl gantz_egui::node::NameRegistry for Environment {
     fn name_ca(&self, name: &str) -> Option<gantz_ca::ContentAddr> {
+        // Return CommitAddr (as ContentAddr) for graph nodes.
         self.registry
             .names()
             .get(name)
-            .and_then(|commit_ca| self.registry.commits().get(commit_ca))
-            .map(|commit| gantz_ca::ContentAddr::from(commit.graph.0))
+            .map(|commit_ca| (*commit_ca).into())
     }
 }
 
@@ -734,6 +735,12 @@ fn process_cmds(state: &mut State) {
                             );
                         }
                     }
+                }
+                gantz_egui::Cmd::ForkNamedNode { new_name, ca } => {
+                    // The CA represents a CommitAddr for graph nodes.
+                    let commit_ca = gantz_ca::CommitAddr::from(ca);
+                    state.env.registry.insert_name(new_name.clone(), commit_ca);
+                    log::info!("Forked node to new name: {new_name}");
                 }
             }
         }

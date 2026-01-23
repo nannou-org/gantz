@@ -59,11 +59,11 @@ impl gantz_egui::widget::gantz::NodeTypeRegistry for Environment {
         self.registry
             .names()
             .get(node_type)
-            .and_then(|commit_ca| {
-                let graph_ca = self.registry.commits().get(commit_ca)?.graph;
-                let ref_ = gantz_core::node::Ref::new(graph_ca.into());
+            .map(|commit_ca| {
+                // Store CommitAddr directly (converted to ContentAddr).
+                let ref_ = gantz_core::node::Ref::new((*commit_ca).into());
                 let named = gantz_egui::node::NamedRef::new(node_type.to_string(), ref_);
-                Some(Box::new(named) as Box<_>)
+                Box::new(named) as Box<_>
             })
             .or_else(|| self.primitives.get(node_type).map(|f| (f)()))
     }
@@ -73,16 +73,15 @@ impl gantz_egui::widget::gantz::NodeTypeRegistry for Environment {
 impl gantz_core::node::ref_::NodeRegistry for Environment {
     type Node = dyn gantz_core::Node<Self>;
     fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&Self::Node> {
-        // Graphs shadow primitives.
-        self.registry
-            .graphs()
-            .get(&gantz_ca::GraphAddr::from(*ca))
-            .map(|g| g as &dyn gantz_core::Node<Self>)
-            .or_else(|| {
-                self.primitive_instances
-                    .get(ca)
-                    .map(|n| &**n as &dyn gantz_core::Node<Self>)
-            })
+        // Try commit lookup (for graph refs stored as CommitAddr).
+        let commit_ca = gantz_ca::CommitAddr::from(*ca);
+        if let Some(graph) = self.registry.commit_graph_ref(&commit_ca) {
+            return Some(graph as &dyn gantz_core::Node<Self>);
+        }
+        // Fall back to primitive lookup.
+        self.primitive_instances
+            .get(ca)
+            .map(|n| &**n as &dyn gantz_core::Node<Self>)
     }
 }
 
@@ -104,12 +103,9 @@ impl gantz_egui::widget::graph_select::GraphRegistry for Environment {
 impl gantz_egui::node::NameRegistry for Environment {
     fn name_ca(&self, name: &str) -> Option<ca::ContentAddr> {
         // Check registry names first (graphs shadow primitives).
+        // Return CommitAddr (as ContentAddr) for graph nodes.
         if let Some(commit_ca) = self.registry.names().get(name) {
-            return self
-                .registry
-                .commits()
-                .get(commit_ca)
-                .map(|commit| ca::ContentAddr::from(commit.graph.0));
+            return Some((*commit_ca).into());
         }
         // Then check primitive names.
         self.primitive_names

@@ -5,6 +5,11 @@ use gantz_core::node::{self, Node};
 use serde::{Deserialize, Serialize};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
+/// The warning color used for outdated references.
+pub fn outdated_color() -> egui::Color32 {
+    egui::Color32::from_rgb(200, 150, 50)
+}
+
 /// A node that references another node by name and content address.
 ///
 /// Similar to [`gantz_core::node::Ref`], but also stores the human-readable
@@ -16,6 +21,9 @@ pub struct NamedRef {
     ref_: gantz_core::node::Ref,
     /// The human-readable name associated with this reference.
     name: String,
+    /// Whether to automatically sync to the latest commit.
+    #[serde(default)]
+    sync: bool,
 }
 
 /// Trait for environments that can check if a name maps to a content address.
@@ -27,7 +35,11 @@ pub trait NameRegistry {
 impl NamedRef {
     /// Construct a `NamedRef` node.
     pub fn new(name: String, ref_: gantz_core::node::Ref) -> Self {
-        Self { ref_, name }
+        Self {
+            ref_,
+            name,
+            sync: false,
+        }
     }
 
     /// The human-readable name associated with this reference.
@@ -127,36 +139,49 @@ where
         let ref_ca = self.ref_.content_addr();
         let is_outdated = current_ca.map(|ca| ca != ref_ca).unwrap_or(false);
 
-        // Use a slightly different frame stroke when outdated.
-        let response = if is_outdated {
-            let stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(200, 150, 50));
-            let frame = egui::Frame::group(uictx.style()).stroke(stroke);
-            uictx.framed_with(frame, |ui| {
-                ui.horizontal(|ui| {
-                    let warn =
-                        egui::RichText::new("!").color(egui::Color32::from_rgb(200, 150, 50));
-                    let warn_res = ui.label(warn);
-                    let name_res = ui.add(egui::Label::new(&self.name).selectable(false));
-                    warn_res.union(name_res)
-                })
-                .inner
-            })
-        } else {
-            uictx.framed(|ui| ui.add(egui::Label::new(&self.name).selectable(false)))
-        };
+        // Auto-sync if enabled and outdated.
+        if self.sync && is_outdated {
+            if let Some(ca) = current_ca {
+                self.ref_ = gantz_core::node::Ref::new(ca);
+            }
+        }
+
+        // Recalculate after potential sync.
+        let is_outdated = env
+            .name_ca(&self.name)
+            .map(|ca| ca != self.ref_.content_addr())
+            .unwrap_or(false);
+
+        // Regular frame, warning color only on name if outdated.
+        let response = uictx.framed(|ui| {
+            let name_text = if is_outdated {
+                egui::RichText::new(&self.name).color(outdated_color())
+            } else {
+                egui::RichText::new(&self.name)
+            };
+            ui.add(egui::Label::new(name_text).selectable(false))
+        });
 
         // Open the node on double-click (handler decides if the node is openable).
         if response.response.double_clicked() {
-            ctx.cmds.push(Cmd::OpenNamedNode(self.name.clone(), ref_ca));
+            ctx.cmds.push(Cmd::OpenNamedNode(
+                self.name.clone(),
+                self.ref_.content_addr(),
+            ));
         }
 
         response
     }
 
-    fn inspector_rows(&mut self, ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(&mut self, ctx: &mut NodeCtx<Env>, body: &mut egui_extras::TableBody) {
         let row_h = node_inspector::table_row_h(body.ui_mut());
+        let env = ctx.env();
+        let current_ca = env.name_ca(&self.name);
+        let is_outdated = current_ca
+            .map(|ca| ca != self.ref_.content_addr())
+            .unwrap_or(false);
 
-        // Show content address.
+        // CA row.
         body.row(row_h, |mut row| {
             row.col(|ui| {
                 ui.label("CA");
@@ -167,21 +192,47 @@ where
             });
         });
 
-        // Show update button if outdated.
-        let env = ctx.env();
-        if let Some(current_ca) = env.name_ca(&self.name) {
-            if current_ca != self.ref_.content_addr() {
+        // Sync toggle row.
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("sync");
+            });
+            row.col(|ui| {
+                ui.checkbox(&mut self.sync, "")
+                    .on_hover_text("automatically update to the latest commit");
+            });
+        });
+
+        // Status row - only shown when sync is disabled and outdated.
+        if !self.sync && is_outdated {
+            if let Some(latest_ca) = current_ca {
+                let current_short = self.ref_.content_addr().display_short().to_string();
+                let latest_short = latest_ca.display_short().to_string();
+
                 body.row(row_h, |mut row| {
                     row.col(|ui| {
-                        ui.label("Status");
+                        ui.label("status");
                     });
                     row.col(|ui| {
                         ui.horizontal(|ui| {
-                            let warn_text = egui::RichText::new("outdated")
-                                .color(egui::Color32::from_rgb(200, 150, 50));
+                            let warn_text = egui::RichText::new("outdated").color(outdated_color());
                             ui.label(warn_text);
-                            if ui.button("Update").clicked() {
-                                self.ref_ = gantz_core::node::Ref::new(current_ca);
+
+                            let sync_hover = format!(
+                                "sync reference from {} to {}",
+                                current_short, latest_short
+                            );
+                            if ui.button("sync").on_hover_text(sync_hover).clicked() {
+                                self.ref_ = gantz_core::node::Ref::new(latest_ca);
+                            }
+
+                            let fork_hover = format!("fork a new node at {}", current_short);
+                            if ui.button("fork").on_hover_text(fork_hover).clicked() {
+                                let new_name = format!("{}-{}", self.name, current_short);
+                                ctx.cmds.push(Cmd::ForkNamedNode {
+                                    new_name,
+                                    ca: self.ref_.content_addr(),
+                                });
                             }
                         });
                     });

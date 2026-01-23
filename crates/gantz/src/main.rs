@@ -381,6 +381,12 @@ fn process_gantz_gui_cmds(
                         }
                     }
                 }
+                gantz_egui::Cmd::ForkNamedNode { new_name, ca } => {
+                    // The CA represents a CommitAddr for graph nodes.
+                    let commit_ca = ca::CommitAddr::from(ca);
+                    env.registry.insert_name(new_name.clone(), commit_ca);
+                    bevy::log::info!("Forked node to new name: {new_name}");
+                }
             }
         }
     }
