@@ -38,6 +38,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: nix ${{ matrix.command }}
 
+  upload-pr-preview-artifact:
+    needs: nix
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@v13
+      - run: nix build --print-build-logs .#gantz-website
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr-preview-${{ github.event.pull_request.number }}
+          path: result/
+
   cargo-publish:
     needs: nix
     permissions:
@@ -66,21 +83,17 @@ jobs:
     needs: nix
     if: github.ref == 'refs/heads/master'
     permissions:
-      pages: write
       id-token: write
-      contents: read
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@v13
       - run: nix build --print-build-logs .#gantz-website
-      - uses: actions/configure-pages@v4
-      - uses: actions/upload-pages-artifact@v3
+      - uses: peaceiris/actions-gh-pages@v4
         with:
-          path: 'result'
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./result
+          keep_files: true
+          exclude_assets: '.git*,pr-preview'
