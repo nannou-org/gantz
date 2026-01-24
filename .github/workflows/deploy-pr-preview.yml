@@ -1,9 +1,13 @@
-name: Deploy PR Preview
+name: deploy-pr-preview
 
 on:
   workflow_run:
     workflows: [ci]
     types: [completed]
+
+concurrency:
+  group: deploy-preview-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
 
 jobs:
   deploy-preview:
@@ -17,47 +21,39 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@v5
-
-      - name: Download artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           pattern: pr-preview-*
           path: ./preview-build
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           merge-multiple: true
-
-      - name: Get PR info
-        id: pr
+      - id: pr-info
         run: |
           PR_NUMBER=$(cat ./preview-build/PR_NUMBER)
           echo "number=$PR_NUMBER" >> $GITHUB_OUTPUT
           echo "head_sha=${{ github.event.workflow_run.head_sha }}" >> $GITHUB_OUTPUT
           rm ./preview-build/PR_NUMBER
-
-      - name: Start deployment
+      - name: start-deployment
         uses: bobheadxi/deployments@v1
         id: deployment
         with:
           step: start
           token: ${{ secrets.GITHUB_TOKEN }}
-          env: pr-${{ steps.pr.outputs.number }}
-          ref: ${{ steps.pr.outputs.head_sha }}
-
-      - name: Deploy to gh-pages
-        uses: peaceiris/actions-gh-pages@v4
+          env: pr-${{ steps.pr-info.outputs.number }}
+          ref: ${{ steps.pr-info.outputs.head_sha }}
+      - uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./preview-build
-          destination_dir: pr-preview/pr-${{ steps.pr.outputs.number }}
+          destination_dir: pr-preview/pr-${{ steps.pr-info.outputs.number }}
           keep_files: true
-
-      - name: Finish deployment
+      - name: finish-deployment
         uses: bobheadxi/deployments@v1
         with:
           step: finish
           token: ${{ secrets.GITHUB_TOKEN }}
-          env: pr-${{ steps.pr.outputs.number }}
+          env: pr-${{ steps.pr-info.outputs.number }}
           status: success
           deployment_id: ${{ steps.deployment.outputs.deployment_id }}
-          env_url: https://nannou-org.github.io/gantz/pr-preview/pr-${{ steps.pr.outputs.number }}/
+          env_url: https://nannou-org.github.io/gantz/pr-preview/pr-${{ steps.pr-info.outputs.number }}/
