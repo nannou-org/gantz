@@ -55,7 +55,10 @@ where
 enum LogSource {
     Logger(widget::log_view::Logger),
     #[cfg(feature = "tracing")]
-    TraceCapture(widget::trace_view::TraceCapture),
+    TraceCapture(
+        widget::trace_view::TraceCapture,
+        tracing::level_filters::LevelFilter,
+    ),
 }
 
 /// All state for the widget.
@@ -252,8 +255,12 @@ where
     }
 
     /// Enable the logging window for tracking tracing.
-    pub fn trace_capture(mut self, trace_capture: widget::trace_view::TraceCapture) -> Self {
-        self.log_source = Some(LogSource::TraceCapture(trace_capture));
+    pub fn trace_capture(
+        mut self,
+        trace_capture: widget::trace_view::TraceCapture,
+        level: tracing::level_filters::LevelFilter,
+    ) -> Self {
+        self.log_source = Some(LogSource::TraceCapture(trace_capture, level));
         self
     }
 
@@ -341,7 +348,7 @@ where
             Pane::Logs => match self.gantz.log_source {
                 None => "Logs (No Source)".into(),
                 Some(LogSource::Logger(_)) => "Logs".into(),
-                Some(LogSource::TraceCapture(_)) => "Tracing".into(),
+                Some(LogSource::TraceCapture(..)) => "Tracing".into(),
             },
             Pane::NodeInspector => match self.gantz.heads.get(self.state.focused_head) {
                 Some((head, _, _)) => format!("Node Inspector - {head}").into(),
@@ -512,8 +519,8 @@ where
                 Some(LogSource::Logger(logger)) => {
                     log_view(logger, ui);
                 }
-                Some(LogSource::TraceCapture(trace_capture)) => {
-                    trace_view(trace_capture, ui);
+                Some(LogSource::TraceCapture(trace_capture, level)) => {
+                    trace_view(trace_capture, *level, ui);
                 }
             },
             Pane::NodeInspector => {
@@ -1152,7 +1159,7 @@ fn command_palette<Env>(
 
         // Determine the node's path and register it within the VM.
         let node_path: Vec<_> = head_state.path.iter().copied().chain(Some(ix)).collect();
-        graph[id].register(&node_path, vm);
+        graph[id].register(env, &node_path, vm);
     }
 }
 
@@ -1183,10 +1190,12 @@ fn log_view(logger: &widget::log_view::Logger, ui: &mut egui::Ui) -> egui::Inner
 
 fn trace_view(
     trace_capture: &widget::trace_view::TraceCapture,
+    level: tracing::level_filters::LevelFilter,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<()> {
     pane_ui(ui, |ui| {
-        widget::trace_view::TraceView::new("trace-view".into(), trace_capture.clone()).show(ui);
+        widget::trace_view::TraceView::new("trace-view".into(), trace_capture.clone(), level)
+            .show(ui);
     })
 }
 
@@ -1207,7 +1216,7 @@ where
                 let graph = graph_scene::index_path_graph_mut(root, &head_state.path).unwrap();
                 let ids: Vec<_> = graph.node_references().map(|n_ref| n_ref.id()).collect();
                 // Collect the inlets and outlets.
-                let (inlets, outlets) = crate::inlet_outlet_ids::<Env, _>(graph);
+                let (inlets, outlets) = crate::inlet_outlet_ids::<Env, _>(env, graph);
                 for id in ids {
                     let mut frame = egui::Frame::group(ui.style());
                     if head_state.scene.interaction.selection.nodes.contains(&id) {

@@ -122,14 +122,9 @@ fn setup_open(storage: Res<PkvStore>, mut env: ResMut<Environment>, mut cmds: Co
 
 fn prune_unused_graphs_and_commits(mut env: ResMut<Environment>, open: Res<Open>) {
     let heads = open.heads.iter().map(|(h, _, _)| h);
-    env.registry
-        .prune_unnamed_graphs(heads, env::graph_contains);
-
-    // Prune views for commits that no longer exist.
-    let existing_commits: std::collections::HashSet<_> =
-        env.registry.commits().keys().copied().collect();
-    env.views
-        .retain(|commit_addr, _| existing_commits.contains(commit_addr));
+    let required = gantz_core::reg::required_commits(&*env, &env.registry, heads);
+    env.registry.prune_unreachable(&required);
+    env.views.retain(|ca, _| required.contains(ca));
 }
 
 fn setup_gui_state(storage: Res<PkvStore>, mut cmds: Commands) {
@@ -184,8 +179,9 @@ fn update_gui(
                 .map(|(h, g, l)| (h.clone(), g, l))
                 .collect();
             let get_module = |ix: usize| compiled_modules.0.get(ix).map(|m| m.0.as_str());
+            let level = bevy::log::tracing_subscriber::filter::LevelFilter::current();
             let response = gantz_egui::widget::Gantz::new(&mut *env, &mut heads)
-                .trace_capture(trace_capture.0.clone())
+                .trace_capture(trace_capture.0.clone(), level)
                 .show(&mut gui_state.gantz, &get_module, &mut vms.0, ui);
 
             // The given graph name was removed.
@@ -298,11 +294,17 @@ fn update_vm(
         let head_commit = env.registry.head_commit(head).unwrap();
         if head_commit.graph != new_graph_ca {
             let old_head = head.clone();
-            env.registry.commit_graph_to_head(
+            let old_commit_ca = env.registry.head_commit_ca(head).copied().unwrap();
+            let new_commit_ca = env.registry.commit_graph_to_head(
                 env::timestamp(),
                 new_graph_ca,
                 || graph::clone(graph),
                 head,
+            );
+            bevy::log::debug!(
+                "Graph changed: {} -> {}",
+                old_commit_ca.display_short(),
+                new_commit_ca.display_short()
             );
             // Update the graph pane if the head's commit CA changed.
             if let Ok(ctx) = ctxs.ctx_mut() {
@@ -314,12 +316,77 @@ fn update_vm(
                 gui_state.gantz.open_heads.insert(head.clone(), state);
             }
 
-            // Recompile this head's graph into its VM.
+            // Re-register and recompile this head's graph into its VM.
+            // Registration is idempotent - existing state is preserved.
             let vm = &mut vms.0[ix];
+            gantz_core::graph::register(&*env, &*graph, &[], vm);
             let module = compile_graph(&env, graph, vm);
             compiled_modules.0[ix] = CompiledModule(fmt_compiled_module(&module));
         }
     }
+}
+
+/// Insert an Inspect node on the given edge, replacing the edge with two edges.
+fn inspect_edge(
+    env: &Environment,
+    graph: &mut Graph,
+    views: &mut env::GraphViews,
+    vm: &mut Engine,
+    cmd: gantz_egui::InspectEdge,
+) {
+    use gantz_egui::widget::gantz::NodeTypeRegistry;
+
+    let gantz_egui::InspectEdge { path, edge, pos } = cmd;
+
+    // Navigate to the nested graph at the path.
+    let Some(nested) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
+        bevy::log::error!("InspectEdge: could not find graph at path");
+        return;
+    };
+
+    // Get edge endpoints and weight.
+    let Some((src_node, dst_node)) = nested.edge_endpoints(edge) else {
+        bevy::log::error!("InspectEdge: edge not found");
+        return;
+    };
+    let edge_weight = *nested.edge_weight(edge).unwrap();
+
+    // Remove the edge.
+    nested.remove_edge(edge);
+
+    // Create a new Inspect node.
+    let Some(inspect_node) = env.new_node("inspect") else {
+        bevy::log::error!("InspectEdge: could not create inspect node");
+        return;
+    };
+    let inspect_id = nested.add_node(inspect_node);
+
+    // Determine the node path and register it with the VM.
+    let node_path: Vec<_> = path
+        .iter()
+        .copied()
+        .chain(Some(inspect_id.index()))
+        .collect();
+    nested[inspect_id].register(env, &node_path, vm);
+
+    // Add edge: src -> inspect (using original output, input 0).
+    nested.add_edge(
+        src_node,
+        inspect_id,
+        gantz_core::Edge::new(edge_weight.output, gantz_core::node::Input(0)),
+    );
+
+    // Add edge: inspect -> dst (using output 0, original input).
+    nested.add_edge(
+        inspect_id,
+        dst_node,
+        gantz_core::Edge::new(gantz_core::node::Output(0), edge_weight.input),
+    );
+
+    // Position the new node at the click position.
+    let node_id = egui_graph::NodeId::from_u64(inspect_id.index() as u64);
+    let view = views.entry(path).or_default();
+    view.layout.insert(node_id, pos);
 }
 
 // Drain the commands provided by the UI and process them.
@@ -360,23 +427,33 @@ fn process_gantz_gui_cmds(
                     let head_state = gui_state.gantz.open_heads.get_mut(&head).unwrap();
                     head_state.path = path;
                 }
-                gantz_egui::Cmd::OpenNamedGraph(name, graph_ca) => {
-                    if let Some(commit) = env.registry.named_commit(&name) {
-                        if graph_ca == commit.graph {
-                            open_head(
-                                &mut env,
-                                &mut open,
-                                &mut vms,
-                                &mut compiled_modules,
-                                &mut gui_state.gantz,
-                                ca::Head::Branch(name.to_string()),
-                            );
-                        } else {
-                            bevy::log::debug!(
-                                "Attempted to open named graph, but the graph address has changed"
-                            );
-                        }
+                gantz_egui::Cmd::OpenNamedNode(name, content_ca) => {
+                    // The content_ca represents a CommitAddr for graph nodes.
+                    let commit_ca = ca::CommitAddr::from(content_ca);
+                    if env.registry.names().get(&name) == Some(&commit_ca) {
+                        open_head(
+                            &mut env,
+                            &mut open,
+                            &mut vms,
+                            &mut compiled_modules,
+                            &mut gui_state.gantz,
+                            ca::Head::Branch(name.to_string()),
+                        );
+                    } else {
+                        bevy::log::debug!(
+                            "Attempted to open named node, but the content address has changed"
+                        );
                     }
+                }
+                gantz_egui::Cmd::ForkNamedNode { new_name, ca } => {
+                    // The CA represents a CommitAddr for graph nodes.
+                    let commit_ca = ca::CommitAddr::from(ca);
+                    env.registry.insert_name(new_name.clone(), commit_ca);
+                    bevy::log::info!("Forked node to new name: {new_name}");
+                }
+                gantz_egui::Cmd::InspectEdge(cmd) => {
+                    let (_, graph, views) = &mut open.heads[ix];
+                    inspect_edge(&env, graph, views, &mut vms.0[ix], cmd);
                 }
             }
         }

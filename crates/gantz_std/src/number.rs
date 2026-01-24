@@ -31,12 +31,12 @@ impl<Env> gantz_core::Node<Env> for Number {
         Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
     }
 
-    fn stateful(&self) -> bool {
+    fn stateful(&self, _env: &Env) -> bool {
         true
     }
 
-    fn register(&self, path: &[gantz_core::node::Id], vm: &mut Engine) {
-        gantz_core::node::state::update_value(vm, path, SteelVal::NumV(0.0)).unwrap()
+    fn register(&self, _env: &Env, path: &[gantz_core::node::Id], vm: &mut Engine) {
+        gantz_core::node::state::init_value_if_absent(vm, path, || SteelVal::NumV(0.0)).unwrap()
     }
 }
 

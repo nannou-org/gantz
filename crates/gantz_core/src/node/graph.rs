@@ -19,7 +19,7 @@ use std::{
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
 };
-use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
+use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// The graph type used by the graph node to represent its nested graph.
 pub type Graph<N> = petgraph::stable_graph::StableGraph<N, Edge, Directed, Index>;
@@ -32,6 +32,12 @@ pub type NodeIx = NodeIndex<Index>;
 pub type EdgeIx = EdgeIndex<Index>;
 
 /// A node that itself is implemented in terms of a graph of nodes.
+///
+/// While an implementation of [`Node`] is also provided for [`Graph`], the
+/// `Graph` type is defined in the petgraph crate. As a result, we cannot ensure
+/// it implements all of the upstream traits we require. By providing a
+/// dedicated `GraphNode` type, we can also provide implementations for any
+/// upstream traits we might need.
 #[derive(Clone, Debug)]
 pub struct GraphNode<N> {
     /// The nested graph.
@@ -69,16 +75,16 @@ where
     }
 }
 
-impl<Env, N> Node<Env> for GraphNode<N>
+impl<Env, N> Node<Env> for Graph<N>
 where
     N: Node<Env>,
 {
-    fn n_inputs(&self, _: &Env) -> usize {
-        inlets(&self.graph).count()
+    fn n_inputs(&self, env: &Env) -> usize {
+        inlets(env, self).count()
     }
 
-    fn n_outputs(&self, _: &Env) -> usize {
-        outlets(&self.graph).count()
+    fn n_outputs(&self, env: &Env) -> usize {
+        outlets(env, self).count()
     }
 
     fn branches(&self, _: &Env) -> Vec<node::EvalConf> {
@@ -87,21 +93,54 @@ where
     }
 
     fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
-        nested_expr(ctx.env(), &self.graph, ctx.path(), ctx.inputs())
+        nested_expr(ctx.env(), self, ctx.path(), ctx.inputs())
     }
 
-    fn stateful(&self) -> bool {
-        true
+    fn stateful(&self, env: &Env) -> bool {
+        self.node_references()
+            .any(|n_ref| n_ref.weight().stateful(env))
     }
 
-    fn register(&self, path: &[node::Id], vm: &mut Engine) {
-        // Register the graph's state map.
-        node::state::update_value(vm, path, SteelVal::empty_hashmap())
-            .expect("failed to register graph hashmap");
+    fn register(&self, _env: &Env, _path: &[node::Id], _vm: &mut Engine) {
+        // Graph state hashmaps are lazily initialized by `update_value` when
+        // nested stateful nodes register their state.
     }
 
     fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
-        crate::graph::visit(ctx.env(), &self.graph, ctx.path(), visitor);
+        crate::graph::visit(ctx.env(), self, ctx.path(), visitor);
+    }
+}
+
+impl<Env, N> Node<Env> for GraphNode<N>
+where
+    N: Node<Env>,
+{
+    fn n_inputs(&self, env: &Env) -> usize {
+        self.graph.n_inputs(env)
+    }
+
+    fn n_outputs(&self, env: &Env) -> usize {
+        self.graph.n_outputs(env)
+    }
+
+    fn branches(&self, env: &Env) -> Vec<node::EvalConf> {
+        self.graph.branches(env)
+    }
+
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+        self.graph.expr(ctx)
+    }
+
+    fn stateful(&self, env: &Env) -> bool {
+        self.graph.stateful(env)
+    }
+
+    fn register(&self, env: &Env, path: &[node::Id], vm: &mut Engine) {
+        self.graph.register(env, path, vm)
+    }
+
+    fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
+        self.graph.visit(ctx, visitor)
     }
 }
 
@@ -222,7 +261,7 @@ impl<Env> Node<Env> for Inlet {
         1
     }
 
-    fn inlet(&self) -> bool {
+    fn inlet(&self, _env: &Env) -> bool {
         true
     }
 }
@@ -253,7 +292,7 @@ impl<Env> Node<Env> for Outlet {
         0
     }
 
-    fn outlet(&self) -> bool {
+    fn outlet(&self, _env: &Env) -> bool {
         true
     }
 }
@@ -303,21 +342,23 @@ pub fn graph_partial_eq<N: PartialEq>(a: &Graph<N>, b: &Graph<N>) -> bool {
 }
 
 /// Count the number of inlet nodes in the given graph.
-pub fn inlets<Env, G>(g: G) -> impl Iterator<Item = G::NodeRef>
+pub fn inlets<'a, Env, G>(env: &'a Env, g: G) -> impl Iterator<Item = G::NodeRef> + 'a
 where
-    G: Data + IntoNodeReferences,
+    G: Data + IntoNodeReferences + 'a,
     G::NodeWeight: Node<Env>,
 {
-    g.node_references().filter(|n_ref| n_ref.weight().inlet())
+    g.node_references()
+        .filter(|n_ref| n_ref.weight().inlet(env))
 }
 
 /// Count the number of outlet nodes in the given graph.
-pub fn outlets<Env, G>(g: G) -> impl Iterator<Item = G::NodeRef>
+pub fn outlets<'a, Env, G>(env: &'a Env, g: G) -> impl Iterator<Item = G::NodeRef> + 'a
 where
-    G: Data + IntoNodeReferences,
+    G: Data + IntoNodeReferences + 'a,
     G::NodeWeight: Node<Env>,
 {
-    g.node_references().filter(|n_ref| n_ref.weight().outlet())
+    g.node_references()
+        .filter(|n_ref| n_ref.weight().outlet(env))
 }
 
 /// The implementation of the `GraphNode`'s `Node::expr` fn.
@@ -336,9 +377,9 @@ where
     use petgraph::visit::EdgeRef;
 
     // Create define bindings for inlet values.
-    let inlets: Vec<_> = inlets(g).map(|n_ref| n_ref.id()).collect();
+    let inlet_ids: Vec<_> = inlets(env, g).map(|n_ref| n_ref.id()).collect();
     let mut inlet_bindings = Vec::new();
-    for (i, &inlet_id) in inlets.iter().enumerate() {
+    for (i, &inlet_id) in inlet_ids.iter().enumerate() {
         let node_ix = g.to_index(inlet_id);
         let input_expr = if i < inputs.len() && inputs[i].is_some() {
             inputs[i].as_ref().unwrap().clone()
@@ -351,13 +392,13 @@ where
 
     // Use compile to create the evaluation order, steps, and statements
     let meta = compile::Meta::from_graph(env, g);
-    let outlets: Vec<_> = outlets(g).map(|n_ref| n_ref.id()).collect();
+    let outlet_ids: Vec<_> = outlets(env, g).map(|n_ref| n_ref.id()).collect();
     let flow_graph = compile::flow_graph(
         &meta,
-        inlets
+        inlet_ids
             .iter()
             .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
-        outlets
+        outlet_ids
             .iter()
             .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
     );
@@ -378,7 +419,7 @@ where
         .join(" ");
 
     // For the return values, find the source node connected to each outlet's input.
-    let outlet_values = outlets
+    let outlet_values = outlet_ids
         .iter()
         .map(|&outlet_id| {
             // Find the edge coming into this outlet (input index 0).
@@ -404,13 +445,18 @@ where
         "'()".to_string()
     };
 
-    let expr_str = format!(
-        "(begin (define {GRAPH_STATE} state)
-           {}
-           (set! state {GRAPH_STATE})
-           {outlet_values_expr})",
-        all_stmts
-    );
+    // Only include state handling if the graph has stateful nodes.
+    let expr_str = if meta.stateful.is_empty() {
+        format!("(begin {} {outlet_values_expr})", all_stmts)
+    } else {
+        format!(
+            "(begin (define {GRAPH_STATE} state)
+               {}
+               (set! state {GRAPH_STATE})
+               {outlet_values_expr})",
+            all_stmts
+        )
+    };
     Engine::emit_ast(&expr_str)
         .expect("failed to emit AST for nested expr")
         .into_iter()

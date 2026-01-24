@@ -81,20 +81,24 @@ where
         vec![self.conf.clone()]
     }
 
-    fn inlet(&self) -> bool {
-        self.node.inlet()
+    fn inlet(&self, env: &Env) -> bool {
+        self.node.inlet(env)
     }
 
-    fn outlet(&self) -> bool {
-        self.node.outlet()
+    fn outlet(&self, env: &Env) -> bool {
+        self.node.outlet(env)
     }
 
-    fn stateful(&self) -> bool {
-        self.node.stateful()
+    fn stateful(&self, env: &Env) -> bool {
+        self.node.stateful(env)
     }
 
-    fn register(&self, path: &[node::Id], vm: &mut Engine) {
-        self.node.register(path, vm)
+    fn register(&self, env: &Env, path: &[node::Id], vm: &mut Engine) {
+        self.node.register(env, path, vm)
+    }
+
+    fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
+        self.node.required_addrs()
     }
 }
 

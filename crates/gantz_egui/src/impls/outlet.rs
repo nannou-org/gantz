@@ -19,7 +19,7 @@ impl<Env> NodeUi<Env> for gantz_core::node::graph::Outlet {
         })
     }
 
-    fn inspector_rows(&mut self, ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(&mut self, ctx: &mut NodeCtx<Env>, body: &mut egui_extras::TableBody) {
         let row_h = node_inspector::table_row_h(body.ui_mut());
         body.row(row_h, |mut row| {
             row.col(|ui| {

@@ -75,6 +75,13 @@ impl<G> Registry<G> {
             .and_then(|commit| self.graphs.get(&commit.graph))
     }
 
+    /// Look-up the graph pointed to by the given commit address.
+    pub fn commit_graph_ref(&self, ca: &CommitAddr) -> Option<&G> {
+        self.commits
+            .get(ca)
+            .and_then(|commit| self.graphs.get(&commit.graph))
+    }
+
     /// Commit the graph at the given address.
     ///
     /// NOTE: Assumes `graph_ca` is a correct address for the graph resulting
@@ -117,8 +124,8 @@ impl<G> Registry<G> {
         graph_ca: GraphAddr,
         graph: impl FnOnce() -> G,
         head: &mut Head,
-    ) {
-        commit_graph_to_head(self, timestamp, graph_ca, graph, head);
+    ) -> CommitAddr {
+        commit_graph_to_head(self, timestamp, graph_ca, graph, head)
     }
 
     /// Insert the given name mapping into the registry.
@@ -135,26 +142,15 @@ impl<G> Registry<G> {
         self.names.remove(name)
     }
 
-    /// Prunes all graphs that don't have an associated named commit.
+    /// Prune commits and graphs not in the required set.
     ///
-    /// All commits invalidated by the removed graphs are then removed.
-    ///
-    /// All `parent` fields in remaining commits that would be invalidated by
-    /// the commit removal are set to `None`.
-    ///
-    /// The `heads` parameter specifies heads whose graphs should be protected
-    /// from pruning, even if they are unnamed.
-    pub fn prune_unnamed_graphs<'a>(
-        &mut self,
-        heads: impl IntoIterator<Item = &'a Head>,
-        graph_contains: impl Fn(&G, &GraphAddr) -> bool,
-    ) {
-        let head_graph_cas: HashSet<GraphAddr> = heads
-            .into_iter()
-            .filter_map(|head| self.head_commit(head).map(|commit| commit.graph))
-            .collect();
-        prune_unnamed_graphs(self, &head_graph_cas, graph_contains);
-        prune_graphless_commits(self);
+    /// 1. Removes commits not in `required_commits`
+    /// 2. Removes graphs not referenced by any remaining commit
+    /// 3. Detaches invalid parent references
+    pub fn prune_unreachable(&mut self, required_commits: &HashSet<CommitAddr>) {
+        self.commits.retain(|ca, _| required_commits.contains(ca));
+        let used_graphs: HashSet<_> = self.commits.values().map(|c| c.graph).collect();
+        self.graphs.retain(|ca, _| used_graphs.contains(ca));
         detach_invalid_parents(&mut self.commits);
     }
 }
@@ -235,7 +231,7 @@ fn commit_graph_to_head<G>(
     graph_ca: GraphAddr,
     graph: impl FnOnce() -> G,
     head: &mut Head,
-) {
+) -> CommitAddr {
     let parent_ca = *head_commit_ca(&reg.names, head).unwrap();
     let commit_ca = commit_graph(reg, timestamp, Some(parent_ca), graph_ca, graph);
     match *head {
@@ -244,46 +240,7 @@ fn commit_graph_to_head<G>(
             reg.names.insert(name.to_string(), commit_ca);
         }
     }
-}
-
-/// Prune all unused graph entries from the registry.
-fn prune_unnamed_graphs<G>(
-    reg: &mut Registry<G>,
-    head_graph_cas: &HashSet<GraphAddr>,
-    graph_contains: impl Fn(&G, &GraphAddr) -> bool,
-) {
-    let to_remove: Vec<_> = reg
-        .graphs()
-        .keys()
-        .copied()
-        .filter(|ca| !head_graph_cas.contains(ca) && !graph_is_named(reg, ca, &graph_contains))
-        .collect();
-    for ca in to_remove {
-        reg.graphs.remove(&ca);
-    }
-}
-
-/// Tests whether or not the graph with the given content address is in use
-/// within the registry.
-///
-/// This is used to determine whether or not to remove unused graphs.
-fn graph_is_named<G>(
-    reg: &Registry<G>,
-    ca: &GraphAddr,
-    graph_contains: impl Fn(&G, &GraphAddr) -> bool,
-) -> bool {
-    reg.names
-        .values()
-        .any(|commit_ca| *ca == reg.commits()[commit_ca].graph)
-        || reg.graphs().values().any(|g| graph_contains(g, ca))
-}
-
-/// Prunes all commits point to graphs that no longer exist.
-///
-/// Intended for running after `prune_unused_graphs`.
-fn prune_graphless_commits<G>(reg: &mut Registry<G>) {
-    reg.commits
-        .retain(|_ca, commit| reg.graphs.contains_key(&commit.graph));
+    commit_ca
 }
 
 /// For all `parent` commits that are invalid (i.e. don't point to an existing

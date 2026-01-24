@@ -37,7 +37,7 @@ pub trait NodeUi<Env> {
     /// By default, only the node's path and its current state within the VM are
     /// shown. Adding to the given `body` by providing an implementation of this
     /// method will append extra rows.
-    fn inspector_rows(&mut self, _ctx: &NodeCtx<Env>, _body: &mut egui_extras::TableBody) {}
+    fn inspector_rows(&mut self, _ctx: &mut NodeCtx<Env>, _body: &mut egui_extras::TableBody) {}
 
     /// Extra UI for the node to be presented within the node inspector
     /// following the default table.
@@ -72,7 +72,22 @@ pub enum Cmd {
     PushEval(Vec<node::Id>),
     PullEval(Vec<node::Id>),
     OpenGraph(Vec<node::Id>),
-    OpenNamedGraph(String, gantz_ca::GraphAddr),
+    OpenNamedNode(String, gantz_ca::ContentAddr),
+    /// Fork a named node: create new name pointing to the given content address.
+    ForkNamedNode {
+        new_name: String,
+        ca: gantz_ca::ContentAddr,
+    },
+    /// Insert an inspect node on the given edge at the given position.
+    InspectEdge(InspectEdge),
+}
+
+/// A command to insert an Inspect node on an edge.
+#[derive(Debug)]
+pub struct InspectEdge {
+    pub path: Vec<node::Id>,
+    pub edge: petgraph::graph::EdgeIndex<usize>,
+    pub pos: egui::Pos2,
 }
 
 impl<'a, Env, N> NodeUi<Env> for &'a mut N
@@ -91,7 +106,7 @@ where
         (**self).ui(ctx, uictx)
     }
 
-    fn inspector_rows(&mut self, ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(&mut self, ctx: &mut NodeCtx<Env>, body: &mut egui_extras::TableBody) {
         (**self).inspector_rows(ctx, body)
     }
 
@@ -118,7 +133,7 @@ macro_rules! impl_node_ui_for_ptr {
                 (**self).ui(ctx, uictx)
             }
 
-            fn inspector_rows(&mut self, ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+            fn inspector_rows(&mut self, ctx: &mut NodeCtx<Env>, body: &mut egui_extras::TableBody) {
                 (**self).inspector_rows(ctx, body)
             }
 
@@ -224,6 +239,7 @@ impl<'a, Env> NodeCtx<'a, Env> {
 
 /// The IDs of the inlet and outlet nodes.
 pub(crate) fn inlet_outlet_ids<Env, N>(
+    env: &Env,
     g: &gantz_core::node::graph::Graph<N>,
 ) -> (Vec<node::Id>, Vec<node::Id>)
 where
@@ -232,10 +248,10 @@ where
     let mut inlets = vec![];
     let mut outlets = vec![];
     for n_ref in g.node_references() {
-        if n_ref.weight().inlet() {
+        if n_ref.weight().inlet(env) {
             inlets.push(n_ref.id().index());
         }
-        if n_ref.weight().outlet() {
+        if n_ref.weight().outlet(env) {
             outlets.push(n_ref.id().index());
         }
     }

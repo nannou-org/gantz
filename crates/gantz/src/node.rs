@@ -21,9 +21,13 @@ dyn_clone::clone_trait_object!(Node);
 dyn_hash::hash_trait_object!(Node);
 
 #[typetag::serde]
+impl Node for gantz_core::node::Apply {}
+#[typetag::serde]
 impl Node for gantz_core::node::Expr {}
 #[typetag::serde]
 impl Node for gantz_core::node::GraphNode<Box<dyn Node>> {}
+#[typetag::serde]
+impl Node for gantz_core::node::Identity {}
 #[typetag::serde]
 impl Node for gantz_core::node::graph::Inlet {}
 #[typetag::serde]
@@ -39,10 +43,14 @@ impl Node for gantz_std::Log {}
 impl Node for gantz_std::Number {}
 
 #[typetag::serde]
-impl Node for gantz_egui::node::NamedGraph {}
+impl Node for gantz_egui::node::FnNamedRef {}
+#[typetag::serde]
+impl Node for gantz_egui::node::NamedRef {}
 
 #[typetag::serde]
 impl Node for gantz_egui::node::Comment {}
+#[typetag::serde]
+impl Node for gantz_egui::node::Inspect {}
 
 #[typetag::serde]
 impl Node for Box<dyn Node> {}

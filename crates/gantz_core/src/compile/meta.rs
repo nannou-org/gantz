@@ -141,13 +141,13 @@ impl Meta {
                     .collect(),
             );
         }
-        if node.inlet() {
+        if node.inlet(env) {
             self.inlets.insert(id);
         }
-        if node.outlet() {
+        if node.outlet(env) {
             self.outlets.insert(id);
         }
-        if node.stateful() {
+        if node.stateful(env) {
             self.stateful.insert(id);
         }
     }

@@ -40,7 +40,7 @@ impl<Env> gantz_core::Node<Env> for Log {
         Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
     }
 
-    fn register(&self, _path: &[gantz_core::node::Id], vm: &mut Engine) {
+    fn register(&self, _env: &Env, _path: &[gantz_core::node::Id], vm: &mut Engine) {
         fn error(val: SteelVal) {
             log::error!("{}", val);
         }

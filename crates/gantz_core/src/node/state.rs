@@ -109,22 +109,29 @@ where
         self.node.pull_eval(env)
     }
 
-    fn inlet(&self) -> bool {
-        self.node.inlet()
+    fn inlet(&self, env: &Env) -> bool {
+        self.node.inlet(env)
     }
 
-    fn outlet(&self) -> bool {
-        self.node.outlet()
+    fn outlet(&self, env: &Env) -> bool {
+        self.node.outlet(env)
     }
 
-    fn stateful(&self) -> bool {
+    fn stateful(&self, _env: &Env) -> bool {
         true
     }
 
-    fn register(&self, path: &[node::Id], vm: &mut Engine) {
+    fn register(&self, _env: &Env, path: &[node::Id], vm: &mut Engine) {
         S::register(vm);
-        let val = default_node_state_steel_val::<S>();
-        update(vm, path, val).unwrap();
+        // Only initialize state if not already present.
+        if extract_value(vm, path).ok().flatten().is_none() {
+            let val = default_node_state_steel_val::<S>();
+            update(vm, path, val).unwrap();
+        }
+    }
+
+    fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
+        self.node.required_addrs()
     }
 }
 
@@ -165,8 +172,11 @@ pub fn update_value(vm: &mut Engine, node_path: &[usize], val: SteelVal) -> Resu
                 let id = graph_id.try_into().expect("node_id out of range");
                 let key = SteelVal::IntV(id);
                 let update = |opt: Option<SteelVal>| {
-                    let Some(SteelVal::HashMapV(mut state)) = opt else {
-                        panic!("graph state was not a hashmap");
+                    // Lazily initialize empty hashmap if not present.
+                    let mut state = match opt {
+                        Some(SteelVal::HashMapV(state)) => state,
+                        None => Gc::new(steel::HashMap::new()).into(),
+                        Some(_) => panic!("graph state was not a hashmap"),
                     };
                     update_hashmap_value(&mut state, &node_path[1..], val)
                         .expect("failed to update value");
@@ -234,4 +244,48 @@ pub fn extract<S: FromSteelVal>(vm: &Engine, node_path: &[usize]) -> Result<Opti
         return Ok(None);
     };
     S::from_steelval(&val).map(Some)
+}
+
+/// Check if any value exists at the given path.
+pub fn value_exists(vm: &Engine, path: &[node::Id]) -> Result<bool, SteelErr> {
+    extract_value(vm, path).map(|opt| opt.is_some())
+}
+
+/// Check if a value of type `S` exists at the given path.
+///
+/// Returns `false` if no value exists, or if the value cannot be converted to `S`.
+pub fn exists<S: FromSteelVal>(vm: &Engine, path: &[node::Id]) -> Result<bool, SteelErr> {
+    match extract_value(vm, path)? {
+        None => Ok(false),
+        Some(val) => Ok(S::from_steelval(&val).is_ok()),
+    }
+}
+
+/// Initialize state with a raw `SteelVal` only if no state is currently present.
+///
+/// Ensures registration is idempotent - calling it multiple times won't reset existing state.
+pub fn init_value_if_absent(
+    vm: &mut Engine,
+    path: &[node::Id],
+    init: impl FnOnce() -> SteelVal,
+) -> Result<(), SteelErr> {
+    if !value_exists(vm, path)? {
+        update_value(vm, path, init())?;
+    }
+    Ok(())
+}
+
+/// Initialize state only if no value of type `S` is currently present.
+///
+/// Useful for nodes that require a specific state type.
+pub fn init_if_absent<S: NodeState>(
+    vm: &mut Engine,
+    path: &[node::Id],
+    init: impl FnOnce() -> S,
+) -> Result<(), SteelErr> {
+    if !exists::<S>(vm, path)? {
+        let val = init().into_steelval()?;
+        update_value(vm, path, val)?;
+    }
+    Ok(())
 }

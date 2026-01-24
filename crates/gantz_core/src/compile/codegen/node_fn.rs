@@ -43,7 +43,7 @@ impl<'pl, Env> Visitor<Env> for NodeFns<'pl> {
     fn visit_post(&mut self, ctx: visit::Ctx<Env>, node: &dyn Node<Env>) {
         // Skip generating node functions for inlet and outlet nodes - their
         // values are handled directly by nested_expr bindings.
-        if node.inlet() || node.outlet() {
+        if node.inlet(ctx.env()) || node.outlet(ctx.env()) {
             return;
         }
 
@@ -146,7 +146,7 @@ pub(crate) fn node_fn<Env>(
     // Construct the full function definition
     // FIXME: Remove this when switching to `flow::NodeConf`.
     let fn_name = name(node_path, &conns.inputs, &conns.outputs);
-    let fn_body = if node.stateful() {
+    let fn_body = if node.stateful(env) {
         input_args.push(STATE.to_string());
         format!("(let ((output {node_expr})) (list output state))")
     } else {

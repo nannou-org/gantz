@@ -2,22 +2,30 @@
 
 #[doc(inline)]
 pub use crate::visit::{self, Visitor};
+pub use apply::Apply;
 #[doc(inline)]
 pub use conns::Conns;
 pub use expr::{Expr, ExprError};
+pub use fn_::Fn;
 use gantz_ca::CaHash;
 pub use graph::GraphNode;
+pub use id::{IDENTITY_NAME, Identity};
 pub use pull::{Pull, WithPullEval};
 pub use push::{Push, WithPushEval};
+pub use ref_::{NodeRegistry, Ref};
 use serde::{Deserialize, Serialize};
 pub use state::{NodeState, State, WithStateType};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
+pub mod apply;
 mod conns;
 pub mod expr;
+pub mod fn_;
 pub mod graph;
+pub mod id;
 pub mod pull;
 pub mod push;
+pub mod ref_;
 pub mod state;
 
 /// The definitive abstraction of a gantz graph, the gantz `Node` trait.
@@ -111,12 +119,12 @@ pub trait Node<Env> {
     }
 
     /// Whether or not this node acts as an inlet for some nested graph.
-    fn inlet(&self) -> bool {
+    fn inlet(&self, _env: &Env) -> bool {
         false
     }
 
     /// Whether or not this node acts as an outlet for some nested graph.
-    fn outlet(&self) -> bool {
+    fn outlet(&self, _env: &Env) -> bool {
         false
     }
 
@@ -124,18 +132,34 @@ pub trait Node<Env> {
     ///
     /// Nodes returning `true` will have a special `state` variable accessible
     /// within their [`Node::expr`] provided during compilation.
-    fn stateful(&self) -> bool {
+    fn stateful(&self, _env: &Env) -> bool {
         false
     }
 
     /// Function for registering necessary types, functions and initialising any
     /// default values as necessary.
     ///
+    /// This method is called each time the graph changes and must be idempotent.
+    /// Implementations should check whether state already exists before
+    /// initializing to avoid resetting existing state. See
+    /// [`state::init_value_if_absent`] and [`state::init_if_absent`].
+    ///
     /// Nodes returning `true` from their [`Node::stateful`] implementation
     /// must use this to initialise their state.
     ///
     /// By default, the node is assumed to be stateless, and this does nothing.
-    fn register(&self, _path: &[Id], _vm: &mut Engine) {}
+    fn register(&self, _env: &Env, _path: &[Id], _vm: &mut Engine) {}
+
+    /// Returns the content addresses of external nodes this node requires.
+    ///
+    /// Used during pruning to determine which commits/graphs are still in use.
+    /// Nodes that reference other graphs (like `Ref`, `NamedRef`) should return
+    /// the addresses they depend on.
+    ///
+    /// By default, returns an empty vec (no external dependencies).
+    fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
+        vec![]
+    }
 
     /// Traverse all nested nodes, depth-first, with the given [`Visitor`].
     ///
@@ -287,20 +311,24 @@ where
         (**self).pull_eval(env)
     }
 
-    fn inlet(&self) -> bool {
-        (**self).inlet()
+    fn inlet(&self, env: &Env) -> bool {
+        (**self).inlet(env)
     }
 
-    fn outlet(&self) -> bool {
-        (**self).outlet()
+    fn outlet(&self, env: &Env) -> bool {
+        (**self).outlet(env)
     }
 
-    fn stateful(&self) -> bool {
-        (**self).stateful()
+    fn stateful(&self, env: &Env) -> bool {
+        (**self).stateful(env)
     }
 
-    fn register(&self, path: &[Id], vm: &mut Engine) {
-        (**self).register(path, vm)
+    fn register(&self, env: &Env, path: &[Id], vm: &mut Engine) {
+        (**self).register(env, path, vm)
+    }
+
+    fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
+        (**self).required_addrs()
     }
 
     fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn Visitor<Env>) {
@@ -338,20 +366,24 @@ macro_rules! impl_node_for_ptr {
                 (**self).pull_eval(env)
             }
 
-            fn inlet(&self) -> bool {
-                (**self).inlet()
+            fn inlet(&self, env: &Env) -> bool {
+                (**self).inlet(env)
             }
 
-            fn outlet(&self) -> bool {
-                (**self).outlet()
+            fn outlet(&self, env: &Env) -> bool {
+                (**self).outlet(env)
             }
 
-            fn stateful(&self) -> bool {
-                (**self).stateful()
+            fn stateful(&self, env: &Env) -> bool {
+                (**self).stateful(env)
             }
 
-            fn register(&self, path: &[Id], vm: &mut Engine) {
-                (**self).register(path, vm)
+            fn register(&self, env: &Env, path: &[Id], vm: &mut Engine) {
+                (**self).register(env, path, vm)
+            }
+
+            fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
+                (**self).required_addrs()
             }
 
             fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn Visitor<Env>) {
@@ -364,6 +396,17 @@ macro_rules! impl_node_for_ptr {
 impl_node_for_ptr!(Box);
 impl_node_for_ptr!(std::rc::Rc);
 impl_node_for_ptr!(std::sync::Arc);
+
+impl<'a, Env> Clone for ExprCtx<'a, Env> {
+    fn clone(&self) -> Self {
+        Self {
+            env: self.env,
+            path: self.path,
+            inputs: self.inputs,
+            outputs: self.outputs,
+        }
+    }
+}
 
 impl From<u16> for Input {
     fn from(u: u16) -> Self {

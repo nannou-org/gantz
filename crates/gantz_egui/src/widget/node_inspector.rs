@@ -24,8 +24,8 @@ where
     }
 
     pub fn show(self, ui: &mut egui::Ui) -> NodeInspectorResponse {
-        let Self { node, ctx } = self;
-        let scroll_area_output = table(node, &ctx, ui);
+        let Self { node, mut ctx } = self;
+        let scroll_area_output = table(node, &mut ctx, ui);
         let node_response = node.inspector_ui(ctx, ui);
         NodeInspectorResponse {
             scroll_area_output,
@@ -40,7 +40,7 @@ pub fn table_row_h(ui: &egui::Ui) -> f32 {
 
 pub fn table<Env>(
     node: &mut (impl Node<Env> + NodeUi<Env>),
-    ctx: &NodeCtx<Env>,
+    ctx: &mut NodeCtx<Env>,
     ui: &mut egui::Ui,
 ) -> ScrollAreaOutput<()> {
     ui.strong(node.name(ctx.env()));
@@ -93,7 +93,7 @@ pub fn table<Env>(
                 });
             }
 
-            if node.stateful() {
+            if node.stateful(ctx.env()) {
                 body.row(row_h, |mut row| {
                     row.col(|ui| {
                         ui.label("state");
