@@ -53,6 +53,7 @@ jobs:
       - name: Prepare artifact
         run: |
           cp -rL result artifact
+          chmod -R u+w artifact
           echo "${{ github.event.pull_request.number }}" > artifact/PR_NUMBER
       - uses: actions/upload-artifact@v4
         with:
