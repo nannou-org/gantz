@@ -50,12 +50,14 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@v13
       - run: nix build --print-build-logs .#gantz-website
-      - name: Add PR number to artifact
-        run: echo "${{ github.event.pull_request.number }}" > result/PR_NUMBER
+      - name: Prepare artifact
+        run: |
+          cp -rL result artifact
+          echo "${{ github.event.pull_request.number }}" > artifact/PR_NUMBER
       - uses: actions/upload-artifact@v4
         with:
           name: pr-preview-${{ github.event.pull_request.number }}
-          path: result/
+          path: artifact/
 
   cargo-publish:
     needs: nix
