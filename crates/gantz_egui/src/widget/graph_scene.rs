@@ -77,6 +77,9 @@ pub struct Interaction {
     pub selection: Selection,
     #[serde(default, skip)]
     pub edge_in_progress: Option<(NodeIndex, SocketKind, usize)>,
+    /// Position where an edge context menu was opened (in graph coordinates).
+    #[serde(default, skip)]
+    pub edge_context_menu_pos: Option<egui::Pos2>,
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -162,7 +165,7 @@ where
                 show.nodes(ui, |nctx, ui| {
                     node_responses = nodes(self.env, self.graph, self.path, nctx, state, vm, ui);
                 })
-                .edges(ui, |ectx, ui| edges(self.graph, ectx, state, ui));
+                .edges(ui, |ectx, ui| edges(self.graph, self.path, ectx, state, ui));
             })
             .response;
         GraphSceneResponse {
@@ -307,10 +310,14 @@ where
 
 fn edges<N>(
     graph: &mut Graph<N>,
+    path: &[node::Id],
     ectx: &mut egui_graph::EdgesCtx,
     state: &mut GraphSceneState,
     ui: &mut egui::Ui,
 ) {
+    // Track whether any edge has a context menu open this frame.
+    let mut any_context_menu_open = false;
+
     // Instantiate all edges.
     for e in graph.edge_indices().collect::<Vec<_>>() {
         let (na, nb) = graph.edge_endpoints(e).unwrap();
@@ -332,6 +339,36 @@ fn edges<N>(
                 state.interaction.selection.edges.remove(&e);
             }
         }
+
+        // Context menu for edges - must be called every frame to keep menu open.
+        // Only store position on the FIRST frame the context menu opens.
+        // If we already have a position stored, don't overwrite it (the pointer
+        // may have moved to the context menu popup, causing closest_point to
+        // become invalid).
+        let context_menu_open = response.context_menu_opened();
+        if context_menu_open {
+            any_context_menu_open = true;
+            if state.interaction.edge_context_menu_pos.is_none() {
+                state.interaction.edge_context_menu_pos = Some(response.closest_point());
+            }
+        }
+        response.context_menu(|ui| {
+            if ui.button("inspect").clicked() {
+                if let Some(pos) = state.interaction.edge_context_menu_pos.take() {
+                    state.cmds.push(Cmd::InspectEdge(crate::InspectEdge {
+                        path: path.to_vec(),
+                        edge: e,
+                        pos,
+                    }));
+                }
+                ui.close();
+            }
+        });
+    }
+
+    // Clear the stored position if no context menu is open (user dismissed it).
+    if !any_context_menu_open {
+        state.interaction.edge_context_menu_pos = None;
     }
 
     // Draw the in-progress edge if there is one.

@@ -78,6 +78,16 @@ pub enum Cmd {
         new_name: String,
         ca: gantz_ca::ContentAddr,
     },
+    /// Insert an inspect node on the given edge at the given position.
+    InspectEdge(InspectEdge),
+}
+
+/// A command to insert an Inspect node on an edge.
+#[derive(Debug)]
+pub struct InspectEdge {
+    pub path: Vec<node::Id>,
+    pub edge: petgraph::graph::EdgeIndex<usize>,
+    pub pos: egui::Pos2,
 }
 
 impl<'a, Env, N> NodeUi<Env> for &'a mut N

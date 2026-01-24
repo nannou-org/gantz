@@ -175,6 +175,8 @@ impl Node for gantz_std::Log {}
 impl Node for gantz_std::Number {}
 
 #[typetag::serde]
+impl Node for gantz_egui::node::Inspect {}
+#[typetag::serde]
 impl Node for gantz_egui::node::NamedRef {}
 
 #[typetag::serde]
@@ -759,9 +761,75 @@ fn process_cmds(state: &mut State) {
                     state.env.registry.insert_name(new_name.clone(), commit_ca);
                     log::info!("Forked node to new name: {new_name}");
                 }
+                gantz_egui::Cmd::InspectEdge(cmd) => {
+                    let (_, graph, views) = &mut state.heads[ix];
+                    inspect_edge(&state.env, graph, views, &mut state.vms[ix], cmd);
+                }
             }
         }
     }
+}
+
+fn inspect_edge(
+    env: &Environment,
+    graph: &mut Graph,
+    views: &mut GraphViews,
+    vm: &mut Engine,
+    cmd: gantz_egui::InspectEdge,
+) {
+    use gantz_egui::widget::gantz::NodeTypeRegistry;
+
+    let gantz_egui::InspectEdge { path, edge, pos } = cmd;
+
+    // Navigate to the nested graph at the path.
+    let Some(nested) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
+        log::error!("InspectEdge: could not find graph at path");
+        return;
+    };
+
+    // Get edge endpoints and weight.
+    let Some((src_node, dst_node)) = nested.edge_endpoints(edge) else {
+        log::error!("InspectEdge: edge not found");
+        return;
+    };
+    let edge_weight = *nested.edge_weight(edge).unwrap();
+
+    // Remove the edge.
+    nested.remove_edge(edge);
+
+    // Create a new Inspect node.
+    let Some(inspect_node) = env.new_node("inspect") else {
+        log::error!("InspectEdge: could not create inspect node");
+        return;
+    };
+    let inspect_id = nested.add_node(inspect_node);
+
+    // Determine the node path and register it with the VM.
+    let node_path: Vec<_> = path
+        .iter()
+        .copied()
+        .chain(Some(inspect_id.index()))
+        .collect();
+    nested[inspect_id].register(env, &node_path, vm);
+
+    // Add edge: src -> inspect (using original output, input 0).
+    nested.add_edge(
+        src_node,
+        inspect_id,
+        gantz_core::Edge::new(edge_weight.output, gantz_core::node::Input(0)),
+    );
+
+    // Add edge: inspect -> dst (using output 0, original input).
+    nested.add_edge(
+        inspect_id,
+        dst_node,
+        gantz_core::Edge::new(gantz_core::node::Output(0), edge_weight.input),
+    );
+
+    // Position the new node at the click position.
+    let node_id = egui_graph::NodeId::from_u64(inspect_id.index() as u64);
+    let view = views.entry(path).or_default();
+    view.layout.insert(node_id, pos);
 }
 
 fn compile_graph(env: &Environment, graph: &Graph, vm: &mut Engine) -> Vec<ExprKind> {
