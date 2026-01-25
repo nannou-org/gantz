@@ -6,7 +6,9 @@ use gantz_ca::CaHash;
 use serde::{Deserialize, Serialize};
 
 /// Describes a connection between two nodes.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize, CaHash)]
+#[derive(
+    Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize, CaHash,
+)]
 pub struct Edge {
     /// The output of the node at the source of this edge.
     pub output: node::Output,
@@ -33,4 +35,3 @@ where
         Edge { output, input }
     }
 }
-

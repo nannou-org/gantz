@@ -222,11 +222,15 @@ pub struct ExprCtx<'a, Env> {
 pub struct EvalFn;
 
 /// Represents an input of a node via an index.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize, CaHash)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize, CaHash,
+)]
 pub struct Input(pub u16);
 
 /// Represents an output of a node via an index.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize, CaHash)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize, CaHash,
+)]
 pub struct Output(pub u16);
 
 /// Error during expression generation.
