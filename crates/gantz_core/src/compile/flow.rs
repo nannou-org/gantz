@@ -1,12 +1,38 @@
 //! Items related to constructing a view of the control flow of a gantz graph.
 
-use super::{Meta, MetaGraph, push_eval_neighbors, push_reachable};
+use super::{
+    Meta, MetaGraph,
+    error::{InvalidInputIndex, InvalidOutputIndex, NodeConnsError, TooManyConns},
+    push_eval_neighbors, push_reachable,
+};
 use crate::node;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt, ops,
 };
+
+/// Error when computing node inputs from graph edges.
+#[derive(Debug, thiserror::Error)]
+pub enum NodeInputsError {
+    /// The node has too many inputs.
+    #[error(transparent)]
+    TooManyInputs(#[from] TooManyConns),
+    /// An edge references an invalid input index.
+    #[error(transparent)]
+    InvalidIndex(#[from] InvalidInputIndex),
+}
+
+/// Error when computing node outputs from graph edges.
+#[derive(Debug, thiserror::Error)]
+pub enum NodeOutputsError {
+    /// The node has too many outputs.
+    #[error(transparent)]
+    TooManyOutputs(#[from] TooManyConns),
+    /// An edge references an invalid output index.
+    #[error(transparent)]
+    InvalidIndex(#[from] InvalidOutputIndex),
+}
 
 /// Represents all control flow graphs for all entrypoints in a single gantz graph.
 ///
@@ -70,7 +96,7 @@ pub struct NodeConns {
 }
 
 impl Flow {
-    pub fn from_meta(meta: &Meta) -> Self {
+    pub fn from_meta(meta: &Meta) -> Result<Self, NodeConnsError> {
         // Create the push eval entrypoint control flow graphs.
         let push = meta
             .push
@@ -80,7 +106,8 @@ impl Flow {
                     .iter()
                     .map(move |conns| ((n, *conns), push_eval_flow_graph(meta, n, conns)))
             })
-            .collect();
+            .map(|(k, r)| r.map(|v| (k, v)))
+            .collect::<Result<_, _>>()?;
 
         let pull = meta
             .pull
@@ -90,7 +117,8 @@ impl Flow {
                     .iter()
                     .map(move |conns| ((n, *conns), pull_eval_flow_graph(meta, n, conns)))
             })
-            .collect();
+            .map(|(k, r)| r.map(|v| (k, v)))
+            .collect::<Result<_, _>>()?;
 
         let nested = flow_graph(
             meta,
@@ -100,9 +128,9 @@ impl Flow {
             meta.outlets
                 .iter()
                 .map(|&n| (n, node::Conns::connected(1).unwrap())),
-        );
+        )?;
 
-        Self { nested, push, pull }
+        Ok(Self { nested, push, pull })
     }
 }
 
@@ -131,29 +159,55 @@ impl ops::DerefMut for Block {
     }
 }
 
+impl From<NodeInputsError> for NodeConnsError {
+    fn from(e: NodeInputsError) -> Self {
+        match e {
+            NodeInputsError::TooManyInputs(e) => NodeConnsError::TooManyConns(e),
+            NodeInputsError::InvalidIndex(e) => NodeConnsError::InvalidInputIndex(e),
+        }
+    }
+}
+
+impl From<NodeOutputsError> for NodeConnsError {
+    fn from(e: NodeOutputsError) -> Self {
+        match e {
+            NodeOutputsError::TooManyOutputs(e) => NodeConnsError::TooManyConns(e),
+            NodeOutputsError::InvalidIndex(e) => NodeConnsError::InvalidOutputIndex(e),
+        }
+    }
+}
+
 /// Given a meta graph and set of push and pull eval fn nodes, construct a full
 /// control flow graph.
 pub fn flow_graph(
     meta: &Meta,
     push: impl IntoIterator<Item = (node::Id, node::Conns)>,
     pull: impl IntoIterator<Item = (node::Id, node::Conns)>,
-) -> FlowGraph {
+) -> Result<FlowGraph, NodeConnsError> {
     let order: Vec<_> = super::eval_order(&meta.graph, push, pull).collect();
     let included: HashSet<_> = order.iter().copied().collect();
     let mg = reachable_subgraph(&meta.graph, &included);
-    let conf_graph = node_conf_graph(meta, &mg, None);
-    flow_graph_from_conf_graph(&conf_graph)
+    let conf_graph = node_conf_graph(meta, &mg, None)?;
+    Ok(flow_graph_from_conf_graph(&conf_graph))
 }
 
 /// Given the meta graph and a node registered as a `push_eval` entrypoint,
 /// produce the control flow graph.
-fn push_eval_flow_graph(meta: &Meta, n: node::Id, conns: &node::Conns) -> FlowGraph {
+fn push_eval_flow_graph(
+    meta: &Meta,
+    n: node::Id,
+    conns: &node::Conns,
+) -> Result<FlowGraph, NodeConnsError> {
     flow_graph(meta, Some((n, *conns)), std::iter::empty())
 }
 
 /// Given the meta graph and a node registered as a `pull_eval` entrypoint,
 /// produce the control flow graph.
-fn pull_eval_flow_graph(meta: &Meta, n: node::Id, conns: &node::Conns) -> FlowGraph {
+fn pull_eval_flow_graph(
+    meta: &Meta,
+    n: node::Id,
+    conns: &node::Conns,
+) -> Result<FlowGraph, NodeConnsError> {
     flow_graph(meta, std::iter::empty(), Some((n, *conns)))
 }
 
@@ -228,26 +282,40 @@ fn flow_graph_edge_contraction(g: &mut FlowGraph) {
 
 /// Given some node within a given meta graph with an expected total number of
 /// inputs, return the list of inputs that are actually connected.
-fn node_inputs(g: &MetaGraph, n: node::Id, n_inputs: usize) -> node::Conns {
-    let mut inputs = node::Conns::unconnected(n_inputs).unwrap();
+fn node_inputs(
+    g: &MetaGraph,
+    n: node::Id,
+    n_inputs: usize,
+) -> Result<node::Conns, NodeInputsError> {
+    let mut inputs = node::Conns::unconnected(n_inputs).map_err(|_| TooManyConns(n_inputs))?;
     for e_ref in g.edges_directed(n, petgraph::Incoming) {
         for (edge, _kind) in e_ref.weight() {
-            inputs.set(edge.input.0 as usize, true).unwrap();
+            let index = edge.input.0 as usize;
+            inputs
+                .set(index, true)
+                .map_err(|_| InvalidInputIndex { index, n_inputs })?;
         }
     }
-    inputs
+    Ok(inputs)
 }
 
 /// Given some node within a given meta graph with an expected total number of
 /// outputs, return the list of outputs that are actually connected.
-fn node_outputs(g: &MetaGraph, n: node::Id, n_outputs: usize) -> node::Conns {
-    let mut outputs = node::Conns::unconnected(n_outputs).unwrap();
+fn node_outputs(
+    g: &MetaGraph,
+    n: node::Id,
+    n_outputs: usize,
+) -> Result<node::Conns, NodeOutputsError> {
+    let mut outputs = node::Conns::unconnected(n_outputs).map_err(|_| TooManyConns(n_outputs))?;
     for e_ref in g.edges_directed(n, petgraph::Outgoing) {
         for (edge, _kind) in e_ref.weight() {
-            outputs.set(edge.output.0 as usize, true).unwrap();
+            let index = edge.output.0 as usize;
+            outputs
+                .set(index, true)
+                .map_err(|_| InvalidOutputIndex { index, n_outputs })?;
         }
     }
-    outputs
+    Ok(outputs)
 }
 
 /// For the given meta graph `mg`, produce its control flow graph.
@@ -266,7 +334,7 @@ fn node_conf_graph(
     mg: &MetaGraph,
     // The `NodeConns` is the conns of the branching node.
     mut from_branch: Option<(NodeConns, Branch)>,
-) -> NodeConfGraph {
+) -> Result<NodeConfGraph, NodeConnsError> {
     let mut g = NodeConfGraph::new();
 
     // Walk nodes in topological order until we hit a branch.
@@ -276,8 +344,8 @@ fn node_conf_graph(
         // Determine the configuration and add it.
         let n_inputs = meta.inputs.get(&n).copied().unwrap_or(0);
         let n_outputs = meta.outputs.get(&n).copied().unwrap_or(0);
-        let inputs = node_inputs(&mg, n, n_inputs);
-        let outputs = node_outputs(&mg, n, n_outputs);
+        let inputs = node_inputs(mg, n, n_inputs)?;
+        let outputs = node_outputs(mg, n, n_outputs)?;
         let conns = NodeConns { inputs, outputs };
         let mut conf = NodeConf { id: n, conns };
 
@@ -314,7 +382,7 @@ fn node_conf_graph(
                 // outputs. We only want the branching node at the end of the
                 // block with all connected outputs in the config, then the
                 // *edges* should have the branch subsets.
-                let sub_ncg = node_conf_graph(meta, &sub_mg, Some((conns, branch)));
+                let sub_ncg = node_conf_graph(meta, &sub_mg, Some((conns, branch)))?;
                 g.extend(sub_ncg.all_edges().map(|(a, b, &w)| (a, b, w)));
             }
 
@@ -325,5 +393,5 @@ fn node_conf_graph(
         last = Some(conf);
     }
 
-    g
+    Ok(g)
 }

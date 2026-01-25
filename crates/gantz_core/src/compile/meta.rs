@@ -2,7 +2,10 @@
 
 use crate::{
     Edge,
-    compile::RoseTree,
+    compile::{
+        RoseTree,
+        error::{InvalidOutputIndex, NodeConnsError, TooManyConns},
+    },
     node::{self, Node},
     visit::{self, Visitor},
 };
@@ -55,7 +58,7 @@ pub type MetaGraph = petgraph::graphmap::DiGraphMap<node::Id, Vec<(Edge, EdgeKin
 
 impl Meta {
     /// Construct a `Meta` for a single gantz graph.
-    pub fn from_graph<Env, G>(env: &Env, g: G) -> Self
+    pub fn from_graph<Env, G>(env: &Env, g: G) -> Result<Self, NodeConnsError>
     where
         G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable,
         G::NodeWeight: Node<Env>,
@@ -68,9 +71,9 @@ impl Meta {
                 .map(|e_ref| (g.to_index(e_ref.source()), e_ref.weight().clone()));
             let id = g.to_index(n);
             let node = n_ref.weight();
-            flow.add_node(env, id, node, inputs);
+            flow.add_node(env, id, node, inputs)?;
         }
-        flow
+        Ok(flow)
     }
 
     /// Add the node with the given ID and inputs to the `Meta`.
@@ -80,7 +83,7 @@ impl Meta {
         id: node::Id,
         node: &dyn Node<Env>,
         inputs: impl IntoIterator<Item = (node::Id, Edge)>,
-    ) {
+    ) -> Result<(), NodeConnsError> {
         // Add the node.
         self.graph.add_node(id);
 
@@ -89,7 +92,7 @@ impl Meta {
             loop {
                 if let Some(edges) = self.graph.edge_weight_mut(n, id) {
                     let n_branches = self.branches.get(&n).map(|bs| &bs[..]);
-                    if let Some(kind) = edge_kind(n_branches, edge.output.0 as usize) {
+                    if let Some(kind) = edge_kind(n_branches, edge.output.0 as usize)? {
                         edges.push((edge, kind));
                         break;
                     }
@@ -116,7 +119,7 @@ impl Meta {
                 branches
                     .iter()
                     .map(|conf| conns_from_eval_conf(conf, outputs))
-                    .collect(),
+                    .collect::<Result<_, _>>()?,
             );
         }
 
@@ -128,7 +131,7 @@ impl Meta {
                 push_eval
                     .iter()
                     .map(|conf| conns_from_eval_conf(conf, outputs))
-                    .collect(),
+                    .collect::<Result<_, _>>()?,
             );
         }
         let pull_eval = node.pull_eval(env);
@@ -138,7 +141,7 @@ impl Meta {
                 pull_eval
                     .iter()
                     .map(|conf| conns_from_eval_conf(conf, inputs))
-                    .collect(),
+                    .collect::<Result<_, _>>()?,
             );
         }
         if node.inlet(env) {
@@ -150,23 +153,31 @@ impl Meta {
         if node.stateful(env) {
             self.stateful.insert(id);
         }
+        Ok(())
     }
 }
 
 /// Allow for constructing a rose-tree of `Meta`s (one for each graph) using
 /// the `Node::visit` implementation.
+///
+/// # Panics
+///
+/// Panics if a node has invalid connections. Proper error handling will be
+/// added when the [`Visitor`] trait supports fallibility.
 impl<Env> Visitor<Env> for RoseTree<Meta> {
     fn visit_pre(&mut self, ctx: visit::Ctx<Env>, node: &dyn Node<Env>) {
         let node_path = ctx.path();
 
         // Ensure the plan for the graph owning this node exists, retrieve it.
         let tree_path = &node_path[..node_path.len() - 1];
-        let tree = self.tree_mut(&tree_path);
+        let tree = self.tree_mut(tree_path);
 
         // Insert the node.
         let id = ctx.id();
+        // TODO: Propagate error once Visitor supports fallibility.
         tree.elem
-            .add_node(ctx.env(), id, node, ctx.inputs().iter().copied());
+            .add_node(ctx.env(), id, node, ctx.inputs().iter().copied())
+            .unwrap();
     }
 }
 
@@ -178,30 +189,40 @@ impl super::Edges for Vec<(Edge, EdgeKind)> {
 
 /// Given an eval conf and a known number of connections, convert the conf to
 /// the set of conns.
-fn conns_from_eval_conf(conf: &node::EvalConf, n_conns: usize) -> node::Conns {
+fn conns_from_eval_conf(
+    conf: &node::EvalConf,
+    n_conns: usize,
+) -> Result<node::Conns, TooManyConns> {
     match conf {
-        node::EvalConf::All => node::Conns::try_from_iter((0..n_conns).map(|_| true)).unwrap(),
-        node::EvalConf::Set(conns) => *conns,
+        node::EvalConf::All => node::Conns::try_from_iter((0..n_conns).map(|_| true))
+            .map_err(|_| TooManyConns(n_conns)),
+        node::EvalConf::Set(conns) => Ok(*conns),
     }
 }
 
 /// Given the branching of the source node and the output index of a connected
 /// edge, returns the `EdgeKind` of that edge, or `None` if there is no branch
 /// under which the edge can be reached.
-fn edge_kind(confs: Option<&[node::Conns]>, out_ix: usize) -> Option<EdgeKind> {
+fn edge_kind(
+    confs: Option<&[node::Conns]>,
+    out_ix: usize,
+) -> Result<Option<EdgeKind>, InvalidOutputIndex> {
     let Some(confs) = confs else {
-        return Some(EdgeKind::Static);
+        return Ok(Some(EdgeKind::Static));
     };
     let mut reachable = false;
     let mut conditional = false;
     for branch in confs {
-        let active = branch.get(out_ix).expect("missing output in branch");
+        let active = branch.get(out_ix).ok_or_else(|| InvalidOutputIndex {
+            index: out_ix,
+            n_outputs: branch.len(),
+        })?;
         reachable |= active;
         conditional |= !active;
     }
-    match (reachable, conditional) {
+    Ok(match (reachable, conditional) {
         (false, _) => None,
         (true, true) => Some(EdgeKind::Conditional),
         (true, false) => Some(EdgeKind::Static),
-    }
+    })
 }

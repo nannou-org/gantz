@@ -60,6 +60,20 @@ impl<T> RoseTree<T> {
         RoseTree { elem, nested }
     }
 
+    /// Fallible version of `map_ref`.
+    pub(crate) fn try_map_ref<'a, U, E>(
+        &'a self,
+        f: &mut impl FnMut(&'a T) -> Result<U, E>,
+    ) -> Result<RoseTree<U>, E> {
+        let Self { elem, nested } = self;
+        let elem = f(elem)?;
+        let nested = nested
+            .into_iter()
+            .map(|(&k, r)| r.try_map_ref(f).map(|r| (k, r)))
+            .collect::<Result<_, _>>()?;
+        Ok(RoseTree { elem, nested })
+    }
+
     /// Visit all nodes in depth-first order where the given `path` is the
     /// path to `self` from the root.
     pub(crate) fn visit(&self, path: &[node::Id], f: &mut impl FnMut(&[node::Id], &T)) {

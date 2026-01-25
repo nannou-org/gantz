@@ -391,8 +391,10 @@ where
     }
 
     // Use compile to create the evaluation order, steps, and statements
-    let meta = compile::Meta::from_graph(env, g);
+    // TODO: Propagate error once `nested_expr` returns a `Result`.
+    let meta = compile::Meta::from_graph(env, g).unwrap();
     let outlet_ids: Vec<_> = outlets(env, g).map(|n_ref| n_ref.id()).collect();
+    // TODO: Propagate error once `nested_expr` returns a `Result`.
     let flow_graph = compile::flow_graph(
         &meta,
         inlet_ids
@@ -401,7 +403,8 @@ where
         outlet_ids
             .iter()
             .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
-    );
+    )
+    .unwrap();
     let stmts = compile::eval_fn_body(
         path,
         &meta.graph,

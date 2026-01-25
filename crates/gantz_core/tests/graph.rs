@@ -91,7 +91,7 @@ fn test_graph_push_eval() {
     let env = ();
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::compile::module(&env, &g);
+    let module = gantz_core::compile::module(&env, &g).unwrap();
     // Function per node alongside the single push eval function.
     assert_eq!(module.len(), g.node_count() + 1);
 
@@ -151,7 +151,7 @@ fn test_graph_pull_eval() {
     let env = ();
 
     // Generate the steel module.
-    let module = gantz_core::compile::module(&env, &g);
+    let module = gantz_core::compile::module(&env, &g).unwrap();
 
     // Prepare the VM.
     let mut vm = Engine::new_base();
@@ -253,7 +253,7 @@ fn test_graph_push_cond_eval() {
     let env = ();
 
     // Generate the module.
-    let module = gantz_core::compile::module(&env, &g);
+    let module = gantz_core::compile::module(&env, &g).unwrap();
     // Function per node alongside the two push eval functions.
     assert_eq!(module.len(), g.node_count() + 2);
 
@@ -326,7 +326,7 @@ fn test_graph_eval_should_panic() {
     let env = ();
 
     // Generate the steel module.
-    let module = gantz_core::compile::module(&env, &g);
+    let module = gantz_core::compile::module(&env, &g).unwrap();
 
     // Prepare the VM.
     let mut vm = Engine::new_base();
@@ -404,7 +404,7 @@ fn test_graph_push_eval_subset() {
     let env = ();
 
     // Generate the module
-    let module = gantz_core::compile::module(&env, &g);
+    let module = gantz_core::compile::module(&env, &g).unwrap();
 
     // Create the VM
     let mut vm = Engine::new_base();

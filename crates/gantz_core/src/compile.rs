@@ -9,6 +9,8 @@ use crate::{
 #[doc(inline)]
 pub use codegen::{eval_fn_body, pull_eval_fn_name, push_eval_fn_name};
 #[doc(inline)]
+pub use error::ModuleError;
+#[doc(inline)]
 pub use flow::{Block, Flow, FlowGraph, NodeConf, NodeConns, flow_graph};
 #[doc(inline)]
 pub use meta::{EdgeKind, Meta, MetaGraph};
@@ -21,6 +23,7 @@ use std::{collections::HashSet, hash::Hash};
 use steel::parser::ast::ExprKind;
 
 mod codegen;
+pub mod error;
 mod flow;
 mod meta;
 mod rosetree;
@@ -262,7 +265,7 @@ where
 /// 1. A function for each node (and for each node input configuration).
 /// 2. A function for each node requiring push/pull evaluation.
 /// 3. The above for all nested graphs.
-pub fn module<Env, G>(env: &Env, g: G) -> Vec<ExprKind>
+pub fn module<Env, G>(env: &Env, g: G) -> Result<Vec<ExprKind>, ModuleError>
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G::NodeWeight: Node<Env>,
@@ -272,7 +275,8 @@ where
     crate::graph::visit(env, g, &[], &mut meta_tree);
 
     // Derive control flow graphs from the meta graphs.
-    let flow_tree = meta_tree.map_ref(&mut |meta| (meta, Flow::from_meta(meta)));
+    let flow_tree =
+        meta_tree.try_map_ref(&mut |meta| Flow::from_meta(meta).map(|flow| (meta, flow)))?;
 
     // Collect node fns.
     let node_confs_tree = flow_tree.map_ref(&mut |(_, flow)| codegen::unique_node_confs(flow));
@@ -280,5 +284,5 @@ where
 
     // Collect eval fns.
     let eval_fns = codegen::eval_fns(&flow_tree);
-    node_fns.into_iter().chain(eval_fns).collect()
+    Ok(node_fns.into_iter().chain(eval_fns).collect())
 }
