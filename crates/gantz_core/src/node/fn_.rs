@@ -5,7 +5,6 @@ use crate::{
     visit,
 };
 use serde::{Deserialize, Serialize};
-use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// A node that emits a lambda function wrapping another node's expression.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
@@ -37,11 +36,11 @@ where
     ///
     /// The returned function receives a number of arguments equal to the inner
     /// node's `Node::n_inputs` count.
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
         // Only emit a lambda in the case that some input is connected for
         // receiving bangs. Otherwise, we'll just emit an empty list.
         if ctx.inputs().get(0).and_then(|conn| conn.as_ref()).is_none() {
-            return Engine::emit_ast("'()").unwrap().into_iter().next().unwrap();
+            return node::parse_expr("'()");
         }
 
         // Lookup the node for the given address.
@@ -50,14 +49,20 @@ where
 
         // Validate the node (must be stateless and non-branching).
         if node.stateful(env) {
-            panic!("nodes used as functions must be stateless");
+            return Err(node::ExprError::custom(
+                "nodes used as functions must be stateless",
+            ));
         }
         if !node.branches(env).is_empty() {
-            panic!("nodes used as functions must not branch");
+            return Err(node::ExprError::custom(
+                "nodes used as functions must not branch",
+            ));
         }
         let n_outputs = node.n_outputs(env);
         if n_outputs > 1 {
-            panic!("nodes used as functions must have at most one output");
+            return Err(node::ExprError::custom(
+                "nodes used as functions must have at most one output",
+            ));
         }
 
         // Generate the node's expression with a placeholder path.
@@ -67,17 +72,13 @@ where
         let outputs = node::Conns::connected(n_outputs).unwrap();
         let path = ctx.path();
         let ectx = node::ExprCtx::new(env, path, &input_refs, &outputs);
-        let expr = node.expr(ectx);
+        let expr = node.expr(ectx)?;
 
         // Create the lambda that we'll return.
         let expr_str = expr.to_pretty(80);
         let params_str = params.join(" ");
         let lambda_expr = format!("(lambda ({}) {})", params_str, expr_str);
-        Engine::emit_ast(&lambda_expr)
-            .unwrap()
-            .into_iter()
-            .next()
-            .unwrap()
+        node::parse_expr(&lambda_expr)
     }
 
     fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {

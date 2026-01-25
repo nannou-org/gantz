@@ -30,6 +30,30 @@ pub struct InvalidOutputIndex {
 #[error("nested graph not found at path {0:?}")]
 pub struct NestedGraphNotFound(pub Vec<node::Id>);
 
+/// Expression generation failed for a node.
+#[derive(Debug)]
+pub struct NodeExprError {
+    /// The path to the node that failed.
+    pub path: Vec<node::Id>,
+    /// The underlying error.
+    pub error: node::ExprError,
+}
+
+/// Error during node function generation.
+#[derive(Debug, Error)]
+pub enum NodeFnError {
+    /// A nested graph was not found.
+    #[error(transparent)]
+    NestedGraphNotFound(#[from] NestedGraphNotFound),
+    /// Expression generation failed.
+    #[error(transparent)]
+    Expr(#[from] NodeExprError),
+}
+
+/// Multiple errors encountered during node function generation.
+#[derive(Debug)]
+pub struct NodeFnErrors(pub Vec<NodeFnError>);
+
 /// Error when computing node connections from graph edges.
 #[derive(Debug, Error)]
 pub enum NodeConnsError {
@@ -83,6 +107,9 @@ pub enum ModuleError {
     /// Multiple errors during meta collection.
     #[error(transparent)]
     MetaErrors(#[from] MetaErrors),
+    /// Multiple errors during node function generation.
+    #[error(transparent)]
+    NodeFnErrors(#[from] NodeFnErrors),
 }
 
 impl fmt::Display for MetaError {
@@ -108,6 +135,29 @@ impl fmt::Display for MetaErrors {
     }
 }
 
+impl fmt::Display for NodeExprError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "node-{}: {}",
+            super::codegen::path_string(&self.path),
+            self.error
+        )
+    }
+}
+
+impl fmt::Display for NodeFnErrors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, err) in self.0.iter().enumerate() {
+            if i > 0 {
+                writeln!(f)?;
+            }
+            write!(f, "{err}")?;
+        }
+        Ok(())
+    }
+}
+
 impl std::error::Error for MetaError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.error)
@@ -115,3 +165,11 @@ impl std::error::Error for MetaError {
 }
 
 impl std::error::Error for MetaErrors {}
+
+impl std::error::Error for NodeExprError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+impl std::error::Error for NodeFnErrors {}

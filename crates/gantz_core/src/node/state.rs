@@ -7,7 +7,6 @@ use gantz_ca::CaHash;
 use steel::{
     SteelErr, SteelVal,
     gc::Gc,
-    parser::ast::ExprKind,
     rerrs::ErrorKind,
     rvals::{FromSteelVal, IntoSteelVal, SteelHashMap},
     steel_vm::engine::Engine,
@@ -97,7 +96,7 @@ where
         self.node.branches(env)
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
         self.node.expr(ctx)
     }
 

@@ -10,14 +10,16 @@
 use crate::{
     Edge,
     compile::{
-        Flow, NodeConf, NodeConns, RoseTree, codegen::path_string, error::NestedGraphNotFound,
+        Flow, NodeConf, NodeConns, RoseTree,
+        codegen::path_string,
+        error::{NestedGraphNotFound, NodeExprError, NodeFnError, NodeFnErrors},
     },
     node::{self, Node},
     visit::{self, Visitor},
 };
 use petgraph::visit::{Data, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, Visitable};
 use std::collections::BTreeSet;
-use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
+use steel::parser::ast::ExprKind;
 
 /// The set of all node input/output configurations for a single graph.
 ///
@@ -30,7 +32,7 @@ type NodeConfs = BTreeSet<NodeConf>;
 struct NodeFns<'a> {
     tree: &'a RoseTree<NodeConfs>,
     fns: Vec<ExprKind>,
-    errors: Vec<NestedGraphNotFound>,
+    errors: Vec<NodeFnError>,
 }
 
 impl<'a> NodeFns<'a> {
@@ -59,7 +61,8 @@ impl<'pl, Env> Visitor<Env> for NodeFns<'pl> {
         let tree = match self.tree.tree(plan_path) {
             Some(t) => t,
             None => {
-                self.errors.push(NestedGraphNotFound(plan_path.to_vec()));
+                self.errors
+                    .push(NestedGraphNotFound(plan_path.to_vec()).into());
                 return;
             }
         };
@@ -80,8 +83,16 @@ impl<'pl, Env> Visitor<Env> for NodeFns<'pl> {
         let range = (Included(start), Excluded(end));
         let input_confs = tree.elem.range(range);
         for conf in input_confs {
-            self.fns
-                .push(node_fn(ctx.env(), node, node_path, &conf.conns));
+            match node_fn(ctx.env(), node, node_path, &conf.conns) {
+                Ok(fn_expr) => self.fns.push(fn_expr),
+                Err(error) => self.errors.push(
+                    NodeExprError {
+                        path: node_path.to_vec(),
+                        error,
+                    }
+                    .into(),
+                ),
+            }
         }
     }
 }
@@ -125,7 +136,7 @@ pub(crate) fn node_fn<Env>(
     node: &dyn Node<Env>,
     node_path: &[node::Id],
     conns: &NodeConns,
-) -> ExprKind {
+) -> Result<ExprKind, node::ExprError> {
     // The binding used to receive the node's state as an argument, and whose
     // resulting value is returned from the body of the function and used to
     // update the state map.
@@ -153,7 +164,7 @@ pub(crate) fn node_fn<Env>(
 
     // Get the node's expression
     let ctx = node::ExprCtx::new(env, node_path, &input_exprs, &conns.outputs);
-    let node_expr = node.expr(ctx);
+    let node_expr = node.expr(ctx)?;
 
     // Construct the full function definition
     // FIXME: Remove this when switching to `flow::NodeConf`.
@@ -167,11 +178,7 @@ pub(crate) fn node_fn<Env>(
     let fn_args = input_args.join(" ");
     let fn_def = format!("(define ({fn_name} {fn_args}) {fn_body})");
 
-    Engine::emit_ast(&fn_def)
-        .expect("Failed to emit AST for node function")
-        .into_iter()
-        .next()
-        .unwrap()
+    node::parse_expr(&fn_def)
 }
 
 /// Given a gantz graph and a rose tree with the associated node configs,
@@ -180,15 +187,15 @@ pub(crate) fn node_fns<Env, G>(
     env: &Env,
     g: G,
     node_confs_tree: &RoseTree<NodeConfs>,
-) -> Result<Vec<ExprKind>, NestedGraphNotFound>
+) -> Result<Vec<ExprKind>, NodeFnErrors>
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G::NodeWeight: Node<Env>,
 {
     let mut node_fns = NodeFns::new(node_confs_tree);
     crate::graph::visit(env, g, &[], &mut node_fns);
-    if let Some(e) = node_fns.errors.into_iter().next() {
-        return Err(e);
+    if !node_fns.errors.is_empty() {
+        return Err(NodeFnErrors(node_fns.errors));
     }
     Ok(node_fns.fns)
 }

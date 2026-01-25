@@ -4,8 +4,6 @@ use crate::widget::node_inspector;
 use crate::{NodeCtx, NodeUi};
 use gantz_core::node;
 use serde::{Deserialize, Serialize};
-use steel::parser::ast::ExprKind;
-use steel::steel_vm::engine::Engine;
 
 /// A transparent comment node for documenting graphs.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
@@ -42,13 +40,9 @@ impl<Env> gantz_core::Node<Env> for Comment {
     }
 
     // Comments don't evaluate to anything
-    fn expr(&self, _ctx: node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, _ctx: node::ExprCtx<Env>) -> node::ExprResult {
         // Return void/empty expression since comments don't compute anything
-        Engine::emit_ast("void")
-            .unwrap()
-            .into_iter()
-            .next()
-            .unwrap()
+        node::parse_expr("void")
     }
 }
 

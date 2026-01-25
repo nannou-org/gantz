@@ -2,7 +2,6 @@
 
 use crate::node;
 use serde::{Deserialize, Serialize};
-use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// The name used for the identity node in the registry.
 pub const IDENTITY_NAME: &str = "id";
@@ -23,7 +22,7 @@ impl<Env> node::Node<Env> for Identity {
         1
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
         let inputs = ctx.inputs();
 
         // Simply return the input unchanged
@@ -32,7 +31,7 @@ impl<Env> node::Node<Env> for Identity {
             _ => "'()".to_string(),
         };
 
-        Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
+        node::parse_expr(&expr)
     }
 }
 

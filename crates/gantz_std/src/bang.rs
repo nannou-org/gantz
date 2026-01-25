@@ -1,4 +1,3 @@
-use gantz_core::steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 use serde::{Deserialize, Serialize};
 
 /// A simple node for pushing evaluation through the graph.
@@ -10,8 +9,8 @@ impl<Env> gantz_core::Node<Env> for Bang {
         1
     }
 
-    fn expr(&self, _ctx: gantz_core::node::ExprCtx<Env>) -> ExprKind {
-        Engine::emit_ast("'()").unwrap().into_iter().next().unwrap()
+    fn expr(&self, _ctx: gantz_core::node::ExprCtx<Env>) -> gantz_core::node::ExprResult {
+        gantz_core::node::parse_expr("'()")
     }
 
     fn push_eval(&self, _: &Env) -> Vec<gantz_core::node::EvalConf> {

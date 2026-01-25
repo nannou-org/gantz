@@ -19,7 +19,7 @@ use std::{
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
 };
-use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
+use steel::steel_vm::engine::Engine;
 
 /// The graph type used by the graph node to represent its nested graph.
 pub type Graph<N> = petgraph::stable_graph::StableGraph<N, Edge, Directed, Index>;
@@ -92,7 +92,7 @@ where
         vec![]
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
         nested_expr(ctx.env(), self, ctx.path(), ctx.inputs())
     }
 
@@ -127,7 +127,7 @@ where
         self.graph.branches(env)
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
         self.graph.expr(ctx)
     }
 
@@ -244,13 +244,8 @@ impl<Env> Node<Env> for Inlet {
     /// - eval_stmt creates simple aliases to these bindings rather than calling node functions
     ///
     /// Returns `'()` as a safe fallback in case this is ever called outside normal compilation.
-    fn expr(&self, _ctx: node::ExprCtx<Env>) -> ExprKind {
-        Engine::emit_ast("'()")
-            .expect("failed to emit AST")
-            .into_iter()
-            .next()
-            .unwrap()
-            .into()
+    fn expr(&self, _ctx: node::ExprCtx<Env>) -> node::ExprResult {
+        node::parse_expr("'()")
     }
 
     fn n_inputs(&self, _env: &Env) -> usize {
@@ -275,13 +270,8 @@ impl<Env> Node<Env> for Outlet {
     /// - Outlet values are read directly from source node output bindings by nested_expr
     ///
     /// Returns `'()` as a safe fallback in case this is ever called outside normal compilation.
-    fn expr(&self, _ctx: node::ExprCtx<Env>) -> ExprKind {
-        Engine::emit_ast("'()")
-            .expect("failed to emit AST")
-            .into_iter()
-            .next()
-            .unwrap()
-            .into()
+    fn expr(&self, _ctx: node::ExprCtx<Env>) -> node::ExprResult {
+        node::parse_expr("'()")
     }
 
     fn n_inputs(&self, _env: &Env) -> usize {
@@ -367,7 +357,7 @@ pub fn nested_expr<Env, G>(
     g: G,
     path: &[node::Id],
     inputs: &[Option<String>],
-) -> ExprKind
+) -> node::ExprResult
 where
     G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable + Data<EdgeWeight = Edge>,
     G::NodeWeight: Node<Env>,
@@ -390,11 +380,9 @@ where
         inlet_bindings.push(binding);
     }
 
-    // Use compile to create the evaluation order, steps, and statements
-    // TODO: Propagate error once `nested_expr` returns a `Result`.
-    let meta = compile::Meta::from_graph(env, g).unwrap();
+    // Use compile to create the evaluation order, steps, and statements.
+    let meta = compile::Meta::from_graph(env, g).map_err(|e| node::ExprError::custom(e))?;
     let outlet_ids: Vec<_> = outlets(env, g).map(|n_ref| n_ref.id()).collect();
-    // TODO: Propagate error once `nested_expr` returns a `Result`.
     let flow_graph = compile::flow_graph(
         &meta,
         inlet_ids
@@ -404,8 +392,7 @@ where
             .iter()
             .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
     )
-    .unwrap();
-    // TODO: Propagate error once `nested_expr` returns a `Result`.
+    .map_err(|e| node::ExprError::custom(e))?;
     let stmts = compile::eval_fn_body(
         path,
         &meta.graph,
@@ -414,7 +401,7 @@ where
         &meta.outlets,
         &flow_graph,
     )
-    .unwrap();
+    .map_err(|e| node::ExprError::custom(e))?;
 
     // Combine inlet bindings with graph evaluation steps
     let all_stmts = inlet_bindings
@@ -462,10 +449,5 @@ where
             all_stmts
         )
     };
-    Engine::emit_ast(&expr_str)
-        .expect("failed to emit AST for nested expr")
-        .into_iter()
-        .next()
-        .unwrap()
-        .into()
+    node::parse_expr(&expr_str)
 }

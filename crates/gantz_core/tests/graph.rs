@@ -5,7 +5,6 @@ use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
 use std::fmt::Debug;
 use steel::SteelVal;
-use steel::parser::ast::ExprKind;
 use steel::steel_vm::engine::Engine;
 
 fn node_push() -> node::Push<(), node::Expr> {
@@ -212,7 +211,7 @@ fn test_graph_push_cond_eval() {
             ]
         }
 
-        fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+        fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
             let x = ctx.inputs()[0].as_deref().expect("must have one input");
             let expr = format!(
                 r#"
@@ -221,7 +220,7 @@ fn test_graph_push_cond_eval() {
                   (list 1 '())) ; 1 index for right branch, '() for empty value
             "#
             );
-            Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
+            node::parse_expr(&expr)
         }
     }
 
@@ -372,7 +371,7 @@ fn test_graph_push_eval_subset() {
             2
         }
 
-        fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+        fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
             let Src(a, b) = *self;
             let outputs = ctx.outputs();
             let expr = match (outputs.get(0).unwrap(), outputs.get(1).unwrap()) {
@@ -383,7 +382,7 @@ fn test_graph_push_eval_subset() {
                 // Otherwise return both in a list.
                 _ => format!("(list {a} {b})"),
             };
-            Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
+            node::parse_expr(&expr)
         }
     }
 

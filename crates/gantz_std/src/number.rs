@@ -1,4 +1,4 @@
-use gantz_core::steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
+use gantz_core::steel::{SteelVal, steel_vm::engine::Engine};
 use serde::{Deserialize, Serialize};
 
 /// A number stored in state. Can be updated via the first input.
@@ -18,7 +18,7 @@ impl<Env> gantz_core::Node<Env> for Number {
         vec![gantz_core::node::EvalConf::All]
     }
 
-    fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> gantz_core::node::ExprResult {
         let expr = match ctx.inputs().get(0) {
             // If an input value was provided, use it to update state and
             // forward that value.
@@ -28,7 +28,7 @@ impl<Env> gantz_core::Node<Env> for Number {
             // If no input value was provided, forward the value in state.
             _ => "(begin state)".to_string(),
         };
-        Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
+        gantz_core::node::parse_expr(&expr)
     }
 
     fn stateful(&self, _env: &Env) -> bool {

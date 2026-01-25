@@ -5,7 +5,7 @@ pub use crate::visit::{self, Visitor};
 pub use apply::Apply;
 #[doc(inline)]
 pub use conns::Conns;
-pub use expr::{Expr, ExprError};
+pub use expr::{Expr, ExprNewError};
 pub use fn_::Fn;
 use gantz_ca::CaHash;
 pub use graph::GraphNode;
@@ -80,7 +80,7 @@ pub trait Node<Env> {
     /// If [`Node::n_outputs`] is 1, the expr should result in a single value.
     ///
     /// If [`Node::n_outputs`] is > 1, the expr should result in a list of values.
-    fn expr(&self, ctx: ExprCtx<Env>) -> ExprKind;
+    fn expr(&self, ctx: ExprCtx<Env>) -> ExprResult;
 
     /// Specifies whether or not code should be generated to allow for push
     /// evaluation from instances of this node. Enabling push evaluation allows
@@ -228,6 +228,14 @@ pub struct Input(pub u16);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct Output(pub u16);
 
+/// Error during expression generation.
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct ExprError(Box<str>);
+
+/// Result type for expression generation.
+pub type ExprResult = Result<ExprKind, ExprError>;
+
 impl<'a, Env> ExprCtx<'a, Env> {
     pub(crate) fn new(
         env: &'a Env,
@@ -299,7 +307,7 @@ where
         (**self).branches(env)
     }
 
-    fn expr(&self, ctx: ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: ExprCtx<Env>) -> ExprResult {
         (**self).expr(ctx)
     }
 
@@ -354,7 +362,7 @@ macro_rules! impl_node_for_ptr {
                 (**self).branches(env)
             }
 
-            fn expr(&self, ctx: ExprCtx<Env>) -> ExprKind {
+            fn expr(&self, ctx: ExprCtx<Env>) -> ExprResult {
                 (**self).expr(ctx)
             }
 
@@ -420,6 +428,13 @@ impl From<u16> for Output {
     }
 }
 
+impl ExprError {
+    /// Create an error from any displayable value.
+    pub fn custom(msg: impl std::fmt::Display) -> Self {
+        Self(msg.to_string().into_boxed_str())
+    }
+}
+
 impl CaHash for EvalConf {
     fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         const ALL_TAG: u8 = 0;
@@ -439,8 +454,17 @@ impl CaHash for EvalConf {
 /// Create a node from the given Steel expression.
 ///
 /// Shorthand for `node::Expr::new`.
-pub fn expr(expr: impl Into<String>) -> Result<Expr, ExprError> {
+pub fn expr(expr: impl Into<String>) -> Result<Expr, ExprNewError> {
     Expr::new(expr)
+}
+
+/// Parse a Steel expression string, returning an [`ExprResult`].
+pub fn parse_expr(src: &str) -> ExprResult {
+    let exprs = Engine::emit_ast(src).map_err(|e| ExprError::custom(e))?;
+    exprs
+        .into_iter()
+        .next()
+        .ok_or_else(|| ExprError::custom("empty expression"))
 }
 
 /// Visit this node and all nested nodes.
