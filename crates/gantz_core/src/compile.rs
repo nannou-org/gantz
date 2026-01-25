@@ -283,6 +283,6 @@ where
     let node_fns = codegen::node_fns(env, g, &node_confs_tree);
 
     // Collect eval fns.
-    let eval_fns = codegen::eval_fns(&flow_tree);
+    let eval_fns = codegen::eval_fns(&flow_tree)?;
     Ok(node_fns.into_iter().chain(eval_fns).collect())
 }

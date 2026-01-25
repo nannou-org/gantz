@@ -43,10 +43,24 @@ pub enum NodeConnsError {
     InvalidOutputIndex(#[from] InvalidOutputIndex),
 }
 
+/// Error during code generation.
+#[derive(Debug, Error)]
+pub enum CodegenError {
+    /// The node has too many inputs.
+    #[error(transparent)]
+    TooManyInputs(#[from] TooManyConns),
+    /// An edge references an invalid input index.
+    #[error(transparent)]
+    InvalidInputIndex(#[from] InvalidInputIndex),
+}
+
 /// Error when generating a module from a graph.
 #[derive(Debug, Error)]
 pub enum ModuleError {
     /// Error computing node connections.
     #[error(transparent)]
     NodeConns(#[from] NodeConnsError),
+    /// Error during code generation.
+    #[error(transparent)]
+    Codegen(#[from] CodegenError),
 }

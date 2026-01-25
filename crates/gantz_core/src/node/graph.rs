@@ -405,6 +405,7 @@ where
             .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
     )
     .unwrap();
+    // TODO: Propagate error once `nested_expr` returns a `Result`.
     let stmts = compile::eval_fn_body(
         path,
         &meta.graph,
@@ -412,7 +413,8 @@ where
         &meta.inlets,
         &meta.outlets,
         &flow_graph,
-    );
+    )
+    .unwrap();
 
     // Combine inlet bindings with graph evaluation steps
     let all_stmts = inlet_bindings
