@@ -1,6 +1,6 @@
 //! `Fn<NamedRef>` type alias and NodeUi implementation.
 
-use super::{NameRegistry, NamedRef, outdated_color};
+use super::{NameRegistry, NamedRef, missing_color, outdated_color};
 use crate::{NodeCtx, NodeUi, widget::node_inspector};
 
 /// A function node wrapping a named reference.
@@ -15,7 +15,7 @@ pub trait FnNodeNames: NameRegistry {
 
 impl<Env> NodeUi<Env> for FnNamedRef
 where
-    Env: FnNodeNames,
+    Env: FnNodeNames + gantz_core::node::ref_::NodeRegistry,
 {
     fn name(&self, _env: &Env) -> &str {
         "fn"
@@ -27,12 +27,16 @@ where
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
         let env = ctx.env();
-        let current_ca = env.name_ca(self.0.name());
-        let is_outdated = current_ca
-            .map(|ca| ca != self.0.content_addr())
-            .unwrap_or(false);
+        let ref_ca = self.0.content_addr();
 
-        // Auto-sync if enabled and outdated.
+        // Check if the referenced CA exists in registry.
+        let is_missing = env.node(&ref_ca).is_none();
+
+        // Check if outdated (name points to different CA).
+        let current_ca = env.name_ca(self.0.name());
+        let is_outdated = !is_missing && current_ca.map(|ca| ca != ref_ca).unwrap_or(false);
+
+        // Auto-sync if enabled and outdated (skip if missing).
         if self.0.sync && is_outdated {
             if let Some(ca) = current_ca {
                 self.0.set_ref(gantz_core::node::Ref::new(ca));
@@ -40,15 +44,20 @@ where
         }
 
         // Recalculate after potential sync.
-        let is_outdated = env
-            .name_ca(self.0.name())
-            .map(|ca| ca != self.0.content_addr())
-            .unwrap_or(false);
+        let ref_ca = self.0.content_addr();
+        let is_missing = env.node(&ref_ca).is_none();
+        let is_outdated = !is_missing
+            && env
+                .name_ca(self.0.name())
+                .map(|ca| ca != ref_ca)
+                .unwrap_or(false);
 
         uictx.framed(|ui| {
             ui.horizontal(|ui| {
                 let fn_res = ui.add(egui::Label::new("λ").selectable(false));
-                let name_text = if is_outdated {
+                let name_text = if is_missing {
+                    egui::RichText::new(self.0.name()).color(missing_color())
+                } else if is_outdated {
                     egui::RichText::new(self.0.name()).color(outdated_color())
                 } else {
                     egui::RichText::new(self.0.name())

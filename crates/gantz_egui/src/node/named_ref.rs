@@ -10,6 +10,11 @@ pub fn outdated_color() -> egui::Color32 {
     egui::Color32::from_rgb(200, 150, 50)
 }
 
+/// The error color used for missing references.
+pub fn missing_color() -> egui::Color32 {
+    egui::Color32::from_rgb(200, 80, 80)
+}
+
 /// A node that references another node by name and content address.
 ///
 /// Similar to [`gantz_core::node::Ref`], but also stores the human-readable
@@ -127,7 +132,7 @@ impl gantz_ca::CaHash for NamedRef {
 
 impl<Env> NodeUi<Env> for NamedRef
 where
-    Env: NameRegistry,
+    Env: NameRegistry + gantz_core::node::ref_::NodeRegistry,
 {
     fn name(&self, _env: &Env) -> &str {
         &self.name
@@ -139,11 +144,16 @@ where
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
         let env = ctx.env();
-        let current_ca = env.name_ca(&self.name);
         let ref_ca = self.ref_.content_addr();
-        let is_outdated = current_ca.map(|ca| ca != ref_ca).unwrap_or(false);
 
-        // Auto-sync if enabled and outdated.
+        // Check if the referenced CA exists in registry.
+        let is_missing = env.node(&ref_ca).is_none();
+
+        // Check if outdated (name points to different CA).
+        let current_ca = env.name_ca(&self.name);
+        let is_outdated = !is_missing && current_ca.map(|ca| ca != ref_ca).unwrap_or(false);
+
+        // Auto-sync if enabled and outdated (skip if missing).
         if self.sync && is_outdated {
             if let Some(ca) = current_ca {
                 self.ref_ = gantz_core::node::Ref::new(ca);
@@ -151,14 +161,19 @@ where
         }
 
         // Recalculate after potential sync.
-        let is_outdated = env
-            .name_ca(&self.name)
-            .map(|ca| ca != self.ref_.content_addr())
-            .unwrap_or(false);
+        let ref_ca = self.ref_.content_addr();
+        let is_missing = env.node(&ref_ca).is_none();
+        let is_outdated = !is_missing
+            && env
+                .name_ca(&self.name)
+                .map(|ca| ca != ref_ca)
+                .unwrap_or(false);
 
-        // Regular frame, warning color only on name if outdated.
+        // Regular frame, error color if missing, warning color if outdated.
         let response = uictx.framed(|ui| {
-            let name_text = if is_outdated {
+            let name_text = if is_missing {
+                egui::RichText::new(&self.name).color(missing_color())
+            } else if is_outdated {
                 egui::RichText::new(&self.name).color(outdated_color())
             } else {
                 egui::RichText::new(&self.name)
@@ -180,10 +195,14 @@ where
     fn inspector_rows(&mut self, ctx: &mut NodeCtx<Env>, body: &mut egui_extras::TableBody) {
         let row_h = node_inspector::table_row_h(body.ui_mut());
         let env = ctx.env();
+        let ref_ca = self.ref_.content_addr();
+
+        // Check if the referenced CA exists in registry.
+        let is_missing = env.node(&ref_ca).is_none();
+
+        // Check if outdated (name points to different CA).
         let current_ca = env.name_ca(&self.name);
-        let is_outdated = current_ca
-            .map(|ca| ca != self.ref_.content_addr())
-            .unwrap_or(false);
+        let is_outdated = !is_missing && current_ca.map(|ca| ca != ref_ca).unwrap_or(false);
 
         // CA row.
         body.row(row_h, |mut row| {
@@ -207,8 +226,19 @@ where
             });
         });
 
-        // Status row - only shown when sync is disabled and outdated.
-        if !self.sync && is_outdated {
+        // Status row for missing CA.
+        if is_missing {
+            body.row(row_h, |mut row| {
+                row.col(|ui| {
+                    ui.label("status");
+                });
+                row.col(|ui| {
+                    let err_text = egui::RichText::new("missing").color(missing_color());
+                    ui.label(err_text);
+                });
+            });
+        // Status row for outdated CA - only shown when sync is disabled.
+        } else if !self.sync && is_outdated {
             if let Some(latest_ca) = current_ca {
                 let current_short = self.ref_.content_addr().display_short().to_string();
                 let latest_short = latest_ca.display_short().to_string();

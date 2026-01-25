@@ -557,7 +557,10 @@ fn open_head(
     }
 
     // Head is not open - add it as a new tab.
-    let graph = env.registry.head_graph(&new_head).unwrap();
+    let Some(graph) = env.registry.head_graph(&new_head) else {
+        bevy::log::error!("cannot open head: graph missing from registry");
+        return;
+    };
     let new_graph = graph::clone(graph);
 
     // Load the views for this head's commit, or create empty.
@@ -602,7 +605,10 @@ fn replace_head(
     let old_head = open.heads[ix].0.clone();
 
     // Load the new graph.
-    let graph = env.registry.head_graph(&new_head).unwrap();
+    let Some(graph) = env.registry.head_graph(&new_head) else {
+        bevy::log::error!("cannot replace head: graph missing from registry");
+        return;
+    };
     let new_graph = graph::clone(graph);
 
     // Load the views for this head's commit, or create empty.
