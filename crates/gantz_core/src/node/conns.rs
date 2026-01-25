@@ -41,7 +41,7 @@ impl Conns {
     ///
     /// All connections are initialised as unconnected.
     ///
-    /// Returns `Err` if `len` is out of range of [`MAX`].
+    /// Returns `Err` if `len` is out of range of [`Self::MAX`].
     pub fn unconnected(len: usize) -> Result<Self, OutOfBoundsError> {
         if len > Self::MAX {
             Err(OutOfBoundsError)
@@ -57,7 +57,7 @@ impl Conns {
     ///
     /// All connections are initialised as connected.
     ///
-    /// Returns `Err` if `len` is out of range of [`MAX`].
+    /// Returns `Err` if `len` is out of range of [`Self::MAX`].
     pub fn connected(len: usize) -> Result<Self, OutOfBoundsError> {
         let mut conns = Self::unconnected(len)?;
         for i in 0..len {
@@ -76,7 +76,7 @@ impl Conns {
 
     /// Creates a new `Conns` with the given slice of connection states.
     ///
-    /// Returns `Err` if `len` is out of range of [`MAX`].
+    /// Returns `Err` if `len` is out of range of [`Self::MAX`].
     pub fn try_from_slice(arr: &[bool]) -> Result<Self, OutOfBoundsError> {
         let mut conns = Self::unconnected(arr.len())?;
         for (i, &b) in arr.iter().enumerate() {
@@ -87,7 +87,7 @@ impl Conns {
 
     /// Creates a new `Conns` with the given iterator yielding connection states.
     ///
-    /// Returns `Err` if `len` is out of range of [`MAX`].
+    /// Returns `Err` if `len` is out of range of [`Self::MAX`].
     pub fn try_from_iter(iter: impl IntoIterator<Item = bool>) -> Result<Self, OutOfBoundsError> {
         let mut count = 0;
         let mut conns = Self::unconnected(Self::MAX).unwrap();

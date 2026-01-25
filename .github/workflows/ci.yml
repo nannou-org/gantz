@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: "-D warnings"
+      RUSTDOCFLAGS: "-D warnings"
     strategy:
       fail-fast: false
       matrix:

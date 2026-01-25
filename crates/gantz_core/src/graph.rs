@@ -1,5 +1,4 @@
-//! Provides [`visit`](crate::graph::visit) and [`register`] fns for generic
-//! gantz graphs.
+//! Provides [`visit()`] and [`register()`] fns for generic gantz graphs.
 
 use std::{
     collections::HashSet,

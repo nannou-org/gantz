@@ -170,7 +170,7 @@ pub trait Node<Env> {
     /// 3. `Visitor::visit_post`
     ///
     /// Note that implementations should *only* visit nested nodes and not the
-    /// node itself. To visit the node *and* all nested nodes, use the [`visit`]
+    /// node itself. To visit the node *and* all nested nodes, use the [`visit()`]
     /// function.
     fn visit(&self, _ctx: visit::Ctx<Env>, _visitor: &mut dyn Visitor<Env>) {}
 }

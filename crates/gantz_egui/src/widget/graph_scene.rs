@@ -121,7 +121,7 @@ where
     }
 
     /// Whether or not to automatically layout the graph using
-    /// [`egui_graph::layout`].
+    /// [`egui_graph::layout()`].
     ///
     /// Default: `false`
     pub fn auto_layout(mut self, auto: bool) -> Self {
