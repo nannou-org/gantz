@@ -2740,9 +2740,19 @@ name = "gantz_ca"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "gantz_ca_derive",
  "hex",
  "petgraph",
  "serde",
+]
+
+[[package]]
+name = "gantz_ca_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

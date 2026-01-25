@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 blake3.workspace = true
+gantz_ca_derive.workspace = true
 hex.workspace = true
 petgraph.workspace = true
 serde.workspace = true

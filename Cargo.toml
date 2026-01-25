@@ -48,6 +48,7 @@ egui_graph = "0.11"
 egui_tiles = "0.14"
 env_logger = { version = "0.11", default-features = false }
 gantz_ca = { version = "0.1.0", path = "crates/gantz_ca" }
+gantz_ca_derive = { version = "0.1.0", path = "crates/gantz_ca_derive" }
 gantz_core = { version = "0.1.0", path = "crates/gantz_core" }
 gantz_egui = { version = "0.1.0", path = "crates/gantz_egui" }
 gantz_std = { version = "0.1.0", path = "crates/gantz_std" }
