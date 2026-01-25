@@ -1,6 +1,7 @@
 //! Error types for the compile module.
 
 use crate::node;
+use std::fmt;
 use thiserror::Error;
 
 /// Too many connections for a node (exceeds [`node::Conns::MAX`]).
@@ -43,6 +44,19 @@ pub enum NodeConnsError {
     InvalidOutputIndex(#[from] InvalidOutputIndex),
 }
 
+/// A node connection error with the path to the failing node.
+#[derive(Debug)]
+pub struct MetaError {
+    /// The path to the node that caused the error.
+    pub path: Vec<node::Id>,
+    /// The underlying error.
+    pub error: NodeConnsError,
+}
+
+/// Multiple errors encountered during meta collection.
+#[derive(Debug)]
+pub struct MetaErrors(pub Vec<MetaError>);
+
 /// Error during code generation.
 #[derive(Debug, Error)]
 pub enum CodegenError {
@@ -63,4 +77,41 @@ pub enum ModuleError {
     /// Error during code generation.
     #[error(transparent)]
     Codegen(#[from] CodegenError),
+    /// A nested graph was not found.
+    #[error(transparent)]
+    NestedGraphNotFound(#[from] NestedGraphNotFound),
+    /// Multiple errors during meta collection.
+    #[error(transparent)]
+    MetaErrors(#[from] MetaErrors),
 }
+
+impl fmt::Display for MetaError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "node-{}: {}",
+            super::codegen::path_string(&self.path),
+            self.error
+        )
+    }
+}
+
+impl fmt::Display for MetaErrors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, err) in self.0.iter().enumerate() {
+            if i > 0 {
+                writeln!(f)?;
+            }
+            write!(f, "{err}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for MetaError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+impl std::error::Error for MetaErrors {}

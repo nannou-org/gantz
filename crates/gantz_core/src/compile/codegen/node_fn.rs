@@ -9,7 +9,9 @@
 
 use crate::{
     Edge,
-    compile::{Flow, NodeConf, NodeConns, RoseTree, codegen::path_string},
+    compile::{
+        Flow, NodeConf, NodeConns, RoseTree, codegen::path_string, error::NestedGraphNotFound,
+    },
     node::{self, Node},
     visit::{self, Visitor},
 };
@@ -28,13 +30,17 @@ type NodeConfs = BTreeSet<NodeConf>;
 struct NodeFns<'a> {
     tree: &'a RoseTree<NodeConfs>,
     fns: Vec<ExprKind>,
+    errors: Vec<NestedGraphNotFound>,
 }
 
 impl<'a> NodeFns<'a> {
     /// Initialise the `NodeFns` visitor.
     fn new(tree: &'a RoseTree<NodeConfs>) -> Self {
-        let fns = vec![];
-        Self { tree, fns }
+        Self {
+            tree,
+            fns: vec![],
+            errors: vec![],
+        }
     }
 }
 
@@ -50,7 +56,13 @@ impl<'pl, Env> Visitor<Env> for NodeFns<'pl> {
         use std::ops::Bound::{Excluded, Included};
         let node_path = ctx.path();
         let plan_path = &node_path[..node_path.len() - 1];
-        let tree = self.tree.tree(&plan_path).unwrap();
+        let tree = match self.tree.tree(plan_path) {
+            Some(t) => t,
+            None => {
+                self.errors.push(NestedGraphNotFound(plan_path.to_vec()));
+                return;
+            }
+        };
         let id = ctx.id();
         let empty_conns = NodeConns {
             inputs: node::Conns::empty(),
@@ -168,12 +180,15 @@ pub(crate) fn node_fns<Env, G>(
     env: &Env,
     g: G,
     node_confs_tree: &RoseTree<NodeConfs>,
-) -> Vec<ExprKind>
+) -> Result<Vec<ExprKind>, NestedGraphNotFound>
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G::NodeWeight: Node<Env>,
 {
-    let mut node_fns = NodeFns::new(&node_confs_tree);
+    let mut node_fns = NodeFns::new(node_confs_tree);
     crate::graph::visit(env, g, &[], &mut node_fns);
-    node_fns.fns
+    if let Some(e) = node_fns.errors.into_iter().next() {
+        return Err(e);
+    }
+    Ok(node_fns.fns)
 }

@@ -12,6 +12,7 @@ pub use codegen::{eval_fn_body, pull_eval_fn_name, push_eval_fn_name};
 pub use error::ModuleError;
 #[doc(inline)]
 pub use flow::{Block, Flow, FlowGraph, NodeConf, NodeConns, flow_graph};
+use meta::MetaTree;
 #[doc(inline)]
 pub use meta::{EdgeKind, Meta, MetaGraph};
 use petgraph::visit::{
@@ -271,16 +272,20 @@ where
     G::NodeWeight: Node<Env>,
 {
     // Create a `Meta` for each graph (including nested) in a tree.
-    let mut meta_tree = RoseTree::<Meta>::default();
+    let mut meta_tree = MetaTree::default();
     crate::graph::visit(env, g, &[], &mut meta_tree);
+    if !meta_tree.errors.is_empty() {
+        return Err(error::MetaErrors(meta_tree.errors).into());
+    }
 
     // Derive control flow graphs from the meta graphs.
-    let flow_tree =
-        meta_tree.try_map_ref(&mut |meta| Flow::from_meta(meta).map(|flow| (meta, flow)))?;
+    let flow_tree = meta_tree
+        .tree
+        .try_map_ref(&mut |meta| Flow::from_meta(meta).map(|flow| (meta, flow)))?;
 
     // Collect node fns.
     let node_confs_tree = flow_tree.map_ref(&mut |(_, flow)| codegen::unique_node_confs(flow));
-    let node_fns = codegen::node_fns(env, g, &node_confs_tree);
+    let node_fns = codegen::node_fns(env, g, &node_confs_tree)?;
 
     // Collect eval fns.
     let eval_fns = codegen::eval_fns(&flow_tree)?;

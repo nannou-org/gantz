@@ -318,7 +318,7 @@ fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
 }
 
 /// The string used to represent a path in a fn name.
-fn path_string(path: &[node::Id]) -> String {
+pub(crate) fn path_string(path: &[node::Id]) -> String {
     path.iter()
         .map(|id| id.to_string())
         .collect::<Vec<_>>()

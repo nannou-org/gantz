@@ -4,7 +4,7 @@ use crate::{
     Edge,
     compile::{
         RoseTree,
-        error::{InvalidOutputIndex, NodeConnsError, TooManyConns},
+        error::{InvalidOutputIndex, MetaError, NodeConnsError, TooManyConns},
     },
     node::{self, Node},
     visit::{self, Visitor},
@@ -55,6 +55,18 @@ pub enum EdgeKind {
 /// Note that we use a `Vec<Edge>` in order to represent multiple edges
 /// between the same two nodes.
 pub type MetaGraph = petgraph::graphmap::DiGraphMap<node::Id, Vec<(Edge, EdgeKind)>>;
+
+/// A rose tree of [`Meta`] with error accumulation during visitation.
+///
+/// Errors encountered during the visitor traversal are accumulated in the
+/// `errors` field rather than panicking, allowing all errors to be reported.
+#[derive(Debug, Default)]
+pub(crate) struct MetaTree {
+    /// The rose tree of meta information for the graph and its nested graphs.
+    pub tree: RoseTree<Meta>,
+    /// Errors accumulated during the visitor traversal.
+    pub errors: Vec<MetaError>,
+}
 
 impl Meta {
     /// Construct a `Meta` for a single gantz graph.
@@ -159,25 +171,25 @@ impl Meta {
 
 /// Allow for constructing a rose-tree of `Meta`s (one for each graph) using
 /// the `Node::visit` implementation.
-///
-/// # Panics
-///
-/// Panics if a node has invalid connections. Proper error handling will be
-/// added when the [`Visitor`] trait supports fallibility.
-impl<Env> Visitor<Env> for RoseTree<Meta> {
+impl<Env> Visitor<Env> for MetaTree {
     fn visit_pre(&mut self, ctx: visit::Ctx<Env>, node: &dyn Node<Env>) {
         let node_path = ctx.path();
 
         // Ensure the plan for the graph owning this node exists, retrieve it.
         let tree_path = &node_path[..node_path.len() - 1];
-        let tree = self.tree_mut(tree_path);
+        let tree = self.tree.tree_mut(tree_path);
 
         // Insert the node.
         let id = ctx.id();
-        // TODO: Propagate error once Visitor supports fallibility.
-        tree.elem
+        if let Err(error) = tree
+            .elem
             .add_node(ctx.env(), id, node, ctx.inputs().iter().copied())
-            .unwrap();
+        {
+            self.errors.push(MetaError {
+                path: node_path.to_vec(),
+                error,
+            });
+        }
     }
 }
 
