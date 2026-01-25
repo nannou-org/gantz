@@ -1,7 +1,9 @@
+use gantz_ca::CaHash;
 use serde::{Deserialize, Serialize};
 
 /// Simple `Add` operation node.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.add")]
 pub struct Add;
 
 impl<Env> gantz_core::Node<Env> for Add {
@@ -23,11 +25,5 @@ impl<Env> gantz_core::Node<Env> for Add {
         };
         let expr = format!("(+ {l} {r})");
         gantz_core::node::parse_expr(&expr)
-    }
-}
-
-impl gantz_ca::CaHash for Add {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        "gantz_std::Add".hash(hasher);
     }
 }

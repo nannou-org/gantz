@@ -81,6 +81,12 @@ impl CaHash for str {
     }
 }
 
+impl CaHash for String {
+    fn hash(&self, hasher: &mut Hasher) {
+        hasher.update(self.as_bytes());
+    }
+}
+
 impl CaHash for [u8] {
     fn hash(&self, hasher: &mut Hasher) {
         hasher.update(&self[..]);

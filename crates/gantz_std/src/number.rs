@@ -1,8 +1,10 @@
+use gantz_ca::CaHash;
 use gantz_core::steel::{SteelVal, steel_vm::engine::Engine};
 use serde::{Deserialize, Serialize};
 
 /// A number stored in state. Can be updated via the first input.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.number")]
 pub struct Number;
 
 impl<Env> gantz_core::Node<Env> for Number {
@@ -37,11 +39,5 @@ impl<Env> gantz_core::Node<Env> for Number {
 
     fn register(&self, _env: &Env, path: &[gantz_core::node::Id], vm: &mut Engine) {
         gantz_core::node::state::init_value_if_absent(vm, path, || SteelVal::NumV(0.0)).unwrap()
-    }
-}
-
-impl gantz_ca::CaHash for Number {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        "gantz_std::Number".hash(hasher);
     }
 }

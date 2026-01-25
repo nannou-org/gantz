@@ -1,6 +1,7 @@
 //! A node that references another node by name and content address.
 
 use crate::{Cmd, NodeCtx, NodeUi, widget::node_inspector};
+use gantz_ca::CaHash;
 use gantz_core::node::{self, Node};
 use serde::{Deserialize, Serialize};
 use steel::steel_vm::engine::Engine;
@@ -20,7 +21,8 @@ pub fn missing_color() -> egui::Color32 {
 /// Similar to [`gantz_core::node::Ref`], but also stores the human-readable
 /// name associated with the reference. This allows for detecting when the
 /// name's current commit differs from the stored reference.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.named-ref")]
 pub struct NamedRef {
     /// The underlying reference by content address.
     ref_: gantz_core::node::Ref,
@@ -28,6 +30,7 @@ pub struct NamedRef {
     name: String,
     /// Whether to automatically sync to the latest commit.
     #[serde(default)]
+    #[cahash(skip)]
     pub(crate) sync: bool,
 }
 
@@ -119,14 +122,6 @@ where
 
     fn visit(&self, ctx: gantz_core::visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
         self.ref_.visit(ctx, visitor)
-    }
-}
-
-impl gantz_ca::CaHash for NamedRef {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        "gantz_egui::node::NamedRef".hash(hasher);
-        self.ref_.hash(hasher);
-        self.name.hash(hasher);
     }
 }
 

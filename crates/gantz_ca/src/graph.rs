@@ -75,7 +75,7 @@ where
     GraphAddr(ContentAddr(hasher.finalize().into()))
 }
 
-/// A more efficient alternative to [`graph`] for when the node content
+/// A more efficient alternative to [`addr`] for when the node content
 /// addresses are already known.
 pub fn addr_with_nodes<G>(g: G, nodes: &HashMap<G::NodeId, ContentAddr>) -> GraphAddr
 where
@@ -88,7 +88,7 @@ where
     GraphAddr(ContentAddr(hasher.finalize().into()))
 }
 
-/// The implementation of [`graph`] with hasher provided.
+/// The implementation of [`addr`] with hasher provided.
 pub fn hash_graph<G>(g: G, hasher: &mut Hasher)
 where
     G: Data + IntoEdgeReferences + IntoNodeReferences + NodeIndexable,
@@ -100,7 +100,7 @@ where
     hash_graph_with_nodes(g, &nodes, hasher);
 }
 
-/// The implementation of [`graph_with_nodes`] with hasher provided.
+/// The implementation of [`addr_with_nodes`] with hasher provided.
 pub fn hash_graph_with_nodes<G>(g: G, nodes: &HashMap<G::NodeId, ContentAddr>, hasher: &mut Hasher)
 where
     G: Data + IntoEdgeReferences + IntoNodeReferences + NodeIndexable,

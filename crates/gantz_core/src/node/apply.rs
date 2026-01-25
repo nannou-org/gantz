@@ -1,6 +1,7 @@
 //! A node that applies a function to a list of arguments.
 
 use crate::node;
+use gantz_ca::CaHash;
 use serde::{Deserialize, Serialize};
 
 /// A node that applies a function to arguments.
@@ -9,7 +10,8 @@ use serde::{Deserialize, Serialize};
 /// with the arguments received on the second input.
 ///
 /// The node is stateless and evaluates immediately when a function is received.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.apply")]
 pub struct Apply;
 
 impl<Env> node::Node<Env> for Apply {
@@ -37,11 +39,5 @@ impl<Env> node::Node<Env> for Apply {
             .map(|f| format!("(apply {f} {args})"))
             .unwrap_or_else(|| "'()".to_string());
         node::parse_expr(&expr)
-    }
-}
-
-impl gantz_ca::CaHash for Apply {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        "gantz_core::node::Apply".hash(hasher);
     }
 }

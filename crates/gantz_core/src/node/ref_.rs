@@ -4,11 +4,13 @@ use crate::{
     node::{self, Node},
     visit,
 };
+use gantz_ca::CaHash;
 use serde::{Deserialize, Serialize};
 use steel::steel_vm::engine::Engine;
 
 /// A node that refers to another node in the environment by content address.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.ref")]
 pub struct Ref(gantz_ca::ContentAddr);
 
 /// A registry of `Node`s, used by the [`Ref`] node to lookup a node by it's
@@ -29,13 +31,6 @@ impl Ref {
     /// The content address of the referenced node.
     pub fn content_addr(&self) -> gantz_ca::ContentAddr {
         self.0
-    }
-}
-
-impl gantz_ca::CaHash for Ref {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update("gantz_core::node::Ref".as_bytes());
-        hasher.update(&self.0.0);
     }
 }
 

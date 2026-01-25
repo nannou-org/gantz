@@ -47,13 +47,15 @@ pub struct GraphNode<N> {
 /// An inlet to a nested graph.
 ///
 /// Inlet values are provided via `define` bindings by the parent graph node.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, CaHash)]
+#[cahash("gantz.inlet")]
 pub struct Inlet;
 
 /// An outlet from a nested graph.
 ///
 /// Outlet values are passed through directly as the node's output.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, CaHash)]
+#[cahash("gantz.outlet")]
 pub struct Outlet;
 
 impl<N> Default for GraphNode<N> {
@@ -293,18 +295,6 @@ where
 {
     fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         gantz_ca::hash_graph(&self.graph, hasher);
-    }
-}
-
-impl CaHash for Inlet {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        CaHash::hash("in", hasher);
-    }
-}
-
-impl CaHash for Outlet {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        CaHash::hash("out", hasher);
     }
 }
 

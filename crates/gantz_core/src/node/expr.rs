@@ -18,12 +18,14 @@ use thiserror::Error;
 ///
 /// Variables are identified by unique names - if the same `$var` appears
 /// multiple times in the expression, it refers to the same inlet.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, CaHash)]
+#[cahash("gantz.expr")]
 pub struct Expr {
     src: String,
     /// Unique `$` variable names in order of first appearance (cached).
     /// Skipped during serialization and recomputed on deserialization.
     #[serde(skip)]
+    #[cahash(skip)]
     vars: Vec<String>,
 }
 
@@ -175,13 +177,6 @@ impl<Env> Node<Env> for Expr {
     /// Registers a state slot just in case `state` is referenced by the expr.
     fn register(&self, _env: &Env, path: &[super::Id], vm: &mut Engine) {
         node::state::init_value_if_absent(vm, path, || steel::SteelVal::Void).unwrap();
-    }
-}
-
-impl CaHash for Expr {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update("gantz_core::node::Expr".as_bytes());
-        hasher.update(self.src.as_bytes());
     }
 }
 

@@ -7,8 +7,10 @@ use steel::steel_vm::engine::Engine;
 ///
 /// The implementation of `Node` will match the inner node type `N`, but with a
 /// unique implementation of [`Node::push_eval`].
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.push")]
 pub struct Push<Env, N> {
+    #[cahash(skip)]
     env: core::marker::PhantomData<Env>,
     node: N,
     conf: node::EvalConf,
@@ -97,16 +99,5 @@ where
 
     fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
         self.node.required_addrs()
-    }
-}
-
-impl<Env, N> CaHash for Push<Env, N>
-where
-    N: CaHash,
-{
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        "Push".hash(hasher);
-        self.conf.hash(hasher);
-        self.node.hash(hasher);
     }
 }

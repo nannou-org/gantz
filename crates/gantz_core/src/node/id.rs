@@ -1,6 +1,7 @@
 //! A node representing the identity function - returns its input unchanged.
 
 use crate::node;
+use gantz_ca::CaHash;
 use serde::{Deserialize, Serialize};
 
 /// The name used for the identity node in the registry.
@@ -10,7 +11,8 @@ pub const IDENTITY_NAME: &str = "id";
 ///
 /// This is a fundamental building block in functional programming,
 /// often used as a default or no-op function.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.identity")]
 pub struct Identity;
 
 impl<Env> node::Node<Env> for Identity {
@@ -32,11 +34,5 @@ impl<Env> node::Node<Env> for Identity {
         };
 
         node::parse_expr(&expr)
-    }
-}
-
-impl gantz_ca::CaHash for Identity {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        "gantz_core::node::Identity".hash(hasher);
     }
 }

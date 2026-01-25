@@ -2,13 +2,16 @@
 
 use crate::widget::node_inspector;
 use crate::{NodeCtx, NodeUi};
+use gantz_ca::CaHash;
 use gantz_core::node;
 use serde::{Deserialize, Serialize};
 
 /// A transparent comment node for documenting graphs.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.comment")]
 pub struct Comment {
     text: String,
+    #[cahash(skip)]
     size: [u16; 2],
 }
 
@@ -43,13 +46,6 @@ impl<Env> gantz_core::Node<Env> for Comment {
     fn expr(&self, _ctx: node::ExprCtx<Env>) -> node::ExprResult {
         // Return void/empty expression since comments don't compute anything
         node::parse_expr("void")
-    }
-}
-
-impl gantz_ca::CaHash for Comment {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        "gantz_egui::Comment".hash(hasher);
-        self.text.hash(hasher);
     }
 }
 

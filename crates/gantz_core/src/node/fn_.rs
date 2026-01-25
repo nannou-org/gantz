@@ -4,10 +4,12 @@ use crate::{
     node::{self, Node},
     visit,
 };
+use gantz_ca::CaHash;
 use serde::{Deserialize, Serialize};
 
 /// A node that emits a lambda function wrapping another node's expression.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.fn")]
 pub struct Fn<N>(pub N);
 
 impl<N> Fn<N> {
@@ -87,12 +89,5 @@ where
 
     fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
         self.0.visit(ctx, visitor);
-    }
-}
-
-impl<N: gantz_ca::CaHash> gantz_ca::CaHash for Fn<N> {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        "gantz_core::node::Fn".hash(hasher);
-        self.0.hash(hasher);
     }
 }
