@@ -3,7 +3,7 @@
 use crate::{Cmd, NodeCtx, NodeUi, widget::node_inspector};
 use gantz_core::node::{self, Node};
 use serde::{Deserialize, Serialize};
-use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
+use steel::steel_vm::engine::Engine;
 
 /// The warning color used for outdated references.
 pub fn outdated_color() -> egui::Color32 {
@@ -80,7 +80,7 @@ where
         self.ref_.branches(env)
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
         self.ref_.expr(ctx)
     }
 

@@ -1,4 +1,3 @@
-use gantz_core::steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 use serde::{Deserialize, Serialize};
 
 /// Simple `Add` operation node.
@@ -14,17 +13,16 @@ impl<Env> gantz_core::Node<Env> for Add {
         1
     }
 
-    fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> gantz_core::node::ExprResult {
         let inputs = ctx.inputs();
         let (l, r) = match (inputs.get(0), inputs.get(1)) {
             (Some(Some(l)), Some(Some(r))) => (&l[..], &r[..]),
             (Some(Some(l)), _) => (&l[..], "0"),
             (_, Some(Some(r))) => ("0", &r[..]),
-            // FIXME: Need a way of handling these error cases.
-            _ => return ExprKind::empty(),
+            _ => return gantz_core::node::parse_expr("'()"),
         };
         let expr = format!("(+ {l} {r})");
-        Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
+        gantz_core::node::parse_expr(&expr)
     }
 }
 

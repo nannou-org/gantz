@@ -5,7 +5,7 @@ use crate::{
     visit,
 };
 use serde::{Deserialize, Serialize};
-use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
+use steel::steel_vm::engine::Engine;
 
 /// A node that refers to another node in the environment by content address.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
@@ -58,12 +58,15 @@ where
             .unwrap_or_default()
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
         let ctx2 = ctx.clone();
-        ctx.env()
-            .node(&self.0)
-            .map(|n| n.expr(ctx2))
-            .unwrap_or_default()
+        match ctx.env().node(&self.0) {
+            Some(n) => n.expr(ctx2),
+            None => Err(node::ExprError::custom(format!(
+                "node not found for address {:?}",
+                self.0
+            ))),
+        }
     }
 
     fn push_eval(&self, env: &Env) -> Vec<node::EvalConf> {

@@ -118,7 +118,7 @@ fn test_graph_nested_stateless() {
     let env = ();
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::compile::module(&env, &gb);
+    let module = gantz_core::compile::module(&env, &gb).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -203,7 +203,7 @@ fn test_graph_nested_counter() {
     let env = ();
 
     // Generate the module.
-    let module = gantz_core::compile::module(&env, &gb);
+    let module = gantz_core::compile::module(&env, &gb).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -290,7 +290,7 @@ fn test_graph_nested_push_eval() {
     let env = ();
 
     // Generate the module.
-    let module = gantz_core::compile::module(&env, &gb);
+    let module = gantz_core::compile::module(&env, &gb).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -415,7 +415,7 @@ fn test_graph_nested_non_sequential_inlets() {
     let env = ();
 
     // Generate the module.
-    let module = gantz_core::compile::module(&env, &gb);
+    let module = gantz_core::compile::module(&env, &gb).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();

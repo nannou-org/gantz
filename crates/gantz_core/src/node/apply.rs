@@ -2,7 +2,6 @@
 
 use crate::node;
 use serde::{Deserialize, Serialize};
-use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// A node that applies a function to arguments.
 ///
@@ -27,7 +26,7 @@ impl<Env> node::Node<Env> for Apply {
         1
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
         let inputs = ctx.inputs();
 
         // Get function and arguments from inputs
@@ -37,7 +36,7 @@ impl<Env> node::Node<Env> for Apply {
         let expr = function
             .map(|f| format!("(apply {f} {args})"))
             .unwrap_or_else(|| "'()".to_string());
-        Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
+        node::parse_expr(&expr)
     }
 }
 

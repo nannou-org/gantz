@@ -5,7 +5,6 @@ use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
 use std::fmt::Debug;
 use steel::SteelVal;
-use steel::parser::ast::ExprKind;
 use steel::steel_vm::engine::Engine;
 
 fn node_push() -> node::Push<(), node::Expr> {
@@ -91,7 +90,7 @@ fn test_graph_push_eval() {
     let env = ();
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::compile::module(&env, &g);
+    let module = gantz_core::compile::module(&env, &g).unwrap();
     // Function per node alongside the single push eval function.
     assert_eq!(module.len(), g.node_count() + 1);
 
@@ -151,7 +150,7 @@ fn test_graph_pull_eval() {
     let env = ();
 
     // Generate the steel module.
-    let module = gantz_core::compile::module(&env, &g);
+    let module = gantz_core::compile::module(&env, &g).unwrap();
 
     // Prepare the VM.
     let mut vm = Engine::new_base();
@@ -212,7 +211,7 @@ fn test_graph_push_cond_eval() {
             ]
         }
 
-        fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+        fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
             let x = ctx.inputs()[0].as_deref().expect("must have one input");
             let expr = format!(
                 r#"
@@ -221,7 +220,7 @@ fn test_graph_push_cond_eval() {
                   (list 1 '())) ; 1 index for right branch, '() for empty value
             "#
             );
-            Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
+            node::parse_expr(&expr)
         }
     }
 
@@ -253,7 +252,7 @@ fn test_graph_push_cond_eval() {
     let env = ();
 
     // Generate the module.
-    let module = gantz_core::compile::module(&env, &g);
+    let module = gantz_core::compile::module(&env, &g).unwrap();
     // Function per node alongside the two push eval functions.
     assert_eq!(module.len(), g.node_count() + 2);
 
@@ -326,7 +325,7 @@ fn test_graph_eval_should_panic() {
     let env = ();
 
     // Generate the steel module.
-    let module = gantz_core::compile::module(&env, &g);
+    let module = gantz_core::compile::module(&env, &g).unwrap();
 
     // Prepare the VM.
     let mut vm = Engine::new_base();
@@ -372,7 +371,7 @@ fn test_graph_push_eval_subset() {
             2
         }
 
-        fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+        fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
             let Src(a, b) = *self;
             let outputs = ctx.outputs();
             let expr = match (outputs.get(0).unwrap(), outputs.get(1).unwrap()) {
@@ -383,7 +382,7 @@ fn test_graph_push_eval_subset() {
                 // Otherwise return both in a list.
                 _ => format!("(list {a} {b})"),
             };
-            Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
+            node::parse_expr(&expr)
         }
     }
 
@@ -404,7 +403,7 @@ fn test_graph_push_eval_subset() {
     let env = ();
 
     // Generate the module
-    let module = gantz_core::compile::module(&env, &g);
+    let module = gantz_core::compile::module(&env, &g).unwrap();
 
     // Create the VM
     let mut vm = Engine::new_base();

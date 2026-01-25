@@ -1,9 +1,8 @@
 use gantz_core::steel::{
-    parser::ast::ExprKind,
+    SteelVal,
     steel_vm::{engine::Engine, register_fn::RegisterFn},
 };
 use serde::{Deserialize, Serialize};
-use steel::SteelVal;
 
 /// A simple node that logs whatever value is received at a given log level.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
@@ -24,9 +23,9 @@ impl<Env> gantz_core::Node<Env> for Log {
         1
     }
 
-    fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> gantz_core::node::ExprResult {
         let Some(Some(input)) = ctx.inputs().get(0) else {
-            return ExprKind::empty();
+            return gantz_core::node::parse_expr("'()");
         };
         let level = match self.level {
             log::Level::Error => "error",
@@ -37,7 +36,7 @@ impl<Env> gantz_core::Node<Env> for Log {
         };
         // TODO: Switch to proper logging. Reference steel logging.scm example.
         let expr = format!("(log/{level} {input})");
-        Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
+        gantz_core::node::parse_expr(&expr)
     }
 
     fn register(&self, _env: &Env, _path: &[gantz_core::node::Id], vm: &mut Engine) {

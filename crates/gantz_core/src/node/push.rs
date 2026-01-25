@@ -1,7 +1,7 @@
 use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
 use gantz_ca::CaHash;
-use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
+use steel::steel_vm::engine::Engine;
 
 /// A wrapper around a `Node` that enables push evaluation across all outputs.
 ///
@@ -67,7 +67,7 @@ where
         self.node.branches(env)
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
         self.node.expr(ctx)
     }
 

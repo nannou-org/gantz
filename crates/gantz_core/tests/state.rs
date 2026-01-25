@@ -85,7 +85,7 @@ fn test_graph_with_counter() {
     let env = ();
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::compile::module(&env, &g);
+    let module = gantz_core::compile::module(&env, &g).unwrap();
 
     // Initialise the VM.
     let mut vm = Engine::new_base();
@@ -178,7 +178,7 @@ fn test_graph_with_counters() {
     let env = ();
 
     // Generate the module, which should have one expr for each `push`.
-    let module = gantz_core::compile::module(&env, &g);
+    let module = gantz_core::compile::module(&env, &g).unwrap();
 
     // Initialise the VM.
     let mut vm = Engine::new_base();

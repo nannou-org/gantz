@@ -107,7 +107,7 @@ fn test_fn_apply_identity() {
     g.add_edge(expected, assert_eq, Edge::from((0, 1)));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&env, &g);
+    let module = gantz_core::compile::module(&env, &g).unwrap();
 
     // Create and setup VM.
     let mut vm = Engine::new_base();
@@ -209,7 +209,7 @@ fn test_fn_apply_graph() {
     g.add_edge(expected, assert_eq, Edge::from((0, 1)));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&env, &g);
+    let module = gantz_core::compile::module(&env, &g).unwrap();
 
     // Create and setup VM.
     let mut vm = Engine::new_base();

@@ -60,15 +60,45 @@ impl<T> RoseTree<T> {
         RoseTree { elem, nested }
     }
 
+    /// Fallible version of `map_ref`.
+    pub(crate) fn try_map_ref<'a, U, E>(
+        &'a self,
+        f: &mut impl FnMut(&'a T) -> Result<U, E>,
+    ) -> Result<RoseTree<U>, E> {
+        let Self { elem, nested } = self;
+        let elem = f(elem)?;
+        let nested = nested
+            .into_iter()
+            .map(|(&k, r)| r.try_map_ref(f).map(|r| (k, r)))
+            .collect::<Result<_, _>>()?;
+        Ok(RoseTree { elem, nested })
+    }
+
     /// Visit all nodes in depth-first order where the given `path` is the
     /// path to `self` from the root.
-    pub(crate) fn visit(&self, path: &[node::Id], f: &mut impl FnMut(&[node::Id], &T)) {
+    pub(crate) fn _visit(&self, path: &[node::Id], f: &mut impl FnMut(&[node::Id], &T)) {
         f(path, &self.elem);
         let mut path = path.to_vec();
         for (&id, tree) in &self.nested {
             path.push(id);
-            tree.visit(&path, f);
+            tree._visit(&path, f);
             path.pop();
         }
+    }
+
+    /// Fallible version of `visit`.
+    pub(crate) fn try_visit<E>(
+        &self,
+        path: &[node::Id],
+        f: &mut impl FnMut(&[node::Id], &T) -> Result<(), E>,
+    ) -> Result<(), E> {
+        f(path, &self.elem)?;
+        let mut path = path.to_vec();
+        for (&id, tree) in &self.nested {
+            path.push(id);
+            tree.try_visit(&path, f)?;
+            path.pop();
+        }
+        Ok(())
     }
 }

@@ -2,10 +2,7 @@ use crate::node::{self, Node};
 use gantz_ca::CaHash;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fmt, str::FromStr};
-use steel::{
-    parser::{ast::ExprKind, lexer::TokenStream},
-    steel_vm::engine::Engine,
-};
+use steel::{parser::lexer::TokenStream, steel_vm::engine::Engine};
 use thiserror::Error;
 
 /// A simple node that allows for representing expressions as nodes.
@@ -50,7 +47,7 @@ impl<'de> Deserialize<'de> for Expr {
 
 /// An error occurred while constructing the `Expr` node.
 #[derive(Debug, Error)]
-pub enum ExprError {
+pub enum ExprNewError {
     /// Failed to parse a valid expression.
     #[error("failed to parse a valid expr: {err}")]
     InvalidExpr {
@@ -73,13 +70,13 @@ impl Expr {
     ///     let _node = gantz_core::node::Expr::new("(+ $foo $bar)").unwrap();
     /// }
     /// ```
-    pub fn new(src: impl Into<String>) -> Result<Self, ExprError> {
+    pub fn new(src: impl Into<String>) -> Result<Self, ExprNewError> {
         let src: String = src.into();
         let vars = vars_from_src(&src);
         // Validate that the source parses successfully.
         let exprs = Engine::emit_ast(&src)?;
         if exprs.is_empty() {
-            return Err(ExprError::Empty);
+            return Err(ExprNewError::Empty);
         }
         Ok(Expr { src, vars })
     }
@@ -144,7 +141,7 @@ impl<Env> Node<Env> for Expr {
         1
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
         // Create a token stream.
         let tts = TokenStream::new(&self.src, true, None);
 
@@ -152,12 +149,13 @@ impl<Env> Node<Env> for Expr {
         let new_src = interpolate_tokens(tts, &self.vars, ctx.inputs());
 
         // Convert the interpolated string to an expr.
-        let exprs = Engine::emit_ast(&new_src).expect("failed to emit AST");
+        let exprs = steel::steel_vm::engine::Engine::emit_ast(&new_src)
+            .map_err(|e| node::ExprError::custom(e))?;
 
         // If there's one expression, return it.
         if exprs.len() == 1 {
-            exprs.into_iter().next().unwrap()
-        // If there are multiple expressions, combine them with begin?
+            Ok(exprs.into_iter().next().unwrap())
+        // If there are multiple expressions, combine them with begin.
         } else {
             let exprs = exprs
                 .iter()
@@ -165,11 +163,7 @@ impl<Env> Node<Env> for Expr {
                 .collect::<Vec<_>>()
                 .join(" ");
             let out_src = format!("(begin {})", exprs);
-            Engine::emit_ast(&out_src)
-                .expect("failed to emit AST")
-                .into_iter()
-                .next()
-                .unwrap()
+            node::parse_expr(&out_src)
         }
     }
 
@@ -198,7 +192,7 @@ impl fmt::Display for Expr {
 }
 
 impl FromStr for Expr {
-    type Err = ExprError;
+    type Err = ExprNewError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::new(s)
     }

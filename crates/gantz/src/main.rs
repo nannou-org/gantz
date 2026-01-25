@@ -514,7 +514,13 @@ fn init_vm(env: &Environment, graph: &Graph) -> (Engine, CompiledModule) {
 
 fn compile_graph(env: &Environment, graph: &Graph, vm: &mut Engine) -> Vec<ExprKind> {
     // Generate the steel module.
-    let module = gantz_core::compile::module(env, graph);
+    let module = match gantz_core::compile::module(env, graph) {
+        Ok(module) => module,
+        Err(e) => {
+            bevy::log::error!("failed to compile graph: {e}");
+            return vec![];
+        }
+    };
     // Compile the eval fns.
     for expr in &module {
         if let Err(e) = vm.run(expr.to_pretty(80)) {

@@ -3,7 +3,6 @@
 use crate::{NodeCtx, NodeUi};
 use gantz_core::node;
 use serde::{Deserialize, Serialize};
-use steel::parser::ast::ExprKind;
 use steel::steel_vm::engine::Engine;
 
 /// A node that displays the debug representation of values passing through.
@@ -23,12 +22,12 @@ impl<Env> gantz_core::Node<Env> for Inspect {
         true
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
         let expr = match ctx.inputs().get(0) {
             Some(Some(val)) => format!("(begin (set! state {val}) state)"),
             _ => "(begin state)".to_string(),
         };
-        Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
+        node::parse_expr(&expr)
     }
 
     fn register(&self, _env: &Env, path: &[node::Id], vm: &mut Engine) {
