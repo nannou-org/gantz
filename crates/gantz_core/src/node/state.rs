@@ -12,6 +12,19 @@ use steel::{
     steel_vm::engine::Engine,
 };
 
+/// A wrapper around a **Node** that adds some persistent state.
+#[derive(Clone, Debug, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.state")]
+pub struct State<Env, N, S> {
+    #[cahash(skip)]
+    pub env: core::marker::PhantomData<Env>,
+    /// The node being wrapped with state.
+    pub node: N,
+    /// The type of state used by the node.
+    #[cahash(skip)]
+    pub state: core::marker::PhantomData<S>,
+}
+
 /// Types that may be used as state for a [`Node`].
 // FIXME: Does `derive(Steel)` already do all this? Is there a trait for this?
 // TODO: If not, we should add a `derive` for this and its `impl`.
@@ -36,16 +49,6 @@ pub trait WithStateType<Env>: Node<Env> + Sized {
     fn with_state_type<S: NodeState>(self) -> State<Env, Self, S> {
         State::<Env, Self, S>::new(self)
     }
-}
-
-/// A wrapper around a **Node** that adds some persistent state.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct State<Env, N, S> {
-    pub env: core::marker::PhantomData<Env>,
-    /// The node being wrapped with state.
-    pub node: N,
-    /// The type of state used by the node.
-    pub state: core::marker::PhantomData<S>,
 }
 
 impl<Env, N, S> State<Env, N, S> {
@@ -131,16 +134,6 @@ where
 
     fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
         self.node.required_addrs()
-    }
-}
-
-impl<Env, N, S> CaHash for State<Env, N, S>
-where
-    N: CaHash,
-{
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        "State".hash(hasher);
-        self.node.hash(hasher);
     }
 }
 

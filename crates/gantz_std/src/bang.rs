@@ -1,7 +1,9 @@
+use gantz_ca::CaHash;
 use serde::{Deserialize, Serialize};
 
 /// A simple node for pushing evaluation through the graph.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.bang")]
 pub struct Bang;
 
 impl<Env> gantz_core::Node<Env> for Bang {
@@ -15,11 +17,5 @@ impl<Env> gantz_core::Node<Env> for Bang {
 
     fn push_eval(&self, _: &Env) -> Vec<gantz_core::node::EvalConf> {
         vec![gantz_core::node::EvalConf::All]
-    }
-}
-
-impl gantz_ca::CaHash for Bang {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        "gantz_std::Bang".hash(hasher);
     }
 }

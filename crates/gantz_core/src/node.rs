@@ -176,7 +176,8 @@ pub trait Node<Env> {
 }
 
 /// A set of connections over which to push/pull evaluation.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.eval-conf")]
 pub enum EvalConf {
     /// Requires a fn for evaluation from all connections.
     #[default]
@@ -221,11 +222,11 @@ pub struct ExprCtx<'a, Env> {
 pub struct EvalFn;
 
 /// Represents an input of a node via an index.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize, CaHash)]
 pub struct Input(pub u16);
 
 /// Represents an output of a node via an index.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize, CaHash)]
 pub struct Output(pub u16);
 
 /// Error during expression generation.
@@ -432,22 +433,6 @@ impl ExprError {
     /// Create an error from any displayable value.
     pub fn custom(msg: impl std::fmt::Display) -> Self {
         Self(msg.to_string().into_boxed_str())
-    }
-}
-
-impl CaHash for EvalConf {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        const ALL_TAG: u8 = 0;
-        const SET_TAG: u8 = 1;
-        match self {
-            Self::All => {
-                hasher.update(&[ALL_TAG]);
-            }
-            Self::Set(set) => {
-                hasher.update(&[SET_TAG]);
-                set.hash(hasher);
-            }
-        }
     }
 }
 

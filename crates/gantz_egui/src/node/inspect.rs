@@ -1,12 +1,14 @@
 //! An Inspect node for viewing SteelVals flowing through the graph.
 
 use crate::{NodeCtx, NodeUi};
+use gantz_ca::CaHash;
 use gantz_core::node;
 use serde::{Deserialize, Serialize};
 use steel::steel_vm::engine::Engine;
 
 /// A node that displays the debug representation of values passing through.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.inspect")]
 pub struct Inspect;
 
 impl<Env> gantz_core::Node<Env> for Inspect {
@@ -32,12 +34,6 @@ impl<Env> gantz_core::Node<Env> for Inspect {
 
     fn register(&self, _env: &Env, path: &[node::Id], vm: &mut Engine) {
         node::state::init_value_if_absent(vm, path, || steel::SteelVal::Void).unwrap()
-    }
-}
-
-impl gantz_ca::CaHash for Inspect {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        "gantz_egui::Inspect".hash(hasher);
     }
 }
 
