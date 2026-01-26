@@ -464,50 +464,10 @@ where
                     }
                 }
 
-                // Floating toggles over the bottom right corner of the graph scene pane.
+                // Floating pane menu over the bottom right corner of the graph scene pane.
                 let space = ui.style().interaction.interact_radius * 3.0;
-                egui::Window::new("view_toggle_window")
-                    .pivot(egui::Align2::RIGHT_BOTTOM)
-                    .fixed_pos(rect.right_bottom() + egui::vec2(-space, -space))
-                    .title_bar(false)
-                    .resizable(false)
-                    .collapsible(false)
-                    .frame(egui::Frame::NONE)
-                    .show(ui.ctx(), |ui| {
-                        fn toggle<'a>(s: &str, b: &'a mut bool) -> widget::LabelToggle<'a> {
-                            let text = egui::RichText::new(s).size(24.0);
-                            widget::LabelToggle::new(text, b)
-                        }
-                        let grid_w = 150.0;
-                        let n_cols = 5;
-                        let gap_space = ui.spacing().item_spacing.x * (n_cols as f32 - 1.0);
-                        let col_w = (grid_w - gap_space) / n_cols as f32;
-                        egui::Grid::new("view_toggles")
-                            .min_col_width(col_w)
-                            .max_col_width(col_w)
-                            .show(ui, |ui| {
-                                ui.vertical_centered_justified(|ui| {
-                                    ui.add(toggle("C", &mut state.view_toggles.graph_config))
-                                        .on_hover_text("Graph Configuration");
-                                });
-                                ui.vertical_centered_justified(|ui| {
-                                    ui.add(toggle("G", &mut state.view_toggles.graph_select))
-                                        .on_hover_text("Graph Select");
-                                });
-                                ui.vertical_centered_justified(|ui| {
-                                    ui.add(toggle("N", &mut state.view_toggles.node_inspector))
-                                        .on_hover_text("Node Inspector");
-                                });
-                                ui.vertical_centered_justified(|ui| {
-                                    ui.add(toggle("L", &mut state.view_toggles.logs))
-                                        .on_hover_text("Log View");
-                                });
-                                ui.vertical_centered_justified(|ui| {
-                                    ui.add(toggle("λ", &mut state.view_toggles.steel))
-                                        .on_hover_text("Steel View");
-                                });
-                            });
-                    });
+                let anchor = rect.right_bottom() + egui::vec2(-space, -space);
+                widget::PaneMenu::new(&mut state.view_toggles).show(ui.ctx(), anchor);
             }
             Pane::GraphSelect => {
                 let heads: Vec<_> = gantz.heads.iter().map(|(h, _, _)| h.clone()).collect();
