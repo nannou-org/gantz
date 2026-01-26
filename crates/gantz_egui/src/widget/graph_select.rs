@@ -1,5 +1,6 @@
 //! A simple widget for selecting between, naming and creating new graphs.
 
+use super::head_row::{HeadRowType, head_row};
 use std::collections::HashSet;
 
 /// A widget for selecting between, naming, and creating new graphs.
@@ -38,17 +39,30 @@ pub struct GraphSelectResponse {
     pub name_removed: Option<String>,
 }
 
-/// Response returned from a row.
-struct RowResponse {
-    /// Response for the row.
-    row: egui::Response,
-    /// The response for the delete button.
-    delete: Option<egui::Response>,
+impl GraphSelectResponse {
+    /// Combine two responses, preferring `Some` values from `other`.
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            new_graph: self.new_graph || other.new_graph,
+            replaced: other.replaced.or(self.replaced),
+            opened: other.opened.or(self.opened),
+            closed: other.closed.or(self.closed),
+            name_removed: other.name_removed.or(self.name_removed),
+        }
+    }
 }
 
-enum RowType<'a> {
-    Named(&'a str),
-    Unnamed(&'a gantz_ca::Timestamp),
+impl std::ops::BitOr for GraphSelectResponse {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self::Output {
+        self.union(rhs)
+    }
+}
+
+impl std::ops::BitOrAssign for GraphSelectResponse {
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = std::mem::take(self).union(rhs);
+    }
 }
 
 impl<'a> GraphSelect<'a> {
@@ -110,10 +124,10 @@ impl<'a> GraphSelect<'a> {
                     }
                     visited.insert(ca);
                     let head = gantz_ca::Head::Branch(name.to_string());
-                    let res = graph_select_row(
+                    let res = head_row(
                         self.heads,
                         &head,
-                        RowType::Named(name),
+                        HeadRowType::Named(name),
                         ca,
                         self.focused_head,
                         ui,
@@ -136,12 +150,22 @@ impl<'a> GraphSelect<'a> {
                     }
                 }
 
-                // Show remaining unnamed graphs.
+                // Collect commit addresses for open heads (excluding named ones already shown).
+                let open_head_cas: HashSet<_> = self
+                    .heads
+                    .iter()
+                    .filter_map(|head| match head {
+                        gantz_ca::Head::Branch(_) => None, // Already shown in named section
+                        gantz_ca::Head::Commit(ca) => Some(*ca),
+                    })
+                    .collect();
+
+                // Show only unnamed commits that are currently open as heads.
                 for (ca, commit) in self
                     .registry
                     .commits()
                     .into_iter()
-                    .filter(|(ca, _)| !visited.contains(ca))
+                    .filter(|(ca, _)| !visited.contains(ca) && open_head_cas.contains(ca))
                 {
                     if !state.name_filter.is_empty() {
                         let ca_str = format!("{ca}");
@@ -152,9 +176,8 @@ impl<'a> GraphSelect<'a> {
 
                     // Use the timestamp as a row name.
                     let head = gantz_ca::Head::Commit(*ca);
-                    let row_type = RowType::Unnamed(&commit.timestamp);
-                    let res =
-                        graph_select_row(self.heads, &head, row_type, ca, self.focused_head, ui);
+                    let row_type = HeadRowType::Unnamed(&commit.timestamp);
+                    let res = head_row(self.heads, &head, row_type, ca, self.focused_head, ui);
                     if res.row.clicked() {
                         let ctrl = ui.input(|i| i.modifiers.ctrl);
                         if ctrl {
@@ -179,91 +202,4 @@ impl<'a> GraphSelect<'a> {
 
         response
     }
-}
-
-fn graph_select_row(
-    open_heads: &[gantz_ca::Head],
-    head: &gantz_ca::Head,
-    row_type: RowType,
-    row_ca: &gantz_ca::CommitAddr,
-    focused_head: Option<usize>,
-    ui: &mut egui::Ui,
-) -> RowResponse {
-    let w = ui.max_rect().width();
-    let h = ui.style().interaction.interact_radius;
-    let size = egui::Vec2::new(w, h);
-    let (rect, mut row) = ui.allocate_at_least(size, egui::Sense::click());
-
-    let builder = egui::UiBuilder::new()
-        .sense(egui::Sense::click())
-        .max_rect(rect);
-    let (res, delete) = ui
-        .scope_builder(builder, |ui| {
-            let mut res = ui.response();
-            let hovered = res.hovered();
-
-            // Create a child UI for the labels positioned over the allocated rect
-            ui.horizontal(|ui| {
-                let mut name = match row_type {
-                    RowType::Named(name) => name.to_string(),
-                    RowType::Unnamed(&timestamp) => fmt_commit_timestamp(timestamp),
-                };
-                // Append focus indicator if this head is focused.
-                if let Some(focused) = focused_head {
-                    if crate::head_is_focused(open_heads.iter(), focused, head) {
-                        name.push_str(" ⚫");
-                    }
-                }
-                let mut text = egui::RichText::new(name.clone());
-                let is_open = open_heads.contains(head);
-                text = if is_open {
-                    text.strong()
-                } else if hovered {
-                    text
-                } else {
-                    text.weak()
-                };
-                let label = egui::Label::new(text).selectable(false);
-                res |= ui.add(label);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Show the address.
-                    let row_ca_string = format!("{}", row_ca.display_short());
-                    let mut text = egui::RichText::new(row_ca_string).monospace();
-                    text = if is_open {
-                        text.strong()
-                    } else if hovered {
-                        text
-                    } else {
-                        text.weak()
-                    };
-                    let label = egui::Label::new(text).selectable(false);
-                    res |= ui.add(label);
-
-                    // Show an x for removing the name mapping.
-                    let delete = match row_type {
-                        RowType::Named(_) => {
-                            Some(ui.add(egui::Button::new("×").frame_when_inactive(false)))
-                        }
-                        RowType::Unnamed(_) => None,
-                    };
-
-                    (res, delete)
-                })
-                .inner
-            })
-            .inner
-        })
-        .inner;
-
-    row |= res;
-
-    RowResponse { row, delete }
-}
-
-// Format the commit as a timestamp for listing unnamed commits.
-fn fmt_commit_timestamp(timestamp: gantz_ca::Timestamp) -> String {
-    std::time::UNIX_EPOCH
-        .checked_add(timestamp)
-        .map(|time| humantime::format_rfc3339_seconds(time).to_string())
-        .unwrap_or_else(|| "<invalid-timestamp>".to_string())
 }

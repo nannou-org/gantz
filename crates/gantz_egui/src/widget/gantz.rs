@@ -92,7 +92,8 @@ pub enum Pane {
     GraphConfig,
     /// Contains the inner graph tree with all open graph tabs.
     GraphScene,
-    GraphSelect,
+    Graphs,
+    History,
     Logs,
     NodeInspector,
     Steel,
@@ -176,7 +177,8 @@ struct TabEditState {
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
 pub struct ViewToggles {
-    pub graph_select: bool,
+    pub graphs: bool,
+    pub history: bool,
     pub node_inspector: bool,
     pub logs: bool,
     pub steel: bool,
@@ -344,7 +346,8 @@ where
         match pane {
             Pane::GraphConfig => "Graph Config".into(),
             Pane::GraphScene => "Graphs".into(),
-            Pane::GraphSelect => "Graph Select".into(),
+            Pane::Graphs => "Graphs".into(),
+            Pane::History => "History".into(),
             Pane::Logs => match self.gantz.log_source {
                 None => "Logs (No Source)".into(),
                 Some(LogSource::Logger(_)) => "Logs".into(),
@@ -469,10 +472,21 @@ where
                 let anchor = rect.right_bottom() + egui::vec2(-space, -space);
                 widget::PaneMenu::new(&mut state.view_toggles).show(ui.ctx(), anchor);
             }
-            Pane::GraphSelect => {
+            Pane::Graphs => {
                 let heads: Vec<_> = gantz.heads.iter().map(|(h, _, _)| h.clone()).collect();
                 let res = graph_select(gantz.env, &heads, state.focused_head, ui);
-                gantz_response.graph_select = Some(res.inner);
+                match &mut gantz_response.graph_select {
+                    Some(gs) => *gs |= res.inner,
+                    None => gantz_response.graph_select = Some(res.inner),
+                }
+            }
+            Pane::History => {
+                let heads: Vec<_> = gantz.heads.iter().map(|(h, _, _)| h.clone()).collect();
+                let res = history_view(gantz.env, &heads, state.focused_head, ui);
+                match &mut gantz_response.graph_select {
+                    Some(gs) => *gs |= res.inner,
+                    None => gantz_response.graph_select = Some(res.inner),
+                }
             }
             Pane::Logs => match &gantz.log_source {
                 None => (),
@@ -795,13 +809,13 @@ impl Default for GantzState {
 /// Roughly something like this:
 ///
 /// -------------------------------------
-/// |conf |scene                        |
+/// |grs  |scene                        |
 /// |-----|                             |
-/// |sel  |                             |
-/// |     |                             |
-/// |-----|-----------------------------|
-/// |insp |logs          |steel         |
-/// |     |              |              |
+/// |hist |                             |
+/// |-----|                             |
+/// |conf |-----------------------------|
+/// |-----|logs          |steel         |
+/// |insp |              |              |
 /// -------------------------------------
 fn create_tree() -> egui_tiles::Tree<Pane> {
     let mut tiles = egui_tiles::Tiles::default();
@@ -809,18 +823,20 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
     // The leaf panes.
     let graph_config = tiles.insert_pane(Pane::GraphConfig);
     let graph_scene = tiles.insert_pane(Pane::GraphScene);
-    let graph_select = tiles.insert_pane(Pane::GraphSelect);
+    let graphs = tiles.insert_pane(Pane::Graphs);
+    let history = tiles.insert_pane(Pane::History);
     let logs = tiles.insert_pane(Pane::Logs);
     let node_inspector = tiles.insert_pane(Pane::NodeInspector);
     let steel = tiles.insert_pane(Pane::Steel);
 
     // The left column.
     let mut shares = egui_tiles::Shares::default();
-    shares.set_share(graph_config, 0.15);
-    shares.set_share(graph_select, 0.4);
-    shares.set_share(node_inspector, 0.45);
+    shares.set_share(graphs, 0.30);
+    shares.set_share(history, 0.23);
+    shares.set_share(graph_config, 0.12);
+    shares.set_share(node_inspector, 0.35);
     let left_column = tiles.insert_container(egui_tiles::Linear {
-        children: vec![graph_config, graph_select, node_inspector],
+        children: vec![graphs, history, graph_config, node_inspector],
         dir: egui_tiles::LinearDir::Vertical,
         shares,
     });
@@ -947,7 +963,8 @@ fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
             match pane {
                 Pane::GraphConfig => tree.set_visible(id, view.graph_config),
                 Pane::GraphScene => (),
-                Pane::GraphSelect => tree.set_visible(id, view.graph_select),
+                Pane::Graphs => tree.set_visible(id, view.graphs),
+                Pane::History => tree.set_visible(id, view.history),
                 Pane::Logs => tree.set_visible(id, view.logs),
                 Pane::NodeInspector => tree.set_visible(id, view.node_inspector),
                 Pane::Steel => tree.set_visible(id, view.steel),
@@ -979,6 +996,22 @@ where
 {
     pane_ui(ui, |ui| {
         widget::GraphSelect::new(env, heads)
+            .focused_head(focused_head)
+            .show(ui)
+    })
+}
+
+fn history_view<Env>(
+    env: &Env,
+    heads: &[gantz_ca::Head],
+    focused_head: usize,
+    ui: &mut egui::Ui,
+) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse>
+where
+    Env: widget::graph_select::GraphRegistry,
+{
+    pane_ui(ui, |ui| {
+        widget::HistoryView::new(env, heads)
             .focused_head(focused_head)
             .show(ui)
     })
