@@ -76,8 +76,9 @@ impl<'a> PaneMenu<'a> {
                                     "Node Inspector",
                                     &mut self.view_toggles.node_inspector,
                                 ),
-                                menu_item(ui, "Graph Select", &mut self.view_toggles.graph_select),
                                 menu_item(ui, "Graph Config", &mut self.view_toggles.graph_config),
+                                menu_item(ui, "History", &mut self.view_toggles.history),
+                                menu_item(ui, "Graphs", &mut self.view_toggles.graphs),
                             ]
                             .into_iter()
                             .reduce(|acc, r| acc.union(r));
