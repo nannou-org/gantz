@@ -13,6 +13,38 @@ mod impls;
 pub mod node;
 pub mod widget;
 
+/// Provides access to open head data for the Gantz widget.
+///
+/// This trait abstracts over different storage strategies (Bevy entities,
+/// parallel Vecs, etc.) allowing the widget to access head data without
+/// requiring a specific storage layout.
+pub trait HeadAccess {
+    /// The node type used in graphs.
+    type Node;
+
+    /// Get the list of all head identifiers.
+    fn heads(&self) -> &[gantz_ca::Head];
+
+    /// Get mutable access to a specific head's data via a callback.
+    ///
+    /// Returns `None` if the head is not found.
+    fn with_head_mut<R>(
+        &mut self,
+        head: &gantz_ca::Head,
+        f: impl FnOnce(HeadDataMut<'_, Self::Node>) -> R,
+    ) -> Option<R>;
+
+    /// Get the compiled module string for a head.
+    fn compiled_module(&self, head: &gantz_ca::Head) -> Option<&str>;
+}
+
+/// Mutable access to a head's data, provided via [`HeadAccess::with_head_mut`].
+pub struct HeadDataMut<'a, N> {
+    pub graph: &'a mut gantz_core::node::graph::Graph<N>,
+    pub views: &'a mut GraphViews,
+    pub vm: &'a mut Engine,
+}
+
 /// View state (layout + camera) for a graph and all its nested subgraphs, keyed by path.
 pub type GraphViews = HashMap<Vec<node::Id>, egui_graph::View>;
 

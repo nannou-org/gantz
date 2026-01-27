@@ -1,5 +1,4 @@
 use crate::{
-    Open,
     env::{self, Environment, GraphViews, Views},
     graph::{self, Graph},
 };
@@ -22,6 +21,8 @@ mod key {
     pub const NAMES: &str = "graph-names";
     /// The key at which the list of open heads is stored.
     pub const OPEN_HEADS: &str = "open-heads";
+    /// The key at which the focused head is stored.
+    pub const FOCUSED_HEAD: &str = "focused-head";
     /// The key at which all graph views (layout + camera) are stored.
     pub const VIEWS: &str = "views";
 
@@ -154,6 +155,21 @@ pub fn save_open_heads(storage: &mut PkvStore, heads: &[ca::Head]) {
     match storage.set_string(key::OPEN_HEADS, &heads_str) {
         Ok(()) => log::debug!("Successfully persisted {} open heads", heads.len()),
         Err(e) => log::error!("Failed to persist open heads: {e}"),
+    }
+}
+
+/// Save the focused head to storage.
+pub fn save_focused_head(storage: &mut PkvStore, head: &ca::Head) {
+    let head_str = match ron::to_string(head) {
+        Err(e) => {
+            log::error!("Failed to serialize focused head: {e}");
+            return;
+        }
+        Ok(s) => s,
+    };
+    match storage.set_string(key::FOCUSED_HEAD, &head_str) {
+        Ok(()) => log::debug!("Successfully persisted focused head"),
+        Err(e) => log::error!("Failed to persist focused head: {e}"),
     }
 }
 
@@ -324,6 +340,21 @@ fn load_open_heads(storage: &PkvStore) -> Option<Vec<ca::Head>> {
     }
 }
 
+/// Load the focused head from storage.
+pub fn load_focused_head(storage: &PkvStore) -> Option<ca::Head> {
+    let head_str = storage.get::<String>(key::FOCUSED_HEAD).ok()?;
+    match ron::de::from_str(&head_str) {
+        Ok(head) => {
+            log::debug!("Successfully loaded focused head");
+            Some(head)
+        }
+        Err(e) => {
+            log::error!("Failed to deserialize focused head: {e}");
+            None
+        }
+    }
+}
+
 /// Load the state of the gantz GUI from storage.
 pub fn load_gantz_gui_state(storage: &PkvStore) -> gantz_egui::widget::GantzState {
     storage
@@ -368,7 +399,14 @@ pub fn load_environment(storage: &PkvStore) -> Environment {
     }
 }
 
-pub fn load_open(storage: &PkvStore, env: &mut Environment) -> Open {
+/// Load the open heads data from storage.
+///
+/// Returns a vector of (head, graph, views) tuples suitable for spawning entities.
+/// If no valid heads remain, creates a default empty graph head.
+pub fn load_open(
+    storage: &PkvStore,
+    env: &mut Environment,
+) -> Vec<(gantz_ca::Head, Graph, GraphViews)> {
     // Try to load all open heads from storage.
     let heads: Vec<_> = load_open_heads(storage)
         .unwrap_or_default()
@@ -391,11 +429,9 @@ pub fn load_open(storage: &PkvStore, env: &mut Environment) -> Open {
         let head = env.registry.init_head(env::timestamp());
         let graph = graph::clone(env.registry.head_graph(&head).unwrap());
         let views = GraphViews::default();
-        Open {
-            heads: vec![(head, graph, views)],
-        }
+        vec![(head, graph, views)]
     } else {
-        Open { heads }
+        heads
     }
 }
 

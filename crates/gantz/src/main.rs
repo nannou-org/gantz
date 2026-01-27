@@ -3,7 +3,12 @@ use bevy::{
     window::{Window, WindowPlugin},
 };
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
-use bevy_gantz::debounced_input::{DebouncedInputEvent, DebouncedInputPlugin};
+use bevy_gantz::{
+    CompiledModule, FocusedHead, GraphViews, HeadGuiState, HeadRef, HeadTabOrder, HeadVms,
+    OpenHead, OpenHeadData, OpenHeadDataReadOnly, WorkingGraph,
+    debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
+    head,
+};
 use bevy_pkv::PkvStore;
 use env::Environment;
 use gantz_ca as ca;
@@ -15,34 +20,10 @@ mod graph;
 mod node;
 mod storage;
 
-/// The currently open graphs/heads.
-///
-/// Each entry is a head (branch or commit), its associated graph, and its views.
-/// Multiple heads can be open simultaneously, displayed as tabs.
-#[derive(Resource)]
-struct Open {
-    heads: Vec<(ca::Head, Graph, env::GraphViews)>,
-}
-
 #[derive(Resource)]
 struct GuiState {
     gantz: gantz_egui::widget::GantzState,
 }
-
-/// The compiled module for a single graph as a `String`.
-struct CompiledModule(String);
-
-/// Per-head compiled modules.
-///
-/// Each entry corresponds to a head in the `Open` resource at the same index.
-#[derive(Resource)]
-struct CompiledModules(Vec<CompiledModule>);
-
-/// Per-head VMs.
-///
-/// This is a non-send resource because `Engine` is not `Send`.
-/// Each entry corresponds to a head in the `Open` resource at the same index.
-struct HeadVms(Vec<Engine>);
 
 /// A resource for capturing tracing logs for the `TraceView` widget.
 #[derive(Default, Resource)]
@@ -61,6 +42,14 @@ fn main() {
         .insert_resource(TraceCapture::default())
         .insert_resource(PerfVm::default())
         .insert_resource(PerfGui::default())
+        // Entity-based head management resources
+        .insert_resource(FocusedHead::default())
+        .insert_resource(HeadTabOrder::default())
+        // Head event observers
+        .add_observer(handle_open_head_event)
+        .add_observer(handle_close_head_event)
+        .add_observer(handle_replace_head_event)
+        .add_observer(handle_create_branch_event)
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::new(0.25))
@@ -82,7 +71,7 @@ fn main() {
         .add_systems(
             Update,
             (
-                update_vm.after(update_gui),
+                update_vm,
                 process_gantz_gui_cmds.after(update_vm),
                 persist_resources.run_if(on_message::<DebouncedInputEvent>),
             ),
@@ -125,14 +114,45 @@ fn setup_environment(storage: Res<PkvStore>, mut cmds: Commands) {
     cmds.insert_resource(env);
 }
 
-fn setup_open(storage: Res<PkvStore>, mut env: ResMut<Environment>, mut cmds: Commands) {
-    let open = storage::load_open(&*storage, &mut *env);
-    cmds.insert_resource(open);
+fn setup_open(
+    storage: Res<PkvStore>,
+    mut env: ResMut<Environment>,
+    mut cmds: Commands,
+    mut tab_order: ResMut<HeadTabOrder>,
+    mut focused: ResMut<FocusedHead>,
+) {
+    let loaded = storage::load_open(&*storage, &mut *env);
+    let focused_head = storage::load_focused_head(&*storage);
+
+    // Spawn entities for each open head.
+    for (head, graph, views) in loaded {
+        let is_focused = focused_head.as_ref() == Some(&head);
+        let entity = cmds
+            .spawn((
+                OpenHead,
+                HeadRef(head),
+                WorkingGraph(graph),
+                GraphViews(views),
+                CompiledModule::default(),
+                HeadGuiState::default(),
+            ))
+            .id();
+
+        tab_order.push(entity);
+
+        // Set focused to the persisted focused head, or first head as fallback.
+        if is_focused || (**focused).is_none() {
+            **focused = Some(entity);
+        }
+    }
 }
 
-fn prune_unused_graphs_and_commits(mut env: ResMut<Environment>, open: Res<Open>) {
-    let heads = open.heads.iter().map(|(h, _, _)| h);
-    let required = gantz_core::reg::required_commits(&*env, &env.registry, heads);
+fn prune_unused_graphs_and_commits(
+    mut env: ResMut<Environment>,
+    heads: Query<&HeadRef, With<OpenHead>>,
+) {
+    let head_iter = heads.iter().map(|h| &**h);
+    let required = gantz_core::reg::required_commits(&*env, &env.registry, head_iter);
     env.registry.prune_unreachable(&required);
     env.views.retain(|ca, _| required.contains(ca));
 }
@@ -145,20 +165,34 @@ fn setup_gui_state(storage: Res<PkvStore>, mut cmds: Commands) {
 
 fn setup_vm(world: &mut World) {
     bevy::log::info!("Setting up VMs for all open heads!");
-    let env = world.resource_ref::<Environment>();
-    let open = world.resource_ref::<Open>();
 
-    // Initialize a VM for each open head.
-    let mut vms = Vec::with_capacity(open.heads.len());
-    let mut compiled_modules = Vec::with_capacity(open.heads.len());
-    for (_, graph, _) in &open.heads {
-        let (vm, compiled_module) = init_vm(&*env, graph);
-        vms.push(vm);
-        compiled_modules.push(compiled_module);
+    // Collect entity IDs first.
+    let entities: Vec<Entity> = world
+        .query_filtered::<Entity, With<OpenHead>>()
+        .iter(world)
+        .collect();
+
+    // Initialize VMs.
+    let mut vms = HeadVms::default();
+    let mut compiled_updates: Vec<(Entity, String)> = vec![];
+    for entity in entities {
+        let env: &Environment = world.resource();
+        let Some(wg) = world.get::<WorkingGraph<Box<dyn node::Node>>>(entity) else {
+            continue;
+        };
+        let (vm, compiled_module) = init_vm(env, &**wg);
+        vms.insert(entity, vm);
+        compiled_updates.push((entity, compiled_module));
     }
 
-    world.insert_non_send_resource(HeadVms(vms));
-    world.insert_resource(CompiledModules(compiled_modules));
+    // Update CompiledModule components.
+    for (entity, compiled_module) in compiled_updates {
+        if let Some(mut compiled) = world.get_mut::<CompiledModule>(entity) {
+            *compiled = CompiledModule(compiled_module);
+        }
+    }
+
+    world.insert_non_send_resource(vms);
 }
 
 fn update_gui(
@@ -167,12 +201,14 @@ fn update_gui(
     mut perf_gui: ResMut<PerfGui>,
     mut ctxs: EguiContexts,
     mut env: ResMut<Environment>,
-    mut open: ResMut<Open>,
     mut gui_state: ResMut<GuiState>,
     mut vms: NonSendMut<HeadVms>,
-    mut compiled_modules: ResMut<CompiledModules>,
+    tab_order: Res<HeadTabOrder>,
+    mut focused: ResMut<FocusedHead>,
+    mut heads_query: Query<OpenHeadData<Box<dyn node::Node>>, With<OpenHead>>,
     mut storage: ResMut<PkvStore>,
     mut memory_loaded: Local<bool>,
+    mut cmds: Commands,
 ) -> Result {
     let ctx = ctxs.ctx_mut()?;
 
@@ -185,108 +221,79 @@ fn update_gui(
     // Measure GUI frame time.
     let gui_start = web_time::Instant::now();
 
-    egui::containers::CentralPanel::default()
+    // Determine the focused head index from the focused entity.
+    let focused_ix = (**focused)
+        .and_then(|e| tab_order.iter().position(|&x| x == e))
+        .unwrap_or(0);
+
+    // Create the head access adapter.
+    let mut access = head::HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
+
+    let level = bevy::log::tracing_subscriber::filter::LevelFilter::current();
+    let response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
-            // Build a slice of (Head, &mut Graph, &mut GraphLayout) for the Gantz widget.
-            let mut heads: Vec<_> = open
-                .heads
-                .iter_mut()
-                .map(|(h, g, l)| (h.clone(), g, l))
-                .collect();
-            let get_module = |ix: usize| compiled_modules.0.get(ix).map(|m| m.0.as_str());
-            let level = bevy::log::tracing_subscriber::filter::LevelFilter::current();
-            let response = gantz_egui::widget::Gantz::new(&mut *env, &mut heads)
+            gantz_egui::widget::Gantz::new(&mut *env)
                 .trace_capture(trace_capture.0.clone(), level)
                 .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
-                .show(&mut gui_state.gantz, &get_module, &mut vms.0, ui);
+                .show(&mut gui_state.gantz, focused_ix, &mut access, ui)
+        })
+        .inner;
 
-            // The given graph name was removed.
-            if let Some(name) = response.graph_name_removed() {
-                // Update any open heads that reference this name.
-                for (head, _, _) in &mut open.heads {
-                    if let ca::Head::Branch(head_name) = &*head {
-                        if *head_name == name {
-                            let commit_ca = *env.registry.head_commit_ca(head).unwrap();
-                            *head = ca::Head::Commit(commit_ca);
-                        }
-                    }
+    // Update focused head from the widget's response.
+    if let Some(&entity) = tab_order.get(response.focused_head) {
+        **focused = Some(entity);
+    }
+
+    // The given graph name was removed.
+    if let Some(name) = response.graph_name_removed() {
+        // Update any open heads that reference this name.
+        for mut data in heads_query.iter_mut() {
+            if let ca::Head::Branch(head_name) = &**data.head_ref {
+                if *head_name == name {
+                    let commit_ca = *env.registry.head_commit_ca(&*data.head_ref).unwrap();
+                    **data.head_ref = ca::Head::Commit(commit_ca);
                 }
-                env.registry.remove_name(&name);
             }
+        }
+        env.registry.remove_name(&name);
+    }
 
-            // Single click: replace the focused head with the selected one.
-            if let Some(new_head) = response.graph_replaced() {
-                replace_head(
-                    ctx,
-                    &mut env,
-                    &mut open,
-                    &mut vms,
-                    &mut compiled_modules,
-                    &mut gui_state.gantz,
-                    new_head.clone(),
-                );
-            }
+    // Trigger events for head operations (handled by observers).
 
-            // Open head as a new tab (or focus if already open).
-            if let Some(new_head) = response.graph_opened() {
-                open_head(
-                    &mut env,
-                    &mut open,
-                    &mut vms,
-                    &mut compiled_modules,
-                    &mut gui_state.gantz,
-                    new_head.clone(),
-                );
-            }
+    // Single click: replace the focused head with the selected one.
+    if let Some(new_head) = response.graph_replaced() {
+        cmds.trigger(head::ReplaceEvent(new_head.clone()));
+    }
 
-            // Close head.
-            if let Some(head) = response.graph_closed() {
-                close_head(
-                    &mut open,
-                    &mut vms,
-                    &mut compiled_modules,
-                    &mut gui_state.gantz,
-                    head,
-                );
-            }
+    // Open head as a new tab (or focus if already open).
+    if let Some(new_head) = response.graph_opened() {
+        cmds.trigger(head::OpenEvent(new_head.clone()));
+    }
 
-            // Create a new empty graph and open it.
-            if response.new_graph() {
-                let new_head = env.registry.init_head(env::timestamp());
-                open_head(
-                    &mut env,
-                    &mut open,
-                    &mut vms,
-                    &mut compiled_modules,
-                    &mut gui_state.gantz,
-                    new_head,
-                );
-            }
+    // Close head.
+    if let Some(h) = response.graph_closed() {
+        cmds.trigger(head::CloseEvent(h.clone()));
+    }
 
-            // Handle closed heads from tab close buttons.
-            for closed_head in &response.closed_heads {
-                close_head(
-                    &mut open,
-                    &mut vms,
-                    &mut compiled_modules,
-                    &mut gui_state.gantz,
-                    closed_head,
-                );
-            }
+    // Create a new empty graph and open it.
+    if response.new_graph() {
+        let new_head = env.registry.init_head(env::timestamp());
+        cmds.trigger(head::OpenEvent(new_head));
+    }
 
-            // Handle new branch created from tab double-click.
-            if let Some((original_head, new_name)) = response.new_branch() {
-                create_branch_from_head(
-                    ctx,
-                    &mut env,
-                    &mut open,
-                    &mut gui_state.gantz,
-                    original_head,
-                    new_name.clone(),
-                );
-            }
+    // Handle closed heads from tab close buttons.
+    for closed_head in &response.closed_heads {
+        cmds.trigger(head::CloseEvent(closed_head.clone()));
+    }
+
+    // Handle new branch created from tab double-click.
+    if let Some((original_head, new_name)) = response.new_branch() {
+        cmds.trigger(head::CreateBranchEvent {
+            original: original_head.clone(),
+            new_name: new_name.clone(),
         });
+    }
 
     // Record GUI frame time.
     perf_gui.0.record(gui_start.elapsed());
@@ -297,22 +304,27 @@ fn update_gui(
 fn update_vm(
     mut ctxs: EguiContexts,
     mut env: ResMut<Environment>,
-    mut open: ResMut<Open>,
     mut gui_state: ResMut<GuiState>,
     mut vms: NonSendMut<HeadVms>,
-    mut compiled_modules: ResMut<CompiledModules>,
+    mut heads_query: Query<OpenHeadData<Box<dyn node::Node>>, With<OpenHead>>,
 ) {
     // Check for changes to each open graph and commit/recompile them.
     // FIXME: Rather than checking changed CA to monitor changes, ideally
     // `Gantz` widget can tell us this in a custom response.
-    for (ix, (head, graph, views)) in open.heads.iter_mut().enumerate() {
+    for mut data in heads_query.iter_mut() {
+        let head: &mut ca::Head = &mut *data.head_ref;
+        let graph: &Graph = &*data.working_graph;
+        let views: &gantz_egui::GraphViews = &*data.views;
+
         // Always update the views in env.views for this head's commit.
         if let Some(commit_addr) = env.registry.head_commit_ca(head).copied() {
             env.views.insert(commit_addr, views.clone());
         }
 
-        let new_graph_ca = ca::graph_addr(&*graph);
-        let head_commit = env.registry.head_commit(head).unwrap();
+        let new_graph_ca = ca::graph_addr(graph);
+        let Some(head_commit) = env.registry.head_commit(head) else {
+            continue;
+        };
         if head_commit.graph != new_graph_ca {
             let old_head = head.clone();
             let old_commit_ca = env.registry.head_commit_ca(head).copied().unwrap();
@@ -339,10 +351,11 @@ fn update_vm(
 
             // Re-register and recompile this head's graph into its VM.
             // Registration is idempotent - existing state is preserved.
-            let vm = &mut vms.0[ix];
-            gantz_core::graph::register(&*env, &*graph, &[], vm);
-            let module = compile_graph(&env, graph, vm);
-            compiled_modules.0[ix] = CompiledModule(fmt_compiled_module(&module));
+            if let Some(vm) = vms.get_mut(&data.entity) {
+                gantz_core::graph::register(&*env, graph, &[], vm);
+                let module = compile_graph(&env, graph, vm);
+                data.compiled.0 = fmt_compiled_module(&module);
+            }
         }
     }
 }
@@ -350,14 +363,17 @@ fn update_vm(
 /// Insert an Inspect node on the given edge, replacing the edge with two edges.
 fn inspect_edge(
     env: &Environment,
-    graph: &mut Graph,
-    views: &mut env::GraphViews,
+    wg: &mut WorkingGraph<Box<dyn node::Node>>,
+    gv: &mut GraphViews,
     vm: &mut Engine,
     cmd: gantz_egui::InspectEdge,
 ) {
     use gantz_egui::widget::gantz::NodeTypeRegistry;
 
     let gantz_egui::InspectEdge { path, edge, pos } = cmd;
+
+    let graph: &mut Graph = &mut *wg;
+    let views: &mut gantz_egui::GraphViews = &mut *gv;
 
     // Navigate to the nested graph at the path.
     let Some(nested) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
@@ -413,21 +429,19 @@ fn inspect_edge(
 // Drain the commands provided by the UI and process them.
 fn process_gantz_gui_cmds(
     mut env: ResMut<Environment>,
-    mut open: ResMut<Open>,
     mut vms: NonSendMut<HeadVms>,
-    mut compiled_modules: ResMut<CompiledModules>,
     mut gui_state: ResMut<GuiState>,
     mut perf_vm: ResMut<PerfVm>,
+    mut heads: Query<OpenHeadData<Box<dyn node::Node>>, With<OpenHead>>,
+    mut cmds: Commands,
 ) {
-    // Collect heads with their indices to process.
-    let heads_to_process: Vec<_> = open
-        .heads
+    // Collect heads with their entities to process.
+    let heads_to_process: Vec<_> = heads
         .iter()
-        .enumerate()
-        .map(|(ix, (h, _, _))| (ix, h.clone()))
+        .map(|data| (data.entity, (**data.head_ref).clone()))
         .collect();
 
-    for (ix, head) in heads_to_process {
+    for (entity, head) in heads_to_process {
         let head_state = gui_state.gantz.open_heads.entry(head.clone()).or_default();
         for cmd in std::mem::take(&mut head_state.scene.cmds) {
             bevy::log::debug!("{cmd:?}");
@@ -435,16 +449,20 @@ fn process_gantz_gui_cmds(
                 gantz_egui::Cmd::PushEval(path) => {
                     let fn_name = gantz_core::compile::push_eval_fn_name(&path);
                     let start = web_time::Instant::now();
-                    if let Err(e) = vms.0[ix].call_function_by_name_with_args(&fn_name, vec![]) {
-                        bevy::log::error!("{e}");
+                    if let Some(vm) = vms.get_mut(&entity) {
+                        if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
+                            bevy::log::error!("{e}");
+                        }
                     }
                     perf_vm.0.record(start.elapsed());
                 }
                 gantz_egui::Cmd::PullEval(path) => {
                     let fn_name = gantz_core::compile::pull_eval_fn_name(&path);
                     let start = web_time::Instant::now();
-                    if let Err(e) = vms.0[ix].call_function_by_name_with_args(&fn_name, vec![]) {
-                        bevy::log::error!("{e}");
+                    if let Some(vm) = vms.get_mut(&entity) {
+                        if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
+                            bevy::log::error!("{e}");
+                        }
                     }
                     perf_vm.0.record(start.elapsed());
                 }
@@ -457,14 +475,7 @@ fn process_gantz_gui_cmds(
                     // The content_ca represents a CommitAddr for graph nodes.
                     let commit_ca = ca::CommitAddr::from(content_ca);
                     if env.registry.names().get(&name) == Some(&commit_ca) {
-                        open_head(
-                            &mut env,
-                            &mut open,
-                            &mut vms,
-                            &mut compiled_modules,
-                            &mut gui_state.gantz,
-                            ca::Head::Branch(name.to_string()),
-                        );
+                        cmds.trigger(head::OpenEvent(ca::Head::Branch(name.to_string())));
                     } else {
                         bevy::log::debug!(
                             "Attempted to open named node, but the content address has changed"
@@ -478,8 +489,11 @@ fn process_gantz_gui_cmds(
                     bevy::log::info!("Forked node to new name: {new_name}");
                 }
                 gantz_egui::Cmd::InspectEdge(cmd) => {
-                    let (_, graph, views) = &mut open.heads[ix];
-                    inspect_edge(&env, graph, views, &mut vms.0[ix], cmd);
+                    if let Ok(mut data) = heads.get_mut(entity) {
+                        if let Some(vm) = vms.get_mut(&entity) {
+                            inspect_edge(&env, &mut data.working_graph, &mut data.views, vm, cmd);
+                        }
+                    }
                 }
             }
         }
@@ -488,10 +502,12 @@ fn process_gantz_gui_cmds(
 
 fn persist_resources(
     env: Res<Environment>,
-    open: Res<Open>,
     gui_state: Res<GuiState>,
     mut storage: ResMut<PkvStore>,
     mut ctxs: EguiContexts,
+    tab_order: Res<HeadTabOrder>,
+    focused: Res<FocusedHead>,
+    heads_query: Query<OpenHeadDataReadOnly<Box<dyn node::Node>>, With<OpenHead>>,
 ) {
     // Save graphs.
     let mut addrs: Vec<_> = env.registry.graphs().keys().copied().collect();
@@ -508,9 +524,24 @@ fn persist_resources(
     // Save names.
     storage::save_names(&mut *storage, env.registry.names());
 
-    // Save all open heads.
-    let heads: Vec<_> = open.heads.iter().map(|(h, _, _)| h.clone()).collect();
+    // Save all open heads in tab order.
+    let heads: Vec<_> = tab_order
+        .iter()
+        .filter_map(|&entity| {
+            heads_query
+                .get(entity)
+                .ok()
+                .map(|data| (**data.head_ref).clone())
+        })
+        .collect();
     storage::save_open_heads(&mut *storage, &heads);
+
+    // Save the focused head.
+    if let Some(focused_entity) = **focused {
+        if let Ok(data) = heads_query.get(focused_entity) {
+            storage::save_focused_head(&mut *storage, &**data.head_ref);
+        }
+    }
 
     // Save all views (already updated in update_vm).
     storage::save_views(&mut *storage, &env.views);
@@ -526,15 +557,15 @@ fn persist_resources(
 
 /// Initialise the VM for the given environment and graph.
 ///
-/// Also returns the compiled module for the initial state.
+/// Also returns the compiled module string for the initial state.
 ///
 /// TODO: Allow loading state from storage.
-fn init_vm(env: &Environment, graph: &Graph) -> (Engine, CompiledModule) {
+fn init_vm(env: &Environment, graph: &Graph) -> (Engine, String) {
     let mut vm = Engine::new_base();
     vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(env, graph, &[], &mut vm);
     let module = compile_graph(env, graph, &mut vm);
-    let compiled_module = CompiledModule(fmt_compiled_module(&module));
+    let compiled_module = fmt_compiled_module(&module);
     (vm, compiled_module)
 }
 
@@ -564,26 +595,27 @@ fn fmt_compiled_module(module: &[ExprKind]) -> String {
         .join("\n\n")
 }
 
-/// Open a head as a new tab, or focus it if already open.
-///
-/// This is only used when selecting from GraphSelect.
-fn open_head(
-    env: &mut Environment,
-    open: &mut Open,
-    vms: &mut HeadVms,
-    compiled_modules: &mut CompiledModules,
-    gantz: &mut gantz_egui::widget::GantzState,
-    new_head: ca::Head,
+fn handle_open_head_event(
+    trigger: On<head::OpenEvent>,
+    mut cmds: Commands,
+    env: Res<Environment>,
+    mut vms: NonSendMut<HeadVms>,
+    mut gui_state: ResMut<GuiState>,
+    mut tab_order: ResMut<HeadTabOrder>,
+    mut focused: ResMut<FocusedHead>,
+    heads: Query<(Entity, &HeadRef), With<OpenHead>>,
 ) {
+    let head::OpenEvent(new_head) = trigger.event();
+
     // Check if the head is already open.
-    if let Some(ix) = open.heads.iter().position(|(h, _, _)| *h == new_head) {
+    if let Some(entity) = head::find_head_entity(new_head, &heads) {
         // Just focus the existing tab.
-        gantz.focused_head = ix;
+        **focused = Some(entity);
         return;
     }
 
     // Head is not open - add it as a new tab.
-    let Some(graph) = env.registry.head_graph(&new_head) else {
+    let Some(graph) = env.registry.head_graph(new_head) else {
         bevy::log::error!("cannot open head: graph missing from registry");
         return;
     };
@@ -592,46 +624,67 @@ fn open_head(
     // Load the views for this head's commit, or create empty.
     let views = env
         .registry
-        .head_commit_ca(&new_head)
+        .head_commit_ca(new_head)
         .and_then(|ca| env.views.get(&ca).cloned())
         .unwrap_or_default();
 
-    open.heads
-        .push((new_head.clone(), new_graph.clone(), views));
-    gantz.focused_head = open.heads.len() - 1;
+    // Initialise the VM for the new graph.
+    let (new_vm, compiled_module) = init_vm(&env, &new_graph);
 
-    // Initialise the VM for the new graph and add it to the per-head collections.
-    let (new_vm, new_module) = init_vm(env, &new_graph);
-    vms.0.push(new_vm);
-    compiled_modules.0.push(new_module);
+    // Spawn the entity.
+    let entity = cmds
+        .spawn((
+            OpenHead,
+            HeadRef(new_head.clone()),
+            WorkingGraph(new_graph),
+            GraphViews(views),
+            CompiledModule(compiled_module),
+            HeadGuiState::default(),
+        ))
+        .id();
+
+    vms.insert(entity, new_vm);
+    tab_order.push(entity);
+    **focused = Some(entity);
 
     // Initialize GUI state for the new head.
-    gantz.open_heads.entry(new_head).or_default();
+    gui_state
+        .gantz
+        .open_heads
+        .entry(new_head.clone())
+        .or_default();
 }
 
-/// Replace the focused head with a new head in-place.
-///
-/// If the new head is already open elsewhere, focuses that instead.
-fn replace_head(
-    ctx: &egui::Context,
-    env: &mut Environment,
-    open: &mut Open,
-    vms: &mut HeadVms,
-    compiled_modules: &mut CompiledModules,
-    gantz: &mut gantz_egui::widget::GantzState,
-    new_head: ca::Head,
+fn handle_replace_head_event(
+    trigger: On<head::ReplaceEvent>,
+    mut ctxs: EguiContexts,
+    mut cmds: Commands,
+    env: Res<Environment>,
+    mut vms: NonSendMut<HeadVms>,
+    mut gui_state: ResMut<GuiState>,
+    mut focused: ResMut<FocusedHead>,
+    heads: Query<(Entity, &HeadRef), With<OpenHead>>,
 ) {
+    let head::ReplaceEvent(new_head) = trigger.event();
+
     // If the new head is already open, just focus it.
-    if let Some(ix) = open.heads.iter().position(|(h, _, _)| *h == new_head) {
-        gantz.focused_head = ix;
-        return;
+    for (entity, head_ref) in heads.iter() {
+        if **head_ref == *new_head {
+            **focused = Some(entity);
+            return;
+        }
     }
 
-    let ix = gantz.focused_head;
-    let old_head = open.heads[ix].0.clone();
+    // Get the currently focused entity.
+    let Some(focused_entity) = **focused else {
+        return;
+    };
+
+    // Get the old head for updating GUI state.
+    let old_head = heads.get(focused_entity).ok().map(|(_, h)| (**h).clone());
 
     // Load the new graph.
-    let Some(graph) = env.registry.head_graph(&new_head) else {
+    let Some(graph) = env.registry.head_graph(new_head) else {
         bevy::log::error!("cannot replace head: graph missing from registry");
         return;
     };
@@ -640,87 +693,116 @@ fn replace_head(
     // Load the views for this head's commit, or create empty.
     let views = env
         .registry
-        .head_commit_ca(&new_head)
+        .head_commit_ca(new_head)
         .and_then(|ca| env.views.get(&ca).cloned())
         .unwrap_or_default();
 
-    // Replace at the focused index.
-    open.heads[ix] = (new_head.clone(), new_graph.clone(), views);
-
     // Reinitialize the VM for the new graph.
-    let (new_vm, new_module) = init_vm(env, &new_graph);
-    vms.0[ix] = new_vm;
-    compiled_modules.0[ix] = new_module;
+    let (new_vm, compiled_module) = init_vm(&env, &new_graph);
+
+    // Update the entity's components via commands.
+    cmds.entity(focused_entity)
+        .insert(HeadRef(new_head.clone()))
+        .insert(WorkingGraph(new_graph))
+        .insert(GraphViews(views))
+        .insert(CompiledModule(compiled_module))
+        .insert(HeadGuiState::default());
+
+    vms.insert(focused_entity, new_vm);
 
     // Update the graph pane to show the new head.
-    gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
+    if let Some(old) = &old_head {
+        if let Ok(ctx) = ctxs.ctx_mut() {
+            gantz_egui::widget::update_graph_pane_head(ctx, old, new_head);
+        }
 
-    // Move GUI state from old head to new head.
-    if let Some(state) = gantz.open_heads.remove(&old_head) {
-        gantz.open_heads.insert(new_head, state);
-    } else {
-        gantz.open_heads.entry(new_head).or_default();
-    }
-}
-
-/// Close a head, removing it from the open tabs.
-///
-/// Does nothing if the head is not open or if it's the last open head.
-fn close_head(
-    open: &mut Open,
-    vms: &mut HeadVms,
-    compiled_modules: &mut CompiledModules,
-    gantz: &mut gantz_egui::widget::GantzState,
-    head: &ca::Head,
-) {
-    // Don't close if it's the last open head.
-    // TODO: Consider opening default empty graph when closing last head.
-    if open.heads.len() <= 1 {
-        return;
-    }
-    if let Some(ix) = open.heads.iter().position(|(h, _, _)| h == head) {
-        open.heads.remove(ix);
-        vms.0.remove(ix);
-        compiled_modules.0.remove(ix);
-        gantz.open_heads.remove(head);
-
-        // Update focused_head to remain valid.
-        if ix <= gantz.focused_head {
-            gantz.focused_head = gantz.focused_head.saturating_sub(1);
+        // Move GUI state from old head to new head.
+        if let Some(state) = gui_state.gantz.open_heads.remove(old) {
+            gui_state.gantz.open_heads.insert(new_head.clone(), state);
+        } else {
+            gui_state
+                .gantz
+                .open_heads
+                .entry(new_head.clone())
+                .or_default();
         }
     }
 }
 
-/// Create a new branch from an existing head and replace the open head with it.
-fn create_branch_from_head(
-    ctx: &egui::Context,
-    env: &mut Environment,
-    open: &mut Open,
-    gantz: &mut gantz_egui::widget::GantzState,
-    original_head: &ca::Head,
-    new_name: String,
+fn handle_close_head_event(
+    trigger: On<head::CloseEvent>,
+    mut cmds: Commands,
+    mut vms: NonSendMut<HeadVms>,
+    mut gui_state: ResMut<GuiState>,
+    mut tab_order: ResMut<HeadTabOrder>,
+    mut focused: ResMut<FocusedHead>,
+    heads: Query<(Entity, &HeadRef), With<OpenHead>>,
 ) {
+    let head::CloseEvent(head) = trigger.event();
+
+    // Don't close if it's the last open head.
+    if tab_order.len() <= 1 {
+        return;
+    }
+
+    // Find the entity for this head.
+    let Some(entity) = head::find_head_entity(head, &heads) else {
+        return;
+    };
+
+    // Get the index before removing.
+    let Some(ix) = tab_order.iter().position(|&x| x == entity) else {
+        return;
+    };
+
+    // Remove the entity.
+    cmds.entity(entity).despawn();
+    vms.remove(&entity);
+    tab_order.retain(|&x| x != entity);
+    gui_state.gantz.open_heads.remove(head);
+
+    // Update focused entity to remain valid.
+    if **focused == Some(entity) {
+        let new_ix = ix.saturating_sub(1).min(tab_order.len().saturating_sub(1));
+        **focused = tab_order.get(new_ix).copied();
+    }
+}
+
+fn handle_create_branch_event(
+    trigger: On<head::CreateBranchEvent>,
+    mut ctxs: EguiContexts,
+    mut env: ResMut<Environment>,
+    mut gui_state: ResMut<GuiState>,
+    mut heads: Query<OpenHeadData<Box<dyn node::Node>>, With<OpenHead>>,
+) {
+    let head::CreateBranchEvent { original, new_name } = trigger.event();
+
     // Get the commit CA from the original head.
-    let Some(commit_ca) = env.registry.head_commit_ca(original_head).copied() else {
-        bevy::log::error!("Failed to get commit address for head: {:?}", original_head);
+    let Some(commit_ca) = env.registry.head_commit_ca(original).copied() else {
+        bevy::log::error!("Failed to get commit address for head: {:?}", original);
         return;
     };
 
     // Insert the new branch name into the registry.
     env.registry.insert_name(new_name.clone(), commit_ca);
 
-    // Find the index of the original head and replace it.
-    let new_head = ca::Head::Branch(new_name);
-    if let Some(ix) = open.heads.iter().position(|(h, _, _)| h == original_head) {
-        let old_head = open.heads[ix].0.clone();
-        open.heads[ix].0 = new_head.clone();
+    // Find the entity with the original head and update it.
+    let new_head = ca::Head::Branch(new_name.clone());
+    for mut data in heads.iter_mut() {
+        if &**data.head_ref == original {
+            let old_head: ca::Head = (**data.head_ref).clone();
+            **data.head_ref = new_head.clone();
 
-        // Update the graph pane to show the new head.
-        gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
+            // Update the graph pane to show the new head.
+            if let Ok(ctx) = ctxs.ctx_mut() {
+                gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
+            }
 
-        // Move GUI state from old head to new head.
-        if let Some(state) = gantz.open_heads.remove(&old_head) {
-            gantz.open_heads.insert(new_head, state);
+            // Move GUI state from old head to new head.
+            if let Some(state) = gui_state.gantz.open_heads.remove(&old_head) {
+                gui_state.gantz.open_heads.insert(new_head, state);
+            }
+            break;
         }
     }
 }
