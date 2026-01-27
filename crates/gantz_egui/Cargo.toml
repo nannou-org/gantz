@@ -17,6 +17,7 @@ blake3.workspace = true
 egui.workspace = true
 egui_extras.workspace = true
 egui_graph.workspace = true
+egui_plot.workspace = true
 egui_tiles.workspace = true
 gantz_ca.workspace = true
 gantz_core.workspace = true

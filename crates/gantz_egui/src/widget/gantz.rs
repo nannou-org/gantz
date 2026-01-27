@@ -50,6 +50,8 @@ where
         &'a mut GraphViews,
     )],
     log_source: Option<LogSource>,
+    perf_vm: Option<&'a mut widget::PerfCapture>,
+    perf_gui: Option<&'a mut widget::PerfCapture>,
 }
 
 enum LogSource {
@@ -93,10 +95,12 @@ pub enum Pane {
     /// Contains the inner graph tree with all open graph tabs.
     GraphScene,
     Graphs,
+    GuiPerf,
     History,
     Logs,
     NodeInspector,
     Steel,
+    VmPerf,
 }
 
 /// A pane within the inner graph tree.
@@ -179,8 +183,10 @@ struct TabEditState {
 pub struct ViewToggles {
     pub graphs: bool,
     pub history: bool,
-    pub node_inspector: bool,
     pub logs: bool,
+    pub node_inspector: bool,
+    pub perf_gui: bool,
+    pub perf_vm: bool,
     pub steel: bool,
     pub graph_config: bool,
 }
@@ -247,6 +253,8 @@ where
             env,
             heads,
             log_source: None,
+            perf_vm: None,
+            perf_gui: None,
         }
     }
 
@@ -257,12 +265,24 @@ where
     }
 
     /// Enable the logging window for tracking tracing.
+    #[cfg(feature = "tracing")]
     pub fn trace_capture(
         mut self,
         trace_capture: widget::trace_view::TraceCapture,
         level: tracing::level_filters::LevelFilter,
     ) -> Self {
         self.log_source = Some(LogSource::TraceCapture(trace_capture, level));
+        self
+    }
+
+    /// Set the performance capture sources for VM and GUI timing.
+    pub fn perf_captures(
+        mut self,
+        perf_vm: &'a mut widget::PerfCapture,
+        perf_gui: &'a mut widget::PerfCapture,
+    ) -> Self {
+        self.perf_vm = Some(perf_vm);
+        self.perf_gui = Some(perf_gui);
         self
     }
 
@@ -347,10 +367,12 @@ where
             Pane::GraphConfig => "Graph Config".into(),
             Pane::GraphScene => "Graphs".into(),
             Pane::Graphs => "Graphs".into(),
+            Pane::GuiPerf => "GUI Perf".into(),
             Pane::History => "History".into(),
             Pane::Logs => match self.gantz.log_source {
                 None => "Logs (No Source)".into(),
                 Some(LogSource::Logger(_)) => "Logs".into(),
+                #[cfg(feature = "tracing")]
                 Some(LogSource::TraceCapture(..)) => "Tracing".into(),
             },
             Pane::NodeInspector => match self.gantz.heads.get(self.state.focused_head) {
@@ -361,6 +383,7 @@ where
                 Some((head, _, _)) => format!("Steel - {head}").into(),
                 None => "Steel".into(),
             },
+            Pane::VmPerf => "VM Perf".into(),
         }
     }
 
@@ -480,6 +503,11 @@ where
                     None => gantz_response.graph_select = Some(res.inner),
                 }
             }
+            Pane::GuiPerf => {
+                if let Some(ref mut capture) = gantz.perf_gui {
+                    perf_view("GUI Perf", capture, ui);
+                }
+            }
             Pane::History => {
                 let heads: Vec<_> = gantz.heads.iter().map(|(h, _, _)| h.clone()).collect();
                 let res = history_view(gantz.env, &heads, state.focused_head, ui);
@@ -493,6 +521,7 @@ where
                 Some(LogSource::Logger(logger)) => {
                     log_view(logger, ui);
                 }
+                #[cfg(feature = "tracing")]
                 Some(LogSource::TraceCapture(trace_capture, level)) => {
                     trace_view(trace_capture, *level, ui);
                 }
@@ -512,6 +541,11 @@ where
                 let focused = state.focused_head;
                 let compiled_steel = get_compiled_module(focused).unwrap_or("");
                 steel_view(compiled_steel, ui);
+            }
+            Pane::VmPerf => {
+                if let Some(ref mut capture) = gantz.perf_vm {
+                    perf_view("VM Perf", capture, ui);
+                }
             }
         }
         egui_tiles::UiResponse::None
@@ -824,19 +858,30 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
     let graph_config = tiles.insert_pane(Pane::GraphConfig);
     let graph_scene = tiles.insert_pane(Pane::GraphScene);
     let graphs = tiles.insert_pane(Pane::Graphs);
+    let gui_perf = tiles.insert_pane(Pane::GuiPerf);
     let history = tiles.insert_pane(Pane::History);
     let logs = tiles.insert_pane(Pane::Logs);
     let node_inspector = tiles.insert_pane(Pane::NodeInspector);
     let steel = tiles.insert_pane(Pane::Steel);
+    let vm_perf = tiles.insert_pane(Pane::VmPerf);
 
     // The left column.
     let mut shares = egui_tiles::Shares::default();
-    shares.set_share(graphs, 0.30);
-    shares.set_share(history, 0.23);
-    shares.set_share(graph_config, 0.12);
-    shares.set_share(node_inspector, 0.35);
+    shares.set_share(graphs, 0.24);
+    shares.set_share(history, 0.18);
+    shares.set_share(vm_perf, 0.10);
+    shares.set_share(gui_perf, 0.10);
+    shares.set_share(graph_config, 0.10);
+    shares.set_share(node_inspector, 0.28);
     let left_column = tiles.insert_container(egui_tiles::Linear {
-        children: vec![graphs, history, graph_config, node_inspector],
+        children: vec![
+            graphs,
+            history,
+            vm_perf,
+            gui_perf,
+            graph_config,
+            node_inspector,
+        ],
         dir: egui_tiles::LinearDir::Vertical,
         shares,
     });
@@ -964,10 +1009,12 @@ fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
                 Pane::GraphConfig => tree.set_visible(id, view.graph_config),
                 Pane::GraphScene => (),
                 Pane::Graphs => tree.set_visible(id, view.graphs),
+                Pane::GuiPerf => tree.set_visible(id, view.perf_gui),
                 Pane::History => tree.set_visible(id, view.history),
                 Pane::Logs => tree.set_visible(id, view.logs),
                 Pane::NodeInspector => tree.set_visible(id, view.node_inspector),
                 Pane::Steel => tree.set_visible(id, view.steel),
+                Pane::VmPerf => tree.set_visible(id, view.perf_vm),
             }
         }
     }
@@ -1015,6 +1062,15 @@ where
             .focused_head(focused_head)
             .show(ui)
     })
+}
+
+fn perf_view(title: &str, capture: &mut widget::PerfCapture, ui: &mut egui::Ui) {
+    // Use Frame::NONE to fill the entire pane with no padding.
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE)
+        .show_inside(ui, |ui| {
+            widget::PerfView::new(title, capture).show(ui);
+        });
 }
 
 /// Returns the response from the graph scene if it was shown.
