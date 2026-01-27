@@ -71,6 +71,8 @@ impl<'a> PaneMenu<'a> {
                             items_response = [
                                 menu_item(ui, "Steel", &mut self.view_toggles.steel),
                                 menu_item(ui, "Logs", &mut self.view_toggles.logs),
+                                menu_item(ui, "GUI Perf", &mut self.view_toggles.perf_gui),
+                                menu_item(ui, "VM Perf", &mut self.view_toggles.perf_vm),
                                 menu_item(
                                     ui,
                                     "Node Inspector",

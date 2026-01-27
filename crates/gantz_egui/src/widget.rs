@@ -12,6 +12,7 @@ pub use label_toggle::LabelToggle;
 pub use log_view::LogView;
 pub use node_inspector::NodeInspector;
 pub use pane_menu::PaneMenu;
+pub use perf_view::{PerfCapture, PerfView};
 
 pub mod command_palette;
 pub mod gantz;
@@ -25,6 +26,7 @@ pub mod label_toggle;
 pub mod log_view;
 pub mod node_inspector;
 pub mod pane_menu;
+pub mod perf_view;
 #[cfg(feature = "tracing")]
 pub mod trace_view;
 

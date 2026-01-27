@@ -48,9 +48,19 @@ struct HeadVms(Vec<Engine>);
 #[derive(Default, Resource)]
 struct TraceCapture(gantz_egui::widget::trace_view::TraceCapture);
 
+/// Performance capture for VM execution timing.
+#[derive(Default, Resource)]
+struct PerfVm(gantz_egui::widget::PerfCapture);
+
+/// Performance capture for GUI frame timing.
+#[derive(Default, Resource)]
+struct PerfGui(gantz_egui::widget::PerfCapture);
+
 fn main() {
     App::new()
         .insert_resource(TraceCapture::default())
+        .insert_resource(PerfVm::default())
+        .insert_resource(PerfGui::default())
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::new(0.25))
@@ -153,6 +163,8 @@ fn setup_vm(world: &mut World) {
 
 fn update_gui(
     trace_capture: Res<TraceCapture>,
+    mut perf_vm: ResMut<PerfVm>,
+    mut perf_gui: ResMut<PerfGui>,
     mut ctxs: EguiContexts,
     mut env: ResMut<Environment>,
     mut open: ResMut<Open>,
@@ -169,6 +181,10 @@ fn update_gui(
         storage::load_egui_memory(&mut *storage, ctx);
         *memory_loaded = true;
     }
+
+    // Measure GUI frame time.
+    let gui_start = web_time::Instant::now();
+
     egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
@@ -182,6 +198,7 @@ fn update_gui(
             let level = bevy::log::tracing_subscriber::filter::LevelFilter::current();
             let response = gantz_egui::widget::Gantz::new(&mut *env, &mut heads)
                 .trace_capture(trace_capture.0.clone(), level)
+                .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
                 .show(&mut gui_state.gantz, &get_module, &mut vms.0, ui);
 
             // The given graph name was removed.
@@ -270,6 +287,10 @@ fn update_gui(
                 );
             }
         });
+
+    // Record GUI frame time.
+    perf_gui.0.record(gui_start.elapsed());
+
     Ok(())
 }
 
@@ -396,6 +417,7 @@ fn process_gantz_gui_cmds(
     mut vms: NonSendMut<HeadVms>,
     mut compiled_modules: ResMut<CompiledModules>,
     mut gui_state: ResMut<GuiState>,
+    mut perf_vm: ResMut<PerfVm>,
 ) {
     // Collect heads with their indices to process.
     let heads_to_process: Vec<_> = open
@@ -412,15 +434,19 @@ fn process_gantz_gui_cmds(
             match cmd {
                 gantz_egui::Cmd::PushEval(path) => {
                     let fn_name = gantz_core::compile::push_eval_fn_name(&path);
+                    let start = web_time::Instant::now();
                     if let Err(e) = vms.0[ix].call_function_by_name_with_args(&fn_name, vec![]) {
                         bevy::log::error!("{e}");
                     }
+                    perf_vm.0.record(start.elapsed());
                 }
                 gantz_egui::Cmd::PullEval(path) => {
                     let fn_name = gantz_core::compile::pull_eval_fn_name(&path);
+                    let start = web_time::Instant::now();
                     if let Err(e) = vms.0[ix].call_function_by_name_with_args(&fn_name, vec![]) {
                         bevy::log::error!("{e}");
                     }
+                    perf_vm.0.record(start.elapsed());
                 }
                 gantz_egui::Cmd::OpenGraph(path) => {
                     // Re-borrow head_state to modify path.
