@@ -13,7 +13,7 @@ use bevy_pkv::PkvStore;
 use env::Environment;
 use gantz_ca as ca;
 use graph::Graph;
-use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
+use steel::steel_vm::engine::Engine;
 
 mod env;
 mod graph;
@@ -180,9 +180,15 @@ fn setup_vm(world: &mut World) {
         let Some(wg) = world.get::<WorkingGraph<Box<dyn node::Node>>>(entity) else {
             continue;
         };
-        let (vm, compiled_module) = init_vm(env, &**wg);
+        let (vm, module) = match gantz_core::vm::init(env, &**wg) {
+            Ok(result) => result,
+            Err(e) => {
+                bevy::log::error!("Failed to init VM for entity {entity}: {e}");
+                continue;
+            }
+        };
         vms.insert(entity, vm);
-        compiled_updates.push((entity, compiled_module));
+        compiled_updates.push((entity, gantz_core::vm::fmt_module(&module)));
     }
 
     // Update CompiledModule components.
@@ -353,8 +359,10 @@ fn update_vm(
             // Registration is idempotent - existing state is preserved.
             if let Some(vm) = vms.get_mut(&data.entity) {
                 gantz_core::graph::register(&*env, graph, &[], vm);
-                let module = compile_graph(&env, graph, vm);
-                data.compiled.0 = fmt_compiled_module(&module);
+                match gantz_core::vm::compile(&*env, graph, vm) {
+                    Ok(module) => data.compiled.0 = gantz_core::vm::fmt_module(&module),
+                    Err(e) => bevy::log::error!("Failed to compile graph: {e}"),
+                }
             }
         }
     }
@@ -555,46 +563,6 @@ fn persist_resources(
     }
 }
 
-/// Initialise the VM for the given environment and graph.
-///
-/// Also returns the compiled module string for the initial state.
-///
-/// TODO: Allow loading state from storage.
-fn init_vm(env: &Environment, graph: &Graph) -> (Engine, String) {
-    let mut vm = Engine::new_base();
-    vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(env, graph, &[], &mut vm);
-    let module = compile_graph(env, graph, &mut vm);
-    let compiled_module = fmt_compiled_module(&module);
-    (vm, compiled_module)
-}
-
-fn compile_graph(env: &Environment, graph: &Graph, vm: &mut Engine) -> Vec<ExprKind> {
-    // Generate the steel module.
-    let module = match gantz_core::compile::module(env, graph) {
-        Ok(module) => module,
-        Err(e) => {
-            bevy::log::error!("failed to compile graph: {e}");
-            return vec![];
-        }
-    };
-    // Compile the eval fns.
-    for expr in &module {
-        if let Err(e) = vm.run(expr.to_pretty(80)) {
-            bevy::log::error!("{e}");
-        }
-    }
-    module
-}
-
-fn fmt_compiled_module(module: &[ExprKind]) -> String {
-    module
-        .iter()
-        .map(|expr| expr.to_pretty(80))
-        .collect::<Vec<String>>()
-        .join("\n\n")
-}
-
 fn handle_open_head_event(
     trigger: On<head::OpenEvent>,
     mut cmds: Commands,
@@ -629,7 +597,14 @@ fn handle_open_head_event(
         .unwrap_or_default();
 
     // Initialise the VM for the new graph.
-    let (new_vm, compiled_module) = init_vm(&env, &new_graph);
+    let (new_vm, module) = match gantz_core::vm::init(&*env, &new_graph) {
+        Ok(result) => result,
+        Err(e) => {
+            bevy::log::error!("Failed to init VM for new head: {e}");
+            return;
+        }
+    };
+    let compiled_module = gantz_core::vm::fmt_module(&module);
 
     // Spawn the entity.
     let entity = cmds
@@ -698,7 +673,14 @@ fn handle_replace_head_event(
         .unwrap_or_default();
 
     // Reinitialize the VM for the new graph.
-    let (new_vm, compiled_module) = init_vm(&env, &new_graph);
+    let (new_vm, module) = match gantz_core::vm::init(&*env, &new_graph) {
+        Ok(result) => result,
+        Err(e) => {
+            bevy::log::error!("Failed to init VM for replaced head: {e}");
+            return;
+        }
+    };
+    let compiled_module = gantz_core::vm::fmt_module(&module);
 
     // Update the entity's components via commands.
     cmds.entity(focused_entity)

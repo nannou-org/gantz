@@ -12,7 +12,6 @@ use std::{
     any::Any,
     collections::{BTreeMap, HashMap},
 };
-use steel::{SteelVal, parser::ast::ExprKind};
 
 // ----------------------------------------------
 
@@ -367,9 +366,18 @@ impl App {
         let mut vms = Vec::with_capacity(heads.len());
         let mut compiled_modules = Vec::with_capacity(heads.len());
         for (_, graph, _) in &heads {
-            let (vm, compiled_module) = init_vm(&env, graph);
-            vms.push(vm);
-            compiled_modules.push(compiled_module);
+            match gantz_core::vm::init(&env, graph) {
+                Ok((vm, module)) => {
+                    vms.push(vm);
+                    compiled_modules.push(gantz_core::vm::fmt_module(&module));
+                }
+                Err(e) => {
+                    log::error!("Failed to init VM: {e}");
+                    // Push defaults to keep indices aligned
+                    vms.push(Engine::new_base());
+                    compiled_modules.push(String::new());
+                }
+            }
         }
 
         // GUI setup.
@@ -430,8 +438,12 @@ impl eframe::App for App {
 
                 // Recompile this head's graph into its VM.
                 let vm = &mut self.state.vms[ix];
-                let module = compile_graph(&self.state.env, graph, vm);
-                self.state.compiled_modules[ix] = fmt_compiled_module(&module);
+                match gantz_core::vm::compile(&self.state.env, &*graph, vm) {
+                    Ok(module) => {
+                        self.state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module)
+                    }
+                    Err(e) => log::error!("Failed to compile graph: {e}"),
+                }
             }
         }
 
@@ -762,20 +774,6 @@ fn commit_key(ca: gantz_ca::CommitAddr) -> String {
     format!("{ca}")
 }
 
-/// Initialise the VM for the given environment and graph.
-///
-/// Also returns the compiled module for the initial state.
-///
-/// TODO: Allow loading state from storage.
-fn init_vm(env: &Environment, graph: &Graph) -> (Engine, String) {
-    let mut vm = Engine::new_base();
-    vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(env, graph, &[], &mut vm);
-    let module = compile_graph(env, graph, &mut vm);
-    let compiled_module = fmt_compiled_module(&module);
-    (vm, compiled_module)
-}
-
 // Drain the commands provided by the UI and process them.
 fn process_cmds(state: &mut State) {
     // Collect heads with their indices to process.
@@ -898,42 +896,13 @@ fn inspect_edge(
     view.layout.insert(node_id, pos);
 }
 
-fn compile_graph(env: &Environment, graph: &Graph, vm: &mut Engine) -> Vec<ExprKind> {
-    // Generate the steel module.
-    let module = match gantz_core::compile::module(env, graph) {
-        Ok(module) => module,
-        Err(e) => {
-            log::error!("failed to compile graph: {e}");
-            return vec![];
-        }
-    };
-    // Compile the eval fns.
-    for expr in &module {
-        if let Err(e) = vm.run(expr.to_pretty(80)) {
-            log::error!("{e}");
-        }
-    }
-    module
-}
-
-fn fmt_compiled_module(module: &[ExprKind]) -> String {
-    module
-        .iter()
-        .map(|expr| expr.to_pretty(80))
-        .collect::<Vec<String>>()
-        .join("\n\n")
-}
-
 fn gui(ctx: &egui::Context, state: &mut State) {
     let response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
             // Create the head access adapter.
-            let mut access = DemoHeadAccess::new(
-                &mut state.heads,
-                &state.compiled_modules,
-                &mut state.vms,
-            );
+            let mut access =
+                DemoHeadAccess::new(&mut state.heads, &state.compiled_modules, &mut state.vms);
 
             gantz_egui::widget::Gantz::new(&mut state.env)
                 .logger(state.logger.clone())
@@ -1012,9 +981,20 @@ fn open_head(state: &mut State, new_head: gantz_ca::Head) {
     state.focused_head = state.heads.len() - 1;
 
     // Initialise the VM for the new graph and add to per-head collections.
-    let (vm, compiled_module) = init_vm(&state.env, &new_graph);
-    state.vms.push(vm);
-    state.compiled_modules.push(compiled_module);
+    match gantz_core::vm::init(&state.env, &new_graph) {
+        Ok((vm, module)) => {
+            state.vms.push(vm);
+            state
+                .compiled_modules
+                .push(gantz_core::vm::fmt_module(&module));
+        }
+        Err(e) => {
+            log::error!("Failed to init VM for new head: {e}");
+            // Push defaults to keep indices aligned
+            state.vms.push(Engine::new_base());
+            state.compiled_modules.push(String::new());
+        }
+    }
 
     // Initialize GUI state for the new head.
     state.gantz.open_heads.entry(new_head).or_default();
@@ -1042,9 +1022,15 @@ fn replace_head(ctx: &egui::Context, state: &mut State, new_head: gantz_ca::Head
     state.heads[ix] = (new_head.clone(), new_graph.clone(), views);
 
     // Reinitialize the VM for the new graph.
-    let (new_vm, new_module) = init_vm(&state.env, &new_graph);
-    state.vms[ix] = new_vm;
-    state.compiled_modules[ix] = new_module;
+    match gantz_core::vm::init(&state.env, &new_graph) {
+        Ok((new_vm, module)) => {
+            state.vms[ix] = new_vm;
+            state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module);
+        }
+        Err(e) => {
+            log::error!("Failed to init VM for replaced head: {e}");
+        }
+    }
 
     // Update the graph pane to show the new head.
     gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);

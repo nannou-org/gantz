@@ -8,6 +8,7 @@ pub mod graph;
 pub mod node;
 pub mod reg;
 pub mod visit;
+pub mod vm;
 
 /// The ident used to represent the root state.
 /// This is the state of the top-level graph.
