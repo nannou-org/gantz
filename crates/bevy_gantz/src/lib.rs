@@ -1,4 +1,5 @@
 pub mod debounced_input;
+pub mod eval;
 pub mod head;
 
 pub use head::{

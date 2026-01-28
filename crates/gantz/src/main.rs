@@ -7,7 +7,7 @@ use bevy_gantz::{
     CompiledModule, FocusedHead, GraphViews, HeadGuiState, HeadRef, HeadTabOrder, HeadVms,
     OpenHead, OpenHeadData, OpenHeadDataReadOnly, WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
-    head,
+    eval, head,
 };
 use bevy_pkv::PkvStore;
 use env::Environment;
@@ -50,6 +50,8 @@ fn main() {
         .add_observer(handle_close_head_event)
         .add_observer(handle_replace_head_event)
         .add_observer(handle_create_branch_event)
+        // Eval event observer
+        .add_observer(handle_eval_event)
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::new(0.25))
@@ -439,7 +441,6 @@ fn process_gantz_gui_cmds(
     mut env: ResMut<Environment>,
     mut vms: NonSendMut<HeadVms>,
     mut gui_state: ResMut<GuiState>,
-    mut perf_vm: ResMut<PerfVm>,
     mut heads: Query<OpenHeadData<Box<dyn node::Node>>, With<OpenHead>>,
     mut cmds: Commands,
 ) {
@@ -455,24 +456,18 @@ fn process_gantz_gui_cmds(
             bevy::log::debug!("{cmd:?}");
             match cmd {
                 gantz_egui::Cmd::PushEval(path) => {
-                    let fn_name = gantz_core::compile::push_eval_fn_name(&path);
-                    let start = web_time::Instant::now();
-                    if let Some(vm) = vms.get_mut(&entity) {
-                        if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
-                            bevy::log::error!("{e}");
-                        }
-                    }
-                    perf_vm.0.record(start.elapsed());
+                    cmds.trigger(eval::EvalEvent {
+                        head: entity,
+                        path,
+                        kind: eval::EvalKind::Push,
+                    });
                 }
                 gantz_egui::Cmd::PullEval(path) => {
-                    let fn_name = gantz_core::compile::pull_eval_fn_name(&path);
-                    let start = web_time::Instant::now();
-                    if let Some(vm) = vms.get_mut(&entity) {
-                        if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
-                            bevy::log::error!("{e}");
-                        }
-                    }
-                    perf_vm.0.record(start.elapsed());
+                    cmds.trigger(eval::EvalEvent {
+                        head: entity,
+                        path,
+                        kind: eval::EvalKind::Pull,
+                    });
                 }
                 gantz_egui::Cmd::OpenGraph(path) => {
                     // Re-borrow head_state to modify path.
@@ -787,4 +782,23 @@ fn handle_create_branch_event(
             break;
         }
     }
+}
+
+fn handle_eval_event(
+    trigger: On<eval::EvalEvent>,
+    mut vms: NonSendMut<HeadVms>,
+    mut perf_vm: ResMut<PerfVm>,
+) {
+    let event = trigger.event();
+    let fn_name = match event.kind {
+        eval::EvalKind::Push => gantz_core::compile::push_eval_fn_name(&event.path),
+        eval::EvalKind::Pull => gantz_core::compile::pull_eval_fn_name(&event.path),
+    };
+    let start = web_time::Instant::now();
+    if let Some(vm) = vms.get_mut(&event.head) {
+        if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
+            bevy::log::error!("{e}");
+        }
+    }
+    perf_vm.0.record(start.elapsed());
 }
