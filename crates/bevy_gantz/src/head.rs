@@ -3,7 +3,10 @@
 //! This module provides Bevy components and resources for managing open graph
 //! heads as entities rather than parallel `Vec`s.
 
+use crate::reg::Registry;
+use crate::view::Views;
 use bevy_ecs::{prelude::*, query::QueryData};
+use bevy_log as log;
 use gantz_ca as ca;
 use gantz_egui::HeadDataMut;
 use std::{
@@ -340,4 +343,186 @@ pub fn is_head_focused(
     find_head_entity(head, heads)
         .map(|entity| **focused == Some(entity))
         .unwrap_or(false)
+}
+
+// ----------------------------------------------------------------------------
+// Event Handlers (Observers)
+// ----------------------------------------------------------------------------
+
+/// Handle request to open a head as a new tab (or focus if already open).
+pub fn on_open_head<N>(
+    trigger: On<OpenEvent>,
+    mut cmds: Commands,
+    registry: Res<Registry<N>>,
+    views: Res<Views>,
+    mut tab_order: ResMut<HeadTabOrder>,
+    mut focused: ResMut<FocusedHead>,
+    heads: Query<(Entity, &HeadRef), With<OpenHead>>,
+) where
+    N: Clone + Send + Sync + 'static,
+{
+    let OpenEvent(new_head) = trigger.event();
+
+    // If already open, just focus it.
+    if let Some(entity) = find_head_entity(new_head, &heads) {
+        **focused = Some(entity);
+        return;
+    }
+
+    // Get graph from registry.
+    let Some(graph) = registry.head_graph(new_head).cloned() else {
+        log::error!("cannot open head: graph missing from registry");
+        return;
+    };
+
+    // Get views for this head's commit.
+    let head_views = registry
+        .head_commit_ca(new_head)
+        .and_then(|ca| views.get(ca).cloned())
+        .unwrap_or_default();
+
+    // Spawn entity (NO CompiledModule - app observer adds it after VM init).
+    let entity = cmds
+        .spawn((
+            OpenHead,
+            HeadRef(new_head.clone()),
+            WorkingGraph(graph),
+            GraphViews(head_views),
+            HeadGuiState::default(),
+        ))
+        .id();
+
+    tab_order.push(entity);
+    **focused = Some(entity);
+
+    // Emit hook for app to do VM init + GUI state.
+    cmds.trigger(HeadOpened {
+        entity,
+        head: new_head.clone(),
+    });
+}
+
+/// Handle request to replace the focused head with a different head.
+pub fn on_replace_head<N>(
+    trigger: On<ReplaceEvent>,
+    mut cmds: Commands,
+    registry: Res<Registry<N>>,
+    views: Res<Views>,
+    mut focused: ResMut<FocusedHead>,
+    heads: Query<(Entity, &HeadRef), With<OpenHead>>,
+) where
+    N: Clone + Send + Sync + 'static,
+{
+    let ReplaceEvent(new_head) = trigger.event();
+
+    // If new head already open, just focus it.
+    if let Some(entity) = find_head_entity(new_head, &heads) {
+        **focused = Some(entity);
+        return;
+    }
+
+    let Some(focused_entity) = **focused else { return };
+    let old_head = heads.get(focused_entity).ok().map(|(_, h)| (**h).clone());
+
+    // Get new graph/views.
+    let Some(graph) = registry.head_graph(new_head).cloned() else {
+        log::error!("cannot replace head: graph missing from registry");
+        return;
+    };
+    let head_views = registry
+        .head_commit_ca(new_head)
+        .and_then(|ca| views.get(ca).cloned())
+        .unwrap_or_default();
+
+    // Update entity components (NO CompiledModule - app observer adds it).
+    cmds.entity(focused_entity)
+        .insert(HeadRef(new_head.clone()))
+        .insert(WorkingGraph(graph))
+        .insert(GraphViews(head_views))
+        .insert(HeadGuiState::default());
+
+    // Emit hook.
+    if let Some(old) = old_head {
+        cmds.trigger(HeadReplaced {
+            entity: focused_entity,
+            old_head: old,
+            new_head: new_head.clone(),
+        });
+    }
+}
+
+/// Handle request to close a head tab.
+pub fn on_close_head<N>(
+    trigger: On<CloseEvent>,
+    mut cmds: Commands,
+    mut tab_order: ResMut<HeadTabOrder>,
+    mut focused: ResMut<FocusedHead>,
+    heads: Query<(Entity, &HeadRef), With<OpenHead>>,
+) where
+    N: Send + Sync + 'static,
+{
+    let CloseEvent(head) = trigger.event();
+
+    // Don't close if last head.
+    if tab_order.len() <= 1 {
+        return;
+    }
+
+    let Some(entity) = find_head_entity(head, &heads) else {
+        return;
+    };
+    let Some(ix) = tab_order.iter().position(|&x| x == entity) else {
+        return;
+    };
+
+    cmds.entity(entity).despawn();
+    tab_order.retain(|&x| x != entity);
+
+    // Update focus to remain valid.
+    if **focused == Some(entity) {
+        let new_ix = ix.saturating_sub(1).min(tab_order.len().saturating_sub(1));
+        **focused = tab_order.get(new_ix).copied();
+    }
+
+    cmds.trigger(HeadClosed {
+        entity,
+        head: head.clone(),
+    });
+}
+
+/// Handle request to create a new branch from an existing head.
+pub fn on_create_branch<N>(
+    trigger: On<CreateBranchEvent>,
+    mut cmds: Commands,
+    mut registry: ResMut<Registry<N>>,
+    mut heads: Query<(Entity, &mut HeadRef), With<OpenHead>>,
+) where
+    N: Send + Sync + 'static,
+{
+    let CreateBranchEvent { original, new_name } = trigger.event();
+
+    // Get commit CA from original head.
+    let Some(commit_ca) = registry.head_commit_ca(original).copied() else {
+        log::error!("Failed to get commit address for head: {:?}", original);
+        return;
+    };
+
+    // Insert new branch name.
+    registry.insert_name(new_name.clone(), commit_ca);
+
+    // Find and update the entity.
+    let new_head = ca::Head::Branch(new_name.clone());
+    for (entity, mut head_ref) in heads.iter_mut() {
+        if &**head_ref == original {
+            let old_head = (**head_ref).clone();
+            **head_ref = new_head.clone();
+
+            cmds.trigger(BranchCreated {
+                entity,
+                old_head,
+                new_head,
+            });
+            break;
+        }
+    }
 }

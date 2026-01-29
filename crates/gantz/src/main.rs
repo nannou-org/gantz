@@ -49,13 +49,13 @@ fn main() {
         .insert_resource(BuiltinNodes::<Box<dyn node::Node>>(Box::new(
             AppBuiltins::new(),
         )))
-        // Head event observers
-        .add_observer(handle_open_head_event)
-        .add_observer(handle_close_head_event)
-        .add_observer(handle_replace_head_event)
-        .add_observer(handle_create_branch_event)
+        // Hook observers for app-specific handling (VM init, GUI state)
+        .add_observer(on_head_opened)
+        .add_observer(on_head_closed)
+        .add_observer(on_head_replaced)
+        .add_observer(on_branch_created)
         // Eval event observer
-        .add_observer(handle_eval_event)
+        .add_observer(on_eval_event)
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::new(0.25))
@@ -583,237 +583,115 @@ fn persist_resources(
     }
 }
 
-fn handle_open_head_event(
-    trigger: On<head::OpenEvent>,
-    mut cmds: Commands,
+// ----------------------------------------------------------------------------
+// Hook Observers (respond to hook events from bevy_gantz handlers)
+// ----------------------------------------------------------------------------
+
+/// VM init + GUI state for opened heads.
+fn on_head_opened(
+    trigger: On<head::HeadOpened>,
     registry: Res<Registry<Box<dyn node::Node>>>,
     views: Res<Views>,
     builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     mut vms: NonSendMut<HeadVms>,
+    mut cmds: Commands,
     mut gui_state: ResMut<GuiState>,
-    mut tab_order: ResMut<HeadTabOrder>,
-    mut focused: ResMut<FocusedHead>,
-    heads: Query<(Entity, &HeadRef), With<OpenHead>>,
+    graphs: Query<&WorkingGraph<Box<dyn node::Node>>>,
 ) {
-    let head::OpenEvent(new_head) = trigger.event();
+    let event = trigger.event();
 
-    // Check if the head is already open.
-    if let Some(entity) = head::find_head_entity(new_head, &heads) {
-        // Just focus the existing tab.
-        **focused = Some(entity);
-        return;
-    }
-
-    // Head is not open - add it as a new tab.
-    let Some(graph) = registry.head_graph(new_head) else {
-        bevy::log::error!("cannot open head: graph missing from registry");
-        return;
-    };
-    let new_graph = graph::clone(graph);
-
-    // Load the views for this head's commit, or create empty.
-    let head_views = registry
-        .head_commit_ca(new_head)
-        .and_then(|ca| views.get(&ca).cloned())
-        .unwrap_or_default();
-
-    // Initialise the VM for the new graph.
+    // VM init.
+    let graph = graphs.get(event.entity).unwrap();
     let env = Environment::new(&*registry, &*views, &*builtins);
-    let (new_vm, module) = match gantz_core::vm::init(&env, &new_graph) {
+    let (vm, module) = match gantz_core::vm::init(&env, &**graph) {
         Ok(result) => result,
         Err(e) => {
             bevy::log::error!("Failed to init VM for new head: {e}");
             return;
         }
     };
-    let compiled_module = gantz_core::vm::fmt_module(&module);
+    cmds.entity(event.entity)
+        .insert(CompiledModule(gantz_core::vm::fmt_module(&module)));
+    vms.insert(event.entity, vm);
 
-    // Spawn the entity.
-    let entity = cmds
-        .spawn((
-            OpenHead,
-            HeadRef(new_head.clone()),
-            WorkingGraph(new_graph),
-            GraphViews(head_views),
-            CompiledModule(compiled_module),
-            HeadGuiState::default(),
-        ))
-        .id();
-
-    vms.insert(entity, new_vm);
-    tab_order.push(entity);
-    **focused = Some(entity);
-
-    // Initialize GUI state for the new head.
+    // GUI state.
     gui_state
         .gantz
         .open_heads
-        .entry(new_head.clone())
+        .entry(event.head.clone())
         .or_default();
 }
 
-fn handle_replace_head_event(
-    trigger: On<head::ReplaceEvent>,
-    mut ctxs: EguiContexts,
-    mut cmds: Commands,
+/// VM init + GUI state for replaced heads.
+fn on_head_replaced(
+    trigger: On<head::HeadReplaced>,
     registry: Res<Registry<Box<dyn node::Node>>>,
     views: Res<Views>,
     builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     mut vms: NonSendMut<HeadVms>,
+    mut cmds: Commands,
     mut gui_state: ResMut<GuiState>,
-    mut focused: ResMut<FocusedHead>,
-    heads: Query<(Entity, &HeadRef), With<OpenHead>>,
+    mut ctxs: EguiContexts,
+    graphs: Query<&WorkingGraph<Box<dyn node::Node>>>,
 ) {
-    let head::ReplaceEvent(new_head) = trigger.event();
+    let event = trigger.event();
 
-    // If the new head is already open, just focus it.
-    for (entity, head_ref) in heads.iter() {
-        if **head_ref == *new_head {
-            **focused = Some(entity);
-            return;
-        }
-    }
-
-    // Get the currently focused entity.
-    let Some(focused_entity) = **focused else {
-        return;
-    };
-
-    // Get the old head for updating GUI state.
-    let old_head = heads.get(focused_entity).ok().map(|(_, h)| (**h).clone());
-
-    // Load the new graph.
-    let Some(graph) = registry.head_graph(new_head) else {
-        bevy::log::error!("cannot replace head: graph missing from registry");
-        return;
-    };
-    let new_graph = graph::clone(graph);
-
-    // Load the views for this head's commit, or create empty.
-    let head_views = registry
-        .head_commit_ca(new_head)
-        .and_then(|ca| views.get(&ca).cloned())
-        .unwrap_or_default();
-
-    // Reinitialize the VM for the new graph.
+    // VM init.
+    let graph = graphs.get(event.entity).unwrap();
     let env = Environment::new(&*registry, &*views, &*builtins);
-    let (new_vm, module) = match gantz_core::vm::init(&env, &new_graph) {
+    let (vm, module) = match gantz_core::vm::init(&env, &**graph) {
         Ok(result) => result,
         Err(e) => {
             bevy::log::error!("Failed to init VM for replaced head: {e}");
             return;
         }
     };
-    let compiled_module = gantz_core::vm::fmt_module(&module);
+    cmds.entity(event.entity)
+        .insert(CompiledModule(gantz_core::vm::fmt_module(&module)));
+    vms.insert(event.entity, vm);
 
-    // Update the entity's components via commands.
-    cmds.entity(focused_entity)
-        .insert(HeadRef(new_head.clone()))
-        .insert(WorkingGraph(new_graph))
-        .insert(GraphViews(head_views))
-        .insert(CompiledModule(compiled_module))
-        .insert(HeadGuiState::default());
-
-    vms.insert(focused_entity, new_vm);
-
-    // Update the graph pane to show the new head.
-    if let Some(old) = &old_head {
-        if let Ok(ctx) = ctxs.ctx_mut() {
-            gantz_egui::widget::update_graph_pane_head(ctx, old, new_head);
-        }
-
-        // Move GUI state from old head to new head.
-        if let Some(state) = gui_state.gantz.open_heads.remove(old) {
-            gui_state.gantz.open_heads.insert(new_head.clone(), state);
-        } else {
-            gui_state
-                .gantz
-                .open_heads
-                .entry(new_head.clone())
-                .or_default();
-        }
+    // GUI state migration.
+    if let Some(state) = gui_state.gantz.open_heads.remove(&event.old_head) {
+        gui_state
+            .gantz
+            .open_heads
+            .insert(event.new_head.clone(), state);
+    }
+    if let Ok(ctx) = ctxs.ctx_mut() {
+        gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
     }
 }
 
-fn handle_close_head_event(
-    trigger: On<head::CloseEvent>,
-    mut cmds: Commands,
+/// VM cleanup + GUI state for closed heads.
+fn on_head_closed(
+    trigger: On<head::HeadClosed>,
     mut vms: NonSendMut<HeadVms>,
     mut gui_state: ResMut<GuiState>,
-    mut tab_order: ResMut<HeadTabOrder>,
-    mut focused: ResMut<FocusedHead>,
-    heads: Query<(Entity, &HeadRef), With<OpenHead>>,
 ) {
-    let head::CloseEvent(head) = trigger.event();
-
-    // Don't close if it's the last open head.
-    if tab_order.len() <= 1 {
-        return;
-    }
-
-    // Find the entity for this head.
-    let Some(entity) = head::find_head_entity(head, &heads) else {
-        return;
-    };
-
-    // Get the index before removing.
-    let Some(ix) = tab_order.iter().position(|&x| x == entity) else {
-        return;
-    };
-
-    // Remove the entity.
-    cmds.entity(entity).despawn();
-    vms.remove(&entity);
-    tab_order.retain(|&x| x != entity);
-    gui_state.gantz.open_heads.remove(head);
-
-    // Update focused entity to remain valid.
-    if **focused == Some(entity) {
-        let new_ix = ix.saturating_sub(1).min(tab_order.len().saturating_sub(1));
-        **focused = tab_order.get(new_ix).copied();
-    }
+    let event = trigger.event();
+    vms.remove(&event.entity);
+    gui_state.gantz.open_heads.remove(&event.head);
 }
 
-fn handle_create_branch_event(
-    trigger: On<head::CreateBranchEvent>,
-    mut ctxs: EguiContexts,
-    mut registry: ResMut<Registry<Box<dyn node::Node>>>,
+/// GUI state only for branch creation (no VM to init).
+fn on_branch_created(
+    trigger: On<head::BranchCreated>,
     mut gui_state: ResMut<GuiState>,
-    mut heads: Query<OpenHeadData<Box<dyn node::Node>>, With<OpenHead>>,
+    mut ctxs: EguiContexts,
 ) {
-    let head::CreateBranchEvent { original, new_name } = trigger.event();
-
-    // Get the commit CA from the original head.
-    let Some(commit_ca) = registry.head_commit_ca(original).copied() else {
-        bevy::log::error!("Failed to get commit address for head: {:?}", original);
-        return;
-    };
-
-    // Insert the new branch name into the registry.
-    registry.insert_name(new_name.clone(), commit_ca);
-
-    // Find the entity with the original head and update it.
-    let new_head = ca::Head::Branch(new_name.clone());
-    for mut data in heads.iter_mut() {
-        if &**data.head_ref == original {
-            let old_head: ca::Head = (**data.head_ref).clone();
-            **data.head_ref = new_head.clone();
-
-            // Update the graph pane to show the new head.
-            if let Ok(ctx) = ctxs.ctx_mut() {
-                gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
-            }
-
-            // Move GUI state from old head to new head.
-            if let Some(state) = gui_state.gantz.open_heads.remove(&old_head) {
-                gui_state.gantz.open_heads.insert(new_head, state);
-            }
-            break;
-        }
+    let event = trigger.event();
+    if let Some(state) = gui_state.gantz.open_heads.remove(&event.old_head) {
+        gui_state
+            .gantz
+            .open_heads
+            .insert(event.new_head.clone(), state);
+    }
+    if let Ok(ctx) = ctxs.ctx_mut() {
+        gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
     }
 }
 
-fn handle_eval_event(
+fn on_eval_event(
     trigger: On<eval::EvalEvent>,
     mut vms: NonSendMut<HeadVms>,
     mut perf_vm: ResMut<PerfVm>,

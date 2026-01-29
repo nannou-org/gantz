@@ -667,6 +667,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_egui",
  "bevy_input",
+ "bevy_log",
  "bevy_time",
  "bevy_window",
  "gantz_ca",

@@ -26,6 +26,7 @@ bevy = { version = "0.17", default-features = false, features = [
 ] }
 bevy_app = "0.17"
 bevy_ecs = "0.17"
+bevy_log = "0.17"
 bevy_egui = { version = "0.38", features = ["serde"] }
 bevy_gantz = { version = "0.1.0", path = "crates/bevy_gantz" }
 bevy_input = "0.17"

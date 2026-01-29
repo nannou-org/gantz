@@ -26,19 +26,19 @@ impl<N> Default for GantzPlugin<N> {
     }
 }
 
-impl<N: Send + Sync + 'static> Plugin for GantzPlugin<N> {
+impl<N: Clone + Send + Sync + 'static> Plugin for GantzPlugin<N> {
     fn build(&self, app: &mut App) {
+        use crate::head::{on_close_head, on_create_branch, on_open_head, on_replace_head};
+
         app.init_resource::<FocusedHead>()
             .init_resource::<HeadTabOrder>()
             .init_resource::<Registry<N>>()
             .init_resource::<Views>()
-            .init_non_send_resource::<HeadVms>();
-
-        // TODO: Register generic handlers once they're implemented
-        // .add_observer(crate::eval::handle_eval_event)
-        // .add_observer(crate::head::handle_open_head::<N>)
-        // .add_observer(crate::head::handle_close_head::<N>)
-        // .add_observer(crate::head::handle_replace_head::<N>)
-        // .add_observer(crate::head::handle_create_branch::<N>)
+            .init_non_send_resource::<HeadVms>()
+            // Register head event handlers.
+            .add_observer(on_open_head::<N>)
+            .add_observer(on_replace_head::<N>)
+            .add_observer(on_close_head::<N>)
+            .add_observer(on_create_branch::<N>);
     }
 }
