@@ -5,7 +5,8 @@ use bevy::{
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_gantz::{
     BuiltinNodes, CompiledModule, FocusedHead, GantzPlugin, GraphViews, HeadGuiState, HeadRef,
-    HeadTabOrder, HeadVms, OpenHead, OpenHeadData, OpenHeadDataReadOnly, WorkingGraph,
+    HeadTabOrder, HeadVms, OpenHead, OpenHeadData, OpenHeadDataReadOnly, Registry, Views,
+    WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
     eval, head,
 };
@@ -63,10 +64,10 @@ fn main() {
             Startup,
             (
                 setup_camera,
-                setup_environment,
-                setup_open.after(setup_environment),
+                setup_resources,
+                setup_open.after(setup_resources),
                 prune_unused_graphs_and_commits
-                    .after(setup_environment)
+                    .after(setup_resources)
                     .after(setup_open),
                 setup_vm.after(prune_unused_graphs_and_commits),
                 setup_gui_state,
@@ -114,30 +115,33 @@ fn setup_camera(mut cmds: Commands) {
     cmds.spawn(Camera2d);
 }
 
-fn setup_environment(storage: Res<PkvStore>, mut cmds: Commands) {
-    let env = storage::load_environment(&*storage);
-    cmds.insert_resource(env);
+fn setup_resources(storage: Res<PkvStore>, mut cmds: Commands) {
+    let registry = storage::load_registry(&*storage);
+    let views = storage::load_views(&*storage);
+    cmds.insert_resource(registry);
+    cmds.insert_resource(views);
 }
 
 fn setup_open(
     storage: Res<PkvStore>,
-    mut env: ResMut<Environment>,
+    mut registry: ResMut<Registry<Box<dyn node::Node>>>,
+    views: Res<Views>,
     mut cmds: Commands,
     mut tab_order: ResMut<HeadTabOrder>,
     mut focused: ResMut<FocusedHead>,
 ) {
-    let loaded = storage::load_open(&*storage, &mut *env);
+    let loaded = storage::load_open(&*storage, &mut *registry, &*views);
     let focused_head = storage::load_focused_head(&*storage);
 
     // Spawn entities for each open head.
-    for (head, graph, views) in loaded {
+    for (head, graph, head_views) in loaded {
         let is_focused = focused_head.as_ref() == Some(&head);
         let entity = cmds
             .spawn((
                 OpenHead,
                 HeadRef(head),
                 WorkingGraph(graph),
-                GraphViews(views),
+                GraphViews(head_views),
                 CompiledModule::default(),
                 HeadGuiState::default(),
             ))
@@ -153,13 +157,16 @@ fn setup_open(
 }
 
 fn prune_unused_graphs_and_commits(
-    mut env: ResMut<Environment>,
+    mut registry: ResMut<Registry<Box<dyn node::Node>>>,
+    mut views: ResMut<Views>,
+    builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     heads: Query<&HeadRef, With<OpenHead>>,
 ) {
+    let env = Environment::new(&*registry, &*views, &*builtins);
     let head_iter = heads.iter().map(|h| &**h);
-    let required = gantz_core::reg::required_commits(&*env, &env.registry, head_iter);
-    env.registry.prune_unreachable(&required);
-    env.views.retain(|ca, _| required.contains(ca));
+    let required = gantz_core::reg::required_commits(&env, &registry, head_iter);
+    registry.prune_unreachable(&required);
+    views.retain(|ca, _| required.contains(ca));
 }
 
 fn setup_gui_state(storage: Res<PkvStore>, mut cmds: Commands) {
@@ -181,11 +188,14 @@ fn setup_vm(world: &mut World) {
     let mut vms = HeadVms::default();
     let mut compiled_updates: Vec<(Entity, String)> = vec![];
     for entity in entities {
-        let env: &Environment = world.resource();
+        let registry = world.resource::<Registry<Box<dyn node::Node>>>();
+        let views = world.resource::<Views>();
+        let builtins = world.resource::<BuiltinNodes<Box<dyn node::Node>>>();
+        let env = Environment::new(registry, views, &*builtins);
         let Some(wg) = world.get::<WorkingGraph<Box<dyn node::Node>>>(entity) else {
             continue;
         };
-        let (vm, module) = match gantz_core::vm::init(env, &**wg) {
+        let (vm, module) = match gantz_core::vm::init(&env, &**wg) {
             Ok(result) => result,
             Err(e) => {
                 bevy::log::error!("Failed to init VM for entity {entity}: {e}");
@@ -211,7 +221,9 @@ fn update_gui(
     mut perf_vm: ResMut<PerfVm>,
     mut perf_gui: ResMut<PerfGui>,
     mut ctxs: EguiContexts,
-    mut env: ResMut<Environment>,
+    mut registry: ResMut<Registry<Box<dyn node::Node>>>,
+    views: Res<Views>,
+    builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     mut gui_state: ResMut<GuiState>,
     mut vms: NonSendMut<HeadVms>,
     tab_order: Res<HeadTabOrder>,
@@ -240,11 +252,14 @@ fn update_gui(
     // Create the head access adapter.
     let mut access = head::HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
 
+    // Construct environment on-demand for the widget.
+    let mut env = Environment::new(&*registry, &*views, &*builtins);
+
     let level = bevy::log::tracing_subscriber::filter::LevelFilter::current();
     let response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
-            gantz_egui::widget::Gantz::new(&mut *env)
+            gantz_egui::widget::Gantz::new(&mut env)
                 .trace_capture(trace_capture.0.clone(), level)
                 .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
                 .show(&mut gui_state.gantz, focused_ix, &mut access, ui)
@@ -262,12 +277,12 @@ fn update_gui(
         for mut data in heads_query.iter_mut() {
             if let ca::Head::Branch(head_name) = &**data.head_ref {
                 if *head_name == name {
-                    let commit_ca = *env.registry.head_commit_ca(&*data.head_ref).unwrap();
+                    let commit_ca = *registry.head_commit_ca(&*data.head_ref).unwrap();
                     **data.head_ref = ca::Head::Commit(commit_ca);
                 }
             }
         }
-        env.registry.remove_name(&name);
+        registry.remove_name(&name);
     }
 
     // Trigger events for head operations (handled by observers).
@@ -289,7 +304,7 @@ fn update_gui(
 
     // Create a new empty graph and open it.
     if response.new_graph() {
-        let new_head = env.registry.init_head(env::timestamp());
+        let new_head = registry.init_head(env::timestamp());
         cmds.trigger(head::OpenEvent(new_head));
     }
 
@@ -314,7 +329,9 @@ fn update_gui(
 
 fn update_vm(
     mut ctxs: EguiContexts,
-    mut env: ResMut<Environment>,
+    mut registry: ResMut<Registry<Box<dyn node::Node>>>,
+    mut views: ResMut<Views>,
+    builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     mut gui_state: ResMut<GuiState>,
     mut vms: NonSendMut<HeadVms>,
     mut heads_query: Query<OpenHeadData<Box<dyn node::Node>>, With<OpenHead>>,
@@ -325,21 +342,21 @@ fn update_vm(
     for mut data in heads_query.iter_mut() {
         let head: &mut ca::Head = &mut *data.head_ref;
         let graph: &Graph = &*data.working_graph;
-        let views: &gantz_egui::GraphViews = &*data.views;
+        let head_views: &gantz_egui::GraphViews = &*data.views;
 
-        // Always update the views in env.views for this head's commit.
-        if let Some(commit_addr) = env.registry.head_commit_ca(head).copied() {
-            env.views.insert(commit_addr, views.clone());
+        // Always update the views in global Views for this head's commit.
+        if let Some(commit_addr) = registry.head_commit_ca(head).copied() {
+            views.insert(commit_addr, head_views.clone());
         }
 
         let new_graph_ca = ca::graph_addr(graph);
-        let Some(head_commit) = env.registry.head_commit(head) else {
+        let Some(head_commit) = registry.head_commit(head) else {
             continue;
         };
         if head_commit.graph != new_graph_ca {
             let old_head = head.clone();
-            let old_commit_ca = env.registry.head_commit_ca(head).copied().unwrap();
-            let new_commit_ca = env.registry.commit_graph_to_head(
+            let old_commit_ca = registry.head_commit_ca(head).copied().unwrap();
+            let new_commit_ca = registry.commit_graph_to_head(
                 env::timestamp(),
                 new_graph_ca,
                 || graph::clone(graph),
@@ -363,8 +380,9 @@ fn update_vm(
             // Re-register and recompile this head's graph into its VM.
             // Registration is idempotent - existing state is preserved.
             if let Some(vm) = vms.get_mut(&data.entity) {
-                gantz_core::graph::register(&*env, graph, &[], vm);
-                match gantz_core::vm::compile(&*env, graph, vm) {
+                let env = Environment::new(&*registry, &*views, &*builtins);
+                gantz_core::graph::register(&env, graph, &[], vm);
+                match gantz_core::vm::compile(&env, graph, vm) {
                     Ok(module) => data.compiled.0 = gantz_core::vm::fmt_module(&module),
                     Err(e) => bevy::log::error!("Failed to compile graph: {e}"),
                 }
@@ -441,7 +459,9 @@ fn inspect_edge(
 
 // Drain the commands provided by the UI and process them.
 fn process_gantz_gui_cmds(
-    mut env: ResMut<Environment>,
+    mut registry: ResMut<Registry<Box<dyn node::Node>>>,
+    views: Res<Views>,
+    builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     mut vms: NonSendMut<HeadVms>,
     mut gui_state: ResMut<GuiState>,
     mut heads: Query<OpenHeadData<Box<dyn node::Node>>, With<OpenHead>>,
@@ -480,7 +500,7 @@ fn process_gantz_gui_cmds(
                 gantz_egui::Cmd::OpenNamedNode(name, content_ca) => {
                     // The content_ca represents a CommitAddr for graph nodes.
                     let commit_ca = ca::CommitAddr::from(content_ca);
-                    if env.registry.names().get(&name) == Some(&commit_ca) {
+                    if registry.names().get(&name) == Some(&commit_ca) {
                         cmds.trigger(head::OpenEvent(ca::Head::Branch(name.to_string())));
                     } else {
                         bevy::log::debug!(
@@ -491,12 +511,13 @@ fn process_gantz_gui_cmds(
                 gantz_egui::Cmd::ForkNamedNode { new_name, ca } => {
                     // The CA represents a CommitAddr for graph nodes.
                     let commit_ca = ca::CommitAddr::from(ca);
-                    env.registry.insert_name(new_name.clone(), commit_ca);
+                    registry.insert_name(new_name.clone(), commit_ca);
                     bevy::log::info!("Forked node to new name: {new_name}");
                 }
                 gantz_egui::Cmd::InspectEdge(cmd) => {
                     if let Ok(mut data) = heads.get_mut(entity) {
                         if let Some(vm) = vms.get_mut(&entity) {
+                            let env = Environment::new(&*registry, &*views, &*builtins);
                             inspect_edge(&env, &mut data.working_graph, &mut data.views, vm, cmd);
                         }
                     }
@@ -507,7 +528,8 @@ fn process_gantz_gui_cmds(
 }
 
 fn persist_resources(
-    env: Res<Environment>,
+    registry: Res<Registry<Box<dyn node::Node>>>,
+    views: Res<Views>,
     gui_state: Res<GuiState>,
     mut storage: ResMut<PkvStore>,
     mut ctxs: EguiContexts,
@@ -516,19 +538,19 @@ fn persist_resources(
     heads_query: Query<OpenHeadDataReadOnly<Box<dyn node::Node>>, With<OpenHead>>,
 ) {
     // Save graphs.
-    let mut addrs: Vec<_> = env.registry.graphs().keys().copied().collect();
+    let mut addrs: Vec<_> = registry.graphs().keys().copied().collect();
     addrs.sort();
     storage::save_graph_addrs(&mut *storage, &addrs);
-    storage::save_graphs(&mut *storage, &env.registry.graphs());
+    storage::save_graphs(&mut *storage, &registry.graphs());
 
     // Save commits.
-    let mut addrs: Vec<_> = env.registry.commits().keys().copied().collect();
+    let mut addrs: Vec<_> = registry.commits().keys().copied().collect();
     addrs.sort();
     storage::save_commit_addrs(&mut *storage, &addrs);
-    storage::save_commits(&mut *storage, env.registry.commits());
+    storage::save_commits(&mut *storage, registry.commits());
 
     // Save names.
-    storage::save_names(&mut *storage, env.registry.names());
+    storage::save_names(&mut *storage, registry.names());
 
     // Save all open heads in tab order.
     let heads: Vec<_> = tab_order
@@ -550,7 +572,7 @@ fn persist_resources(
     }
 
     // Save all views (already updated in update_vm).
-    storage::save_views(&mut *storage, &env.views);
+    storage::save_views(&mut *storage, &*views);
 
     // Save the gantz GUI state.
     storage::save_gantz_gui_state(&mut *storage, &gui_state.gantz);
@@ -564,7 +586,9 @@ fn persist_resources(
 fn handle_open_head_event(
     trigger: On<head::OpenEvent>,
     mut cmds: Commands,
-    env: Res<Environment>,
+    registry: Res<Registry<Box<dyn node::Node>>>,
+    views: Res<Views>,
+    builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     mut vms: NonSendMut<HeadVms>,
     mut gui_state: ResMut<GuiState>,
     mut tab_order: ResMut<HeadTabOrder>,
@@ -581,21 +605,21 @@ fn handle_open_head_event(
     }
 
     // Head is not open - add it as a new tab.
-    let Some(graph) = env.registry.head_graph(new_head) else {
+    let Some(graph) = registry.head_graph(new_head) else {
         bevy::log::error!("cannot open head: graph missing from registry");
         return;
     };
     let new_graph = graph::clone(graph);
 
     // Load the views for this head's commit, or create empty.
-    let views = env
-        .registry
+    let head_views = registry
         .head_commit_ca(new_head)
-        .and_then(|ca| env.views.get(&ca).cloned())
+        .and_then(|ca| views.get(&ca).cloned())
         .unwrap_or_default();
 
     // Initialise the VM for the new graph.
-    let (new_vm, module) = match gantz_core::vm::init(&*env, &new_graph) {
+    let env = Environment::new(&*registry, &*views, &*builtins);
+    let (new_vm, module) = match gantz_core::vm::init(&env, &new_graph) {
         Ok(result) => result,
         Err(e) => {
             bevy::log::error!("Failed to init VM for new head: {e}");
@@ -610,7 +634,7 @@ fn handle_open_head_event(
             OpenHead,
             HeadRef(new_head.clone()),
             WorkingGraph(new_graph),
-            GraphViews(views),
+            GraphViews(head_views),
             CompiledModule(compiled_module),
             HeadGuiState::default(),
         ))
@@ -632,7 +656,9 @@ fn handle_replace_head_event(
     trigger: On<head::ReplaceEvent>,
     mut ctxs: EguiContexts,
     mut cmds: Commands,
-    env: Res<Environment>,
+    registry: Res<Registry<Box<dyn node::Node>>>,
+    views: Res<Views>,
+    builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     mut vms: NonSendMut<HeadVms>,
     mut gui_state: ResMut<GuiState>,
     mut focused: ResMut<FocusedHead>,
@@ -657,21 +683,21 @@ fn handle_replace_head_event(
     let old_head = heads.get(focused_entity).ok().map(|(_, h)| (**h).clone());
 
     // Load the new graph.
-    let Some(graph) = env.registry.head_graph(new_head) else {
+    let Some(graph) = registry.head_graph(new_head) else {
         bevy::log::error!("cannot replace head: graph missing from registry");
         return;
     };
     let new_graph = graph::clone(graph);
 
     // Load the views for this head's commit, or create empty.
-    let views = env
-        .registry
+    let head_views = registry
         .head_commit_ca(new_head)
-        .and_then(|ca| env.views.get(&ca).cloned())
+        .and_then(|ca| views.get(&ca).cloned())
         .unwrap_or_default();
 
     // Reinitialize the VM for the new graph.
-    let (new_vm, module) = match gantz_core::vm::init(&*env, &new_graph) {
+    let env = Environment::new(&*registry, &*views, &*builtins);
+    let (new_vm, module) = match gantz_core::vm::init(&env, &new_graph) {
         Ok(result) => result,
         Err(e) => {
             bevy::log::error!("Failed to init VM for replaced head: {e}");
@@ -684,7 +710,7 @@ fn handle_replace_head_event(
     cmds.entity(focused_entity)
         .insert(HeadRef(new_head.clone()))
         .insert(WorkingGraph(new_graph))
-        .insert(GraphViews(views))
+        .insert(GraphViews(head_views))
         .insert(CompiledModule(compiled_module))
         .insert(HeadGuiState::default());
 
@@ -751,20 +777,20 @@ fn handle_close_head_event(
 fn handle_create_branch_event(
     trigger: On<head::CreateBranchEvent>,
     mut ctxs: EguiContexts,
-    mut env: ResMut<Environment>,
+    mut registry: ResMut<Registry<Box<dyn node::Node>>>,
     mut gui_state: ResMut<GuiState>,
     mut heads: Query<OpenHeadData<Box<dyn node::Node>>, With<OpenHead>>,
 ) {
     let head::CreateBranchEvent { original, new_name } = trigger.event();
 
     // Get the commit CA from the original head.
-    let Some(commit_ca) = env.registry.head_commit_ca(original).copied() else {
+    let Some(commit_ca) = registry.head_commit_ca(original).copied() else {
         bevy::log::error!("Failed to get commit address for head: {:?}", original);
         return;
     };
 
     // Insert the new branch name into the registry.
-    env.registry.insert_name(new_name.clone(), commit_ca);
+    registry.insert_name(new_name.clone(), commit_ca);
 
     // Find the entity with the original head and update it.
     let new_head = ca::Head::Branch(new_name.clone());

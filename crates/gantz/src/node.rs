@@ -10,8 +10,8 @@ pub trait Node:
     + DynClone
     + DynHash
     + gantz_ca::CaHash
-    + gantz_core::Node<Environment>
-    + gantz_egui::NodeUi<Environment>
+    + for<'a> gantz_core::Node<Environment<'a>>
+    + for<'a> gantz_egui::NodeUi<Environment<'a>>
     + Send
     + Sync
 {

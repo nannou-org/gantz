@@ -1,11 +1,14 @@
 use crate::{
-    env::{self, Environment, GraphViews, Views},
+    env,
     graph::{self, Graph},
+    node::Node,
 };
 use bevy::log;
 use bevy_egui::egui;
+use bevy_gantz::{Registry, Views};
 use bevy_pkv::PkvStore;
 use gantz_ca as ca;
+use gantz_egui::GraphViews;
 use std::collections::{BTreeMap, HashMap};
 
 mod key {
@@ -175,7 +178,8 @@ pub fn save_focused_head(storage: &mut PkvStore, head: &ca::Head) {
 
 /// Save all graph views to storage under a single key.
 pub fn save_views(storage: &mut PkvStore, views: &Views) {
-    let views_str = match ron::to_string(views) {
+    // Serialize the inner HashMap, not the wrapper struct.
+    let views_str = match ron::to_string(&**views) {
         Err(e) => {
             log::error!("Failed to serialize views: {e}");
             return;
@@ -310,10 +314,10 @@ pub fn load_views(storage: &PkvStore) -> Views {
         log::debug!("No existing views to load");
         return Views::default();
     };
-    match ron::de::from_str(&views_str) {
+    match ron::de::from_str::<HashMap<ca::CommitAddr, GraphViews>>(&views_str) {
         Ok(views) => {
             log::debug!("Successfully loaded views from storage");
-            views
+            Views(views)
         }
         Err(e) => {
             log::error!("Failed to deserialize views: {e}");
@@ -380,23 +384,14 @@ pub fn load_gantz_gui_state(storage: &PkvStore) -> gantz_egui::widget::GantzStat
         })
 }
 
-pub fn load_environment(storage: &PkvStore) -> Environment {
+/// Load the registry from storage.
+pub fn load_registry(storage: &PkvStore) -> Registry<Box<dyn Node>> {
     let graph_addrs = load_graph_addrs(storage);
     let commit_addrs = load_commit_addrs(storage);
     let graphs = load_graphs(storage, graph_addrs.iter().copied());
     let commits = load_commits(storage, commit_addrs.iter().copied());
     let names = load_names(storage);
-    let views = load_views(storage);
-    let registry = env::Registry::new(graphs, commits, names);
-    let primitives = env::primitives();
-    let (primitive_instances, primitive_names) = env::primitive_instances_and_names(&primitives);
-    Environment {
-        primitives,
-        primitive_instances,
-        primitive_names,
-        registry,
-        views,
-    }
+    Registry(ca::Registry::new(graphs, commits, names))
 }
 
 /// Load the open heads data from storage.
@@ -405,31 +400,31 @@ pub fn load_environment(storage: &PkvStore) -> Environment {
 /// If no valid heads remain, creates a default empty graph head.
 pub fn load_open(
     storage: &PkvStore,
-    env: &mut Environment,
-) -> Vec<(gantz_ca::Head, Graph, GraphViews)> {
+    registry: &mut Registry<Box<dyn Node>>,
+    views: &Views,
+) -> Vec<(ca::Head, Graph, GraphViews)> {
     // Try to load all open heads from storage.
     let heads: Vec<_> = load_open_heads(storage)
         .unwrap_or_default()
         .into_iter()
         // Filter out heads that no longer exist in the registry.
         .filter_map(|head| {
-            let graph = graph::clone(env.registry.head_graph(&head)?);
+            let graph = graph::clone(registry.head_graph(&head)?);
             // Load the views for this head's commit, or create empty.
-            let views = env
-                .registry
+            let head_views = registry
                 .head_commit_ca(&head)
-                .and_then(|ca| env.views.get(&ca).cloned())
+                .and_then(|ca| views.get(&ca).cloned())
                 .unwrap_or_default();
-            Some((head, graph, views))
+            Some((head, graph, head_views))
         })
         .collect();
 
     // If no valid heads remain, create a default one.
     if heads.is_empty() {
-        let head = env.registry.init_head(env::timestamp());
-        let graph = graph::clone(env.registry.head_graph(&head).unwrap());
-        let views = GraphViews::default();
-        vec![(head, graph, views)]
+        let head = registry.init_head(env::timestamp());
+        let graph = graph::clone(registry.head_graph(&head).unwrap());
+        let head_views = GraphViews::default();
+        vec![(head, graph, head_views)]
     } else {
         heads
     }
