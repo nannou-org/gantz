@@ -82,6 +82,40 @@ pub struct CreateBranchEvent {
 }
 
 // ----------------------------------------------------------------------------
+// Hook Events (emitted after core operations for app-specific handling)
+// ----------------------------------------------------------------------------
+
+/// Emitted after a head has been opened.
+#[derive(Event)]
+pub struct HeadOpened {
+    pub entity: Entity,
+    pub head: ca::Head,
+}
+
+/// Emitted after a head has been closed.
+#[derive(Event)]
+pub struct HeadClosed {
+    pub entity: Entity,
+    pub head: ca::Head,
+}
+
+/// Emitted after a head has been replaced.
+#[derive(Event)]
+pub struct HeadReplaced {
+    pub entity: Entity,
+    pub old_head: ca::Head,
+    pub new_head: ca::Head,
+}
+
+/// Emitted after a branch has been created from a head.
+#[derive(Event)]
+pub struct BranchCreated {
+    pub entity: Entity,
+    pub old_head: ca::Head,
+    pub new_head: ca::Head,
+}
+
+// ----------------------------------------------------------------------------
 // Resources
 // ----------------------------------------------------------------------------
 

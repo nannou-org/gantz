@@ -4,13 +4,13 @@ use bevy::{
 };
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_gantz::{
-    CompiledModule, FocusedHead, GraphViews, HeadGuiState, HeadRef, HeadTabOrder, HeadVms,
-    OpenHead, OpenHeadData, OpenHeadDataReadOnly, WorkingGraph,
+    BuiltinNodes, CompiledModule, FocusedHead, GantzPlugin, GraphViews, HeadGuiState, HeadRef,
+    HeadTabOrder, HeadVms, OpenHead, OpenHeadData, OpenHeadDataReadOnly, WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
     eval, head,
 };
 use bevy_pkv::PkvStore;
-use env::Environment;
+use env::{AppBuiltins, Environment};
 use gantz_ca as ca;
 use graph::Graph;
 use steel::steel_vm::engine::Engine;
@@ -42,9 +42,12 @@ fn main() {
         .insert_resource(TraceCapture::default())
         .insert_resource(PerfVm::default())
         .insert_resource(PerfGui::default())
-        // Entity-based head management resources
-        .insert_resource(FocusedHead::default())
-        .insert_resource(HeadTabOrder::default())
+        // Gantz plugin (provides FocusedHead, HeadTabOrder, HeadVms, Registry, Views)
+        .add_plugins(GantzPlugin::<Box<dyn node::Node>>::default())
+        // App-specific builtins
+        .insert_resource(BuiltinNodes::<Box<dyn node::Node>>(Box::new(
+            AppBuiltins::new(),
+        )))
         // Head event observers
         .add_observer(handle_open_head_event)
         .add_observer(handle_close_head_event)

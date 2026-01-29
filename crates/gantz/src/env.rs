@@ -3,6 +3,7 @@ use crate::{
     node::Node,
 };
 use bevy::ecs::resource::Resource;
+use bevy_gantz::Builtins;
 use gantz_ca as ca;
 use gantz_core::node;
 use std::{collections::BTreeMap, collections::HashMap};
@@ -222,4 +223,63 @@ pub fn timestamp() -> std::time::Duration {
     let now = web_time::SystemTime::now();
     now.duration_since(web_time::UNIX_EPOCH)
         .unwrap_or(std::time::Duration::ZERO)
+}
+
+// ----------------------------------------------------------------------------
+// AppBuiltins
+// ----------------------------------------------------------------------------
+
+/// Application-specific builtins implementation.
+pub struct AppBuiltins {
+    /// Constructors for all builtin nodes.
+    constructors: Primitives,
+    /// Instantiated builtin nodes keyed by their content address.
+    instances: PrimitiveInstances,
+    /// Mapping from content addresses to names.
+    names: PrimitiveNames,
+}
+
+impl AppBuiltins {
+    pub fn new() -> Self {
+        let constructors = primitives();
+        let (instances, names) = primitive_instances_and_names(&constructors);
+        Self {
+            constructors,
+            instances,
+            names,
+        }
+    }
+}
+
+impl Default for AppBuiltins {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Builtins for AppBuiltins {
+    type Node = Box<dyn Node>;
+
+    fn names(&self) -> Vec<&str> {
+        self.constructors.keys().map(|s| s.as_str()).collect()
+    }
+
+    fn create(&self, name: &str) -> Option<Self::Node> {
+        self.constructors.get(name).map(|f| f())
+    }
+
+    fn instance(&self, ca: &ca::ContentAddr) -> Option<&Self::Node> {
+        self.instances.get(ca)
+    }
+
+    fn name(&self, ca: &ca::ContentAddr) -> Option<&str> {
+        self.names.get(ca).map(|s| s.as_str())
+    }
+
+    fn content_addr(&self, name: &str) -> Option<ca::ContentAddr> {
+        self.names
+            .iter()
+            .find(|(_, n)| *n == name)
+            .map(|(ca, _)| *ca)
+    }
 }
