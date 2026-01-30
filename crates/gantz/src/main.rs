@@ -14,14 +14,15 @@ use bevy_pkv::PkvStore;
 use builtin::Builtins;
 use env::Environment;
 use gantz_ca as ca;
-use graph::Graph;
 use steel::steel_vm::engine::Engine;
 
 mod builtin;
 mod env;
-mod graph;
 mod node;
 mod storage;
+
+type Graph = gantz_core::node::graph::Graph<Box<dyn node::Node>>;
+type GraphNode = gantz_core::node::GraphNode<Box<dyn node::Node>>;
 
 #[derive(Resource)]
 struct GuiState {
@@ -130,7 +131,7 @@ fn setup_open(
     mut tab_order: ResMut<HeadTabOrder>,
     mut focused: ResMut<FocusedHead>,
 ) {
-    let loaded = storage::load_open(&*storage, &mut *registry, &*views);
+    let loaded = storage::load_open(&*storage, &mut *registry, &*views, timestamp());
     let focused_head = storage::load_focused_head(&*storage);
 
     // Spawn entities for each open head.
@@ -359,7 +360,7 @@ fn update_vm(
             let new_commit_ca = registry.commit_graph_to_head(
                 timestamp(),
                 new_graph_ca,
-                || graph::clone(graph),
+                || bevy_gantz::clone_graph(graph),
                 head,
             );
             bevy::log::debug!(

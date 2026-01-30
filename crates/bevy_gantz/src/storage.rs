@@ -10,7 +10,6 @@ use gantz_core::node::graph::Graph;
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
-
 mod key {
     /// All known graph addresses.
     pub const GRAPH_ADDRS: &str = "graph-addrs";
@@ -34,13 +33,6 @@ mod key {
     pub fn commit(ca: gantz_ca::CommitAddr) -> String {
         format!("{}", ca)
     }
-}
-
-/// Create a timestamp for a commit (current time since UNIX epoch).
-pub fn timestamp() -> Duration {
-    let now = web_time::SystemTime::now();
-    now.duration_since(web_time::UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
 }
 
 /// Save the list of known graph addresses to storage.

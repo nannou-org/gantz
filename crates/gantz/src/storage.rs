@@ -5,16 +5,11 @@
 
 use bevy::log;
 use bevy_egui::egui;
-use bevy_gantz::{GraphViews, Registry, Views, timestamp};
 use bevy_pkv::PkvStore;
-use gantz_ca as ca;
-
-use crate::graph::{self, Graph};
-use crate::node::Node;
 
 // Re-export generic storage functions from bevy_gantz.
 pub use bevy_gantz::storage::{
-    load_focused_head, load_open_heads, load_registry, load_views, save_commit_addrs, save_commits,
+    load_focused_head, load_open, load_registry, load_views, save_commit_addrs, save_commits,
     save_focused_head, save_graph_addrs, save_graphs, save_names, save_open_heads, save_views,
 };
 
@@ -89,42 +84,5 @@ pub fn load_egui_memory(storage: &mut PkvStore, ctx: &egui::Context) {
         Err(e) => {
             log::debug!("No egui memory found in storage (this is normal on first run): {e}");
         }
-    }
-}
-
-/// Load the open heads data from storage.
-///
-/// Returns a vector of (head, graph, views) tuples suitable for spawning entities.
-/// If no valid heads remain, creates a default empty graph head.
-pub fn load_open(
-    storage: &PkvStore,
-    registry: &mut Registry<Box<dyn Node>>,
-    views: &Views,
-) -> Vec<(ca::Head, Graph, GraphViews)> {
-    // Try to load all open heads from storage.
-    let heads: Vec<_> = load_open_heads(storage)
-        .unwrap_or_default()
-        .into_iter()
-        // Filter out heads that no longer exist in the registry.
-        .filter_map(|head| {
-            let g = graph::clone(registry.head_graph(&head)?);
-            // Load the views for this head's commit, or create empty.
-            let head_views = registry
-                .head_commit_ca(&head)
-                .and_then(|ca| views.get(ca).cloned())
-                .map(GraphViews)
-                .unwrap_or_default();
-            Some((head, g, head_views))
-        })
-        .collect();
-
-    // If no valid heads remain, create a default one.
-    if heads.is_empty() {
-        let head = registry.init_head(timestamp());
-        let g = graph::clone(registry.head_graph(&head).unwrap());
-        let head_views = GraphViews::default();
-        vec![(head, g, head_views)]
-    } else {
-        heads
     }
 }

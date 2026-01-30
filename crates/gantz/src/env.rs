@@ -1,4 +1,4 @@
-use crate::graph::Graph;
+use crate::Graph;
 use bevy_gantz::{BuiltinNodes, Registry, Views};
 use gantz_ca as ca;
 use std::collections::BTreeMap;
