@@ -668,15 +668,18 @@ dependencies = [
  "bevy_egui",
  "bevy_input",
  "bevy_log",
+ "bevy_pkv",
  "bevy_time",
  "bevy_window",
  "gantz_ca",
  "gantz_core",
  "gantz_egui",
  "gantz_std",
+ "ron 0.10.1",
  "serde",
  "steel-core",
  "web-sys",
+ "web-time",
 ]
 
 [[package]]

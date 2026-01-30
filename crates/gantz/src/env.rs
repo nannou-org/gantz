@@ -133,13 +133,6 @@ impl gantz_egui::node::FnNodeNames for Environment<'_> {
     }
 }
 
-/// Create a timestamp for a commit.
-pub fn timestamp() -> std::time::Duration {
-    let now = web_time::SystemTime::now();
-    now.duration_since(web_time::UNIX_EPOCH)
-        .unwrap_or(std::time::Duration::ZERO)
-}
-
 // ----------------------------------------------------------------------------
 // AppBuiltins
 // ----------------------------------------------------------------------------

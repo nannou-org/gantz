@@ -421,7 +421,9 @@ pub fn on_replace_head<N>(
         return;
     }
 
-    let Some(focused_entity) = **focused else { return };
+    let Some(focused_entity) = **focused else {
+        return;
+    };
     let old_head = heads.get(focused_entity).ok().map(|(_, h)| (**h).clone());
 
     // Get new graph/views.
@@ -457,6 +459,7 @@ pub fn on_close_head<N>(
     mut cmds: Commands,
     mut tab_order: ResMut<HeadTabOrder>,
     mut focused: ResMut<FocusedHead>,
+    mut vms: NonSendMut<HeadVms>,
     heads: Query<(Entity, &HeadRef), With<OpenHead>>,
 ) where
     N: Send + Sync + 'static,
@@ -474,6 +477,9 @@ pub fn on_close_head<N>(
     let Some(ix) = tab_order.iter().position(|&x| x == entity) else {
         return;
     };
+
+    // Clean up VM for this head.
+    vms.remove(&entity);
 
     cmds.entity(entity).despawn();
     tab_order.retain(|&x| x != entity);

@@ -4,6 +4,7 @@ pub mod eval;
 pub mod head;
 pub mod plugin;
 pub mod reg;
+pub mod storage;
 pub mod view;
 
 pub use builtin::{BuiltinNodes, Builtins};
@@ -13,5 +14,12 @@ pub use head::{
     OpenHeadDataReadOnly, WorkingGraph,
 };
 pub use plugin::GantzPlugin;
-pub use reg::Registry;
+pub use reg::{Registry, timestamp};
 pub use view::Views;
+
+/// Clone a graph.
+pub fn clone_graph<N: Clone>(
+    graph: &gantz_core::node::graph::Graph<N>,
+) -> gantz_core::node::graph::Graph<N> {
+    graph.map(|_, n| n.clone(), |_, e| *e)
+}

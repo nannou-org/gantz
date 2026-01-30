@@ -8,7 +8,7 @@ use bevy_gantz::{
     HeadTabOrder, HeadVms, OpenHead, OpenHeadData, OpenHeadDataReadOnly, Registry, Views,
     WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
-    eval, head,
+    eval, head, timestamp,
 };
 use bevy_pkv::PkvStore;
 use env::{AppBuiltins, Environment};
@@ -54,8 +54,6 @@ fn main() {
         .add_observer(on_head_closed)
         .add_observer(on_head_replaced)
         .add_observer(on_branch_created)
-        // Eval event observer
-        .add_observer(on_eval_event)
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::new(0.25))
@@ -116,7 +114,7 @@ fn setup_camera(mut cmds: Commands) {
 }
 
 fn setup_resources(storage: Res<PkvStore>, mut cmds: Commands) {
-    let registry = storage::load_registry(&*storage);
+    let registry: Registry<Box<dyn node::Node>> = storage::load_registry(&*storage);
     let views = storage::load_views(&*storage);
     cmds.insert_resource(registry);
     cmds.insert_resource(views);
@@ -141,7 +139,7 @@ fn setup_open(
                 OpenHead,
                 HeadRef(head),
                 WorkingGraph(graph),
-                GraphViews(head_views),
+                head_views,
                 CompiledModule::default(),
                 HeadGuiState::default(),
             ))
@@ -304,7 +302,7 @@ fn update_gui(
 
     // Create a new empty graph and open it.
     if response.new_graph() {
-        let new_head = registry.init_head(env::timestamp());
+        let new_head = registry.init_head(timestamp());
         cmds.trigger(head::OpenEvent(new_head));
     }
 
@@ -357,7 +355,7 @@ fn update_vm(
             let old_head = head.clone();
             let old_commit_ca = registry.head_commit_ca(head).copied().unwrap();
             let new_commit_ca = registry.commit_graph_to_head(
-                env::timestamp(),
+                timestamp(),
                 new_graph_ca,
                 || graph::clone(graph),
                 head,
@@ -662,14 +660,9 @@ fn on_head_replaced(
     }
 }
 
-/// VM cleanup + GUI state for closed heads.
-fn on_head_closed(
-    trigger: On<head::HeadClosed>,
-    mut vms: NonSendMut<HeadVms>,
-    mut gui_state: ResMut<GuiState>,
-) {
+/// GUI state cleanup for closed heads.
+fn on_head_closed(trigger: On<head::HeadClosed>, mut gui_state: ResMut<GuiState>) {
     let event = trigger.event();
-    vms.remove(&event.entity);
     gui_state.gantz.open_heads.remove(&event.head);
 }
 
@@ -689,23 +682,4 @@ fn on_branch_created(
     if let Ok(ctx) = ctxs.ctx_mut() {
         gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
     }
-}
-
-fn on_eval_event(
-    trigger: On<eval::EvalEvent>,
-    mut vms: NonSendMut<HeadVms>,
-    mut perf_vm: ResMut<PerfVm>,
-) {
-    let event = trigger.event();
-    let fn_name = match event.kind {
-        eval::EvalKind::Push => gantz_core::compile::push_eval_fn_name(&event.path),
-        eval::EvalKind::Pull => gantz_core::compile::pull_eval_fn_name(&event.path),
-    };
-    let start = web_time::Instant::now();
-    if let Some(vm) = vms.get_mut(&event.head) {
-        if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
-            bevy::log::error!("{e}");
-        }
-    }
-    perf_vm.0.record(start.elapsed());
 }
