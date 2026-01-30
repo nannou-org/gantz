@@ -195,7 +195,7 @@ fn setup_vm(world: &mut World) {
         let Some(wg) = world.get::<WorkingGraph<Box<dyn node::Node>>>(entity) else {
             continue;
         };
-        let (vm, module) = match gantz_core::vm::init(&env, &**wg) {
+        let (vm, module) = match bevy_gantz::vm::init(&env, &**wg) {
             Ok(result) => result,
             Err(e) => {
                 bevy::log::error!("Failed to init VM for entity {entity}: {e}");
@@ -203,7 +203,7 @@ fn setup_vm(world: &mut World) {
             }
         };
         vms.insert(entity, vm);
-        compiled_updates.push((entity, gantz_core::vm::fmt_module(&module)));
+        compiled_updates.push((entity, module));
     }
 
     // Update CompiledModule components.
@@ -382,8 +382,8 @@ fn update_vm(
             if let Some(vm) = vms.get_mut(&data.entity) {
                 let env = Environment::new(&*registry, &*views, &*builtins);
                 gantz_core::graph::register(&env, graph, &[], vm);
-                match gantz_core::vm::compile(&env, graph, vm) {
-                    Ok(module) => data.compiled.0 = gantz_core::vm::fmt_module(&module),
+                match bevy_gantz::vm::compile(&env, graph, vm) {
+                    Ok(module) => data.compiled.0 = module,
                     Err(e) => bevy::log::error!("Failed to compile graph: {e}"),
                 }
             }
@@ -603,15 +603,14 @@ fn on_head_opened(
     // VM init.
     let graph = graphs.get(event.entity).unwrap();
     let env = Environment::new(&*registry, &*views, &*builtins);
-    let (vm, module) = match gantz_core::vm::init(&env, &**graph) {
+    let (vm, module) = match bevy_gantz::vm::init(&env, &**graph) {
         Ok(result) => result,
         Err(e) => {
             bevy::log::error!("Failed to init VM for new head: {e}");
             return;
         }
     };
-    cmds.entity(event.entity)
-        .insert(CompiledModule(gantz_core::vm::fmt_module(&module)));
+    cmds.entity(event.entity).insert(CompiledModule(module));
     vms.insert(event.entity, vm);
 
     // GUI state.
@@ -639,15 +638,14 @@ fn on_head_replaced(
     // VM init.
     let graph = graphs.get(event.entity).unwrap();
     let env = Environment::new(&*registry, &*views, &*builtins);
-    let (vm, module) = match gantz_core::vm::init(&env, &**graph) {
+    let (vm, module) = match bevy_gantz::vm::init(&env, &**graph) {
         Ok(result) => result,
         Err(e) => {
             bevy::log::error!("Failed to init VM for replaced head: {e}");
             return;
         }
     };
-    cmds.entity(event.entity)
-        .insert(CompiledModule(gantz_core::vm::fmt_module(&module)));
+    cmds.entity(event.entity).insert(CompiledModule(module));
     vms.insert(event.entity, vm);
 
     // GUI state migration.

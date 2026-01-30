@@ -6,6 +6,7 @@ pub mod plugin;
 pub mod reg;
 pub mod storage;
 pub mod view;
+pub mod vm;
 
 pub use builtin::{BuiltinNodes, Builtins};
 pub use head::{
