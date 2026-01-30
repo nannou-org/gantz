@@ -11,11 +11,13 @@ use bevy_gantz::{
     eval, head, timestamp,
 };
 use bevy_pkv::PkvStore;
-use env::{AppBuiltins, Environment};
+use builtin::Builtins;
+use env::Environment;
 use gantz_ca as ca;
 use graph::Graph;
 use steel::steel_vm::engine::Engine;
 
+mod builtin;
 mod env;
 mod graph;
 mod node;
@@ -47,7 +49,7 @@ fn main() {
         .add_plugins(GantzPlugin::<Box<dyn node::Node>>::default())
         // App-specific builtins
         .insert_resource(BuiltinNodes::<Box<dyn node::Node>>(Box::new(
-            AppBuiltins::new(),
+            Builtins::new(),
         )))
         // Hook observers for app-specific handling (VM init, GUI state)
         .add_observer(on_head_opened)
