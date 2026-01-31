@@ -5,10 +5,10 @@ use bevy::{
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_gantz::{
     BuiltinNodes, CompiledModule, FocusedHead, GantzPlugin, GraphViews, GuiState, HeadGuiState,
-    HeadRef, HeadTabOrder, HeadVms, OpenHead, OpenHeadData, OpenHeadDataReadOnly, Registry, Views,
-    WorkingGraph,
+    HeadRef, HeadTabOrder, HeadVms, InspectEdgeEvent, OpenHead, OpenHeadData, OpenHeadDataReadOnly,
+    Registry, Views, WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
-    eval, head, timestamp,
+    head, timestamp,
 };
 use bevy_pkv::PkvStore;
 use builtin::Builtins;
@@ -47,9 +47,10 @@ fn main() {
         .insert_resource(BuiltinNodes::<Box<dyn node::Node>>(Box::new(
             Builtins::new(),
         )))
-        // Hook observers for app-specific handling (VM init)
+        // Hook observers for app-specific handling (VM init, inspect edge)
         .add_observer(on_head_opened)
         .add_observer(on_head_replaced)
+        .add_observer(on_inspect_edge)
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::new(0.25))
@@ -71,7 +72,6 @@ fn main() {
             Update,
             (
                 update_vm,
-                process_gantz_gui_cmds.after(update_vm),
                 persist_resources.run_if(on_message::<DebouncedInputEvent>),
             ),
         )
@@ -446,76 +446,6 @@ fn inspect_edge(
     view.layout.insert(node_id, pos);
 }
 
-// Drain the commands provided by the UI and process them.
-fn process_gantz_gui_cmds(
-    mut registry: ResMut<Registry<Box<dyn node::Node>>>,
-    views: Res<Views>,
-    builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
-    mut vms: NonSendMut<HeadVms>,
-    mut gui_state: ResMut<GuiState>,
-    mut heads: Query<OpenHeadData<Box<dyn node::Node>>, With<OpenHead>>,
-    mut cmds: Commands,
-) {
-    // Collect heads with their entities to process.
-    let heads_to_process: Vec<_> = heads
-        .iter()
-        .map(|data| (data.entity, (**data.head_ref).clone()))
-        .collect();
-
-    for (entity, head) in heads_to_process {
-        let head_state = gui_state.open_heads.entry(head.clone()).or_default();
-        for cmd in std::mem::take(&mut head_state.scene.cmds) {
-            bevy::log::debug!("{cmd:?}");
-            match cmd {
-                gantz_egui::Cmd::PushEval(path) => {
-                    cmds.trigger(eval::EvalEvent {
-                        head: entity,
-                        path,
-                        kind: eval::EvalKind::Push,
-                    });
-                }
-                gantz_egui::Cmd::PullEval(path) => {
-                    cmds.trigger(eval::EvalEvent {
-                        head: entity,
-                        path,
-                        kind: eval::EvalKind::Pull,
-                    });
-                }
-                gantz_egui::Cmd::OpenGraph(path) => {
-                    // Re-borrow head_state to modify path.
-                    let head_state = gui_state.open_heads.get_mut(&head).unwrap();
-                    head_state.path = path;
-                }
-                gantz_egui::Cmd::OpenNamedNode(name, content_ca) => {
-                    // The content_ca represents a CommitAddr for graph nodes.
-                    let commit_ca = ca::CommitAddr::from(content_ca);
-                    if registry.names().get(&name) == Some(&commit_ca) {
-                        cmds.trigger(head::OpenEvent(ca::Head::Branch(name.to_string())));
-                    } else {
-                        bevy::log::debug!(
-                            "Attempted to open named node, but the content address has changed"
-                        );
-                    }
-                }
-                gantz_egui::Cmd::ForkNamedNode { new_name, ca } => {
-                    // The CA represents a CommitAddr for graph nodes.
-                    let commit_ca = ca::CommitAddr::from(ca);
-                    registry.insert_name(new_name.clone(), commit_ca);
-                    bevy::log::info!("Forked node to new name: {new_name}");
-                }
-                gantz_egui::Cmd::InspectEdge(cmd) => {
-                    if let Ok(mut data) = heads.get_mut(entity) {
-                        if let Some(vm) = vms.get_mut(&entity) {
-                            let env = Environment::new(&*registry, &*views, &*builtins);
-                            inspect_edge(&env, &mut data.working_graph, &mut data.views, vm, cmd);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 fn persist_resources(
     registry: Res<Registry<Box<dyn node::Node>>>,
     views: Res<Views>,
@@ -622,4 +552,28 @@ fn on_head_replaced(
     };
     cmds.entity(event.entity).insert(CompiledModule(module));
     vms.insert(event.entity, vm);
+}
+
+/// Handle inspect edge events by creating and registering the inspect node.
+fn on_inspect_edge(
+    trigger: On<InspectEdgeEvent>,
+    registry: Res<Registry<Box<dyn node::Node>>>,
+    views: Res<Views>,
+    builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
+    mut vms: NonSendMut<HeadVms>,
+    mut heads: Query<OpenHeadData<Box<dyn node::Node>>, With<OpenHead>>,
+) {
+    let event = trigger.event();
+    if let Ok(mut data) = heads.get_mut(event.entity) {
+        if let Some(vm) = vms.get_mut(&event.entity) {
+            let env = Environment::new(&*registry, &*views, &*builtins);
+            inspect_edge(
+                &env,
+                &mut data.working_graph,
+                &mut data.views,
+                vm,
+                event.cmd.clone(),
+            );
+        }
+    }
 }

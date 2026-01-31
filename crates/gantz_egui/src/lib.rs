@@ -115,7 +115,7 @@ pub enum Cmd {
 }
 
 /// A command to insert an Inspect node on an edge.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct InspectEdge {
     pub path: Vec<node::Id>,
     pub edge: petgraph::graph::EdgeIndex<usize>,

@@ -50,6 +50,8 @@ impl<N: Clone + Send + Sync + 'static> Plugin for GantzPlugin<N> {
             .add_observer(egui::on_head_opened)
             .add_observer(egui::on_head_replaced)
             .add_observer(egui::on_head_closed)
-            .add_observer(egui::on_branch_created);
+            .add_observer(egui::on_branch_created)
+            // Process GUI commands.
+            .add_systems(Update, egui::process_cmds::<N>);
     }
 }
