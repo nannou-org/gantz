@@ -4,8 +4,8 @@ use bevy::{
 };
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_gantz::{
-    BuiltinNodes, CompiledModule, FocusedHead, GantzPlugin, GraphViews, HeadGuiState, HeadRef,
-    HeadTabOrder, HeadVms, OpenHead, OpenHeadData, OpenHeadDataReadOnly, Registry, Views,
+    BuiltinNodes, CompiledModule, FocusedHead, GantzPlugin, GraphViews, GuiState, HeadGuiState,
+    HeadRef, HeadTabOrder, HeadVms, OpenHead, OpenHeadData, OpenHeadDataReadOnly, Registry, Views,
     WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
     eval, head, timestamp,
@@ -23,11 +23,6 @@ mod storage;
 
 type Graph = gantz_core::node::graph::Graph<Box<dyn node::Node>>;
 type GraphNode = gantz_core::node::GraphNode<Box<dyn node::Node>>;
-
-#[derive(Resource)]
-struct GuiState {
-    gantz: gantz_egui::widget::GantzState,
-}
 
 /// A resource for capturing tracing logs for the `TraceView` widget.
 #[derive(Default, Resource)]
@@ -52,11 +47,9 @@ fn main() {
         .insert_resource(BuiltinNodes::<Box<dyn node::Node>>(Box::new(
             Builtins::new(),
         )))
-        // Hook observers for app-specific handling (VM init, GUI state)
+        // Hook observers for app-specific handling (VM init)
         .add_observer(on_head_opened)
-        .add_observer(on_head_closed)
         .add_observer(on_head_replaced)
-        .add_observer(on_branch_created)
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::new(0.25))
@@ -71,7 +64,6 @@ fn main() {
                     .after(setup_resources)
                     .after(setup_open),
                 setup_vm.after(prune_unused_graphs_and_commits),
-                setup_gui_state,
             ),
         )
         .add_systems(EguiPrimaryContextPass, update_gui)
@@ -119,8 +111,10 @@ fn setup_camera(mut cmds: Commands) {
 fn setup_resources(storage: Res<PkvStore>, mut cmds: Commands) {
     let registry: Registry<Box<dyn node::Node>> = storage::load_registry(&*storage);
     let views = storage::load_views(&*storage);
+    let gui_state = storage::load_gui_state(&*storage);
     cmds.insert_resource(registry);
     cmds.insert_resource(views);
+    cmds.insert_resource(gui_state);
 }
 
 fn setup_open(
@@ -168,12 +162,6 @@ fn prune_unused_graphs_and_commits(
     let required = gantz_core::reg::required_commits(&env, &registry, head_iter);
     registry.prune_unreachable(&required);
     views.retain(|ca, _| required.contains(ca));
-}
-
-fn setup_gui_state(storage: Res<PkvStore>, mut cmds: Commands) {
-    let gantz = storage::load_gantz_gui_state(&*storage);
-    let gui = GuiState { gantz };
-    cmds.insert_resource(gui);
 }
 
 fn setup_vm(world: &mut World) {
@@ -263,7 +251,7 @@ fn update_gui(
             gantz_egui::widget::Gantz::new(&mut env)
                 .trace_capture(trace_capture.0.clone(), level)
                 .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
-                .show(&mut gui_state.gantz, focused_ix, &mut access, ui)
+                .show(&mut *gui_state, focused_ix, &mut access, ui)
         })
         .inner;
 
@@ -374,8 +362,8 @@ fn update_vm(
             }
 
             // Migrate open_heads entry from old key to new key.
-            if let Some(state) = gui_state.gantz.open_heads.remove(&old_head) {
-                gui_state.gantz.open_heads.insert(head.clone(), state);
+            if let Some(state) = gui_state.open_heads.remove(&old_head) {
+                gui_state.open_heads.insert(head.clone(), state);
             }
 
             // Re-register and recompile this head's graph into its VM.
@@ -475,7 +463,7 @@ fn process_gantz_gui_cmds(
         .collect();
 
     for (entity, head) in heads_to_process {
-        let head_state = gui_state.gantz.open_heads.entry(head.clone()).or_default();
+        let head_state = gui_state.open_heads.entry(head.clone()).or_default();
         for cmd in std::mem::take(&mut head_state.scene.cmds) {
             bevy::log::debug!("{cmd:?}");
             match cmd {
@@ -495,7 +483,7 @@ fn process_gantz_gui_cmds(
                 }
                 gantz_egui::Cmd::OpenGraph(path) => {
                     // Re-borrow head_state to modify path.
-                    let head_state = gui_state.gantz.open_heads.get_mut(&head).unwrap();
+                    let head_state = gui_state.open_heads.get_mut(&head).unwrap();
                     head_state.path = path;
                 }
                 gantz_egui::Cmd::OpenNamedNode(name, content_ca) => {
@@ -576,7 +564,7 @@ fn persist_resources(
     storage::save_views(&mut *storage, &*views);
 
     // Save the gantz GUI state.
-    storage::save_gantz_gui_state(&mut *storage, &gui_state.gantz);
+    storage::save_gui_state(&mut *storage, &gui_state);
 
     // Save egui memory (widget states).
     if let Ok(ctx) = ctxs.ctx_mut() {
@@ -588,7 +576,7 @@ fn persist_resources(
 // Hook Observers (respond to hook events from bevy_gantz handlers)
 // ----------------------------------------------------------------------------
 
-/// VM init + GUI state for opened heads.
+/// VM init for opened heads.
 fn on_head_opened(
     trigger: On<head::HeadOpened>,
     registry: Res<Registry<Box<dyn node::Node>>>,
@@ -596,12 +584,9 @@ fn on_head_opened(
     builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     mut vms: NonSendMut<HeadVms>,
     mut cmds: Commands,
-    mut gui_state: ResMut<GuiState>,
     graphs: Query<&WorkingGraph<Box<dyn node::Node>>>,
 ) {
     let event = trigger.event();
-
-    // VM init.
     let graph = graphs.get(event.entity).unwrap();
     let env = Environment::new(&*registry, &*views, &*builtins);
     let (vm, module) = match bevy_gantz::vm::init(&env, &**graph) {
@@ -613,16 +598,9 @@ fn on_head_opened(
     };
     cmds.entity(event.entity).insert(CompiledModule(module));
     vms.insert(event.entity, vm);
-
-    // GUI state.
-    gui_state
-        .gantz
-        .open_heads
-        .entry(event.head.clone())
-        .or_default();
 }
 
-/// VM init + GUI state for replaced heads.
+/// VM init for replaced heads.
 fn on_head_replaced(
     trigger: On<head::HeadReplaced>,
     registry: Res<Registry<Box<dyn node::Node>>>,
@@ -630,13 +608,9 @@ fn on_head_replaced(
     builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     mut vms: NonSendMut<HeadVms>,
     mut cmds: Commands,
-    mut gui_state: ResMut<GuiState>,
-    mut ctxs: EguiContexts,
     graphs: Query<&WorkingGraph<Box<dyn node::Node>>>,
 ) {
     let event = trigger.event();
-
-    // VM init.
     let graph = graphs.get(event.entity).unwrap();
     let env = Environment::new(&*registry, &*views, &*builtins);
     let (vm, module) = match bevy_gantz::vm::init(&env, &**graph) {
@@ -648,39 +622,4 @@ fn on_head_replaced(
     };
     cmds.entity(event.entity).insert(CompiledModule(module));
     vms.insert(event.entity, vm);
-
-    // GUI state migration.
-    if let Some(state) = gui_state.gantz.open_heads.remove(&event.old_head) {
-        gui_state
-            .gantz
-            .open_heads
-            .insert(event.new_head.clone(), state);
-    }
-    if let Ok(ctx) = ctxs.ctx_mut() {
-        gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
-    }
-}
-
-/// GUI state cleanup for closed heads.
-fn on_head_closed(trigger: On<head::HeadClosed>, mut gui_state: ResMut<GuiState>) {
-    let event = trigger.event();
-    gui_state.gantz.open_heads.remove(&event.head);
-}
-
-/// GUI state only for branch creation (no VM to init).
-fn on_branch_created(
-    trigger: On<head::BranchCreated>,
-    mut gui_state: ResMut<GuiState>,
-    mut ctxs: EguiContexts,
-) {
-    let event = trigger.event();
-    if let Some(state) = gui_state.gantz.open_heads.remove(&event.old_head) {
-        gui_state
-            .gantz
-            .open_heads
-            .insert(event.new_head.clone(), state);
-    }
-    if let Ok(ctx) = ctxs.ctx_mut() {
-        gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
-    }
 }

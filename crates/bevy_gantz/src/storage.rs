@@ -23,6 +23,8 @@ mod key {
     pub const FOCUSED_HEAD: &str = "focused-head";
     /// The key at which all graph views (layout + camera) are stored.
     pub const VIEWS: &str = "views";
+    /// The key at which the gantz GUI state is stored.
+    pub const GUI_STATE: &str = "gui-state";
 
     /// The key for a particular graph in storage.
     pub fn graph(ca: gantz_ca::GraphAddr) -> String {
@@ -175,6 +177,21 @@ pub fn save_views(storage: &mut PkvStore, views: &Views) {
     }
 }
 
+/// Save the GUI state to storage.
+pub fn save_gui_state(storage: &mut PkvStore, state: &crate::egui::GuiState) {
+    let state_str = match ron::to_string(&**state) {
+        Err(e) => {
+            log::error!("Failed to serialize GUI state: {e}");
+            return;
+        }
+        Ok(s) => s,
+    };
+    match storage.set_string(key::GUI_STATE, &state_str) {
+        Ok(()) => log::debug!("Successfully persisted GUI state"),
+        Err(e) => log::error!("Failed to persist GUI state: {e}"),
+    }
+}
+
 /// Save the registry to storage.
 pub fn save_registry<N: Serialize>(storage: &mut PkvStore, registry: &Registry<N>) {
     // Save graphs.
@@ -323,6 +340,24 @@ pub fn load_views(storage: &PkvStore) -> Views {
         Err(e) => {
             log::error!("Failed to deserialize views: {e}");
             Views::default()
+        }
+    }
+}
+
+/// Load the GUI state from storage.
+pub fn load_gui_state(storage: &PkvStore) -> crate::egui::GuiState {
+    let Some(state_str) = storage.get::<String>(key::GUI_STATE).ok() else {
+        log::debug!("No existing GUI state to load");
+        return crate::egui::GuiState::default();
+    };
+    match ron::de::from_str(&state_str) {
+        Ok(state) => {
+            log::debug!("Successfully loaded GUI state from storage");
+            crate::egui::GuiState(state)
+        }
+        Err(e) => {
+            log::error!("Failed to deserialize GUI state: {e}");
+            crate::egui::GuiState::default()
         }
     }
 }

@@ -1,5 +1,6 @@
 //! The GantzPlugin for Bevy applications.
 
+use crate::egui::{self, GuiState};
 use crate::eval::on_eval_event;
 use crate::head::{FocusedHead, HeadTabOrder, HeadVms};
 use crate::reg::Registry;
@@ -12,13 +13,14 @@ use std::marker::PhantomData;
 /// Generic over `N`, the node type used in graphs.
 ///
 /// This plugin:
-/// - Initializes core resources (Registry, Views, HeadVms, etc.)
+/// - Initializes core resources (Registry, Views, HeadVms, GuiState, etc.)
 /// - Registers event observers for head operations
 /// - Registers the eval event observer
+/// - Handles GUI state management automatically
 ///
 /// Apps should also:
 /// - Insert a `BuiltinNodes<N>` resource with their builtin nodes
-/// - Add observers for hook events (HeadOpened, HeadClosed, etc.) if GUI state updates are needed
+/// - Add observers for HeadOpened/HeadReplaced if VM initialization is needed
 pub struct GantzPlugin<N>(PhantomData<N>);
 
 impl<N> Default for GantzPlugin<N> {
@@ -35,6 +37,7 @@ impl<N: Clone + Send + Sync + 'static> Plugin for GantzPlugin<N> {
             .init_resource::<HeadTabOrder>()
             .init_resource::<Registry<N>>()
             .init_resource::<Views>()
+            .init_resource::<GuiState>()
             .init_non_send_resource::<HeadVms>()
             // Register head event handlers.
             .add_observer(on_open_head::<N>)
@@ -42,6 +45,11 @@ impl<N: Clone + Send + Sync + 'static> Plugin for GantzPlugin<N> {
             .add_observer(on_close_head::<N>)
             .add_observer(on_create_branch::<N>)
             // Register eval event handler.
-            .add_observer(on_eval_event);
+            .add_observer(on_eval_event)
+            // Register GUI state handlers.
+            .add_observer(egui::on_head_opened)
+            .add_observer(egui::on_head_replaced)
+            .add_observer(egui::on_head_closed)
+            .add_observer(egui::on_branch_created);
     }
 }
