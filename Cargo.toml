@@ -57,6 +57,7 @@ gantz_egui = { version = "0.1.0", path = "crates/gantz_egui" }
 gantz_std = { version = "0.1.0", path = "crates/gantz_std" }
 hex = "0.4"
 humantime = "2.3"
+js-sys = "0.3"
 log = { version = "0.4", features = ["serde"] }
 petgraph = { version = "0.8", features = ["serde-1"] }
 ron = "0.10"
@@ -66,6 +67,7 @@ steel-core = "0.7"
 steel-derive = "0.6"
 sublime_fuzzy = "0.7"
 thiserror = "2"
+time = { version = "0.3", features = ["local-offset", "formatting", "wasm-bindgen"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 typetag = "0.2"

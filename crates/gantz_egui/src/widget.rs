@@ -1,4 +1,7 @@
 //! A collection of useful widgets for gantz.
+#[cfg(target_arch = "wasm32")]
+use js_sys::Date;
+use time::{OffsetDateTime, UtcOffset};
 
 pub use command_palette::CommandPalette;
 pub use gantz::{Gantz, GantzState, update_graph_pane_head};
@@ -33,6 +36,32 @@ pub mod pane_menu;
 pub mod perf_view;
 #[cfg(feature = "tracing")]
 pub mod trace_view;
+
+/// Convert a UTC datetime to local timezone, with fallback to UTC if unavailable.
+pub(crate) fn to_local_datetime(datetime: OffsetDateTime) -> OffsetDateTime {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // Native platforms: use time crate's built-in method
+        UtcOffset::current_local_offset()
+            .map(|offset| datetime.to_offset(offset))
+            .unwrap_or(datetime)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        // WASM: get timezone offset from JavaScript Date API
+        use js_sys::Date;
+
+        let js_date = Date::new_0();
+        let offset_minutes = js_date.get_timezone_offset();
+        let offset_seconds = -(offset_minutes as i32 * 60);
+
+        match UtcOffset::from_whole_seconds(offset_seconds) {
+            Ok(offset) => datetime.to_offset(offset),
+            Err(_) => datetime,
+        }
+    }
+}
 
 /// Simple shorthand for viewing steel code.
 pub fn steel_view(ui: &mut egui::Ui, code: &str) {
