@@ -3,6 +3,7 @@ use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
 };
+use time::{OffsetDateTime, format_description};
 use tracing::{Level, level_filters::LevelFilter};
 use tracing_subscriber::Layer;
 use web_time::SystemTime;
@@ -47,8 +48,16 @@ struct MessageVisitor {
 
 impl TraceEntry {
     fn format_timestamp(&self) -> String {
-        let time = crate::system_time_from_web(self.timestamp).expect("failed to convert");
-        humantime::format_rfc3339_seconds(time).to_string()
+        let system_time = crate::system_time_from_web(self.timestamp).expect("failed to convert");
+        let datetime = OffsetDateTime::from(system_time);
+        let local_datetime = crate::widget::to_local_datetime(datetime);
+
+        let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+            .expect("invalid format");
+
+        local_datetime
+            .format(&format)
+            .unwrap_or_else(|_| "<invalid-timestamp>".to_string())
     }
 
     fn freshness(&self) -> f32 {
