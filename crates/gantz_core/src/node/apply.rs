@@ -14,21 +14,21 @@ use serde::{Deserialize, Serialize};
 #[cahash("gantz.apply")]
 pub struct Apply;
 
-impl<Env> node::Node<Env> for Apply {
+impl node::Node for Apply {
     /// Two inputs:
     ///
     /// 1. A function value. Receiving this triggers evaluation.
     /// 2. A list of arguments. Assumed `'()` if unconnected.
-    fn n_inputs(&self, _env: &Env) -> usize {
+    fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
         2
     }
 
     /// The result of function application.
-    fn n_outputs(&self, _env: &Env) -> usize {
+    fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
         1
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         let inputs = ctx.inputs();
 
         // Get function and arguments from inputs

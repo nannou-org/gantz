@@ -1,7 +1,6 @@
 use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
 use gantz_ca::CaHash;
-use steel::steel_vm::engine::Engine;
 
 /// A wrapper around a `Node` that enables pull evaluation across all inputs.
 ///
@@ -9,27 +8,22 @@ use steel::steel_vm::engine::Engine;
 /// unique implementation of [`Node::pull_eval`].
 #[derive(Clone, Debug, Deserialize, Serialize, CaHash)]
 #[cahash("gantz.pull")]
-pub struct Pull<Env, N> {
-    #[cahash(skip)]
-    env: core::marker::PhantomData<Env>,
+pub struct Pull<N> {
     node: N,
     conf: node::EvalConf,
 }
 
 /// A trait implemented for all `Node` types allowing to enable pull evaluation.
-pub trait WithPullEval<Env>: Sized + Node<Env> {
+pub trait WithPullEval: Sized + Node {
     /// Consume `self` and return a `Node` that has push evaluation enabled.
-    fn with_pull_eval_conf(self, conf: node::EvalConf) -> Pull<Env, Self>;
+    fn with_pull_eval_conf(self, conf: node::EvalConf) -> Pull<Self>;
     /// Consume `self` and return a `Node` that has pull evaluation enabled.
-    fn with_pull_eval(self) -> Pull<Env, Self> {
+    fn with_pull_eval(self) -> Pull<Self> {
         self.with_pull_eval_conf(node::EvalConf::All)
     }
 }
 
-impl<Env, N> Pull<Env, N>
-where
-    N: Node<Env>,
-{
+impl<N: Node> Pull<N> {
     /// Given some node, return a `Pull` node enabling pull evaluation across
     /// all outputs.
     pub fn all(node: N) -> Self {
@@ -39,64 +33,57 @@ where
     /// Given some node, return a `Pull` node enabling pull evaluation across
     /// some subset of the outputs.
     pub fn new(node: N, conf: node::EvalConf) -> Self {
-        let env = core::marker::PhantomData;
-        Pull { env, node, conf }
+        Pull { node, conf }
     }
 }
 
-impl<Env, N> WithPullEval<Env> for N
-where
-    N: Node<Env>,
-{
+impl<N: Node> WithPullEval for N {
     /// Consume `self` and return an equivalent node with pull evaluation
     /// enabled.
-    fn with_pull_eval_conf(self, conf: node::EvalConf) -> Pull<Env, Self> {
+    fn with_pull_eval_conf(self, conf: node::EvalConf) -> Pull<Self> {
         Pull::new(self, conf)
     }
 }
 
-impl<Env, N> Node<Env> for Pull<Env, N>
-where
-    N: Node<Env>,
-{
-    fn n_inputs(&self, env: &Env) -> usize {
-        self.node.n_inputs(env)
+impl<N: Node> Node for Pull<N> {
+    fn n_inputs(&self, ctx: node::MetaCtx) -> usize {
+        self.node.n_inputs(ctx)
     }
 
-    fn n_outputs(&self, env: &Env) -> usize {
-        self.node.n_outputs(env)
+    fn n_outputs(&self, ctx: node::MetaCtx) -> usize {
+        self.node.n_outputs(ctx)
     }
 
-    fn branches(&self, env: &Env) -> Vec<node::EvalConf> {
-        self.node.branches(env)
+    fn branches(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+        self.node.branches(ctx)
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         self.node.expr(ctx)
     }
 
-    fn push_eval(&self, env: &Env) -> Vec<node::EvalConf> {
-        self.node.push_eval(env)
+    fn push_eval(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+        self.node.push_eval(ctx)
     }
 
-    fn pull_eval(&self, _env: &Env) -> Vec<node::EvalConf> {
+    fn pull_eval(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
         vec![self.conf.clone()]
     }
 
-    fn inlet(&self, env: &Env) -> bool {
-        self.node.inlet(env)
+    fn inlet(&self, ctx: node::MetaCtx) -> bool {
+        self.node.inlet(ctx)
     }
 
-    fn outlet(&self, env: &Env) -> bool {
-        self.node.outlet(env)
+    fn outlet(&self, ctx: node::MetaCtx) -> bool {
+        self.node.outlet(ctx)
     }
 
-    fn stateful(&self, env: &Env) -> bool {
-        self.node.stateful(env)
+    fn stateful(&self, ctx: node::MetaCtx) -> bool {
+        self.node.stateful(ctx)
     }
 
-    fn register(&self, env: &Env, path: &[node::Id], vm: &mut Engine) {
-        self.node.register(env, path, vm)
+    fn register(&self, ctx: node::RegCtx<'_, '_>) {
+        self.node.register(ctx)
     }
 
     fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {

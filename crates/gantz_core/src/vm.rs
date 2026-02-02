@@ -3,7 +3,7 @@
 //! This module provides common functionality for working with the Steel VM
 //! that is shared between different gantz frontends (Bevy app, pure egui demo, etc.).
 
-use crate::{Edge, Node, compile::ModuleError};
+use crate::{Edge, Node, compile::ModuleError, node};
 use petgraph::visit::{Data, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, Visitable};
 use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 
@@ -21,7 +21,10 @@ pub enum CompileError {
 /// Initialize a new VM with root state and register the given graph.
 ///
 /// Returns the initialized VM and the generated module expressions.
-pub fn init<Env, G>(env: &Env, graph: G) -> Result<(Engine, Vec<ExprKind>), CompileError>
+pub fn init<'a, G>(
+    get_node: node::GetNode<'a>,
+    graph: G,
+) -> Result<(Engine, Vec<ExprKind>), CompileError>
 where
     G: Data<EdgeWeight = Edge>
         + IntoEdgesDirected
@@ -29,12 +32,12 @@ where
         + NodeIndexable
         + Visitable
         + Copy,
-    G::NodeWeight: Node<Env>,
+    G::NodeWeight: Node,
 {
     let mut vm = Engine::new_base();
     vm.register_value(crate::ROOT_STATE, SteelVal::empty_hashmap());
-    crate::graph::register(env, graph, &[], &mut vm);
-    let module = compile(env, graph, &mut vm)?;
+    crate::graph::register(get_node, graph, &[], &mut vm);
+    let module = compile(get_node, graph, &mut vm)?;
     Ok((vm, module))
 }
 
@@ -42,7 +45,11 @@ where
 ///
 /// This generates the Steel expressions for the graph and executes them
 /// in the provided VM. Returns the generated expressions.
-pub fn compile<Env, G>(env: &Env, graph: G, vm: &mut Engine) -> Result<Vec<ExprKind>, CompileError>
+pub fn compile<'a, G>(
+    get_node: node::GetNode<'a>,
+    graph: G,
+    vm: &mut Engine,
+) -> Result<Vec<ExprKind>, CompileError>
 where
     G: Data<EdgeWeight = Edge>
         + IntoEdgesDirected
@@ -50,9 +57,9 @@ where
         + NodeIndexable
         + Visitable
         + Copy,
-    G::NodeWeight: Node<Env>,
+    G::NodeWeight: Node,
 {
-    let module = crate::compile::module(env, graph)?;
+    let module = crate::compile::module(get_node, graph)?;
     for expr in &module {
         vm.run(expr.to_pretty(80))
             .map_err(|e| CompileError::Eval(e.to_string()))?;

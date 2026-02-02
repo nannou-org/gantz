@@ -15,16 +15,16 @@ pub const IDENTITY_NAME: &str = "id";
 #[cahash("gantz.identity")]
 pub struct Identity;
 
-impl<Env> node::Node<Env> for Identity {
-    fn n_inputs(&self, _env: &Env) -> usize {
+impl node::Node for Identity {
+    fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
         1
     }
 
-    fn n_outputs(&self, _env: &Env) -> usize {
+    fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
         1
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         let inputs = ctx.inputs();
 
         // Simply return the input unchanged

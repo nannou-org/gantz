@@ -134,16 +134,16 @@ fn interpolate_tokens(tts: TokenStream, vars: &[String], inputs: &[Option<String
     tokens.collect::<Vec<_>>().join(" ")
 }
 
-impl<Env> Node<Env> for Expr {
-    fn n_inputs(&self, _: &Env) -> usize {
+impl Node for Expr {
+    fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
         self.vars.len()
     }
 
-    fn n_outputs(&self, _: &Env) -> usize {
+    fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
         1
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         // Create a token stream.
         let tts = TokenStream::new(&self.src, true, None);
 
@@ -170,12 +170,13 @@ impl<Env> Node<Env> for Expr {
     }
 
     /// Only generate the state binding if the expr references `state`.
-    fn stateful(&self, _env: &Env) -> bool {
+    fn stateful(&self, _ctx: node::MetaCtx) -> bool {
         self.src().contains("state")
     }
 
     /// Registers a state slot just in case `state` is referenced by the expr.
-    fn register(&self, _env: &Env, path: &[super::Id], vm: &mut Engine) {
+    fn register(&self, ctx: node::RegCtx<'_, '_>) {
+        let (_, path, vm) = ctx.into_parts();
         node::state::init_value_if_absent(vm, path, || steel::SteelVal::Void).unwrap();
     }
 }

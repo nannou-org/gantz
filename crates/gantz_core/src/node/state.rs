@@ -15,9 +15,7 @@ use steel::{
 /// A wrapper around a **Node** that adds some persistent state.
 #[derive(Clone, Debug, Deserialize, Serialize, CaHash)]
 #[cahash("gantz.state")]
-pub struct State<Env, N, S> {
-    #[cahash(skip)]
-    pub env: core::marker::PhantomData<Env>,
+pub struct State<N, S> {
     /// The node being wrapped with state.
     pub node: N,
     /// The type of state used by the node.
@@ -44,23 +42,22 @@ pub trait NodeState: Default + FromSteelVal + IntoSteelVal {
 
 /// A trait implemented for all **Node** types allowing to add some state accessible to its
 /// expression. This is particularly useful for adding state to **Expr** nodes.
-pub trait WithStateType<Env>: Node<Env> + Sized {
+pub trait WithStateType: Node + Sized {
     /// Consume `self` and return a `Node` that has state of type `state_type`.
-    fn with_state_type<S: NodeState>(self) -> State<Env, Self, S> {
-        State::<Env, Self, S>::new(self)
+    fn with_state_type<S: NodeState>(self) -> State<Self, S> {
+        State::<Self, S>::new(self)
     }
 }
 
-impl<Env, N, S> State<Env, N, S> {
+impl<N, S> State<N, S> {
     /// Given some node, return a **State** node enabling access to state of the
     /// given type.
     pub fn new(node: N) -> Self
     where
-        N: Node<Env>,
+        N: Node,
         S: NodeState,
     {
         State {
-            env: core::marker::PhantomData,
             node,
             state: core::marker::PhantomData,
         }
@@ -73,63 +70,63 @@ fn default_node_state_steel_val<S: NodeState>() -> SteelVal {
         .expect("default `NodeState` to `SteelVal` conversion should never fail")
 }
 
-impl<Env, N> WithStateType<Env> for N
-where
-    N: Node<Env>,
-{
-    fn with_state_type<S: NodeState>(self) -> State<Env, Self, S> {
-        State::<Env, Self, S>::new(self)
+impl<N: Node> WithStateType for N {
+    fn with_state_type<S: NodeState>(self) -> State<Self, S> {
+        State::<Self, S>::new(self)
     }
 }
 
-impl<Env, N, S> Node<Env> for State<Env, N, S>
+impl<N, S> Node for State<N, S>
 where
-    N: Node<Env>,
+    N: Node,
     S: NodeState,
 {
-    fn n_inputs(&self, env: &Env) -> usize {
-        self.node.n_inputs(env)
+    fn n_inputs(&self, ctx: node::MetaCtx) -> usize {
+        self.node.n_inputs(ctx)
     }
 
-    fn n_outputs(&self, env: &Env) -> usize {
-        self.node.n_outputs(env)
+    fn n_outputs(&self, ctx: node::MetaCtx) -> usize {
+        self.node.n_outputs(ctx)
     }
 
-    fn branches(&self, env: &Env) -> Vec<node::EvalConf> {
-        self.node.branches(env)
+    fn branches(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+        self.node.branches(ctx)
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         self.node.expr(ctx)
     }
 
-    fn push_eval(&self, env: &Env) -> Vec<node::EvalConf> {
-        self.node.push_eval(env)
+    fn push_eval(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+        self.node.push_eval(ctx)
     }
 
-    fn pull_eval(&self, env: &Env) -> Vec<node::EvalConf> {
-        self.node.pull_eval(env)
+    fn pull_eval(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+        self.node.pull_eval(ctx)
     }
 
-    fn inlet(&self, env: &Env) -> bool {
-        self.node.inlet(env)
+    fn inlet(&self, ctx: node::MetaCtx) -> bool {
+        self.node.inlet(ctx)
     }
 
-    fn outlet(&self, env: &Env) -> bool {
-        self.node.outlet(env)
+    fn outlet(&self, ctx: node::MetaCtx) -> bool {
+        self.node.outlet(ctx)
     }
 
-    fn stateful(&self, _env: &Env) -> bool {
+    fn stateful(&self, _ctx: node::MetaCtx) -> bool {
         true
     }
 
-    fn register(&self, _env: &Env, path: &[node::Id], vm: &mut Engine) {
+    fn register(&self, ctx: node::RegCtx<'_, '_>) {
+        let (get_node, path, vm) = ctx.into_parts();
         S::register(vm);
         // Only initialize state if not already present.
         if extract_value(vm, path).ok().flatten().is_none() {
             let val = default_node_state_steel_val::<S>();
             update(vm, path, val).unwrap();
         }
+        // Register the inner node.
+        self.node.register(node::RegCtx::new(get_node, path, vm));
     }
 
     fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {

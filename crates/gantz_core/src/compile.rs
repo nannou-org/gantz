@@ -266,14 +266,14 @@ where
 /// 1. A function for each node (and for each node input configuration).
 /// 2. A function for each node requiring push/pull evaluation.
 /// 3. The above for all nested graphs.
-pub fn module<Env, G>(env: &Env, g: G) -> Result<Vec<ExprKind>, ModuleError>
+pub fn module<'a, G>(get_node: node::GetNode<'a>, g: G) -> Result<Vec<ExprKind>, ModuleError>
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
-    G::NodeWeight: Node<Env>,
+    G::NodeWeight: Node,
 {
     // Create a `Meta` for each graph (including nested) in a tree.
     let mut meta_tree = MetaTree::default();
-    crate::graph::visit(env, g, &[], &mut meta_tree);
+    crate::graph::visit(get_node, g, &[], &mut meta_tree);
     if !meta_tree.errors.is_empty() {
         return Err(error::MetaErrors(meta_tree.errors).into());
     }
@@ -285,7 +285,7 @@ where
 
     // Collect node fns.
     let node_confs_tree = flow_tree.map_ref(&mut |(_, flow)| codegen::unique_node_confs(flow));
-    let node_fns = codegen::node_fns(env, g, &node_confs_tree)?;
+    let node_fns = codegen::node_fns(get_node, g, &node_confs_tree)?;
 
     // Collect eval fns.
     let eval_fns = codegen::eval_fns(&flow_tree)?;

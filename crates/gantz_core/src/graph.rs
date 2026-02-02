@@ -38,10 +38,14 @@ where
 
 /// Visit all nodes in the graph in toposort order, and all nested nodes in
 /// depth-first order.
-pub fn visit<Env, G>(env: &Env, g: G, path: &[node::Id], visitor: &mut dyn node::Visitor<Env>)
-where
+pub fn visit<'a, G>(
+    get_node: node::GetNode<'a>,
+    g: G,
+    path: &[node::Id],
+    visitor: &mut dyn node::Visitor,
+) where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
-    G::NodeWeight: Node<Env>,
+    G::NodeWeight: Node,
 {
     let mut path = path.to_vec();
     let mut topo = Topo::new(g);
@@ -52,7 +56,7 @@ where
             .edges_directed(n, petgraph::Direction::Incoming)
             .map(|e_ref| (g.to_index(e_ref.source()), e_ref.weight().clone()))
             .collect();
-        let ctx = visit::Ctx::new(env, &path, &inputs);
+        let ctx = visit::Ctx::new(get_node, &path, &inputs);
 
         // FIXME: index directly.
         let nref = g.node_references().find(|nref| nref.id() == n).unwrap();
@@ -63,21 +67,26 @@ where
 }
 
 /// Register the given graph of nodes, including any nested nodes.
-pub fn register<Env, G>(env: &Env, g: G, path: &[node::Id], vm: &mut Engine)
+pub fn register<'a, G>(get_node: node::GetNode<'a>, g: G, path: &[node::Id], vm: &mut Engine)
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
-    G::NodeWeight: Node<Env>,
+    G::NodeWeight: Node,
 {
-    visit(env, g, path, &mut visit::Register(vm));
+    visit(get_node, g, path, &mut visit::Register(vm));
 }
 
 /// Collect all content addresses required by nodes in this graph.
-pub fn required_addrs<Env, G>(env: &Env, g: G) -> HashSet<gantz_ca::ContentAddr>
+pub fn required_addrs<'a, G>(get_node: node::GetNode<'a>, g: G) -> HashSet<gantz_ca::ContentAddr>
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
-    G::NodeWeight: Node<Env>,
+    G::NodeWeight: Node,
 {
     let mut addrs = HashSet::new();
-    visit(env, g, &[], &mut visit::RequiredAddrs { addrs: &mut addrs });
+    visit(
+        get_node,
+        g,
+        &[],
+        &mut visit::RequiredAddrs { addrs: &mut addrs },
+    );
     addrs
 }

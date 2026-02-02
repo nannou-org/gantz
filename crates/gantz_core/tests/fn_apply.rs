@@ -8,19 +8,6 @@ use std::fmt::Debug;
 use steel::SteelVal;
 use steel::steel_vm::engine::Engine;
 
-// A simple test environment that maps addresses to nodes.
-#[derive(Debug, Default)]
-struct TestEnv {
-    nodes: HashMap<gantz_ca::ContentAddr, Box<dyn DebugNode>>,
-}
-
-impl node::ref_::NodeRegistry for TestEnv {
-    type Node = Box<dyn DebugNode>;
-    fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&Self::Node> {
-        self.nodes.get(&ca).map(|boxed| &*boxed)
-    }
-}
-
 fn node_bang() -> node::expr::Expr {
     node::expr("'bang").unwrap()
 }
@@ -38,8 +25,8 @@ fn node_assert_eq() -> node::expr::Expr {
 }
 
 // Helper trait for debugging
-trait DebugNode: Debug + Node<TestEnv> + gantz_ca::CaHash {}
-impl<T> DebugNode for T where T: Debug + Node<TestEnv> + gantz_ca::CaHash {}
+trait DebugNode: Debug + Node + gantz_ca::CaHash {}
+impl<T> DebugNode for T where T: Debug + Node + gantz_ca::CaHash {}
 
 // Test that Fn can wrap the identity function and Apply can call it
 //
@@ -67,13 +54,18 @@ impl<T> DebugNode for T where T: Debug + Node<TestEnv> + gantz_ca::CaHash {}
 fn test_fn_apply_identity() {
     let mut g = petgraph::graph::DiGraph::new();
 
-    // Setup the test environment.
-    let mut env = TestEnv::default();
+    // Setup the node registry as a HashMap.
+    let mut nodes: HashMap<gantz_ca::ContentAddr, Box<dyn DebugNode>> = HashMap::new();
 
     // Just add the identity node.
     let id = gantz_core::node::Identity;
     let id_ca = gantz_ca::content_addr(&id);
-    env.nodes.insert(id_ca, Box::new(id) as Box<dyn DebugNode>);
+    nodes.insert(id_ca, Box::new(id) as Box<dyn DebugNode>);
+
+    // Create closure for node lookup.
+    let get_node = |ca: &gantz_ca::ContentAddr| -> Option<&dyn Node> {
+        nodes.get(ca).map(|b| &**b as &dyn Node)
+    };
 
     // Create nodes
     let bang = node_bang();
@@ -107,12 +99,12 @@ fn test_fn_apply_identity() {
     g.add_edge(expected, assert_eq, Edge::from((0, 1)));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&env, &g).unwrap();
+    let module = gantz_core::compile::module(&get_node, &g).unwrap();
 
     // Create and setup VM.
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&env, &g, &[], &mut vm);
+    gantz_core::graph::register(&get_node, &g, &[], &mut vm);
 
     // Register all functions
     for expr in module {
@@ -170,11 +162,15 @@ fn test_fn_apply_graph() {
         graph: double_graph,
     };
 
-    // Setup the test environment with the double graph.
-    let mut env = TestEnv::default();
+    // Setup the node registry as a HashMap.
+    let mut nodes: HashMap<gantz_ca::ContentAddr, Box<dyn DebugNode>> = HashMap::new();
     let double_ca = gantz_ca::content_addr(&double_node);
-    env.nodes
-        .insert(double_ca, Box::new(double_node) as Box<dyn DebugNode>);
+    nodes.insert(double_ca, Box::new(double_node) as Box<dyn DebugNode>);
+
+    // Create closure for node lookup.
+    let get_node = |ca: &gantz_ca::ContentAddr| -> Option<&dyn Node> {
+        nodes.get(ca).map(|b| &**b as &dyn Node)
+    };
 
     // Now create the main graph that uses Fn<Ref> to wrap the double graph.
     let mut g = petgraph::graph::DiGraph::new();
@@ -209,12 +205,12 @@ fn test_fn_apply_graph() {
     g.add_edge(expected, assert_eq, Edge::from((0, 1)));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&env, &g).unwrap();
+    let module = gantz_core::compile::module(&get_node, &g).unwrap();
 
     // Create and setup VM.
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&env, &g, &[], &mut vm);
+    gantz_core::graph::register(&get_node, &g, &[], &mut vm);
 
     // Register all functions.
     for expr in module {
