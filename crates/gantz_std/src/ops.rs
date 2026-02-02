@@ -1,4 +1,5 @@
 use gantz_ca::CaHash;
+use gantz_core::node::{ExprCtx, ExprResult, MetaCtx};
 use serde::{Deserialize, Serialize};
 
 /// Simple `Add` operation node.
@@ -6,16 +7,16 @@ use serde::{Deserialize, Serialize};
 #[cahash("gantz.add")]
 pub struct Add;
 
-impl<Env> gantz_core::Node<Env> for Add {
-    fn n_inputs(&self, _: &Env) -> usize {
+impl gantz_core::Node for Add {
+    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
         2
     }
 
-    fn n_outputs(&self, _: &Env) -> usize {
+    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
         1
     }
 
-    fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> gantz_core::node::ExprResult {
+    fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
         let inputs = ctx.inputs();
         let (l, r) = match (inputs.get(0), inputs.get(1)) {
             (Some(Some(l)), Some(Some(r))) => (&l[..], &r[..]),
