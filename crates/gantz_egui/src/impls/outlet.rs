@@ -1,25 +1,25 @@
-use crate::{NodeCtx, NodeUi, widget::node_inspector};
+use crate::{NodeCtx, NodeUi, Registry, widget::node_inspector};
 use gantz_core::node;
 
-impl<Env> NodeUi<Env> for gantz_core::node::graph::Outlet {
-    fn name(&self, _: &Env) -> &str {
+impl NodeUi for gantz_core::node::graph::Outlet {
+    fn name(&self, _: &dyn Registry) -> &str {
         "out"
     }
 
     fn ui(
         &mut self,
-        ctx: NodeCtx<Env>,
+        ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
         uictx.framed(|ui| {
-            let name = self.name(ctx.env());
+            let name = self.name(ctx.registry());
             let ix = outlet_ix(ctx.path(), ctx.outlets());
             let text = format!("{}[{}]", name, ix);
             ui.add(egui::Label::new(text).selectable(false))
         })
     }
 
-    fn inspector_rows(&mut self, ctx: &mut NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(&mut self, ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
         let row_h = node_inspector::table_row_h(body.ui_mut());
         body.row(row_h, |mut row| {
             row.col(|ui| {

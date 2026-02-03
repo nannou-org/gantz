@@ -1,7 +1,7 @@
-use crate::{NodeCtx, NodeUi};
+use crate::{NodeCtx, NodeUi, Registry};
 
-impl<Env> NodeUi<Env> for gantz_std::log::Log {
-    fn name(&self, _: &Env) -> &str {
+impl NodeUi for gantz_std::log::Log {
+    fn name(&self, _: &dyn Registry) -> &str {
         match self.level {
             log::Level::Error => "error",
             log::Level::Warn => "warn",
@@ -13,7 +13,7 @@ impl<Env> NodeUi<Env> for gantz_std::log::Log {
 
     fn ui(
         &mut self,
-        _ctx: NodeCtx<Env>,
+        _ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
         uictx.framed(|ui| {

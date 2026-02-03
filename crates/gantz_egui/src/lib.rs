@@ -13,6 +13,19 @@ mod impls;
 pub mod node;
 pub mod widget;
 
+// Re-export traits that make up the Registry supertrait.
+pub use node::{FnNodeNames, NameRegistry};
+
+/// Combined registry trait for UI operations.
+///
+/// Provides node lookup, name resolution, and Fn-compatible node listing.
+/// This supertrait combines [`NameRegistry`] and [`FnNodeNames`] with an
+/// additional method for looking up nodes by content address.
+pub trait Registry: NameRegistry + FnNodeNames {
+    /// Look up a node by content address.
+    fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&dyn gantz_core::Node>;
+}
+
 /// Provides access to open head data for the Gantz widget.
 ///
 /// This trait abstracts over different storage strategies (Bevy entities,
@@ -49,9 +62,9 @@ pub struct HeadDataMut<'a, N> {
 pub type GraphViews = HashMap<Vec<node::Id>, egui_graph::View>;
 
 /// A trait providing an egui `Ui` implementation for gantz nodes.
-pub trait NodeUi<Env> {
+pub trait NodeUi {
     /// The name used to present the node within the inspector.
-    fn name(&self, _env: &Env) -> &str;
+    fn name(&self, _registry: &dyn Registry) -> &str;
 
     /// Instantiate the `Ui` for the given node.
     ///
@@ -60,7 +73,7 @@ pub trait NodeUi<Env> {
     /// allow customizing the frame and other node display properties.
     fn ui(
         &mut self,
-        ctx: NodeCtx<Env>,
+        ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response>;
 
@@ -69,27 +82,27 @@ pub trait NodeUi<Env> {
     /// By default, only the node's path and its current state within the VM are
     /// shown. Adding to the given `body` by providing an implementation of this
     /// method will append extra rows.
-    fn inspector_rows(&mut self, _ctx: &mut NodeCtx<Env>, _body: &mut egui_extras::TableBody) {}
+    fn inspector_rows(&mut self, _ctx: &mut NodeCtx, _body: &mut egui_extras::TableBody) {}
 
     /// Extra UI for the node to be presented within the node inspector
     /// following the default table.
     ///
     /// See [`NodeUi::inspector_rows`] for how to simply append rows to the
     /// table.
-    fn inspector_ui(&mut self, _ctx: NodeCtx<Env>, _ui: &mut egui::Ui) -> Option<egui::Response> {
+    fn inspector_ui(&mut self, _ctx: NodeCtx, _ui: &mut egui::Ui) -> Option<egui::Response> {
         None
     }
 
     /// The layout direction of the node's inputs to outputs.
-    fn flow(&self, _env: &Env) -> egui::Direction {
+    fn flow(&self, _registry: &dyn Registry) -> egui::Direction {
         egui::Direction::TopDown
     }
 }
 
 /// A wrapper around a node's path and the VM providing easy access to the
 /// node's state.
-pub struct NodeCtx<'a, Env> {
-    env: &'a Env,
+pub struct NodeCtx<'a> {
+    registry: &'a dyn Registry,
     path: &'a [node::Id],
     inlets: &'a [node::Id],
     outlets: &'a [node::Id],
@@ -122,59 +135,59 @@ pub struct InspectEdge {
     pub pos: egui::Pos2,
 }
 
-impl<'a, Env, N> NodeUi<Env> for &'a mut N
+impl<'a, N> NodeUi for &'a mut N
 where
-    N: ?Sized + NodeUi<Env>,
+    N: ?Sized + NodeUi,
 {
-    fn name(&self, env: &Env) -> &str {
-        (**self).name(env)
+    fn name(&self, registry: &dyn Registry) -> &str {
+        (**self).name(registry)
     }
 
     fn ui(
         &mut self,
-        ctx: NodeCtx<Env>,
+        ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
         (**self).ui(ctx, uictx)
     }
 
-    fn inspector_rows(&mut self, ctx: &mut NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(&mut self, ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
         (**self).inspector_rows(ctx, body)
     }
 
-    fn inspector_ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> Option<egui::Response> {
+    fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> Option<egui::Response> {
         (**self).inspector_ui(ctx, ui)
     }
 
-    fn flow(&self, env: &Env) -> egui::Direction {
-        (**self).flow(env)
+    fn flow(&self, registry: &dyn Registry) -> egui::Direction {
+        (**self).flow(registry)
     }
 }
 
 macro_rules! impl_node_ui_for_ptr {
     ($($Ty:ident)::*) => {
-        impl<Env, T> NodeUi<Env> for $($Ty)::*<T>
+        impl<T> NodeUi for $($Ty)::*<T>
         where
-            T: ?Sized + NodeUi<Env>,
+            T: ?Sized + NodeUi,
         {
-            fn name(&self, env: &Env) -> &str {
-                (**self).name(env)
+            fn name(&self, registry: &dyn Registry) -> &str {
+                (**self).name(registry)
             }
 
-            fn ui(&mut self, ctx: NodeCtx<Env>, uictx: egui_graph::NodeCtx) -> egui::InnerResponse<egui::Response> {
+            fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> egui::InnerResponse<egui::Response> {
                 (**self).ui(ctx, uictx)
             }
 
-            fn inspector_rows(&mut self, ctx: &mut NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+            fn inspector_rows(&mut self, ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
                 (**self).inspector_rows(ctx, body)
             }
 
-            fn inspector_ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> Option<egui::Response> {
+            fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> Option<egui::Response> {
                 (**self).inspector_ui(ctx, ui)
             }
 
-            fn flow(&self, env: &Env) -> egui::Direction {
-                (**self).flow(env)
+            fn flow(&self, registry: &dyn Registry) -> egui::Direction {
+                (**self).flow(registry)
             }
         }
     };
@@ -182,9 +195,9 @@ macro_rules! impl_node_ui_for_ptr {
 
 impl_node_ui_for_ptr!(Box);
 
-impl<'a, Env> NodeCtx<'a, Env> {
+impl<'a> NodeCtx<'a> {
     pub fn new(
-        env: &'a Env,
+        registry: &'a dyn Registry,
         path: &'a [node::Id],
         inlets: &'a [node::Id],
         outlets: &'a [node::Id],
@@ -192,7 +205,7 @@ impl<'a, Env> NodeCtx<'a, Env> {
         cmds: &'a mut Vec<Cmd>,
     ) -> Self {
         Self {
-            env,
+            registry,
             path,
             inlets,
             outlets,
@@ -201,9 +214,9 @@ impl<'a, Env> NodeCtx<'a, Env> {
         }
     }
 
-    /// Provide access to the node's input environment.
-    pub fn env(&self) -> &Env {
-        self.env
+    /// Provide access to the registry.
+    pub fn registry(&self) -> &dyn Registry {
+        self.registry
     }
 
     /// The node's full path into the state tree.
@@ -270,20 +283,22 @@ impl<'a, Env> NodeCtx<'a, Env> {
 }
 
 /// The IDs of the inlet and outlet nodes.
-pub(crate) fn inlet_outlet_ids<Env, N>(
-    env: &Env,
+pub(crate) fn inlet_outlet_ids<N>(
+    registry: &dyn Registry,
     g: &gantz_core::node::graph::Graph<N>,
 ) -> (Vec<node::Id>, Vec<node::Id>)
 where
-    N: gantz_core::Node<Env>,
+    N: gantz_core::Node,
 {
+    let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
+    let ctx = gantz_core::node::MetaCtx::new(&get_node);
     let mut inlets = vec![];
     let mut outlets = vec![];
     for n_ref in g.node_references() {
-        if n_ref.weight().inlet(env) {
+        if n_ref.weight().inlet(ctx) {
             inlets.push(n_ref.id().index());
         }
-        if n_ref.weight().outlet(env) {
+        if n_ref.weight().outlet(ctx) {
             outlets.push(n_ref.id().index());
         }
     }

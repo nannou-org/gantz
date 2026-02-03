@@ -1,13 +1,13 @@
-use crate::{NodeCtx, NodeUi};
+use crate::{NodeCtx, NodeUi, Registry};
 
-impl<Env> NodeUi<Env> for gantz_std::Bang {
-    fn name(&self, _: &Env) -> &str {
+impl NodeUi for gantz_std::Bang {
+    fn name(&self, _: &dyn Registry) -> &str {
         "!"
     }
 
     fn ui(
         &mut self,
-        mut ctx: NodeCtx<Env>,
+        mut ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
         uictx.framed(|ui| {

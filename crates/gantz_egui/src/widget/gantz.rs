@@ -1,5 +1,5 @@
 use crate::{
-    Cmd, GraphViews, HeadAccess, NodeCtx, NodeUi,
+    Cmd, GraphViews, HeadAccess, NodeCtx, NodeUi, Registry,
     widget::{
         self, GraphScene, GraphSceneState,
         graph_scene::{self, ToGraphMut},
@@ -229,8 +229,8 @@ impl GantzResponse {
 
 impl<'a, Env> Gantz<'a, Env>
 where
-    Env: widget::graph_select::GraphRegistry + NodeTypeRegistry,
-    Env::Node: gantz_core::Node<Env> + NodeUi<Env> + graph_scene::ToGraphMut<Node = Env::Node>,
+    Env: widget::graph_select::GraphRegistry + NodeTypeRegistry + Registry,
+    Env::Node: gantz_core::Node + NodeUi + graph_scene::ToGraphMut<Node = Env::Node>,
 {
     /// Instantiate the full top-level gantz widget.
     pub fn new(env: &'a mut Env) -> Self {
@@ -357,8 +357,8 @@ impl GantzState {
 
 impl<'a, 's, Env, Access> egui_tiles::Behavior<Pane> for TreeBehaviour<'a, 's, Env, Access>
 where
-    Env: widget::graph_select::GraphRegistry + NodeTypeRegistry,
-    Env::Node: gantz_core::Node<Env> + NodeUi<Env> + graph_scene::ToGraphMut<Node = Env::Node>,
+    Env: widget::graph_select::GraphRegistry + NodeTypeRegistry + Registry,
+    Env::Node: gantz_core::Node + NodeUi + graph_scene::ToGraphMut<Node = Env::Node>,
     Access: HeadAccess<Node = Env::Node>,
 {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
@@ -572,8 +572,8 @@ where
 
 impl<'a, Env, Access> egui_tiles::Behavior<GraphPane> for GraphTreeBehaviour<'a, Env, Access>
 where
-    Env: widget::graph_select::GraphRegistry + NodeTypeRegistry,
-    Env::Node: gantz_core::Node<Env> + NodeUi<Env> + graph_scene::ToGraphMut<Node = Env::Node>,
+    Env: widget::graph_select::GraphRegistry + NodeTypeRegistry + Registry,
+    Env::Node: gantz_core::Node + NodeUi + graph_scene::ToGraphMut<Node = Env::Node>,
     Access: HeadAccess<Node = Env::Node>,
 {
     fn tab_title_for_pane(&mut self, pane: &GraphPane) -> egui::WidgetText {
@@ -1072,8 +1072,8 @@ fn perf_view(title: &str, capture: &mut widget::PerfCapture, ui: &mut egui::Ui) 
 }
 
 /// Returns the response from the graph scene if it was shown.
-fn graph_scene<Env, N>(
-    env: &Env,
+fn graph_scene<N>(
+    registry: &dyn Registry,
     graph: &mut gantz_core::node::graph::Graph<N>,
     head: &gantz_ca::Head,
     head_state: &mut OpenHeadState,
@@ -1085,7 +1085,7 @@ fn graph_scene<Env, N>(
     ui: &mut egui::Ui,
 ) -> Option<graph_scene::GraphSceneResponse>
 where
-    N: Node<Env> + NodeUi<Env> + graph_scene::ToGraphMut<Node = N>,
+    N: Node + NodeUi + graph_scene::ToGraphMut<Node = N>,
 {
     // We'll use this for positioning the fixed path labels window.
     let rect = ui.available_rect_before_wrap();
@@ -1111,7 +1111,7 @@ where
                     }
                 });
 
-            let response = GraphScene::new(env, graph, &head_state.path)
+            let response = GraphScene::new(registry, graph, &head_state.path)
                 .with_id(id)
                 .auto_layout(auto_layout)
                 .layout_flow(layout_flow)
@@ -1180,7 +1180,7 @@ fn command_palette<Env>(
     ui: &mut egui::Ui,
 ) where
     Env: NodeTypeRegistry,
-    Env::Node: gantz_core::Node<Env> + ToGraphMut<Node = Env::Node>,
+    Env::Node: gantz_core::Node + ToGraphMut<Node = Env::Node>,
 {
     // If space is pressed, toggle command palette visibility.
     if !ui.ctx().wants_keyboard_input() {
@@ -1206,7 +1206,10 @@ fn command_palette<Env>(
 
         // Determine the node's path and register it within the VM.
         let node_path: Vec<_> = head_state.path.iter().copied().chain(Some(ix)).collect();
-        graph[id].register(env, &node_path, vm);
+        // For GUI node creation, use a no-op lookup - the node being registered
+        // typically doesn't need external node lookups.
+        let reg_ctx = gantz_core::node::RegCtx::new(&|_| None, &node_path, vm);
+        graph[id].register(reg_ctx);
     }
 }
 
@@ -1246,15 +1249,15 @@ fn trace_view(
     })
 }
 
-fn node_inspector<Env, N>(
-    env: &Env,
+fn node_inspector<N>(
+    registry: &dyn Registry,
     root: &mut gantz_core::node::graph::Graph<N>,
     vm: &mut Engine,
     head_state: &mut OpenHeadState,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<()>
 where
-    N: Node<Env> + NodeUi<Env> + ToGraphMut<Node = N>,
+    N: Node + NodeUi + ToGraphMut<Node = N>,
 {
     pane_ui(ui, |ui| {
         egui::ScrollArea::vertical()
@@ -1263,7 +1266,7 @@ where
                 let graph = graph_scene::index_path_graph_mut(root, &head_state.path).unwrap();
                 let ids: Vec<_> = graph.node_references().map(|n_ref| n_ref.id()).collect();
                 // Collect the inlets and outlets.
-                let (inlets, outlets) = crate::inlet_outlet_ids::<Env, _>(env, graph);
+                let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
                 for id in ids {
                     let mut frame = egui::Frame::group(ui.style());
                     if head_state.scene.interaction.selection.nodes.contains(&id) {
@@ -1277,7 +1280,7 @@ where
                         let path: Vec<_> =
                             head_state.path.iter().copied().chain(Some(ix)).collect();
                         let ctx = NodeCtx::new(
-                            env,
+                            registry,
                             &path[..],
                             &inlets,
                             &outlets,

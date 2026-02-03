@@ -35,6 +35,17 @@ struct Environment {
     registry: Registry,
 }
 
+impl Environment {
+    /// Look up a node by content address.
+    fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&dyn gantz_core::Node> {
+        // Try commit lookup (for graph refs stored as CommitAddr).
+        let commit_ca = gantz_ca::CommitAddr::from(*ca);
+        self.registry
+            .commit_graph_ref(&commit_ca)
+            .map(|g| g as &dyn gantz_core::Node)
+    }
+}
+
 /// Registry of graphs, commits and branch names.
 type Registry = gantz_ca::Registry<Graph>;
 
@@ -81,18 +92,6 @@ impl gantz_egui::widget::graph_select::GraphRegistry for Environment {
     }
 }
 
-// Provide the `NodeRegistry` implementation required by `gantz_core::node::Ref`.
-impl gantz_core::node::ref_::NodeRegistry for Environment {
-    type Node = dyn gantz_core::Node<Self>;
-    fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&Self::Node> {
-        // Try commit lookup (for graph refs stored as CommitAddr).
-        let commit_ca = gantz_ca::CommitAddr::from(*ca);
-        self.registry
-            .commit_graph_ref(&commit_ca)
-            .map(|g| g as &dyn gantz_core::Node<Self>)
-    }
-}
-
 // Provide the `NameRegistry` implementation required by `gantz_egui::node::NamedRef`.
 impl gantz_egui::node::NameRegistry for Environment {
     fn name_ca(&self, name: &str) -> Option<gantz_ca::ContentAddr> {
@@ -101,6 +100,50 @@ impl gantz_egui::node::NameRegistry for Environment {
             .names()
             .get(name)
             .map(|commit_ca| (*commit_ca).into())
+    }
+
+    fn node_exists(&self, ca: &gantz_ca::ContentAddr) -> bool {
+        // Check if the commit exists in the registry.
+        let commit_ca = gantz_ca::CommitAddr::from(*ca);
+        self.registry.commit_graph_ref(&commit_ca).is_some()
+    }
+}
+
+// Provide the `FnNodeNames` implementation required by `gantz_egui::node::FnNamedRef`.
+impl gantz_egui::node::FnNodeNames for Environment {
+    fn fn_node_names(&self) -> Vec<String> {
+        use gantz_core::Node;
+        // Fn-compatible nodes: stateless, branchless, single-output.
+        let get_node = |ca: &gantz_ca::ContentAddr| self.node(ca);
+        let meta_ctx = gantz_core::node::MetaCtx::new(&get_node);
+        self.registry
+            .names()
+            .keys()
+            .filter(|name| {
+                let Some(commit_ca) = self.registry.names().get(*name) else {
+                    return false;
+                };
+                let Some(graph) = self.registry.commit_graph_ref(commit_ca) else {
+                    return false;
+                };
+                let stateful = graph.stateful(meta_ctx);
+                let branching = !graph.branches(meta_ctx).is_empty();
+                let single_output = graph.n_outputs(meta_ctx) == 1;
+                !stateful && !branching && single_output
+            })
+            .cloned()
+            .collect()
+    }
+}
+
+// Provide the `Registry` implementation required by the Gantz widget.
+impl gantz_egui::Registry for Environment {
+    fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&dyn gantz_core::Node> {
+        // Try commit lookup (for graph refs stored as CommitAddr).
+        let commit_ca = gantz_ca::CommitAddr::from(*ca);
+        self.registry
+            .commit_graph_ref(&commit_ca)
+            .map(|g| g as &dyn gantz_core::Node)
     }
 }
 
@@ -149,10 +192,7 @@ fn register_primitive(
 
 /// A top-level blanket trait providing trait object cloning, hashing, and serialization.
 #[typetag::serde(tag = "type")]
-trait Node:
-    Any + DynClone + gantz_ca::CaHash + gantz_core::Node<Environment> + gantz_egui::NodeUi<Environment>
-{
-}
+trait Node: Any + DynClone + gantz_ca::CaHash + gantz_core::Node + gantz_egui::NodeUi {}
 
 dyn_clone::clone_trait_object!(Node);
 
@@ -358,15 +398,17 @@ impl App {
         };
 
         // Prune unused graphs now that we have the environment for node lookups.
+        let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
         let heads_for_prune = heads.iter().map(|(h, _, _)| h);
-        let required = gantz_core::reg::required_commits(&env, &env.registry, heads_for_prune);
+        let required = gantz_core::reg::required_commits(&get_node, &env.registry, heads_for_prune);
         env.registry.prune_unreachable(&required);
 
         // VM setup - initialize a VM for each open head.
         let mut vms = Vec::with_capacity(heads.len());
         let mut compiled_modules = Vec::with_capacity(heads.len());
         for (_, graph, _) in &heads {
-            match gantz_core::vm::init(&env, graph) {
+            let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
+            match gantz_core::vm::init(&get_node, graph) {
                 Ok((vm, module)) => {
                     vms.push(vm);
                     compiled_modules.push(gantz_core::vm::fmt_module(&module));
@@ -438,7 +480,8 @@ impl eframe::App for App {
 
                 // Recompile this head's graph into its VM.
                 let vm = &mut self.state.vms[ix];
-                match gantz_core::vm::compile(&self.state.env, &*graph, vm) {
+                let get_node = |ca: &gantz_ca::ContentAddr| self.state.env.node(ca);
+                match gantz_core::vm::compile(&get_node, &*graph, vm) {
                     Ok(module) => {
                         self.state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module)
                     }
@@ -874,7 +917,9 @@ fn inspect_edge(
         .copied()
         .chain(Some(inspect_id.index()))
         .collect();
-    nested[inspect_id].register(env, &node_path, vm);
+    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
+    let reg_ctx = gantz_core::node::RegCtx::new(&get_node, &node_path, vm);
+    nested[inspect_id].register(reg_ctx);
 
     // Add edge: src -> inspect (using original output, input 0).
     nested.add_edge(
@@ -981,7 +1026,8 @@ fn open_head(state: &mut State, new_head: gantz_ca::Head) {
     state.focused_head = state.heads.len() - 1;
 
     // Initialise the VM for the new graph and add to per-head collections.
-    match gantz_core::vm::init(&state.env, &new_graph) {
+    let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
+    match gantz_core::vm::init(&get_node, &new_graph) {
         Ok((vm, module)) => {
             state.vms.push(vm);
             state
@@ -1022,7 +1068,8 @@ fn replace_head(ctx: &egui::Context, state: &mut State, new_head: gantz_ca::Head
     state.heads[ix] = (new_head.clone(), new_graph.clone(), views);
 
     // Reinitialize the VM for the new graph.
-    match gantz_core::vm::init(&state.env, &new_graph) {
+    let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
+    match gantz_core::vm::init(&get_node, &new_graph) {
         Ok((new_vm, module)) => {
             state.vms[ix] = new_vm;
             state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module);

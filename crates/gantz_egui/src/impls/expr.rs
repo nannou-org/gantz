@@ -84,14 +84,14 @@ impl<'a> egui::Widget for ExprEdit<'a> {
     }
 }
 
-impl<Env> NodeUi<Env> for gantz_core::node::Expr {
-    fn name(&self, _: &Env) -> &str {
+impl NodeUi for gantz_core::node::Expr {
+    fn name(&self, _: &dyn crate::Registry) -> &str {
         "expr"
     }
 
     fn ui(
         &mut self,
-        ctx: NodeCtx<Env>,
+        ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
         uictx.framed(|ui| {

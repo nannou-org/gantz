@@ -1,7 +1,7 @@
 //! `Fn<NamedRef>` type alias and NodeUi implementation.
 
 use super::{NameRegistry, NamedRef, missing_color, outdated_color};
-use crate::{NodeCtx, NodeUi, widget::node_inspector};
+use crate::{NodeCtx, NodeUi, Registry, widget::node_inspector};
 
 /// A function node wrapping a named reference.
 pub type FnNamedRef = gantz_core::node::Fn<NamedRef>;
@@ -13,27 +13,24 @@ pub trait FnNodeNames: NameRegistry {
     fn fn_node_names(&self) -> Vec<String>;
 }
 
-impl<Env> NodeUi<Env> for FnNamedRef
-where
-    Env: FnNodeNames + gantz_core::node::ref_::NodeRegistry,
-{
-    fn name(&self, _env: &Env) -> &str {
+impl NodeUi for FnNamedRef {
+    fn name(&self, _registry: &dyn Registry) -> &str {
         "fn"
     }
 
     fn ui(
         &mut self,
-        ctx: NodeCtx<Env>,
+        ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
-        let env = ctx.env();
+        let registry = ctx.registry();
         let ref_ca = self.0.content_addr();
 
         // Check if the referenced CA exists in registry.
-        let is_missing = env.node(&ref_ca).is_none();
+        let is_missing = !registry.node_exists(&ref_ca);
 
         // Check if outdated (name points to different CA).
-        let current_ca = env.name_ca(self.0.name());
+        let current_ca = registry.name_ca(self.0.name());
         let is_outdated = !is_missing && current_ca.map(|ca| ca != ref_ca).unwrap_or(false);
 
         // Auto-sync if enabled and outdated (skip if missing).
@@ -45,9 +42,9 @@ where
 
         // Recalculate after potential sync.
         let ref_ca = self.0.content_addr();
-        let is_missing = env.node(&ref_ca).is_none();
+        let is_missing = !registry.node_exists(&ref_ca);
         let is_outdated = !is_missing
-            && env
+            && registry
                 .name_ca(self.0.name())
                 .map(|ca| ca != ref_ca)
                 .unwrap_or(false);
@@ -69,7 +66,7 @@ where
         })
     }
 
-    fn inspector_rows(&mut self, ctx: &mut NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(&mut self, ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
         let row_h = node_inspector::table_row_h(body.ui_mut());
 
         // ComboBox to select which node to reference.
@@ -78,15 +75,15 @@ where
                 ui.label("node");
             });
             row.col(|ui| {
-                let env = ctx.env();
+                let registry = ctx.registry();
                 let salt = format!("λ-node-select-{:?}", ctx.path());
-                let names = env.fn_node_names();
+                let names = registry.fn_node_names();
                 egui::ComboBox::from_id_salt(salt)
                     .selected_text(self.0.name())
                     .show_ui(ui, |ui| {
                         for name in names.iter() {
                             if ui.selectable_label(self.0.name() == name, name).clicked() {
-                                if let Some(ca) = env.name_ca(name) {
+                                if let Some(ca) = registry.name_ca(name) {
                                     self.0 =
                                         NamedRef::new(name.clone(), gantz_core::node::Ref::new(ca));
                                 }
