@@ -42,15 +42,13 @@ impl<'a> Environment<'a> {
 }
 
 // Provide the `NodeTypeRegistry` implementation required by `gantz_egui`.
-impl gantz_egui::widget::gantz::NodeTypeRegistry for Environment<'_> {
-    type Node = Box<dyn crate::node::Node>;
-
-    fn node_types(&self) -> impl Iterator<Item = &str> {
+impl gantz_egui::NodeTypeRegistry for Environment<'_> {
+    fn node_types(&self) -> Vec<&str> {
         let mut types = vec![];
         types.extend(self.builtins.names());
         types.extend(self.registry.names().keys().map(|s| &s[..]));
         types.sort();
-        types.into_iter()
+        types
     }
 }
 

@@ -15,13 +15,14 @@ pub mod widget;
 
 // Re-export traits that make up the Registry supertrait.
 pub use node::{FnNodeNames, NameRegistry};
+pub use widget::gantz::NodeTypeRegistry;
+pub use widget::graph_select::GraphRegistry;
 
 /// Combined registry trait for UI operations.
 ///
-/// Provides node lookup, name resolution, and Fn-compatible node listing.
-/// This supertrait combines [`NameRegistry`] and [`FnNodeNames`] with an
-/// additional method for looking up nodes by content address.
-pub trait Registry: NameRegistry + FnNodeNames {
+/// Provides node lookup, name resolution, Fn-compatible node listing,
+/// node type registration, and graph/commit registry access.
+pub trait Registry: NameRegistry + FnNodeNames + NodeTypeRegistry + GraphRegistry {
     /// Look up a node by content address.
     fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&dyn gantz_core::Node>;
 }

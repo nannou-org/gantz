@@ -243,13 +243,13 @@ fn update_gui(
     let mut access = head::HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
 
     // Construct environment on-demand for the widget.
-    let mut env = Environment::new(&*registry, &*builtins);
+    let env = Environment::new(&*registry, &*builtins);
 
     let level = bevy::log::tracing_subscriber::filter::LevelFilter::current();
     let response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
-            gantz_egui::widget::Gantz::new(&mut env)
+            gantz_egui::widget::Gantz::new(&env)
                 .trace_capture(trace_capture.0.clone(), level)
                 .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
                 .show(&mut *gui_state, focused_ix, &mut access, ui)

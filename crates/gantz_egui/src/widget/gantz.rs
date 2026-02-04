@@ -15,11 +15,8 @@ use steel::steel_vm::engine::Engine;
 /// Provides the list of node type names available for creation.
 /// Actual node creation is handled via [`crate::Cmd::CreateNode`].
 pub trait NodeTypeRegistry {
-    /// The gantz node type associated with this registry.
-    type Node;
-
     /// The unique name of each node available.
-    fn node_types(&self) -> impl Iterator<Item = &str>;
+    fn node_types(&self) -> Vec<&str>;
 
     /// The tooltip shown for this node type within the command palette.
     fn command_tooltip(&self, _node_type: &str) -> &str {
@@ -37,11 +34,8 @@ pub trait NodeTypeRegistry {
 }
 
 /// The top-level gantz widget.
-pub struct Gantz<'a, Env>
-where
-    Env: NodeTypeRegistry,
-{
-    env: &'a mut Env,
+pub struct Gantz<'a> {
+    env: &'a dyn Registry,
     log_source: Option<LogSource>,
     perf_vm: Option<&'a mut widget::PerfCapture>,
     perf_gui: Option<&'a mut widget::PerfCapture>,
@@ -136,12 +130,12 @@ pub fn update_graph_pane_head(
 }
 
 /// The context passed to the `egui_tiles::Tree` widget.
-struct TreeBehaviour<'a, 's, Env, Access>
+struct TreeBehaviour<'a, 's, Access>
 where
-    Env: NodeTypeRegistry,
-    Access: HeadAccess<Node = Env::Node>,
+    Access: HeadAccess,
+    Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
 {
-    gantz: &'a mut Gantz<'s, Env>,
+    gantz: &'a mut Gantz<'s>,
     state: &'s mut GantzState,
     access: &'s mut Access,
     focused_head: usize,
@@ -183,8 +177,8 @@ pub struct ViewToggles {
     pub graph_config: bool,
 }
 
-struct NodeTyCmd<'a, Env> {
-    env: &'a Env,
+struct NodeTyCmd<'a> {
+    env: &'a dyn Registry,
     name: &'a str,
 }
 
@@ -225,13 +219,9 @@ impl GantzResponse {
     }
 }
 
-impl<'a, Env> Gantz<'a, Env>
-where
-    Env: widget::graph_select::GraphRegistry + NodeTypeRegistry + Registry,
-    Env::Node: gantz_core::Node + NodeUi + graph_scene::ToGraphMut<Node = Env::Node>,
-{
+impl<'a> Gantz<'a> {
     /// Instantiate the full top-level gantz widget.
-    pub fn new(env: &'a mut Env) -> Self {
+    pub fn new(env: &'a dyn Registry) -> Self {
         Self {
             env,
             log_source: None,
@@ -283,7 +273,8 @@ where
     ) -> GantzResponse
     where
         's: 'a,
-        Access: HeadAccess<Node = Env::Node>,
+        Access: HeadAccess,
+        Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
     {
         // TODO: Load the tiling tree, or initialise.
         let tree_id = egui::Id::new("gantz-tiles-tree-storage");
@@ -353,11 +344,10 @@ impl GantzState {
     }
 }
 
-impl<'a, 's, Env, Access> egui_tiles::Behavior<Pane> for TreeBehaviour<'a, 's, Env, Access>
+impl<'a, 's, Access> egui_tiles::Behavior<Pane> for TreeBehaviour<'a, 's, Access>
 where
-    Env: widget::graph_select::GraphRegistry + NodeTypeRegistry + Registry,
-    Env::Node: gantz_core::Node + NodeUi + graph_scene::ToGraphMut<Node = Env::Node>,
-    Access: HeadAccess<Node = Env::Node>,
+    Access: HeadAccess,
+    Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
 {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
         match pane {
@@ -544,12 +534,12 @@ where
 }
 
 /// The context passed to the inner graph `egui_tiles::Tree` widget.
-struct GraphTreeBehaviour<'a, Env, Access>
+struct GraphTreeBehaviour<'a, Access>
 where
-    Env: NodeTypeRegistry,
-    Access: HeadAccess<Node = Env::Node>,
+    Access: HeadAccess,
+    Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
 {
-    env: &'a mut Env,
+    env: &'a dyn Registry,
     access: &'a mut Access,
     state: &'a mut GantzState,
     focused_head: &'a mut usize,
@@ -559,11 +549,10 @@ where
     new_branch: &'a mut Option<(gantz_ca::Head, String)>,
 }
 
-impl<'a, Env, Access> egui_tiles::Behavior<GraphPane> for GraphTreeBehaviour<'a, Env, Access>
+impl<'a, Access> egui_tiles::Behavior<GraphPane> for GraphTreeBehaviour<'a, Access>
 where
-    Env: widget::graph_select::GraphRegistry + NodeTypeRegistry + Registry,
-    Env::Node: gantz_core::Node + NodeUi + graph_scene::ToGraphMut<Node = Env::Node>,
-    Access: HeadAccess<Node = Env::Node>,
+    Access: HeadAccess,
+    Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
 {
     fn tab_title_for_pane(&mut self, pane: &GraphPane) -> egui::WidgetText {
         let GraphPane(head) = pane;
@@ -800,10 +789,7 @@ where
     }
 }
 
-impl<'a, Env> widget::command_palette::Command for NodeTyCmd<'a, Env>
-where
-    Env: NodeTypeRegistry,
-{
+impl widget::command_palette::Command for NodeTyCmd<'_> {
     fn text(&self) -> &str {
         self.name
     }
@@ -817,14 +803,16 @@ where
     }
 }
 
-impl<'a, T> Clone for NodeTyCmd<'a, T> {
+impl Clone for NodeTyCmd<'_> {
     fn clone(&self) -> Self {
-        let Self { env, name } = self;
-        Self { env, name }
+        Self {
+            env: self.env,
+            name: self.name,
+        }
     }
 }
 
-impl<'a, T> Copy for NodeTyCmd<'a, T> {}
+impl Copy for NodeTyCmd<'_> {}
 
 impl Default for GantzState {
     fn default() -> Self {
@@ -1019,15 +1007,12 @@ fn pane_ui<R>(ui: &mut egui::Ui, pane: impl FnOnce(&mut egui::Ui) -> R) -> egui:
     egui::CentralPanel::default().show_inside(ui, |ui| pane(ui))
 }
 
-fn graph_select<Env>(
-    env: &mut Env,
+fn graph_select(
+    env: &dyn Registry,
     heads: &[gantz_ca::Head],
     focused_head: usize,
     ui: &mut egui::Ui,
-) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse>
-where
-    Env: widget::graph_select::GraphRegistry,
-{
+) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse> {
     pane_ui(ui, |ui| {
         widget::GraphSelect::new(env, heads)
             .focused_head(focused_head)
@@ -1035,15 +1020,12 @@ where
     })
 }
 
-fn history_view<Env>(
-    env: &Env,
+fn history_view(
+    env: &dyn Registry,
     heads: &[gantz_ca::Head],
     focused_head: usize,
     ui: &mut egui::Ui,
-) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse>
-where
-    Env: widget::graph_select::GraphRegistry,
-{
+) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse> {
     pane_ui(ui, |ui| {
         widget::HistoryView::new(env, heads)
             .focused_head(focused_head)
@@ -1160,14 +1142,12 @@ where
     response
 }
 
-fn command_palette<Env>(
-    env: &Env,
+fn command_palette(
+    env: &dyn Registry,
     head_state: &mut OpenHeadState,
     cmd_palette: &mut widget::CommandPalette,
     ui: &mut egui::Ui,
-) where
-    Env: NodeTypeRegistry,
-{
+) {
     // If space is pressed, toggle command palette visibility.
     if !ui.ctx().wants_keyboard_input() {
         if ui.ctx().input(|i| i.key_pressed(egui::Key::Space)) {
@@ -1176,7 +1156,8 @@ fn command_palette<Env>(
     }
 
     // Map the node types to commands for the command palette.
-    let cmds = env.node_types().map(|k| NodeTyCmd { env, name: &k[..] });
+    let types = env.node_types();
+    let cmds = types.iter().map(|&k| NodeTyCmd { env, name: k });
 
     // If a command was emitted, emit a CreateNode command.
     if let Some(cmd) = cmd_palette.show(ui.ctx(), cmds) {

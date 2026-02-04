@@ -53,15 +53,13 @@ type Registry = gantz_ca::Registry<Graph>;
 type Primitives = BTreeMap<String, Box<dyn Fn() -> Box<dyn Node>>>;
 
 // Provide the `NodeTypeRegistry` implementation required by `gantz_egui`.
-impl gantz_egui::widget::gantz::NodeTypeRegistry for Environment {
-    type Node = Box<dyn Node>;
-
-    fn node_types(&self) -> impl Iterator<Item = &str> {
+impl gantz_egui::NodeTypeRegistry for Environment {
+    fn node_types(&self) -> Vec<&str> {
         let mut types = vec![];
         types.extend(self.primitives.keys().map(|s| &s[..]));
         types.extend(self.registry.names().keys().map(|s| &s[..]));
         types.sort();
-        types.into_iter()
+        types
     }
 }
 
@@ -987,7 +985,7 @@ fn gui(ctx: &egui::Context, state: &mut State) {
             let mut access =
                 DemoHeadAccess::new(&mut state.heads, &state.compiled_modules, &mut state.vms);
 
-            gantz_egui::widget::Gantz::new(&mut state.env)
+            gantz_egui::widget::Gantz::new(&state.env)
                 .logger(state.logger.clone())
                 .show(&mut state.gantz, state.focused_head, &mut access, ui)
         })
