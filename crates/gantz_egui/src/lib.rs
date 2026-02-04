@@ -125,6 +125,17 @@ pub enum Cmd {
     },
     /// Insert an inspect node on the given edge at the given position.
     InspectEdge(InspectEdge),
+    /// Create a new node of the given type at the current path.
+    CreateNode(CreateNode),
+}
+
+/// A command to create a new node.
+#[derive(Clone, Debug)]
+pub struct CreateNode {
+    /// The path within the graph hierarchy where the node should be created.
+    pub path: Vec<node::Id>,
+    /// The type name of the node to create.
+    pub node_type: String,
 }
 
 /// A command to insert an Inspect node on an edge.

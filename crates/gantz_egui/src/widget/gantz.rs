@@ -10,18 +10,16 @@ use petgraph::visit::{IntoNodeReferences, NodeRef};
 use std::collections::HashMap;
 use steel::steel_vm::engine::Engine;
 
-/// A registry of available nodes.
+/// A registry of available node types.
 ///
-/// This should be implemented for the `Node`'s input `Env` type.
+/// Provides the list of node type names available for creation.
+/// Actual node creation is handled via [`crate::Cmd::CreateNode`].
 pub trait NodeTypeRegistry {
-    /// The gantz node type that can be produced by the registry.
+    /// The gantz node type associated with this registry.
     type Node;
 
     /// The unique name of each node available.
     fn node_types(&self) -> impl Iterator<Item = &str>;
-
-    /// Create a node of the given type name.
-    fn new_node(&self, node_type: &str) -> Option<Self::Node>;
 
     /// The tooltip shown for this node type within the command palette.
     fn command_tooltip(&self, _node_type: &str) -> &str {
@@ -478,16 +476,7 @@ where
                 // Show the command palette once (not per-pane), operating on the focused head.
                 if let Some(fh) = access.heads().get(*focused_head).cloned() {
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
-                    access.with_head_mut(&fh, |data| {
-                        command_palette(
-                            gantz.env,
-                            data.graph,
-                            head_state,
-                            &mut state.command_palette,
-                            data.vm,
-                            ui,
-                        );
-                    });
+                    command_palette(gantz.env, head_state, &mut state.command_palette, ui);
                 }
 
                 // Floating pane menu over the bottom right corner of the graph scene pane.
@@ -1173,14 +1162,11 @@ where
 
 fn command_palette<Env>(
     env: &Env,
-    root: &mut gantz_core::node::graph::Graph<Env::Node>,
     head_state: &mut OpenHeadState,
     cmd_palette: &mut widget::CommandPalette,
-    vm: &mut Engine,
     ui: &mut egui::Ui,
 ) where
     Env: NodeTypeRegistry,
-    Env::Node: gantz_core::Node + ToGraphMut<Node = Env::Node>,
 {
     // If space is pressed, toggle command palette visibility.
     if !ui.ctx().wants_keyboard_input() {
@@ -1192,24 +1178,15 @@ fn command_palette<Env>(
     // Map the node types to commands for the command palette.
     let cmds = env.node_types().map(|k| NodeTyCmd { env, name: &k[..] });
 
-    // We'll only want to apply commands to the currently selected graph.
-    let graph = graph_scene::index_path_graph_mut(root, &head_state.path).unwrap();
-
-    // If a command was emitted, add the node.
+    // If a command was emitted, emit a CreateNode command.
     if let Some(cmd) = cmd_palette.show(ui.ctx(), cmds) {
-        // Add a node of the selected type.
-        let Some(node) = env.new_node(cmd.name) else {
-            return;
-        };
-        let id = graph.add_node(node);
-        let ix = id.index();
-
-        // Determine the node's path and register it within the VM.
-        let node_path: Vec<_> = head_state.path.iter().copied().chain(Some(ix)).collect();
-        // For GUI node creation, use a no-op lookup - the node being registered
-        // typically doesn't need external node lookups.
-        let reg_ctx = gantz_core::node::RegCtx::new(&|_| None, &node_path, vm);
-        graph[id].register(reg_ctx);
+        head_state
+            .scene
+            .cmds
+            .push(crate::Cmd::CreateNode(crate::CreateNode {
+                path: head_state.path.clone(),
+                node_type: cmd.name.to_string(),
+            }));
     }
 }
 

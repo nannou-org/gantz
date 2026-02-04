@@ -76,9 +76,21 @@ pub fn on_branch_created(
 #[derive(Event)]
 pub struct InspectEdgeEvent {
     /// The head entity on which the edge exists.
-    pub entity: Entity,
+    pub head: Entity,
     /// The inspect edge command from the GUI.
     pub cmd: gantz_egui::InspectEdge,
+}
+
+/// Event emitted when node creation is requested.
+///
+/// Apps should handle this with an observer that has access to the
+/// app-specific Builtins for creating nodes.
+#[derive(Event)]
+pub struct CreateNodeEvent {
+    /// The head entity where the node should be created.
+    pub head: Entity,
+    /// The create node command from the GUI.
+    pub cmd: gantz_egui::CreateNode,
 }
 
 /// Process GUI commands from all open heads.
@@ -136,7 +148,10 @@ pub fn process_cmds<N: Send + Sync + 'static>(
                     log::info!("Forked node to new name: {new_name}");
                 }
                 gantz_egui::Cmd::InspectEdge(cmd) => {
-                    cmds.trigger(InspectEdgeEvent { entity, cmd });
+                    cmds.trigger(InspectEdgeEvent { head: entity, cmd });
+                }
+                gantz_egui::Cmd::CreateNode(cmd) => {
+                    cmds.trigger(CreateNodeEvent { head: entity, cmd });
                 }
             }
         }

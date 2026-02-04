@@ -4,9 +4,9 @@ use bevy::{
 };
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_gantz::{
-    BuiltinNodes, CompiledModule, FocusedHead, GantzPlugin, GraphViews, GuiState, HeadGuiState,
-    HeadRef, HeadTabOrder, HeadVms, InspectEdgeEvent, OpenHead, OpenHeadData, OpenHeadDataReadOnly,
-    Registry, Views, WorkingGraph,
+    BuiltinNodes, CompiledModule, CreateNodeEvent, FocusedHead, GantzPlugin, GraphViews, GuiState,
+    HeadGuiState, HeadRef, HeadTabOrder, HeadVms, InspectEdgeEvent, OpenHead, OpenHeadData,
+    OpenHeadDataReadOnly, Registry, Views, WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
     head, timestamp,
 };
@@ -51,6 +51,7 @@ fn main() {
         .add_observer(on_head_opened)
         .add_observer(on_head_replaced)
         .add_observer(on_inspect_edge)
+        .add_observer(on_create_node)
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::new(0.25))
@@ -157,9 +158,10 @@ fn prune_unused_graphs_and_commits(
     builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     heads: Query<&HeadRef, With<OpenHead>>,
 ) {
-    let env = Environment::new(&*registry, &*views, &*builtins);
+    let env = Environment::new(&*registry, &*builtins);
+    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
     let head_iter = heads.iter().map(|h| &**h);
-    let required = gantz_core::reg::required_commits(&env, &registry, head_iter);
+    let required = gantz_core::reg::required_commits(&get_node, &registry, head_iter);
     registry.prune_unreachable(&required);
     views.retain(|ca, _| required.contains(ca));
 }
@@ -178,13 +180,13 @@ fn setup_vm(world: &mut World) {
     let mut compiled_updates: Vec<(Entity, String)> = vec![];
     for entity in entities {
         let registry = world.resource::<Registry<Box<dyn node::Node>>>();
-        let views = world.resource::<Views>();
         let builtins = world.resource::<BuiltinNodes<Box<dyn node::Node>>>();
-        let env = Environment::new(registry, views, &*builtins);
+        let env = Environment::new(registry, &*builtins);
+        let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
         let Some(wg) = world.get::<WorkingGraph<Box<dyn node::Node>>>(entity) else {
             continue;
         };
-        let (vm, module) = match bevy_gantz::vm::init(&env, &**wg) {
+        let (vm, module) = match bevy_gantz::vm::init(&get_node, &**wg) {
             Ok(result) => result,
             Err(e) => {
                 bevy::log::error!("Failed to init VM for entity {entity}: {e}");
@@ -211,7 +213,6 @@ fn update_gui(
     mut perf_gui: ResMut<PerfGui>,
     mut ctxs: EguiContexts,
     mut registry: ResMut<Registry<Box<dyn node::Node>>>,
-    views: Res<Views>,
     builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     mut gui_state: ResMut<GuiState>,
     mut vms: NonSendMut<HeadVms>,
@@ -242,7 +243,7 @@ fn update_gui(
     let mut access = head::HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
 
     // Construct environment on-demand for the widget.
-    let mut env = Environment::new(&*registry, &*views, &*builtins);
+    let mut env = Environment::new(&*registry, &*builtins);
 
     let level = bevy::log::tracing_subscriber::filter::LevelFilter::current();
     let response = egui::containers::CentralPanel::default()
@@ -369,9 +370,10 @@ fn update_vm(
             // Re-register and recompile this head's graph into its VM.
             // Registration is idempotent - existing state is preserved.
             if let Some(vm) = vms.get_mut(&data.entity) {
-                let env = Environment::new(&*registry, &*views, &*builtins);
-                gantz_core::graph::register(&env, graph, &[], vm);
-                match bevy_gantz::vm::compile(&env, graph, vm) {
+                let env = Environment::new(&*registry, &*builtins);
+                let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
+                gantz_core::graph::register(&get_node, graph, &[], vm);
+                match bevy_gantz::vm::compile(&get_node, graph, vm) {
                     Ok(module) => data.compiled.0 = module,
                     Err(e) => bevy::log::error!("Failed to compile graph: {e}"),
                 }
@@ -388,8 +390,6 @@ fn inspect_edge(
     vm: &mut Engine,
     cmd: gantz_egui::InspectEdge,
 ) {
-    use gantz_egui::widget::gantz::NodeTypeRegistry;
-
     let gantz_egui::InspectEdge { path, edge, pos } = cmd;
 
     let graph: &mut Graph = &mut *wg;
@@ -412,7 +412,7 @@ fn inspect_edge(
     nested.remove_edge(edge);
 
     // Create a new Inspect node.
-    let Some(inspect_node) = env.new_node("inspect") else {
+    let Some(inspect_node) = env::create_node(env.registry, env.builtins, "inspect") else {
         bevy::log::error!("InspectEdge: could not create inspect node");
         return;
     };
@@ -424,7 +424,9 @@ fn inspect_edge(
         .copied()
         .chain(Some(inspect_id.index()))
         .collect();
-    nested[inspect_id].register(env, &node_path, vm);
+    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
+    let reg_ctx = gantz_core::node::RegCtx::new(&get_node, &node_path, vm);
+    nested[inspect_id].register(reg_ctx);
 
     // Add edge: src -> inspect (using original output, input 0).
     nested.add_edge(
@@ -510,7 +512,6 @@ fn persist_resources(
 fn on_head_opened(
     trigger: On<head::HeadOpened>,
     registry: Res<Registry<Box<dyn node::Node>>>,
-    views: Res<Views>,
     builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     mut vms: NonSendMut<HeadVms>,
     mut cmds: Commands,
@@ -518,8 +519,9 @@ fn on_head_opened(
 ) {
     let event = trigger.event();
     let graph = graphs.get(event.entity).unwrap();
-    let env = Environment::new(&*registry, &*views, &*builtins);
-    let (vm, module) = match bevy_gantz::vm::init(&env, &**graph) {
+    let env = Environment::new(&*registry, &*builtins);
+    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
+    let (vm, module) = match bevy_gantz::vm::init(&get_node, &**graph) {
         Ok(result) => result,
         Err(e) => {
             bevy::log::error!("Failed to init VM for new head: {e}");
@@ -534,7 +536,6 @@ fn on_head_opened(
 fn on_head_replaced(
     trigger: On<head::HeadReplaced>,
     registry: Res<Registry<Box<dyn node::Node>>>,
-    views: Res<Views>,
     builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     mut vms: NonSendMut<HeadVms>,
     mut cmds: Commands,
@@ -542,8 +543,9 @@ fn on_head_replaced(
 ) {
     let event = trigger.event();
     let graph = graphs.get(event.entity).unwrap();
-    let env = Environment::new(&*registry, &*views, &*builtins);
-    let (vm, module) = match bevy_gantz::vm::init(&env, &**graph) {
+    let env = Environment::new(&*registry, &*builtins);
+    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
+    let (vm, module) = match bevy_gantz::vm::init(&get_node, &**graph) {
         Ok(result) => result,
         Err(e) => {
             bevy::log::error!("Failed to init VM for replaced head: {e}");
@@ -558,15 +560,14 @@ fn on_head_replaced(
 fn on_inspect_edge(
     trigger: On<InspectEdgeEvent>,
     registry: Res<Registry<Box<dyn node::Node>>>,
-    views: Res<Views>,
     builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
     mut vms: NonSendMut<HeadVms>,
     mut heads: Query<OpenHeadData<Box<dyn node::Node>>, With<OpenHead>>,
 ) {
     let event = trigger.event();
-    if let Ok(mut data) = heads.get_mut(event.entity) {
-        if let Some(vm) = vms.get_mut(&event.entity) {
-            let env = Environment::new(&*registry, &*views, &*builtins);
+    if let Ok(mut data) = heads.get_mut(event.head) {
+        if let Some(vm) = vms.get_mut(&event.head) {
+            let env = Environment::new(&*registry, &*builtins);
             inspect_edge(
                 &env,
                 &mut data.working_graph,
@@ -576,4 +577,52 @@ fn on_inspect_edge(
             );
         }
     }
+}
+
+/// Handle create node events by creating the node and adding it to the graph.
+fn on_create_node(
+    trigger: On<CreateNodeEvent>,
+    registry: Res<Registry<Box<dyn node::Node>>>,
+    builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
+    mut vms: NonSendMut<HeadVms>,
+    mut heads: Query<OpenHeadData<Box<dyn node::Node>>, With<OpenHead>>,
+) {
+    let event = trigger.event();
+    let Ok(mut data) = heads.get_mut(event.head) else {
+        error!("CreateNode: head not found for entity {:?}", event.head);
+        return;
+    };
+    let Some(vm) = vms.get_mut(&event.head) else {
+        error!("CreateNode: VM not found for entity {:?}", event.head);
+        return;
+    };
+
+    // Navigate to the nested graph at the path.
+    let Some(graph) = gantz_egui::widget::graph_scene::index_path_graph_mut(
+        &mut data.working_graph,
+        &event.cmd.path,
+    ) else {
+        error!(
+            "CreateNode: could not find graph at path {:?}",
+            event.cmd.path
+        );
+        return;
+    };
+
+    // Create the node.
+    let Some(node) = env::create_node(&registry.0, &*builtins.0, &event.cmd.node_type) else {
+        error!("CreateNode: unknown node type {:?}", event.cmd.node_type);
+        return;
+    };
+
+    // Add the node to the graph.
+    let id = graph.add_node(node);
+    let ix = id.index();
+
+    // Determine the node's path and register it within the VM.
+    let node_path: Vec<_> = event.cmd.path.iter().copied().chain(Some(ix)).collect();
+    let env = Environment::new(&*registry, &*builtins);
+    let get_node = |ca: &ca::ContentAddr| env.node(ca);
+    let reg_ctx = gantz_core::node::RegCtx::new(&get_node, &node_path, vm);
+    graph[id].register(reg_ctx);
 }

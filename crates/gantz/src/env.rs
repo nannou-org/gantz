@@ -1,6 +1,7 @@
 use crate::Graph;
-use bevy_gantz::{BuiltinNodes, Registry, Views};
+use bevy_gantz::{BuiltinNodes, Registry};
 use gantz_ca as ca;
+use gantz_core::node::{self, Node as CoreNode};
 use std::collections::BTreeMap;
 
 /// Reference-based environment for VM operations.
@@ -10,8 +11,6 @@ use std::collections::BTreeMap;
 pub struct Environment<'a> {
     /// The registry of all graphs, commits and names.
     pub registry: &'a ca::Registry<Graph>,
-    /// Views (layout + camera) for all known commits.
-    pub views: &'a Views,
     /// Builtins (primitive nodes).
     pub builtins: &'a dyn bevy_gantz::Builtins<Node = Box<dyn crate::node::Node>>,
 }
@@ -20,14 +19,25 @@ impl<'a> Environment<'a> {
     /// Create a new environment from borrowed resources.
     pub fn new(
         registry: &'a Registry<Box<dyn crate::node::Node>>,
-        views: &'a Views,
         builtins: &'a BuiltinNodes<Box<dyn crate::node::Node>>,
     ) -> Self {
         Self {
             registry: &registry.0,
-            views,
             builtins: &*builtins.0,
         }
+    }
+
+    /// Look up a node by content address.
+    ///
+    /// Returns the node if found in either the registry (as a commit graph) or builtins.
+    pub fn node(&self, ca: &ca::ContentAddr) -> Option<&dyn CoreNode> {
+        // Try commit lookup (for graph refs stored as CommitAddr).
+        let commit_ca = ca::CommitAddr::from(*ca);
+        if let Some(graph) = self.registry.commit_graph_ref(&commit_ca) {
+            return Some(graph as &dyn CoreNode);
+        }
+        // Fall back to builtin lookup.
+        self.builtins.instance(ca).map(|n| &**n as &dyn CoreNode)
     }
 }
 
@@ -42,35 +52,26 @@ impl gantz_egui::widget::gantz::NodeTypeRegistry for Environment<'_> {
         types.sort();
         types.into_iter()
     }
-
-    fn new_node(&self, node_type: &str) -> Option<Self::Node> {
-        self.registry
-            .names()
-            .get(node_type)
-            .map(|commit_ca| {
-                // Store CommitAddr directly (converted to ContentAddr).
-                let ref_ = gantz_core::node::Ref::new((*commit_ca).into());
-                let named = gantz_egui::node::NamedRef::new(node_type.to_string(), ref_);
-                Box::new(named) as Box<_>
-            })
-            .or_else(|| self.builtins.create(node_type))
-    }
 }
 
-// Provide the `NodeRegistry` implementation required by `gantz_core::node::Ref`.
-impl gantz_core::node::ref_::NodeRegistry for Environment<'_> {
-    type Node = dyn gantz_core::Node<Self>;
-    fn node(&self, ca: &ca::ContentAddr) -> Option<&Self::Node> {
-        // Try commit lookup (for graph refs stored as CommitAddr).
-        let commit_ca = ca::CommitAddr::from(*ca);
-        if let Some(graph) = self.registry.commit_graph_ref(&commit_ca) {
-            return Some(graph as &dyn gantz_core::Node<Self>);
-        }
-        // Fall back to builtin lookup.
-        self.builtins
-            .instance(ca)
-            .map(|n| &**n as &dyn gantz_core::Node<Self>)
-    }
+/// Create a node of the given type name.
+///
+/// This is used to handle [`gantz_egui::Cmd::CreateNode`] commands.
+pub fn create_node(
+    registry: &ca::Registry<crate::Graph>,
+    builtins: &dyn bevy_gantz::Builtins<Node = Box<dyn crate::node::Node>>,
+    node_type: &str,
+) -> Option<Box<dyn crate::node::Node>> {
+    registry
+        .names()
+        .get(node_type)
+        .map(|commit_ca| {
+            // Store CommitAddr directly (converted to ContentAddr).
+            let ref_ = gantz_core::node::Ref::new((*commit_ca).into());
+            let named = gantz_egui::node::NamedRef::new(node_type.to_string(), ref_);
+            Box::new(named) as Box<dyn crate::node::Node>
+        })
+        .or_else(|| builtins.create(node_type))
 }
 
 // Provide the `GraphRegistry` implementation required by the `GraphSelect` widget.
@@ -98,12 +99,15 @@ impl gantz_egui::node::NameRegistry for Environment<'_> {
         // Then check builtin names.
         self.builtins.content_addr(name)
     }
+
+    fn node_exists(&self, ca: &ca::ContentAddr) -> bool {
+        self.node(ca).is_some()
+    }
 }
 
 // Provide the `FnNodeNames` implementation required by `Fn<NamedRef>` UI.
 impl gantz_egui::node::FnNodeNames for Environment<'_> {
     fn fn_node_names(&self) -> Vec<String> {
-        use gantz_core::node::ref_::NodeRegistry;
         use gantz_egui::node::NameRegistry;
 
         // Collect all names (builtins + registry names).
@@ -116,12 +120,17 @@ impl gantz_egui::node::FnNodeNames for Environment<'_> {
         let all_names = builtin_names.chain(registry_names);
 
         // Filter to Fn-compatible nodes (stateless, branchless, 1 output).
+        // Use a lookup closure that delegates to self.node().
+        let get_node = |ca: &ca::ContentAddr| self.node(ca);
         let mut names: Vec<_> = all_names
             .filter(|name| {
+                let meta_ctx = node::MetaCtx::new(&get_node);
                 self.name_ca(name)
                     .and_then(|ca| self.node(&ca))
                     .map(|n| {
-                        !n.stateful(self) && n.branches(self).is_empty() && n.n_outputs(self) == 1
+                        !n.stateful(meta_ctx)
+                            && n.branches(meta_ctx).is_empty()
+                            && n.n_outputs(meta_ctx) == 1
                     })
                     .unwrap_or(false)
             })
@@ -129,5 +138,12 @@ impl gantz_egui::node::FnNodeNames for Environment<'_> {
 
         names.sort();
         names
+    }
+}
+
+// Provide the `Registry` implementation required by the Gantz widget.
+impl gantz_egui::Registry for Environment<'_> {
+    fn node(&self, ca: &ca::ContentAddr) -> Option<&dyn CoreNode> {
+        Environment::node(self, ca)
     }
 }

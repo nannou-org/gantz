@@ -63,16 +63,18 @@ impl gantz_egui::widget::gantz::NodeTypeRegistry for Environment {
         types.sort();
         types.into_iter()
     }
+}
 
-    fn new_node(&self, node_type: &str) -> Option<Self::Node> {
+impl Environment {
+    /// Create a node of the given type name.
+    fn new_node(&self, node_type: &str) -> Option<Box<dyn Node>> {
         self.registry
             .names()
             .get(node_type)
             .map(|commit_ca| {
-                // Store CommitAddr directly (converted to ContentAddr).
                 let ref_ = gantz_core::node::Ref::new((*commit_ca).into());
                 let named = gantz_egui::node::NamedRef::new(node_type.to_string(), ref_);
-                Box::new(named) as Box<_>
+                Box::new(named) as Box<dyn Node>
             })
             .or_else(|| self.primitives.get(node_type).map(|f| (f)()))
     }
@@ -872,6 +874,10 @@ fn process_cmds(state: &mut State) {
                     let (_, graph, views) = &mut state.heads[ix];
                     inspect_edge(&state.env, graph, views, &mut state.vms[ix], cmd);
                 }
+                gantz_egui::Cmd::CreateNode(cmd) => {
+                    let (_, graph, views) = &mut state.heads[ix];
+                    create_node(&state.env, graph, views, &mut state.vms[ix], cmd);
+                }
             }
         }
     }
@@ -884,8 +890,6 @@ fn inspect_edge(
     vm: &mut Engine,
     cmd: gantz_egui::InspectEdge,
 ) {
-    use gantz_egui::widget::gantz::NodeTypeRegistry;
-
     let gantz_egui::InspectEdge { path, edge, pos } = cmd;
 
     // Navigate to the nested graph at the path.
@@ -939,6 +943,40 @@ fn inspect_edge(
     let node_id = egui_graph::NodeId::from_u64(inspect_id.index() as u64);
     let view = views.entry(path).or_default();
     view.layout.insert(node_id, pos);
+}
+
+fn create_node(
+    env: &Environment,
+    graph: &mut Graph,
+    views: &mut GraphViews,
+    vm: &mut Engine,
+    cmd: gantz_egui::CreateNode,
+) {
+    let gantz_egui::CreateNode { path, node_type } = cmd;
+
+    // Navigate to the nested graph at the path.
+    let Some(nested) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
+        log::error!("CreateNode: could not find graph at path");
+        return;
+    };
+
+    // Create the new node.
+    let Some(node) = env.new_node(&node_type) else {
+        log::error!("CreateNode: unknown node type: {node_type}");
+        return;
+    };
+    let node_ix = nested.add_node(node);
+
+    // Register the new node with the VM.
+    let node_path: Vec<_> = path.iter().copied().chain(Some(node_ix.index())).collect();
+    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
+    let reg_ctx = gantz_core::node::RegCtx::new(&get_node, &node_path, vm);
+    nested[node_ix].register(reg_ctx);
+
+    // Position the new node at the scene center (or use layout default).
+    let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
+    let view = views.entry(path).or_default();
+    view.layout.entry(egui_id).or_insert(egui::Pos2::ZERO);
 }
 
 fn gui(ctx: &egui::Context, state: &mut State) {
