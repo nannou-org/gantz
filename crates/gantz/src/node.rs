@@ -44,6 +44,12 @@ impl Node for gantz_egui::node::Comment {}
 #[typetag::serde]
 impl Node for gantz_egui::node::Inspect {}
 
+impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
+    fn from(named: gantz_egui::node::NamedRef) -> Self {
+        Box::new(named)
+    }
+}
+
 #[typetag::serde]
 impl Node for Box<dyn Node> {}
 

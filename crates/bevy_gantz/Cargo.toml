@@ -17,6 +17,7 @@ bevy_log.workspace = true
 bevy_pkv.workspace = true
 bevy_time.workspace = true
 bevy_window.workspace = true
+egui_graph.workspace = true
 gantz_ca.workspace = true
 gantz_core.workspace = true
 gantz_egui.workspace = true

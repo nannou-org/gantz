@@ -1,7 +1,8 @@
 //! Application-specific builtin nodes.
 
-use crate::{GraphNode, node::Node};
+use crate::node::Node;
 use gantz_ca as ca;
+use gantz_core::node::GraphNode;
 use std::collections::{BTreeMap, HashMap};
 
 /// Constructors for all builtin nodes.

@@ -671,6 +671,7 @@ dependencies = [
  "bevy_pkv",
  "bevy_time",
  "bevy_window",
+ "egui_graph",
  "gantz_ca",
  "gantz_core",
  "gantz_egui",
