@@ -10,7 +10,7 @@ pub mod view;
 pub mod vm;
 
 pub use builtin::{BuiltinNodes, Builtins};
-pub use egui::{CreateNodeEvent, GuiState, InspectEdgeEvent};
+pub use egui::{CreateNodeEvent, GuiState, InspectEdgeEvent, PerfGui, PerfVm, TraceCapture};
 pub use head::{
     BranchCreated, CompiledModule, FocusedHead, GraphViews, HeadAccess, HeadClosed, HeadGuiState,
     HeadOpened, HeadRef, HeadReplaced, HeadTabOrder, HeadVms, OpenHead, OpenHeadData,

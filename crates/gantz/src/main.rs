@@ -2,33 +2,20 @@ use bevy::{
     prelude::*,
     window::{Window, WindowPlugin},
 };
-use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
+use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use bevy_gantz::{
     BuiltinNodes, CompiledModule, FocusedHead, GantzPlugin, GuiState, HeadGuiState, HeadRef,
-    HeadTabOrder, HeadVms, OpenHead, OpenHeadData, OpenHeadDataReadOnly, Registry, RegistryRef,
-    Views, WorkingGraph,
+    HeadTabOrder, OpenHead, OpenHeadDataReadOnly, PerfGui, PerfVm, Registry, TraceCapture, Views,
+    WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
-    head, reg, timestamp, vm,
+    egui as gantz_egui_sys, reg, timestamp, vm,
 };
 use bevy_pkv::PkvStore;
 use builtin::Builtins;
-use gantz_ca as ca;
 
 mod builtin;
 mod node;
 mod storage;
-
-/// A resource for capturing tracing logs for the `TraceView` widget.
-#[derive(Default, Resource)]
-struct TraceCapture(gantz_egui::widget::trace_view::TraceCapture);
-
-/// Performance capture for VM execution timing.
-#[derive(Default, Resource)]
-struct PerfVm(gantz_egui::widget::PerfCapture);
-
-/// Performance capture for GUI frame timing.
-#[derive(Default, Resource)]
-struct PerfGui(gantz_egui::widget::PerfCapture);
 
 fn main() {
     App::new()
@@ -57,7 +44,13 @@ fn main() {
                 vm::setup::<Box<dyn node::Node>>.after(reg::prune_unused::<Box<dyn node::Node>>),
             ),
         )
-        .add_systems(EguiPrimaryContextPass, update_gui)
+        .add_systems(
+            EguiPrimaryContextPass,
+            (
+                load_egui_memory,
+                gantz_egui_sys::update::<Box<dyn node::Node>>,
+            ),
+        )
         .add_systems(
             Update,
             persist_resources.run_if(on_message::<DebouncedInputEvent>),
@@ -138,114 +131,18 @@ fn setup_open(
     }
 }
 
-fn update_gui(
-    trace_capture: Res<TraceCapture>,
-    mut perf_vm: ResMut<PerfVm>,
-    mut perf_gui: ResMut<PerfGui>,
+/// Load egui memory from storage once on first frame.
+fn load_egui_memory(
     mut ctxs: EguiContexts,
-    mut registry: ResMut<Registry<Box<dyn node::Node>>>,
-    builtins: Res<BuiltinNodes<Box<dyn node::Node>>>,
-    mut gui_state: ResMut<GuiState>,
-    mut vms: NonSendMut<HeadVms>,
-    tab_order: Res<HeadTabOrder>,
-    mut focused: ResMut<FocusedHead>,
-    mut heads_query: Query<OpenHeadData<Box<dyn node::Node>>, With<OpenHead>>,
     mut storage: ResMut<PkvStore>,
-    mut memory_loaded: Local<bool>,
-    mut cmds: Commands,
-) -> Result {
-    let ctx = ctxs.ctx_mut()?;
-
-    // Load egui memory once on first frame
-    if !*memory_loaded {
-        storage::load_egui_memory(&mut *storage, ctx);
-        *memory_loaded = true;
-    }
-
-    // Measure GUI frame time.
-    let gui_start = web_time::Instant::now();
-
-    // Determine the focused head index from the focused entity.
-    let focused_ix = (**focused)
-        .and_then(|e| tab_order.iter().position(|&x| x == e))
-        .unwrap_or(0);
-
-    // Create the head access adapter.
-    let mut access = head::HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
-
-    // Construct node registry on-demand for the widget.
-    let node_reg = RegistryRef::new(&*registry, &*builtins);
-
-    let level = bevy::log::tracing_subscriber::filter::LevelFilter::current();
-    let response = egui::containers::CentralPanel::default()
-        .frame(egui::Frame::default())
-        .show(ctx, |ui| {
-            gantz_egui::widget::Gantz::new(&node_reg)
-                .trace_capture(trace_capture.0.clone(), level)
-                .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
-                .show(&mut *gui_state, focused_ix, &mut access, ui)
-        })
-        .inner;
-
-    // Update focused head from the widget's response.
-    if let Some(&entity) = tab_order.get(response.focused_head) {
-        **focused = Some(entity);
-    }
-
-    // The given graph name was removed.
-    if let Some(name) = response.graph_name_removed() {
-        // Update any open heads that reference this name.
-        for mut data in heads_query.iter_mut() {
-            if let ca::Head::Branch(head_name) = &**data.head_ref {
-                if *head_name == name {
-                    let commit_ca = *registry.head_commit_ca(&*data.head_ref).unwrap();
-                    **data.head_ref = ca::Head::Commit(commit_ca);
-                }
-            }
+    mut loaded: Local<bool>,
+) {
+    if !*loaded {
+        if let Ok(ctx) = ctxs.ctx_mut() {
+            storage::load_egui_memory(&mut *storage, ctx);
+            *loaded = true;
         }
-        registry.remove_name(&name);
     }
-
-    // Trigger events for head operations (handled by observers).
-
-    // Single click: replace the focused head with the selected one.
-    if let Some(new_head) = response.graph_replaced() {
-        cmds.trigger(head::ReplaceEvent(new_head.clone()));
-    }
-
-    // Open head as a new tab (or focus if already open).
-    if let Some(new_head) = response.graph_opened() {
-        cmds.trigger(head::OpenEvent(new_head.clone()));
-    }
-
-    // Close head.
-    if let Some(h) = response.graph_closed() {
-        cmds.trigger(head::CloseEvent(h.clone()));
-    }
-
-    // Create a new empty graph and open it.
-    if response.new_graph() {
-        let new_head = registry.init_head(timestamp());
-        cmds.trigger(head::OpenEvent(new_head));
-    }
-
-    // Handle closed heads from tab close buttons.
-    for closed_head in &response.closed_heads {
-        cmds.trigger(head::CloseEvent(closed_head.clone()));
-    }
-
-    // Handle new branch created from tab double-click.
-    if let Some((original_head, new_name)) = response.new_branch() {
-        cmds.trigger(head::CreateBranchEvent {
-            original: original_head.clone(),
-            new_name: new_name.clone(),
-        });
-    }
-
-    // Record GUI frame time.
-    perf_gui.0.record(gui_start.elapsed());
-
-    Ok(())
 }
 
 fn persist_resources(
