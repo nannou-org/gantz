@@ -5,10 +5,9 @@ use bevy::{
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use bevy_gantz::{
     BuiltinNodes, CompiledModule, FocusedHead, GantzPlugin, GuiState, HeadGuiState, HeadRef,
-    HeadTabOrder, OpenHead, OpenHeadDataReadOnly, PerfGui, PerfVm, Registry, TraceCapture, Views,
-    WorkingGraph,
+    HeadTabOrder, OpenHead, OpenHeadDataReadOnly, Registry, TraceCapture, Views, WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
-    egui as gantz_egui_sys, reg, timestamp, vm,
+    egui, reg, timestamp, vm,
 };
 use bevy_pkv::PkvStore;
 use builtin::Builtins;
@@ -19,10 +18,8 @@ mod storage;
 
 fn main() {
     App::new()
-        .insert_resource(TraceCapture::default())
-        .insert_resource(PerfVm::default())
-        .insert_resource(PerfGui::default())
-        // Gantz plugin (provides FocusedHead, HeadTabOrder, HeadVms, Registry, Views)
+        // Gantz plugin (provides FocusedHead, HeadTabOrder, HeadVms, Registry, Views,
+        // TraceCapture, PerfVm, PerfGui)
         .add_plugins(GantzPlugin::<Box<dyn node::Node>>::default())
         // App-specific builtins
         .insert_resource(BuiltinNodes::<Box<dyn node::Node>>(Box::new(
@@ -46,10 +43,7 @@ fn main() {
         )
         .add_systems(
             EguiPrimaryContextPass,
-            (
-                load_egui_memory,
-                gantz_egui_sys::update::<Box<dyn node::Node>>,
-            ),
+            (load_egui_memory, egui::update::<Box<dyn node::Node>>),
         )
         .add_systems(
             Update,

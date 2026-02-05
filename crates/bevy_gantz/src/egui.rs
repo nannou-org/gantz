@@ -193,11 +193,11 @@ pub fn process_cmds<N: Send + Sync + 'static>(
 /// This system:
 /// - Shows the Gantz widget in an egui CentralPanel
 /// - Processes GUI responses (head open/close/replace, branch creation, etc.)
-/// - Optionally uses TraceCapture and PerfVm/PerfGui if inserted as resources
+/// - Uses TraceCapture for tracing and PerfVm/PerfGui for performance capture
 pub fn update<N>(
-    trace_capture: Option<Res<TraceCapture>>,
-    mut perf_vm: Option<ResMut<PerfVm>>,
-    mut perf_gui: Option<ResMut<PerfGui>>,
+    trace_capture: Res<TraceCapture>,
+    mut perf_vm: ResMut<PerfVm>,
+    mut perf_gui: ResMut<PerfGui>,
     mut ctxs: EguiContexts,
     mut registry: ResMut<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
@@ -236,18 +236,13 @@ where
     let level = bevy_log::tracing_subscriber::filter::LevelFilter::current();
 
     // Build and show the Gantz widget.
-    let mut gantz = gantz_egui::widget::Gantz::new(&node_reg);
-    if let Some(ref trace) = trace_capture {
-        gantz = gantz.trace_capture(trace.0.clone(), level);
-    }
-    if let (Some(pv), Some(pg)) = (&mut perf_vm, &mut perf_gui) {
-        gantz = gantz.perf_captures(&mut pv.0, &mut pg.0);
-    }
-
     let response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
-            gantz.show(&mut *gui_state, focused_ix, &mut access, ui)
+            gantz_egui::widget::Gantz::new(&node_reg)
+                .trace_capture(trace_capture.0.clone(), level)
+                .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
+                .show(&mut *gui_state, focused_ix, &mut access, ui)
         })
         .inner;
 
@@ -307,9 +302,7 @@ where
     }
 
     // Record GUI frame time.
-    if let Some(ref mut pg) = perf_gui {
-        pg.0.record(gui_start.elapsed());
-    }
+    perf_gui.0.record(gui_start.elapsed());
 
     Ok(())
 }

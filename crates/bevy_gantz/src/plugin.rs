@@ -1,6 +1,6 @@
 //! The GantzPlugin for Bevy applications.
 
-use crate::egui::{self, GuiState};
+use crate::egui::{self, GuiState, PerfGui, PerfVm, TraceCapture};
 use crate::eval::on_eval_event;
 use crate::head::{FocusedHead, HeadTabOrder, HeadVms};
 use crate::reg::{self, Registry};
@@ -52,6 +52,9 @@ where
             .init_resource::<Registry<N>>()
             .init_resource::<Views>()
             .init_resource::<GuiState>()
+            .init_resource::<TraceCapture>()
+            .init_resource::<PerfVm>()
+            .init_resource::<PerfGui>()
             .init_non_send_resource::<HeadVms>()
             // Register head event handlers.
             .add_observer(on_open_head::<N>)
