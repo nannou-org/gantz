@@ -118,6 +118,17 @@ pub struct BranchCreated {
     pub new_head: ca::Head,
 }
 
+/// Emitted when a head's working graph is committed (graph changed).
+///
+/// This event is emitted by `vm::update` when it detects a graph change
+/// and commits to the registry. Apps can observe this to update UI state.
+#[derive(Event)]
+pub struct HeadCommitted {
+    pub entity: Entity,
+    pub old_head: ca::Head,
+    pub new_head: ca::Head,
+}
+
 // ----------------------------------------------------------------------------
 // Resources
 // ----------------------------------------------------------------------------
@@ -382,13 +393,13 @@ pub fn on_open_head<N>(
         .unwrap_or_default();
 
     // Spawn entity (NO CompiledModule - app observer adds it after VM init).
+    // Note: HeadGuiState is added by GantzEguiPlugin observer if egui is used.
     let entity = cmds
         .spawn((
             OpenHead,
             HeadRef(new_head.clone()),
             WorkingGraph(graph),
             GraphViews(head_views),
-            HeadGuiState::default(),
         ))
         .id();
 
@@ -437,11 +448,11 @@ pub fn on_replace_head<N>(
         .unwrap_or_default();
 
     // Update entity components (NO CompiledModule - app observer adds it).
+    // Note: HeadGuiState is updated by GantzEguiPlugin observer if egui is used.
     cmds.entity(focused_entity)
         .insert(HeadRef(new_head.clone()))
         .insert(WorkingGraph(graph))
-        .insert(GraphViews(head_views))
-        .insert(HeadGuiState::default());
+        .insert(GraphViews(head_views));
 
     // Emit hook.
     if let Some(old) = old_head {

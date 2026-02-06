@@ -6,14 +6,13 @@
 //! - Systems for VM setup and update (`setup`, `update`)
 
 use crate::BuiltinNodes;
-use crate::egui::GuiState;
 use crate::head::{
-    CompiledModule, HeadOpened, HeadReplaced, HeadVms, OpenHead, OpenHeadData, WorkingGraph,
+    CompiledModule, HeadCommitted, HeadOpened, HeadReplaced, HeadVms, OpenHead, OpenHeadData,
+    WorkingGraph,
 };
 use crate::reg::{Registry, RegistryRef};
 use crate::view::Views;
 use bevy_ecs::prelude::*;
-use bevy_egui::EguiContexts;
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::Node;
@@ -155,12 +154,16 @@ where
 }
 
 /// Detect graph changes and recompile into VMs.
+///
+/// When a graph change is detected, this system:
+/// - Commits the new graph to the registry
+/// - Recompiles the VM
+/// - Emits a [`HeadCommitted`] event for UI updates
 pub fn update<N>(
-    mut ctxs: EguiContexts,
+    mut cmds: Commands,
     mut registry: ResMut<Registry<N>>,
     mut views: ResMut<Views>,
     builtins: Res<BuiltinNodes<N>>,
-    mut gui_state: ResMut<GuiState>,
     mut vms: NonSendMut<HeadVms>,
     mut heads_query: Query<OpenHeadData<N>, With<OpenHead>>,
 ) where
@@ -193,13 +196,13 @@ pub fn update<N>(
                 old_commit_ca.display_short(),
                 new_commit_ca.display_short()
             );
-            if let Ok(ctx) = ctxs.ctx_mut() {
-                gantz_egui::widget::update_graph_pane_head(ctx, &old_head, head);
-            }
 
-            if let Some(state) = gui_state.open_heads.remove(&old_head) {
-                gui_state.open_heads.insert(head.clone(), state);
-            }
+            // Emit event for UI state updates (handled by GantzEguiPlugin if present).
+            cmds.trigger(HeadCommitted {
+                entity: data.entity,
+                old_head: old_head.clone(),
+                new_head: head.clone(),
+            });
 
             if let Some(vm) = vms.get_mut(&data.entity) {
                 let node_reg = RegistryRef::new(&*registry, &*builtins);

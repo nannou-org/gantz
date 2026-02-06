@@ -1,19 +1,85 @@
 //! Egui integration for gantz.
+//!
+//! This module provides:
+//! - [`GantzEguiPlugin`] — Bevy plugin for egui-based UI
+//! - GUI state resources and observers
+//! - The main `update` system for rendering the gantz GUI
 
+use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
-use bevy_egui::EguiContexts;
 use bevy_egui::egui;
+use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::Node;
+use gantz_core::node::Node as CoreNode;
+use std::marker::PhantomData;
 
 use crate::BuiltinNodes;
 use crate::eval::{EvalEvent, EvalKind};
 use crate::head::{
-    self, BranchCreated, FocusedHead, HeadClosed, HeadOpened, HeadReplaced, HeadTabOrder, HeadVms,
-    OpenEvent, OpenHead, OpenHeadData,
+    self, BranchCreated, FocusedHead, GraphViews, HeadClosed, HeadCommitted, HeadGuiState,
+    HeadOpened, HeadReplaced, HeadTabOrder, HeadVms, OpenEvent, OpenHead, OpenHeadData,
+    WorkingGraph,
 };
 use crate::reg::{Registry, RegistryRef};
+use gantz_core::node::graph::Graph;
+use steel::steel_vm::engine::Engine;
+
+// ---------------------------------------------------------------------------
+// Plugin
+// ---------------------------------------------------------------------------
+
+/// Plugin providing egui-based UI for gantz.
+///
+/// Generic over `N`, the node type used in graphs.
+///
+/// This plugin:
+/// - Initializes GUI resources (`GuiState`, `TraceCapture`, `PerfVm`, `PerfGui`)
+/// - Registers observers for GUI state management
+/// - Registers node creation/inspection observers
+/// - Runs the main GUI update system
+///
+/// **Note:** This plugin requires `GantzPlugin<N>` to be added first.
+pub struct GantzEguiPlugin<N>(PhantomData<N>);
+
+impl<N> Default for GantzEguiPlugin<N> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<N> Plugin for GantzEguiPlugin<N>
+where
+    N: CoreNode
+        + Clone
+        + gantz_ca::CaHash
+        + From<gantz_egui::node::NamedRef>
+        + gantz_egui::NodeUi
+        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
+        + Send
+        + Sync
+        + 'static,
+{
+    fn build(&self, app: &mut App) {
+        app.init_resource::<GuiState>()
+            .init_resource::<TraceCapture>()
+            .init_resource::<PerfVm>()
+            .init_resource::<PerfGui>()
+            // GUI state observers
+            .add_observer(on_head_opened)
+            .add_observer(on_head_replaced)
+            .add_observer(on_head_closed)
+            .add_observer(on_branch_created)
+            .add_observer(on_head_committed)
+            // Node creation/inspection observers
+            .add_observer(on_create_node::<N>)
+            .add_observer(on_inspect_edge::<N>)
+            // Systems
+            .add_systems(Update, process_cmds::<N>)
+            .add_systems(EguiPrimaryContextPass, update::<N>);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Resources
@@ -52,19 +118,23 @@ impl std::ops::DerefMut for GuiState {
     }
 }
 
-/// Initialize GUI state entry for opened head.
-pub fn on_head_opened(trigger: On<HeadOpened>, mut gui_state: ResMut<GuiState>) {
-    gui_state
-        .open_heads
-        .entry(trigger.event().head.clone())
-        .or_default();
+/// Initialize GUI state entry and component for opened head.
+pub fn on_head_opened(
+    trigger: On<HeadOpened>,
+    mut gui_state: ResMut<GuiState>,
+    mut cmds: Commands,
+) {
+    let event = trigger.event();
+    gui_state.open_heads.entry(event.head.clone()).or_default();
+    cmds.entity(event.entity).insert(HeadGuiState::default());
 }
 
-/// Migrate GUI state for replaced head.
+/// Migrate GUI state for replaced head and reset component.
 pub fn on_head_replaced(
     trigger: On<HeadReplaced>,
     mut gui_state: ResMut<GuiState>,
     mut ctxs: EguiContexts,
+    mut cmds: Commands,
 ) {
     let event = trigger.event();
     if let Some(state) = gui_state.open_heads.remove(&event.old_head) {
@@ -73,6 +143,7 @@ pub fn on_head_replaced(
     if let Ok(ctx) = ctxs.ctx_mut() {
         gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
     }
+    cmds.entity(event.entity).insert(HeadGuiState::default());
 }
 
 /// Remove GUI state for closed head.
@@ -90,6 +161,27 @@ pub fn on_branch_created(
     if let Some(state) = gui_state.open_heads.remove(&event.old_head) {
         gui_state.open_heads.insert(event.new_head.clone(), state);
     }
+    if let Ok(ctx) = ctxs.ctx_mut() {
+        gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
+    }
+}
+
+/// Handle graph commit by updating egui state.
+///
+/// This observer is triggered by `vm::update` when a graph change is committed.
+pub fn on_head_committed(
+    trigger: On<HeadCommitted>,
+    mut gui_state: ResMut<GuiState>,
+    mut ctxs: EguiContexts,
+) {
+    let event = trigger.event();
+
+    // Migrate GUI state to new head.
+    if let Some(state) = gui_state.open_heads.remove(&event.old_head) {
+        gui_state.open_heads.insert(event.new_head.clone(), state);
+    }
+
+    // Update egui pane ID mapping.
     if let Ok(ctx) = ctxs.ctx_mut() {
         gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
     }
@@ -118,6 +210,160 @@ pub struct CreateNodeEvent {
     /// The create node command from the GUI.
     pub cmd: gantz_egui::CreateNode,
 }
+
+// ---------------------------------------------------------------------------
+// Node Creation/Inspection Observers
+// ---------------------------------------------------------------------------
+
+/// Handle create node events.
+pub fn on_create_node<N>(
+    trigger: On<CreateNodeEvent>,
+    registry: Res<Registry<N>>,
+    builtins: Res<BuiltinNodes<N>>,
+    mut vms: NonSendMut<HeadVms>,
+    mut heads: Query<OpenHeadData<N>, With<OpenHead>>,
+) where
+    N: CoreNode
+        + From<gantz_egui::node::NamedRef>
+        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
+        + Send
+        + Sync
+        + 'static,
+{
+    let event = trigger.event();
+    let Ok(mut data) = heads.get_mut(event.head) else {
+        log::error!("CreateNode: head not found for entity {:?}", event.head);
+        return;
+    };
+    let Some(vm) = vms.get_mut(&event.head) else {
+        log::error!("CreateNode: VM not found for entity {:?}", event.head);
+        return;
+    };
+
+    let Some(graph) = gantz_egui::widget::graph_scene::index_path_graph_mut(
+        &mut data.working_graph,
+        &event.cmd.path,
+    ) else {
+        log::error!(
+            "CreateNode: could not find graph at path {:?}",
+            event.cmd.path
+        );
+        return;
+    };
+
+    let node_reg = RegistryRef::new(&*registry, &*builtins);
+    let Some(node) = node_reg.create_node(&event.cmd.node_type) else {
+        log::error!("CreateNode: unknown node type {:?}", event.cmd.node_type);
+        return;
+    };
+
+    let id = graph.add_node(node);
+    let ix = id.index();
+
+    let node_path: Vec<_> = event.cmd.path.iter().copied().chain(Some(ix)).collect();
+    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+    let reg_ctx = gantz_core::node::RegCtx::new(&get_node, &node_path, vm);
+    graph[id].register(reg_ctx);
+}
+
+/// Handle inspect edge events.
+pub fn on_inspect_edge<N>(
+    trigger: On<InspectEdgeEvent>,
+    registry: Res<Registry<N>>,
+    builtins: Res<BuiltinNodes<N>>,
+    mut vms: NonSendMut<HeadVms>,
+    mut heads: Query<OpenHeadData<N>, With<OpenHead>>,
+) where
+    N: CoreNode
+        + From<gantz_egui::node::NamedRef>
+        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
+        + Send
+        + Sync
+        + 'static,
+{
+    let event = trigger.event();
+    if let Ok(mut data) = heads.get_mut(event.head) {
+        if let Some(vm) = vms.get_mut(&event.head) {
+            let node_reg = RegistryRef::new(&*registry, &*builtins);
+            inspect_edge(
+                &node_reg,
+                &mut data.working_graph,
+                &mut data.views,
+                vm,
+                event.cmd.clone(),
+            );
+        }
+    }
+}
+
+/// Insert an Inspect node on the given edge, replacing the edge with two edges.
+fn inspect_edge<N>(
+    node_reg: &RegistryRef<N>,
+    wg: &mut WorkingGraph<N>,
+    gv: &mut GraphViews,
+    vm: &mut Engine,
+    cmd: gantz_egui::InspectEdge,
+) where
+    N: CoreNode
+        + From<gantz_egui::node::NamedRef>
+        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
+        + Send
+        + Sync
+        + 'static,
+{
+    let gantz_egui::InspectEdge { path, edge, pos } = cmd;
+
+    let graph: &mut Graph<N> = &mut *wg;
+    let views: &mut gantz_egui::GraphViews = &mut *gv;
+
+    let Some(nested) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
+        log::error!("InspectEdge: could not find graph at path");
+        return;
+    };
+
+    let Some((src_node, dst_node)) = nested.edge_endpoints(edge) else {
+        log::error!("InspectEdge: edge not found");
+        return;
+    };
+    let edge_weight = *nested.edge_weight(edge).unwrap();
+
+    nested.remove_edge(edge);
+
+    let Some(inspect_node) = node_reg.create_node("inspect") else {
+        log::error!("InspectEdge: could not create inspect node");
+        return;
+    };
+    let inspect_id = nested.add_node(inspect_node);
+
+    let node_path: Vec<_> = path
+        .iter()
+        .copied()
+        .chain(Some(inspect_id.index()))
+        .collect();
+    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+    let reg_ctx = gantz_core::node::RegCtx::new(&get_node, &node_path, vm);
+    nested[inspect_id].register(reg_ctx);
+
+    nested.add_edge(
+        src_node,
+        inspect_id,
+        gantz_core::Edge::new(edge_weight.output, gantz_core::node::Input(0)),
+    );
+
+    nested.add_edge(
+        inspect_id,
+        dst_node,
+        gantz_core::Edge::new(gantz_core::node::Output(0), edge_weight.input),
+    );
+
+    let node_id = egui_graph::NodeId::from_u64(inspect_id.index() as u64);
+    let view = views.entry(path).or_default();
+    view.layout.insert(node_id, pos);
+}
+
+// ---------------------------------------------------------------------------
+// Systems
+// ---------------------------------------------------------------------------
 
 /// Process GUI commands from all open heads.
 ///

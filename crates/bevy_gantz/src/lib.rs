@@ -10,10 +10,12 @@ pub mod view;
 pub mod vm;
 
 pub use builtin::{BuiltinNodes, Builtins};
-pub use egui::{CreateNodeEvent, GuiState, InspectEdgeEvent, PerfGui, PerfVm, TraceCapture};
+pub use egui::{
+    CreateNodeEvent, GantzEguiPlugin, GuiState, InspectEdgeEvent, PerfGui, PerfVm, TraceCapture,
+};
 pub use head::{
-    BranchCreated, CompiledModule, FocusedHead, GraphViews, HeadAccess, HeadClosed, HeadGuiState,
-    HeadOpened, HeadRef, HeadReplaced, HeadTabOrder, HeadVms, OpenHead, OpenHeadData,
+    BranchCreated, CompiledModule, FocusedHead, GraphViews, HeadAccess, HeadClosed, HeadCommitted,
+    HeadGuiState, HeadOpened, HeadRef, HeadReplaced, HeadTabOrder, HeadVms, OpenHead, OpenHeadData,
     OpenHeadDataReadOnly, WorkingGraph,
 };
 pub use plugin::GantzPlugin;

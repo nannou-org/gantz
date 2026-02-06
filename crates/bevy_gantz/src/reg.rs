@@ -3,21 +3,16 @@
 //! Provides:
 //! - [`Registry<N>`] — Bevy resource wrapping `gantz_ca::Registry`
 //! - [`RegistryRef<'a, N>`] — Reference-based node lookup, constructed on-demand
-//! - Node creation/inspection observers and helpers
 
 use crate::BuiltinNodes;
 use crate::builtin::Builtins;
-use crate::egui::{CreateNodeEvent, InspectEdgeEvent};
-use crate::head::{HeadRef, HeadVms, OpenHead, OpenHeadData, WorkingGraph};
+use crate::head::{HeadRef, OpenHead};
 use crate::view::Views;
 use bevy_ecs::prelude::*;
-use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::node::{self, Node as CoreNode, graph::Graph};
-use gantz_egui::GraphViews;
 use std::collections::BTreeMap;
 use std::time::Duration;
-use steel::steel_vm::engine::Engine;
 
 // ---------------------------------------------------------------------------
 // Registry resource
@@ -183,160 +178,6 @@ impl<N: CoreNode + Send + Sync + 'static> gantz_egui::node::FnNodeNames for Regi
 impl<N: CoreNode + Send + Sync + 'static> gantz_egui::Registry for RegistryRef<'_, N> {
     fn node(&self, ca: &ca::ContentAddr) -> Option<&dyn CoreNode> {
         RegistryRef::node(self, ca)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Insert an Inspect node on the given edge, replacing the edge with two edges.
-pub fn inspect_edge<N>(
-    node_reg: &RegistryRef<N>,
-    wg: &mut WorkingGraph<N>,
-    gv: &mut GraphViews,
-    vm: &mut Engine,
-    cmd: gantz_egui::InspectEdge,
-) where
-    N: CoreNode
-        + From<gantz_egui::node::NamedRef>
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
-        + Send
-        + Sync
-        + 'static,
-{
-    let gantz_egui::InspectEdge { path, edge, pos } = cmd;
-
-    let graph: &mut Graph<N> = &mut *wg;
-    let views: &mut GraphViews = &mut *gv;
-
-    let Some(nested) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
-        log::error!("InspectEdge: could not find graph at path");
-        return;
-    };
-
-    let Some((src_node, dst_node)) = nested.edge_endpoints(edge) else {
-        log::error!("InspectEdge: edge not found");
-        return;
-    };
-    let edge_weight = *nested.edge_weight(edge).unwrap();
-
-    nested.remove_edge(edge);
-
-    let Some(inspect_node) = node_reg.create_node("inspect") else {
-        log::error!("InspectEdge: could not create inspect node");
-        return;
-    };
-    let inspect_id = nested.add_node(inspect_node);
-
-    let node_path: Vec<_> = path
-        .iter()
-        .copied()
-        .chain(Some(inspect_id.index()))
-        .collect();
-    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
-    let reg_ctx = gantz_core::node::RegCtx::new(&get_node, &node_path, vm);
-    nested[inspect_id].register(reg_ctx);
-
-    nested.add_edge(
-        src_node,
-        inspect_id,
-        gantz_core::Edge::new(edge_weight.output, gantz_core::node::Input(0)),
-    );
-
-    nested.add_edge(
-        inspect_id,
-        dst_node,
-        gantz_core::Edge::new(gantz_core::node::Output(0), edge_weight.input),
-    );
-
-    let node_id = egui_graph::NodeId::from_u64(inspect_id.index() as u64);
-    let view = views.entry(path).or_default();
-    view.layout.insert(node_id, pos);
-}
-
-// ---------------------------------------------------------------------------
-// Observers
-// ---------------------------------------------------------------------------
-
-/// Handle create node events.
-pub fn on_create_node<N>(
-    trigger: On<CreateNodeEvent>,
-    registry: Res<Registry<N>>,
-    builtins: Res<BuiltinNodes<N>>,
-    mut vms: NonSendMut<HeadVms>,
-    mut heads: Query<OpenHeadData<N>, With<OpenHead>>,
-) where
-    N: CoreNode
-        + From<gantz_egui::node::NamedRef>
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
-        + Send
-        + Sync
-        + 'static,
-{
-    let event = trigger.event();
-    let Ok(mut data) = heads.get_mut(event.head) else {
-        log::error!("CreateNode: head not found for entity {:?}", event.head);
-        return;
-    };
-    let Some(vm) = vms.get_mut(&event.head) else {
-        log::error!("CreateNode: VM not found for entity {:?}", event.head);
-        return;
-    };
-
-    let Some(graph) = gantz_egui::widget::graph_scene::index_path_graph_mut(
-        &mut data.working_graph,
-        &event.cmd.path,
-    ) else {
-        log::error!(
-            "CreateNode: could not find graph at path {:?}",
-            event.cmd.path
-        );
-        return;
-    };
-
-    let node_reg = RegistryRef::new(&*registry, &*builtins);
-    let Some(node) = node_reg.create_node(&event.cmd.node_type) else {
-        log::error!("CreateNode: unknown node type {:?}", event.cmd.node_type);
-        return;
-    };
-
-    let id = graph.add_node(node);
-    let ix = id.index();
-
-    let node_path: Vec<_> = event.cmd.path.iter().copied().chain(Some(ix)).collect();
-    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
-    let reg_ctx = gantz_core::node::RegCtx::new(&get_node, &node_path, vm);
-    graph[id].register(reg_ctx);
-}
-
-/// Handle inspect edge events.
-pub fn on_inspect_edge<N>(
-    trigger: On<InspectEdgeEvent>,
-    registry: Res<Registry<N>>,
-    builtins: Res<BuiltinNodes<N>>,
-    mut vms: NonSendMut<HeadVms>,
-    mut heads: Query<OpenHeadData<N>, With<OpenHead>>,
-) where
-    N: CoreNode
-        + From<gantz_egui::node::NamedRef>
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
-        + Send
-        + Sync
-        + 'static,
-{
-    let event = trigger.event();
-    if let Ok(mut data) = heads.get_mut(event.head) {
-        if let Some(vm) = vms.get_mut(&event.head) {
-            let node_reg = RegistryRef::new(&*registry, &*builtins);
-            inspect_edge(
-                &node_reg,
-                &mut data.working_graph,
-                &mut data.views,
-                vm,
-                event.cmd.clone(),
-            );
-        }
     }
 }
 
