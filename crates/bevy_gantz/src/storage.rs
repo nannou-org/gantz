@@ -1,8 +1,7 @@
 //! Generic storage utilities for persisting gantz state.
 
-use crate::head::GraphViews;
+use crate::egui::{GraphViews, Views};
 use crate::reg::Registry;
-use crate::view::Views;
 use bevy_log as log;
 use bevy_pkv::PkvStore;
 use gantz_ca as ca;

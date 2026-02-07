@@ -7,7 +7,6 @@
 use crate::BuiltinNodes;
 use crate::builtin::Builtins;
 use crate::head::{HeadRef, OpenHead};
-use crate::view::Views;
 use bevy_ecs::prelude::*;
 use gantz_ca as ca;
 use gantz_core::node::{self, Node, graph::Graph};
@@ -119,7 +118,6 @@ impl<N: Send + Sync + 'static> RegistryRef<'_, N> {
 /// Prune unreachable graphs and commits from the registry.
 pub fn prune_unused<N>(
     mut registry: ResMut<Registry<N>>,
-    mut views: ResMut<Views>,
     builtins: Res<BuiltinNodes<N>>,
     heads: Query<&HeadRef, With<OpenHead>>,
 ) where
@@ -130,5 +128,4 @@ pub fn prune_unused<N>(
     let head_iter = heads.iter().map(|h| &**h);
     let required = gantz_core::reg::required_commits(&get_node, &registry, head_iter);
     registry.prune_unreachable(&required);
-    views.retain(|ca, _| required.contains(ca));
 }

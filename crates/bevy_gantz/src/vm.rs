@@ -11,14 +11,12 @@ use crate::head::{
     WorkingGraph,
 };
 use crate::reg::{Registry, RegistryRef};
-use crate::view::Views;
 use bevy_ecs::prelude::*;
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::Node;
 use gantz_core::node::{GetNode, graph::Graph};
 use gantz_core::vm::CompileError;
-use gantz_egui::GraphViews;
 use steel::steel_vm::engine::Engine;
 
 // ---------------------------------------------------------------------------
@@ -162,7 +160,6 @@ where
 pub fn update<N>(
     mut cmds: Commands,
     mut registry: ResMut<Registry<N>>,
-    mut views: ResMut<Views>,
     builtins: Res<BuiltinNodes<N>>,
     mut vms: NonSendMut<HeadVms>,
     mut heads_query: Query<OpenHeadData<N>, With<OpenHead>>,
@@ -172,11 +169,6 @@ pub fn update<N>(
     for mut data in heads_query.iter_mut() {
         let head: &mut ca::Head = &mut *data.head_ref;
         let graph: &Graph<N> = &*data.working_graph;
-        let head_views: &GraphViews = &*data.views;
-
-        if let Some(commit_addr) = registry.head_commit_ca(head).copied() {
-            views.insert(commit_addr, head_views.clone());
-        }
 
         let new_graph_ca = ca::graph_addr(graph);
         let Some(head_commit) = registry.head_commit(head) else {

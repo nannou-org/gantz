@@ -6,21 +6,20 @@ pub mod head;
 pub mod plugin;
 pub mod reg;
 pub mod storage;
-pub mod view;
 pub mod vm;
 
 pub use builtin::{BuiltinNodes, Builtins};
 pub use egui::{
-    CreateNodeEvent, GantzEguiPlugin, GuiState, InspectEdgeEvent, PerfGui, PerfVm, TraceCapture,
+    CreateNodeEvent, GantzEguiPlugin, GraphViews, GuiState, HeadAccess, InspectEdgeEvent, PerfGui,
+    PerfVm, TraceCapture, Views, prune_views,
 };
 pub use head::{
-    BranchCreated, CompiledModule, FocusedHead, GraphViews, HeadAccess, HeadClosed, HeadCommitted,
-    HeadGuiState, HeadOpened, HeadRef, HeadReplaced, HeadTabOrder, HeadVms, OpenHead, OpenHeadData,
+    BranchCreated, CompiledModule, FocusedHead, HeadClosed, HeadCommitted, HeadGuiState,
+    HeadOpened, HeadRef, HeadReplaced, HeadTabOrder, HeadVms, OpenHead, OpenHeadData,
     OpenHeadDataReadOnly, WorkingGraph,
 };
 pub use plugin::GantzPlugin;
 pub use reg::{Registry, RegistryRef, timestamp};
-pub use view::Views;
 
 /// Clone a graph.
 pub fn clone_graph<N: Clone>(
