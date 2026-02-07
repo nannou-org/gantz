@@ -27,10 +27,6 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use steel::steel_vm::engine::Engine;
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 /// Plugin providing egui-based UI for gantz.
 ///
 /// Generic over `N`, the node type used in graphs.
@@ -116,10 +112,6 @@ pub struct CreateNodeEvent {
     pub cmd: gantz_egui::CreateNode,
 }
 
-// ---------------------------------------------------------------------------
-// Inherent impls
-// ---------------------------------------------------------------------------
-
 impl<'q, 'w, 's, N: 'static + Send + Sync> HeadAccess<'q, 'w, 's, N> {
     pub fn new(
         tab_order: &HeadTabOrder,
@@ -151,10 +143,6 @@ impl<'q, 'w, 's, N: 'static + Send + Sync> HeadAccess<'q, 'w, 's, N> {
         self.query.iter_mut()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Trait impls
-// ---------------------------------------------------------------------------
 
 impl<N> Default for GantzEguiPlugin<N> {
     fn default() -> Self {
@@ -337,10 +325,6 @@ impl<N: 'static + Node + Send + Sync> gantz_egui::Registry for RegistryRef<'_, N
         RegistryRef::node(self, ca)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Functions
-// ---------------------------------------------------------------------------
 
 /// Initialize GUI state entry and components for opened head.
 ///
@@ -748,10 +732,6 @@ where
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Functions: Helpers
-// ---------------------------------------------------------------------------
 
 /// Insert an Inspect node on the given edge, replacing the edge with two edges.
 fn inspect_edge<N>(
