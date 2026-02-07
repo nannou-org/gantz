@@ -23,7 +23,7 @@ use steel::steel_vm::engine::Engine;
 /// Use with `Query<OpenHeadData<N>, With<OpenHead>>`.
 #[derive(QueryData)]
 #[query_data(mutable)]
-pub struct OpenHeadData<N: Send + Sync + 'static> {
+pub struct OpenHeadData<N: 'static + Send + Sync> {
     pub entity: Entity,
     pub head_ref: &'static mut HeadRef,
     pub working_graph: &'static mut WorkingGraph<N>,
@@ -268,7 +268,7 @@ pub fn on_open<N>(
     mut focused: ResMut<FocusedHead>,
     heads: Query<(Entity, &HeadRef), With<OpenHead>>,
 ) where
-    N: Clone + Send + Sync + 'static,
+    N: 'static + Clone + Send + Sync,
 {
     let OpenEvent(new_head) = trigger.event();
 
@@ -308,7 +308,7 @@ pub fn on_replace<N>(
     mut focused: ResMut<FocusedHead>,
     heads: Query<(Entity, &HeadRef), With<OpenHead>>,
 ) where
-    N: Clone + Send + Sync + 'static,
+    N: 'static + Clone + Send + Sync,
 {
     let ReplaceEvent(new_head) = trigger.event();
 
@@ -354,7 +354,7 @@ pub fn on_close<N>(
     mut vms: NonSendMut<HeadVms>,
     heads: Query<(Entity, &HeadRef), With<OpenHead>>,
 ) where
-    N: Send + Sync + 'static,
+    N: 'static + Send + Sync,
 {
     let CloseEvent(head) = trigger.event();
 
@@ -395,7 +395,7 @@ pub fn on_branch<N>(
     mut registry: ResMut<Registry<N>>,
     mut heads: Query<(Entity, &mut HeadRef), With<OpenHead>>,
 ) where
-    N: Send + Sync + 'static,
+    N: 'static + Send + Sync,
 {
     let CreateBranchEvent { original, new_name } = trigger.event();
 

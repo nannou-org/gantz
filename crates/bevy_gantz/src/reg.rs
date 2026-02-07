@@ -52,12 +52,12 @@ pub fn timestamp() -> Duration {
 // ---------------------------------------------------------------------------
 
 /// Reference-based node registry, constructed on-demand from borrowed Bevy resources.
-pub struct RegistryRef<'a, N: Send + Sync + 'static> {
+pub struct RegistryRef<'a, N: 'static + Send + Sync> {
     ca_registry: &'a ca::Registry<Graph<N>>,
     builtins: &'a dyn Builtins<Node = N>,
 }
 
-impl<'a, N: Send + Sync + 'static> RegistryRef<'a, N> {
+impl<'a, N: 'static + Send + Sync> RegistryRef<'a, N> {
     /// Construct from borrowed Bevy resources.
     pub fn new(registry: &'a Registry<N>, builtins: &'a BuiltinNodes<N>) -> Self {
         Self {
@@ -77,7 +77,7 @@ impl<'a, N: Send + Sync + 'static> RegistryRef<'a, N> {
     }
 }
 
-impl<N: Node + Send + Sync + 'static> RegistryRef<'_, N> {
+impl<N: 'static + Node + Send + Sync> RegistryRef<'_, N> {
     /// Look up a node by content address.
     ///
     /// Checks commit graphs first, then falls back to builtins.
@@ -90,7 +90,7 @@ impl<N: Node + Send + Sync + 'static> RegistryRef<'_, N> {
     }
 }
 
-impl<N: Send + Sync + 'static> RegistryRef<'_, N> {
+impl<N: 'static + Send + Sync> RegistryRef<'_, N> {
     /// Create a node of the given type name.
     ///
     /// Checks registry names first (creating a [`gantz_egui::node::NamedRef`]),
@@ -121,7 +121,7 @@ pub fn prune_unused<N>(
     builtins: Res<BuiltinNodes<N>>,
     heads: Query<&HeadRef, With<OpenHead>>,
 ) where
-    N: Node + Send + Sync + 'static,
+    N: 'static + Node + Send + Sync,
 {
     let node_reg = RegistryRef::new(&*registry, &*builtins);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);

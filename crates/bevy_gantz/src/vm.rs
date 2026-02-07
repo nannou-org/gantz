@@ -62,7 +62,7 @@ pub fn on_head_opened<N>(
     mut cmds: Commands,
     graphs: Query<&WorkingGraph<N>>,
 ) where
-    N: Node + Send + Sync + 'static,
+    N: 'static + Node + Send + Sync,
 {
     let event = trigger.event();
     let graph = graphs.get(event.entity).unwrap();
@@ -88,7 +88,7 @@ pub fn on_head_replaced<N>(
     mut cmds: Commands,
     graphs: Query<&WorkingGraph<N>>,
 ) where
-    N: Node + Send + Sync + 'static,
+    N: 'static + Node + Send + Sync,
 {
     let event = trigger.event();
     let graph = graphs.get(event.entity).unwrap();
@@ -112,7 +112,7 @@ pub fn on_head_replaced<N>(
 /// Initialize VMs for all open heads (exclusive startup system).
 pub fn setup<N>(world: &mut World)
 where
-    N: Node + Send + Sync + 'static,
+    N: 'static + Node + Send + Sync,
 {
     log::info!("Setting up VMs for all open heads!");
 
@@ -164,7 +164,7 @@ pub fn update<N>(
     mut vms: NonSendMut<HeadVms>,
     mut heads_query: Query<OpenHeadData<N>, With<OpenHead>>,
 ) where
-    N: Node + Clone + ca::CaHash + Send + Sync + 'static,
+    N: 'static + Node + Clone + ca::CaHash + Send + Sync,
 {
     for mut data in heads_query.iter_mut() {
         let head: &mut ca::Head = &mut *data.head_ref;

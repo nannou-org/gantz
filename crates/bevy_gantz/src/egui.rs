@@ -71,7 +71,7 @@ pub struct GraphViews(pub gantz_egui::GraphViews);
 /// Bundled query data for open heads (core data + views).
 #[derive(QueryData)]
 #[query_data(mutable)]
-pub struct OpenHeadViews<N: Send + Sync + 'static> {
+pub struct OpenHeadViews<N: 'static + Send + Sync> {
     pub core: OpenHeadData<N>,
     pub views: &'static mut GraphViews,
 }
@@ -81,7 +81,7 @@ pub struct OpenHeadViews<N: Send + Sync + 'static> {
 /// This struct wraps the necessary Bevy queries and resources to implement
 /// the `HeadAccess` trait, allowing the gantz_egui widget to access head data
 /// without knowing about Bevy's ECS.
-pub struct HeadAccess<'q, 'w, 's, N: Send + Sync + 'static> {
+pub struct HeadAccess<'q, 'w, 's, N: 'static + Send + Sync> {
     /// Heads in tab order, pre-collected.
     heads: Vec<ca::Head>,
     /// Map from head to entity for lookup.
@@ -120,7 +120,7 @@ pub struct CreateNodeEvent {
 // Inherent impls
 // ---------------------------------------------------------------------------
 
-impl<'q, 'w, 's, N: Send + Sync + 'static> HeadAccess<'q, 'w, 's, N> {
+impl<'q, 'w, 's, N: 'static + Send + Sync> HeadAccess<'q, 'w, 's, N> {
     pub fn new(
         tab_order: &HeadTabOrder,
         query: &'q mut Query<'w, 's, OpenHeadViews<N>, With<OpenHead>>,
@@ -234,7 +234,7 @@ impl DerefMut for GraphViews {
     }
 }
 
-impl<N: Send + Sync + 'static> gantz_egui::HeadAccess for HeadAccess<'_, '_, '_, N> {
+impl<N: 'static + Send + Sync> gantz_egui::HeadAccess for HeadAccess<'_, '_, '_, N> {
     type Node = N;
 
     fn heads(&self) -> &[ca::Head] {
@@ -263,7 +263,7 @@ impl<N: Send + Sync + 'static> gantz_egui::HeadAccess for HeadAccess<'_, '_, '_,
     }
 }
 
-impl<N: Node + Send + Sync + 'static> gantz_egui::NodeTypeRegistry for RegistryRef<'_, N> {
+impl<N: 'static + Node + Send + Sync> gantz_egui::NodeTypeRegistry for RegistryRef<'_, N> {
     fn node_types(&self) -> Vec<&str> {
         let mut types = vec![];
         types.extend(self.builtins().names());
@@ -273,7 +273,7 @@ impl<N: Node + Send + Sync + 'static> gantz_egui::NodeTypeRegistry for RegistryR
     }
 }
 
-impl<N: Node + Send + Sync + 'static> gantz_egui::widget::graph_select::GraphRegistry
+impl<N: 'static + Node + Send + Sync> gantz_egui::widget::graph_select::GraphRegistry
     for RegistryRef<'_, N>
 {
     fn commits(&self) -> Vec<(&ca::CommitAddr, &ca::Commit)> {
@@ -287,7 +287,7 @@ impl<N: Node + Send + Sync + 'static> gantz_egui::widget::graph_select::GraphReg
     }
 }
 
-impl<N: Node + Send + Sync + 'static> gantz_egui::node::NameRegistry for RegistryRef<'_, N> {
+impl<N: 'static + Node + Send + Sync> gantz_egui::node::NameRegistry for RegistryRef<'_, N> {
     fn name_ca(&self, name: &str) -> Option<ca::ContentAddr> {
         if let Some(commit_ca) = self.ca_registry().names().get(name) {
             return Some((*commit_ca).into());
@@ -300,7 +300,7 @@ impl<N: Node + Send + Sync + 'static> gantz_egui::node::NameRegistry for Registr
     }
 }
 
-impl<N: Node + Send + Sync + 'static> gantz_egui::node::FnNodeNames for RegistryRef<'_, N> {
+impl<N: 'static + Node + Send + Sync> gantz_egui::node::FnNodeNames for RegistryRef<'_, N> {
     fn fn_node_names(&self) -> Vec<String> {
         use gantz_egui::node::NameRegistry;
 
@@ -332,7 +332,7 @@ impl<N: Node + Send + Sync + 'static> gantz_egui::node::FnNodeNames for Registry
     }
 }
 
-impl<N: Node + Send + Sync + 'static> gantz_egui::Registry for RegistryRef<'_, N> {
+impl<N: 'static + Node + Send + Sync> gantz_egui::Registry for RegistryRef<'_, N> {
     fn node(&self, ca: &ca::ContentAddr) -> Option<&dyn Node> {
         RegistryRef::node(self, ca)
     }
@@ -345,7 +345,7 @@ impl<N: Node + Send + Sync + 'static> gantz_egui::Registry for RegistryRef<'_, N
 /// Initialize GUI state entry and components for opened head.
 ///
 /// Loads views from the `Views` resource and spawns `GraphViews` + `HeadGuiState` components.
-pub fn on_head_opened<N: Send + Sync + 'static>(
+pub fn on_head_opened<N: 'static + Send + Sync>(
     trigger: On<HeadOpened>,
     registry: Res<Registry<N>>,
     views: Res<Views>,
@@ -369,7 +369,7 @@ pub fn on_head_opened<N: Send + Sync + 'static>(
 /// Migrate GUI state for replaced head and reset components.
 ///
 /// Loads views for the new head and updates `GraphViews` + `HeadGuiState` components.
-pub fn on_head_replaced<N: Send + Sync + 'static>(
+pub fn on_head_replaced<N: 'static + Send + Sync>(
     trigger: On<HeadReplaced>,
     registry: Res<Registry<N>>,
     views: Res<Views>,
@@ -445,12 +445,12 @@ pub fn on_create_node<N>(
     mut vms: NonSendMut<HeadVms>,
     mut heads: Query<OpenHeadData<N>, With<OpenHead>>,
 ) where
-    N: Node
+    N: 'static
+        + Node
         + From<gantz_egui::node::NamedRef>
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
-        + Sync
-        + 'static,
+        + Sync,
 {
     let event = trigger.event();
     let Ok(mut data) = heads.get_mut(event.head) else {
@@ -497,12 +497,12 @@ pub fn on_inspect_edge<N>(
     mut heads: Query<OpenHeadData<N>, With<OpenHead>>,
     mut views_query: Query<&mut GraphViews, With<OpenHead>>,
 ) where
-    N: Node
+    N: 'static
+        + Node
         + From<gantz_egui::node::NamedRef>
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
-        + Sync
-        + 'static,
+        + Sync,
 {
     let event = trigger.event();
     let Ok(mut data) = heads.get_mut(event.head) else {
@@ -536,7 +536,7 @@ pub fn on_inspect_edge<N>(
 ///
 /// This runs every frame to capture layout changes (node dragging, etc.)
 /// that occur without graph topology changes.
-pub fn persist_views<N: Send + Sync + 'static>(
+pub fn persist_views<N: 'static + Send + Sync>(
     registry: Res<Registry<N>>,
     mut views: ResMut<Views>,
     heads: Query<(&HeadRef, &GraphViews), With<OpenHead>>,
@@ -552,7 +552,7 @@ pub fn persist_views<N: Send + Sync + 'static>(
 ///
 /// This should run after `reg::prune_unused` to clean up views for commits
 /// that are no longer reachable from any open head.
-pub fn prune_views<N: Node + Send + Sync + 'static>(
+pub fn prune_views<N: 'static + Node + Send + Sync>(
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     mut views: ResMut<Views>,
@@ -569,7 +569,7 @@ pub fn prune_views<N: Node + Send + Sync + 'static>(
 ///
 /// Handles eval, navigation, and registry commands directly.
 /// Emits `InspectEdgeEvent` for edge inspection (requires app-specific handling).
-pub fn process_cmds<N: Send + Sync + 'static>(
+pub fn process_cmds<N: 'static + Send + Sync>(
     mut registry: ResMut<Registry<N>>,
     mut gui_state: ResMut<GuiState>,
     heads: Query<(Entity, &crate::head::HeadRef), With<OpenHead>>,
@@ -651,13 +651,13 @@ pub fn update<N>(
     mut cmds: Commands,
 ) -> Result
 where
-    N: Node
+    N: 'static
+        + Node
         + gantz_ca::CaHash
         + gantz_egui::NodeUi
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
-        + Sync
-        + 'static,
+        + Sync,
 {
     let ctx = ctxs.ctx_mut()?;
 
@@ -761,12 +761,12 @@ fn inspect_edge<N>(
     vm: &mut Engine,
     cmd: gantz_egui::InspectEdge,
 ) where
-    N: Node
+    N: 'static
+        + Node
         + From<gantz_egui::node::NamedRef>
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
-        + Sync
-        + 'static,
+        + Sync,
 {
     let gantz_egui::InspectEdge { path, edge, pos } = cmd;
 

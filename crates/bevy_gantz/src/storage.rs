@@ -415,7 +415,7 @@ pub fn load_open<N>(
     ts: Duration,
 ) -> Vec<(ca::Head, Graph<N>, GraphViews)>
 where
-    N: Clone + DeserializeOwned + ca::CaHash + 'static,
+    N: 'static + Clone + DeserializeOwned + ca::CaHash,
 {
     // Try to load all open heads from storage.
     let heads: Vec<_> = load_open_heads(storage)

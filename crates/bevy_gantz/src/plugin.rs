@@ -32,7 +32,7 @@ impl<N> Default for GantzPlugin<N> {
 
 impl<N> Plugin for GantzPlugin<N>
 where
-    N: Node + Clone + gantz_ca::CaHash + Send + Sync + 'static,
+    N: 'static + Node + Clone + gantz_ca::CaHash + Send + Sync,
 {
     fn build(&self, app: &mut App) {
         use crate::head::{on_branch, on_close, on_open, on_replace};
