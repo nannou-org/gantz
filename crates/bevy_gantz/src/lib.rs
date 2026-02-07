@@ -14,9 +14,8 @@ pub use egui::{
     PerfVm, TraceCapture, Views, prune_views,
 };
 pub use head::{
-    BranchCreated, CompiledModule, FocusedHead, HeadClosed, HeadCommitted, HeadGuiState,
-    HeadOpened, HeadRef, HeadReplaced, HeadTabOrder, HeadVms, OpenHead, OpenHeadData,
-    OpenHeadDataReadOnly, WorkingGraph,
+    CompiledModule, FocusedHead, HeadGuiState, HeadRef, HeadTabOrder, HeadVms, OpenHead,
+    OpenHeadData, OpenHeadDataReadOnly, WorkingGraph,
 };
 pub use plugin::GantzPlugin;
 pub use reg::{Registry, RegistryRef, timestamp};

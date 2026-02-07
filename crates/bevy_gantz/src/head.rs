@@ -72,7 +72,7 @@ pub struct ReplaceEvent(pub ca::Head);
 
 /// Event to create a new branch from an existing head.
 #[derive(Event)]
-pub struct CreateBranchEvent {
+pub struct BranchEvent {
     pub original: ca::Head,
     pub new_name: String,
 }
@@ -83,21 +83,21 @@ pub struct CreateBranchEvent {
 
 /// Emitted after a head has been opened.
 #[derive(Event)]
-pub struct HeadOpened {
+pub struct OpenedEvent {
     pub entity: Entity,
     pub head: ca::Head,
 }
 
 /// Emitted after a head has been closed.
 #[derive(Event)]
-pub struct HeadClosed {
+pub struct ClosedEvent {
     pub entity: Entity,
     pub head: ca::Head,
 }
 
 /// Emitted after a head has been replaced.
 #[derive(Event)]
-pub struct HeadReplaced {
+pub struct ReplacedEvent {
     pub entity: Entity,
     pub old_head: ca::Head,
     pub new_head: ca::Head,
@@ -105,7 +105,7 @@ pub struct HeadReplaced {
 
 /// Emitted after a branch has been created from a head.
 #[derive(Event)]
-pub struct BranchCreated {
+pub struct BranchedEvent {
     pub entity: Entity,
     pub old_head: ca::Head,
     pub new_head: ca::Head,
@@ -116,7 +116,7 @@ pub struct BranchCreated {
 /// This event is emitted by `vm::update` when it detects a graph change
 /// and commits to the registry. Apps can observe this to update UI state.
 #[derive(Event)]
-pub struct HeadCommitted {
+pub struct CommittedEvent {
     pub entity: Entity,
     pub old_head: ca::Head,
     pub new_head: ca::Head,
@@ -294,7 +294,7 @@ pub fn on_open<N>(
     **focused = Some(entity);
 
     // Emit hook for app to do VM init + GUI state + views.
-    cmds.trigger(HeadOpened {
+    cmds.trigger(OpenedEvent {
         entity,
         head: new_head.clone(),
     });
@@ -337,7 +337,7 @@ pub fn on_replace<N>(
 
     // Emit hook.
     if let Some(old) = old_head {
-        cmds.trigger(HeadReplaced {
+        cmds.trigger(ReplacedEvent {
             entity: focused_entity,
             old_head: old,
             new_head: new_head.clone(),
@@ -382,7 +382,7 @@ pub fn on_close<N>(
         **focused = tab_order.get(new_ix).copied();
     }
 
-    cmds.trigger(HeadClosed {
+    cmds.trigger(ClosedEvent {
         entity,
         head: head.clone(),
     });
@@ -390,14 +390,14 @@ pub fn on_close<N>(
 
 /// Handle request to create a new branch from an existing head.
 pub fn on_branch<N>(
-    trigger: On<CreateBranchEvent>,
+    trigger: On<BranchEvent>,
     mut cmds: Commands,
     mut registry: ResMut<Registry<N>>,
     mut heads: Query<(Entity, &mut HeadRef), With<OpenHead>>,
 ) where
     N: 'static + Send + Sync,
 {
-    let CreateBranchEvent { original, new_name } = trigger.event();
+    let BranchEvent { original, new_name } = trigger.event();
 
     // Get commit CA from original head.
     let Some(commit_ca) = registry.head_commit_ca(original).copied() else {
@@ -415,7 +415,7 @@ pub fn on_branch<N>(
             let old_head = (**head_ref).clone();
             **head_ref = new_head.clone();
 
-            cmds.trigger(BranchCreated {
+            cmds.trigger(BranchedEvent {
                 entity,
                 old_head,
                 new_head,

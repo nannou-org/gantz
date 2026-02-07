@@ -8,8 +8,9 @@
 use crate::BuiltinNodes;
 use crate::eval::{EvalEvent, EvalKind};
 use crate::head::{
-    self, BranchCreated, FocusedHead, HeadClosed, HeadCommitted, HeadGuiState, HeadOpened, HeadRef,
-    HeadReplaced, HeadTabOrder, HeadVms, OpenEvent, OpenHead, OpenHeadData, WorkingGraph,
+    self, BranchedEvent, ClosedEvent, CommittedEvent, FocusedHead, HeadGuiState, HeadRef,
+    HeadTabOrder, HeadVms, OpenEvent, OpenHead, OpenHeadData, OpenedEvent, ReplacedEvent,
+    WorkingGraph,
 };
 use crate::reg::{Registry, RegistryRef};
 use bevy_app::prelude::*;
@@ -330,7 +331,7 @@ impl<N: 'static + Node + Send + Sync> gantz_egui::Registry for RegistryRef<'_, N
 ///
 /// Loads views from the `Views` resource and spawns `GraphViews` + `HeadGuiState` components.
 pub fn on_head_opened<N: 'static + Send + Sync>(
-    trigger: On<HeadOpened>,
+    trigger: On<OpenedEvent>,
     registry: Res<Registry<N>>,
     views: Res<Views>,
     mut gui_state: ResMut<GuiState>,
@@ -354,7 +355,7 @@ pub fn on_head_opened<N: 'static + Send + Sync>(
 ///
 /// Loads views for the new head and updates `GraphViews` + `HeadGuiState` components.
 pub fn on_head_replaced<N: 'static + Send + Sync>(
-    trigger: On<HeadReplaced>,
+    trigger: On<ReplacedEvent>,
     registry: Res<Registry<N>>,
     views: Res<Views>,
     mut gui_state: ResMut<GuiState>,
@@ -381,13 +382,13 @@ pub fn on_head_replaced<N: 'static + Send + Sync>(
 }
 
 /// Remove GUI state for closed head.
-pub fn on_head_closed(trigger: On<HeadClosed>, mut gui_state: ResMut<GuiState>) {
+pub fn on_head_closed(trigger: On<ClosedEvent>, mut gui_state: ResMut<GuiState>) {
     gui_state.open_heads.remove(&trigger.event().head);
 }
 
 /// Migrate GUI state for branch creation.
 pub fn on_branch_created(
-    trigger: On<BranchCreated>,
+    trigger: On<BranchedEvent>,
     mut gui_state: ResMut<GuiState>,
     mut ctxs: EguiContexts,
 ) {
@@ -404,7 +405,7 @@ pub fn on_branch_created(
 ///
 /// This observer is triggered by `vm::update` when a graph change is committed.
 pub fn on_head_committed(
-    trigger: On<HeadCommitted>,
+    trigger: On<CommittedEvent>,
     mut gui_state: ResMut<GuiState>,
     mut ctxs: EguiContexts,
 ) {
@@ -721,7 +722,7 @@ where
 
     // Handle new branch created from tab double-click.
     if let Some((original_head, new_name)) = response.new_branch() {
-        cmds.trigger(head::CreateBranchEvent {
+        cmds.trigger(head::BranchEvent {
             original: original_head.clone(),
             new_name: new_name.clone(),
         });

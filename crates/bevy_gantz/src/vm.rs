@@ -7,7 +7,7 @@
 
 use crate::BuiltinNodes;
 use crate::head::{
-    CompiledModule, HeadCommitted, HeadOpened, HeadReplaced, HeadVms, OpenHead, OpenHeadData,
+    CommittedEvent, CompiledModule, HeadVms, OpenHead, OpenHeadData, OpenedEvent, ReplacedEvent,
     WorkingGraph,
 };
 use crate::reg::{Registry, RegistryRef};
@@ -55,7 +55,7 @@ where
 
 /// VM init for opened heads.
 pub fn on_head_opened<N>(
-    trigger: On<HeadOpened>,
+    trigger: On<OpenedEvent>,
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     mut vms: NonSendMut<HeadVms>,
@@ -81,7 +81,7 @@ pub fn on_head_opened<N>(
 
 /// VM init for replaced heads.
 pub fn on_head_replaced<N>(
-    trigger: On<HeadReplaced>,
+    trigger: On<ReplacedEvent>,
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     mut vms: NonSendMut<HeadVms>,
@@ -156,7 +156,7 @@ where
 /// When a graph change is detected, this system:
 /// - Commits the new graph to the registry
 /// - Recompiles the VM
-/// - Emits a [`HeadCommitted`] event for UI updates
+/// - Emits a [`CommittedEvent`] for UI updates
 pub fn update<N>(
     mut cmds: Commands,
     mut registry: ResMut<Registry<N>>,
@@ -190,7 +190,7 @@ pub fn update<N>(
             );
 
             // Emit event for UI state updates (handled by GantzEguiPlugin if present).
-            cmds.trigger(HeadCommitted {
+            cmds.trigger(CommittedEvent {
                 entity: data.entity,
                 old_head: old_head.clone(),
                 new_head: head.clone(),
