@@ -260,7 +260,7 @@ pub fn is_head_focused(
 // ----------------------------------------------------------------------------
 
 /// Handle request to open a head as a new tab (or focus if already open).
-pub fn on_open_head<N>(
+pub fn on_open<N>(
     trigger: On<OpenEvent>,
     mut cmds: Commands,
     registry: Res<Registry<N>>,
@@ -301,7 +301,7 @@ pub fn on_open_head<N>(
 }
 
 /// Handle request to replace the focused head with a different head.
-pub fn on_replace_head<N>(
+pub fn on_replace<N>(
     trigger: On<ReplaceEvent>,
     mut cmds: Commands,
     registry: Res<Registry<N>>,
@@ -346,7 +346,7 @@ pub fn on_replace_head<N>(
 }
 
 /// Handle request to close a head tab.
-pub fn on_close_head<N>(
+pub fn on_close<N>(
     trigger: On<CloseEvent>,
     mut cmds: Commands,
     mut tab_order: ResMut<HeadTabOrder>,
@@ -389,7 +389,7 @@ pub fn on_close_head<N>(
 }
 
 /// Handle request to create a new branch from an existing head.
-pub fn on_create_branch<N>(
+pub fn on_branch<N>(
     trigger: On<CreateBranchEvent>,
     mut cmds: Commands,
     mut registry: ResMut<Registry<N>>,

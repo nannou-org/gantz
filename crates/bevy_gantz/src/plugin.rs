@@ -35,17 +35,17 @@ where
     N: Node + Clone + gantz_ca::CaHash + Send + Sync + 'static,
 {
     fn build(&self, app: &mut App) {
-        use crate::head::{on_close_head, on_create_branch, on_open_head, on_replace_head};
+        use crate::head::{on_branch, on_close, on_open, on_replace};
 
         app.init_resource::<FocusedHead>()
             .init_resource::<HeadTabOrder>()
             .init_resource::<Registry<N>>()
             .init_non_send_resource::<HeadVms>()
             // Register head event handlers.
-            .add_observer(on_open_head::<N>)
-            .add_observer(on_replace_head::<N>)
-            .add_observer(on_close_head::<N>)
-            .add_observer(on_create_branch::<N>)
+            .add_observer(on_open::<N>)
+            .add_observer(on_replace::<N>)
+            .add_observer(on_close::<N>)
+            .add_observer(on_branch::<N>)
             // Register eval event handler.
             .add_observer(on_eval_event)
             // VM init observers.
