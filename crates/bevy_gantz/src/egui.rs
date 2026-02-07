@@ -12,7 +12,6 @@ use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::Node;
-use gantz_core::node::Node as CoreNode;
 use std::marker::PhantomData;
 
 use crate::BuiltinNodes;
@@ -23,7 +22,8 @@ use crate::head::{
     WorkingGraph,
 };
 use crate::reg::{Registry, RegistryRef};
-use gantz_core::node::graph::Graph;
+use gantz_core::node::{self, graph::Graph};
+use std::collections::BTreeMap;
 use steel::steel_vm::engine::Engine;
 
 // ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@ impl<N> Default for GantzEguiPlugin<N> {
 
 impl<N> Plugin for GantzEguiPlugin<N>
 where
-    N: CoreNode
+    N: Node
         + Clone
         + gantz_ca::CaHash
         + From<gantz_egui::node::NamedRef>
@@ -223,7 +223,7 @@ pub fn on_create_node<N>(
     mut vms: NonSendMut<HeadVms>,
     mut heads: Query<OpenHeadData<N>, With<OpenHead>>,
 ) where
-    N: CoreNode
+    N: Node
         + From<gantz_egui::node::NamedRef>
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
@@ -274,7 +274,7 @@ pub fn on_inspect_edge<N>(
     mut vms: NonSendMut<HeadVms>,
     mut heads: Query<OpenHeadData<N>, With<OpenHead>>,
 ) where
-    N: CoreNode
+    N: Node
         + From<gantz_egui::node::NamedRef>
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
@@ -304,7 +304,7 @@ fn inspect_edge<N>(
     vm: &mut Engine,
     cmd: gantz_egui::InspectEdge,
 ) where
-    N: CoreNode
+    N: Node
         + From<gantz_egui::node::NamedRef>
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
@@ -359,6 +359,85 @@ fn inspect_edge<N>(
     let node_id = egui_graph::NodeId::from_u64(inspect_id.index() as u64);
     let view = views.entry(path).or_default();
     view.layout.insert(node_id, pos);
+}
+
+// ---------------------------------------------------------------------------
+// gantz_egui trait impls for RegistryRef
+// ---------------------------------------------------------------------------
+
+impl<N: Node + Send + Sync + 'static> gantz_egui::NodeTypeRegistry for RegistryRef<'_, N> {
+    fn node_types(&self) -> Vec<&str> {
+        let mut types = vec![];
+        types.extend(self.builtins().names());
+        types.extend(self.ca_registry().names().keys().map(|s| &s[..]));
+        types.sort();
+        types
+    }
+}
+
+impl<N: Node + Send + Sync + 'static> gantz_egui::widget::graph_select::GraphRegistry
+    for RegistryRef<'_, N>
+{
+    fn commits(&self) -> Vec<(&ca::CommitAddr, &ca::Commit)> {
+        let mut commits: Vec<_> = self.ca_registry().commits().iter().collect();
+        commits.sort_by(|(_, a), (_, b)| b.timestamp.cmp(&a.timestamp));
+        commits
+    }
+
+    fn names(&self) -> &BTreeMap<String, ca::CommitAddr> {
+        self.ca_registry().names()
+    }
+}
+
+impl<N: Node + Send + Sync + 'static> gantz_egui::node::NameRegistry for RegistryRef<'_, N> {
+    fn name_ca(&self, name: &str) -> Option<ca::ContentAddr> {
+        if let Some(commit_ca) = self.ca_registry().names().get(name) {
+            return Some((*commit_ca).into());
+        }
+        self.builtins().content_addr(name)
+    }
+
+    fn node_exists(&self, ca: &ca::ContentAddr) -> bool {
+        self.node(ca).is_some()
+    }
+}
+
+impl<N: Node + Send + Sync + 'static> gantz_egui::node::FnNodeNames for RegistryRef<'_, N> {
+    fn fn_node_names(&self) -> Vec<String> {
+        use gantz_egui::node::NameRegistry;
+
+        let builtin_names = self
+            .builtins()
+            .names()
+            .into_iter()
+            .filter_map(|name| self.builtins().content_addr(name).map(|_| name.to_string()));
+        let registry_names = self.ca_registry().names().keys().cloned();
+        let all_names = builtin_names.chain(registry_names);
+
+        let get_node = |ca: &ca::ContentAddr| self.node(ca);
+        let mut names: Vec<_> = all_names
+            .filter(|name| {
+                let meta_ctx = node::MetaCtx::new(&get_node);
+                self.name_ca(name)
+                    .and_then(|ca| self.node(&ca))
+                    .map(|n| {
+                        !n.stateful(meta_ctx)
+                            && n.branches(meta_ctx).is_empty()
+                            && n.n_outputs(meta_ctx) == 1
+                    })
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        names.sort();
+        names
+    }
+}
+
+impl<N: Node + Send + Sync + 'static> gantz_egui::Registry for RegistryRef<'_, N> {
+    fn node(&self, ca: &ca::ContentAddr) -> Option<&dyn Node> {
+        RegistryRef::node(self, ca)
+    }
 }
 
 // ---------------------------------------------------------------------------
