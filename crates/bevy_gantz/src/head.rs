@@ -234,7 +234,7 @@ impl DerefMut for HeadTabOrder {
 // ----------------------------------------------------------------------------
 
 /// Find the entity for the given head, if it exists.
-pub fn find_head_entity(
+pub fn find_entity(
     head: &ca::Head,
     heads: &Query<(Entity, &HeadRef), With<OpenHead>>,
 ) -> Option<Entity> {
@@ -245,12 +245,12 @@ pub fn find_head_entity(
 }
 
 /// Check if the given head is the currently focused head.
-pub fn is_head_focused(
+pub fn is_focused(
     head: &ca::Head,
     heads: &Query<(Entity, &HeadRef), With<OpenHead>>,
     focused: &FocusedHead,
 ) -> bool {
-    find_head_entity(head, heads)
+    find_entity(head, heads)
         .map(|entity| **focused == Some(entity))
         .unwrap_or(false)
 }
@@ -273,7 +273,7 @@ pub fn on_open<N>(
     let OpenEvent(new_head) = trigger.event();
 
     // If already open, just focus it.
-    if let Some(entity) = find_head_entity(new_head, &heads) {
+    if let Some(entity) = find_entity(new_head, &heads) {
         **focused = Some(entity);
         return;
     }
@@ -313,7 +313,7 @@ pub fn on_replace<N>(
     let ReplaceEvent(new_head) = trigger.event();
 
     // If new head already open, just focus it.
-    if let Some(entity) = find_head_entity(new_head, &heads) {
+    if let Some(entity) = find_entity(new_head, &heads) {
         **focused = Some(entity);
         return;
     }
@@ -363,7 +363,7 @@ pub fn on_close<N>(
         return;
     }
 
-    let Some(entity) = find_head_entity(head, &heads) else {
+    let Some(entity) = find_entity(head, &heads) else {
         return;
     };
     let Some(ix) = tab_order.iter().position(|&x| x == entity) else {
