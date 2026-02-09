@@ -12,13 +12,13 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryData;
 use bevy_egui::egui;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
-use bevy_gantz::eval::{EvalEvent, EvalKind};
 use bevy_gantz::head::{
     self, BranchedEvent, ClosedEvent, CommittedEvent, FocusedHead, HeadRef, HeadTabOrder, HeadVms,
     OpenEvent, OpenHead, OpenHeadData, OpenedEvent, ReplacedEvent, WorkingGraph,
 };
 use bevy_gantz::reg::Registry;
-use bevy_gantz::{BuiltinNodes, VmExecCompleted};
+use bevy_gantz::vm::{EvalEvent, EvalKind};
+use bevy_gantz::{BuiltinNodes, EvalCompleted};
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::Node;
@@ -78,7 +78,7 @@ where
             .add_observer(on_branch_created)
             .add_observer(on_head_committed)
             // VM timing observer
-            .add_observer(on_vm_exec_completed)
+            .add_observer(on_eval_completed)
             // Node creation/inspection observers
             .add_observer(on_create_node::<N>)
             .add_observer(on_inspect_edge::<N>)
@@ -319,11 +319,11 @@ pub fn registry_ref<'a, N: 'static + Send + Sync>(
 // Observers
 // ----------------------------------------------------------------------------
 
-/// Record VM execution timing from VmExecCompleted events.
+/// Record VM execution timing from EvalCompleted events.
 ///
-/// This observer receives timing events from `bevy_gantz::eval` and records
+/// This observer receives timing events from `bevy_gantz::vm` and records
 /// them to `PerfVm` for the performance widget.
-fn on_vm_exec_completed(trigger: On<VmExecCompleted>, mut perf_vm: ResMut<PerfVm>) {
+fn on_eval_completed(trigger: On<EvalCompleted>, mut perf_vm: ResMut<PerfVm>) {
     perf_vm.0.record(trigger.event().duration);
 }
 

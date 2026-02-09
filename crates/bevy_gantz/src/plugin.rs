@@ -1,6 +1,5 @@
 //! The GantzPlugin for Bevy applications.
 
-use crate::eval::on_eval_event;
 use crate::head::{FocusedHead, HeadTabOrder, HeadVms};
 use crate::reg::Registry;
 use crate::vm;
@@ -47,7 +46,7 @@ where
             .add_observer(on_close::<N>)
             .add_observer(on_branch::<N>)
             // Register eval event handler.
-            .add_observer(on_eval_event)
+            .add_observer(vm::on_eval)
             // VM init observers.
             .add_observer(vm::on_head_opened::<N>)
             .add_observer(vm::on_head_replaced::<N>)

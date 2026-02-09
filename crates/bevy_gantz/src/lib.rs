@@ -5,7 +5,6 @@
 
 pub mod builtin;
 pub mod debounced_input;
-pub mod eval;
 pub mod head;
 pub mod plugin;
 pub mod reg;
@@ -13,13 +12,13 @@ pub mod storage;
 pub mod vm;
 
 pub use builtin::{BuiltinNodes, Builtins};
-pub use eval::{EvalEvent, EvalKind, VmExecCompleted};
 pub use head::{
     CompiledModule, FocusedHead, HeadRef, HeadTabOrder, HeadVms, OpenHead, OpenHeadData,
     OpenHeadDataReadOnly, WorkingGraph,
 };
 pub use plugin::GantzPlugin;
 pub use reg::{Registry, lookup_node, timestamp};
+pub use vm::{EvalCompleted, EvalEvent, EvalKind};
 
 /// Clone a graph.
 pub fn clone_graph<N: Clone>(
