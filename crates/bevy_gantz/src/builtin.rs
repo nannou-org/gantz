@@ -1,8 +1,6 @@
 //! Builtins trait and Bevy resource wrapper.
 
 use bevy_ecs::prelude::*;
-
-// Re-export the Builtins trait from gantz_core.
 pub use gantz_core::Builtins;
 
 /// Resource wrapper for `dyn Builtins`.

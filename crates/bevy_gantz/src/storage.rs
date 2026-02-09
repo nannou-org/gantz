@@ -10,6 +10,7 @@ use gantz_ca as ca;
 use gantz_core::node::graph::Graph;
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::{BTreeMap, HashMap};
+
 mod key {
     /// All known graph addresses.
     pub const GRAPH_ADDRS: &str = "graph-addrs";

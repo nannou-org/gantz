@@ -1,8 +1,10 @@
 //! The GantzPlugin for Bevy applications.
 
-use crate::head::{FocusedHead, HeadTabOrder, HeadVms};
-use crate::reg::Registry;
-use crate::vm;
+use crate::{
+    head::{self, FocusedHead, HeadTabOrder, HeadVms},
+    reg::Registry,
+    vm,
+};
 use bevy_app::prelude::*;
 use gantz_core::Node;
 use std::marker::PhantomData;
@@ -34,17 +36,15 @@ where
     N: 'static + Node + Clone + gantz_ca::CaHash + Send + Sync,
 {
     fn build(&self, app: &mut App) {
-        use crate::head::{on_branch, on_close, on_open, on_replace};
-
         app.init_resource::<FocusedHead>()
             .init_resource::<HeadTabOrder>()
             .init_resource::<Registry<N>>()
             .init_non_send_resource::<HeadVms>()
             // Register head event handlers.
-            .add_observer(on_open::<N>)
-            .add_observer(on_replace::<N>)
-            .add_observer(on_close::<N>)
-            .add_observer(on_branch::<N>)
+            .add_observer(head::on_open::<N>)
+            .add_observer(head::on_replace::<N>)
+            .add_observer(head::on_close::<N>)
+            .add_observer(head::on_branch::<N>)
             // Register eval event handler.
             .add_observer(vm::on_eval)
             // VM init observers.

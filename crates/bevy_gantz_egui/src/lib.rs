@@ -5,8 +5,6 @@
 //! - GUI state resources and observers
 //! - The main `update` system for rendering the gantz GUI
 
-pub mod storage;
-
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryData;
@@ -29,6 +27,8 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use steel::steel_vm::engine::Engine;
+
+pub mod storage;
 
 // ----------------------------------------------------------------------------
 // Plugin
