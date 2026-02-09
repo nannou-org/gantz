@@ -42,7 +42,7 @@ impl Default for Builtins {
     }
 }
 
-impl bevy_gantz::Builtins for Builtins {
+impl gantz_core::Builtins for Builtins {
     type Node = Box<dyn Node>;
 
     fn names(&self) -> Vec<&str> {

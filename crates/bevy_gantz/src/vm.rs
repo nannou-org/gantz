@@ -10,7 +10,7 @@ use crate::head::{
     CommittedEvent, CompiledModule, HeadVms, OpenHead, OpenHeadData, OpenedEvent, ReplacedEvent,
     WorkingGraph,
 };
-use crate::reg::{Registry, RegistryRef};
+use crate::reg::{Registry, lookup_node};
 use bevy_ecs::prelude::*;
 use bevy_log as log;
 use gantz_ca as ca;
@@ -66,8 +66,7 @@ pub fn on_head_opened<N>(
 {
     let event = trigger.event();
     let graph = graphs.get(event.entity).unwrap();
-    let node_reg = RegistryRef::new(&*registry, &*builtins);
-    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+    let get_node = |ca: &ca::ContentAddr| lookup_node(&registry, &**builtins, ca);
     let (vm, module) = match init(&get_node, &**graph) {
         Ok(result) => result,
         Err(e) => {
@@ -92,8 +91,7 @@ pub fn on_head_replaced<N>(
 {
     let event = trigger.event();
     let graph = graphs.get(event.entity).unwrap();
-    let node_reg = RegistryRef::new(&*registry, &*builtins);
-    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+    let get_node = |ca: &ca::ContentAddr| lookup_node(&registry, &**builtins, ca);
     let (vm, module) = match init(&get_node, &**graph) {
         Ok(result) => result,
         Err(e) => {
@@ -126,8 +124,7 @@ where
     for entity in entities {
         let registry = world.resource::<Registry<N>>();
         let builtins = world.resource::<BuiltinNodes<N>>();
-        let node_reg = RegistryRef::new(registry, &*builtins);
-        let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+        let get_node = |ca: &ca::ContentAddr| lookup_node(registry, &**builtins, ca);
         let Some(wg) = world.get::<WorkingGraph<N>>(entity) else {
             continue;
         };
@@ -197,8 +194,7 @@ pub fn update<N>(
             });
 
             if let Some(vm) = vms.get_mut(&data.entity) {
-                let node_reg = RegistryRef::new(&*registry, &*builtins);
-                let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+                let get_node = |ca: &ca::ContentAddr| lookup_node(&registry, &**builtins, ca);
                 gantz_core::graph::register(&get_node, graph, &[], vm);
                 match compile(&get_node, graph, vm) {
                     Ok(module) => data.compiled.0 = module,

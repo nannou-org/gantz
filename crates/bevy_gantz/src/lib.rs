@@ -19,7 +19,7 @@ pub use head::{
     OpenHeadDataReadOnly, WorkingGraph,
 };
 pub use plugin::GantzPlugin;
-pub use reg::{Registry, RegistryRef, timestamp};
+pub use reg::{Registry, lookup_node, timestamp};
 
 /// Clone a graph.
 pub fn clone_graph<N: Clone>(

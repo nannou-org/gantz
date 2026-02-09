@@ -11,10 +11,12 @@ use steel::{
 
 mod impls;
 pub mod node;
+pub mod reg;
 pub mod widget;
 
 // Re-export traits that make up the Registry supertrait.
 pub use node::{FnNodeNames, NameRegistry};
+pub use reg::RegistryRef;
 pub use widget::gantz::NodeTypeRegistry;
 pub use widget::graph_select::GraphRegistry;
 
