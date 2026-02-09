@@ -1,17 +1,22 @@
 //! App-specific storage utilities.
 //!
-//! Most storage functionality is provided by `bevy_gantz::storage`.
-//! This module only contains app-specific functions for egui memory.
+//! Most storage functionality is provided by `bevy_gantz::storage` and
+//! `bevy_gantz_egui::storage`. This module only contains app-specific
+//! functions for egui memory.
 
 use bevy::log;
 use bevy_egui::egui;
 use bevy_pkv::PkvStore;
 
-// Re-export generic storage functions from bevy_gantz.
+// Re-export core storage functions from bevy_gantz.
 pub use bevy_gantz::storage::{
-    load_focused_head, load_gui_state, load_open, load_registry, load_views, save_commit_addrs,
-    save_commits, save_focused_head, save_graph_addrs, save_graphs, save_gui_state, save_names,
-    save_open_heads, save_views,
+    load_focused_head, load_registry, save_commit_addrs, save_commits, save_focused_head,
+    save_graph_addrs, save_graphs, save_names, save_open_heads,
+};
+
+// Re-export GUI storage functions from bevy_gantz_egui.
+pub use bevy_gantz_egui::storage::{
+    load_gui_state, load_open, load_views, save_gui_state, save_views,
 };
 
 mod key {

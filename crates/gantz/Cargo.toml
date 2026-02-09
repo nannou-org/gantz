@@ -12,6 +12,7 @@ repository.workspace = true
 bevy.workspace = true
 bevy_egui.workspace = true
 bevy_gantz.workspace = true
+bevy_gantz_egui.workspace = true
 bevy_pkv.workspace = true
 dyn-clone.workspace = true
 dyn-hash.workspace = true

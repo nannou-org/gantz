@@ -1,23 +1,24 @@
-//! Egui integration for gantz.
+//! Egui integration for bevy_gantz.
 //!
-//! This module provides:
+//! This crate provides:
 //! - [`GantzEguiPlugin`] — Bevy plugin for egui-based UI
 //! - GUI state resources and observers
 //! - The main `update` system for rendering the gantz GUI
 
-use crate::BuiltinNodes;
-use crate::eval::{EvalEvent, EvalKind};
-use crate::head::{
-    self, BranchedEvent, ClosedEvent, CommittedEvent, FocusedHead, HeadGuiState, HeadRef,
-    HeadTabOrder, HeadVms, OpenEvent, OpenHead, OpenHeadData, OpenedEvent, ReplacedEvent,
-    WorkingGraph,
-};
-use crate::reg::{Registry, RegistryRef};
+pub mod storage;
+
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryData;
 use bevy_egui::egui;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
+use bevy_gantz::eval::{EvalEvent, EvalKind};
+use bevy_gantz::head::{
+    self, BranchedEvent, ClosedEvent, CommittedEvent, FocusedHead, HeadRef, HeadTabOrder, HeadVms,
+    OpenEvent, OpenHead, OpenHeadData, OpenedEvent, ReplacedEvent, WorkingGraph,
+};
+use bevy_gantz::reg::Registry;
+use bevy_gantz::{BuiltinNodes, VmExecCompleted};
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::Node;
@@ -27,6 +28,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use steel::steel_vm::engine::Engine;
+
+// ----------------------------------------------------------------------------
+// Plugin
+// ----------------------------------------------------------------------------
 
 /// Plugin providing egui-based UI for gantz.
 ///
@@ -40,6 +45,66 @@ use steel::steel_vm::engine::Engine;
 ///
 /// **Note:** This plugin requires `GantzPlugin<N>` to be added first.
 pub struct GantzEguiPlugin<N>(PhantomData<N>);
+
+impl<N> Default for GantzEguiPlugin<N> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<N> Plugin for GantzEguiPlugin<N>
+where
+    N: Node
+        + Clone
+        + gantz_ca::CaHash
+        + From<gantz_egui::node::NamedRef>
+        + gantz_egui::NodeUi
+        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
+        + Send
+        + Sync
+        + 'static,
+{
+    fn build(&self, app: &mut App) {
+        app.init_resource::<GuiState>()
+            .init_resource::<TraceCapture>()
+            .init_resource::<PerfVm>()
+            .init_resource::<PerfGui>()
+            .init_resource::<Views>()
+            // GUI state observers
+            .add_observer(on_head_opened::<N>)
+            .add_observer(on_head_replaced::<N>)
+            .add_observer(on_head_closed)
+            .add_observer(on_branch_created)
+            .add_observer(on_head_committed)
+            // VM timing observer
+            .add_observer(on_vm_exec_completed)
+            // Node creation/inspection observers
+            .add_observer(on_create_node::<N>)
+            .add_observer(on_inspect_edge::<N>)
+            // Systems
+            .add_systems(Update, (process_cmds::<N>, persist_views::<N>))
+            .add_systems(EguiPrimaryContextPass, update::<N>);
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Components
+// ----------------------------------------------------------------------------
+
+/// Per-head GUI state component.
+///
+/// This component wraps `gantz_egui::widget::gantz::OpenHeadState` to store
+/// GUI-related state for each open head entity.
+#[derive(Component, Default)]
+pub struct HeadGuiState(pub gantz_egui::widget::gantz::OpenHeadState);
+
+/// Views for a single head's graphs (keyed by subgraph path).
+#[derive(Component, Default, Clone)]
+pub struct GraphViews(pub gantz_egui::GraphViews);
+
+// ----------------------------------------------------------------------------
+// Resources
+// ----------------------------------------------------------------------------
 
 /// Captures tracing logs for the TraceView widget.
 #[derive(Default, Resource)]
@@ -61,33 +126,9 @@ pub struct GuiState(pub gantz_egui::widget::GantzState);
 #[derive(Resource, Default)]
 pub struct Views(pub HashMap<ca::CommitAddr, gantz_egui::GraphViews>);
 
-/// Views for a single head's graphs (keyed by subgraph path).
-#[derive(Component, Default, Clone)]
-pub struct GraphViews(pub gantz_egui::GraphViews);
-
-/// Bundled query data for open heads (core data + views).
-#[derive(QueryData)]
-#[query_data(mutable)]
-pub struct OpenHeadViews<N: 'static + Send + Sync> {
-    pub core: OpenHeadData<N>,
-    pub views: &'static mut GraphViews,
-}
-
-/// Provides [`gantz_egui::HeadAccess`] implementation for Bevy ECS.
-///
-/// This struct wraps the necessary Bevy queries and resources to implement
-/// the `HeadAccess` trait, allowing the gantz_egui widget to access head data
-/// without knowing about Bevy's ECS.
-pub struct HeadAccess<'q, 'w, 's, N: 'static + Send + Sync> {
-    /// Heads in tab order, pre-collected.
-    heads: Vec<ca::Head>,
-    /// Map from head to entity for lookup.
-    head_to_entity: HashMap<ca::Head, Entity>,
-    /// Query for accessing head data + views mutably.
-    query: &'q mut Query<'w, 's, OpenHeadViews<N>, With<OpenHead>>,
-    /// The VMs keyed by entity.
-    vms: &'q mut HeadVms,
-}
+// ----------------------------------------------------------------------------
+// Events
+// ----------------------------------------------------------------------------
 
 /// Event emitted when an edge inspection is requested.
 ///
@@ -111,6 +152,38 @@ pub struct CreateNodeEvent {
     pub head: Entity,
     /// The create node command from the GUI.
     pub cmd: gantz_egui::CreateNode,
+}
+
+// ----------------------------------------------------------------------------
+// QueryData
+// ----------------------------------------------------------------------------
+
+/// Bundled query data for open heads (core data + views).
+#[derive(QueryData)]
+#[query_data(mutable)]
+pub struct OpenHeadViews<N: 'static + Send + Sync> {
+    pub core: OpenHeadData<N>,
+    pub views: &'static mut GraphViews,
+}
+
+// ----------------------------------------------------------------------------
+// HeadAccess adapter
+// ----------------------------------------------------------------------------
+
+/// Provides [`gantz_egui::HeadAccess`] implementation for Bevy ECS.
+///
+/// This struct wraps the necessary Bevy queries and resources to implement
+/// the `HeadAccess` trait, allowing the gantz_egui widget to access head data
+/// without knowing about Bevy's ECS.
+pub struct HeadAccess<'q, 'w, 's, N: 'static + Send + Sync> {
+    /// Heads in tab order, pre-collected.
+    heads: Vec<ca::Head>,
+    /// Map from head to entity for lookup.
+    head_to_entity: HashMap<ca::Head, Entity>,
+    /// Query for accessing head data + views mutably.
+    query: &'q mut Query<'w, 's, OpenHeadViews<N>, With<OpenHead>>,
+    /// The VMs keyed by entity.
+    vms: &'q mut HeadVms,
 }
 
 impl<'q, 'w, 's, N: 'static + Send + Sync> HeadAccess<'q, 'w, 's, N> {
@@ -145,84 +218,6 @@ impl<'q, 'w, 's, N: 'static + Send + Sync> HeadAccess<'q, 'w, 's, N> {
     }
 }
 
-impl<N> Default for GantzEguiPlugin<N> {
-    fn default() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<N> Plugin for GantzEguiPlugin<N>
-where
-    N: Node
-        + Clone
-        + gantz_ca::CaHash
-        + From<gantz_egui::node::NamedRef>
-        + gantz_egui::NodeUi
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
-        + Send
-        + Sync
-        + 'static,
-{
-    fn build(&self, app: &mut App) {
-        app.init_resource::<GuiState>()
-            .init_resource::<TraceCapture>()
-            .init_resource::<PerfVm>()
-            .init_resource::<PerfGui>()
-            .init_resource::<Views>()
-            // GUI state observers
-            .add_observer(on_head_opened::<N>)
-            .add_observer(on_head_replaced::<N>)
-            .add_observer(on_head_closed)
-            .add_observer(on_branch_created)
-            .add_observer(on_head_committed)
-            // Node creation/inspection observers
-            .add_observer(on_create_node::<N>)
-            .add_observer(on_inspect_edge::<N>)
-            // Systems
-            .add_systems(Update, (process_cmds::<N>, persist_views::<N>))
-            .add_systems(EguiPrimaryContextPass, update::<N>);
-    }
-}
-
-impl Deref for GuiState {
-    type Target = gantz_egui::widget::GantzState;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl Deref for Views {
-    type Target = HashMap<ca::CommitAddr, gantz_egui::GraphViews>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl Deref for GraphViews {
-    type Target = gantz_egui::GraphViews;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for GuiState {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl DerefMut for Views {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl DerefMut for GraphViews {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
 impl<N: 'static + Send + Sync> gantz_egui::HeadAccess for HeadAccess<'_, '_, '_, N> {
     type Node = N;
 
@@ -252,11 +247,135 @@ impl<N: 'static + Send + Sync> gantz_egui::HeadAccess for HeadAccess<'_, '_, '_,
     }
 }
 
+// ----------------------------------------------------------------------------
+// Deref impls
+// ----------------------------------------------------------------------------
+
+impl Deref for HeadGuiState {
+    type Target = gantz_egui::widget::gantz::OpenHeadState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for HeadGuiState {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Deref for GuiState {
+    type Target = gantz_egui::widget::GantzState;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for GuiState {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Deref for Views {
+    type Target = HashMap<ca::CommitAddr, gantz_egui::GraphViews>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Views {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Deref for GraphViews {
+    type Target = gantz_egui::GraphViews;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for GraphViews {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+// ----------------------------------------------------------------------------
+// RegistryRef (for orphan rule compliance)
+// ----------------------------------------------------------------------------
+
+/// Registry reference that implements the gantz_egui traits.
+///
+/// This is necessary because both `bevy_gantz::RegistryRef` and the gantz_egui
+/// traits are defined in external crates, so we can't implement the traits
+/// directly on `bevy_gantz::RegistryRef`. Instead, we use this local type.
+pub struct RegistryRef<'a, N: 'static + Send + Sync> {
+    ca_registry: &'a ca::Registry<Graph<N>>,
+    builtins: &'a dyn bevy_gantz::builtin::Builtins<Node = N>,
+}
+
+impl<'a, N: 'static + Send + Sync> RegistryRef<'a, N> {
+    /// Construct from a registry and builtins.
+    pub fn new(registry: &'a Registry<N>, builtins: &'a BuiltinNodes<N>) -> Self {
+        Self {
+            ca_registry: &**registry,
+            builtins: &*builtins.0,
+        }
+    }
+
+    /// Access the underlying CA registry.
+    pub fn ca_registry(&self) -> &ca::Registry<Graph<N>> {
+        self.ca_registry
+    }
+
+    /// Access the builtins.
+    pub fn builtins(&self) -> &dyn bevy_gantz::builtin::Builtins<Node = N> {
+        self.builtins
+    }
+}
+
+impl<N: 'static + Node + Send + Sync> RegistryRef<'_, N> {
+    /// Look up a node by content address.
+    pub fn node(&self, ca: &ca::ContentAddr) -> Option<&dyn Node> {
+        let commit_ca = ca::CommitAddr::from(*ca);
+        if let Some(graph) = self.ca_registry.commit_graph_ref(&commit_ca) {
+            return Some(graph as &dyn Node);
+        }
+        self.builtins.instance(ca).map(|n| n as &dyn Node)
+    }
+
+    /// Create a node of the given type name.
+    ///
+    /// Checks registry names first (creating a [`gantz_egui::node::NamedRef`]),
+    /// then falls back to builtins.
+    pub fn create_node(&self, node_type: &str) -> Option<N>
+    where
+        N: From<gantz_egui::node::NamedRef>,
+    {
+        self.ca_registry
+            .names()
+            .get(node_type)
+            .map(|commit_ca| {
+                let ref_ = gantz_core::node::Ref::new((*commit_ca).into());
+                let named = gantz_egui::node::NamedRef::new(node_type.to_string(), ref_);
+                N::from(named)
+            })
+            .or_else(|| self.builtins.create(node_type))
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Trait impls for RegistryRef
+// ----------------------------------------------------------------------------
+
 impl<N: 'static + Node + Send + Sync> gantz_egui::NodeTypeRegistry for RegistryRef<'_, N> {
     fn node_types(&self) -> Vec<&str> {
         let mut types = vec![];
-        types.extend(self.builtins().names());
-        types.extend(self.ca_registry().names().keys().map(|s| &s[..]));
+        types.extend(self.builtins.names());
+        types.extend(self.ca_registry.names().keys().map(|s| &s[..]));
         types.sort();
         types
     }
@@ -266,22 +385,22 @@ impl<N: 'static + Node + Send + Sync> gantz_egui::widget::graph_select::GraphReg
     for RegistryRef<'_, N>
 {
     fn commits(&self) -> Vec<(&ca::CommitAddr, &ca::Commit)> {
-        let mut commits: Vec<_> = self.ca_registry().commits().iter().collect();
+        let mut commits: Vec<_> = self.ca_registry.commits().iter().collect();
         commits.sort_by(|(_, a), (_, b)| b.timestamp.cmp(&a.timestamp));
         commits
     }
 
     fn names(&self) -> &BTreeMap<String, ca::CommitAddr> {
-        self.ca_registry().names()
+        self.ca_registry.names()
     }
 }
 
 impl<N: 'static + Node + Send + Sync> gantz_egui::node::NameRegistry for RegistryRef<'_, N> {
     fn name_ca(&self, name: &str) -> Option<ca::ContentAddr> {
-        if let Some(commit_ca) = self.ca_registry().names().get(name) {
+        if let Some(commit_ca) = self.ca_registry.names().get(name) {
             return Some((*commit_ca).into());
         }
-        self.builtins().content_addr(name)
+        self.builtins.content_addr(name)
     }
 
     fn node_exists(&self, ca: &ca::ContentAddr) -> bool {
@@ -294,11 +413,11 @@ impl<N: 'static + Node + Send + Sync> gantz_egui::node::FnNodeNames for Registry
         use gantz_egui::node::NameRegistry;
 
         let builtin_names = self
-            .builtins()
+            .builtins
             .names()
             .into_iter()
-            .filter_map(|name| self.builtins().content_addr(name).map(|_| name.to_string()));
-        let registry_names = self.ca_registry().names().keys().cloned();
+            .filter_map(|name| self.builtins.content_addr(name).map(|_| name.to_string()));
+        let registry_names = self.ca_registry.names().keys().cloned();
         let all_names = builtin_names.chain(registry_names);
 
         let get_node = |ca: &ca::ContentAddr| self.node(ca);
@@ -325,6 +444,18 @@ impl<N: 'static + Node + Send + Sync> gantz_egui::Registry for RegistryRef<'_, N
     fn node(&self, ca: &ca::ContentAddr) -> Option<&dyn Node> {
         RegistryRef::node(self, ca)
     }
+}
+
+// ----------------------------------------------------------------------------
+// Observers
+// ----------------------------------------------------------------------------
+
+/// Record VM execution timing from VmExecCompleted events.
+///
+/// This observer receives timing events from `bevy_gantz::eval` and records
+/// them to `PerfVm` for the performance widget.
+fn on_vm_exec_completed(trigger: On<VmExecCompleted>, mut perf_vm: ResMut<PerfVm>) {
+    perf_vm.0.record(trigger.event().duration);
 }
 
 /// Initialize GUI state entry and components for opened head.
@@ -514,7 +645,7 @@ pub fn on_inspect_edge<N>(
 }
 
 // ---------------------------------------------------------------------------
-// Functions: Systems
+// Systems
 // ---------------------------------------------------------------------------
 
 /// Persist views for all open heads to the Views resource.
@@ -557,7 +688,7 @@ pub fn prune_views<N: 'static + Node + Send + Sync>(
 pub fn process_cmds<N: 'static + Send + Sync>(
     mut registry: ResMut<Registry<N>>,
     mut gui_state: ResMut<GuiState>,
-    heads: Query<(Entity, &crate::head::HeadRef), With<OpenHead>>,
+    heads: Query<(Entity, &HeadRef), With<OpenHead>>,
     mut cmds: Commands,
 ) {
     // Collect heads to process.
@@ -711,7 +842,7 @@ where
 
     // Create a new empty graph and open it.
     if response.new_graph() {
-        let new_head = registry.init_head(crate::reg::timestamp());
+        let new_head = registry.init_head(bevy_gantz::timestamp());
         cmds.trigger(head::OpenEvent(new_head));
     }
 
@@ -733,6 +864,10 @@ where
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Functions
+// ---------------------------------------------------------------------------
 
 /// Insert an Inspect node on the given edge, replacing the edge with two edges.
 fn inspect_edge<N>(

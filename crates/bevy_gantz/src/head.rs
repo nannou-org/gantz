@@ -50,10 +50,6 @@ pub struct WorkingGraph<N>(pub gantz_core::node::graph::Graph<N>);
 #[derive(Component, Default, Clone)]
 pub struct CompiledModule(pub String);
 
-/// Per-head GUI state (path, scene interaction, queued commands).
-#[derive(Component, Default)]
-pub struct HeadGuiState(pub gantz_egui::widget::gantz::OpenHeadState);
-
 // ----------------------------------------------------------------------------
 // Events
 // ----------------------------------------------------------------------------
@@ -174,19 +170,6 @@ impl Deref for CompiledModule {
     type Target = str;
     fn deref(&self) -> &Self::Target {
         &self.0
-    }
-}
-
-impl Deref for HeadGuiState {
-    type Target = gantz_egui::widget::gantz::OpenHeadState;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for HeadGuiState {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
     }
 }
 

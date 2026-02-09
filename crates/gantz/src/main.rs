@@ -4,12 +4,12 @@ use bevy::{
 };
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use bevy_gantz::{
-    BuiltinNodes, CompiledModule, FocusedHead, GantzEguiPlugin, GantzPlugin, GuiState,
-    HeadGuiState, HeadRef, HeadTabOrder, OpenHead, OpenHeadDataReadOnly, Registry, TraceCapture,
-    Views, WorkingGraph,
+    BuiltinNodes, CompiledModule, FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead,
+    OpenHeadDataReadOnly, Registry, WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
     reg, timestamp, vm,
 };
+use bevy_gantz_egui::{GantzEguiPlugin, GuiState, HeadGuiState, TraceCapture, Views};
 use bevy_pkv::PkvStore;
 use builtin::Builtins;
 

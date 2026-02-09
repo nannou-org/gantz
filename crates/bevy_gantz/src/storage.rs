@@ -1,6 +1,8 @@
 //! Generic storage utilities for persisting gantz state.
+//!
+//! This module provides core storage functions for the gantz registry.
+//! GUI-related storage (views, gui state) is provided by `bevy_gantz_egui::storage`.
 
-use crate::egui::{GraphViews, Views};
 use crate::reg::Registry;
 use bevy_log as log;
 use bevy_pkv::PkvStore;
@@ -8,7 +10,6 @@ use gantz_ca as ca;
 use gantz_core::node::graph::Graph;
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::{BTreeMap, HashMap};
-use std::time::Duration;
 mod key {
     /// All known graph addresses.
     pub const GRAPH_ADDRS: &str = "graph-addrs";
@@ -20,10 +21,6 @@ mod key {
     pub const OPEN_HEADS: &str = "open-heads";
     /// The key at which the focused head is stored.
     pub const FOCUSED_HEAD: &str = "focused-head";
-    /// The key at which all graph views (layout + camera) are stored.
-    pub const VIEWS: &str = "views";
-    /// The key at which the gantz GUI state is stored.
-    pub const GUI_STATE: &str = "gui-state";
 
     /// The key for a particular graph in storage.
     pub fn graph(ca: gantz_ca::GraphAddr) -> String {
@@ -157,37 +154,6 @@ pub fn save_focused_head(storage: &mut PkvStore, head: &ca::Head) {
     match storage.set_string(key::FOCUSED_HEAD, &head_str) {
         Ok(()) => log::debug!("Successfully persisted focused head"),
         Err(e) => log::error!("Failed to persist focused head: {e}"),
-    }
-}
-
-/// Save all graph views to storage under a single key.
-pub fn save_views(storage: &mut PkvStore, views: &Views) {
-    // Serialize the inner HashMap, not the wrapper struct.
-    let views_str = match ron::to_string(&**views) {
-        Err(e) => {
-            log::error!("Failed to serialize views: {e}");
-            return;
-        }
-        Ok(s) => s,
-    };
-    match storage.set_string(key::VIEWS, &views_str) {
-        Ok(()) => log::debug!("Successfully persisted {} views", views.len()),
-        Err(e) => log::error!("Failed to persist views: {e}"),
-    }
-}
-
-/// Save the GUI state to storage.
-pub fn save_gui_state(storage: &mut PkvStore, state: &crate::egui::GuiState) {
-    let state_str = match ron::to_string(&**state) {
-        Err(e) => {
-            log::error!("Failed to serialize GUI state: {e}");
-            return;
-        }
-        Ok(s) => s,
-    };
-    match storage.set_string(key::GUI_STATE, &state_str) {
-        Ok(()) => log::debug!("Successfully persisted GUI state"),
-        Err(e) => log::error!("Failed to persist GUI state: {e}"),
     }
 }
 
@@ -325,42 +291,6 @@ pub fn load_names(storage: &PkvStore) -> BTreeMap<String, ca::CommitAddr> {
     }
 }
 
-/// Load all graph views from storage.
-pub fn load_views(storage: &PkvStore) -> Views {
-    let Some(views_str) = storage.get::<String>(key::VIEWS).ok() else {
-        log::debug!("No existing views to load");
-        return Views::default();
-    };
-    match ron::de::from_str::<HashMap<ca::CommitAddr, gantz_egui::GraphViews>>(&views_str) {
-        Ok(views) => {
-            log::debug!("Successfully loaded views from storage");
-            Views(views)
-        }
-        Err(e) => {
-            log::error!("Failed to deserialize views: {e}");
-            Views::default()
-        }
-    }
-}
-
-/// Load the GUI state from storage.
-pub fn load_gui_state(storage: &PkvStore) -> crate::egui::GuiState {
-    let Some(state_str) = storage.get::<String>(key::GUI_STATE).ok() else {
-        log::debug!("No existing GUI state to load");
-        return crate::egui::GuiState::default();
-    };
-    match ron::de::from_str(&state_str) {
-        Ok(state) => {
-            log::debug!("Successfully loaded GUI state from storage");
-            crate::egui::GuiState(state)
-        }
-        Err(e) => {
-            log::error!("Failed to deserialize GUI state: {e}");
-            crate::egui::GuiState::default()
-        }
-    }
-}
-
 /// Load all open heads from storage.
 pub fn load_open_heads(storage: &PkvStore) -> Option<Vec<ca::Head>> {
     let Some(heads_str) = storage.get::<String>(key::OPEN_HEADS).ok() else {
@@ -402,45 +332,4 @@ pub fn load_registry<N: DeserializeOwned>(storage: &PkvStore) -> Registry<N> {
     let commits = load_commits(storage, commit_addrs.iter().copied());
     let names = load_names(storage);
     Registry(ca::Registry::new(graphs, commits, names))
-}
-
-/// Load the open heads data from storage.
-///
-/// Returns a vector of (head, graph, views) tuples suitable for spawning entities.
-/// If no valid heads remain, creates a default empty graph head using the provided timestamp.
-pub fn load_open<N>(
-    storage: &PkvStore,
-    registry: &mut Registry<N>,
-    views: &Views,
-    ts: Duration,
-) -> Vec<(ca::Head, Graph<N>, GraphViews)>
-where
-    N: 'static + Clone + DeserializeOwned + ca::CaHash,
-{
-    // Try to load all open heads from storage.
-    let heads: Vec<_> = load_open_heads(storage)
-        .unwrap_or_default()
-        .into_iter()
-        // Filter out heads that no longer exist in the registry.
-        .filter_map(|head| {
-            let graph = crate::clone_graph(registry.head_graph(&head)?);
-            // Load the views for this head's commit, or create empty.
-            let head_views = registry
-                .head_commit_ca(&head)
-                .and_then(|ca| views.get(ca).cloned())
-                .map(GraphViews)
-                .unwrap_or_default();
-            Some((head, graph, head_views))
-        })
-        .collect();
-
-    // If no valid heads remain, create a default one.
-    if heads.is_empty() {
-        let head = registry.init_head(ts);
-        let graph = crate::clone_graph(registry.head_graph(&head).unwrap());
-        let head_views = GraphViews::default();
-        vec![(head, graph, head_views)]
-    } else {
-        heads
-    }
 }

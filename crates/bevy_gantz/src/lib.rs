@@ -1,8 +1,10 @@
 //! Bevy plugin for gantz - an environment for creative systems.
+//!
+//! This crate provides core Bevy integration for gantz. For egui-based UI,
+//! see the `bevy_gantz_egui` crate.
 
 pub mod builtin;
 pub mod debounced_input;
-pub mod egui;
 pub mod eval;
 pub mod head;
 pub mod plugin;
@@ -11,17 +13,13 @@ pub mod storage;
 pub mod vm;
 
 pub use builtin::{BuiltinNodes, Builtins};
-pub use egui::{
-    CreateNodeEvent, GantzEguiPlugin, GraphViews, GuiState, HeadAccess, InspectEdgeEvent, PerfGui,
-    PerfVm, TraceCapture, Views, prune_views,
-};
+pub use eval::{EvalEvent, EvalKind, VmExecCompleted};
 pub use head::{
-    CompiledModule, FocusedHead, HeadGuiState, HeadRef, HeadTabOrder, HeadVms, OpenHead,
-    OpenHeadData, OpenHeadDataReadOnly, WorkingGraph,
+    CompiledModule, FocusedHead, HeadRef, HeadTabOrder, HeadVms, OpenHead, OpenHeadData,
+    OpenHeadDataReadOnly, WorkingGraph,
 };
 pub use plugin::GantzPlugin;
 pub use reg::{Registry, RegistryRef, timestamp};
-pub use eval::{EvalEvent, EvalKind};
 
 /// Clone a graph.
 pub fn clone_graph<N: Clone>(

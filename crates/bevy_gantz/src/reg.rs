@@ -90,27 +90,6 @@ impl<N: 'static + Node + Send + Sync> RegistryRef<'_, N> {
     }
 }
 
-impl<N: 'static + Send + Sync> RegistryRef<'_, N> {
-    /// Create a node of the given type name.
-    ///
-    /// Checks registry names first (creating a [`gantz_egui::node::NamedRef`]),
-    /// then falls back to builtins.
-    pub fn create_node(&self, node_type: &str) -> Option<N>
-    where
-        N: From<gantz_egui::node::NamedRef>,
-    {
-        self.ca_registry
-            .names()
-            .get(node_type)
-            .map(|commit_ca| {
-                let ref_ = gantz_core::node::Ref::new((*commit_ca).into());
-                let named = gantz_egui::node::NamedRef::new(node_type.to_string(), ref_);
-                N::from(named)
-            })
-            .or_else(|| self.builtins.create(node_type))
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Systems
 // ---------------------------------------------------------------------------
