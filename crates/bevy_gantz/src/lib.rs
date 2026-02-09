@@ -1,3 +1,5 @@
+//! Bevy plugin for gantz - an environment for creative systems.
+
 pub mod builtin;
 pub mod debounced_input;
 pub mod egui;
@@ -19,6 +21,7 @@ pub use head::{
 };
 pub use plugin::GantzPlugin;
 pub use reg::{Registry, RegistryRef, timestamp};
+pub use eval::{EvalEvent, EvalKind};
 
 /// Clone a graph.
 pub fn clone_graph<N: Clone>(
