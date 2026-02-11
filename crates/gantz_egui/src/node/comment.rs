@@ -3,7 +3,7 @@
 use crate::widget::node_inspector;
 use crate::{NodeCtx, NodeUi};
 use gantz_ca::CaHash;
-use gantz_core::node;
+use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx};
 use serde::{Deserialize, Serialize};
 
 /// A transparent comment node for documenting graphs.
@@ -32,31 +32,31 @@ impl Default for Comment {
     }
 }
 
-impl<Env> gantz_core::Node<Env> for Comment {
+impl gantz_core::Node for Comment {
     // Comments have no inputs or outputs - they're purely for documentation
-    fn n_inputs(&self, _: &Env) -> usize {
+    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
         0
     }
 
-    fn n_outputs(&self, _: &Env) -> usize {
+    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
         0
     }
 
     // Comments don't evaluate to anything
-    fn expr(&self, _ctx: node::ExprCtx<Env>) -> node::ExprResult {
+    fn expr(&self, _ctx: ExprCtx<'_, '_>) -> ExprResult {
         // Return void/empty expression since comments don't compute anything
         node::parse_expr("void")
     }
 }
 
-impl<Env> NodeUi<Env> for Comment {
-    fn name(&self, _env: &Env) -> &str {
+impl NodeUi for Comment {
+    fn name(&self, _registry: &dyn crate::Registry) -> &str {
         "comment"
     }
 
     fn ui(
         &mut self,
-        _ctx: NodeCtx<Env>,
+        _ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
         // Get interaction state
@@ -107,7 +107,7 @@ impl<Env> NodeUi<Env> for Comment {
         response
     }
 
-    fn inspector_rows(&mut self, _ctx: &mut NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(&mut self, _ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
         let row_h = node_inspector::table_row_h(body.ui_mut());
         body.row(row_h, |mut row| {
             row.col(|ui| {

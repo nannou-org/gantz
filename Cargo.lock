@@ -665,16 +665,39 @@ version = "0.1.0"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
- "bevy_egui",
  "bevy_input",
+ "bevy_log",
+ "bevy_pkv",
  "bevy_time",
  "bevy_window",
+ "gantz_ca",
  "gantz_core",
- "gantz_egui",
  "gantz_std",
+ "ron 0.10.1",
  "serde",
  "steel-core",
  "web-sys",
+ "web-time",
+]
+
+[[package]]
+name = "bevy_gantz_egui"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_egui",
+ "bevy_gantz",
+ "bevy_log",
+ "bevy_pkv",
+ "egui_graph",
+ "gantz_ca",
+ "gantz_core",
+ "gantz_egui",
+ "ron 0.10.1",
+ "serde",
+ "steel-core",
+ "web-time",
 ]
 
 [[package]]
@@ -2730,6 +2753,7 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "bevy_gantz",
+ "bevy_gantz_egui",
  "bevy_pkv",
  "dyn-clone",
  "dyn-hash",

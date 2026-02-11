@@ -19,7 +19,6 @@ use std::{
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
 };
-use steel::steel_vm::engine::Engine;
 
 /// The graph type used by the graph node to represent its nested graph.
 pub type Graph<N> = petgraph::stable_graph::StableGraph<N, Edge, Directed, Index>;
@@ -77,71 +76,69 @@ where
     }
 }
 
-impl<Env, N> Node<Env> for Graph<N>
-where
-    N: Node<Env>,
-{
-    fn n_inputs(&self, env: &Env) -> usize {
-        inlets(env, self).count()
+impl<N: Node> Node for Graph<N> {
+    fn n_inputs(&self, ctx: node::MetaCtx) -> usize {
+        self.node_references()
+            .filter(|n_ref| n_ref.weight().inlet(ctx))
+            .count()
     }
 
-    fn n_outputs(&self, env: &Env) -> usize {
-        outlets(env, self).count()
+    fn n_outputs(&self, ctx: node::MetaCtx) -> usize {
+        self.node_references()
+            .filter(|n_ref| n_ref.weight().outlet(ctx))
+            .count()
     }
 
-    fn branches(&self, _: &Env) -> Vec<node::EvalConf> {
+    fn branches(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
         // TODO: generate branches based on inner node branching
         vec![]
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
-        nested_expr(ctx.env(), self, ctx.path(), ctx.inputs())
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+        nested_expr(ctx.get_node(), self, ctx.path(), ctx.inputs())
     }
 
-    fn stateful(&self, env: &Env) -> bool {
+    fn stateful(&self, ctx: node::MetaCtx) -> bool {
         self.node_references()
-            .any(|n_ref| n_ref.weight().stateful(env))
+            .any(|n_ref| n_ref.weight().stateful(ctx))
     }
 
-    fn register(&self, _env: &Env, _path: &[node::Id], _vm: &mut Engine) {
+    fn register(&self, _ctx: node::RegCtx<'_, '_>) {
         // Graph state hashmaps are lazily initialized by `update_value` when
         // nested stateful nodes register their state.
     }
 
-    fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
-        crate::graph::visit(ctx.env(), self, ctx.path(), visitor);
+    fn visit(&self, ctx: visit::Ctx<'_, '_>, visitor: &mut dyn node::Visitor) {
+        crate::graph::visit(ctx.get_node(), self, ctx.path(), visitor);
     }
 }
 
-impl<Env, N> Node<Env> for GraphNode<N>
-where
-    N: Node<Env>,
-{
-    fn n_inputs(&self, env: &Env) -> usize {
-        self.graph.n_inputs(env)
+impl<N: Node> Node for GraphNode<N> {
+    fn n_inputs(&self, ctx: node::MetaCtx) -> usize {
+        self.graph.n_inputs(ctx)
     }
 
-    fn n_outputs(&self, env: &Env) -> usize {
-        self.graph.n_outputs(env)
+    fn n_outputs(&self, ctx: node::MetaCtx) -> usize {
+        self.graph.n_outputs(ctx)
     }
 
-    fn branches(&self, env: &Env) -> Vec<node::EvalConf> {
-        self.graph.branches(env)
+    fn branches(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+        self.graph.branches(ctx)
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         self.graph.expr(ctx)
     }
 
-    fn stateful(&self, env: &Env) -> bool {
-        self.graph.stateful(env)
+    fn stateful(&self, ctx: node::MetaCtx) -> bool {
+        self.graph.stateful(ctx)
     }
 
-    fn register(&self, env: &Env, path: &[node::Id], vm: &mut Engine) {
-        self.graph.register(env, path, vm)
+    fn register(&self, ctx: node::RegCtx<'_, '_>) {
+        self.graph.register(ctx)
     }
 
-    fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
+    fn visit(&self, ctx: visit::Ctx<'_, '_>, visitor: &mut dyn node::Visitor) {
         self.graph.visit(ctx, visitor)
     }
 }
@@ -237,7 +234,7 @@ where
     }
 }
 
-impl<Env> Node<Env> for Inlet {
+impl Node for Inlet {
     /// This method should never be called during compilation.
     ///
     /// Inlet nodes are special-cased to enable statelessness:
@@ -246,24 +243,24 @@ impl<Env> Node<Env> for Inlet {
     /// - eval_stmt creates simple aliases to these bindings rather than calling node functions
     ///
     /// Returns `'()` as a safe fallback in case this is ever called outside normal compilation.
-    fn expr(&self, _ctx: node::ExprCtx<Env>) -> node::ExprResult {
+    fn expr(&self, _ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         node::parse_expr("'()")
     }
 
-    fn n_inputs(&self, _env: &Env) -> usize {
+    fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
         0
     }
 
-    fn n_outputs(&self, _env: &Env) -> usize {
+    fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
         1
     }
 
-    fn inlet(&self, _env: &Env) -> bool {
+    fn inlet(&self, _ctx: node::MetaCtx) -> bool {
         true
     }
 }
 
-impl<Env> Node<Env> for Outlet {
+impl Node for Outlet {
     /// This method should never be called during compilation.
     ///
     /// Outlet nodes are special-cased to enable statelessness:
@@ -272,19 +269,19 @@ impl<Env> Node<Env> for Outlet {
     /// - Outlet values are read directly from source node output bindings by nested_expr
     ///
     /// Returns `'()` as a safe fallback in case this is ever called outside normal compilation.
-    fn expr(&self, _ctx: node::ExprCtx<Env>) -> node::ExprResult {
+    fn expr(&self, _ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         node::parse_expr("'()")
     }
 
-    fn n_inputs(&self, _env: &Env) -> usize {
+    fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
         1
     }
 
-    fn n_outputs(&self, _env: &Env) -> usize {
+    fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
         0
     }
 
-    fn outlet(&self, _env: &Env) -> bool {
+    fn outlet(&self, _ctx: node::MetaCtx) -> bool {
         true
     }
 }
@@ -321,43 +318,29 @@ pub fn graph_partial_eq<N: PartialEq>(a: &Graph<N>, b: &Graph<N>) -> bool {
             .all(|(a, b)| a == b)
 }
 
-/// Count the number of inlet nodes in the given graph.
-pub fn inlets<'a, Env, G>(env: &'a Env, g: G) -> impl Iterator<Item = G::NodeRef> + 'a
-where
-    G: Data + IntoNodeReferences + 'a,
-    G::NodeWeight: Node<Env>,
-{
-    g.node_references()
-        .filter(|n_ref| n_ref.weight().inlet(env))
-}
-
-/// Count the number of outlet nodes in the given graph.
-pub fn outlets<'a, Env, G>(env: &'a Env, g: G) -> impl Iterator<Item = G::NodeRef> + 'a
-where
-    G: Data + IntoNodeReferences + 'a,
-    G::NodeWeight: Node<Env>,
-{
-    g.node_references()
-        .filter(|n_ref| n_ref.weight().outlet(env))
-}
-
 /// The implementation of the `GraphNode`'s `Node::expr` fn.
-pub fn nested_expr<Env, G>(
-    env: &Env,
+pub fn nested_expr<'a, G>(
+    get_node: node::GetNode<'a>,
     g: G,
     path: &[node::Id],
     inputs: &[Option<String>],
 ) -> node::ExprResult
 where
     G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable + Data<EdgeWeight = Edge>,
-    G::NodeWeight: Node<Env>,
+    G::NodeWeight: Node,
     G::NodeId: Eq + Hash,
 {
     use crate::compile;
     use petgraph::visit::EdgeRef;
 
+    let meta_ctx = node::MetaCtx::new(get_node);
+
     // Create define bindings for inlet values.
-    let inlet_ids: Vec<_> = inlets(env, g).map(|n_ref| n_ref.id()).collect();
+    let inlet_ids: Vec<_> = g
+        .node_references()
+        .filter(|n_ref| n_ref.weight().inlet(meta_ctx))
+        .map(|n_ref| n_ref.id())
+        .collect();
     let mut inlet_bindings = Vec::new();
     for (i, &inlet_id) in inlet_ids.iter().enumerate() {
         let node_ix = g.to_index(inlet_id);
@@ -371,8 +354,12 @@ where
     }
 
     // Use compile to create the evaluation order, steps, and statements.
-    let meta = compile::Meta::from_graph(env, g).map_err(|e| node::ExprError::custom(e))?;
-    let outlet_ids: Vec<_> = outlets(env, g).map(|n_ref| n_ref.id()).collect();
+    let meta = compile::Meta::from_graph(get_node, g).map_err(|e| node::ExprError::custom(e))?;
+    let outlet_ids: Vec<_> = g
+        .node_references()
+        .filter(|n_ref| n_ref.weight().outlet(meta_ctx))
+        .map(|n_ref| n_ref.id())
+        .collect();
     let flow_graph = compile::flow_graph(
         &meta,
         inlet_ids

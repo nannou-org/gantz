@@ -12,7 +12,7 @@ pub use graph::GraphNode;
 pub use id::{IDENTITY_NAME, Identity};
 pub use pull::{Pull, WithPullEval};
 pub use push::{Push, WithPushEval};
-pub use ref_::{NodeRegistry, Ref};
+pub use ref_::Ref;
 use serde::{Deserialize, Serialize};
 pub use state::{NodeState, State, WithStateType};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
@@ -29,23 +29,18 @@ pub mod ref_;
 pub mod state;
 
 /// The definitive abstraction of a gantz graph, the gantz `Node` trait.
-///
-/// The `Env` input parameter allows for providing a shared input to all
-/// nodes throughout the graph. This can be used for sharing immutable data
-/// between nodes without the need for shared references like `Arc` or `Rc`
-/// allowing graphs to remain serializable.
-pub trait Node<Env> {
+pub trait Node {
     /// The number of inputs to the node.
     ///
     /// The maximum number is [`Conns::MAX`].
-    fn n_inputs(&self, _env: &Env) -> usize {
+    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
         0
     }
 
     /// The number of outputs from the node.
     ///
     /// The maximum number is [`Conns::MAX`].
-    fn n_outputs(&self, _env: &Env) -> usize {
+    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
         0
     }
 
@@ -66,7 +61,7 @@ pub trait Node<Env> {
     /// element is the node's output value(s).
     ///
     /// By default, this is `vec![]`.
-    fn branches(&self, _env: &Env) -> Vec<EvalConf> {
+    fn branches(&self, _ctx: MetaCtx) -> Vec<EvalConf> {
         vec![]
     }
 
@@ -80,7 +75,7 @@ pub trait Node<Env> {
     /// If [`Node::n_outputs`] is 1, the expr should result in a single value.
     ///
     /// If [`Node::n_outputs`] is > 1, the expr should result in a list of values.
-    fn expr(&self, ctx: ExprCtx<Env>) -> ExprResult;
+    fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult;
 
     /// Specifies whether or not code should be generated to allow for push
     /// evaluation from instances of this node. Enabling push evaluation allows
@@ -96,7 +91,7 @@ pub trait Node<Env> {
     /// this node.
     ///
     /// By default, this is an empty vec.
-    fn push_eval(&self, _env: &Env) -> Vec<EvalConf> {
+    fn push_eval(&self, _ctx: MetaCtx) -> Vec<EvalConf> {
         vec![]
     }
 
@@ -114,17 +109,17 @@ pub trait Node<Env> {
     /// node.
     ///
     /// By default, this is an empty vec.
-    fn pull_eval(&self, _env: &Env) -> Vec<EvalConf> {
+    fn pull_eval(&self, _ctx: MetaCtx) -> Vec<EvalConf> {
         vec![]
     }
 
     /// Whether or not this node acts as an inlet for some nested graph.
-    fn inlet(&self, _env: &Env) -> bool {
+    fn inlet(&self, _ctx: MetaCtx) -> bool {
         false
     }
 
     /// Whether or not this node acts as an outlet for some nested graph.
-    fn outlet(&self, _env: &Env) -> bool {
+    fn outlet(&self, _ctx: MetaCtx) -> bool {
         false
     }
 
@@ -132,7 +127,7 @@ pub trait Node<Env> {
     ///
     /// Nodes returning `true` will have a special `state` variable accessible
     /// within their [`Node::expr`] provided during compilation.
-    fn stateful(&self, _env: &Env) -> bool {
+    fn stateful(&self, _ctx: MetaCtx) -> bool {
         false
     }
 
@@ -148,7 +143,7 @@ pub trait Node<Env> {
     /// must use this to initialise their state.
     ///
     /// By default, the node is assumed to be stateless, and this does nothing.
-    fn register(&self, _env: &Env, _path: &[Id], _vm: &mut Engine) {}
+    fn register(&self, _ctx: RegCtx<'_, '_>) {}
 
     /// Returns the content addresses of external nodes this node requires.
     ///
@@ -172,7 +167,7 @@ pub trait Node<Env> {
     /// Note that implementations should *only* visit nested nodes and not the
     /// node itself. To visit the node *and* all nested nodes, use the [`visit()`]
     /// function.
-    fn visit(&self, _ctx: visit::Ctx<Env>, _visitor: &mut dyn Visitor<Env>) {}
+    fn visit(&self, _ctx: visit::Ctx<'_, '_>, _visitor: &mut dyn Visitor) {}
 }
 
 /// A set of connections over which to push/pull evaluation.
@@ -191,10 +186,28 @@ pub enum EvalConf {
 /// Type used to represent a node's ID within a graph.
 pub type Id = usize;
 
+/// Type alias for the node lookup function.
+///
+/// Used by context types to allow looking up nodes by content address.
+pub type GetNode<'a> = &'a dyn std::ops::Fn(&gantz_ca::ContentAddr) -> Option<&'a dyn Node>;
+
+/// Context for node metadata queries (`n_inputs`, `n_outputs`, `stateful`, etc.).
+#[derive(Clone, Copy)]
+pub struct MetaCtx<'a> {
+    get_node: GetNode<'a>,
+}
+
+/// Context for node registration (registering state, functions with VM).
+pub struct RegCtx<'env, 'data> {
+    get_node: GetNode<'env>,
+    path: &'data [Id],
+    vm: &'data mut Engine,
+}
+
 /// Context provided to the [`Node::expr`] fn.
-pub struct ExprCtx<'a, Env> {
-    /// Access to the environment provided to the node.
-    env: &'a Env,
+pub struct ExprCtx<'env, 'data> {
+    /// Function for looking up nodes by content address.
+    get_node: GetNode<'env>,
     /// The path of this node relative to the root of the gantz graph.
     ///
     /// This is primarily provided to allow `GraphNode`s (or custom graph node
@@ -203,17 +216,16 @@ pub struct ExprCtx<'a, Env> {
     ///
     /// Besides this special case, `path` should not be used so that node's
     /// maintain consistent behaviour whether nested or not.
-    path: &'a [Id],
+    path: &'data [Id],
     /// An element for each input to the node.
     ///
     /// If the input is connected, it is `Some(name)` where `name` is a binding
     /// to the incoming value.
-    inputs: &'a [Option<String>],
-    /// An element for each input to the node.
+    inputs: &'data [Option<String>],
+    /// An element for each output from the node.
     ///
-    /// If the input is connected, it is `Some(name)` where `name` is a binding
-    /// to the incoming value.
-    outputs: &'a Conns,
+    /// If an output is `true`, it means a value is expected for the output.
+    outputs: &'data Conns,
 }
 
 /// Represents a function that can be called to begin evaluation of the graph
@@ -241,24 +253,68 @@ pub struct ExprError(Box<str>);
 /// Result type for expression generation.
 pub type ExprResult = Result<ExprKind, ExprError>;
 
-impl<'a, Env> ExprCtx<'a, Env> {
-    pub(crate) fn new(
-        env: &'a Env,
-        path: &'a [Id],
-        inputs: &'a [Option<String>],
-        outputs: &'a Conns,
+impl<'a> MetaCtx<'a> {
+    /// Create a new metadata context with the given node lookup function.
+    pub fn new(get_node: GetNode<'a>) -> Self {
+        Self { get_node }
+    }
+
+    /// Look up a node by content address.
+    pub fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&'a dyn Node> {
+        (self.get_node)(ca)
+    }
+}
+
+impl<'env, 'data> RegCtx<'env, 'data> {
+    /// Create a new registration context.
+    pub fn new(get_node: GetNode<'env>, path: &'data [Id], vm: &'data mut Engine) -> Self {
+        Self { get_node, path, vm }
+    }
+
+    /// Look up a node by content address.
+    pub fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&'env dyn Node> {
+        (self.get_node)(ca)
+    }
+
+    /// The path of this node relative to the root of the gantz graph.
+    pub fn path(&self) -> &'data [Id] {
+        self.path
+    }
+
+    /// Access to the node lookup function.
+    pub fn get_node(&self) -> GetNode<'env> {
+        self.get_node
+    }
+
+    /// Mutable access to the Steel VM.
+    pub fn vm(&mut self) -> &mut Engine {
+        self.vm
+    }
+
+    /// Decompose the context into its parts.
+    pub fn into_parts(self) -> (GetNode<'env>, &'data [Id], &'data mut Engine) {
+        (self.get_node, self.path, self.vm)
+    }
+}
+
+impl<'env, 'data> ExprCtx<'env, 'data> {
+    pub fn new(
+        get_node: GetNode<'env>,
+        path: &'data [Id],
+        inputs: &'data [Option<String>],
+        outputs: &'data Conns,
     ) -> Self {
         Self {
-            env,
+            get_node,
             path,
             inputs,
             outputs,
         }
     }
 
-    /// Access the environment provided to the node.
-    pub fn env(&self) -> &Env {
-        self.env
+    /// Look up a node by content address.
+    pub fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&'env dyn Node> {
+        (self.get_node)(ca)
     }
 
     /// The path of this node relative to the root of the gantz graph.
@@ -269,7 +325,7 @@ impl<'a, Env> ExprCtx<'a, Env> {
     ///
     /// Besides this special case, `path` should not be used so that node's
     /// maintain consistent behaviour whether nested or not.
-    pub fn path(&self) -> &[Id] {
+    pub fn path(&self) -> &'data [Id] {
         self.path
     }
 
@@ -277,7 +333,7 @@ impl<'a, Env> ExprCtx<'a, Env> {
     ///
     /// If the input is connected, it is `Some(name)` where `name` is a binding
     /// to the incoming value.
-    pub fn inputs(&self) -> &[Option<String>] {
+    pub fn inputs(&self) -> &'data [Option<String>] {
         self.inputs
     }
 
@@ -287,119 +343,120 @@ impl<'a, Env> ExprCtx<'a, Env> {
     ///
     /// Note that even if an output is connected, it may not be `true` if it is
     /// not included in the eval path.
-    ///
-    /// Note that even if
-    ///
-    /// If the output is connected, it is `true`.
-    pub fn outputs(&self) -> &Conns {
+    pub fn outputs(&self) -> &'data Conns {
         self.outputs
+    }
+
+    /// Access to the node lookup function.
+    pub fn get_node(&self) -> GetNode<'env> {
+        self.get_node
     }
 }
 
-impl<'a, Env, N> Node<Env> for &'a N
+impl<N> Node for &N
 where
-    N: ?Sized + Node<Env>,
+    N: ?Sized + Node,
 {
-    fn n_inputs(&self, env: &Env) -> usize {
-        (**self).n_inputs(env)
+    fn n_inputs(&self, ctx: MetaCtx) -> usize {
+        (**self).n_inputs(ctx)
     }
 
-    fn n_outputs(&self, env: &Env) -> usize {
-        (**self).n_outputs(env)
+    fn n_outputs(&self, ctx: MetaCtx) -> usize {
+        (**self).n_outputs(ctx)
     }
 
-    fn branches(&self, env: &Env) -> Vec<EvalConf> {
-        (**self).branches(env)
+    fn branches(&self, ctx: MetaCtx) -> Vec<EvalConf> {
+        (**self).branches(ctx)
     }
 
-    fn expr(&self, ctx: ExprCtx<Env>) -> ExprResult {
+    fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
         (**self).expr(ctx)
     }
 
-    fn push_eval(&self, env: &Env) -> Vec<EvalConf> {
-        (**self).push_eval(env)
+    fn push_eval(&self, ctx: MetaCtx) -> Vec<EvalConf> {
+        (**self).push_eval(ctx)
     }
 
-    fn pull_eval(&self, env: &Env) -> Vec<EvalConf> {
-        (**self).pull_eval(env)
+    fn pull_eval(&self, ctx: MetaCtx) -> Vec<EvalConf> {
+        (**self).pull_eval(ctx)
     }
 
-    fn inlet(&self, env: &Env) -> bool {
-        (**self).inlet(env)
+    fn inlet(&self, ctx: MetaCtx) -> bool {
+        (**self).inlet(ctx)
     }
 
-    fn outlet(&self, env: &Env) -> bool {
-        (**self).outlet(env)
+    fn outlet(&self, ctx: MetaCtx) -> bool {
+        (**self).outlet(ctx)
     }
 
-    fn stateful(&self, env: &Env) -> bool {
-        (**self).stateful(env)
+    fn stateful(&self, ctx: MetaCtx) -> bool {
+        (**self).stateful(ctx)
     }
 
-    fn register(&self, env: &Env, path: &[Id], vm: &mut Engine) {
-        (**self).register(env, path, vm)
+    fn register(&self, ctx: RegCtx<'_, '_>) {
+        (**self).register(ctx)
     }
 
     fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
         (**self).required_addrs()
     }
 
-    fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn Visitor<Env>) {
+    fn visit(&self, ctx: visit::Ctx<'_, '_>, visitor: &mut dyn Visitor) {
         (**self).visit(ctx, visitor)
     }
 }
 
 macro_rules! impl_node_for_ptr {
     ($($Ty:ident)::*) => {
-        impl<Env, T> Node<Env> for $($Ty)::*<T>
+        impl<T> Node for $($Ty)::*<T>
         where
-            T: ?Sized + Node<Env>,
+            T: ?Sized + Node,
         {
-            fn n_inputs(&self, env: &Env) -> usize {
-                (**self).n_inputs(env)
+            fn n_inputs(&self, ctx: MetaCtx) -> usize {
+                (**self).n_inputs(ctx)
             }
 
-            fn n_outputs(&self, env: &Env) -> usize {
-                (**self).n_outputs(env)
+            fn n_outputs(&self, ctx: MetaCtx) -> usize {
+                (**self).n_outputs(ctx)
             }
 
-            fn branches(&self, env: &Env) -> Vec<EvalConf> {
-                (**self).branches(env)
+            fn branches(&self, ctx: MetaCtx) -> Vec<EvalConf> {
+                (**self).branches(ctx)
             }
 
-            fn expr(&self, ctx: ExprCtx<Env>) -> ExprResult {
+            fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
                 (**self).expr(ctx)
             }
 
-            fn push_eval(&self, env: &Env) -> Vec<EvalConf> {
-                (**self).push_eval(env)
+            fn push_eval(&self, ctx: MetaCtx) -> Vec<EvalConf> {
+                (**self).push_eval(ctx)
             }
 
-            fn pull_eval(&self, env: &Env) -> Vec<EvalConf> {
-                (**self).pull_eval(env)
+            fn pull_eval(&self, ctx: MetaCtx) -> Vec<EvalConf> {
+                (**self).pull_eval(ctx)
             }
 
-            fn inlet(&self, env: &Env) -> bool {
-                (**self).inlet(env)
+            fn inlet(&self, ctx: MetaCtx) -> bool {
+                (**self).inlet(ctx)
             }
 
-            fn outlet(&self, env: &Env) -> bool {
-                (**self).outlet(env)
+            fn outlet(&self, ctx: MetaCtx) -> bool {
+                (**self).outlet(ctx)
             }
 
-            fn stateful(&self, env: &Env) -> bool {
-                (**self).stateful(env)
+            fn stateful(&self, ctx: MetaCtx) -> bool {
+                (**self).stateful(ctx)
             }
 
-            fn register(&self, env: &Env, path: &[Id], vm: &mut Engine) {
-                (**self).register(env, path, vm)
+            fn register(&self, ctx: RegCtx<'_, '_>) {
+                (**self).register(ctx)
             }
 
             fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
                 (**self).required_addrs()
             }
 
-            fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn Visitor<Env>) {
+            fn visit(&self, ctx: visit::Ctx<'_, '_>, visitor: &mut dyn Visitor) {
                 (**self).visit(ctx, visitor)
             }
         }
@@ -410,10 +467,10 @@ impl_node_for_ptr!(Box);
 impl_node_for_ptr!(std::rc::Rc);
 impl_node_for_ptr!(std::sync::Arc);
 
-impl<'a, Env> Clone for ExprCtx<'a, Env> {
+impl<'env, 'data> Clone for ExprCtx<'env, 'data> {
     fn clone(&self) -> Self {
         Self {
-            env: self.env,
+            get_node: self.get_node,
             path: self.path,
             inputs: self.inputs,
             outputs: self.outputs,
@@ -457,13 +514,13 @@ pub fn parse_expr(src: &str) -> ExprResult {
 }
 
 /// Visit this node and all nested nodes.
-pub fn visit<Env>(ctx: visit::Ctx<Env>, node: &dyn Node<Env>, visitor: &mut dyn Visitor<Env>) {
+pub fn visit(ctx: visit::Ctx<'_, '_>, node: &dyn Node, visitor: &mut dyn Visitor) {
     visitor.visit_pre(ctx, node);
     node.visit(ctx, visitor);
     visitor.visit_post(ctx, node);
 }
 
 /// Register the given node and all nested nodes.
-pub fn register<Env>(ctx: visit::Ctx<Env>, node: &dyn Node<Env>, vm: &mut Engine) {
+pub fn register(ctx: visit::Ctx<'_, '_>, node: &dyn Node, vm: &mut Engine) {
     visit(ctx, node, &mut visit::Register(vm));
 }

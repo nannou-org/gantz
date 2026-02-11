@@ -1,6 +1,6 @@
 //! Utilities for working with [`gantz_ca::Registry`].
 
-use crate::{Edge, Node, graph};
+use crate::{Edge, Node, graph, node};
 use petgraph::visit::{Data, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, Visitable};
 use std::collections::HashSet;
 
@@ -8,8 +8,8 @@ use std::collections::HashSet;
 ///
 /// Starts from all named commits and head commits, then transitively follows
 /// references within graphs to build the complete set of required commits.
-pub fn required_commits<Env, G>(
-    env: &Env,
+pub fn required_commits<'a, G>(
+    get_node: node::GetNode<'a>,
     reg: &gantz_ca::Registry<G>,
     heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
 ) -> HashSet<gantz_ca::CommitAddr>
@@ -19,7 +19,7 @@ where
         + IntoNodeReferences
         + NodeIndexable
         + Visitable,
-    for<'g> <&'g G as Data>::NodeWeight: Node<Env>,
+    for<'g> <&'g G as Data>::NodeWeight: Node,
 {
     let mut required = HashSet::new();
     let mut to_visit: Vec<gantz_ca::ContentAddr> = reg
@@ -36,7 +36,7 @@ where
         let commit_ca = gantz_ca::CommitAddr::from(addr);
         if reg.commits().contains_key(&commit_ca) && required.insert(commit_ca) {
             if let Some(graph) = reg.commit_graph_ref(&commit_ca) {
-                to_visit.extend(graph::required_addrs(env, graph));
+                to_visit.extend(graph::required_addrs(get_node, graph));
             }
         }
     }

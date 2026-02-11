@@ -7,7 +7,7 @@ use std::fmt::Debug;
 use steel::SteelVal;
 use steel::steel_vm::engine::Engine;
 
-fn node_push() -> node::Push<(), node::Expr> {
+fn node_push() -> node::Push<node::Expr> {
     node::expr("'()").unwrap().with_push_eval()
 }
 
@@ -36,8 +36,13 @@ fn node_number() -> node::Expr {
 }
 
 // Helper trait for debugging the graph.
-trait DebugNode: Debug + Node<()> {}
-impl<T> DebugNode for T where T: Debug + Node<()> {}
+trait DebugNode: Debug + Node {}
+impl<T> DebugNode for T where T: Debug + Node {}
+
+// A no-op node lookup function for tests that don't need it.
+fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
+    None
+}
 
 // A simple test graph that adds two "one"s and checks that it equals "two".
 //
@@ -86,11 +91,8 @@ fn test_graph_push_eval() {
     g.add_edge(add, assert_eq, Edge::from((0, 0)));
     g.add_edge(two, assert_eq, Edge::from((0, 1)));
 
-    // No need to share an environment between nodes for this test.
-    let env = ();
-
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::compile::module(&env, &g).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
     // Function per node alongside the single push eval function.
     assert_eq!(module.len(), g.node_count() + 1);
 
@@ -99,7 +101,7 @@ fn test_graph_push_eval() {
 
     // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&env, &g, &[], &mut vm);
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
     // Register the functions, then call push_eval.
     for f in module {
@@ -146,18 +148,15 @@ fn test_graph_pull_eval() {
     g.add_edge(add, assert_eq, Edge::from((0, 0)));
     g.add_edge(two, assert_eq, Edge::from((0, 1)));
 
-    // No need to share an environment between nodes for this test.
-    let env = ();
-
     // Generate the steel module.
-    let module = gantz_core::compile::module(&env, &g).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
 
     // Prepare the VM.
     let mut vm = Engine::new_base();
 
     // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&env, &g, &[], &mut vm);
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
     // Prepare the eval fn.
     for expr in module {
@@ -195,23 +194,23 @@ fn test_graph_push_cond_eval() {
     #[derive(Debug)]
     struct Select;
 
-    impl<Env> Node<Env> for Select {
-        fn n_inputs(&self, _: &Env) -> usize {
+    impl Node for Select {
+        fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
             1
         }
 
-        fn n_outputs(&self, _: &Env) -> usize {
+        fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
             2
         }
 
-        fn branches(&self, _: &Env) -> Vec<node::EvalConf> {
+        fn branches(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
             vec![
                 node::EvalConf::Set([true, false].try_into().unwrap()),
                 node::EvalConf::Set([false, true].try_into().unwrap()),
             ]
         }
 
-        fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
+        fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
             let x = ctx.inputs()[0].as_deref().expect("must have one input");
             let expr = format!(
                 r#"
@@ -248,11 +247,8 @@ fn test_graph_push_cond_eval() {
     g.add_edge(six, number, Edge::from((0, 0)));
     g.add_edge(seven, number, Edge::from((0, 0)));
 
-    // No need to share an environment between nodes for this test.
-    let env = ();
-
     // Generate the module.
-    let module = gantz_core::compile::module(&env, &g).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
     // Function per node alongside the two push eval functions.
     assert_eq!(module.len(), g.node_count() + 2);
 
@@ -261,7 +257,7 @@ fn test_graph_push_cond_eval() {
 
     // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&env, &g, &[], &mut vm);
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
     // Register the functions, then call push_eval.
     for f in module {
@@ -321,18 +317,15 @@ fn test_graph_eval_should_panic() {
     g.add_edge(add, assert_eq, Edge::from((0, 0)));
     g.add_edge(one, assert_eq, Edge::from((0, 1)));
 
-    // No need to share an environment between nodes for this test.
-    let env = ();
-
     // Generate the steel module.
-    let module = gantz_core::compile::module(&env, &g).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
 
     // Prepare the VM.
     let mut vm = Engine::new_base();
 
     // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&env, &g, &[], &mut vm);
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
     // Run the module.
     for expr in module {
@@ -354,8 +347,8 @@ fn test_graph_push_eval_subset() {
     #[derive(Debug)]
     struct Src(u32, u32);
 
-    impl<Env> Node<Env> for Src {
-        fn push_eval(&self, _: &Env) -> Vec<node::EvalConf> {
+    impl Node for Src {
+        fn push_eval(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
             // Generate 3 push eval fns.
             vec![
                 // Push only the first output.
@@ -367,11 +360,11 @@ fn test_graph_push_eval_subset() {
             ]
         }
 
-        fn n_outputs(&self, _: &Env) -> usize {
+        fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
             2
         }
 
-        fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
+        fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
             let Src(a, b) = *self;
             let outputs = ctx.outputs();
             let expr = match (outputs.get(0).unwrap(), outputs.get(1).unwrap()) {
@@ -399,18 +392,15 @@ fn test_graph_push_eval_subset() {
     g.add_edge(source, store_a, Edge::from((0, 0)));
     g.add_edge(source, store_b, Edge::from((1, 0)));
 
-    // No need to share an environment between nodes for this test.
-    let env = ();
-
     // Generate the module
-    let module = gantz_core::compile::module(&env, &g).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
 
     // Create the VM
     let mut vm = Engine::new_base();
 
     // Initialize the state
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&env, &g, &[], &mut vm);
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
     // Register all functions
     for f in module {

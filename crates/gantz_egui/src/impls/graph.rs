@@ -1,16 +1,16 @@
-use crate::{Cmd, NodeCtx, NodeUi, widget::node_inspector};
+use crate::{Cmd, NodeCtx, NodeUi, Registry, widget::node_inspector};
 
-impl<Env, N> NodeUi<Env> for gantz_core::node::GraphNode<N>
+impl<N> NodeUi for gantz_core::node::GraphNode<N>
 where
     N: gantz_ca::CaHash,
 {
-    fn name(&self, _: &Env) -> &str {
+    fn name(&self, _: &dyn Registry) -> &str {
         "graph"
     }
 
     fn ui(
         &mut self,
-        ctx: NodeCtx<Env>,
+        ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
         uictx.framed(|ui| {
@@ -22,7 +22,7 @@ where
         })
     }
 
-    fn inspector_rows(&mut self, _ctx: &mut NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(&mut self, _ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
         let row_h = node_inspector::table_row_h(body.ui_mut());
         body.row(row_h, |mut row| {
             row.col(|ui| {

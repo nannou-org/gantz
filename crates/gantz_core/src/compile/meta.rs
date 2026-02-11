@@ -70,12 +70,13 @@ pub(crate) struct MetaTree {
 
 impl Meta {
     /// Construct a `Meta` for a single gantz graph.
-    pub fn from_graph<Env, G>(env: &Env, g: G) -> Result<Self, NodeConnsError>
+    pub fn from_graph<'a, G>(get_node: node::GetNode<'a>, g: G) -> Result<Self, NodeConnsError>
     where
         G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable,
-        G::NodeWeight: Node<Env>,
+        G::NodeWeight: Node,
     {
         let mut flow = Meta::default();
+        let ctx = node::MetaCtx::new(get_node);
         for n_ref in g.node_references() {
             let n = n_ref.id();
             let inputs = g
@@ -83,17 +84,17 @@ impl Meta {
                 .map(|e_ref| (g.to_index(e_ref.source()), e_ref.weight().clone()));
             let id = g.to_index(n);
             let node = n_ref.weight();
-            flow.add_node(env, id, node, inputs)?;
+            flow.add_node(ctx, id, node, inputs)?;
         }
         Ok(flow)
     }
 
     /// Add the node with the given ID and inputs to the `Meta`.
-    pub fn add_node<Env>(
+    pub fn add_node(
         &mut self,
-        env: &Env,
+        ctx: node::MetaCtx,
         id: node::Id,
-        node: &dyn Node<Env>,
+        node: &dyn Node,
         inputs: impl IntoIterator<Item = (node::Id, Edge)>,
     ) -> Result<(), NodeConnsError> {
         // Add the node.
@@ -114,8 +115,8 @@ impl Meta {
         }
 
         // Register whether the node has inputs or outputs.
-        let inputs = node.n_inputs(env);
-        let outputs = node.n_outputs(env);
+        let inputs = node.n_inputs(ctx);
+        let outputs = node.n_outputs(ctx);
         if inputs > 0 {
             self.inputs.insert(id, inputs);
         }
@@ -124,7 +125,7 @@ impl Meta {
         }
 
         // Track node branching.
-        let branches = node.branches(env);
+        let branches = node.branches(ctx);
         if !branches.is_empty() {
             self.branches.insert(
                 id,
@@ -136,7 +137,7 @@ impl Meta {
         }
 
         // Register push/pull eval for the node if necessary.
-        let push_eval = node.push_eval(env);
+        let push_eval = node.push_eval(ctx);
         if !push_eval.is_empty() {
             self.push.insert(
                 id,
@@ -146,7 +147,7 @@ impl Meta {
                     .collect::<Result<_, _>>()?,
             );
         }
-        let pull_eval = node.pull_eval(env);
+        let pull_eval = node.pull_eval(ctx);
         if !pull_eval.is_empty() {
             self.pull.insert(
                 id,
@@ -156,13 +157,13 @@ impl Meta {
                     .collect::<Result<_, _>>()?,
             );
         }
-        if node.inlet(env) {
+        if node.inlet(ctx) {
             self.inlets.insert(id);
         }
-        if node.outlet(env) {
+        if node.outlet(ctx) {
             self.outlets.insert(id);
         }
-        if node.stateful(env) {
+        if node.stateful(ctx) {
             self.stateful.insert(id);
         }
         Ok(())
@@ -171,8 +172,8 @@ impl Meta {
 
 /// Allow for constructing a rose-tree of `Meta`s (one for each graph) using
 /// the `Node::visit` implementation.
-impl<Env> Visitor<Env> for MetaTree {
-    fn visit_pre(&mut self, ctx: visit::Ctx<Env>, node: &dyn Node<Env>) {
+impl Visitor for MetaTree {
+    fn visit_pre(&mut self, ctx: visit::Ctx<'_, '_>, node: &dyn Node) {
         let node_path = ctx.path();
 
         // Ensure the plan for the graph owning this node exists, retrieve it.
@@ -181,9 +182,10 @@ impl<Env> Visitor<Env> for MetaTree {
 
         // Insert the node.
         let id = ctx.id();
+        let meta_ctx = node::MetaCtx::new(ctx.get_node());
         if let Err(error) = tree
             .elem
-            .add_node(ctx.env(), id, node, ctx.inputs().iter().copied())
+            .add_node(meta_ctx, id, node, ctx.inputs().iter().copied())
         {
             self.errors.push(MetaError {
                 path: node_path.to_vec(),

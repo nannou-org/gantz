@@ -2,29 +2,28 @@
 
 use crate::{NodeCtx, NodeUi};
 use gantz_ca::CaHash;
-use gantz_core::node;
+use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use serde::{Deserialize, Serialize};
-use steel::steel_vm::engine::Engine;
 
 /// A node that displays the debug representation of values passing through.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
 #[cahash("gantz.inspect")]
 pub struct Inspect;
 
-impl<Env> gantz_core::Node<Env> for Inspect {
-    fn n_inputs(&self, _: &Env) -> usize {
+impl gantz_core::Node for Inspect {
+    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
         1
     }
 
-    fn n_outputs(&self, _: &Env) -> usize {
+    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
         1
     }
 
-    fn stateful(&self, _: &Env) -> bool {
+    fn stateful(&self, _ctx: MetaCtx) -> bool {
         true
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
+    fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
         let expr = match ctx.inputs().get(0) {
             Some(Some(val)) => format!("(begin (set! state {val}) state)"),
             _ => "(begin state)".to_string(),
@@ -32,19 +31,20 @@ impl<Env> gantz_core::Node<Env> for Inspect {
         node::parse_expr(&expr)
     }
 
-    fn register(&self, _env: &Env, path: &[node::Id], vm: &mut Engine) {
-        node::state::init_value_if_absent(vm, path, || steel::SteelVal::Void).unwrap()
+    fn register(&self, mut ctx: RegCtx<'_, '_>) {
+        let path = ctx.path();
+        node::state::init_value_if_absent(ctx.vm(), path, || steel::SteelVal::Void).unwrap()
     }
 }
 
-impl<Env> NodeUi<Env> for Inspect {
-    fn name(&self, _: &Env) -> &str {
+impl NodeUi for Inspect {
+    fn name(&self, _: &dyn crate::Registry) -> &str {
         "inspect"
     }
 
     fn ui(
         &mut self,
-        ctx: NodeCtx<Env>,
+        ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
         let mut frame = egui_graph::node::default_frame(uictx.style(), uictx.interaction());

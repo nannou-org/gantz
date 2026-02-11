@@ -1,4 +1,4 @@
-use crate::{Cmd, NodeUi};
+use crate::{Cmd, NodeUi, Registry};
 use egui_graph::{
     self,
     node::{EdgeEvent, SocketKind},
@@ -52,8 +52,8 @@ pub type NodeIndex = petgraph::graph::NodeIndex<usize>;
 
 /// A widget used for presenting a graph scene for viewing and manipulating a
 /// gantz graph.
-pub struct GraphScene<'a, Env, N> {
-    env: &'a Env,
+pub struct GraphScene<'a, N> {
+    registry: &'a dyn Registry,
     graph: &'a mut Graph<N>,
     path: &'a [node::Id],
     id: egui::Id,
@@ -88,9 +88,9 @@ pub struct Selection {
     pub edges: HashSet<EdgeIndex>,
 }
 
-impl<'a, Env, N> GraphScene<'a, Env, N>
+impl<'a, N> GraphScene<'a, N>
 where
-    N: Node<Env> + NodeUi<Env>,
+    N: Node + NodeUi,
 {
     /// Create a graph scene for the given graph that resides at the given path
     /// from the root.
@@ -100,9 +100,9 @@ where
     ///
     /// NOTE: this means the `path` is not an index into the graph, but is the
     /// path that this braph resides at within some root graph.
-    pub fn new(env: &'a Env, graph: &'a mut Graph<N>, path: &'a [node::Id]) -> Self {
+    pub fn new(registry: &'a dyn Registry, graph: &'a mut Graph<N>, path: &'a [node::Id]) -> Self {
         Self {
-            env,
+            registry,
             graph,
             path,
             id: egui::Id::new("gantz-graph-scene"),
@@ -163,7 +163,8 @@ where
             .center_view(self.center_view)
             .show(view, ui, |ui, show| {
                 show.nodes(ui, |nctx, ui| {
-                    node_responses = nodes(self.env, self.graph, self.path, nctx, state, vm, ui);
+                    node_responses =
+                        nodes(self.registry, self.graph, self.path, nctx, state, vm, ui);
                 })
                 .edges(ui, |ectx, ui| edges(self.graph, self.path, ectx, state, ui));
             })
@@ -222,8 +223,8 @@ pub fn layout<N>(
     egui_graph::layout(nodes, edges, flow)
 }
 
-fn nodes<Env, N>(
-    env: &Env,
+fn nodes<N>(
+    registry: &dyn Registry,
     graph: &mut Graph<N>,
     path: &[node::Id],
     nctx: &mut egui_graph::NodesCtx,
@@ -232,28 +233,31 @@ fn nodes<Env, N>(
     ui: &mut egui::Ui,
 ) -> Vec<(NodeIndex, NodeResponse)>
 where
-    N: Node<Env> + NodeUi<Env>,
+    N: Node + NodeUi,
 {
+    // Create meta context using registry for proper node lookup.
+    let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
+    let meta_ctx = gantz_core::node::MetaCtx::new(&get_node);
     let node_ids: Vec<_> = graph.node_identifiers().collect();
     let mut path = path.to_vec();
-    let (inlets, outlets) = crate::inlet_outlet_ids(env, graph);
+    let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
     let mut responses = Vec::with_capacity(node_ids.len());
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node = &mut graph[n_id];
-        let inputs = node.n_inputs(env);
-        let outputs = node.n_outputs(env);
+        let inputs = node.n_inputs(meta_ctx);
+        let outputs = node.n_outputs(meta_ctx);
         let node_id = egui_graph::NodeId::from_u64(n_ix as u64);
         let response = egui_graph::node::Node::from_id(node_id)
             .inputs(inputs)
             .outputs(outputs)
-            .flow(node.flow(env))
+            .flow(node.flow(registry))
             .show(nctx, ui, |nui_ctx| {
                 path.push(n_ix);
 
                 // Create the gantz node context.
                 let node_ctx =
-                    crate::NodeCtx::new(env, &path, &inlets, &outlets, vm, &mut state.cmds);
+                    crate::NodeCtx::new(registry, &path, &inlets, &outlets, vm, &mut state.cmds);
 
                 // Instantiate the node UI, return its response.
                 let response = node.ui(node_ctx, nui_ctx);

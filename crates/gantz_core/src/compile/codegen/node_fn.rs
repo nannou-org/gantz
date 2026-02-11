@@ -46,12 +46,13 @@ impl<'a> NodeFns<'a> {
     }
 }
 
-impl<'pl, Env> Visitor<Env> for NodeFns<'pl> {
+impl Visitor for NodeFns<'_> {
     // We use `visit_post` so that the nested are generated before parents.
-    fn visit_post(&mut self, ctx: visit::Ctx<Env>, node: &dyn Node<Env>) {
+    fn visit_post(&mut self, ctx: visit::Ctx<'_, '_>, node: &dyn Node) {
         // Skip generating node functions for inlet and outlet nodes - their
         // values are handled directly by nested_expr bindings.
-        if node.inlet(ctx.env()) || node.outlet(ctx.env()) {
+        let meta_ctx = node::MetaCtx::new(ctx.get_node());
+        if node.inlet(meta_ctx) || node.outlet(meta_ctx) {
             return;
         }
 
@@ -83,7 +84,7 @@ impl<'pl, Env> Visitor<Env> for NodeFns<'pl> {
         let range = (Included(start), Excluded(end));
         let input_confs = tree.elem.range(range);
         for conf in input_confs {
-            match node_fn(ctx.env(), node, node_path, &conf.conns) {
+            match node_fn(ctx.get_node(), node, node_path, &conf.conns) {
                 Ok(fn_expr) => self.fns.push(fn_expr),
                 Err(error) => self.errors.push(
                     NodeExprError {
@@ -131,9 +132,9 @@ pub(crate) fn name(node_path: &[node::Id], inputs: &node::Conns, outputs: &node:
 }
 
 /// Generate a function for a single node with the given set of connected inputs.
-pub(crate) fn node_fn<Env>(
-    env: &Env,
-    node: &dyn Node<Env>,
+pub(crate) fn node_fn<'a>(
+    get_node: node::GetNode<'a>,
+    node: &dyn Node,
     node_path: &[node::Id],
     conns: &NodeConns,
 ) -> Result<ExprKind, node::ExprError> {
@@ -163,13 +164,14 @@ pub(crate) fn node_fn<Env>(
         .collect();
 
     // Get the node's expression
-    let ctx = node::ExprCtx::new(env, node_path, &input_exprs, &conns.outputs);
+    let ctx = node::ExprCtx::new(get_node, node_path, &input_exprs, &conns.outputs);
     let node_expr = node.expr(ctx)?;
 
     // Construct the full function definition
     // FIXME: Remove this when switching to `flow::NodeConf`.
     let fn_name = name(node_path, &conns.inputs, &conns.outputs);
-    let fn_body = if node.stateful(env) {
+    let meta_ctx = node::MetaCtx::new(get_node);
+    let fn_body = if node.stateful(meta_ctx) {
         input_args.push(STATE.to_string());
         format!("(let ((output {node_expr})) (list output state))")
     } else {
@@ -183,17 +185,17 @@ pub(crate) fn node_fn<Env>(
 
 /// Given a gantz graph and a rose tree with the associated node configs,
 /// produce a function for every node configuration in the graph.
-pub(crate) fn node_fns<Env, G>(
-    env: &Env,
+pub(crate) fn node_fns<'a, G>(
+    get_node: node::GetNode<'a>,
     g: G,
     node_confs_tree: &RoseTree<NodeConfs>,
 ) -> Result<Vec<ExprKind>, NodeFnErrors>
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
-    G::NodeWeight: Node<Env>,
+    G::NodeWeight: Node,
 {
     let mut node_fns = NodeFns::new(node_confs_tree);
-    crate::graph::visit(env, g, &[], &mut node_fns);
+    crate::graph::visit(get_node, g, &[], &mut node_fns);
     if !node_fns.errors.is_empty() {
         return Err(NodeFnErrors(node_fns.errors));
     }

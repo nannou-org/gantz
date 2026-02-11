@@ -13,14 +13,14 @@ use steel::{
 use steel_derive::Steel;
 
 /// Simple node for pushing evaluation through the graph.
-fn node_push() -> node::Push<(), node::Expr> {
+fn node_push() -> node::Push<node::Expr> {
     node::expr("'()").unwrap().with_push_eval()
 }
 
 // A simple counter node.
 //
 // Increases its `u32` state by `1` each time it receives an input of any type.
-fn node_counter() -> node::State<(), node::Expr, Counter> {
+fn node_counter() -> node::State<node::Expr, Counter> {
     let expr = r#"
         (begin
           $push
@@ -54,8 +54,13 @@ impl NodeState for Counter {
 }
 
 // Helper trait for debugging the graph.
-trait DebugNode: Debug + Node<()> {}
-impl<T> DebugNode for T where T: Debug + Node<()> {}
+trait DebugNode: Debug + Node {}
+impl<T> DebugNode for T where T: Debug + Node {}
+
+// A no-op node lookup function for tests that don't need it.
+fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
+    None
+}
 
 // A simple as possible test graph for testing state.
 //
@@ -81,18 +86,15 @@ fn test_graph_with_counter() {
     let counter = g.add_node(Box::new(counter) as Box<_>);
     g.add_edge(push, counter, Edge::from((0, 0)));
 
-    // No need to share an environment between nodes for this test.
-    let env = ();
-
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::compile::module(&env, &g).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
 
     // Initialise the VM.
     let mut vm = Engine::new_base();
 
     // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&env, &g, &[], &mut vm);
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
     // Initialise the eval fn.
     for f in module {
@@ -174,18 +176,15 @@ fn test_graph_with_counters() {
     g.add_edge(c_b, c_c, Edge::from((0, 0)));
     g.add_edge(p_c, c_c, Edge::from((0, 0)));
 
-    // No need to share an environment between nodes for this test.
-    let env = ();
-
     // Generate the module, which should have one expr for each `push`.
-    let module = gantz_core::compile::module(&env, &g).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
 
     // Initialise the VM.
     let mut vm = Engine::new_base();
 
     // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&env, &g, &[], &mut vm);
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
     // Initialise the eval fns.
     for f in &module {

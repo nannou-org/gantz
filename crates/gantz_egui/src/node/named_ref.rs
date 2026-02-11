@@ -2,9 +2,8 @@
 
 use crate::{Cmd, NodeCtx, NodeUi, widget::node_inspector};
 use gantz_ca::CaHash;
-use gantz_core::node::{self, Node};
+use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, Node, RegCtx};
 use serde::{Deserialize, Serialize};
-use steel::steel_vm::engine::Engine;
 
 /// The warning color used for outdated references.
 pub fn outdated_color() -> egui::Color32 {
@@ -38,6 +37,8 @@ pub struct NamedRef {
 pub trait NameRegistry {
     /// Returns the current content address for the given name, if it exists.
     fn name_ca(&self, name: &str) -> Option<gantz_ca::ContentAddr>;
+    /// Returns true if a node with the given content address exists in the environment.
+    fn node_exists(&self, ca: &gantz_ca::ContentAddr) -> bool;
 }
 
 impl NamedRef {
@@ -71,81 +72,74 @@ impl NamedRef {
     }
 }
 
-impl<Env> Node<Env> for NamedRef
-where
-    Env: gantz_core::node::ref_::NodeRegistry,
-    Env::Node: Node<Env>,
-{
-    fn n_inputs(&self, env: &Env) -> usize {
-        self.ref_.n_inputs(env)
+impl Node for NamedRef {
+    fn n_inputs(&self, ctx: MetaCtx) -> usize {
+        self.ref_.n_inputs(ctx)
     }
 
-    fn n_outputs(&self, env: &Env) -> usize {
-        self.ref_.n_outputs(env)
+    fn n_outputs(&self, ctx: MetaCtx) -> usize {
+        self.ref_.n_outputs(ctx)
     }
 
-    fn branches(&self, env: &Env) -> Vec<node::EvalConf> {
-        self.ref_.branches(env)
+    fn branches(&self, ctx: MetaCtx) -> Vec<node::EvalConf> {
+        self.ref_.branches(ctx)
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
+    fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
         self.ref_.expr(ctx)
     }
 
-    fn push_eval(&self, env: &Env) -> Vec<node::EvalConf> {
-        self.ref_.push_eval(env)
+    fn push_eval(&self, ctx: MetaCtx) -> Vec<node::EvalConf> {
+        self.ref_.push_eval(ctx)
     }
 
-    fn pull_eval(&self, env: &Env) -> Vec<node::EvalConf> {
-        self.ref_.pull_eval(env)
+    fn pull_eval(&self, ctx: MetaCtx) -> Vec<node::EvalConf> {
+        self.ref_.pull_eval(ctx)
     }
 
-    fn stateful(&self, env: &Env) -> bool {
-        <gantz_core::node::Ref as Node<Env>>::stateful(&self.ref_, env)
+    fn stateful(&self, ctx: MetaCtx) -> bool {
+        self.ref_.stateful(ctx)
     }
 
-    fn register(&self, env: &Env, path: &[node::Id], vm: &mut Engine) {
-        <gantz_core::node::Ref as Node<Env>>::register(&self.ref_, env, path, vm)
+    fn register(&self, ctx: RegCtx<'_, '_>) {
+        self.ref_.register(ctx)
     }
 
-    fn inlet(&self, env: &Env) -> bool {
-        <gantz_core::node::Ref as Node<Env>>::inlet(&self.ref_, env)
+    fn inlet(&self, ctx: MetaCtx) -> bool {
+        self.ref_.inlet(ctx)
     }
 
-    fn outlet(&self, env: &Env) -> bool {
-        <gantz_core::node::Ref as Node<Env>>::outlet(&self.ref_, env)
+    fn outlet(&self, ctx: MetaCtx) -> bool {
+        self.ref_.outlet(ctx)
     }
 
     fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
         vec![self.ref_.content_addr()]
     }
 
-    fn visit(&self, ctx: gantz_core::visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
+    fn visit(&self, ctx: gantz_core::visit::Ctx<'_, '_>, visitor: &mut dyn node::Visitor) {
         self.ref_.visit(ctx, visitor)
     }
 }
 
-impl<Env> NodeUi<Env> for NamedRef
-where
-    Env: NameRegistry + gantz_core::node::ref_::NodeRegistry,
-{
-    fn name(&self, _env: &Env) -> &str {
+impl NodeUi for NamedRef {
+    fn name(&self, _registry: &dyn crate::Registry) -> &str {
         &self.name
     }
 
     fn ui(
         &mut self,
-        ctx: NodeCtx<Env>,
+        ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
-        let env = ctx.env();
+        let registry = ctx.registry();
         let ref_ca = self.ref_.content_addr();
 
         // Check if the referenced CA exists in registry.
-        let is_missing = env.node(&ref_ca).is_none();
+        let is_missing = !registry.node_exists(&ref_ca);
 
         // Check if outdated (name points to different CA).
-        let current_ca = env.name_ca(&self.name);
+        let current_ca = registry.name_ca(&self.name);
         let is_outdated = !is_missing && current_ca.map(|ca| ca != ref_ca).unwrap_or(false);
 
         // Auto-sync if enabled and outdated (skip if missing).
@@ -157,9 +151,9 @@ where
 
         // Recalculate after potential sync.
         let ref_ca = self.ref_.content_addr();
-        let is_missing = env.node(&ref_ca).is_none();
+        let is_missing = !registry.node_exists(&ref_ca);
         let is_outdated = !is_missing
-            && env
+            && registry
                 .name_ca(&self.name)
                 .map(|ca| ca != ref_ca)
                 .unwrap_or(false);
@@ -187,16 +181,16 @@ where
         response
     }
 
-    fn inspector_rows(&mut self, ctx: &mut NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(&mut self, ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
         let row_h = node_inspector::table_row_h(body.ui_mut());
-        let env = ctx.env();
+        let registry = ctx.registry();
         let ref_ca = self.ref_.content_addr();
 
         // Check if the referenced CA exists in registry.
-        let is_missing = env.node(&ref_ca).is_none();
+        let is_missing = !registry.node_exists(&ref_ca);
 
         // Check if outdated (name points to different CA).
-        let current_ca = env.name_ca(&self.name);
+        let current_ca = registry.name_ca(&self.name);
         let is_outdated = !is_missing && current_ca.map(|ca| ca != ref_ca).unwrap_or(false);
 
         // CA row.

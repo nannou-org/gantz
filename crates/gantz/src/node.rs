@@ -1,4 +1,3 @@
-use crate::env::Environment;
 use dyn_clone::DynClone;
 use dyn_hash::DynHash;
 use std::any::Any;
@@ -6,14 +5,7 @@ use std::any::Any;
 /// A top-level blanket trait providing trait object cloning, hashing, and serialization.
 #[typetag::serde(tag = "type")]
 pub trait Node:
-    Any
-    + DynClone
-    + DynHash
-    + gantz_ca::CaHash
-    + gantz_core::Node<Environment>
-    + gantz_egui::NodeUi<Environment>
-    + Send
-    + Sync
+    Any + DynClone + DynHash + gantz_ca::CaHash + gantz_core::Node + gantz_egui::NodeUi + Send + Sync
 {
 }
 
@@ -51,6 +43,12 @@ impl Node for gantz_egui::node::NamedRef {}
 impl Node for gantz_egui::node::Comment {}
 #[typetag::serde]
 impl Node for gantz_egui::node::Inspect {}
+
+impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
+    fn from(named: gantz_egui::node::NamedRef) -> Self {
+        Box::new(named)
+    }
+}
 
 #[typetag::serde]
 impl Node for Box<dyn Node> {}

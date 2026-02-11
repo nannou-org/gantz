@@ -1,14 +1,14 @@
-use crate::{NodeCtx, NodeUi};
+use crate::{NodeCtx, NodeUi, Registry};
 use steel::SteelVal;
 
-impl<Env> NodeUi<Env> for gantz_std::number::Number {
-    fn name(&self, _: &Env) -> &str {
+impl NodeUi for gantz_std::number::Number {
+    fn name(&self, _: &dyn Registry) -> &str {
         "number"
     }
 
     fn ui(
         &mut self,
-        mut ctx: NodeCtx<Env>,
+        mut ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui::InnerResponse<egui::Response> {
         uictx.framed(|ui| {

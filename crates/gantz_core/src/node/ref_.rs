@@ -6,21 +6,11 @@ use crate::{
 };
 use gantz_ca::CaHash;
 use serde::{Deserialize, Serialize};
-use steel::steel_vm::engine::Engine;
 
 /// A node that refers to another node in the environment by content address.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
 #[cahash("gantz.ref")]
 pub struct Ref(gantz_ca::ContentAddr);
-
-/// A registry of `Node`s, used by the [`Ref`] node to lookup a node by it's
-/// content address.
-pub trait NodeRegistry {
-    /// The node type.
-    type Node: ?Sized;
-    /// Returns a node for the given node address.
-    fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&Self::Node>;
-}
 
 impl Ref {
     /// Create a new [`Ref`] node that references the node at the given address.
@@ -34,29 +24,24 @@ impl Ref {
     }
 }
 
-impl<Env> Node<Env> for Ref
-where
-    Env: NodeRegistry,
-    Env::Node: node::Node<Env>,
-{
-    fn n_inputs(&self, env: &Env) -> usize {
-        env.node(&self.0).map(|n| n.n_inputs(env)).unwrap_or(0)
+impl Node for Ref {
+    fn n_inputs(&self, ctx: node::MetaCtx) -> usize {
+        ctx.node(&self.0).map(|n| n.n_inputs(ctx)).unwrap_or(0)
     }
 
-    fn n_outputs(&self, env: &Env) -> usize {
-        env.node(&self.0).map(|n| n.n_outputs(env)).unwrap_or(0)
+    fn n_outputs(&self, ctx: node::MetaCtx) -> usize {
+        ctx.node(&self.0).map(|n| n.n_outputs(ctx)).unwrap_or(0)
     }
 
-    fn branches(&self, env: &Env) -> Vec<node::EvalConf> {
-        env.node(&self.0)
-            .map(|n| n.branches(env))
+    fn branches(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+        ctx.node(&self.0)
+            .map(|n| n.branches(ctx))
             .unwrap_or_default()
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> node::ExprResult {
-        let ctx2 = ctx.clone();
-        match ctx.env().node(&self.0) {
-            Some(n) => n.expr(ctx2),
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+        match ctx.node(&self.0) {
+            Some(n) => n.expr(ctx),
             None => Err(node::ExprError::custom(format!(
                 "node not found for address {:?}",
                 self.0
@@ -64,42 +49,46 @@ where
         }
     }
 
-    fn push_eval(&self, env: &Env) -> Vec<node::EvalConf> {
-        env.node(&self.0)
-            .map(|n| n.push_eval(env))
+    fn push_eval(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+        ctx.node(&self.0)
+            .map(|n| n.push_eval(ctx))
             .unwrap_or_default()
     }
 
-    fn pull_eval(&self, env: &Env) -> Vec<node::EvalConf> {
-        env.node(&self.0)
-            .map(|n| n.pull_eval(env))
+    fn pull_eval(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+        ctx.node(&self.0)
+            .map(|n| n.pull_eval(ctx))
             .unwrap_or_default()
     }
 
-    fn stateful(&self, env: &Env) -> bool {
-        env.node(&self.0).map(|n| n.stateful(env)).unwrap_or(false)
+    fn stateful(&self, ctx: node::MetaCtx) -> bool {
+        ctx.node(&self.0).map(|n| n.stateful(ctx)).unwrap_or(false)
     }
 
-    fn register(&self, env: &Env, path: &[node::Id], vm: &mut Engine) {
-        if let Some(n) = env.node(&self.0) {
-            n.register(env, path, vm);
+    fn register(&self, ctx: node::RegCtx<'_, '_>) {
+        // Check if node exists first, then decompose context to pass to nested register.
+        if ctx.node(&self.0).is_some() {
+            let (get_node, path, vm) = ctx.into_parts();
+            // Safe to unwrap since we checked above.
+            let n = (get_node)(&self.0).unwrap();
+            n.register(node::RegCtx::new(get_node, path, vm));
         }
     }
 
-    fn inlet(&self, env: &Env) -> bool {
-        env.node(&self.0).map(|n| n.inlet(env)).unwrap_or(false)
+    fn inlet(&self, ctx: node::MetaCtx) -> bool {
+        ctx.node(&self.0).map(|n| n.inlet(ctx)).unwrap_or(false)
     }
 
-    fn outlet(&self, env: &Env) -> bool {
-        env.node(&self.0).map(|n| n.outlet(env)).unwrap_or(false)
+    fn outlet(&self, ctx: node::MetaCtx) -> bool {
+        ctx.node(&self.0).map(|n| n.outlet(ctx)).unwrap_or(false)
     }
 
     fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
         vec![self.0]
     }
 
-    fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
-        if let Some(n) = ctx.env().node(&self.0) {
+    fn visit(&self, ctx: visit::Ctx<'_, '_>, visitor: &mut dyn node::Visitor) {
+        if let Some(n) = ctx.node(&self.0) {
             n.visit(ctx, visitor);
         }
     }
