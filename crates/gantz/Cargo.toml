@@ -22,7 +22,6 @@ gantz_core.workspace = true
 gantz_egui.workspace = true
 gantz_std.workspace = true
 petgraph.workspace = true
-ron.workspace = true
 serde.workspace = true
 steel-core.workspace = true
 typetag.workspace = true
