@@ -83,9 +83,9 @@ fn setup_camera(mut cmds: Commands) {
 }
 
 fn setup_resources(storage: Res<Pkv>, mut cmds: Commands) {
-    let registry: Registry<Box<dyn node::Node>> = storage::load_registry(&*storage);
-    let views = storage::load_views(&*storage);
-    let gui_state = storage::load_gui_state(&*storage);
+    let registry: Registry<Box<dyn node::Node>> = bevy_gantz::storage::load_registry(&*storage);
+    let views = bevy_gantz_egui::storage::load_views(&*storage);
+    let gui_state = bevy_gantz_egui::storage::load_gui_state(&*storage);
     cmds.insert_resource(registry);
     cmds.insert_resource(views);
     cmds.insert_resource(gui_state);
@@ -99,8 +99,9 @@ fn setup_open(
     mut tab_order: ResMut<HeadTabOrder>,
     mut focused: ResMut<FocusedHead>,
 ) {
-    let loaded = storage::load_open(&*storage, &mut *registry, &*views, timestamp());
-    let focused_head = storage::load_focused_head(&*storage);
+    let loaded =
+        bevy_gantz_egui::storage::load_open(&*storage, &mut *registry, &*views, timestamp());
+    let focused_head = bevy_gantz::storage::load_focused_head(&*storage);
 
     // Spawn entities for each open head.
     for (head, graph, head_views) in loaded {
@@ -129,7 +130,7 @@ fn setup_open(
 fn load_egui_memory(mut ctxs: EguiContexts, mut storage: ResMut<Pkv>, mut loaded: Local<bool>) {
     if !*loaded {
         if let Ok(ctx) = ctxs.ctx_mut() {
-            storage::load_egui_memory(&mut *storage, ctx);
+            bevy_gantz_egui::storage::load_egui_memory(&mut *storage, ctx);
             *loaded = true;
         }
     }
@@ -146,8 +147,7 @@ fn persist_resources(
     heads_query: Query<OpenHeadDataReadOnly<Box<dyn node::Node>>, With<OpenHead>>,
 ) {
     // Save registry (graphs, commits, names).
-    storage::save_registry(&mut *storage, &registry);
-
+    bevy_gantz::storage::save_registry(&mut *storage, &registry);
     // Save all open heads in tab order.
     let heads: Vec<_> = tab_order
         .iter()
@@ -158,23 +158,20 @@ fn persist_resources(
                 .map(|data| (**data.head_ref).clone())
         })
         .collect();
-    storage::save_open_heads(&mut *storage, &heads);
-
+    bevy_gantz::storage::save_open_heads(&mut *storage, &heads);
     // Save the focused head.
     if let Some(focused_entity) = **focused {
         if let Ok(data) = heads_query.get(focused_entity) {
-            storage::save_focused_head(&mut *storage, &**data.head_ref);
+            bevy_gantz::storage::save_focused_head(&mut *storage, &**data.head_ref);
         }
     }
 
     // Save all views (already updated in update_vm).
-    storage::save_views(&mut *storage, &*views);
-
+    bevy_gantz_egui::storage::save_views(&mut *storage, &*views);
     // Save the gantz GUI state.
-    storage::save_gui_state(&mut *storage, &gui_state);
-
+    bevy_gantz_egui::storage::save_gui_state(&mut *storage, &gui_state);
     // Save egui memory (widget states).
     if let Ok(ctx) = ctxs.ctx_mut() {
-        storage::save_egui_memory(&mut *storage, ctx);
+        bevy_gantz_egui::storage::save_egui_memory(&mut *storage, ctx);
     }
 }

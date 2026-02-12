@@ -1,27 +1,11 @@
 //! App-specific storage utilities.
 //!
 //! Provides the [`Pkv`] newtype implementing [`bevy_gantz::storage::Load`] and
-//! [`bevy_gantz::storage::Save`] for [`bevy_pkv::PkvStore`], along with
-//! re-exports from upstream storage modules.
+//! [`bevy_gantz::storage::Save`] for [`bevy_pkv::PkvStore`].
 
 use bevy::prelude::Resource;
 use bevy_gantz::storage::{Load, Save};
 use bevy_pkv::PkvStore;
-
-// Re-export core storage functions from bevy_gantz.
-pub use bevy_gantz::storage::{
-    load_focused_head, load_registry, save_focused_head, save_open_heads, save_registry,
-};
-
-// Re-export GUI storage functions from bevy_gantz_egui.
-pub use bevy_gantz_egui::storage::{
-    load_egui_memory, load_gui_state, load_open, load_views, save_egui_memory, save_gui_state,
-    save_views,
-};
-
-// ---------------------------------------------------------------------------
-// Pkv newtype
-// ---------------------------------------------------------------------------
 
 /// A [`Resource`] wrapping [`PkvStore`] that implements [`Load`] and [`Save`].
 #[derive(Resource)]
