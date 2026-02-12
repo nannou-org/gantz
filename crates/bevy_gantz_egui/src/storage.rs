@@ -5,9 +5,10 @@
 //! by `bevy_gantz::storage`.
 
 use crate::{GraphViews, GuiState, Views};
+use bevy_egui::egui;
 use bevy_gantz::clone_graph;
 use bevy_gantz::reg::Registry;
-use bevy_gantz::storage::{Load, load, save};
+use bevy_gantz::storage::{Load, Save, load, save};
 use gantz_ca as ca;
 use gantz_core::node::graph::Graph;
 use serde::de::DeserializeOwned;
@@ -19,6 +20,8 @@ mod key {
     pub const VIEWS: &str = "views";
     /// The key at which the gantz GUI state is stored.
     pub const GUI_STATE: &str = "gui-state";
+    /// The key at which egui memory (widget states) is saved/loaded.
+    pub const EGUI_MEMORY: &str = "egui-memory-ron";
 }
 
 /// Save all graph views to storage under a single key.
@@ -82,5 +85,17 @@ where
         vec![(head, graph, head_views)]
     } else {
         heads
+    }
+}
+
+/// Save the egui Memory to storage.
+pub fn save_egui_memory(storage: &mut impl Save, ctx: &egui::Context) {
+    ctx.memory(|m| save(storage, key::EGUI_MEMORY, m));
+}
+
+/// Load the egui Memory from storage.
+pub fn load_egui_memory(storage: &impl Load, ctx: &egui::Context) {
+    if let Some(memory) = load::<egui::Memory>(storage, key::EGUI_MEMORY) {
+        ctx.memory_mut(|m| *m = memory);
     }
 }

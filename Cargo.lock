@@ -2760,7 +2760,6 @@ dependencies = [
  "gantz_egui",
  "gantz_std",
  "petgraph",
- "ron 0.10.1",
  "serde",
  "steel-core",
  "typetag",
