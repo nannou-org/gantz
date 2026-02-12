@@ -7,8 +7,7 @@
 use crate::{GraphViews, GuiState, Views};
 use bevy_gantz::clone_graph;
 use bevy_gantz::reg::Registry;
-use bevy_log as log;
-use bevy_pkv::PkvStore;
+use bevy_gantz::storage::{Load, load, save};
 use gantz_ca as ca;
 use gantz_core::node::graph::Graph;
 use serde::de::DeserializeOwned;
@@ -23,70 +22,26 @@ mod key {
 }
 
 /// Save all graph views to storage under a single key.
-pub fn save_views(storage: &mut PkvStore, views: &Views) {
-    // Serialize the inner HashMap, not the wrapper struct.
-    let views_str = match ron::to_string(&**views) {
-        Err(e) => {
-            log::error!("Failed to serialize views: {e}");
-            return;
-        }
-        Ok(s) => s,
-    };
-    match storage.set_string(key::VIEWS, &views_str) {
-        Ok(()) => log::debug!("Successfully persisted {} views", views.len()),
-        Err(e) => log::error!("Failed to persist views: {e}"),
-    }
+pub fn save_views(storage: &mut impl bevy_gantz::storage::Save, views: &Views) {
+    save(storage, key::VIEWS, &**views);
 }
 
 /// Load all graph views from storage.
-pub fn load_views(storage: &PkvStore) -> Views {
-    let Some(views_str) = storage.get::<String>(key::VIEWS).ok() else {
-        log::debug!("No existing views to load");
-        return Views::default();
-    };
-    match ron::de::from_str::<HashMap<ca::CommitAddr, gantz_egui::GraphViews>>(&views_str) {
-        Ok(views) => {
-            log::debug!("Successfully loaded views from storage");
-            Views(views)
-        }
-        Err(e) => {
-            log::error!("Failed to deserialize views: {e}");
-            Views::default()
-        }
-    }
+pub fn load_views(storage: &impl Load) -> Views {
+    Views(
+        load::<HashMap<ca::CommitAddr, gantz_egui::GraphViews>>(storage, key::VIEWS)
+            .unwrap_or_default(),
+    )
 }
 
 /// Save the GUI state to storage.
-pub fn save_gui_state(storage: &mut PkvStore, state: &GuiState) {
-    let state_str = match ron::to_string(&**state) {
-        Err(e) => {
-            log::error!("Failed to serialize GUI state: {e}");
-            return;
-        }
-        Ok(s) => s,
-    };
-    match storage.set_string(key::GUI_STATE, &state_str) {
-        Ok(()) => log::debug!("Successfully persisted GUI state"),
-        Err(e) => log::error!("Failed to persist GUI state: {e}"),
-    }
+pub fn save_gui_state(storage: &mut impl bevy_gantz::storage::Save, state: &GuiState) {
+    save(storage, key::GUI_STATE, &**state);
 }
 
 /// Load the GUI state from storage.
-pub fn load_gui_state(storage: &PkvStore) -> GuiState {
-    let Some(state_str) = storage.get::<String>(key::GUI_STATE).ok() else {
-        log::debug!("No existing GUI state to load");
-        return GuiState::default();
-    };
-    match ron::de::from_str(&state_str) {
-        Ok(state) => {
-            log::debug!("Successfully loaded GUI state from storage");
-            GuiState(state)
-        }
-        Err(e) => {
-            log::error!("Failed to deserialize GUI state: {e}");
-            GuiState::default()
-        }
-    }
+pub fn load_gui_state(storage: &impl Load) -> GuiState {
+    GuiState(load(storage, key::GUI_STATE).unwrap_or_default())
 }
 
 /// Load the open heads data from storage.
@@ -94,7 +49,7 @@ pub fn load_gui_state(storage: &PkvStore) -> GuiState {
 /// Returns a vector of (head, graph, views) tuples suitable for spawning entities.
 /// If no valid heads remain, creates a default empty graph head using the provided timestamp.
 pub fn load_open<N>(
-    storage: &PkvStore,
+    storage: &impl Load,
     registry: &mut Registry<N>,
     views: &Views,
     ts: Duration,
