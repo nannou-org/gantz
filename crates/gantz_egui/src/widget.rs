@@ -2,6 +2,7 @@
 
 pub use command_palette::CommandPalette;
 pub use gantz::{Gantz, GantzState, update_graph_pane_head};
+pub use graph_config::{GraphConfig, GraphConfigResponse};
 pub use graph_scene::{GraphScene, GraphSceneState};
 pub use graph_select::GraphSelect;
 pub use graph_tab::{GraphTab, GraphTabResponse};
@@ -16,6 +17,7 @@ pub use perf_view::{PerfCapture, PerfView};
 
 pub mod command_palette;
 pub mod gantz;
+pub mod graph_config;
 pub mod graph_scene;
 pub mod graph_select;
 pub mod graph_tab;

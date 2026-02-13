@@ -57,20 +57,39 @@ pub struct GantzState {
     pub open_heads: OpenHeadStates,
     pub view_toggles: ViewToggles,
     pub command_palette: widget::CommandPalette,
-    pub auto_layout: bool,
-    pub layout_flow: egui::Direction,
-    pub center_view: bool,
 }
 
 pub type OpenHeadStates = HashMap<gantz_ca::Head, OpenHeadState>;
 
 /// State associated with a single open root graph.
-#[derive(Default, serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 pub struct OpenHeadState {
     /// The path to the currently visible graph within the open graph tree.
     pub path: Vec<node::Id>,
     /// State associated with the `GraphScene` widget.
     pub scene: GraphSceneState,
+    #[serde(default)]
+    pub auto_layout: bool,
+    #[serde(default = "default_layout_flow")]
+    pub layout_flow: egui::Direction,
+    #[serde(default)]
+    pub center_view: bool,
+}
+
+fn default_layout_flow() -> egui::Direction {
+    GantzState::DEFAULT_DIRECTION
+}
+
+impl Default for OpenHeadState {
+    fn default() -> Self {
+        Self {
+            path: Vec::new(),
+            scene: GraphSceneState::default(),
+            auto_layout: false,
+            layout_flow: GantzState::DEFAULT_DIRECTION,
+            center_view: false,
+        }
+    }
 }
 
 /// A pane within the outer tree.
@@ -335,10 +354,7 @@ impl GantzState {
     pub fn from_open_heads(open_heads: OpenHeadStates) -> Self {
         Self {
             open_heads,
-            auto_layout: false,
-            center_view: false,
             command_palette: widget::CommandPalette::default(),
-            layout_flow: Self::DEFAULT_DIRECTION,
             view_toggles: ViewToggles::default(),
         }
     }
@@ -351,7 +367,10 @@ where
 {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
         match pane {
-            Pane::GraphConfig => "Graph Config".into(),
+            Pane::GraphConfig => match self.access.heads().get(self.focused_head) {
+                Some(head) => format!("Graph Config - {head}").into(),
+                None => "Graph Config".into(),
+            },
             Pane::GraphScene => "Graphs".into(),
             Pane::Graphs => "Graphs".into(),
             Pane::GuiPerf => "GUI Perf".into(),
@@ -418,9 +437,23 @@ where
             ref mut gantz_response,
         } = *self;
         match pane {
-            Pane::GraphConfig => {
-                graph_config(state, ui);
-            }
+            Pane::GraphConfig => match access.heads().get(*focused_head).cloned() {
+                Some(head) => {
+                    let head_state = state.open_heads.entry(head.clone()).or_default();
+                    let names = gantz.env.names();
+                    let res = pane_ui(ui, |ui| {
+                        widget::GraphConfig::new(&head, head_state, names).show(ui)
+                    });
+                    if res.inner.new_branch.is_some() {
+                        gantz_response.new_branch = res.inner.new_branch;
+                    }
+                }
+                None => {
+                    pane_ui(ui, |ui| {
+                        ui.label("No graph focused");
+                    });
+                }
+            },
             Pane::GraphScene => {
                 // We'll use this for positioning the floating toggle window.
                 let rect = ui.available_rect_before_wrap();
@@ -748,19 +781,10 @@ where
             .position(|h| h == pane_head)
             .expect("pane head not found in heads");
 
-        // Destructure state to allow separate borrows.
-        let GantzState {
-            open_heads,
-            auto_layout,
-            layout_flow,
-            center_view,
-            ..
-        } = &mut *self.state;
-
-        let head_state = open_heads.entry(pane_head.clone()).or_default();
-        let auto_layout = *auto_layout;
-        let layout_flow = *layout_flow;
-        let center_view = *center_view;
+        let head_state = self.state.open_heads.entry(pane_head.clone()).or_default();
+        let auto_layout = head_state.auto_layout;
+        let layout_flow = head_state.layout_flow;
+        let center_view = head_state.center_view;
 
         // Get mutable access to this head's data and render the graph scene.
         let graph_response = self.access.with_head_mut(pane_head, |data| {
@@ -827,9 +851,9 @@ impl Default for GantzState {
 /// -------------------------------------
 /// |grs  |scene                        |
 /// |-----|                             |
-/// |hist |                             |
+/// |conf |                             |
 /// |-----|                             |
-/// |conf |-----------------------------|
+/// |hist |-----------------------------|
 /// |-----|logs          |steel         |
 /// |insp |              |              |
 /// -------------------------------------
@@ -849,19 +873,19 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
 
     // The left column.
     let mut shares = egui_tiles::Shares::default();
-    shares.set_share(graphs, 0.24);
+    shares.set_share(graphs, 0.22);
+    shares.set_share(graph_config, 0.12);
     shares.set_share(history, 0.18);
     shares.set_share(vm_perf, 0.10);
     shares.set_share(gui_perf, 0.10);
-    shares.set_share(graph_config, 0.10);
     shares.set_share(node_inspector, 0.28);
     let left_column = tiles.insert_container(egui_tiles::Linear {
         children: vec![
             graphs,
+            graph_config,
             history,
             vm_perf,
             gui_perf,
-            graph_config,
             node_inspector,
         ],
         dir: egui_tiles::LinearDir::Vertical,
@@ -1173,25 +1197,6 @@ fn command_palette(
                 node_type: cmd.name.to_string(),
             }));
     }
-}
-
-fn graph_config(state: &mut GantzState, ui: &mut egui::Ui) -> egui::InnerResponse<egui::Response> {
-    pane_ui(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut state.auto_layout, "Automatic Layout");
-        });
-        ui.checkbox(&mut state.center_view, "Center View");
-        ui.horizontal(|ui| {
-            ui.label("Flow:");
-            ui.radio_value(
-                &mut state.layout_flow,
-                egui::Direction::LeftToRight,
-                "Right",
-            );
-            ui.radio_value(&mut state.layout_flow, egui::Direction::TopDown, "Down");
-        });
-        ui.response()
-    })
 }
 
 fn log_view(logger: &widget::log_view::Logger, ui: &mut egui::Ui) -> egui::InnerResponse<()> {
