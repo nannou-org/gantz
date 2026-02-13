@@ -1094,6 +1094,10 @@ where
     };
 
     // Floating path index labels over the bottom-left corner of the scene.
+    // Only show when viewing a subgraph (non-empty path).
+    if head_state.path.is_empty() {
+        return response;
+    }
     let space = ui.style().interaction.interact_radius * 3.0;
     egui::Window::new("path_label_window")
         .pivot(egui::Align2::LEFT_BOTTOM)
