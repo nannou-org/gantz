@@ -661,56 +661,44 @@ where
         let is_editing = edit_state.editing_tile_id == Some(tile_id);
 
         let response = if is_editing {
-            // Get the head for this tile.
             let head = tiles.get_pane(&tile_id).map(|GraphPane(h)| h.clone());
+            let names = self.env.names();
 
-            // Check if the name already exists in the registry.
-            let name_exists = self.env.names().contains_key(&edit_state.edit_text);
-            let is_empty = edit_state.edit_text.is_empty();
+            let name_res = head.as_ref().map(|h| {
+                ui.scope(|ui| {
+                    ui.set_max_width(ui.available_width().min(150.0));
+                    widget::head_name_edit(h, &mut edit_state.edit_text, names, ui)
+                })
+                .inner
+            });
 
-            // Allocate space for the text edit.
-            let desired_width = ui.available_width().min(150.0);
-            let text_color = if name_exists {
-                egui::Color32::RED
-            } else {
-                ui.visuals().text_color()
+            let Some(name_res) = name_res else {
+                edit_state.editing_tile_id = None;
+                edit_state.edit_text.clear();
+                // Store edit state back to temp memory.
+                ui.memory_mut(|m| m.data.insert_temp(edit_state_id, edit_state));
+                return ui.label("");
             };
-
-            let text_edit = egui::TextEdit::singleline(&mut edit_state.edit_text)
-                .desired_width(desired_width)
-                .text_color(text_color);
-            let te_response = ui.add(text_edit);
 
             // Request focus on the first frame after entering edit mode.
             if edit_state.request_focus {
-                te_response.request_focus();
+                name_res.response.request_focus();
                 edit_state.request_focus = false;
             }
 
-            // Check if editing is complete.
-            let enter_pressed =
-                te_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let focus_lost =
-                te_response.lost_focus() && !ui.input(|i| i.key_pressed(egui::Key::Escape));
-
-            if enter_pressed || focus_lost {
-                // Complete editing.
-                if !is_empty && !name_exists {
-                    // Valid name - emit new_branch event.
-                    if let Some(h) = head {
-                        *self.new_branch = Some((h, edit_state.edit_text.clone()));
-                    }
+            // head_name_edit resets the text on commit/cancel, so detect
+            // focus loss or escape to clear the tab editing state.
+            let editing_ended =
+                name_res.response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if editing_ended {
+                if let Some(new_branch) = name_res.new_branch {
+                    *self.new_branch = Some(new_branch);
                 }
-                // Clear editing state.
-                edit_state.editing_tile_id = None;
-                edit_state.edit_text.clear();
-            } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                // Cancel editing.
                 edit_state.editing_tile_id = None;
                 edit_state.edit_text.clear();
             }
 
-            te_response
+            name_res.response
         } else {
             // Render the tab using our custom widget.
             // Append a filled circle if this head is focused.
