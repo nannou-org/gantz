@@ -192,6 +192,60 @@ pub fn update<S: IntoSteelVal>(
     update_value(vm, node_path, val.into_steelval()?)
 }
 
+/// Remove the state value at the given node path.
+///
+/// For a path like `[5]`, removes key `5` from `%root-state`.
+/// For a path like `[5, 3]`, traverses into `%root-state[5]` and removes key `3`.
+///
+/// No-op if the key doesn't exist or if `ROOT_STATE` hasn't been initialized.
+pub fn remove_value(vm: &mut Engine, node_path: &[usize]) -> Result<(), SteelErr> {
+    let root_val = match vm.extract_value(ROOT_STATE) {
+        Ok(val) => val,
+        // No root state initialized yet, nothing to remove.
+        Err(_) => return Ok(()),
+    };
+    let SteelVal::HashMapV(mut root_state) = root_val else {
+        return Err(SteelErr::new(
+            ErrorKind::Generic,
+            "`ROOT_STATE` was not a hashmap".to_string(),
+        ));
+    };
+
+    fn remove_hashmap_value(
+        graph_state: &mut SteelHashMap,
+        node_path: &[usize],
+    ) -> Result<(), SteelErr> {
+        match node_path {
+            &[] => Err(SteelErr::new(ErrorKind::Generic, "empty node path".into())),
+            &[node_id] => {
+                let id = node_id.try_into().expect("node_id out of range");
+                let key = SteelVal::IntV(id);
+                *graph_state = Gc::new(graph_state.alter(|_| None, key)).into();
+                Ok(())
+            }
+            &[graph_id, ..] => {
+                let id = graph_id.try_into().expect("node_id out of range");
+                let key = SteelVal::IntV(id);
+                let remove = |opt: Option<SteelVal>| match opt {
+                    Some(SteelVal::HashMapV(mut nested)) => {
+                        remove_hashmap_value(&mut nested, &node_path[1..])
+                            .expect("failed to remove value");
+                        Some(SteelVal::HashMapV(nested))
+                    }
+                    // No nested state found, nothing to remove.
+                    other => other,
+                };
+                *graph_state = Gc::new(graph_state.alter(remove, key)).into();
+                Ok(())
+            }
+        }
+    }
+
+    remove_hashmap_value(&mut root_state, node_path)?;
+    vm.update_value(ROOT_STATE, SteelVal::HashMapV(root_state));
+    Ok(())
+}
+
 /// Extract the value for the node with the given ID.
 pub fn extract_value(vm: &Engine, node_path: &[usize]) -> Result<Option<SteelVal>, SteelErr> {
     let SteelVal::HashMapV(root_state) = vm.extract_value(ROOT_STATE)? else {

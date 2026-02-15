@@ -311,6 +311,9 @@ where
 
             // If the delete key was pressed while selected, remove it.
             if response.removed() {
+                let mut node_path = path.clone();
+                node_path.push(n_id.index());
+                let _ = gantz_core::node::state::remove_value(vm, &node_path);
                 graph.remove_node(n_id);
             }
         }
