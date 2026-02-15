@@ -57,7 +57,7 @@ impl<'a> GraphConfig<'a> {
         let text_edit = egui::TextEdit::singleline(&mut name)
             .desired_width(ui.available_width())
             .text_color(text_color)
-            .hint_text("Branch name…");
+            .hint_text("name");
         let te_response = ui.add(text_edit);
 
         // On Enter or focus loss, attempt to commit the name.
