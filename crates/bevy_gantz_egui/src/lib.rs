@@ -61,6 +61,8 @@ where
         + From<gantz_egui::node::NamedRef>
         + gantz_egui::NodeUi
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
+        + serde::Serialize
+        + serde::de::DeserializeOwned
         + Send
         + Sync
         + 'static,
@@ -82,6 +84,8 @@ where
             // Node creation/inspection observers
             .add_observer(on_create_node::<N>)
             .add_observer(on_inspect_edge::<N>)
+            .add_observer(on_copy_selection::<N>)
+            .add_observer(on_paste_selection::<N>)
             // Systems
             .add_systems(Update, (process_cmds::<N>, persist_views::<N>))
             .add_systems(EguiPrimaryContextPass, update::<N>);
@@ -153,6 +157,24 @@ pub struct CreateNodeEvent {
     pub head: Entity,
     /// The create node command from the GUI.
     pub cmd: gantz_egui::CreateNode,
+}
+
+/// Event emitted when the user copies the current selection.
+#[derive(Event)]
+pub struct CopySelectionEvent {
+    /// The head entity whose selection should be copied.
+    pub head: Entity,
+}
+
+/// Event emitted when the user pastes from the clipboard.
+#[derive(Event)]
+pub struct PasteSelectionEvent {
+    /// The head entity to paste into.
+    pub head: Entity,
+    /// The clipboard text (RON-serialized [`gantz_egui::export::Copied`]).
+    pub text: String,
+    /// Positional offset applied to pasted node positions.
+    pub offset: egui::Vec2,
 }
 
 // ----------------------------------------------------------------------------
@@ -513,6 +535,139 @@ pub fn on_inspect_edge<N>(
     );
 }
 
+/// Handle copy selection events.
+///
+/// Serializes the selected nodes (and their registry dependencies) to RON
+/// and writes the result directly to the system clipboard via
+/// [`bevy_egui::EguiClipboard`].
+pub fn on_copy_selection<N>(
+    trigger: On<CopySelectionEvent>,
+    registry: Res<Registry<N>>,
+    gui_state: ResMut<GuiState>,
+    views: Res<Views>,
+    mut clipboard: ResMut<bevy_egui::EguiClipboard>,
+    mut heads: Query<(&HeadRef, &mut WorkingGraph<N>, &mut GraphViews), With<OpenHead>>,
+) where
+    N: 'static
+        + Node
+        + Clone
+        + serde::Serialize
+        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
+        + Send
+        + Sync,
+{
+    let event = trigger.event();
+    let Ok((head_ref, mut wg, gv)) = heads.get_mut(event.head) else {
+        log::error!("CopySelection: head not found for entity {:?}", event.head);
+        return;
+    };
+    let Some(head_state) = gui_state.open_heads.get(&**head_ref) else {
+        log::error!("CopySelection: GUI state not found for head");
+        return;
+    };
+
+    let path = head_state.path.clone();
+    let selection = head_state.scene.interaction.selection.nodes.clone();
+    if selection.is_empty() {
+        return;
+    }
+
+    let graph: &mut Graph<N> = &mut *wg;
+    let Some(g) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
+        log::error!("CopySelection: could not find graph at path {path:?}");
+        return;
+    };
+
+    let layout = gv
+        .get(&path)
+        .map(|v| &v.layout)
+        .cloned()
+        .unwrap_or_default();
+
+    let copied = gantz_egui::export::copy(&registry, &views, g, &selection, &layout);
+    match ron::to_string(&copied) {
+        Ok(text) => clipboard.set_text(&text),
+        Err(e) => log::error!("CopySelection: failed to serialize: {e}"),
+    }
+}
+
+/// Handle paste selection events.
+///
+/// Deserializes the clipboard RON text into a [`gantz_egui::export::Copied`],
+/// merges registry dependencies, adds the subgraph, maps positions, and
+/// updates the selection to the newly pasted nodes.
+pub fn on_paste_selection<N>(
+    trigger: On<PasteSelectionEvent>,
+    mut registry: ResMut<Registry<N>>,
+    builtins: Res<BuiltinNodes<N>>,
+    gui_state: ResMut<GuiState>,
+    mut views: ResMut<Views>,
+    mut vms: NonSendMut<HeadVms>,
+    mut heads: Query<(&HeadRef, &mut WorkingGraph<N>, &mut GraphViews), With<OpenHead>>,
+) where
+    N: 'static
+        + Node
+        + Clone
+        + serde::de::DeserializeOwned
+        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
+        + Send
+        + Sync,
+{
+    let event = trigger.event();
+    let Ok((head_ref, mut wg, mut gv)) = heads.get_mut(event.head) else {
+        log::error!("PasteSelection: head not found for entity {:?}", event.head);
+        return;
+    };
+    let Some(head_state) = gui_state.open_heads.get(&**head_ref) else {
+        log::error!("PasteSelection: GUI state not found for head");
+        return;
+    };
+
+    let copied: gantz_egui::export::Copied<N> = match ron::from_str(&event.text) {
+        Ok(c) => c,
+        Err(e) => {
+            log::debug!("Clipboard does not contain a valid gantz payload: {e}");
+            return;
+        }
+    };
+
+    let path = head_state.path.clone();
+    let new_indices = {
+        let graph: &mut Graph<N> = &mut *wg;
+        let Some(g) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
+            log::error!("PasteSelection: could not find graph at path {path:?}");
+            return;
+        };
+        let view = gv.entry(path).or_default();
+        gantz_egui::export::paste(
+            &mut registry,
+            &mut views,
+            g,
+            &mut view.layout,
+            &copied,
+            event.offset,
+        )
+    };
+
+    // Re-register the full root graph so pasted nodes get their state
+    // initialized with the correct nested hashmap structure. Idempotent
+    // for existing nodes.
+    if let Some(vm) = vms.get_mut(&event.head) {
+        let node_reg = registry_ref(&registry, &builtins);
+        let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+        gantz_core::graph::register(&get_node, &**wg, &[], vm);
+    }
+
+    // Update selection to the pasted nodes.
+    let head_state = gui_state
+        .into_inner()
+        .open_heads
+        .get_mut(&**head_ref)
+        .unwrap();
+    head_state.scene.interaction.selection.nodes = new_indices.into_iter().collect();
+    head_state.scene.interaction.selection.edges.clear();
+}
+
 // ---------------------------------------------------------------------------
 // Systems
 // ---------------------------------------------------------------------------
@@ -553,10 +708,12 @@ pub fn prune_views<N: 'static + Node + Send + Sync>(
 /// Process GUI commands from all open heads.
 ///
 /// Handles eval, navigation, and registry commands directly.
-/// Emits `InspectEdgeEvent` for edge inspection (requires app-specific handling).
+/// Emits events for operations requiring additional resources (inspection,
+/// node creation, clipboard).
 pub fn process_cmds<N: 'static + Send + Sync>(
     mut registry: ResMut<Registry<N>>,
     mut gui_state: ResMut<GuiState>,
+    mut clipboard: ResMut<bevy_egui::EguiClipboard>,
     heads: Query<(Entity, &HeadRef), With<OpenHead>>,
     mut cmds: Commands,
 ) {
@@ -609,6 +766,19 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                 }
                 gantz_egui::Cmd::CreateNode(cmd) => {
                     cmds.trigger(CreateNodeEvent { head: entity, cmd });
+                }
+                gantz_egui::Cmd::CopySelection => {
+                    cmds.trigger(CopySelectionEvent { head: entity });
+                }
+                gantz_egui::Cmd::PasteClipboard { text, offset } => {
+                    let text = text.or_else(|| clipboard.get_text());
+                    if let Some(text) = text {
+                        cmds.trigger(PasteSelectionEvent {
+                            head: entity,
+                            text,
+                            offset,
+                        });
+                    }
                 }
             }
         }

@@ -499,6 +499,31 @@ where
                 // Show the command palette once (not per-pane), operating on the focused head.
                 if let Some(fh) = access.heads().get(*focused_head).cloned() {
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
+
+                    // Copy/paste keyboard shortcuts.
+                    if !ui.ctx().wants_keyboard_input() {
+                        if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::C)) {
+                            head_state.scene.cmds.push(Cmd::CopySelection);
+                        }
+                        // Detect paste: Event::Paste (eframe/web) or Ctrl+V
+                        // key press (bevy_egui desktop, which sends Event::Text
+                        // instead of Event::Paste).
+                        let paste_text = ui.input(|i| {
+                            i.events.iter().find_map(|e| match e {
+                                egui::Event::Paste(s) => Some(s.clone()),
+                                _ => None,
+                            })
+                        });
+                        let ctrl_v = paste_text.is_some()
+                            || ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::V));
+                        if ctrl_v {
+                            head_state.scene.cmds.push(Cmd::PasteClipboard {
+                                text: paste_text,
+                                offset: egui::vec2(20.0, 20.0),
+                            });
+                        }
+                    }
+
                     command_palette(gantz.env, head_state, &mut state.command_palette, ui);
                 }
 

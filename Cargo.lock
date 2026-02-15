@@ -692,6 +692,7 @@ dependencies = [
  "gantz_ca",
  "gantz_core",
  "gantz_egui",
+ "ron 0.10.1",
  "serde",
  "steel-core",
  "web-time",
@@ -2279,9 +2280,9 @@ dependencies = [
 
 [[package]]
 name = "egui_graph"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eab42f1d03465a93b51e1a89b84975872ef397c635fadc4b3dbcece68705ce0b"
+checksum = "7b4f51863cb355b20a85c3041d960dec024fdce82d6c4bf001a56ea2ccd8cb63"
 dependencies = [
  "egui",
  "layout-rs",

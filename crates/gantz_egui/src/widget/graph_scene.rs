@@ -159,8 +159,16 @@ where
             view.layout = layout(&*self.graph, self.id, self.layout_flow, ui.ctx());
         }
         let mut node_responses = Vec::new();
+        let selected: HashSet<egui_graph::NodeId> = state
+            .interaction
+            .selection
+            .nodes
+            .iter()
+            .map(|ix| egui_graph::NodeId::from_u64(ix.index() as u64))
+            .collect();
         let scene = egui_graph::Graph::from_id(self.id)
             .center_view(self.center_view)
+            .selected_nodes(selected)
             .show(view, ui, |ui, show| {
                 show.nodes(ui, |nctx, ui| {
                     node_responses =
@@ -303,6 +311,9 @@ where
 
             // If the delete key was pressed while selected, remove it.
             if response.removed() {
+                let mut node_path = path.clone();
+                node_path.push(n_id.index());
+                let _ = gantz_core::node::state::remove_value(vm, &node_path);
                 graph.remove_node(n_id);
             }
         }

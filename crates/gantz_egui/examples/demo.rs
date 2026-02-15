@@ -491,7 +491,7 @@ impl eframe::App for App {
         }
 
         // Process any pending commands generated from the UI.
-        process_cmds(&mut self.state);
+        process_cmds(ctx, &mut self.state);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -818,7 +818,7 @@ fn commit_key(ca: gantz_ca::CommitAddr) -> String {
 }
 
 // Drain the commands provided by the UI and process them.
-fn process_cmds(state: &mut State) {
+fn process_cmds(ctx: &egui::Context, state: &mut State) {
     // Collect heads with their indices to process.
     let heads_to_process: Vec<_> = state
         .heads
@@ -875,6 +875,81 @@ fn process_cmds(state: &mut State) {
                 gantz_egui::Cmd::CreateNode(cmd) => {
                     let (_, graph, views) = &mut state.heads[ix];
                     create_node(&state.env, graph, views, &mut state.vms[ix], cmd);
+                }
+                gantz_egui::Cmd::CopySelection => {
+                    let head_state = state.gantz.open_heads.get_mut(&head).unwrap();
+                    let path = head_state.path.clone();
+                    let selection = head_state.scene.interaction.selection.nodes.clone();
+                    if selection.is_empty() {
+                        continue;
+                    }
+                    let (_, graph, gv) = &mut state.heads[ix];
+                    let Some(g) =
+                        gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path)
+                    else {
+                        continue;
+                    };
+                    let layout = gv
+                        .get(&path)
+                        .map(|v| &v.layout)
+                        .cloned()
+                        .unwrap_or_default();
+                    let all_views = std::collections::HashMap::new();
+                    let copied = gantz_egui::export::copy(
+                        &state.env.registry,
+                        &all_views,
+                        g,
+                        &selection,
+                        &layout,
+                    );
+                    match ron::to_string(&copied) {
+                        Ok(text) => ctx.copy_text(text),
+                        Err(e) => log::error!("Failed to serialize copy payload: {e}"),
+                    }
+                }
+                gantz_egui::Cmd::PasteClipboard { text, offset } => {
+                    // In eframe, Event::Paste provides text directly.
+                    let Some(text) = text else { continue };
+                    let copied: gantz_egui::export::Copied<Box<dyn Node>> =
+                        match ron::from_str(&text) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                log::debug!(
+                                    "Clipboard does not contain a valid gantz payload: {e}"
+                                );
+                                continue;
+                            }
+                        };
+                    let head_state = state.gantz.open_heads.get_mut(&head).unwrap();
+                    let path = head_state.path.clone();
+                    let (_, graph, gv) = &mut state.heads[ix];
+                    let new_indices = {
+                        let Some(g) =
+                            gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path)
+                        else {
+                            continue;
+                        };
+                        let view = gv.entry(path).or_default();
+                        let mut all_views = std::collections::HashMap::new();
+                        gantz_egui::export::paste(
+                            &mut state.env.registry,
+                            &mut all_views,
+                            g,
+                            &mut view.layout,
+                            &copied,
+                            offset,
+                        )
+                    };
+                    // Re-register the full root graph so pasted nodes get
+                    // their state initialized. Idempotent for existing nodes.
+                    let vm = &mut state.vms[ix];
+                    let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
+                    gantz_core::graph::register(&get_node, &*graph, &[], vm);
+                    // Update selection to the pasted nodes.
+                    let head_state = state.gantz.open_heads.get_mut(&head).unwrap();
+                    head_state.scene.interaction.selection.nodes =
+                        new_indices.into_iter().collect();
+                    head_state.scene.interaction.selection.edges.clear();
                 }
             }
         }
