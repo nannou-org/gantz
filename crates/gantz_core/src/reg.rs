@@ -4,6 +4,28 @@ use crate::{Edge, Node, graph, node};
 use petgraph::visit::{Data, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, Visitable};
 use std::collections::HashSet;
 
+/// Export a registry subset containing the transitive dependencies of the given heads.
+///
+/// Collects all required commits via [`required_commits`], then calls
+/// [`gantz_ca::Registry::export`] to produce the subset.
+pub fn export<'a, G>(
+    get_node: node::GetNode<'a>,
+    reg: &gantz_ca::Registry<G>,
+    heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
+) -> gantz_ca::Registry<G>
+where
+    G: Clone,
+    for<'g> &'g G: Data<EdgeWeight = Edge>
+        + IntoEdgesDirected
+        + IntoNodeReferences
+        + NodeIndexable
+        + Visitable,
+    for<'g> <&'g G as Data>::NodeWeight: Node,
+{
+    let required = required_commits(get_node, reg, heads);
+    reg.export(&required)
+}
+
 /// Collect all commit addresses transitively required by named graphs and heads.
 ///
 /// Starts from all named commits and head commits, then transitively follows

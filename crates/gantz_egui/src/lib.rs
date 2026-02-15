@@ -9,6 +9,7 @@ use steel::{
     steel_vm::engine::Engine,
 };
 
+pub mod export;
 mod impls;
 pub mod node;
 pub mod reg;
