@@ -131,6 +131,17 @@ pub enum Cmd {
     InspectEdge(InspectEdge),
     /// Create a new node of the given type at the current path.
     CreateNode(CreateNode),
+    /// Copy the current selection to the clipboard.
+    CopySelection,
+    /// Paste clipboard contents with the given positional offset.
+    ///
+    /// `text` is `Some` when the integration layer provides clipboard text
+    /// directly (e.g. via `egui::Event::Paste` in eframe). When `None`, the
+    /// command handler is expected to read the system clipboard itself.
+    PasteClipboard {
+        text: Option<String>,
+        offset: egui::Vec2,
+    },
 }
 
 /// A command to create a new node.
