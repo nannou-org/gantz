@@ -103,6 +103,6 @@ pub fn head_row(
 pub fn fmt_commit_timestamp(timestamp: gantz_ca::Timestamp) -> String {
     std::time::UNIX_EPOCH
         .checked_add(timestamp)
-        .map(|time| humantime::format_rfc3339_seconds(time).to_string())
+        .map(|system_time| crate::widget::format_local_datetime(system_time))
         .unwrap_or_else(|| "<invalid-timestamp>".to_string())
 }

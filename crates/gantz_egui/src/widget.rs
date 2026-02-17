@@ -1,4 +1,7 @@
 //! A collection of useful widgets for gantz.
+#[cfg(target_arch = "wasm32")]
+use js_sys::Date;
+use time::{OffsetDateTime, UtcOffset, format_description};
 
 pub use command_palette::CommandPalette;
 pub use gantz::{Gantz, GantzState, update_graph_pane_head};
@@ -33,6 +36,27 @@ pub mod pane_menu;
 pub mod perf_view;
 #[cfg(feature = "tracing")]
 pub mod trace_view;
+
+/// Convert a UTC datetime to local timezone, with fallback to UTC if unavailable.
+/// Convert a UTC datetime to local timezone, with fallback to UTC if unavailable.
+pub(crate) fn to_local_datetime(datetime: OffsetDateTime) -> OffsetDateTime {
+    UtcOffset::current_local_offset()
+        .map(|offset| datetime.to_offset(offset))
+        .unwrap_or(datetime)
+}
+
+/// Format a SystemTime as a local datetime string.
+pub(crate) fn format_local_datetime(system_time: std::time::SystemTime) -> String {
+    let datetime = OffsetDateTime::from(system_time);
+    let local_datetime = to_local_datetime(datetime);
+
+    let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+        .expect("invalid format");
+
+    local_datetime
+        .format(&format)
+        .unwrap_or_else(|_| "<invalid-timestamp>".to_string())
+}
 
 /// Simple shorthand for viewing steel code.
 pub fn steel_view(ui: &mut egui::Ui, code: &str) {

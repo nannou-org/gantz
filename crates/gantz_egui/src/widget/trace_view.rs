@@ -47,8 +47,8 @@ struct MessageVisitor {
 
 impl TraceEntry {
     fn format_timestamp(&self) -> String {
-        let time = crate::system_time_from_web(self.timestamp).expect("failed to convert");
-        humantime::format_rfc3339_seconds(time).to_string()
+        let system_time = crate::system_time_from_web(self.timestamp).expect("failed to convert");
+        crate::widget::format_local_datetime(system_time)
     }
 
     fn freshness(&self) -> f32 {
