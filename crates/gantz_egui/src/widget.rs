@@ -1,7 +1,7 @@
 //! A collection of useful widgets for gantz.
 #[cfg(target_arch = "wasm32")]
 use js_sys::Date;
-use time::{OffsetDateTime, UtcOffset};
+use time::{OffsetDateTime, UtcOffset, format_description};
 
 pub use command_palette::CommandPalette;
 pub use gantz::{Gantz, GantzState, update_graph_pane_head};
@@ -9,8 +9,12 @@ pub use graph_config::{GraphConfig, GraphConfigResponse};
 pub use graph_scene::{GraphScene, GraphSceneState};
 pub use graph_select::GraphSelect;
 pub use graph_tab::{GraphTab, GraphTabResponse};
+<<<<<<< HEAD
 pub use head_name_edit::{HeadNameEditResponse, head_name, head_name_edit};
 pub use head_row::{HeadRowResponse, HeadRowType, fmt_commit_timestamp, head_row};
+=======
+pub use head_row::{HeadRowResponse, HeadRowType, head_row};
+>>>>>>> 98b4c97 (Refactor: abstract timestamp formatting into shared helper function)
 pub use history_view::{HistoryMode, HistoryView, HistoryViewState};
 pub use label_button::LabelButton;
 pub use label_toggle::LabelToggle;
@@ -38,29 +42,24 @@ pub mod perf_view;
 pub mod trace_view;
 
 /// Convert a UTC datetime to local timezone, with fallback to UTC if unavailable.
+/// Convert a UTC datetime to local timezone, with fallback to UTC if unavailable.
 pub(crate) fn to_local_datetime(datetime: OffsetDateTime) -> OffsetDateTime {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        // Native platforms: use time crate's built-in method
-        UtcOffset::current_local_offset()
-            .map(|offset| datetime.to_offset(offset))
-            .unwrap_or(datetime)
-    }
+    UtcOffset::current_local_offset()
+        .map(|offset| datetime.to_offset(offset))
+        .unwrap_or(datetime)
+}
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        // WASM: get timezone offset from JavaScript Date API
-        use js_sys::Date;
+/// Format a SystemTime as a local datetime string.
+pub(crate) fn format_local_datetime(system_time: std::time::SystemTime) -> String {
+    let datetime = OffsetDateTime::from(system_time);
+    let local_datetime = to_local_datetime(datetime);
 
-        let js_date = Date::new_0();
-        let offset_minutes = js_date.get_timezone_offset();
-        let offset_seconds = -(offset_minutes as i32 * 60);
+    let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+        .expect("invalid format");
 
-        match UtcOffset::from_whole_seconds(offset_seconds) {
-            Ok(offset) => datetime.to_offset(offset),
-            Err(_) => datetime,
-        }
-    }
+    local_datetime
+        .format(&format)
+        .unwrap_or_else(|_| "<invalid-timestamp>".to_string())
 }
 
 /// Simple shorthand for viewing steel code.
