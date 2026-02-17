@@ -100,7 +100,7 @@ pub fn head_row(
 }
 
 /// Format the commit as a timestamp for listing unnamed commits.
-pub(super) fn fmt_commit_timestamp(timestamp: gantz_ca::Timestamp) -> String {
+pub fn fmt_commit_timestamp(timestamp: gantz_ca::Timestamp) -> String {
     std::time::UNIX_EPOCH
         .checked_add(timestamp)
         .map(|system_time| crate::widget::format_local_datetime(system_time))

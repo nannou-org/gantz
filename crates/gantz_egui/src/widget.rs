@@ -9,12 +9,8 @@ pub use graph_config::{GraphConfig, GraphConfigResponse};
 pub use graph_scene::{GraphScene, GraphSceneState};
 pub use graph_select::GraphSelect;
 pub use graph_tab::{GraphTab, GraphTabResponse};
-<<<<<<< HEAD
 pub use head_name_edit::{HeadNameEditResponse, head_name, head_name_edit};
 pub use head_row::{HeadRowResponse, HeadRowType, fmt_commit_timestamp, head_row};
-=======
-pub use head_row::{HeadRowResponse, HeadRowType, head_row};
->>>>>>> 98b4c97 (Refactor: abstract timestamp formatting into shared helper function)
 pub use history_view::{HistoryMode, HistoryView, HistoryViewState};
 pub use label_button::LabelButton;
 pub use label_toggle::LabelToggle;
