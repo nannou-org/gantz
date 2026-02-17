@@ -1,22 +1,28 @@
-use crate::{Cmd, NodeCtx, NodeUi, widget::node_inspector};
+use crate::{Cmd, NodeCtx, NodeUi, Registry, widget::node_inspector};
 
-impl<Env, N> NodeUi<Env> for gantz_core::node::GraphNode<N>
+impl<N> NodeUi for gantz_core::node::GraphNode<N>
 where
     N: gantz_ca::CaHash,
 {
-    fn name(&self, _: &Env) -> &str {
+    fn name(&self, _: &dyn Registry) -> &str {
         "graph"
     }
 
-    fn ui(&mut self, ctx: NodeCtx<Env>, ui: &mut egui::Ui) -> egui::Response {
-        let res = ui.add(egui::Label::new("graph").selectable(false));
-        if ui.response().double_clicked() {
-            ctx.cmds.push(Cmd::OpenGraph(ctx.path().to_vec()));
-        }
-        res
+    fn ui(
+        &mut self,
+        ctx: NodeCtx,
+        uictx: egui_graph::NodeCtx,
+    ) -> egui::InnerResponse<egui::Response> {
+        uictx.framed(|ui| {
+            let res = ui.add(egui::Label::new("graph").selectable(false));
+            if ui.response().double_clicked() {
+                ctx.cmds.push(Cmd::OpenGraph(ctx.path().to_vec()));
+            }
+            res
+        })
     }
 
-    fn inspector_rows(&mut self, _ctx: &NodeCtx<Env>, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(&mut self, _ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
         let row_h = node_inspector::table_row_h(body.ui_mut());
         body.row(row_h, |mut row| {
             row.col(|ui| {

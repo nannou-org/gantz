@@ -26,8 +26,10 @@ bevy = { version = "0.17", default-features = false, features = [
 ] }
 bevy_app = "0.17"
 bevy_ecs = "0.17"
-bevy_egui = { version = "0.38" }
+bevy_log = "0.17"
+bevy_egui = { version = "0.38", features = ["serde"] }
 bevy_gantz = { version = "0.1.0", path = "crates/bevy_gantz" }
+bevy_gantz_egui = { version = "0.1.0", path = "crates/bevy_gantz_egui" }
 bevy_input = "0.17"
 bevy_pkv = "0.14"
 bevy_time = "0.17"
@@ -42,17 +44,20 @@ eframe = { version = "0.33", default-features = false, features = [
     "wayland",
     # "wgpu",
 ] }
-egui = { version = "0.33", default-features = false }
+egui = { version = "0.33", default-features = false, features = ["serde", "persistence"] }
 egui_extras = { version = "0.33", default-features = false, features = ["syntect"] }
-egui_graph = "0.7"
+egui_graph = "0.11.1"
+egui_plot = "0.34"
 egui_tiles = "0.14"
 env_logger = { version = "0.11", default-features = false }
 gantz_ca = { version = "0.1.0", path = "crates/gantz_ca" }
+gantz_ca_derive = { version = "0.1.0", path = "crates/gantz_ca_derive" }
 gantz_core = { version = "0.1.0", path = "crates/gantz_core" }
 gantz_egui = { version = "0.1.0", path = "crates/gantz_egui" }
 gantz_std = { version = "0.1.0", path = "crates/gantz_std" }
 hex = "0.4"
 humantime = "2.3"
+js-sys = "0.3"
 log = { version = "0.4", features = ["serde"] }
 petgraph = { version = "0.8", features = ["serde-1"] }
 ron = "0.10"
@@ -62,6 +67,7 @@ steel-core = "0.7"
 steel-derive = "0.6"
 sublime_fuzzy = "0.7"
 thiserror = "2"
+time = { version = "0.3", features = ["local-offset", "formatting", "wasm-bindgen"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 typetag = "0.2"

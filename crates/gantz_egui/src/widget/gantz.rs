@@ -1,5 +1,5 @@
 use crate::{
-    Cmd, NodeCtx, NodeUi,
+    Cmd, GraphViews, HeadAccess, NodeCtx, NodeUi, Registry,
     widget::{
         self, GraphScene, GraphSceneState,
         graph_scene::{self, ToGraphMut},
@@ -10,18 +10,13 @@ use petgraph::visit::{IntoNodeReferences, NodeRef};
 use std::collections::HashMap;
 use steel::steel_vm::engine::Engine;
 
-/// A registry of available nodes.
+/// A registry of available node types.
 ///
-/// This should be implemented for the `Node`'s input `Env` type.
+/// Provides the list of node type names available for creation.
+/// Actual node creation is handled via [`crate::Cmd::CreateNode`].
 pub trait NodeTypeRegistry {
-    /// The gantz node type that can be produced by the registry.
-    type Node;
-
     /// The unique name of each node available.
-    fn node_types(&self) -> impl Iterator<Item = &str>;
-
-    /// Create a node of the given type name.
-    fn new_node(&self, node_type: &str) -> Option<Self::Node>;
+    fn node_types(&self) -> Vec<&str>;
 
     /// The tooltip shown for this node type within the command palette.
     fn command_tooltip(&self, _node_type: &str) -> &str {
@@ -39,83 +34,170 @@ pub trait NodeTypeRegistry {
 }
 
 /// The top-level gantz widget.
-pub struct Gantz<'a, Env>
-where
-    Env: NodeTypeRegistry,
-{
-    env: &'a mut Env,
-    root: &'a mut gantz_core::node::graph::Graph<Env::Node>,
-    head: &'a gantz_ca::Head,
+pub struct Gantz<'a> {
+    env: &'a dyn Registry,
     log_source: Option<LogSource>,
+    perf_vm: Option<&'a mut widget::PerfCapture>,
+    perf_gui: Option<&'a mut widget::PerfCapture>,
 }
 
 enum LogSource {
     Logger(widget::log_view::Logger),
     #[cfg(feature = "tracing")]
-    TraceCapture(widget::trace_view::TraceCapture),
+    TraceCapture(
+        widget::trace_view::TraceCapture,
+        tracing::level_filters::LevelFilter,
+    ),
 }
 
+/// All state for the widget.
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct GantzState {
-    pub graph_scene: GraphSceneState,
-    pub path: Vec<node::Id>,
-    pub graphs: Graphs,
+    /// State for each open head.
+    pub open_heads: OpenHeadStates,
     pub view_toggles: ViewToggles,
     pub command_palette: widget::CommandPalette,
+}
+
+pub type OpenHeadStates = HashMap<gantz_ca::Head, OpenHeadState>;
+
+/// State associated with a single open root graph.
+#[derive(serde::Deserialize, serde::Serialize)]
+pub struct OpenHeadState {
+    /// The path to the currently visible graph within the open graph tree.
+    pub path: Vec<node::Id>,
+    /// State associated with the `GraphScene` widget.
+    pub scene: GraphSceneState,
+    #[serde(default)]
     pub auto_layout: bool,
+    #[serde(default = "default_layout_flow")]
     pub layout_flow: egui::Direction,
+    #[serde(default)]
     pub center_view: bool,
 }
 
-/// A pane within the tree.
+fn default_layout_flow() -> egui::Direction {
+    GantzState::DEFAULT_DIRECTION
+}
+
+impl Default for OpenHeadState {
+    fn default() -> Self {
+        Self {
+            path: Vec::new(),
+            scene: GraphSceneState::default(),
+            auto_layout: false,
+            layout_flow: GantzState::DEFAULT_DIRECTION,
+            center_view: false,
+        }
+    }
+}
+
+/// A pane within the outer tree.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum Pane {
     GraphConfig,
+    /// Contains the inner graph tree with all open graph tabs.
     GraphScene,
-    GraphSelect,
+    Graphs,
+    GuiPerf,
+    History,
     Logs,
     NodeInspector,
     Steel,
+    VmPerf,
+}
+
+/// A pane within the inner graph tree.
+/// Contains the head (branch or commit) that this pane displays.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+struct GraphPane(gantz_ca::Head);
+
+/// The egui ID used to store the inner graph tree.
+const GRAPH_TREE_ID: &str = "gantz-graph-tiles-tree";
+
+/// Update the head stored in a graph pane when a commit CA changes.
+///
+/// This should be called after `commit_graph_to_head` modifies a head's commit CA.
+/// It updates the persisted graph tree to reflect the new head value.
+pub fn update_graph_pane_head(
+    ctx: &egui::Context,
+    old_head: &gantz_ca::Head,
+    new_head: &gantz_ca::Head,
+) {
+    if old_head == new_head {
+        return;
+    }
+    let graph_tree_id = egui::Id::new(GRAPH_TREE_ID);
+    ctx.memory_mut(|m| {
+        let Some(tree) = m
+            .data
+            .get_persisted_mut_or_default::<Option<egui_tiles::Tree<GraphPane>>>(graph_tree_id)
+            .as_mut()
+        else {
+            return;
+        };
+        // Find and update the pane with the old head.
+        for (_, tile) in tree.tiles.iter_mut() {
+            if let egui_tiles::Tile::Pane(GraphPane(head)) = tile {
+                if head == old_head {
+                    *head = new_head.clone();
+                    break;
+                }
+            }
+        }
+    });
 }
 
 /// The context passed to the `egui_tiles::Tree` widget.
-struct TreeBehaviour<'a, 'g, Env>
+struct TreeBehaviour<'a, 's, Access>
 where
-    Env: NodeTypeRegistry,
+    Access: HeadAccess,
+    Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
 {
-    gantz: &'a mut Gantz<'g, Env>,
-    state: &'a mut GantzState,
-    compiled_steel: &'a str,
-    vm: &'a mut Engine,
+    gantz: &'a mut Gantz<'s>,
+    state: &'s mut GantzState,
+    access: &'s mut Access,
+    focused_head: usize,
     gantz_response: &'a mut GantzResponse,
 }
 
 /// Response from the top-level gantz widget.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct GantzResponse {
+    /// The focused head index (may have changed due to user interaction).
+    pub focused_head: usize,
     pub graph_select: Option<widget::graph_select::GraphSelectResponse>,
+    /// Heads that were closed via the tab close button.
+    pub closed_heads: Vec<gantz_ca::Head>,
+    /// New branch created from tab double-click: (original_head, new_branch_name).
+    pub new_branch: Option<(gantz_ca::Head, String)>,
 }
 
-/// UI state relevant to each nested graph within the tree.
-pub type Graphs = HashMap<Vec<node::Id>, GraphState>;
-
-/// UI state relevant to a graph at a certain path within the root.
-#[derive(serde::Deserialize, serde::Serialize)]
-pub struct GraphState {
-    pub view: egui_graph::View,
+/// State for editing a tab name via double-click.
+#[derive(Clone, Default)]
+struct TabEditState {
+    /// The tile currently being edited, if any.
+    editing_tile_id: Option<egui_tiles::TileId>,
+    /// The text being edited.
+    edit_text: String,
+    /// Whether we need to request focus on the next frame.
+    request_focus: bool,
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
 pub struct ViewToggles {
-    pub graph_select: bool,
-    pub node_inspector: bool,
+    pub graphs: bool,
+    pub history: bool,
     pub logs: bool,
+    pub node_inspector: bool,
+    pub perf_gui: bool,
+    pub perf_vm: bool,
     pub steel: bool,
     pub graph_config: bool,
 }
 
-struct NodeTyCmd<'a, Env> {
-    env: &'a Env,
+struct NodeTyCmd<'a> {
+    env: &'a dyn Registry,
     name: &'a str,
 }
 
@@ -128,18 +210,19 @@ impl GantzResponse {
             .unwrap_or(false)
     }
 
-    /// If a graph was selected this is its content address and name (if named).
-    pub fn graph_selected(&self) -> Option<&gantz_ca::Head> {
-        self.graph_select.as_ref().and_then(|g| g.selected.as_ref())
+    /// Single click: replace the focused head with this one.
+    pub fn graph_replaced(&self) -> Option<&gantz_ca::Head> {
+        self.graph_select.as_ref().and_then(|g| g.replaced.as_ref())
     }
 
-    /// If `Some` indicates, the root graph name was updated.
-    ///
-    /// If `Some(None)`, the head graph's name was cleared.
-    pub fn graph_name_updated(&self) -> Option<Option<String>> {
-        self.graph_select
-            .as_ref()
-            .and_then(|g| g.name_updated.clone())
+    /// Open this head as a new tab.
+    pub fn graph_opened(&self) -> Option<&gantz_ca::Head> {
+        self.graph_select.as_ref().and_then(|g| g.opened.as_ref())
+    }
+
+    /// Close this head.
+    pub fn graph_closed(&self) -> Option<&gantz_ca::Head> {
+        self.graph_select.as_ref().and_then(|g| g.closed.as_ref())
     }
 
     /// The given graph name was removed.
@@ -148,26 +231,21 @@ impl GantzResponse {
             .as_ref()
             .and_then(|g| g.name_removed.clone())
     }
+
+    /// New branch created from tab double-click: (original_head, new_branch_name).
+    pub fn new_branch(&self) -> Option<&(gantz_ca::Head, String)> {
+        self.new_branch.as_ref()
+    }
 }
 
-impl<'a, Env> Gantz<'a, Env>
-where
-    Env: widget::graph_select::GraphRegistry + NodeTypeRegistry,
-    Env::Node: gantz_core::Node<Env> + NodeUi<Env> + graph_scene::ToGraphMut<Node = Env::Node>,
-{
+impl<'a> Gantz<'a> {
     /// Instantiate the full top-level gantz widget.
-    ///
-    /// The head CA should match the `root`'s CA.
-    pub fn new(
-        env: &'a mut Env,
-        root: &'a mut gantz_core::node::graph::Graph<Env::Node>,
-        head: &'a gantz_ca::Head,
-    ) -> Self {
+    pub fn new(env: &'a dyn Registry) -> Self {
         Self {
             env,
-            root,
-            head,
             log_source: None,
+            perf_vm: None,
+            perf_gui: None,
         }
     }
 
@@ -178,19 +256,45 @@ where
     }
 
     /// Enable the logging window for tracking tracing.
-    pub fn trace_capture(mut self, trace_capture: widget::trace_view::TraceCapture) -> Self {
-        self.log_source = Some(LogSource::TraceCapture(trace_capture));
+    #[cfg(feature = "tracing")]
+    pub fn trace_capture(
+        mut self,
+        trace_capture: widget::trace_view::TraceCapture,
+        level: tracing::level_filters::LevelFilter,
+    ) -> Self {
+        self.log_source = Some(LogSource::TraceCapture(trace_capture, level));
+        self
+    }
+
+    /// Set the performance capture sources for VM and GUI timing.
+    pub fn perf_captures(
+        mut self,
+        perf_vm: &'a mut widget::PerfCapture,
+        perf_gui: &'a mut widget::PerfCapture,
+    ) -> Self {
+        self.perf_vm = Some(perf_vm);
+        self.perf_gui = Some(perf_gui);
         self
     }
 
     /// Present the gantz UI.
-    pub fn show(
+    ///
+    /// The `access` parameter provides access to all open heads and their data.
+    /// The `focused_head` is the index of the currently focused head.
+    ///
+    /// Returns a response containing the (possibly updated) focused head index.
+    pub fn show<'s, Access>(
         mut self,
-        state: &mut GantzState,
-        compiled_steel: &str,
-        vm: &mut Engine,
-        ui: &mut egui::Ui,
-    ) -> GantzResponse {
+        state: &'s mut GantzState,
+        focused_head: usize,
+        access: &'s mut Access,
+        ui: &'s mut egui::Ui,
+    ) -> GantzResponse
+    where
+        's: 'a,
+        Access: HeadAccess,
+        Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
+    {
         // TODO: Load the tiling tree, or initialise.
         let tree_id = egui::Id::new("gantz-tiles-tree-storage");
 
@@ -211,17 +315,25 @@ where
 
         // Initialise the response.
         // We'll collect it during traversal of the tree of tiles.
-        let mut response = GantzResponse::default();
+        let mut response = GantzResponse {
+            focused_head,
+            graph_select: None,
+            closed_heads: Vec::new(),
+            new_branch: None,
+        };
 
         // The context for traversing the tree of tiles.
         let mut behaviour = TreeBehaviour {
             gantz: &mut self,
             state: &mut *state,
-            compiled_steel,
-            vm,
+            access,
+            focused_head,
             gantz_response: &mut response,
         };
         tree.ui(&mut behaviour, ui);
+
+        // Update the response with the final focused head.
+        response.focused_head = behaviour.focused_head;
 
         // Persist the tree.
         ui.memory_mut(|m| m.data.insert_persisted(tree_id, Some(tree)));
@@ -236,40 +348,48 @@ impl GantzState {
     /// Shorthand for initialising graph state, with no intial layout so that on
     /// the first pass, the layout is automatically determined.
     pub fn new() -> Self {
-        Self::from_graphs(Default::default())
+        Self::from_open_heads(Default::default())
     }
 
-    pub fn from_graphs(graphs: Graphs) -> Self {
+    pub fn from_open_heads(open_heads: OpenHeadStates) -> Self {
         Self {
-            graph_scene: Default::default(),
-            path: vec![],
-            graphs,
-            auto_layout: false,
-            center_view: false,
+            open_heads,
             command_palette: widget::CommandPalette::default(),
-            layout_flow: Self::DEFAULT_DIRECTION,
             view_toggles: ViewToggles::default(),
         }
     }
 }
 
-impl<'a, 'g, Env> egui_tiles::Behavior<Pane> for TreeBehaviour<'a, 'g, Env>
+impl<'a, 's, Access> egui_tiles::Behavior<Pane> for TreeBehaviour<'a, 's, Access>
 where
-    Env: widget::graph_select::GraphRegistry + NodeTypeRegistry,
-    Env::Node: gantz_core::Node<Env> + NodeUi<Env> + graph_scene::ToGraphMut<Node = Env::Node>,
+    Access: HeadAccess,
+    Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
 {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
         match pane {
-            Pane::GraphConfig => "Graph Config".into(),
-            Pane::GraphScene => "Graph Scene".into(),
-            Pane::GraphSelect => "Graph Select".into(),
+            Pane::GraphConfig => match self.access.heads().get(self.focused_head) {
+                Some(head) => format!("Graph Config - {head}").into(),
+                None => "Graph Config".into(),
+            },
+            Pane::GraphScene => "Graphs".into(),
+            Pane::Graphs => "Graphs".into(),
+            Pane::GuiPerf => "GUI Perf".into(),
+            Pane::History => "History".into(),
             Pane::Logs => match self.gantz.log_source {
                 None => "Logs (No Source)".into(),
                 Some(LogSource::Logger(_)) => "Logs".into(),
-                Some(LogSource::TraceCapture(_)) => "Tracing".into(),
+                #[cfg(feature = "tracing")]
+                Some(LogSource::TraceCapture(..)) => "Tracing".into(),
             },
-            Pane::NodeInspector => "Node Inspector".into(),
-            Pane::Steel => "Steel".into(),
+            Pane::NodeInspector => match self.access.heads().get(self.focused_head) {
+                Some(head) => format!("Node Inspector - {head}").into(),
+                None => "Node Inspector".into(),
+            },
+            Pane::Steel => match self.access.heads().get(self.focused_head) {
+                Some(head) => format!("Steel - {head}").into(),
+                None => "Steel".into(),
+            },
+            Pane::VmPerf => "VM Perf".into(),
         }
     }
 
@@ -299,7 +419,7 @@ where
     }
 
     fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
-        // We will manually simplify before calling `tree.ui`. See `simplify_tree`
+        // We will manually simplify before calling `tree.ui`. See `simplify_tree`.
         egui_tiles::SimplificationOptions::OFF
     }
 
@@ -312,46 +432,401 @@ where
         let Self {
             ref mut gantz,
             ref mut state,
-            compiled_steel,
-            ref mut vm,
+            ref mut access,
+            ref mut focused_head,
             ref mut gantz_response,
         } = *self;
         match pane {
-            Pane::GraphConfig => {
-                graph_config(gantz.root, state, ui);
-            }
+            Pane::GraphConfig => match access.heads().get(*focused_head).cloned() {
+                Some(head) => {
+                    let head_state = state.open_heads.entry(head.clone()).or_default();
+                    let names = gantz.env.names();
+                    let res = pane_ui(ui, |ui| {
+                        widget::GraphConfig::new(&head, head_state, names).show(ui)
+                    });
+                    if res.inner.new_branch.is_some() {
+                        gantz_response.new_branch = res.inner.new_branch;
+                    }
+                }
+                None => {
+                    pane_ui(ui, |ui| {
+                        ui.label("No graph focused");
+                    });
+                }
+            },
             Pane::GraphScene => {
-                graph_scene(gantz.env, gantz.root, state, vm, ui);
-                command_palette(gantz.env, gantz.root, state, vm, ui);
+                // We'll use this for positioning the floating toggle window.
+                let rect = ui.available_rect_before_wrap();
+
+                // Retrieve the inner graph tree from persistent storage, or create empty.
+                let graph_tree_id = egui::Id::new(GRAPH_TREE_ID);
+                let mut graph_tree: egui_tiles::Tree<GraphPane> = ui
+                    .memory_mut(|m| {
+                        m.data
+                            .get_persisted_mut_or_default::<Option<egui_tiles::Tree<GraphPane>>>(
+                                graph_tree_id,
+                            )
+                            .take()
+                    })
+                    .unwrap_or_else(create_empty_graph_tree);
+
+                // Sync the graph tree panes with the heads list.
+                sync_graph_panes(&mut graph_tree, access.heads());
+
+                // Activate the tab corresponding to the focused head.
+                if let Some(fh) = access.heads().get(*focused_head) {
+                    let fh = fh.clone();
+                    graph_tree.make_active(|_, tile| match tile {
+                        egui_tiles::Tile::Pane(GraphPane(head)) => *head == fh,
+                        _ => false,
+                    });
+                }
+
+                // Render the inner tree.
+                let mut graph_behaviour = GraphTreeBehaviour {
+                    env: gantz.env,
+                    access: *access,
+                    state,
+                    focused_head,
+                    closed_heads: &mut gantz_response.closed_heads,
+                    new_branch: &mut gantz_response.new_branch,
+                };
+                graph_tree.ui(&mut graph_behaviour, ui);
+
+                // Persist the inner tree.
+                ui.memory_mut(|m| m.data.insert_persisted(graph_tree_id, Some(graph_tree)));
+
+                // Show the command palette once (not per-pane), operating on the focused head.
+                if let Some(fh) = access.heads().get(*focused_head).cloned() {
+                    let head_state = state.open_heads.entry(fh.clone()).or_default();
+
+                    // Copy/paste keyboard shortcuts.
+                    if !ui.ctx().wants_keyboard_input() {
+                        if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::C)) {
+                            head_state.scene.cmds.push(Cmd::CopySelection);
+                        }
+                        // Detect paste: Event::Paste (eframe/web) or Ctrl+V
+                        // key press (bevy_egui desktop, which sends Event::Text
+                        // instead of Event::Paste).
+                        let paste_text = ui.input(|i| {
+                            i.events.iter().find_map(|e| match e {
+                                egui::Event::Paste(s) => Some(s.clone()),
+                                _ => None,
+                            })
+                        });
+                        let ctrl_v = paste_text.is_some()
+                            || ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::V));
+                        if ctrl_v {
+                            head_state.scene.cmds.push(Cmd::PasteClipboard {
+                                text: paste_text,
+                                offset: egui::vec2(20.0, 20.0),
+                            });
+                        }
+                    }
+
+                    command_palette(gantz.env, head_state, &mut state.command_palette, ui);
+                }
+
+                // Floating pane menu over the bottom right corner of the graph scene pane.
+                let space = ui.style().interaction.interact_radius * 3.0;
+                let anchor = rect.right_bottom() + egui::vec2(-space, -space);
+                widget::PaneMenu::new(&mut state.view_toggles).show(ui.ctx(), anchor);
             }
-            Pane::GraphSelect => {
-                let res = graph_select(gantz.env, gantz.head, ui);
-                gantz_response.graph_select = Some(res.inner);
+            Pane::Graphs => {
+                let heads = access.heads();
+                let res = graph_select(gantz.env, heads, *focused_head, ui);
+                match &mut gantz_response.graph_select {
+                    Some(gs) => *gs |= res.inner,
+                    None => gantz_response.graph_select = Some(res.inner),
+                }
+            }
+            Pane::GuiPerf => {
+                if let Some(ref mut capture) = gantz.perf_gui {
+                    perf_view("GUI Perf", capture, ui);
+                }
+            }
+            Pane::History => {
+                let heads = access.heads();
+                let res = history_view(gantz.env, heads, *focused_head, ui);
+                match &mut gantz_response.graph_select {
+                    Some(gs) => *gs |= res.inner,
+                    None => gantz_response.graph_select = Some(res.inner),
+                }
             }
             Pane::Logs => match &gantz.log_source {
                 None => (),
                 Some(LogSource::Logger(logger)) => {
                     log_view(logger, ui);
                 }
-                Some(LogSource::TraceCapture(trace_capture)) => {
-                    trace_view(trace_capture, ui);
+                #[cfg(feature = "tracing")]
+                Some(LogSource::TraceCapture(trace_capture, level)) => {
+                    trace_view(trace_capture, *level, ui);
                 }
             },
             Pane::NodeInspector => {
-                node_inspector(gantz.env, gantz.root, vm, state, ui);
+                // Use the focused head for the node inspector.
+                if let Some(fh) = access.heads().get(*focused_head).cloned() {
+                    let head_state = state.open_heads.entry(fh.clone()).or_default();
+                    access.with_head_mut(&fh, |data| {
+                        node_inspector(gantz.env, data.graph, data.vm, head_state, ui);
+                    });
+                }
             }
             Pane::Steel => {
+                // Use the focused head's compiled module.
+                let compiled_steel = access
+                    .heads()
+                    .get(*focused_head)
+                    .and_then(|h| access.compiled_module(h))
+                    .unwrap_or("");
                 steel_view(compiled_steel, ui);
+            }
+            Pane::VmPerf => {
+                if let Some(ref mut capture) = gantz.perf_vm {
+                    perf_view("VM Perf", capture, ui);
+                }
             }
         }
         egui_tiles::UiResponse::None
     }
 }
 
-impl<'a, Env> widget::command_palette::Command for NodeTyCmd<'a, Env>
+/// The context passed to the inner graph `egui_tiles::Tree` widget.
+struct GraphTreeBehaviour<'a, Access>
 where
-    Env: NodeTypeRegistry,
+    Access: HeadAccess,
+    Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
 {
+    env: &'a dyn Registry,
+    access: &'a mut Access,
+    state: &'a mut GantzState,
+    focused_head: &'a mut usize,
+    /// Heads closed via the tab close button.
+    closed_heads: &'a mut Vec<gantz_ca::Head>,
+    /// New branch created from tab double-click: (original_head, new_branch_name).
+    new_branch: &'a mut Option<(gantz_ca::Head, String)>,
+}
+
+impl<'a, Access> egui_tiles::Behavior<GraphPane> for GraphTreeBehaviour<'a, Access>
+where
+    Access: HeadAccess,
+    Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
+{
+    fn tab_title_for_pane(&mut self, pane: &GraphPane) -> egui::WidgetText {
+        let GraphPane(head) = pane;
+        head.to_string().into()
+    }
+
+    fn tab_bar_color(&self, visuals: &egui::Visuals) -> egui::Color32 {
+        visuals.panel_fill
+    }
+
+    fn resize_stroke(
+        &self,
+        style: &egui::Style,
+        _resize_state: egui_tiles::ResizeState,
+    ) -> egui::Stroke {
+        let w = 2.0;
+        egui::Stroke::new(w, style.visuals.extreme_bg_color)
+    }
+
+    fn tab_outline_stroke(
+        &self,
+        _visuals: &egui::Visuals,
+        _tiles: &egui_tiles::Tiles<GraphPane>,
+        _tile_id: egui_tiles::TileId,
+        _state: &egui_tiles::TabState,
+    ) -> egui::Stroke {
+        egui::Stroke::NONE
+    }
+
+    fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
+        egui_tiles::SimplificationOptions {
+            all_panes_must_have_tabs: true,
+            ..Default::default()
+        }
+    }
+
+    fn is_tab_closable(
+        &self,
+        _tiles: &egui_tiles::Tiles<GraphPane>,
+        _tile_id: egui_tiles::TileId,
+    ) -> bool {
+        // Allow closing tabs if there's more than one head open.
+        self.access.heads().len() > 1
+    }
+
+    fn on_tab_close(
+        &mut self,
+        tiles: &mut egui_tiles::Tiles<GraphPane>,
+        tile_id: egui_tiles::TileId,
+    ) -> bool {
+        // Get the head from the pane being closed.
+        if let Some(GraphPane(head)) = tiles.get_pane(&tile_id).cloned() {
+            self.closed_heads.push(head);
+        }
+        // Return true to allow egui_tiles to remove the tile.
+        true
+    }
+
+    fn tab_ui(
+        &mut self,
+        tiles: &mut egui_tiles::Tiles<GraphPane>,
+        ui: &mut egui::Ui,
+        id: egui::Id,
+        tile_id: egui_tiles::TileId,
+        state: &egui_tiles::TabState,
+    ) -> egui::Response {
+        // Load tab edit state from temp memory.
+        let edit_state_id = egui::Id::new("tab_edit_state");
+        let mut edit_state: TabEditState = ui
+            .memory_mut(|m| m.data.get_temp(edit_state_id))
+            .unwrap_or_default();
+
+        let is_editing = edit_state.editing_tile_id == Some(tile_id);
+
+        let response = if is_editing {
+            let head = tiles.get_pane(&tile_id).map(|GraphPane(h)| h.clone());
+            let names = self.env.names();
+
+            let name_res = head.as_ref().map(|h| {
+                ui.scope(|ui| {
+                    ui.set_max_width(ui.available_width().min(150.0));
+                    widget::head_name_edit(h, &mut edit_state.edit_text, names, ui)
+                })
+                .inner
+            });
+
+            let Some(name_res) = name_res else {
+                edit_state.editing_tile_id = None;
+                edit_state.edit_text.clear();
+                // Store edit state back to temp memory.
+                ui.memory_mut(|m| m.data.insert_temp(edit_state_id, edit_state));
+                return ui.label("");
+            };
+
+            // Request focus on the first frame after entering edit mode.
+            if edit_state.request_focus {
+                name_res.response.request_focus();
+                edit_state.request_focus = false;
+            }
+
+            // head_name_edit resets the text on commit/cancel, so detect
+            // focus loss or escape to clear the tab editing state.
+            let editing_ended =
+                name_res.response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if editing_ended {
+                if let Some(new_branch) = name_res.new_branch {
+                    *self.new_branch = Some(new_branch);
+                }
+                edit_state.editing_tile_id = None;
+                edit_state.edit_text.clear();
+            }
+
+            name_res.response
+        } else {
+            // Render the tab using our custom widget.
+            // Append a filled circle if this head is focused.
+            let mut title = self.tab_title_for_tile(tiles, tile_id).text().to_string();
+            if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
+                let heads = self.access.heads();
+                if crate::head_is_focused(heads, *self.focused_head, head) {
+                    title.push_str(" ⚫");
+                }
+            }
+            let res = widget::GraphTab::new(title, id)
+                .active(state.active)
+                .closable(state.closable)
+                .show(ui);
+
+            // Handle double-click to enter edit mode.
+            if res.tab.double_clicked() {
+                if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
+                    // Initialize edit text based on head type.
+                    let initial_text = match head {
+                        gantz_ca::Head::Branch(name) => name.clone(),
+                        gantz_ca::Head::Commit(_) => String::new(),
+                    };
+                    edit_state.editing_tile_id = Some(tile_id);
+                    edit_state.edit_text = initial_text;
+                    edit_state.request_focus = true;
+                }
+            }
+
+            // Update focused_head when this tab is clicked.
+            if res.tab.clicked() {
+                if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
+                    if let Some(ix) = self.access.heads().iter().position(|h| h == head) {
+                        *self.focused_head = ix;
+                    }
+                }
+            }
+
+            // Handle close button click directly, like egui_tiles default does.
+            if res.close.is_some_and(|r| r.clicked()) {
+                if self.on_tab_close(tiles, tile_id) {
+                    tiles.remove(tile_id);
+                }
+            }
+
+            res.tab
+        };
+
+        // Store edit state back to temp memory.
+        ui.memory_mut(|m| m.data.insert_temp(edit_state_id, edit_state));
+
+        response
+    }
+
+    fn pane_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        _tile_id: egui_tiles::TileId,
+        pane: &mut GraphPane,
+    ) -> egui_tiles::UiResponse {
+        let GraphPane(pane_head) = pane;
+
+        // Find the index of this head (for updating focused_head).
+        let ix = self
+            .access
+            .heads()
+            .iter()
+            .position(|h| h == pane_head)
+            .expect("pane head not found in heads");
+
+        let head_state = self.state.open_heads.entry(pane_head.clone()).or_default();
+        let auto_layout = head_state.auto_layout;
+        let layout_flow = head_state.layout_flow;
+        let center_view = head_state.center_view;
+
+        // Get mutable access to this head's data and render the graph scene.
+        let graph_response = self.access.with_head_mut(pane_head, |data| {
+            graph_scene(
+                self.env,
+                data.graph,
+                pane_head,
+                head_state,
+                data.views,
+                auto_layout,
+                layout_flow,
+                center_view,
+                data.vm,
+                ui,
+            )
+        });
+
+        // Focus this head when clicking on the graph or any of its nodes.
+        if let Some(Some(response)) = graph_response {
+            if response.scene.clicked() || response.any_node_interacted() {
+                *self.focused_head = ix;
+            }
+        }
+
+        egui_tiles::UiResponse::None
+    }
+}
+
+impl widget::command_palette::Command for NodeTyCmd<'_> {
     fn text(&self) -> &str {
         self.name
     }
@@ -365,14 +840,16 @@ where
     }
 }
 
-impl<'a, T> Clone for NodeTyCmd<'a, T> {
+impl Clone for NodeTyCmd<'_> {
     fn clone(&self) -> Self {
-        let Self { env, name } = self;
-        Self { env, name }
+        Self {
+            env: self.env,
+            name: self.name,
+        }
     }
 }
 
-impl<'a, T> Copy for NodeTyCmd<'a, T> {}
+impl Copy for NodeTyCmd<'_> {}
 
 impl Default for GantzState {
     fn default() -> Self {
@@ -385,13 +862,13 @@ impl Default for GantzState {
 /// Roughly something like this:
 ///
 /// -------------------------------------
-/// |conf |scene                        |
+/// |grs  |scene                        |
 /// |-----|                             |
-/// |sel  |                             |
-/// |     |                             |
-/// |-----|-----------------------------|
-/// |insp |logs          |steel         |
-/// |     |              |              |
+/// |conf |                             |
+/// |-----|                             |
+/// |hist |-----------------------------|
+/// |-----|logs          |steel         |
+/// |insp |              |              |
 /// -------------------------------------
 fn create_tree() -> egui_tiles::Tree<Pane> {
     let mut tiles = egui_tiles::Tiles::default();
@@ -399,18 +876,31 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
     // The leaf panes.
     let graph_config = tiles.insert_pane(Pane::GraphConfig);
     let graph_scene = tiles.insert_pane(Pane::GraphScene);
-    let graph_select = tiles.insert_pane(Pane::GraphSelect);
+    let graphs = tiles.insert_pane(Pane::Graphs);
+    let gui_perf = tiles.insert_pane(Pane::GuiPerf);
+    let history = tiles.insert_pane(Pane::History);
     let logs = tiles.insert_pane(Pane::Logs);
     let node_inspector = tiles.insert_pane(Pane::NodeInspector);
     let steel = tiles.insert_pane(Pane::Steel);
+    let vm_perf = tiles.insert_pane(Pane::VmPerf);
 
     // The left column.
     let mut shares = egui_tiles::Shares::default();
-    shares.set_share(graph_config, 0.15);
-    shares.set_share(graph_select, 0.4);
-    shares.set_share(node_inspector, 0.45);
+    shares.set_share(graphs, 0.22);
+    shares.set_share(graph_config, 0.12);
+    shares.set_share(history, 0.18);
+    shares.set_share(vm_perf, 0.10);
+    shares.set_share(gui_perf, 0.10);
+    shares.set_share(node_inspector, 0.28);
     let left_column = tiles.insert_container(egui_tiles::Linear {
-        children: vec![graph_config, graph_select, node_inspector],
+        children: vec![
+            graphs,
+            graph_config,
+            history,
+            vm_perf,
+            gui_perf,
+            node_inspector,
+        ],
         dir: egui_tiles::LinearDir::Vertical,
         shares,
     });
@@ -435,6 +925,59 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
     egui_tiles::Tree::new("gantz-tiles-tree", root, tiles)
 }
 
+/// Create an empty graph tree. Panes will be added by `sync_graph_panes`.
+fn create_empty_graph_tree() -> egui_tiles::Tree<GraphPane> {
+    egui_tiles::Tree::empty("graph-tiles")
+}
+
+/// Sync the graph tree panes with the current heads.
+///
+/// Adds missing panes for new heads and removes panes for heads that no longer exist.
+fn sync_graph_panes(tree: &mut egui_tiles::Tree<GraphPane>, heads: &[gantz_ca::Head]) {
+    use std::collections::HashSet;
+
+    // Collect existing heads in panes.
+    let existing: HashSet<gantz_ca::Head> = tree
+        .tiles
+        .iter()
+        .filter_map(|(_, tile)| match tile {
+            egui_tiles::Tile::Pane(GraphPane(head)) => Some(head.clone()),
+            _ => None,
+        })
+        .collect();
+
+    // Collect current heads.
+    let current: HashSet<gantz_ca::Head> = heads.iter().cloned().collect();
+
+    // Add missing panes for heads that don't have a pane yet.
+    for head in heads {
+        if !existing.contains(head) {
+            let pane_id = tree.tiles.insert_pane(GraphPane(head.clone()));
+            // Add to root container, or set as root if tree is empty.
+            if let Some(root_id) = tree.root() {
+                tree.move_tile_to_container(pane_id, root_id, usize::MAX, true);
+            } else {
+                // Tree is empty, create a tabs container as root.
+                let root = tree.tiles.insert_tab_tile(vec![pane_id]);
+                tree.root = Some(root);
+            }
+        }
+    }
+
+    // Remove panes for heads that no longer exist.
+    let orphaned: Vec<egui_tiles::TileId> = tree
+        .tiles
+        .iter()
+        .filter_map(|(id, tile)| match tile {
+            egui_tiles::Tile::Pane(GraphPane(head)) if !current.contains(head) => Some(*id),
+            _ => None,
+        })
+        .collect();
+    for id in orphaned {
+        tree.tiles.remove(id);
+    }
+}
+
 /// All panes should have tab bars besides the main graph scene.
 ///
 /// In the case that a tile is being dragged, even the graph scene should show a
@@ -453,16 +996,14 @@ fn simplify_tree(tree: &mut egui_tiles::Tree<Pane>, ctx: &egui::Context) {
     let Some(graph_scene_id) = tree.tiles.find_pane(&Pane::GraphScene) else {
         return;
     };
-    // Find it's parent. This must be `Tabs` after the `simplify` pass above.
-    let parent_id = tree
-        .tiles
-        .parent_of(graph_scene_id)
-        .expect("parent must be `Tabs`");
+    // Find its parent. This must be `Tabs` after the `simplify` pass above.
+    let Some(parent_id) = tree.tiles.parent_of(graph_scene_id) else {
+        return;
+    };
     // If the parent has one child, replace it with the graph scene.
-    let parent = tree
-        .tiles
-        .get_container(parent_id)
-        .expect("parent must be a container");
+    let Some(parent) = tree.tiles.get_container(parent_id) else {
+        return;
+    };
     if parent.num_children() == 1 {
         tree.tiles.remove(graph_scene_id);
         tree.tiles
@@ -479,10 +1020,13 @@ fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
             match pane {
                 Pane::GraphConfig => tree.set_visible(id, view.graph_config),
                 Pane::GraphScene => (),
-                Pane::GraphSelect => tree.set_visible(id, view.graph_select),
+                Pane::Graphs => tree.set_visible(id, view.graphs),
+                Pane::GuiPerf => tree.set_visible(id, view.perf_gui),
+                Pane::History => tree.set_visible(id, view.history),
                 Pane::Logs => tree.set_visible(id, view.logs),
                 Pane::NodeInspector => tree.set_visible(id, view.node_inspector),
                 Pane::Steel => tree.set_visible(id, view.steel),
+                Pane::VmPerf => tree.set_visible(id, view.perf_vm),
             }
         }
     }
@@ -500,50 +1044,97 @@ fn pane_ui<R>(ui: &mut egui::Ui, pane: impl FnOnce(&mut egui::Ui) -> R) -> egui:
     egui::CentralPanel::default().show_inside(ui, |ui| pane(ui))
 }
 
-fn graph_select<Env>(
-    env: &mut Env,
-    head: &gantz_ca::Head,
+fn graph_select(
+    env: &dyn Registry,
+    heads: &[gantz_ca::Head],
+    focused_head: usize,
     ui: &mut egui::Ui,
-) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse>
-where
-    Env: widget::graph_select::GraphRegistry,
-{
-    pane_ui(ui, |ui| widget::GraphSelect::new(env, head).show(ui))
+) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse> {
+    pane_ui(ui, |ui| {
+        widget::GraphSelect::new(env, heads)
+            .focused_head(focused_head)
+            .show(ui)
+    })
 }
 
-fn graph_scene<Env, N>(
-    env: &Env,
+fn history_view(
+    env: &dyn Registry,
+    heads: &[gantz_ca::Head],
+    focused_head: usize,
+    ui: &mut egui::Ui,
+) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse> {
+    pane_ui(ui, |ui| {
+        widget::HistoryView::new(env, heads)
+            .focused_head(focused_head)
+            .show(ui)
+    })
+}
+
+fn perf_view(title: &str, capture: &mut widget::PerfCapture, ui: &mut egui::Ui) {
+    // Use Frame::NONE to fill the entire pane with no padding.
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE)
+        .show_inside(ui, |ui| {
+            widget::PerfView::new(title, capture).show(ui);
+        });
+}
+
+/// Returns the response from the graph scene if it was shown.
+fn graph_scene<N>(
+    registry: &dyn Registry,
     graph: &mut gantz_core::node::graph::Graph<N>,
-    state: &mut GantzState,
+    head: &gantz_ca::Head,
+    head_state: &mut OpenHeadState,
+    head_views: &mut GraphViews,
+    auto_layout: bool,
+    layout_flow: egui::Direction,
+    center_view: bool,
     vm: &mut Engine,
     ui: &mut egui::Ui,
-) where
-    N: Node<Env> + NodeUi<Env> + graph_scene::ToGraphMut<Node = N>,
+) -> Option<graph_scene::GraphSceneResponse>
+where
+    N: Node + NodeUi + graph_scene::ToGraphMut<Node = N>,
 {
-    // We'll use this for positioning the fixed path and toggle windows.
+    // We'll use this for positioning the fixed path labels window.
     let rect = ui.available_rect_before_wrap();
 
     // Show the `GraphScene` for the graph at the current path.
-    match graph_scene::index_path_graph_mut(graph, &state.path) {
-        None => log::error!("path {:?} is not a graph", state.path),
+    let response = match graph_scene::index_path_graph_mut(graph, &head_state.path) {
+        None => {
+            log::error!("path {:?} is not a graph", head_state.path);
+            None
+        }
         Some(graph) => {
-            // Retrieve the view associated with this graph.
-            let graph_state = state.graphs.entry(state.path.to_vec()).or_insert_with(|| {
-                let mut view = egui_graph::View::default();
-                view.layout = widget::graph_scene::layout(graph, state.layout_flow, ui.ctx());
-                GraphState { view }
-            });
+            // Use both head and path for a unique ID per graph pane.
+            let id = egui::Id::new(head).with(&head_state.path);
 
-            GraphScene::new(env, graph, &state.path)
-                .with_id(egui::Id::new(&state.path))
-                .auto_layout(state.auto_layout)
-                .layout_flow(state.layout_flow)
-                .center_view(state.center_view)
-                .show(&mut graph_state.view, &mut state.graph_scene, vm, ui);
+            // Get or create the View for this path from external storage.
+            let view = head_views
+                .entry(head_state.path.to_vec())
+                .or_insert_with(|| {
+                    let layout = widget::graph_scene::layout(graph, id, layout_flow, ui.ctx());
+                    egui_graph::View {
+                        scene_rect: egui::Rect::ZERO,
+                        layout,
+                    }
+                });
+
+            let response = GraphScene::new(registry, graph, &head_state.path)
+                .with_id(id)
+                .auto_layout(auto_layout)
+                .layout_flow(layout_flow)
+                .center_view(center_view)
+                .show(view, &mut head_state.scene, vm, ui);
+
+            Some(response)
         }
     };
 
     // Floating path index labels over the bottom-left corner of the scene.
+    // Only show when viewing a subgraph (non-empty path).
+    if head_state.path.is_empty() {
+        return response;
+    }
     let space = ui.style().interaction.interact_radius * 3.0;
     egui::Window::new("path_label_window")
         .pivot(egui::Align2::LEFT_BOTTOM)
@@ -564,24 +1155,24 @@ fn graph_scene<Env, N>(
                 .show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
                         if ui.add(button("R")).on_hover_text("Root Graph").clicked() {
-                            state.graph_scene.cmds.push(Cmd::OpenGraph(vec![]));
-                            state.graph_scene.interaction.selection.clear();
+                            head_state.scene.cmds.push(Cmd::OpenGraph(vec![]));
+                            head_state.scene.interaction.selection.clear();
                         }
                     });
-                    for ix in 0..state.path.len() {
-                        let id = state.path[ix];
+                    for ix in 0..head_state.path.len() {
+                        let id = head_state.path[ix];
                         ui.vertical_centered_justified(|ui| {
                             let s = format!("{}", id);
-                            let path = &state.path[..ix + 1];
-                            let current_path = path == state.path;
+                            let path = &head_state.path[..ix + 1];
+                            let current_path = path == head_state.path;
                             if ui
                                 .add(button(&s))
                                 .on_hover_text(format!("Graph at {path:?}"))
                                 .clicked()
                             {
                                 if !current_path {
-                                    state.graph_scene.cmds.push(Cmd::OpenGraph(path.to_vec()));
-                                    state.graph_scene.interaction.selection.clear();
+                                    head_state.scene.cmds.push(Cmd::OpenGraph(path.to_vec()));
+                                    head_state.scene.interaction.selection.clear();
                                 }
                             }
                         });
@@ -589,125 +1180,36 @@ fn graph_scene<Env, N>(
                 })
         });
 
-    // Floating toggles over the bottom right corner of the graph scene.
-    egui::Window::new("label_toggle_window")
-        .pivot(egui::Align2::RIGHT_BOTTOM)
-        .fixed_pos(rect.right_bottom() + egui::vec2(-space, -space))
-        .title_bar(false)
-        .resizable(false)
-        .collapsible(false)
-        .frame(egui::Frame::NONE)
-        .show(ui.ctx(), |ui| {
-            fn toggle<'a>(s: &str, b: &'a mut bool) -> widget::LabelToggle<'a> {
-                let text = egui::RichText::new(s).size(24.0);
-                widget::LabelToggle::new(text, b)
-            }
-            let grid_w = 150.0;
-            let n_cols = 5;
-            let gap_space = ui.spacing().item_spacing.x * (n_cols as f32 - 1.0);
-            let col_w = (grid_w - gap_space) / n_cols as f32;
-            egui::Grid::new("view_toggles")
-                .min_col_width(col_w)
-                .max_col_width(col_w)
-                .show(ui, |ui| {
-                    ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("C", &mut state.view_toggles.graph_config))
-                            .on_hover_text("Graph Configuration");
-                    });
-                    ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("G", &mut state.view_toggles.graph_select))
-                            .on_hover_text("Graph Select");
-                    });
-                    ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("N", &mut state.view_toggles.node_inspector))
-                            .on_hover_text("Node Inspector");
-                    });
-                    ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("L", &mut state.view_toggles.logs))
-                            .on_hover_text("Log View");
-                    });
-                    ui.vertical_centered_justified(|ui| {
-                        ui.add(toggle("λ", &mut state.view_toggles.steel))
-                            .on_hover_text("Steel View");
-                    });
-                });
-        });
+    response
 }
 
-fn command_palette<Env>(
-    env: &Env,
-    root: &mut gantz_core::node::graph::Graph<Env::Node>,
-    state: &mut GantzState,
-    vm: &mut Engine,
+fn command_palette(
+    env: &dyn Registry,
+    head_state: &mut OpenHeadState,
+    cmd_palette: &mut widget::CommandPalette,
     ui: &mut egui::Ui,
-) where
-    Env: NodeTypeRegistry,
-    Env::Node: gantz_core::Node<Env> + ToGraphMut<Node = Env::Node>,
-{
+) {
     // If space is pressed, toggle command palette visibility.
     if !ui.ctx().wants_keyboard_input() {
         if ui.ctx().input(|i| i.key_pressed(egui::Key::Space)) {
-            state.command_palette.toggle();
+            cmd_palette.toggle();
         }
     }
 
     // Map the node types to commands for the command palette.
-    let cmds = env.node_types().map(|k| NodeTyCmd { env, name: &k[..] });
+    let types = env.node_types();
+    let cmds = types.iter().map(|&k| NodeTyCmd { env, name: k });
 
-    // We'll only want to apply commands to the currently selected graph.
-    let graph = graph_scene::index_path_graph_mut(root, &state.path).unwrap();
-
-    // If a command was emitted, add the node.
-    if let Some(cmd) = state.command_palette.show(ui.ctx(), cmds) {
-        // Add a node of the selected type.
-        let Some(node) = env.new_node(cmd.name) else {
-            return;
-        };
-        let id = graph.add_node(node);
-        let ix = id.index();
-
-        // Determine the node's path and register it within the VM.
-        let node_path: Vec<_> = state.path.iter().copied().chain(Some(ix)).collect();
-        graph[id].register(&node_path, vm);
+    // If a command was emitted, emit a CreateNode command.
+    if let Some(cmd) = cmd_palette.show(ui.ctx(), cmds) {
+        head_state
+            .scene
+            .cmds
+            .push(crate::Cmd::CreateNode(crate::CreateNode {
+                path: head_state.path.clone(),
+                node_type: cmd.name.to_string(),
+            }));
     }
-}
-
-fn graph_config<N>(
-    root: &mut gantz_core::node::graph::Graph<N>,
-    state: &mut GantzState,
-    ui: &mut egui::Ui,
-) -> egui::InnerResponse<egui::Response>
-where
-    N: ToGraphMut<Node = N>,
-{
-    pane_ui(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut state.auto_layout, "Automatic Layout");
-            ui.separator();
-            ui.add_enabled_ui(!state.auto_layout, |ui| {
-                if ui.button("Layout Once").clicked() {
-                    let graph = graph_scene::index_path_graph_mut(root, &state.path).unwrap();
-                    let graph_state = state.graphs.get_mut(&state.path).unwrap();
-                    graph_state.view.layout =
-                        graph_scene::layout(graph, state.layout_flow, ui.ctx());
-                }
-            });
-        });
-        ui.checkbox(&mut state.center_view, "Center View");
-        ui.horizontal(|ui| {
-            ui.label("Flow:");
-            ui.radio_value(
-                &mut state.layout_flow,
-                egui::Direction::LeftToRight,
-                "Right",
-            );
-            ui.radio_value(&mut state.layout_flow, egui::Direction::TopDown, "Down");
-        });
-        if let Some(graph_state) = state.graphs.get(&state.path) {
-            ui.label(format!("Scene: {:?}", graph_state.view.scene_rect));
-        }
-        ui.response()
-    })
 }
 
 fn log_view(logger: &widget::log_view::Logger, ui: &mut egui::Ui) -> egui::InnerResponse<()> {
@@ -718,34 +1220,36 @@ fn log_view(logger: &widget::log_view::Logger, ui: &mut egui::Ui) -> egui::Inner
 
 fn trace_view(
     trace_capture: &widget::trace_view::TraceCapture,
+    level: tracing::level_filters::LevelFilter,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<()> {
     pane_ui(ui, |ui| {
-        widget::trace_view::TraceView::new("trace-view".into(), trace_capture.clone()).show(ui);
+        widget::trace_view::TraceView::new("trace-view".into(), trace_capture.clone(), level)
+            .show(ui);
     })
 }
 
-fn node_inspector<Env, N>(
-    env: &Env,
+fn node_inspector<N>(
+    registry: &dyn Registry,
     root: &mut gantz_core::node::graph::Graph<N>,
     vm: &mut Engine,
-    state: &mut GantzState,
+    head_state: &mut OpenHeadState,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<()>
 where
-    N: Node<Env> + NodeUi<Env> + ToGraphMut<Node = N>,
+    N: Node + NodeUi + ToGraphMut<Node = N>,
 {
     pane_ui(ui, |ui| {
         egui::ScrollArea::vertical()
             .auto_shrink(egui::Vec2b::FALSE)
             .show(ui, |ui| {
-                let graph = graph_scene::index_path_graph_mut(root, &state.path).unwrap();
+                let graph = graph_scene::index_path_graph_mut(root, &head_state.path).unwrap();
                 let ids: Vec<_> = graph.node_references().map(|n_ref| n_ref.id()).collect();
                 // Collect the inlets and outlets.
-                let (inlets, outlets) = crate::inlet_outlet_ids::<Env, _>(graph);
+                let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
                 for id in ids {
                     let mut frame = egui::Frame::group(ui.style());
-                    if state.graph_scene.interaction.selection.nodes.contains(&id) {
+                    if head_state.scene.interaction.selection.nodes.contains(&id) {
                         frame.stroke.color = ui.visuals().selection.stroke.color;
                     }
                     frame.show(ui, |ui| {
@@ -753,14 +1257,15 @@ where
                             return;
                         };
                         let ix = id.index();
-                        let path: Vec<_> = state.path.iter().copied().chain(Some(ix)).collect();
+                        let path: Vec<_> =
+                            head_state.path.iter().copied().chain(Some(ix)).collect();
                         let ctx = NodeCtx::new(
-                            env,
+                            registry,
                             &path[..],
                             &inlets,
                             &outlets,
                             vm,
-                            &mut state.graph_scene.cmds,
+                            &mut head_state.scene.cmds,
                         );
                         widget::NodeInspector::new(node, ctx).show(ui);
                     });

@@ -36,6 +36,15 @@ pub enum Head {
     Branch(Branch),
 }
 
+impl std::fmt::Display for Head {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Head::Branch(name) => write!(f, "{name}"),
+            Head::Commit(ca) => write!(f, "{}", ca.display_short()),
+        }
+    }
+}
+
 impl Commit {
     /// Create a new commit with the given timestamp, parent and graph.
     pub fn new(timestamp: Duration, parent: Option<CommitAddr>, graph: GraphAddr) -> Self {

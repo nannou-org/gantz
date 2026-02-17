@@ -1,0 +1,59 @@
+name: deploy-pr-preview
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+
+concurrency:
+  group: deploy-preview-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-preview:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      deployments: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pr-preview-*
+          path: ./preview-build
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          merge-multiple: true
+      - id: pr-info
+        run: |
+          PR_NUMBER=$(cat ./preview-build/PR_NUMBER)
+          echo "number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "head_sha=${{ github.event.workflow_run.head_sha }}" >> $GITHUB_OUTPUT
+          rm ./preview-build/PR_NUMBER
+      - name: start-deployment
+        uses: bobheadxi/deployments@v1
+        id: deployment
+        with:
+          step: start
+          token: ${{ secrets.GITHUB_TOKEN }}
+          env: pr-${{ steps.pr-info.outputs.number }}
+          ref: ${{ steps.pr-info.outputs.head_sha }}
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./preview-build
+          destination_dir: pr-preview/pr-${{ steps.pr-info.outputs.number }}
+          keep_files: true
+      - name: finish-deployment
+        uses: bobheadxi/deployments@v1
+        with:
+          step: finish
+          token: ${{ secrets.GITHUB_TOKEN }}
+          env: pr-${{ steps.pr-info.outputs.number }}
+          status: success
+          deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+          env_url: https://nannou-org.github.io/gantz/pr-preview/pr-${{ steps.pr-info.outputs.number }}/

@@ -1,33 +1,29 @@
 use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
 use gantz_ca::CaHash;
-use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// A wrapper around a `Node` that enables push evaluation across all outputs.
 ///
 /// The implementation of `Node` will match the inner node type `N`, but with a
 /// unique implementation of [`Node::push_eval`].
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Push<Env, N> {
-    env: core::marker::PhantomData<Env>,
+#[derive(Clone, Debug, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.push")]
+pub struct Push<N> {
     node: N,
     conf: node::EvalConf,
 }
 
 /// A trait implemented for all `Node` types allowing to enable push evaluation.
-pub trait WithPushEval<Env>: Sized + Node<Env> {
+pub trait WithPushEval: Sized + Node {
     /// Consume `self` and return a `Node` that has push evaluation enabled.
-    fn with_push_eval_conf(self, conf: node::EvalConf) -> Push<Env, Self>;
+    fn with_push_eval_conf(self, conf: node::EvalConf) -> Push<Self>;
     /// Consume `self` and return a `Node` that has push evaluation enabled.
-    fn with_push_eval(self) -> Push<Env, Self> {
+    fn with_push_eval(self) -> Push<Self> {
         self.with_push_eval_conf(node::EvalConf::All)
     }
 }
 
-impl<Env, N> Push<Env, N>
-where
-    N: Node<Env>,
-{
+impl<N: Node> Push<N> {
     /// Given some node, return a `Push` node enabling push evaluation across
     /// all outputs.
     pub fn all(node: N) -> Self {
@@ -37,72 +33,58 @@ where
     /// Given some node, return a `Push` node enabling push evaluation across
     /// some subset of the outputs.
     pub fn new(node: N, conf: node::EvalConf) -> Self {
-        let env = core::marker::PhantomData;
-        Push { env, node, conf }
+        Push { node, conf }
     }
 }
 
-impl<Env, N> WithPushEval<Env> for N
-where
-    N: Node<Env>,
-{
-    fn with_push_eval_conf(self, conf: node::EvalConf) -> Push<Env, Self> {
+impl<N: Node> WithPushEval for N {
+    fn with_push_eval_conf(self, conf: node::EvalConf) -> Push<Self> {
         Push::new(self, conf)
     }
 }
 
-impl<Env, N> Node<Env> for Push<Env, N>
-where
-    N: Node<Env>,
-{
-    fn n_inputs(&self, env: &Env) -> usize {
-        self.node.n_inputs(env)
+impl<N: Node> Node for Push<N> {
+    fn n_inputs(&self, ctx: node::MetaCtx) -> usize {
+        self.node.n_inputs(ctx)
     }
 
-    fn n_outputs(&self, env: &Env) -> usize {
-        self.node.n_outputs(env)
+    fn n_outputs(&self, ctx: node::MetaCtx) -> usize {
+        self.node.n_outputs(ctx)
     }
 
-    fn branches(&self, env: &Env) -> Vec<node::EvalConf> {
-        self.node.branches(env)
+    fn branches(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+        self.node.branches(ctx)
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         self.node.expr(ctx)
     }
 
-    fn push_eval(&self, _: &Env) -> Vec<node::EvalConf> {
+    fn push_eval(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
         vec![self.conf.clone()]
     }
 
-    fn pull_eval(&self, env: &Env) -> Vec<node::EvalConf> {
-        self.node.pull_eval(env)
+    fn pull_eval(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+        self.node.pull_eval(ctx)
     }
 
-    fn inlet(&self) -> bool {
-        self.node.inlet()
+    fn inlet(&self, ctx: node::MetaCtx) -> bool {
+        self.node.inlet(ctx)
     }
 
-    fn outlet(&self) -> bool {
-        self.node.outlet()
+    fn outlet(&self, ctx: node::MetaCtx) -> bool {
+        self.node.outlet(ctx)
     }
 
-    fn stateful(&self) -> bool {
-        self.node.stateful()
+    fn stateful(&self, ctx: node::MetaCtx) -> bool {
+        self.node.stateful(ctx)
     }
 
-    fn register(&self, path: &[node::Id], vm: &mut Engine) {
-        self.node.register(path, vm)
+    fn register(&self, ctx: node::RegCtx<'_, '_>) {
+        self.node.register(ctx)
     }
-}
 
-impl<Env, N> CaHash for Push<Env, N>
-where
-    N: CaHash,
-{
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        "Push".hash(hasher);
-        self.conf.hash(hasher);
-        self.node.hash(hasher);
+    fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
+        self.node.required_addrs()
     }
 }

@@ -4,27 +4,28 @@ use crate::{
     Edge,
     node::{self, Node},
 };
+use std::collections::HashSet;
 use steel::steel_vm::engine::Engine;
 
 /// For types used to traverse nested graphs of [`Node`]s.
 ///
 /// This is used for both node state registration and code generation.
-pub trait Visitor<Env> {
+pub trait Visitor {
     /// Called prior to traversing nested nodes.
-    fn visit_pre(&mut self, _ctx: Ctx<Env>, _node: &dyn Node<Env>) {}
+    fn visit_pre(&mut self, _ctx: Ctx<'_, '_>, _node: &dyn Node) {}
     /// Called following traversal of nested nodes.
-    fn visit_post(&mut self, _ctx: Ctx<Env>, _node: &dyn Node<Env>) {}
+    fn visit_post(&mut self, _ctx: Ctx<'_, '_>, _node: &dyn Node) {}
 }
 
 /// The context provided for each node during the traversal.
-#[derive(Debug)]
-pub struct Ctx<'a, Env> {
-    /// A reference to the environment provided to the nodes.
-    env: &'a Env,
+#[derive(Clone, Copy)]
+pub struct Ctx<'env, 'data> {
+    /// Function for looking up nodes by content address.
+    get_node: node::GetNode<'env>,
     /// The path at which this node is nested relative to the root.
-    path: &'a [node::Id],
+    path: &'data [node::Id],
     /// A slice with an element for every input, `Some` if connected.
-    inputs: &'a [(node::Id, Edge)],
+    inputs: &'data [(node::Id, Edge)],
 }
 
 /// A type used for registering all nodes in a [`Visitor`] traversal.
@@ -35,20 +36,34 @@ pub struct Ctx<'a, Env> {
 /// - `gantz_core::graph::register`
 pub(crate) struct Register<'vm>(pub(crate) &'vm mut Engine);
 
-impl<'a, Env> Ctx<'a, Env> {
+/// Visitor that collects all required content addresses from nodes.
+pub(crate) struct RequiredAddrs<'a> {
+    /// The set of collected addresses.
+    pub addrs: &'a mut HashSet<gantz_ca::ContentAddr>,
+}
+
+impl<'env, 'data> Ctx<'env, 'data> {
     /// Create a `Ctx` instance. Exclusively for use by `Visitor`
     /// implementations.
-    pub fn new(env: &'a Env, path: &'a [node::Id], inputs: &'a [(node::Id, Edge)]) -> Self {
-        Self { env, path, inputs }
+    pub fn new(
+        get_node: node::GetNode<'env>,
+        path: &'data [node::Id],
+        inputs: &'data [(node::Id, Edge)],
+    ) -> Self {
+        Self {
+            get_node,
+            path,
+            inputs,
+        }
     }
 
-    /// Access to the environment provided to the nodes.
-    pub fn env(&self) -> &Env {
-        self.env
+    /// Look up a node by content address.
+    pub fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&'env dyn Node> {
+        (self.get_node)(ca)
     }
 
     /// The path at which this node is nested relative to the root.
-    pub fn path(&self) -> &[node::Id] {
+    pub fn path(&self) -> &'data [node::Id] {
         self.path
     }
 
@@ -60,27 +75,27 @@ impl<'a, Env> Ctx<'a, Env> {
     }
 
     /// A slice with an element for every input, `Some` if connected.
-    pub fn inputs(&self) -> &[(node::Id, Edge)] {
+    pub fn inputs(&self) -> &'data [(node::Id, Edge)] {
         self.inputs
     }
-}
 
-impl<'a, Env> Clone for Ctx<'a, Env> {
-    fn clone(&self) -> Self {
-        Self {
-            env: self.env,
-            path: self.path,
-            inputs: self.inputs,
-        }
+    /// Access to the node lookup function.
+    pub fn get_node(&self) -> node::GetNode<'env> {
+        self.get_node
     }
 }
-
-impl<'a, Env> Copy for Ctx<'a, Env> {}
 
 /// The `Register` visitor just calls `register` for each node, prior to
 /// traversing its nested nodes.
-impl<'vm, Env> Visitor<Env> for Register<'vm> {
-    fn visit_pre(&mut self, ctx: Ctx<Env>, node: &dyn Node<Env>) {
-        node.register(ctx.path(), self.0);
+impl Visitor for Register<'_> {
+    fn visit_pre(&mut self, ctx: Ctx<'_, '_>, node: &dyn Node) {
+        let reg_ctx = node::RegCtx::new(ctx.get_node(), ctx.path(), self.0);
+        node.register(reg_ctx);
+    }
+}
+
+impl Visitor for RequiredAddrs<'_> {
+    fn visit_pre(&mut self, _ctx: Ctx<'_, '_>, node: &dyn Node) {
+        self.addrs.extend(node.required_addrs());
     }
 }

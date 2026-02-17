@@ -19,7 +19,6 @@ use std::{
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
 };
-use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// The graph type used by the graph node to represent its nested graph.
 pub type Graph<N> = petgraph::stable_graph::StableGraph<N, Edge, Directed, Index>;
@@ -32,6 +31,12 @@ pub type NodeIx = NodeIndex<Index>;
 pub type EdgeIx = EdgeIndex<Index>;
 
 /// A node that itself is implemented in terms of a graph of nodes.
+///
+/// While an implementation of [`Node`] is also provided for [`Graph`], the
+/// `Graph` type is defined in the petgraph crate. As a result, we cannot ensure
+/// it implements all of the upstream traits we require. By providing a
+/// dedicated `GraphNode` type, we can also provide implementations for any
+/// upstream traits we might need.
 #[derive(Clone, Debug)]
 pub struct GraphNode<N> {
     /// The nested graph.
@@ -40,14 +45,16 @@ pub struct GraphNode<N> {
 
 /// An inlet to a nested graph.
 ///
-/// Inlet values are received in the `Inlet`'s `state`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Inlet values are provided via `define` bindings by the parent graph node.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, CaHash)]
+#[cahash("gantz.inlet")]
 pub struct Inlet;
 
 /// An outlet from a nested graph.
 ///
-/// Outlet values are made available via the `Outlet`'s `state`
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Outlet values are passed through directly as the node's output.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, CaHash)]
+#[cahash("gantz.outlet")]
 pub struct Outlet;
 
 impl<N> Default for GraphNode<N> {
@@ -69,39 +76,70 @@ where
     }
 }
 
-impl<Env, N> Node<Env> for GraphNode<N>
-where
-    N: Node<Env>,
-{
-    fn n_inputs(&self, _: &Env) -> usize {
-        inlets(&self.graph).count()
+impl<N: Node> Node for Graph<N> {
+    fn n_inputs(&self, ctx: node::MetaCtx) -> usize {
+        self.node_references()
+            .filter(|n_ref| n_ref.weight().inlet(ctx))
+            .count()
     }
 
-    fn n_outputs(&self, _: &Env) -> usize {
-        outlets(&self.graph).count()
+    fn n_outputs(&self, ctx: node::MetaCtx) -> usize {
+        self.node_references()
+            .filter(|n_ref| n_ref.weight().outlet(ctx))
+            .count()
     }
 
-    fn branches(&self, _: &Env) -> Vec<node::EvalConf> {
+    fn branches(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
         // TODO: generate branches based on inner node branching
         vec![]
     }
 
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
-        nested_expr(ctx.env(), &self.graph, ctx.path(), ctx.inputs())
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+        nested_expr(ctx.get_node(), self, ctx.path(), ctx.inputs())
     }
 
-    fn stateful(&self) -> bool {
-        true
+    fn stateful(&self, ctx: node::MetaCtx) -> bool {
+        self.node_references()
+            .any(|n_ref| n_ref.weight().stateful(ctx))
     }
 
-    fn register(&self, path: &[node::Id], vm: &mut Engine) {
-        // Register the graph's state map.
-        node::state::update_value(vm, path, SteelVal::empty_hashmap())
-            .expect("failed to register graph hashmap");
+    fn register(&self, _ctx: node::RegCtx<'_, '_>) {
+        // Graph state hashmaps are lazily initialized by `update_value` when
+        // nested stateful nodes register their state.
     }
 
-    fn visit(&self, ctx: visit::Ctx<Env>, visitor: &mut dyn node::Visitor<Env>) {
-        crate::graph::visit(ctx.env(), &self.graph, ctx.path(), visitor);
+    fn visit(&self, ctx: visit::Ctx<'_, '_>, visitor: &mut dyn node::Visitor) {
+        crate::graph::visit(ctx.get_node(), self, ctx.path(), visitor);
+    }
+}
+
+impl<N: Node> Node for GraphNode<N> {
+    fn n_inputs(&self, ctx: node::MetaCtx) -> usize {
+        self.graph.n_inputs(ctx)
+    }
+
+    fn n_outputs(&self, ctx: node::MetaCtx) -> usize {
+        self.graph.n_outputs(ctx)
+    }
+
+    fn branches(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+        self.graph.branches(ctx)
+    }
+
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+        self.graph.expr(ctx)
+    }
+
+    fn stateful(&self, ctx: node::MetaCtx) -> bool {
+        self.graph.stateful(ctx)
+    }
+
+    fn register(&self, ctx: node::RegCtx<'_, '_>) {
+        self.graph.register(ctx)
+    }
+
+    fn visit(&self, ctx: visit::Ctx<'_, '_>, visitor: &mut dyn node::Visitor) {
+        self.graph.visit(ctx, visitor)
     }
 }
 
@@ -196,72 +234,55 @@ where
     }
 }
 
-impl<Env> Node<Env> for Inlet {
-    /// Simply returns the state value as this node's output
-    fn expr(&self, _ctx: node::ExprCtx<Env>) -> ExprKind {
-        Engine::emit_ast("state")
-            .expect("failed to emit AST")
-            .into_iter()
-            .next()
-            .unwrap()
-            .into()
+impl Node for Inlet {
+    /// This method should never be called during compilation.
+    ///
+    /// Inlet nodes are special-cased to enable statelessness:
+    /// - No node functions are generated for inlets (skipped in NodeFns visitor)
+    /// - Inlet values are provided via direct `(define inlet-{ix} ...)` bindings in nested_expr
+    /// - eval_stmt creates simple aliases to these bindings rather than calling node functions
+    ///
+    /// Returns `'()` as a safe fallback in case this is ever called outside normal compilation.
+    fn expr(&self, _ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+        node::parse_expr("'()")
     }
 
-    fn n_inputs(&self, _env: &Env) -> usize {
+    fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
         0
     }
 
-    fn n_outputs(&self, _env: &Env) -> usize {
+    fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
         1
     }
 
-    fn inlet(&self) -> bool {
+    fn inlet(&self, _ctx: node::MetaCtx) -> bool {
         true
-    }
-
-    fn stateful(&self) -> bool {
-        true
-    }
-
-    fn register(&self, path: &[node::Id], vm: &mut Engine) {
-        node::state::update_value(vm, path, steel::SteelVal::Void).unwrap();
     }
 }
 
-impl<Env> Node<Env> for Outlet {
-    // Stores the input value in the state.
-    fn expr(&self, ctx: node::ExprCtx<Env>) -> ExprKind {
-        let input = match &ctx.inputs()[0] {
-            Some(expr) => expr.clone(),
-            None => "'()".to_string(),
-        };
-        let expr_str = format!("(begin (set! state {}) state)", input);
-        Engine::emit_ast(&expr_str)
-            .expect("failed to emit AST")
-            .into_iter()
-            .next()
-            .unwrap()
-            .into()
+impl Node for Outlet {
+    /// This method should never be called during compilation.
+    ///
+    /// Outlet nodes are special-cased to enable statelessness:
+    /// - No node functions are generated for outlets (skipped in NodeFns visitor)
+    /// - No evaluation statements are generated for outlets (skipped in eval_stmt)
+    /// - Outlet values are read directly from source node output bindings by nested_expr
+    ///
+    /// Returns `'()` as a safe fallback in case this is ever called outside normal compilation.
+    fn expr(&self, _ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+        node::parse_expr("'()")
     }
 
-    fn n_inputs(&self, _env: &Env) -> usize {
+    fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
         1
     }
 
-    fn n_outputs(&self, _env: &Env) -> usize {
+    fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
         0
     }
 
-    fn outlet(&self) -> bool {
+    fn outlet(&self, _ctx: node::MetaCtx) -> bool {
         true
-    }
-
-    fn stateful(&self) -> bool {
-        true
-    }
-
-    fn register(&self, path: &[node::Id], vm: &mut Engine) {
-        node::state::update_value(vm, path, steel::SteelVal::Void).unwrap();
     }
 }
 
@@ -271,18 +292,6 @@ where
 {
     fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         gantz_ca::hash_graph(&self.graph, hasher);
-    }
-}
-
-impl CaHash for Inlet {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        CaHash::hash("in", hasher);
-    }
-}
-
-impl CaHash for Outlet {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        CaHash::hash("out", hasher);
     }
 }
 
@@ -309,66 +318,67 @@ pub fn graph_partial_eq<N: PartialEq>(a: &Graph<N>, b: &Graph<N>) -> bool {
             .all(|(a, b)| a == b)
 }
 
-/// Count the number of inlet nodes in the given graph.
-pub fn inlets<Env, G>(g: G) -> impl Iterator<Item = G::NodeRef>
-where
-    G: Data + IntoNodeReferences,
-    G::NodeWeight: Node<Env>,
-{
-    g.node_references().filter(|n_ref| n_ref.weight().inlet())
-}
-
-/// Count the number of outlet nodes in the given graph.
-pub fn outlets<Env, G>(g: G) -> impl Iterator<Item = G::NodeRef>
-where
-    G: Data + IntoNodeReferences,
-    G::NodeWeight: Node<Env>,
-{
-    g.node_references().filter(|n_ref| n_ref.weight().outlet())
-}
-
 /// The implementation of the `GraphNode`'s `Node::expr` fn.
-pub fn nested_expr<Env, G>(
-    env: &Env,
+pub fn nested_expr<'a, G>(
+    get_node: node::GetNode<'a>,
     g: G,
     path: &[node::Id],
     inputs: &[Option<String>],
-) -> ExprKind
+) -> node::ExprResult
 where
     G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable + Data<EdgeWeight = Edge>,
-    G::NodeWeight: Node<Env>,
+    G::NodeWeight: Node,
     G::NodeId: Eq + Hash,
 {
     use crate::compile;
+    use petgraph::visit::EdgeRef;
 
-    // Create statements to set inlet node states from inputs
-    let inlets: Vec<_> = inlets(g).map(|n_ref| n_ref.id()).collect();
+    let meta_ctx = node::MetaCtx::new(get_node);
+
+    // Create define bindings for inlet values.
+    let inlet_ids: Vec<_> = g
+        .node_references()
+        .filter(|n_ref| n_ref.weight().inlet(meta_ctx))
+        .map(|n_ref| n_ref.id())
+        .collect();
     let mut inlet_bindings = Vec::new();
-    for (i, &inlet_id) in inlets.iter().enumerate() {
-        if i < inputs.len() && inputs[i].is_some() {
-            let input_expr = inputs[i].as_ref().unwrap();
-            let node_ix = g.to_index(inlet_id);
-            let binding = format!(
-                "(set! {GRAPH_STATE} \
-                   (hash-insert {GRAPH_STATE} '{node_ix} {input_expr}))",
-            );
-            inlet_bindings.push(binding);
-        }
+    for (i, &inlet_id) in inlet_ids.iter().enumerate() {
+        let node_ix = g.to_index(inlet_id);
+        let input_expr = if i < inputs.len() && inputs[i].is_some() {
+            inputs[i].as_ref().unwrap().clone()
+        } else {
+            "'()".to_string()
+        };
+        let binding = format!("(define inlet-{node_ix} {input_expr})");
+        inlet_bindings.push(binding);
     }
 
-    // Use compile to create the evaluation order, steps, and statements
-    let meta = compile::Meta::from_graph(env, g);
-    let outlets: Vec<_> = outlets(g).map(|n_ref| n_ref.id()).collect();
+    // Use compile to create the evaluation order, steps, and statements.
+    let meta = compile::Meta::from_graph(get_node, g).map_err(|e| node::ExprError::custom(e))?;
+    let outlet_ids: Vec<_> = g
+        .node_references()
+        .filter(|n_ref| n_ref.weight().outlet(meta_ctx))
+        .map(|n_ref| n_ref.id())
+        .collect();
     let flow_graph = compile::flow_graph(
         &meta,
-        inlets
+        inlet_ids
             .iter()
             .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
-        outlets
+        outlet_ids
             .iter()
             .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
-    );
-    let stmts = compile::eval_fn_body(path, &meta.graph, &meta.stateful, &flow_graph);
+    )
+    .map_err(|e| node::ExprError::custom(e))?;
+    let stmts = compile::eval_fn_body(
+        path,
+        &meta.graph,
+        &meta.stateful,
+        &meta.inlets,
+        &meta.outlets,
+        &flow_graph,
+    )
+    .map_err(|e| node::ExprError::custom(e))?;
 
     // Combine inlet bindings with graph evaluation steps
     let all_stmts = inlet_bindings
@@ -377,12 +387,20 @@ where
         .collect::<Vec<_>>()
         .join(" ");
 
-    // For the return values, access the states of the outlet nodes
-    let outlet_values = outlets
+    // For the return values, find the source node connected to each outlet's input.
+    let outlet_values = outlet_ids
         .iter()
         .map(|&outlet_id| {
-            let node_ix = g.to_index(outlet_id);
-            format!("(hash-ref {GRAPH_STATE} '{node_ix})")
+            // Find the edge coming into this outlet (input index 0).
+            let incoming: Vec<_> = g.edges_directed(outlet_id, petgraph::Incoming).collect();
+            if let Some(edge_ref) = incoming.first() {
+                let src_ix = g.to_index(edge_ref.source());
+                let src_out = edge_ref.weight().output.0;
+                format!("node-{src_ix}-o{src_out}")
+            } else {
+                // No incoming edge, outlet is disconnected.
+                "'()".to_string()
+            }
         })
         .collect::<Vec<_>>();
 
@@ -391,22 +409,22 @@ where
         let ret_values = outlet_values.join(" ");
         format!("(values {})", ret_values)
     } else if outlet_values.len() == 1 {
-        format!("{}", outlet_values[0])
+        outlet_values[0].clone()
     } else {
-        format!("'()")
+        "'()".to_string()
     };
 
-    let expr_str = format!(
-        "(begin (define {GRAPH_STATE} state)
-           {}
-           (set! state {GRAPH_STATE})
-           {outlet_values_expr})",
-        all_stmts
-    );
-    Engine::emit_ast(&expr_str)
-        .expect("failed to emit AST for nested expr")
-        .into_iter()
-        .next()
-        .unwrap()
-        .into()
+    // Only include state handling if the graph has stateful nodes.
+    let expr_str = if meta.stateful.is_empty() {
+        format!("(begin {} {outlet_values_expr})", all_stmts)
+    } else {
+        format!(
+            "(begin (define {GRAPH_STATE} state)
+               {}
+               (set! state {GRAPH_STATE})
+               {outlet_values_expr})",
+            all_stmts
+        )
+    };
+    node::parse_expr(&expr_str)
 }

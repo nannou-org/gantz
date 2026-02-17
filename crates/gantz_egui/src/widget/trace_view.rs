@@ -11,12 +11,12 @@ use web_time::SystemTime;
 pub struct TraceView {
     capture: TraceCapture,
     id: egui::Id,
+    level: LevelFilter,
 }
 
 // State that needs to persist between frames.
 #[derive(Clone)]
 struct TraceViewState {
-    level_filter: LevelFilter,
     target_filter: String,
     auto_scroll: bool,
 }
@@ -47,8 +47,8 @@ struct MessageVisitor {
 
 impl TraceEntry {
     fn format_timestamp(&self) -> String {
-        let time = crate::system_time_from_web(self.timestamp).expect("failed to convert");
-        humantime::format_rfc3339_seconds(time).to_string()
+        let system_time = crate::system_time_from_web(self.timestamp).expect("failed to convert");
+        crate::widget::format_local_datetime(system_time)
     }
 
     fn freshness(&self) -> f32 {
@@ -103,8 +103,8 @@ impl TraceCapture {
 }
 
 impl TraceView {
-    pub fn new(id: egui::Id, capture: TraceCapture) -> Self {
-        Self { capture, id }
+    pub fn new(id: egui::Id, capture: TraceCapture, level: LevelFilter) -> Self {
+        Self { capture, id, level }
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
@@ -113,7 +113,6 @@ impl TraceView {
         let mut state = ui
             .memory_mut(|mem| mem.data.get_temp::<TraceViewState>(state_id))
             .unwrap_or_else(|| TraceViewState {
-                level_filter: LevelFilter::TRACE,
                 target_filter: String::new(),
                 auto_scroll: true,
             });
@@ -121,16 +120,10 @@ impl TraceView {
         // Controls
         ui.horizontal(|ui| {
             ui.label("Level:");
-            egui::ComboBox::from_id_salt(self.id.with("level_filter"))
-                .selected_text(format!("{}", state.level_filter))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut state.level_filter, LevelFilter::OFF, "Off");
-                    ui.selectable_value(&mut state.level_filter, LevelFilter::ERROR, "Error");
-                    ui.selectable_value(&mut state.level_filter, LevelFilter::WARN, "Warn");
-                    ui.selectable_value(&mut state.level_filter, LevelFilter::INFO, "Info");
-                    ui.selectable_value(&mut state.level_filter, LevelFilter::DEBUG, "Debug");
-                    ui.selectable_value(&mut state.level_filter, LevelFilter::TRACE, "Trace");
-                });
+            let level_label = egui::Label::new(format!("{}", self.level)).selectable(false);
+            let level_response = ui.add(level_label);
+            #[cfg(not(target_arch = "wasm32"))]
+            level_response.on_hover_text("Adjust with RUST_LOG env var at startup");
 
             ui.separator();
             ui.checkbox(&mut state.auto_scroll, "Auto-scroll");
@@ -152,7 +145,7 @@ impl TraceView {
         let mut entries = self.capture.get_entries();
 
         // Filter by level
-        entries.retain(|entry| match state.level_filter {
+        entries.retain(|entry| match self.level {
             LevelFilter::OFF => false,
             LevelFilter::ERROR => entry.level <= Level::ERROR,
             LevelFilter::WARN => entry.level <= Level::WARN,

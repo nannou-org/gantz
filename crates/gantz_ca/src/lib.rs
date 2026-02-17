@@ -4,6 +4,8 @@
 pub use ca::{ContentAddr, ContentAddrShort, content_addr};
 #[doc(inline)]
 pub use commit::{Branch, Commit, CommitAddr, Head, Timestamp, addr as commit_addr};
+/// Re-export the derive macro.
+pub use gantz_ca_derive::CaHash;
 #[doc(inline)]
 pub use graph::{
     GraphAddr, addr as graph_addr, addr_with_nodes as graph_addr_with_nodes, hash_graph,
@@ -18,4 +20,4 @@ mod ca;
 mod commit;
 mod graph;
 mod hash;
-mod registry;
+pub mod registry;

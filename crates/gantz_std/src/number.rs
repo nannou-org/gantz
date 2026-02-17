@@ -1,24 +1,27 @@
-use gantz_core::steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
+use gantz_ca::CaHash;
+use gantz_core::node::{EvalConf, ExprCtx, ExprResult, MetaCtx, RegCtx};
+use gantz_core::steel::SteelVal;
 use serde::{Deserialize, Serialize};
 
 /// A number stored in state. Can be updated via the first input.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[cahash("gantz.number")]
 pub struct Number;
 
-impl<Env> gantz_core::Node<Env> for Number {
-    fn n_inputs(&self, _: &Env) -> usize {
+impl gantz_core::Node for Number {
+    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
         1
     }
 
-    fn n_outputs(&self, _: &Env) -> usize {
+    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
         1
     }
 
-    fn push_eval(&self, _: &Env) -> Vec<gantz_core::node::EvalConf> {
-        vec![gantz_core::node::EvalConf::All]
+    fn push_eval(&self, _ctx: MetaCtx) -> Vec<EvalConf> {
+        vec![EvalConf::All]
     }
 
-    fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
         let expr = match ctx.inputs().get(0) {
             // If an input value was provided, use it to update state and
             // forward that value.
@@ -28,20 +31,16 @@ impl<Env> gantz_core::Node<Env> for Number {
             // If no input value was provided, forward the value in state.
             _ => "(begin state)".to_string(),
         };
-        Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
+        gantz_core::node::parse_expr(&expr)
     }
 
-    fn stateful(&self) -> bool {
+    fn stateful(&self, _ctx: MetaCtx) -> bool {
         true
     }
 
-    fn register(&self, path: &[gantz_core::node::Id], vm: &mut Engine) {
-        gantz_core::node::state::update_value(vm, path, SteelVal::NumV(0.0)).unwrap()
-    }
-}
-
-impl gantz_ca::CaHash for Number {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        "gantz_std::Number".hash(hasher);
+    fn register(&self, mut ctx: RegCtx<'_, '_>) {
+        let path = ctx.path();
+        gantz_core::node::state::init_value_if_absent(ctx.vm(), path, || SteelVal::NumV(0.0))
+            .unwrap()
     }
 }

@@ -665,16 +665,37 @@ version = "0.1.0"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
- "bevy_egui",
  "bevy_input",
+ "bevy_log",
  "bevy_time",
  "bevy_window",
+ "gantz_ca",
  "gantz_core",
- "gantz_egui",
  "gantz_std",
+ "ron 0.10.1",
  "serde",
  "steel-core",
  "web-sys",
+ "web-time",
+]
+
+[[package]]
+name = "bevy_gantz_egui"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_egui",
+ "bevy_gantz",
+ "bevy_log",
+ "egui_graph",
+ "gantz_ca",
+ "gantz_core",
+ "gantz_egui",
+ "ron 0.10.1",
+ "serde",
+ "steel-core",
+ "web-time",
 ]
 
 [[package]]
@@ -2259,13 +2280,24 @@ dependencies = [
 
 [[package]]
 name = "egui_graph"
-version = "0.7.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3053d06c626b66edc23aadfd147b0dca237106e52ede79d39338367a16af637c"
+checksum = "7b4f51863cb355b20a85c3041d960dec024fdce82d6c4bf001a56ea2ccd8cb63"
 dependencies = [
  "egui",
  "layout-rs",
  "serde",
+]
+
+[[package]]
+name = "egui_plot"
+version = "0.34.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33233ffc010fd450381805bbbebecbbb82f077de7712ddc439f0b20effd42db7"
+dependencies = [
+ "ahash",
+ "egui",
+ "emath",
 ]
 
 [[package]]
@@ -2719,15 +2751,16 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "bevy_gantz",
+ "bevy_gantz_egui",
  "bevy_pkv",
  "dyn-clone",
  "dyn-hash",
+ "egui_graph",
  "gantz_ca",
  "gantz_core",
  "gantz_egui",
  "gantz_std",
  "petgraph",
- "ron 0.10.1",
  "serde",
  "steel-core",
  "typetag",
@@ -2739,9 +2772,19 @@ name = "gantz_ca"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "gantz_ca_derive",
  "hex",
  "petgraph",
  "serde",
+]
+
+[[package]]
+name = "gantz_ca_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -2769,18 +2812,21 @@ dependencies = [
  "egui",
  "egui_extras",
  "egui_graph",
+ "egui_plot",
  "egui_tiles",
  "gantz_ca",
  "gantz_core",
  "gantz_std",
  "hex",
  "humantime",
+ "js-sys",
  "log",
  "petgraph",
  "ron 0.10.1",
  "serde",
  "steel-core",
  "sublime_fuzzy",
+ "time",
  "tracing",
  "tracing-subscriber",
  "typetag",
@@ -3785,6 +3831,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "num_threads"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c7398b9c8b70908f6371f47ed36737907c87c52af34c268fed0bf0ceb92ead9"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -5201,7 +5256,10 @@ checksum = "91e7d9e3bb61134e77bde20dd4825b97c010155709965fedf0f49bb138e52a9d"
 dependencies = [
  "deranged",
  "itoa",
+ "js-sys",
+ "libc",
  "num-conv",
+ "num_threads",
  "powerfmt",
  "serde",
  "time-core",

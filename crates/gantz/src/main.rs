@@ -2,70 +2,52 @@ use bevy::{
     prelude::*,
     window::{Window, WindowPlugin},
 };
-use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
-use bevy_gantz::debounced_input::{DebouncedInputEvent, DebouncedInputPlugin};
+use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
+use bevy_gantz::{
+    BuiltinNodes, CompiledModule, FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead,
+    OpenHeadDataReadOnly, Registry, WorkingGraph,
+    debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
+    reg, timestamp, vm,
+};
+use bevy_gantz_egui::{GantzEguiPlugin, GuiState, HeadGuiState, TraceCapture, Views};
 use bevy_pkv::PkvStore;
-use env::Environment;
-use gantz_ca as ca;
-use graph::Graph;
-use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
+use builtin::Builtins;
+use storage::Pkv;
 
-mod env;
-mod graph;
+mod builtin;
 mod node;
 mod storage;
 
-/// The active graph.
-///
-/// If we're working with a name, a mapping from the name to the graph's CA
-/// will be persisted.
-#[derive(Resource)]
-struct Active {
-    graph: Graph,
-    head: ca::Head,
-}
-
-#[derive(Resource)]
-struct GuiState {
-    gantz: gantz_egui::widget::GantzState,
-}
-
-/// The full compiled module as a `String`.
-#[derive(Resource)]
-struct CompiledModule(String);
-
-/// A resource for capturing tracing logs for the `TraceView` widget.
-#[derive(Default, Resource)]
-struct TraceCapture(gantz_egui::widget::trace_view::TraceCapture);
-
 fn main() {
     App::new()
-        .insert_resource(TraceCapture::default())
+        // Core gantz plugin (provides FocusedHead, HeadTabOrder, HeadVms, Registry, Views)
+        .add_plugins(GantzPlugin::<Box<dyn node::Node>>::default())
+        // Egui plugin (provides GuiState, TraceCapture, PerfVm, PerfGui, GUI systems)
+        .add_plugins(GantzEguiPlugin::<Box<dyn node::Node>>::default())
+        // App-specific builtins
+        .insert_resource(BuiltinNodes::<Box<dyn node::Node>>(Box::new(
+            Builtins::new(),
+        )))
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::new(0.25))
-        .insert_resource(PkvStore::new("nannou-org", "gantz"))
+        .insert_resource(Pkv(PkvStore::new("nannou-org", "gantz")))
         .add_systems(
             Startup,
             (
                 setup_camera,
-                setup_environment,
-                setup_active.after(setup_environment),
-                prune_unused_graphs_and_commits
-                    .after(setup_environment)
-                    .after(setup_active),
-                setup_vm.after(prune_unused_graphs_and_commits),
-                setup_gui_state,
+                setup_resources,
+                setup_open.after(setup_resources),
+                reg::prune_unused::<Box<dyn node::Node>>
+                    .after(setup_resources)
+                    .after(setup_open),
+                vm::setup::<Box<dyn node::Node>>.after(reg::prune_unused::<Box<dyn node::Node>>),
             ),
         )
-        .add_systems(EguiPrimaryContextPass, update_gui)
+        .add_systems(EguiPrimaryContextPass, load_egui_memory)
         .add_systems(
             Update,
-            (
-                update_vm.after(update_gui),
-                process_gantz_gui_cmds.after(update_vm),
-                persist_resources.run_if(on_message::<DebouncedInputEvent>),
-            ),
+            persist_resources.run_if(on_message::<DebouncedInputEvent>),
         )
         .run();
 }
@@ -100,271 +82,96 @@ fn setup_camera(mut cmds: Commands) {
     cmds.spawn(Camera2d);
 }
 
-fn setup_environment(storage: Res<PkvStore>, mut cmds: Commands) {
-    let env = storage::load_environment(&*storage);
-    cmds.insert_resource(env);
+fn setup_resources(storage: Res<Pkv>, mut cmds: Commands) {
+    let registry: Registry<Box<dyn node::Node>> = bevy_gantz::storage::load_registry(&*storage);
+    let views = bevy_gantz_egui::storage::load_views(&*storage);
+    let gui_state = bevy_gantz_egui::storage::load_gui_state(&*storage);
+    cmds.insert_resource(registry);
+    cmds.insert_resource(views);
+    cmds.insert_resource(gui_state);
 }
 
-fn setup_active(storage: Res<PkvStore>, mut env: ResMut<Environment>, mut cmds: Commands) {
-    let active = storage::load_active(&*storage, &mut env.registry);
-    cmds.insert_resource(active);
-}
-
-fn prune_unused_graphs_and_commits(mut env: ResMut<Environment>, active: Res<Active>) {
-    env.registry
-        .prune_unnamed_graphs(Some(&active.head), env::graph_contains);
-}
-
-fn setup_gui_state(storage: Res<PkvStore>, mut cmds: Commands) {
-    let gantz = storage::load_gantz_gui_state(&*storage);
-    let gui = GuiState { gantz };
-    cmds.insert_resource(gui);
-}
-
-fn setup_vm(world: &mut World) {
-    bevy::log::info!("Setting up VM!");
-    let env = world.resource_ref::<Environment>();
-    let active = world.resource_ref::<Active>();
-    let (vm, compiled_module) = init_vm(&*env, &active.graph);
-    world.insert_non_send_resource(vm);
-    world.insert_resource(compiled_module);
-}
-
-fn update_gui(
-    trace_capture: Res<TraceCapture>,
-    mut ctxs: EguiContexts,
-    mut env: ResMut<Environment>,
-    mut active: ResMut<Active>,
-    mut gui_state: ResMut<GuiState>,
-    mut vm: NonSendMut<Engine>,
-    mut compiled_module: ResMut<CompiledModule>,
-) -> Result {
-    let ctx = ctxs.ctx_mut()?;
-    egui::containers::CentralPanel::default()
-        .frame(egui::Frame::default())
-        .show(ctx, |ui| {
-            let commit_ca = *env.registry.head_commit_ca(&active.head).unwrap();
-            let Active {
-                ref mut graph,
-                ref head,
-            } = *active;
-            let response = gantz_egui::widget::Gantz::new(&mut *env, graph, head)
-                .trace_capture(trace_capture.0.clone())
-                .show(&mut gui_state.gantz, &compiled_module.0, &mut vm, ui);
-
-            // The graph name was updated, ensure a mapping exists if necessary.
-            if let Some(name_opt) = response.graph_name_updated() {
-                match name_opt {
-                    // If a name was given, ensure it maps to the CA.
-                    Some(name) => {
-                        env.registry.insert_name(name.to_string(), commit_ca);
-                        active.head = ca::Head::Branch(name.to_string());
-                    }
-                    // Otherwise the name was cleared, so just point to the commit.
-                    None => {
-                        active.head = ca::Head::Commit(commit_ca);
-                    }
-                }
-            // The given graph name was removed.
-            } else if let Some(name) = response.graph_name_removed() {
-                if let ca::Head::Branch(ref head_name) = active.head {
-                    if *head_name == name {
-                        active.head = ca::Head::Commit(commit_ca);
-                    }
-                }
-                env.registry.remove_name(&name);
-            }
-
-            // A graph was selected.
-            if let Some(new_head) = response.graph_selected() {
-                // TODO: Load state for named graphs?
-                set_head(
-                    &mut env,
-                    &mut active,
-                    &mut vm,
-                    &mut compiled_module,
-                    &mut gui_state.gantz,
-                    new_head.clone(),
-                );
-            }
-
-            // Create a new empty graph and select it.
-            if response.new_graph() {
-                // Set the head to a new commit.
-                let new_head = env.registry.init_head(env::timestamp());
-                set_head(
-                    &mut env,
-                    &mut active,
-                    &mut vm,
-                    &mut compiled_module,
-                    &mut gui_state.gantz,
-                    new_head,
-                );
-            }
-        });
-    Ok(())
-}
-
-fn update_vm(
-    mut env: ResMut<Environment>,
-    mut active: ResMut<Active>,
-    mut vm: NonSendMut<Engine>,
-    mut compiled_module: ResMut<CompiledModule>,
+fn setup_open(
+    storage: Res<Pkv>,
+    mut registry: ResMut<Registry<Box<dyn node::Node>>>,
+    views: Res<Views>,
+    mut cmds: Commands,
+    mut tab_order: ResMut<HeadTabOrder>,
+    mut focused: ResMut<FocusedHead>,
 ) {
-    // Check for changes to the graph.
-    // FIXME: Rather than checking changed CA to monitor changes, ideally
-    // `Gantz` widget can tell us this in a custom response.
-    let new_graph_ca = ca::graph_addr(&active.graph);
-    let head_commit = env.registry.head_commit(&active.head).unwrap();
-    if head_commit.graph != new_graph_ca {
-        let Active {
-            ref graph,
-            ref mut head,
-        } = *active;
-        env.registry.commit_graph_to_head(
-            env::timestamp(),
-            new_graph_ca,
-            || graph::clone(graph),
-            head,
-        );
-        let module = compile_graph(&env, &active.graph, &mut vm);
-        *compiled_module = CompiledModule(fmt_compiled_module(&module));
+    let loaded =
+        bevy_gantz_egui::storage::load_open(&*storage, &mut *registry, &*views, timestamp());
+    let focused_head = bevy_gantz::storage::load_focused_head(&*storage);
+
+    // Spawn entities for each open head.
+    for (head, graph, head_views) in loaded {
+        let is_focused = focused_head.as_ref() == Some(&head);
+        let entity = cmds
+            .spawn((
+                OpenHead,
+                HeadRef(head),
+                WorkingGraph(graph),
+                head_views,
+                CompiledModule::default(),
+                HeadGuiState::default(),
+            ))
+            .id();
+
+        tab_order.push(entity);
+
+        // Set focused to the persisted focused head, or first head as fallback.
+        if is_focused || (**focused).is_none() {
+            **focused = Some(entity);
+        }
     }
 }
 
-// Drain the commands provided by the UI and process them.
-fn process_gantz_gui_cmds(
-    mut env: ResMut<Environment>,
-    mut active: ResMut<Active>,
-    mut vm: NonSendMut<Engine>,
-    mut compiled_module: ResMut<CompiledModule>,
-    mut gui_state: ResMut<GuiState>,
-) {
-    // Process any pending commands.
-    for cmd in std::mem::take(&mut gui_state.gantz.graph_scene.cmds) {
-        bevy::log::debug!("{cmd:?}");
-        match cmd {
-            gantz_egui::Cmd::PushEval(path) => {
-                let fn_name = gantz_core::compile::push_eval_fn_name(&path);
-                if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
-                    bevy::log::error!("{e}");
-                }
-            }
-            gantz_egui::Cmd::PullEval(path) => {
-                let fn_name = gantz_core::compile::pull_eval_fn_name(&path);
-                if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
-                    bevy::log::error!("{e}");
-                }
-            }
-            gantz_egui::Cmd::OpenGraph(path) => {
-                gui_state.gantz.path = path;
-            }
-            gantz_egui::Cmd::OpenNamedGraph(name, ca) => {
-                if let Some(commit) = env.registry.named_commit(&name) {
-                    if ca == commit.graph {
-                        set_head(
-                            &mut env,
-                            &mut active,
-                            &mut vm,
-                            &mut compiled_module,
-                            &mut gui_state.gantz,
-                            ca::Head::Branch(name.to_string()),
-                        );
-                    } else {
-                        bevy::log::debug!(
-                            "Attempted to open named graph, but the graph address has changed"
-                        );
-                    }
-                }
-            }
+/// Load egui memory from storage once on first frame.
+fn load_egui_memory(mut ctxs: EguiContexts, mut storage: ResMut<Pkv>, mut loaded: Local<bool>) {
+    if !*loaded {
+        if let Ok(ctx) = ctxs.ctx_mut() {
+            bevy_gantz_egui::storage::load_egui_memory(&mut *storage, ctx);
+            *loaded = true;
         }
     }
 }
 
 fn persist_resources(
-    env: Res<Environment>,
-    active: Res<Active>,
+    registry: Res<Registry<Box<dyn node::Node>>>,
+    views: Res<Views>,
     gui_state: Res<GuiState>,
-    mut storage: ResMut<PkvStore>,
+    mut storage: ResMut<Pkv>,
+    mut ctxs: EguiContexts,
+    tab_order: Res<HeadTabOrder>,
+    focused: Res<FocusedHead>,
+    heads_query: Query<OpenHeadDataReadOnly<Box<dyn node::Node>>, With<OpenHead>>,
 ) {
-    // Save graphs.
-    let mut addrs: Vec<_> = env.registry.graphs().keys().copied().collect();
-    addrs.sort();
-    storage::save_graph_addrs(&mut *storage, &addrs);
-    storage::save_graphs(&mut *storage, &env.registry.graphs());
-
-    // Save commits.
-    let mut addrs: Vec<_> = env.registry.commits().keys().copied().collect();
-    addrs.sort();
-    storage::save_commit_addrs(&mut *storage, &addrs);
-    storage::save_commits(&mut *storage, env.registry.commits());
-
-    // Save names.
-    storage::save_names(&mut *storage, env.registry.names());
-
-    // Save the active graph.
-    storage::save_head(&mut *storage, &active.head);
-
-    // Save the gantz GUI state.
-    storage::save_gantz_gui_state(&mut *storage, &gui_state.gantz);
-}
-
-/// Initialise the VM for the given environment and graph.
-///
-/// Also returns the compiled module for the initial state.
-///
-/// TODO: Allow loading state from storage.
-fn init_vm(env: &Environment, graph: &Graph) -> (Engine, CompiledModule) {
-    let mut vm = Engine::new_base();
-    vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(env, graph, &[], &mut vm);
-    let module = compile_graph(env, graph, &mut vm);
-    let compiled_module = CompiledModule(fmt_compiled_module(&module));
-    (vm, compiled_module)
-}
-
-fn compile_graph(env: &Environment, graph: &Graph, vm: &mut Engine) -> Vec<ExprKind> {
-    // Generate the steel module.
-    let module = gantz_core::compile::module(env, graph);
-    // Compile the eval fns.
-    for expr in &module {
-        if let Err(e) = vm.run(expr.to_pretty(80)) {
-            bevy::log::error!("{e}");
+    // Save registry (graphs, commits, names).
+    bevy_gantz::storage::save_registry(&mut *storage, &registry);
+    // Save all open heads in tab order.
+    let heads: Vec<_> = tab_order
+        .iter()
+        .filter_map(|&entity| {
+            heads_query
+                .get(entity)
+                .ok()
+                .map(|data| (**data.head_ref).clone())
+        })
+        .collect();
+    bevy_gantz::storage::save_open_heads(&mut *storage, &heads);
+    // Save the focused head.
+    if let Some(focused_entity) = **focused {
+        if let Ok(data) = heads_query.get(focused_entity) {
+            bevy_gantz::storage::save_focused_head(&mut *storage, &**data.head_ref);
         }
     }
-    module
-}
 
-fn fmt_compiled_module(module: &[ExprKind]) -> String {
-    module
-        .iter()
-        .map(|expr| expr.to_pretty(80))
-        .collect::<Vec<String>>()
-        .join("\n\n")
-}
-
-/// Set the active graph as the graph with the given CA.
-fn set_head(
-    env: &mut Environment,
-    active: &mut Active,
-    vm: &mut Engine,
-    compiled_module: &mut CompiledModule,
-    gantz: &mut gantz_egui::widget::GantzState,
-    new_head: ca::Head,
-) {
-    let graph = env.registry.head_graph(&new_head).unwrap();
-
-    // Clone the graph.
-    active.graph = graph::clone(graph);
-    active.head = new_head;
-
-    // Initialise the VM.
-    let (new_vm, new_module) = init_vm(env, &active.graph);
-    *vm = new_vm;
-    *compiled_module = new_module;
-
-    // Clear the graph GUI state (layout, etc).
-    gantz.path.clear();
-    gantz.graphs.clear();
-    gantz.graph_scene.interaction.selection.clear();
+    // Save all views (already updated in update_vm).
+    bevy_gantz_egui::storage::save_views(&mut *storage, &*views);
+    // Save the gantz GUI state.
+    bevy_gantz_egui::storage::save_gui_state(&mut *storage, &gui_state);
+    // Save egui memory (widget states).
+    if let Ok(ctx) = ctxs.ctx_mut() {
+        bevy_gantz_egui::storage::save_egui_memory(&mut *storage, ctx);
+    }
 }

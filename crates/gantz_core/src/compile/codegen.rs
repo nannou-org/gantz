@@ -2,7 +2,10 @@
 
 use crate::{
     GRAPH_STATE, ROOT_STATE,
-    compile::{Block, Flow, FlowGraph, Meta, MetaGraph, NodeConns, RoseTree},
+    compile::{
+        Block, Flow, FlowGraph, Meta, MetaGraph, NodeConns, RoseTree,
+        error::{CodegenError, InvalidInputIndex, TooManyConns},
+    },
     node,
 };
 pub(crate) use node_fn::{node_fns, unique_node_confs};
@@ -60,7 +63,7 @@ fn node_fn_call(
     inputs: &[Option<String>],
     outputs: &node::Conns,
     stateful: bool,
-) -> ExprKind {
+) -> Result<ExprKind, TooManyConns> {
     // Prepare function arguments.
     let mut args: Vec<String> = inputs.iter().filter_map(Clone::clone).collect();
     if stateful {
@@ -68,14 +71,15 @@ fn node_fn_call(
     }
 
     // The expression for the node function call.
-    let node_inputs = node::Conns::try_from_iter(inputs.iter().map(|arg| arg.is_some())).unwrap();
+    let node_inputs = node::Conns::try_from_iter(inputs.iter().map(|arg| arg.is_some()))
+        .map_err(|_| TooManyConns(inputs.len()))?;
     let node_fn_name = node_fn::name(&node_path, &node_inputs, outputs);
     let node_fn_call_expr_str = format!("({node_fn_name} {})", args.join(" "));
-    Engine::emit_ast(&node_fn_call_expr_str)
+    Ok(Engine::emit_ast(&node_fn_call_expr_str)
         .expect("failed to emit AST")
         .into_iter()
         .next()
-        .unwrap()
+        .unwrap())
 }
 
 /// Function to generate node input variable names for disambiguation.
@@ -100,12 +104,16 @@ fn node_fn_call_args(
     reachable: &HashSet<node::Id>,
     n: node::Id,
     inputs: &node::Conns,
-) -> Vec<Option<NodeFnCallArg>> {
+) -> Result<Vec<Option<NodeFnCallArg>>, InvalidInputIndex> {
     let mut args = vec![None; inputs.len()];
     for e_ref in mg.edges_directed(n, petgraph::Incoming) {
         for (edge, _kind) in e_ref.weight() {
             let input_ix = edge.input.0 as usize;
-            if inputs.get(input_ix).unwrap() && reachable.contains(&e_ref.source()) {
+            let is_connected = inputs.get(input_ix).ok_or(InvalidInputIndex {
+                index: input_ix,
+                n_inputs: inputs.len(),
+            })?;
+            if is_connected && reachable.contains(&e_ref.source()) {
                 args[input_ix] = match args[input_ix] {
                     // If there's no arg for this index yet, assign the output.
                     None => Some(NodeFnCallArg::Output(e_ref.source(), edge.output)),
@@ -123,7 +131,7 @@ fn node_fn_call_args(
         inputs.iter().filter(|&b| b).count(),
         args.iter().filter(|opt| opt.is_some()).count(),
     );
-    args
+    Ok(args)
 }
 
 /// A statement within a sequence of statements for a top-level entrypoint or
@@ -139,11 +147,13 @@ fn node_fn_call_args(
 fn eval_stmt(
     mg: &MetaGraph,
     reachable: &HashSet<node::Id>,
+    inlets: &BTreeSet<node::Id>,
+    outlets: &BTreeSet<node::Id>,
     node_path: &[node::Id],
     inputs: &node::Conns,
     outputs: &node::Conns,
     stateful: bool,
-) -> ExprKind {
+) -> Result<Option<ExprKind>, CodegenError> {
     // An expression for a node's key into the graph state hashmap.
     fn node_state_key(node_id: usize) -> ExprKind {
         // Create a symbol or other hashable key to use in the hashmap
@@ -185,8 +195,30 @@ fn eval_stmt(
     // The node index is the last element of the path.
     let node_ix = *node_path.last().expect("node_path must not be empty");
 
+    // For inlet nodes, create a direct binding to the inlet value instead of
+    // calling a node function. The inlet value is provided by the parent graph
+    // via a `(define inlet-{ix} ...)` binding.
+    if inlets.contains(&node_ix) {
+        let inlet_var = format!("inlet-{node_ix}");
+        let output_var = node_outputs_var(node_ix);
+        return Ok(Some(create_define_expr(
+            output_var,
+            Engine::emit_ast(&inlet_var)
+                .expect("failed to emit AST")
+                .into_iter()
+                .next()
+                .unwrap(),
+        )));
+    }
+
+    // Skip outlet nodes entirely - their values are read directly from source
+    // node output bindings by nested_expr.
+    if outlets.contains(&node_ix) {
+        return Ok(None);
+    }
+
     // Determine the input arg names.
-    let input_args: Vec<_> = node_fn_call_args(mg, reachable, node_ix, inputs)
+    let input_args: Vec<_> = node_fn_call_args(mg, reachable, node_ix, inputs)?
         .into_iter()
         .enumerate()
         .map(|(ix, src_opt)| {
@@ -198,7 +230,7 @@ fn eval_stmt(
         .collect();
 
     // The expression for the node function call.
-    let node_fn_call_expr = node_fn_call(node_path, &input_args, outputs, stateful);
+    let node_fn_call_expr = node_fn_call(node_path, &input_args, outputs, stateful)?;
     let mut node_fn_call_expr_str = format!("{node_fn_call_expr}");
 
     // Create the expression for the node.
@@ -221,7 +253,7 @@ fn eval_stmt(
         }
     };
 
-    stmt
+    Ok(Some(stmt))
 }
 
 /// Create a statement that binds a var for each value in the node's outputs.
@@ -286,7 +318,7 @@ fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
 }
 
 /// The string used to represent a path in a fn name.
-fn path_string(path: &[node::Id]) -> String {
+pub(crate) fn path_string(path: &[node::Id]) -> String {
     path.iter()
         .map(|id| id.to_string())
         .collect::<Vec<_>>()
@@ -355,17 +387,22 @@ pub(crate) fn eval_fn_block_stmts(
     path: &[node::Id],
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
+    inlets: &BTreeSet<node::Id>,
+    outlets: &BTreeSet<node::Id>,
     reachable: &HashSet<node::Id>,
     block: &Block,
-) -> Vec<ExprKind> {
+) -> Result<Vec<ExprKind>, CodegenError> {
     let mut stmts = Vec::new();
     let mut iter = block.0.iter().peekable();
     while let Some(conf) = iter.next() {
         let node_path: Vec<_> = path.iter().copied().chain(Some(conf.id)).collect();
         let stateful = stateful.contains(&conf.id);
         let NodeConns { inputs, outputs } = conf.conns;
-        let stmt = eval_stmt(mg, reachable, &node_path, &inputs, &outputs, stateful);
-        stmts.push(stmt);
+        if let Some(stmt) = eval_stmt(
+            mg, reachable, inlets, outlets, &node_path, &inputs, &outputs, stateful,
+        )? {
+            stmts.push(stmt);
+        }
 
         // If this is the last node fn call in the block, it must be either
         // branching or terminal, so there's no need to destructure here.
@@ -379,7 +416,7 @@ pub(crate) fn eval_fn_block_stmts(
         // edge, we create dedicated bindings for those inputs.
         stmts.extend(define_necessary_node_input_bindings(mg, conf.id));
     }
-    stmts
+    Ok(stmts)
 }
 
 /// Find the entrypoint to the flow graph.
@@ -411,12 +448,14 @@ fn flow_node_stmts(
     flow_ix: NodeIndex,
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
+    inlets: &BTreeSet<node::Id>,
+    outlets: &BTreeSet<node::Id>,
     reachable: &HashSet<node::Id>,
     fg: &FlowGraph,
-) -> Vec<ExprKind> {
+) -> Result<Vec<ExprKind>, CodegenError> {
     // Add the block.
     let block = &fg[flow_ix];
-    let mut stmts = eval_fn_block_stmts(path, mg, stateful, &reachable, block);
+    let mut stmts = eval_fn_block_stmts(path, mg, stateful, inlets, outlets, &reachable, block)?;
 
     // Collect the output branching edges.
     let mut edges: Vec<_> = fg
@@ -427,7 +466,7 @@ fn flow_node_stmts(
 
     // If there are no edges, we're done.
     if edges.is_empty() {
-        return stmts;
+        return Ok(stmts);
 
     // If there is one edge, this must be part of a join.
     // FIXME: For now, just continue generating stmts. We should handle joins
@@ -441,8 +480,10 @@ fn flow_node_stmts(
         stmts.extend(define_necessary_node_input_bindings(mg, conf.id));
 
         // Continue generating...
-        stmts.extend(flow_node_stmts(path, dst, mg, stateful, reachable, fg));
-        return stmts;
+        stmts.extend(flow_node_stmts(
+            path, dst, mg, stateful, inlets, outlets, reachable, fg,
+        )?);
+        return Ok(stmts);
     }
 
     // Otherwise, add a statement to destructure the branch index.
@@ -454,7 +495,7 @@ fn flow_node_stmts(
     // FIXME: This doesn't properly handle joins.
     let mut expr = "'()".to_string();
     while let Some((branch, dst)) = edges.pop() {
-        let dst_stmts = flow_node_stmts(path, dst, mg, stateful, reachable, fg);
+        let dst_stmts = flow_node_stmts(path, dst, mg, stateful, inlets, outlets, reachable, fg)?;
         let dst_expr = format!(
             "(begin {} {} '())",
             destructure_node_outputs_stmt(conf.id, branch.conns),
@@ -474,7 +515,7 @@ fn flow_node_stmts(
         .unwrap();
 
     stmts.push(expr);
-    stmts
+    Ok(stmts)
 }
 
 /// Given the flow graph for an entry point eval fn, generate the body for the
@@ -483,15 +524,26 @@ pub fn eval_fn_body(
     path: &[node::Id],
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
+    inlets: &BTreeSet<node::Id>,
+    outlets: &BTreeSet<node::Id>,
     fg: &FlowGraph,
-) -> Vec<ExprKind> {
+) -> Result<Vec<ExprKind>, CodegenError> {
     // Find the entry node. Collect the set of reachable nodes to filter out
     // unreachable nodes from the meta graph.
     let Some(entry) = flow_graph_entry(fg) else {
-        return vec![];
+        return Ok(vec![]);
     };
     let reachable = flow_graph_nodes(fg);
-    flow_node_stmts(path, entry.id(), mg, stateful, &reachable, fg)
+    flow_node_stmts(
+        path,
+        entry.id(),
+        mg,
+        stateful,
+        inlets,
+        outlets,
+        &reachable,
+        fg,
+    )
 }
 
 //// Generate all push and pull fns for the given control flow graph.
@@ -499,8 +551,10 @@ pub(crate) fn eval_fns_from_flow(
     path: &[node::Id],
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
+    inlets: &BTreeSet<node::Id>,
+    outlets: &BTreeSet<node::Id>,
     flow: &Flow,
-) -> Vec<ExprKind> {
+) -> Result<Vec<ExprKind>, CodegenError> {
     let pull_fgs = flow.pull.iter().map(|(&(id, _conns), fg)| {
         let node_path: Vec<_> = path.iter().copied().chain(Some(id)).collect();
         let name = pull_eval_fn_name(&node_path);
@@ -514,18 +568,26 @@ pub(crate) fn eval_fns_from_flow(
     pull_fgs
         .chain(push_fgs)
         .map(|(name, fg)| {
-            let stmts = eval_fn_body(path, mg, stateful, fg);
-            eval_fn(&name, stmts)
+            let stmts = eval_fn_body(path, mg, stateful, inlets, outlets, fg)?;
+            Ok(eval_fn(&name, stmts))
         })
         .collect()
 }
 
 /// Given a tree of eval plans for a gantz graph (and its nested graphs),
 /// generate all push, pull and nested eval fns for the graph.
-pub(crate) fn eval_fns(flow_tree: &RoseTree<(&Meta, Flow)>) -> Vec<ExprKind> {
+pub(crate) fn eval_fns(flow_tree: &RoseTree<(&Meta, Flow)>) -> Result<Vec<ExprKind>, CodegenError> {
     let mut eval_fns = vec![];
-    flow_tree.visit(&[], &mut |path, (meta, flow)| {
-        eval_fns.extend(eval_fns_from_flow(path, &meta.graph, &meta.stateful, flow));
-    });
-    eval_fns
+    flow_tree.try_visit(&[], &mut |path, (meta, flow)| -> Result<(), CodegenError> {
+        eval_fns.extend(eval_fns_from_flow(
+            path,
+            &meta.graph,
+            &meta.stateful,
+            &meta.inlets,
+            &meta.outlets,
+            flow,
+        )?);
+        Ok(())
+    })?;
+    Ok(eval_fns)
 }

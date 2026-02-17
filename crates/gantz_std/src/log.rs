@@ -1,9 +1,6 @@
-use gantz_core::steel::{
-    parser::ast::ExprKind,
-    steel_vm::{engine::Engine, register_fn::RegisterFn},
-};
+use gantz_core::node::{ExprCtx, ExprResult, MetaCtx, RegCtx};
+use gantz_core::steel::{SteelVal, steel_vm::register_fn::RegisterFn};
 use serde::{Deserialize, Serialize};
-use steel::SteelVal;
 
 /// A simple node that logs whatever value is received at a given log level.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
@@ -19,14 +16,14 @@ impl Default for Log {
     }
 }
 
-impl<Env> gantz_core::Node<Env> for Log {
-    fn n_inputs(&self, _: &Env) -> usize {
+impl gantz_core::Node for Log {
+    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
         1
     }
 
-    fn expr(&self, ctx: gantz_core::node::ExprCtx<Env>) -> ExprKind {
+    fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
         let Some(Some(input)) = ctx.inputs().get(0) else {
-            return ExprKind::empty();
+            return gantz_core::node::parse_expr("'()");
         };
         let level = match self.level {
             log::Level::Error => "error",
@@ -37,10 +34,10 @@ impl<Env> gantz_core::Node<Env> for Log {
         };
         // TODO: Switch to proper logging. Reference steel logging.scm example.
         let expr = format!("(log/{level} {input})");
-        Engine::emit_ast(&expr).unwrap().into_iter().next().unwrap()
+        gantz_core::node::parse_expr(&expr)
     }
 
-    fn register(&self, _path: &[gantz_core::node::Id], vm: &mut Engine) {
+    fn register(&self, mut ctx: RegCtx<'_, '_>) {
         fn error(val: SteelVal) {
             log::error!("{}", val);
         }
@@ -56,11 +53,11 @@ impl<Env> gantz_core::Node<Env> for Log {
         fn trace(val: SteelVal) {
             log::trace!("{}", val);
         }
-        vm.register_fn("log/error", error);
-        vm.register_fn("log/warn", warn);
-        vm.register_fn("log/info", info);
-        vm.register_fn("log/debug", debug);
-        vm.register_fn("log/trace", trace);
+        ctx.vm().register_fn("log/error", error);
+        ctx.vm().register_fn("log/warn", warn);
+        ctx.vm().register_fn("log/info", info);
+        ctx.vm().register_fn("log/debug", debug);
+        ctx.vm().register_fn("log/trace", trace);
     }
 }
 

@@ -2,7 +2,10 @@
 
 use crate::{
     Edge,
-    compile::RoseTree,
+    compile::{
+        RoseTree,
+        error::{InvalidOutputIndex, MetaError, NodeConnsError, TooManyConns},
+    },
     node::{self, Node},
     visit::{self, Visitor},
 };
@@ -53,14 +56,27 @@ pub enum EdgeKind {
 /// between the same two nodes.
 pub type MetaGraph = petgraph::graphmap::DiGraphMap<node::Id, Vec<(Edge, EdgeKind)>>;
 
+/// A rose tree of [`Meta`] with error accumulation during visitation.
+///
+/// Errors encountered during the visitor traversal are accumulated in the
+/// `errors` field rather than panicking, allowing all errors to be reported.
+#[derive(Debug, Default)]
+pub(crate) struct MetaTree {
+    /// The rose tree of meta information for the graph and its nested graphs.
+    pub tree: RoseTree<Meta>,
+    /// Errors accumulated during the visitor traversal.
+    pub errors: Vec<MetaError>,
+}
+
 impl Meta {
     /// Construct a `Meta` for a single gantz graph.
-    pub fn from_graph<Env, G>(env: &Env, g: G) -> Self
+    pub fn from_graph<'a, G>(get_node: node::GetNode<'a>, g: G) -> Result<Self, NodeConnsError>
     where
         G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable,
-        G::NodeWeight: Node<Env>,
+        G::NodeWeight: Node,
     {
         let mut flow = Meta::default();
+        let ctx = node::MetaCtx::new(get_node);
         for n_ref in g.node_references() {
             let n = n_ref.id();
             let inputs = g
@@ -68,19 +84,19 @@ impl Meta {
                 .map(|e_ref| (g.to_index(e_ref.source()), e_ref.weight().clone()));
             let id = g.to_index(n);
             let node = n_ref.weight();
-            flow.add_node(env, id, node, inputs);
+            flow.add_node(ctx, id, node, inputs)?;
         }
-        flow
+        Ok(flow)
     }
 
     /// Add the node with the given ID and inputs to the `Meta`.
-    pub fn add_node<Env>(
+    pub fn add_node(
         &mut self,
-        env: &Env,
+        ctx: node::MetaCtx,
         id: node::Id,
-        node: &dyn Node<Env>,
+        node: &dyn Node,
         inputs: impl IntoIterator<Item = (node::Id, Edge)>,
-    ) {
+    ) -> Result<(), NodeConnsError> {
         // Add the node.
         self.graph.add_node(id);
 
@@ -89,7 +105,7 @@ impl Meta {
             loop {
                 if let Some(edges) = self.graph.edge_weight_mut(n, id) {
                     let n_branches = self.branches.get(&n).map(|bs| &bs[..]);
-                    if let Some(kind) = edge_kind(n_branches, edge.output.0 as usize) {
+                    if let Some(kind) = edge_kind(n_branches, edge.output.0 as usize)? {
                         edges.push((edge, kind));
                         break;
                     }
@@ -99,8 +115,8 @@ impl Meta {
         }
 
         // Register whether the node has inputs or outputs.
-        let inputs = node.n_inputs(env);
-        let outputs = node.n_outputs(env);
+        let inputs = node.n_inputs(ctx);
+        let outputs = node.n_outputs(ctx);
         if inputs > 0 {
             self.inputs.insert(id, inputs);
         }
@@ -109,64 +125,73 @@ impl Meta {
         }
 
         // Track node branching.
-        let branches = node.branches(env);
+        let branches = node.branches(ctx);
         if !branches.is_empty() {
             self.branches.insert(
                 id,
                 branches
                     .iter()
                     .map(|conf| conns_from_eval_conf(conf, outputs))
-                    .collect(),
+                    .collect::<Result<_, _>>()?,
             );
         }
 
         // Register push/pull eval for the node if necessary.
-        let push_eval = node.push_eval(env);
+        let push_eval = node.push_eval(ctx);
         if !push_eval.is_empty() {
             self.push.insert(
                 id,
                 push_eval
                     .iter()
                     .map(|conf| conns_from_eval_conf(conf, outputs))
-                    .collect(),
+                    .collect::<Result<_, _>>()?,
             );
         }
-        let pull_eval = node.pull_eval(env);
+        let pull_eval = node.pull_eval(ctx);
         if !pull_eval.is_empty() {
             self.pull.insert(
                 id,
                 pull_eval
                     .iter()
                     .map(|conf| conns_from_eval_conf(conf, inputs))
-                    .collect(),
+                    .collect::<Result<_, _>>()?,
             );
         }
-        if node.inlet() {
+        if node.inlet(ctx) {
             self.inlets.insert(id);
         }
-        if node.outlet() {
+        if node.outlet(ctx) {
             self.outlets.insert(id);
         }
-        if node.stateful() {
+        if node.stateful(ctx) {
             self.stateful.insert(id);
         }
+        Ok(())
     }
 }
 
 /// Allow for constructing a rose-tree of `Meta`s (one for each graph) using
 /// the `Node::visit` implementation.
-impl<Env> Visitor<Env> for RoseTree<Meta> {
-    fn visit_pre(&mut self, ctx: visit::Ctx<Env>, node: &dyn Node<Env>) {
+impl Visitor for MetaTree {
+    fn visit_pre(&mut self, ctx: visit::Ctx<'_, '_>, node: &dyn Node) {
         let node_path = ctx.path();
 
         // Ensure the plan for the graph owning this node exists, retrieve it.
         let tree_path = &node_path[..node_path.len() - 1];
-        let tree = self.tree_mut(&tree_path);
+        let tree = self.tree.tree_mut(tree_path);
 
         // Insert the node.
         let id = ctx.id();
-        tree.elem
-            .add_node(ctx.env(), id, node, ctx.inputs().iter().copied());
+        let meta_ctx = node::MetaCtx::new(ctx.get_node());
+        if let Err(error) = tree
+            .elem
+            .add_node(meta_ctx, id, node, ctx.inputs().iter().copied())
+        {
+            self.errors.push(MetaError {
+                path: node_path.to_vec(),
+                error,
+            });
+        }
     }
 }
 
@@ -178,30 +203,40 @@ impl super::Edges for Vec<(Edge, EdgeKind)> {
 
 /// Given an eval conf and a known number of connections, convert the conf to
 /// the set of conns.
-fn conns_from_eval_conf(conf: &node::EvalConf, n_conns: usize) -> node::Conns {
+fn conns_from_eval_conf(
+    conf: &node::EvalConf,
+    n_conns: usize,
+) -> Result<node::Conns, TooManyConns> {
     match conf {
-        node::EvalConf::All => node::Conns::try_from_iter((0..n_conns).map(|_| true)).unwrap(),
-        node::EvalConf::Set(conns) => *conns,
+        node::EvalConf::All => node::Conns::try_from_iter((0..n_conns).map(|_| true))
+            .map_err(|_| TooManyConns(n_conns)),
+        node::EvalConf::Set(conns) => Ok(*conns),
     }
 }
 
 /// Given the branching of the source node and the output index of a connected
 /// edge, returns the `EdgeKind` of that edge, or `None` if there is no branch
 /// under which the edge can be reached.
-fn edge_kind(confs: Option<&[node::Conns]>, out_ix: usize) -> Option<EdgeKind> {
+fn edge_kind(
+    confs: Option<&[node::Conns]>,
+    out_ix: usize,
+) -> Result<Option<EdgeKind>, InvalidOutputIndex> {
     let Some(confs) = confs else {
-        return Some(EdgeKind::Static);
+        return Ok(Some(EdgeKind::Static));
     };
     let mut reachable = false;
     let mut conditional = false;
     for branch in confs {
-        let active = branch.get(out_ix).expect("missing output in branch");
+        let active = branch.get(out_ix).ok_or_else(|| InvalidOutputIndex {
+            index: out_ix,
+            n_outputs: branch.len(),
+        })?;
         reachable |= active;
         conditional |= !active;
     }
-    match (reachable, conditional) {
+    Ok(match (reachable, conditional) {
         (false, _) => None,
         (true, true) => Some(EdgeKind::Conditional),
         (true, false) => Some(EdgeKind::Static),
-    }
+    })
 }

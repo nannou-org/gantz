@@ -10,7 +10,7 @@ use std::{
 
 /// A registry of content-addressed graphs, commits of those graphs, and
 /// optional names for those commits.
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Registry<G> {
     /// A mapping from graph addresses to graphs.
     graphs: HashMap<GraphAddr, G>,
@@ -23,6 +23,15 @@ pub struct Registry<G> {
 pub type Graphs<G> = HashMap<GraphAddr, G>;
 pub type Commits = HashMap<CommitAddr, Commit>;
 pub type Names = BTreeMap<String, CommitAddr>;
+
+/// The result of merging an incoming registry into an existing one.
+#[derive(Clone, Debug, Default)]
+pub struct MergeResult {
+    /// Names that were newly added.
+    pub names_added: Vec<String>,
+    /// Names that were replaced (pointed to a different commit): (name, old, new).
+    pub names_replaced: Vec<(String, CommitAddr, CommitAddr)>,
+}
 
 impl<G> Registry<G> {
     /// Construct the registry from its parts.
@@ -75,6 +84,13 @@ impl<G> Registry<G> {
             .and_then(|commit| self.graphs.get(&commit.graph))
     }
 
+    /// Look-up the graph pointed to by the given commit address.
+    pub fn commit_graph_ref(&self, ca: &CommitAddr) -> Option<&G> {
+        self.commits
+            .get(ca)
+            .and_then(|commit| self.graphs.get(&commit.graph))
+    }
+
     /// Commit the graph at the given address.
     ///
     /// NOTE: Assumes `graph_ca` is a correct address for the graph resulting
@@ -117,8 +133,8 @@ impl<G> Registry<G> {
         graph_ca: GraphAddr,
         graph: impl FnOnce() -> G,
         head: &mut Head,
-    ) {
-        commit_graph_to_head(self, timestamp, graph_ca, graph, head);
+    ) -> CommitAddr {
+        commit_graph_to_head(self, timestamp, graph_ca, graph, head)
     }
 
     /// Insert the given name mapping into the registry.
@@ -135,21 +151,73 @@ impl<G> Registry<G> {
         self.names.remove(name)
     }
 
-    /// Prunes all graphs that don't have an associated named commit.
+    /// Prune commits and graphs not in the required set.
     ///
-    /// All commits invalidated by the removed graphs are then removed.
-    ///
-    /// All `parent` fields in remaining commits that would be invalidated by
-    /// the commit removal are set to `None`.
-    pub fn prune_unnamed_graphs(
-        &mut self,
-        head: Option<&Head>,
-        graph_contains: impl Fn(&G, &GraphAddr) -> bool,
-    ) {
-        let head_graph_ca = head.and_then(|head| self.head_commit(head).map(|commit| commit.graph));
-        prune_unnamed_graphs(self, head_graph_ca, graph_contains);
-        prune_graphless_commits(self);
+    /// 1. Removes commits not in `required_commits`
+    /// 2. Removes graphs not referenced by any remaining commit
+    /// 3. Detaches invalid parent references
+    pub fn prune_unreachable(&mut self, required_commits: &HashSet<CommitAddr>) {
+        self.commits.retain(|ca, _| required_commits.contains(ca));
+        let used_graphs: HashSet<_> = self.commits.values().map(|c| c.graph).collect();
+        self.graphs.retain(|ca, _| used_graphs.contains(ca));
         detach_invalid_parents(&mut self.commits);
+    }
+
+    /// Merge an incoming registry into this one.
+    ///
+    /// Graphs and commits are inserted idempotently (content-addressing means
+    /// duplicates are identical). Names are merged: absent names are added,
+    /// same-commit names are kept, different-commit names are replaced.
+    pub fn merge(&mut self, incoming: Registry<G>) -> MergeResult {
+        self.graphs.extend(incoming.graphs);
+        self.commits.extend(incoming.commits);
+        let mut result = MergeResult::default();
+        for (name, new_ca) in incoming.names {
+            match self.names.get(&name) {
+                Some(&existing_ca) if existing_ca == new_ca => {}
+                Some(&existing_ca) => {
+                    result
+                        .names_replaced
+                        .push((name.clone(), existing_ca, new_ca));
+                    self.names.insert(name, new_ca);
+                }
+                None => {
+                    result.names_added.push(name.clone());
+                    self.names.insert(name, new_ca);
+                }
+            }
+        }
+        result
+    }
+}
+
+impl<G> Registry<G>
+where
+    G: Clone,
+{
+    /// Export a subset of the registry containing only the given commits and
+    /// their referenced graphs and names.
+    pub fn export(&self, required_commits: &HashSet<CommitAddr>) -> Registry<G> {
+        let commits: HashMap<CommitAddr, Commit> = self
+            .commits
+            .iter()
+            .filter(|(ca, _)| required_commits.contains(ca))
+            .map(|(&ca, commit)| (ca, commit.clone()))
+            .collect();
+        let used_graphs: HashSet<GraphAddr> = commits.values().map(|c| c.graph).collect();
+        let graphs: HashMap<GraphAddr, G> = self
+            .graphs
+            .iter()
+            .filter(|(ca, _)| used_graphs.contains(ca))
+            .map(|(&ca, g)| (ca, g.clone()))
+            .collect();
+        let names: BTreeMap<String, CommitAddr> = self
+            .names
+            .iter()
+            .filter(|(_, ca)| required_commits.contains(ca))
+            .map(|(name, &ca)| (name.clone(), ca))
+            .collect();
+        Registry::new(graphs, commits, names)
     }
 }
 
@@ -229,7 +297,7 @@ fn commit_graph_to_head<G>(
     graph_ca: GraphAddr,
     graph: impl FnOnce() -> G,
     head: &mut Head,
-) {
+) -> CommitAddr {
     let parent_ca = *head_commit_ca(&reg.names, head).unwrap();
     let commit_ca = commit_graph(reg, timestamp, Some(parent_ca), graph_ca, graph);
     match *head {
@@ -238,46 +306,7 @@ fn commit_graph_to_head<G>(
             reg.names.insert(name.to_string(), commit_ca);
         }
     }
-}
-
-/// Prune all unused graph entries from the registry.
-fn prune_unnamed_graphs<G>(
-    reg: &mut Registry<G>,
-    head_graph_ca: Option<GraphAddr>,
-    graph_contains: impl Fn(&G, &GraphAddr) -> bool,
-) {
-    let to_remove: Vec<_> = reg
-        .graphs()
-        .keys()
-        .copied()
-        .filter(|ca| Some(*ca) != head_graph_ca && !graph_is_named(reg, ca, &graph_contains))
-        .collect();
-    for ca in to_remove {
-        reg.graphs.remove(&ca);
-    }
-}
-
-/// Tests whether or not the graph with the given content address is in use
-/// within the registry.
-///
-/// This is used to determine whether or not to remove unused graphs.
-fn graph_is_named<G>(
-    reg: &Registry<G>,
-    ca: &GraphAddr,
-    graph_contains: impl Fn(&G, &GraphAddr) -> bool,
-) -> bool {
-    reg.names
-        .values()
-        .any(|commit_ca| *ca == reg.commits()[commit_ca].graph)
-        || reg.graphs().values().any(|g| graph_contains(g, ca))
-}
-
-/// Prunes all commits point to graphs that no longer exist.
-///
-/// Intended for running after `prune_unused_graphs`.
-fn prune_graphless_commits<G>(reg: &mut Registry<G>) {
-    reg.commits
-        .retain(|_ca, commit| reg.graphs.contains_key(&commit.graph));
+    commit_ca
 }
 
 /// For all `parent` commits that are invalid (i.e. don't point to an existing
@@ -293,5 +322,132 @@ fn detach_invalid_parents(commits: &mut Commits) {
     }
     for ca in has_invalid_parent {
         commits.get_mut(&ca).unwrap().parent = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ContentAddr;
+    use std::time::Duration;
+
+    fn graph_addr(n: u8) -> GraphAddr {
+        GraphAddr::from(ContentAddr::from([n; 32]))
+    }
+
+    fn commit_addr_raw(n: u8) -> CommitAddr {
+        CommitAddr::from(ContentAddr::from([n; 32]))
+    }
+
+    /// Build a simple registry with two independent commits (each with its own
+    /// graph) and a name pointing to one of them.
+    fn test_registry() -> (Registry<String>, CommitAddr, CommitAddr) {
+        let ga = graph_addr(1);
+        let gb = graph_addr(2);
+        let ca = commit_addr_raw(10);
+        let cb = commit_addr_raw(20);
+        let commit_a = Commit::new(Duration::from_secs(1), None, ga);
+        let commit_b = Commit::new(Duration::from_secs(2), None, gb);
+        let graphs = HashMap::from([(ga, "graph_a".to_string()), (gb, "graph_b".to_string())]);
+        let commits = HashMap::from([(ca, commit_a), (cb, commit_b)]);
+        let names = BTreeMap::from([("alpha".to_string(), ca)]);
+        (Registry::new(graphs, commits, names), ca, cb)
+    }
+
+    #[test]
+    fn export_includes_required_commits_only() {
+        let (reg, ca, cb) = test_registry();
+        let required: HashSet<_> = [ca].into_iter().collect();
+        let exported = reg.export(&required);
+        assert!(exported.commits().contains_key(&ca));
+        assert!(!exported.commits().contains_key(&cb));
+        // Graph referenced by commit_a should be present.
+        let ga = reg.commits()[&ca].graph;
+        assert!(exported.graphs().contains_key(&ga));
+        // Graph referenced by commit_b should not.
+        let gb = reg.commits()[&cb].graph;
+        assert!(!exported.graphs().contains_key(&gb));
+    }
+
+    #[test]
+    fn export_filters_names() {
+        let (reg, ca, _cb) = test_registry();
+        let required: HashSet<_> = [ca].into_iter().collect();
+        let exported = reg.export(&required);
+        assert_eq!(exported.names().get("alpha"), Some(&ca));
+        assert_eq!(exported.names().len(), 1);
+    }
+
+    #[test]
+    fn export_excludes_names_for_unrequired_commits() {
+        let (reg, _ca, cb) = test_registry();
+        // Only require commit_b which has no name.
+        let required: HashSet<_> = [cb].into_iter().collect();
+        let exported = reg.export(&required);
+        assert!(exported.names().is_empty());
+    }
+
+    #[test]
+    fn merge_adds_new_graphs_commits_names() {
+        let (mut base, _ca, _cb) = test_registry();
+        let gc = graph_addr(3);
+        let cc = commit_addr_raw(30);
+        let commit_c = Commit::new(Duration::from_secs(3), None, gc);
+        let incoming = Registry::new(
+            HashMap::from([(gc, "graph_c".to_string())]),
+            HashMap::from([(cc, commit_c)]),
+            BTreeMap::from([("beta".to_string(), cc)]),
+        );
+        let result = base.merge(incoming);
+        assert!(base.commits().contains_key(&cc));
+        assert!(base.graphs().contains_key(&gc));
+        assert_eq!(base.names().get("beta"), Some(&cc));
+        assert_eq!(result.names_added, vec!["beta".to_string()]);
+        assert!(result.names_replaced.is_empty());
+    }
+
+    #[test]
+    fn merge_same_name_same_commit_is_noop() {
+        let (mut base, ca, _cb) = test_registry();
+        let ga = base.commits()[&ca].graph;
+        let commit_a = base.commits()[&ca].clone();
+        let incoming = Registry::new(
+            HashMap::from([(ga, "graph_a".to_string())]),
+            HashMap::from([(ca, commit_a)]),
+            BTreeMap::from([("alpha".to_string(), ca)]),
+        );
+        let result = base.merge(incoming);
+        assert!(result.names_added.is_empty());
+        assert!(result.names_replaced.is_empty());
+    }
+
+    #[test]
+    fn merge_name_conflict_replaces() {
+        let (mut base, ca, cb) = test_registry();
+        // Incoming maps "alpha" to a different commit.
+        let gb = base.commits()[&cb].graph;
+        let commit_b = base.commits()[&cb].clone();
+        let incoming = Registry::new(
+            HashMap::from([(gb, "graph_b".to_string())]),
+            HashMap::from([(cb, commit_b)]),
+            BTreeMap::from([("alpha".to_string(), cb)]),
+        );
+        let result = base.merge(incoming);
+        assert!(result.names_added.is_empty());
+        assert_eq!(result.names_replaced.len(), 1);
+        let (name, old, new) = &result.names_replaced[0];
+        assert_eq!(name, "alpha");
+        assert_eq!(*old, ca);
+        assert_eq!(*new, cb);
+        assert_eq!(base.names().get("alpha"), Some(&cb));
+    }
+
+    #[test]
+    fn export_empty_required_set_produces_empty_registry() {
+        let (reg, _ca, _cb) = test_registry();
+        let exported = reg.export(&HashSet::new());
+        assert!(exported.commits().is_empty());
+        assert!(exported.graphs().is_empty());
+        assert!(exported.names().is_empty());
     }
 }

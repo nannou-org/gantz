@@ -1,4 +1,3 @@
-use crate::env::Environment;
 use dyn_clone::DynClone;
 use dyn_hash::DynHash;
 use std::any::Any;
@@ -6,14 +5,7 @@ use std::any::Any;
 /// A top-level blanket trait providing trait object cloning, hashing, and serialization.
 #[typetag::serde(tag = "type")]
 pub trait Node:
-    Any
-    + DynClone
-    + DynHash
-    + gantz_ca::CaHash
-    + gantz_core::Node<Environment>
-    + gantz_egui::NodeUi<Environment>
-    + Send
-    + Sync
+    Any + DynClone + DynHash + gantz_ca::CaHash + gantz_core::Node + gantz_egui::NodeUi + Send + Sync
 {
 }
 
@@ -21,9 +13,13 @@ dyn_clone::clone_trait_object!(Node);
 dyn_hash::hash_trait_object!(Node);
 
 #[typetag::serde]
+impl Node for gantz_core::node::Apply {}
+#[typetag::serde]
 impl Node for gantz_core::node::Expr {}
 #[typetag::serde]
 impl Node for gantz_core::node::GraphNode<Box<dyn Node>> {}
+#[typetag::serde]
+impl Node for gantz_core::node::Identity {}
 #[typetag::serde]
 impl Node for gantz_core::node::graph::Inlet {}
 #[typetag::serde]
@@ -39,7 +35,20 @@ impl Node for gantz_std::Log {}
 impl Node for gantz_std::Number {}
 
 #[typetag::serde]
-impl Node for gantz_egui::node::NamedGraph {}
+impl Node for gantz_egui::node::FnNamedRef {}
+#[typetag::serde]
+impl Node for gantz_egui::node::NamedRef {}
+
+#[typetag::serde]
+impl Node for gantz_egui::node::Comment {}
+#[typetag::serde]
+impl Node for gantz_egui::node::Inspect {}
+
+impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
+    fn from(named: gantz_egui::node::NamedRef) -> Self {
+        Box::new(named)
+    }
+}
 
 #[typetag::serde]
 impl Node for Box<dyn Node> {}

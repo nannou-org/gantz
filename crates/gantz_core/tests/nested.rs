@@ -8,7 +8,7 @@ use gantz_core::{
 use std::fmt::Debug;
 use steel::{SteelVal, steel_vm::engine::Engine};
 
-fn node_push() -> node::Push<(), node::Expr> {
+fn node_push() -> node::Push<node::Expr> {
     node::expr("'()").unwrap().with_push_eval()
 }
 
@@ -36,8 +36,13 @@ fn node_number() -> node::Expr {
 }
 
 // Helper trait for debugging the graph.
-trait DebugNode: Debug + Node<()> {}
-impl<T> DebugNode for T where T: Debug + Node<()> {}
+trait DebugNode: Debug + Node {}
+impl<T> DebugNode for T where T: Debug + Node {}
+
+// A no-op node lookup function for tests that don't need it.
+fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
+    None
+}
 
 // A simple test for nested graph support.
 //
@@ -114,18 +119,15 @@ fn test_graph_nested_stateless() {
     gb.add_edge(graph_a, assert_eq, Edge::from((0, 0)));
     gb.add_edge(forty_two, assert_eq, Edge::from((0, 1)));
 
-    // No need to share an environment between nodes for this test.
-    let env = ();
-
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::compile::module(&env, &gb);
+    let module = gantz_core::compile::module(&no_lookup, &gb).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
 
     // Initialise the node state vars.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&env, &gb, &[], &mut vm);
+    gantz_core::graph::register(&no_lookup, &gb, &[], &mut vm);
 
     // Register the fns.
     for f in module {
@@ -199,18 +201,15 @@ fn test_graph_nested_counter() {
     gb.add_edge(push, graph_a, Edge::from((0, 0)));
     gb.add_edge(graph_a, number, Edge::from((0, 0)));
 
-    // No need to share an environment between nodes for this test.
-    let env = ();
-
     // Generate the module.
-    let module = gantz_core::compile::module(&env, &gb);
+    let module = gantz_core::compile::module(&no_lookup, &gb).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
 
     // Initialise the node state vars.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&env, &gb, &[], &mut vm);
+    gantz_core::graph::register(&no_lookup, &gb, &[], &mut vm);
 
     // Register the fns.
     for f in module {
@@ -231,11 +230,8 @@ fn test_graph_nested_counter() {
         .expect("counter state was `None`");
     assert_eq!(counter_state, 1);
 
-    // Now check that the outlet's state is `1`.
-    let outlet_state = node::state::extract::<u32>(&vm, &[graph_a.index(), outlet.index()])
-        .expect("failed to extract outlet state")
-        .expect("outlet state was `None`");
-    assert_eq!(outlet_state, 1);
+    // Outlets are stateless - they just pass through their input value.
+    // The value flows through to the downstream `number` node.
 
     // Check that the number in the root graph was updated from the outlet.
     let number_state = node::state::extract::<u32>(&vm, &[number.index()])
@@ -289,18 +285,15 @@ fn test_graph_nested_push_eval() {
     let number = gb.add_node(Box::new(node_number()) as Box<_>);
     gb.add_edge(graph_a, number, Edge::from((0, 0)));
 
-    // No need to share an environment between nodes for this test.
-    let env = ();
-
     // Generate the module.
-    let module = gantz_core::compile::module(&env, &gb);
+    let module = gantz_core::compile::module(&no_lookup, &gb).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
 
     // Initialise the node state vars.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&env, &gb, &[], &mut vm);
+    gantz_core::graph::register(&no_lookup, &gb, &[], &mut vm);
 
     // Register the fns.
     for f in module {
@@ -324,4 +317,113 @@ fn test_graph_nested_push_eval() {
         .expect("failed to extract number state")
         .expect("number state was `None`");
     assert_eq!(number_state, 42);
+}
+
+// Test that inlet bindings work correctly when node indices don't match inlet positions.
+//
+// This verifies that inlets are correctly bound even when they're not the first nodes
+// in the graph (i.e., their node indices don't match their inlet positions).
+//
+// GRAPH A (inner)
+//
+//    --------- ---------
+//    | dummy | | dummy |  // Non-inlet nodes with indices 0, 1
+//    --------- ---------
+//
+//    --------- ---------
+//    | Inlet | | Inlet |  // Inlet nodes with indices 2, 3 (positions 0, 1)
+//    -+------- -+-------
+//     |         |
+//     ----   ----
+//        |   |
+//       -+---+-
+//       | sub |  // Subtracts second from first
+//       -+-----
+//        |
+//       -+--------
+//       | Outlet |
+//       ----------
+//
+// GRAPH B (outer)
+//
+//    --------
+//    | push | // push_eval
+//    -+------
+//     |
+//     |------------
+//     |           |
+//    -+----     -+----
+//    | 10 |     | 3 |
+//    -+----     -+----
+//     |           |
+//     ----     ----
+//        |     |
+//    ----+-----+----
+//    | GRAPH A |
+//    -+-------------
+//     |
+//    -+----
+//    | 7 |  // Expected result: 10 - 3 = 7
+//    -+----
+//     |
+//    -+-----------
+//    | assert_eq |
+//    -------------
+#[test]
+fn test_graph_nested_non_sequential_inlets() {
+    // Graph A with non-sequential inlet indices.
+    let mut ga = GraphNode::default();
+
+    // Add dummy nodes first to offset inlet indices
+    let _dummy1 = ga.add_node(Box::new(node_int(999)) as Box<dyn DebugNode>);
+    let _dummy2 = ga.add_node(Box::new(node_int(998)) as Box<_>);
+
+    // Now add inlets - they'll have indices 2 and 3
+    let inlet_a = ga.add_node(Box::new(node::graph::Inlet) as Box<_>);
+    let inlet_b = ga.add_node(Box::new(node::graph::Inlet) as Box<_>);
+
+    // Add processing nodes
+    let sub = ga.add_node(Box::new(node::expr("(- $l $r)").unwrap()) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
+
+    // Connect the graph
+    ga.add_edge(inlet_a, sub, Edge::from((0, 0)));
+    ga.add_edge(inlet_b, sub, Edge::from((0, 1)));
+    ga.add_edge(sub, outlet, Edge::from((0, 0)));
+
+    // Graph B that uses graph A.
+    let mut gb = petgraph::graph::DiGraph::new();
+    let push = gb.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let ten = gb.add_node(Box::new(node_int(10)) as Box<_>);
+    let three = gb.add_node(Box::new(node_int(3)) as Box<_>);
+    let graph_a = gb.add_node(Box::new(ga) as Box<_>);
+    let seven = gb.add_node(Box::new(node_int(7)) as Box<_>);
+    let assert_eq = gb.add_node(Box::new(node_assert_eq()) as Box<_>);
+
+    gb.add_edge(push, ten, Edge::from((0, 0)));
+    gb.add_edge(push, three, Edge::from((0, 0)));
+    gb.add_edge(push, seven, Edge::from((0, 0)));
+    gb.add_edge(ten, graph_a, Edge::from((0, 0)));
+    gb.add_edge(three, graph_a, Edge::from((0, 1)));
+    gb.add_edge(graph_a, assert_eq, Edge::from((0, 0)));
+    gb.add_edge(seven, assert_eq, Edge::from((0, 1)));
+
+    // Generate the module.
+    let module = gantz_core::compile::module(&no_lookup, &gb).unwrap();
+
+    // Create the VM.
+    let mut vm = Engine::new_base();
+
+    // Initialise the node state vars.
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &gb, &[], &mut vm);
+
+    // Register the fns.
+    for f in module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
+    // Call the `push` eval function - should compute 10 - 3 = 7
+    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
+        .unwrap();
 }
