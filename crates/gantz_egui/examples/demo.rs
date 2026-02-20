@@ -478,6 +478,10 @@ impl eframe::App for App {
                     self.state.gantz.open_heads.insert(head.clone(), state);
                 }
 
+                // A new edit commit invalidates the redo history.
+                self.state.gantz.redo_stacks.remove(&old_head);
+                self.state.gantz.redo_stacks.remove(head);
+
                 // Recompile this head's graph into its VM.
                 let vm = &mut self.state.vms[ix];
                 let get_node = |ca: &gantz_ca::ContentAddr| self.state.env.node(ca);
@@ -951,6 +955,34 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         new_indices.into_iter().collect();
                     head_state.scene.interaction.selection.edges.clear();
                 }
+                gantz_egui::Cmd::Undo => {
+                    let commit_ca = state.env.registry.head_commit_ca(&head).copied();
+                    let parent = commit_ca
+                        .and_then(|ca| state.env.registry.commits().get(&ca))
+                        .and_then(|c| c.parent);
+                    if let Some(parent) = parent {
+                        if let Some(ca) = commit_ca {
+                            state
+                                .gantz
+                                .redo_stacks
+                                .entry(head.clone())
+                                .or_default()
+                                .push(ca);
+                        }
+                        replace_head(ctx, state, gantz_ca::Head::Commit(parent));
+                    }
+                }
+                gantz_egui::Cmd::Redo => {
+                    if let Some(redo_ca) = state
+                        .gantz
+                        .redo_stacks
+                        .entry(head.clone())
+                        .or_default()
+                        .pop()
+                    {
+                        replace_head(ctx, state, gantz_ca::Head::Commit(redo_ca));
+                    }
+                }
             }
         }
     }
@@ -1195,9 +1227,14 @@ fn replace_head(ctx: &egui::Context, state: &mut State, new_head: gantz_ca::Head
 
     // Move GUI state from old head to new head.
     if let Some(gui_state) = state.gantz.open_heads.remove(&old_head) {
-        state.gantz.open_heads.insert(new_head, gui_state);
+        state.gantz.open_heads.insert(new_head.clone(), gui_state);
     } else {
-        state.gantz.open_heads.entry(new_head).or_default();
+        state.gantz.open_heads.entry(new_head.clone()).or_default();
+    }
+
+    // Migrate redo stack from old head key to new head key.
+    if let Some(stack) = state.gantz.redo_stacks.remove(&old_head) {
+        state.gantz.redo_stacks.insert(new_head, stack);
     }
 }
 
@@ -1215,6 +1252,7 @@ fn close_head(state: &mut State, head: &gantz_ca::Head) {
         state.vms.remove(ix);
         state.compiled_modules.remove(ix);
         state.gantz.open_heads.remove(head);
+        state.gantz.redo_stacks.remove(head);
 
         // Update focused_head to remain valid.
         if ix <= state.focused_head {
@@ -1250,7 +1288,12 @@ fn create_branch_from_head(
 
         // Move GUI state from old head to new head.
         if let Some(gui_state) = state.gantz.open_heads.remove(&old_head) {
-            state.gantz.open_heads.insert(new_head, gui_state);
+            state.gantz.open_heads.insert(new_head.clone(), gui_state);
+        }
+
+        // Migrate redo stack from old head to new head.
+        if let Some(stack) = state.gantz.redo_stacks.remove(&old_head) {
+            state.gantz.redo_stacks.insert(new_head, stack);
         }
     }
 }

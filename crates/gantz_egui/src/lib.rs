@@ -142,6 +142,10 @@ pub enum Cmd {
         text: Option<String>,
         offset: egui::Vec2,
     },
+    /// Undo the last graph edit (move head to parent commit).
+    Undo,
+    /// Redo a previously undone edit (move head forward).
+    Redo,
 }
 
 /// A command to create a new node.
