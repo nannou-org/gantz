@@ -166,7 +166,7 @@ where
             .iter()
             .map(|ix| egui_graph::NodeId::from_u64(ix.index() as u64))
             .collect();
-        let scene = egui_graph::Graph::from_id(self.id)
+        let graph_response = egui_graph::Graph::from_id(self.id)
             .center_view(self.center_view)
             .selected_nodes(selected)
             .show(view, ui, |ui, show| {
@@ -175,10 +175,18 @@ where
                         nodes(self.registry, self.graph, self.path, nctx, state, vm, ui);
                 })
                 .edges(ui, |ectx, ui| edges(self.graph, self.path, ectx, state, ui));
-            })
-            .response;
+            });
+
+        // Sync selection when egui_graph reports a change.
+        if let Some(selected) = graph_response.selection_changed {
+            state.interaction.selection.nodes = selected
+                .into_iter()
+                .map(|id| NodeIndex::new(id.value() as usize))
+                .collect();
+        }
+
         GraphSceneResponse {
-            scene,
+            scene: graph_response.response,
             nodes: node_responses,
         }
     }
@@ -274,14 +282,6 @@ where
                 response
             });
 
-        // Always update the selected nodes to stay in sync with egui_graph.
-        // TODO: Remove this workaround once egui_graph#47 is fixed.
-        if egui_graph::is_node_selected(ui, nctx.graph_id, node_id) {
-            state.interaction.selection.nodes.insert(n_id);
-        } else {
-            state.interaction.selection.nodes.remove(&n_id);
-        }
-
         if response.changed() {
             // Check for an edge event.
             if let Some(ev) = response.edge_event() {
@@ -320,6 +320,7 @@ where
 
         responses.push((n_id, response));
     }
+
     responses
 }
 
