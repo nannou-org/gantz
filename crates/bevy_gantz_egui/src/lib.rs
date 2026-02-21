@@ -807,14 +807,36 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                                 .or_default()
                                 .push(ca);
                         }
-                        cmds.trigger(head::ReplaceEvent(ca::Head::Commit(parent)));
+                        match &head {
+                            ca::Head::Commit(_) => {
+                                cmds.trigger(head::ReplaceEvent(ca::Head::Commit(parent)));
+                            }
+                            ca::Head::Branch(name) => {
+                                cmds.trigger(head::MoveBranchEvent {
+                                    entity,
+                                    name: name.clone(),
+                                    target: parent,
+                                });
+                            }
+                        }
                     }
                 }
                 gantz_egui::Cmd::Redo => {
                     if let Some(redo_ca) =
                         gui_state.redo_stacks.entry(head.clone()).or_default().pop()
                     {
-                        cmds.trigger(head::ReplaceEvent(ca::Head::Commit(redo_ca)));
+                        match &head {
+                            ca::Head::Commit(_) => {
+                                cmds.trigger(head::ReplaceEvent(ca::Head::Commit(redo_ca)));
+                            }
+                            ca::Head::Branch(name) => {
+                                cmds.trigger(head::MoveBranchEvent {
+                                    entity,
+                                    name: name.clone(),
+                                    target: redo_ca,
+                                });
+                            }
+                        }
                     }
                 }
             }

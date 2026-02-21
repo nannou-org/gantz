@@ -969,7 +969,15 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                                 .or_default()
                                 .push(ca);
                         }
-                        replace_head(ctx, state, gantz_ca::Head::Commit(parent));
+                        match &head {
+                            gantz_ca::Head::Commit(_) => {
+                                replace_head(ctx, state, gantz_ca::Head::Commit(parent));
+                            }
+                            gantz_ca::Head::Branch(name) => {
+                                state.env.registry.insert_name(name.clone(), parent);
+                                refresh_branch_head(state);
+                            }
+                        }
                     }
                 }
                 gantz_egui::Cmd::Redo => {
@@ -980,7 +988,15 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         .or_default()
                         .pop()
                     {
-                        replace_head(ctx, state, gantz_ca::Head::Commit(redo_ca));
+                        match &head {
+                            gantz_ca::Head::Commit(_) => {
+                                replace_head(ctx, state, gantz_ca::Head::Commit(redo_ca));
+                            }
+                            gantz_ca::Head::Branch(name) => {
+                                state.env.registry.insert_name(name.clone(), redo_ca);
+                                refresh_branch_head(state);
+                            }
+                        }
                     }
                 }
             }
@@ -1235,6 +1251,27 @@ fn replace_head(ctx: &egui::Context, state: &mut State, new_head: gantz_ca::Head
     // Migrate redo stack from old head key to new head key.
     if let Some(stack) = state.gantz.redo_stacks.remove(&old_head) {
         state.gantz.redo_stacks.insert(new_head, stack);
+    }
+}
+
+/// Refresh the focused branch head after its commit pointer has been moved.
+///
+/// Reloads the graph, views, and VM from the registry for the focused head.
+fn refresh_branch_head(state: &mut State) {
+    let ix = state.focused_head;
+    let (ref head, ref mut graph, ref mut views) = state.heads[ix];
+    let new_graph = state.env.registry.head_graph(head).unwrap();
+    *graph = clone_graph(new_graph);
+    *views = GraphViews::default();
+    let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
+    match gantz_core::vm::init(&get_node, &*graph) {
+        Ok((new_vm, module)) => {
+            state.vms[ix] = new_vm;
+            state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module);
+        }
+        Err(e) => {
+            log::error!("Failed to init VM for branch head refresh: {e}");
+        }
     }
 }
 
