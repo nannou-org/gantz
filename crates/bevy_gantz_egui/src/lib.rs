@@ -10,10 +10,7 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryData;
 use bevy_egui::egui;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
-use bevy_gantz::head::{
-    self, BranchedEvent, ChangedEvent, ClosedEvent, CommittedEvent, FocusedHead, HeadRef,
-    HeadTabOrder, HeadVms, OpenEvent, OpenHead, OpenHeadData, OpenedEvent, WorkingGraph,
-};
+use bevy_gantz::head;
 use bevy_gantz::reg::Registry;
 use bevy_gantz::vm::{EvalEvent, EvalKind};
 use bevy_gantz::{BuiltinNodes, EvalCompleted};
@@ -185,7 +182,7 @@ pub struct PasteSelectionEvent {
 #[derive(QueryData)]
 #[query_data(mutable)]
 pub struct OpenHeadViews<N: 'static + Send + Sync> {
-    pub core: OpenHeadData<N>,
+    pub core: head::OpenHeadData<N>,
     pub views: &'static mut GraphViews,
 }
 
@@ -204,16 +201,16 @@ pub struct HeadAccess<'q, 'w, 's, N: 'static + Send + Sync> {
     /// Map from head to entity for lookup.
     head_to_entity: HashMap<ca::Head, Entity>,
     /// Query for accessing head data + views mutably.
-    query: &'q mut Query<'w, 's, OpenHeadViews<N>, With<OpenHead>>,
+    query: &'q mut Query<'w, 's, OpenHeadViews<N>, With<head::OpenHead>>,
     /// The VMs keyed by entity.
-    vms: &'q mut HeadVms,
+    vms: &'q mut head::HeadVms,
 }
 
 impl<'q, 'w, 's, N: 'static + Send + Sync> HeadAccess<'q, 'w, 's, N> {
     pub fn new(
-        tab_order: &HeadTabOrder,
-        query: &'q mut Query<'w, 's, OpenHeadViews<N>, With<OpenHead>>,
-        vms: &'q mut HeadVms,
+        tab_order: &head::HeadTabOrder,
+        query: &'q mut Query<'w, 's, OpenHeadViews<N>, With<head::OpenHead>>,
+        vms: &'q mut head::HeadVms,
     ) -> Self {
         // Pre-collect heads in tab order and build entity lookup.
         let mut heads = Vec::new();
@@ -353,7 +350,7 @@ fn on_eval_completed(trigger: On<EvalCompleted>, mut perf_vm: ResMut<PerfVm>) {
 ///
 /// Loads views from the `Views` resource and spawns `GraphViews` + `HeadGuiState` components.
 pub fn on_head_opened<N: 'static + Send + Sync>(
-    trigger: On<OpenedEvent>,
+    trigger: On<head::OpenedEvent>,
     registry: Res<Registry<N>>,
     views: Res<Views>,
     mut gui_state: ResMut<GuiState>,
@@ -377,7 +374,7 @@ pub fn on_head_opened<N: 'static + Send + Sync>(
 ///
 /// Loads views for the new head and updates `GraphViews` + `HeadGuiState` components.
 pub fn on_head_changed<N: 'static + Send + Sync>(
-    trigger: On<ChangedEvent>,
+    trigger: On<head::ChangedEvent>,
     registry: Res<Registry<N>>,
     views: Res<Views>,
     mut gui_state: ResMut<GuiState>,
@@ -402,7 +399,7 @@ pub fn on_head_changed<N: 'static + Send + Sync>(
 }
 
 /// Remove GUI state for closed head.
-pub fn on_head_closed(trigger: On<ClosedEvent>, mut gui_state: ResMut<GuiState>) {
+pub fn on_head_closed(trigger: On<head::ClosedEvent>, mut gui_state: ResMut<GuiState>) {
     let head = &trigger.event().head;
     gui_state.open_heads.remove(head);
     gui_state.redo_stacks.remove(head);
@@ -410,7 +407,7 @@ pub fn on_head_closed(trigger: On<ClosedEvent>, mut gui_state: ResMut<GuiState>)
 
 /// Migrate GUI state for branch creation.
 pub fn on_branch_created(
-    trigger: On<BranchedEvent>,
+    trigger: On<head::BranchedEvent>,
     mut gui_state: ResMut<GuiState>,
     mut ctxs: EguiContexts,
 ) {
@@ -426,7 +423,7 @@ pub fn on_branch_created(
 /// This observer is triggered by `vm::update` when a graph change is committed.
 /// Also clears the redo stack, since a new edit invalidates the redo history.
 pub fn on_head_committed(
-    trigger: On<CommittedEvent>,
+    trigger: On<head::CommittedEvent>,
     mut gui_state: ResMut<GuiState>,
     mut ctxs: EguiContexts,
 ) {
@@ -442,8 +439,8 @@ pub fn on_create_node<N>(
     trigger: On<CreateNodeEvent>,
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
-    mut vms: NonSendMut<HeadVms>,
-    mut heads: Query<OpenHeadData<N>, With<OpenHead>>,
+    mut vms: NonSendMut<head::HeadVms>,
+    mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
 ) where
     N: 'static
         + Node
@@ -493,9 +490,9 @@ pub fn on_inspect_edge<N>(
     trigger: On<InspectEdgeEvent>,
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
-    mut vms: NonSendMut<HeadVms>,
-    mut heads: Query<OpenHeadData<N>, With<OpenHead>>,
-    mut views_query: Query<&mut GraphViews, With<OpenHead>>,
+    mut vms: NonSendMut<head::HeadVms>,
+    mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
+    mut views_query: Query<&mut GraphViews, With<head::OpenHead>>,
 ) where
     N: 'static
         + Node
@@ -539,7 +536,7 @@ pub fn on_copy_selection<N>(
     gui_state: ResMut<GuiState>,
     views: Res<Views>,
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
-    mut heads: Query<(&HeadRef, &mut WorkingGraph<N>, &mut GraphViews), With<OpenHead>>,
+    mut heads: Query<(&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphViews), With<head::OpenHead>>,
 ) where
     N: 'static
         + Node
@@ -595,8 +592,8 @@ pub fn on_paste_selection<N>(
     builtins: Res<BuiltinNodes<N>>,
     gui_state: ResMut<GuiState>,
     mut views: ResMut<Views>,
-    mut vms: NonSendMut<HeadVms>,
-    mut heads: Query<(&HeadRef, &mut WorkingGraph<N>, &mut GraphViews), With<OpenHead>>,
+    mut vms: NonSendMut<head::HeadVms>,
+    mut heads: Query<(&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphViews), With<head::OpenHead>>,
 ) where
     N: 'static
         + Node
@@ -672,7 +669,7 @@ pub fn on_paste_selection<N>(
 pub fn persist_views<N: 'static + Send + Sync>(
     registry: Res<Registry<N>>,
     mut views: ResMut<Views>,
-    heads: Query<(&HeadRef, &GraphViews), With<OpenHead>>,
+    heads: Query<(&head::HeadRef, &GraphViews), With<head::OpenHead>>,
 ) {
     for (head_ref, head_views) in heads.iter() {
         if let Some(commit_addr) = registry.head_commit_ca(&**head_ref).copied() {
@@ -689,7 +686,7 @@ pub fn prune_views<N: 'static + Node + Send + Sync>(
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     mut views: ResMut<Views>,
-    heads: Query<&HeadRef, With<OpenHead>>,
+    heads: Query<&head::HeadRef, With<head::OpenHead>>,
 ) {
     let node_reg = registry_ref(&registry, &builtins);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
@@ -714,7 +711,7 @@ pub fn process_cmds<N: 'static + Send + Sync>(
     mut registry: ResMut<Registry<N>>,
     mut gui_state: ResMut<GuiState>,
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
-    heads: Query<(Entity, &HeadRef), With<OpenHead>>,
+    heads: Query<(Entity, &head::HeadRef), With<head::OpenHead>>,
     mut cmds: Commands,
 ) {
     // Collect heads to process.
@@ -749,7 +746,7 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                 gantz_egui::Cmd::OpenNamedNode(name, content_ca) => {
                     let commit_ca = ca::CommitAddr::from(content_ca);
                     if registry.names().get(&name) == Some(&commit_ca) {
-                        cmds.trigger(OpenEvent(ca::Head::Branch(name.to_string())));
+                        cmds.trigger(head::OpenEvent(ca::Head::Branch(name.to_string())));
                     } else {
                         log::debug!(
                             "Attempted to open named node, but the content address has changed"
@@ -822,10 +819,10 @@ pub fn update<N>(
     mut registry: ResMut<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     mut gui_state: ResMut<GuiState>,
-    mut vms: NonSendMut<HeadVms>,
-    tab_order: Res<HeadTabOrder>,
-    mut focused: ResMut<FocusedHead>,
-    mut heads_query: Query<OpenHeadViews<N>, With<OpenHead>>,
+    mut vms: NonSendMut<head::HeadVms>,
+    tab_order: Res<head::HeadTabOrder>,
+    mut focused: ResMut<head::FocusedHead>,
+    mut heads_query: Query<OpenHeadViews<N>, With<head::OpenHead>>,
     mut cmds: Commands,
 ) -> Result
 where
@@ -949,7 +946,7 @@ fn navigate_head(cmds: &mut Commands, entity: Entity, head: &ca::Head, target: c
 /// Insert an Inspect node on the given edge, replacing the edge with two edges.
 fn inspect_edge<N>(
     node_reg: &RegistryRef<N>,
-    wg: &mut WorkingGraph<N>,
+    wg: &mut head::WorkingGraph<N>,
     gv: &mut GraphViews,
     vm: &mut Engine,
     cmd: gantz_egui::InspectEdge,

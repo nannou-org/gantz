@@ -88,6 +88,31 @@ where
 // Observers
 // ---------------------------------------------------------------------------
 
+/// Initialize (or reinitialize) the VM for the given head entity.
+fn init_head_vm<N>(
+    entity: Entity,
+    registry: &Registry<N>,
+    builtins: &BuiltinNodes<N>,
+    vms: &mut head::HeadVms,
+    cmds: &mut Commands,
+    graphs: &Query<&head::WorkingGraph<N>>,
+) where
+    N: 'static + Node + Send + Sync,
+{
+    let graph = graphs.get(entity).unwrap();
+    let get_node = |ca: &ca::ContentAddr| lookup_node(registry, &**builtins, ca);
+    let (vm, module) = match init(&get_node, &**graph) {
+        Ok(result) => result,
+        Err(e) => {
+            log::error!("Failed to init VM for head: {e}");
+            return;
+        }
+    };
+    cmds.entity(entity)
+        .insert(head::CompiledModule(module));
+    vms.insert(entity, vm);
+}
+
 /// VM init for opened heads.
 pub fn on_head_opened<N>(
     trigger: On<head::OpenedEvent>,
@@ -99,19 +124,7 @@ pub fn on_head_opened<N>(
 ) where
     N: 'static + Node + Send + Sync,
 {
-    let event = trigger.event();
-    let graph = graphs.get(event.entity).unwrap();
-    let get_node = |ca: &ca::ContentAddr| lookup_node(&registry, &**builtins, ca);
-    let (vm, module) = match init(&get_node, &**graph) {
-        Ok(result) => result,
-        Err(e) => {
-            log::error!("Failed to init VM for new head: {e}");
-            return;
-        }
-    };
-    cmds.entity(event.entity)
-        .insert(head::CompiledModule(module));
-    vms.insert(event.entity, vm);
+    init_head_vm(trigger.event().entity, &registry, &builtins, &mut vms, &mut cmds, &graphs);
 }
 
 /// VM init for changed heads.
@@ -125,19 +138,7 @@ pub fn on_head_changed<N>(
 ) where
     N: 'static + Node + Send + Sync,
 {
-    let event = trigger.event();
-    let graph = graphs.get(event.entity).unwrap();
-    let get_node = |ca: &ca::ContentAddr| lookup_node(&registry, &**builtins, ca);
-    let (vm, module) = match init(&get_node, &**graph) {
-        Ok(result) => result,
-        Err(e) => {
-            log::error!("Failed to init VM for changed head: {e}");
-            return;
-        }
-    };
-    cmds.entity(event.entity)
-        .insert(head::CompiledModule(module));
-    vms.insert(event.entity, vm);
+    init_head_vm(trigger.event().entity, &registry, &builtins, &mut vms, &mut cmds, &graphs);
 }
 
 /// Observer that handles evaluation events by calling the appropriate VM function.
