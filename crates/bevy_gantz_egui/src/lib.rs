@@ -388,6 +388,9 @@ pub fn on_head_replaced<N: 'static + Send + Sync>(
     if let Some(state) = gui_state.open_heads.remove(&event.old_head) {
         gui_state.open_heads.insert(event.new_head.clone(), state);
     }
+    if let Some(stack) = gui_state.redo_stacks.remove(&event.old_head) {
+        gui_state.redo_stacks.insert(event.new_head.clone(), stack);
+    }
     if let Ok(ctx) = ctxs.ctx_mut() {
         gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
     }
@@ -405,7 +408,9 @@ pub fn on_head_replaced<N: 'static + Send + Sync>(
 
 /// Remove GUI state for closed head.
 pub fn on_head_closed(trigger: On<ClosedEvent>, mut gui_state: ResMut<GuiState>) {
-    gui_state.open_heads.remove(&trigger.event().head);
+    let head = &trigger.event().head;
+    gui_state.open_heads.remove(head);
+    gui_state.redo_stacks.remove(head);
 }
 
 /// Migrate GUI state for branch creation.
@@ -418,6 +423,9 @@ pub fn on_branch_created(
     if let Some(state) = gui_state.open_heads.remove(&event.old_head) {
         gui_state.open_heads.insert(event.new_head.clone(), state);
     }
+    if let Some(stack) = gui_state.redo_stacks.remove(&event.old_head) {
+        gui_state.redo_stacks.insert(event.new_head.clone(), stack);
+    }
     if let Ok(ctx) = ctxs.ctx_mut() {
         gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
     }
@@ -426,6 +434,7 @@ pub fn on_branch_created(
 /// Handle graph commit by updating egui state.
 ///
 /// This observer is triggered by `vm::update` when a graph change is committed.
+/// Also clears the redo stack, since a new edit invalidates the redo history.
 pub fn on_head_committed(
     trigger: On<CommittedEvent>,
     mut gui_state: ResMut<GuiState>,
@@ -437,6 +446,11 @@ pub fn on_head_committed(
     if let Some(state) = gui_state.open_heads.remove(&event.old_head) {
         gui_state.open_heads.insert(event.new_head.clone(), state);
     }
+
+    // A new edit commit invalidates the redo history.
+    // Remove both old and new keys to ensure cleanup regardless of migration order.
+    gui_state.redo_stacks.remove(&event.old_head);
+    gui_state.redo_stacks.remove(&event.new_head);
 
     // Update egui pane ID mapping.
     if let Ok(ctx) = ctxs.ctx_mut() {
@@ -778,6 +792,51 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                             text,
                             offset,
                         });
+                    }
+                }
+                gantz_egui::Cmd::Undo => {
+                    let commit_ca = registry.head_commit_ca(&head).copied();
+                    let parent = commit_ca
+                        .and_then(|ca| registry.commits().get(&ca))
+                        .and_then(|c| c.parent);
+                    if let Some(parent) = parent {
+                        if let Some(ca) = commit_ca {
+                            gui_state
+                                .redo_stacks
+                                .entry(head.clone())
+                                .or_default()
+                                .push(ca);
+                        }
+                        match &head {
+                            ca::Head::Commit(_) => {
+                                cmds.trigger(head::ReplaceEvent(ca::Head::Commit(parent)));
+                            }
+                            ca::Head::Branch(name) => {
+                                cmds.trigger(head::MoveBranchEvent {
+                                    entity,
+                                    name: name.clone(),
+                                    target: parent,
+                                });
+                            }
+                        }
+                    }
+                }
+                gantz_egui::Cmd::Redo => {
+                    if let Some(redo_ca) =
+                        gui_state.redo_stacks.entry(head.clone()).or_default().pop()
+                    {
+                        match &head {
+                            ca::Head::Commit(_) => {
+                                cmds.trigger(head::ReplaceEvent(ca::Head::Commit(redo_ca)));
+                            }
+                            ca::Head::Branch(name) => {
+                                cmds.trigger(head::MoveBranchEvent {
+                                    entity,
+                                    name: name.clone(),
+                                    target: redo_ca,
+                                });
+                            }
+                        }
                     }
                 }
             }

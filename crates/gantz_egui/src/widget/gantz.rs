@@ -57,6 +57,9 @@ pub struct GantzState {
     pub open_heads: OpenHeadStates,
     pub view_toggles: ViewToggles,
     pub command_palette: widget::CommandPalette,
+    /// Per-head redo stacks for undo/redo support.
+    #[serde(default)]
+    pub redo_stacks: HashMap<gantz_ca::Head, Vec<gantz_ca::CommitAddr>>,
 }
 
 pub type OpenHeadStates = HashMap<gantz_ca::Head, OpenHeadState>;
@@ -356,6 +359,7 @@ impl GantzState {
             open_heads,
             command_palette: widget::CommandPalette::default(),
             view_toggles: ViewToggles::default(),
+            redo_stacks: HashMap::new(),
         }
     }
 }
@@ -500,7 +504,7 @@ where
                 if let Some(fh) = access.heads().get(*focused_head).cloned() {
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
 
-                    // Copy/paste keyboard shortcuts.
+                    // Copy/paste/undo/redo keyboard shortcuts.
                     if !ui.ctx().wants_keyboard_input() {
                         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::C)) {
                             head_state.scene.cmds.push(Cmd::CopySelection);
@@ -521,6 +525,21 @@ where
                                 text: paste_text,
                                 offset: egui::vec2(20.0, 20.0),
                             });
+                        }
+                        // Undo: Cmd/Ctrl+Z (without Shift).
+                        if ui.input(|i| {
+                            i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::Z)
+                        }) {
+                            head_state.scene.cmds.push(Cmd::Undo);
+                        }
+                        // Redo: Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y.
+                        if ui.input(|i| {
+                            (i.modifiers.command
+                                && i.modifiers.shift
+                                && i.key_pressed(egui::Key::Z))
+                                || (i.modifiers.command && i.key_pressed(egui::Key::Y))
+                        }) {
+                            head_state.scene.cmds.push(Cmd::Redo);
                         }
                     }
 

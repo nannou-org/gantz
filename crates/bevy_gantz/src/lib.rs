@@ -56,6 +56,7 @@ where
             .add_observer(head::on_replace::<N>)
             .add_observer(head::on_close::<N>)
             .add_observer(head::on_branch::<N>)
+            .add_observer(head::on_move_branch::<N>)
             // Register eval event handler.
             .add_observer(vm::on_eval)
             // VM init observers.

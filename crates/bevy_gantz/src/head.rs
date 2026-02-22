@@ -73,6 +73,14 @@ pub struct BranchEvent {
     pub new_name: String,
 }
 
+/// Event to move a branch's commit pointer to a different commit.
+#[derive(Event)]
+pub struct MoveBranchEvent {
+    pub entity: Entity,
+    pub name: ca::Branch,
+    pub target: ca::CommitAddr,
+}
+
 // ----------------------------------------------------------------------------
 // Hook Events (emitted after core operations for app-specific handling)
 // ----------------------------------------------------------------------------
@@ -406,4 +414,30 @@ pub fn on_branch<N>(
             break;
         }
     }
+}
+
+/// Handle request to move a branch's commit pointer to a different commit.
+///
+/// Atomically updates the registry, WorkingGraph, and emits ReplacedEvent
+/// within the command flush to prevent inconsistent state between systems.
+pub fn on_move_branch<N>(
+    trigger: On<MoveBranchEvent>,
+    mut cmds: Commands,
+    mut registry: ResMut<Registry<N>>,
+) where
+    N: 'static + Clone + Send + Sync,
+{
+    let event = trigger.event();
+    registry.insert_name(event.name.clone(), event.target);
+    let head = ca::Head::Branch(event.name.clone());
+    let Some(graph) = registry.head_graph(&head).cloned() else {
+        log::error!("MoveBranch: graph missing for target commit");
+        return;
+    };
+    cmds.entity(event.entity).insert(WorkingGraph(graph));
+    cmds.trigger(ReplacedEvent {
+        entity: event.entity,
+        old_head: head.clone(),
+        new_head: head,
+    });
 }
