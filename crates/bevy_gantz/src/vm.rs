@@ -225,7 +225,7 @@ where
 /// When a graph change is detected, this system:
 /// - Commits the new graph to the registry
 /// - Recompiles the VM
-/// - Emits a [`CommittedEvent`] for UI updates
+/// - Emits a [`head::CommittedEvent`] for UI updates
 pub fn update<N>(
     mut cmds: Commands,
     mut registry: ResMut<Registry<N>>,
