@@ -7,10 +7,7 @@
 //! - Systems for VM setup and update (`setup`, `update`)
 
 use crate::BuiltinNodes;
-use crate::head::{
-    ChangedEvent, CommittedEvent, CompiledModule, HeadVms, OpenHead, OpenHeadData, OpenedEvent,
-    WorkingGraph,
-};
+use crate::head;
 use crate::reg::{Registry, lookup_node};
 use bevy_ecs::prelude::*;
 use bevy_log as log;
@@ -93,12 +90,12 @@ where
 
 /// VM init for opened heads.
 pub fn on_head_opened<N>(
-    trigger: On<OpenedEvent>,
+    trigger: On<head::OpenedEvent>,
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
-    mut vms: NonSendMut<HeadVms>,
+    mut vms: NonSendMut<head::HeadVms>,
     mut cmds: Commands,
-    graphs: Query<&WorkingGraph<N>>,
+    graphs: Query<&head::WorkingGraph<N>>,
 ) where
     N: 'static + Node + Send + Sync,
 {
@@ -112,18 +109,19 @@ pub fn on_head_opened<N>(
             return;
         }
     };
-    cmds.entity(event.entity).insert(CompiledModule(module));
+    cmds.entity(event.entity)
+        .insert(head::CompiledModule(module));
     vms.insert(event.entity, vm);
 }
 
 /// VM init for changed heads.
 pub fn on_head_changed<N>(
-    trigger: On<ChangedEvent>,
+    trigger: On<head::ChangedEvent>,
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
-    mut vms: NonSendMut<HeadVms>,
+    mut vms: NonSendMut<head::HeadVms>,
     mut cmds: Commands,
-    graphs: Query<&WorkingGraph<N>>,
+    graphs: Query<&head::WorkingGraph<N>>,
 ) where
     N: 'static + Node + Send + Sync,
 {
@@ -137,14 +135,15 @@ pub fn on_head_changed<N>(
             return;
         }
     };
-    cmds.entity(event.entity).insert(CompiledModule(module));
+    cmds.entity(event.entity)
+        .insert(head::CompiledModule(module));
     vms.insert(event.entity, vm);
 }
 
 /// Observer that handles evaluation events by calling the appropriate VM function.
 ///
 /// Emits an `EvalCompleted` event with timing information for UI layers to observe.
-pub fn on_eval(trigger: On<EvalEvent>, mut vms: NonSendMut<HeadVms>, mut cmds: Commands) {
+pub fn on_eval(trigger: On<EvalEvent>, mut vms: NonSendMut<head::HeadVms>, mut cmds: Commands) {
     let event = trigger.event();
     let fn_name = match event.kind {
         EvalKind::Push => core_compile::push_eval_fn_name(&event.path),
@@ -174,17 +173,17 @@ where
     log::info!("Setting up VMs for all open heads!");
 
     let entities: Vec<Entity> = world
-        .query_filtered::<Entity, With<OpenHead>>()
+        .query_filtered::<Entity, With<head::OpenHead>>()
         .iter(world)
         .collect();
 
-    let mut vms = HeadVms::default();
+    let mut vms = head::HeadVms::default();
     let mut compiled_updates: Vec<(Entity, String)> = vec![];
     for entity in entities {
         let registry = world.resource::<Registry<N>>();
         let builtins = world.resource::<BuiltinNodes<N>>();
         let get_node = |ca: &ca::ContentAddr| lookup_node(registry, &**builtins, ca);
-        let Some(wg) = world.get::<WorkingGraph<N>>(entity) else {
+        let Some(wg) = world.get::<head::WorkingGraph<N>>(entity) else {
             continue;
         };
         let (vm, module) = match init(&get_node, &**wg) {
@@ -199,8 +198,8 @@ where
     }
 
     for (entity, compiled_module) in compiled_updates {
-        if let Some(mut compiled) = world.get_mut::<CompiledModule>(entity) {
-            *compiled = CompiledModule(compiled_module);
+        if let Some(mut compiled) = world.get_mut::<head::CompiledModule>(entity) {
+            *compiled = head::CompiledModule(compiled_module);
         }
     }
 
@@ -217,8 +216,8 @@ pub fn update<N>(
     mut cmds: Commands,
     mut registry: ResMut<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
-    mut vms: NonSendMut<HeadVms>,
-    mut heads_query: Query<OpenHeadData<N>, With<OpenHead>>,
+    mut vms: NonSendMut<head::HeadVms>,
+    mut heads_query: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
 ) where
     N: 'static + Node + Clone + ca::CaHash + Send + Sync,
 {
@@ -246,7 +245,7 @@ pub fn update<N>(
             );
 
             // Emit event for UI state updates (handled by GantzEguiPlugin if present).
-            cmds.trigger(CommittedEvent {
+            cmds.trigger(head::CommittedEvent {
                 entity: data.entity,
                 old_head: old_head.clone(),
                 new_head: head.clone(),
