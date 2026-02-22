@@ -23,8 +23,30 @@ pub use widget::graph_select::GraphRegistry;
 
 /// Combined registry trait for UI operations.
 ///
-/// Provides node lookup, name resolution, Fn-compatible node listing,
-/// node type registration, and graph/commit registry access.
+/// Brings together the different lookup capabilities required by the various
+/// gantz_egui widgets. Each supertrait is defined alongside the widget that
+/// requires it:
+///
+/// - [`NameRegistry`] (`node/named_ref.rs`) — resolves named references to
+///   content addresses. Required by [`node::NamedRef`] to check whether a
+///   referenced graph still exists and to display up-to-date status.
+///
+/// - [`FnNodeNames`] (`node/fn_named_ref.rs`) — lists names eligible for
+///   use in `Fn`-style node references (stateless, branchless, single-output).
+///   Required by [`node::FnNamedRef`]'s UI dropdown.
+///
+/// - [`NodeTypeRegistry`] (`widget/gantz.rs`) — enumerates all creatable node
+///   types. Required by the command palette for node creation.
+///
+/// - [`GraphRegistry`] (`widget/graph_select.rs`) — provides access to commits
+///   and branch names. Required by the graph selector and history view.
+///
+/// The `node` method provides direct node lookup by content address, used
+/// throughout for resolving graph references during compilation, evaluation,
+/// and UI rendering.
+///
+/// See [`reg::RegistryRef`] for the standard implementation combining a
+/// [`gantz_ca::Registry`] with [`gantz_core::Builtins`].
 pub trait Registry: NameRegistry + FnNodeNames + NodeTypeRegistry + GraphRegistry {
     /// Look up a node by content address.
     fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&dyn gantz_core::Node>;
@@ -114,8 +136,12 @@ pub struct NodeCtx<'a> {
     cmds: &'a mut Vec<Cmd>,
 }
 
-/// Commands that can be emitted by nodes that are processed after the GUI pass
-/// is complete.
+/// Commands emitted by nodes and widgets, processed after the GUI pass.
+///
+/// All variants must be exhaustively handled in both
+/// `bevy_gantz_egui::process_cmds` and the demo's `process_cmds`
+/// (`gantz_egui/examples/demo.rs`). Adding a new variant without updating
+/// both will produce a compile error.
 #[derive(Debug)]
 pub enum Cmd {
     PushEval(Vec<node::Id>),

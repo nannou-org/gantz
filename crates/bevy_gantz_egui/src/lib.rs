@@ -385,12 +385,7 @@ pub fn on_head_replaced<N: 'static + Send + Sync>(
     mut cmds: Commands,
 ) {
     let event = trigger.event();
-    if let Some(state) = gui_state.open_heads.remove(&event.old_head) {
-        gui_state.open_heads.insert(event.new_head.clone(), state);
-    }
-    if let Some(stack) = gui_state.redo_stacks.remove(&event.old_head) {
-        gui_state.redo_stacks.insert(event.new_head.clone(), stack);
-    }
+    gui_state.migrate_head(&event.old_head, &event.new_head, false);
     if let Ok(ctx) = ctxs.ctx_mut() {
         gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
     }
@@ -420,12 +415,7 @@ pub fn on_branch_created(
     mut ctxs: EguiContexts,
 ) {
     let event = trigger.event();
-    if let Some(state) = gui_state.open_heads.remove(&event.old_head) {
-        gui_state.open_heads.insert(event.new_head.clone(), state);
-    }
-    if let Some(stack) = gui_state.redo_stacks.remove(&event.old_head) {
-        gui_state.redo_stacks.insert(event.new_head.clone(), stack);
-    }
+    gui_state.migrate_head(&event.old_head, &event.new_head, false);
     if let Ok(ctx) = ctxs.ctx_mut() {
         gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
     }
@@ -441,18 +431,7 @@ pub fn on_head_committed(
     mut ctxs: EguiContexts,
 ) {
     let event = trigger.event();
-
-    // Migrate GUI state to new head.
-    if let Some(state) = gui_state.open_heads.remove(&event.old_head) {
-        gui_state.open_heads.insert(event.new_head.clone(), state);
-    }
-
-    // A new edit commit invalidates the redo history.
-    // Remove both old and new keys to ensure cleanup regardless of migration order.
-    gui_state.redo_stacks.remove(&event.old_head);
-    gui_state.redo_stacks.remove(&event.new_head);
-
-    // Update egui pane ID mapping.
+    gui_state.migrate_head(&event.old_head, &event.new_head, true);
     if let Ok(ctx) = ctxs.ctx_mut() {
         gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
     }
@@ -721,9 +700,16 @@ pub fn prune_views<N: 'static + Node + Send + Sync>(
 
 /// Process GUI commands from all open heads.
 ///
-/// Handles eval, navigation, and registry commands directly.
-/// Emits events for operations requiring additional resources (inspection,
-/// node creation, clipboard).
+/// Commands are split between inline handling and event dispatch based on
+/// Bevy's ECS borrow rules. Inline-handled commands (eval, navigation,
+/// registry operations, undo/redo) only need `registry + gui_state`, which
+/// are available as system parameters. Event-dispatched commands (node
+/// creation, edge inspection, clipboard) need mutable access to per-head
+/// components (`WorkingGraph`, `GraphViews`, `HeadVms`) that would conflict
+/// with the iteration query — observers handle these with separate queries.
+///
+/// All [`gantz_egui::Cmd`] variants must be handled here *and* in the demo's
+/// `process_cmds` (see `gantz_egui/examples/demo.rs`).
 pub fn process_cmds<N: 'static + Send + Sync>(
     mut registry: ResMut<Registry<N>>,
     mut gui_state: ResMut<GuiState>,
@@ -807,36 +793,14 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                                 .or_default()
                                 .push(ca);
                         }
-                        match &head {
-                            ca::Head::Commit(_) => {
-                                cmds.trigger(head::ReplaceEvent(ca::Head::Commit(parent)));
-                            }
-                            ca::Head::Branch(name) => {
-                                cmds.trigger(head::MoveBranchEvent {
-                                    entity,
-                                    name: name.clone(),
-                                    target: parent,
-                                });
-                            }
-                        }
+                        navigate_head(&mut cmds, entity, &head, parent);
                     }
                 }
                 gantz_egui::Cmd::Redo => {
                     if let Some(redo_ca) =
                         gui_state.redo_stacks.entry(head.clone()).or_default().pop()
                     {
-                        match &head {
-                            ca::Head::Commit(_) => {
-                                cmds.trigger(head::ReplaceEvent(ca::Head::Commit(redo_ca)));
-                            }
-                            ca::Head::Branch(name) => {
-                                cmds.trigger(head::MoveBranchEvent {
-                                    entity,
-                                    name: name.clone(),
-                                    target: redo_ca,
-                                });
-                            }
-                        }
+                        navigate_head(&mut cmds, entity, &head, redo_ca);
                     }
                 }
             }
@@ -966,6 +930,21 @@ where
 // ---------------------------------------------------------------------------
 // Functions
 // ---------------------------------------------------------------------------
+
+/// Trigger the appropriate event to move a head to a target commit.
+///
+/// Branch heads use `MoveBranchEvent` for atomic registry+graph updates
+/// (avoids oscillation with `vm::update`). Commit heads use `ReplaceEvent`.
+fn navigate_head(cmds: &mut Commands, entity: Entity, head: &ca::Head, target: ca::CommitAddr) {
+    match head {
+        ca::Head::Commit(_) => cmds.trigger(head::ReplaceEvent(ca::Head::Commit(target))),
+        ca::Head::Branch(name) => cmds.trigger(head::MoveBranchEvent {
+            entity,
+            name: name.clone(),
+            target,
+        }),
+    }
+}
 
 /// Insert an Inspect node on the given edge, replacing the edge with two edges.
 fn inspect_edge<N>(
