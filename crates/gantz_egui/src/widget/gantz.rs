@@ -362,6 +362,23 @@ impl GantzState {
             redo_stacks: HashMap::new(),
         }
     }
+
+    /// Migrate GUI state when a head's identity changes.
+    ///
+    /// Moves `open_heads` entry from old to new key. When `clear_redo` is
+    /// true (new edit commit), removes redo stacks for both keys. Otherwise
+    /// migrates the redo stack to the new key.
+    pub fn migrate_head(&mut self, old: &gantz_ca::Head, new: &gantz_ca::Head, clear_redo: bool) {
+        if let Some(state) = self.open_heads.remove(old) {
+            self.open_heads.insert(new.clone(), state);
+        }
+        if clear_redo {
+            self.redo_stacks.remove(old);
+            self.redo_stacks.remove(new);
+        } else if let Some(stack) = self.redo_stacks.remove(old) {
+            self.redo_stacks.insert(new.clone(), stack);
+        }
+    }
 }
 
 impl<'a, 's, Access> egui_tiles::Behavior<Pane> for TreeBehaviour<'a, 's, Access>

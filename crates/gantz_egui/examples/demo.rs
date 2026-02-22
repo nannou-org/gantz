@@ -472,15 +472,7 @@ impl eframe::App for App {
                 );
                 // Update the graph pane if the head's commit CA changed.
                 gantz_egui::widget::update_graph_pane_head(ctx, &old_head, head);
-
-                // Migrate open_heads entry from old key to new key.
-                if let Some(state) = self.state.gantz.open_heads.remove(&old_head) {
-                    self.state.gantz.open_heads.insert(head.clone(), state);
-                }
-
-                // A new edit commit invalidates the redo history.
-                self.state.gantz.redo_stacks.remove(&old_head);
-                self.state.gantz.redo_stacks.remove(head);
+                self.state.gantz.migrate_head(&old_head, head, true);
 
                 // Recompile this head's graph into its VM.
                 let vm = &mut self.state.vms[ix];
@@ -969,15 +961,7 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                                 .or_default()
                                 .push(ca);
                         }
-                        match &head {
-                            gantz_ca::Head::Commit(_) => {
-                                replace_head(ctx, state, gantz_ca::Head::Commit(parent));
-                            }
-                            gantz_ca::Head::Branch(name) => {
-                                state.env.registry.insert_name(name.clone(), parent);
-                                refresh_branch_head(state);
-                            }
-                        }
+                        navigate_head(ctx, state, &head, parent);
                     }
                 }
                 gantz_egui::Cmd::Redo => {
@@ -988,15 +972,7 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         .or_default()
                         .pop()
                     {
-                        match &head {
-                            gantz_ca::Head::Commit(_) => {
-                                replace_head(ctx, state, gantz_ca::Head::Commit(redo_ca));
-                            }
-                            gantz_ca::Head::Branch(name) => {
-                                state.env.registry.insert_name(name.clone(), redo_ca);
-                                refresh_branch_head(state);
-                            }
-                        }
+                        navigate_head(ctx, state, &head, redo_ca);
                     }
                 }
             }
@@ -1240,17 +1216,29 @@ fn replace_head(ctx: &egui::Context, state: &mut State, new_head: gantz_ca::Head
 
     // Update the graph pane to show the new head.
     gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
+    state.gantz.migrate_head(&old_head, &new_head, false);
+    // Ensure an entry exists even if there was no old state to migrate.
+    state.gantz.open_heads.entry(new_head).or_default();
+}
 
-    // Move GUI state from old head to new head.
-    if let Some(gui_state) = state.gantz.open_heads.remove(&old_head) {
-        state.gantz.open_heads.insert(new_head.clone(), gui_state);
-    } else {
-        state.gantz.open_heads.entry(new_head.clone()).or_default();
-    }
-
-    // Migrate redo stack from old head key to new head key.
-    if let Some(stack) = state.gantz.redo_stacks.remove(&old_head) {
-        state.gantz.redo_stacks.insert(new_head, stack);
+/// Move a head to a target commit.
+///
+/// Branch heads update the registry name mapping and refresh in-place.
+/// Commit heads replace the focused head entirely.
+fn navigate_head(
+    ctx: &egui::Context,
+    state: &mut State,
+    head: &gantz_ca::Head,
+    target: gantz_ca::CommitAddr,
+) {
+    match head {
+        gantz_ca::Head::Commit(_) => {
+            replace_head(ctx, state, gantz_ca::Head::Commit(target));
+        }
+        gantz_ca::Head::Branch(name) => {
+            state.env.registry.insert_name(name.clone(), target);
+            refresh_branch_head(state);
+        }
     }
 }
 
@@ -1322,15 +1310,6 @@ fn create_branch_from_head(
 
         // Update the graph pane to show the new head.
         gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
-
-        // Move GUI state from old head to new head.
-        if let Some(gui_state) = state.gantz.open_heads.remove(&old_head) {
-            state.gantz.open_heads.insert(new_head.clone(), gui_state);
-        }
-
-        // Migrate redo stack from old head to new head.
-        if let Some(stack) = state.gantz.redo_stacks.remove(&old_head) {
-            state.gantz.redo_stacks.insert(new_head, stack);
-        }
+        state.gantz.migrate_head(&old_head, &new_head, false);
     }
 }
