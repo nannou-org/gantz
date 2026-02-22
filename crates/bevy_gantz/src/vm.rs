@@ -3,12 +3,12 @@
 //! This module provides:
 //! - Convenience wrappers around `gantz_core::vm` (`init`, `compile`)
 //! - Evaluation events and observer (`EvalEvent`, `EvalKind`, `on_eval`)
-//! - Observers for VM initialization on head events (`on_head_opened`, `on_head_replaced`)
+//! - Observers for VM initialization on head events (`on_head_opened`, `on_head_changed`)
 //! - Systems for VM setup and update (`setup`, `update`)
 
 use crate::BuiltinNodes;
 use crate::head::{
-    CommittedEvent, CompiledModule, HeadVms, OpenHead, OpenHeadData, OpenedEvent, ReplacedEvent,
+    ChangedEvent, CommittedEvent, CompiledModule, HeadVms, OpenHead, OpenHeadData, OpenedEvent,
     WorkingGraph,
 };
 use crate::reg::{Registry, lookup_node};
@@ -116,9 +116,9 @@ pub fn on_head_opened<N>(
     vms.insert(event.entity, vm);
 }
 
-/// VM init for replaced heads.
-pub fn on_head_replaced<N>(
-    trigger: On<ReplacedEvent>,
+/// VM init for changed heads.
+pub fn on_head_changed<N>(
+    trigger: On<ChangedEvent>,
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     mut vms: NonSendMut<HeadVms>,
@@ -133,7 +133,7 @@ pub fn on_head_replaced<N>(
     let (vm, module) = match init(&get_node, &**graph) {
         Ok(result) => result,
         Err(e) => {
-            log::error!("Failed to init VM for replaced head: {e}");
+            log::error!("Failed to init VM for changed head: {e}");
             return;
         }
     };

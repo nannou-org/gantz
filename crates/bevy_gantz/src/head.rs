@@ -99,9 +99,9 @@ pub struct ClosedEvent {
     pub head: ca::Head,
 }
 
-/// Emitted after a head has been replaced.
+/// Emitted when a head's backing data has changed (replacement, branch move, etc.).
 #[derive(Event)]
-pub struct ReplacedEvent {
+pub struct ChangedEvent {
     pub entity: Entity,
     pub old_head: ca::Head,
     pub new_head: ca::Head,
@@ -328,7 +328,7 @@ pub fn on_replace<N>(
 
     // Emit hook.
     if let Some(old) = old_head {
-        cmds.trigger(ReplacedEvent {
+        cmds.trigger(ChangedEvent {
             entity: focused_entity,
             old_head: old,
             new_head: new_head.clone(),
@@ -418,7 +418,7 @@ pub fn on_branch<N>(
 
 /// Handle request to move a branch's commit pointer to a different commit.
 ///
-/// Atomically updates the registry, WorkingGraph, and emits ReplacedEvent
+/// Atomically updates the registry, WorkingGraph, and emits ChangedEvent
 /// within the command flush to prevent inconsistent state between systems.
 pub fn on_move_branch<N>(
     trigger: On<MoveBranchEvent>,
@@ -435,7 +435,7 @@ pub fn on_move_branch<N>(
         return;
     };
     cmds.entity(event.entity).insert(WorkingGraph(graph));
-    cmds.trigger(ReplacedEvent {
+    cmds.trigger(ChangedEvent {
         entity: event.entity,
         old_head: head.clone(),
         new_head: head,

@@ -11,8 +11,8 @@ use bevy_ecs::query::QueryData;
 use bevy_egui::egui;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
 use bevy_gantz::head::{
-    self, BranchedEvent, ClosedEvent, CommittedEvent, FocusedHead, HeadRef, HeadTabOrder, HeadVms,
-    OpenEvent, OpenHead, OpenHeadData, OpenedEvent, ReplacedEvent, WorkingGraph,
+    self, BranchedEvent, ChangedEvent, ClosedEvent, CommittedEvent, FocusedHead, HeadRef,
+    HeadTabOrder, HeadVms, OpenEvent, OpenHead, OpenHeadData, OpenedEvent, WorkingGraph,
 };
 use bevy_gantz::reg::Registry;
 use bevy_gantz::vm::{EvalEvent, EvalKind};
@@ -75,7 +75,7 @@ where
             .init_resource::<Views>()
             // GUI state observers
             .add_observer(on_head_opened::<N>)
-            .add_observer(on_head_replaced::<N>)
+            .add_observer(on_head_changed::<N>)
             .add_observer(on_head_closed)
             .add_observer(on_branch_created)
             .add_observer(on_head_committed)
@@ -373,11 +373,11 @@ pub fn on_head_opened<N: 'static + Send + Sync>(
         .insert(GraphViews(head_views));
 }
 
-/// Migrate GUI state for replaced head and reset components.
+/// Migrate GUI state for changed head and reset components.
 ///
 /// Loads views for the new head and updates `GraphViews` + `HeadGuiState` components.
-pub fn on_head_replaced<N: 'static + Send + Sync>(
-    trigger: On<ReplacedEvent>,
+pub fn on_head_changed<N: 'static + Send + Sync>(
+    trigger: On<ChangedEvent>,
     registry: Res<Registry<N>>,
     views: Res<Views>,
     mut gui_state: ResMut<GuiState>,

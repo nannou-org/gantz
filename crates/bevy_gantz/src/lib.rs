@@ -28,7 +28,7 @@ pub use vm::{EvalCompleted, EvalEvent, EvalKind};
 /// - Initializes core resources (Registry, HeadVms, etc.)
 /// - Registers event observers for head operations
 /// - Registers the eval event observer
-/// - Handles VM initialization for opened/replaced heads
+/// - Handles VM initialization for opened/changed heads
 /// - Detects graph changes and recompiles VMs
 ///
 /// Apps should also:
@@ -61,7 +61,7 @@ where
             .add_observer(vm::on_eval)
             // VM init observers.
             .add_observer(vm::on_head_opened::<N>)
-            .add_observer(vm::on_head_replaced::<N>)
+            .add_observer(vm::on_head_changed::<N>)
             // Graph recompilation system.
             .add_systems(Update, vm::update::<N>);
     }
