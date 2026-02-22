@@ -536,7 +536,10 @@ pub fn on_copy_selection<N>(
     gui_state: ResMut<GuiState>,
     views: Res<Views>,
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
-    mut heads: Query<(&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphViews), With<head::OpenHead>>,
+    mut heads: Query<
+        (&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphViews),
+        With<head::OpenHead>,
+    >,
 ) where
     N: 'static
         + Node
@@ -593,7 +596,10 @@ pub fn on_paste_selection<N>(
     gui_state: ResMut<GuiState>,
     mut views: ResMut<Views>,
     mut vms: NonSendMut<head::HeadVms>,
-    mut heads: Query<(&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphViews), With<head::OpenHead>>,
+    mut heads: Query<
+        (&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphViews),
+        With<head::OpenHead>,
+    >,
 ) where
     N: 'static
         + Node

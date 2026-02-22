@@ -108,8 +108,7 @@ fn init_head_vm<N>(
             return;
         }
     };
-    cmds.entity(entity)
-        .insert(head::CompiledModule(module));
+    cmds.entity(entity).insert(head::CompiledModule(module));
     vms.insert(entity, vm);
 }
 
@@ -124,7 +123,14 @@ pub fn on_head_opened<N>(
 ) where
     N: 'static + Node + Send + Sync,
 {
-    init_head_vm(trigger.event().entity, &registry, &builtins, &mut vms, &mut cmds, &graphs);
+    init_head_vm(
+        trigger.event().entity,
+        &registry,
+        &builtins,
+        &mut vms,
+        &mut cmds,
+        &graphs,
+    );
 }
 
 /// VM init for changed heads.
@@ -138,7 +144,14 @@ pub fn on_head_changed<N>(
 ) where
     N: 'static + Node + Send + Sync,
 {
-    init_head_vm(trigger.event().entity, &registry, &builtins, &mut vms, &mut cmds, &graphs);
+    init_head_vm(
+        trigger.event().entity,
+        &registry,
+        &builtins,
+        &mut vms,
+        &mut cmds,
+        &graphs,
+    );
 }
 
 /// Observer that handles evaluation events by calling the appropriate VM function.
