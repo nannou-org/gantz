@@ -83,6 +83,7 @@ where
             .add_observer(on_inspect_edge::<N>)
             .add_observer(on_copy_selection::<N>)
             .add_observer(on_paste_selection::<N>)
+            .add_observer(on_export_head::<N>)
             // Systems
             .add_systems(Update, (process_cmds::<N>, persist_views::<N>))
             .add_systems(EguiPrimaryContextPass, update::<N>);
@@ -160,6 +161,13 @@ pub struct CreateNodeEvent {
 #[derive(Event)]
 pub struct CopySelectionEvent {
     /// The head entity whose selection should be copied.
+    pub head: Entity,
+}
+
+/// Event emitted when the user requests exporting the focused head.
+#[derive(Event)]
+pub struct ExportHeadEvent {
+    /// The head entity to export.
     pub head: Entity,
 }
 
@@ -664,6 +672,65 @@ pub fn on_paste_selection<N>(
     head_state.scene.interaction.selection.edges.clear();
 }
 
+/// Handle export head events.
+///
+/// Exports the head's graph (with transitive dependencies and views) to a
+/// `.gantz` file chosen via an `rfd` file dialog. The export is serialized
+/// as RON using the existing [`gantz_egui::export`] infrastructure.
+pub fn on_export_head<N>(
+    trigger: On<ExportHeadEvent>,
+    registry: Res<Registry<N>>,
+    builtins: Res<BuiltinNodes<N>>,
+    views: Res<Views>,
+    heads: Query<&head::HeadRef, With<head::OpenHead>>,
+) where
+    N: 'static + Node + Clone + serde::Serialize + Send + Sync,
+{
+    let event = trigger.event();
+    let Ok(head_ref) = heads.get(event.head) else {
+        log::error!("ExportHead: head not found for entity {:?}", event.head);
+        return;
+    };
+    let head: &ca::Head = &**head_ref;
+
+    let node_reg = registry_ref(&registry, &builtins);
+    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+
+    let export_registry = gantz_core::reg::export_heads(&get_node, &registry, [head]);
+    let export = gantz_egui::export::export_with_views(export_registry, &views);
+
+    let ron_str = match ron::ser::to_string_pretty(&export, ron::ser::PrettyConfig::default()) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("ExportHead: failed to serialize: {e}");
+            return;
+        }
+    };
+
+    // Derive a default filename from the head.
+    let ext = gantz_egui::export::FILE_EXTENSION;
+    let default_name = match head {
+        ca::Head::Branch(name) => format!("{name}.{ext}"),
+        ca::Head::Commit(ca) => format!("{}.{ext}", ca.display_short()),
+    };
+
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title("Export Graph")
+        .set_file_name(&default_name)
+        .add_filter("Gantz Export", &[ext]);
+    bevy_tasks::AsyncComputeTaskPool::get()
+        .spawn(async move {
+            if let Some(handle) = dialog.save_file().await {
+                if let Err(e) = handle.write(ron_str.as_bytes()).await {
+                    log::error!("ExportHead: failed to write: {e}");
+                } else {
+                    log::info!("Exported graph to {}", handle.file_name());
+                }
+            }
+        })
+        .detach();
+}
+
 // ---------------------------------------------------------------------------
 // Systems
 // ---------------------------------------------------------------------------
@@ -805,6 +872,9 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                     {
                         navigate_head(&mut cmds, entity, &head, redo_ca);
                     }
+                }
+                gantz_egui::Cmd::ExportHead => {
+                    cmds.trigger(ExportHeadEvent { head: entity });
                 }
             }
         }

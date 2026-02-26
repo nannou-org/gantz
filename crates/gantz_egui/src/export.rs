@@ -10,6 +10,9 @@ use gantz_core::node::{self, graph::Graph};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
+/// File extension for gantz export files (without the leading dot).
+pub const FILE_EXTENSION: &str = "gantz";
+
 /// A serializable bundle of a registry subset and its associated view state.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Export<G> {

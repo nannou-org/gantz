@@ -172,6 +172,8 @@ pub enum Cmd {
     Undo,
     /// Redo a previously undone edit (move head forward).
     Redo,
+    /// Export the focused head (graph + transitive deps + views) to a `.gantz` file.
+    ExportHead,
 }
 
 /// A command to create a new node.

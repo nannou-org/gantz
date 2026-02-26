@@ -36,6 +36,8 @@ web-time.workspace = true
 [dev-dependencies]
 dyn-clone.workspace = true
 eframe.workspace = true
+pollster.workspace = true
+rfd.workspace = true
 ron.workspace = true
 typetag.workspace = true
 # FIXME: temporarily disabled, see #122.

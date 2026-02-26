@@ -975,6 +975,41 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         navigate_head(ctx, state, &head, redo_ca);
                     }
                 }
+                gantz_egui::Cmd::ExportHead => {
+                    let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
+                    let export_registry =
+                        gantz_core::reg::export_heads(&get_node, &state.env.registry, [&head]);
+                    let all_views = HashMap::new();
+                    let export = gantz_egui::export::export_with_views(export_registry, &all_views);
+                    let ron_str = match ron::ser::to_string_pretty(
+                        &export,
+                        ron::ser::PrettyConfig::default(),
+                    ) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            log::error!("ExportHead: failed to serialize: {e}");
+                            continue;
+                        }
+                    };
+                    let ext = gantz_egui::export::FILE_EXTENSION;
+                    let default_name = match &head {
+                        gantz_ca::Head::Branch(name) => format!("{name}.{ext}"),
+                        gantz_ca::Head::Commit(ca) => {
+                            format!("{}.{ext}", ca.display_short())
+                        }
+                    };
+                    let dialog = rfd::AsyncFileDialog::new()
+                        .set_title("Export Graph")
+                        .set_file_name(&default_name)
+                        .add_filter("Gantz Export", &[ext]);
+                    if let Some(handle) = pollster::block_on(dialog.save_file()) {
+                        if let Err(e) = pollster::block_on(handle.write(ron_str.as_bytes())) {
+                            log::error!("ExportHead: failed to write: {e}");
+                        } else {
+                            log::info!("Exported graph to {}", handle.file_name());
+                        }
+                    }
+                }
             }
         }
     }

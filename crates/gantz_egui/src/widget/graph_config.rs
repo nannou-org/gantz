@@ -17,6 +17,8 @@ pub struct GraphConfig<'a> {
 pub struct GraphConfigResponse {
     /// A new branch name was committed via the name editor.
     pub new_branch: Option<(gantz_ca::Head, String)>,
+    /// The "Export" button was clicked.
+    pub export: bool,
 }
 
 impl<'a> GraphConfig<'a> {
@@ -61,6 +63,7 @@ impl<'a> GraphConfig<'a> {
             );
         });
 
-        GraphConfigResponse { new_branch }
+        let export = ui.button("Export").clicked();
+        GraphConfigResponse { new_branch, export }
     }
 }

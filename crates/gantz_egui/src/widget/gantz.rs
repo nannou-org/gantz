@@ -468,6 +468,10 @@ where
                     if res.inner.new_branch.is_some() {
                         gantz_response.new_branch = res.inner.new_branch;
                     }
+                    if res.inner.export {
+                        let head_state = state.open_heads.entry(head).or_default();
+                        head_state.scene.cmds.push(Cmd::ExportHead);
+                    }
                 }
                 None => {
                     pane_ui(ui, |ui| {
