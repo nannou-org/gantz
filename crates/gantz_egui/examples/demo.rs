@@ -991,13 +991,8 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                             continue;
                         }
                     };
+                    let default_name = gantz_egui::export::default_filename(&head);
                     let ext = gantz_egui::export::FILE_EXTENSION;
-                    let default_name = match &head {
-                        gantz_ca::Head::Branch(name) => format!("{name}.{ext}"),
-                        gantz_ca::Head::Commit(ca) => {
-                            format!("{}.{ext}", ca.display_short())
-                        }
-                    };
                     let dialog = rfd::AsyncFileDialog::new()
                         .set_title("Export Graph")
                         .set_file_name(&default_name)

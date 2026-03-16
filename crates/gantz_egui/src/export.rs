@@ -53,12 +53,28 @@ pub fn merge_with_views<G>(
     result
 }
 
+/// Derive a default export filename from a [`gantz_ca::Head`].
+pub fn default_filename(head: &gantz_ca::Head) -> String {
+    match head {
+        gantz_ca::Head::Branch(name) => format!("{name}.{FILE_EXTENSION}"),
+        gantz_ca::Head::Commit(ca) => format!("{}.{FILE_EXTENSION}", ca.display_short()),
+    }
+}
+
 /// Check if a path has the `.gantz` extension.
 pub fn is_gantz_path(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.eq_ignore_ascii_case(FILE_EXTENSION))
         .unwrap_or(false)
+}
+
+/// Check if an optional path is a `.gantz` file.
+///
+/// Returns `true` when the path is absent (e.g. on web) so that files without
+/// a known path are accepted speculatively.
+pub fn is_maybe_gantz(path: Option<&std::path::Path>) -> bool {
+    path.map(is_gantz_path).unwrap_or(true)
 }
 
 /// Read bytes from an [`egui::DroppedFile`].

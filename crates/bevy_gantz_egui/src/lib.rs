@@ -725,16 +725,12 @@ pub fn on_export_head<N>(
     };
 
     // Derive a default filename from the head.
-    let ext = gantz_egui::export::FILE_EXTENSION;
-    let default_name = match head {
-        ca::Head::Branch(name) => format!("{name}.{ext}"),
-        ca::Head::Commit(ca) => format!("{}.{ext}", ca.display_short()),
-    };
+    let default_name = gantz_egui::export::default_filename(&head);
 
     let dialog = rfd::AsyncFileDialog::new()
         .set_title("Export Graph")
         .set_file_name(&default_name)
-        .add_filter("Gantz Export", &[ext]);
+        .add_filter("Gantz Export", &[gantz_egui::export::FILE_EXTENSION]);
     bevy_tasks::AsyncComputeTaskPool::get()
         .spawn(async move {
             if let Some(handle) = dialog.save_file().await {

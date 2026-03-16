@@ -1132,12 +1132,10 @@ fn paint_gantz_file_hover_overlay(ui: &mut egui::Ui) {
     let latest_pos = ui.ctx().input(|i| i.pointer.latest_pos());
     let pointer_over = latest_pos.map(|p| rect.contains(p)).unwrap_or(false);
     let has_hovered = ui.ctx().input(|i| {
-        i.raw.hovered_files.iter().any(|f| {
-            f.path
-                .as_ref()
-                .map(|p| export::is_gantz_path(p))
-                .unwrap_or(true)
-        })
+        i.raw
+            .hovered_files
+            .iter()
+            .any(|f| export::is_maybe_gantz(f.path.as_deref()))
     });
 
     if has_hovered && pointer_over {
@@ -1182,13 +1180,7 @@ fn collect_gantz_file_drops(ctx: &egui::Context) -> Vec<FileDrop> {
 
     dropped
         .iter()
-        .filter(|f| {
-            f.path
-                .as_ref()
-                .map(|p| export::is_gantz_path(p))
-                // On web, path may be absent; accept speculatively.
-                .unwrap_or(true)
-        })
+        .filter(|f| export::is_maybe_gantz(f.path.as_deref()))
         .filter_map(|f| export::read_dropped_file(f))
         .map(|bytes| FileDrop { bytes, target })
         .collect()
