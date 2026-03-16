@@ -257,6 +257,14 @@ impl GantzResponse {
     pub fn new_branch(&self) -> Option<&(gantz_ca::Head, String)> {
         self.new_branch.as_ref()
     }
+
+    /// Indicates the import button was clicked.
+    pub fn import(&self) -> bool {
+        self.graph_select
+            .as_ref()
+            .map(|g| g.import)
+            .unwrap_or(false)
+    }
 }
 
 impl<'a> Gantz<'a> {
@@ -600,10 +608,8 @@ where
             Pane::Graphs => {
                 // Store the pane rect for file drop targeting.
                 ui.ctx().memory_mut(|m| {
-                    m.data.insert_temp(
-                        egui::Id::new(GRAPHS_PANE_RECT_ID),
-                        ui.max_rect(),
-                    )
+                    m.data
+                        .insert_temp(egui::Id::new(GRAPHS_PANE_RECT_ID), ui.max_rect())
                 });
                 paint_gantz_file_hover_overlay(ui);
 

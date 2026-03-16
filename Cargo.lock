@@ -798,7 +798,6 @@ dependencies = [
  "bevy_gantz",
  "bevy_log",
  "bevy_tasks",
- "bevy_window",
  "egui_graph",
  "gantz_ca",
  "gantz_core",

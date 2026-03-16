@@ -1173,49 +1173,68 @@ fn gui(ctx: &egui::Context, state: &mut State) {
         create_branch_from_head(ctx, state, original_head, new_name.clone());
     }
 
+    // Handle import button click.
+    if response.import() {
+        let ext = gantz_egui::export::FILE_EXTENSION;
+        let dialog = rfd::AsyncFileDialog::new()
+            .set_title("Import")
+            .add_filter("Gantz Export", &[ext]);
+        if let Some(handle) = pollster::block_on(dialog.pick_file()) {
+            let bytes = pollster::block_on(handle.read());
+            import_bytes(state, bytes, true);
+        }
+    }
+
     // Handle file drops.
     for drop in response.file_drops {
-        let text = match std::str::from_utf8(&drop.bytes) {
-            Ok(s) => s,
-            Err(e) => {
-                log::error!("ImportFile: invalid UTF-8: {e}");
-                continue;
-            }
-        };
-        let export: gantz_egui::export::Export<Graph> = match ron::from_str(text) {
-            Ok(e) => e,
-            Err(e) => {
-                log::error!("ImportFile: failed to deserialize: {e}");
-                continue;
-            }
-        };
+        let open_head = drop.target == gantz_egui::widget::gantz::FileDropTarget::GraphScene;
+        import_bytes(state, drop.bytes, open_head);
+    }
+}
 
-        // Compute root names before merge if targeting the graph scene.
-        let root_name =
-            if drop.target == gantz_egui::widget::gantz::FileDropTarget::GraphScene {
-                let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
-                let roots = gantz_core::reg::root_names(&get_node, &export.registry);
-                if roots.len() == 1 {
-                    Some(roots.into_iter().next().unwrap())
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-        let mut all_views = HashMap::new();
-        let result =
-            gantz_egui::export::merge_with_views(&mut state.env.registry, &mut all_views, export);
-        log::info!(
-            "Imported: {} names added, {} replaced",
-            result.names_added.len(),
-            result.names_replaced.len(),
-        );
-
-        if let Some(name) = root_name {
-            open_head(state, gantz_ca::Head::Branch(name));
+/// Import a `.gantz` file from raw bytes.
+///
+/// Deserializes the export, merges into the registry, and optionally opens
+/// the unique root head.
+fn import_bytes(state: &mut State, bytes: Vec<u8>, open_head: bool) {
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("Import: invalid UTF-8: {e}");
+            return;
         }
+    };
+    let export: gantz_egui::export::Export<Graph> = match ron::from_str(text) {
+        Ok(e) => e,
+        Err(e) => {
+            log::error!("Import: failed to deserialize: {e}");
+            return;
+        }
+    };
+
+    let root_name = if open_head {
+        let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
+        let roots = gantz_core::reg::root_names(&get_node, &export.registry);
+        if roots.len() == 1 {
+            Some(roots.into_iter().next().unwrap())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut all_views = HashMap::new();
+    let result =
+        gantz_egui::export::merge_with_views(&mut state.env.registry, &mut all_views, export);
+    log::info!(
+        "Imported: {} names added, {} replaced",
+        result.names_added.len(),
+        result.names_replaced.len(),
+    );
+
+    if let Some(name) = root_name {
+        self::open_head(state, gantz_ca::Head::Branch(name));
     }
 }
 

@@ -29,6 +29,8 @@ pub trait GraphRegistry {
 pub struct GraphSelectResponse {
     /// Indicates the new graph button was clicked.
     pub new_graph: bool,
+    /// Indicates the import button was clicked.
+    pub import: bool,
     /// Single click: replace the focused head with this one.
     pub replaced: Option<gantz_ca::Head>,
     /// Ctrl+click on a head that is not open: open this head as a new tab.
@@ -44,6 +46,7 @@ impl GraphSelectResponse {
     pub fn union(self, other: Self) -> Self {
         Self {
             new_graph: self.new_graph || other.new_graph,
+            import: self.import || other.import,
             replaced: other.replaced.or(self.replaced),
             opened: other.opened.or(self.opened),
             closed: other.closed.or(self.closed),
@@ -193,8 +196,27 @@ impl<'a> GraphSelect<'a> {
                 }
             });
 
-        ui.vertical_centered_justified(|ui| {
-            response.new_graph |= ui.button("+").clicked();
+        ui.horizontal(|ui| {
+            // Place the import button on the right first.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button("\u{2B07}")
+                    .on_hover_text("Import Graph(s)")
+                    .clicked()
+                {
+                    response.import = true;
+                }
+                // Fill remaining space with the "+" button.
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    if ui
+                        .add(egui::Button::new("+").min_size(ui.available_size()))
+                        .on_hover_text("Add Graph")
+                        .clicked()
+                    {
+                        response.new_graph = true;
+                    }
+                });
+            });
         });
 
         // Store the modified state back in memory

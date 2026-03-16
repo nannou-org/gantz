@@ -15,7 +15,6 @@ use bevy_gantz::reg::Registry;
 use bevy_gantz::vm::{EvalEvent, EvalKind};
 use bevy_gantz::{BuiltinNodes, EvalCompleted};
 use bevy_log as log;
-use bevy_window::FileDragAndDrop;
 use gantz_ca as ca;
 use gantz_core::Node;
 use gantz_core::node::graph::Graph;
@@ -89,7 +88,7 @@ where
             // Systems
             .add_systems(
                 Update,
-                (process_cmds::<N>, persist_views::<N>, handle_file_drops::<N>),
+                (process_cmds::<N>, persist_views::<N>, poll_import_task),
             )
             .add_systems(EguiPrimaryContextPass, update::<N>);
     }
@@ -133,6 +132,10 @@ pub struct GuiState(pub gantz_egui::widget::GantzState);
 /// Views (layout + camera) for all known commits.
 #[derive(Resource, Default)]
 pub struct Views(pub HashMap<ca::CommitAddr, gantz_egui::GraphViews>);
+
+/// In-flight import file dialog task.
+#[derive(Resource)]
+pub struct ImportTask(bevy_tasks::Task<Option<Vec<u8>>>);
 
 // ----------------------------------------------------------------------------
 // Events
@@ -820,32 +823,19 @@ pub fn persist_views<N: 'static + Send + Sync>(
     }
 }
 
-/// Handle `.gantz` file drops directly from bevy's window events.
+/// Poll the in-flight import file dialog task.
 ///
-/// This bypasses egui's raw input pipeline (which may not reliably forward OS
-/// file drag-and-drop events on all platforms) and reads bevy's
-/// [`FileDragAndDrop`] messages directly.
-pub fn handle_file_drops<N: 'static + Send + Sync>(
-    mut dnd_reader: MessageReader<FileDragAndDrop>,
-    mut cmds: Commands,
-) {
-    for msg in dnd_reader.read() {
-        if let FileDragAndDrop::DroppedFile { path_buf, .. } = msg {
-            if !gantz_egui::export::is_gantz_path(path_buf) {
-                continue;
-            }
-            match std::fs::read(path_buf) {
-                Ok(bytes) => {
-                    log::info!("Dropped .gantz file: {}", path_buf.display());
-                    cmds.trigger(ImportFileEvent {
-                        bytes,
-                        open_head: true,
-                    });
-                }
-                Err(e) => {
-                    log::error!("Failed to read dropped file {}: {e}", path_buf.display());
-                }
-            }
+/// When the task completes with file bytes, triggers [`ImportFileEvent`].
+/// The resource is removed regardless of whether a file was selected.
+fn poll_import_task(task: Option<ResMut<ImportTask>>, mut cmds: Commands) {
+    let Some(mut task) = task else { return };
+    if let Some(result) = bevy_tasks::futures::check_ready(&mut task.0) {
+        cmds.remove_resource::<ImportTask>();
+        if let Some(bytes) = result {
+            cmds.trigger(ImportFileEvent {
+                bytes,
+                open_head: true,
+            });
         }
     }
 }
@@ -998,6 +988,7 @@ pub fn update<N>(
     tab_order: Res<head::HeadTabOrder>,
     mut focused: ResMut<head::FocusedHead>,
     mut heads_query: Query<OpenHeadViews<N>, With<head::OpenHead>>,
+    import_task: Option<Res<ImportTask>>,
     mut cmds: Commands,
 ) -> Result
 where
@@ -1091,6 +1082,28 @@ where
             original: original_head.clone(),
             new_name: new_name.clone(),
         });
+    }
+
+    // Handle file drops (egui-level DnD).
+    for drop in &response.file_drops {
+        let open_head = drop.target == gantz_egui::widget::gantz::FileDropTarget::GraphScene;
+        cmds.trigger(ImportFileEvent {
+            bytes: drop.bytes.clone(),
+            open_head,
+        });
+    }
+
+    // Handle import button - open a file dialog (only if none already in flight).
+    if response.import() && import_task.is_none() {
+        let ext = gantz_egui::export::FILE_EXTENSION;
+        let dialog = rfd::AsyncFileDialog::new()
+            .set_title("Import")
+            .add_filter("Gantz Export", &[ext]);
+        let task = bevy_tasks::AsyncComputeTaskPool::get().spawn(async move {
+            let handle = dialog.pick_file().await?;
+            Some(handle.read().await)
+        });
+        cmds.insert_resource(ImportTask(task));
     }
 
     // Record GUI frame time.

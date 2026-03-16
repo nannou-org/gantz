@@ -113,10 +113,7 @@ where
 /// A name is "root" if no graph in the registry contains a node whose
 /// `required_addrs` points to that name's commit. Returns names in
 /// alphabetical order.
-pub fn root_names<'a, G>(
-    get_node: node::GetNode<'a>,
-    reg: &gantz_ca::Registry<G>,
-) -> Vec<String>
+pub fn root_names<'a, G>(get_node: node::GetNode<'a>, reg: &gantz_ca::Registry<G>) -> Vec<String>
 where
     for<'g> &'g G: Data<EdgeWeight = Edge>
         + IntoEdgesDirected
