@@ -1,0 +1,7 @@
+[build]
+target = "crates/gantz/web/index.html"
+filehash = false
+
+[serve]
+port = 8088
+headers = { "Cross-Origin-Opener-Policy" = "same-origin", "Cross-Origin-Embedder-Policy" = "require-corp" }

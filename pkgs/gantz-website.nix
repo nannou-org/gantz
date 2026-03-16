@@ -1,13 +1,16 @@
-# Combines `gantz-wasm-bindgen` with an index.html and some js.
 {
+  binaryen,
   lib,
-  stdenv,
-  gantz-wasm-bindgen,
+  lld,
+  rustPlatform,
+  trunk,
+  wasm-bindgen-cli,
 }:
-stdenv.mkDerivation {
-  pname = "gantz-website";
-  version = gantz-wasm-bindgen.version;
-  src = lib.sourceFilesBySuffices ./.. [
+let
+  src = lib.sourceFilesBySuffices ../. [
+    ".lock"
+    ".rs"
+    ".toml"
     ".html"
     ".css"
     ".js"
@@ -16,10 +19,30 @@ stdenv.mkDerivation {
     ".svg"
     ".ico"
   ];
+in
+rustPlatform.buildRustPackage {
+  pname = "gantz-website";
+  version = "0.1.0";
+  inherit src;
+  cargoLock.lockFile = ../Cargo.lock;
+  doCheck = false;
+  dontFixup = true;
+
+  nativeBuildInputs = [
+    binaryen
+    lld
+    trunk
+    wasm-bindgen-cli
+  ];
+
+  # Tell trunk to use Nix-provided tools, not download its own.
+  TRUNK_SKIP_VERSION_CHECK = "true";
+
+  # buildRustPackage's configurePhase sets up cargo vendoring.
+  # Override buildPhase to call trunk instead of cargo directly.
   buildPhase = ''
-    mkdir -p $out
-    cp -r crates/gantz/web/* $out/
-    cp -r ${gantz-wasm-bindgen}/lib/* $out/
+    trunk build --release --dist $out
   '';
-  dontInstall = true;
+
+  installPhase = "true";
 }

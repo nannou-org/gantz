@@ -4,10 +4,8 @@ const CACHE_NAME = 'gantz-cache-v1';
 const urlsToCache = [
     '/',
     '/index.html',
-    '/gantz.d.ts',
     '/gantz.js',
     '/gantz_bg.wasm',
-    '/gantz_bg.wasm.d.ts',
     '/manifest.json',
     '/sw.js',
 ];
