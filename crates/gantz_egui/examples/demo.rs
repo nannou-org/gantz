@@ -975,6 +975,36 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         navigate_head(ctx, state, &head, redo_ca);
                     }
                 }
+                gantz_egui::Cmd::ExportHead => {
+                    let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
+                    let export_registry =
+                        gantz_core::reg::export_heads(&get_node, &state.env.registry, [&head]);
+                    let all_views = HashMap::new();
+                    let export = gantz_egui::export::export_with_views(export_registry, &all_views);
+                    let ron_str = match ron::ser::to_string_pretty(
+                        &export,
+                        ron::ser::PrettyConfig::default(),
+                    ) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            log::error!("ExportHead: failed to serialize: {e}");
+                            continue;
+                        }
+                    };
+                    let default_name = gantz_egui::export::default_filename(&head);
+                    let ext = gantz_egui::export::FILE_EXTENSION;
+                    let dialog = rfd::AsyncFileDialog::new()
+                        .set_title("Export Graph")
+                        .set_file_name(&default_name)
+                        .add_filter("Gantz Export", &[ext]);
+                    if let Some(handle) = pollster::block_on(dialog.save_file()) {
+                        if let Err(e) = pollster::block_on(handle.write(ron_str.as_bytes())) {
+                            log::error!("ExportHead: failed to write: {e}");
+                        } else {
+                            log::info!("Exported graph to {}", handle.file_name());
+                        }
+                    }
+                }
             }
         }
     }
@@ -1136,6 +1166,70 @@ fn gui(ctx: &egui::Context, state: &mut State) {
     // Handle new branch created from tab double-click.
     if let Some((original_head, new_name)) = response.new_branch() {
         create_branch_from_head(ctx, state, original_head, new_name.clone());
+    }
+
+    // Handle import button click.
+    if response.import() {
+        let ext = gantz_egui::export::FILE_EXTENSION;
+        let dialog = rfd::AsyncFileDialog::new()
+            .set_title("Import")
+            .add_filter("Gantz Export", &[ext]);
+        if let Some(handle) = pollster::block_on(dialog.pick_file()) {
+            let bytes = pollster::block_on(handle.read());
+            import_bytes(state, bytes, true);
+        }
+    }
+
+    // Handle file drops.
+    for drop in response.file_drops {
+        let open_head = drop.target == gantz_egui::widget::gantz::FileDropTarget::GraphScene;
+        import_bytes(state, drop.bytes, open_head);
+    }
+}
+
+/// Import a `.gantz` file from raw bytes.
+///
+/// Deserializes the export, merges into the registry, and optionally opens
+/// the unique root head.
+fn import_bytes(state: &mut State, bytes: Vec<u8>, open_head: bool) {
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("Import: invalid UTF-8: {e}");
+            return;
+        }
+    };
+    let export: gantz_egui::export::Export<Graph> = match ron::from_str(text) {
+        Ok(e) => e,
+        Err(e) => {
+            log::error!("Import: failed to deserialize: {e}");
+            return;
+        }
+    };
+
+    let root_name = if open_head {
+        let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
+        let roots = gantz_core::reg::root_names(&get_node, &export.registry);
+        if roots.len() == 1 {
+            Some(roots.into_iter().next().unwrap())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut all_views = HashMap::new();
+    let result =
+        gantz_egui::export::merge_with_views(&mut state.env.registry, &mut all_views, export);
+    log::info!(
+        "Imported: {} names added, {} replaced",
+        result.names_added.len(),
+        result.names_replaced.len(),
+    );
+
+    if let Some(name) = root_name {
+        self::open_head(state, gantz_ca::Head::Branch(name));
     }
 }
 

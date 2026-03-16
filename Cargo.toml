@@ -27,6 +27,7 @@ bevy = { version = "0.17", default-features = false, features = [
 bevy_app = "0.17"
 bevy_ecs = "0.17"
 bevy_log = "0.17"
+bevy_tasks = "0.17"
 bevy_egui = { version = "0.38", features = ["serde"] }
 bevy_gantz = { version = "0.1.0", path = "crates/bevy_gantz" }
 bevy_gantz_egui = { version = "0.1.0", path = "crates/bevy_gantz_egui" }
@@ -59,6 +60,8 @@ hex = "0.4"
 humantime = "2.3"
 log = { version = "0.4", features = ["serde"] }
 petgraph = { version = "0.8", features = ["serde-1"] }
+pollster = "0.4"
+rfd = "0.15"
 ron = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

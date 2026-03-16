@@ -1,5 +1,5 @@
 use crate::{
-    Cmd, GraphViews, HeadAccess, NodeCtx, NodeUi, Registry,
+    Cmd, GraphViews, HeadAccess, NodeCtx, NodeUi, Registry, export,
     widget::{
         self, GraphScene, GraphSceneState,
         graph_scene::{self, ToGraphMut},
@@ -9,6 +9,22 @@ use gantz_core::{Node, node};
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use std::collections::HashMap;
 use steel::steel_vm::engine::Engine;
+
+/// A file dropped onto a gantz pane.
+#[derive(Debug)]
+pub struct FileDrop {
+    pub bytes: Vec<u8>,
+    pub target: FileDropTarget,
+}
+
+/// Which pane received the file drop.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FileDropTarget {
+    /// Graphs pane: merge registry + views only.
+    Graphs,
+    /// GraphScene pane: merge + open the root graph if unique.
+    GraphScene,
+}
 
 /// A registry of available node types.
 ///
@@ -174,6 +190,8 @@ pub struct GantzResponse {
     pub closed_heads: Vec<gantz_ca::Head>,
     /// New branch created from tab double-click: (original_head, new_branch_name).
     pub new_branch: Option<(gantz_ca::Head, String)>,
+    /// Files dropped onto gantz panes.
+    pub file_drops: Vec<FileDrop>,
 }
 
 /// State for editing a tab name via double-click.
@@ -238,6 +256,14 @@ impl GantzResponse {
     /// New branch created from tab double-click: (original_head, new_branch_name).
     pub fn new_branch(&self) -> Option<&(gantz_ca::Head, String)> {
         self.new_branch.as_ref()
+    }
+
+    /// Indicates the import button was clicked.
+    pub fn import(&self) -> bool {
+        self.graph_select
+            .as_ref()
+            .map(|g| g.import)
+            .unwrap_or(false)
     }
 }
 
@@ -323,6 +349,7 @@ impl<'a> Gantz<'a> {
             graph_select: None,
             closed_heads: Vec::new(),
             new_branch: None,
+            file_drops: Vec::new(),
         };
 
         // The context for traversing the tree of tiles.
@@ -337,6 +364,10 @@ impl<'a> Gantz<'a> {
 
         // Update the response with the final focused head.
         response.focused_head = behaviour.focused_head;
+
+        // Detect .gantz file drops globally (not per-pane, since pointer
+        // position may be unavailable during OS file drags on some platforms).
+        response.file_drops = collect_gantz_file_drops(ui.ctx());
 
         // Persist the tree.
         ui.memory_mut(|m| m.data.insert_persisted(tree_id, Some(tree)));
@@ -468,6 +499,10 @@ where
                     if res.inner.new_branch.is_some() {
                         gantz_response.new_branch = res.inner.new_branch;
                     }
+                    if res.inner.export {
+                        let head_state = state.open_heads.entry(head).or_default();
+                        head_state.scene.cmds.push(Cmd::ExportHead);
+                    }
                 }
                 None => {
                     pane_ui(ui, |ui| {
@@ -476,6 +511,8 @@ where
                 }
             },
             Pane::GraphScene => {
+                paint_gantz_file_hover_overlay(ui);
+
                 // We'll use this for positioning the floating toggle window.
                 let rect = ui.available_rect_before_wrap();
 
@@ -569,6 +606,13 @@ where
                 widget::PaneMenu::new(&mut state.view_toggles).show(ui.ctx(), anchor);
             }
             Pane::Graphs => {
+                // Store the pane rect for file drop targeting.
+                ui.ctx().memory_mut(|m| {
+                    m.data
+                        .insert_temp(egui::Id::new(GRAPHS_PANE_RECT_ID), ui.max_rect())
+                });
+                paint_gantz_file_hover_overlay(ui);
+
                 let heads = access.heads();
                 let res = graph_select(gantz.env, heads, *focused_head, ui);
                 match &mut gantz_response.graph_select {
@@ -1073,6 +1117,73 @@ fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
             tree.set_visible(id, has_visible_child);
         }
     }
+}
+
+/// The egui ID used to store the Graphs pane rect for file drop targeting.
+const GRAPHS_PANE_RECT_ID: &str = "gantz-graphs-pane-rect";
+
+/// Paint a hover overlay when `.gantz` files are being dragged over this pane.
+///
+/// The overlay is best-effort: it only appears when the pointer position is
+/// available and within the pane (some platforms don't track the pointer
+/// during OS file drags).
+fn paint_gantz_file_hover_overlay(ui: &mut egui::Ui) {
+    let rect = ui.max_rect();
+    let latest_pos = ui.ctx().input(|i| i.pointer.latest_pos());
+    let pointer_over = latest_pos.map(|p| rect.contains(p)).unwrap_or(false);
+    let has_hovered = ui.ctx().input(|i| {
+        i.raw
+            .hovered_files
+            .iter()
+            .any(|f| export::is_maybe_gantz(f.path.as_deref()))
+    });
+
+    if has_hovered && pointer_over {
+        let painter = ui.painter();
+        painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(100));
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "Drop to import",
+            egui::FontId::proportional(24.0),
+            egui::Color32::WHITE,
+        );
+    }
+}
+
+/// Detect `.gantz` file drops from egui's raw input.
+///
+/// Called from [`Gantz::show`] after the tile tree renders, so that detection
+/// is independent of pointer position (which may be unavailable during OS
+/// file drags on some platforms). The target pane is determined by checking
+/// the pointer against the stored Graphs pane rect when available, defaulting
+/// to [`FileDropTarget::GraphScene`].
+fn collect_gantz_file_drops(ctx: &egui::Context) -> Vec<FileDrop> {
+    let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+    if dropped.is_empty() {
+        return Vec::new();
+    }
+
+    // Determine target: Graphs if pointer is over the Graphs pane, else GraphScene.
+    let graphs_rect: Option<egui::Rect> =
+        ctx.memory(|m| m.data.get_temp(egui::Id::new(GRAPHS_PANE_RECT_ID)));
+    let latest_pos = ctx.input(|i| i.pointer.latest_pos());
+    let over_graphs = match (graphs_rect, latest_pos) {
+        (Some(rect), Some(pos)) => rect.contains(pos),
+        _ => false,
+    };
+    let target = if over_graphs {
+        FileDropTarget::Graphs
+    } else {
+        FileDropTarget::GraphScene
+    };
+
+    dropped
+        .iter()
+        .filter(|f| export::is_maybe_gantz(f.path.as_deref()))
+        .filter_map(|f| export::read_dropped_file(f))
+        .map(|bytes| FileDrop { bytes, target })
+        .collect()
 }
 
 /// Provides a consistent frame and styling for the panes.

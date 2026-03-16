@@ -83,8 +83,13 @@ where
             .add_observer(on_inspect_edge::<N>)
             .add_observer(on_copy_selection::<N>)
             .add_observer(on_paste_selection::<N>)
+            .add_observer(on_export_head::<N>)
+            .add_observer(on_import_file::<N>)
             // Systems
-            .add_systems(Update, (process_cmds::<N>, persist_views::<N>))
+            .add_systems(
+                Update,
+                (process_cmds::<N>, persist_views::<N>, poll_import_task),
+            )
             .add_systems(EguiPrimaryContextPass, update::<N>);
     }
 }
@@ -128,6 +133,10 @@ pub struct GuiState(pub gantz_egui::widget::GantzState);
 #[derive(Resource, Default)]
 pub struct Views(pub HashMap<ca::CommitAddr, gantz_egui::GraphViews>);
 
+/// In-flight import file dialog task.
+#[derive(Resource)]
+pub struct ImportTask(bevy_tasks::Task<Option<Vec<u8>>>);
+
 // ----------------------------------------------------------------------------
 // Events
 // ----------------------------------------------------------------------------
@@ -161,6 +170,22 @@ pub struct CreateNodeEvent {
 pub struct CopySelectionEvent {
     /// The head entity whose selection should be copied.
     pub head: Entity,
+}
+
+/// Event emitted when the user requests exporting the focused head.
+#[derive(Event)]
+pub struct ExportHeadEvent {
+    /// The head entity to export.
+    pub head: Entity,
+}
+
+/// Event emitted when a `.gantz` file is dropped onto a pane.
+#[derive(Event)]
+pub struct ImportFileEvent {
+    /// The raw bytes of the dropped file.
+    pub bytes: Vec<u8>,
+    /// Whether to open the root head after merging (GraphScene target).
+    pub open_head: bool,
 }
 
 /// Event emitted when the user pastes from the clipboard.
@@ -664,6 +689,116 @@ pub fn on_paste_selection<N>(
     head_state.scene.interaction.selection.edges.clear();
 }
 
+/// Handle export head events.
+///
+/// Exports the head's graph (with transitive dependencies and views) to a
+/// `.gantz` file chosen via an `rfd` file dialog. The export is serialized
+/// as RON using the existing [`gantz_egui::export`] infrastructure.
+pub fn on_export_head<N>(
+    trigger: On<ExportHeadEvent>,
+    registry: Res<Registry<N>>,
+    builtins: Res<BuiltinNodes<N>>,
+    views: Res<Views>,
+    heads: Query<&head::HeadRef, With<head::OpenHead>>,
+) where
+    N: 'static + Node + Clone + serde::Serialize + Send + Sync,
+{
+    let event = trigger.event();
+    let Ok(head_ref) = heads.get(event.head) else {
+        log::error!("ExportHead: head not found for entity {:?}", event.head);
+        return;
+    };
+    let head: &ca::Head = &**head_ref;
+
+    let node_reg = registry_ref(&registry, &builtins);
+    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+
+    let export_registry = gantz_core::reg::export_heads(&get_node, &registry, [head]);
+    let export = gantz_egui::export::export_with_views(export_registry, &views);
+
+    let ron_str = match ron::ser::to_string_pretty(&export, ron::ser::PrettyConfig::default()) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("ExportHead: failed to serialize: {e}");
+            return;
+        }
+    };
+
+    // Derive a default filename from the head.
+    let default_name = gantz_egui::export::default_filename(&head);
+
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title("Export Graph")
+        .set_file_name(&default_name)
+        .add_filter("Gantz Export", &[gantz_egui::export::FILE_EXTENSION]);
+    bevy_tasks::AsyncComputeTaskPool::get()
+        .spawn(async move {
+            if let Some(handle) = dialog.save_file().await {
+                if let Err(e) = handle.write(ron_str.as_bytes()).await {
+                    log::error!("ExportHead: failed to write: {e}");
+                } else {
+                    log::info!("Exported graph to {}", handle.file_name());
+                }
+            }
+        })
+        .detach();
+}
+
+/// Handle import file events (dropped `.gantz` files).
+///
+/// Deserializes the export, optionally computes root names, merges into the
+/// registry, and opens the unique root head if requested.
+pub fn on_import_file<N>(
+    trigger: On<ImportFileEvent>,
+    mut registry: ResMut<Registry<N>>,
+    builtins: Res<BuiltinNodes<N>>,
+    mut views: ResMut<Views>,
+    mut cmds: Commands,
+) where
+    N: 'static + Node + Clone + serde::de::DeserializeOwned + Send + Sync,
+{
+    let event = trigger.event();
+    let text = match std::str::from_utf8(&event.bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("ImportFile: invalid UTF-8: {e}");
+            return;
+        }
+    };
+    let export: gantz_egui::export::Export<Graph<N>> = match ron::from_str(text) {
+        Ok(e) => e,
+        Err(e) => {
+            log::error!("ImportFile: failed to deserialize: {e}");
+            return;
+        }
+    };
+
+    // Compute root names before merge if we might open a head.
+    let root_name = if event.open_head {
+        let node_reg = registry_ref(&registry, &builtins);
+        let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+        let roots = gantz_core::reg::root_names(&get_node, &export.registry);
+        if roots.len() == 1 {
+            Some(roots.into_iter().next().unwrap())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let result = gantz_egui::export::merge_with_views(&mut registry, &mut views, export);
+    log::info!(
+        "Imported: {} names added, {} replaced",
+        result.names_added.len(),
+        result.names_replaced.len(),
+    );
+
+    if let Some(name) = root_name {
+        cmds.trigger(head::OpenEvent(ca::Head::Branch(name)));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Systems
 // ---------------------------------------------------------------------------
@@ -680,6 +815,23 @@ pub fn persist_views<N: 'static + Send + Sync>(
     for (head_ref, head_views) in heads.iter() {
         if let Some(commit_addr) = registry.head_commit_ca(&**head_ref).copied() {
             views.insert(commit_addr, (**head_views).clone());
+        }
+    }
+}
+
+/// Poll the in-flight import file dialog task.
+///
+/// When the task completes with file bytes, triggers [`ImportFileEvent`].
+/// The resource is removed regardless of whether a file was selected.
+fn poll_import_task(task: Option<ResMut<ImportTask>>, mut cmds: Commands) {
+    let Some(mut task) = task else { return };
+    if let Some(result) = bevy_tasks::futures::check_ready(&mut task.0) {
+        cmds.remove_resource::<ImportTask>();
+        if let Some(bytes) = result {
+            cmds.trigger(ImportFileEvent {
+                bytes,
+                open_head: true,
+            });
         }
     }
 }
@@ -806,6 +958,9 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                         navigate_head(&mut cmds, entity, &head, redo_ca);
                     }
                 }
+                gantz_egui::Cmd::ExportHead => {
+                    cmds.trigger(ExportHeadEvent { head: entity });
+                }
             }
         }
     }
@@ -829,6 +984,7 @@ pub fn update<N>(
     tab_order: Res<head::HeadTabOrder>,
     mut focused: ResMut<head::FocusedHead>,
     mut heads_query: Query<OpenHeadViews<N>, With<head::OpenHead>>,
+    import_task: Option<Res<ImportTask>>,
     mut cmds: Commands,
 ) -> Result
 where
@@ -922,6 +1078,28 @@ where
             original: original_head.clone(),
             new_name: new_name.clone(),
         });
+    }
+
+    // Handle file drops (egui-level DnD).
+    for drop in &response.file_drops {
+        let open_head = drop.target == gantz_egui::widget::gantz::FileDropTarget::GraphScene;
+        cmds.trigger(ImportFileEvent {
+            bytes: drop.bytes.clone(),
+            open_head,
+        });
+    }
+
+    // Handle import button - open a file dialog (only if none already in flight).
+    if response.import() && import_task.is_none() {
+        let ext = gantz_egui::export::FILE_EXTENSION;
+        let dialog = rfd::AsyncFileDialog::new()
+            .set_title("Import")
+            .add_filter("Gantz Export", &[ext]);
+        let task = bevy_tasks::AsyncComputeTaskPool::get().spawn(async move {
+            let handle = dialog.pick_file().await?;
+            Some(handle.read().await)
+        });
+        cmds.insert_resource(ImportTask(task));
     }
 
     // Record GUI frame time.
