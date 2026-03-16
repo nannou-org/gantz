@@ -1172,6 +1172,51 @@ fn gui(ctx: &egui::Context, state: &mut State) {
     if let Some((original_head, new_name)) = response.new_branch() {
         create_branch_from_head(ctx, state, original_head, new_name.clone());
     }
+
+    // Handle file drops.
+    for drop in response.file_drops {
+        let text = match std::str::from_utf8(&drop.bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("ImportFile: invalid UTF-8: {e}");
+                continue;
+            }
+        };
+        let export: gantz_egui::export::Export<Graph> = match ron::from_str(text) {
+            Ok(e) => e,
+            Err(e) => {
+                log::error!("ImportFile: failed to deserialize: {e}");
+                continue;
+            }
+        };
+
+        // Compute root names before merge if targeting the graph scene.
+        let root_name =
+            if drop.target == gantz_egui::widget::gantz::FileDropTarget::GraphScene {
+                let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
+                let roots = gantz_core::reg::root_names(&get_node, &export.registry);
+                if roots.len() == 1 {
+                    Some(roots.into_iter().next().unwrap())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+        let mut all_views = HashMap::new();
+        let result =
+            gantz_egui::export::merge_with_views(&mut state.env.registry, &mut all_views, export);
+        log::info!(
+            "Imported: {} names added, {} replaced",
+            result.names_added.len(),
+            result.names_replaced.len(),
+        );
+
+        if let Some(name) = root_name {
+            open_head(state, gantz_ca::Head::Branch(name));
+        }
+    }
 }
 
 /// Open a head as a new tab, or focus it if already open.

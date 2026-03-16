@@ -15,6 +15,7 @@ use bevy_gantz::reg::Registry;
 use bevy_gantz::vm::{EvalEvent, EvalKind};
 use bevy_gantz::{BuiltinNodes, EvalCompleted};
 use bevy_log as log;
+use bevy_window::FileDragAndDrop;
 use gantz_ca as ca;
 use gantz_core::Node;
 use gantz_core::node::graph::Graph;
@@ -84,8 +85,12 @@ where
             .add_observer(on_copy_selection::<N>)
             .add_observer(on_paste_selection::<N>)
             .add_observer(on_export_head::<N>)
+            .add_observer(on_import_file::<N>)
             // Systems
-            .add_systems(Update, (process_cmds::<N>, persist_views::<N>))
+            .add_systems(
+                Update,
+                (process_cmds::<N>, persist_views::<N>, handle_file_drops::<N>),
+            )
             .add_systems(EguiPrimaryContextPass, update::<N>);
     }
 }
@@ -169,6 +174,15 @@ pub struct CopySelectionEvent {
 pub struct ExportHeadEvent {
     /// The head entity to export.
     pub head: Entity,
+}
+
+/// Event emitted when a `.gantz` file is dropped onto a pane.
+#[derive(Event)]
+pub struct ImportFileEvent {
+    /// The raw bytes of the dropped file.
+    pub bytes: Vec<u8>,
+    /// Whether to open the root head after merging (GraphScene target).
+    pub open_head: bool,
 }
 
 /// Event emitted when the user pastes from the clipboard.
@@ -731,6 +745,61 @@ pub fn on_export_head<N>(
         .detach();
 }
 
+/// Handle import file events (dropped `.gantz` files).
+///
+/// Deserializes the export, optionally computes root names, merges into the
+/// registry, and opens the unique root head if requested.
+pub fn on_import_file<N>(
+    trigger: On<ImportFileEvent>,
+    mut registry: ResMut<Registry<N>>,
+    builtins: Res<BuiltinNodes<N>>,
+    mut views: ResMut<Views>,
+    mut cmds: Commands,
+) where
+    N: 'static + Node + Clone + serde::de::DeserializeOwned + Send + Sync,
+{
+    let event = trigger.event();
+    let text = match std::str::from_utf8(&event.bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("ImportFile: invalid UTF-8: {e}");
+            return;
+        }
+    };
+    let export: gantz_egui::export::Export<Graph<N>> = match ron::from_str(text) {
+        Ok(e) => e,
+        Err(e) => {
+            log::error!("ImportFile: failed to deserialize: {e}");
+            return;
+        }
+    };
+
+    // Compute root names before merge if we might open a head.
+    let root_name = if event.open_head {
+        let node_reg = registry_ref(&registry, &builtins);
+        let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+        let roots = gantz_core::reg::root_names(&get_node, &export.registry);
+        if roots.len() == 1 {
+            Some(roots.into_iter().next().unwrap())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let result = gantz_egui::export::merge_with_views(&mut registry, &mut views, export);
+    log::info!(
+        "Imported: {} names added, {} replaced",
+        result.names_added.len(),
+        result.names_replaced.len(),
+    );
+
+    if let Some(name) = root_name {
+        cmds.trigger(head::OpenEvent(ca::Head::Branch(name)));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Systems
 // ---------------------------------------------------------------------------
@@ -747,6 +816,36 @@ pub fn persist_views<N: 'static + Send + Sync>(
     for (head_ref, head_views) in heads.iter() {
         if let Some(commit_addr) = registry.head_commit_ca(&**head_ref).copied() {
             views.insert(commit_addr, (**head_views).clone());
+        }
+    }
+}
+
+/// Handle `.gantz` file drops directly from bevy's window events.
+///
+/// This bypasses egui's raw input pipeline (which may not reliably forward OS
+/// file drag-and-drop events on all platforms) and reads bevy's
+/// [`FileDragAndDrop`] messages directly.
+pub fn handle_file_drops<N: 'static + Send + Sync>(
+    mut dnd_reader: MessageReader<FileDragAndDrop>,
+    mut cmds: Commands,
+) {
+    for msg in dnd_reader.read() {
+        if let FileDragAndDrop::DroppedFile { path_buf, .. } = msg {
+            if !gantz_egui::export::is_gantz_path(path_buf) {
+                continue;
+            }
+            match std::fs::read(path_buf) {
+                Ok(bytes) => {
+                    log::info!("Dropped .gantz file: {}", path_buf.display());
+                    cmds.trigger(ImportFileEvent {
+                        bytes,
+                        open_head: true,
+                    });
+                }
+                Err(e) => {
+                    log::error!("Failed to read dropped file {}: {e}", path_buf.display());
+                }
+            }
         }
     }
 }

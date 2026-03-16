@@ -2,7 +2,7 @@
 
 use crate::{Edge, Node, graph, node};
 use petgraph::visit::{Data, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, Visitable};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 /// Export a registry subset containing the transitive dependencies of the given heads.
 ///
@@ -106,6 +106,43 @@ where
         }
     }
     transitive_commits(get_node, reg, seeds)
+}
+
+/// Find named graphs not referenced by any other graph in the registry.
+///
+/// A name is "root" if no graph in the registry contains a node whose
+/// `required_addrs` points to that name's commit. Returns names in
+/// alphabetical order.
+pub fn root_names<'a, G>(
+    get_node: node::GetNode<'a>,
+    reg: &gantz_ca::Registry<G>,
+) -> Vec<String>
+where
+    for<'g> &'g G: Data<EdgeWeight = Edge>
+        + IntoEdgesDirected
+        + IntoNodeReferences
+        + NodeIndexable
+        + Visitable,
+    for<'g> <&'g G as Data>::NodeWeight: Node,
+{
+    // Collect all CommitAddrs referenced by any graph in the registry.
+    let mut referenced = HashSet::new();
+    for (commit_ca, _) in reg.commits() {
+        if let Some(graph) = reg.commit_graph_ref(commit_ca) {
+            for ca in graph::required_addrs(get_node, graph) {
+                referenced.insert(gantz_ca::CommitAddr::from(ca));
+            }
+        }
+    }
+
+    // Filter names to those whose commit is NOT referenced.
+    reg.names()
+        .iter()
+        .filter(|&(_, &commit_ca)| !referenced.contains(&commit_ca))
+        .map(|(name, _)| name.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 /// Traverse commit references starting from the given seed addresses.
