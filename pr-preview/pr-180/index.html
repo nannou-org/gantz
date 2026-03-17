@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:,">
+
+    <!-- trunk asset directives -->
+    
+<script type="module">
+async function __trunkInitializer(init, source, sourceSize, initializer, initWithObject) {
+  if (initializer === undefined) {
+    return await init(initWithObject ? { module_or_path: source } : source);
+  }
+
+  const {
+    onStart, onProgress, onComplete, onSuccess, onFailure
+  } = initializer;
+
+  onStart?.();
+
+  const response = fetch(source)
+      .then((response) => {
+        const reader = response.body.getReader();
+        const headers = response.headers;
+        const status = response.status;
+        const statusText = response.statusText;
+
+        const total = sourceSize;
+        let current = 0;
+
+        const stream = new ReadableStream({
+          start(controller) {
+            function push() {
+              reader.read().then(({done, value}) => {
+                if (done) {
+                  onProgress?.({current: total, total});
+                  controller.close();
+                  return;
+                }
+
+                current += value.byteLength;
+                onProgress?.({current, total});
+                controller.enqueue(value);
+                push();
+              });
+            }
+
+            push();
+          },
+        });
+
+        return {
+          stream, init: {
+            headers, status, statusText
+          }
+        };
+      })
+      .then(({stream, init}) =>
+          new Response(stream, init),
+      );
+
+  return init(initWithObject ? { module_or_path: response } : response)
+      .then((value) => {
+        onComplete?.();
+        onSuccess?.(value);
+        return value;
+      }, (reason) => {
+        onComplete?.();
+        onFailure?.(reason);
+        return reason;
+      });
+}
+
+
+import init, * as bindings from '/gantz.js';
+import initializer from '/initializer.js';
+
+const wasm = await __trunkInitializer(init, '/gantz_bg.wasm', 19475259, initializer(), true);
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+    
+    
+
+    <!-- PWA stuff -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="PAW">
+
+    <title>gantz</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100%;
+        }
+        canvas {
+            display: block;
+            touch-action: none;
+        }
+        canvas:focus {
+            outline: none;
+        }
+    </style>
+<link rel="modulepreload" href="/gantz.js" crossorigin="anonymous" integrity="sha384-9aNwjIOdEm2Nu5483XL6a2V5CS/s1WsOk9a5S9Mpt9KUydUlUgPSM06ZAV4tAyXI"><link rel="modulepreload" href="/initializer.js" crossorigin="anonymous" integrity="sha384-4eiQsBKjQHCjIVhwbu5+xUsN+fB6g5DhVmXXkPGjnAxg5IVSSp0EzLNNKeAwhjlJ"><link rel="preload" href="/gantz_bg.wasm" crossorigin="anonymous" integrity="sha384-AYOi4iPPrbNRIxJjscgQ4LnSNoxAl/qjE7TU83P0aacecWKZKchzdcgSDd4x8Teb" as="fetch" type="application/wasm"></head>
+<body>
+    <script>
+        document.body.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+
+        // Insert hack to make sound autoplay on Chrome as soon as the user interacts with the tab:
+        // https://developers.google.com/web/updates/2018/11/web-audio-autoplay#moving-forward
+        (function () {
+            const audioContextList = [];
+            const userInputEventNames = [
+                "click", "contextmenu", "auxclick", "dblclick",
+                "mousedown", "mouseup", "pointerup", "touchend",
+                "keydown", "keyup",
+            ];
+
+            self.AudioContext = new Proxy(self.AudioContext, {
+                construct(target, args) {
+                    const result = new target(...args);
+                    audioContextList.push(result);
+                    return result;
+                },
+            });
+
+            function resumeAllContexts(_event) {
+                let count = 0;
+                audioContextList.forEach((context) => {
+                    if (context.state !== "running") {
+                        context.resume();
+                    } else {
+                        count++;
+                    }
+                });
+
+                if (count > 0 && count === audioContextList.length) {
+                    userInputEventNames.forEach((eventName) => {
+                        document.removeEventListener(eventName, resumeAllContexts);
+                    });
+                }
+            }
+
+            userInputEventNames.forEach((eventName) => {
+                document.addEventListener(eventName, resumeAllContexts);
+            });
+        })();
+
+        // Service Worker for the PWA
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(registration => {
+                        console.log('ServiceWorker registered:', registration);
+                    })
+                    .catch(error => {
+                        console.log('ServiceWorker registration failed:', error);
+                    });
+            });
+        }
+    </script>
+</body>
+</html>
