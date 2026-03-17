@@ -102,4 +102,3 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./result
           keep_files: true
-          exclude_assets: 'pr-preview'
