@@ -28,6 +28,7 @@
             padding: 0;
             width: 100vw;
             height: 100%;
+            background-color: #1b1b1b;
         }
         canvas {
             display: block;
@@ -36,9 +37,38 @@
         canvas:focus {
             outline: none;
         }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #f0f0f0;
+            font-family: sans-serif;
+            text-align: center;
+        }
+        #loading-title {
+            font-size: 18px;
+            letter-spacing: 0.5em;
+            margin: 0 0 12px 0;
+        }
+        #loading-track {
+            width: 100%;
+            height: 2px;
+            background: #333;
+        }
+        #loading-bar {
+            width: 0%;
+            height: 100%;
+            background: #f0f0f0;
+            transition: width 0.2s ease;
+        }
     </style>
 </head>
 <body>
+    <div id="loading">
+        <p id="loading-title">g a n t z</p>
+        <div id="loading-track"><div id="loading-bar"></div></div>
+    </div>
     <script>
         document.body.addEventListener("contextmenu", (e) => {
             e.preventDefault();
