@@ -102,6 +102,7 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
             padding: 0;
             width: 100vw;
             height: 100%;
+            background-color: #1b1b1b;
         }
         canvas {
             display: block;
@@ -110,9 +111,38 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
         canvas:focus {
             outline: none;
         }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #f0f0f0;
+            font-family: sans-serif;
+            text-align: center;
+        }
+        #loading-title {
+            font-size: 18px;
+            letter-spacing: 0.5em;
+            margin: 0 0 12px 0;
+        }
+        #loading-track {
+            width: 100%;
+            height: 2px;
+            background: #333;
+        }
+        #loading-bar {
+            width: 0%;
+            height: 100%;
+            background: #f0f0f0;
+            transition: width 0.2s ease;
+        }
     </style>
-<link rel="modulepreload" href="./gantz.js" crossorigin="anonymous" integrity="sha384-9aNwjIOdEm2Nu5483XL6a2V5CS/s1WsOk9a5S9Mpt9KUydUlUgPSM06ZAV4tAyXI"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-4eiQsBKjQHCjIVhwbu5+xUsN+fB6g5DhVmXXkPGjnAxg5IVSSp0EzLNNKeAwhjlJ"><link rel="preload" href="./gantz_bg.wasm" crossorigin="anonymous" integrity="sha384-YzJn7dhOmE6NF+FXNYUhkqbFzV5L/Pgz3/n0qQUed+BFVwrcGl5za0D9K/lBGeZ9" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./gantz.js" crossorigin="anonymous" integrity="sha384-9aNwjIOdEm2Nu5483XL6a2V5CS/s1WsOk9a5S9Mpt9KUydUlUgPSM06ZAV4tAyXI"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-AUQ/wcWeusvS1MGxTIiNOqRU1Atxh7QAhWlkwAzCSVIen5YlhA7h6DtjwhGXAWUo"><link rel="preload" href="./gantz_bg.wasm" crossorigin="anonymous" integrity="sha384-tLvaJrfNxxV9pE+oxKmMBOil6JTVxsKoaMH97EpMMWs0pJV4LjDIsMG5clcWVQMr" as="fetch" type="application/wasm"></head>
 <body>
+    <div id="loading">
+        <p id="loading-title">g a n t z</p>
+        <div id="loading-track"><div id="loading-bar"></div></div>
+    </div>
     <script>
         document.body.addEventListener("contextmenu", (e) => {
             e.preventDefault();
