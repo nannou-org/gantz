@@ -1,20 +1,26 @@
 {
   gantz-unwrapped,
-  gantz-wasm,
+  gantz-website,
   lib,
   libGL,
   mkShell,
   stdenv,
+  trunk,
+  binaryen,
+  wasm-bindgen-cli,
 }:
 mkShell {
   name = "gantz-dev";
   inputsFrom = [
     gantz-unwrapped
-    gantz-wasm
+    gantz-website
   ];
   # FIXME: Remove this, see #122.
   buildInputs = [
     libGL
+    trunk
+    binaryen
+    wasm-bindgen-cli
   ];
   env = lib.optionalAttrs stdenv.isLinux {
     # FIXME: Switch back when #122 is resolved.

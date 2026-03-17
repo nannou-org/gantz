@@ -1,15 +1,13 @@
 // Service Worker for caching PWA
 
-const CACHE_NAME = 'gantz-cache-v1';
+const CACHE_NAME = 'gantz-cache-v2';
 const urlsToCache = [
-    '/',
-    '/index.html',
-    '/gantz.d.ts',
-    '/gantz.js',
-    '/gantz_bg.wasm',
-    '/gantz_bg.wasm.d.ts',
-    '/manifest.json',
-    '/sw.js',
+    './',
+    './index.html',
+    './gantz.js',
+    './gantz_bg.wasm',
+    './manifest.json',
+    './sw.js',
 ];
 
 self.addEventListener('install', event => {

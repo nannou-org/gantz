@@ -121,6 +121,7 @@ impl TraceView {
         ui.horizontal(|ui| {
             ui.label("Level:");
             let level_label = egui::Label::new(format!("{}", self.level)).selectable(false);
+            #[allow(unused_variables)]
             let level_response = ui.add(level_label);
             #[cfg(not(target_arch = "wasm32"))]
             level_response.on_hover_text("Adjust with RUST_LOG env var at startup");

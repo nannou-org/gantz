@@ -6,6 +6,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="data:,">
 
+    <!-- trunk asset directives -->
+    <link data-trunk rel="rust" href="../Cargo.toml" data-bin="gantz"
+          data-cargo-profile-release="wasm_release"
+          data-wasm-opt="z"
+          data-wasm-opt-params="--enable-bulk-memory --enable-reference-types --enable-multivalue --enable-tail-call --enable-nontrapping-float-to-int"
+          data-initializer="initializer.js" />
+    <link data-trunk rel="copy-file" href="manifest.json" />
+    <link data-trunk rel="copy-file" href="sw.js" />
+
     <!-- PWA stuff -->
     <link rel="manifest" href="manifest.json">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -28,19 +37,6 @@
             outline: none;
         }
     </style>
-    <script type="module">
-        import init from './gantz.js';
-
-        async function run() {
-            await init().catch(error => {
-                if (!error.message.startsWith("Using exceptions for control flow (not an error)")) {
-                    throw error;
-                }
-            });
-        }
-
-        run();
-    </script>
 </head>
 <body>
     <script>
@@ -92,7 +88,7 @@
         // Service Worker for the PWA
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js')
+                navigator.serviceWorker.register('sw.js')
                     .then(registration => {
                         console.log('ServiceWorker registered:', registration);
                     })
