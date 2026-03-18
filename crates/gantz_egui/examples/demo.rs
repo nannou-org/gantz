@@ -1024,8 +1024,7 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         named_heads.iter(),
                     );
                     let all_views = HashMap::new();
-                    let export =
-                        gantz_egui::export::export_with_views(export_registry, &all_views);
+                    let export = gantz_egui::export::export_with_views(export_registry, &all_views);
                     let ron_str = match ron::ser::to_string_pretty(
                         &export,
                         ron::ser::PrettyConfig::default(),
@@ -1045,10 +1044,7 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         if let Err(e) = pollster::block_on(handle.write(ron_str.as_bytes())) {
                             log::error!("ExportAllNamed: failed to write: {e}");
                         } else {
-                            log::info!(
-                                "Exported all named graphs to {}",
-                                handle.file_name()
-                            );
+                            log::info!("Exported all named graphs to {}", handle.file_name());
                         }
                     }
                 }
@@ -1161,7 +1157,8 @@ fn gui(ctx: &egui::Context, state: &mut State) {
             let mut access =
                 DemoHeadAccess::new(&mut state.heads, &state.compiled_modules, &mut state.vms);
 
-            gantz_egui::widget::Gantz::new(&state.env)
+            let no_base_names = Default::default();
+            gantz_egui::widget::Gantz::new(&state.env, &no_base_names)
                 .logger(state.logger.clone())
                 .show(&mut state.gantz, state.focused_head, &mut access, ui)
         })

@@ -11,6 +11,7 @@ pub struct GraphConfig<'a> {
     head: &'a gantz_ca::Head,
     head_state: &'a mut OpenHeadState,
     names: &'a gantz_ca::registry::Names,
+    is_base: bool,
 }
 
 /// Response from the [`GraphConfig`] widget.
@@ -31,7 +32,17 @@ impl<'a> GraphConfig<'a> {
             head,
             head_state,
             names,
+            is_base: false,
         }
+    }
+
+    /// Whether this graph is a base node - a pre-composed graph that ships
+    /// with the binary and is reset to its original form on every launch.
+    /// Users who want to customize a base node should duplicate it under a
+    /// new name.
+    pub fn is_base(mut self, is_base: bool) -> Self {
+        self.is_base = is_base;
+        self
     }
 
     pub fn show(self, ui: &mut egui::Ui) -> GraphConfigResponse {
@@ -43,6 +54,14 @@ impl<'a> GraphConfig<'a> {
         let name_res = head_name_edit(self.head, &mut name, self.names, ui);
         ui.memory_mut(|m| m.data.insert_temp(edit_id, name));
         let new_branch = name_res.new_branch;
+
+        if self.is_base {
+            ui.label(
+                egui::RichText::new("Base node - resets on launch")
+                    .italics()
+                    .weak(),
+            );
+        }
 
         // Layout config.
         ui.horizontal(|ui| {

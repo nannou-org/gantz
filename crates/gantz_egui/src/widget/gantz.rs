@@ -52,6 +52,7 @@ pub trait NodeTypeRegistry {
 /// The top-level gantz widget.
 pub struct Gantz<'a> {
     env: &'a dyn Registry,
+    base_names: &'a gantz_ca::registry::Names,
     log_source: Option<LogSource>,
     perf_vm: Option<&'a mut widget::PerfCapture>,
     perf_gui: Option<&'a mut widget::PerfCapture>,
@@ -177,6 +178,7 @@ where
     state: &'s mut GantzState,
     access: &'s mut Access,
     focused_head: usize,
+    base_names: &'s gantz_ca::registry::Names,
     gantz_response: &'a mut GantzResponse,
 }
 
@@ -277,9 +279,10 @@ impl GantzResponse {
 
 impl<'a> Gantz<'a> {
     /// Instantiate the full top-level gantz widget.
-    pub fn new(env: &'a dyn Registry) -> Self {
+    pub fn new(env: &'a dyn Registry, base_names: &'a gantz_ca::registry::Names) -> Self {
         Self {
             env,
+            base_names,
             log_source: None,
             perf_vm: None,
             perf_gui: None,
@@ -361,11 +364,13 @@ impl<'a> Gantz<'a> {
         };
 
         // The context for traversing the tree of tiles.
+        let base_names = self.base_names;
         let mut behaviour = TreeBehaviour {
             gantz: &mut self,
             state: &mut *state,
             access,
             focused_head,
+            base_names,
             gantz_response: &mut response,
         };
         tree.ui(&mut behaviour, ui);
@@ -494,6 +499,7 @@ where
             ref mut state,
             ref mut access,
             ref mut focused_head,
+            ref base_names,
             ref mut gantz_response,
         } = *self;
         match pane {
@@ -501,8 +507,14 @@ where
                 Some(head) => {
                     let head_state = state.open_heads.entry(head.clone()).or_default();
                     let names = gantz.env.names();
+                    let is_base = match &head {
+                        gantz_ca::Head::Branch(name) => base_names.contains_key(name),
+                        _ => false,
+                    };
                     let res = pane_ui(ui, |ui| {
-                        widget::GraphConfig::new(&head, head_state, names).show(ui)
+                        widget::GraphConfig::new(&head, head_state, names)
+                            .is_base(is_base)
+                            .show(ui)
                     });
                     if res.inner.new_branch.is_some() {
                         gantz_response.new_branch = res.inner.new_branch;
@@ -622,7 +634,8 @@ where
                 paint_gantz_file_hover_overlay(ui);
 
                 let heads = access.heads();
-                let res = graph_select(gantz.env, heads, *focused_head, ui);
+                let res = graph_select(gantz.env, heads, *focused_head, *base_names, ui);
+
                 if res.inner.export_all {
                     if let Some(fh) = access.heads().get(*focused_head).cloned() {
                         let head_state = state.open_heads.entry(fh).or_default();
@@ -1209,10 +1222,11 @@ fn graph_select(
     env: &dyn Registry,
     heads: &[gantz_ca::Head],
     focused_head: usize,
+    base_names: &gantz_ca::registry::Names,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse> {
     pane_ui(ui, |ui| {
-        widget::GraphSelect::new(env, heads)
+        widget::GraphSelect::new(env, heads, base_names)
             .focused_head(focused_head)
             .show(ui)
     })

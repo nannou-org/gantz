@@ -14,6 +14,8 @@ pub enum HeadRowType<'a> {
     Named(&'a str),
     /// An unnamed commit (addressed by timestamp).
     Unnamed(&'a gantz_ca::Timestamp),
+    /// A base node (ships with the binary, resets on launch).
+    Base(&'a str),
 }
 
 /// Render a single head/commit row.
@@ -46,6 +48,7 @@ pub fn head_row(
                 let mut name = match row_type {
                     HeadRowType::Named(name) => name.to_string(),
                     HeadRowType::Unnamed(&timestamp) => fmt_commit_timestamp(timestamp),
+                    HeadRowType::Base(name) => format!("[base] {name}"),
                 };
                 // Append focus indicator if this head is focused.
                 if let Some(focused) = focused_head {
@@ -83,7 +86,7 @@ pub fn head_row(
                         HeadRowType::Named(_) => {
                             Some(ui.add(egui::Button::new("×").frame_when_inactive(false)))
                         }
-                        HeadRowType::Unnamed(_) => None,
+                        HeadRowType::Unnamed(_) | HeadRowType::Base(_) => None,
                     };
 
                     (res, delete)

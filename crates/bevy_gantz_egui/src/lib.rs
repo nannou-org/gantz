@@ -25,6 +25,7 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use steel::steel_vm::engine::Engine;
 
+pub mod base;
 pub mod storage;
 
 // ----------------------------------------------------------------------------
@@ -65,7 +66,8 @@ where
         + 'static,
 {
     fn build(&self, app: &mut App) {
-        app.init_resource::<GuiState>()
+        app.init_resource::<BaseNames>()
+            .init_resource::<GuiState>()
             .init_resource::<TraceCapture>()
             .init_resource::<PerfVm>()
             .init_resource::<PerfGui>()
@@ -133,6 +135,13 @@ pub struct GuiState(pub gantz_egui::widget::GantzState);
 /// Views (layout + camera) for all known commits.
 #[derive(Resource, Default)]
 pub struct Views(pub HashMap<ca::CommitAddr, gantz_egui::GraphViews>);
+
+/// Names of base nodes baked into the binary.
+///
+/// When present, these names are displayed with a `[base]` prefix and
+/// cannot be deleted from the Graphs pane.
+#[derive(Resource, Default)]
+pub struct BaseNames(pub gantz_ca::registry::Names);
 
 /// In-flight import file dialog task.
 #[derive(Resource)]
@@ -775,8 +784,7 @@ pub fn on_export_all_named<N>(
         return;
     }
 
-    let export_registry =
-        gantz_core::reg::export_heads(&get_node, &registry, named_heads.iter());
+    let export_registry = gantz_core::reg::export_heads(&get_node, &registry, named_heads.iter());
     let export = gantz_egui::export::export_with_views(export_registry, &views);
 
     let ron_str = match ron::ser::to_string_pretty(&export, ron::ser::PrettyConfig::default()) {
@@ -1048,6 +1056,7 @@ pub fn update<N>(
     mut focused: ResMut<head::FocusedHead>,
     mut heads_query: Query<OpenHeadViews<N>, With<head::OpenHead>>,
     import_task: Option<Res<ImportTask>>,
+    base_names: Res<BaseNames>,
     mut cmds: Commands,
 ) -> Result
 where
@@ -1081,7 +1090,7 @@ where
     let response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
-            gantz_egui::widget::Gantz::new(&node_reg)
+            gantz_egui::widget::Gantz::new(&node_reg, &base_names.0)
                 .trace_capture(trace_capture.0.clone(), level)
                 .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
                 .show(&mut *gui_state, focused_ix, &mut access, ui)

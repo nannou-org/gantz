@@ -9,6 +9,7 @@ pub struct GraphSelect<'a> {
     registry: &'a dyn GraphRegistry,
     heads: &'a [gantz_ca::Head],
     focused_head: Option<usize>,
+    base_names: &'a gantz_ca::registry::Names,
 }
 
 #[derive(Clone, Default)]
@@ -72,13 +73,18 @@ impl std::ops::BitOrAssign for GraphSelectResponse {
 }
 
 impl<'a> GraphSelect<'a> {
-    pub fn new(registry: &'a dyn GraphRegistry, heads: &'a [gantz_ca::Head]) -> Self {
+    pub fn new(
+        registry: &'a dyn GraphRegistry,
+        heads: &'a [gantz_ca::Head],
+        base_names: &'a gantz_ca::registry::Names,
+    ) -> Self {
         let id = egui::Id::new("gantz-graph-select");
         Self {
             registry,
             heads,
             id,
             focused_head: None,
+            base_names,
         }
     }
 
@@ -117,9 +123,12 @@ impl<'a> GraphSelect<'a> {
                 ui.available_height() - ui.spacing().interact_size.y - ui.spacing().item_spacing.y,
             )
             .show(ui, |ui| {
-                // Show named graphs first.
+                // Partition names into user names and base names.
+                let is_base = |name: &str| self.base_names.contains_key(name);
+
+                // Show user-named graphs first.
                 let mut visited = HashSet::new();
-                for (name, ca) in names {
+                for (name, ca) in names.iter().filter(|(n, _)| !is_base(n)) {
                     if !state.name_filter.is_empty()
                         && !state
                             .name_filter
@@ -152,6 +161,40 @@ impl<'a> GraphSelect<'a> {
                     } else if let Some(delete) = res.delete {
                         if delete.clicked() {
                             response.name_removed = Some(name.to_string());
+                        }
+                    }
+                }
+
+                // Show base-named graphs after user graphs.
+                for (name, ca) in names.iter().filter(|(n, _)| is_base(n)) {
+                    if !state.name_filter.is_empty()
+                        && !state
+                            .name_filter
+                            .split_whitespace()
+                            .all(|s| name.contains(s))
+                    {
+                        continue;
+                    }
+                    visited.insert(ca);
+                    let head = gantz_ca::Head::Branch(name.to_string());
+                    let res = head_row(
+                        self.heads,
+                        &head,
+                        HeadRowType::Base(name),
+                        ca,
+                        self.focused_head,
+                        ui,
+                    );
+                    if res.row.clicked() {
+                        let ctrl = ui.input(|i| i.modifiers.ctrl);
+                        if ctrl {
+                            if self.heads.contains(&head) {
+                                response.closed = Some(head);
+                            } else {
+                                response.opened = Some(head);
+                            }
+                        } else {
+                            response.replaced = Some(head);
                         }
                     }
                 }

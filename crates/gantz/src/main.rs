@@ -37,6 +37,9 @@ fn main() {
             (
                 setup_camera,
                 setup_resources,
+                bevy_gantz_egui::base::load::<Box<dyn node::Node>>
+                    .after(setup_resources)
+                    .before(setup_open),
                 setup_open.after(setup_resources),
                 reg::prune_unused::<Box<dyn node::Node>>
                     .after(setup_resources)
@@ -173,5 +176,18 @@ fn persist_resources(
     // Save egui memory (widget states).
     if let Ok(ctx) = ctxs.ctx_mut() {
         bevy_gantz_egui::storage::save_egui_memory(&mut *storage, ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    const BASE_GANTZ: &[u8] = include_bytes!("../../../base/base.gantz");
+
+    #[test]
+    fn base_gantz_deserializes() {
+        let text = std::str::from_utf8(BASE_GANTZ).expect("valid UTF-8");
+        let _export: gantz_egui::export::Export<
+            gantz_core::node::graph::Graph<Box<dyn super::node::Node>>,
+        > = ron::from_str(text).expect("valid RON");
     }
 }
