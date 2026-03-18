@@ -31,6 +31,8 @@ pub struct GraphSelectResponse {
     pub new_graph: bool,
     /// Indicates the import button was clicked.
     pub import: bool,
+    /// Indicates the export-all button was clicked.
+    pub export_all: bool,
     /// Single click: replace the focused head with this one.
     pub replaced: Option<gantz_ca::Head>,
     /// Ctrl+click on a head that is not open: open this head as a new tab.
@@ -47,6 +49,7 @@ impl GraphSelectResponse {
         Self {
             new_graph: self.new_graph || other.new_graph,
             import: self.import || other.import,
+            export_all: self.export_all || other.export_all,
             replaced: other.replaced.or(self.replaced),
             opened: other.opened.or(self.opened),
             closed: other.closed.or(self.closed),
@@ -197,14 +200,21 @@ impl<'a> GraphSelect<'a> {
             });
 
         ui.horizontal(|ui| {
-            // Place the import button on the right first.
+            // Place import and export buttons on the right.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .button("\u{2B07}")
+                    .button("\u{2B06}")
                     .on_hover_text("Import Graph(s)")
                     .clicked()
                 {
                     response.import = true;
+                }
+                if ui
+                    .button("\u{2B07}")
+                    .on_hover_text("Export All Named Graphs")
+                    .clicked()
+                {
+                    response.export_all = true;
                 }
                 // Fill remaining space with the "+" button.
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {

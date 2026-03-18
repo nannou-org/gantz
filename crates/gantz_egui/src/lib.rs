@@ -174,6 +174,8 @@ pub enum Cmd {
     Redo,
     /// Export the focused head (graph + transitive deps + views) to a `.gantz` file.
     ExportHead,
+    /// Export all named graphs (with transitive deps + views) to a single `.gantz` file.
+    ExportAllNamed,
 }
 
 /// A command to create a new node.

@@ -1005,6 +1005,53 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         }
                     }
                 }
+                gantz_egui::Cmd::ExportAllNamed => {
+                    let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
+                    let named_heads: Vec<gantz_ca::Head> = state
+                        .env
+                        .registry
+                        .names()
+                        .keys()
+                        .map(|name| gantz_ca::Head::Branch(name.clone()))
+                        .collect();
+                    if named_heads.is_empty() {
+                        log::info!("ExportAllNamed: no named graphs to export");
+                        continue;
+                    }
+                    let export_registry = gantz_core::reg::export_heads(
+                        &get_node,
+                        &state.env.registry,
+                        named_heads.iter(),
+                    );
+                    let all_views = HashMap::new();
+                    let export =
+                        gantz_egui::export::export_with_views(export_registry, &all_views);
+                    let ron_str = match ron::ser::to_string_pretty(
+                        &export,
+                        ron::ser::PrettyConfig::default(),
+                    ) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            log::error!("ExportAllNamed: failed to serialize: {e}");
+                            continue;
+                        }
+                    };
+                    let ext = gantz_egui::export::FILE_EXTENSION;
+                    let dialog = rfd::AsyncFileDialog::new()
+                        .set_title("Export All Named Graphs")
+                        .set_file_name(&format!("gantz.{ext}"))
+                        .add_filter("Gantz Export", &[ext]);
+                    if let Some(handle) = pollster::block_on(dialog.save_file()) {
+                        if let Err(e) = pollster::block_on(handle.write(ron_str.as_bytes())) {
+                            log::error!("ExportAllNamed: failed to write: {e}");
+                        } else {
+                            log::info!(
+                                "Exported all named graphs to {}",
+                                handle.file_name()
+                            );
+                        }
+                    }
+                }
             }
         }
     }

@@ -84,6 +84,7 @@ where
             .add_observer(on_copy_selection::<N>)
             .add_observer(on_paste_selection::<N>)
             .add_observer(on_export_head::<N>)
+            .add_observer(on_export_all_named::<N>)
             .add_observer(on_import_file::<N>)
             // Systems
             .add_systems(
@@ -178,6 +179,10 @@ pub struct ExportHeadEvent {
     /// The head entity to export.
     pub head: Entity,
 }
+
+/// Event emitted when the user requests exporting all named graphs.
+#[derive(Event)]
+pub struct ExportAllNamedEvent;
 
 /// Event emitted when a `.gantz` file is dropped onto a pane.
 #[derive(Event)]
@@ -744,6 +749,61 @@ pub fn on_export_head<N>(
         .detach();
 }
 
+/// Handle export-all-named events.
+///
+/// Exports every named graph (with transitive dependencies and views) to a
+/// single `.gantz` file chosen via an `rfd` file dialog.
+pub fn on_export_all_named<N>(
+    _trigger: On<ExportAllNamedEvent>,
+    registry: Res<Registry<N>>,
+    builtins: Res<BuiltinNodes<N>>,
+    views: Res<Views>,
+) where
+    N: 'static + Node + Clone + serde::Serialize + Send + Sync,
+{
+    let node_reg = registry_ref(&registry, &builtins);
+    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+
+    let named_heads: Vec<ca::Head> = registry
+        .names()
+        .keys()
+        .map(|name| ca::Head::Branch(name.clone()))
+        .collect();
+
+    if named_heads.is_empty() {
+        log::info!("ExportAllNamed: no named graphs to export");
+        return;
+    }
+
+    let export_registry =
+        gantz_core::reg::export_heads(&get_node, &registry, named_heads.iter());
+    let export = gantz_egui::export::export_with_views(export_registry, &views);
+
+    let ron_str = match ron::ser::to_string_pretty(&export, ron::ser::PrettyConfig::default()) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("ExportAllNamed: failed to serialize: {e}");
+            return;
+        }
+    };
+
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title("Export All Named Graphs")
+        .set_file_name(&format!("gantz.{}", gantz_egui::export::FILE_EXTENSION))
+        .add_filter("Gantz Export", &[gantz_egui::export::FILE_EXTENSION]);
+    bevy_tasks::AsyncComputeTaskPool::get()
+        .spawn(async move {
+            if let Some(handle) = dialog.save_file().await {
+                if let Err(e) = handle.write(ron_str.as_bytes()).await {
+                    log::error!("ExportAllNamed: failed to write: {e}");
+                } else {
+                    log::info!("Exported all named graphs to {}", handle.file_name());
+                }
+            }
+        })
+        .detach();
+}
+
 /// Handle import file events (dropped `.gantz` files).
 ///
 /// Deserializes the export, optionally computes root names, merges into the
@@ -960,6 +1020,9 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                 }
                 gantz_egui::Cmd::ExportHead => {
                     cmds.trigger(ExportHeadEvent { head: entity });
+                }
+                gantz_egui::Cmd::ExportAllNamed => {
+                    cmds.trigger(ExportAllNamedEvent);
                 }
             }
         }

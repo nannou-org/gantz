@@ -265,6 +265,14 @@ impl GantzResponse {
             .map(|g| g.import)
             .unwrap_or(false)
     }
+
+    /// Indicates the export-all button was clicked.
+    pub fn export_all(&self) -> bool {
+        self.graph_select
+            .as_ref()
+            .map(|g| g.export_all)
+            .unwrap_or(false)
+    }
 }
 
 impl<'a> Gantz<'a> {
@@ -615,6 +623,12 @@ where
 
                 let heads = access.heads();
                 let res = graph_select(gantz.env, heads, *focused_head, ui);
+                if res.inner.export_all {
+                    if let Some(fh) = access.heads().get(*focused_head).cloned() {
+                        let head_state = state.open_heads.entry(fh).or_default();
+                        head_state.scene.cmds.push(Cmd::ExportAllNamed);
+                    }
+                }
                 match &mut gantz_response.graph_select {
                     Some(gs) => *gs |= res.inner,
                     None => gantz_response.graph_select = Some(res.inner),
