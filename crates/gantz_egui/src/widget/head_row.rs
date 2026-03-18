@@ -48,7 +48,7 @@ pub fn head_row(
                 let mut name = match row_type {
                     HeadRowType::Named(name) => name.to_string(),
                     HeadRowType::Unnamed(&timestamp) => fmt_commit_timestamp(timestamp),
-                    HeadRowType::Base(name) => format!("[base] {name}"),
+                    HeadRowType::Base(name) => name.to_string(),
                 };
                 // Append focus indicator if this head is focused.
                 if let Some(focused) = focused_head {
