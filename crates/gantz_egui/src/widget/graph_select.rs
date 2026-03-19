@@ -246,18 +246,18 @@ impl<'a> GraphSelect<'a> {
             // Place import and export buttons on the right.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .button("\u{2B06}")
-                    .on_hover_text("Import Graph(s)")
-                    .clicked()
-                {
-                    response.import = true;
-                }
-                if ui
                     .button("\u{2B07}")
                     .on_hover_text("Export All Named Graphs")
                     .clicked()
                 {
                     response.export_all = true;
+                }
+                if ui
+                    .button("\u{2B06}")
+                    .on_hover_text("Import Graph(s)")
+                    .clicked()
+                {
+                    response.import = true;
                 }
                 // Fill remaining space with the "+" button.
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
