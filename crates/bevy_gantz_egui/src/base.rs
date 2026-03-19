@@ -22,8 +22,11 @@ const BYTES: &[u8] = include_bytes!("../../../base/base.gantz");
 
 /// Startup system that deserializes the embedded base export and merges it
 /// into the registry, populating [`BaseNames`].
-pub fn load<N>(mut registry: ResMut<Registry<N>>, mut base_names: ResMut<BaseNames>)
-where
+pub fn load<N>(
+    mut registry: ResMut<Registry<N>>,
+    mut base_names: ResMut<BaseNames>,
+    mut views: ResMut<crate::Views>,
+) where
     N: serde::de::DeserializeOwned + Send + Sync + 'static,
 {
     let text = match std::str::from_utf8(BYTES) {
@@ -42,6 +45,7 @@ where
     };
     base_names.0 = export.registry.names().clone();
     registry.merge(export.registry);
+    views.0.extend(export.views);
 }
 
 /// Path to write the base `.gantz` export to.

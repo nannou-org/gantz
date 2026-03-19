@@ -44,9 +44,9 @@ fn main() {
             Startup,
             (
                 setup_camera,
-                bevy_gantz_egui::base::load::<Box<dyn node::Node>>,
-                setup_gui_state.after(bevy_gantz_egui::base::load::<Box<dyn node::Node>>),
-                setup_open.after(setup_gui_state),
+                setup_gui_state,
+                bevy_gantz_egui::base::load::<Box<dyn node::Node>>.after(setup_gui_state),
+                setup_open.after(bevy_gantz_egui::base::load::<Box<dyn node::Node>>),
                 vm::setup::<Box<dyn node::Node>>.after(setup_open),
             ),
         )
