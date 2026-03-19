@@ -11,6 +11,8 @@ pub struct GraphConfig<'a> {
     head: &'a gantz_ca::Head,
     head_state: &'a mut OpenHeadState,
     names: &'a gantz_ca::registry::Names,
+    is_base: bool,
+    immutable: bool,
 }
 
 /// Response from the [`GraphConfig`] widget.
@@ -31,7 +33,24 @@ impl<'a> GraphConfig<'a> {
             head,
             head_state,
             names,
+            is_base: false,
+            immutable: false,
         }
+    }
+
+    /// Whether this graph is a base node - a pre-composed graph that ships
+    /// with the binary and is reset to its original form on every launch.
+    /// Users who want to customize a base node should duplicate it under a
+    /// new name.
+    pub fn is_base(mut self, is_base: bool) -> Self {
+        self.is_base = is_base;
+        self
+    }
+
+    /// Whether this graph is immutable - layout controls will be disabled.
+    pub fn immutable(mut self, immutable: bool) -> Self {
+        self.immutable = immutable;
+        self
     }
 
     pub fn show(self, ui: &mut egui::Ui) -> GraphConfigResponse {
@@ -44,23 +63,33 @@ impl<'a> GraphConfig<'a> {
         ui.memory_mut(|m| m.data.insert_temp(edit_id, name));
         let new_branch = name_res.new_branch;
 
+        if self.is_base {
+            ui.label(
+                egui::RichText::new("\"base\" node, included with gantz")
+                    .italics()
+                    .weak(),
+            );
+        }
+
         // Layout config.
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut self.head_state.auto_layout, "Automatic Layout");
-        });
         ui.checkbox(&mut self.head_state.center_view, "Center View");
-        ui.horizontal(|ui| {
-            ui.label("Flow:");
-            ui.radio_value(
-                &mut self.head_state.layout_flow,
-                egui::Direction::LeftToRight,
-                "Right",
-            );
-            ui.radio_value(
-                &mut self.head_state.layout_flow,
-                egui::Direction::TopDown,
-                "Down",
-            );
+        ui.add_enabled_ui(!self.immutable, |ui| {
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.head_state.auto_layout, "Automatic Layout");
+            });
+            ui.horizontal(|ui| {
+                ui.label("Flow:");
+                ui.radio_value(
+                    &mut self.head_state.layout_flow,
+                    egui::Direction::LeftToRight,
+                    "Right",
+                );
+                ui.radio_value(
+                    &mut self.head_state.layout_flow,
+                    egui::Direction::TopDown,
+                    "Down",
+                );
+            });
         });
 
         let export = ui.button("Export").clicked();

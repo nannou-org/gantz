@@ -1,0 +1,86 @@
+(
+    registry: (
+        graphs: {
+            (("3d13f6fe038ab07901832453a73a39636d4a2881691a897f47035b498b947bbe")): (
+                nodes: [
+                    {
+                        "type": "Expr",
+                        "src": "(* $l $r)",
+                    },
+                    {
+                        "type": "Inlet",
+                    },
+                    {
+                        "type": "Inlet",
+                    },
+                    {
+                        "type": "Outlet",
+                    },
+                ],
+                node_holes: [],
+                edge_property: directed,
+                edges: [
+                    Some((1, 0, (
+                        output: (0),
+                        input: (0),
+                    ))),
+                    Some((2, 0, (
+                        output: (0),
+                        input: (1),
+                    ))),
+                    Some((0, 3, (
+                        output: (0),
+                        input: (0),
+                    ))),
+                ],
+            ),
+        },
+        commits: {
+            (("834568e90d032eb8bfec7252ee60b1ebd1f193ea93614f32f0105c97f6ddf421")): (
+                timestamp: (
+                    secs: 1773828677,
+                    nanos: 728729908,
+                ),
+                parent: Some((("d620b968a3686771a10a3ffe7f01831764b0f12c0a733e7d6be7d96f8a6414f2"))),
+                graph: (("3d13f6fe038ab07901832453a73a39636d4a2881691a897f47035b498b947bbe")),
+            ),
+        },
+        names: {
+            "mul": (("834568e90d032eb8bfec7252ee60b1ebd1f193ea93614f32f0105c97f6ddf421")),
+        },
+    ),
+    views: {
+        (("834568e90d032eb8bfec7252ee60b1ebd1f193ea93614f32f0105c97f6ddf421")): {
+            []: (
+                scene_rect: (
+                    min: (
+                        x: -53.55,
+                        y: -89.70625,
+                    ),
+                    max: (
+                        x: 113.55,
+                        y: 149.70625,
+                    ),
+                ),
+                layout: {
+                    (3): (
+                        x: -39.625,
+                        y: 106.59375,
+                    ),
+                    (0): (
+                        x: -39.625,
+                        y: 13.40625,
+                    ),
+                    (1): (
+                        x: -39.625,
+                        y: -75.78125,
+                    ),
+                    (2): (
+                        x: 60.002007,
+                        y: -75.78125,
+                    ),
+                },
+            ),
+        },
+    },
+)

@@ -8,6 +8,7 @@
 }:
 let
   src = lib.sourceFilesBySuffices ../. [
+    ".gantz"
     ".lock"
     ".rs"
     ".toml"

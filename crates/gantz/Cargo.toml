@@ -7,6 +7,7 @@ edition.workspace = true
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
+default-run = "gantz"
 
 [dependencies]
 bevy.workspace = true
@@ -26,3 +27,14 @@ serde.workspace = true
 steel-core.workspace = true
 typetag.workspace = true
 web-time.workspace = true
+
+[dev-dependencies]
+ron.workspace = true
+
+[[bin]]
+name = "gantz"
+path = "src/main.rs"
+
+[[bin]]
+name = "update-base"
+path = "src/main_update_base.rs"

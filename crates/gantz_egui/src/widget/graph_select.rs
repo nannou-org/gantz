@@ -9,6 +9,7 @@ pub struct GraphSelect<'a> {
     registry: &'a dyn GraphRegistry,
     heads: &'a [gantz_ca::Head],
     focused_head: Option<usize>,
+    base_names: &'a gantz_ca::registry::Names,
 }
 
 #[derive(Clone, Default)]
@@ -31,6 +32,8 @@ pub struct GraphSelectResponse {
     pub new_graph: bool,
     /// Indicates the import button was clicked.
     pub import: bool,
+    /// Indicates the export-all button was clicked.
+    pub export_all: bool,
     /// Single click: replace the focused head with this one.
     pub replaced: Option<gantz_ca::Head>,
     /// Ctrl+click on a head that is not open: open this head as a new tab.
@@ -47,6 +50,7 @@ impl GraphSelectResponse {
         Self {
             new_graph: self.new_graph || other.new_graph,
             import: self.import || other.import,
+            export_all: self.export_all || other.export_all,
             replaced: other.replaced.or(self.replaced),
             opened: other.opened.or(self.opened),
             closed: other.closed.or(self.closed),
@@ -69,13 +73,18 @@ impl std::ops::BitOrAssign for GraphSelectResponse {
 }
 
 impl<'a> GraphSelect<'a> {
-    pub fn new(registry: &'a dyn GraphRegistry, heads: &'a [gantz_ca::Head]) -> Self {
+    pub fn new(
+        registry: &'a dyn GraphRegistry,
+        heads: &'a [gantz_ca::Head],
+        base_names: &'a gantz_ca::registry::Names,
+    ) -> Self {
         let id = egui::Id::new("gantz-graph-select");
         Self {
             registry,
             heads,
             id,
             focused_head: None,
+            base_names,
         }
     }
 
@@ -114,9 +123,12 @@ impl<'a> GraphSelect<'a> {
                 ui.available_height() - ui.spacing().interact_size.y - ui.spacing().item_spacing.y,
             )
             .show(ui, |ui| {
-                // Show named graphs first.
+                // Partition names into user names and base names.
+                let is_base = |name: &str| self.base_names.contains_key(name);
+
+                // Show user-named graphs first.
                 let mut visited = HashSet::new();
-                for (name, ca) in names {
+                for (name, ca) in names.iter().filter(|(n, _)| !is_base(n)) {
                     if !state.name_filter.is_empty()
                         && !state
                             .name_filter
@@ -149,6 +161,40 @@ impl<'a> GraphSelect<'a> {
                     } else if let Some(delete) = res.delete {
                         if delete.clicked() {
                             response.name_removed = Some(name.to_string());
+                        }
+                    }
+                }
+
+                // Show base-named graphs after user graphs.
+                for (name, ca) in names.iter().filter(|(n, _)| is_base(n)) {
+                    if !state.name_filter.is_empty()
+                        && !state
+                            .name_filter
+                            .split_whitespace()
+                            .all(|s| name.contains(s))
+                    {
+                        continue;
+                    }
+                    visited.insert(ca);
+                    let head = gantz_ca::Head::Branch(name.to_string());
+                    let res = head_row(
+                        self.heads,
+                        &head,
+                        HeadRowType::Base(name),
+                        ca,
+                        self.focused_head,
+                        ui,
+                    );
+                    if res.row.clicked() {
+                        let ctrl = ui.input(|i| i.modifiers.ctrl);
+                        if ctrl {
+                            if self.heads.contains(&head) {
+                                response.closed = Some(head);
+                            } else {
+                                response.opened = Some(head);
+                            }
+                        } else {
+                            response.replaced = Some(head);
                         }
                     }
                 }
@@ -197,10 +243,17 @@ impl<'a> GraphSelect<'a> {
             });
 
         ui.horizontal(|ui| {
-            // Place the import button on the right first.
+            // Place import and export buttons on the right.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .button("\u{2B07}")
+                    .on_hover_text("Export All Named Graphs")
+                    .clicked()
+                {
+                    response.export_all = true;
+                }
+                if ui
+                    .button("\u{2B06}")
                     .on_hover_text("Import Graph(s)")
                     .clicked()
                 {

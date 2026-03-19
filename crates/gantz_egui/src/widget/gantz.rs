@@ -52,9 +52,11 @@ pub trait NodeTypeRegistry {
 /// The top-level gantz widget.
 pub struct Gantz<'a> {
     env: &'a dyn Registry,
+    base_names: &'a gantz_ca::registry::Names,
     log_source: Option<LogSource>,
     perf_vm: Option<&'a mut widget::PerfCapture>,
     perf_gui: Option<&'a mut widget::PerfCapture>,
+    base_immutable: bool,
 }
 
 enum LogSource {
@@ -177,6 +179,7 @@ where
     state: &'s mut GantzState,
     access: &'s mut Access,
     focused_head: usize,
+    base_names: &'s gantz_ca::registry::Names,
     gantz_response: &'a mut GantzResponse,
 }
 
@@ -265,16 +268,26 @@ impl GantzResponse {
             .map(|g| g.import)
             .unwrap_or(false)
     }
+
+    /// Indicates the export-all button was clicked.
+    pub fn export_all(&self) -> bool {
+        self.graph_select
+            .as_ref()
+            .map(|g| g.export_all)
+            .unwrap_or(false)
+    }
 }
 
 impl<'a> Gantz<'a> {
     /// Instantiate the full top-level gantz widget.
-    pub fn new(env: &'a dyn Registry) -> Self {
+    pub fn new(env: &'a dyn Registry, base_names: &'a gantz_ca::registry::Names) -> Self {
         Self {
             env,
+            base_names,
             log_source: None,
             perf_vm: None,
             perf_gui: None,
+            base_immutable: true,
         }
     }
 
@@ -303,6 +316,19 @@ impl<'a> Gantz<'a> {
     ) -> Self {
         self.perf_vm = Some(perf_vm);
         self.perf_gui = Some(perf_gui);
+        self
+    }
+
+    /// Whether base node graphs should be immutable (view-only).
+    ///
+    /// When `true` (the default), graphs for heads whose branch name
+    /// appears in `base_names` are shown in immutable mode - navigation
+    /// and selection work, but structural edits are disabled.
+    ///
+    /// Set to `false` for developer tools like `update-base` that need
+    /// to edit base nodes.
+    pub fn base_immutable(mut self, base_immutable: bool) -> Self {
+        self.base_immutable = base_immutable;
         self
     }
 
@@ -353,11 +379,13 @@ impl<'a> Gantz<'a> {
         };
 
         // The context for traversing the tree of tiles.
+        let base_names = self.base_names;
         let mut behaviour = TreeBehaviour {
             gantz: &mut self,
             state: &mut *state,
             access,
             focused_head,
+            base_names,
             gantz_response: &mut response,
         };
         tree.ui(&mut behaviour, ui);
@@ -486,6 +514,7 @@ where
             ref mut state,
             ref mut access,
             ref mut focused_head,
+            ref base_names,
             ref mut gantz_response,
         } = *self;
         match pane {
@@ -493,8 +522,16 @@ where
                 Some(head) => {
                     let head_state = state.open_heads.entry(head.clone()).or_default();
                     let names = gantz.env.names();
+                    let is_base = match &head {
+                        gantz_ca::Head::Branch(name) => base_names.contains_key(name),
+                        _ => false,
+                    };
+                    let immutable = is_base && gantz.base_immutable;
                     let res = pane_ui(ui, |ui| {
-                        widget::GraphConfig::new(&head, head_state, names).show(ui)
+                        widget::GraphConfig::new(&head, head_state, names)
+                            .is_base(is_base)
+                            .immutable(immutable)
+                            .show(ui)
                     });
                     if res.inner.new_branch.is_some() {
                         gantz_response.new_branch = res.inner.new_branch;
@@ -548,6 +585,8 @@ where
                     focused_head,
                     closed_heads: &mut gantz_response.closed_heads,
                     new_branch: &mut gantz_response.new_branch,
+                    base_names,
+                    base_immutable: gantz.base_immutable,
                 };
                 graph_tree.ui(&mut graph_behaviour, ui);
 
@@ -556,48 +595,60 @@ where
 
                 // Show the command palette once (not per-pane), operating on the focused head.
                 if let Some(fh) = access.heads().get(*focused_head).cloned() {
+                    let focused_immutable = gantz.base_immutable
+                        && matches!(&fh, gantz_ca::Head::Branch(name) if base_names.contains_key(name));
+
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
 
                     // Copy/paste/undo/redo keyboard shortcuts.
                     if !ui.ctx().wants_keyboard_input() {
+                        // Copy is always allowed.
                         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::C)) {
                             head_state.scene.cmds.push(Cmd::CopySelection);
                         }
-                        // Detect paste: Event::Paste (eframe/web) or Ctrl+V
-                        // key press (bevy_egui desktop, which sends Event::Text
-                        // instead of Event::Paste).
-                        let paste_text = ui.input(|i| {
-                            i.events.iter().find_map(|e| match e {
-                                egui::Event::Paste(s) => Some(s.clone()),
-                                _ => None,
-                            })
-                        });
-                        let ctrl_v = paste_text.is_some()
-                            || ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::V));
-                        if ctrl_v {
-                            head_state.scene.cmds.push(Cmd::PasteClipboard {
-                                text: paste_text,
-                                offset: egui::vec2(20.0, 20.0),
+                        // Paste, undo, redo are gated by immutable.
+                        if !focused_immutable {
+                            // Detect paste: Event::Paste (eframe/web) or Ctrl+V
+                            // key press (bevy_egui desktop, which sends Event::Text
+                            // instead of Event::Paste).
+                            let paste_text = ui.input(|i| {
+                                i.events.iter().find_map(|e| match e {
+                                    egui::Event::Paste(s) => Some(s.clone()),
+                                    _ => None,
+                                })
                             });
-                        }
-                        // Undo: Cmd/Ctrl+Z (without Shift).
-                        if ui.input(|i| {
-                            i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::Z)
-                        }) {
-                            head_state.scene.cmds.push(Cmd::Undo);
-                        }
-                        // Redo: Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y.
-                        if ui.input(|i| {
-                            (i.modifiers.command
-                                && i.modifiers.shift
-                                && i.key_pressed(egui::Key::Z))
-                                || (i.modifiers.command && i.key_pressed(egui::Key::Y))
-                        }) {
-                            head_state.scene.cmds.push(Cmd::Redo);
+                            let ctrl_v = paste_text.is_some()
+                                || ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::V));
+                            if ctrl_v {
+                                head_state.scene.cmds.push(Cmd::PasteClipboard {
+                                    text: paste_text,
+                                    offset: egui::vec2(20.0, 20.0),
+                                });
+                            }
+                            // Undo: Cmd/Ctrl+Z (without Shift).
+                            if ui.input(|i| {
+                                i.modifiers.command
+                                    && !i.modifiers.shift
+                                    && i.key_pressed(egui::Key::Z)
+                            }) {
+                                head_state.scene.cmds.push(Cmd::Undo);
+                            }
+                            // Redo: Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y.
+                            if ui.input(|i| {
+                                (i.modifiers.command
+                                    && i.modifiers.shift
+                                    && i.key_pressed(egui::Key::Z))
+                                    || (i.modifiers.command && i.key_pressed(egui::Key::Y))
+                            }) {
+                                head_state.scene.cmds.push(Cmd::Redo);
+                            }
                         }
                     }
 
-                    command_palette(gantz.env, head_state, &mut state.command_palette, ui);
+                    // Skip command palette when immutable.
+                    if !focused_immutable {
+                        command_palette(gantz.env, head_state, &mut state.command_palette, ui);
+                    }
                 }
 
                 // Floating pane menu over the bottom right corner of the graph scene pane.
@@ -614,7 +665,14 @@ where
                 paint_gantz_file_hover_overlay(ui);
 
                 let heads = access.heads();
-                let res = graph_select(gantz.env, heads, *focused_head, ui);
+                let res = graph_select(gantz.env, heads, *focused_head, *base_names, ui);
+
+                if res.inner.export_all {
+                    if let Some(fh) = access.heads().get(*focused_head).cloned() {
+                        let head_state = state.open_heads.entry(fh).or_default();
+                        head_state.scene.cmds.push(Cmd::ExportAllNamed);
+                    }
+                }
                 match &mut gantz_response.graph_select {
                     Some(gs) => *gs |= res.inner,
                     None => gantz_response.graph_select = Some(res.inner),
@@ -685,6 +743,8 @@ where
     closed_heads: &'a mut Vec<gantz_ca::Head>,
     /// New branch created from tab double-click: (original_head, new_branch_name).
     new_branch: &'a mut Option<(gantz_ca::Head, String)>,
+    base_names: &'a gantz_ca::registry::Names,
+    base_immutable: bool,
 }
 
 impl<'a, Access> egui_tiles::Behavior<GraphPane> for GraphTreeBehaviour<'a, Access>
@@ -874,6 +934,10 @@ where
             .position(|h| h == pane_head)
             .expect("pane head not found in heads");
 
+        // Compute whether this head should be immutable.
+        let immutable = self.base_immutable
+            && matches!(pane_head, gantz_ca::Head::Branch(name) if self.base_names.contains_key(name));
+
         let head_state = self.state.open_heads.entry(pane_head.clone()).or_default();
         let auto_layout = head_state.auto_layout;
         let layout_flow = head_state.layout_flow;
@@ -890,6 +954,7 @@ where
                 auto_layout,
                 layout_flow,
                 center_view,
+                immutable,
                 data.vm,
                 ui,
             )
@@ -1195,10 +1260,11 @@ fn graph_select(
     env: &dyn Registry,
     heads: &[gantz_ca::Head],
     focused_head: usize,
+    base_names: &gantz_ca::registry::Names,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse> {
     pane_ui(ui, |ui| {
-        widget::GraphSelect::new(env, heads)
+        widget::GraphSelect::new(env, heads, base_names)
             .focused_head(focused_head)
             .show(ui)
     })
@@ -1236,6 +1302,7 @@ fn graph_scene<N>(
     auto_layout: bool,
     layout_flow: egui::Direction,
     center_view: bool,
+    immutable: bool,
     vm: &mut Engine,
     ui: &mut egui::Ui,
 ) -> Option<graph_scene::GraphSceneResponse>
@@ -1271,6 +1338,7 @@ where
                 .auto_layout(auto_layout)
                 .layout_flow(layout_flow)
                 .center_view(center_view)
+                .immutable(immutable)
                 .show(view, &mut head_state.scene, vm, ui);
 
             Some(response)

@@ -25,6 +25,7 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use steel::steel_vm::engine::Engine;
 
+pub mod base;
 pub mod storage;
 
 // ----------------------------------------------------------------------------
@@ -42,11 +43,31 @@ pub mod storage;
 /// - Runs the main GUI update system
 ///
 /// **Note:** This plugin requires `GantzPlugin<N>` to be added first.
-pub struct GantzEguiPlugin<N>(PhantomData<N>);
+pub struct GantzEguiPlugin<N> {
+    base_immutable: bool,
+    _marker: PhantomData<N>,
+}
 
 impl<N> Default for GantzEguiPlugin<N> {
     fn default() -> Self {
-        Self(PhantomData)
+        Self {
+            base_immutable: true,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<N> GantzEguiPlugin<N> {
+    /// Whether base node graphs should be immutable (view-only).
+    ///
+    /// When `true` (the default), graphs for heads whose branch name
+    /// appears in `BaseNames` are shown in immutable mode.
+    ///
+    /// Set to `false` for developer tools like `update-base` that need
+    /// to edit base nodes.
+    pub fn base_immutable(mut self, base_immutable: bool) -> Self {
+        self.base_immutable = base_immutable;
+        self
     }
 }
 
@@ -65,7 +86,9 @@ where
         + 'static,
 {
     fn build(&self, app: &mut App) {
-        app.init_resource::<GuiState>()
+        app.insert_resource(BaseImmutable(self.base_immutable))
+            .init_resource::<BaseNames>()
+            .init_resource::<GuiState>()
             .init_resource::<TraceCapture>()
             .init_resource::<PerfVm>()
             .init_resource::<PerfGui>()
@@ -84,6 +107,7 @@ where
             .add_observer(on_copy_selection::<N>)
             .add_observer(on_paste_selection::<N>)
             .add_observer(on_export_head::<N>)
+            .add_observer(on_export_all_named::<N>)
             .add_observer(on_import_file::<N>)
             // Systems
             .add_systems(
@@ -133,6 +157,19 @@ pub struct GuiState(pub gantz_egui::widget::GantzState);
 #[derive(Resource, Default)]
 pub struct Views(pub HashMap<ca::CommitAddr, gantz_egui::GraphViews>);
 
+/// Names of base nodes baked into the binary.
+///
+/// When present, these names are displayed with a `[base]` prefix and
+/// cannot be deleted from the Graphs pane.
+#[derive(Resource, Default)]
+pub struct BaseNames(pub gantz_ca::registry::Names);
+
+/// Whether base node graphs are immutable (view-only) in the GUI.
+///
+/// Inserted by [`GantzEguiPlugin`] based on its `base_immutable` setting.
+#[derive(Resource)]
+pub struct BaseImmutable(pub bool);
+
 /// In-flight import file dialog task.
 #[derive(Resource)]
 pub struct ImportTask(bevy_tasks::Task<Option<Vec<u8>>>);
@@ -178,6 +215,10 @@ pub struct ExportHeadEvent {
     /// The head entity to export.
     pub head: Entity,
 }
+
+/// Event emitted when the user requests exporting all named graphs.
+#[derive(Event)]
+pub struct ExportAllNamedEvent;
 
 /// Event emitted when a `.gantz` file is dropped onto a pane.
 #[derive(Event)]
@@ -744,6 +785,60 @@ pub fn on_export_head<N>(
         .detach();
 }
 
+/// Handle export-all-named events.
+///
+/// Exports every named graph (with transitive dependencies and views) to a
+/// single `.gantz` file chosen via an `rfd` file dialog.
+pub fn on_export_all_named<N>(
+    _trigger: On<ExportAllNamedEvent>,
+    registry: Res<Registry<N>>,
+    builtins: Res<BuiltinNodes<N>>,
+    views: Res<Views>,
+) where
+    N: 'static + Node + Clone + serde::Serialize + Send + Sync,
+{
+    let node_reg = registry_ref(&registry, &builtins);
+    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+
+    let named_heads: Vec<ca::Head> = registry
+        .names()
+        .keys()
+        .map(|name| ca::Head::Branch(name.clone()))
+        .collect();
+
+    if named_heads.is_empty() {
+        log::info!("ExportAllNamed: no named graphs to export");
+        return;
+    }
+
+    let export_registry = gantz_core::reg::export_heads(&get_node, &registry, named_heads.iter());
+    let export = gantz_egui::export::export_with_views(export_registry, &views);
+
+    let ron_str = match ron::ser::to_string_pretty(&export, ron::ser::PrettyConfig::default()) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("ExportAllNamed: failed to serialize: {e}");
+            return;
+        }
+    };
+
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title("Export All Named Graphs")
+        .set_file_name(&format!("gantz.{}", gantz_egui::export::FILE_EXTENSION))
+        .add_filter("Gantz Export", &[gantz_egui::export::FILE_EXTENSION]);
+    bevy_tasks::AsyncComputeTaskPool::get()
+        .spawn(async move {
+            if let Some(handle) = dialog.save_file().await {
+                if let Err(e) = handle.write(ron_str.as_bytes()).await {
+                    log::error!("ExportAllNamed: failed to write: {e}");
+                } else {
+                    log::info!("Exported all named graphs to {}", handle.file_name());
+                }
+            }
+        })
+        .detach();
+}
+
 /// Handle import file events (dropped `.gantz` files).
 ///
 /// Deserializes the export, optionally computes root names, merges into the
@@ -961,6 +1056,9 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                 gantz_egui::Cmd::ExportHead => {
                     cmds.trigger(ExportHeadEvent { head: entity });
                 }
+                gantz_egui::Cmd::ExportAllNamed => {
+                    cmds.trigger(ExportAllNamedEvent);
+                }
             }
         }
     }
@@ -985,6 +1083,8 @@ pub fn update<N>(
     mut focused: ResMut<head::FocusedHead>,
     mut heads_query: Query<OpenHeadViews<N>, With<head::OpenHead>>,
     import_task: Option<Res<ImportTask>>,
+    base_names: Res<BaseNames>,
+    base_immutable: Res<BaseImmutable>,
     mut cmds: Commands,
 ) -> Result
 where
@@ -1018,7 +1118,8 @@ where
     let response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
-            gantz_egui::widget::Gantz::new(&node_reg)
+            gantz_egui::widget::Gantz::new(&node_reg, &base_names.0)
+                .base_immutable(base_immutable.0)
                 .trace_capture(trace_capture.0.clone(), level)
                 .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
                 .show(&mut *gui_state, focused_ix, &mut access, ui)

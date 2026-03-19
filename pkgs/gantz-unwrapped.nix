@@ -11,6 +11,7 @@
 }:
 let
   src = lib.sourceFilesBySuffices ../. [
+    ".gantz"
     ".lock"
     ".rs"
     ".toml"
@@ -36,6 +37,10 @@ rustPlatform.buildRustPackage {
   pname = manifest.package.name;
   version = manifest.package.version;
   cargoLock.lockFile = ../Cargo.lock;
+  cargoBuildFlags = [
+    "--bin"
+    "gantz"
+  ];
   doCheck = false;
   nativeBuildInputs = [
     makeWrapper
