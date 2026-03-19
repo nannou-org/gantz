@@ -526,9 +526,11 @@ where
                         gantz_ca::Head::Branch(name) => base_names.contains_key(name),
                         _ => false,
                     };
+                    let immutable = is_base && gantz.base_immutable;
                     let res = pane_ui(ui, |ui| {
                         widget::GraphConfig::new(&head, head_state, names)
                             .is_base(is_base)
+                            .immutable(immutable)
                             .show(ui)
                     });
                     if res.inner.new_branch.is_some() {

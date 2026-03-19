@@ -12,6 +12,7 @@ pub struct GraphConfig<'a> {
     head_state: &'a mut OpenHeadState,
     names: &'a gantz_ca::registry::Names,
     is_base: bool,
+    immutable: bool,
 }
 
 /// Response from the [`GraphConfig`] widget.
@@ -33,6 +34,7 @@ impl<'a> GraphConfig<'a> {
             head_state,
             names,
             is_base: false,
+            immutable: false,
         }
     }
 
@@ -42,6 +44,12 @@ impl<'a> GraphConfig<'a> {
     /// new name.
     pub fn is_base(mut self, is_base: bool) -> Self {
         self.is_base = is_base;
+        self
+    }
+
+    /// Whether this graph is immutable - layout controls will be disabled.
+    pub fn immutable(mut self, immutable: bool) -> Self {
+        self.immutable = immutable;
         self
     }
 
@@ -57,29 +65,31 @@ impl<'a> GraphConfig<'a> {
 
         if self.is_base {
             ui.label(
-                egui::RichText::new("Base node - resets on launch")
+                egui::RichText::new("\"base\" node, included with gantz")
                     .italics()
                     .weak(),
             );
         }
 
         // Layout config.
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut self.head_state.auto_layout, "Automatic Layout");
-        });
         ui.checkbox(&mut self.head_state.center_view, "Center View");
-        ui.horizontal(|ui| {
-            ui.label("Flow:");
-            ui.radio_value(
-                &mut self.head_state.layout_flow,
-                egui::Direction::LeftToRight,
-                "Right",
-            );
-            ui.radio_value(
-                &mut self.head_state.layout_flow,
-                egui::Direction::TopDown,
-                "Down",
-            );
+        ui.add_enabled_ui(!self.immutable, |ui| {
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.head_state.auto_layout, "Automatic Layout");
+            });
+            ui.horizontal(|ui| {
+                ui.label("Flow:");
+                ui.radio_value(
+                    &mut self.head_state.layout_flow,
+                    egui::Direction::LeftToRight,
+                    "Right",
+                );
+                ui.radio_value(
+                    &mut self.head_state.layout_flow,
+                    egui::Direction::TopDown,
+                    "Down",
+                );
+            });
         });
 
         let export = ui.button("Export").clicked();
