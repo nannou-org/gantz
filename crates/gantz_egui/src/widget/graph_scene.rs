@@ -60,6 +60,7 @@ pub struct GraphScene<'a, N> {
     auto_layout: bool,
     layout_flow: egui::Direction,
     center_view: bool,
+    immutable: bool,
 }
 
 /// State associated with the [`GraphScene`] widget that can be useful to access
@@ -109,6 +110,7 @@ where
             auto_layout: false,
             layout_flow: egui::Direction::TopDown,
             center_view: false,
+            immutable: false,
         }
     }
 
@@ -145,6 +147,18 @@ where
         self
     }
 
+    /// Set immutable (view-only) mode.
+    ///
+    /// When `true`, prevents structural changes (node dragging, edge
+    /// creation/deletion, node deletion, content editing) while preserving
+    /// navigation and selection.
+    ///
+    /// Default: `false`
+    pub fn immutable(mut self, immutable: bool) -> Self {
+        self.immutable = immutable;
+        self
+    }
+
     /// Show the graph scene.
     ///
     /// Returns a response containing both the scene response and all node responses.
@@ -169,6 +183,7 @@ where
         let graph_response = egui_graph::Graph::from_id(self.id)
             .center_view(self.center_view)
             .selected_nodes(selected)
+            .immutable(self.immutable)
             .show(view, ui, |ui, show| {
                 show.nodes(ui, |nctx, ui| {
                     node_responses =

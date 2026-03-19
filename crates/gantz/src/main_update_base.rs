@@ -22,7 +22,7 @@ mod node;
 fn main() {
     App::new()
         .add_plugins(GantzPlugin::<Box<dyn node::Node>>::default())
-        .add_plugins(GantzEguiPlugin::<Box<dyn node::Node>>::default())
+        .add_plugins(GantzEguiPlugin::<Box<dyn node::Node>>::default().base_immutable(false))
         .insert_resource(BuiltinNodes::<Box<dyn node::Node>>(Box::new(
             Builtins::new(),
         )))

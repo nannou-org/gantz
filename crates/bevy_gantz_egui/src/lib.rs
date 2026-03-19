@@ -43,11 +43,31 @@ pub mod storage;
 /// - Runs the main GUI update system
 ///
 /// **Note:** This plugin requires `GantzPlugin<N>` to be added first.
-pub struct GantzEguiPlugin<N>(PhantomData<N>);
+pub struct GantzEguiPlugin<N> {
+    base_immutable: bool,
+    _marker: PhantomData<N>,
+}
 
 impl<N> Default for GantzEguiPlugin<N> {
     fn default() -> Self {
-        Self(PhantomData)
+        Self {
+            base_immutable: true,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<N> GantzEguiPlugin<N> {
+    /// Whether base node graphs should be immutable (view-only).
+    ///
+    /// When `true` (the default), graphs for heads whose branch name
+    /// appears in `BaseNames` are shown in immutable mode.
+    ///
+    /// Set to `false` for developer tools like `update-base` that need
+    /// to edit base nodes.
+    pub fn base_immutable(mut self, base_immutable: bool) -> Self {
+        self.base_immutable = base_immutable;
+        self
     }
 }
 
@@ -66,7 +86,8 @@ where
         + 'static,
 {
     fn build(&self, app: &mut App) {
-        app.init_resource::<BaseNames>()
+        app.insert_resource(BaseImmutable(self.base_immutable))
+            .init_resource::<BaseNames>()
             .init_resource::<GuiState>()
             .init_resource::<TraceCapture>()
             .init_resource::<PerfVm>()
@@ -142,6 +163,12 @@ pub struct Views(pub HashMap<ca::CommitAddr, gantz_egui::GraphViews>);
 /// cannot be deleted from the Graphs pane.
 #[derive(Resource, Default)]
 pub struct BaseNames(pub gantz_ca::registry::Names);
+
+/// Whether base node graphs are immutable (view-only) in the GUI.
+///
+/// Inserted by [`GantzEguiPlugin`] based on its `base_immutable` setting.
+#[derive(Resource)]
+pub struct BaseImmutable(pub bool);
 
 /// In-flight import file dialog task.
 #[derive(Resource)]
@@ -1057,6 +1084,7 @@ pub fn update<N>(
     mut heads_query: Query<OpenHeadViews<N>, With<head::OpenHead>>,
     import_task: Option<Res<ImportTask>>,
     base_names: Res<BaseNames>,
+    base_immutable: Res<BaseImmutable>,
     mut cmds: Commands,
 ) -> Result
 where
@@ -1091,6 +1119,7 @@ where
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
             gantz_egui::widget::Gantz::new(&node_reg, &base_names.0)
+                .base_immutable(base_immutable.0)
                 .trace_capture(trace_capture.0.clone(), level)
                 .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
                 .show(&mut *gui_state, focused_ix, &mut access, ui)
