@@ -7,8 +7,8 @@
 //! # Stateless example
 //!
 //! ```ignore
-//! fn my_add(a: SteelVal, b: SteelVal) -> SteelVal {
-//!     // ...
+//! fn my_add(a: isize, b: isize) -> isize {
+//!     a + b
 //! }
 //!
 //! // In Node::register:
@@ -20,9 +20,14 @@
 //!
 //! # Stateful example
 //!
+//! State and return types can be any type implementing `FromSteelVal` /
+//! `IntoSteelVal` (including `SteelVal` itself for untyped usage):
+//!
 //! ```ignore
-//! fn my_counter(_trigger: SteelVal, state: &mut SteelVal) -> SteelVal {
-//!     // ...modify state, return output...
+//! // Typed state - no manual SteelVal matching needed.
+//! fn my_counter(_trigger: isize, state: &mut isize) -> isize {
+//!     *state += 1;
+//!     *state
 //! }
 //!
 //! // In Node::register:
@@ -35,6 +40,7 @@
 use super::ExprResult;
 use steel::{
     SteelVal,
+    rvals::{FromSteelVal, IntoSteelVal},
     steel_vm::{engine::Engine, register_fn::RegisterFn},
 };
 
@@ -57,31 +63,48 @@ where
 // Stateful registration
 // ---------------------------------------------------------------------------
 
-/// Trait for registering a Rust function that takes `&mut SteelVal` state as
-/// its last parameter.
+/// Trait for registering a Rust function that takes `&mut S` state as its last
+/// parameter and returns `R`.
 ///
 /// Implementations are generated for arities 0-15 (positional inputs) via the
 /// internal [`impl_register_stateful`] macro. The user writes:
 ///
 /// ```ignore
-/// fn my_fn(input0: A, input1: B, ..., state: &mut SteelVal) -> SteelVal
+/// fn my_fn(input0: A, input1: B, ..., state: &mut S) -> R
 /// ```
 ///
-/// and the trait impl wraps it into a function that:
-/// 1. Accepts `state` as an owned `SteelVal` argument
+/// where `S: FromSteelVal + IntoSteelVal` and `R: IntoSteelVal`.
+///
+/// The trait impl wraps it into a function that:
+/// 1. Accepts `state` as an owned `S` argument (Steel handles `FromSteelVal`)
 /// 2. Calls the user's function with `&mut state`
-/// 3. Returns `vec![output, state]` (converted to a Steel list)
-pub trait RegisterStatefulNodeFn<ARGS> {
+/// 3. Converts output and state back via `IntoSteelVal`
+/// 4. Returns `vec![output, state]` (converted to a Steel list)
+///
+/// `SteelVal` trivially implements both `FromSteelVal` and `IntoSteelVal`, so
+/// existing `&mut SteelVal` signatures continue to work unchanged.
+pub trait RegisterStatefulNodeFn<ARGS, S, R> {
     fn register_node_fn(self, vm: &mut Engine, name: &'static str);
 }
 
 /// Register a stateful Rust function with the Steel VM.
 ///
-/// The function's last parameter must be `&mut SteelVal` (the node's state).
-/// The return type must be `SteelVal` (the node's output).
-pub fn register_stateful<F, ARGS>(vm: &mut Engine, name: &'static str, f: F)
+/// The function's last parameter must be `&mut S` (the node's state) where
+/// `S: FromSteelVal + IntoSteelVal`. The return type `R` must implement
+/// `IntoSteelVal`.
+///
+/// # Typed state example
+///
+/// ```ignore
+/// fn counter(_trigger: isize, state: &mut isize) -> isize {
+///     *state += 1;
+///     *state
+/// }
+/// node::rust::register_stateful(vm, "counter", counter);
+/// ```
+pub fn register_stateful<F, ARGS, S, R>(vm: &mut Engine, name: &'static str, f: F)
 where
-    F: RegisterStatefulNodeFn<ARGS>,
+    F: RegisterStatefulNodeFn<ARGS, S, R>,
 {
     f.register_node_fn(vm, name);
 }
@@ -90,32 +113,42 @@ where
 macro_rules! impl_register_stateful {
     // Base case: 0 positional inputs, state only.
     (0 =>) => {
-        impl<FN> RegisterStatefulNodeFn<()> for FN
+        impl<FN, S, R> RegisterStatefulNodeFn<(), S, R> for FN
         where
-            FN: Fn(&mut SteelVal) -> SteelVal + Send + Sync + 'static,
+            FN: Fn(&mut S) -> R + Send + Sync + 'static,
+            S: FromSteelVal + IntoSteelVal,
+            R: IntoSteelVal,
         {
             fn register_node_fn(self, vm: &mut Engine, name: &'static str) {
-                vm.register_fn(name, move |s: SteelVal| -> Vec<SteelVal> {
-                    let mut state = s;
+                vm.register_fn(name, move |s_raw: S| -> Vec<SteelVal> {
+                    let mut state = s_raw;
                     let output = (self)(&mut state);
-                    vec![output, state]
+                    vec![
+                        output.into_steelval().expect("output IntoSteelVal failed"),
+                        state.into_steelval().expect("state IntoSteelVal failed"),
+                    ]
                 });
             }
         }
     };
     // N positional inputs + state. Takes pairs of (TypeParam, binding_name).
     ($n:tt => $($T:ident $b:ident),+) => {
-        impl<FN, $($T),+> RegisterStatefulNodeFn<($($T,)+)> for FN
+        impl<FN, $($T,)+ S, R> RegisterStatefulNodeFn<($($T,)+), S, R> for FN
         where
-            FN: Fn($($T,)+ &mut SteelVal) -> SteelVal + Send + Sync + 'static,
-            $($T: steel::rvals::FromSteelVal,)+
+            FN: Fn($($T,)+ &mut S) -> R + Send + Sync + 'static,
+            $($T: FromSteelVal,)+
+            S: FromSteelVal + IntoSteelVal,
+            R: IntoSteelVal,
         {
             #[allow(non_snake_case)]
             fn register_node_fn(self, vm: &mut Engine, name: &'static str) {
-                vm.register_fn(name, move |$($b: $T,)+ s: SteelVal| -> Vec<SteelVal> {
-                    let mut state = s;
+                vm.register_fn(name, move |$($b: $T,)+ s_raw: S| -> Vec<SteelVal> {
+                    let mut state = s_raw;
                     let output = (self)($($b,)+ &mut state);
-                    vec![output, state]
+                    vec![
+                        output.into_steelval().expect("output IntoSteelVal failed"),
+                        state.into_steelval().expect("state IntoSteelVal failed"),
+                    ]
                 });
             }
         }
@@ -190,7 +223,7 @@ pub fn expr_stateful(fn_name: &str, args: &[&str]) -> ExprResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use steel::{rvals::FromSteelVal, steel_vm::engine::Engine};
+    use steel::steel_vm::engine::Engine;
 
     #[test]
     fn test_register_stateless() {
@@ -247,6 +280,36 @@ mod tests {
         let list = Vec::<SteelVal>::from_steelval(&result[0]).unwrap();
         assert_eq!(list[0], SteelVal::IntV(1));
         assert_eq!(list[1], SteelVal::IntV(1));
+    }
+
+    #[test]
+    fn test_register_stateful_typed_with_input() {
+        let mut vm = Engine::new_base();
+        fn counter(_trigger: isize, state: &mut isize) -> isize {
+            *state += 1;
+            *state
+        }
+        register_stateful(&mut vm, "test-typed-counter", counter);
+        let result = vm.run("(test-typed-counter 0 0)").unwrap();
+        assert_eq!(result.len(), 1);
+        let list = Vec::<SteelVal>::from_steelval(&result[0]).unwrap();
+        assert_eq!(list[0], SteelVal::IntV(1));
+        assert_eq!(list[1], SteelVal::IntV(1));
+    }
+
+    #[test]
+    fn test_register_stateful_typed_no_inputs() {
+        let mut vm = Engine::new_base();
+        fn toggle(state: &mut bool) -> bool {
+            *state = !*state;
+            *state
+        }
+        register_stateful(&mut vm, "test-toggle", toggle);
+        let result = vm.run("(test-toggle #f)").unwrap();
+        assert_eq!(result.len(), 1);
+        let list = Vec::<SteelVal>::from_steelval(&result[0]).unwrap();
+        assert_eq!(list[0], SteelVal::BoolV(true));
+        assert_eq!(list[1], SteelVal::BoolV(true));
     }
 
     #[test]

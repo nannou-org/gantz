@@ -331,6 +331,78 @@ fn test_state_only_fn() {
 }
 
 // ---------------------------------------------------------------------------
+// Stateful: typed counter (isize state, no SteelVal matching)
+// ---------------------------------------------------------------------------
+
+/// A Rust fn with typed `isize` state - no manual `SteelVal` matching needed.
+fn rust_typed_counter(_trigger: SteelVal, state: &mut isize) -> isize {
+    *state += 1;
+    *state
+}
+
+/// A stateful counter node using typed state.
+#[derive(Debug)]
+struct RustTypedCounter;
+
+impl Node for RustTypedCounter {
+    fn n_inputs(&self, _: node::MetaCtx) -> usize {
+        1
+    }
+    fn n_outputs(&self, _: node::MetaCtx) -> usize {
+        1
+    }
+    fn stateful(&self, _: node::MetaCtx) -> bool {
+        true
+    }
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+        match ctx.inputs().first() {
+            Some(Some(trigger)) => node::rust::expr_stateful("rust-typed-counter", &[trigger]),
+            _ => node::parse_expr("state"),
+        }
+    }
+    fn register(&self, mut ctx: node::RegCtx<'_, '_>) {
+        node::rust::register_stateful(ctx.vm(), "rust-typed-counter", rust_typed_counter);
+        let path = ctx.path().to_vec();
+        node::state::init_value_if_absent(ctx.vm(), &path, || SteelVal::IntV(0)).unwrap();
+    }
+}
+
+/// Build: push -> typed_counter, call push 3 times, verify state = 3.
+#[test]
+fn test_stateful_typed_counter() {
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let push = node_push();
+    let counter = RustTypedCounter;
+
+    let push = g.add_node(Box::new(push) as Box<dyn DebugNode>);
+    let counter = g.add_node(Box::new(counter) as Box<_>);
+    g.add_edge(push, counter, Edge::from((0, 0)));
+
+    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+
+    for f in module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    // Push 3 times.
+    for _ in 0..3 {
+        vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
+            .unwrap();
+    }
+
+    // Verify counter state is 3.
+    let val = node::state::extract_value(&vm, &[counter.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(val, SteelVal::IntV(3));
+}
+
+// ---------------------------------------------------------------------------
 // Closure with captured state
 // ---------------------------------------------------------------------------
 
