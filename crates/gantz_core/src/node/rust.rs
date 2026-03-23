@@ -39,7 +39,7 @@
 
 use super::ExprResult;
 use steel::{
-    SteelVal,
+    SteelErr, SteelVal,
     rvals::{FromSteelVal, IntoSteelVal},
     steel_vm::{engine::Engine, register_fn::RegisterFn},
 };
@@ -120,13 +120,10 @@ macro_rules! impl_register_stateful {
             R: IntoSteelVal,
         {
             fn register_node_fn(self, vm: &mut Engine, name: &'static str) {
-                vm.register_fn(name, move |s_raw: S| -> Vec<SteelVal> {
+                vm.register_fn(name, move |s_raw: S| -> Result<Vec<SteelVal>, SteelErr> {
                     let mut state = s_raw;
                     let output = (self)(&mut state);
-                    vec![
-                        output.into_steelval().expect("output IntoSteelVal failed"),
-                        state.into_steelval().expect("state IntoSteelVal failed"),
-                    ]
+                    Ok(vec![output.into_steelval()?, state.into_steelval()?])
                 });
             }
         }
@@ -142,13 +139,10 @@ macro_rules! impl_register_stateful {
         {
             #[allow(non_snake_case)]
             fn register_node_fn(self, vm: &mut Engine, name: &'static str) {
-                vm.register_fn(name, move |$($b: $T,)+ s_raw: S| -> Vec<SteelVal> {
+                vm.register_fn(name, move |$($b: $T,)+ s_raw: S| -> Result<Vec<SteelVal>, SteelErr> {
                     let mut state = s_raw;
                     let output = (self)($($b,)+ &mut state);
-                    vec![
-                        output.into_steelval().expect("output IntoSteelVal failed"),
-                        state.into_steelval().expect("state IntoSteelVal failed"),
-                    ]
+                    Ok(vec![output.into_steelval()?, state.into_steelval()?])
                 });
             }
         }
