@@ -1,4 +1,4 @@
-//! Helpers for writing gantz [`Node`] expressions as natural Rust functions.
+//! Helpers for writing gantz [`super::Node`] expressions as natural Rust functions.
 //!
 //! Instead of manually writing Steel (Scheme) strings, users can write
 //! standard Rust functions with named parameters and register them with the
@@ -67,7 +67,7 @@ where
 /// parameter and returns `R`.
 ///
 /// Implementations are generated for arities 0-15 (positional inputs) via the
-/// internal [`impl_register_stateful`] macro. The user writes:
+/// internal `impl_register_stateful` macro. The user writes:
 ///
 /// ```ignore
 /// fn my_fn(input0: A, input1: B, ..., state: &mut S) -> R
