@@ -58,6 +58,7 @@ pub struct Gantz<'a> {
     perf_vm: Option<&'a mut widget::PerfCapture>,
     perf_gui: Option<&'a mut widget::PerfCapture>,
     base_immutable: bool,
+    persist_state_names: Option<&'a std::collections::HashSet<String>>,
 }
 
 enum LogSource {
@@ -201,6 +202,8 @@ pub struct GantzResponse {
     pub demo_changed: Option<(gantz_ca::Head, Option<String>)>,
     /// A base graph should be reset to its original state.
     pub reset_base_graph: Option<gantz_ca::Head>,
+    /// The "Persist State" toggle changed: (branch_name, new_value).
+    pub persist_state_changed: Option<(String, bool)>,
 }
 
 /// State for editing a tab name via double-click.
@@ -295,12 +298,19 @@ impl<'a> Gantz<'a> {
             perf_vm: None,
             perf_gui: None,
             base_immutable: true,
+            persist_state_names: None,
         }
     }
 
     /// Provide demo graph associations for the config dropdown.
     pub fn demos(mut self, demos: &'a HashMap<gantz_ca::CommitAddr, String>) -> Self {
         self.demos = Some(demos);
+        self
+    }
+
+    /// Set the names of graphs that have state persistence enabled.
+    pub fn persist_state_names(mut self, names: &'a std::collections::HashSet<String>) -> Self {
+        self.persist_state_names = Some(names);
         self
     }
 
@@ -391,6 +401,7 @@ impl<'a> Gantz<'a> {
             file_drops: Vec::new(),
             demo_changed: None,
             reset_base_graph: None,
+            persist_state_changed: None,
         };
 
         // The context for traversing the tree of tiles.
@@ -561,12 +572,20 @@ where
                         _ => None,
                     };
 
+                    let persist_state = match &head {
+                        gantz_ca::Head::Branch(name) => gantz
+                            .persist_state_names
+                            .map(|s| s.contains(name))
+                            .unwrap_or(false),
+                        _ => false,
+                    };
                     let res = pane_ui(ui, |ui| {
-                        widget::GraphConfig::new(&head, head_state, names)
+                        widget::GraphConfig::new(&head, head_state, names, gantz.env)
                             .is_base(is_base)
                             .immutable(immutable)
                             .demo_names(&demo_names_vec)
                             .current_demo(current_demo)
+                            .persist_state(persist_state)
                             .show(ui)
                     });
                     if res.inner.new_branch.is_some() {
@@ -577,6 +596,11 @@ where
                     }
                     if res.inner.reset_base_graph {
                         gantz_response.reset_base_graph = Some(head.clone());
+                    }
+                    if let Some(new_val) = res.inner.persist_state_changed {
+                        if let gantz_ca::Head::Branch(name) = &head {
+                            gantz_response.persist_state_changed = Some((name.clone(), new_val));
+                        }
                     }
                     if res.inner.export {
                         let head_state = state.open_heads.entry(head).or_default();

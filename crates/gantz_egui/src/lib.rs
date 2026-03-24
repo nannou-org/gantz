@@ -222,6 +222,8 @@ pub enum Cmd {
     ExportAllNamed,
     /// Open the command palette for node creation.
     OpenCommandPalette,
+    /// Persist live VM state for the current head into `States`.
+    PersistState,
 }
 
 /// A command to create a new node.
@@ -355,12 +357,16 @@ impl<'a> NodeCtx<'a> {
 
     /// Register the given value as the node's new state.
     pub fn update_value(&mut self, val: SteelVal) -> Result<(), SteelErr> {
-        node::state::update_value(self.vm, self.path, val)
+        node::state::update_value(self.vm, self.path, val)?;
+        self.cmds.push(Cmd::PersistState);
+        Ok(())
     }
 
     /// Register the given value as the node's new state.
     pub fn update<T: IntoSteelVal>(&mut self, val: T) -> Result<(), SteelErr> {
-        node::state::update(self.vm, self.path, val)
+        node::state::update(self.vm, self.path, val)?;
+        self.cmds.push(Cmd::PersistState);
+        Ok(())
     }
 
     /// Queue a call to the generated push evaluation function for this node.

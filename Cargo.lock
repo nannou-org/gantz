@@ -2984,6 +2984,7 @@ version = "0.2.0"
 dependencies = [
  "env_logger",
  "gantz_ca",
+ "hex",
  "petgraph",
  "serde",
  "serde_json",

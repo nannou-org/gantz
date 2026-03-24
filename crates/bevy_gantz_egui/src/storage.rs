@@ -9,6 +9,7 @@ use bevy_egui::egui;
 use bevy_gantz::clone_graph;
 use bevy_gantz::reg::Registry;
 use bevy_gantz::storage::{Load, Save, load, save};
+use bevy_gantz::{PersistStateConfig, States};
 use gantz_ca as ca;
 use gantz_core::node::graph::Graph;
 use serde::de::DeserializeOwned;
@@ -22,6 +23,10 @@ mod key {
     pub const GUI_STATE: &str = "gui-state";
     /// The key at which egui memory (widget states) is saved/loaded.
     pub const EGUI_MEMORY: &str = "egui-memory-ron";
+    /// The key at which serialized node states are stored.
+    pub const NODE_STATES: &str = "node-states";
+    /// The key at which the persist-state configuration is stored.
+    pub const PERSIST_STATE_CONFIG: &str = "persist-state-config";
 }
 
 /// Save all graph views to storage under a single key.
@@ -102,4 +107,30 @@ pub fn load_egui_memory(storage: &impl Load, ctx: &egui::Context) {
     if let Some(memory) = load::<egui::Memory>(storage, key::EGUI_MEMORY) {
         ctx.memory_mut(|m| *m = memory);
     }
+}
+
+/// Save serialized node states to storage.
+pub fn save_states(storage: &mut impl Save, states: &States) {
+    save(storage, key::NODE_STATES, &**states);
+}
+
+/// Load serialized node states from storage.
+pub fn load_states(storage: &impl Load) -> States {
+    States(
+        load::<HashMap<ca::CommitAddr, gantz_core::node::Bytes>>(storage, key::NODE_STATES)
+            .unwrap_or_default(),
+    )
+}
+
+/// Save the persist-state configuration to storage.
+pub fn save_persist_state_config(storage: &mut impl Save, config: &PersistStateConfig) {
+    save(storage, key::PERSIST_STATE_CONFIG, &**config);
+}
+
+/// Load the persist-state configuration from storage.
+pub fn load_persist_state_config(storage: &impl Load) -> PersistStateConfig {
+    PersistStateConfig(
+        load::<std::collections::HashSet<String>>(storage, key::PERSIST_STATE_CONFIG)
+            .unwrap_or_default(),
+    )
 }

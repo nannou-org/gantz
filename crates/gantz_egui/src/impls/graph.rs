@@ -1,8 +1,9 @@
 use crate::{Cmd, NodeCtx, NodeUi, Registry, widget::node_inspector};
+use gantz_core::Node;
 
 impl<N> NodeUi for gantz_core::node::GraphNode<N>
 where
-    N: gantz_ca::CaHash,
+    N: gantz_ca::CaHash + Node,
 {
     fn name(&self, _: &dyn Registry) -> &str {
         "graph"
@@ -13,8 +14,13 @@ where
         ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui_graph::FramedResponse<egui::Response> {
+        let registry = ctx.registry();
+        let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
+        let meta_ctx = gantz_core::node::MetaCtx::new(&get_node);
+        let stateful = self.stateful(meta_ctx);
         uictx.framed(|ui, _sockets| {
-            let res = ui.add(egui::Label::new("graph").selectable(false));
+            let label = if stateful { "graph˚" } else { "graph" };
+            let res = ui.add(egui::Label::new(label).selectable(false));
             if ui.response().double_clicked() {
                 ctx.cmds.push(Cmd::OpenPath(ctx.path().to_vec()));
             }

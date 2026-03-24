@@ -2,6 +2,8 @@
 
 use super::gantz::OpenHeadState;
 use super::head_name_edit::{head_name, head_name_edit};
+use crate::Registry;
+use gantz_core::node;
 
 /// Per-head graph configuration widget.
 ///
@@ -11,10 +13,12 @@ pub struct GraphConfig<'a> {
     head: &'a gantz_ca::Head,
     head_state: &'a mut OpenHeadState,
     names: &'a gantz_ca::registry::Names,
+    registry: &'a dyn Registry,
     is_base: bool,
     immutable: bool,
     demo_names: &'a [&'a str],
     current_demo: Option<&'a str>,
+    persist_state: bool,
 }
 
 /// Response from the [`GraphConfig`] widget.
@@ -27,6 +31,8 @@ pub struct GraphConfigResponse {
     pub demo_changed: Option<Option<String>>,
     /// The "Reset" button was clicked for a base graph.
     pub reset_base_graph: bool,
+    /// The "Persist State" toggle changed (Some(new_value) if changed).
+    pub persist_state_changed: Option<bool>,
 }
 
 impl<'a> GraphConfig<'a> {
@@ -34,15 +40,18 @@ impl<'a> GraphConfig<'a> {
         head: &'a gantz_ca::Head,
         head_state: &'a mut OpenHeadState,
         names: &'a gantz_ca::registry::Names,
+        registry: &'a dyn Registry,
     ) -> Self {
         Self {
             head,
             head_state,
             names,
+            registry,
             is_base: false,
             immutable: false,
             demo_names: &[],
             current_demo: None,
+            persist_state: false,
         }
     }
 
@@ -73,15 +82,59 @@ impl<'a> GraphConfig<'a> {
         self
     }
 
+    /// Whether state persistence is currently enabled for this graph.
+    pub fn persist_state(mut self, persist_state: bool) -> Self {
+        self.persist_state = persist_state;
+        self
+    }
+
     pub fn show(self, ui: &mut egui::Ui) -> GraphConfigResponse {
-        // Name editing TextEdit with per-head temp state.
-        let edit_id = egui::Id::new("graph_config_name_edit").with(self.head);
-        let mut name = ui
-            .memory_mut(|m| m.data.get_temp::<String>(edit_id))
-            .unwrap_or_else(|| head_name(self.head));
-        let name_res = head_name_edit(self.head, &mut name, self.names, ui);
-        ui.memory_mut(|m| m.data.insert_temp(edit_id, name));
-        let new_branch = name_res.new_branch;
+        // Export button (right) + name field (filling remaining space).
+        let (export, new_branch) = ui
+            .horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let export = ui
+                        .button("\u{2B07}")
+                        .on_hover_text("export this graph")
+                        .clicked();
+                    let edit_id = egui::Id::new("graph_config_name_edit").with(self.head);
+                    let mut name = ui
+                        .memory_mut(|m| m.data.get_temp::<String>(edit_id))
+                        .unwrap_or_else(|| head_name(self.head));
+                    let name_res = head_name_edit(self.head, &mut name, self.names, ui);
+                    ui.memory_mut(|m| m.data.insert_temp(edit_id, name));
+                    (export, name_res.new_branch)
+                })
+                .inner
+            })
+            .inner;
+
+        // Persist State toggle - visible only for named, stateful, non-base graphs.
+        let is_stateful = match self.head {
+            gantz_ca::Head::Branch(name) => self
+                .names
+                .get(name)
+                .map(|commit_ca| {
+                    let ca = gantz_ca::ContentAddr::from(*commit_ca);
+                    let get_node = |ca: &gantz_ca::ContentAddr| self.registry.node(ca);
+                    let meta_ctx = node::MetaCtx::new(&get_node);
+                    self.registry
+                        .node(&ca)
+                        .map(|n| n.stateful(meta_ctx))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false),
+            _ => false,
+        };
+        let is_named = matches!(self.head, gantz_ca::Head::Branch(_));
+        let show_persist = is_stateful && is_named && !self.is_base;
+        let mut persist_state_changed = None;
+        if show_persist {
+            let mut persist = self.persist_state;
+            if ui.checkbox(&mut persist, "Persist State").changed() {
+                persist_state_changed = Some(persist);
+            }
+        }
 
         // Demo graph selector (only for named, non-demo graphs).
         let is_named = matches!(self.head, gantz_ca::Head::Branch(_));
@@ -159,12 +212,12 @@ impl<'a> GraphConfig<'a> {
             });
         });
 
-        let export = ui.button("Export").clicked();
         GraphConfigResponse {
             new_branch,
             export,
             demo_changed,
             reset_base_graph,
+            persist_state_changed,
         }
     }
 }

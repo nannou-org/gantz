@@ -83,3 +83,21 @@ pub fn prune_unused<N>(
     let required = gantz_core::reg::required_commits(&get_node, &registry, head_iter);
     registry.prune_unreachable(&required);
 }
+
+/// Prune serialized node states for unreachable commits.
+///
+/// Retains only states whose commit address is reachable from an open head.
+/// Should run after `prune_unused`.
+pub fn prune_states<N>(
+    registry: Res<Registry<N>>,
+    builtins: Res<BuiltinNodes<N>>,
+    mut states: ResMut<crate::States>,
+    heads: Query<&HeadRef, With<OpenHead>>,
+) where
+    N: 'static + Node + Send + Sync,
+{
+    let get_node = |ca: &ca::ContentAddr| lookup_node(&registry, &**builtins, ca);
+    let head_iter = heads.iter().map(|h| &**h);
+    let required = gantz_core::reg::required_commits(&get_node, &registry, head_iter);
+    states.retain(|ca, _| required.contains(ca));
+}

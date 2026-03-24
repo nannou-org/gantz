@@ -9,6 +9,7 @@
 use crate::BuiltinNodes;
 use crate::head;
 use crate::reg::{Registry, lookup_node};
+use crate::state;
 use bevy_ecs::prelude::*;
 use bevy_log as log;
 use gantz_ca as ca;
@@ -120,16 +121,27 @@ pub fn on_head_opened<N>(
     mut vms: NonSendMut<head::HeadVms>,
     mut cmds: Commands,
     graphs: Query<&head::WorkingGraph<N>>,
+    states: Res<state::States>,
+    config: Res<state::PersistStateConfig>,
 ) where
     N: 'static + Node + Send + Sync,
 {
+    let event = trigger.event();
     init_head_vm(
-        trigger.event().entity,
+        event.entity,
         &registry,
         &builtins,
         &mut vms,
         &mut cmds,
         &graphs,
+    );
+    state::restore_for_head(
+        &event.head,
+        event.entity,
+        &registry,
+        &states,
+        &config,
+        &mut vms,
     );
 }
 
@@ -141,16 +153,27 @@ pub fn on_head_changed<N>(
     mut vms: NonSendMut<head::HeadVms>,
     mut cmds: Commands,
     graphs: Query<&head::WorkingGraph<N>>,
+    states: Res<state::States>,
+    config: Res<state::PersistStateConfig>,
 ) where
     N: 'static + Node + Send + Sync,
 {
+    let event = trigger.event();
     init_head_vm(
-        trigger.event().entity,
+        event.entity,
         &registry,
         &builtins,
         &mut vms,
         &mut cmds,
         &graphs,
+    );
+    state::restore_for_head(
+        &event.new_head,
+        event.entity,
+        &registry,
+        &states,
+        &config,
+        &mut vms,
     );
 }
 
@@ -172,6 +195,7 @@ pub fn on_eval(trigger: On<EvalEvent>, mut vms: NonSendMut<head::HeadVms>, mut c
             entity: event.head,
             duration: start.elapsed(),
         });
+        cmds.trigger(state::PersistEvent { head: event.head });
     }
 }
 
@@ -179,45 +203,15 @@ pub fn on_eval(trigger: On<EvalEvent>, mut vms: NonSendMut<head::HeadVms>, mut c
 // Systems
 // ---------------------------------------------------------------------------
 
-/// Initialize VMs for all open heads (exclusive startup system).
-pub fn setup<N>(world: &mut World)
-where
-    N: 'static + Node + Send + Sync,
-{
-    log::info!("Setting up VMs for all open heads!");
-
-    let entities: Vec<Entity> = world
-        .query_filtered::<Entity, With<head::OpenHead>>()
-        .iter(world)
-        .collect();
-
-    let mut vms = head::HeadVms::default();
-    let mut compiled_updates: Vec<(Entity, String)> = vec![];
-    for entity in entities {
-        let registry = world.resource::<Registry<N>>();
-        let builtins = world.resource::<BuiltinNodes<N>>();
-        let get_node = |ca: &ca::ContentAddr| lookup_node(registry, &**builtins, ca);
-        let Some(wg) = world.get::<head::WorkingGraph<N>>(entity) else {
-            continue;
-        };
-        let (vm, module) = match init(&get_node, &**wg) {
-            Ok(result) => result,
-            Err(e) => {
-                log::error!("Failed to init VM for entity {entity}: {e}");
-                continue;
-            }
-        };
-        vms.insert(entity, vm);
-        compiled_updates.push((entity, module));
+/// Trigger [`head::OpenedEvent`] for all open heads so that the existing
+/// observer chain handles VM initialization and state restoration.
+pub fn setup(heads: Query<(Entity, &head::HeadRef), With<head::OpenHead>>, mut cmds: Commands) {
+    for (entity, head_ref) in heads.iter() {
+        cmds.trigger(head::OpenedEvent {
+            entity,
+            head: (**head_ref).clone(),
+        });
     }
-
-    for (entity, compiled_module) in compiled_updates {
-        if let Some(mut compiled) = world.get_mut::<head::CompiledModule>(entity) {
-            *compiled = head::CompiledModule(compiled_module);
-        }
-    }
-
-    world.insert_non_send_resource(vms);
 }
 
 /// Detect graph changes and recompile into VMs.

@@ -9,8 +9,93 @@ use steel::{
     gc::Gc,
     rerrs::ErrorKind,
     rvals::{FromSteelVal, IntoSteelVal, SteelHashMap},
-    steel_vm::engine::Engine,
+    steel_vm::{engine::Engine, register_fn::RegisterFn},
 };
+
+/// Opaque serialized byte payload with hex-aware serde.
+///
+/// In human-readable formats (RON, JSON) serializes as a hex string.
+/// In binary formats serializes as raw bytes.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Bytes(pub Vec<u8>);
+
+impl Bytes {
+    /// Consume the wrapper and return the inner `Vec<u8>`.
+    pub fn into_vec(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+impl From<Vec<u8>> for Bytes {
+    fn from(v: Vec<u8>) -> Self {
+        Self(v)
+    }
+}
+
+impl std::ops::Deref for Bytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Bytes {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+impl std::fmt::Debug for Bytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const MAX_HEX: usize = 64;
+        let hex = hex::encode(&self.0);
+        if hex.len() <= MAX_HEX {
+            write!(f, "Bytes({hex})")
+        } else {
+            write!(f, "Bytes({}...[{}])", &hex[..MAX_HEX], self.0.len())
+        }
+    }
+}
+
+impl std::fmt::Display for Bytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&hex::encode(&self.0))
+    }
+}
+
+impl Serialize for Bytes {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&hex::encode(&self.0))
+        } else {
+            serializer.serialize_bytes(&self.0)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Bytes {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        if deserializer.is_human_readable() {
+            let s = String::deserialize(deserializer)?;
+            hex::decode(&s).map(Bytes).map_err(serde::de::Error::custom)
+        } else {
+            struct BytesVisitor;
+            impl<'de> serde::de::Visitor<'de> for BytesVisitor {
+                type Value = Bytes;
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str("byte array")
+                }
+                fn visit_byte_buf<E: serde::de::Error>(self, v: Vec<u8>) -> Result<Bytes, E> {
+                    Ok(Bytes(v))
+                }
+                fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Bytes, E> {
+                    Ok(Bytes(v.to_vec()))
+                }
+            }
+            deserializer.deserialize_byte_buf(BytesVisitor)
+        }
+    }
+}
 
 /// A wrapper around a **Node** that adds some persistent state.
 #[derive(Clone, Debug, Deserialize, Serialize, CaHash)]
@@ -331,4 +416,93 @@ pub fn init_if_absent<S: NodeState>(
         update_value(vm, path, val)?;
     }
     Ok(())
+}
+
+/// Extract the entire ROOT_STATE from the VM.
+pub fn extract_root(vm: &Engine) -> Result<SteelVal, SteelErr> {
+    vm.extract_value(ROOT_STATE)
+}
+
+/// Replace the entire ROOT_STATE in the VM.
+pub fn restore_root(vm: &mut Engine, state: SteelVal) {
+    vm.update_value(ROOT_STATE, state);
+}
+
+/// Serialize an arbitrary `SteelVal` to `Bytes` via Steel's `serialize-value`.
+fn serialize_steelval(vm: &mut Engine, val: SteelVal) -> Result<Bytes, SteelErr> {
+    use std::sync::{Arc, Mutex};
+
+    let buf: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
+    let buf_clone = buf.clone();
+    vm.register_fn("__gantz-capture-bytes!", move |v: Vec<isize>| -> bool {
+        let bytes: Vec<u8> = v.into_iter().map(|i| i as u8).collect();
+        *buf_clone.lock().unwrap() = Some(bytes);
+        true
+    });
+
+    vm.register_value("__gantz-serialize-tmp", val);
+    vm.run(
+        "(__gantz-capture-bytes! (bytes->list (serialized->bytes (serialize-value __gantz-serialize-tmp))))",
+    )?;
+
+    let bytes = buf
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or_else(|| SteelErr::new(ErrorKind::Generic, "byte capture failed".into()))?;
+    Ok(Bytes(bytes))
+}
+
+/// Deserialize `Bytes` back to a `SteelVal` via Steel's `deserialize-value`.
+fn deserialize_steelval(vm: &mut Engine, bytes: &[u8]) -> Result<SteelVal, SteelErr> {
+    use steel::rvals::SteelByteVector;
+    let bv = SteelByteVector::new(bytes.to_vec());
+    vm.register_value("__gantz-deserialize-tmp", SteelVal::ByteVector(bv));
+    let results = vm.run("(deserialize-value (bytes->serialized __gantz-deserialize-tmp))")?;
+    results.into_iter().last().ok_or_else(|| {
+        SteelErr::new(
+            ErrorKind::Generic,
+            "deserialize-value returned no result".into(),
+        )
+    })
+}
+
+/// Serialize ROOT_STATE to bytes via Steel's `serialize-value` and `serialized->bytes`.
+///
+/// Returns an error if the state contains values that Steel cannot serialize
+/// (e.g. futures, continuations, iterators).
+pub fn serialize_root(vm: &mut Engine) -> Result<Bytes, SteelErr> {
+    let root = extract_root(vm)?;
+    serialize_steelval(vm, root)
+}
+
+/// Deserialize bytes and restore as ROOT_STATE.
+///
+/// The bytes must have been produced by [`serialize_root`].
+pub fn deserialize_and_restore_root(vm: &mut Engine, bytes: &[u8]) -> Result<(), SteelErr> {
+    let state = deserialize_steelval(vm, bytes)?;
+    restore_root(vm, state);
+    Ok(())
+}
+
+/// Serialize the state subtree at `path` (e.g. `[3]` or `[3, 1]`).
+///
+/// Returns `None` if no entry exists at that path.
+pub fn serialize_entry(vm: &mut Engine, path: &[usize]) -> Result<Option<Bytes>, SteelErr> {
+    let Some(val) = extract_value(vm, path)? else {
+        return Ok(None);
+    };
+    serialize_steelval(vm, val).map(Some)
+}
+
+/// Deserialize bytes and insert at `path` in `%root-state`.
+///
+/// The bytes must have been produced by [`serialize_entry`] or `serialize_steelval`.
+pub fn deserialize_and_restore_entry(
+    vm: &mut Engine,
+    path: &[usize],
+    bytes: &[u8],
+) -> Result<(), SteelErr> {
+    let val = deserialize_steelval(vm, bytes)?;
+    update_value(vm, path, val)
 }

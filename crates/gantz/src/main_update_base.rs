@@ -1,10 +1,11 @@
 //! Developer tool for authoring base nodes.
 //!
-//! Starts with the registry populated from `base/base.gantz`. GUI state
-//! (open heads, views, egui memory) is persisted under a separate
-//! `PkvStore` so it never collides with the main gantz binary's storage.
-//! On every debounced input event, named graphs are exported back to
-//! `base/base.gantz` and GUI state is saved.
+//! Starts with the registry populated from `base/base.gantz`, including
+//! any per-node VM state stored in the export. GUI state (open heads,
+//! views, egui memory) is persisted under a separate `PkvStore` so it
+//! never collides with the main gantz binary's storage. On every
+//! debounced input event, named graphs and their node state are exported
+//! back to `base/base.gantz` and GUI state is saved.
 //!
 //! Usage: `cargo run -p gantz --bin update-base`
 
@@ -14,7 +15,7 @@ use bevy_gantz::{
     BuiltinNodes, CompiledModule, FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead,
     OpenHeadDataReadOnly, WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
-    timestamp, vm,
+    reg, timestamp, vm,
 };
 use bevy_gantz_egui::{GantzEguiPlugin, GuiState, HeadGuiState, TraceCapture, Views};
 use bevy_pkv::PkvStore;
@@ -47,7 +48,14 @@ fn main() {
                 setup_gui_state,
                 bevy_gantz_egui::base::load::<Box<dyn node::Node>>.after(setup_gui_state),
                 setup_open.after(bevy_gantz_egui::base::load::<Box<dyn node::Node>>),
-                vm::setup::<Box<dyn node::Node>>.after(setup_open),
+                reg::prune_unused::<Box<dyn node::Node>>
+                    .after(setup_gui_state)
+                    .after(setup_open),
+                bevy_gantz_egui::prune_views::<Box<dyn node::Node>>
+                    .after(reg::prune_unused::<Box<dyn node::Node>>),
+                reg::prune_states::<Box<dyn node::Node>>
+                    .after(reg::prune_unused::<Box<dyn node::Node>>),
+                vm::setup.after(reg::prune_unused::<Box<dyn node::Node>>),
             ),
         )
         .add_systems(EguiPrimaryContextPass, load_egui_memory)

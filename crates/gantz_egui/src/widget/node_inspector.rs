@@ -64,8 +64,13 @@ pub fn table(
         None
     };
 
+    let display_name = if is_stateful {
+        format!("{name}˚")
+    } else {
+        name.to_string()
+    };
     let label_response = ui.add(
-        egui::Label::new(egui::RichText::new(name).strong())
+        egui::Label::new(egui::RichText::new(&display_name).strong())
             .selectable(false)
             .sense(egui::Sense::click()),
     );
