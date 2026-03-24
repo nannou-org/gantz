@@ -26,6 +26,7 @@ pub mod id;
 pub mod pull;
 pub mod push;
 pub mod ref_;
+pub mod rust;
 pub mod state;
 
 /// The definitive abstraction of a gantz graph, the gantz `Node` trait.
