@@ -18,6 +18,7 @@ bevy_pkv.workspace = true
 dyn-clone.workspace = true
 dyn-hash.workspace = true
 egui_graph.workspace = true
+gantz_base.workspace = true
 gantz_ca.workspace = true
 gantz_core.workspace = true
 gantz_egui.workspace = true

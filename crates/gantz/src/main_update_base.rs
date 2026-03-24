@@ -38,7 +38,7 @@ fn main() {
         .insert_resource(Pkv(PkvStore::new("nannou-org", "gantz-update-base")))
         .insert_resource(bevy_gantz_egui::base::ExportPath(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../base/base.gantz"
+            "/../gantz_base/base.gantz"
         )))
         .add_systems(
             Startup,
