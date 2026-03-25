@@ -11,10 +11,13 @@ use std::{
 /// A registry of content-addressed graphs, commits of those graphs, and
 /// optional names for those commits.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(bound(serialize = "G: Serialize", deserialize = "G: Deserialize<'de>"))]
 pub struct Registry<G> {
     /// A mapping from graph addresses to graphs.
+    #[serde(serialize_with = "crate::serde_sorted::serialize_map")]
     graphs: HashMap<GraphAddr, G>,
     /// A mapping from commit addresses to commits.
+    #[serde(serialize_with = "crate::serde_sorted::serialize_map")]
     commits: HashMap<CommitAddr, Commit>,
     /// A mapping from names to graph content addresses.
     names: BTreeMap<String, CommitAddr>,

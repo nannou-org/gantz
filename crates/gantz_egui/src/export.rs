@@ -17,7 +17,10 @@ pub const FILE_EXTENSION: &str = "gantz";
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Export<G> {
     pub registry: gantz_ca::Registry<G>,
-    #[serde(default)]
+    #[serde(
+        default,
+        serialize_with = "gantz_ca::serde_sorted::serialize_map_of_maps"
+    )]
     pub views: HashMap<CommitAddr, GraphViews>,
 }
 

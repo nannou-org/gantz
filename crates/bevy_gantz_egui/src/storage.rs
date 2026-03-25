@@ -25,8 +25,12 @@ mod key {
 }
 
 /// Save all graph views to storage under a single key.
+///
+/// Keys are sorted at both levels to produce deterministic output.
 pub fn save_views(storage: &mut impl bevy_gantz::storage::Save, views: &Views) {
-    save(storage, key::VIEWS, &**views);
+    let sorted: std::collections::BTreeMap<_, std::collections::BTreeMap<_, _>> =
+        views.iter().map(|(k, v)| (k, v.iter().collect())).collect();
+    save(storage, key::VIEWS, &sorted);
 }
 
 /// Load all graph views from storage.
