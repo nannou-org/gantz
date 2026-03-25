@@ -12,8 +12,8 @@ where
         &mut self,
         ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui::InnerResponse<egui::Response> {
-        uictx.framed(|ui| {
+    ) -> egui_graph::FramedResponse<egui::Response> {
+        uictx.framed(|ui, _sockets| {
             let res = ui.add(egui::Label::new("graph").selectable(false));
             if ui.response().double_clicked() {
                 ctx.cmds.push(Cmd::OpenGraph(ctx.path().to_vec()));

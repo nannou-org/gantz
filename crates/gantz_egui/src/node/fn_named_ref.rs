@@ -22,7 +22,7 @@ impl NodeUi for FnNamedRef {
         &mut self,
         ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui::InnerResponse<egui::Response> {
+    ) -> egui_graph::FramedResponse<egui::Response> {
         let registry = ctx.registry();
         let ref_ca = self.0.content_addr();
 
@@ -49,7 +49,7 @@ impl NodeUi for FnNamedRef {
                 .map(|ca| ca != ref_ca)
                 .unwrap_or(false);
 
-        uictx.framed(|ui| {
+        uictx.framed(|ui, _sockets| {
             ui.horizontal(|ui| {
                 let fn_res = ui.add(egui::Label::new("λ").selectable(false));
                 let name_text = if is_missing {

@@ -10,8 +10,8 @@ impl NodeUi for gantz_core::node::graph::Outlet {
         &mut self,
         ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui::InnerResponse<egui::Response> {
-        uictx.framed(|ui| {
+    ) -> egui_graph::FramedResponse<egui::Response> {
+        uictx.framed(|ui, _sockets| {
             let name = self.name(ctx.registry());
             let ix = outlet_ix(ctx.path(), ctx.outlets());
             let text = format!("{}[{}]", name, ix);

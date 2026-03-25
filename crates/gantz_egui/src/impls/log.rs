@@ -15,8 +15,8 @@ impl NodeUi for gantz_std::log::Log {
         &mut self,
         _ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui::InnerResponse<egui::Response> {
-        uictx.framed(|ui| {
+    ) -> egui_graph::FramedResponse<egui::Response> {
+        uictx.framed(|ui, _sockets| {
             let level = format!("{:?}", self.level).to_lowercase();
             ui.add(egui::Label::new(&level).selectable(false))
         })

@@ -101,7 +101,7 @@ pub trait NodeUi {
         &mut self,
         ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui::InnerResponse<egui::Response>;
+    ) -> egui_graph::FramedResponse<egui::Response>;
 
     /// Optionally add additional rows to the node's inspector UI.
     ///
@@ -207,7 +207,7 @@ where
         &mut self,
         ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui::InnerResponse<egui::Response> {
+    ) -> egui_graph::FramedResponse<egui::Response> {
         (**self).ui(ctx, uictx)
     }
 
@@ -234,7 +234,7 @@ macro_rules! impl_node_ui_for_ptr {
                 (**self).name(registry)
             }
 
-            fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> egui::InnerResponse<egui::Response> {
+            fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> egui_graph::FramedResponse<egui::Response> {
                 (**self).ui(ctx, uictx)
             }
 

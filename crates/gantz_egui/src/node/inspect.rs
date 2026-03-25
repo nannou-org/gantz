@@ -46,10 +46,10 @@ impl NodeUi for Inspect {
         &mut self,
         ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui::InnerResponse<egui::Response> {
+    ) -> egui_graph::FramedResponse<egui::Response> {
         let mut frame = egui_graph::node::default_frame(uictx.style(), uictx.interaction());
         frame.fill = uictx.style().visuals.extreme_bg_color;
-        uictx.framed_with(frame, |ui| {
+        uictx.framed_with(frame, |ui, _sockets| {
             let text = match ctx.extract_value() {
                 Ok(Some(val)) => format!("{:?}", val),
                 Ok(None) => "∅".to_string(),

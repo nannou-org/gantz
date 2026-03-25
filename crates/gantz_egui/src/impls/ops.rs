@@ -9,7 +9,7 @@ impl NodeUi for gantz_std::ops::Add {
         &mut self,
         _ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui::InnerResponse<egui::Response> {
-        uictx.framed(|ui| ui.add(egui::Label::new("+").selectable(false)))
+    ) -> egui_graph::FramedResponse<egui::Response> {
+        uictx.framed(|ui, _sockets| ui.add(egui::Label::new("+").selectable(false)))
     }
 }
