@@ -799,6 +799,7 @@ dependencies = [
  "bevy_log",
  "bevy_tasks",
  "egui_graph",
+ "gantz_base",
  "gantz_ca",
  "gantz_core",
  "gantz_egui",
@@ -2896,6 +2897,7 @@ dependencies = [
  "dyn-clone",
  "dyn-hash",
  "egui_graph",
+ "gantz_base",
  "gantz_ca",
  "gantz_core",
  "gantz_egui",
@@ -2907,6 +2909,10 @@ dependencies = [
  "typetag",
  "web-time",
 ]
+
+[[package]]
+name = "gantz_base"
+version = "0.2.0"
 
 [[package]]
 name = "gantz_ca"

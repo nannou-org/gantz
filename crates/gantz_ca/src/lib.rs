@@ -21,3 +21,4 @@ mod commit;
 mod graph;
 mod hash;
 pub mod registry;
+pub mod serde_sorted;

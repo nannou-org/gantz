@@ -72,11 +72,12 @@ enum LogSource {
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct GantzState {
     /// State for each open head.
+    #[serde(serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub open_heads: OpenHeadStates,
     pub view_toggles: ViewToggles,
     pub command_palette: widget::CommandPalette,
     /// Per-head redo stacks for undo/redo support.
-    #[serde(default)]
+    #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub redo_stacks: HashMap<gantz_ca::Head, Vec<gantz_ca::CommitAddr>>,
 }
 

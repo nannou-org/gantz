@@ -181,7 +181,7 @@ fn persist_resources(
 
 #[cfg(test)]
 mod tests {
-    const BASE_GANTZ: &[u8] = include_bytes!("../../../base/base.gantz");
+    const BASE_GANTZ: &[u8] = gantz_base::BYTES;
 
     #[test]
     fn base_gantz_deserializes() {

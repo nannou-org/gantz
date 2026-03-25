@@ -18,7 +18,7 @@ use gantz_core::node::graph::Graph;
 use crate::BaseNames;
 
 /// Raw bytes of the baked-in base `.gantz` export, embedded at compile time.
-const BYTES: &[u8] = include_bytes!("../../../base/base.gantz");
+const BYTES: &[u8] = gantz_base::BYTES;
 
 /// Startup system that deserializes the embedded base export and merges it
 /// into the registry, populating [`BaseNames`].
@@ -51,8 +51,8 @@ pub fn load<N>(
 /// Path to write the base `.gantz` export to.
 ///
 /// Used by [`export_to_file`] to know where to write. Typically set to
-/// `concat!(env!("CARGO_MANIFEST_DIR"), "/../../base/base.gantz")` so
-/// that edits land back in the repo.
+/// point at the `gantz_base` crate's `base.gantz` file so that edits
+/// land back in the repo.
 #[derive(Resource)]
 pub struct ExportPath(pub &'static str);
 

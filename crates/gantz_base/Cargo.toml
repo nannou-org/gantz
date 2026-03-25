@@ -1,0 +1,9 @@
+[package]
+name = "gantz_base"
+version = "0.2.0"
+description = "Embedded base node export for gantz"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
