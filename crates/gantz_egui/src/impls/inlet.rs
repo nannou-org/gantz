@@ -10,8 +10,8 @@ impl NodeUi for gantz_core::node::graph::Inlet {
         &mut self,
         ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui::InnerResponse<egui::Response> {
-        uictx.framed(|ui| {
+    ) -> egui_graph::FramedResponse<egui::Response> {
+        uictx.framed(|ui, _sockets| {
             let name = self.name(ctx.registry());
             let ix = inlet_ix(ctx.path(), ctx.inlets());
             let text = format!("{}[{}]", name, ix);

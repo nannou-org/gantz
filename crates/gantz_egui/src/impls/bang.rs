@@ -9,8 +9,8 @@ impl NodeUi for gantz_std::Bang {
         &mut self,
         mut ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui::InnerResponse<egui::Response> {
-        uictx.framed(|ui| {
+    ) -> egui_graph::FramedResponse<egui::Response> {
+        uictx.framed(|ui, _sockets| {
             let res = ui.add(egui::Button::new(" ! "));
             if res.clicked() {
                 ctx.push_eval();

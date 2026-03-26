@@ -10,8 +10,8 @@ impl NodeUi for gantz_std::number::Number {
         &mut self,
         mut ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui::InnerResponse<egui::Response> {
-        uictx.framed(|ui| {
+    ) -> egui_graph::FramedResponse<egui::Response> {
+        uictx.framed(|ui, _sockets| {
             let mut val = ctx.extract_value().unwrap().unwrap();
             let res = match val {
                 SteelVal::NumV(ref mut f) => ui.add(egui::DragValue::new(f)),

@@ -1,8 +1,5 @@
 use crate::{Cmd, NodeUi, Registry};
-use egui_graph::{
-    self,
-    node::{EdgeEvent, SocketKind},
-};
+use egui_graph::{self, SocketKind, node::EdgeEvent};
 use gantz_core::{
     Edge, Node,
     node::{self, graph::Graph},

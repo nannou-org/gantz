@@ -58,7 +58,7 @@ impl NodeUi for Comment {
         &mut self,
         _ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui::InnerResponse<egui::Response> {
+    ) -> egui_graph::FramedResponse<egui::Response> {
         // Get interaction state
         let interaction = uictx.interaction();
         let style = uictx.style();
@@ -85,7 +85,7 @@ impl NodeUi for Comment {
         let resize_id = node_egui_id.with("resize");
         let min_resize = egui::Vec2::splat(style.interaction.interact_radius);
         let default_size = egui::vec2(self.size[0] as f32, self.size[1] as f32);
-        let response = uictx.framed_with(frame, |ui| {
+        let response = uictx.framed_with(frame, |ui, _sockets| {
             egui::containers::Resize::default()
                 .id(resize_id)
                 .resizable(interaction.selected)

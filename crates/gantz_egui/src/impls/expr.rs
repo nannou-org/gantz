@@ -93,8 +93,8 @@ impl NodeUi for gantz_core::node::Expr {
         &mut self,
         ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui::InnerResponse<egui::Response> {
-        uictx.framed(|ui| {
+    ) -> egui_graph::FramedResponse<egui::Response> {
+        uictx.framed(|ui, _sockets| {
             let id = egui::Id::new("ExprEdit").with(ctx.path());
             ui.add(ExprEdit::new(self, id))
         })

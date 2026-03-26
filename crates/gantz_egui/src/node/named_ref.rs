@@ -131,7 +131,7 @@ impl NodeUi for NamedRef {
         &mut self,
         ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui::InnerResponse<egui::Response> {
+    ) -> egui_graph::FramedResponse<egui::Response> {
         let registry = ctx.registry();
         let ref_ca = self.ref_.content_addr();
 
@@ -159,7 +159,7 @@ impl NodeUi for NamedRef {
                 .unwrap_or(false);
 
         // Regular frame, error color if missing, warning color if outdated.
-        let response = uictx.framed(|ui| {
+        let response = uictx.framed(|ui, _sockets| {
             let name_text = if is_missing {
                 egui::RichText::new(&self.name).color(missing_color())
             } else if is_outdated {
@@ -171,7 +171,7 @@ impl NodeUi for NamedRef {
         });
 
         // Open the node on double-click (handler decides if the node is openable).
-        if response.response.double_clicked() {
+        if response.inner.response.double_clicked() {
             ctx.cmds.push(Cmd::OpenNamedNode(
                 self.name.clone(),
                 self.ref_.content_addr(),
