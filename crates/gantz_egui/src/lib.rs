@@ -148,10 +148,13 @@ pub enum Cmd {
     PullEval(Vec<node::Id>),
     OpenGraph(Vec<node::Id>),
     OpenNamedNode(String, gantz_ca::ContentAddr),
-    /// Fork a named node: create new name pointing to the given content address.
-    ForkNamedNode {
+    /// Branch a named node: create a new name with its own commit for the
+    /// given content address, and replace the node with a reference to it.
+    BranchNode {
         new_name: String,
         ca: gantz_ca::ContentAddr,
+        /// Path from root to the NamedRef node (last element = node index).
+        path: Vec<crate::node::Id>,
     },
     /// Insert an inspect node on the given edge at the given position.
     InspectEdge(InspectEdge),

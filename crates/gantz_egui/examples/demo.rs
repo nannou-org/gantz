@@ -858,11 +858,36 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         );
                     }
                 }
-                gantz_egui::Cmd::ForkNamedNode { new_name, ca } => {
-                    // The CA represents a CommitAddr for graph nodes.
+                gantz_egui::Cmd::BranchNode { new_name, ca, path } => {
                     let commit_ca = gantz_ca::CommitAddr::from(ca);
-                    state.env.registry.insert_name(new_name.clone(), commit_ca);
-                    log::info!("Forked node to new name: {new_name}");
+                    let graph_addr = state.env.registry.commits()[&commit_ca].graph;
+                    let new_commit_ca = state.env.registry.commit_graph(
+                        timestamp(),
+                        Some(commit_ca),
+                        graph_addr,
+                        || unreachable!("graph already exists in registry"),
+                    );
+                    state
+                        .env
+                        .registry
+                        .insert_name(new_name.clone(), new_commit_ca);
+                    let (_, root_graph, _) = &mut state.heads[ix];
+                    let (parent_path, node_ix_slice) = path.split_at(path.len() - 1);
+                    let Some(graph) = gantz_egui::widget::graph_scene::index_path_graph_mut(
+                        root_graph,
+                        parent_path,
+                    ) else {
+                        log::error!("BranchNode: could not find graph at path {parent_path:?}");
+                        continue;
+                    };
+                    let node_id = gantz_core::node::graph::NodeIx::new(node_ix_slice[0]);
+                    let new_ref = gantz_core::node::Ref::new(new_commit_ca.into());
+                    let named_ref = gantz_egui::node::NamedRef::new(new_name, new_ref);
+                    if let Some(node) = graph.node_weight_mut(node_id) {
+                        *node = Box::new(named_ref);
+                    } else {
+                        log::error!("BranchNode: node not found at index {}", node_ix_slice[0]);
+                    }
                 }
                 gantz_egui::Cmd::InspectEdge(cmd) => {
                     let (_, graph, views) = &mut state.heads[ix];
