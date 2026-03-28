@@ -396,8 +396,16 @@ pub fn on_branch<N>(
         return;
     };
 
-    // Insert new branch name.
-    registry.insert_name(new_name.clone(), commit_ca);
+    // Create a new commit pointing to the same graph so the new branch gets
+    // its own independent `CommitAddr` (and therefore its own views/layout).
+    let graph_addr = registry.commits()[&commit_ca].graph;
+    let new_commit_ca =
+        registry.commit_graph(crate::reg::timestamp(), Some(commit_ca), graph_addr, || {
+            unreachable!("graph already exists in registry")
+        });
+
+    // Insert new branch name pointing to the fresh commit.
+    registry.insert_name(new_name.clone(), new_commit_ca);
 
     // Find and update the entity.
     let new_head = ca::Head::Branch(new_name.clone());

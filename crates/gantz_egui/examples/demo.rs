@@ -1437,8 +1437,22 @@ fn create_branch_from_head(
         return;
     };
 
-    // Insert the new branch name into the registry.
-    state.env.registry.insert_name(new_name.clone(), commit_ca);
+    // Create a new commit pointing to the same graph so the new branch gets
+    // its own independent `CommitAddr` (and therefore its own views/layout).
+    let graph_addr = state.env.registry.commits()[&commit_ca].graph;
+    let new_commit_ca =
+        state
+            .env
+            .registry
+            .commit_graph(timestamp(), Some(commit_ca), graph_addr, || {
+                unreachable!("graph already exists in registry")
+            });
+
+    // Insert the new branch name pointing to the fresh commit.
+    state
+        .env
+        .registry
+        .insert_name(new_name.clone(), new_commit_ca);
 
     // Find the index of the original head and replace it.
     let new_head = gantz_ca::Head::Branch(new_name);
