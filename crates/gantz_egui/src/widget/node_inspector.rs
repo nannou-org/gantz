@@ -13,6 +13,7 @@ pub struct NodeInspector<'a, N> {
 pub struct NodeInspectorResponse {
     pub scroll_area_output: ScrollAreaOutput<()>,
     pub node_response: Option<egui::Response>,
+    pub label_response: egui::Response,
 }
 
 impl<'a, N> NodeInspector<'a, N>
@@ -25,11 +26,12 @@ where
 
     pub fn show(self, ui: &mut egui::Ui) -> NodeInspectorResponse {
         let Self { node, mut ctx } = self;
-        let scroll_area_output = table(node, &mut ctx, ui);
+        let (scroll_area_output, label_response) = table(node, &mut ctx, ui);
         let node_response = node.inspector_ui(ctx, ui);
         NodeInspectorResponse {
             scroll_area_output,
             node_response,
+            label_response,
         }
     }
 }
@@ -42,7 +44,7 @@ pub fn table(
     node: &mut (impl Node + NodeUi),
     ctx: &mut NodeCtx,
     ui: &mut egui::Ui,
-) -> ScrollAreaOutput<()> {
+) -> (ScrollAreaOutput<()>, egui::Response) {
     // Extract info we need upfront before the closure borrows ctx.
     let registry = ctx.registry();
     let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
@@ -62,10 +64,14 @@ pub fn table(
         None
     };
 
-    ui.strong(name);
+    let label_response = ui.add(
+        egui::Label::new(egui::RichText::new(name).strong())
+            .selectable(false)
+            .sense(egui::Sense::click()),
+    );
     ui.add_space(ui.spacing().item_spacing.y);
     let row_h = table_row_h(ui);
-    TableBuilder::new(ui)
+    let scroll_area_output = TableBuilder::new(ui)
         .vscroll(false)
         .column(Column::auto().at_least(50.0).resizable(true))
         .column(Column::remainder().at_least(120.0))
@@ -126,7 +132,8 @@ pub fn table(
             }
 
             node.inspector_rows(ctx, &mut body);
-        })
+        });
+    (scroll_area_output, label_response)
 }
 
 /// Format the node's path string.

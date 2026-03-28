@@ -1483,7 +1483,18 @@ where
                             vm,
                             &mut head_state.scene.cmds,
                         );
-                        widget::NodeInspector::new(node, ctx).show(ui);
+                        let resp = widget::NodeInspector::new(node, ctx).show(ui);
+                        if resp.label_response.clicked() {
+                            let sel = &mut head_state.scene.interaction.selection.nodes;
+                            if ui.input(|i| i.modifiers.command) {
+                                if !sel.remove(&id) {
+                                    sel.insert(id);
+                                }
+                            } else {
+                                sel.clear();
+                                sel.insert(id);
+                            }
+                        }
                     });
                 }
             });
