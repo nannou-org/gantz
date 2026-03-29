@@ -136,6 +136,34 @@ pub struct NodeCtx<'a> {
     cmds: &'a mut Vec<Cmd>,
 }
 
+/// How to position pasted nodes.
+#[derive(Clone, Debug)]
+pub enum PastePos {
+    /// Offset each node's original position by this amount.
+    Offset(egui::Vec2),
+    /// Center the pasted nodes at this graph-space position.
+    GraphPos(egui::Pos2),
+}
+
+/// Resolve a [`PastePos`] to a concrete offset vector for use with
+/// [`export::paste`].
+pub fn resolve_paste_offset(pos: &PastePos, copied_positions: &egui_graph::Layout) -> egui::Vec2 {
+    match pos {
+        PastePos::Offset(v) => *v,
+        PastePos::GraphPos(target) => {
+            if copied_positions.is_empty() {
+                target.to_vec2()
+            } else {
+                let center = copied_positions
+                    .values()
+                    .fold(egui::Vec2::ZERO, |acc, p| acc + p.to_vec2())
+                    / copied_positions.len() as f32;
+                target.to_vec2() - center
+            }
+        }
+    }
+}
+
 /// Commands emitted by nodes and widgets, processed after the GUI pass.
 ///
 /// All variants must be exhaustively handled in both
@@ -162,14 +190,14 @@ pub enum Cmd {
     CreateNode(CreateNode),
     /// Copy the given nodes to the clipboard.
     CopyNodes(std::collections::HashSet<widget::graph_scene::NodeIndex>),
-    /// Paste clipboard contents with the given positional offset.
+    /// Paste clipboard contents at the given position.
     ///
     /// `text` is `Some` when the integration layer provides clipboard text
     /// directly (e.g. via `egui::Event::Paste` in eframe). When `None`, the
     /// command handler is expected to read the system clipboard itself.
     Paste {
         text: Option<String>,
-        offset: egui::Vec2,
+        pos: PastePos,
     },
     /// Undo the last graph edit (move head to parent commit).
     Undo,

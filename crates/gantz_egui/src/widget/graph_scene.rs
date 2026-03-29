@@ -1,4 +1,4 @@
-use crate::{Cmd, NodeUi, Registry};
+use crate::{Cmd, NodeUi, PastePos, Registry};
 use egui_graph::{self, SocketKind, node::EdgeEvent};
 use gantz_core::{
     Edge, Node,
@@ -208,16 +208,25 @@ where
 
         // Background context menu.
         if !self.immutable {
+            let layer_id = graph_response.response.layer_id;
             graph_response.response.context_menu(|ui| {
+                // The popup is placed at the right-click location, so its
+                // top-left corner in screen space corresponds to where the
+                // user clicked. Convert that to graph space for paste
+                // positioning.
+                let menu_screen_pos = ui.min_rect().left_top();
                 if ui.button("add node").clicked() {
                     state.cmds.push(Cmd::OpenCommandPalette);
                     ui.close();
                 }
                 if ui.button("paste").clicked() {
-                    state.cmds.push(Cmd::Paste {
-                        text: None,
-                        offset: egui::vec2(20.0, 20.0),
-                    });
+                    let graph_pos = ui
+                        .ctx()
+                        .layer_transform_from_global(layer_id)
+                        .map(|t| t * menu_screen_pos)
+                        .unwrap_or(menu_screen_pos);
+                    let pos = PastePos::GraphPos(graph_pos);
+                    state.cmds.push(Cmd::Paste { text: None, pos });
                     ui.close();
                 }
             });

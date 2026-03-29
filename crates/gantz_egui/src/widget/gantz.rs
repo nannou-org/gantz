@@ -624,7 +624,7 @@ where
                             if ctrl_v {
                                 head_state.scene.cmds.push(Cmd::Paste {
                                     text: paste_text,
-                                    offset: egui::vec2(20.0, 20.0),
+                                    pos: crate::PastePos::Offset(egui::vec2(20.0, 20.0)),
                                 });
                             }
                             // Undo: Cmd/Ctrl+Z (without Shift).

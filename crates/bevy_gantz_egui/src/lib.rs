@@ -257,8 +257,8 @@ pub struct PasteEvent {
     pub head: Entity,
     /// The clipboard text (RON-serialized [`gantz_egui::export::Copied`]).
     pub text: String,
-    /// Positional offset applied to pasted node positions.
-    pub offset: egui::Vec2,
+    /// How to position the pasted nodes.
+    pub pos: gantz_egui::PastePos,
 }
 
 // ----------------------------------------------------------------------------
@@ -767,6 +767,8 @@ pub fn on_paste<N>(
         }
     };
 
+    let offset = gantz_egui::resolve_paste_offset(&event.pos, &copied.positions);
+
     let path = head_state.path.clone();
     let new_indices = {
         let graph: &mut Graph<N> = &mut *wg;
@@ -781,7 +783,7 @@ pub fn on_paste<N>(
             g,
             &mut view.layout,
             &copied,
-            event.offset,
+            offset,
         )
     };
 
@@ -1100,13 +1102,13 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                         nodes,
                     });
                 }
-                gantz_egui::Cmd::Paste { text, offset } => {
+                gantz_egui::Cmd::Paste { text, pos } => {
                     let text = text.or_else(|| clipboard.get_text());
                     if let Some(text) = text {
                         cmds.trigger(PasteEvent {
                             head: entity,
                             text,
-                            offset,
+                            pos,
                         });
                     }
                 }

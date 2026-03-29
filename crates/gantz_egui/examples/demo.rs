@@ -900,7 +900,7 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                 gantz_egui::Cmd::CopyNodes(nodes) => {
                     copy_nodes(ctx, state, ix, &head, nodes);
                 }
-                gantz_egui::Cmd::Paste { text, offset } => {
+                gantz_egui::Cmd::Paste { text, pos } => {
                     // In eframe, Event::Paste provides text directly.
                     let Some(text) = text else { continue };
                     let copied: gantz_egui::export::Copied<Box<dyn Node>> =
@@ -913,6 +913,7 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                                 continue;
                             }
                         };
+                    let offset = gantz_egui::resolve_paste_offset(&pos, &copied.positions);
                     let head_state = state.gantz.open_heads.get_mut(&head).unwrap();
                     let path = head_state.path.clone();
                     let (_, graph, gv) = &mut state.heads[ix];
