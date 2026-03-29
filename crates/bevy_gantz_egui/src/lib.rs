@@ -20,7 +20,7 @@ use gantz_core::Node;
 use gantz_core::node::graph::Graph;
 use gantz_egui::HeadDataMut;
 pub use gantz_egui::RegistryRef;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use steel::steel_vm::engine::Engine;
@@ -105,8 +105,8 @@ where
             .add_observer(on_create_node::<N>)
             .add_observer(on_branch_node::<N>)
             .add_observer(on_inspect_edge::<N>)
-            .add_observer(on_copy_selection::<N>)
-            .add_observer(on_paste_selection::<N>)
+            .add_observer(on_copy_nodes::<N>)
+            .add_observer(on_paste::<N>)
             .add_observer(on_export_head::<N>)
             .add_observer(on_export_all_named::<N>)
             .add_observer(on_import_file::<N>)
@@ -203,11 +203,13 @@ pub struct CreateNodeEvent {
     pub cmd: gantz_egui::CreateNode,
 }
 
-/// Event emitted when the user copies the current selection.
+/// Event emitted when the user copies nodes.
 #[derive(Event)]
-pub struct CopySelectionEvent {
+pub struct CopyNodesEvent {
     /// The head entity whose selection should be copied.
     pub head: Entity,
+    /// The nodes to copy.
+    pub nodes: HashSet<gantz_egui::widget::graph_scene::NodeIndex>,
 }
 
 /// Event emitted when the user requests exporting the focused head.
@@ -250,7 +252,7 @@ pub struct BranchNodeEvent {
 
 /// Event emitted when the user pastes from the clipboard.
 #[derive(Event)]
-pub struct PasteSelectionEvent {
+pub struct PasteEvent {
     /// The head entity to paste into.
     pub head: Entity,
     /// The clipboard text (RON-serialized [`gantz_egui::export::Copied`]).
@@ -668,8 +670,8 @@ pub fn on_inspect_edge<N>(
 /// Serializes the selected nodes (and their registry dependencies) to RON
 /// and writes the result directly to the system clipboard via
 /// [`bevy_egui::EguiClipboard`].
-pub fn on_copy_selection<N>(
-    trigger: On<CopySelectionEvent>,
+pub fn on_copy_nodes<N>(
+    trigger: On<CopyNodesEvent>,
     registry: Res<Registry<N>>,
     gui_state: ResMut<GuiState>,
     views: Res<Views>,
@@ -698,7 +700,7 @@ pub fn on_copy_selection<N>(
     };
 
     let path = head_state.path.clone();
-    let selection = head_state.scene.interaction.selection.nodes.clone();
+    let selection = event.nodes.clone();
     if selection.is_empty() {
         return;
     }
@@ -727,8 +729,8 @@ pub fn on_copy_selection<N>(
 /// Deserializes the clipboard RON text into a [`gantz_egui::export::Copied`],
 /// merges registry dependencies, adds the subgraph, maps positions, and
 /// updates the selection to the newly pasted nodes.
-pub fn on_paste_selection<N>(
-    trigger: On<PasteSelectionEvent>,
+pub fn on_paste<N>(
+    trigger: On<PasteEvent>,
     mut registry: ResMut<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     gui_state: ResMut<GuiState>,
@@ -1092,13 +1094,16 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                 gantz_egui::Cmd::CreateNode(cmd) => {
                     cmds.trigger(CreateNodeEvent { head: entity, cmd });
                 }
-                gantz_egui::Cmd::CopySelection => {
-                    cmds.trigger(CopySelectionEvent { head: entity });
+                gantz_egui::Cmd::CopyNodes(nodes) => {
+                    cmds.trigger(CopyNodesEvent {
+                        head: entity,
+                        nodes,
+                    });
                 }
-                gantz_egui::Cmd::PasteClipboard { text, offset } => {
+                gantz_egui::Cmd::Paste { text, offset } => {
                     let text = text.or_else(|| clipboard.get_text());
                     if let Some(text) = text {
-                        cmds.trigger(PasteSelectionEvent {
+                        cmds.trigger(PasteEvent {
                             head: entity,
                             text,
                             offset,

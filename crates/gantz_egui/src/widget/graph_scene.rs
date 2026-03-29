@@ -214,7 +214,7 @@ where
                     ui.close();
                 }
                 if ui.button("paste").clicked() {
-                    state.cmds.push(Cmd::PasteClipboard {
+                    state.cmds.push(Cmd::Paste {
                         text: None,
                         offset: egui::vec2(20.0, 20.0),
                     });
@@ -357,13 +357,19 @@ where
 
         // Node context menu.
         response.context_menu(|ui| {
+            let selected = &state.interaction.selection.nodes;
+            let target: HashSet<NodeIndex> = if selected.contains(&n_id) {
+                selected.clone()
+            } else {
+                HashSet::from([n_id])
+            };
             if ui.button("copy").clicked() {
-                state.cmds.push(Cmd::CopySelection);
+                state.cmds.push(Cmd::CopyNodes(target.clone()));
                 ui.close();
             }
             if !immutable {
                 if ui.button("delete").clicked() {
-                    nodes_to_delete.extend(state.interaction.selection.nodes.iter().copied());
+                    nodes_to_delete.extend(target);
                     ui.close();
                 }
             }

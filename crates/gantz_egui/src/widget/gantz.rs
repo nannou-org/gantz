@@ -605,7 +605,8 @@ where
                     if !ui.ctx().wants_keyboard_input() {
                         // Copy is always allowed.
                         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::C)) {
-                            head_state.scene.cmds.push(Cmd::CopySelection);
+                            let nodes = head_state.scene.interaction.selection.nodes.clone();
+                            head_state.scene.cmds.push(Cmd::CopyNodes(nodes));
                         }
                         // Paste, undo, redo are gated by immutable.
                         if !focused_immutable {
@@ -621,7 +622,7 @@ where
                             let ctrl_v = paste_text.is_some()
                                 || ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::V));
                             if ctrl_v {
-                                head_state.scene.cmds.push(Cmd::PasteClipboard {
+                                head_state.scene.cmds.push(Cmd::Paste {
                                     text: paste_text,
                                     offset: egui::vec2(20.0, 20.0),
                                 });

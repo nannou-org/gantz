@@ -897,38 +897,10 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                     let (_, graph, views) = &mut state.heads[ix];
                     create_node(&state.env, graph, views, &mut state.vms[ix], cmd);
                 }
-                gantz_egui::Cmd::CopySelection => {
-                    let head_state = state.gantz.open_heads.get_mut(&head).unwrap();
-                    let path = head_state.path.clone();
-                    let selection = head_state.scene.interaction.selection.nodes.clone();
-                    if selection.is_empty() {
-                        continue;
-                    }
-                    let (_, graph, gv) = &mut state.heads[ix];
-                    let Some(g) =
-                        gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path)
-                    else {
-                        continue;
-                    };
-                    let layout = gv
-                        .get(&path)
-                        .map(|v| &v.layout)
-                        .cloned()
-                        .unwrap_or_default();
-                    let all_views = std::collections::HashMap::new();
-                    let copied = gantz_egui::export::copy(
-                        &state.env.registry,
-                        &all_views,
-                        g,
-                        &selection,
-                        &layout,
-                    );
-                    match ron::to_string(&copied) {
-                        Ok(text) => ctx.copy_text(text),
-                        Err(e) => log::error!("Failed to serialize copy payload: {e}"),
-                    }
+                gantz_egui::Cmd::CopyNodes(nodes) => {
+                    copy_nodes(ctx, state, ix, &head, nodes);
                 }
-                gantz_egui::Cmd::PasteClipboard { text, offset } => {
+                gantz_egui::Cmd::Paste { text, offset } => {
                     // In eframe, Event::Paste provides text directly.
                     let Some(text) = text else { continue };
                     let copied: gantz_egui::export::Copied<Box<dyn Node>> =
@@ -1078,6 +1050,35 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                 }
             }
         }
+    }
+}
+
+fn copy_nodes(
+    ctx: &egui::Context,
+    state: &mut State,
+    ix: usize,
+    head: &gantz_ca::Head,
+    nodes: std::collections::HashSet<gantz_egui::widget::graph_scene::NodeIndex>,
+) {
+    if nodes.is_empty() {
+        return;
+    }
+    let head_state = state.gantz.open_heads.get_mut(head).unwrap();
+    let path = head_state.path.clone();
+    let (_, graph, gv) = &mut state.heads[ix];
+    let Some(g) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
+        return;
+    };
+    let layout = gv
+        .get(&path)
+        .map(|v| &v.layout)
+        .cloned()
+        .unwrap_or_default();
+    let all_views = std::collections::HashMap::new();
+    let copied = gantz_egui::export::copy(&state.env.registry, &all_views, g, &nodes, &layout);
+    match ron::to_string(&copied) {
+        Ok(text) => ctx.copy_text(text),
+        Err(e) => log::error!("Failed to serialize copy payload: {e}"),
     }
 }
 
