@@ -1073,6 +1073,9 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         }
                     }
                 }
+                gantz_egui::Cmd::OpenCommandPalette => {
+                    state.gantz.command_palette.toggle();
+                }
             }
         }
     }

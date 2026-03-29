@@ -1134,6 +1134,9 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                 gantz_egui::Cmd::ExportAllNamed => {
                     cmds.trigger(ExportAllNamedEvent);
                 }
+                gantz_egui::Cmd::OpenCommandPalette => {
+                    gui_state.command_palette.toggle();
+                }
             }
         }
     }

@@ -179,6 +179,8 @@ pub enum Cmd {
     ExportHead,
     /// Export all named graphs (with transitive deps + views) to a single `.gantz` file.
     ExportAllNamed,
+    /// Open the command palette for node creation.
+    OpenCommandPalette,
 }
 
 /// A command to create a new node.

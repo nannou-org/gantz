@@ -182,9 +182,18 @@ where
             .selected_nodes(selected)
             .immutable(self.immutable)
             .show(view, ui, |ui, show| {
+                let immutable = self.immutable;
                 show.nodes(ui, |nctx, ui| {
-                    node_responses =
-                        nodes(self.registry, self.graph, self.path, nctx, state, vm, ui);
+                    node_responses = nodes(
+                        self.registry,
+                        self.graph,
+                        self.path,
+                        nctx,
+                        state,
+                        vm,
+                        immutable,
+                        ui,
+                    );
                 })
                 .edges(ui, |ectx, ui| edges(self.graph, self.path, ectx, state, ui));
             });
@@ -195,6 +204,23 @@ where
                 .into_iter()
                 .map(|id| NodeIndex::new(id.value() as usize))
                 .collect();
+        }
+
+        // Background context menu.
+        if !self.immutable {
+            graph_response.response.context_menu(|ui| {
+                if ui.button("add node").clicked() {
+                    state.cmds.push(Cmd::OpenCommandPalette);
+                    ui.close();
+                }
+                if ui.button("paste").clicked() {
+                    state.cmds.push(Cmd::PasteClipboard {
+                        text: None,
+                        offset: egui::vec2(20.0, 20.0),
+                    });
+                    ui.close();
+                }
+            });
         }
 
         GraphSceneResponse {
@@ -258,6 +284,7 @@ fn nodes<N>(
     nctx: &mut egui_graph::NodesCtx,
     state: &mut GraphSceneState,
     vm: &mut Engine,
+    immutable: bool,
     ui: &mut egui::Ui,
 ) -> Vec<(NodeIndex, NodeResponse)>
 where
@@ -270,6 +297,7 @@ where
     let mut path = path.to_vec();
     let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
     let mut responses = Vec::with_capacity(node_ids.len());
+    let mut nodes_to_delete = Vec::new();
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node = &mut graph[n_id];
@@ -321,16 +349,38 @@ where
                 }
             }
 
-            // If the delete key was pressed while selected, remove it.
+            // If the delete key was pressed while selected, defer removal.
             if response.removed() {
-                let mut node_path = path.clone();
-                node_path.push(n_id.index());
-                let _ = gantz_core::node::state::remove_value(vm, &node_path);
-                graph.remove_node(n_id);
+                nodes_to_delete.push(n_id);
             }
         }
 
+        // Node context menu.
+        response.context_menu(|ui| {
+            if ui.button("copy").clicked() {
+                state.cmds.push(Cmd::CopySelection);
+                ui.close();
+            }
+            if !immutable {
+                if ui.button("delete").clicked() {
+                    nodes_to_delete.extend(state.interaction.selection.nodes.iter().copied());
+                    ui.close();
+                }
+            }
+        });
+
         responses.push((n_id, response));
+    }
+
+    // Unified delete: both keyboard and context menu deletes go through here.
+    for n_id in nodes_to_delete {
+        if graph.contains_node(n_id) {
+            let mut node_path = path.to_vec();
+            node_path.push(n_id.index());
+            let _ = gantz_core::node::state::remove_value(vm, &node_path);
+            graph.remove_node(n_id);
+            state.interaction.selection.nodes.remove(&n_id);
+        }
     }
 
     responses
