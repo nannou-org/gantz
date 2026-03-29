@@ -858,11 +858,36 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         );
                     }
                 }
-                gantz_egui::Cmd::ForkNamedNode { new_name, ca } => {
-                    // The CA represents a CommitAddr for graph nodes.
+                gantz_egui::Cmd::BranchNode { new_name, ca, path } => {
                     let commit_ca = gantz_ca::CommitAddr::from(ca);
-                    state.env.registry.insert_name(new_name.clone(), commit_ca);
-                    log::info!("Forked node to new name: {new_name}");
+                    let graph_addr = state.env.registry.commits()[&commit_ca].graph;
+                    let new_commit_ca = state.env.registry.commit_graph(
+                        timestamp(),
+                        Some(commit_ca),
+                        graph_addr,
+                        || unreachable!("graph already exists in registry"),
+                    );
+                    state
+                        .env
+                        .registry
+                        .insert_name(new_name.clone(), new_commit_ca);
+                    let (_, root_graph, _) = &mut state.heads[ix];
+                    let (parent_path, node_ix_slice) = path.split_at(path.len() - 1);
+                    let Some(graph) = gantz_egui::widget::graph_scene::index_path_graph_mut(
+                        root_graph,
+                        parent_path,
+                    ) else {
+                        log::error!("BranchNode: could not find graph at path {parent_path:?}");
+                        continue;
+                    };
+                    let node_id = gantz_core::node::graph::NodeIx::new(node_ix_slice[0]);
+                    let new_ref = gantz_core::node::Ref::new(new_commit_ca.into());
+                    let named_ref = gantz_egui::node::NamedRef::new(new_name, new_ref);
+                    if let Some(node) = graph.node_weight_mut(node_id) {
+                        *node = Box::new(named_ref);
+                    } else {
+                        log::error!("BranchNode: node not found at index {}", node_ix_slice[0]);
+                    }
                 }
                 gantz_egui::Cmd::InspectEdge(cmd) => {
                     let (_, graph, views) = &mut state.heads[ix];
@@ -872,38 +897,10 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                     let (_, graph, views) = &mut state.heads[ix];
                     create_node(&state.env, graph, views, &mut state.vms[ix], cmd);
                 }
-                gantz_egui::Cmd::CopySelection => {
-                    let head_state = state.gantz.open_heads.get_mut(&head).unwrap();
-                    let path = head_state.path.clone();
-                    let selection = head_state.scene.interaction.selection.nodes.clone();
-                    if selection.is_empty() {
-                        continue;
-                    }
-                    let (_, graph, gv) = &mut state.heads[ix];
-                    let Some(g) =
-                        gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path)
-                    else {
-                        continue;
-                    };
-                    let layout = gv
-                        .get(&path)
-                        .map(|v| &v.layout)
-                        .cloned()
-                        .unwrap_or_default();
-                    let all_views = std::collections::HashMap::new();
-                    let copied = gantz_egui::export::copy(
-                        &state.env.registry,
-                        &all_views,
-                        g,
-                        &selection,
-                        &layout,
-                    );
-                    match ron::to_string(&copied) {
-                        Ok(text) => ctx.copy_text(text),
-                        Err(e) => log::error!("Failed to serialize copy payload: {e}"),
-                    }
+                gantz_egui::Cmd::CopyNodes(nodes) => {
+                    copy_nodes(ctx, state, ix, &head, nodes);
                 }
-                gantz_egui::Cmd::PasteClipboard { text, offset } => {
+                gantz_egui::Cmd::Paste { text, pos } => {
                     // In eframe, Event::Paste provides text directly.
                     let Some(text) = text else { continue };
                     let copied: gantz_egui::export::Copied<Box<dyn Node>> =
@@ -916,6 +913,7 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                                 continue;
                             }
                         };
+                    let offset = gantz_egui::resolve_paste_offset(&pos, &copied.positions);
                     let head_state = state.gantz.open_heads.get_mut(&head).unwrap();
                     let path = head_state.path.clone();
                     let (_, graph, gv) = &mut state.heads[ix];
@@ -1048,8 +1046,40 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         }
                     }
                 }
+                gantz_egui::Cmd::OpenCommandPalette => {
+                    state.gantz.command_palette.toggle();
+                }
             }
         }
+    }
+}
+
+fn copy_nodes(
+    ctx: &egui::Context,
+    state: &mut State,
+    ix: usize,
+    head: &gantz_ca::Head,
+    nodes: std::collections::HashSet<gantz_egui::widget::graph_scene::NodeIndex>,
+) {
+    if nodes.is_empty() {
+        return;
+    }
+    let head_state = state.gantz.open_heads.get_mut(head).unwrap();
+    let path = head_state.path.clone();
+    let (_, graph, gv) = &mut state.heads[ix];
+    let Some(g) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
+        return;
+    };
+    let layout = gv
+        .get(&path)
+        .map(|v| &v.layout)
+        .cloned()
+        .unwrap_or_default();
+    let all_views = std::collections::HashMap::new();
+    let copied = gantz_egui::export::copy(&state.env.registry, &all_views, g, &nodes, &layout);
+    match ron::to_string(&copied) {
+        Ok(text) => ctx.copy_text(text),
+        Err(e) => log::error!("Failed to serialize copy payload: {e}"),
     }
 }
 
@@ -1437,8 +1467,22 @@ fn create_branch_from_head(
         return;
     };
 
-    // Insert the new branch name into the registry.
-    state.env.registry.insert_name(new_name.clone(), commit_ca);
+    // Create a new commit pointing to the same graph so the new branch gets
+    // its own independent `CommitAddr` (and therefore its own views/layout).
+    let graph_addr = state.env.registry.commits()[&commit_ca].graph;
+    let new_commit_ca =
+        state
+            .env
+            .registry
+            .commit_graph(timestamp(), Some(commit_ca), graph_addr, || {
+                unreachable!("graph already exists in registry")
+            });
+
+    // Insert the new branch name pointing to the fresh commit.
+    state
+        .env
+        .registry
+        .insert_name(new_name.clone(), new_commit_ca);
 
     // Find the index of the original head and replace it.
     let new_head = gantz_ca::Head::Branch(new_name);

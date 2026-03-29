@@ -68,7 +68,7 @@ pub struct ReplaceEvent(pub ca::Head);
 
 /// Event to create a new branch from an existing head.
 #[derive(Event)]
-pub struct BranchEvent {
+pub struct BranchHeadEvent {
     pub original: ca::Head,
     pub new_name: String,
 }
@@ -109,7 +109,7 @@ pub struct ChangedEvent {
 
 /// Emitted after a branch has been created from a head.
 #[derive(Event)]
-pub struct BranchedEvent {
+pub struct BranchedHeadEvent {
     pub entity: Entity,
     pub old_head: ca::Head,
     pub new_head: ca::Head,
@@ -380,15 +380,15 @@ pub fn on_close<N>(
 }
 
 /// Handle request to create a new branch from an existing head.
-pub fn on_branch<N>(
-    trigger: On<BranchEvent>,
+pub fn on_branch_head<N>(
+    trigger: On<BranchHeadEvent>,
     mut cmds: Commands,
     mut registry: ResMut<Registry<N>>,
     mut heads: Query<(Entity, &mut HeadRef), With<OpenHead>>,
 ) where
     N: 'static + Send + Sync,
 {
-    let BranchEvent { original, new_name } = trigger.event();
+    let BranchHeadEvent { original, new_name } = trigger.event();
 
     // Get commit CA from original head.
     let Some(commit_ca) = registry.head_commit_ca(original).copied() else {
@@ -396,8 +396,16 @@ pub fn on_branch<N>(
         return;
     };
 
-    // Insert new branch name.
-    registry.insert_name(new_name.clone(), commit_ca);
+    // Create a new commit pointing to the same graph so the new branch gets
+    // its own independent `CommitAddr` (and therefore its own views/layout).
+    let graph_addr = registry.commits()[&commit_ca].graph;
+    let new_commit_ca =
+        registry.commit_graph(crate::reg::timestamp(), Some(commit_ca), graph_addr, || {
+            unreachable!("graph already exists in registry")
+        });
+
+    // Insert new branch name pointing to the fresh commit.
+    registry.insert_name(new_name.clone(), new_commit_ca);
 
     // Find and update the entity.
     let new_head = ca::Head::Branch(new_name.clone());
@@ -406,7 +414,7 @@ pub fn on_branch<N>(
             let old_head = (**head_ref).clone();
             **head_ref = new_head.clone();
 
-            cmds.trigger(BranchedEvent {
+            cmds.trigger(BranchedHeadEvent {
                 entity,
                 old_head,
                 new_head,

@@ -1,4 +1,4 @@
-use crate::{Cmd, NodeUi, Registry};
+use crate::{Cmd, NodeUi, PastePos, Registry};
 use egui_graph::{self, SocketKind, node::EdgeEvent};
 use gantz_core::{
     Edge, Node,
@@ -182,9 +182,18 @@ where
             .selected_nodes(selected)
             .immutable(self.immutable)
             .show(view, ui, |ui, show| {
+                let immutable = self.immutable;
                 show.nodes(ui, |nctx, ui| {
-                    node_responses =
-                        nodes(self.registry, self.graph, self.path, nctx, state, vm, ui);
+                    node_responses = nodes(
+                        self.registry,
+                        self.graph,
+                        self.path,
+                        nctx,
+                        state,
+                        vm,
+                        immutable,
+                        ui,
+                    );
                 })
                 .edges(ui, |ectx, ui| edges(self.graph, self.path, ectx, state, ui));
             });
@@ -195,6 +204,32 @@ where
                 .into_iter()
                 .map(|id| NodeIndex::new(id.value() as usize))
                 .collect();
+        }
+
+        // Background context menu.
+        if !self.immutable {
+            let layer_id = graph_response.response.layer_id;
+            graph_response.response.context_menu(|ui| {
+                // The popup is placed at the right-click location, so its
+                // top-left corner in screen space corresponds to where the
+                // user clicked. Convert that to graph space for paste
+                // positioning.
+                let menu_screen_pos = ui.min_rect().left_top();
+                if ui.button("add node").clicked() {
+                    state.cmds.push(Cmd::OpenCommandPalette);
+                    ui.close();
+                }
+                if ui.button("paste").clicked() {
+                    let graph_pos = ui
+                        .ctx()
+                        .layer_transform_from_global(layer_id)
+                        .map(|t| t * menu_screen_pos)
+                        .unwrap_or(menu_screen_pos);
+                    let pos = PastePos::GraphPos(graph_pos);
+                    state.cmds.push(Cmd::Paste { text: None, pos });
+                    ui.close();
+                }
+            });
         }
 
         GraphSceneResponse {
@@ -258,6 +293,7 @@ fn nodes<N>(
     nctx: &mut egui_graph::NodesCtx,
     state: &mut GraphSceneState,
     vm: &mut Engine,
+    immutable: bool,
     ui: &mut egui::Ui,
 ) -> Vec<(NodeIndex, NodeResponse)>
 where
@@ -270,6 +306,7 @@ where
     let mut path = path.to_vec();
     let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
     let mut responses = Vec::with_capacity(node_ids.len());
+    let mut nodes_to_delete = Vec::new();
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node = &mut graph[n_id];
@@ -321,16 +358,44 @@ where
                 }
             }
 
-            // If the delete key was pressed while selected, remove it.
+            // If the delete key was pressed while selected, defer removal.
             if response.removed() {
-                let mut node_path = path.clone();
-                node_path.push(n_id.index());
-                let _ = gantz_core::node::state::remove_value(vm, &node_path);
-                graph.remove_node(n_id);
+                nodes_to_delete.push(n_id);
             }
         }
 
+        // Node context menu.
+        response.context_menu(|ui| {
+            let selected = &state.interaction.selection.nodes;
+            let target: HashSet<NodeIndex> = if selected.contains(&n_id) {
+                selected.clone()
+            } else {
+                HashSet::from([n_id])
+            };
+            if ui.button("copy").clicked() {
+                state.cmds.push(Cmd::CopyNodes(target.clone()));
+                ui.close();
+            }
+            if !immutable {
+                if ui.button("delete").clicked() {
+                    nodes_to_delete.extend(target);
+                    ui.close();
+                }
+            }
+        });
+
         responses.push((n_id, response));
+    }
+
+    // Unified delete: both keyboard and context menu deletes go through here.
+    for n_id in nodes_to_delete {
+        if graph.contains_node(n_id) {
+            let mut node_path = path.to_vec();
+            node_path.push(n_id.index());
+            let _ = gantz_core::node::state::remove_value(vm, &node_path);
+            graph.remove_node(n_id);
+            state.interaction.selection.nodes.remove(&n_id);
+        }
     }
 
     responses

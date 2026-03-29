@@ -20,7 +20,7 @@ use gantz_core::Node;
 use gantz_core::node::graph::Graph;
 use gantz_egui::HeadDataMut;
 pub use gantz_egui::RegistryRef;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use steel::steel_vm::engine::Engine;
@@ -103,9 +103,10 @@ where
             .add_observer(on_eval_completed)
             // Node creation/inspection observers
             .add_observer(on_create_node::<N>)
+            .add_observer(on_branch_node::<N>)
             .add_observer(on_inspect_edge::<N>)
-            .add_observer(on_copy_selection::<N>)
-            .add_observer(on_paste_selection::<N>)
+            .add_observer(on_copy_nodes::<N>)
+            .add_observer(on_paste::<N>)
             .add_observer(on_export_head::<N>)
             .add_observer(on_export_all_named::<N>)
             .add_observer(on_import_file::<N>)
@@ -202,11 +203,13 @@ pub struct CreateNodeEvent {
     pub cmd: gantz_egui::CreateNode,
 }
 
-/// Event emitted when the user copies the current selection.
+/// Event emitted when the user copies nodes.
 #[derive(Event)]
-pub struct CopySelectionEvent {
+pub struct CopyNodesEvent {
     /// The head entity whose selection should be copied.
     pub head: Entity,
+    /// The nodes to copy.
+    pub nodes: HashSet<gantz_egui::widget::graph_scene::NodeIndex>,
 }
 
 /// Event emitted when the user requests exporting the focused head.
@@ -229,15 +232,33 @@ pub struct ImportFileEvent {
     pub open_head: bool,
 }
 
+/// Event emitted when a named node should be branched.
+///
+/// Creates a new commit (same graph, new timestamp, original as parent),
+/// inserts a new name pointing to the fresh commit, and replaces the
+/// NamedRef node in the working graph so its reference points to the new
+/// commit.
+#[derive(Event)]
+pub struct BranchNodeEvent {
+    /// The head entity containing the NamedRef node.
+    pub head: Entity,
+    /// The new branch name.
+    pub new_name: String,
+    /// Content address of the graph being branched.
+    pub ca: gantz_ca::ContentAddr,
+    /// Path from root to the NamedRef node (last element = node index).
+    pub path: Vec<gantz_core::node::Id>,
+}
+
 /// Event emitted when the user pastes from the clipboard.
 #[derive(Event)]
-pub struct PasteSelectionEvent {
+pub struct PasteEvent {
     /// The head entity to paste into.
     pub head: Entity,
     /// The clipboard text (RON-serialized [`gantz_egui::export::Copied`]).
     pub text: String,
-    /// Positional offset applied to pasted node positions.
-    pub offset: egui::Vec2,
+    /// How to position the pasted nodes.
+    pub pos: gantz_egui::PastePos,
 }
 
 // ----------------------------------------------------------------------------
@@ -473,7 +494,7 @@ pub fn on_head_closed(trigger: On<head::ClosedEvent>, mut gui_state: ResMut<GuiS
 
 /// Migrate GUI state for branch creation.
 pub fn on_branch_created(
-    trigger: On<head::BranchedEvent>,
+    trigger: On<head::BranchedHeadEvent>,
     mut gui_state: ResMut<GuiState>,
     mut ctxs: EguiContexts,
 ) {
@@ -551,6 +572,59 @@ pub fn on_create_node<N>(
     graph[id].register(reg_ctx);
 }
 
+/// Handle branch node events.
+///
+/// Creates a new commit (same graph content, new timestamp, original as parent),
+/// inserts the new name, and replaces the NamedRef node in the working graph.
+pub fn on_branch_node<N>(
+    trigger: On<BranchNodeEvent>,
+    mut registry: ResMut<Registry<N>>,
+    mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
+) where
+    N: 'static
+        + From<gantz_egui::node::NamedRef>
+        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
+        + Send
+        + Sync,
+{
+    let event = trigger.event();
+    let Ok(mut data) = heads.get_mut(event.head) else {
+        log::error!("BranchNode: head not found for entity {:?}", event.head);
+        return;
+    };
+
+    let commit_ca = ca::CommitAddr::from(event.ca);
+    let Some(commit) = registry.commits().get(&commit_ca) else {
+        log::error!("BranchNode: commit not found for {:?}", commit_ca);
+        return;
+    };
+    let graph_addr = commit.graph;
+    let new_commit_ca = registry.commit_graph(
+        bevy_gantz::reg::timestamp(),
+        Some(commit_ca),
+        graph_addr,
+        || unreachable!("graph already exists in registry"),
+    );
+    registry.insert_name(event.new_name.clone(), new_commit_ca);
+
+    // Replace the NamedRef node in the working graph.
+    let (parent_path, node_ix_slice) = event.path.split_at(event.path.len() - 1);
+    let Some(graph) =
+        gantz_egui::widget::graph_scene::index_path_graph_mut(&mut data.working_graph, parent_path)
+    else {
+        log::error!("BranchNode: could not find graph at path {:?}", parent_path);
+        return;
+    };
+    let node_id = gantz_core::node::graph::NodeIx::new(node_ix_slice[0]);
+    let new_ref = gantz_core::node::Ref::new(new_commit_ca.into());
+    let named_ref = gantz_egui::node::NamedRef::new(event.new_name.clone(), new_ref);
+    if let Some(node) = graph.node_weight_mut(node_id) {
+        *node = N::from(named_ref);
+    } else {
+        log::error!("BranchNode: node not found at index {}", node_ix_slice[0]);
+    }
+}
+
 /// Handle inspect edge events.
 pub fn on_inspect_edge<N>(
     trigger: On<InspectEdgeEvent>,
@@ -596,8 +670,8 @@ pub fn on_inspect_edge<N>(
 /// Serializes the selected nodes (and their registry dependencies) to RON
 /// and writes the result directly to the system clipboard via
 /// [`bevy_egui::EguiClipboard`].
-pub fn on_copy_selection<N>(
-    trigger: On<CopySelectionEvent>,
+pub fn on_copy_nodes<N>(
+    trigger: On<CopyNodesEvent>,
     registry: Res<Registry<N>>,
     gui_state: ResMut<GuiState>,
     views: Res<Views>,
@@ -626,7 +700,7 @@ pub fn on_copy_selection<N>(
     };
 
     let path = head_state.path.clone();
-    let selection = head_state.scene.interaction.selection.nodes.clone();
+    let selection = event.nodes.clone();
     if selection.is_empty() {
         return;
     }
@@ -655,8 +729,8 @@ pub fn on_copy_selection<N>(
 /// Deserializes the clipboard RON text into a [`gantz_egui::export::Copied`],
 /// merges registry dependencies, adds the subgraph, maps positions, and
 /// updates the selection to the newly pasted nodes.
-pub fn on_paste_selection<N>(
-    trigger: On<PasteSelectionEvent>,
+pub fn on_paste<N>(
+    trigger: On<PasteEvent>,
     mut registry: ResMut<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     gui_state: ResMut<GuiState>,
@@ -693,6 +767,8 @@ pub fn on_paste_selection<N>(
         }
     };
 
+    let offset = gantz_egui::resolve_paste_offset(&event.pos, &copied.positions);
+
     let path = head_state.path.clone();
     let new_indices = {
         let graph: &mut Graph<N> = &mut *wg;
@@ -707,7 +783,7 @@ pub fn on_paste_selection<N>(
             g,
             &mut view.layout,
             &copied,
-            event.offset,
+            offset,
         )
     };
 
@@ -961,7 +1037,7 @@ pub fn prune_views<N: 'static + Node + Send + Sync>(
 /// All [`gantz_egui::Cmd`] variants must be handled here *and* in the demo's
 /// `process_cmds` (see `gantz_egui/examples/demo.rs`).
 pub fn process_cmds<N: 'static + Send + Sync>(
-    mut registry: ResMut<Registry<N>>,
+    registry: Res<Registry<N>>,
     mut gui_state: ResMut<GuiState>,
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
     heads: Query<(Entity, &head::HeadRef), With<head::OpenHead>>,
@@ -1006,10 +1082,13 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                         );
                     }
                 }
-                gantz_egui::Cmd::ForkNamedNode { new_name, ca } => {
-                    let commit_ca = ca::CommitAddr::from(ca);
-                    registry.insert_name(new_name.clone(), commit_ca);
-                    log::info!("Forked node to new name: {new_name}");
+                gantz_egui::Cmd::BranchNode { new_name, ca, path } => {
+                    cmds.trigger(BranchNodeEvent {
+                        head: entity,
+                        new_name,
+                        ca,
+                        path,
+                    });
                 }
                 gantz_egui::Cmd::InspectEdge(cmd) => {
                     cmds.trigger(InspectEdgeEvent { head: entity, cmd });
@@ -1017,16 +1096,19 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                 gantz_egui::Cmd::CreateNode(cmd) => {
                     cmds.trigger(CreateNodeEvent { head: entity, cmd });
                 }
-                gantz_egui::Cmd::CopySelection => {
-                    cmds.trigger(CopySelectionEvent { head: entity });
+                gantz_egui::Cmd::CopyNodes(nodes) => {
+                    cmds.trigger(CopyNodesEvent {
+                        head: entity,
+                        nodes,
+                    });
                 }
-                gantz_egui::Cmd::PasteClipboard { text, offset } => {
+                gantz_egui::Cmd::Paste { text, pos } => {
                     let text = text.or_else(|| clipboard.get_text());
                     if let Some(text) = text {
-                        cmds.trigger(PasteSelectionEvent {
+                        cmds.trigger(PasteEvent {
                             head: entity,
                             text,
-                            offset,
+                            pos,
                         });
                     }
                 }
@@ -1058,6 +1140,9 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                 }
                 gantz_egui::Cmd::ExportAllNamed => {
                     cmds.trigger(ExportAllNamedEvent);
+                }
+                gantz_egui::Cmd::OpenCommandPalette => {
+                    gui_state.command_palette.toggle();
                 }
             }
         }
@@ -1175,7 +1260,7 @@ where
 
     // Handle new branch created from tab double-click.
     if let Some((original_head, new_name)) = response.new_branch() {
-        cmds.trigger(head::BranchEvent {
+        cmds.trigger(head::BranchHeadEvent {
             original: original_head.clone(),
             new_name: new_name.clone(),
         });

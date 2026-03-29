@@ -252,11 +252,11 @@ impl NodeUi for NamedRef {
                             let fork_hover = format!("fork a new node at {}", current_short);
                             if ui.button("fork").on_hover_text(fork_hover).clicked() {
                                 let new_name = format!("{}-{}", self.name, current_short);
-                                ctx.cmds.push(Cmd::ForkNamedNode {
-                                    new_name: new_name.clone(),
+                                ctx.cmds.push(Cmd::BranchNode {
+                                    new_name,
                                     ca: self.ref_.content_addr(),
+                                    path: ctx.path.to_vec(),
                                 });
-                                self.name = new_name;
                             }
                         });
                     });

@@ -136,6 +136,34 @@ pub struct NodeCtx<'a> {
     cmds: &'a mut Vec<Cmd>,
 }
 
+/// How to position pasted nodes.
+#[derive(Clone, Debug)]
+pub enum PastePos {
+    /// Offset each node's original position by this amount.
+    Offset(egui::Vec2),
+    /// Center the pasted nodes at this graph-space position.
+    GraphPos(egui::Pos2),
+}
+
+/// Resolve a [`PastePos`] to a concrete offset vector for use with
+/// [`export::paste`].
+pub fn resolve_paste_offset(pos: &PastePos, copied_positions: &egui_graph::Layout) -> egui::Vec2 {
+    match pos {
+        PastePos::Offset(v) => *v,
+        PastePos::GraphPos(target) => {
+            if copied_positions.is_empty() {
+                target.to_vec2()
+            } else {
+                let center = copied_positions
+                    .values()
+                    .fold(egui::Vec2::ZERO, |acc, p| acc + p.to_vec2())
+                    / copied_positions.len() as f32;
+                target.to_vec2() - center
+            }
+        }
+    }
+}
+
 /// Commands emitted by nodes and widgets, processed after the GUI pass.
 ///
 /// All variants must be exhaustively handled in both
@@ -148,25 +176,28 @@ pub enum Cmd {
     PullEval(Vec<node::Id>),
     OpenGraph(Vec<node::Id>),
     OpenNamedNode(String, gantz_ca::ContentAddr),
-    /// Fork a named node: create new name pointing to the given content address.
-    ForkNamedNode {
+    /// Branch a named node: create a new name with its own commit for the
+    /// given content address, and replace the node with a reference to it.
+    BranchNode {
         new_name: String,
         ca: gantz_ca::ContentAddr,
+        /// Path from root to the NamedRef node (last element = node index).
+        path: Vec<crate::node::Id>,
     },
     /// Insert an inspect node on the given edge at the given position.
     InspectEdge(InspectEdge),
     /// Create a new node of the given type at the current path.
     CreateNode(CreateNode),
-    /// Copy the current selection to the clipboard.
-    CopySelection,
-    /// Paste clipboard contents with the given positional offset.
+    /// Copy the given nodes to the clipboard.
+    CopyNodes(std::collections::HashSet<widget::graph_scene::NodeIndex>),
+    /// Paste clipboard contents at the given position.
     ///
     /// `text` is `Some` when the integration layer provides clipboard text
     /// directly (e.g. via `egui::Event::Paste` in eframe). When `None`, the
     /// command handler is expected to read the system clipboard itself.
-    PasteClipboard {
+    Paste {
         text: Option<String>,
-        offset: egui::Vec2,
+        pos: PastePos,
     },
     /// Undo the last graph edit (move head to parent commit).
     Undo,
@@ -176,6 +207,8 @@ pub enum Cmd {
     ExportHead,
     /// Export all named graphs (with transitive deps + views) to a single `.gantz` file.
     ExportAllNamed,
+    /// Open the command palette for node creation.
+    OpenCommandPalette,
 }
 
 /// A command to create a new node.
