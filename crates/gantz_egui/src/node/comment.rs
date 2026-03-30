@@ -95,12 +95,18 @@ impl NodeUi for Comment {
                 .show(ui, |ui| {
                     let size = ui.available_size();
                     self.size = [size.x as u16, size.y as u16];
-                    ui.add(
-                        egui::TextEdit::multiline(&mut self.text)
-                            .hint_text("Add comment...")
-                            .frame(false)
-                            .desired_width(f32::INFINITY),
-                    )
+                    egui::ScrollArea::vertical()
+                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                        .auto_shrink(false)
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.text)
+                                    .hint_text("Add comment...")
+                                    .frame(false)
+                                    .desired_width(f32::INFINITY),
+                            )
+                        })
+                        .inner
                 })
         });
 
