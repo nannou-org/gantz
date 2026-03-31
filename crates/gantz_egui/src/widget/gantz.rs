@@ -608,6 +608,13 @@ where
                             let nodes = head_state.scene.interaction.selection.nodes.clone();
                             head_state.scene.cmds.push(Cmd::CopyNodes(nodes));
                         }
+                        // New graph: Cmd/Ctrl+N.
+                        if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::N)) {
+                            let gs = gantz_response
+                                .graph_select
+                                .get_or_insert_with(Default::default);
+                            gs.new_graph = true;
+                        }
                         // Paste, undo, redo are gated by immutable.
                         if !focused_immutable {
                             // Detect paste: Event::Paste (eframe/web) or Ctrl+V
