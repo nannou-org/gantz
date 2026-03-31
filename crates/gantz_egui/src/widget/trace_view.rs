@@ -124,7 +124,7 @@ impl TraceView {
             #[allow(unused_variables)]
             let level_response = ui.add(level_label);
             #[cfg(not(target_arch = "wasm32"))]
-            level_response.on_hover_text("Adjust with RUST_LOG env var at startup");
+            level_response.on_hover_text("adjust with RUST_LOG env var at startup");
 
             ui.separator();
             ui.checkbox(&mut state.auto_scroll, "Auto-scroll");

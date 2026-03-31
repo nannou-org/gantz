@@ -44,7 +44,7 @@ impl<'a> PaneMenu<'a> {
                     let response = ui.add(LabelToggle::new(icon_text, &mut state.open));
 
                     if !state.open {
-                        response.on_hover_text("Toggle pane visibility")
+                        response.on_hover_text("toggle pane visibility")
                     } else {
                         response
                     }

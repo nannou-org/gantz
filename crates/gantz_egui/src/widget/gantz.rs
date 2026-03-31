@@ -1378,7 +1378,7 @@ where
                 .max_col_width(col_w)
                 .show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
-                        if ui.add(button("R")).on_hover_text("Root Graph").clicked() {
+                        if ui.add(button("R")).on_hover_text("root graph").clicked() {
                             head_state.scene.cmds.push(Cmd::OpenGraph(vec![]));
                             head_state.scene.interaction.selection.clear();
                         }
@@ -1391,7 +1391,7 @@ where
                             let current_path = path == head_state.path;
                             if ui
                                 .add(button(&s))
-                                .on_hover_text(format!("Graph at {path:?}"))
+                                .on_hover_text(format!("graph at {path:?}"))
                                 .clicked()
                             {
                                 if !current_path {
