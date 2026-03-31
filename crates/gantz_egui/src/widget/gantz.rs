@@ -608,6 +608,13 @@ where
                             let nodes = head_state.scene.interaction.selection.nodes.clone();
                             head_state.scene.cmds.push(Cmd::CopyNodes(nodes));
                         }
+                        // New graph: Cmd/Ctrl+N.
+                        if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::N)) {
+                            let gs = gantz_response
+                                .graph_select
+                                .get_or_insert_with(Default::default);
+                            gs.new_graph = true;
+                        }
                         // Paste, undo, redo are gated by immutable.
                         if !focused_immutable {
                             // Detect paste: Event::Paste (eframe/web) or Ctrl+V
@@ -1371,7 +1378,7 @@ where
                 .max_col_width(col_w)
                 .show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
-                        if ui.add(button("R")).on_hover_text("Root Graph").clicked() {
+                        if ui.add(button("R")).on_hover_text("root graph").clicked() {
                             head_state.scene.cmds.push(Cmd::OpenGraph(vec![]));
                             head_state.scene.interaction.selection.clear();
                         }
@@ -1384,7 +1391,7 @@ where
                             let current_path = path == head_state.path;
                             if ui
                                 .add(button(&s))
-                                .on_hover_text(format!("Graph at {path:?}"))
+                                .on_hover_text(format!("graph at {path:?}"))
                                 .clicked()
                             {
                                 if !current_path {

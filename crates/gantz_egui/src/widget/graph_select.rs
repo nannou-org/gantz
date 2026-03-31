@@ -247,14 +247,14 @@ impl<'a> GraphSelect<'a> {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .button("\u{2B07}")
-                    .on_hover_text("Export All Named Graphs")
+                    .on_hover_text("export all named graphs")
                     .clicked()
                 {
                     response.export_all = true;
                 }
                 if ui
                     .button("\u{2B06}")
-                    .on_hover_text("Import Graph(s)")
+                    .on_hover_text("import graph(s)")
                     .clicked()
                 {
                     response.import = true;
@@ -263,7 +263,7 @@ impl<'a> GraphSelect<'a> {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     if ui
                         .add(egui::Button::new("+").min_size(ui.available_size()))
-                        .on_hover_text("Add Graph")
+                        .on_hover_text("add graph (Ctrl+N)")
                         .clicked()
                     {
                         response.new_graph = true;

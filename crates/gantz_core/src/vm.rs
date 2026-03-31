@@ -5,17 +5,17 @@
 
 use crate::{Edge, Node, compile::ModuleError, node};
 use petgraph::visit::{Data, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, Visitable};
-use steel::{SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
+use steel::{SteelErr, SteelVal, parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// Errors that can occur during VM compilation.
 #[derive(Debug, thiserror::Error)]
 pub enum CompileError {
     /// Error generating the Steel module from the graph.
-    #[error("module generation failed: {0}")]
+    #[error("module generation failed")]
     Module(#[from] ModuleError),
     /// Error executing a Steel expression in the VM.
-    #[error("expression evaluation failed: {0}")]
-    Eval(String),
+    #[error("expression evaluation failed")]
+    Eval(#[from] SteelErr),
 }
 
 /// Initialize a new VM with root state and register the given graph.
@@ -61,8 +61,7 @@ where
 {
     let module = crate::compile::module(get_node, graph)?;
     for expr in &module {
-        vm.run(expr.to_pretty(80))
-            .map_err(|e| CompileError::Eval(e.to_string()))?;
+        vm.run(expr.to_pretty(80))?;
     }
     Ok(module)
 }

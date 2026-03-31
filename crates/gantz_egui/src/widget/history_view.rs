@@ -62,7 +62,7 @@ impl<'a> HistoryView<'a> {
         // Mode toggle at top.
         ui.horizontal(|ui| {
             ui.radio_value(&mut state.mode, HistoryMode::All, "All")
-                .on_hover_text("Show all commits in the registry");
+                .on_hover_text("show all commits in the registry");
 
             ui.radio_value(&mut state.mode, HistoryMode::Focused, "Focused")
                 .on_hover_ui(|ui| {
