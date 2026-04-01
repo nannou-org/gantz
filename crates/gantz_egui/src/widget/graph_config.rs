@@ -121,7 +121,11 @@ impl<'a> GraphConfig<'a> {
         // Reset button for demo base graphs.
         let mut reset_base_graph = false;
         if self.is_base && is_demo {
-            if ui.button("Reset Demo").clicked() {
+            if ui
+                .button("Reset")
+                .on_hover_text("reset demo to initial state")
+                .clicked()
+            {
                 reset_base_graph = true;
             }
         }
