@@ -123,80 +123,105 @@ impl<'a> GraphSelect<'a> {
                 ui.available_height() - ui.spacing().interact_size.y - ui.spacing().item_spacing.y,
             )
             .show(ui, |ui| {
-                // Partition names into user names and base names.
+                // Partition names into groups:
+                // 1. User-named, non-demo
+                // 2. Base-named, non-demo
+                // 3. All demos (alphabetical, regardless of user/base)
                 let is_base = |name: &str| self.base_names.contains_key(name);
-
-                // Show user-named graphs first.
-                let mut visited = HashSet::new();
-                for (name, ca) in names.iter().filter(|(n, _)| !is_base(n)) {
-                    if !state.name_filter.is_empty()
-                        && !state
+                let is_demo = |name: &str| name.starts_with("demo-");
+                let matches_filter = |name: &str| {
+                    state.name_filter.is_empty()
+                        || state
                             .name_filter
                             .split_whitespace()
                             .all(|s| name.contains(s))
-                    {
+                };
+
+                let mut visited = HashSet::new();
+
+                // Helper: show a named graph row and handle clicks.
+                let show_named =
+                    |ui: &mut egui::Ui,
+                     name: &str,
+                     ca: &gantz_ca::CommitAddr,
+                     row_type: HeadRowType<'_>,
+                     heads: &[gantz_ca::Head],
+                     focused_head: Option<usize>,
+                     response: &mut GraphSelectResponse| {
+                        let head = gantz_ca::Head::Branch(name.to_string());
+                        let res = head_row(heads, &head, row_type, ca, focused_head, ui);
+                        if res.row.clicked() {
+                            let ctrl = ui.input(|i| i.modifiers.ctrl);
+                            if ctrl {
+                                if heads.contains(&head) {
+                                    response.closed = Some(head);
+                                } else {
+                                    response.opened = Some(head);
+                                }
+                            } else {
+                                response.replaced = Some(head);
+                            }
+                        } else if let Some(delete) = res.delete {
+                            if delete.clicked() {
+                                response.name_removed = Some(name.to_string());
+                            }
+                        }
+                    };
+
+                // 1. User-named, non-demo.
+                for (name, ca) in names.iter().filter(|(n, _)| !is_base(n) && !is_demo(n)) {
+                    if !matches_filter(name) {
                         continue;
                     }
-                    visited.insert(ca);
-                    let head = gantz_ca::Head::Branch(name.to_string());
-                    let res = head_row(
-                        self.heads,
-                        &head,
-                        HeadRowType::Named(name),
-                        ca,
-                        self.focused_head,
+                    visited.insert(*ca);
+                    show_named(
                         ui,
+                        name,
+                        ca,
+                        HeadRowType::Named(name),
+                        self.heads,
+                        self.focused_head,
+                        &mut response,
                     );
-                    if res.row.clicked() {
-                        let ctrl = ui.input(|i| i.modifiers.ctrl);
-                        if ctrl {
-                            if self.heads.contains(&head) {
-                                response.closed = Some(head);
-                            } else {
-                                response.opened = Some(head);
-                            }
-                        } else {
-                            response.replaced = Some(head);
-                        }
-                    } else if let Some(delete) = res.delete {
-                        if delete.clicked() {
-                            response.name_removed = Some(name.to_string());
-                        }
-                    }
                 }
 
-                // Show base-named graphs after user graphs.
-                for (name, ca) in names.iter().filter(|(n, _)| is_base(n)) {
-                    if !state.name_filter.is_empty()
-                        && !state
-                            .name_filter
-                            .split_whitespace()
-                            .all(|s| name.contains(s))
-                    {
+                // 2. Base-named, non-demo.
+                for (name, ca) in names.iter().filter(|(n, _)| is_base(n) && !is_demo(n)) {
+                    if !matches_filter(name) {
                         continue;
                     }
-                    visited.insert(ca);
-                    let head = gantz_ca::Head::Branch(name.to_string());
-                    let res = head_row(
-                        self.heads,
-                        &head,
-                        HeadRowType::Base(name),
-                        ca,
-                        self.focused_head,
+                    visited.insert(*ca);
+                    show_named(
                         ui,
+                        name,
+                        ca,
+                        HeadRowType::Base(name),
+                        self.heads,
+                        self.focused_head,
+                        &mut response,
                     );
-                    if res.row.clicked() {
-                        let ctrl = ui.input(|i| i.modifiers.ctrl);
-                        if ctrl {
-                            if self.heads.contains(&head) {
-                                response.closed = Some(head);
-                            } else {
-                                response.opened = Some(head);
-                            }
-                        } else {
-                            response.replaced = Some(head);
-                        }
+                }
+
+                // 3. All demos, alphabetical, regardless of user/base.
+                for (name, ca) in names.iter().filter(|(n, _)| is_demo(n)) {
+                    if !matches_filter(name) {
+                        continue;
                     }
+                    visited.insert(*ca);
+                    let row_type = if is_base(name) {
+                        HeadRowType::Base(name)
+                    } else {
+                        HeadRowType::Named(name)
+                    };
+                    show_named(
+                        ui,
+                        name,
+                        ca,
+                        row_type,
+                        self.heads,
+                        self.focused_head,
+                        &mut response,
+                    );
                 }
 
                 // Collect commit addresses for open heads (excluding named ones already shown).

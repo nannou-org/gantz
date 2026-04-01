@@ -22,36 +22,55 @@ pub struct Export<G> {
         serialize_with = "gantz_ca::serde_sorted::serialize_map_of_maps"
     )]
     pub views: HashMap<CommitAddr, GraphViews>,
+    /// Maps commits to their associated demo graph name (a `demo-*` name).
+    #[serde(default)]
+    pub demos: HashMap<CommitAddr, String>,
 }
 
-/// Produce an [`Export`] by filtering views to commits present in the registry.
-pub fn export_with_views<G>(
+/// Produce an [`Export`] by filtering views and demos to commits present in the registry.
+pub fn export_with<G>(
     registry: gantz_ca::Registry<G>,
     all_views: &HashMap<CommitAddr, GraphViews>,
+    all_demos: &HashMap<CommitAddr, String>,
 ) -> Export<G>
 where
     G: Clone,
 {
+    let commits = registry.commits();
+    let filter = |ca: &&CommitAddr| commits.contains_key(ca);
     let views = all_views
         .iter()
-        .filter(|(ca, _)| registry.commits().contains_key(ca))
+        .filter(|(ca, _)| filter(ca))
         .map(|(&ca, v)| (ca, v.clone()))
         .collect();
-    Export { registry, views }
+    let demos = all_demos
+        .iter()
+        .filter(|(ca, _)| filter(ca))
+        .map(|(&ca, v)| (ca, v.clone()))
+        .collect();
+    Export {
+        registry,
+        views,
+        demos,
+    }
 }
 
-/// Merge an [`Export`] into an existing registry and views map.
+/// Merge an [`Export`] into an existing registry, views and demos maps.
 ///
-/// Incoming views for new commits are inserted; existing views for known
-/// commits are kept.
-pub fn merge_with_views<G>(
+/// Incoming views and demos for new commits are inserted; existing
+/// entries for known commits are kept.
+pub fn merge_with<G>(
     registry: &mut gantz_ca::Registry<G>,
     views: &mut HashMap<CommitAddr, GraphViews>,
+    demos: &mut HashMap<CommitAddr, String>,
     export: Export<G>,
 ) -> MergeResult {
     let result = registry.merge(export.registry);
     for (ca, v) in export.views {
         views.entry(ca).or_insert(v);
+    }
+    for (ca, d) in export.demos {
+        demos.entry(ca).or_insert(d);
     }
     result
 }
@@ -141,7 +160,7 @@ where
         }
     }
     let export_registry = registry.export(&required_commits);
-    let export = export_with_views(export_registry, all_views);
+    let export = export_with(export_registry, all_views, &HashMap::new());
 
     Copied {
         export,
@@ -158,6 +177,7 @@ where
 pub fn paste<N>(
     registry: &mut gantz_ca::Registry<Graph<N>>,
     views: &mut HashMap<CommitAddr, GraphViews>,
+    demos: &mut HashMap<CommitAddr, String>,
     target_graph: &mut Graph<N>,
     target_layout: &mut egui_graph::Layout,
     copied: &Copied<N>,
@@ -166,7 +186,7 @@ pub fn paste<N>(
 where
     N: Clone,
 {
-    merge_with_views(registry, views, copied.export.clone());
+    merge_with(registry, views, demos, copied.export.clone());
     let new_indices = gantz_core::graph::add_subgraph(target_graph, &copied.graph);
 
     // Map positions from subgraph indices to target indices with offset.
@@ -207,6 +227,7 @@ mod tests {
         Export {
             registry,
             views: HashMap::new(),
+            demos: HashMap::new(),
         }
     }
 
@@ -240,7 +261,8 @@ mod tests {
         let recovered: Export<String> = ron::from_str(&s).expect("deserialize");
         let mut target = gantz_ca::Registry::<String>::default();
         let mut views = HashMap::new();
-        let result = merge_with_views(&mut target, &mut views, recovered);
+        let mut demos = HashMap::new();
+        let result = merge_with(&mut target, &mut views, &mut demos, recovered);
         assert_eq!(result.names_added, vec!["alpha".to_string()]);
         assert!(result.names_replaced.is_empty());
         let ca = commit_addr_raw(10);
@@ -249,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn export_with_views_filters_views() {
+    fn export_with_filters_views() {
         let ga = graph_addr(1);
         let ca = commit_addr_raw(10);
         let cb = commit_addr_raw(20);
@@ -262,7 +284,7 @@ mod tests {
         let mut all_views = HashMap::new();
         all_views.insert(ca, GraphViews::new());
         all_views.insert(cb, GraphViews::new()); // cb not in registry
-        let export = export_with_views(registry, &all_views);
+        let export = export_with(registry, &all_views, &HashMap::new());
         assert!(export.views.contains_key(&ca));
         assert!(!export.views.contains_key(&cb));
     }
@@ -303,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_with_views_keeps_existing_views() {
+    fn merge_with_keeps_existing_views() {
         let ga = graph_addr(1);
         let ca = commit_addr_raw(10);
         let commit = Commit::new(Duration::from_secs(1), None, ga);
@@ -315,6 +337,7 @@ mod tests {
         let mut existing_view = GraphViews::new();
         existing_view.insert(vec![0], egui_graph::View::default());
         let mut views = HashMap::from([(ca, existing_view)]);
+        let mut demos = HashMap::new();
         let export = Export {
             registry: gantz_ca::Registry::new(
                 HashMap::from([(ga, "g".to_string())]),
@@ -322,8 +345,9 @@ mod tests {
                 BTreeMap::new(),
             ),
             views: HashMap::from([(ca, GraphViews::new())]),
+            demos: HashMap::new(),
         };
-        merge_with_views(&mut registry, &mut views, export);
+        merge_with(&mut registry, &mut views, &mut demos, export);
         // Existing view (with 1 entry) should be preserved, not replaced by empty.
         assert_eq!(views[&ca].len(), 1);
     }

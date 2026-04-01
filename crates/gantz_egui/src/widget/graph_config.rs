@@ -13,6 +13,8 @@ pub struct GraphConfig<'a> {
     names: &'a gantz_ca::registry::Names,
     is_base: bool,
     immutable: bool,
+    demo_names: &'a [&'a str],
+    current_demo: Option<&'a str>,
 }
 
 /// Response from the [`GraphConfig`] widget.
@@ -21,6 +23,10 @@ pub struct GraphConfigResponse {
     pub new_branch: Option<(gantz_ca::Head, String)>,
     /// The "Export" button was clicked.
     pub export: bool,
+    /// Demo graph association changed: `Some(Some(name))` = set, `Some(None)` = clear.
+    pub demo_changed: Option<Option<String>>,
+    /// The "Reset" button was clicked for a base graph.
+    pub reset_base_graph: bool,
 }
 
 impl<'a> GraphConfig<'a> {
@@ -35,6 +41,8 @@ impl<'a> GraphConfig<'a> {
             names,
             is_base: false,
             immutable: false,
+            demo_names: &[],
+            current_demo: None,
         }
     }
 
@@ -53,6 +61,18 @@ impl<'a> GraphConfig<'a> {
         self
     }
 
+    /// Available demo graph names for the dropdown.
+    pub fn demo_names(mut self, demo_names: &'a [&'a str]) -> Self {
+        self.demo_names = demo_names;
+        self
+    }
+
+    /// The current demo graph association for this graph, if any.
+    pub fn current_demo(mut self, current_demo: Option<&'a str>) -> Self {
+        self.current_demo = current_demo;
+        self
+    }
+
     pub fn show(self, ui: &mut egui::Ui) -> GraphConfigResponse {
         // Name editing TextEdit with per-head temp state.
         let edit_id = egui::Id::new("graph_config_name_edit").with(self.head);
@@ -62,6 +82,49 @@ impl<'a> GraphConfig<'a> {
         let name_res = head_name_edit(self.head, &mut name, self.names, ui);
         ui.memory_mut(|m| m.data.insert_temp(edit_id, name));
         let new_branch = name_res.new_branch;
+
+        // Demo graph selector (only for named, non-demo graphs).
+        let is_named = matches!(self.head, gantz_ca::Head::Branch(_));
+        let is_demo =
+            matches!(&self.head, gantz_ca::Head::Branch(name) if name.starts_with("demo-"));
+        let mut demo_changed = None;
+        if is_named && !is_demo && !self.demo_names.is_empty() {
+            ui.add_enabled_ui(!self.immutable, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Demo:");
+                    let selected_text = self.current_demo.unwrap_or("none");
+                    egui::ComboBox::from_id_salt("demo_graph_select")
+                        .selected_text(selected_text)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(self.current_demo.is_none(), "none")
+                                .clicked()
+                            {
+                                demo_changed = Some(None);
+                            }
+                            for &demo_name in self.demo_names {
+                                if ui
+                                    .selectable_label(
+                                        self.current_demo == Some(demo_name),
+                                        demo_name,
+                                    )
+                                    .clicked()
+                                {
+                                    demo_changed = Some(Some(demo_name.to_string()));
+                                }
+                            }
+                        });
+                });
+            });
+        }
+
+        // Reset button for demo base graphs.
+        let mut reset_base_graph = false;
+        if self.is_base && is_demo {
+            if ui.button("Reset Demo").clicked() {
+                reset_base_graph = true;
+            }
+        }
 
         if self.is_base {
             ui.label(
@@ -93,6 +156,11 @@ impl<'a> GraphConfig<'a> {
         });
 
         let export = ui.button("Export").clicked();
-        GraphConfigResponse { new_branch, export }
+        GraphConfigResponse {
+            new_branch,
+            export,
+            demo_changed,
+            reset_base_graph,
+        }
     }
 }

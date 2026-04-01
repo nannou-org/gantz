@@ -26,4 +26,10 @@ pub trait Builtins: Send + Sync {
 
     /// Get content address by name.
     fn content_addr(&self, name: &str) -> Option<ContentAddr>;
+
+    /// Get the name of the demo graph associated with a builtin, if any.
+    fn demo_graph(&self, name: &str) -> Option<&str> {
+        let _ = name;
+        None
+    }
 }

@@ -53,6 +53,7 @@ pub trait NodeTypeRegistry {
 pub struct Gantz<'a> {
     env: &'a dyn Registry,
     base_names: &'a gantz_ca::registry::Names,
+    demos: Option<&'a HashMap<gantz_ca::CommitAddr, String>>,
     log_source: Option<LogSource>,
     perf_vm: Option<&'a mut widget::PerfCapture>,
     perf_gui: Option<&'a mut widget::PerfCapture>,
@@ -196,6 +197,10 @@ pub struct GantzResponse {
     pub new_branch: Option<(gantz_ca::Head, String)>,
     /// Files dropped onto gantz panes.
     pub file_drops: Vec<FileDrop>,
+    /// Demo graph association changed: (head, Some(demo_name) | None).
+    pub demo_changed: Option<(gantz_ca::Head, Option<String>)>,
+    /// A base graph should be reset to its original state.
+    pub reset_base_graph: Option<gantz_ca::Head>,
 }
 
 /// State for editing a tab name via double-click.
@@ -285,11 +290,18 @@ impl<'a> Gantz<'a> {
         Self {
             env,
             base_names,
+            demos: None,
             log_source: None,
             perf_vm: None,
             perf_gui: None,
             base_immutable: true,
         }
+    }
+
+    /// Provide demo graph associations for the config dropdown.
+    pub fn demos(mut self, demos: &'a HashMap<gantz_ca::CommitAddr, String>) -> Self {
+        self.demos = Some(demos);
+        self
     }
 
     /// Enable the logging window with a basic env logger.
@@ -377,6 +389,8 @@ impl<'a> Gantz<'a> {
             closed_heads: Vec::new(),
             new_branch: None,
             file_drops: Vec::new(),
+            demo_changed: None,
+            reset_base_graph: None,
         };
 
         // The context for traversing the tree of tiles.
@@ -527,15 +541,42 @@ where
                         gantz_ca::Head::Branch(name) => base_names.contains_key(name),
                         _ => false,
                     };
-                    let immutable = is_base && gantz.base_immutable;
+                    let is_demo =
+                        matches!(&head, gantz_ca::Head::Branch(name) if name.starts_with("demo-"));
+                    let immutable = is_base && gantz.base_immutable && !is_demo;
+
+                    // Collect demo-* names for the dropdown.
+                    let demo_names_vec: Vec<&str> = names
+                        .keys()
+                        .filter(|n| n.starts_with("demo-"))
+                        .map(|n| n.as_str())
+                        .collect();
+
+                    // Look up the current demo association for this head.
+                    let current_demo = match &head {
+                        gantz_ca::Head::Branch(name) => names
+                            .get(name)
+                            .and_then(|ca| gantz.demos.and_then(|d| d.get(ca)))
+                            .map(|s| s.as_str()),
+                        _ => None,
+                    };
+
                     let res = pane_ui(ui, |ui| {
                         widget::GraphConfig::new(&head, head_state, names)
                             .is_base(is_base)
                             .immutable(immutable)
+                            .demo_names(&demo_names_vec)
+                            .current_demo(current_demo)
                             .show(ui)
                     });
                     if res.inner.new_branch.is_some() {
                         gantz_response.new_branch = res.inner.new_branch;
+                    }
+                    if let Some(demo_val) = res.inner.demo_changed {
+                        gantz_response.demo_changed = Some((head.clone(), demo_val));
+                    }
+                    if res.inner.reset_base_graph {
+                        gantz_response.reset_base_graph = Some(head.clone());
                     }
                     if res.inner.export {
                         let head_state = state.open_heads.entry(head).or_default();
@@ -944,8 +985,12 @@ where
             .expect("pane head not found in heads");
 
         // Compute whether this head should be immutable.
+        // Demo base graphs are mutable so users can experiment.
+        let is_demo =
+            matches!(pane_head, gantz_ca::Head::Branch(name) if name.starts_with("demo-"));
         let immutable = self.base_immutable
-            && matches!(pane_head, gantz_ca::Head::Branch(name) if self.base_names.contains_key(name));
+            && matches!(pane_head, gantz_ca::Head::Branch(name) if self.base_names.contains_key(name))
+            && !is_demo;
 
         let head_state = self.state.open_heads.entry(pane_head.clone()).or_default();
         let auto_layout = head_state.auto_layout;
@@ -1379,7 +1424,7 @@ where
                 .show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
                         if ui.add(button("R")).on_hover_text("root graph").clicked() {
-                            head_state.scene.cmds.push(Cmd::OpenGraph(vec![]));
+                            head_state.scene.cmds.push(Cmd::OpenPath(vec![]));
                             head_state.scene.interaction.selection.clear();
                         }
                     });
@@ -1395,7 +1440,7 @@ where
                                 .clicked()
                             {
                                 if !current_path {
-                                    head_state.scene.cmds.push(Cmd::OpenGraph(path.to_vec()));
+                                    head_state.scene.cmds.push(Cmd::OpenPath(path.to_vec()));
                                     head_state.scene.interaction.selection.clear();
                                 }
                             }

@@ -26,6 +26,7 @@ pub fn load<N>(
     mut registry: ResMut<Registry<N>>,
     mut base_names: ResMut<BaseNames>,
     mut views: ResMut<crate::Views>,
+    mut demos: ResMut<crate::Demos>,
 ) where
     N: serde::de::DeserializeOwned + Send + Sync + 'static,
 {
@@ -46,6 +47,7 @@ pub fn load<N>(
     base_names.0 = export.registry.names().clone();
     registry.merge(export.registry);
     views.0.extend(export.views);
+    demos.0.extend(export.demos);
 }
 
 /// Path to write the base `.gantz` export to.
@@ -65,10 +67,11 @@ pub fn export_to_file<N>(
     registry: Res<Registry<N>>,
     builtins: Res<bevy_gantz::BuiltinNodes<N>>,
     views: Res<crate::Views>,
+    demos: Res<crate::Demos>,
 ) where
     N: gantz_core::Node + Clone + serde::Serialize + Send + Sync + 'static,
 {
-    let Some(ron_str) = export_all_named_ron(&registry, &builtins, &views) else {
+    let Some(ron_str) = export_all_named_ron(&registry, &builtins, &views, &demos) else {
         log::error!("export_to_file: failed to serialize");
         return;
     };
@@ -85,11 +88,12 @@ pub fn export_all_named_ron<N>(
     registry: &Registry<N>,
     builtins: &bevy_gantz::BuiltinNodes<N>,
     views: &crate::Views,
+    demos: &crate::Demos,
 ) -> Option<String>
 where
     N: gantz_core::Node + Clone + serde::Serialize + Send + Sync + 'static,
 {
-    let node_reg = crate::registry_ref(registry, builtins);
+    let node_reg = crate::registry_ref(registry, builtins, demos);
     let get_node = |ca: &gantz_ca::ContentAddr| node_reg.node(ca);
 
     let named_heads: Vec<gantz_ca::Head> = registry
@@ -99,7 +103,7 @@ where
         .collect();
 
     let export_registry = gantz_core::reg::export_heads(&get_node, registry, named_heads.iter());
-    let export = gantz_egui::export::export_with_views(export_registry, views);
+    let export = gantz_egui::export::export_with(export_registry, views, &demos.0);
 
     ron::ser::to_string_pretty(&export, ron::ser::PrettyConfig::default()).ok()
 }

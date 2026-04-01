@@ -16,7 +16,7 @@ where
         uictx.framed(|ui, _sockets| {
             let res = ui.add(egui::Label::new("graph").selectable(false));
             if ui.response().double_clicked() {
-                ctx.cmds.push(Cmd::OpenGraph(ctx.path().to_vec()));
+                ctx.cmds.push(Cmd::OpenPath(ctx.path().to_vec()));
             }
             res
         })

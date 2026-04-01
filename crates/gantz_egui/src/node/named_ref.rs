@@ -127,6 +127,10 @@ impl NodeUi for NamedRef {
         &self.name
     }
 
+    fn demo_graph<'a>(&self, registry: &'a dyn crate::Registry) -> Option<&'a str> {
+        registry.demo_graph(&self.ref_.content_addr())
+    }
+
     fn ui(
         &mut self,
         ctx: NodeCtx,
@@ -172,10 +176,8 @@ impl NodeUi for NamedRef {
 
         // Open the node on double-click (handler decides if the node is openable).
         if response.inner.response.double_clicked() {
-            ctx.cmds.push(Cmd::OpenNamedNode(
-                self.name.clone(),
-                self.ref_.content_addr(),
-            ));
+            ctx.cmds
+                .push(Cmd::OpenHead(gantz_ca::Head::Branch(self.name.clone())));
         }
 
         response

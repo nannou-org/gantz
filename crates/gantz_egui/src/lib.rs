@@ -50,6 +50,12 @@ pub use widget::graph_select::GraphRegistry;
 pub trait Registry: NameRegistry + FnNodeNames + NodeTypeRegistry + GraphRegistry {
     /// Look up a node by content address.
     fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&dyn gantz_core::Node>;
+
+    /// Get the demo graph name for a node at the given content address.
+    fn demo_graph(&self, ca: &gantz_ca::ContentAddr) -> Option<&str> {
+        let _ = ca;
+        None
+    }
 }
 
 /// Provides access to open head data for the Gantz widget.
@@ -123,6 +129,11 @@ pub trait NodeUi {
     fn flow(&self, _registry: &dyn Registry) -> egui::Direction {
         egui::Direction::TopDown
     }
+
+    /// Look up the demo graph name associated with this node, if any.
+    fn demo_graph<'a>(&self, _registry: &'a dyn Registry) -> Option<&'a str> {
+        None
+    }
 }
 
 /// A wrapper around a node's path and the VM providing easy access to the
@@ -174,8 +185,10 @@ pub fn resolve_paste_offset(pos: &PastePos, copied_positions: &egui_graph::Layou
 pub enum Cmd {
     PushEval(Vec<node::Id>),
     PullEval(Vec<node::Id>),
-    OpenGraph(Vec<node::Id>),
-    OpenNamedNode(String, gantz_ca::ContentAddr),
+    /// Navigate the path within the current head's graph hierarchy.
+    OpenPath(Vec<node::Id>),
+    /// Open a head (named or commit) as a new tab.
+    OpenHead(gantz_ca::Head),
     /// Branch a named node: create a new name with its own commit for the
     /// given content address, and replace the node with a reference to it.
     BranchNode {
@@ -255,6 +268,10 @@ where
     fn flow(&self, registry: &dyn Registry) -> egui::Direction {
         (**self).flow(registry)
     }
+
+    fn demo_graph<'b>(&self, registry: &'b dyn Registry) -> Option<&'b str> {
+        (**self).demo_graph(registry)
+    }
 }
 
 macro_rules! impl_node_ui_for_ptr {
@@ -281,6 +298,10 @@ macro_rules! impl_node_ui_for_ptr {
 
             fn flow(&self, registry: &dyn Registry) -> egui::Direction {
                 (**self).flow(registry)
+            }
+
+            fn demo_graph<'a>(&self, registry: &'a dyn Registry) -> Option<&'a str> {
+                (**self).demo_graph(registry)
             }
         }
     };
