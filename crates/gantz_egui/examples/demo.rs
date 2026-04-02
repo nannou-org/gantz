@@ -842,21 +842,13 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         log::error!("{e}");
                     }
                 }
-                gantz_egui::Cmd::OpenGraph(path) => {
+                gantz_egui::Cmd::OpenPath(path) => {
                     // Re-borrow head_state to modify path.
                     let head_state = state.gantz.open_heads.get_mut(&head).unwrap();
                     head_state.path = path;
                 }
-                gantz_egui::Cmd::OpenNamedNode(name, content_ca) => {
-                    // The content_ca represents a CommitAddr for graph nodes.
-                    let commit_ca = gantz_ca::CommitAddr::from(content_ca);
-                    if state.env.registry.names().get(&name) == Some(&commit_ca) {
-                        open_head(state, gantz_ca::Head::Branch(name.to_string()));
-                    } else {
-                        log::debug!(
-                            "Attempted to open named node, but the content address has changed"
-                        );
-                    }
+                gantz_egui::Cmd::OpenHead(target) => {
+                    open_head(state, target);
                 }
                 gantz_egui::Cmd::BranchNode { new_name, ca, path } => {
                     let commit_ca = gantz_ca::CommitAddr::from(ca);
@@ -925,9 +917,11 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         };
                         let view = gv.entry(path).or_default();
                         let mut all_views = std::collections::HashMap::new();
+                        let mut all_demos = std::collections::HashMap::new();
                         gantz_egui::export::paste(
                             &mut state.env.registry,
                             &mut all_views,
+                            &mut all_demos,
                             g,
                             &mut view.layout,
                             &copied,
@@ -978,7 +972,11 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                     let export_registry =
                         gantz_core::reg::export_heads(&get_node, &state.env.registry, [&head]);
                     let all_views = HashMap::new();
-                    let export = gantz_egui::export::export_with_views(export_registry, &all_views);
+                    let export = gantz_egui::export::export_with(
+                        export_registry,
+                        &all_views,
+                        &HashMap::new(),
+                    );
                     let ron_str = match ron::ser::to_string_pretty(
                         &export,
                         ron::ser::PrettyConfig::default(),
@@ -1022,7 +1020,11 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         named_heads.iter(),
                     );
                     let all_views = HashMap::new();
-                    let export = gantz_egui::export::export_with_views(export_registry, &all_views);
+                    let export = gantz_egui::export::export_with(
+                        export_registry,
+                        &all_views,
+                        &HashMap::new(),
+                    );
                     let ron_str = match ron::ser::to_string_pretty(
                         &export,
                         ron::ser::PrettyConfig::default(),
@@ -1294,8 +1296,13 @@ fn import_bytes(state: &mut State, bytes: Vec<u8>, open_head: bool) {
     };
 
     let mut all_views = HashMap::new();
-    let result =
-        gantz_egui::export::merge_with_views(&mut state.env.registry, &mut all_views, export);
+    let mut all_demos = HashMap::new();
+    let result = gantz_egui::export::merge_with(
+        &mut state.env.registry,
+        &mut all_views,
+        &mut all_demos,
+        export,
+    );
     log::info!(
         "Imported: {} names added, {} replaced",
         result.names_added.len(),

@@ -376,6 +376,19 @@ where
                 state.cmds.push(Cmd::CopyNodes(target.clone()));
                 ui.close();
             }
+            // Demo graph, if the node has one.
+            let demo_name = graph[n_id].demo_graph(registry);
+            let demo_btn = ui.add_enabled(demo_name.is_some(), egui::Button::new("demo"));
+            if let Some(name) = demo_name {
+                if demo_btn.on_hover_text(format!("opens {name}")).clicked() {
+                    state
+                        .cmds
+                        .push(Cmd::OpenHead(gantz_ca::Head::Branch(name.to_string())));
+                    ui.close();
+                }
+            } else {
+                demo_btn.on_disabled_hover_text("no associated demo");
+            }
             if !immutable {
                 if ui.button("delete").clicked() {
                     nodes_to_delete.extend(target);

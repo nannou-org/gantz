@@ -14,6 +14,9 @@ type PrimitiveInstances = HashMap<ca::ContentAddr, Box<dyn Node>>;
 /// Mapping from builtin content addresses to their names.
 type PrimitiveNames = HashMap<ca::ContentAddr, String>;
 
+/// Mapping from builtin node names to their associated demo graph names.
+type DemoGraphs = BTreeMap<String, String>;
+
 /// The set of all known node types accessible to gantz.
 pub struct Builtins {
     /// Constructors for all builtin nodes.
@@ -22,16 +25,20 @@ pub struct Builtins {
     instances: PrimitiveInstances,
     /// Mapping from content addresses to names.
     names: PrimitiveNames,
+    /// Mapping from builtin names to their associated demo graph names.
+    demo_graphs: DemoGraphs,
 }
 
 impl Builtins {
     pub fn new() -> Self {
         let constructors = primitives();
         let (instances, names) = primitive_instances_and_names(&constructors);
+        let demo_graphs = DemoGraphs::default();
         Self {
             constructors,
             instances,
             names,
+            demo_graphs,
         }
     }
 }
@@ -66,6 +73,10 @@ impl gantz_core::Builtins for Builtins {
             .iter()
             .find(|(_, n)| *n == name)
             .map(|(ca, _)| *ca)
+    }
+
+    fn demo_graph(&self, name: &str) -> Option<&str> {
+        self.demo_graphs.get(name).map(|s| s.as_str())
     }
 }
 

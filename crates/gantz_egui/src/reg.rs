@@ -11,7 +11,7 @@ use crate::widget::graph_select::GraphRegistry;
 use gantz_ca as ca;
 use gantz_core::node::{self, graph::Graph};
 use gantz_core::{Builtins, Node};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Registry reference providing unified node access.
 ///
@@ -21,17 +21,20 @@ use std::collections::BTreeMap;
 pub struct RegistryRef<'a, N: 'static + Send + Sync> {
     ca_registry: &'a ca::Registry<Graph<N>>,
     builtins: &'a dyn Builtins<Node = N>,
+    demos: &'a HashMap<ca::CommitAddr, String>,
 }
 
 impl<'a, N: 'static + Send + Sync> RegistryRef<'a, N> {
-    /// Construct from a CA registry and builtins provider.
+    /// Construct from a CA registry, builtins provider and demo associations.
     pub fn new(
         ca_registry: &'a ca::Registry<Graph<N>>,
         builtins: &'a dyn Builtins<Node = N>,
+        demos: &'a HashMap<ca::CommitAddr, String>,
     ) -> Self {
         Self {
             ca_registry,
             builtins,
+            demos,
         }
     }
 
@@ -150,5 +153,18 @@ impl<N: 'static + Node + Send + Sync> FnNodeNames for RegistryRef<'_, N> {
 impl<N: 'static + Node + Send + Sync> Registry for RegistryRef<'_, N> {
     fn node(&self, ca: &ca::ContentAddr) -> Option<&dyn Node> {
         RegistryRef::node(self, ca)
+    }
+
+    fn demo_graph(&self, ca: &ca::ContentAddr) -> Option<&str> {
+        // Check demos map (commit-level associations from Export).
+        let commit_ca = ca::CommitAddr::from(*ca);
+        if let Some(name) = self.demos.get(&commit_ca) {
+            return Some(name.as_str());
+        }
+        // Check builtins.
+        if let Some(builtin_name) = self.builtins.name(ca) {
+            return self.builtins.demo_graph(builtin_name);
+        }
+        None
     }
 }
