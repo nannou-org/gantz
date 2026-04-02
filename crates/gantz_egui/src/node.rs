@@ -6,6 +6,7 @@
 
 pub use comment::Comment;
 pub use fn_named_ref::{FnNamedRef, FnNodeNames};
+pub use frame_bang::FrameBang;
 #[doc(inline)]
 pub use gantz_core::node::{Id, state};
 pub use inspect::Inspect;
@@ -13,5 +14,6 @@ pub use named_ref::{NameRegistry, NamedRef, missing_color, outdated_color};
 
 pub mod comment;
 pub mod fn_named_ref;
+pub mod frame_bang;
 pub mod inspect;
 pub mod named_ref;

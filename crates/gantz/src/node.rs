@@ -42,6 +42,8 @@ impl Node for gantz_egui::node::NamedRef {}
 #[typetag::serde]
 impl Node for gantz_egui::node::Comment {}
 #[typetag::serde]
+impl Node for gantz_egui::node::FrameBang {}
+#[typetag::serde]
 impl Node for gantz_egui::node::Inspect {}
 
 impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
