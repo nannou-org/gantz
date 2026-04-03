@@ -42,11 +42,20 @@ impl Node for gantz_egui::node::NamedRef {}
 #[typetag::serde]
 impl Node for gantz_egui::node::Comment {}
 #[typetag::serde]
+impl Node for bevy_gantz_egui::node::FrameBang {}
+#[typetag::serde]
 impl Node for gantz_egui::node::Inspect {}
 
 impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
     fn from(named: gantz_egui::node::NamedRef) -> Self {
         Box::new(named)
+    }
+}
+
+impl bevy_gantz_egui::node::ToFrameBang for Box<dyn Node> {
+    fn to_frame_bang(&self) -> Option<&bevy_gantz_egui::node::FrameBang> {
+        let any: &dyn std::any::Any = &**self;
+        any.downcast_ref()
     }
 }
 

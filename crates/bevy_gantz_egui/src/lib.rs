@@ -26,6 +26,7 @@ use std::ops::{Deref, DerefMut};
 use steel::steel_vm::engine::Engine;
 
 pub mod base;
+pub mod node;
 pub mod storage;
 
 // ----------------------------------------------------------------------------
@@ -79,6 +80,7 @@ where
         + From<gantz_egui::node::NamedRef>
         + gantz_egui::NodeUi
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
+        + node::ToFrameBang
         + serde::Serialize
         + serde::de::DeserializeOwned
         + Send
@@ -115,7 +117,12 @@ where
             // Systems
             .add_systems(
                 Update,
-                (process_cmds::<N>, persist_views::<N>, poll_import_task),
+                (
+                    node::frame_bang::drive_frame_bangs::<N>,
+                    process_cmds::<N>,
+                    persist_views::<N>,
+                    poll_import_task,
+                ),
             )
             .add_systems(EguiPrimaryContextPass, update::<N>);
     }
