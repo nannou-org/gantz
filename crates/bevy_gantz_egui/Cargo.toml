@@ -12,6 +12,7 @@ repository.workspace = true
 bevy_app.workspace = true
 bevy_ecs.workspace = true
 bevy_egui.workspace = true
+bevy_time.workspace = true
 bevy_gantz.workspace = true
 bevy_log.workspace = true
 bevy_tasks.workspace = true
