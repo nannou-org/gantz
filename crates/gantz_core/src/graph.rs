@@ -66,6 +66,21 @@ pub fn visit<'a, G>(
     }
 }
 
+/// Visit all nodes in the graph with a [`visit::TypedVisitor`].
+pub fn visit_typed<'a, G, V>(get_node: node::GetNode<'a>, g: G, path: &[node::Id], visitor: &mut V)
+where
+    G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
+    G::NodeWeight: Node,
+    V: visit::TypedVisitor<G::NodeWeight>,
+{
+    visit(
+        get_node,
+        g,
+        path,
+        &mut visit::Typed::<&mut V, G::NodeWeight>::new(visitor),
+    );
+}
+
 /// Register the given graph of nodes, including any nested nodes.
 pub fn register<'a, G>(get_node: node::GetNode<'a>, g: G, path: &[node::Id], vm: &mut Engine)
 where

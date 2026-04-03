@@ -30,7 +30,10 @@ pub mod rust;
 pub mod state;
 
 /// The definitive abstraction of a gantz graph, the gantz `Node` trait.
-pub trait Node {
+///
+/// The [`std::any::Any`] supertrait enables [`Visitor`] implementations to
+/// downcast `&dyn Node` to concrete types via [`visit::TypedVisitor`].
+pub trait Node: std::any::Any {
     /// The number of inputs to the node.
     ///
     /// The maximum number is [`Conns::MAX`].
@@ -354,59 +357,6 @@ impl<'env, 'data> ExprCtx<'env, 'data> {
     }
 }
 
-impl<N> Node for &N
-where
-    N: ?Sized + Node,
-{
-    fn n_inputs(&self, ctx: MetaCtx) -> usize {
-        (**self).n_inputs(ctx)
-    }
-
-    fn n_outputs(&self, ctx: MetaCtx) -> usize {
-        (**self).n_outputs(ctx)
-    }
-
-    fn branches(&self, ctx: MetaCtx) -> Vec<EvalConf> {
-        (**self).branches(ctx)
-    }
-
-    fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
-        (**self).expr(ctx)
-    }
-
-    fn push_eval(&self, ctx: MetaCtx) -> Vec<EvalConf> {
-        (**self).push_eval(ctx)
-    }
-
-    fn pull_eval(&self, ctx: MetaCtx) -> Vec<EvalConf> {
-        (**self).pull_eval(ctx)
-    }
-
-    fn inlet(&self, ctx: MetaCtx) -> bool {
-        (**self).inlet(ctx)
-    }
-
-    fn outlet(&self, ctx: MetaCtx) -> bool {
-        (**self).outlet(ctx)
-    }
-
-    fn stateful(&self, ctx: MetaCtx) -> bool {
-        (**self).stateful(ctx)
-    }
-
-    fn register(&self, ctx: RegCtx<'_, '_>) {
-        (**self).register(ctx)
-    }
-
-    fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
-        (**self).required_addrs()
-    }
-
-    fn visit(&self, ctx: visit::Ctx<'_, '_>, visitor: &mut dyn Visitor) {
-        (**self).visit(ctx, visitor)
-    }
-}
-
 macro_rules! impl_node_for_ptr {
     ($($Ty:ident)::*) => {
         impl<T> Node for $($Ty)::*<T>
@@ -519,6 +469,18 @@ pub fn visit(ctx: visit::Ctx<'_, '_>, node: &dyn Node, visitor: &mut dyn Visitor
     visitor.visit_pre(ctx, node);
     node.visit(ctx, visitor);
     visitor.visit_post(ctx, node);
+}
+
+/// Visit this node and all nested nodes with a [`visit::TypedVisitor`].
+///
+/// The root node is passed directly as `&N`. Nested nodes that are not `N`
+/// are silently skipped.
+pub fn visit_typed<V: visit::TypedVisitor<N>, N: Node>(
+    ctx: visit::Ctx<'_, '_>,
+    node: &N,
+    visitor: &mut V,
+) {
+    visit(ctx, node, &mut visit::Typed::<&mut V, N>::new(visitor));
 }
 
 /// Register the given node and all nested nodes.
