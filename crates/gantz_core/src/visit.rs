@@ -6,6 +6,9 @@ use crate::{
 };
 use std::collections::HashSet;
 use steel::steel_vm::engine::Engine;
+pub use typed::{Typed, TypedVisitor};
+
+mod typed;
 
 /// For types used to traverse nested graphs of [`Node`]s.
 ///

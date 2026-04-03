@@ -79,7 +79,7 @@ impl<N: Node> WithStateType for N {
 impl<N, S> Node for State<N, S>
 where
     N: Node,
-    S: NodeState,
+    S: NodeState + 'static,
 {
     fn n_inputs(&self, ctx: node::MetaCtx) -> usize {
         self.node.n_inputs(ctx)
