@@ -7,6 +7,7 @@ pub mod builtin;
 pub mod debounced_input;
 pub mod head;
 pub mod reg;
+pub mod state;
 pub mod storage;
 pub mod vm;
 
@@ -18,6 +19,7 @@ pub use head::{
     OpenHeadDataReadOnly, WorkingGraph,
 };
 pub use reg::{Registry, lookup_node, timestamp};
+pub use state::{PersistEvent, PersistStateConfig, States};
 pub use vm::{EvalCompleted, EvalEvent, EvalKind};
 
 /// Plugin providing core gantz functionality.
@@ -50,6 +52,8 @@ where
         app.init_resource::<FocusedHead>()
             .init_resource::<HeadTabOrder>()
             .init_resource::<Registry<N>>()
+            .init_resource::<States>()
+            .init_resource::<PersistStateConfig>()
             .init_non_send_resource::<HeadVms>()
             // Register head event handlers.
             .add_observer(head::on_open::<N>)
@@ -59,6 +63,8 @@ where
             .add_observer(head::on_move_branch::<N>)
             // Register eval event handler.
             .add_observer(vm::on_eval)
+            // State persistence observer.
+            .add_observer(state::on_persist::<N>)
             // VM init observers.
             .add_observer(vm::on_head_opened::<N>)
             .add_observer(vm::on_head_changed::<N>)
@@ -66,6 +72,10 @@ where
             .add_systems(Update, vm::update::<N>);
     }
 }
+
+// ----------------------------------------------------------------------------
+// Functions
+// ----------------------------------------------------------------------------
 
 /// Clone a graph.
 pub fn clone_graph<N: Clone>(

@@ -918,10 +918,12 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         let view = gv.entry(path).or_default();
                         let mut all_views = std::collections::HashMap::new();
                         let mut all_demos = std::collections::HashMap::new();
+                        let mut all_states = std::collections::HashMap::new();
                         gantz_egui::export::paste(
                             &mut state.env.registry,
                             &mut all_views,
                             &mut all_demos,
+                            &mut all_states,
                             g,
                             &mut view.layout,
                             &copied,
@@ -976,6 +978,7 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         export_registry,
                         &all_views,
                         &HashMap::new(),
+                        &HashMap::new(),
                     );
                     let ron_str = match ron::ser::to_string_pretty(
                         &export,
@@ -1001,6 +1004,7 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         }
                     }
                 }
+                gantz_egui::Cmd::PersistState => {}
                 gantz_egui::Cmd::ExportAllNamed => {
                     let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
                     let named_heads: Vec<gantz_ca::Head> = state
@@ -1023,6 +1027,7 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                     let export = gantz_egui::export::export_with(
                         export_registry,
                         &all_views,
+                        &HashMap::new(),
                         &HashMap::new(),
                     );
                     let ron_str = match ron::ser::to_string_pretty(
@@ -1078,7 +1083,15 @@ fn copy_nodes(
         .cloned()
         .unwrap_or_default();
     let all_views = std::collections::HashMap::new();
-    let copied = gantz_egui::export::copy(&state.env.registry, &all_views, g, &nodes, &layout);
+    let all_states = std::collections::HashMap::new();
+    let copied = gantz_egui::export::copy(
+        &state.env.registry,
+        &all_views,
+        &all_states,
+        g,
+        &nodes,
+        &layout,
+    );
     match ron::to_string(&copied) {
         Ok(text) => ctx.copy_text(text),
         Err(e) => log::error!("Failed to serialize copy payload: {e}"),
@@ -1297,10 +1310,12 @@ fn import_bytes(state: &mut State, bytes: Vec<u8>, open_head: bool) {
 
     let mut all_views = HashMap::new();
     let mut all_demos = HashMap::new();
+    let mut all_states = HashMap::new();
     let result = gantz_egui::export::merge_with(
         &mut state.env.registry,
         &mut all_views,
         &mut all_demos,
+        &mut all_states,
         export,
     );
     log::info!(

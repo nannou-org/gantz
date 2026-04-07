@@ -93,7 +93,7 @@ impl Expr {
 fn collect_unique_vars(tts: TokenStream) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut vars = Vec::new();
-    for token in tts {
+    for token in tts.flatten() {
         let src = token.source();
         if src.starts_with("$") {
             let var_name = src.to_string();
@@ -119,7 +119,7 @@ fn interpolate_tokens(tts: TokenStream, vars: &[String], inputs: &[Option<String
         .map(|(i, v)| (v.as_str(), i))
         .collect();
 
-    let tokens = tts.map(|token| {
+    let tokens = tts.flatten().map(|token| {
         let src = token.source();
         if src.starts_with("$") {
             let index = var_to_index.get(src).unwrap();

@@ -9,7 +9,9 @@ use bevy_gantz::{
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
     reg, timestamp, vm,
 };
-use bevy_gantz_egui::{GantzEguiPlugin, GuiState, HeadGuiState, TraceCapture, Views};
+use bevy_gantz_egui::{
+    GantzEguiPlugin, GuiState, HeadGuiState, PersistStateConfig, States, TraceCapture, Views,
+};
 use bevy_pkv::PkvStore;
 use builtin::Builtins;
 use storage::Pkv;
@@ -44,7 +46,11 @@ fn main() {
                 reg::prune_unused::<Box<dyn node::Node>>
                     .after(setup_resources)
                     .after(setup_open),
-                vm::setup::<Box<dyn node::Node>>.after(reg::prune_unused::<Box<dyn node::Node>>),
+                bevy_gantz_egui::prune_views::<Box<dyn node::Node>>
+                    .after(reg::prune_unused::<Box<dyn node::Node>>),
+                reg::prune_states::<Box<dyn node::Node>>
+                    .after(reg::prune_unused::<Box<dyn node::Node>>),
+                vm::setup.after(reg::prune_unused::<Box<dyn node::Node>>),
             ),
         )
         .add_systems(EguiPrimaryContextPass, load_egui_memory)
@@ -89,9 +95,13 @@ fn setup_resources(storage: Res<Pkv>, mut cmds: Commands) {
     let registry: Registry<Box<dyn node::Node>> = bevy_gantz::storage::load_registry(&*storage);
     let views = bevy_gantz_egui::storage::load_views(&*storage);
     let gui_state = bevy_gantz_egui::storage::load_gui_state(&*storage);
+    let states = bevy_gantz_egui::storage::load_states(&*storage);
+    let persist_config = bevy_gantz_egui::storage::load_persist_state_config(&*storage);
     cmds.insert_resource(registry);
     cmds.insert_resource(views);
     cmds.insert_resource(gui_state);
+    cmds.insert_resource(states);
+    cmds.insert_resource(persist_config);
 }
 
 fn setup_open(
@@ -143,6 +153,8 @@ fn persist_resources(
     registry: Res<Registry<Box<dyn node::Node>>>,
     views: Res<Views>,
     gui_state: Res<GuiState>,
+    states: Res<States>,
+    persist_config: Res<PersistStateConfig>,
     mut storage: ResMut<Pkv>,
     mut ctxs: EguiContexts,
     tab_order: Res<HeadTabOrder>,
@@ -177,6 +189,9 @@ fn persist_resources(
     if let Ok(ctx) = ctxs.ctx_mut() {
         bevy_gantz_egui::storage::save_egui_memory(&mut *storage, ctx);
     }
+    // Save node state snapshots and persist-state configuration.
+    bevy_gantz_egui::storage::save_states(&mut *storage, &states);
+    bevy_gantz_egui::storage::save_persist_state_config(&mut *storage, &persist_config);
 }
 
 #[cfg(test)]

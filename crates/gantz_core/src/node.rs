@@ -14,7 +14,7 @@ pub use pull::{Pull, WithPullEval};
 pub use push::{Push, WithPushEval};
 pub use ref_::Ref;
 use serde::{Deserialize, Serialize};
-pub use state::{NodeState, State, WithStateType};
+pub use state::{Bytes, NodeState, State, WithStateType};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 pub mod apply;

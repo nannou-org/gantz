@@ -162,14 +162,26 @@ impl NodeUi for NamedRef {
                 .map(|ca| ca != ref_ca)
                 .unwrap_or(false);
 
+        // Compute statefulness for the label suffix.
+        let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
+        let meta_ctx = MetaCtx::new(&get_node);
+        let stateful = self.stateful(meta_ctx);
+
+        // Add a tiny suffix indicating statefulness.
+        let display_name = if stateful {
+            format!("{}˚", self.name)
+        } else {
+            self.name.clone()
+        };
+
         // Regular frame, error color if missing, warning color if outdated.
         let response = uictx.framed(|ui, _sockets| {
             let name_text = if is_missing {
-                egui::RichText::new(&self.name).color(missing_color())
+                egui::RichText::new(&display_name).color(missing_color())
             } else if is_outdated {
-                egui::RichText::new(&self.name).color(outdated_color())
+                egui::RichText::new(&display_name).color(outdated_color())
             } else {
-                egui::RichText::new(&self.name)
+                egui::RichText::new(&display_name)
             };
             ui.add(egui::Label::new(name_text).selectable(false))
         });

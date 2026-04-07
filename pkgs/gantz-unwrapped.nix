@@ -36,7 +36,12 @@ rustPlatform.buildRustPackage {
   inherit src buildAndTestSubdir;
   pname = manifest.package.name;
   version = manifest.package.version;
-  cargoLock.lockFile = ../Cargo.lock;
+  cargoLock = {
+    outputHashes = {
+      "steel-core-0.8.2" = "sha256-qlGG7BWgg6mQifj80Ycm5P7T2TQUM2OppH91fKFT57A=";
+    };
+    lockFile = ../Cargo.lock;
+  };
   cargoBuildFlags = [
     "--bin"
     "gantz"

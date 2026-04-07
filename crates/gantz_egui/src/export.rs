@@ -6,14 +6,14 @@
 
 use crate::GraphViews;
 use gantz_ca::{CommitAddr, registry::MergeResult};
-use gantz_core::node::{self, graph::Graph};
+use gantz_core::node::{self, Bytes, graph::Graph};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 /// File extension for gantz export files (without the leading dot).
 pub const FILE_EXTENSION: &str = "gantz";
 
-/// A serializable bundle of a registry subset and its associated view state.
+/// A serializable bundle of a registry subset and its associated view and state data.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Export<G> {
     pub registry: gantz_ca::Registry<G>,
@@ -25,13 +25,16 @@ pub struct Export<G> {
     /// Maps commits to their associated demo graph name (a `demo-*` name).
     #[serde(default)]
     pub demos: HashMap<CommitAddr, String>,
+    #[serde(default)]
+    pub states: HashMap<CommitAddr, Bytes>,
 }
 
-/// Produce an [`Export`] by filtering views and demos to commits present in the registry.
+/// Produce an [`Export`] by filtering views, demos, and states to commits present in the registry.
 pub fn export_with<G>(
     registry: gantz_ca::Registry<G>,
     all_views: &HashMap<CommitAddr, GraphViews>,
     all_demos: &HashMap<CommitAddr, String>,
+    all_states: &HashMap<CommitAddr, Bytes>,
 ) -> Export<G>
 where
     G: Clone,
@@ -48,21 +51,28 @@ where
         .filter(|(ca, _)| filter(ca))
         .map(|(&ca, v)| (ca, v.clone()))
         .collect();
+    let states = all_states
+        .iter()
+        .filter(|(ca, _)| filter(ca))
+        .map(|(&ca, v)| (ca, v.clone()))
+        .collect();
     Export {
         registry,
         views,
         demos,
+        states,
     }
 }
 
-/// Merge an [`Export`] into an existing registry, views and demos maps.
+/// Merge an [`Export`] into an existing registry, views, demos, and states maps.
 ///
-/// Incoming views and demos for new commits are inserted; existing
-/// entries for known commits are kept.
+/// Incoming entries for new commits are inserted; existing entries for known
+/// commits are kept.
 pub fn merge_with<G>(
     registry: &mut gantz_ca::Registry<G>,
     views: &mut HashMap<CommitAddr, GraphViews>,
     demos: &mut HashMap<CommitAddr, String>,
+    states: &mut HashMap<CommitAddr, Bytes>,
     export: Export<G>,
 ) -> MergeResult {
     let result = registry.merge(export.registry);
@@ -71,6 +81,9 @@ pub fn merge_with<G>(
     }
     for (ca, d) in export.demos {
         demos.entry(ca).or_insert(d);
+    }
+    for (ca, s) in export.states {
+        states.entry(ca).or_insert(s);
     }
     result
 }
@@ -121,12 +134,16 @@ pub struct Copied<N> {
     pub graph: Graph<N>,
     /// Positions of nodes in the subgraph.
     pub positions: egui_graph::Layout,
+    /// Per-node VM state keyed by subgraph node index.
+    #[serde(default)]
+    pub node_states: HashMap<usize, Bytes>,
 }
 
 /// Build a [`Copied`] payload from the selected nodes in a graph.
 pub fn copy<N>(
     registry: &gantz_ca::Registry<Graph<N>>,
     all_views: &HashMap<CommitAddr, GraphViews>,
+    all_states: &HashMap<CommitAddr, Bytes>,
     graph: &Graph<N>,
     selected: &HashSet<node::graph::NodeIx>,
     layout: &egui_graph::Layout,
@@ -160,12 +177,13 @@ where
         }
     }
     let export_registry = registry.export(&required_commits);
-    let export = export_with(export_registry, all_views, &HashMap::new());
+    let export = export_with(export_registry, all_views, &HashMap::new(), all_states);
 
     Copied {
         export,
         graph: subgraph,
         positions,
+        node_states: HashMap::new(),
     }
 }
 
@@ -178,6 +196,7 @@ pub fn paste<N>(
     registry: &mut gantz_ca::Registry<Graph<N>>,
     views: &mut HashMap<CommitAddr, GraphViews>,
     demos: &mut HashMap<CommitAddr, String>,
+    states: &mut HashMap<CommitAddr, Bytes>,
     target_graph: &mut Graph<N>,
     target_layout: &mut egui_graph::Layout,
     copied: &Copied<N>,
@@ -186,7 +205,7 @@ pub fn paste<N>(
 where
     N: Clone,
 {
-    merge_with(registry, views, demos, copied.export.clone());
+    merge_with(registry, views, demos, states, copied.export.clone());
     let new_indices = gantz_core::graph::add_subgraph(target_graph, &copied.graph);
 
     // Map positions from subgraph indices to target indices with offset.
@@ -228,6 +247,7 @@ mod tests {
             registry,
             views: HashMap::new(),
             demos: HashMap::new(),
+            states: HashMap::new(),
         }
     }
 
@@ -262,7 +282,8 @@ mod tests {
         let mut target = gantz_ca::Registry::<String>::default();
         let mut views = HashMap::new();
         let mut demos = HashMap::new();
-        let result = merge_with(&mut target, &mut views, &mut demos, recovered);
+        let mut states = HashMap::new();
+        let result = merge_with(&mut target, &mut views, &mut demos, &mut states, recovered);
         assert_eq!(result.names_added, vec!["alpha".to_string()]);
         assert!(result.names_replaced.is_empty());
         let ca = commit_addr_raw(10);
@@ -284,7 +305,7 @@ mod tests {
         let mut all_views = HashMap::new();
         all_views.insert(ca, GraphViews::new());
         all_views.insert(cb, GraphViews::new()); // cb not in registry
-        let export = export_with(registry, &all_views, &HashMap::new());
+        let export = export_with(registry, &all_views, &HashMap::new(), &HashMap::new());
         assert!(export.views.contains_key(&ca));
         assert!(!export.views.contains_key(&cb));
     }
@@ -306,6 +327,7 @@ mod tests {
             export: Export::default(),
             graph,
             positions,
+            node_states: HashMap::new(),
         };
 
         let s = ron::to_string(&copied).expect("serialize");
@@ -338,6 +360,7 @@ mod tests {
         existing_view.insert(vec![0], egui_graph::View::default());
         let mut views = HashMap::from([(ca, existing_view)]);
         let mut demos = HashMap::new();
+        let mut states = HashMap::new();
         let export = Export {
             registry: gantz_ca::Registry::new(
                 HashMap::from([(ga, "g".to_string())]),
@@ -346,10 +369,64 @@ mod tests {
             ),
             views: HashMap::from([(ca, GraphViews::new())]),
             demos: HashMap::new(),
+            states: HashMap::new(),
         };
-        merge_with(&mut registry, &mut views, &mut demos, export);
+        merge_with(&mut registry, &mut views, &mut demos, &mut states, export);
         // Existing view (with 1 entry) should be preserved, not replaced by empty.
         assert_eq!(views[&ca].len(), 1);
+    }
+
+    #[test]
+    fn export_with_filters_states() {
+        let ga = graph_addr(1);
+        let ca = commit_addr_raw(10);
+        let cb = commit_addr_raw(20);
+        let commit = Commit::new(Duration::from_secs(1), None, ga);
+        let registry = gantz_ca::Registry::new(
+            HashMap::from([(ga, "g".to_string())]),
+            HashMap::from([(ca, commit)]),
+            BTreeMap::new(),
+        );
+        let mut all_states = HashMap::new();
+        all_states.insert(ca, Bytes::from(vec![1, 2, 3]));
+        all_states.insert(cb, Bytes::from(vec![4, 5, 6])); // cb not in registry
+        let export = export_with(registry, &HashMap::new(), &HashMap::new(), &all_states);
+        assert!(export.states.contains_key(&ca));
+        assert!(!export.states.contains_key(&cb));
+        assert_eq!(&*export.states[&ca], &[1, 2, 3]);
+    }
+
+    #[test]
+    fn merge_with_keeps_existing_states() {
+        let ga = graph_addr(1);
+        let ca = commit_addr_raw(10);
+        let commit = Commit::new(Duration::from_secs(1), None, ga);
+        let mut registry = gantz_ca::Registry::new(
+            HashMap::from([(ga, "g".to_string())]),
+            HashMap::from([(ca, commit.clone())]),
+            BTreeMap::new(),
+        );
+        let mut views = HashMap::new();
+        let mut states = HashMap::from([(ca, Bytes::from(vec![1, 2, 3]))]);
+        let export = Export {
+            registry: gantz_ca::Registry::new(
+                HashMap::from([(ga, "g".to_string())]),
+                HashMap::from([(ca, commit)]),
+                BTreeMap::new(),
+            ),
+            views: HashMap::new(),
+            demos: HashMap::new(),
+            states: HashMap::from([(ca, Bytes::from(vec![9, 9, 9]))]),
+        };
+        merge_with(
+            &mut registry,
+            &mut views,
+            &mut HashMap::new(),
+            &mut states,
+            export,
+        );
+        // Existing state should be preserved, not replaced.
+        assert_eq!(&*states[&ca], &[1, 2, 3]);
     }
 
     #[test]

@@ -66,8 +66,8 @@ rfd = "0.15"
 ron = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-steel-core = "0.7"
-steel-derive = "0.6"
+steel-core = { git = "https://github.com/mattwparas/steel" }
+steel-derive = { git = "https://github.com/mattwparas/steel" }
 sublime_fuzzy = "0.7"
 thiserror = "2"
 time = { version = "0.3", features = ["local-offset", "wasm-bindgen"] }

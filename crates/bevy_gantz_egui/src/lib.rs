@@ -14,6 +14,7 @@ use bevy_gantz::head;
 use bevy_gantz::reg::Registry;
 use bevy_gantz::vm::{EvalEvent, EvalKind};
 use bevy_gantz::{BuiltinNodes, EvalCompleted};
+pub use bevy_gantz::{PersistStateConfig, States};
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::Node;
@@ -558,6 +559,7 @@ pub fn on_create_node<N>(
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     demos: Res<Demos>,
+    states: Res<States>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
 ) where
@@ -602,6 +604,17 @@ pub fn on_create_node<N>(
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
     let reg_ctx = gantz_core::node::RegCtx::new(&get_node, &node_path, vm);
     graph[id].register(reg_ctx);
+
+    // If the node is a named graph with persisted state, restore it.
+    if let Some(commit_ca) = registry.names().get(&event.cmd.node_type) {
+        if let Some(bytes) = states.get(commit_ca) {
+            if let Err(e) =
+                gantz_core::node::state::deserialize_and_restore_entry(vm, &node_path, bytes)
+            {
+                log::error!("CreateNode: failed to restore state: {e}");
+            }
+        }
+    }
 }
 
 /// Handle branch node events.
@@ -708,6 +721,8 @@ pub fn on_copy_nodes<N>(
     registry: Res<Registry<N>>,
     gui_state: ResMut<GuiState>,
     views: Res<Views>,
+    states: Res<States>,
+    mut vms: NonSendMut<head::HeadVms>,
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
     mut heads: Query<
         (&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphViews),
@@ -750,7 +765,23 @@ pub fn on_copy_nodes<N>(
         .cloned()
         .unwrap_or_default();
 
-    let copied = gantz_egui::export::copy(&registry, &views, g, &selection, &layout);
+    let mut copied = gantz_egui::export::copy(&registry, &views, &states, g, &selection, &layout);
+
+    // Serialize per-node VM state from the selected nodes.
+    if let Some(vm) = vms.get_mut(&event.head) {
+        let sorted: std::collections::BTreeSet<_> = selection.iter().copied().collect();
+        for (sub_ix, &old_ix) in sorted.iter().enumerate() {
+            let full_path: Vec<usize> = path.iter().copied().chain(Some(old_ix.index())).collect();
+            match gantz_core::node::state::serialize_entry(vm, &full_path) {
+                Ok(Some(bytes)) => {
+                    copied.node_states.insert(sub_ix, bytes);
+                }
+                Ok(None) => {}
+                Err(e) => log::error!("CopySelection: failed to serialize node state: {e}"),
+            }
+        }
+    }
+
     match ron::to_string(&copied) {
         Ok(text) => clipboard.set_text(&text),
         Err(e) => log::error!("CopySelection: failed to serialize: {e}"),
@@ -769,6 +800,7 @@ pub fn on_paste<N>(
     gui_state: ResMut<GuiState>,
     mut views: ResMut<Views>,
     mut demos: ResMut<Demos>,
+    mut states: ResMut<States>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads: Query<
         (&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphViews),
@@ -810,11 +842,12 @@ pub fn on_paste<N>(
             log::error!("PasteSelection: could not find graph at path {path:?}");
             return;
         };
-        let view = gv.entry(path).or_default();
+        let view = gv.entry(path.clone()).or_default();
         gantz_egui::export::paste(
             &mut registry,
             &mut views,
             &mut demos,
+            &mut states,
             g,
             &mut view.layout,
             &copied,
@@ -829,6 +862,22 @@ pub fn on_paste<N>(
         let node_reg = registry_ref(&registry, &builtins, &demos);
         let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
         gantz_core::graph::register(&get_node, &**wg, &[], vm);
+
+        // Restore per-node state from the clipboard payload.
+        for (sub_ix, &target_ix) in new_indices.iter().enumerate() {
+            if let Some(bytes) = copied.node_states.get(&sub_ix) {
+                let full_path: Vec<usize> = path
+                    .iter()
+                    .copied()
+                    .chain(Some(target_ix.index()))
+                    .collect();
+                if let Err(e) =
+                    gantz_core::node::state::deserialize_and_restore_entry(vm, &full_path, bytes)
+                {
+                    log::error!("PasteSelection: failed to restore node state: {e}");
+                }
+            }
+        }
     }
 
     // Update selection to the pasted nodes.
@@ -852,6 +901,8 @@ pub fn on_export_head<N>(
     builtins: Res<BuiltinNodes<N>>,
     views: Res<Views>,
     demos: Res<Demos>,
+    states: Res<States>,
+    persist_config: Res<PersistStateConfig>,
     heads: Query<&head::HeadRef, With<head::OpenHead>>,
 ) where
     N: 'static + Node + Clone + serde::Serialize + Send + Sync,
@@ -867,7 +918,8 @@ pub fn on_export_head<N>(
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
 
     let export_registry = gantz_core::reg::export_heads(&get_node, &registry, [head]);
-    let export = gantz_egui::export::export_with(export_registry, &views, &demos);
+    let export_states = filter_export_states(&node_reg, &export_registry, &states, &persist_config);
+    let export = gantz_egui::export::export_with(export_registry, &views, &demos, &export_states);
 
     let ron_str = match ron::ser::to_string_pretty(&export, ron::ser::PrettyConfig::default()) {
         Ok(s) => s,
@@ -907,6 +959,8 @@ pub fn on_export_all_named<N>(
     builtins: Res<BuiltinNodes<N>>,
     views: Res<Views>,
     demos: Res<Demos>,
+    states: Res<States>,
+    persist_config: Res<PersistStateConfig>,
 ) where
     N: 'static + Node + Clone + serde::Serialize + Send + Sync,
 {
@@ -925,7 +979,8 @@ pub fn on_export_all_named<N>(
     }
 
     let export_registry = gantz_core::reg::export_heads(&get_node, &registry, named_heads.iter());
-    let export = gantz_egui::export::export_with(export_registry, &views, &demos);
+    let export_states = filter_export_states(&node_reg, &export_registry, &states, &persist_config);
+    let export = gantz_egui::export::export_with(export_registry, &views, &demos, &export_states);
 
     let ron_str = match ron::ser::to_string_pretty(&export, ron::ser::PrettyConfig::default()) {
         Ok(s) => s,
@@ -962,6 +1017,8 @@ pub fn on_import_file<N>(
     builtins: Res<BuiltinNodes<N>>,
     mut views: ResMut<Views>,
     mut demos: ResMut<Demos>,
+    mut states: ResMut<States>,
+    mut persist_config: ResMut<PersistStateConfig>,
     mut cmds: Commands,
 ) where
     N: 'static + Node + Clone + serde::de::DeserializeOwned + Send + Sync,
@@ -996,12 +1053,27 @@ pub fn on_import_file<N>(
         None
     };
 
-    let result = gantz_egui::export::merge_with(&mut registry, &mut views, &mut demos, export);
+    // Collect names whose commits carry state before the merge consumes the export.
+    let names_with_state: Vec<String> = export
+        .registry
+        .names()
+        .iter()
+        .filter(|(_, ca)| export.states.contains_key(ca))
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    let result =
+        gantz_egui::export::merge_with(&mut registry, &mut views, &mut demos, &mut states, export);
     log::info!(
         "Imported: {} names added, {} replaced",
         result.names_added.len(),
         result.names_replaced.len(),
     );
+
+    // Enable state persistence for imported names that had state.
+    for name in names_with_state {
+        persist_config.insert(name);
+    }
 
     if let Some(name) = root_name {
         cmds.trigger(head::OpenEvent(ca::Head::Branch(name)));
@@ -1216,6 +1288,9 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                 gantz_egui::Cmd::OpenCommandPalette => {
                     gui_state.command_palette.toggle();
                 }
+                gantz_egui::Cmd::PersistState => {
+                    cmds.trigger(bevy_gantz::state::PersistEvent { head: entity });
+                }
             }
         }
     }
@@ -1242,6 +1317,7 @@ pub fn update<N>(
     import_task: Option<Res<ImportTask>>,
     (base_names, base_immutable): (Res<BaseNames>, Res<BaseImmutable>),
     mut demos: ResMut<Demos>,
+    mut persist_state_config: ResMut<PersistStateConfig>,
     mut cmds: Commands,
 ) -> Result
 where
@@ -1278,6 +1354,7 @@ where
             gantz_egui::widget::Gantz::new(&node_reg, &base_names.0)
                 .base_immutable(base_immutable.0)
                 .demos(&demos.0)
+                .persist_state_names(&persist_state_config.0)
                 .trace_capture(trace_capture.0.clone(), level)
                 .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
                 .show(&mut *gui_state, focused_ix, &mut access, ui)
@@ -1369,6 +1446,15 @@ where
         }
     }
 
+    // Handle persist-state toggle.
+    if let Some((name, enabled)) = &response.persist_state_changed {
+        if *enabled {
+            persist_state_config.insert(name.clone());
+        } else {
+            persist_state_config.remove(name);
+        }
+    }
+
     // Handle import button - open a file dialog (only if none already in flight).
     if response.import() && import_task.is_none() {
         let ext = gantz_egui::export::FILE_EXTENSION;
@@ -1405,6 +1491,31 @@ fn navigate_head(cmds: &mut Commands, entity: Entity, head: &ca::Head, target: c
             target,
         }),
     }
+}
+
+/// Filter states for export, keeping only entries whose branch name is in the
+/// persist config and whose graph is stateful.
+fn filter_export_states<N: Node + Send + Sync>(
+    node_reg: &RegistryRef<N>,
+    export_registry: &gantz_ca::Registry<Graph<N>>,
+    states: &States,
+    persist_config: &PersistStateConfig,
+) -> HashMap<ca::CommitAddr, gantz_core::node::Bytes> {
+    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+    let meta_ctx = gantz_core::node::MetaCtx::new(&get_node);
+    export_registry
+        .names()
+        .iter()
+        .filter(|(name, _)| persist_config.contains(*name))
+        .filter_map(|(_, commit_ca)| {
+            let graph = export_registry.commit_graph_ref(commit_ca)?;
+            if !graph.stateful(meta_ctx) {
+                return None;
+            }
+            let bytes = states.get(commit_ca)?.clone();
+            Some((*commit_ca, bytes))
+        })
+        .collect()
 }
 
 /// Insert an Inspect node on the given edge, replacing the edge with two edges.
