@@ -26,9 +26,10 @@ pub struct EvalSource {
 
 /// A set of eval sources to be evaluated together in one generated function.
 ///
-/// **Invariant:** All sources must share the same parent path (same graph
-/// level). An entrypoint with sources at different nesting levels is invalid
-/// because `flow_graph()` operates on a single `Meta` (one graph level).
+/// Sources may span multiple graph nesting levels. During compilation,
+/// sources are grouped by level and a FlowGraph is generated at each level.
+/// The resulting eval fn concatenates all levels' statements, which is safe
+/// because each level's statements access distinct parts of the state tree.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, CaHash)]
 #[cahash("gantz.entrypoint")]
 pub struct Entrypoint(pub BTreeSet<EvalSource>);
@@ -51,11 +52,10 @@ impl Entrypoint {
         EntrypointId(ca::content_addr(self))
     }
 
-    /// The parent path shared by all sources (the graph level).
+    /// The parent path of the first source, if any.
     ///
-    /// For root-level sources with `path.len() == 1`, this returns an empty vec.
-    ///
-    /// Panics if the entrypoint is empty.
+    /// For root-level sources with `path.len() == 1`, the slice is empty.
+    /// Returns `None` if the entrypoint has no sources.
     pub fn parent_path(&self) -> Option<&[node::Id]> {
         self.0
             .first()
