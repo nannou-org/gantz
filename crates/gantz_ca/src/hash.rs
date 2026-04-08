@@ -139,6 +139,24 @@ where
     }
 }
 
+impl<T: CaHash> CaHash for Vec<T> {
+    fn hash(&self, hasher: &mut Hasher) {
+        (self.len() as u64).hash(hasher);
+        for elem in self {
+            elem.hash(hasher);
+        }
+    }
+}
+
+impl<T: CaHash> CaHash for std::collections::BTreeSet<T> {
+    fn hash(&self, hasher: &mut Hasher) {
+        (self.len() as u64).hash(hasher);
+        for elem in self {
+            elem.hash(hasher);
+        }
+    }
+}
+
 impl CaHash for crate::ContentAddr {
     fn hash(&self, hasher: &mut Hasher) {
         self.0.hash(hasher);

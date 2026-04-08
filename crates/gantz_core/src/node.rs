@@ -175,7 +175,9 @@ pub trait Node: std::any::Any {
 }
 
 /// A set of connections over which to push/pull evaluation.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, CaHash)]
+#[derive(
+    Clone, Debug, Default, Deserialize, Serialize, CaHash, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
 #[cahash("gantz.eval-conf")]
 pub enum EvalConf {
     /// Requires a fn for evaluation from all connections.
