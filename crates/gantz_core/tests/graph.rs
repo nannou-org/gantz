@@ -1,8 +1,12 @@
 // Tests for the graph module.
 
-use gantz_core::compile::{default_entrypoints, eval_fn_name, pull_entrypoint, push_entrypoint};
-use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
+use gantz_core::compile::{
+    Entrypoint, EvalKind, EvalSource, default_entrypoints, eval_fn_name, pull_entrypoint,
+    push_entrypoint,
+};
+use gantz_core::node::{self, EvalConf, Node, WithPullEval, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
+use std::collections::BTreeSet;
 use std::fmt::Debug;
 use steel::SteelVal;
 use steel::steel_vm::engine::Engine;
@@ -444,4 +448,95 @@ fn test_graph_push_eval_subset() {
     // Second output was not enabled for push, so its state should be None
     // (never evaluated)
     assert_eq!(store_b_val, None);
+}
+
+// Test that a multi-source entrypoint combines two push nodes into one eval fn.
+//
+//    ----------   ----------
+//    | push_a |   | push_b |
+//    -+--------   -+--------
+//     |            |
+//    -+--------   -+--------
+//    | 42     |   | 7      |
+//    -+--------   -+--------
+//     |            |
+//    -+--------   -+--------
+//    | num_a  |   | num_b  |
+//    ----------   ----------
+//
+// Two independent chains. A combined entrypoint evaluates both in one call.
+#[test]
+fn test_graph_multi_source_push() {
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let push_a = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let int_a = g.add_node(Box::new(node_int(42)) as Box<_>);
+    let num_a = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_a, int_a, Edge::from((0, 0)));
+    g.add_edge(int_a, num_a, Edge::from((0, 0)));
+
+    let push_b = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let int_b = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let num_b = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_b, int_b, Edge::from((0, 0)));
+    g.add_edge(int_b, num_b, Edge::from((0, 0)));
+
+    // Build a single combined entrypoint from both push nodes.
+    let combined = Entrypoint(BTreeSet::from([
+        EvalSource {
+            path: vec![push_a.index()],
+            kind: EvalKind::Push,
+            conf: EvalConf::All,
+        },
+        EvalSource {
+            path: vec![push_b.index()],
+            kind: EvalKind::Push,
+            conf: EvalConf::All,
+        },
+    ]));
+    let module = gantz_core::compile::module(&no_lookup, &g, &[combined.clone()]).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    // Calling the combined entrypoint should evaluate BOTH chains.
+    let fn_name = eval_fn_name(&combined.id());
+    vm.call_function_by_name_with_args(&fn_name, vec![])
+        .unwrap();
+
+    let a = node::state::extract::<u32>(&vm, &[num_a.index()])
+        .expect("failed to extract num_a state")
+        .expect("num_a state was None");
+    let b = node::state::extract::<u32>(&vm, &[num_b.index()])
+        .expect("failed to extract num_b state")
+        .expect("num_b state was None");
+    assert_eq!(a, 42);
+    assert_eq!(b, 7);
+}
+
+// Verify that push_entrypoint produces the same EntrypointId as
+// default_entrypoints for the same node, confirming naming consistency.
+#[test]
+fn test_entrypoint_naming_consistency() {
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let int = g.add_node(Box::new(node_int(1)) as Box<_>);
+    g.add_edge(push, int, Edge::from((0, 0)));
+
+    let eps = default_entrypoints(&no_lookup, &g);
+    let manual = push_entrypoint(vec![push.index()]);
+
+    // The default planner should produce a singleton push entrypoint for
+    // the push node. Its ID should match a manually-constructed one.
+    let default_ep = eps
+        .iter()
+        .find(|ep| ep.0.iter().any(|s| s.path == vec![push.index()]))
+        .expect("default_entrypoints should contain push node");
+    assert_eq!(default_ep.id(), manual.id());
+    assert_eq!(eval_fn_name(&default_ep.id()), eval_fn_name(&manual.id()));
 }
