@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Default)]
 pub(crate) struct RoseTree<T> {
     pub(crate) elem: T,
-    nested: BTreeMap<node::Id, RoseTree<T>>,
+    pub(crate) nested: BTreeMap<node::Id, RoseTree<T>>,
 }
 
 impl<T> RoseTree<T> {

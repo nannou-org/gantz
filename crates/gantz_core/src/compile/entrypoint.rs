@@ -1,7 +1,11 @@
 //! Types for representing entrypoints into a gantz graph's generated code.
 
-use crate::node::{self, EvalConf};
+use crate::{
+    Edge,
+    node::{self, EvalConf, Node},
+};
 use gantz_ca::{self as ca, CaHash};
+use petgraph::visit::{Data, IntoNodeReferences, NodeIndexable, NodeRef};
 use std::{collections::BTreeSet, fmt};
 
 /// Whether evaluation is pushed from or pulled to a node.
@@ -61,4 +65,55 @@ impl Entrypoint {
             .first()
             .map(|first| &first.path[..first.path.len() - 1])
     }
+}
+
+/// Create a singleton push entrypoint for the given node path with `EvalConf::All`.
+///
+/// Convenience for tests and callers that trigger a single push node.
+pub fn push_entrypoint(path: Vec<node::Id>) -> Entrypoint {
+    Entrypoint(BTreeSet::from([EvalSource {
+        path,
+        kind: EvalKind::Push,
+        conf: EvalConf::All,
+    }]))
+}
+
+/// Create a singleton pull entrypoint for the given node path with `EvalConf::All`.
+///
+/// Convenience for tests and callers that trigger a single pull node.
+pub fn pull_entrypoint(path: Vec<node::Id>) -> Entrypoint {
+    Entrypoint(BTreeSet::from([EvalSource {
+        path,
+        kind: EvalKind::Pull,
+        conf: EvalConf::All,
+    }]))
+}
+
+/// Default planner: one singleton entrypoint per push/pull eval node.
+pub fn default_entrypoints<G>(get_node: node::GetNode<'_>, g: G) -> Vec<Entrypoint>
+where
+    G: Data<EdgeWeight = Edge> + IntoNodeReferences + NodeIndexable,
+    G::NodeWeight: Node,
+{
+    let ctx = node::MetaCtx::new(get_node);
+    let mut eps = Vec::new();
+    for n_ref in g.node_references() {
+        let id = g.to_index(n_ref.id());
+        let node = n_ref.weight();
+        for conf in node.push_eval(ctx) {
+            eps.push(Entrypoint(BTreeSet::from([EvalSource {
+                path: vec![id],
+                kind: EvalKind::Push,
+                conf,
+            }])));
+        }
+        for conf in node.pull_eval(ctx) {
+            eps.push(Entrypoint(BTreeSet::from([EvalSource {
+                path: vec![id],
+                kind: EvalKind::Pull,
+                conf,
+            }])));
+        }
+    }
+    eps
 }

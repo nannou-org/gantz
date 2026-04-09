@@ -1,6 +1,6 @@
 // Tests for the Fn and Apply nodes - first-class functions in gantz.
 
-use gantz_core::compile::pull_eval_fn_name;
+use gantz_core::compile::{default_entrypoints, eval_fn_name, pull_entrypoint};
 use gantz_core::node::{self, Apply, Fn, Node, Ref, WithPullEval, graph};
 use gantz_core::{Edge, ROOT_STATE};
 use std::collections::HashMap;
@@ -99,7 +99,8 @@ fn test_fn_apply_identity() {
     g.add_edge(expected, assert_eq, Edge::from((0, 1)));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&get_node, &g).unwrap();
+    let eps = default_entrypoints(&get_node, &g);
+    let module = gantz_core::compile::module(&get_node, &g, &eps).unwrap();
 
     // Create and setup VM.
     let mut vm = Engine::new_base();
@@ -112,8 +113,11 @@ fn test_fn_apply_identity() {
     }
 
     // Execute pull evaluation from assert_eq
-    vm.call_function_by_name_with_args(&pull_eval_fn_name(&[assert_eq.index()]), vec![])
-        .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&pull_entrypoint(vec![assert_eq.index()]).id()),
+        vec![],
+    )
+    .unwrap();
 }
 
 // Test that Fn can wrap a graph node (not just a primitive) and Apply can call it.
@@ -205,7 +209,8 @@ fn test_fn_apply_graph() {
     g.add_edge(expected, assert_eq, Edge::from((0, 1)));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&get_node, &g).unwrap();
+    let eps = default_entrypoints(&get_node, &g);
+    let module = gantz_core::compile::module(&get_node, &g, &eps).unwrap();
 
     // Create and setup VM.
     let mut vm = Engine::new_base();
@@ -218,6 +223,9 @@ fn test_fn_apply_graph() {
     }
 
     // Execute pull evaluation from assert_eq.
-    vm.call_function_by_name_with_args(&pull_eval_fn_name(&[assert_eq.index()]), vec![])
-        .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&pull_entrypoint(vec![assert_eq.index()]).id()),
+        vec![],
+    )
+    .unwrap();
 }

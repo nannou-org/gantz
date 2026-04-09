@@ -1,6 +1,6 @@
 // Tests for the graph module.
 
-use gantz_core::compile::{pull_eval_fn_name, push_eval_fn_name};
+use gantz_core::compile::{default_entrypoints, eval_fn_name, pull_entrypoint, push_entrypoint};
 use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
 use std::fmt::Debug;
@@ -92,7 +92,8 @@ fn test_graph_push_eval() {
     g.add_edge(two, assert_eq, Edge::from((0, 1)));
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
     // Function per node alongside the single push eval function.
     assert_eq!(module.len(), g.node_count() + 1);
 
@@ -107,8 +108,11 @@ fn test_graph_push_eval() {
     for f in module {
         vm.run(format!("{f}")).unwrap();
     }
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
-        .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&push_entrypoint(vec![push.index()]).id()),
+        vec![],
+    )
+    .unwrap();
 }
 
 // A simple test graph that adds two "one"s and checks that it equals "two".
@@ -149,7 +153,8 @@ fn test_graph_pull_eval() {
     g.add_edge(two, assert_eq, Edge::from((0, 1)));
 
     // Generate the steel module.
-    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     // Prepare the VM.
     let mut vm = Engine::new_base();
@@ -164,8 +169,11 @@ fn test_graph_pull_eval() {
     }
 
     // Call the eval fn.
-    vm.call_function_by_name_with_args(&pull_eval_fn_name(&[assert_eq.index()]), vec![])
-        .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&pull_entrypoint(vec![assert_eq.index()]).id()),
+        vec![],
+    )
+    .unwrap();
 }
 
 // A simple test graph that checks conditional runtime evaluation.
@@ -248,7 +256,8 @@ fn test_graph_push_cond_eval() {
     g.add_edge(seven, number, Edge::from((0, 0)));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
     // Function per node alongside the two push eval functions.
     assert_eq!(module.len(), g.node_count() + 2);
 
@@ -265,16 +274,22 @@ fn test_graph_push_cond_eval() {
     }
 
     // First, call `push_0` and check the result is `6`.
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push_0.index()]), vec![])
-        .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&push_entrypoint(vec![push_0.index()]).id()),
+        vec![],
+    )
+    .unwrap();
     let number_state = node::state::extract::<u32>(&vm, &[number.index()])
         .expect("failed to extract number state")
         .expect("number state was `None`");
     assert_eq!(number_state, 6);
 
     // First, call `push_1` and check the result is `7`.
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push_1.index()]), vec![])
-        .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&push_entrypoint(vec![push_1.index()]).id()),
+        vec![],
+    )
+    .unwrap();
     let number_state = node::state::extract::<u32>(&vm, &[number.index()])
         .expect("failed to extract number state")
         .expect("number state was `None`");
@@ -318,7 +333,8 @@ fn test_graph_eval_should_panic() {
     g.add_edge(one, assert_eq, Edge::from((0, 1)));
 
     // Generate the steel module.
-    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     // Prepare the VM.
     let mut vm = Engine::new_base();
@@ -331,8 +347,11 @@ fn test_graph_eval_should_panic() {
     for expr in module {
         vm.run(expr.to_pretty(100)).unwrap();
     }
-    vm.call_function_by_name_with_args(&pull_eval_fn_name(&[assert_eq.index()]), vec![])
-        .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&pull_entrypoint(vec![assert_eq.index()]).id()),
+        vec![],
+    )
+    .unwrap();
 }
 
 // Test for pushing evaluation with a subset of outputs enabled
@@ -393,7 +412,8 @@ fn test_graph_push_eval_subset() {
     g.add_edge(source, store_b, Edge::from((1, 0)));
 
     // Generate the module
-    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     // Create the VM
     let mut vm = Engine::new_base();
@@ -408,9 +428,11 @@ fn test_graph_push_eval_subset() {
     }
 
     // Call the push_eval function - should only evaluate the first output path
-    // FIXME: Update push_eval_fn_name
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[source.index()]), vec![])
-        .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&push_entrypoint(vec![source.index()]).id()),
+        vec![],
+    )
+    .unwrap();
 
     // Check the state of each store node
     let store_a_val = node::state::extract::<i32>(&vm, &[store_a.index()]).unwrap();

@@ -5,11 +5,13 @@ use crate::{
     Edge,
     node::{self, Node},
 };
-// FIXME: Make these private, expose easier way to call entry points.
 #[doc(inline)]
-pub use codegen::{eval_fn_body, pull_eval_fn_name, push_eval_fn_name};
+pub use codegen::{eval_fn_body, eval_fn_name};
 #[doc(inline)]
-pub use entrypoint::{Entrypoint, EntrypointId, EvalKind, EvalSource};
+pub use entrypoint::{
+    Entrypoint, EntrypointId, EvalKind, EvalSource, default_entrypoints, pull_entrypoint,
+    push_entrypoint,
+};
 #[doc(inline)]
 pub use error::ModuleError;
 #[doc(inline)]
@@ -261,15 +263,46 @@ where
     Topo::new(g).iter(g).filter(move |n| reachable.contains(&n))
 }
 
+/// Group entrypoint sources by graph level (parent path).
+///
+/// Returns a map from level_path -> Vec<(EntrypointId, sources_at_this_level)>.
+/// A single entrypoint with cross-level sources appears at multiple levels.
+fn group_sources_by_level(
+    entrypoints: &[Entrypoint],
+) -> std::collections::BTreeMap<Vec<node::Id>, Vec<(EntrypointId, Vec<&EvalSource>)>> {
+    let mut map: std::collections::BTreeMap<
+        Vec<node::Id>,
+        std::collections::BTreeMap<EntrypointId, Vec<&EvalSource>>,
+    > = std::collections::BTreeMap::new();
+    for ep in entrypoints {
+        let id = ep.id();
+        for src in &ep.0 {
+            let parent = src.path[..src.path.len() - 1].to_vec();
+            map.entry(parent)
+                .or_default()
+                .entry(id.clone())
+                .or_default()
+                .push(src);
+        }
+    }
+    map.into_iter()
+        .map(|(level, ep_map)| (level, ep_map.into_iter().collect()))
+        .collect()
+}
+
 /// Given a root gantz graph, generate the full module with all the necessary
 /// functions for executing it.
 ///
 /// This includes:
 ///
 /// 1. A function for each node (and for each node input configuration).
-/// 2. A function for each node requiring push/pull evaluation.
+/// 2. A function for each entrypoint's evaluation.
 /// 3. The above for all nested graphs.
-pub fn module<'a, G>(get_node: node::GetNode<'a>, g: G) -> Result<Vec<ExprKind>, ModuleError>
+pub fn module<'a, G>(
+    get_node: node::GetNode<'a>,
+    g: G,
+    entrypoints: &[Entrypoint],
+) -> Result<Vec<ExprKind>, ModuleError>
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G::NodeWeight: Node,
@@ -281,10 +314,32 @@ where
         return Err(error::MetaErrors(meta_tree.errors).into());
     }
 
-    // Derive control flow graphs from the meta graphs.
-    let flow_tree = meta_tree
+    // Group entrypoint sources by graph level.
+    let level_sources = group_sources_by_level(entrypoints);
+
+    // Build root flow with its entrypoint sources.
+    let root_sources = level_sources.get(&vec![]).map(|v| &v[..]).unwrap_or(&[]);
+    let root_flow = Flow::from_meta_and_sources(&meta_tree.tree.elem, root_sources)?;
+
+    // Build nested flows (empty entrypoint sources for now; chunk 5 adds
+    // cross-level routing via a recursive builder).
+    let nested = meta_tree
         .tree
-        .try_map_ref(&mut |meta| Flow::from_meta(meta).map(|flow| (meta, flow)))?;
+        .nested
+        .iter()
+        .map(|(&id, subtree)| {
+            subtree
+                .try_map_ref(&mut |meta| {
+                    Flow::from_meta_and_sources(meta, &[]).map(|flow| (meta, flow))
+                })
+                .map(|tree| (id, tree))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
+
+    let flow_tree = RoseTree {
+        elem: (&meta_tree.tree.elem, root_flow),
+        nested,
+    };
 
     // Collect node fns.
     let node_confs_tree = flow_tree.map_ref(&mut |(_, flow)| codegen::unique_node_confs(flow));

@@ -2,7 +2,7 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
-    compile::push_eval_fn_name,
+    compile::{default_entrypoints, eval_fn_name, push_entrypoint},
     node::{self, GraphNode, Node, WithPushEval},
 };
 use std::fmt::Debug;
@@ -120,7 +120,8 @@ fn test_graph_nested_stateless() {
     gb.add_edge(forty_two, assert_eq, Edge::from((0, 1)));
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::compile::module(&no_lookup, &gb).unwrap();
+    let eps = default_entrypoints(&no_lookup, &gb);
+    let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -135,8 +136,11 @@ fn test_graph_nested_stateless() {
     }
 
     // Call the `push` eval function.
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
-        .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&push_entrypoint(vec![push.index()]).id()),
+        vec![],
+    )
+    .unwrap();
 }
 
 // A simple test for nested graph support where the nested graph is stateful.
@@ -202,7 +206,8 @@ fn test_graph_nested_counter() {
     gb.add_edge(graph_a, number, Edge::from((0, 0)));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&no_lookup, &gb).unwrap();
+    let eps = default_entrypoints(&no_lookup, &gb);
+    let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -219,10 +224,16 @@ fn test_graph_nested_counter() {
 
     // Increment the nested counter by pushing evaluation.
     // The first is `0`, the second is `1`.
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
-        .unwrap();
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
-        .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&push_entrypoint(vec![push.index()]).id()),
+        vec![],
+    )
+    .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&push_entrypoint(vec![push.index()]).id()),
+        vec![],
+    )
+    .unwrap();
 
     // First, check that the nested expr's state is `1`.
     let counter_state = node::state::extract::<u32>(&vm, &[graph_a.index(), counter.index()])
@@ -286,7 +297,8 @@ fn test_graph_nested_push_eval() {
     gb.add_edge(graph_a, number, Edge::from((0, 0)));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&no_lookup, &gb).unwrap();
+    let eps = default_entrypoints(&no_lookup, &gb);
+    let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -302,8 +314,8 @@ fn test_graph_nested_push_eval() {
     }
 
     // Call the nested push node's eval fn.
-    let push_path = [graph_a.index(), push.index()];
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&push_path), vec![])
+    let push_path = vec![graph_a.index(), push.index()];
+    vm.call_function_by_name_with_args(&eval_fn_name(&push_entrypoint(push_path).id()), vec![])
         .unwrap();
 
     // Now check that the outlet's state is `42`.
@@ -409,7 +421,8 @@ fn test_graph_nested_non_sequential_inlets() {
     gb.add_edge(seven, assert_eq, Edge::from((0, 1)));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&no_lookup, &gb).unwrap();
+    let eps = default_entrypoints(&no_lookup, &gb);
+    let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -424,6 +437,9 @@ fn test_graph_nested_non_sequential_inlets() {
     }
 
     // Call the `push` eval function - should compute 10 - 3 = 7
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
-        .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&push_entrypoint(vec![push.index()]).id()),
+        vec![],
+    )
+    .unwrap();
 }

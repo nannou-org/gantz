@@ -159,10 +159,11 @@ pub fn on_head_changed<N>(
 /// Emits an `EvalCompleted` event with timing information for UI layers to observe.
 pub fn on_eval(trigger: On<EvalEvent>, mut vms: NonSendMut<head::HeadVms>, mut cmds: Commands) {
     let event = trigger.event();
-    let fn_name = match event.kind {
-        EvalKind::Push => core_compile::push_eval_fn_name(&event.path),
-        EvalKind::Pull => core_compile::pull_eval_fn_name(&event.path),
+    let ep = match event.kind {
+        EvalKind::Push => core_compile::push_entrypoint(event.path.clone()),
+        EvalKind::Pull => core_compile::pull_entrypoint(event.path.clone()),
     };
+    let fn_name = core_compile::eval_fn_name(&ep.id());
     if let Some(vm) = vms.get_mut(&event.head) {
         let start = web_time::Instant::now();
         if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {

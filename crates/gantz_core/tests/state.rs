@@ -2,7 +2,7 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
-    compile::push_eval_fn_name,
+    compile::{default_entrypoints, eval_fn_name, push_entrypoint},
     node::{self, Node, NodeState, WithPushEval, WithStateType},
 };
 use std::fmt::Debug;
@@ -87,7 +87,8 @@ fn test_graph_with_counter() {
     g.add_edge(push, counter, Edge::from((0, 0)));
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     // Initialise the VM.
     let mut vm = Engine::new_base();
@@ -103,8 +104,11 @@ fn test_graph_with_counter() {
 
     // Call the push eval fn 3 times to increment the counter thrice.
     for _ in 0..3 {
-        vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
-            .unwrap();
+        vm.call_function_by_name_with_args(
+            &eval_fn_name(&push_entrypoint(vec![push.index()]).id()),
+            vec![],
+        )
+        .unwrap();
     }
 
     // Check the counter was incremented thrice.
@@ -121,8 +125,11 @@ fn test_graph_with_counter() {
     assert_eq!(res, Counter(0));
 
     // Check that calling the function again works based on the new state.
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
-        .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&push_entrypoint(vec![push.index()]).id()),
+        vec![],
+    )
+    .unwrap();
 
     // The value should now be 1.
     let res = node::state::extract::<Counter>(&vm, &[counter.index()])
@@ -177,7 +184,8 @@ fn test_graph_with_counters() {
     g.add_edge(p_c, c_c, Edge::from((0, 0)));
 
     // Generate the module, which should have one expr for each `push`.
-    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     // Initialise the VM.
     let mut vm = Engine::new_base();
@@ -192,12 +200,21 @@ fn test_graph_with_counters() {
     }
 
     // Call a, b then c.
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[p_a.index()]), vec![])
-        .unwrap();
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[p_b.index()]), vec![])
-        .unwrap();
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[p_c.index()]), vec![])
-        .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&push_entrypoint(vec![p_a.index()]).id()),
+        vec![],
+    )
+    .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&push_entrypoint(vec![p_b.index()]).id()),
+        vec![],
+    )
+    .unwrap();
+    vm.call_function_by_name_with_args(
+        &eval_fn_name(&push_entrypoint(vec![p_c.index()]).id()),
+        vec![],
+    )
+    .unwrap();
 
     // A should be incremented once, b twice, and c thrice.
     let a = node::state::extract::<Counter>(&vm, &[c_a.index()])

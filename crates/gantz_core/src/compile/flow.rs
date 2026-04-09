@@ -1,8 +1,9 @@
 //! Items related to constructing a view of the control flow of a gantz graph.
 
 use super::{
-    Meta, MetaGraph,
+    EntrypointId, EvalKind, EvalSource, Meta, MetaGraph,
     error::{InvalidInputIndex, InvalidOutputIndex, NodeConnsError, TooManyConns},
+    meta::conns_from_eval_conf,
     push_eval_neighbors, push_reachable,
 };
 use crate::node;
@@ -43,10 +44,9 @@ pub struct Flow {
     /// Control flow graph from all inlets to all outlets, or empty in the case
     /// that the graph has no inlets or outlets (i.e. is not nested).
     pub nested: FlowGraph,
-    /// The control flow graph for each `push_eval` configuration for each node.
-    pub push: BTreeMap<(node::Id, node::Conns), FlowGraph>,
-    /// The control flow graph for each `pull_eval` configuration for each node.
-    pub pull: BTreeMap<(node::Id, node::Conns), FlowGraph>,
+    /// Control flow graph for each entrypoint at this graph level.
+    /// An entrypoint appears here only if it has sources at this level.
+    pub entrypoints: BTreeMap<EntrypointId, FlowGraph>,
 }
 
 /// Represents a basic, linear block of node function calls.
@@ -96,29 +96,41 @@ pub struct NodeConns {
 }
 
 impl Flow {
-    pub fn from_meta(meta: &Meta) -> Result<Self, NodeConnsError> {
-        // Create the push eval entrypoint control flow graphs.
-        let push = meta
-            .push
-            .iter()
-            .flat_map(|(&n, connss)| {
-                connss
-                    .iter()
-                    .map(move |conns| ((n, *conns), push_eval_flow_graph(meta, n, conns)))
-            })
-            .map(|(k, r)| r.map(|v| (k, v)))
-            .collect::<Result<_, _>>()?;
-
-        let pull = meta
-            .pull
-            .iter()
-            .flat_map(|(&n, connss)| {
-                connss
-                    .iter()
-                    .map(move |conns| ((n, *conns), pull_eval_flow_graph(meta, n, conns)))
-            })
-            .map(|(k, r)| r.map(|v| (k, v)))
-            .collect::<Result<_, _>>()?;
+    /// Build Flow from structural Meta and entrypoint sources at this level.
+    ///
+    /// `level_sources` maps `EntrypointId` -> sources at this level.
+    /// The `EntrypointId` is always from the original (full-path) entrypoint.
+    pub fn from_meta_and_sources(
+        meta: &Meta,
+        level_sources: &[(EntrypointId, Vec<&EvalSource>)],
+    ) -> Result<Self, NodeConnsError> {
+        let mut entrypoints = BTreeMap::new();
+        for (id, sources) in level_sources {
+            let push_sources = sources
+                .iter()
+                .filter(|s| s.kind == EvalKind::Push)
+                .map(|s| {
+                    let local_id = *s.path.last().unwrap();
+                    let n = meta.outputs.get(&local_id).copied().unwrap_or(0);
+                    let conns =
+                        conns_from_eval_conf(&s.conf, n).map_err(NodeConnsError::TooManyConns)?;
+                    Ok((local_id, conns))
+                })
+                .collect::<Result<Vec<_>, NodeConnsError>>()?;
+            let pull_sources = sources
+                .iter()
+                .filter(|s| s.kind == EvalKind::Pull)
+                .map(|s| {
+                    let local_id = *s.path.last().unwrap();
+                    let n = meta.inputs.get(&local_id).copied().unwrap_or(0);
+                    let conns =
+                        conns_from_eval_conf(&s.conf, n).map_err(NodeConnsError::TooManyConns)?;
+                    Ok((local_id, conns))
+                })
+                .collect::<Result<Vec<_>, NodeConnsError>>()?;
+            let fg = flow_graph(meta, push_sources, pull_sources)?;
+            entrypoints.insert(id.clone(), fg);
+        }
 
         let nested = flow_graph(
             meta,
@@ -130,7 +142,10 @@ impl Flow {
                 .map(|&n| (n, node::Conns::connected(1).unwrap())),
         )?;
 
-        Ok(Self { nested, push, pull })
+        Ok(Self {
+            nested,
+            entrypoints,
+        })
     }
 }
 
@@ -189,26 +204,6 @@ pub fn flow_graph(
     let mg = reachable_subgraph(&meta.graph, &included);
     let conf_graph = node_conf_graph(meta, &mg, None)?;
     Ok(flow_graph_from_conf_graph(&conf_graph))
-}
-
-/// Given the meta graph and a node registered as a `push_eval` entrypoint,
-/// produce the control flow graph.
-fn push_eval_flow_graph(
-    meta: &Meta,
-    n: node::Id,
-    conns: &node::Conns,
-) -> Result<FlowGraph, NodeConnsError> {
-    flow_graph(meta, Some((n, *conns)), std::iter::empty())
-}
-
-/// Given the meta graph and a node registered as a `pull_eval` entrypoint,
-/// produce the control flow graph.
-fn pull_eval_flow_graph(
-    meta: &Meta,
-    n: node::Id,
-    conns: &node::Conns,
-) -> Result<FlowGraph, NodeConnsError> {
-    flow_graph(meta, std::iter::empty(), Some((n, *conns)))
 }
 
 /// Filter unreachable nodes from the given metagraph.
