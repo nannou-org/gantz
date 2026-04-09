@@ -290,6 +290,33 @@ fn group_sources_by_level(
         .collect()
 }
 
+/// Recursively build a flow tree, routing entrypoint sources to each nesting
+/// level.
+fn build_flow_tree<'a>(
+    meta_tree: &'a RoseTree<Meta>,
+    level_sources: &std::collections::BTreeMap<
+        Vec<node::Id>,
+        Vec<(EntrypointId, Vec<&EvalSource>)>,
+    >,
+    current_path: Vec<node::Id>,
+) -> Result<RoseTree<(&'a Meta, Flow)>, error::NodeConnsError> {
+    let sources = level_sources
+        .get(&current_path)
+        .map(|v| &v[..])
+        .unwrap_or(&[]);
+    let flow = Flow::from_meta_and_sources(&meta_tree.elem, sources)?;
+    let mut nested = std::collections::BTreeMap::new();
+    for (&id, subtree) in &meta_tree.nested {
+        let mut child_path = current_path.clone();
+        child_path.push(id);
+        nested.insert(id, build_flow_tree(subtree, level_sources, child_path)?);
+    }
+    Ok(RoseTree {
+        elem: (&meta_tree.elem, flow),
+        nested,
+    })
+}
+
 /// Given a root gantz graph, generate the full module with all the necessary
 /// functions for executing it.
 ///
@@ -314,32 +341,10 @@ where
         return Err(error::MetaErrors(meta_tree.errors).into());
     }
 
-    // Group entrypoint sources by graph level.
+    // Group entrypoint sources by graph level, then recursively build a
+    // flow tree that routes each level's sources to the correct nested graph.
     let level_sources = group_sources_by_level(entrypoints);
-
-    // Build root flow with its entrypoint sources.
-    let root_sources = level_sources.get(&vec![]).map(|v| &v[..]).unwrap_or(&[]);
-    let root_flow = Flow::from_meta_and_sources(&meta_tree.tree.elem, root_sources)?;
-
-    // Build nested flows (empty entrypoint sources for now; chunk 5 adds
-    // cross-level routing via a recursive builder).
-    let nested = meta_tree
-        .tree
-        .nested
-        .iter()
-        .map(|(&id, subtree)| {
-            subtree
-                .try_map_ref(&mut |meta| {
-                    Flow::from_meta_and_sources(meta, &[]).map(|flow| (meta, flow))
-                })
-                .map(|tree| (id, tree))
-        })
-        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
-
-    let flow_tree = RoseTree {
-        elem: (&meta_tree.tree.elem, root_flow),
-        nested,
-    };
+    let flow_tree = build_flow_tree(&meta_tree.tree, &level_sources, vec![])?;
 
     // Collect node fns.
     let node_confs_tree = flow_tree.map_ref(&mut |(_, flow)| codegen::unique_node_confs(flow));

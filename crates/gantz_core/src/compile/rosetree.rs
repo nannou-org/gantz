@@ -18,7 +18,7 @@ impl<T> RoseTree<T> {
             Some(&n_id) => n_id,
         };
         let tree = self.nested.get(&n_id)?;
-        tree.tree(&path[..path.len() - 1])
+        tree.tree(&path[1..])
     }
 
     /// Get the tree (or nested tree) at the given nesting path.
@@ -33,7 +33,7 @@ impl<T> RoseTree<T> {
             Some(&n_id) => n_id,
         };
         let tree = self.nested.entry(n_id).or_default();
-        tree.tree_mut(&path[..path.len() - 1])
+        tree.tree_mut(&path[1..])
     }
 
     /// Map the `RoseTree` from elem type T to U.
@@ -99,6 +99,22 @@ impl<T> RoseTree<T> {
             tree.try_visit(&path, f)?;
             path.pop();
         }
+        Ok(())
+    }
+
+    /// Fallible post-order visit: children are visited before parent.
+    pub(crate) fn try_visit_post<E>(
+        &self,
+        path: &[node::Id],
+        f: &mut impl FnMut(&[node::Id], &T) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let mut child_path = path.to_vec();
+        for (&id, tree) in &self.nested {
+            child_path.push(id);
+            tree.try_visit_post(&child_path, f)?;
+            child_path.pop();
+        }
+        f(path, &self.elem)?;
         Ok(())
     }
 }

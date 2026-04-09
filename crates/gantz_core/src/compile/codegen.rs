@@ -565,16 +565,57 @@ pub(crate) fn eval_stmts_from_flow(
         .collect()
 }
 
+/// Wrap statements from a nested graph level with state scope enter/exit.
+///
+/// For a nested level at path `[graph_a]`, this generates:
+/// ```scheme
+/// (define __parent-graph-state graph-state)
+/// (define graph-state (hash-ref __parent-graph-state '{graph_a_id}))
+/// ;; ... nested statements ...
+/// (set! graph-state (hash-insert __parent-graph-state '{graph_a_id} graph-state))
+/// ```
+fn wrap_state_scope(path: &[node::Id], stmts: Vec<ExprKind>) -> Vec<ExprKind> {
+    use crate::GRAPH_STATE;
+
+    if path.is_empty() || stmts.is_empty() {
+        return stmts;
+    }
+
+    let mut result = Vec::with_capacity(stmts.len() + 2 * path.len());
+
+    // Enter scopes from outermost to innermost.
+    for (depth, &id) in path.iter().enumerate() {
+        let parent = format!("__parent-graph-state-{depth}");
+        let enter = format!(
+            "(define {parent} {GRAPH_STATE}) \
+             (define {GRAPH_STATE} (hash-ref {parent} '{id}))"
+        );
+        result.extend(Engine::emit_ast(&enter).expect("failed to emit state scope enter"));
+    }
+
+    result.extend(stmts);
+
+    // Exit scopes from innermost to outermost.
+    for (depth, &id) in path.iter().enumerate().rev() {
+        let parent = format!("__parent-graph-state-{depth}");
+        let exit = format!("(set! {GRAPH_STATE} (hash-insert {parent} '{id} {GRAPH_STATE}))");
+        result.extend(Engine::emit_ast(&exit).expect("failed to emit state scope exit"));
+    }
+
+    result
+}
+
 /// Given a tree of eval plans for a gantz graph (and its nested graphs),
 /// generate all eval fns.
 ///
-/// Visits all levels of the flow tree, collecting statements per entrypoint.
-/// An entrypoint with sources at multiple nesting levels gets statements from
-/// each level concatenated into one eval fn.
+/// Uses post-order traversal so nested statements execute before parent
+/// statements. Nested-level statements are wrapped with state scope
+/// enter/exit to narrow `graph-state` to the correct sub-hashmap.
 pub(crate) fn eval_fns(flow_tree: &RoseTree<(&Meta, Flow)>) -> Result<Vec<ExprKind>, CodegenError> {
     // Collect statements from all levels, grouped by EntrypointId.
+    // Post-order: children before parent, so nested eval runs first.
     let mut all_stmts: BTreeMap<super::EntrypointId, Vec<ExprKind>> = BTreeMap::new();
-    flow_tree.try_visit(&[], &mut |path, (meta, flow)| -> Result<(), CodegenError> {
+    flow_tree.try_visit_post(&[], &mut |path, (meta, flow)| -> Result<(), CodegenError> {
         let level_stmts = eval_stmts_from_flow(
             path,
             &meta.graph,
@@ -584,7 +625,8 @@ pub(crate) fn eval_fns(flow_tree: &RoseTree<(&Meta, Flow)>) -> Result<Vec<ExprKi
             flow,
         )?;
         for (id, stmts) in level_stmts {
-            all_stmts.entry(id).or_default().extend(stmts);
+            let scoped = wrap_state_scope(path, stmts);
+            all_stmts.entry(id).or_default().extend(scoped);
         }
         Ok(())
     })?;
