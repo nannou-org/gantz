@@ -441,8 +441,9 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        gui(ctx, &mut self.state);
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        gui(&ctx, ui, &mut self.state);
 
         // Check for changes to each open graph and commit/recompile them.
         // FIXME: Rather than checking changed CA to monitor changes, ideally
@@ -471,7 +472,7 @@ impl eframe::App for App {
                     new_commit_ca.display_short()
                 );
                 // Update the graph pane if the head's commit CA changed.
-                gantz_egui::widget::update_graph_pane_head(ctx, &old_head, head);
+                gantz_egui::widget::update_graph_pane_head(&ctx, &old_head, head);
                 self.state.gantz.migrate_head(&old_head, head, true);
 
                 // Recompile this head's graph into its VM.
@@ -487,7 +488,7 @@ impl eframe::App for App {
         }
 
         // Process any pending commands generated from the UI.
-        process_cmds(ctx, &mut self.state);
+        process_cmds(&ctx, &mut self.state);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -1181,10 +1182,10 @@ fn create_node(
     view.layout.entry(egui_id).or_insert(egui::Pos2::ZERO);
 }
 
-fn gui(ctx: &egui::Context, state: &mut State) {
+fn gui(ctx: &egui::Context, ui: &mut egui::Ui, state: &mut State) {
     let response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
-        .show(ctx, |ui| {
+        .show_inside(ui, |ui| {
             // Create the head access adapter.
             let mut access =
                 DemoHeadAccess::new(&mut state.heads, &state.compiled_modules, &mut state.vms);
