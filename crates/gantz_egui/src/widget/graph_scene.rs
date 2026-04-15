@@ -479,7 +479,7 @@ fn edges<N>(
 
     // Draw the in-progress edge if there is one.
     if let Some(edge) = ectx.in_progress(ui) {
-        edge.show(ui);
+        edge.show(ui, egui_graph::bezier::Cubic::DEFAULT_CURVATURE);
     }
 }
 
