@@ -16,12 +16,20 @@ fn node_int(i: i32) -> node::expr::Expr {
     node::expr(format!("{}", i)).unwrap()
 }
 
+fn node_nil() -> node::expr::Expr {
+    node::expr("'()").unwrap()
+}
+
 fn node_list_single() -> node::expr::Expr {
     node::expr("(list $x)").unwrap()
 }
 
 fn node_assert_eq() -> node::expr::Expr {
     node::expr("(assert! (equal? $l $r))").unwrap()
+}
+
+fn node_add() -> node::expr::Expr {
+    node::expr("(+ $l $r)").unwrap()
 }
 
 // Helper trait for debugging
@@ -70,7 +78,7 @@ fn test_fn_apply_identity() {
     // Create nodes
     let bang = node_bang();
     let fn_node = Fn::new(Ref::new(id_ca));
-    let apply_node = Apply;
+    let apply_node = Apply::default();
     let value = node_int(42);
     let list = node_list_single(); // Wrap value in list for apply
     let expected = node_int(42);
@@ -177,7 +185,7 @@ fn test_fn_apply_graph() {
 
     let bang = node_bang();
     let fn_node = Fn::new(Ref::new(double_ca));
-    let apply_node = Apply;
+    let apply_node = Apply::default();
     let value = node_int(21);
     let list = node_list_single();
     let expected = node_int(42);
@@ -218,6 +226,100 @@ fn test_fn_apply_graph() {
     }
 
     // Execute pull evaluation from assert_eq.
+    vm.call_function_by_name_with_args(&pull_eval_fn_name(&[assert_eq.index()]), vec![])
+        .unwrap();
+}
+
+#[test]
+fn test_fn_apply_fixed_args() {
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let mut nodes: HashMap<gantz_ca::ContentAddr, Box<dyn DebugNode>> = HashMap::new();
+    let add = node_add();
+    let add_ca = gantz_ca::content_addr(&add);
+    nodes.insert(add_ca, Box::new(add) as Box<dyn DebugNode>);
+
+    let get_node = |ca: &gantz_ca::ContentAddr| -> Option<&dyn Node> {
+        nodes.get(ca).map(|b| &**b as &dyn Node)
+    };
+
+    let bang = node_bang();
+    let fn_node = Fn::new(Ref::new(add_ca));
+    let apply_node = Apply::fixed(2).unwrap();
+    let lhs = node_int(20);
+    let rhs = node_int(22);
+    let expected = node_int(42);
+    let assert_eq = node_assert_eq().with_pull_eval();
+
+    let bang = g.add_node(Box::new(bang) as Box<dyn DebugNode>);
+    let fn_node = g.add_node(Box::new(fn_node) as Box<_>);
+    let apply_node = g.add_node(Box::new(apply_node) as Box<_>);
+    let lhs = g.add_node(Box::new(lhs) as Box<_>);
+    let rhs = g.add_node(Box::new(rhs) as Box<_>);
+    let expected = g.add_node(Box::new(expected) as Box<_>);
+    let assert_eq = g.add_node(Box::new(assert_eq) as Box<_>);
+
+    g.add_edge(bang, fn_node, Edge::from((0, 0)));
+    g.add_edge(fn_node, apply_node, Edge::from((0, 0)));
+    g.add_edge(lhs, apply_node, Edge::from((0, 1)));
+    g.add_edge(rhs, apply_node, Edge::from((0, 2)));
+    g.add_edge(apply_node, assert_eq, Edge::from((0, 0)));
+    g.add_edge(expected, assert_eq, Edge::from((0, 1)));
+
+    let module = gantz_core::compile::module(&get_node, &g).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&get_node, &g, &[], &mut vm);
+
+    for expr in module {
+        vm.run(expr.to_pretty(80)).unwrap();
+    }
+
+    vm.call_function_by_name_with_args(&pull_eval_fn_name(&[assert_eq.index()]), vec![])
+        .unwrap();
+}
+
+#[test]
+fn test_fn_apply_fixed_missing_arg_defaults_to_nil() {
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let mut nodes: HashMap<gantz_ca::ContentAddr, Box<dyn DebugNode>> = HashMap::new();
+    let id = gantz_core::node::Identity;
+    let id_ca = gantz_ca::content_addr(&id);
+    nodes.insert(id_ca, Box::new(id) as Box<dyn DebugNode>);
+
+    let get_node = |ca: &gantz_ca::ContentAddr| -> Option<&dyn Node> {
+        nodes.get(ca).map(|b| &**b as &dyn Node)
+    };
+
+    let bang = node_bang();
+    let fn_node = Fn::new(Ref::new(id_ca));
+    let apply_node = Apply::fixed(1).unwrap();
+    let expected = node_nil();
+    let assert_eq = node_assert_eq().with_pull_eval();
+
+    let bang = g.add_node(Box::new(bang) as Box<dyn DebugNode>);
+    let fn_node = g.add_node(Box::new(fn_node) as Box<_>);
+    let apply_node = g.add_node(Box::new(apply_node) as Box<_>);
+    let expected = g.add_node(Box::new(expected) as Box<_>);
+    let assert_eq = g.add_node(Box::new(assert_eq) as Box<_>);
+
+    g.add_edge(bang, fn_node, Edge::from((0, 0)));
+    g.add_edge(fn_node, apply_node, Edge::from((0, 0)));
+    g.add_edge(apply_node, assert_eq, Edge::from((0, 0)));
+    g.add_edge(expected, assert_eq, Edge::from((0, 1)));
+
+    let module = gantz_core::compile::module(&get_node, &g).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&get_node, &g, &[], &mut vm);
+
+    for expr in module {
+        vm.run(expr.to_pretty(80)).unwrap();
+    }
+
     vm.call_function_by_name_with_args(&pull_eval_fn_name(&[assert_eq.index()]), vec![])
         .unwrap();
 }

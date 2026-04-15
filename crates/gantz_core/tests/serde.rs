@@ -12,6 +12,8 @@ trait SerdeNode: Node {}
 #[typetag::serde]
 impl SerdeNode for node::Expr {}
 #[typetag::serde]
+impl SerdeNode for node::Apply {}
+#[typetag::serde]
 impl SerdeNode for node::Push<node::Expr> {}
 #[typetag::serde]
 impl SerdeNode for node::Pull<node::Expr> {}
@@ -29,6 +31,10 @@ fn push_expr() -> Push<Expr> {
 // Helper function to create a pullable expression node
 fn pull_expr() -> Pull<Expr> {
     node::expr("(+ $a $b)").unwrap().with_pull_eval()
+}
+
+fn fixed_apply() -> node::Apply {
+    node::Apply::fixed(3).unwrap()
 }
 
 // A no-op node lookup function for tests that don't need it.
@@ -86,6 +92,21 @@ fn test_serde_push_node() {
     assert_eq!(n.n_outputs(ctx), 1);
     assert!(!n.push_eval(ctx).is_empty());
     assert!(n.pull_eval(ctx).is_empty());
+}
+
+#[test]
+fn test_serde_fixed_apply_node() {
+    let node = fixed_apply();
+
+    let boxed: Box<dyn SerdeNode> = Box::new(node);
+    let serialized = serde_json::to_string(&boxed).expect("Failed to serialize");
+    let deserialized: Box<dyn SerdeNode> =
+        serde_json::from_str(&serialized).expect("Failed to deserialize");
+
+    let ctx = MetaCtx::new(&no_lookup);
+    let n = deserialized;
+    assert_eq!(n.n_inputs(ctx), 4);
+    assert_eq!(n.n_outputs(ctx), 1);
 }
 
 // Test serializing and deserializing a vector of various node types
