@@ -59,7 +59,8 @@ where
         + Copy,
     G::NodeWeight: Node,
 {
-    let module = crate::compile::module(get_node, graph)?;
+    let entrypoints = crate::compile::default_entrypoints(get_node, graph);
+    let module = crate::compile::module(get_node, graph, &entrypoints)?;
     for expr in &module {
         vm.run(expr.to_pretty(80))?;
     }

@@ -13,7 +13,7 @@ use petgraph::{
     graph::NodeIndex,
     visit::{EdgeRef, IntoNodeReferences, NodeRef},
 };
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 mod node_fn;
@@ -290,7 +290,7 @@ fn destructure_node_branch_stmt(n: node::Id) -> ExprKind {
 /// Generate a function for performing evaluation of the given statements.
 ///
 /// The given `Vec<ExprKind>` should be generated via the `eval_stmts` function.
-fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
+fn entry_fn(name: &str, stmts: Vec<ExprKind>) -> ExprKind {
     // Create the body of the function as a sequence of expressions
     let stmts_str = stmts
         .iter()
@@ -306,7 +306,7 @@ fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
            (define {GRAPH_STATE} {ROOT_STATE}) \
            {stmts_str} \
            (set! {ROOT_STATE} {GRAPH_STATE}))",
-        eval_fn_name
+        name
     );
 
     // Parse the function definition into Steel AST
@@ -325,14 +325,12 @@ pub(crate) fn path_string(path: &[node::Id]) -> String {
         .join(":")
 }
 
-/// The name used for the pull evaluation fn generated for the given node.
-pub fn pull_eval_fn_name(path: &[node::Id]) -> String {
-    format!("pull-fn-{}", path_string(path))
-}
-
-/// The name used for the push evaluation fn generated for the given node.
-pub fn push_eval_fn_name(path: &[node::Id]) -> String {
-    format!("push-fn-{}", path_string(path))
+/// Generate entry fn name from an `EntrypointId`.
+///
+/// The name is deterministic and unique - derived from the content hash
+/// (truncated to 8 hex chars).
+pub fn entry_fn_name(id: &super::EntrypointId) -> String {
+    format!("entry-fn-{}", id.0.display_short())
 }
 
 /// The set of outputs on the given node that require dedicated bindings due to
@@ -520,7 +518,7 @@ fn flow_node_stmts(
 
 /// Given the flow graph for an entry point eval fn, generate the body for the
 /// fn. as a list of statements.
-pub fn eval_fn_body(
+pub fn entry_fn_body(
     path: &[node::Id],
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
@@ -546,48 +544,99 @@ pub fn eval_fn_body(
     )
 }
 
-//// Generate all push and pull fns for the given control flow graph.
-pub(crate) fn eval_fns_from_flow(
+/// Generate eval statements for each entrypoint at this graph level.
+///
+/// Returns a map from `EntrypointId` to the statements for that entrypoint
+/// at this level. Cross-level entrypoints will have statements at multiple
+/// levels, which are collected and concatenated by `entry_fns`.
+pub(crate) fn eval_stmts_from_flow(
     path: &[node::Id],
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
     inlets: &BTreeSet<node::Id>,
     outlets: &BTreeSet<node::Id>,
     flow: &Flow,
-) -> Result<Vec<ExprKind>, CodegenError> {
-    let pull_fgs = flow.pull.iter().map(|(&(id, _conns), fg)| {
-        let node_path: Vec<_> = path.iter().copied().chain(Some(id)).collect();
-        let name = pull_eval_fn_name(&node_path);
-        (name, fg)
-    });
-    let push_fgs = flow.push.iter().map(|(&(id, _conns), fg)| {
-        let node_path: Vec<_> = path.iter().copied().chain(Some(id)).collect();
-        let name = push_eval_fn_name(&node_path);
-        (name, fg)
-    });
-    pull_fgs
-        .chain(push_fgs)
-        .map(|(name, fg)| {
-            let stmts = eval_fn_body(path, mg, stateful, inlets, outlets, fg)?;
-            Ok(eval_fn(&name, stmts))
+) -> Result<BTreeMap<super::EntrypointId, Vec<ExprKind>>, CodegenError> {
+    flow.entrypoints
+        .iter()
+        .map(|(id, fg)| {
+            let stmts = entry_fn_body(path, mg, stateful, inlets, outlets, fg)?;
+            Ok((id.clone(), stmts))
         })
         .collect()
 }
 
+/// Wrap statements from a nested graph level with state scope enter/exit.
+///
+/// For a nested level at path `[graph_a]`, this generates:
+/// ```scheme
+/// (define __parent-graph-state graph-state)
+/// (define graph-state (hash-ref __parent-graph-state '{graph_a_id}))
+/// ;; ... nested statements ...
+/// (set! graph-state (hash-insert __parent-graph-state '{graph_a_id} graph-state))
+/// ```
+fn wrap_state_scope(path: &[node::Id], stmts: Vec<ExprKind>) -> Vec<ExprKind> {
+    use crate::GRAPH_STATE;
+
+    if path.is_empty() || stmts.is_empty() {
+        return stmts;
+    }
+
+    let mut result = Vec::with_capacity(stmts.len() + 2 * path.len());
+
+    // Enter scopes from outermost to innermost.
+    for (depth, &id) in path.iter().enumerate() {
+        let parent = format!("__parent-graph-state-{depth}");
+        let enter = format!(
+            "(define {parent} {GRAPH_STATE}) \
+             (set! {GRAPH_STATE} (hash-ref {parent} '{id}))"
+        );
+        result.extend(Engine::emit_ast(&enter).expect("failed to emit state scope enter"));
+    }
+
+    result.extend(stmts);
+
+    // Exit scopes from innermost to outermost.
+    for (depth, &id) in path.iter().enumerate().rev() {
+        let parent = format!("__parent-graph-state-{depth}");
+        let exit = format!("(set! {GRAPH_STATE} (hash-insert {parent} '{id} {GRAPH_STATE}))");
+        result.extend(Engine::emit_ast(&exit).expect("failed to emit state scope exit"));
+    }
+
+    result
+}
+
 /// Given a tree of eval plans for a gantz graph (and its nested graphs),
-/// generate all push, pull and nested eval fns for the graph.
-pub(crate) fn eval_fns(flow_tree: &RoseTree<(&Meta, Flow)>) -> Result<Vec<ExprKind>, CodegenError> {
-    let mut eval_fns = vec![];
-    flow_tree.try_visit(&[], &mut |path, (meta, flow)| -> Result<(), CodegenError> {
-        eval_fns.extend(eval_fns_from_flow(
+/// generate all entry fns.
+///
+/// Uses post-order traversal so nested statements execute before parent
+/// statements. Nested-level statements are wrapped with state scope
+/// enter/exit to narrow `graph-state` to the correct sub-hashmap.
+pub(crate) fn entry_fns(
+    flow_tree: &RoseTree<(&Meta, Flow)>,
+) -> Result<Vec<ExprKind>, CodegenError> {
+    // Collect statements from all levels, grouped by EntrypointId.
+    // Post-order: children before parent, so nested eval runs first.
+    let mut all_stmts: BTreeMap<super::EntrypointId, Vec<ExprKind>> = BTreeMap::new();
+    flow_tree.try_visit_post(&[], &mut |path, (meta, flow)| -> Result<(), CodegenError> {
+        let level_stmts = eval_stmts_from_flow(
             path,
             &meta.graph,
             &meta.stateful,
             &meta.inlets,
             &meta.outlets,
             flow,
-        )?);
+        )?;
+        for (id, stmts) in level_stmts {
+            let scoped = wrap_state_scope(path, stmts);
+            all_stmts.entry(id).or_default().extend(scoped);
+        }
         Ok(())
     })?;
-    Ok(eval_fns)
+
+    // Generate one eval fn per EntrypointId.
+    Ok(all_stmts
+        .into_iter()
+        .map(|(id, stmts)| entry_fn(&entry_fn_name(&id), stmts))
+        .collect())
 }

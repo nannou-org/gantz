@@ -2,7 +2,7 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
-    compile::push_eval_fn_name,
+    compile::{default_entrypoints, entry_fn_name, entrypoint},
     node::{self, Node, WithPushEval},
 };
 use std::fmt::Debug;
@@ -101,7 +101,9 @@ fn test_stateless_rust_add() {
     g.add_edge(add, assert_eq, Edge::from((0, 0)));
     g.add_edge(two, assert_eq, Edge::from((0, 1)));
 
-    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -110,7 +112,8 @@ fn test_stateless_rust_add() {
     for f in module {
         vm.run(format!("{f}")).unwrap();
     }
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
 
@@ -168,7 +171,9 @@ fn test_stateful_rust_counter() {
     let counter = g.add_node(Box::new(counter) as Box<_>);
     g.add_edge(push, counter, Edge::from((0, 0)));
 
-    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -179,8 +184,10 @@ fn test_stateful_rust_counter() {
     }
 
     // Push 3 times.
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    let fn_name = entry_fn_name(&ep.id());
     for _ in 0..3 {
-        vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
+        vm.call_function_by_name_with_args(&fn_name, vec![])
             .unwrap();
     }
 
@@ -222,7 +229,6 @@ impl Node for RustFortyTwo {
 /// Build: forty_two -> assert_eq <- literal_42, pull eval from assert_eq.
 #[test]
 fn test_zero_arg_stateless() {
-    use gantz_core::compile::pull_eval_fn_name;
     use gantz_core::node::WithPullEval;
 
     let mut g = petgraph::graph::DiGraph::new();
@@ -240,7 +246,9 @@ fn test_zero_arg_stateless() {
     g.add_edge(ft, aeq, Edge::from((0, 0)));
     g.add_edge(ex, aeq, Edge::from((0, 1)));
 
-    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -249,7 +257,8 @@ fn test_zero_arg_stateless() {
     for f in module {
         vm.run(format!("{f}")).unwrap();
     }
-    vm.call_function_by_name_with_args(&pull_eval_fn_name(&[aeq.index()]), vec![])
+    let ep = entrypoint::pull(vec![aeq.index()], g[aeq].n_inputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
 
@@ -295,7 +304,6 @@ impl Node for RustTick {
 /// Build: tick (pull eval), call 5 times, verify state = 5.
 #[test]
 fn test_state_only_fn() {
-    use gantz_core::compile::pull_eval_fn_name;
     use gantz_core::node::WithPullEval;
 
     let mut g = petgraph::graph::DiGraph::new();
@@ -309,7 +317,9 @@ fn test_state_only_fn() {
 
     g.add_edge(tick_ix, pull_ix, Edge::from((0, 0)));
 
-    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -319,8 +329,10 @@ fn test_state_only_fn() {
         vm.run(format!("{f}")).unwrap();
     }
 
+    let ep = entrypoint::pull(vec![pull_ix.index()], g[pull_ix].n_inputs(ctx) as u8);
+    let fn_name = entry_fn_name(&ep.id());
     for _ in 0..5 {
-        vm.call_function_by_name_with_args(&pull_eval_fn_name(&[pull_ix.index()]), vec![])
+        vm.call_function_by_name_with_args(&fn_name, vec![])
             .unwrap();
     }
 
@@ -379,7 +391,9 @@ fn test_stateful_typed_counter() {
     let counter = g.add_node(Box::new(counter) as Box<_>);
     g.add_edge(push, counter, Edge::from((0, 0)));
 
-    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -390,8 +404,10 @@ fn test_stateful_typed_counter() {
     }
 
     // Push 3 times.
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    let fn_name = entry_fn_name(&ep.id());
     for _ in 0..3 {
-        vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
+        vm.call_function_by_name_with_args(&fn_name, vec![])
             .unwrap();
     }
 
@@ -409,7 +425,6 @@ fn test_stateful_typed_counter() {
 /// Test that closures with captured variables work with `register`.
 #[test]
 fn test_closure_with_capture() {
-    use gantz_core::compile::pull_eval_fn_name;
     use gantz_core::node::WithPullEval;
 
     let multiplier: isize = 10;
@@ -454,7 +469,8 @@ fn test_closure_with_capture() {
     g.add_edge(mul_ix, aeq_ix, Edge::from((0, 0)));
     g.add_edge(exp_ix, aeq_ix, Edge::from((0, 1)));
 
-    let module = gantz_core::compile::module(&no_lookup, &g).unwrap();
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -469,9 +485,11 @@ fn test_closure_with_capture() {
 
     gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
+    let ctx = node::MetaCtx::new(&no_lookup);
     for f in module {
         vm.run(format!("{f}")).unwrap();
     }
-    vm.call_function_by_name_with_args(&pull_eval_fn_name(&[aeq_ix.index()]), vec![])
+    let ep = entrypoint::pull(vec![aeq_ix.index()], g[aeq_ix].n_inputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }

@@ -24,10 +24,6 @@ pub struct Meta {
     pub graph: MetaGraph,
     /// The set of nodes that require branching on their outputs.
     pub branches: BTreeMap<node::Id, Vec<node::Conns>>,
-    /// The set of nodes that require a push evaluation fn.
-    pub push: BTreeMap<node::Id, Vec<node::Conns>>,
-    /// The set of nodes that require a pull evaluation fn.
-    pub pull: BTreeMap<node::Id, Vec<node::Conns>>,
     /// The set of nodes that require access to state.
     pub stateful: BTreeSet<node::Id>,
     /// The set of nodes that act as inlets (for nested graphs).
@@ -136,27 +132,6 @@ impl Meta {
             );
         }
 
-        // Register push/pull eval for the node if necessary.
-        let push_eval = node.push_eval(ctx);
-        if !push_eval.is_empty() {
-            self.push.insert(
-                id,
-                push_eval
-                    .iter()
-                    .map(|conf| conns_from_eval_conf(conf, outputs))
-                    .collect::<Result<_, _>>()?,
-            );
-        }
-        let pull_eval = node.pull_eval(ctx);
-        if !pull_eval.is_empty() {
-            self.pull.insert(
-                id,
-                pull_eval
-                    .iter()
-                    .map(|conf| conns_from_eval_conf(conf, inputs))
-                    .collect::<Result<_, _>>()?,
-            );
-        }
         if node.inlet(ctx) {
             self.inlets.insert(id);
         }
@@ -203,7 +178,7 @@ impl super::Edges for Vec<(Edge, EdgeKind)> {
 
 /// Given an eval conf and a known number of connections, convert the conf to
 /// the set of conns.
-fn conns_from_eval_conf(
+pub(crate) fn conns_from_eval_conf(
     conf: &node::EvalConf,
     n_conns: usize,
 ) -> Result<node::Conns, TooManyConns> {

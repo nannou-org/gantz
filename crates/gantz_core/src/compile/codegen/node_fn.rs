@@ -102,12 +102,7 @@ impl Visitor for NodeFns<'_> {
 pub(crate) fn unique_node_confs(flow: &Flow) -> NodeConfs {
     let mut confs = BTreeSet::new();
     confs.extend(
-        flow.push
-            .values()
-            .flat_map(|g| g.node_weights().flat_map(|blk| blk.iter().copied())),
-    );
-    confs.extend(
-        flow.pull
+        flow.entrypoints
             .values()
             .flat_map(|g| g.node_weights().flat_map(|blk| blk.iter().copied())),
     );

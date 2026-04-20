@@ -12,8 +12,8 @@ use bevy_egui::egui;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
 use bevy_gantz::head;
 use bevy_gantz::reg::Registry;
-use bevy_gantz::vm::{EvalEvent, EvalKind};
-use bevy_gantz::{BuiltinNodes, EvalCompleted};
+use bevy_gantz::vm::EvalEntryEvent;
+use bevy_gantz::{BuiltinNodes, EvalEntryComplete};
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::Node;
@@ -103,7 +103,7 @@ where
             .add_observer(on_branch_created)
             .add_observer(on_head_committed)
             // VM timing observer
-            .add_observer(on_eval_completed)
+            .add_observer(on_eval_entry_complete)
             // Node creation/inspection observers
             .add_observer(on_create_node::<N>)
             .add_observer(on_branch_node::<N>)
@@ -456,11 +456,11 @@ pub fn registry_ref<'a, N: 'static + Send + Sync>(
 // Observers
 // ----------------------------------------------------------------------------
 
-/// Record VM execution timing from EvalCompleted events.
+/// Record VM execution timing from EvalEntryComplete events.
 ///
 /// This observer receives timing events from `bevy_gantz::vm` and records
 /// them to `PerfVm` for the performance widget.
-fn on_eval_completed(trigger: On<EvalCompleted>, mut perf_vm: ResMut<PerfVm>) {
+fn on_eval_entry_complete(trigger: On<EvalEntryComplete>, mut perf_vm: ResMut<PerfVm>) {
     perf_vm.0.record(trigger.event().duration);
 }
 
@@ -1133,18 +1133,10 @@ pub fn process_cmds<N: 'static + Send + Sync>(
         for cmd in std::mem::take(&mut head_state.scene.cmds) {
             log::debug!("{cmd:?}");
             match cmd {
-                gantz_egui::Cmd::PushEval(path) => {
-                    cmds.trigger(EvalEvent {
+                gantz_egui::Cmd::EvalEntry(entrypoint) => {
+                    cmds.trigger(EvalEntryEvent {
                         head: entity,
-                        path,
-                        kind: EvalKind::Push,
-                    });
-                }
-                gantz_egui::Cmd::PullEval(path) => {
-                    cmds.trigger(EvalEvent {
-                        head: entity,
-                        path,
-                        kind: EvalKind::Pull,
+                        entrypoint,
                     });
                 }
                 gantz_egui::Cmd::OpenPath(path) => {

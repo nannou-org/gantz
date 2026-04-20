@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Default)]
 pub(crate) struct RoseTree<T> {
     pub(crate) elem: T,
-    nested: BTreeMap<node::Id, RoseTree<T>>,
+    pub(crate) nested: BTreeMap<node::Id, RoseTree<T>>,
 }
 
 impl<T> RoseTree<T> {
@@ -18,7 +18,7 @@ impl<T> RoseTree<T> {
             Some(&n_id) => n_id,
         };
         let tree = self.nested.get(&n_id)?;
-        tree.tree(&path[..path.len() - 1])
+        tree.tree(&path[1..])
     }
 
     /// Get the tree (or nested tree) at the given nesting path.
@@ -33,7 +33,7 @@ impl<T> RoseTree<T> {
             Some(&n_id) => n_id,
         };
         let tree = self.nested.entry(n_id).or_default();
-        tree.tree_mut(&path[..path.len() - 1])
+        tree.tree_mut(&path[1..])
     }
 
     /// Map the `RoseTree` from elem type T to U.
@@ -61,7 +61,7 @@ impl<T> RoseTree<T> {
     }
 
     /// Fallible version of `map_ref`.
-    pub(crate) fn try_map_ref<'a, U, E>(
+    pub(crate) fn _try_map_ref<'a, U, E>(
         &'a self,
         f: &mut impl FnMut(&'a T) -> Result<U, E>,
     ) -> Result<RoseTree<U>, E> {
@@ -69,7 +69,7 @@ impl<T> RoseTree<T> {
         let elem = f(elem)?;
         let nested = nested
             .into_iter()
-            .map(|(&k, r)| r.try_map_ref(f).map(|r| (k, r)))
+            .map(|(&k, r)| r._try_map_ref(f).map(|r| (k, r)))
             .collect::<Result<_, _>>()?;
         Ok(RoseTree { elem, nested })
     }
@@ -87,7 +87,7 @@ impl<T> RoseTree<T> {
     }
 
     /// Fallible version of `visit`.
-    pub(crate) fn try_visit<E>(
+    pub(crate) fn _try_visit<E>(
         &self,
         path: &[node::Id],
         f: &mut impl FnMut(&[node::Id], &T) -> Result<(), E>,
@@ -96,9 +96,25 @@ impl<T> RoseTree<T> {
         let mut path = path.to_vec();
         for (&id, tree) in &self.nested {
             path.push(id);
-            tree.try_visit(&path, f)?;
+            tree._try_visit(&path, f)?;
             path.pop();
         }
+        Ok(())
+    }
+
+    /// Fallible post-order visit: children are visited before parent.
+    pub(crate) fn try_visit_post<E>(
+        &self,
+        path: &[node::Id],
+        f: &mut impl FnMut(&[node::Id], &T) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let mut child_path = path.to_vec();
+        for (&id, tree) in &self.nested {
+            child_path.push(id);
+            tree.try_visit_post(&child_path, f)?;
+            child_path.pop();
+        }
+        f(path, &self.elem)?;
         Ok(())
     }
 }

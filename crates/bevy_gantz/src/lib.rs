@@ -18,7 +18,7 @@ pub use head::{
     OpenHeadDataReadOnly, WorkingGraph,
 };
 pub use reg::{Registry, lookup_node, timestamp};
-pub use vm::{EvalCompleted, EvalEvent, EvalKind};
+pub use vm::{EvalEntryComplete, EvalEntryEvent};
 
 /// Plugin providing core gantz functionality.
 ///
@@ -57,8 +57,8 @@ where
             .add_observer(head::on_close::<N>)
             .add_observer(head::on_branch_head::<N>)
             .add_observer(head::on_move_branch::<N>)
-            // Register eval event handler.
-            .add_observer(vm::on_eval)
+            // Register eval entry event handler.
+            .add_observer(vm::on_eval_entry)
             // VM init observers.
             .add_observer(vm::on_head_opened::<N>)
             .add_observer(vm::on_head_changed::<N>)

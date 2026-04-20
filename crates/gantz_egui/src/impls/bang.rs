@@ -13,7 +13,7 @@ impl NodeUi for gantz_std::Bang {
         uictx.framed(|ui, _sockets| {
             let res = ui.add(egui::Button::new(" ! "));
             if res.clicked() {
-                ctx.push_eval();
+                ctx.push_eval(1);
             }
             res
         })

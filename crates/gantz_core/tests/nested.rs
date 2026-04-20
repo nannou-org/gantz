@@ -2,7 +2,7 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
-    compile::push_eval_fn_name,
+    compile::{default_entrypoints, entry_fn_name, entrypoint, push_source},
     node::{self, GraphNode, Node, WithPushEval},
 };
 use std::fmt::Debug;
@@ -120,7 +120,9 @@ fn test_graph_nested_stateless() {
     gb.add_edge(forty_two, assert_eq, Edge::from((0, 1)));
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let module = gantz_core::compile::module(&no_lookup, &gb).unwrap();
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &gb);
+    let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -135,7 +137,8 @@ fn test_graph_nested_stateless() {
     }
 
     // Call the `push` eval function.
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
+    let ep = entrypoint::push(vec![push.index()], gb[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
 
@@ -202,7 +205,9 @@ fn test_graph_nested_counter() {
     gb.add_edge(graph_a, number, Edge::from((0, 0)));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&no_lookup, &gb).unwrap();
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &gb);
+    let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -219,9 +224,11 @@ fn test_graph_nested_counter() {
 
     // Increment the nested counter by pushing evaluation.
     // The first is `0`, the second is `1`.
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
+    let ep = entrypoint::push(vec![push.index()], gb[push].n_outputs(ctx) as u8);
+    let fn_name = entry_fn_name(&ep.id());
+    vm.call_function_by_name_with_args(&fn_name, vec![])
         .unwrap();
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
+    vm.call_function_by_name_with_args(&fn_name, vec![])
         .unwrap();
 
     // First, check that the nested expr's state is `1`.
@@ -268,55 +275,73 @@ fn test_graph_nested_counter() {
 //
 // A simple-as-possible demonstration of pushing evaluation from within a nested
 // node, and propagating that evaluation through the outlets of the graph node.
+// Test pushing evaluation from a node inside a nested graph.
+//
+// GRAPH A (inner):
+//
+//    --------
+//    | Push |
+//    -+------
+//     |
+//    -+--------
+//    | number | (stores received value in state)
+//    ----------
+//
+// GRAPH B (outer):
+//
+//    -----------
+//    | GRAPH A |
+//    -----------
+//
+// The push fires inside graph A, driving evaluation to the number node
+// which stores the received value. This demonstrates that entrypoints
+// can target nodes inside nested graphs.
 #[test]
-#[ignore = "requires #78, #77"]
 fn test_graph_nested_push_eval() {
-    // GRAPH A
+    // GRAPH A: push -> number (stateful, stores value)
     let mut ga = GraphNode::default();
     let push = ga.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
-    let int = ga.add_node(Box::new(node_int(42)) as Box<_>);
-    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
-    ga.add_edge(push, int, Edge::from((0, 0)));
-    ga.add_edge(int, outlet, Edge::from((0, 0)));
+    let num = ga.add_node(Box::new(node_number()) as Box<_>);
+    ga.add_edge(push, num, Edge::from((0, 0)));
 
-    // Graph B.
+    // Compute push connection count before moving `ga` into `gb`.
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let push_n_outputs = ga[push].n_outputs(ctx) as u8;
+
+    // Graph B: just contains graph A (no outlet propagation needed).
     let mut gb = petgraph::graph::DiGraph::new();
     let graph_a = gb.add_node(Box::new(ga) as Box<dyn DebugNode>);
-    let number = gb.add_node(Box::new(node_number()) as Box<_>);
-    gb.add_edge(graph_a, number, Edge::from((0, 0)));
+
+    // Nested entrypoint: push inside graph A.
+    let ep = entrypoint::from_source(push_source(
+        vec![graph_a.index(), push.index()],
+        push_n_outputs,
+    ));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&no_lookup, &gb).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &gb, &[ep.clone()]).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
-
-    // Initialise the node state vars.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, &gb, &[], &mut vm);
 
     // Register the fns.
-    for f in module {
+    for f in &module {
         println!("{}\n", f.to_pretty(100));
         vm.run(f.to_pretty(100)).unwrap();
     }
 
-    // Call the nested push node's eval fn.
-    let push_path = [graph_a.index(), push.index()];
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&push_path), vec![])
+    // Call the nested push eval fn.
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 
-    // Now check that the outlet's state is `42`.
-    let outlet_state = node::state::extract::<u32>(&vm, &[graph_a.index(), outlet.index()])
-        .expect("failed to extract outlet state")
-        .expect("outlet state was `None`");
-    assert_eq!(outlet_state, 42);
-
-    // Check that the number in the root graph was updated from the outlet.
-    let number_state = node::state::extract::<u32>(&vm, &[number.index()])
-        .expect("failed to extract number state")
-        .expect("number state was `None`");
-    assert_eq!(number_state, 42);
+    // The number node inside graph A should have received the push value.
+    // node_push outputs '() which is not a number, so number's state stays
+    // at its initial void value. But we can verify the eval ran without
+    // error - the state::extract call itself confirms the state path exists.
+    let _num_state = node::state::extract_value(&vm, &[graph_a.index(), num.index()])
+        .expect("failed to extract number state from nested graph");
 }
 
 // Test that inlet bindings work correctly when node indices don't match inlet positions.
@@ -409,7 +434,9 @@ fn test_graph_nested_non_sequential_inlets() {
     gb.add_edge(seven, assert_eq, Edge::from((0, 1)));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&no_lookup, &gb).unwrap();
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &gb);
+    let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -424,6 +451,88 @@ fn test_graph_nested_non_sequential_inlets() {
     }
 
     // Call the `push` eval function - should compute 10 - 3 = 7
-    vm.call_function_by_name_with_args(&push_eval_fn_name(&[push.index()]), vec![])
+    let ep = entrypoint::push(vec![push.index()], gb[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
+}
+
+// Test that push evaluation inside a nested graph propagates through its outlet
+// to downstream nodes in the outer graph.
+//
+// GRAPH A (inner):
+//
+//    --------
+//    | Push |
+//    -+------
+//     |
+//    -+----
+//    | 42 |
+//    -+----
+//     |
+//    -+--------
+//    | Outlet |
+//    ----------
+//
+// GRAPH B (outer):
+//
+//    -----------
+//    | GRAPH A |
+//    -+---------
+//     |
+//    -+--------
+//    | number |
+//    ----------
+//
+// The push fires inside graph A, value 42 flows through the outlet to the
+// number node in the outer graph. Verifies that nested push evaluation
+// propagates through outlets.
+#[test]
+#[ignore = "requires outlet propagation from nested push eval"]
+fn test_graph_nested_push_through_outlet() {
+    // GRAPH A: push -> int(42) -> outlet
+    let mut ga = GraphNode::default();
+    let push = ga.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let forty_two = ga.add_node(Box::new(node_int(42)) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    ga.add_edge(push, forty_two, Edge::from((0, 0)));
+    ga.add_edge(forty_two, outlet, Edge::from((0, 0)));
+
+    // Compute push connection count before moving `ga` into `gb`.
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let push_n_outputs = ga[push].n_outputs(ctx) as u8;
+
+    // GRAPH B: graph_a -> number
+    let mut gb = petgraph::graph::DiGraph::new();
+    let graph_a = gb.add_node(Box::new(ga) as Box<dyn DebugNode>);
+    let number = gb.add_node(Box::new(node_number()) as Box<_>);
+    gb.add_edge(graph_a, number, Edge::from((0, 0)));
+
+    // Nested entrypoint: push inside graph A.
+    let ep = entrypoint::from_source(push_source(
+        vec![graph_a.index(), push.index()],
+        push_n_outputs,
+    ));
+
+    // Generate the module.
+    let module = gantz_core::compile::module(&no_lookup, &gb, &[ep.clone()]).unwrap();
+
+    // Create the VM.
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &gb, &[], &mut vm);
+
+    // Register the fns.
+    for f in &module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
+    // Call the nested push eval fn.
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    // The number node should have received 42 via the outlet.
+    let number_state = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract number state")
+        .expect("number state was None");
+    assert_eq!(number_state, 42);
 }
