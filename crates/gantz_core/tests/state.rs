@@ -2,7 +2,7 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
-    compile::{default_entrypoints, entrypoint, eval_fn_name},
+    compile::{default_entrypoints, entry_fn_name, entrypoint},
     node::{self, Node, NodeState, WithPushEval, WithStateType},
 };
 use std::fmt::Debug;
@@ -105,7 +105,7 @@ fn test_graph_with_counter() {
 
     // Call the push eval fn 3 times to increment the counter thrice.
     let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
-    let fn_name = eval_fn_name(&ep.id());
+    let fn_name = entry_fn_name(&ep.id());
     for _ in 0..3 {
         vm.call_function_by_name_with_args(&fn_name, vec![])
             .unwrap();
@@ -201,11 +201,11 @@ fn test_graph_with_counters() {
     let ep_a = entrypoint::push(vec![p_a.index()], g[p_a].n_outputs(ctx) as u8);
     let ep_b = entrypoint::push(vec![p_b.index()], g[p_b].n_outputs(ctx) as u8);
     let ep_c = entrypoint::push(vec![p_c.index()], g[p_c].n_outputs(ctx) as u8);
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep_a.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_a.id()), vec![])
         .unwrap();
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep_b.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_b.id()), vec![])
         .unwrap();
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep_c.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_c.id()), vec![])
         .unwrap();
 
     // A should be incremented once, b twice, and c thrice.

@@ -2,7 +2,7 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
-    compile::{default_entrypoints, entrypoint, eval_fn_name, push_source},
+    compile::{default_entrypoints, entry_fn_name, entrypoint, push_source},
     node::{self, GraphNode, Node, WithPushEval},
 };
 use std::fmt::Debug;
@@ -138,7 +138,7 @@ fn test_graph_nested_stateless() {
 
     // Call the `push` eval function.
     let ep = entrypoint::push(vec![push.index()], gb[push].n_outputs(ctx) as u8);
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
 
@@ -225,7 +225,7 @@ fn test_graph_nested_counter() {
     // Increment the nested counter by pushing evaluation.
     // The first is `0`, the second is `1`.
     let ep = entrypoint::push(vec![push.index()], gb[push].n_outputs(ctx) as u8);
-    let fn_name = eval_fn_name(&ep.id());
+    let fn_name = entry_fn_name(&ep.id());
     vm.call_function_by_name_with_args(&fn_name, vec![])
         .unwrap();
     vm.call_function_by_name_with_args(&fn_name, vec![])
@@ -333,7 +333,7 @@ fn test_graph_nested_push_eval() {
     }
 
     // Call the nested push eval fn.
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 
     // The number node inside graph A should have received the push value.
@@ -452,7 +452,7 @@ fn test_graph_nested_non_sequential_inlets() {
 
     // Call the `push` eval function - should compute 10 - 3 = 7
     let ep = entrypoint::push(vec![push.index()], gb[push].n_outputs(ctx) as u8);
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
 
@@ -527,7 +527,7 @@ fn test_graph_nested_push_through_outlet() {
     }
 
     // Call the nested push eval fn.
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 
     // The number node should have received 42 via the outlet.

@@ -1,6 +1,6 @@
 // Tests for the graph module.
 
-use gantz_core::compile::{default_entrypoints, entrypoint, eval_fn_name, push_source};
+use gantz_core::compile::{default_entrypoints, entry_fn_name, entrypoint, push_source};
 use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
 use std::fmt::Debug;
@@ -111,7 +111,7 @@ fn test_graph_push_eval() {
         vm.run(format!("{f}")).unwrap();
     }
     let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
 
@@ -172,7 +172,7 @@ fn test_graph_pull_eval() {
 
     // Call the eval fn.
     let ep = entrypoint::pull(vec![assert_eq.index()], g[assert_eq].n_inputs(ctx) as u8);
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
 
@@ -277,7 +277,7 @@ fn test_graph_push_cond_eval() {
 
     // First, call `push_0` and check the result is `6`.
     let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep_0.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
         .unwrap();
     let number_state = node::state::extract::<u32>(&vm, &[number.index()])
         .expect("failed to extract number state")
@@ -286,7 +286,7 @@ fn test_graph_push_cond_eval() {
 
     // First, call `push_1` and check the result is `7`.
     let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep_1.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
         .unwrap();
     let number_state = node::state::extract::<u32>(&vm, &[number.index()])
         .expect("failed to extract number state")
@@ -348,7 +348,7 @@ fn test_graph_eval_should_panic() {
         vm.run(expr.to_pretty(100)).unwrap();
     }
     let ep = entrypoint::pull(vec![assert_eq.index()], g[assert_eq].n_inputs(ctx) as u8);
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
 
@@ -427,7 +427,7 @@ fn test_graph_push_eval_subset() {
 
     // Call the push_eval function - should only evaluate the first output path
     let ep = &eps[0]; // first push eval conf: only first output
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 
     // Check the state of each store node
@@ -491,7 +491,7 @@ fn test_graph_multi_source_push() {
     }
 
     // Calling the combined entrypoint should evaluate BOTH chains.
-    let fn_name = eval_fn_name(&combined.id());
+    let fn_name = entry_fn_name(&combined.id());
     vm.call_function_by_name_with_args(&fn_name, vec![])
         .unwrap();
 
@@ -526,5 +526,5 @@ fn test_entrypoint_naming_consistency() {
         .find(|ep| ep.0.iter().any(|s| s.path == vec![push.index()]))
         .expect("default_entrypoints should contain push node");
     assert_eq!(default_ep.id(), manual.id());
-    assert_eq!(eval_fn_name(&default_ep.id()), eval_fn_name(&manual.id()));
+    assert_eq!(entry_fn_name(&default_ep.id()), entry_fn_name(&manual.id()));
 }

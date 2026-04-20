@@ -6,7 +6,7 @@ use crate::{
     node::{self, Node},
 };
 #[doc(inline)]
-pub use codegen::{eval_fn_body, eval_fn_name};
+pub use codegen::{entry_fn_name, eval_fn_body};
 #[doc(inline)]
 pub use entrypoint::{
     Entrypoint, EntrypointId, EvalKind, EvalSource, default_entrypoints, pull_source, push_source,

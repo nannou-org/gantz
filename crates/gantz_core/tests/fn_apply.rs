@@ -1,6 +1,6 @@
 // Tests for the Fn and Apply nodes - first-class functions in gantz.
 
-use gantz_core::compile::{default_entrypoints, entrypoint, eval_fn_name};
+use gantz_core::compile::{default_entrypoints, entry_fn_name, entrypoint};
 use gantz_core::node::{self, Apply, Fn, Node, Ref, WithPullEval, graph};
 use gantz_core::{Edge, ROOT_STATE};
 use std::collections::HashMap;
@@ -115,7 +115,7 @@ fn test_fn_apply_identity() {
 
     // Execute pull evaluation from assert_eq
     let ep = entrypoint::pull(vec![assert_eq.index()], g[assert_eq].n_inputs(ctx) as u8);
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
 
@@ -224,6 +224,6 @@ fn test_fn_apply_graph() {
 
     // Execute pull evaluation from assert_eq.
     let ep = entrypoint::pull(vec![assert_eq.index()], g[assert_eq].n_inputs(ctx) as u8);
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }

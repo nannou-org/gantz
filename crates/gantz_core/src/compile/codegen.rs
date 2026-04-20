@@ -325,11 +325,12 @@ pub(crate) fn path_string(path: &[node::Id]) -> String {
         .join(":")
 }
 
-/// Generate eval fn name from an `EntrypointId`.
+/// Generate entry fn name from an `EntrypointId`.
 ///
-/// The name is deterministic and unique - derived from the content hash.
-pub fn eval_fn_name(id: &super::EntrypointId) -> String {
-    format!("eval-fn-{id}")
+/// The name is deterministic and unique - derived from the content hash
+/// (truncated to 8 hex chars).
+pub fn entry_fn_name(id: &super::EntrypointId) -> String {
+    format!("entry-fn-{}", id.0.display_short())
 }
 
 /// The set of outputs on the given node that require dedicated bindings due to
@@ -634,6 +635,6 @@ pub(crate) fn eval_fns(flow_tree: &RoseTree<(&Meta, Flow)>) -> Result<Vec<ExprKi
     // Generate one eval fn per EntrypointId.
     Ok(all_stmts
         .into_iter()
-        .map(|(id, stmts)| eval_fn(&eval_fn_name(&id), stmts))
+        .map(|(id, stmts)| eval_fn(&entry_fn_name(&id), stmts))
         .collect())
 }

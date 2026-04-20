@@ -2,7 +2,7 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
-    compile::{default_entrypoints, entrypoint, eval_fn_name},
+    compile::{default_entrypoints, entry_fn_name, entrypoint},
     node::{self, Node, WithPushEval},
 };
 use std::fmt::Debug;
@@ -113,7 +113,7 @@ fn test_stateless_rust_add() {
         vm.run(format!("{f}")).unwrap();
     }
     let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
 
@@ -185,7 +185,7 @@ fn test_stateful_rust_counter() {
 
     // Push 3 times.
     let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
-    let fn_name = eval_fn_name(&ep.id());
+    let fn_name = entry_fn_name(&ep.id());
     for _ in 0..3 {
         vm.call_function_by_name_with_args(&fn_name, vec![])
             .unwrap();
@@ -258,7 +258,7 @@ fn test_zero_arg_stateless() {
         vm.run(format!("{f}")).unwrap();
     }
     let ep = entrypoint::pull(vec![aeq.index()], g[aeq].n_inputs(ctx) as u8);
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
 
@@ -330,7 +330,7 @@ fn test_state_only_fn() {
     }
 
     let ep = entrypoint::pull(vec![pull_ix.index()], g[pull_ix].n_inputs(ctx) as u8);
-    let fn_name = eval_fn_name(&ep.id());
+    let fn_name = entry_fn_name(&ep.id());
     for _ in 0..5 {
         vm.call_function_by_name_with_args(&fn_name, vec![])
             .unwrap();
@@ -405,7 +405,7 @@ fn test_stateful_typed_counter() {
 
     // Push 3 times.
     let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
-    let fn_name = eval_fn_name(&ep.id());
+    let fn_name = entry_fn_name(&ep.id());
     for _ in 0..3 {
         vm.call_function_by_name_with_args(&fn_name, vec![])
             .unwrap();
@@ -490,6 +490,6 @@ fn test_closure_with_capture() {
         vm.run(format!("{f}")).unwrap();
     }
     let ep = entrypoint::pull(vec![aeq_ix.index()], g[aeq_ix].n_inputs(ctx) as u8);
-    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
