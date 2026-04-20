@@ -18,7 +18,7 @@ pub use head::{
     OpenHeadDataReadOnly, WorkingGraph,
 };
 pub use reg::{Registry, lookup_node, timestamp};
-pub use vm::{EvalCompleted, EvalEvent, EvalKind};
+pub use vm::{EvalCompleted, EvalEvent};
 
 /// Plugin providing core gantz functionality.
 ///

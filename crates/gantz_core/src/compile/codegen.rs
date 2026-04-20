@@ -588,7 +588,7 @@ fn wrap_state_scope(path: &[node::Id], stmts: Vec<ExprKind>) -> Vec<ExprKind> {
         let parent = format!("__parent-graph-state-{depth}");
         let enter = format!(
             "(define {parent} {GRAPH_STATE}) \
-             (define {GRAPH_STATE} (hash-ref {parent} '{id}))"
+             (set! {GRAPH_STATE} (hash-ref {parent} '{id}))"
         );
         result.extend(Engine::emit_ast(&enter).expect("failed to emit state scope enter"));
     }

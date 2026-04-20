@@ -3,7 +3,6 @@
 use super::{
     EntrypointId, EvalKind, EvalSource, Meta, MetaGraph,
     error::{InvalidInputIndex, InvalidOutputIndex, NodeConnsError, TooManyConns},
-    meta::conns_from_eval_conf,
     push_eval_neighbors, push_reachable,
 };
 use crate::node;
@@ -109,25 +108,11 @@ impl Flow {
             let push_sources = sources
                 .iter()
                 .filter(|s| s.kind == EvalKind::Push)
-                .map(|s| {
-                    let local_id = *s.path.last().unwrap();
-                    let n = meta.outputs.get(&local_id).copied().unwrap_or(0);
-                    let conns =
-                        conns_from_eval_conf(&s.conf, n).map_err(NodeConnsError::TooManyConns)?;
-                    Ok((local_id, conns))
-                })
-                .collect::<Result<Vec<_>, NodeConnsError>>()?;
+                .map(|s| (*s.path.last().unwrap(), s.conns));
             let pull_sources = sources
                 .iter()
                 .filter(|s| s.kind == EvalKind::Pull)
-                .map(|s| {
-                    let local_id = *s.path.last().unwrap();
-                    let n = meta.inputs.get(&local_id).copied().unwrap_or(0);
-                    let conns =
-                        conns_from_eval_conf(&s.conf, n).map_err(NodeConnsError::TooManyConns)?;
-                    Ok((local_id, conns))
-                })
-                .collect::<Result<Vec<_>, NodeConnsError>>()?;
+                .map(|s| (*s.path.last().unwrap(), s.conns));
             let fg = flow_graph(meta, push_sources, pull_sources)?;
             entrypoints.insert(id.clone(), fg);
         }

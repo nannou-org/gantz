@@ -9,8 +9,7 @@ use crate::{
 pub use codegen::{eval_fn_body, eval_fn_name};
 #[doc(inline)]
 pub use entrypoint::{
-    Entrypoint, EntrypointId, EvalKind, EvalSource, default_entrypoints, pull_entrypoint,
-    push_entrypoint,
+    Entrypoint, EntrypointId, EvalKind, EvalSource, default_entrypoints, pull_source, push_source,
 };
 #[doc(inline)]
 pub use error::ModuleError;
@@ -28,7 +27,7 @@ use std::{collections::HashSet, hash::Hash};
 use steel::parser::ast::ExprKind;
 
 mod codegen;
-mod entrypoint;
+pub mod entrypoint;
 pub mod error;
 mod flow;
 mod meta;

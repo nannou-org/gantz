@@ -2,7 +2,7 @@
 //!
 //! This module provides:
 //! - Convenience wrappers around `gantz_core::vm` (`init`, `compile`)
-//! - Evaluation events and observer (`EvalEvent`, `EvalKind`, `on_eval`)
+//! - Evaluation events and observer (`EvalEvent`, `on_eval`)
 //! - Observers for VM initialization on head events (`on_head_opened`, `on_head_changed`)
 //! - Systems for VM setup and update (`setup`, `update`)
 
@@ -12,7 +12,7 @@ use crate::reg::{Registry, lookup_node};
 use bevy_ecs::prelude::*;
 use bevy_log as log;
 use gantz_ca as ca;
-use gantz_core::node::{self, GetNode, graph::Graph};
+use gantz_core::node::{GetNode, graph::Graph};
 use gantz_core::vm::CompileError;
 use gantz_core::{Node, compile as core_compile};
 use std::time::Duration;
@@ -22,24 +22,13 @@ use steel::steel_vm::engine::Engine;
 // Types
 // ---------------------------------------------------------------------------
 
-/// The kind of evaluation to perform.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EvalKind {
-    /// Push evaluation: propagate values forward from sources.
-    Push,
-    /// Pull evaluation: request values backward from sinks.
-    Pull,
-}
-
-/// Event to trigger evaluation of a node path.
+/// Event to trigger evaluation of an entrypoint.
 #[derive(Event)]
 pub struct EvalEvent {
     /// The head entity to evaluate on.
     pub head: Entity,
-    /// The path to the node/subgraph to evaluate.
-    pub path: Vec<node::Id>,
-    /// The kind of evaluation (push or pull).
-    pub kind: EvalKind,
+    /// The entrypoint to evaluate.
+    pub entrypoint: core_compile::Entrypoint,
 }
 
 /// Emitted after VM evaluation completes, for timing capture.
@@ -159,11 +148,7 @@ pub fn on_head_changed<N>(
 /// Emits an `EvalCompleted` event with timing information for UI layers to observe.
 pub fn on_eval(trigger: On<EvalEvent>, mut vms: NonSendMut<head::HeadVms>, mut cmds: Commands) {
     let event = trigger.event();
-    let ep = match event.kind {
-        EvalKind::Push => core_compile::push_entrypoint(event.path.clone()),
-        EvalKind::Pull => core_compile::pull_entrypoint(event.path.clone()),
-    };
-    let fn_name = core_compile::eval_fn_name(&ep.id());
+    let fn_name = core_compile::eval_fn_name(&event.entrypoint.id());
     if let Some(vm) = vms.get_mut(&event.head) {
         let start = web_time::Instant::now();
         if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {

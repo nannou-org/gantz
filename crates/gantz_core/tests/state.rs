@@ -2,7 +2,7 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
-    compile::{default_entrypoints, eval_fn_name, push_entrypoint},
+    compile::{default_entrypoints, entrypoint, eval_fn_name},
     node::{self, Node, NodeState, WithPushEval, WithStateType},
 };
 use std::fmt::Debug;
@@ -87,6 +87,7 @@ fn test_graph_with_counter() {
     g.add_edge(push, counter, Edge::from((0, 0)));
 
     // Generate the module, which should have just one top-level expr for `push`.
+    let ctx = node::MetaCtx::new(&no_lookup);
     let eps = default_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
@@ -103,12 +104,11 @@ fn test_graph_with_counter() {
     }
 
     // Call the push eval fn 3 times to increment the counter thrice.
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    let fn_name = eval_fn_name(&ep.id());
     for _ in 0..3 {
-        vm.call_function_by_name_with_args(
-            &eval_fn_name(&push_entrypoint(vec![push.index()]).id()),
-            vec![],
-        )
-        .unwrap();
+        vm.call_function_by_name_with_args(&fn_name, vec![])
+            .unwrap();
     }
 
     // Check the counter was incremented thrice.
@@ -125,11 +125,8 @@ fn test_graph_with_counter() {
     assert_eq!(res, Counter(0));
 
     // Check that calling the function again works based on the new state.
-    vm.call_function_by_name_with_args(
-        &eval_fn_name(&push_entrypoint(vec![push.index()]).id()),
-        vec![],
-    )
-    .unwrap();
+    vm.call_function_by_name_with_args(&fn_name, vec![])
+        .unwrap();
 
     // The value should now be 1.
     let res = node::state::extract::<Counter>(&vm, &[counter.index()])
@@ -184,6 +181,7 @@ fn test_graph_with_counters() {
     g.add_edge(p_c, c_c, Edge::from((0, 0)));
 
     // Generate the module, which should have one expr for each `push`.
+    let ctx = node::MetaCtx::new(&no_lookup);
     let eps = default_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
@@ -200,21 +198,15 @@ fn test_graph_with_counters() {
     }
 
     // Call a, b then c.
-    vm.call_function_by_name_with_args(
-        &eval_fn_name(&push_entrypoint(vec![p_a.index()]).id()),
-        vec![],
-    )
-    .unwrap();
-    vm.call_function_by_name_with_args(
-        &eval_fn_name(&push_entrypoint(vec![p_b.index()]).id()),
-        vec![],
-    )
-    .unwrap();
-    vm.call_function_by_name_with_args(
-        &eval_fn_name(&push_entrypoint(vec![p_c.index()]).id()),
-        vec![],
-    )
-    .unwrap();
+    let ep_a = entrypoint::push(vec![p_a.index()], g[p_a].n_outputs(ctx) as u8);
+    let ep_b = entrypoint::push(vec![p_b.index()], g[p_b].n_outputs(ctx) as u8);
+    let ep_c = entrypoint::push(vec![p_c.index()], g[p_c].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&eval_fn_name(&ep_a.id()), vec![])
+        .unwrap();
+    vm.call_function_by_name_with_args(&eval_fn_name(&ep_b.id()), vec![])
+        .unwrap();
+    vm.call_function_by_name_with_args(&eval_fn_name(&ep_c.id()), vec![])
+        .unwrap();
 
     // A should be incremented once, b twice, and c thrice.
     let a = node::state::extract::<Counter>(&vm, &[c_a.index()])

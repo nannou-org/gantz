@@ -2,12 +2,9 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
-    compile::{
-        Entrypoint, EvalKind, EvalSource, default_entrypoints, eval_fn_name, push_entrypoint,
-    },
-    node::{self, EvalConf, GraphNode, Node, WithPushEval},
+    compile::{default_entrypoints, entrypoint, eval_fn_name, push_source},
+    node::{self, GraphNode, Node, WithPushEval},
 };
-use std::collections::BTreeSet;
 use std::fmt::Debug;
 use steel::{SteelVal, steel_vm::engine::Engine};
 
@@ -123,6 +120,7 @@ fn test_graph_nested_stateless() {
     gb.add_edge(forty_two, assert_eq, Edge::from((0, 1)));
 
     // Generate the module, which should have just one top-level expr for `push`.
+    let ctx = node::MetaCtx::new(&no_lookup);
     let eps = default_entrypoints(&no_lookup, &gb);
     let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
 
@@ -139,11 +137,9 @@ fn test_graph_nested_stateless() {
     }
 
     // Call the `push` eval function.
-    vm.call_function_by_name_with_args(
-        &eval_fn_name(&push_entrypoint(vec![push.index()]).id()),
-        vec![],
-    )
-    .unwrap();
+    let ep = entrypoint::push(vec![push.index()], gb[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+        .unwrap();
 }
 
 // A simple test for nested graph support where the nested graph is stateful.
@@ -209,6 +205,7 @@ fn test_graph_nested_counter() {
     gb.add_edge(graph_a, number, Edge::from((0, 0)));
 
     // Generate the module.
+    let ctx = node::MetaCtx::new(&no_lookup);
     let eps = default_entrypoints(&no_lookup, &gb);
     let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
 
@@ -227,16 +224,12 @@ fn test_graph_nested_counter() {
 
     // Increment the nested counter by pushing evaluation.
     // The first is `0`, the second is `1`.
-    vm.call_function_by_name_with_args(
-        &eval_fn_name(&push_entrypoint(vec![push.index()]).id()),
-        vec![],
-    )
-    .unwrap();
-    vm.call_function_by_name_with_args(
-        &eval_fn_name(&push_entrypoint(vec![push.index()]).id()),
-        vec![],
-    )
-    .unwrap();
+    let ep = entrypoint::push(vec![push.index()], gb[push].n_outputs(ctx) as u8);
+    let fn_name = eval_fn_name(&ep.id());
+    vm.call_function_by_name_with_args(&fn_name, vec![])
+        .unwrap();
+    vm.call_function_by_name_with_args(&fn_name, vec![])
+        .unwrap();
 
     // First, check that the nested expr's state is `1`.
     let counter_state = node::state::extract::<u32>(&vm, &[graph_a.index(), counter.index()])
@@ -311,16 +304,19 @@ fn test_graph_nested_push_eval() {
     let num = ga.add_node(Box::new(node_number()) as Box<_>);
     ga.add_edge(push, num, Edge::from((0, 0)));
 
+    // Compute push connection count before moving `ga` into `gb`.
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let push_n_outputs = ga[push].n_outputs(ctx) as u8;
+
     // Graph B: just contains graph A (no outlet propagation needed).
     let mut gb = petgraph::graph::DiGraph::new();
     let graph_a = gb.add_node(Box::new(ga) as Box<dyn DebugNode>);
 
     // Nested entrypoint: push inside graph A.
-    let ep = Entrypoint(BTreeSet::from([EvalSource {
-        path: vec![graph_a.index(), push.index()],
-        kind: EvalKind::Push,
-        conf: EvalConf::All,
-    }]));
+    let ep = entrypoint::from_source(push_source(
+        vec![graph_a.index(), push.index()],
+        push_n_outputs,
+    ));
 
     // Generate the module.
     let module = gantz_core::compile::module(&no_lookup, &gb, &[ep.clone()]).unwrap();
@@ -438,6 +434,7 @@ fn test_graph_nested_non_sequential_inlets() {
     gb.add_edge(seven, assert_eq, Edge::from((0, 1)));
 
     // Generate the module.
+    let ctx = node::MetaCtx::new(&no_lookup);
     let eps = default_entrypoints(&no_lookup, &gb);
     let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
 
@@ -454,9 +451,7 @@ fn test_graph_nested_non_sequential_inlets() {
     }
 
     // Call the `push` eval function - should compute 10 - 3 = 7
-    vm.call_function_by_name_with_args(
-        &eval_fn_name(&push_entrypoint(vec![push.index()]).id()),
-        vec![],
-    )
-    .unwrap();
+    let ep = entrypoint::push(vec![push.index()], gb[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+        .unwrap();
 }

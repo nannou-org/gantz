@@ -1,12 +1,8 @@
 // Tests for the graph module.
 
-use gantz_core::compile::{
-    Entrypoint, EvalKind, EvalSource, default_entrypoints, eval_fn_name, pull_entrypoint,
-    push_entrypoint,
-};
-use gantz_core::node::{self, EvalConf, Node, WithPullEval, WithPushEval};
+use gantz_core::compile::{default_entrypoints, entrypoint, eval_fn_name, push_source};
+use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
-use std::collections::BTreeSet;
 use std::fmt::Debug;
 use steel::SteelVal;
 use steel::steel_vm::engine::Engine;
@@ -95,6 +91,8 @@ fn test_graph_push_eval() {
     g.add_edge(add, assert_eq, Edge::from((0, 0)));
     g.add_edge(two, assert_eq, Edge::from((0, 1)));
 
+    let ctx = node::MetaCtx::new(&no_lookup);
+
     // Generate the module, which should have just one top-level expr for `push`.
     let eps = default_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
@@ -112,11 +110,9 @@ fn test_graph_push_eval() {
     for f in module {
         vm.run(format!("{f}")).unwrap();
     }
-    vm.call_function_by_name_with_args(
-        &eval_fn_name(&push_entrypoint(vec![push.index()]).id()),
-        vec![],
-    )
-    .unwrap();
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+        .unwrap();
 }
 
 // A simple test graph that adds two "one"s and checks that it equals "two".
@@ -156,6 +152,8 @@ fn test_graph_pull_eval() {
     g.add_edge(add, assert_eq, Edge::from((0, 0)));
     g.add_edge(two, assert_eq, Edge::from((0, 1)));
 
+    let ctx = node::MetaCtx::new(&no_lookup);
+
     // Generate the steel module.
     let eps = default_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
@@ -173,11 +171,9 @@ fn test_graph_pull_eval() {
     }
 
     // Call the eval fn.
-    vm.call_function_by_name_with_args(
-        &eval_fn_name(&pull_entrypoint(vec![assert_eq.index()]).id()),
-        vec![],
-    )
-    .unwrap();
+    let ep = entrypoint::pull(vec![assert_eq.index()], g[assert_eq].n_inputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+        .unwrap();
 }
 
 // A simple test graph that checks conditional runtime evaluation.
@@ -259,6 +255,8 @@ fn test_graph_push_cond_eval() {
     g.add_edge(six, number, Edge::from((0, 0)));
     g.add_edge(seven, number, Edge::from((0, 0)));
 
+    let ctx = node::MetaCtx::new(&no_lookup);
+
     // Generate the module.
     let eps = default_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
@@ -278,22 +276,18 @@ fn test_graph_push_cond_eval() {
     }
 
     // First, call `push_0` and check the result is `6`.
-    vm.call_function_by_name_with_args(
-        &eval_fn_name(&push_entrypoint(vec![push_0.index()]).id()),
-        vec![],
-    )
-    .unwrap();
+    let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&eval_fn_name(&ep_0.id()), vec![])
+        .unwrap();
     let number_state = node::state::extract::<u32>(&vm, &[number.index()])
         .expect("failed to extract number state")
         .expect("number state was `None`");
     assert_eq!(number_state, 6);
 
     // First, call `push_1` and check the result is `7`.
-    vm.call_function_by_name_with_args(
-        &eval_fn_name(&push_entrypoint(vec![push_1.index()]).id()),
-        vec![],
-    )
-    .unwrap();
+    let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&eval_fn_name(&ep_1.id()), vec![])
+        .unwrap();
     let number_state = node::state::extract::<u32>(&vm, &[number.index()])
         .expect("failed to extract number state")
         .expect("number state was `None`");
@@ -336,6 +330,8 @@ fn test_graph_eval_should_panic() {
     g.add_edge(add, assert_eq, Edge::from((0, 0)));
     g.add_edge(one, assert_eq, Edge::from((0, 1)));
 
+    let ctx = node::MetaCtx::new(&no_lookup);
+
     // Generate the steel module.
     let eps = default_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
@@ -351,11 +347,9 @@ fn test_graph_eval_should_panic() {
     for expr in module {
         vm.run(expr.to_pretty(100)).unwrap();
     }
-    vm.call_function_by_name_with_args(
-        &eval_fn_name(&pull_entrypoint(vec![assert_eq.index()]).id()),
-        vec![],
-    )
-    .unwrap();
+    let ep = entrypoint::pull(vec![assert_eq.index()], g[assert_eq].n_inputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+        .unwrap();
 }
 
 // Test for pushing evaluation with a subset of outputs enabled
@@ -432,11 +426,9 @@ fn test_graph_push_eval_subset() {
     }
 
     // Call the push_eval function - should only evaluate the first output path
-    vm.call_function_by_name_with_args(
-        &eval_fn_name(&push_entrypoint(vec![source.index()]).id()),
-        vec![],
-    )
-    .unwrap();
+    let ep = &eps[0]; // first push eval conf: only first output
+    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+        .unwrap();
 
     // Check the state of each store node
     let store_a_val = node::state::extract::<i32>(&vm, &[store_a.index()]).unwrap();
@@ -481,19 +473,13 @@ fn test_graph_multi_source_push() {
     g.add_edge(push_b, int_b, Edge::from((0, 0)));
     g.add_edge(int_b, num_b, Edge::from((0, 0)));
 
+    let ctx = node::MetaCtx::new(&no_lookup);
+
     // Build a single combined entrypoint from both push nodes.
-    let combined = Entrypoint(BTreeSet::from([
-        EvalSource {
-            path: vec![push_a.index()],
-            kind: EvalKind::Push,
-            conf: EvalConf::All,
-        },
-        EvalSource {
-            path: vec![push_b.index()],
-            kind: EvalKind::Push,
-            conf: EvalConf::All,
-        },
-    ]));
+    let combined = entrypoint::from_sources([
+        push_source(vec![push_a.index()], g[push_a].n_outputs(ctx) as u8),
+        push_source(vec![push_b.index()], g[push_b].n_outputs(ctx) as u8),
+    ]);
     let module = gantz_core::compile::module(&no_lookup, &g, &[combined.clone()]).unwrap();
 
     let mut vm = Engine::new_base();
@@ -528,8 +514,10 @@ fn test_entrypoint_naming_consistency() {
     let int = g.add_node(Box::new(node_int(1)) as Box<_>);
     g.add_edge(push, int, Edge::from((0, 0)));
 
+    let ctx = node::MetaCtx::new(&no_lookup);
+
     let eps = default_entrypoints(&no_lookup, &g);
-    let manual = push_entrypoint(vec![push.index()]);
+    let manual = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
 
     // The default planner should produce a singleton push entrypoint for
     // the push node. Its ID should match a manually-constructed one.

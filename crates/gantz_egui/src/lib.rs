@@ -183,8 +183,8 @@ pub fn resolve_paste_offset(pos: &PastePos, copied_positions: &egui_graph::Layou
 /// both will produce a compile error.
 #[derive(Debug)]
 pub enum Cmd {
-    PushEval(Vec<node::Id>),
-    PullEval(Vec<node::Id>),
+    /// Evaluate an entrypoint (push or pull).
+    CallEntrypoint(gantz_core::compile::Entrypoint),
     /// Navigate the path within the current head's graph hierarchy.
     OpenPath(Vec<node::Id>),
     /// Open a head (named or commit) as a new tab.
@@ -208,10 +208,7 @@ pub enum Cmd {
     /// `text` is `Some` when the integration layer provides clipboard text
     /// directly (e.g. via `egui::Event::Paste` in eframe). When `None`, the
     /// command handler is expected to read the system clipboard itself.
-    Paste {
-        text: Option<String>,
-        pos: PastePos,
-    },
+    Paste { text: Option<String>, pos: PastePos },
     /// Undo the last graph edit (move head to parent commit).
     Undo,
     /// Redo a previously undone edit (move head forward).
@@ -368,8 +365,9 @@ impl<'a> NodeCtx<'a> {
     /// This will only be successful if the underlying node's
     /// [`gantz_core::Node::push_eval`] fn returned `Some` last time the graph
     /// was compiled.
-    pub fn push_eval(&mut self) {
-        self.cmds.push(Cmd::PushEval(self.path.to_vec()));
+    pub fn push_eval(&mut self, n_outputs: u8) {
+        let ep = gantz_core::compile::entrypoint::push(self.path.to_vec(), n_outputs);
+        self.cmds.push(Cmd::CallEntrypoint(ep));
     }
 
     /// Queue a call to the generated pull evaluation function for this node.
@@ -377,8 +375,9 @@ impl<'a> NodeCtx<'a> {
     /// This will only be successful if the underlying node's
     /// [`gantz_core::Node::pull_eval`] fn returned `Some` last time the graph
     /// was compiled.
-    pub fn pull_eval(&mut self) {
-        self.cmds.push(Cmd::PullEval(self.path.to_vec()));
+    pub fn pull_eval(&mut self, n_inputs: u8) {
+        let ep = gantz_core::compile::entrypoint::pull(self.path.to_vec(), n_inputs);
+        self.cmds.push(Cmd::CallEntrypoint(ep));
     }
 
     /// The IDs of the inlets within the current graph.

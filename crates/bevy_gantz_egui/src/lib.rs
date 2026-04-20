@@ -12,7 +12,7 @@ use bevy_egui::egui;
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
 use bevy_gantz::head;
 use bevy_gantz::reg::Registry;
-use bevy_gantz::vm::{EvalEvent, EvalKind};
+use bevy_gantz::vm::EvalEvent;
 use bevy_gantz::{BuiltinNodes, EvalCompleted};
 use bevy_log as log;
 use gantz_ca as ca;
@@ -1133,18 +1133,10 @@ pub fn process_cmds<N: 'static + Send + Sync>(
         for cmd in std::mem::take(&mut head_state.scene.cmds) {
             log::debug!("{cmd:?}");
             match cmd {
-                gantz_egui::Cmd::PushEval(path) => {
+                gantz_egui::Cmd::CallEntrypoint(entrypoint) => {
                     cmds.trigger(EvalEvent {
                         head: entity,
-                        path,
-                        kind: EvalKind::Push,
-                    });
-                }
-                gantz_egui::Cmd::PullEval(path) => {
-                    cmds.trigger(EvalEvent {
-                        head: entity,
-                        path,
-                        kind: EvalKind::Pull,
+                        entrypoint,
                     });
                 }
                 gantz_egui::Cmd::OpenPath(path) => {

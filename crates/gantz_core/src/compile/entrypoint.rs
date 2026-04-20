@@ -2,7 +2,7 @@
 
 use crate::{
     Edge,
-    node::{self, EvalConf, Node},
+    node::{self, Node},
 };
 use gantz_ca::{self as ca, CaHash};
 use petgraph::visit::{Data, IntoNodeReferences, NodeIndexable, NodeRef};
@@ -24,8 +24,8 @@ pub struct EvalSource {
     pub path: Vec<node::Id>,
     /// Whether this source pushes or pulls evaluation.
     pub kind: EvalKind,
-    /// Which connections participate in evaluation.
-    pub conf: EvalConf,
+    /// Which connections participate in evaluation (resolved, not deferred).
+    pub conns: node::Conns,
 }
 
 /// A set of eval sources to be evaluated together in one generated function.
@@ -55,41 +55,58 @@ impl Entrypoint {
     pub fn id(&self) -> EntrypointId {
         EntrypointId(ca::content_addr(self))
     }
+}
 
-    /// The parent path of the first source, if any.
-    ///
-    /// For root-level sources with `path.len() == 1`, the slice is empty.
-    /// Returns `None` if the entrypoint has no sources.
-    pub fn parent_path(&self) -> Option<&[node::Id]> {
-        self.0
-            .first()
-            .map(|first| &first.path[..first.path.len() - 1])
+/// Create an `EvalSource` at the given path with all `n_conns` connections active.
+pub fn source(path: Vec<node::Id>, kind: EvalKind, n_conns: u8) -> EvalSource {
+    EvalSource {
+        path,
+        kind,
+        // u8 is always within Conns::MAX (256).
+        conns: node::Conns::connected(n_conns as usize).unwrap(),
     }
 }
 
-/// Create a singleton push entrypoint for the given node path with `EvalConf::All`.
-///
-/// Convenience for tests and callers that trigger a single push node.
-pub fn push_entrypoint(path: Vec<node::Id>) -> Entrypoint {
-    Entrypoint(BTreeSet::from([EvalSource {
-        path,
-        kind: EvalKind::Push,
-        conf: EvalConf::All,
-    }]))
+/// Create a push `EvalSource` at the given path with all `n_outputs` connections active.
+pub fn push_source(path: Vec<node::Id>, n_outputs: u8) -> EvalSource {
+    source(path, EvalKind::Push, n_outputs)
 }
 
-/// Create a singleton pull entrypoint for the given node path with `EvalConf::All`.
+/// Create a pull `EvalSource` at the given path with all `n_inputs` connections active.
+pub fn pull_source(path: Vec<node::Id>, n_inputs: u8) -> EvalSource {
+    source(path, EvalKind::Pull, n_inputs)
+}
+
+/// Create an entrypoint from a single evaluation source.
+pub fn from_source(source: EvalSource) -> Entrypoint {
+    Entrypoint(BTreeSet::from([source]))
+}
+
+/// Create an entrypoint from multiple evaluation sources.
+pub fn from_sources(sources: impl IntoIterator<Item = EvalSource>) -> Entrypoint {
+    Entrypoint(sources.into_iter().collect())
+}
+
+/// Create a singleton push entrypoint for the given node path with all
+/// `n_outputs` connections active.
+///
+/// Convenience for tests and callers that trigger a single push node.
+pub fn push(path: Vec<node::Id>, n_outputs: u8) -> Entrypoint {
+    from_source(push_source(path, n_outputs))
+}
+
+/// Create a singleton pull entrypoint for the given node path with all
+/// `n_inputs` connections active.
 ///
 /// Convenience for tests and callers that trigger a single pull node.
-pub fn pull_entrypoint(path: Vec<node::Id>) -> Entrypoint {
-    Entrypoint(BTreeSet::from([EvalSource {
-        path,
-        kind: EvalKind::Pull,
-        conf: EvalConf::All,
-    }]))
+pub fn pull(path: Vec<node::Id>, n_inputs: u8) -> Entrypoint {
+    from_source(pull_source(path, n_inputs))
 }
 
 /// Default planner: one singleton entrypoint per push/pull eval node.
+///
+/// Resolves each node's `EvalConf` to concrete `Conns` using the node's
+/// output/input count.
 pub fn default_entrypoints<G>(get_node: node::GetNode<'_>, g: G) -> Vec<Entrypoint>
 where
     G: Data<EdgeWeight = Edge> + IntoNodeReferences + NodeIndexable,
@@ -100,19 +117,25 @@ where
     for n_ref in g.node_references() {
         let id = g.to_index(n_ref.id());
         let node = n_ref.weight();
+        let n_outputs = node.n_outputs(ctx);
         for conf in node.push_eval(ctx) {
-            eps.push(Entrypoint(BTreeSet::from([EvalSource {
+            let conns = super::meta::conns_from_eval_conf(&conf, n_outputs)
+                .expect("push_eval conf exceeds output count");
+            eps.push(from_source(EvalSource {
                 path: vec![id],
                 kind: EvalKind::Push,
-                conf,
-            }])));
+                conns,
+            }));
         }
+        let n_inputs = node.n_inputs(ctx);
         for conf in node.pull_eval(ctx) {
-            eps.push(Entrypoint(BTreeSet::from([EvalSource {
+            let conns = super::meta::conns_from_eval_conf(&conf, n_inputs)
+                .expect("pull_eval conf exceeds input count");
+            eps.push(from_source(EvalSource {
                 path: vec![id],
                 kind: EvalKind::Pull,
-                conf,
-            }])));
+                conns,
+            }));
         }
     }
     eps

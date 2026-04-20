@@ -20,7 +20,7 @@ impl NodeUi for gantz_std::number::Number {
             };
             if res.changed() {
                 ctx.update_value(val).unwrap();
-                ctx.push_eval();
+                ctx.push_eval(1);
             }
             res
         })
