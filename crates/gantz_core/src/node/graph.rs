@@ -370,7 +370,7 @@ where
             .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
     )
     .map_err(|e| node::ExprError::custom(e))?;
-    let stmts = compile::eval_fn_body(
+    let stmts = compile::entry_fn_body(
         path,
         &meta.graph,
         &meta.stateful,

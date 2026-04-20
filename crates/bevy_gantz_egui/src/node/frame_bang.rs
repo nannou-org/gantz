@@ -142,7 +142,7 @@ pub fn drive_frame_bangs<N>(
 
         for path in collector.paths {
             let entrypoint = gantz_core::compile::entrypoint::push(path, 1);
-            cmds.trigger(bevy_gantz::vm::EvalEvent {
+            cmds.trigger(bevy_gantz::vm::EvalEntryEvent {
                 head: entity,
                 entrypoint,
             });

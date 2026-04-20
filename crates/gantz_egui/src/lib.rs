@@ -184,7 +184,7 @@ pub fn resolve_paste_offset(pos: &PastePos, copied_positions: &egui_graph::Layou
 #[derive(Debug)]
 pub enum Cmd {
     /// Evaluate an entrypoint (push or pull).
-    CallEntrypoint(gantz_core::compile::Entrypoint),
+    EvalEntry(gantz_core::compile::Entrypoint),
     /// Navigate the path within the current head's graph hierarchy.
     OpenPath(Vec<node::Id>),
     /// Open a head (named or commit) as a new tab.
@@ -367,7 +367,7 @@ impl<'a> NodeCtx<'a> {
     /// was compiled.
     pub fn push_eval(&mut self, n_outputs: u8) {
         let ep = gantz_core::compile::entrypoint::push(self.path.to_vec(), n_outputs);
-        self.cmds.push(Cmd::CallEntrypoint(ep));
+        self.cmds.push(Cmd::EvalEntry(ep));
     }
 
     /// Queue a call to the generated pull evaluation function for this node.
@@ -377,7 +377,7 @@ impl<'a> NodeCtx<'a> {
     /// was compiled.
     pub fn pull_eval(&mut self, n_inputs: u8) {
         let ep = gantz_core::compile::entrypoint::pull(self.path.to_vec(), n_inputs);
-        self.cmds.push(Cmd::CallEntrypoint(ep));
+        self.cmds.push(Cmd::EvalEntry(ep));
     }
 
     /// The IDs of the inlets within the current graph.

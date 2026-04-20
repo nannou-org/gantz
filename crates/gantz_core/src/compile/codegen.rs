@@ -290,7 +290,7 @@ fn destructure_node_branch_stmt(n: node::Id) -> ExprKind {
 /// Generate a function for performing evaluation of the given statements.
 ///
 /// The given `Vec<ExprKind>` should be generated via the `eval_stmts` function.
-fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
+fn entry_fn(name: &str, stmts: Vec<ExprKind>) -> ExprKind {
     // Create the body of the function as a sequence of expressions
     let stmts_str = stmts
         .iter()
@@ -306,7 +306,7 @@ fn eval_fn(eval_fn_name: &str, stmts: Vec<ExprKind>) -> ExprKind {
            (define {GRAPH_STATE} {ROOT_STATE}) \
            {stmts_str} \
            (set! {ROOT_STATE} {GRAPH_STATE}))",
-        eval_fn_name
+        name
     );
 
     // Parse the function definition into Steel AST
@@ -518,7 +518,7 @@ fn flow_node_stmts(
 
 /// Given the flow graph for an entry point eval fn, generate the body for the
 /// fn. as a list of statements.
-pub fn eval_fn_body(
+pub fn entry_fn_body(
     path: &[node::Id],
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
@@ -548,7 +548,7 @@ pub fn eval_fn_body(
 ///
 /// Returns a map from `EntrypointId` to the statements for that entrypoint
 /// at this level. Cross-level entrypoints will have statements at multiple
-/// levels, which are collected and concatenated by `eval_fns`.
+/// levels, which are collected and concatenated by `entry_fns`.
 pub(crate) fn eval_stmts_from_flow(
     path: &[node::Id],
     mg: &MetaGraph,
@@ -560,7 +560,7 @@ pub(crate) fn eval_stmts_from_flow(
     flow.entrypoints
         .iter()
         .map(|(id, fg)| {
-            let stmts = eval_fn_body(path, mg, stateful, inlets, outlets, fg)?;
+            let stmts = entry_fn_body(path, mg, stateful, inlets, outlets, fg)?;
             Ok((id.clone(), stmts))
         })
         .collect()
@@ -607,12 +607,14 @@ fn wrap_state_scope(path: &[node::Id], stmts: Vec<ExprKind>) -> Vec<ExprKind> {
 }
 
 /// Given a tree of eval plans for a gantz graph (and its nested graphs),
-/// generate all eval fns.
+/// generate all entry fns.
 ///
 /// Uses post-order traversal so nested statements execute before parent
 /// statements. Nested-level statements are wrapped with state scope
 /// enter/exit to narrow `graph-state` to the correct sub-hashmap.
-pub(crate) fn eval_fns(flow_tree: &RoseTree<(&Meta, Flow)>) -> Result<Vec<ExprKind>, CodegenError> {
+pub(crate) fn entry_fns(
+    flow_tree: &RoseTree<(&Meta, Flow)>,
+) -> Result<Vec<ExprKind>, CodegenError> {
     // Collect statements from all levels, grouped by EntrypointId.
     // Post-order: children before parent, so nested eval runs first.
     let mut all_stmts: BTreeMap<super::EntrypointId, Vec<ExprKind>> = BTreeMap::new();
@@ -635,6 +637,6 @@ pub(crate) fn eval_fns(flow_tree: &RoseTree<(&Meta, Flow)>) -> Result<Vec<ExprKi
     // Generate one eval fn per EntrypointId.
     Ok(all_stmts
         .into_iter()
-        .map(|(id, stmts)| eval_fn(&entry_fn_name(&id), stmts))
+        .map(|(id, stmts)| entry_fn(&entry_fn_name(&id), stmts))
         .collect())
 }

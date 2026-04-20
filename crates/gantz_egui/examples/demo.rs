@@ -828,7 +828,7 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
         for cmd in std::mem::take(&mut head_state.scene.cmds) {
             log::debug!("{cmd:?}");
             match cmd {
-                gantz_egui::Cmd::CallEntrypoint(ep) => {
+                gantz_egui::Cmd::EvalEntry(ep) => {
                     let fn_name = gantz_core::compile::entry_fn_name(&ep.id());
                     if let Err(e) = state.vms[ix].call_function_by_name_with_args(&fn_name, vec![])
                     {

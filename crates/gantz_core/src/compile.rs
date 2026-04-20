@@ -6,7 +6,7 @@ use crate::{
     node::{self, Node},
 };
 #[doc(inline)]
-pub use codegen::{entry_fn_name, eval_fn_body};
+pub use codegen::{entry_fn_body, entry_fn_name};
 #[doc(inline)]
 pub use entrypoint::{
     Entrypoint, EntrypointId, EvalKind, EvalSource, default_entrypoints, pull_source, push_source,
@@ -350,6 +350,6 @@ where
     let node_fns = codegen::node_fns(get_node, g, &node_confs_tree)?;
 
     // Collect eval fns.
-    let eval_fns = codegen::eval_fns(&flow_tree)?;
-    Ok(node_fns.into_iter().chain(eval_fns).collect())
+    let entry_fns = codegen::entry_fns(&flow_tree)?;
+    Ok(node_fns.into_iter().chain(entry_fns).collect())
 }

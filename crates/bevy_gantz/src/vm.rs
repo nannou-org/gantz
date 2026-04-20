@@ -2,7 +2,7 @@
 //!
 //! This module provides:
 //! - Convenience wrappers around `gantz_core::vm` (`init`, `compile`)
-//! - Evaluation events and observer (`EvalEvent`, `on_eval`)
+//! - Evaluation events and observer (`EvalEntryEvent`, `on_eval_entry`)
 //! - Observers for VM initialization on head events (`on_head_opened`, `on_head_changed`)
 //! - Systems for VM setup and update (`setup`, `update`)
 
@@ -24,7 +24,7 @@ use steel::steel_vm::engine::Engine;
 
 /// Event to trigger evaluation of an entrypoint.
 #[derive(Event)]
-pub struct EvalEvent {
+pub struct EvalEntryEvent {
     /// The head entity to evaluate on.
     pub head: Entity,
     /// The entrypoint to evaluate.
@@ -36,7 +36,7 @@ pub struct EvalEvent {
 /// This event allows UI layers (like `bevy_gantz_egui`) to observe VM execution
 /// timing without the core crate depending on UI-related types.
 #[derive(Event)]
-pub struct EvalCompleted {
+pub struct EvalEntryComplete {
     /// The head entity that was evaluated.
     pub entity: Entity,
     /// The duration of the VM execution.
@@ -145,8 +145,12 @@ pub fn on_head_changed<N>(
 
 /// Observer that handles evaluation events by calling the appropriate VM function.
 ///
-/// Emits an `EvalCompleted` event with timing information for UI layers to observe.
-pub fn on_eval(trigger: On<EvalEvent>, mut vms: NonSendMut<head::HeadVms>, mut cmds: Commands) {
+/// Emits an `EvalEntryComplete` event with timing information for UI layers to observe.
+pub fn on_eval_entry(
+    trigger: On<EvalEntryEvent>,
+    mut vms: NonSendMut<head::HeadVms>,
+    mut cmds: Commands,
+) {
     let event = trigger.event();
     let fn_name = core_compile::entry_fn_name(&event.entrypoint.id());
     if let Some(vm) = vms.get_mut(&event.head) {
@@ -154,7 +158,7 @@ pub fn on_eval(trigger: On<EvalEvent>, mut vms: NonSendMut<head::HeadVms>, mut c
         if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
             log::error!("{e}");
         }
-        cmds.trigger(EvalCompleted {
+        cmds.trigger(EvalEntryComplete {
             entity: event.head,
             duration: start.elapsed(),
         });
