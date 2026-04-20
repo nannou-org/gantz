@@ -455,3 +455,84 @@ fn test_graph_nested_non_sequential_inlets() {
     vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
         .unwrap();
 }
+
+// Test that push evaluation inside a nested graph propagates through its outlet
+// to downstream nodes in the outer graph.
+//
+// GRAPH A (inner):
+//
+//    --------
+//    | Push |
+//    -+------
+//     |
+//    -+----
+//    | 42 |
+//    -+----
+//     |
+//    -+--------
+//    | Outlet |
+//    ----------
+//
+// GRAPH B (outer):
+//
+//    -----------
+//    | GRAPH A |
+//    -+---------
+//     |
+//    -+--------
+//    | number |
+//    ----------
+//
+// The push fires inside graph A, value 42 flows through the outlet to the
+// number node in the outer graph. Verifies that nested push evaluation
+// propagates through outlets.
+#[test]
+#[ignore = "requires outlet propagation from nested push eval"]
+fn test_graph_nested_push_through_outlet() {
+    // GRAPH A: push -> int(42) -> outlet
+    let mut ga = GraphNode::default();
+    let push = ga.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let forty_two = ga.add_node(Box::new(node_int(42)) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    ga.add_edge(push, forty_two, Edge::from((0, 0)));
+    ga.add_edge(forty_two, outlet, Edge::from((0, 0)));
+
+    // Compute push connection count before moving `ga` into `gb`.
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let push_n_outputs = ga[push].n_outputs(ctx) as u8;
+
+    // GRAPH B: graph_a -> number
+    let mut gb = petgraph::graph::DiGraph::new();
+    let graph_a = gb.add_node(Box::new(ga) as Box<dyn DebugNode>);
+    let number = gb.add_node(Box::new(node_number()) as Box<_>);
+    gb.add_edge(graph_a, number, Edge::from((0, 0)));
+
+    // Nested entrypoint: push inside graph A.
+    let ep = entrypoint::from_source(push_source(
+        vec![graph_a.index(), push.index()],
+        push_n_outputs,
+    ));
+
+    // Generate the module.
+    let module = gantz_core::compile::module(&no_lookup, &gb, &[ep.clone()]).unwrap();
+
+    // Create the VM.
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &gb, &[], &mut vm);
+
+    // Register the fns.
+    for f in &module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
+    // Call the nested push eval fn.
+    vm.call_function_by_name_with_args(&eval_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    // The number node should have received 42 via the outlet.
+    let number_state = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract number state")
+        .expect("number state was None");
+    assert_eq!(number_state, 42);
+}

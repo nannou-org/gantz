@@ -59,6 +59,7 @@ impl Entrypoint {
 
 /// Create an `EvalSource` at the given path with all `n_conns` connections active.
 pub fn source(path: Vec<node::Id>, kind: EvalKind, n_conns: u8) -> EvalSource {
+    debug_assert!(!path.is_empty(), "EvalSource path must be non-empty");
     EvalSource {
         path,
         kind,
