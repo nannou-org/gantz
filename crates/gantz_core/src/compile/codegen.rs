@@ -5,16 +5,15 @@ use crate::{
     compile::{
         Block, Flow, FlowGraph, Meta, MetaGraph, NodeConns, RoseTree,
         error::{CodegenError, InvalidInputIndex, TooManyConns},
-        flow::Branch,
     },
     node,
 };
 pub(crate) use node_fn::{node_fns, unique_node_confs};
 use petgraph::{
     graph::NodeIndex,
-    visit::{EdgeRef, IntoNodeReferences, NodeRef},
+    visit::{EdgeRef, IntoEdgeReferences, IntoNodeReferences, NodeRef},
 };
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 mod node_fn;
@@ -369,8 +368,8 @@ fn define_node_input_binding(
         .unwrap()
 }
 
-// For the given node's outputs that connect to node inputs that have more than
-// one incoming edge, create dedicated bindings for those inputs.
+/// For the given node's outputs that connect to node inputs that have more than
+/// one incoming edge, create dedicated bindings for those inputs.
 fn define_necessary_node_input_bindings(
     g: &MetaGraph,
     n: node::Id,
@@ -378,6 +377,23 @@ fn define_necessary_node_input_bindings(
     node_outputs_that_need_bindings(g, n)
         .into_iter()
         .map(move |(output, dst)| define_node_input_binding((n, output), dst))
+}
+
+/// Like `define_necessary_node_input_bindings`, but filtered to only the
+/// outputs active in a given branch, excluding any destinations that are
+/// active phi vars (to avoid shadowing outer phi declarations).
+fn define_branch_node_input_bindings(
+    mg: &MetaGraph,
+    n: node::Id,
+    active_outputs: &node::Conns,
+    exclude: &HashSet<(node::Id, usize)>,
+) -> Vec<ExprKind> {
+    node_outputs_that_need_bindings(mg, n)
+        .into_iter()
+        .filter(|(output, _)| active_outputs.get(output.0 as usize).unwrap_or(false))
+        .filter(|(_, (dst_id, dst_input))| !exclude.contains(&(*dst_id, dst_input.0 as usize)))
+        .map(|(output, dst)| define_node_input_binding((n, output), dst))
+        .collect()
 }
 
 /// For a join block's first node, find which inputs are `DedicatedBinding`
@@ -526,82 +542,55 @@ fn find_join_points(fg: &FlowGraph) -> HashSet<NodeIndex> {
         .collect()
 }
 
-/// Check if `to` is reachable from `from` in the flow graph via DFS.
-fn is_reachable_in(fg: &FlowGraph, from: NodeIndex, to: NodeIndex) -> bool {
-    let mut stack = vec![from];
-    let mut visited = HashSet::new();
-    while let Some(n) = stack.pop() {
-        if n == to {
-            return true;
-        }
-        if !visited.insert(n) {
-            continue;
-        }
-        for e in fg.edges_directed(n, petgraph::Outgoing) {
-            stack.push(e.target());
-        }
-    }
-    false
-}
-
-/// Given a branching block's outgoing edges, find the reconvergence point
-/// where all branches meet (if one exists).
+/// Compute immediate post-dominators for all flow graph nodes.
 ///
-/// Returns `None` if branches don't all converge on the same join point,
-/// in which case the caller falls back to code duplication.
-fn find_reconvergence(
-    fg: &FlowGraph,
-    branch_targets: &[(Branch, NodeIndex)],
-    join_points: &HashSet<NodeIndex>,
-) -> Option<NodeIndex> {
-    if branch_targets.is_empty() {
-        return None;
+/// The immediate post-dominator of a node is the first node that ALL
+/// paths from it must pass through. For a branching block, this is the
+/// reconvergence point.
+///
+/// Built by reversing the flow graph, adding a virtual exit, and
+/// computing the dominator tree on the reversed graph.
+fn compute_post_dominators(fg: &FlowGraph) -> HashMap<NodeIndex, NodeIndex> {
+    use petgraph::algo::dominators;
+
+    let nodes: Vec<_> = fg.node_indices().collect();
+    if nodes.is_empty() {
+        return HashMap::new();
     }
-    // For each branch target, DFS to collect all reachable join points.
-    let mut common: Option<HashSet<NodeIndex>> = None;
-    for &(_, target) in branch_targets {
-        let mut reachable_joins = HashSet::new();
-        let mut stack = vec![target];
-        let mut visited = HashSet::new();
-        while let Some(n) = stack.pop() {
-            if !visited.insert(n) {
-                continue;
-            }
-            if join_points.contains(&n) {
-                reachable_joins.insert(n);
-            }
-            for e in fg.edges_directed(n, petgraph::Outgoing) {
-                stack.push(e.target());
+
+    // Build reversed graph (plain DiGraph for trait compat with simple_fast).
+    let mut reversed = petgraph::graph::DiGraph::<(), ()>::new();
+    let mut fg_to_rev = HashMap::new();
+    for &n in &nodes {
+        fg_to_rev.insert(n, reversed.add_node(()));
+    }
+    for e_ref in fg.edge_references() {
+        reversed.add_edge(fg_to_rev[&e_ref.target()], fg_to_rev[&e_ref.source()], ());
+    }
+
+    // Virtual exit: root of reversed graph.
+    // Terminal nodes (no outgoing edges in original) connect from this root.
+    let virtual_exit = reversed.add_node(());
+    for &n in &nodes {
+        if fg.edges_directed(n, petgraph::Outgoing).count() == 0 {
+            reversed.add_edge(virtual_exit, fg_to_rev[&n], ());
+        }
+    }
+
+    let doms = dominators::simple_fast(&reversed, virtual_exit);
+
+    // Map back: immediate dominator in reversed = post-dominator in original.
+    let rev_to_fg: HashMap<_, _> = fg_to_rev.iter().map(|(&f, &r)| (r, f)).collect();
+    let mut post_dom = HashMap::new();
+    for &fg_n in &nodes {
+        if let Some(idom) = doms.immediate_dominator(fg_to_rev[&fg_n]) {
+            // Filter out virtual exit (not in rev_to_fg).
+            if let Some(&orig) = rev_to_fg.get(&idom) {
+                post_dom.insert(fg_n, orig);
             }
         }
-        common = Some(match common {
-            None => reachable_joins,
-            Some(prev) => prev.intersection(&reachable_joins).copied().collect(),
-        });
     }
-    let common = common?;
-    if common.is_empty() {
-        return None;
-    }
-    if common.len() == 1 {
-        return common.into_iter().next();
-    }
-    // Multiple common joins: find the earliest (closest to branch targets).
-    // This is the one that no other common join is an ancestor of.
-    let minimal: Vec<_> = common
-        .iter()
-        .copied()
-        .filter(|&j| {
-            !common
-                .iter()
-                .any(|&other| other != j && is_reachable_in(fg, other, j))
-        })
-        .collect();
-    if minimal.len() == 1 {
-        Some(minimal[0])
-    } else {
-        None
-    }
+    post_dom
 }
 
 /// The eval fn statements for the control flow block at the given `flow_ix`.
@@ -618,8 +607,9 @@ fn flow_node_stmts(
     outlets: &BTreeSet<node::Id>,
     reachable: &HashSet<node::Id>,
     fg: &FlowGraph,
-    join_points: &HashSet<NodeIndex>,
+    post_dom: &HashMap<NodeIndex, NodeIndex>,
     phi_params: &BTreeMap<NodeIndex, Vec<(usize, String)>>,
+    active_phi: &HashSet<(node::Id, usize)>,
     stop_at: Option<NodeIndex>,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     // Add the block.
@@ -656,17 +646,8 @@ fn flow_node_stmts(
         // Otherwise continue normally.
         stmts.extend(define_necessary_node_input_bindings(mg, conf.id));
         stmts.extend(flow_node_stmts(
-            path,
-            dst,
-            mg,
-            stateful,
-            inlets,
-            outlets,
-            reachable,
-            fg,
-            join_points,
-            phi_params,
-            stop_at,
+            path, dst, mg, stateful, inlets, outlets, reachable, fg, post_dom, phi_params,
+            active_phi, stop_at,
         )?);
         return Ok(stmts);
     }
@@ -675,11 +656,27 @@ fn flow_node_stmts(
     let conf = *block.last().unwrap();
     stmts.push(destructure_node_branch_stmt(conf.id));
 
-    // Try to find a reconvergence point for the phi-variable approach.
-    if let Some(join_ix) = find_reconvergence(fg, &edges, join_points) {
+    // Post-dominator gives the reconvergence point directly.
+    // Skip if it equals stop_at (handled by outer level).
+    let reconvergence = post_dom
+        .get(&flow_ix)
+        .copied()
+        .filter(|&r| stop_at != Some(r));
+
+    if let Some(join_ix) = reconvergence {
         // Declare phi variable placeholders for the join's inputs.
         if let Some(params) = phi_params.get(&join_ix) {
             stmts.extend(declare_phi_vars(params));
+        }
+
+        // Extend active phi vars with this join's phi params so that
+        // branch bodies and deeper recursions won't shadow them.
+        let mut inner_phi = active_phi.clone();
+        if let Some(params) = phi_params.get(&join_ix) {
+            let join_first_id = fg[join_ix].first().expect("block must not be empty").id;
+            for (ix, _) in params {
+                inner_phi.insert((join_first_id, *ix));
+            }
         }
 
         // Build nested if-else with each branch body.
@@ -687,6 +684,12 @@ fn flow_node_stmts(
         let mut sorted_edges = edges;
         while let Some((branch, dst)) = sorted_edges.pop() {
             let mut branch_stmts = vec![destructure_node_outputs_stmt(conf.id, branch.conns)];
+            branch_stmts.extend(define_branch_node_input_bindings(
+                mg,
+                conf.id,
+                &branch.conns,
+                &inner_phi,
+            ));
 
             if dst == join_ix {
                 // Branch target IS the join - just emit phi sets.
@@ -708,8 +711,9 @@ fn flow_node_stmts(
                     outlets,
                     reachable,
                     fg,
-                    join_points,
+                    post_dom,
                     phi_params,
+                    &inner_phi,
                     Some(join_ix),
                 )?);
             }
@@ -734,47 +738,36 @@ fn flow_node_stmts(
 
         // After the if: generate the join block and everything after it.
         stmts.extend(flow_node_stmts(
-            path,
-            join_ix,
-            mg,
-            stateful,
-            inlets,
-            outlets,
-            reachable,
-            fg,
-            join_points,
-            phi_params,
-            stop_at,
+            path, join_ix, mg, stateful, inlets, outlets, reachable, fg, post_dom, phi_params,
+            active_phi, stop_at,
         )?);
 
         return Ok(stmts);
     }
 
     // No reconvergence found - fall back to code duplication.
-    stmts.extend(define_necessary_node_input_bindings(mg, conf.id));
     let mut expr = "'()".to_string();
     while let Some((branch, dst)) = edges.pop() {
         let dst_stmts = flow_node_stmts(
-            path,
-            dst,
-            mg,
-            stateful,
-            inlets,
-            outlets,
-            reachable,
-            fg,
-            join_points,
-            phi_params,
-            stop_at,
+            path, dst, mg, stateful, inlets, outlets, reachable, fg, post_dom, phi_params,
+            active_phi, stop_at,
         )?;
+        let bindings = define_branch_node_input_bindings(mg, conf.id, &branch.conns, active_phi);
+        let bindings_str = bindings
+            .iter()
+            .map(|e| format!("{e}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let dst_stmts_str = dst_stmts
+            .into_iter()
+            .map(|expr| format!("{expr}"))
+            .collect::<Vec<_>>()
+            .join(" ");
         let dst_expr = format!(
-            "(begin {} {} '())",
+            "(begin {} {} {} '())",
             destructure_node_outputs_stmt(conf.id, branch.conns),
-            dst_stmts
-                .into_iter()
-                .map(|expr| format!("{expr}"))
-                .collect::<Vec<_>>()
-                .join(" ")
+            bindings_str,
+            dst_stmts_str,
         );
         expr = format!("(if (= {} {BRANCH_IX}) {dst_expr} {expr})", branch.ix);
     }
@@ -804,6 +797,7 @@ pub fn entry_fn_body(
     };
     let reachable = flow_graph_nodes(fg);
     let join_points = find_join_points(fg);
+    let post_dom = compute_post_dominators(fg);
     let mut phi_params_map = BTreeMap::new();
     for &j in &join_points {
         phi_params_map.insert(j, join_phi_params(mg, &reachable, &fg[j])?);
@@ -817,8 +811,9 @@ pub fn entry_fn_body(
         outlets,
         &reachable,
         fg,
-        &join_points,
+        &post_dom,
         &phi_params_map,
+        &HashSet::new(),
         None,
     )
 }

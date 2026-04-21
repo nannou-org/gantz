@@ -406,9 +406,7 @@ fn test_graph_branch_target_is_join() {
         fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
             let x = ctx.inputs()[0].as_deref().expect("must have one input");
             // Branch 0: pass 6 as the value. Branch 1: pass input through.
-            node::parse_expr(&format!(
-                "(if (equal? 0 {x}) (list 0 6) (list 1 {x}))"
-            ))
+            node::parse_expr(&format!("(if (equal? 0 {x}) (list 0 6) (list 1 {x}))"))
         }
     }
 
@@ -465,7 +463,8 @@ fn test_graph_branch_target_is_join() {
     assert!(
         count <= 3, // 1 fn def + up to 1 call per entry fn
         "number node fn appears {} times - join duplicated!\n{}",
-        count, module_str,
+        count,
+        module_str,
     );
 }
 
@@ -521,9 +520,7 @@ fn test_graph_nested_diamond() {
         }
         fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
             let x = ctx.inputs()[0].as_deref().expect("must have one input");
-            node::parse_expr(&format!(
-                "(if (equal? 0 {x}) (list 0 '()) (list 1 '()))"
-            ))
+            node::parse_expr(&format!("(if (equal? 0 {x}) (list 0 '()) (list 1 '()))"))
         }
     }
 
@@ -597,8 +594,10 @@ fn test_graph_nested_diamond() {
         .map(|e| format!("{e}"))
         .collect::<Vec<_>>()
         .join("\n");
-    for (name, ix) in [("inner_result", inner_result.index()), ("outer_result", outer_result.index())]
-    {
+    for (name, ix) in [
+        ("inner_result", inner_result.index()),
+        ("outer_result", outer_result.index()),
+    ] {
         let prefix = format!("node-fn-{ix}");
         let count = module_str.matches(&prefix).count();
         assert!(
@@ -606,6 +605,134 @@ fn test_graph_nested_diamond() {
             "{name} fn '{prefix}' appears {count} times - join duplicated!\n{module_str}",
         );
     }
+}
+
+// Lattice: both outer branch targets share the same inner branching
+// structure. The post-dominator approach finds number as the reconvergence.
+//
+//      ----------       ----------
+//      | push_0 |       | push_1 |
+//      ----+-----       ----+-----
+//          |                |
+//          |-------  -------|
+//                 |  |
+//            -----+--+-------
+//            | select_outer  |  br0=left, br1=right
+//            ---+--------+----
+//               |        |
+//         ------+--   ---+-------
+//         | sel_L |   |  sel_R  |  both branch to six and seven
+//         --+---+--   ---+---+---
+//           |   |        |   |
+//           |   +-----+--+   |
+//           +-----+   |  +---+
+//                 |   |
+//            -----+---+---
+//            |   six      |
+//            ------+-------
+//                  |
+//            ------+-------
+//            |   seven    |
+//            ------+-------
+//                  |
+//            ------+-------
+//            |   number   |  join - all paths converge here
+//            --------------
+//
+// Push 0 -> outer-left -> sel_L -> right (since '() != 0) -> seven(7) -> number(7).
+// Push 1 -> outer-right -> sel_R -> right (since '() != 0) -> seven(7) -> number(7).
+#[test]
+fn test_graph_lattice_reconvergence() {
+    #[derive(Debug)]
+    struct Select;
+
+    impl Node for Select {
+        fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
+            1
+        }
+        fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
+            2
+        }
+        fn branches(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+            vec![
+                node::EvalConf::Set([true, false].try_into().unwrap()),
+                node::EvalConf::Set([false, true].try_into().unwrap()),
+            ]
+        }
+        fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+            let x = ctx.inputs()[0].as_deref().expect("must have one input");
+            node::parse_expr(&format!("(if (equal? 0 {x}) (list 0 '()) (list 1 '()))"))
+        }
+    }
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<dyn DebugNode>);
+    let select_outer = g.add_node(Box::new(Select) as Box<_>);
+    let sel_l = g.add_node(Box::new(Select) as Box<_>);
+    let sel_r = g.add_node(Box::new(Select) as Box<_>);
+    let six = g.add_node(Box::new(node_int(6)) as Box<_>);
+    let seven = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+
+    // Outer structure.
+    g.add_edge(push_0, select_outer, Edge::from((0, 0)));
+    g.add_edge(push_1, select_outer, Edge::from((0, 0)));
+    g.add_edge(select_outer, sel_l, Edge::from((0, 0)));
+    g.add_edge(select_outer, sel_r, Edge::from((1, 0)));
+
+    // Both inner selects branch to the same six/seven nodes.
+    g.add_edge(sel_l, six, Edge::from((0, 0)));
+    g.add_edge(sel_l, seven, Edge::from((1, 0)));
+    g.add_edge(sel_r, six, Edge::from((0, 0)));
+    g.add_edge(sel_r, seven, Edge::from((1, 0)));
+
+    // Both converge at number.
+    g.add_edge(six, number, Edge::from((0, 0)));
+    g.add_edge(seven, number, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    // Push 0: outer-left → sel_L → right (default) → seven(7) → number(7).
+    let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
+        .unwrap();
+    let state = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("state was None");
+    assert_eq!(state, 7);
+
+    // Push 1: outer-right → sel_R → right (default) → seven(7) → number(7).
+    let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
+        .unwrap();
+    let state = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("state was None");
+    assert_eq!(state, 7);
+
+    // Verify number's fn call is not duplicated per outer branch.
+    let module_str = module
+        .iter()
+        .map(|e| format!("{e}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let number_fn_prefix = format!("node-fn-{}", number.index());
+    let count = module_str.matches(&number_fn_prefix).count();
+    assert!(
+        count <= 3, // 1 fn def + up to 1 call per entry fn
+        "number fn '{number_fn_prefix}' appears {count} times - join duplicated!\n{module_str}",
+    );
 }
 
 // A simple test graph that is expected to `panic!`.
