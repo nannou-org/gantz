@@ -136,7 +136,7 @@ fn default_outputs() -> u8 {
 }
 
 /// Collect unique `$var` names in order of first appearance.
-fn collect_unique_vars(tts: TokenStream) -> Vec<String> {
+pub(crate) fn collect_unique_vars(tts: TokenStream) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut vars = Vec::new();
     for token in tts {
@@ -152,12 +152,16 @@ fn collect_unique_vars(tts: TokenStream) -> Vec<String> {
 }
 
 /// Extract unique vars from a source string.
-fn vars_from_src(src: &str) -> Vec<String> {
+pub(crate) fn vars_from_src(src: &str) -> Vec<String> {
     collect_unique_vars(TokenStream::new(src, true, None))
 }
 
 /// Replace each `$var` with the corresponding input expression based on variable name.
-fn interpolate_tokens(tts: TokenStream, vars: &[String], inputs: &[Option<String>]) -> String {
+pub(crate) fn interpolate_tokens(
+    tts: TokenStream,
+    vars: &[String],
+    inputs: &[Option<String>],
+) -> String {
     // Build a map from var name to input index.
     let var_to_index: std::collections::HashMap<&str, usize> = vars
         .iter()

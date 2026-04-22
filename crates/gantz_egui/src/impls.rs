@@ -2,6 +2,7 @@
 
 mod apply;
 mod bang;
+mod branch;
 mod expr;
 mod graph;
 mod identity;

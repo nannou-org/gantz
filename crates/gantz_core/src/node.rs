@@ -3,6 +3,7 @@
 #[doc(inline)]
 pub use crate::visit::{self, Visitor};
 pub use apply::Apply;
+pub use branch::{Branch, BranchNewError};
 #[doc(inline)]
 pub use conns::Conns;
 pub use expr::{Expr, ExprNewError};
@@ -18,6 +19,7 @@ pub use state::{NodeState, State, WithStateType};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 pub mod apply;
+pub mod branch;
 mod conns;
 pub mod expr;
 pub mod fn_;
@@ -455,6 +457,13 @@ impl ExprError {
 /// Shorthand for `node::Expr::new`.
 pub fn expr(expr: impl Into<String>) -> Result<Expr, ExprNewError> {
     Expr::new(expr)
+}
+
+/// Create a branching node from the given expression and branch masks.
+///
+/// Shorthand for `node::Branch::new`.
+pub fn branch(src: impl Into<String>, branches: Vec<Conns>) -> Result<Branch, BranchNewError> {
+    Branch::new(src, branches)
 }
 
 /// Parse a Steel expression string, returning an [`ExprResult`].

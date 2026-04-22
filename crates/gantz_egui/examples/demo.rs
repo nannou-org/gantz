@@ -156,6 +156,9 @@ fn primitives() -> Primitives {
     register_primitive(&mut p, "bang", || {
         Box::new(gantz_std::Bang::default()) as Box<_>
     });
+    register_primitive(&mut p, "branch", || {
+        Box::new(gantz_core::node::Branch::default()) as Box<_>
+    });
     register_primitive(&mut p, "expr", || {
         Box::new(gantz_core::node::Expr::new("()").unwrap()) as Box<_>
     });
@@ -196,6 +199,8 @@ trait Node: Any + DynClone + gantz_ca::CaHash + gantz_core::Node + gantz_egui::N
 
 dyn_clone::clone_trait_object!(Node);
 
+#[typetag::serde]
+impl Node for gantz_core::node::Branch {}
 #[typetag::serde]
 impl Node for gantz_core::node::Expr {}
 #[typetag::serde]

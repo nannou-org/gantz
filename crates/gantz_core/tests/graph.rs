@@ -1088,3 +1088,71 @@ fn test_graph_zero_output_leaf_nodes() {
     vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
+
+/// Test using the `Branch` node type in a graph with push evaluation.
+///
+/// Graph layout:
+///
+///   push_0 (emits 0) ---\
+///                         branch --- out0 -> six -> number
+///   push_1 (emits 1) ---/       \-- out1 -> seven -> number
+///
+/// When push_0 fires (input=0), branch selects index 0 -> six -> number stores 6.
+/// When push_1 fires (input=1), branch selects index 1 -> seven -> number stores 7.
+#[test]
+fn test_graph_branch_node() {
+    let branch = node::Branch::new(
+        "(if (equal? 0 $x) (list 0 '()) (list 1 '()))",
+        vec![
+            node::Conns::try_from([true, false]).unwrap(),
+            node::Conns::try_from([false, true]).unwrap(),
+        ],
+    )
+    .unwrap();
+
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let branch_ix = g.add_node(Box::new(branch) as Box<_>);
+    let six = g.add_node(Box::new(node_int(6)) as Box<_>);
+    let seven = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+
+    g.add_edge(push_0, branch_ix, Edge::from((0, 0)));
+    g.add_edge(push_1, branch_ix, Edge::from((0, 0)));
+    g.add_edge(branch_ix, six, Edge::from((0, 0)));
+    g.add_edge(branch_ix, seven, Edge::from((1, 0)));
+    g.add_edge(six, number, Edge::from((0, 0)));
+    g.add_edge(seven, number, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+
+    for f in module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    // Push 0 -> branch takes index 0 -> six -> number stores 6.
+    let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
+        .unwrap();
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 6);
+
+    // Push 1 -> branch takes index 1 -> seven -> number stores 7.
+    let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
+        .unwrap();
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 7);
+}

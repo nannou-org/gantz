@@ -91,6 +91,9 @@ fn primitives() -> Primitives {
     register_primitive(&mut p, "bang", || {
         Box::new(gantz_std::Bang::default()) as Box<_>
     });
+    register_primitive(&mut p, "branch", || {
+        Box::new(gantz_core::node::Branch::default()) as Box<_>
+    });
     register_primitive(&mut p, "comment", || {
         Box::new(gantz_egui::node::Comment::default()) as Box<_>
     });

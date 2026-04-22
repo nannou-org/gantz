@@ -1,7 +1,9 @@
 //! Ensure that its possible to serialize/deserialize core nodes as trait
 //! objects using typetag.
 
-use gantz_core::node::{self, Expr, MetaCtx, Node, Pull, Push, WithPullEval, WithPushEval};
+use gantz_core::node::{
+    self, Branch, Conns, Expr, MetaCtx, Node, Pull, Push, WithPullEval, WithPushEval,
+};
 use serde_json;
 
 /// A wrapper around the **Node** trait that allows for serializing and
@@ -9,6 +11,8 @@ use serde_json;
 #[typetag::serde(tag = "type")]
 trait SerdeNode: Node {}
 
+#[typetag::serde]
+impl SerdeNode for node::Branch {}
 #[typetag::serde]
 impl SerdeNode for node::Expr {}
 #[typetag::serde]
@@ -122,4 +126,37 @@ fn test_serde_node_vector() {
     // Third node should be pull node
     assert!(deserialized[2].push_eval(ctx).is_empty());
     assert!(!deserialized[2].pull_eval(ctx).is_empty());
+}
+
+// Test serializing and deserializing a Branch node via trait object.
+#[test]
+fn test_serde_branch_roundtrip() {
+    let branch = Branch::new(
+        "(if (equal? 0 $x) (list 0 $x) (list 1 $x))",
+        vec![
+            Conns::try_from([true, false]).unwrap(),
+            Conns::try_from([false, true]).unwrap(),
+        ],
+    )
+    .unwrap();
+
+    let boxed: Box<dyn SerdeNode> = Box::new(branch);
+    let serialized = serde_json::to_string(&boxed).expect("Failed to serialize");
+    let deserialized: Box<dyn SerdeNode> =
+        serde_json::from_str(&serialized).expect("Failed to deserialize");
+
+    let ctx = MetaCtx::new(&no_lookup);
+    assert_eq!(deserialized.n_inputs(ctx), 1);
+    assert_eq!(deserialized.n_outputs(ctx), 2);
+
+    let branches = deserialized.branches(ctx);
+    assert_eq!(branches.len(), 2);
+    assert_eq!(
+        branches[0],
+        node::EvalConf::Set(Conns::try_from([true, false]).unwrap()),
+    );
+    assert_eq!(
+        branches[1],
+        node::EvalConf::Set(Conns::try_from([false, true]).unwrap()),
+    );
 }
