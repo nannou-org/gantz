@@ -22,6 +22,7 @@ use thiserror::Error;
 #[cahash("gantz.expr")]
 pub struct Expr {
     src: String,
+    outputs: u8,
     /// Unique `$` variable names in order of first appearance (cached).
     /// Skipped during serialization and recomputed on deserialization.
     #[serde(skip)]
@@ -37,11 +38,20 @@ impl<'de> Deserialize<'de> for Expr {
         #[derive(Deserialize)]
         struct ExprData {
             src: String,
+            #[serde(default = "default_outputs")]
+            outputs: u8,
         }
         let data = ExprData::deserialize(deserializer)?;
+        if data.outputs < 1 || data.outputs > 16 {
+            return Err(serde::de::Error::custom(format!(
+                "outputs must be in 1..=16, got {}",
+                data.outputs,
+            )));
+        }
         let vars = vars_from_src(&data.src);
         Ok(Expr {
             src: data.src,
+            outputs: data.outputs,
             vars,
         })
     }
@@ -80,13 +90,49 @@ impl Expr {
         if exprs.is_empty() {
             return Err(ExprNewError::Empty);
         }
-        Ok(Expr { src, vars })
+        Ok(Expr {
+            src,
+            outputs: 1,
+            vars,
+        })
+    }
+
+    /// Set the number of outputs for this expression node.
+    ///
+    /// When `n > 1`, the expression should evaluate to `(list v1 v2 ...)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `n` is 0 or greater than 16.
+    pub fn with_outputs(mut self, n: u8) -> Self {
+        assert!(n >= 1 && n <= 16, "outputs must be in 1..=16, got {n}");
+        self.outputs = n;
+        self
+    }
+
+    /// The number of outputs for this expression node.
+    pub fn outputs(&self) -> u8 {
+        self.outputs
+    }
+
+    /// Set the number of outputs in place.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `n` is 0 or greater than 16.
+    pub fn set_outputs(&mut self, n: u8) {
+        assert!(n >= 1 && n <= 16, "outputs must be in 1..=16, got {n}");
+        self.outputs = n;
     }
 
     /// The source string that was used to create this node.
     pub fn src(&self) -> &str {
         &self.src
     }
+}
+
+fn default_outputs() -> u8 {
+    1
 }
 
 /// Collect unique `$var` names in order of first appearance.
@@ -140,7 +186,7 @@ impl Node for Expr {
     }
 
     fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
-        1
+        self.outputs as usize
     }
 
     fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
@@ -219,4 +265,35 @@ fn test_collect_unique_vars() {
     // Multiple unique vars.
     let vars = vars_from_src("($a $b $c $d $e)");
     assert_eq!(vars, vec!["$a", "$b", "$c", "$d", "$e"]);
+}
+
+#[test]
+fn test_outputs_default() {
+    let e = Expr::new("(+ $a $b)").unwrap();
+    assert_eq!(e.outputs(), 1);
+}
+
+#[test]
+fn test_with_outputs() {
+    let e = Expr::new("(values $a $b)").unwrap().with_outputs(2);
+    assert_eq!(e.outputs(), 2);
+}
+
+#[test]
+fn test_set_outputs() {
+    let mut e = Expr::new("(values $a $b $c)").unwrap();
+    e.set_outputs(3);
+    assert_eq!(e.outputs(), 3);
+}
+
+#[test]
+#[should_panic]
+fn test_outputs_zero_panics() {
+    Expr::new("$a").unwrap().with_outputs(0);
+}
+
+#[test]
+#[should_panic]
+fn test_outputs_exceeds_max_panics() {
+    Expr::new("$a").unwrap().with_outputs(17);
 }

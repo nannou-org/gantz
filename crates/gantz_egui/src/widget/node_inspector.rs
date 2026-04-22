@@ -7,6 +7,7 @@ use gantz_core::node::{self, MetaCtx, Node};
 pub struct NodeInspector<'a, N> {
     node: &'a mut N,
     ctx: NodeCtx<'a>,
+    immutable: bool,
 }
 
 /// The response returned from [`NodeInspector::show`].
@@ -20,13 +21,24 @@ impl<'a, N> NodeInspector<'a, N>
 where
     N: Node + NodeUi,
 {
-    pub fn new(node: &'a mut N, ctx: NodeCtx<'a>) -> Self {
-        Self { node, ctx }
+    pub fn new(node: &'a mut N, ctx: NodeCtx<'a>, immutable: bool) -> Self {
+        Self {
+            node,
+            ctx,
+            immutable,
+        }
     }
 
     pub fn show(self, ui: &mut egui::Ui) -> NodeInspectorResponse {
-        let Self { node, mut ctx } = self;
-        let (scroll_area_output, label_response) = table(node, &mut ctx, ui);
+        let Self {
+            node,
+            mut ctx,
+            immutable,
+        } = self;
+        let (scroll_area_output, label_response) = table(node, &mut ctx, immutable, ui);
+        if immutable {
+            ui.disable();
+        }
         let node_response = node.inspector_ui(ctx, ui);
         NodeInspectorResponse {
             scroll_area_output,
@@ -43,6 +55,7 @@ pub fn table_row_h(ui: &egui::Ui) -> f32 {
 pub fn table(
     node: &mut (impl Node + NodeUi),
     ctx: &mut NodeCtx,
+    immutable: bool,
     ui: &mut egui::Ui,
 ) -> (ScrollAreaOutput<()>, egui::Response) {
     // Extract info we need upfront before the closure borrows ctx.
@@ -131,6 +144,9 @@ pub fn table(
                 });
             }
 
+            if immutable {
+                body.ui_mut().disable();
+            }
             node.inspector_rows(ctx, &mut body);
         });
     (scroll_area_output, label_response)

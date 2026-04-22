@@ -541,9 +541,7 @@ where
                         gantz_ca::Head::Branch(name) => base_names.contains_key(name),
                         _ => false,
                     };
-                    let is_demo =
-                        matches!(&head, gantz_ca::Head::Branch(name) if name.starts_with("demo-"));
-                    let immutable = is_base && gantz.base_immutable && !is_demo;
+                    let immutable = head_immutable(&head, gantz.base_immutable, base_names);
 
                     // Collect demo-* names for the dropdown.
                     let demo_names_vec: Vec<&str> = names
@@ -637,8 +635,7 @@ where
 
                 // Show the command palette once (not per-pane), operating on the focused head.
                 if let Some(fh) = access.heads().get(*focused_head).cloned() {
-                    let focused_immutable = gantz.base_immutable
-                        && matches!(&fh, gantz_ca::Head::Branch(name) if base_names.contains_key(name));
+                    let focused_immutable = head_immutable(&fh, gantz.base_immutable, base_names);
 
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
 
@@ -754,9 +751,10 @@ where
             Pane::NodeInspector => {
                 // Use the focused head for the node inspector.
                 if let Some(fh) = access.heads().get(*focused_head).cloned() {
+                    let immutable = head_immutable(&fh, gantz.base_immutable, base_names);
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
                     access.with_head_mut(&fh, |data| {
-                        node_inspector(gantz.env, data.graph, data.vm, head_state, ui);
+                        node_inspector(gantz.env, data.graph, data.vm, head_state, immutable, ui);
                     });
                 }
             }
@@ -984,13 +982,7 @@ where
             .position(|h| h == pane_head)
             .expect("pane head not found in heads");
 
-        // Compute whether this head should be immutable.
-        // Demo base graphs are mutable so users can experiment.
-        let is_demo =
-            matches!(pane_head, gantz_ca::Head::Branch(name) if name.starts_with("demo-"));
-        let immutable = self.base_immutable
-            && matches!(pane_head, gantz_ca::Head::Branch(name) if self.base_names.contains_key(name))
-            && !is_demo;
+        let immutable = head_immutable(pane_head, self.base_immutable, self.base_names);
 
         let head_state = self.state.open_heads.entry(pane_head.clone()).or_default();
         let auto_layout = head_state.auto_layout;
@@ -1498,11 +1490,27 @@ fn trace_view(
     })
 }
 
+/// Whether the given head should be treated as immutable.
+///
+/// A head is immutable when `base_immutable` is enabled and the head is a base
+/// graph that is not a demo (demo base graphs are always mutable so users can
+/// experiment).
+fn head_immutable(
+    head: &gantz_ca::Head,
+    base_immutable: bool,
+    base_names: &gantz_ca::registry::Names,
+) -> bool {
+    let is_base = matches!(head, gantz_ca::Head::Branch(name) if base_names.contains_key(name));
+    let is_demo = matches!(head, gantz_ca::Head::Branch(name) if name.starts_with("demo-"));
+    base_immutable && is_base && !is_demo
+}
+
 fn node_inspector<N>(
     registry: &dyn Registry,
     root: &mut gantz_core::node::graph::Graph<N>,
     vm: &mut Engine,
     head_state: &mut OpenHeadState,
+    immutable: bool,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<()>
 where
@@ -1536,7 +1544,7 @@ where
                             vm,
                             &mut head_state.scene.cmds,
                         );
-                        let resp = widget::NodeInspector::new(node, ctx).show(ui);
+                        let resp = widget::NodeInspector::new(node, ctx, immutable).show(ui);
                         if resp.label_response.clicked() {
                             let sel = &mut head_state.scene.interaction.selection.nodes;
                             if ui.input(|i| i.modifiers.command) {

@@ -99,6 +99,24 @@ impl NodeUi for gantz_core::node::Expr {
             ui.add(ExprEdit::new(self, id))
         })
     }
+
+    fn inspector_rows(&mut self, _ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
+        let row_h = crate::widget::node_inspector::table_row_h(body.ui_mut());
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("outputs");
+            });
+            row.col(|ui| {
+                let mut n = self.outputs() as i32;
+                if ui
+                    .add(egui::DragValue::new(&mut n).range(1..=16).speed(0.1))
+                    .changed()
+                {
+                    self.set_outputs(n.clamp(1, 16) as u8);
+                }
+            });
+        });
+    }
 }
 
 impl<'a> ExprEdit<'a> {
