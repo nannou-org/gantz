@@ -969,3 +969,63 @@ fn test_entrypoint_naming_consistency() {
     assert_eq!(default_ep.id(), manual.id());
     assert_eq!(entry_fn_name(&default_ep.id()), entry_fn_name(&manual.id()));
 }
+
+// A 2-output expr node returns `(values 6 7)`. Each output is wired to a
+// separate stateful store node. After push evaluation, each store should hold
+// the corresponding value.
+//
+//    --------
+//    | push |
+//    --------
+//       |
+//    ----------
+//    | pair   |  outputs=2, expr: (begin $push (values 6 7))
+//    ----------
+//     |      |
+//     o0     o1
+//     |      |
+// ---------  ---------
+// | num_a |  | num_b |
+// ---------  ---------
+#[test]
+fn test_graph_multi_output_expr() {
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let pair = node::expr("(begin $push (list 6 7))")
+        .unwrap()
+        .with_outputs(2);
+    let pair = g.add_node(Box::new(pair) as Box<_>);
+    let num_a = g.add_node(Box::new(node_number()) as Box<_>);
+    let num_b = g.add_node(Box::new(node_number()) as Box<_>);
+
+    g.add_edge(push, pair, Edge::from((0, 0)));
+    g.add_edge(pair, num_a, Edge::from((0, 0))); // output 0 -> num_a
+    g.add_edge(pair, num_b, Edge::from((1, 0))); // output 1 -> num_b
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    let a = node::state::extract::<u32>(&vm, &[num_a.index()])
+        .expect("failed to extract num_a state")
+        .expect("num_a state was None");
+    let b = node::state::extract::<u32>(&vm, &[num_b.index()])
+        .expect("failed to extract num_b state")
+        .expect("num_b state was None");
+    assert_eq!(a, 6);
+    assert_eq!(b, 7);
+}
