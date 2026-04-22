@@ -485,11 +485,13 @@ pub(crate) fn eval_fn_block_stmts(
         let node_path: Vec<_> = path.iter().copied().chain(Some(conf.id)).collect();
         let stateful = stateful.contains(&conf.id);
         let NodeConns { inputs, outputs } = conf.conns;
-        if let Some(stmt) = eval_stmt(
+        let Some(stmt) = eval_stmt(
             mg, reachable, inlets, outlets, &node_path, &inputs, &outputs, stateful,
-        )? {
-            stmts.push(stmt);
-        }
+        )?
+        else {
+            continue;
+        };
+        stmts.push(stmt);
 
         // If this is the last node fn call in the block, it must be either
         // branching or terminal, so there's no need to destructure here.

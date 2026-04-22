@@ -536,3 +536,91 @@ fn test_graph_nested_push_through_outlet() {
         .expect("number state was None");
     assert_eq!(number_state, 42);
 }
+
+// Test that a nested graph with multiple outlets correctly returns a list
+// that is destructured via `define-values` in the outer graph.
+//
+// INNER GRAPH:
+//
+//    --------- ---------
+//    | Inlet | | Inlet |
+//    -+------- -+-------
+//     |         |
+//    -+-------  |
+//    | Outlet | |
+//    ---------- |
+//              -+-------
+//              | Outlet |
+//              ----------
+//
+// OUTER GRAPH:
+//
+//    --------
+//    | push |
+//    -+------
+//     |
+//     |------
+//     |     |
+//    -+--- -+---
+//    | 6 | | 7 |
+//    -+--- -+---
+//     |     |
+//    -+-----+----
+//    | INNER    |
+//    -+------+---
+//     |      |
+//     o0     o1
+//     |      |
+//   num_a  num_b
+#[test]
+fn test_graph_nested_multi_outlet() {
+    // Inner graph: 2 inlets pass through to 2 outlets.
+    let mut inner = GraphNode::default();
+    let inlet_a = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let inlet_b = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
+    let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    inner.add_edge(inlet_a, outlet_a, Edge::from((0, 0)));
+    inner.add_edge(inlet_b, outlet_b, Edge::from((0, 0)));
+
+    // Outer graph.
+    let mut outer = petgraph::graph::DiGraph::new();
+    let push = outer.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let six = outer.add_node(Box::new(node_int(6)) as Box<_>);
+    let seven = outer.add_node(Box::new(node_int(7)) as Box<_>);
+    let graph = outer.add_node(Box::new(inner) as Box<_>);
+    let num_a = outer.add_node(Box::new(node_number()) as Box<_>);
+    let num_b = outer.add_node(Box::new(node_number()) as Box<_>);
+
+    outer.add_edge(push, six, Edge::from((0, 0)));
+    outer.add_edge(push, seven, Edge::from((0, 0)));
+    outer.add_edge(six, graph, Edge::from((0, 0)));
+    outer.add_edge(seven, graph, Edge::from((0, 1)));
+    outer.add_edge(graph, num_a, Edge::from((0, 0))); // outlet 0
+    outer.add_edge(graph, num_b, Edge::from((1, 0))); // outlet 1
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &outer);
+    let module = gantz_core::compile::module(&no_lookup, &outer, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &outer, &[], &mut vm);
+
+    for f in &module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
+    let ep = entrypoint::push(vec![push.index()], outer[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    let a = node::state::extract::<u32>(&vm, &[num_a.index()])
+        .expect("failed to extract num_a state")
+        .expect("num_a state was None");
+    let b = node::state::extract::<u32>(&vm, &[num_b.index()])
+        .expect("failed to extract num_b state")
+        .expect("num_b state was None");
+    assert_eq!(a, 6);
+    assert_eq!(b, 7);
+}

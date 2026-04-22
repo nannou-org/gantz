@@ -407,7 +407,7 @@ where
     // Construct the final expression based on number of outputs
     let outlet_values_expr = if outlet_values.len() > 1 {
         let ret_values = outlet_values.join(" ");
-        format!("(values {})", ret_values)
+        format!("(list {})", ret_values)
     } else if outlet_values.len() == 1 {
         outlet_values[0].clone()
     } else {
