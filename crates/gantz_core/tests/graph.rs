@@ -1029,3 +1029,62 @@ fn test_graph_multi_output_expr() {
     assert_eq!(a, 6);
     assert_eq!(b, 7);
 }
+
+// Test that nodes with 0 outputs (side-effect-only nodes like Log) work
+// correctly even when multiple appear in the same evaluation path.
+//
+// The graph:
+//
+//    ----------
+//    | push   |  (push_eval, 1 output)
+//    -+--------
+//     |\
+//     | \
+//    -+------  -+------
+//    |effect1|  |effect2|  (each: 1 input, 0 outputs)
+//    --------  ---------
+//
+// Both effect nodes end up in the same basic block. The first one
+// is NOT last in the block, so destructure_node_outputs_stmt is
+// called on it. With 0 outputs this must be a no-op, not an
+// invalid (define-values () node-X) referencing an undefined binding.
+#[test]
+fn test_graph_zero_output_leaf_nodes() {
+    /// A node with 1 input and 0 outputs (pure side-effect).
+    #[derive(Debug)]
+    struct Effect;
+
+    impl Node for Effect {
+        fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
+            1
+        }
+        fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+            let input = ctx.inputs()[0].as_deref().unwrap_or("'()");
+            node::parse_expr(&format!("(begin {input} '())"))
+        }
+    }
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let effect1 = g.add_node(Box::new(Effect) as Box<dyn DebugNode>);
+    let effect2 = g.add_node(Box::new(Effect) as Box<dyn DebugNode>);
+    g.add_edge(push, effect1, Edge::from((0, 0)));
+    g.add_edge(push, effect2, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+
+    for f in &module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
+    // Execute the push entrypoint - should not crash.
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+}

@@ -257,23 +257,30 @@ fn eval_stmt(
 }
 
 /// Create a statement that binds a var for each value in the node's outputs.
-fn destructure_node_outputs_stmt(n: node::Id, outputs: node::Conns) -> ExprKind {
+///
+/// Returns `None` when the node has no connected outputs.
+fn destructure_node_outputs_stmt(n: node::Id, outputs: node::Conns) -> Option<ExprKind> {
     // Collect the names of the outputs.
     let vars: Vec<_> = outputs
         .iter()
         .enumerate()
         .filter_map(|(ix, b)| b.then(|| node_output_var(n, ix)))
         .collect();
+    if vars.is_empty() {
+        return None;
+    }
     let outputs_var = node_outputs_var(n);
     let stmt = match vars.len() {
         1 => format!("(define {} {outputs_var})", vars.join(" ")),
         _ => format!("(define-values ({}) {outputs_var})", vars.join(" ")),
     };
-    Engine::emit_ast(&stmt)
-        .expect("failed to emit AST")
-        .into_iter()
-        .next()
-        .unwrap()
+    Some(
+        Engine::emit_ast(&stmt)
+            .expect("failed to emit AST")
+            .into_iter()
+            .next()
+            .unwrap(),
+    )
 }
 
 /// Create a statement that destructures the node
@@ -500,7 +507,7 @@ pub(crate) fn eval_fn_block_stmts(
         }
 
         // Destructure the node's outputs.
-        stmts.push(destructure_node_outputs_stmt(conf.id, conf.conns.outputs));
+        stmts.extend(destructure_node_outputs_stmt(conf.id, conf.conns.outputs));
         // For outputs connected to node inputs that have more than one incoming
         // edge, we create dedicated bindings for those inputs.
         stmts.extend(define_necessary_node_input_bindings(mg, conf.id));
@@ -633,7 +640,7 @@ fn flow_node_stmts(
     } else if edges.len() == 1 {
         let (_branch, dst) = edges.pop().unwrap();
         let conf = *block.last().unwrap();
-        stmts.push(destructure_node_outputs_stmt(conf.id, conf.conns.outputs));
+        stmts.extend(destructure_node_outputs_stmt(conf.id, conf.conns.outputs));
 
         // If the successor is the reconvergence point we're stopping at,
         // emit phi set statements and return.
@@ -685,7 +692,10 @@ fn flow_node_stmts(
         let mut expr = "'()".to_string();
         let mut sorted_edges = edges;
         while let Some((branch, dst)) = sorted_edges.pop() {
-            let mut branch_stmts = vec![destructure_node_outputs_stmt(conf.id, branch.conns)];
+            let mut branch_stmts: Vec<ExprKind> =
+                destructure_node_outputs_stmt(conf.id, branch.conns)
+                    .into_iter()
+                    .collect();
             branch_stmts.extend(define_branch_node_input_bindings(
                 mg,
                 conf.id,
@@ -765,11 +775,12 @@ fn flow_node_stmts(
             .map(|expr| format!("{expr}"))
             .collect::<Vec<_>>()
             .join(" ");
+        let destructure_str = destructure_node_outputs_stmt(conf.id, branch.conns)
+            .map(|e| format!("{e}"))
+            .unwrap_or_default();
         let dst_expr = format!(
             "(begin {} {} {} '())",
-            destructure_node_outputs_stmt(conf.id, branch.conns),
-            bindings_str,
-            dst_stmts_str,
+            destructure_str, bindings_str, dst_stmts_str,
         );
         expr = format!("(if (= {} {BRANCH_IX}) {dst_expr} {expr})", branch.ix);
     }
