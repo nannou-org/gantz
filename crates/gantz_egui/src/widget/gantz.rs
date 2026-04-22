@@ -754,9 +754,19 @@ where
             Pane::NodeInspector => {
                 // Use the focused head for the node inspector.
                 if let Some(fh) = access.heads().get(*focused_head).cloned() {
+                    let is_demo = matches!(
+                        &fh,
+                        gantz_ca::Head::Branch(name) if name.starts_with("demo-")
+                    );
+                    let immutable = gantz.base_immutable
+                        && matches!(
+                            &fh,
+                            gantz_ca::Head::Branch(name) if base_names.contains_key(name)
+                        )
+                        && !is_demo;
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
                     access.with_head_mut(&fh, |data| {
-                        node_inspector(gantz.env, data.graph, data.vm, head_state, ui);
+                        node_inspector(gantz.env, data.graph, data.vm, head_state, immutable, ui);
                     });
                 }
             }
@@ -1503,6 +1513,7 @@ fn node_inspector<N>(
     root: &mut gantz_core::node::graph::Graph<N>,
     vm: &mut Engine,
     head_state: &mut OpenHeadState,
+    immutable: bool,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<()>
 where
@@ -1536,7 +1547,7 @@ where
                             vm,
                             &mut head_state.scene.cmds,
                         );
-                        let resp = widget::NodeInspector::new(node, ctx).show(ui);
+                        let resp = widget::NodeInspector::new(node, ctx, immutable).show(ui);
                         if resp.label_response.clicked() {
                             let sel = &mut head_state.scene.interaction.selection.nodes;
                             if ui.input(|i| i.modifiers.command) {
