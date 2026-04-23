@@ -468,6 +468,78 @@ fn test_graph_branch_target_is_join() {
     );
 }
 
+/// Both branch outputs feed the same target input - phi_set_stmts must
+/// reference the correct output variable for each arm.
+///
+///   push_0 --\          /-- output 0 --\
+///              select --<               number
+///   push_1 --/          \-- output 1 --/
+#[test]
+fn test_graph_branch_both_outputs_same_target() {
+    #[derive(Debug)]
+    struct Select;
+
+    impl Node for Select {
+        fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
+            1
+        }
+        fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
+            2
+        }
+        fn branches(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+            vec![
+                node::EvalConf::Set([true, false].try_into().unwrap()),
+                node::EvalConf::Set([false, true].try_into().unwrap()),
+            ]
+        }
+        fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+            let x = ctx.inputs()[0].as_deref().expect("must have one input");
+            node::parse_expr(&format!("(if (equal? 0 {x}) (list 0 42) (list 1 99))"))
+        }
+    }
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let select = g.add_node(Box::new(Select) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+
+    g.add_edge(push_0, select, Edge::from((0, 0)));
+    g.add_edge(push_1, select, Edge::from((0, 0)));
+    // Both branch outputs go to number's single input.
+    g.add_edge(select, number, Edge::from((0, 0)));
+    g.add_edge(select, number, Edge::from((1, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    // Push 0 -> arm 0 -> number receives 42.
+    let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
+        .unwrap();
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("number was None");
+    assert_eq!(val, 42);
+
+    // Push 1 -> arm 1 -> number receives 99.
+    let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
+        .unwrap();
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("number was None");
+    assert_eq!(val, 99);
+}
+
 // Nested diamond: outer branch contains an inner branch, both with
 // distinct reconvergence points.
 //
@@ -1262,9 +1334,7 @@ fn test_graph_branch_divergent_terminal() {
         }
         fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
             let x = ctx.inputs()[0].as_deref().expect("must have one input");
-            node::parse_expr(&format!(
-                "(if (equal? 0 {x}) (list 0 42) (list 1 99))"
-            ))
+            node::parse_expr(&format!("(if (equal? 0 {x}) (list 0 42) (list 1 99))"))
         }
     }
 
@@ -1300,7 +1370,9 @@ fn test_graph_branch_divergent_terminal() {
         .expect("store_a was None");
     assert_eq!(val_a, 42);
     // store_b should be untouched (still void/initial).
-    let val_b = node::state::extract::<u32>(&vm, &[store_b.index()]).ok().flatten();
+    let val_b = node::state::extract::<u32>(&vm, &[store_b.index()])
+        .ok()
+        .flatten();
     assert!(val_b.is_none(), "store_b should not have been evaluated");
 
     // Push 1 -> arm 1 -> store_b receives 99, store_a unchanged.

@@ -8,7 +8,7 @@ use super::{
 use crate::node;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt, ops,
 };
 
@@ -67,14 +67,52 @@ pub struct Branch {
     pub conns: node::Conns,
 }
 
-/// A control flow graph describing indifidual node function call dependency.
+/// A control flow graph describing individual node function call dependency.
 ///
 /// Each `NodeConf` node represents a node function call statement that should
 /// be made.
 ///
 /// This is derived from the `Meta` graph and is used to construct the
 /// `FlowGraph` via edge contraction.
-pub type NodeConfGraph = petgraph::graphmap::DiGraphMap<NodeConf, Branch>;
+///
+/// Uses a simple edge list rather than `DiGraphMap` because `DiGraphMap` only
+/// supports one edge per (source, target) pair. When multiple branch outputs
+/// feed the same target `NodeConf`, all branch edges must be preserved.
+struct NodeConfGraph {
+    nodes: BTreeSet<NodeConf>,
+    edges: BTreeSet<(NodeConf, NodeConf, Branch)>,
+}
+
+impl NodeConfGraph {
+    fn new() -> Self {
+        Self {
+            nodes: BTreeSet::new(),
+            edges: BTreeSet::new(),
+        }
+    }
+
+    fn add_node(&mut self, conf: NodeConf) {
+        self.nodes.insert(conf);
+    }
+
+    fn add_edge(&mut self, a: NodeConf, b: NodeConf, branch: Branch) {
+        self.nodes.insert(a);
+        self.nodes.insert(b);
+        self.edges.insert((a, b, branch));
+    }
+
+    fn all_edges(&self) -> impl Iterator<Item = (NodeConf, NodeConf, &Branch)> {
+        self.edges.iter().map(|(a, b, w)| (*a, *b, w))
+    }
+
+    fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+}
 
 /// A node within the control flow graph.
 ///
@@ -228,7 +266,9 @@ fn flow_graph_edge_contraction(g: &mut FlowGraph) {
     // Maintain a stack of all edges that require reducing.
     let mut edges: Vec<_> = g.edge_references().map(|e_ref| e_ref.id()).collect();
     while let Some(e) = edges.pop() {
-        let (src, dst) = g.edge_endpoints(e).unwrap();
+        let Some((src, dst)) = g.edge_endpoints(e) else {
+            continue; // Edge was removed when its node was merged.
+        };
 
         // Check whether or not this is the only edge between src and dst.
         let mergeable = g.edges_directed(src, petgraph::Outgoing).take(2).count() == 1
@@ -363,7 +403,9 @@ fn node_conf_graph(
                 // block with all connected outputs in the config, then the
                 // *edges* should have the branch subsets.
                 let sub_ncg = node_conf_graph(meta, &sub_mg, Some((conns, branch)))?;
-                g.extend(sub_ncg.all_edges().map(|(a, b, &w)| (a, b, w)));
+                for (a, b, &w) in sub_ncg.all_edges() {
+                    g.add_edge(a, b, w);
+                }
             }
 
             // We've handled the branches in the recursive cases - we're done.

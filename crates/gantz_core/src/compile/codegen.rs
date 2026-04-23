@@ -446,17 +446,29 @@ fn declare_phi_vars(phi_params: &[(usize, String)]) -> Vec<ExprKind> {
 
 /// Generate `(set! name value)` statements to assign phi variables from a
 /// predecessor node's outputs.
+///
+/// When `active_outputs` is `Some`, only edges whose output index is active
+/// in the given conns are considered. This is needed when the predecessor is
+/// a branch node with multiple outputs feeding the same target input - each
+/// arm must reference only its own active output.
 fn phi_set_stmts(
     mg: &MetaGraph,
     pred_last_node: node::Id,
     join_node_id: node::Id,
     phi_params: &[(usize, String)],
+    active_outputs: Option<node::Conns>,
 ) -> Vec<ExprKind> {
-    // Collect all edges from the predecessor to the join node.
+    // Collect edges from the predecessor to the join node, optionally
+    // filtered to the branch arm's active outputs.
     let edges: Vec<_> = mg
         .edges_directed(join_node_id, petgraph::Incoming)
         .filter(|e| e.source() == pred_last_node)
         .flat_map(|e| e.weight().clone())
+        .filter(|(edge, _kind)| {
+            active_outputs.map_or(true, |conns| {
+                conns.get(edge.output.0 as usize).unwrap_or(false)
+            })
+        })
         .collect();
     phi_params
         .iter()
@@ -667,7 +679,7 @@ fn flow_node_stmts(
         if stop_at == Some(dst) {
             let join_first_id = fg[dst].first().expect("join block must not be empty").id;
             if let Some(params) = phi_params.get(&dst) {
-                stmts.extend(phi_set_stmts(mg, conf.id, join_first_id, params));
+                stmts.extend(phi_set_stmts(mg, conf.id, join_first_id, params, None));
             }
             return Ok(stmts);
         }
@@ -724,7 +736,13 @@ fn flow_node_stmts(
                     .expect("join block must not be empty")
                     .id;
                 if let Some(params) = phi_params.get(&join_ix) {
-                    branch_stmts.extend(phi_set_stmts(mg, conf.id, join_first_id, params));
+                    branch_stmts.extend(phi_set_stmts(
+                        mg,
+                        conf.id,
+                        join_first_id,
+                        params,
+                        Some(branch.conns),
+                    ));
                 }
             } else {
                 // Recurse with stop_at = join_ix so it stops at the join.
