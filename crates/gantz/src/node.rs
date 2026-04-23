@@ -15,6 +15,8 @@ dyn_hash::hash_trait_object!(Node);
 #[typetag::serde]
 impl Node for gantz_core::node::Apply {}
 #[typetag::serde]
+impl Node for gantz_core::node::Branch {}
+#[typetag::serde]
 impl Node for gantz_core::node::Expr {}
 #[typetag::serde]
 impl Node for gantz_core::node::GraphNode<Box<dyn Node>> {}
