@@ -1264,9 +1264,19 @@ where
     let level = bevy_log::tracing_subscriber::filter::LevelFilter::current();
 
     // Build and show the Gantz widget.
+    let panel_id = egui::Id::new((ctx.viewport_id(), "central_panel"));
+    let mut panel_ui = egui::Ui::new(
+        ctx.clone(),
+        panel_id,
+        egui::UiBuilder::new()
+            .layer_id(egui::LayerId::background())
+            .max_rect(ctx.content_rect()),
+    );
+    panel_ui.set_clip_rect(ctx.content_rect());
+
     let response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
-        .show(ctx, |ui| {
+        .show_inside(&mut panel_ui, |ui| {
             gantz_egui::widget::Gantz::new(&node_reg, &base_names.0)
                 .base_immutable(base_immutable.0)
                 .demos(&demos.0)

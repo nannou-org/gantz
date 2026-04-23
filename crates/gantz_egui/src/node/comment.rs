@@ -142,7 +142,7 @@ impl NodeUi for Comment {
                                 egui::TextEdit::multiline(&mut state.text)
                                     .desired_rows(1)
                                     .hint_text("Add comment...")
-                                    .frame(false)
+                                    .frame(egui::Frame::NONE)
                                     .desired_width(f32::INFINITY),
                             );
 
