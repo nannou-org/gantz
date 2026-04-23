@@ -377,13 +377,94 @@ fn define_node_input_binding(
 
 /// For the given node's outputs that connect to node inputs that have more than
 /// one incoming edge, create dedicated bindings for those inputs.
+///
+/// Excludes any `(target_node, input_index)` pairs in `exclude` - these are
+/// handled elsewhere (e.g. by list bindings for unconditional multi-edge
+/// inputs).
 fn define_necessary_node_input_bindings(
     g: &MetaGraph,
     n: node::Id,
+    exclude: &HashSet<(node::Id, usize)>,
 ) -> impl Iterator<Item = ExprKind> {
     node_outputs_that_need_bindings(g, n)
         .into_iter()
+        .filter(move |(_, (dst_id, dst_input))| !exclude.contains(&(*dst_id, dst_input.0 as usize)))
         .map(move |(output, dst)| define_node_input_binding((n, output), dst))
+}
+
+/// For each node in the block, collect inputs that have more than one
+/// unconditional incoming edge from other nodes within the same block.
+///
+/// Returns `target_node -> input_ix -> [(source_node, source_output)]`,
+/// ordered by source position in the block (topological order).
+fn collect_block_multi_edge_inputs(
+    mg: &MetaGraph,
+    block: &Block,
+    reachable: &HashSet<node::Id>,
+) -> BTreeMap<node::Id, BTreeMap<usize, Vec<(node::Id, node::Output)>>> {
+    // Build a set of node IDs present in this block for fast lookup,
+    // and a position map for deterministic ordering.
+    let block_ids: HashSet<node::Id> = block.iter().map(|conf| conf.id).collect();
+    let block_pos: HashMap<node::Id, usize> = block
+        .iter()
+        .enumerate()
+        .map(|(i, conf)| (conf.id, i))
+        .collect();
+
+    let mut result: BTreeMap<node::Id, BTreeMap<usize, Vec<(node::Id, node::Output)>>> =
+        BTreeMap::new();
+
+    for conf in block.iter() {
+        let n = conf.id;
+        // For each input index, collect all in-block, reachable sources.
+        let mut input_sources: BTreeMap<usize, Vec<(node::Id, node::Output)>> = BTreeMap::new();
+        for e_ref in mg.edges_directed(n, petgraph::Incoming) {
+            let src = e_ref.source();
+            if !block_ids.contains(&src) || !reachable.contains(&src) {
+                continue;
+            }
+            for (edge, _kind) in e_ref.weight() {
+                let input_ix = edge.input.0 as usize;
+                input_sources
+                    .entry(input_ix)
+                    .or_default()
+                    .push((src, edge.output));
+            }
+        }
+        // Keep only inputs with >1 source (true multi-edge).
+        input_sources.retain(|_, sources| sources.len() > 1);
+        // Sort sources by their block position for deterministic ordering.
+        for sources in input_sources.values_mut() {
+            sources.sort_by_key(|(src, _)| block_pos[src]);
+        }
+        if !input_sources.is_empty() {
+            result.insert(n, input_sources);
+        }
+    }
+    result
+}
+
+/// Generate a `(define node-X-iY (list node-A-oZ node-B-oW ...))` statement
+/// for a multi-edge input.
+fn define_list_input_binding(
+    dst: node::Id,
+    dst_in_ix: usize,
+    sources: &[(node::Id, node::Output)],
+) -> ExprKind {
+    let elements: Vec<String> = sources
+        .iter()
+        .map(|(src, out)| node_output_var(*src, out.0 as usize))
+        .collect();
+    let s = format!(
+        "(define {} (list {}))",
+        node_input_var(dst, dst_in_ix),
+        elements.join(" "),
+    );
+    Engine::emit_ast(&s)
+        .expect("failed to emit AST")
+        .into_iter()
+        .next()
+        .unwrap()
 }
 
 /// Like `define_necessary_node_input_bindings`, but filtered to only the
@@ -486,9 +567,28 @@ pub(crate) fn eval_fn_block_stmts(
     reachable: &HashSet<node::Id>,
     block: &Block,
 ) -> Result<Vec<ExprKind>, CodegenError> {
+    // Pre-compute unconditional multi-edge inputs within this block.
+    let multi_edge = collect_block_multi_edge_inputs(mg, block, reachable);
+
+    // Build the set of (target, input_ix) pairs handled by list bindings,
+    // so that `define_necessary_node_input_bindings` can skip them.
+    let handled: HashSet<(node::Id, usize)> = multi_edge
+        .iter()
+        .flat_map(|(&dst, inputs)| inputs.keys().map(move |&ix| (dst, ix)))
+        .collect();
+
     let mut stmts = Vec::new();
     let mut iter = block.0.iter().peekable();
     while let Some(conf) = iter.next() {
+        // Before evaluating this node, emit list bindings for any of its
+        // unconditional multi-edge inputs. All sources appear earlier in
+        // the block (topological order), so their output vars are available.
+        if let Some(inputs) = multi_edge.get(&conf.id) {
+            for (&input_ix, sources) in inputs {
+                stmts.push(define_list_input_binding(conf.id, input_ix, sources));
+            }
+        }
+
         let node_path: Vec<_> = path.iter().copied().chain(Some(conf.id)).collect();
         let stateful = stateful.contains(&conf.id);
         let NodeConns { inputs, outputs } = conf.conns;
@@ -509,8 +609,9 @@ pub(crate) fn eval_fn_block_stmts(
         // Destructure the node's outputs.
         stmts.extend(destructure_node_outputs_stmt(conf.id, conf.conns.outputs));
         // For outputs connected to node inputs that have more than one incoming
-        // edge, we create dedicated bindings for those inputs.
-        stmts.extend(define_necessary_node_input_bindings(mg, conf.id));
+        // edge, we create dedicated bindings for those inputs. Skip any that
+        // are already handled by list bindings above.
+        stmts.extend(define_necessary_node_input_bindings(mg, conf.id, &handled));
     }
     Ok(stmts)
 }
@@ -653,7 +754,11 @@ fn flow_node_stmts(
         }
 
         // Otherwise continue normally.
-        stmts.extend(define_necessary_node_input_bindings(mg, conf.id));
+        stmts.extend(define_necessary_node_input_bindings(
+            mg,
+            conf.id,
+            &HashSet::new(),
+        ));
         stmts.extend(flow_node_stmts(
             path, dst, mg, stateful, inlets, outlets, reachable, fg, post_dom, phi_params,
             active_phi, stop_at,

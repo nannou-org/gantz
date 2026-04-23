@@ -1156,3 +1156,80 @@ fn test_graph_branch_node() {
         .expect("was None");
     assert_eq!(val, 7);
 }
+
+// Test that multiple unconditional edges to the same input produce a list.
+//
+//    --------
+//    | push |
+//    -+------
+//     |
+//     |----------
+//     |         |
+//    -+------- -+------
+//    | three | | four |
+//    -+------- -+------
+//     |         |
+//     |---------- (both connect to sum.i0)
+//     |
+//    -+-------
+//    |  sum  |  expr: (apply + $x) - sums all list elements
+//    -+-------
+//     |
+//    -+-------
+//    | store |
+//    ---------
+//
+// Both `three` and `four` connect unconditionally to `sum`'s single input.
+// With multi-edge list bindings, `sum` receives `(list 3 4)` and
+// `(apply + (list 3 4))` = 7.
+#[test]
+fn test_graph_multi_edge_input_list() {
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let three = g.add_node(Box::new(node_int(3)) as Box<_>);
+    let four = g.add_node(Box::new(node_int(4)) as Box<_>);
+    // Sum all elements in the input list.
+    let sum = g.add_node(Box::new(node::expr("(apply + $x)").unwrap()) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+
+    g.add_edge(push, three, Edge::from((0, 0)));
+    g.add_edge(push, four, Edge::from((0, 0)));
+    // Both connect to sum's input 0.
+    g.add_edge(three, sum, Edge::from((0, 0)));
+    g.add_edge(four, sum, Edge::from((0, 0)));
+    g.add_edge(sum, store, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    // Verify the generated code contains a list binding.
+    let module_str = module
+        .iter()
+        .map(|e| format!("{e}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        module_str.contains("(list"),
+        "expected a (list ...) binding for multi-edge input\n{module_str}",
+    );
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    let val = node::state::extract::<u32>(&vm, &[store.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    // 3 + 4 = 7 (not just 4 from last-write-wins).
+    assert_eq!(val, 7);
+}
