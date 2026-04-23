@@ -1233,3 +1233,271 @@ fn test_graph_multi_edge_input_list() {
     // 3 + 4 = 7 (not just 4 from last-write-wins).
     assert_eq!(val, 7);
 }
+
+/// Test branching to independent terminal nodes (no reconvergence).
+///
+/// Exercises the code-duplication fallback in `flow_node_stmts` directly,
+/// with `in_scope` cloned per arm and no join or phi variables.
+///
+///   push_0 (emits 0) ---\              /--- store_a (stateful leaf)
+///                         select -----<
+///   push_1 (emits 1) ---/              \--- store_b (stateful leaf)
+#[test]
+fn test_graph_branch_divergent_terminal() {
+    #[derive(Debug)]
+    struct Select;
+
+    impl Node for Select {
+        fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
+            1
+        }
+        fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
+            2
+        }
+        fn branches(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+            vec![
+                node::EvalConf::Set([true, false].try_into().unwrap()),
+                node::EvalConf::Set([false, true].try_into().unwrap()),
+            ]
+        }
+        fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+            let x = ctx.inputs()[0].as_deref().expect("must have one input");
+            node::parse_expr(&format!(
+                "(if (equal? 0 {x}) (list 0 42) (list 1 99))"
+            ))
+        }
+    }
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let select = g.add_node(Box::new(Select) as Box<_>);
+    let store_a = g.add_node(Box::new(node_number()) as Box<_>);
+    let store_b = g.add_node(Box::new(node_number()) as Box<_>);
+
+    g.add_edge(push_0, select, Edge::from((0, 0)));
+    g.add_edge(push_1, select, Edge::from((0, 0)));
+    g.add_edge(select, store_a, Edge::from((0, 0)));
+    g.add_edge(select, store_b, Edge::from((1, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    // Push 0 -> arm 0 -> store_a receives 42.
+    let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
+        .unwrap();
+    let val_a = node::state::extract::<u32>(&vm, &[store_a.index()])
+        .expect("failed to extract")
+        .expect("store_a was None");
+    assert_eq!(val_a, 42);
+    // store_b should be untouched (still void/initial).
+    let val_b = node::state::extract::<u32>(&vm, &[store_b.index()]).ok().flatten();
+    assert!(val_b.is_none(), "store_b should not have been evaluated");
+
+    // Push 1 -> arm 1 -> store_b receives 99, store_a unchanged.
+    let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
+        .unwrap();
+    let val_a = node::state::extract::<u32>(&vm, &[store_a.index()])
+        .expect("failed to extract")
+        .expect("store_a was None");
+    assert_eq!(val_a, 42, "store_a should be unchanged");
+    let val_b = node::state::extract::<u32>(&vm, &[store_b.index()])
+        .expect("failed to extract")
+        .expect("store_b was None");
+    assert_eq!(val_b, 99);
+}
+
+/// Test multi-edge list binding within a branch arm.
+///
+/// Inside arm 0, two nodes (`three` and `four`) both feed `sum`'s single
+/// input, which should produce a `(list ...)` binding using only in-scope
+/// sources. Arm 1 takes a separate path through `eight`.
+///
+///   push_0 ---\              /--arm0--> three \
+///               select -----<            four  +--> sum --\
+///   push_1 ---/              \--arm1--> eight ------------ number
+#[test]
+fn test_graph_multi_edge_in_branch_arm() {
+    #[derive(Debug)]
+    struct Select;
+
+    impl Node for Select {
+        fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
+            1
+        }
+        fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
+            2
+        }
+        fn branches(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+            vec![
+                node::EvalConf::Set([true, false].try_into().unwrap()),
+                node::EvalConf::Set([false, true].try_into().unwrap()),
+            ]
+        }
+        fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+            let x = ctx.inputs()[0].as_deref().expect("must have one input");
+            node::parse_expr(&format!(
+                "(if (equal? 0 {x}) (list 0 '() '()) (list 1 '() '()))"
+            ))
+        }
+    }
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let select = g.add_node(Box::new(Select) as Box<_>);
+    let three = g.add_node(Box::new(node_int(3)) as Box<_>);
+    let four = g.add_node(Box::new(node_int(4)) as Box<_>);
+    let sum = g.add_node(Box::new(node::expr("(apply + $x)").unwrap()) as Box<_>);
+    let eight = g.add_node(Box::new(node_int(8)) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+
+    g.add_edge(push_0, select, Edge::from((0, 0)));
+    g.add_edge(push_1, select, Edge::from((0, 0)));
+    // Arm 0: select output 0 fans out to three and four.
+    g.add_edge(select, three, Edge::from((0, 0)));
+    g.add_edge(select, four, Edge::from((0, 0)));
+    // Both feed sum's input 0 (multi-edge list within the arm).
+    g.add_edge(three, sum, Edge::from((0, 0)));
+    g.add_edge(four, sum, Edge::from((0, 0)));
+    // Arm 1: select output 1 to eight.
+    g.add_edge(select, eight, Edge::from((1, 0)));
+    // Both arms converge at number.
+    g.add_edge(sum, number, Edge::from((0, 0)));
+    g.add_edge(eight, number, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    // Push 0 -> arm 0 -> sum receives (list 3 4) -> (apply + ...) = 7 -> number stores 7.
+    let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
+        .unwrap();
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 7);
+
+    // Push 1 -> arm 1 -> eight = 8 -> number stores 8.
+    let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
+        .unwrap();
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 8);
+}
+
+/// Test a three-way branch with reconvergence.
+///
+/// All existing branch tests use binary (2-arm) branches. This exercises
+/// the generality of the branch loop and phi handling with 3 arms.
+///
+///   push_0 ---\                 /--arm0--> six   \
+///   push_1 ----+-- select3 ---<---arm1--> seven  +--> number
+///   push_2 ---/                 \--arm2--> eight /
+#[test]
+fn test_graph_three_way_branch() {
+    #[derive(Debug)]
+    struct Select3;
+
+    impl Node for Select3 {
+        fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
+            1
+        }
+        fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
+            3
+        }
+        fn branches(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+            vec![
+                node::EvalConf::Set([true, false, false].try_into().unwrap()),
+                node::EvalConf::Set([false, true, false].try_into().unwrap()),
+                node::EvalConf::Set([false, false, true].try_into().unwrap()),
+            ]
+        }
+        fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+            let x = ctx.inputs()[0].as_deref().expect("must have one input");
+            node::parse_expr(&format!(
+                "(if (equal? 0 {x}) (list 0 '() '() '()) \
+                   (if (equal? 1 {x}) (list 1 '() '() '()) \
+                     (list 2 '() '() '())))"
+            ))
+        }
+    }
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let push_2 = g.add_node(Box::new(node_int(2).with_push_eval()) as Box<_>);
+    let select = g.add_node(Box::new(Select3) as Box<_>);
+    let six = g.add_node(Box::new(node_int(6)) as Box<_>);
+    let seven = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let eight = g.add_node(Box::new(node_int(8)) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+
+    g.add_edge(push_0, select, Edge::from((0, 0)));
+    g.add_edge(push_1, select, Edge::from((0, 0)));
+    g.add_edge(push_2, select, Edge::from((0, 0)));
+    g.add_edge(select, six, Edge::from((0, 0)));
+    g.add_edge(select, seven, Edge::from((1, 0)));
+    g.add_edge(select, eight, Edge::from((2, 0)));
+    g.add_edge(six, number, Edge::from((0, 0)));
+    g.add_edge(seven, number, Edge::from((0, 0)));
+    g.add_edge(eight, number, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    // Push 0 -> arm 0 -> six -> number stores 6.
+    let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
+        .unwrap();
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 6);
+
+    // Push 1 -> arm 1 -> seven -> number stores 7.
+    let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
+        .unwrap();
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 7);
+
+    // Push 2 -> arm 2 -> eight -> number stores 8.
+    let ep_2 = entrypoint::push(vec![push_2.index()], g[push_2].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_2.id()), vec![])
+        .unwrap();
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 8);
+}
