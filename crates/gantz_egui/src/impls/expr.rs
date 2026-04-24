@@ -49,8 +49,7 @@ impl<'a> egui::Widget for ExprEdit<'a> {
         let font_sel = egui::FontSelection::from(egui::TextStyle::Monospace);
         let font_id = font_sel.resolve(ui.style());
         ui.fonts_mut(|fonts| {
-            for line in state.code.split('\n').clone() {
-                // Use the layout_no_wrap function to get width without wrapping
+            for line in state.code.split('\n') {
                 let galley = fonts.layout_no_wrap(
                     line.to_string(),
                     font_id.clone(),
