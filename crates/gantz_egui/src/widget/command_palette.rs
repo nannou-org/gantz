@@ -17,6 +17,24 @@ pub trait Command: Copy + Sized {
     }
 }
 
+/// The egui responses from the command palette's content widgets.
+struct ContentResponses {
+    /// The query text input.
+    text_input: egui::Response,
+    /// Union of all alternative item responses, if any were shown.
+    items: Option<egui::Response>,
+}
+
+impl ContentResponses {
+    /// Fold all content responses into a single combined response.
+    fn combined(&self) -> egui::Response {
+        match &self.items {
+            Some(items) => self.text_input.union(items.clone()),
+            None => self.text_input.clone(),
+        }
+    }
+}
+
 #[derive(Default, serde::Deserialize, serde::Serialize)]
 pub struct CommandPalette {
     visible: bool,
@@ -53,7 +71,7 @@ impl CommandPalette {
         let width = 300.0;
         let max_height = 320.0.at_most(content_rect.height());
 
-        egui::Window::new("Command Palette")
+        let window_response = egui::Window::new("Command Palette")
             .fixed_pos(content_rect.center() - 0.5 * max_height * egui::Vec2::Y)
             .fixed_size([width, max_height])
             .pivot(egui::Align2::CENTER_TOP)
@@ -67,12 +85,30 @@ impl CommandPalette {
                 }
                 .show(ui, |ui| self.window_content_ui(ui, &commands))
                 .inner
-            })?
-            .inner?
+            });
+
+        // Close on click outside the palette.
+        if let Some(ref resp) = window_response {
+            if let Some((_, content)) = &resp.inner {
+                let combined = resp.response.union(content.combined());
+                let interacted = combined.hovered() || combined.is_pointer_button_down_on();
+                if egui_ctx.input(|i| i.pointer.any_pressed()) && !interacted {
+                    self.visible = false;
+                    self.query.clear();
+                    return None;
+                }
+            }
+        }
+
+        let (selected, _) = window_response?.inner?;
+        selected
     }
 
-    #[must_use = "Returns the command that was selected"]
-    fn window_content_ui<T: Command>(&mut self, ui: &mut egui::Ui, commands: &[T]) -> Option<T> {
+    fn window_content_ui<T: Command>(
+        &mut self,
+        ui: &mut egui::Ui,
+        commands: &[T],
+    ) -> (Option<T>, ContentResponses) {
         // Check _before_ we add the `TextEdit`, so it doesn't steal it.
         let enter_pressed = ui.input_mut(|i| i.consume_key(Default::default(), Key::Enter));
 
@@ -88,28 +124,32 @@ impl CommandPalette {
             scroll_to_selected_alternative = true;
         }
 
-        let selected_command = egui::ScrollArea::vertical()
+        let (selected_command, items_response) = egui::ScrollArea::vertical()
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 self.alternatives_ui(ui, commands, enter_pressed, scroll_to_selected_alternative)
             })
             .inner;
 
+        let content_responses = ContentResponses {
+            text_input: text_response,
+            items: items_response,
+        };
+
         if selected_command.is_some() {
             *self = Self::new();
         }
 
-        selected_command
+        (selected_command, content_responses)
     }
 
-    #[must_use = "Returns the command that was selected"]
     fn alternatives_ui<T: Command>(
         &mut self,
         ui: &mut egui::Ui,
         commands: &[T],
         enter_pressed: bool,
         mut scroll_to_selected_alternative: bool,
-    ) -> Option<T> {
+    ) -> (Option<T>, Option<egui::Response>) {
         scroll_to_selected_alternative |= ui.input(|i| i.key_pressed(Key::ArrowUp));
         scroll_to_selected_alternative |= ui.input(|i| i.key_pressed(Key::ArrowDown));
 
@@ -120,6 +160,7 @@ impl CommandPalette {
 
         let mut num_alternatives: usize = 0;
         let mut selected_command = None;
+        let mut items_response: Option<egui::Response> = None;
 
         let matches = commands_that_match(&query, commands);
 
@@ -140,6 +181,12 @@ impl CommandPalette {
 
             let selected = i == self.selected_alternative;
             let style = ui.style().interact_selectable(&response, selected);
+
+            // Collect for hover merging (response not used after this point).
+            items_response = Some(match items_response.take() {
+                Some(prev) => prev.union(response),
+                None => response,
+            });
 
             if selected {
                 ui.painter()
@@ -198,7 +245,7 @@ impl CommandPalette {
             .selected_alternative
             .clamp(0, num_alternatives.saturating_sub(1));
 
-        selected_command
+        (selected_command, items_response)
     }
 }
 
