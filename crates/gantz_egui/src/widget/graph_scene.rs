@@ -317,6 +317,7 @@ where
             .inputs(inputs)
             .outputs(outputs)
             .flow(node.flow(registry))
+            .max_width(f32::INFINITY)
             .show(nctx, ui, |nui_ctx| {
                 path.push(n_ix);
 

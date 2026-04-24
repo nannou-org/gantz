@@ -49,7 +49,7 @@ impl<'a> egui::Widget for BranchEdit<'a> {
         let font_sel = egui::FontSelection::from(egui::TextStyle::Monospace);
         let font_id = font_sel.resolve(ui.style());
         ui.fonts_mut(|fonts| {
-            for line in state.code.split('\n').clone() {
+            for line in state.code.split('\n') {
                 let galley = fonts.layout_no_wrap(
                     line.to_string(),
                     font_id.clone(),
