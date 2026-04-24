@@ -748,3 +748,82 @@ fn test_graph_nested_push_through_outlet_deep() {
         .expect("number state was None");
     assert_eq!(val, 99);
 }
+
+// Test that `default_entrypoints` discovers push eval nodes inside nested
+// graphs. This mirrors the real-world scenario of a FrameBang node inside a
+// nested graph placed in a top-level graph via NamedRef.
+//
+// INNER GRAPH:
+//    push -> int(42) -> outlet
+//
+// OUTER GRAPH:
+//    inner_graph -> number
+//
+// `default_entrypoints` on the outer graph should discover the push node
+// inside the inner graph and create an entrypoint with path [graph_a, push].
+#[test]
+fn test_default_entrypoints_discovers_nested_push() {
+    // Inner graph: push -> int(42) -> outlet
+    let mut inner = GraphNode::default();
+    let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let forty_two = inner.add_node(Box::new(node_int(42)) as Box<_>);
+    let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    inner.add_edge(push, forty_two, Edge::from((0, 0)));
+    inner.add_edge(forty_two, outlet, Edge::from((0, 0)));
+
+    // Outer graph: inner -> number
+    let mut outer = petgraph::graph::DiGraph::new();
+    let graph_a = outer.add_node(Box::new(inner) as Box<dyn DebugNode>);
+    let number = outer.add_node(Box::new(node_number()) as Box<_>);
+    outer.add_edge(graph_a, number, Edge::from((0, 0)));
+
+    // default_entrypoints should find the nested push node.
+    let eps = default_entrypoints(&no_lookup, &outer);
+    assert!(
+        !eps.is_empty(),
+        "default_entrypoints should discover the nested push eval node"
+    );
+
+    // There should be an entrypoint with path [graph_a, push].
+    let has_nested_push = eps.iter().any(|ep| {
+        ep.0.iter()
+            .any(|src| src.path == vec![graph_a.index(), push.index()])
+    });
+    assert!(
+        has_nested_push,
+        "expected entrypoint at path [{}, {}], found: {:?}",
+        graph_a.index(),
+        push.index(),
+        eps.iter()
+            .flat_map(|ep| ep.0.iter().map(|s| &s.path))
+            .collect::<Vec<_>>()
+    );
+
+    // The generated module should include the entry fn for this entrypoint,
+    // and it should work end-to-end (value 42 flows through outlet to number).
+    let module = gantz_core::compile::module(&no_lookup, &outer, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &outer, &[], &mut vm);
+
+    for f in &module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
+    // Find and call the nested push entrypoint.
+    let nested_ep = eps
+        .iter()
+        .find(|ep| {
+            ep.0.iter()
+                .any(|src| src.path == vec![graph_a.index(), push.index()])
+        })
+        .unwrap();
+    vm.call_function_by_name_with_args(&entry_fn_name(&nested_ep.id()), vec![])
+        .unwrap();
+
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract number state")
+        .expect("number state was None");
+    assert_eq!(val, 42);
+}

@@ -3,9 +3,10 @@
 use crate::{
     Edge,
     node::{self, Node},
+    visit,
 };
 use gantz_ca::{self as ca, CaHash};
-use petgraph::visit::{Data, IntoNodeReferences, NodeIndexable, NodeRef};
+use petgraph::visit::{Data, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, Visitable};
 use std::{collections::BTreeSet, fmt};
 
 /// Whether evaluation is pushed from or pulled to a node.
@@ -104,40 +105,52 @@ pub fn pull(path: Vec<node::Id>, n_inputs: u8) -> Entrypoint {
     from_source(pull_source(path, n_inputs))
 }
 
-/// Default planner: one singleton entrypoint per push/pull eval node.
-///
-/// Resolves each node's `EvalConf` to concrete `Conns` using the node's
-/// output/input count.
-pub fn default_entrypoints<G>(get_node: node::GetNode<'_>, g: G) -> Vec<Entrypoint>
-where
-    G: Data<EdgeWeight = Edge> + IntoNodeReferences + NodeIndexable,
-    G::NodeWeight: Node,
-{
-    let ctx = node::MetaCtx::new(get_node);
-    let mut eps = Vec::new();
-    for n_ref in g.node_references() {
-        let id = g.to_index(n_ref.id());
-        let node = n_ref.weight();
-        let n_outputs = node.n_outputs(ctx);
-        for conf in node.push_eval(ctx) {
+/// Visitor that collects entrypoints from all nodes in a graph tree.
+struct EntrypointCollector<'a> {
+    get_node: node::GetNode<'a>,
+    eps: Vec<Entrypoint>,
+}
+
+impl visit::Visitor for EntrypointCollector<'_> {
+    fn visit_pre(&mut self, ctx: visit::Ctx<'_, '_>, node: &dyn Node) {
+        let meta_ctx = node::MetaCtx::new(self.get_node);
+        let path = ctx.path().to_vec();
+        let n_outputs = node.n_outputs(meta_ctx);
+        for conf in node.push_eval(meta_ctx) {
             let conns = super::meta::conns_from_eval_conf(&conf, n_outputs)
                 .expect("push_eval conf exceeds output count");
-            eps.push(from_source(EvalSource {
-                path: vec![id],
+            self.eps.push(from_source(EvalSource {
+                path: path.clone(),
                 kind: EvalKind::Push,
                 conns,
             }));
         }
-        let n_inputs = node.n_inputs(ctx);
-        for conf in node.pull_eval(ctx) {
+        let n_inputs = node.n_inputs(meta_ctx);
+        for conf in node.pull_eval(meta_ctx) {
             let conns = super::meta::conns_from_eval_conf(&conf, n_inputs)
                 .expect("pull_eval conf exceeds input count");
-            eps.push(from_source(EvalSource {
-                path: vec![id],
+            self.eps.push(from_source(EvalSource {
+                path: path.clone(),
                 kind: EvalKind::Pull,
                 conns,
             }));
         }
     }
-    eps
+}
+
+/// Default planner: one singleton entrypoint per push/pull eval node.
+///
+/// Uses the visitor pattern to recurse into nested and referenced graphs,
+/// discovering entrypoints at all nesting levels.
+pub fn default_entrypoints<G>(get_node: node::GetNode<'_>, g: G) -> Vec<Entrypoint>
+where
+    G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
+    G::NodeWeight: Node,
+{
+    let mut collector = EntrypointCollector {
+        get_node,
+        eps: vec![],
+    };
+    crate::graph::visit(get_node, g, &[], &mut collector);
+    collector.eps
 }
