@@ -370,10 +370,13 @@ where
             .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
     )
     .map_err(|e| node::ExprError::custom(e))?;
+    let branching: std::collections::BTreeMap<node::Id, usize> =
+        meta.branches.iter().map(|(&id, v)| (id, v.len())).collect();
     let stmts = compile::entry_fn_body(
         path,
         &meta.graph,
         &meta.stateful,
+        &branching,
         &meta.inlets,
         &meta.outlets,
         &flow_graph,

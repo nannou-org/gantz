@@ -225,8 +225,9 @@ pub fn flow_graph(
     let order: Vec<_> = super::eval_order(&meta.graph, push, pull).collect();
     let included: HashSet<_> = order.iter().copied().collect();
     let mg = reachable_subgraph(&meta.graph, &included);
+    let branching: BTreeSet<node::Id> = meta.branches.keys().copied().collect();
     let conf_graph = node_conf_graph(meta, &mg, None)?;
-    Ok(flow_graph_from_conf_graph(&conf_graph))
+    Ok(flow_graph_from_conf_graph(&conf_graph, &branching))
 }
 
 /// Filter unreachable nodes from the given metagraph.
@@ -239,7 +240,7 @@ fn reachable_subgraph(g: &MetaGraph, reachable: &HashSet<node::Id>) -> MetaGraph
 
 /// Given a node configuration flow graph, return the reduced control flow graph
 /// of basic blocks.
-fn flow_graph_from_conf_graph(cg: &NodeConfGraph) -> FlowGraph {
+fn flow_graph_from_conf_graph(cg: &NodeConfGraph, branching: &BTreeSet<node::Id>) -> FlowGraph {
     // Initialise the flow graph with the same nodes and edges.
     let mut g = FlowGraph::with_capacity(cg.node_count(), cg.edge_count());
     let mut visited = HashMap::with_capacity(cg.node_count());
@@ -252,7 +253,7 @@ fn flow_graph_from_conf_graph(cg: &NodeConfGraph) -> FlowGraph {
             .or_insert_with(|| g.add_node(Block(vec![b])));
         g.add_edge(na, nb, branch);
     }
-    flow_graph_edge_contraction(&mut g);
+    flow_graph_edge_contraction(&mut g, branching);
     g
 }
 
@@ -262,13 +263,21 @@ fn flow_graph_from_conf_graph(cg: &NodeConfGraph) -> FlowGraph {
 /// Ie for each edge, if that edge is the only output for the source node, and
 /// the only input for the destination node, remove the edge and merge the src
 /// and dst nodes.
-fn flow_graph_edge_contraction(g: &mut FlowGraph) {
+fn flow_graph_edge_contraction(g: &mut FlowGraph, branching: &BTreeSet<node::Id>) {
     // Maintain a stack of all edges that require reducing.
     let mut edges: Vec<_> = g.edge_references().map(|e_ref| e_ref.id()).collect();
     while let Some(e) = edges.pop() {
         let Some((src, dst)) = g.edge_endpoints(e) else {
             continue; // Edge was removed when its node was merged.
         };
+
+        // Never contract edges from branching nodes - even with a single
+        // active branch edge, the codegen must handle branch destructuring.
+        if let Some(last) = g[src].last() {
+            if branching.contains(&last.id) {
+                continue;
+            }
+        }
 
         // Check whether or not this is the only edge between src and dst.
         let mergeable = g.edges_directed(src, petgraph::Outgoing).take(2).count() == 1

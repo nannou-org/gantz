@@ -640,6 +640,7 @@ fn flow_node_stmts(
     flow_ix: NodeIndex,
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
+    branching: &BTreeMap<node::Id, usize>,
     inlets: &BTreeSet<node::Id>,
     outlets: &BTreeSet<node::Id>,
     reachable: &HashSet<node::Id>,
@@ -668,7 +669,7 @@ fn flow_node_stmts(
         return Ok(stmts);
 
     // Single successor: either a linear continuation or leads to a join.
-    } else if edges.len() == 1 {
+    } else if edges.len() == 1 && !branching.contains_key(&block.last().unwrap().id) {
         let (_branch, dst) = edges.pop().unwrap();
         let conf = *block.last().unwrap();
         stmts.extend(destructure_node_outputs_stmt(conf.id, conf.conns.outputs));
@@ -687,8 +688,8 @@ fn flow_node_stmts(
         // Otherwise continue normally. The next block's
         // `eval_fn_block_stmts` handles input bindings via before-target.
         stmts.extend(flow_node_stmts(
-            path, dst, mg, stateful, inlets, outlets, reachable, fg, post_dom, phi_params,
-            in_scope, active_phi, stop_at,
+            path, dst, mg, stateful, branching, inlets, outlets, reachable, fg, post_dom,
+            phi_params, in_scope, active_phi, stop_at,
         )?);
         return Ok(stmts);
     }
@@ -699,10 +700,18 @@ fn flow_node_stmts(
 
     // Post-dominator gives the reconvergence point directly.
     // Skip if it equals stop_at (handled by outer level).
+    // Also skip if this branching node has dead branches (fewer edges than
+    // branches) - the join block must not run unconditionally when some
+    // branches terminate evaluation.
     let reconvergence = post_dom
         .get(&flow_ix)
         .copied()
-        .filter(|&r| stop_at != Some(r));
+        .filter(|&r| stop_at != Some(r))
+        .filter(|_| {
+            branching
+                .get(&conf.id)
+                .map_or(true, |&n_branches| edges.len() >= n_branches)
+        });
 
     if let Some(join_ix) = reconvergence {
         // Declare phi variable placeholders for the join's inputs.
@@ -756,6 +765,7 @@ fn flow_node_stmts(
                     dst,
                     mg,
                     stateful,
+                    branching,
                     inlets,
                     outlets,
                     reachable,
@@ -788,8 +798,8 @@ fn flow_node_stmts(
 
         // After the if: generate the join block and everything after it.
         stmts.extend(flow_node_stmts(
-            path, join_ix, mg, stateful, inlets, outlets, reachable, fg, post_dom, phi_params,
-            in_scope, &inner_phi, stop_at,
+            path, join_ix, mg, stateful, branching, inlets, outlets, reachable, fg, post_dom,
+            phi_params, in_scope, &inner_phi, stop_at,
         )?);
 
         return Ok(stmts);
@@ -807,6 +817,7 @@ fn flow_node_stmts(
             dst,
             mg,
             stateful,
+            branching,
             inlets,
             outlets,
             reachable,
@@ -845,6 +856,7 @@ pub fn entry_fn_body(
     path: &[node::Id],
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
+    branching: &BTreeMap<node::Id, usize>,
     inlets: &BTreeSet<node::Id>,
     outlets: &BTreeSet<node::Id>,
     fg: &FlowGraph,
@@ -864,6 +876,7 @@ pub fn entry_fn_body(
         entry.id(),
         mg,
         stateful,
+        branching,
         inlets,
         outlets,
         &reachable,
@@ -885,6 +898,7 @@ pub(crate) fn eval_stmts_from_flow(
     path: &[node::Id],
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
+    branching: &BTreeMap<node::Id, usize>,
     inlets: &BTreeSet<node::Id>,
     outlets: &BTreeSet<node::Id>,
     flow: &Flow,
@@ -892,7 +906,7 @@ pub(crate) fn eval_stmts_from_flow(
     flow.entrypoints
         .iter()
         .map(|(id, fg)| {
-            let stmts = entry_fn_body(path, mg, stateful, inlets, outlets, fg)?;
+            let stmts = entry_fn_body(path, mg, stateful, branching, inlets, outlets, fg)?;
             Ok((id.clone(), stmts))
         })
         .collect()
@@ -951,10 +965,13 @@ pub(crate) fn entry_fns(
     // Post-order: children before parent, so nested eval runs first.
     let mut all_stmts: BTreeMap<super::EntrypointId, Vec<ExprKind>> = BTreeMap::new();
     flow_tree.try_visit_post(&[], &mut |path, (meta, flow)| -> Result<(), CodegenError> {
+        let branching: BTreeMap<node::Id, usize> =
+            meta.branches.iter().map(|(&id, v)| (id, v.len())).collect();
         let level_stmts = eval_stmts_from_flow(
             path,
             &meta.graph,
             &meta.stateful,
+            &branching,
             &meta.inlets,
             &meta.outlets,
             flow,

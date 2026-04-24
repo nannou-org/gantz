@@ -98,15 +98,15 @@ impl Meta {
 
         // Add edges for inputs.
         for (n, edge) in inputs {
-            loop {
-                if let Some(edges) = self.graph.edge_weight_mut(n, id) {
-                    let n_branches = self.branches.get(&n).map(|bs| &bs[..]);
-                    if let Some(kind) = edge_kind(n_branches, edge.output.0 as usize)? {
-                        edges.push((edge, kind));
-                        break;
-                    }
-                }
-                self.graph.add_edge(n, id, vec![]);
+            let n_branches = self.branches.get(&n).map(|bs| &bs[..]);
+            // Skip edges from outputs that are unreachable through all branches.
+            let Some(kind) = edge_kind(n_branches, edge.output.0 as usize)? else {
+                continue;
+            };
+            if let Some(edges) = self.graph.edge_weight_mut(n, id) {
+                edges.push((edge, kind));
+            } else {
+                self.graph.add_edge(n, id, vec![(edge, kind)]);
             }
         }
 
