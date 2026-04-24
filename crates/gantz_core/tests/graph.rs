@@ -1478,6 +1478,97 @@ fn test_graph_multi_edge_in_branch_arm() {
     assert_eq!(val, 8);
 }
 
+/// Test an Expr node with an optional input ($?var).
+///
+///   push ----> add_opt ----> store
+///
+/// `add_opt` uses `(if (Some? $?b) (Some->value $?b) 0)` to default to 0
+/// when `$?b` is unconnected.
+///
+/// When `$?b` is unconnected, `(None)` is substituted, `(Some? (None))`
+/// is false, so the result is `5 + 0 = 5`.
+#[test]
+fn test_graph_optional_input_unconnected() {
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let push = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let add_opt = g.add_node(Box::new(
+        node::expr("(+ $a (if (Some? $?b) (Some->value $?b) 0))").unwrap(),
+    ) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+
+    // Only connect $a (input 0). $?b (input 1) is left unconnected.
+    g.add_edge(push, add_opt, Edge::from((0, 0)));
+    g.add_edge(add_opt, store, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    // 5 + 0 = 5.
+    let val = node::state::extract::<u32>(&vm, &[store.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 5);
+}
+
+/// Test an Expr node with an optional input ($?var) that IS connected.
+///
+///   push ----> three ----> add_opt ----> store
+///                    \--/
+///
+/// When `$?b` is connected, `(Some 3)` is substituted, `(Some? (Some 3))`
+/// is true, so the result is `5 + 3 = 8`.
+#[test]
+fn test_graph_optional_input_connected() {
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let push = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let three = g.add_node(Box::new(node_int(3)) as Box<_>);
+    let add_opt = g.add_node(Box::new(
+        node::expr("(+ $a (if (Some? $?b) (Some->value $?b) 0))").unwrap(),
+    ) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+
+    // Connect both $a and $?b.
+    g.add_edge(push, add_opt, Edge::from((0, 0)));
+    g.add_edge(push, three, Edge::from((0, 0)));
+    g.add_edge(three, add_opt, Edge::from((0, 1)));
+    g.add_edge(add_opt, store, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    // 5 + 3 = 8.
+    let val = node::state::extract::<u32>(&vm, &[store.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 8);
+}
+
 /// Test a three-way branch with reconvergence.
 ///
 /// All existing branch tests use binary (2-arm) branches. This exercises

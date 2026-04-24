@@ -437,4 +437,22 @@ mod tests {
         let json = r#"{"src":"(list 0 '())","branches":["100","01"]}"#;
         assert!(serde_json::from_str::<Branch>(json).is_err());
     }
+
+    #[test]
+    fn test_optional_input() {
+        let b = Branch::new(
+            "(if (Some? $?x) (list 0 (Some->value $?x)) (list 1 '()))",
+            two_branch_conns(),
+        )
+        .unwrap();
+        let ctx = node::MetaCtx::new(&|_| None);
+        assert_eq!(b.n_inputs(ctx), 1);
+
+        // Verify expr with unconnected optional input produces (None).
+        let outputs = Conns::try_from([true, false]).unwrap();
+        let expr_ctx = node::ExprCtx::new(&|_| None, &[0], &[None], &outputs);
+        let expr = b.expr(expr_ctx).unwrap();
+        let s = format!("{expr}");
+        assert!(s.contains("(None)"), "expected (None) in expr: {s}");
+    }
 }
