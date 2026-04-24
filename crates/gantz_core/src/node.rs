@@ -78,6 +78,11 @@ pub trait Node: std::any::Any {
     /// [`Node::n_inputs`] immediately prior. Inputs are `Some` in the case that
     /// they are connected, and `None` otherwise.
     ///
+    /// At runtime, each connected input binding holds a single value when
+    /// exactly one edge targets that input index. When multiple unconditional
+    /// edges target the same input index, the binding holds a `(list ...)` of
+    /// all incoming values in topological source order.
+    ///
     /// If [`Node::n_outputs`] is 1, the expr should result in a single value.
     ///
     /// If [`Node::n_outputs`] is > 1, the expr should result in a list of values.
@@ -228,7 +233,9 @@ pub struct ExprCtx<'env, 'data> {
     /// An element for each input to the node.
     ///
     /// If the input is connected, it is `Some(name)` where `name` is a binding
-    /// to the incoming value.
+    /// to the incoming value. When multiple unconditional edges target the same
+    /// input index, the binding holds a `(list ...)` of all incoming values
+    /// rather than a single value.
     inputs: &'data [Option<String>],
     /// An element for each output from the node.
     ///
@@ -340,7 +347,9 @@ impl<'env, 'data> ExprCtx<'env, 'data> {
     /// An element for each input to the node.
     ///
     /// If the input is connected, it is `Some(name)` where `name` is a binding
-    /// to the incoming value.
+    /// to the incoming value. When multiple unconditional edges target the same
+    /// input index, the binding holds a `(list ...)` of all incoming values
+    /// rather than a single value.
     pub fn inputs(&self) -> &'data [Option<String>] {
         self.inputs
     }

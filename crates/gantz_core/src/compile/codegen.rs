@@ -36,27 +36,6 @@ const STATE: &str = "state";
 /// Binding used for the current branch index.
 const BRANCH_IX: &str = "branch-ix";
 
-/// Whether or not the given node input requires a dedicated binding name.
-///
-/// This is required in the case that the node is within or following a "join"
-/// control flow node, and the input has more than one incoming edge.
-///
-/// Disambiguation only requires generating one extra binding, so we just check
-/// if there's more than one edge and don't worry about checking the flow graph.
-fn node_input_needs_binding(mg: &MetaGraph, n: node::Id, input: usize) -> bool {
-    let mut count = 0;
-    for e_ref in mg.edges_directed(n, petgraph::Incoming) {
-        for (edge, _kind) in e_ref.weight() {
-            let ix = edge.input.0 as usize;
-            count += (ix == input).then_some(1).unwrap_or(0);
-            if count > 1 {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 /// The expression for a call to a node function.
 fn node_fn_call(
     node_path: &[node::Id],
@@ -340,23 +319,6 @@ pub fn entry_fn_name(id: &super::EntrypointId) -> String {
     format!("entry-fn-{}", id.0.display_short())
 }
 
-/// The set of outputs on the given node that require dedicated bindings due to
-/// being connected to an input on a node that has multiple incoming edges.
-fn node_outputs_that_need_bindings(
-    mg: &MetaGraph,
-    n: node::Id,
-) -> BTreeSet<(node::Output, (node::Id, node::Input))> {
-    let mut need_bindings = BTreeSet::default();
-    for e_ref in mg.edges_directed(n, petgraph::Outgoing) {
-        for (edge, _kind) in e_ref.weight() {
-            if node_input_needs_binding(mg, e_ref.target(), edge.input.0 as usize) {
-                need_bindings.insert((edge.output, (e_ref.target(), edge.input)));
-            }
-        }
-    }
-    need_bindings
-}
-
 /// Generate a statement that creates a node input binding for `dst` to the
 /// given `src` node's output.
 fn define_node_input_binding(
@@ -375,32 +337,75 @@ fn define_node_input_binding(
         .unwrap()
 }
 
-/// For the given node's outputs that connect to node inputs that have more than
-/// one incoming edge, create dedicated bindings for those inputs.
-fn define_necessary_node_input_bindings(
-    g: &MetaGraph,
-    n: node::Id,
-) -> impl Iterator<Item = ExprKind> {
-    node_outputs_that_need_bindings(g, n)
-        .into_iter()
-        .map(move |(output, dst)| define_node_input_binding((n, output), dst))
-}
-
-/// Like `define_necessary_node_input_bindings`, but filtered to only the
-/// outputs active in a given branch, excluding any destinations that are
-/// active phi vars (to avoid shadowing outer phi declarations).
-fn define_branch_node_input_bindings(
+/// For the given target node, create dedicated input bindings for all inputs
+/// that have multiple incoming MetaGraph edges (i.e. `DedicatedBinding` args).
+///
+/// Skips inputs in `active_phi` - those are handled by phi variables at join
+/// points.
+///
+/// For single-source inputs, emits `(define node-X-iY node-SRC-oZ)`.
+/// For multi-source inputs, emits `(define node-X-iY (list ...))`.
+fn define_target_input_bindings(
     mg: &MetaGraph,
+    reachable: &HashSet<node::Id>,
+    in_scope: &HashSet<node::Id>,
     n: node::Id,
-    active_outputs: &node::Conns,
-    exclude: &HashSet<(node::Id, usize)>,
-) -> Vec<ExprKind> {
-    node_outputs_that_need_bindings(mg, n)
-        .into_iter()
-        .filter(|(output, _)| active_outputs.get(output.0 as usize).unwrap_or(false))
-        .filter(|(_, (dst_id, dst_input))| !exclude.contains(&(*dst_id, dst_input.0 as usize)))
-        .map(|(output, dst)| define_node_input_binding((n, output), dst))
-        .collect()
+    conns: &NodeConns,
+    active_phi: &HashSet<(node::Id, usize)>,
+) -> Result<Vec<ExprKind>, CodegenError> {
+    let args = node_fn_call_args(mg, reachable, n, &conns.inputs)?;
+    let mut stmts = Vec::new();
+    for (ix, arg) in args.iter().enumerate() {
+        if !matches!(arg, Some(NodeFnCallArg::DedicatedBinding)) {
+            continue;
+        }
+        if active_phi.contains(&(n, ix)) {
+            continue;
+        }
+        // Collect sources whose outputs are currently in scope.
+        let mut sources: Vec<(node::Id, node::Output)> = Vec::new();
+        for e_ref in mg.edges_directed(n, petgraph::Incoming) {
+            if !in_scope.contains(&e_ref.source()) {
+                continue;
+            }
+            for (edge, _kind) in e_ref.weight() {
+                if edge.input.0 as usize == ix {
+                    sources.push((e_ref.source(), edge.output));
+                }
+            }
+        }
+        // Sort by node ID for deterministic ordering.
+        sources.sort_by_key(|(src, _)| *src);
+        match sources.len() {
+            0 => {}
+            1 => {
+                let (src, src_out) = sources[0];
+                stmts.push(define_node_input_binding(
+                    (src, src_out),
+                    (n, node::Input(ix as u16)),
+                ));
+            }
+            _ => {
+                let elements: Vec<String> = sources
+                    .iter()
+                    .map(|(src, out)| node_output_var(*src, out.0 as usize))
+                    .collect();
+                let s = format!(
+                    "(define {} (list {}))",
+                    node_input_var(n, ix),
+                    elements.join(" "),
+                );
+                stmts.push(
+                    Engine::emit_ast(&s)
+                        .expect("failed to emit AST")
+                        .into_iter()
+                        .next()
+                        .unwrap(),
+                );
+            }
+        }
+    }
+    Ok(stmts)
 }
 
 /// For a join block's first node, find which inputs are `DedicatedBinding`
@@ -441,17 +446,29 @@ fn declare_phi_vars(phi_params: &[(usize, String)]) -> Vec<ExprKind> {
 
 /// Generate `(set! name value)` statements to assign phi variables from a
 /// predecessor node's outputs.
+///
+/// When `active_outputs` is `Some`, only edges whose output index is active
+/// in the given conns are considered. This is needed when the predecessor is
+/// a branch node with multiple outputs feeding the same target input - each
+/// arm must reference only its own active output.
 fn phi_set_stmts(
     mg: &MetaGraph,
     pred_last_node: node::Id,
     join_node_id: node::Id,
     phi_params: &[(usize, String)],
+    active_outputs: Option<node::Conns>,
 ) -> Vec<ExprKind> {
-    // Collect all edges from the predecessor to the join node.
+    // Collect edges from the predecessor to the join node, optionally
+    // filtered to the branch arm's active outputs.
     let edges: Vec<_> = mg
         .edges_directed(join_node_id, petgraph::Incoming)
         .filter(|e| e.source() == pred_last_node)
         .flat_map(|e| e.weight().clone())
+        .filter(|(edge, _kind)| {
+            active_outputs.map_or(true, |conns| {
+                conns.get(edge.output.0 as usize).unwrap_or(false)
+            })
+        })
         .collect();
     phi_params
         .iter()
@@ -485,10 +502,23 @@ pub(crate) fn eval_fn_block_stmts(
     outlets: &BTreeSet<node::Id>,
     reachable: &HashSet<node::Id>,
     block: &Block,
+    in_scope: &mut HashSet<node::Id>,
+    active_phi: &HashSet<(node::Id, usize)>,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     let mut stmts = Vec::new();
     let mut iter = block.0.iter().peekable();
     while let Some(conf) = iter.next() {
+        // Before evaluating this node, create dedicated input bindings for
+        // any inputs with multiple incoming edges (scalar or list).
+        stmts.extend(define_target_input_bindings(
+            mg,
+            reachable,
+            in_scope,
+            conf.id,
+            &conf.conns,
+            active_phi,
+        )?);
+
         let node_path: Vec<_> = path.iter().copied().chain(Some(conf.id)).collect();
         let stateful = stateful.contains(&conf.id);
         let NodeConns { inputs, outputs } = conf.conns;
@@ -506,11 +536,9 @@ pub(crate) fn eval_fn_block_stmts(
             continue;
         }
 
-        // Destructure the node's outputs.
+        // Destructure the node's outputs and mark them as in-scope.
         stmts.extend(destructure_node_outputs_stmt(conf.id, conf.conns.outputs));
-        // For outputs connected to node inputs that have more than one incoming
-        // edge, we create dedicated bindings for those inputs.
-        stmts.extend(define_necessary_node_input_bindings(mg, conf.id));
+        in_scope.insert(conf.id);
     }
     Ok(stmts)
 }
@@ -618,12 +646,15 @@ fn flow_node_stmts(
     fg: &FlowGraph,
     post_dom: &HashMap<NodeIndex, NodeIndex>,
     phi_params: &BTreeMap<NodeIndex, Vec<(usize, String)>>,
+    in_scope: &mut HashSet<node::Id>,
     active_phi: &HashSet<(node::Id, usize)>,
     stop_at: Option<NodeIndex>,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     // Add the block.
     let block = &fg[flow_ix];
-    let mut stmts = eval_fn_block_stmts(path, mg, stateful, inlets, outlets, &reachable, block)?;
+    let mut stmts = eval_fn_block_stmts(
+        path, mg, stateful, inlets, outlets, reachable, block, in_scope, active_phi,
+    )?;
 
     // Collect the output branching edges.
     let mut edges: Vec<_> = fg
@@ -641,22 +672,23 @@ fn flow_node_stmts(
         let (_branch, dst) = edges.pop().unwrap();
         let conf = *block.last().unwrap();
         stmts.extend(destructure_node_outputs_stmt(conf.id, conf.conns.outputs));
+        in_scope.insert(conf.id);
 
         // If the successor is the reconvergence point we're stopping at,
         // emit phi set statements and return.
         if stop_at == Some(dst) {
             let join_first_id = fg[dst].first().expect("join block must not be empty").id;
             if let Some(params) = phi_params.get(&dst) {
-                stmts.extend(phi_set_stmts(mg, conf.id, join_first_id, params));
+                stmts.extend(phi_set_stmts(mg, conf.id, join_first_id, params, None));
             }
             return Ok(stmts);
         }
 
-        // Otherwise continue normally.
-        stmts.extend(define_necessary_node_input_bindings(mg, conf.id));
+        // Otherwise continue normally. The next block's
+        // `eval_fn_block_stmts` handles input bindings via before-target.
         stmts.extend(flow_node_stmts(
             path, dst, mg, stateful, inlets, outlets, reachable, fg, post_dom, phi_params,
-            active_phi, stop_at,
+            in_scope, active_phi, stop_at,
         )?);
         return Ok(stmts);
     }
@@ -696,12 +728,6 @@ fn flow_node_stmts(
                 destructure_node_outputs_stmt(conf.id, branch.conns)
                     .into_iter()
                     .collect();
-            branch_stmts.extend(define_branch_node_input_bindings(
-                mg,
-                conf.id,
-                &branch.conns,
-                &inner_phi,
-            ));
 
             if dst == join_ix {
                 // Branch target IS the join - just emit phi sets.
@@ -710,10 +736,21 @@ fn flow_node_stmts(
                     .expect("join block must not be empty")
                     .id;
                 if let Some(params) = phi_params.get(&join_ix) {
-                    branch_stmts.extend(phi_set_stmts(mg, conf.id, join_first_id, params));
+                    branch_stmts.extend(phi_set_stmts(
+                        mg,
+                        conf.id,
+                        join_first_id,
+                        params,
+                        Some(branch.conns),
+                    ));
                 }
             } else {
                 // Recurse with stop_at = join_ix so it stops at the join.
+                // Clone in_scope so this arm doesn't leak its nodes to
+                // sibling arms. Add the branch node since its outputs were
+                // destructured above.
+                let mut arm_scope = in_scope.clone();
+                arm_scope.insert(conf.id);
                 branch_stmts.extend(flow_node_stmts(
                     path,
                     dst,
@@ -725,6 +762,7 @@ fn flow_node_stmts(
                     fg,
                     post_dom,
                     phi_params,
+                    &mut arm_scope,
                     &inner_phi,
                     Some(join_ix),
                 )?);
@@ -751,7 +789,7 @@ fn flow_node_stmts(
         // After the if: generate the join block and everything after it.
         stmts.extend(flow_node_stmts(
             path, join_ix, mg, stateful, inlets, outlets, reachable, fg, post_dom, phi_params,
-            active_phi, stop_at,
+            in_scope, &inner_phi, stop_at,
         )?);
 
         return Ok(stmts);
@@ -760,16 +798,25 @@ fn flow_node_stmts(
     // No reconvergence found - fall back to code duplication.
     let mut expr = "'()".to_string();
     while let Some((branch, dst)) = edges.pop() {
+        // Clone in_scope so each arm is independent. Add the branch node
+        // since its outputs are destructured in each arm below.
+        let mut arm_scope = in_scope.clone();
+        arm_scope.insert(conf.id);
         let dst_stmts = flow_node_stmts(
-            path, dst, mg, stateful, inlets, outlets, reachable, fg, post_dom, phi_params,
-            active_phi, stop_at,
+            path,
+            dst,
+            mg,
+            stateful,
+            inlets,
+            outlets,
+            reachable,
+            fg,
+            post_dom,
+            phi_params,
+            &mut arm_scope,
+            active_phi,
+            stop_at,
         )?;
-        let bindings = define_branch_node_input_bindings(mg, conf.id, &branch.conns, active_phi);
-        let bindings_str = bindings
-            .iter()
-            .map(|e| format!("{e}"))
-            .collect::<Vec<_>>()
-            .join(" ");
         let dst_stmts_str = dst_stmts
             .into_iter()
             .map(|expr| format!("{expr}"))
@@ -778,10 +825,7 @@ fn flow_node_stmts(
         let destructure_str = destructure_node_outputs_stmt(conf.id, branch.conns)
             .map(|e| format!("{e}"))
             .unwrap_or_default();
-        let dst_expr = format!(
-            "(begin {} {} {} '())",
-            destructure_str, bindings_str, dst_stmts_str,
-        );
+        let dst_expr = format!("(begin {} {} '())", destructure_str, dst_stmts_str,);
         expr = format!("(if (= {} {BRANCH_IX}) {dst_expr} {expr})", branch.ix);
     }
 
@@ -826,6 +870,7 @@ pub fn entry_fn_body(
         fg,
         &post_dom,
         &phi_params_map,
+        &mut HashSet::new(),
         &HashSet::new(),
         None,
     )
