@@ -1478,6 +1478,97 @@ fn test_graph_multi_edge_in_branch_arm() {
     assert_eq!(val, 8);
 }
 
+/// Test an Expr node with an optional input ($?var).
+///
+///   push ----> add_opt ----> store
+///
+/// `add_opt` uses `(if (Some? $?b) (Some->value $?b) 0)` to default to 0
+/// when `$?b` is unconnected.
+///
+/// When `$?b` is unconnected, `(None)` is substituted, `(Some? (None))`
+/// is false, so the result is `5 + 0 = 5`.
+#[test]
+fn test_graph_optional_input_unconnected() {
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let push = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let add_opt = g.add_node(Box::new(
+        node::expr("(+ $a (if (Some? $?b) (Some->value $?b) 0))").unwrap(),
+    ) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+
+    // Only connect $a (input 0). $?b (input 1) is left unconnected.
+    g.add_edge(push, add_opt, Edge::from((0, 0)));
+    g.add_edge(add_opt, store, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    // 5 + 0 = 5.
+    let val = node::state::extract::<u32>(&vm, &[store.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 5);
+}
+
+/// Test an Expr node with an optional input ($?var) that IS connected.
+///
+///   push ----> three ----> add_opt ----> store
+///                    \--/
+///
+/// When `$?b` is connected, `(Some 3)` is substituted, `(Some? (Some 3))`
+/// is true, so the result is `5 + 3 = 8`.
+#[test]
+fn test_graph_optional_input_connected() {
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let push = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let three = g.add_node(Box::new(node_int(3)) as Box<_>);
+    let add_opt = g.add_node(Box::new(
+        node::expr("(+ $a (if (Some? $?b) (Some->value $?b) 0))").unwrap(),
+    ) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+
+    // Connect both $a and $?b.
+    g.add_edge(push, add_opt, Edge::from((0, 0)));
+    g.add_edge(push, three, Edge::from((0, 0)));
+    g.add_edge(three, add_opt, Edge::from((0, 1)));
+    g.add_edge(add_opt, store, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    // 5 + 3 = 8.
+    let val = node::state::extract::<u32>(&vm, &[store.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 8);
+}
+
 /// Test a three-way branch with reconvergence.
 ///
 /// All existing branch tests use binary (2-arm) branches. This exercises
@@ -1572,4 +1663,278 @@ fn test_graph_three_way_branch() {
         .expect("failed to extract")
         .expect("was None");
     assert_eq!(val, 8);
+}
+
+/// Branch with 1 output, 2 branches: branch 0 active, branch 1 dead.
+///
+/// When branch 1 is taken at runtime, evaluation should terminate at the
+/// branch node - downstream `number` should not execute.
+///
+///   push_0 (emits 0) ---\
+///                         branch ---(out 0, branch 0)--> number
+///   push_1 (emits 1) ---/
+///
+/// Branch 0: [true]  -> output 0 active, downstream runs.
+/// Branch 1: [false] -> output 0 dead, downstream does NOT run.
+#[test]
+fn test_graph_branch_single_output_dead_branch() {
+    let branch = node::Branch::new(
+        "(if (equal? 0 $x) (list 0 42) (list 1 99))",
+        vec![
+            node::Conns::try_from([true]).unwrap(),
+            node::Conns::try_from([false]).unwrap(),
+        ],
+    )
+    .unwrap();
+
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let branch_ix = g.add_node(Box::new(branch) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+
+    g.add_edge(push_0, branch_ix, Edge::from((0, 0)));
+    g.add_edge(push_1, branch_ix, Edge::from((0, 0)));
+    g.add_edge(branch_ix, number, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    // Push 0 -> branch index 0 (active) -> number stores 42.
+    let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
+        .unwrap();
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 42);
+
+    // Push 1 -> branch index 1 (dead) -> number should NOT be updated.
+    let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
+        .unwrap();
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(
+        val, 42,
+        "number should still be 42 - dead branch must not propagate"
+    );
+}
+
+/// Branch with 2 outputs, 2 branches: branch 0 fully active, branch 1 fully dead.
+///
+///   push_0 (emits 0) ---\                /---(out 0)--> store_a
+///                         branch --------<
+///   push_1 (emits 1) ---/                \---(out 1)--> store_b
+///
+/// Branch 0: [true, true]   -> both outputs active.
+/// Branch 1: [false, false] -> both outputs dead - evaluation terminates.
+#[test]
+fn test_graph_branch_two_outputs_one_dead() {
+    let branch = node::Branch::new(
+        "(if (equal? 0 $x) (list 0 (list 42 43)) (list 1 (list 99 100)))",
+        vec![
+            node::Conns::try_from([true, true]).unwrap(),
+            node::Conns::try_from([false, false]).unwrap(),
+        ],
+    )
+    .unwrap();
+
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let branch_ix = g.add_node(Box::new(branch) as Box<_>);
+    let store_a = g.add_node(Box::new(node_number()) as Box<_>);
+    let store_b = g.add_node(Box::new(node_number()) as Box<_>);
+
+    g.add_edge(push_0, branch_ix, Edge::from((0, 0)));
+    g.add_edge(push_1, branch_ix, Edge::from((0, 0)));
+    g.add_edge(branch_ix, store_a, Edge::from((0, 0)));
+    g.add_edge(branch_ix, store_b, Edge::from((1, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    // Push 0 -> branch 0 (active) -> store_a=42, store_b=43.
+    let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
+        .unwrap();
+    let val_a = node::state::extract::<u32>(&vm, &[store_a.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val_a, 42);
+    let val_b = node::state::extract::<u32>(&vm, &[store_b.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val_b, 43);
+
+    // Push 1 -> branch 1 (dead) -> stores should remain unchanged.
+    let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
+        .unwrap();
+    let val_a = node::state::extract::<u32>(&vm, &[store_a.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val_a, 42, "store_a should be unchanged after dead branch");
+    let val_b = node::state::extract::<u32>(&vm, &[store_b.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val_b, 43, "store_b should be unchanged after dead branch");
+}
+
+/// Branch where ALL branches have zero active outputs.
+///
+/// The branch node's expression still evaluates (side effects like state
+/// updates run), but nothing propagates downstream.
+///
+///   push ----> branch ---x---> number (should never run)
+///
+/// Branch 0: [false], Branch 1: [false] -> both dead.
+#[test]
+fn test_graph_branch_all_dead() {
+    // Stateful branch: stores the value in state, then returns branch info.
+    let branch = node::Branch::new(
+        "(begin (set! state $x) (if (equal? 0 $x) (list 0 '()) (list 1 '())))",
+        vec![
+            node::Conns::try_from([false]).unwrap(),
+            node::Conns::try_from([false]).unwrap(),
+        ],
+    )
+    .unwrap();
+
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let push = g.add_node(Box::new(node_int(42).with_push_eval()) as Box<dyn DebugNode>);
+    let branch_ix = g.add_node(Box::new(branch) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+
+    g.add_edge(push, branch_ix, Edge::from((0, 0)));
+    g.add_edge(branch_ix, number, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    // Push -> branch evaluates (stores 42 in state), but number is unreachable.
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    // Branch's own state should have been updated.
+    let branch_state = node::state::extract::<u32>(&vm, &[branch_ix.index()])
+        .expect("failed to extract")
+        .expect("branch state was None");
+    assert_eq!(branch_state, 42);
+
+    // number should never have been evaluated.
+    let number_state = node::state::extract::<u32>(&vm, &[number.index()])
+        .ok()
+        .flatten();
+    assert!(
+        number_state.is_none(),
+        "number should not have been evaluated"
+    );
+}
+
+/// Pd-style `+` node: hot left inlet triggers output, cold right inlet only
+/// updates state. Uses `$?var` optional input + Branch to achieve this.
+///
+///   push_hot (5) ----> [hot_inlet] +_node [cold_inlet] <---- push_cold (3)
+///                                    |
+///                                  number (stores result)
+///
+/// The `+` node uses a Branch: when the hot inlet fires, it adds state
+/// (cold value) and emits; when the cold inlet fires, it stores the new
+/// value in state but does NOT emit.
+#[test]
+fn test_graph_branch_optional_input_pd_add() {
+    // Pd-style +: hot inlet ($a) is required, cold inlet ($?b) is optional.
+    // When hot fires ($a is a number), update state from $?b if present, then
+    // emit $a + state on branch 0.
+    // When cold fires ($a is unconnected = '()), update state from $?b, then
+    // take branch 1 (dead - no output).
+    let pd_add = node::Branch::new(
+        "(begin \
+           (if (Some? $?b) (set! state (Some->value $?b)) '()) \
+           (if (number? $a) \
+               (list 0 (+ $a (if (number? state) state 0))) \
+               (list 1 '())))",
+        vec![
+            node::Conns::try_from([true]).unwrap(),  // branch 0: emit
+            node::Conns::try_from([false]).unwrap(), // branch 1: dead (cold only)
+        ],
+    )
+    .unwrap();
+
+    let mut g = petgraph::graph::DiGraph::new();
+
+    let push_hot = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let push_cold = g.add_node(Box::new(node_int(3).with_push_eval()) as Box<_>);
+    let pd_add_ix = g.add_node(Box::new(pd_add) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+
+    // Cold inlet -> input 0 ($?b appears first in expression).
+    g.add_edge(push_cold, pd_add_ix, Edge::from((0, 0)));
+    // Hot inlet -> input 1 ($a appears second in expression).
+    g.add_edge(push_hot, pd_add_ix, Edge::from((0, 1)));
+    // Output 0 -> number.
+    g.add_edge(pd_add_ix, number, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = default_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    // First: push cold (3) to set state. Number should NOT be updated.
+    let ep_cold = entrypoint::push(vec![push_cold.index()], g[push_cold].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_cold.id()), vec![])
+        .unwrap();
+    let number_state = node::state::extract::<u32>(&vm, &[number.index()])
+        .ok()
+        .flatten();
+    assert!(
+        number_state.is_none(),
+        "number should not run on cold inlet push"
+    );
+
+    // Then: push hot (5). pd_add should compute 5 + 3 = 8 and emit.
+    let ep_hot = entrypoint::push(vec![push_hot.index()], g[push_hot].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep_hot.id()), vec![])
+        .unwrap();
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 8, "hot inlet should emit 5 + 3 = 8");
 }

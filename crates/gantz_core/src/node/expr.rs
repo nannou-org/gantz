@@ -18,6 +18,17 @@ use thiserror::Error;
 ///
 /// Variables are identified by unique names - if the same `$var` appears
 /// multiple times in the expression, it refers to the same inlet.
+///
+/// ## Optional inputs
+///
+/// Variables prefixed with `$?` are treated as optional inputs. When
+/// connected, the value is wrapped as `(Some value)`. When unconnected,
+/// `(None)` is substituted. This uses Steel's built-in Option type, so
+/// `Some?`, `None?`, and `Some->value` are available.
+///
+/// ```ignore
+/// (+ $a (if (Some? $?b) (Some->value $?b) 0))
+/// ```
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, CaHash)]
 #[cahash("gantz.expr")]
 pub struct Expr {
@@ -157,6 +168,14 @@ pub(crate) fn vars_from_src(src: &str) -> Vec<String> {
 }
 
 /// Replace each `$var` with the corresponding input expression based on variable name.
+///
+/// Variables with a `$?` prefix are treated as optional inputs:
+/// - Connected: substituted with `(Some <binding>)`.
+/// - Unconnected: substituted with `(None)`.
+///
+/// Regular `$var` variables use the existing behaviour:
+/// - Connected: substituted with the binding name.
+/// - Unconnected: substituted with `'()`.
 pub(crate) fn interpolate_tokens(
     tts: TokenStream,
     vars: &[String],
@@ -171,7 +190,13 @@ pub(crate) fn interpolate_tokens(
 
     let tokens = tts.map(|token| {
         let src = token.source();
-        if src.starts_with("$") {
+        if src.starts_with("$?") {
+            let index = var_to_index.get(src).unwrap();
+            match inputs.get(*index).and_then(|o| o.as_ref()) {
+                None => "(None)".to_string(),
+                Some(in_expr) => format!("(Some {in_expr})"),
+            }
+        } else if src.starts_with("$") {
             let index = var_to_index.get(src).unwrap();
             match inputs.get(*index).and_then(|o| o.as_ref()) {
                 None => "'()".to_string(),
@@ -269,6 +294,18 @@ fn test_collect_unique_vars() {
     // Multiple unique vars.
     let vars = vars_from_src("($a $b $c $d $e)");
     assert_eq!(vars, vec!["$a", "$b", "$c", "$d", "$e"]);
+
+    // Optional vars are captured with $? prefix.
+    let vars = vars_from_src("(+ $?a $b)");
+    assert_eq!(vars, vec!["$?a", "$b"]);
+
+    // Duplicate optional vars deduplicate.
+    let vars = vars_from_src("(if $?x $?x 0)");
+    assert_eq!(vars, vec!["$?x"]);
+
+    // Mixed required and optional.
+    let vars = vars_from_src("(+ $a $?b $?c)");
+    assert_eq!(vars, vec!["$a", "$?b", "$?c"]);
 }
 
 #[test]
@@ -300,4 +337,55 @@ fn test_outputs_zero_panics() {
 #[should_panic]
 fn test_outputs_exceeds_max_panics() {
     Expr::new("$a").unwrap().with_outputs(17);
+}
+
+#[test]
+fn test_interpolate_optional_unconnected() {
+    let src = "(if $?a $?a 0)";
+    let vars = vars_from_src(src);
+    let tts = TokenStream::new(src, true, None);
+    let result = interpolate_tokens(tts, &vars, &[None]);
+    assert!(result.contains("(None)"), "expected (None) in: {result}");
+}
+
+#[test]
+fn test_interpolate_optional_connected() {
+    let src = "(if $?a $?a 0)";
+    let vars = vars_from_src(src);
+    let tts = TokenStream::new(src, true, None);
+    let result = interpolate_tokens(tts, &vars, &[Some("input0".into())]);
+    assert!(
+        result.contains("(Some input0)"),
+        "expected (Some input0) in: {result}",
+    );
+}
+
+#[test]
+fn test_interpolate_mixed_required_optional() {
+    let src = "(+ $a (unwrap-or $?b 0))";
+    let vars = vars_from_src(src);
+    let tts = TokenStream::new(src, true, None);
+    // $a connected, $?b unconnected.
+    let result = interpolate_tokens(tts, &vars, &[Some("input0".into()), None]);
+    assert!(result.contains("input0"), "expected input0 in: {result}");
+    assert!(result.contains("(None)"), "expected (None) in: {result}");
+}
+
+#[test]
+fn test_interpolate_required_unconnected_unchanged() {
+    let src = "(+ $a $b)";
+    let vars = vars_from_src(src);
+    let tts = TokenStream::new(src, true, None);
+    let result = interpolate_tokens(tts, &vars, &[Some("input0".into()), None]);
+    assert!(result.contains("input0"), "expected input0 in: {result}");
+    assert!(result.contains("'()"), "expected '() in: {result}");
+    // Ensure no Option wrapping for required vars.
+    assert!(
+        !result.contains("(None)"),
+        "should not contain (None): {result}"
+    );
+    assert!(
+        !result.contains("(Some"),
+        "should not contain (Some: {result}"
+    );
 }
