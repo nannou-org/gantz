@@ -46,6 +46,9 @@ pub struct Flow {
     /// Control flow graph for each entrypoint at this graph level.
     /// An entrypoint appears here only if it has sources at this level.
     pub entrypoints: BTreeMap<EntrypointId, FlowGraph>,
+    /// For each entrypoint, the outlet node IDs its FlowGraph reaches.
+    /// Only populated for entrypoints whose flow reaches at least one outlet.
+    pub outlet_reach: BTreeMap<EntrypointId, BTreeSet<node::Id>>,
 }
 
 /// Represents a basic, linear block of node function calls.
@@ -142,6 +145,7 @@ impl Flow {
         level_sources: &[(EntrypointId, Vec<&EvalSource>)],
     ) -> Result<Self, NodeConnsError> {
         let mut entrypoints = BTreeMap::new();
+        let mut outlet_reach = BTreeMap::new();
         for (id, sources) in level_sources {
             let push_sources = sources
                 .iter()
@@ -152,6 +156,16 @@ impl Flow {
                 .filter(|s| s.kind == EvalKind::Pull)
                 .map(|s| (*s.path.last().unwrap(), s.conns));
             let fg = flow_graph(meta, push_sources, pull_sources)?;
+            // Check which outlet nodes this entrypoint's flow reaches.
+            let reached: BTreeSet<node::Id> = fg
+                .node_weights()
+                .flat_map(|blk| blk.iter())
+                .map(|conf| conf.id)
+                .filter(|id| meta.outlets.contains(id))
+                .collect();
+            if !reached.is_empty() {
+                outlet_reach.insert(id.clone(), reached);
+            }
             entrypoints.insert(id.clone(), fg);
         }
 
@@ -168,6 +182,7 @@ impl Flow {
         Ok(Self {
             nested,
             entrypoints,
+            outlet_reach,
         })
     }
 }

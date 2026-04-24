@@ -303,12 +303,42 @@ fn build_flow_tree<'a>(
         .get(&current_path)
         .map(|v| &v[..])
         .unwrap_or(&[]);
-    let flow = Flow::from_meta_and_sources(&meta_tree.elem, sources)?;
+    let mut flow = Flow::from_meta_and_sources(&meta_tree.elem, sources)?;
     let mut nested = std::collections::BTreeMap::new();
     for (&id, subtree) in &meta_tree.nested {
         let mut child_path = current_path.clone();
         child_path.push(id);
-        nested.insert(id, build_flow_tree(subtree, level_sources, child_path)?);
+        let child_tree = build_flow_tree(subtree, level_sources, child_path)?;
+
+        // If a child entrypoint reaches outlets, create a continuation
+        // FlowGraph in the parent that starts from the graph node.
+        let (_, ref child_flow) = child_tree.elem;
+        for ep_id in child_flow.outlet_reach.keys() {
+            if !flow.entrypoints.contains_key(ep_id) {
+                let n_outputs = meta_tree.elem.outputs.get(&id).copied().unwrap_or(0);
+                if n_outputs > 0 {
+                    let conns = node::Conns::connected(n_outputs).unwrap();
+                    let fg = flow::flow_graph(
+                        &meta_tree.elem,
+                        std::iter::once((id, conns)),
+                        std::iter::empty(),
+                    )?;
+                    // Check if the continuation itself reaches outlets (multi-level).
+                    let reached: std::collections::BTreeSet<node::Id> = fg
+                        .node_weights()
+                        .flat_map(|blk| blk.iter())
+                        .map(|conf| conf.id)
+                        .filter(|nid| meta_tree.elem.outlets.contains(nid))
+                        .collect();
+                    if !reached.is_empty() {
+                        flow.outlet_reach.insert(ep_id.clone(), reached);
+                    }
+                    flow.entrypoints.insert(ep_id.clone(), fg);
+                }
+            }
+        }
+
+        nested.insert(id, child_tree);
     }
     Ok(RoseTree {
         elem: (&meta_tree.elem, flow),

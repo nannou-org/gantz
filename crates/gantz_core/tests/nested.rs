@@ -487,7 +487,6 @@ fn test_graph_nested_non_sequential_inlets() {
 // number node in the outer graph. Verifies that nested push evaluation
 // propagates through outlets.
 #[test]
-#[ignore = "requires outlet propagation from nested push eval"]
 fn test_graph_nested_push_through_outlet() {
     // GRAPH A: push -> int(42) -> outlet
     let mut ga = GraphNode::default();
@@ -623,4 +622,129 @@ fn test_graph_nested_multi_outlet() {
         .expect("num_b state was None");
     assert_eq!(a, 6);
     assert_eq!(b, 7);
+}
+
+// Test nested push evaluation propagating through multiple outlets.
+//
+// INNER GRAPH:
+//    push -> int(10) -> outlet_a
+//                    -> outlet_b (via int(20))
+//
+// OUTER GRAPH:
+//    inner_graph -> num_a (from outlet 0)
+//               -> num_b (from outlet 1)
+//
+// Push fires inside inner graph. Both outlet values should propagate to
+// the outer graph's number nodes.
+#[test]
+fn test_graph_nested_push_through_outlet_multi() {
+    let mut inner = GraphNode::default();
+    let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let ten = inner.add_node(Box::new(node_int(10)) as Box<_>);
+    let twenty = inner.add_node(Box::new(node_int(20)) as Box<_>);
+    let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    inner.add_edge(push, ten, Edge::from((0, 0)));
+    inner.add_edge(push, twenty, Edge::from((0, 0)));
+    inner.add_edge(ten, outlet_a, Edge::from((0, 0)));
+    inner.add_edge(twenty, outlet_b, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let push_n_outputs = inner[push].n_outputs(ctx) as u8;
+
+    let mut outer = petgraph::graph::DiGraph::new();
+    let graph = outer.add_node(Box::new(inner) as Box<dyn DebugNode>);
+    let num_a = outer.add_node(Box::new(node_number()) as Box<_>);
+    let num_b = outer.add_node(Box::new(node_number()) as Box<_>);
+    outer.add_edge(graph, num_a, Edge::from((0, 0)));
+    outer.add_edge(graph, num_b, Edge::from((1, 0)));
+
+    let ep = entrypoint::from_source(push_source(
+        vec![graph.index(), push.index()],
+        push_n_outputs,
+    ));
+
+    let module = gantz_core::compile::module(&no_lookup, &outer, &[ep.clone()]).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &outer, &[], &mut vm);
+
+    for f in &module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    let a = node::state::extract::<u32>(&vm, &[num_a.index()])
+        .expect("failed to extract num_a state")
+        .expect("num_a state was None");
+    let b = node::state::extract::<u32>(&vm, &[num_b.index()])
+        .expect("failed to extract num_b state")
+        .expect("num_b state was None");
+    assert_eq!(a, 10);
+    assert_eq!(b, 20);
+}
+
+// Test nested push evaluation propagating through two levels of nesting.
+//
+// INNERMOST GRAPH:
+//    push -> int(99) -> outlet
+//
+// MIDDLE GRAPH:
+//    innermost -> outlet
+//
+// OUTER GRAPH:
+//    middle -> number
+//
+// Push fires in innermost, value 99 propagates through two outlet levels
+// to the outer number node.
+#[test]
+fn test_graph_nested_push_through_outlet_deep() {
+    // Innermost: push -> int(99) -> outlet
+    let mut innermost = GraphNode::default();
+    let push = innermost.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let ninety_nine = innermost.add_node(Box::new(node_int(99)) as Box<_>);
+    let outlet_inner = innermost.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    innermost.add_edge(push, ninety_nine, Edge::from((0, 0)));
+    innermost.add_edge(ninety_nine, outlet_inner, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let push_n_outputs = innermost[push].n_outputs(ctx) as u8;
+
+    // Middle: innermost_graph -> outlet
+    let mut middle = GraphNode::default();
+    let innermost_node = middle.add_node(Box::new(innermost) as Box<dyn DebugNode>);
+    let outlet_mid = middle.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    middle.add_edge(innermost_node, outlet_mid, Edge::from((0, 0)));
+
+    // Outer: middle_graph -> number
+    let mut outer = petgraph::graph::DiGraph::new();
+    let middle_node = outer.add_node(Box::new(middle) as Box<dyn DebugNode>);
+    let number = outer.add_node(Box::new(node_number()) as Box<_>);
+    outer.add_edge(middle_node, number, Edge::from((0, 0)));
+
+    let ep = entrypoint::from_source(push_source(
+        vec![middle_node.index(), innermost_node.index(), push.index()],
+        push_n_outputs,
+    ));
+
+    let module = gantz_core::compile::module(&no_lookup, &outer, &[ep.clone()]).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &outer, &[], &mut vm);
+
+    for f in &module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract number state")
+        .expect("number state was None");
+    assert_eq!(val, 99);
 }
