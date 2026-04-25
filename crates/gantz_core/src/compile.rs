@@ -291,6 +291,11 @@ fn group_sources_by_level(
 
 /// Recursively build a flow tree, routing entrypoint sources to each nesting
 /// level.
+///
+/// Children are recursed into first so that outlet-reaching push sources can
+/// be combined with direct sources before building each entrypoint's flow
+/// graph. This ensures each flow graph is built exactly once with complete
+/// source information.
 fn build_flow_tree<'a>(
     meta_tree: &'a RoseTree<Meta>,
     level_sources: &std::collections::BTreeMap<
@@ -303,72 +308,89 @@ fn build_flow_tree<'a>(
         .get(&current_path)
         .map(|v| &v[..])
         .unwrap_or(&[]);
-    let mut flow = Flow::from_meta_and_sources(&meta_tree.elem, sources)?;
+    let nested_fg = flow::flow_graph(
+        &meta_tree.elem,
+        meta_tree
+            .elem
+            .inlets
+            .iter()
+            .map(|&n| (n, node::Conns::connected(1).unwrap())),
+        meta_tree
+            .elem
+            .outlets
+            .iter()
+            .map(|&n| (n, node::Conns::connected(1).unwrap())),
+    )?;
     let mut nested = std::collections::BTreeMap::new();
 
-    // Collect outlet-reaching push sources across all children, grouped by
-    // entrypoint ID. Multiple children may reach outlets for the same
-    // entrypoint (e.g. two NamedRef nodes sharing a multi-source entrypoint).
-    let mut outlet_push_sources: std::collections::BTreeMap<
-        EntrypointId,
-        Vec<(node::Id, node::Conns)>,
-    > = std::collections::BTreeMap::new();
-
+    // 1. Recurse into children, collect outlet-reaching push sources.
+    let mut outlet_push: std::collections::BTreeMap<EntrypointId, Vec<(node::Id, node::Conns)>> =
+        std::collections::BTreeMap::new();
     for (&id, subtree) in &meta_tree.nested {
         let mut child_path = current_path.clone();
         child_path.push(id);
         let child_tree = build_flow_tree(subtree, level_sources, child_path)?;
-
         let (_, ref child_flow) = child_tree.elem;
         for ep_id in child_flow.outlet_reach.keys() {
             let n_outputs = meta_tree.elem.outputs.get(&id).copied().unwrap_or(0);
             if n_outputs > 0 {
                 let conns = node::Conns::connected(n_outputs).unwrap();
-                outlet_push_sources
+                outlet_push
                     .entry(ep_id.clone())
                     .or_default()
                     .push((id, conns));
             }
         }
-
         nested.insert(id, child_tree);
     }
 
-    // Create or rebuild FlowGraphs for outlet-reaching entrypoints,
-    // combining all children's push sources (and any direct sources at
-    // this level) into a single flow graph.
-    for (ep_id, outlet_srcs) in outlet_push_sources {
-        // If a flow graph already exists for this ep_id (from direct
-        // sources at this level), merge the direct sources with the
-        // outlet push sources by rebuilding the flow graph.
-        let direct_srcs: &[&EvalSource] = sources
-            .iter()
-            .find(|(id, _)| *id == ep_id)
-            .map(|(_, srcs)| srcs.as_slice())
-            .unwrap_or(&[]);
-        let direct_push = direct_srcs
-            .iter()
-            .filter(|s| s.kind == EvalKind::Push)
-            .map(|s| (*s.path.last().unwrap(), s.conns));
-        let direct_pull = direct_srcs
-            .iter()
-            .filter(|s| s.kind == EvalKind::Pull)
-            .map(|s| (*s.path.last().unwrap(), s.conns));
-        let all_push = direct_push.chain(outlet_srcs);
-        let fg = flow::flow_graph(&meta_tree.elem, all_push, direct_pull)?;
+    // 2. Collect all push/pull sources per entrypoint: direct + outlet.
+    let mut ep_push: std::collections::BTreeMap<EntrypointId, Vec<(node::Id, node::Conns)>> =
+        std::collections::BTreeMap::new();
+    let mut ep_pull: std::collections::BTreeMap<EntrypointId, Vec<(node::Id, node::Conns)>> =
+        std::collections::BTreeMap::new();
+    for (ep_id, srcs) in sources {
+        for src in srcs {
+            let node_id = *src.path.last().unwrap();
+            let map = match src.kind {
+                EvalKind::Push => &mut ep_push,
+                EvalKind::Pull => &mut ep_pull,
+            };
+            map.entry(ep_id.clone())
+                .or_default()
+                .push((node_id, src.conns));
+        }
+    }
+    for (ep_id, srcs) in outlet_push {
+        ep_push.entry(ep_id).or_default().extend(srcs);
+    }
+
+    // 3. Build one flow graph per entrypoint with complete sources.
+    let mut entrypoints = std::collections::BTreeMap::new();
+    let mut outlet_reach = std::collections::BTreeMap::new();
+    let ep_ids: std::collections::BTreeSet<_> =
+        ep_push.keys().chain(ep_pull.keys()).cloned().collect();
+    for ep_id in ep_ids {
+        let push = ep_push.remove(&ep_id).unwrap_or_default();
+        let pull = ep_pull.remove(&ep_id).unwrap_or_default();
+        let fg = flow::flow_graph(&meta_tree.elem, push, pull)?;
         let reached: std::collections::BTreeSet<node::Id> = fg
             .node_weights()
             .flat_map(|blk| blk.iter())
             .map(|conf| conf.id)
             .filter(|nid| meta_tree.elem.outlets.contains(nid))
             .collect();
-        if reached.is_empty() {
-            flow.outlet_reach.remove(&ep_id);
-        } else {
-            flow.outlet_reach.insert(ep_id.clone(), reached);
+        if !reached.is_empty() {
+            outlet_reach.insert(ep_id.clone(), reached);
         }
-        flow.entrypoints.insert(ep_id, fg);
+        entrypoints.insert(ep_id, fg);
     }
+
+    let flow = Flow {
+        nested: nested_fg,
+        entrypoints,
+        outlet_reach,
+    };
     Ok(RoseTree {
         elem: (&meta_tree.elem, flow),
         nested,

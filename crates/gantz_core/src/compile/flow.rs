@@ -1,7 +1,7 @@
 //! Items related to constructing a view of the control flow of a gantz graph.
 
 use super::{
-    EntrypointId, EvalKind, EvalSource, Meta, MetaGraph,
+    EntrypointId, Meta, MetaGraph,
     error::{InvalidInputIndex, InvalidOutputIndex, NodeConnsError, TooManyConns},
     push_eval_neighbors, push_reachable,
 };
@@ -133,58 +133,6 @@ pub struct NodeConns {
     pub inputs: node::Conns,
     /// Includes all connected outputs (whether conditional or not).
     pub outputs: node::Conns,
-}
-
-impl Flow {
-    /// Build Flow from structural Meta and entrypoint sources at this level.
-    ///
-    /// `level_sources` maps `EntrypointId` -> sources at this level.
-    /// The `EntrypointId` is always from the original (full-path) entrypoint.
-    pub fn from_meta_and_sources(
-        meta: &Meta,
-        level_sources: &[(EntrypointId, Vec<&EvalSource>)],
-    ) -> Result<Self, NodeConnsError> {
-        let mut entrypoints = BTreeMap::new();
-        let mut outlet_reach = BTreeMap::new();
-        for (id, sources) in level_sources {
-            let push_sources = sources
-                .iter()
-                .filter(|s| s.kind == EvalKind::Push)
-                .map(|s| (*s.path.last().unwrap(), s.conns));
-            let pull_sources = sources
-                .iter()
-                .filter(|s| s.kind == EvalKind::Pull)
-                .map(|s| (*s.path.last().unwrap(), s.conns));
-            let fg = flow_graph(meta, push_sources, pull_sources)?;
-            // Check which outlet nodes this entrypoint's flow reaches.
-            let reached: BTreeSet<node::Id> = fg
-                .node_weights()
-                .flat_map(|blk| blk.iter())
-                .map(|conf| conf.id)
-                .filter(|id| meta.outlets.contains(id))
-                .collect();
-            if !reached.is_empty() {
-                outlet_reach.insert(id.clone(), reached);
-            }
-            entrypoints.insert(id.clone(), fg);
-        }
-
-        let nested = flow_graph(
-            meta,
-            meta.inlets
-                .iter()
-                .map(|&n| (n, node::Conns::connected(1).unwrap())),
-            meta.outlets
-                .iter()
-                .map(|&n| (n, node::Conns::connected(1).unwrap())),
-        )?;
-
-        Ok(Self {
-            nested,
-            entrypoints,
-            outlet_reach,
-        })
-    }
 }
 
 impl fmt::Debug for NodeConf {
