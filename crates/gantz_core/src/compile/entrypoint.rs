@@ -138,11 +138,11 @@ impl visit::Visitor for EntrypointCollector<'_> {
     }
 }
 
-/// Default planner: one singleton entrypoint per push/pull eval node.
+/// Collect one singleton entrypoint per push/pull eval node.
 ///
 /// Uses the visitor pattern to recurse into nested and referenced graphs,
 /// discovering entrypoints at all nesting levels.
-pub fn default_entrypoints<G>(get_node: node::GetNode<'_>, g: G) -> Vec<Entrypoint>
+pub fn push_pull_entrypoints<G>(get_node: node::GetNode<'_>, g: G) -> Vec<Entrypoint>
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G::NodeWeight: Node,

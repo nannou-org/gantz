@@ -6,7 +6,7 @@
 
 use dyn_clone::DynClone;
 use eframe::egui;
-use gantz_core::steel::steel_vm::engine::Engine;
+use gantz_core::{compile::push_pull_entrypoints, steel::steel_vm::engine::Engine};
 use gantz_egui::{HeadAccess, HeadDataMut};
 use std::{
     any::Any,
@@ -413,7 +413,8 @@ impl App {
         let mut compiled_modules = Vec::with_capacity(heads.len());
         for (_, graph, _) in &heads {
             let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
-            match gantz_core::vm::init(&get_node, graph) {
+            let eps = push_pull_entrypoints(&get_node, graph);
+            match gantz_core::vm::init(&get_node, graph, &eps) {
                 Ok((vm, module)) => {
                     vms.push(vm);
                     compiled_modules.push(gantz_core::vm::fmt_module(&module));
@@ -482,7 +483,8 @@ impl eframe::App for App {
                 // Recompile this head's graph into its VM.
                 let vm = &mut self.state.vms[ix];
                 let get_node = |ca: &gantz_ca::ContentAddr| self.state.env.node(ca);
-                match gantz_core::vm::compile(&get_node, &*graph, vm) {
+                let eps = push_pull_entrypoints(&get_node, &*graph);
+                match gantz_core::vm::compile(&get_node, &*graph, vm, &eps) {
                     Ok(module) => {
                         self.state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module)
                     }
@@ -1335,7 +1337,8 @@ fn open_head(state: &mut State, new_head: gantz_ca::Head) {
 
     // Initialise the VM for the new graph and add to per-head collections.
     let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
-    match gantz_core::vm::init(&get_node, &new_graph) {
+    let eps = push_pull_entrypoints(&get_node, &new_graph);
+    match gantz_core::vm::init(&get_node, &new_graph, &eps) {
         Ok((vm, module)) => {
             state.vms.push(vm);
             state
@@ -1377,7 +1380,8 @@ fn replace_head(ctx: &egui::Context, state: &mut State, new_head: gantz_ca::Head
 
     // Reinitialize the VM for the new graph.
     let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
-    match gantz_core::vm::init(&get_node, &new_graph) {
+    let eps = push_pull_entrypoints(&get_node, &new_graph);
+    match gantz_core::vm::init(&get_node, &new_graph, &eps) {
         Ok((new_vm, module)) => {
             state.vms[ix] = new_vm;
             state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module);
@@ -1425,7 +1429,8 @@ fn refresh_branch_head(state: &mut State) {
     *graph = clone_graph(new_graph);
     *views = GraphViews::default();
     let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
-    match gantz_core::vm::init(&get_node, &*graph) {
+    let eps = push_pull_entrypoints(&get_node, &*graph);
+    match gantz_core::vm::init(&get_node, &*graph, &eps) {
         Ok((new_vm, module)) => {
             state.vms[ix] = new_vm;
             state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module);

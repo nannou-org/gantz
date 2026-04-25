@@ -2,7 +2,7 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
-    compile::{default_entrypoints, entry_fn_name, entrypoint, push_source},
+    compile::{entry_fn_name, entrypoint, push_pull_entrypoints, push_source},
     node::{self, GraphNode, Node, WithPushEval},
 };
 use std::fmt::Debug;
@@ -121,7 +121,7 @@ fn test_graph_nested_stateless() {
 
     // Generate the module, which should have just one top-level expr for `push`.
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &gb);
+    let eps = push_pull_entrypoints(&no_lookup, &gb);
     let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
 
     // Create the VM.
@@ -206,7 +206,7 @@ fn test_graph_nested_counter() {
 
     // Generate the module.
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &gb);
+    let eps = push_pull_entrypoints(&no_lookup, &gb);
     let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
 
     // Create the VM.
@@ -435,7 +435,7 @@ fn test_graph_nested_non_sequential_inlets() {
 
     // Generate the module.
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &gb);
+    let eps = push_pull_entrypoints(&no_lookup, &gb);
     let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
 
     // Create the VM.
@@ -599,7 +599,7 @@ fn test_graph_nested_multi_outlet() {
     outer.add_edge(graph, num_b, Edge::from((1, 0))); // outlet 1
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &outer);
+    let eps = push_pull_entrypoints(&no_lookup, &outer);
     let module = gantz_core::compile::module(&no_lookup, &outer, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -749,7 +749,7 @@ fn test_graph_nested_push_through_outlet_deep() {
     assert_eq!(val, 99);
 }
 
-// Test that `default_entrypoints` discovers push eval nodes inside nested
+// Test that `push_pull_entrypoints` discovers push eval nodes inside nested
 // graphs. This mirrors the real-world scenario of a FrameBang node inside a
 // nested graph placed in a top-level graph via NamedRef.
 //
@@ -759,10 +759,10 @@ fn test_graph_nested_push_through_outlet_deep() {
 // OUTER GRAPH:
 //    inner_graph -> number
 //
-// `default_entrypoints` on the outer graph should discover the push node
+// `push_pull_entrypoints` on the outer graph should discover the push node
 // inside the inner graph and create an entrypoint with path [graph_a, push].
 #[test]
-fn test_default_entrypoints_discovers_nested_push() {
+fn test_push_pull_entrypoints_discovers_nested_push() {
     // Inner graph: push -> int(42) -> outlet
     let mut inner = GraphNode::default();
     let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
@@ -777,11 +777,11 @@ fn test_default_entrypoints_discovers_nested_push() {
     let number = outer.add_node(Box::new(node_number()) as Box<_>);
     outer.add_edge(graph_a, number, Edge::from((0, 0)));
 
-    // default_entrypoints should find the nested push node.
-    let eps = default_entrypoints(&no_lookup, &outer);
+    // push_pull_entrypoints should find the nested push node.
+    let eps = push_pull_entrypoints(&no_lookup, &outer);
     assert!(
         !eps.is_empty(),
-        "default_entrypoints should discover the nested push eval node"
+        "push_pull_entrypoints should discover the nested push eval node"
     );
 
     // There should be an entrypoint with path [graph_a, push].
@@ -826,4 +826,148 @@ fn test_default_entrypoints_discovers_nested_push() {
         .expect("failed to extract number state")
         .expect("number state was None");
     assert_eq!(val, 42);
+}
+
+// Test that two nested graph nodes sharing a multi-source entrypoint both
+// propagate through their outlets to the parent graph.
+//
+// This mirrors the scenario of two NamedRef "deltams" nodes in a top-level
+// graph, where both contain a FrameBang and are combined into a single
+// multi-source entrypoint.
+//
+// INNER GRAPH (shared by both):
+//    push -> int(10) -> outlet
+//
+// OUTER GRAPH:
+//    graph_a -> num_a
+//    graph_b -> num_b
+//
+// A single multi-source entrypoint fires push inside both graph_a and graph_b.
+// Both outlets should propagate, writing 10 to both num_a and num_b.
+#[test]
+fn test_graph_nested_multi_source_outlet_propagation() {
+    // Inner graph: push -> int(10) -> outlet
+    let make_inner = || {
+        let mut inner = GraphNode::default();
+        let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let ten = inner.add_node(Box::new(node_int(10)) as Box<_>);
+        let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        inner.add_edge(push, ten, Edge::from((0, 0)));
+        inner.add_edge(ten, outlet, Edge::from((0, 0)));
+        (inner, push)
+    };
+
+    let (inner_a, push_a) = make_inner();
+    let (inner_b, push_b) = make_inner();
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let push_n_outputs = inner_a[push_a].n_outputs(ctx) as u8;
+
+    // Outer graph: two graph nodes -> two number nodes
+    let mut outer = petgraph::graph::DiGraph::new();
+    let graph_a = outer.add_node(Box::new(inner_a) as Box<dyn DebugNode>);
+    let graph_b = outer.add_node(Box::new(inner_b) as Box<dyn DebugNode>);
+    let num_a = outer.add_node(Box::new(node_number()) as Box<_>);
+    let num_b = outer.add_node(Box::new(node_number()) as Box<_>);
+    outer.add_edge(graph_a, num_a, Edge::from((0, 0)));
+    outer.add_edge(graph_b, num_b, Edge::from((0, 0)));
+
+    // Multi-source entrypoint: both pushes in one entrypoint.
+    let ep = entrypoint::from_sources([
+        push_source(vec![graph_a.index(), push_a.index()], push_n_outputs),
+        push_source(vec![graph_b.index(), push_b.index()], push_n_outputs),
+    ]);
+
+    let module = gantz_core::compile::module(&no_lookup, &outer, &[ep.clone()]).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &outer, &[], &mut vm);
+
+    for f in &module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    let a = node::state::extract::<u32>(&vm, &[num_a.index()])
+        .expect("failed to extract num_a state")
+        .expect("num_a state was None");
+    let b = node::state::extract::<u32>(&vm, &[num_b.index()])
+        .expect("failed to extract num_b state")
+        .expect("num_b state was None");
+    assert_eq!(a, 10, "graph_a outlet should propagate to num_a");
+    assert_eq!(b, 10, "graph_b outlet should propagate to num_b");
+}
+
+// Test a multi-source entrypoint with sources at different nesting levels:
+// a direct push source at the root and a nested push source inside a graph
+// node that propagates through an outlet.
+//
+// This mirrors the scenario of a top-level FrameBang + a NamedRef "deltams"
+// (which contains its own FrameBang inside) combined into one entrypoint.
+//
+// INNER GRAPH:
+//    push_inner -> int(10) -> outlet
+//
+// OUTER GRAPH:
+//    graph_node --(outlet)--> add (input 0)
+//    push_outer ------------> add (input 1)
+//    add -> number
+//
+// Both pushes fire in a single entrypoint. The graph_node outlet value (10)
+// and push_outer value ('()) reach add, whose result is stored in number.
+#[test]
+fn test_graph_nested_mixed_level_multi_source() {
+    // Inner graph: push -> int(10) -> outlet
+    let mut inner = GraphNode::default();
+    let push_inner = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let ten = inner.add_node(Box::new(node_int(10)) as Box<_>);
+    let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    inner.add_edge(push_inner, ten, Edge::from((0, 0)));
+    inner.add_edge(ten, outlet, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let push_inner_n = inner[push_inner].n_outputs(ctx) as u8;
+
+    // Outer graph
+    let mut outer = petgraph::graph::DiGraph::new();
+    let graph_node = outer.add_node(Box::new(inner) as Box<dyn DebugNode>);
+    let push_outer = outer.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let twenty = outer.add_node(Box::new(node_int(20)) as Box<_>);
+    // add: (+ $l $r) - takes two inputs
+    let add = outer.add_node(Box::new(node::expr("(+ $l $r)").unwrap()) as Box<_>);
+    let number = outer.add_node(Box::new(node_number()) as Box<_>);
+    outer.add_edge(graph_node, add, Edge::from((0, 0))); // outlet(10) -> add input 0
+    outer.add_edge(push_outer, twenty, Edge::from((0, 0))); // push -> int(20)
+    outer.add_edge(twenty, add, Edge::from((0, 1))); // int(20) -> add input 1
+    outer.add_edge(add, number, Edge::from((0, 0)));
+
+    let push_outer_n = outer[push_outer].n_outputs(ctx) as u8;
+
+    // Multi-source entrypoint: nested push + direct push
+    let ep = entrypoint::from_sources([
+        push_source(vec![graph_node.index(), push_inner.index()], push_inner_n),
+        push_source(vec![push_outer.index()], push_outer_n),
+    ]);
+
+    let module = gantz_core::compile::module(&no_lookup, &outer, &[ep.clone()]).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &outer, &[], &mut vm);
+
+    for f in &module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    // outlet produces 10, push_outer -> int produces 20, add = 10 + 20 = 30
+    let val = node::state::extract::<i32>(&vm, &[number.index()])
+        .expect("failed to extract number state")
+        .expect("number state was None");
+    assert_eq!(val, 30);
 }

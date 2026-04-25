@@ -9,7 +9,7 @@ use crate::{
 pub use codegen::{entry_fn_body, entry_fn_name};
 #[doc(inline)]
 pub use entrypoint::{
-    Entrypoint, EntrypointId, EvalKind, EvalSource, default_entrypoints, pull_source, push_source,
+    Entrypoint, EntrypointId, EvalKind, EvalSource, pull_source, push_pull_entrypoints, push_source,
 };
 #[doc(inline)]
 pub use error::ModuleError;
@@ -305,40 +305,69 @@ fn build_flow_tree<'a>(
         .unwrap_or(&[]);
     let mut flow = Flow::from_meta_and_sources(&meta_tree.elem, sources)?;
     let mut nested = std::collections::BTreeMap::new();
+
+    // Collect outlet-reaching push sources across all children, grouped by
+    // entrypoint ID. Multiple children may reach outlets for the same
+    // entrypoint (e.g. two NamedRef nodes sharing a multi-source entrypoint).
+    let mut outlet_push_sources: std::collections::BTreeMap<
+        EntrypointId,
+        Vec<(node::Id, node::Conns)>,
+    > = std::collections::BTreeMap::new();
+
     for (&id, subtree) in &meta_tree.nested {
         let mut child_path = current_path.clone();
         child_path.push(id);
         let child_tree = build_flow_tree(subtree, level_sources, child_path)?;
 
-        // If a child entrypoint reaches outlets, create a continuation
-        // FlowGraph in the parent that starts from the graph node.
         let (_, ref child_flow) = child_tree.elem;
         for ep_id in child_flow.outlet_reach.keys() {
-            if !flow.entrypoints.contains_key(ep_id) {
-                let n_outputs = meta_tree.elem.outputs.get(&id).copied().unwrap_or(0);
-                if n_outputs > 0 {
-                    let conns = node::Conns::connected(n_outputs).unwrap();
-                    let fg = flow::flow_graph(
-                        &meta_tree.elem,
-                        std::iter::once((id, conns)),
-                        std::iter::empty(),
-                    )?;
-                    // Check if the continuation itself reaches outlets (multi-level).
-                    let reached: std::collections::BTreeSet<node::Id> = fg
-                        .node_weights()
-                        .flat_map(|blk| blk.iter())
-                        .map(|conf| conf.id)
-                        .filter(|nid| meta_tree.elem.outlets.contains(nid))
-                        .collect();
-                    if !reached.is_empty() {
-                        flow.outlet_reach.insert(ep_id.clone(), reached);
-                    }
-                    flow.entrypoints.insert(ep_id.clone(), fg);
-                }
+            let n_outputs = meta_tree.elem.outputs.get(&id).copied().unwrap_or(0);
+            if n_outputs > 0 {
+                let conns = node::Conns::connected(n_outputs).unwrap();
+                outlet_push_sources
+                    .entry(ep_id.clone())
+                    .or_default()
+                    .push((id, conns));
             }
         }
 
         nested.insert(id, child_tree);
+    }
+
+    // Create or rebuild FlowGraphs for outlet-reaching entrypoints,
+    // combining all children's push sources (and any direct sources at
+    // this level) into a single flow graph.
+    for (ep_id, outlet_srcs) in outlet_push_sources {
+        // If a flow graph already exists for this ep_id (from direct
+        // sources at this level), merge the direct sources with the
+        // outlet push sources by rebuilding the flow graph.
+        let direct_srcs: &[&EvalSource] = sources
+            .iter()
+            .find(|(id, _)| *id == ep_id)
+            .map(|(_, srcs)| srcs.as_slice())
+            .unwrap_or(&[]);
+        let direct_push = direct_srcs
+            .iter()
+            .filter(|s| s.kind == EvalKind::Push)
+            .map(|s| (*s.path.last().unwrap(), s.conns));
+        let direct_pull = direct_srcs
+            .iter()
+            .filter(|s| s.kind == EvalKind::Pull)
+            .map(|s| (*s.path.last().unwrap(), s.conns));
+        let all_push = direct_push.chain(outlet_srcs);
+        let fg = flow::flow_graph(&meta_tree.elem, all_push, direct_pull)?;
+        let reached: std::collections::BTreeSet<node::Id> = fg
+            .node_weights()
+            .flat_map(|blk| blk.iter())
+            .map(|conf| conf.id)
+            .filter(|nid| meta_tree.elem.outlets.contains(nid))
+            .collect();
+        if reached.is_empty() {
+            flow.outlet_reach.remove(&ep_id);
+        } else {
+            flow.outlet_reach.insert(ep_id.clone(), reached);
+        }
+        flow.entrypoints.insert(ep_id, fg);
     }
     Ok(RoseTree {
         elem: (&meta_tree.elem, flow),

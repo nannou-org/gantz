@@ -88,6 +88,14 @@ where
         + 'static,
 {
     fn build(&self, app: &mut App) {
+        // Register frame_bang entrypoint provider.
+        app.world_mut()
+            .resource_mut::<bevy_gantz::EntrypointFns<N>>()
+            .0
+            .push(Box::new(|get_node, graph| {
+                node::frame_bang::entrypoints(get_node, graph)
+            }));
+
         app.insert_resource(BaseImmutable(self.base_immutable))
             .init_resource::<BaseNames>()
             .init_resource::<GuiState>()

@@ -2,7 +2,7 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
-    compile::{default_entrypoints, entry_fn_name, entrypoint},
+    compile::{entry_fn_name, entrypoint, push_pull_entrypoints},
     node::{self, Node, WithPushEval},
 };
 use std::fmt::Debug;
@@ -102,7 +102,7 @@ fn test_stateless_rust_add() {
     g.add_edge(two, assert_eq, Edge::from((0, 1)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -172,7 +172,7 @@ fn test_stateful_rust_counter() {
     g.add_edge(push, counter, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -247,7 +247,7 @@ fn test_zero_arg_stateless() {
     g.add_edge(ex, aeq, Edge::from((0, 1)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -318,7 +318,7 @@ fn test_state_only_fn() {
     g.add_edge(tick_ix, pull_ix, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -392,7 +392,7 @@ fn test_stateful_typed_counter() {
     g.add_edge(push, counter, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -469,7 +469,7 @@ fn test_closure_with_capture() {
     g.add_edge(mul_ix, aeq_ix, Edge::from((0, 0)));
     g.add_edge(exp_ix, aeq_ix, Edge::from((0, 1)));
 
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();

@@ -12,11 +12,39 @@ use crate::reg::{Registry, lookup_node};
 use bevy_ecs::prelude::*;
 use bevy_log as log;
 use gantz_ca as ca;
-use gantz_core::node::{GetNode, graph::Graph};
+use gantz_core::node::{self, GetNode, graph::Graph};
 use gantz_core::vm::CompileError;
 use gantz_core::{Node, compile as core_compile};
 use std::time::Duration;
 use steel::steel_vm::engine::Engine;
+
+/// A function that produces entrypoints for a given graph.
+pub type EntrypointFn<N> = Box<
+    dyn for<'a> Fn(node::GetNode<'a>, &Graph<N>) -> Vec<core_compile::Entrypoint> + Send + Sync,
+>;
+
+/// Resource holding all entrypoint provider functions.
+///
+/// Each provider is called during compilation to collect entrypoints.
+/// `GantzPlugin` registers `push_pull_entrypoints` by default.
+/// Downstream plugins (e.g. `GantzEguiPlugin`) push additional providers.
+#[derive(Resource)]
+pub struct EntrypointFns<N: 'static>(pub Vec<EntrypointFn<N>>);
+
+impl<N: 'static> Default for EntrypointFns<N> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
+
+/// Collect all entrypoints by calling each provider fn in the resource.
+fn collect_entrypoints<N: Node>(
+    ep_fns: &EntrypointFns<N>,
+    get_node: GetNode<'_>,
+    graph: &Graph<N>,
+) -> Vec<core_compile::Entrypoint> {
+    ep_fns.0.iter().flat_map(|f| f(get_node, graph)).collect()
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -50,11 +78,15 @@ pub struct EvalEntryComplete {
 /// Initialize a new VM with root state and register the given graph.
 ///
 /// Returns the initialized VM and the compiled module as a formatted string.
-pub fn init<N>(get_node: GetNode, graph: &Graph<N>) -> Result<(Engine, String), CompileError>
+pub fn init<N>(
+    get_node: GetNode,
+    graph: &Graph<N>,
+    entrypoints: &[core_compile::Entrypoint],
+) -> Result<(Engine, String), CompileError>
 where
     N: Node,
 {
-    let (vm, module) = gantz_core::vm::init(get_node, graph)?;
+    let (vm, module) = gantz_core::vm::init(get_node, graph, entrypoints)?;
     Ok((vm, gantz_core::vm::fmt_module(&module)))
 }
 
@@ -65,11 +97,12 @@ pub fn compile<N>(
     get_node: GetNode,
     graph: &Graph<N>,
     vm: &mut Engine,
+    entrypoints: &[core_compile::Entrypoint],
 ) -> Result<String, CompileError>
 where
     N: Node,
 {
-    let module = gantz_core::vm::compile(get_node, graph, vm)?;
+    let module = gantz_core::vm::compile(get_node, graph, vm, entrypoints)?;
     Ok(gantz_core::vm::fmt_module(&module))
 }
 
@@ -82,6 +115,7 @@ fn init_head_vm<N>(
     entity: Entity,
     registry: &Registry<N>,
     builtins: &BuiltinNodes<N>,
+    ep_fns: &EntrypointFns<N>,
     vms: &mut head::HeadVms,
     cmds: &mut Commands,
     graphs: &Query<&head::WorkingGraph<N>>,
@@ -90,7 +124,8 @@ fn init_head_vm<N>(
 {
     let graph = graphs.get(entity).unwrap();
     let get_node = |ca: &ca::ContentAddr| lookup_node(registry, &**builtins, ca);
-    let (vm, module) = match init(&get_node, &**graph) {
+    let entrypoints = collect_entrypoints(ep_fns, &get_node, &**graph);
+    let (vm, module) = match init(&get_node, &**graph, &entrypoints) {
         Ok(result) => result,
         Err(e) => {
             log::error!("Failed to init VM for head: {e}");
@@ -106,6 +141,7 @@ pub fn on_head_opened<N>(
     trigger: On<head::OpenedEvent>,
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
+    ep_fns: Res<EntrypointFns<N>>,
     mut vms: NonSendMut<head::HeadVms>,
     mut cmds: Commands,
     graphs: Query<&head::WorkingGraph<N>>,
@@ -116,6 +152,7 @@ pub fn on_head_opened<N>(
         trigger.event().entity,
         &registry,
         &builtins,
+        &ep_fns,
         &mut vms,
         &mut cmds,
         &graphs,
@@ -127,6 +164,7 @@ pub fn on_head_changed<N>(
     trigger: On<head::ChangedEvent>,
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
+    ep_fns: Res<EntrypointFns<N>>,
     mut vms: NonSendMut<head::HeadVms>,
     mut cmds: Commands,
     graphs: Query<&head::WorkingGraph<N>>,
@@ -137,6 +175,7 @@ pub fn on_head_changed<N>(
         trigger.event().entity,
         &registry,
         &builtins,
+        &ep_fns,
         &mut vms,
         &mut cmds,
         &graphs,
@@ -186,11 +225,13 @@ where
     for entity in entities {
         let registry = world.resource::<Registry<N>>();
         let builtins = world.resource::<BuiltinNodes<N>>();
+        let ep_fns = world.resource::<EntrypointFns<N>>();
         let get_node = |ca: &ca::ContentAddr| lookup_node(registry, &**builtins, ca);
         let Some(wg) = world.get::<head::WorkingGraph<N>>(entity) else {
             continue;
         };
-        let (vm, module) = match init(&get_node, &**wg) {
+        let entrypoints = collect_entrypoints(ep_fns, &get_node, &**wg);
+        let (vm, module) = match init(&get_node, &**wg, &entrypoints) {
             Ok(result) => result,
             Err(e) => {
                 log::error!("Failed to init VM for entity {entity}: {e}");
@@ -220,6 +261,7 @@ pub fn update<N>(
     mut cmds: Commands,
     mut registry: ResMut<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
+    ep_fns: Res<EntrypointFns<N>>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads_query: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
 ) where
@@ -258,7 +300,8 @@ pub fn update<N>(
             if let Some(vm) = vms.get_mut(&data.entity) {
                 let get_node = |ca: &ca::ContentAddr| lookup_node(&registry, &**builtins, ca);
                 gantz_core::graph::register(&get_node, graph, &[], vm);
-                match compile(&get_node, graph, vm) {
+                let entrypoints = collect_entrypoints(&ep_fns, &get_node, graph);
+                match compile(&get_node, graph, vm, &entrypoints) {
                     Ok(module) => data.compiled.0 = module,
                     Err(e) => log::error!("Failed to compile graph: {e}"),
                 }
