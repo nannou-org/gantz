@@ -1,6 +1,6 @@
 // Tests for the Fn and Apply nodes - first-class functions in gantz.
 
-use gantz_core::compile::{default_entrypoints, entry_fn_name, entrypoint};
+use gantz_core::compile::{entry_fn_name, entrypoint, push_pull_entrypoints};
 use gantz_core::node::{self, Apply, Fn, Node, Ref, WithPullEval, graph};
 use gantz_core::{Edge, ROOT_STATE};
 use std::collections::HashMap;
@@ -100,7 +100,7 @@ fn test_fn_apply_identity() {
 
     // Generate the module.
     let ctx = node::MetaCtx::new(&get_node);
-    let eps = default_entrypoints(&get_node, &g);
+    let eps = push_pull_entrypoints(&get_node, &g);
     let module = gantz_core::compile::module(&get_node, &g, &eps).unwrap();
 
     // Create and setup VM.
@@ -209,7 +209,7 @@ fn test_fn_apply_graph() {
 
     // Generate the module.
     let ctx = node::MetaCtx::new(&get_node);
-    let eps = default_entrypoints(&get_node, &g);
+    let eps = push_pull_entrypoints(&get_node, &g);
     let module = gantz_core::compile::module(&get_node, &g, &eps).unwrap();
 
     // Create and setup VM.

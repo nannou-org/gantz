@@ -18,7 +18,7 @@ pub use head::{
     OpenHeadDataReadOnly, WorkingGraph,
 };
 pub use reg::{Registry, lookup_node, timestamp};
-pub use vm::{EvalEntryComplete, EvalEntryEvent};
+pub use vm::{EntrypointFns, EvalEntryComplete, EvalEntryEvent};
 
 /// Plugin providing core gantz functionality.
 ///
@@ -47,23 +47,26 @@ where
     N: 'static + Node + Clone + gantz_ca::CaHash + Send + Sync,
 {
     fn build(&self, app: &mut App) {
-        app.init_resource::<FocusedHead>()
-            .init_resource::<HeadTabOrder>()
-            .init_resource::<Registry<N>>()
-            .init_non_send_resource::<HeadVms>()
-            // Register head event handlers.
-            .add_observer(head::on_open::<N>)
-            .add_observer(head::on_replace::<N>)
-            .add_observer(head::on_close::<N>)
-            .add_observer(head::on_branch_head::<N>)
-            .add_observer(head::on_move_branch::<N>)
-            // Register eval entry event handler.
-            .add_observer(vm::on_eval_entry)
-            // VM init observers.
-            .add_observer(vm::on_head_opened::<N>)
-            .add_observer(vm::on_head_changed::<N>)
-            // Graph recompilation system.
-            .add_systems(Update, vm::update::<N>);
+        app.insert_resource(vm::EntrypointFns::<N>(vec![Box::new(|get_node, graph| {
+            gantz_core::compile::push_pull_entrypoints(get_node, graph)
+        })]))
+        .init_resource::<FocusedHead>()
+        .init_resource::<HeadTabOrder>()
+        .init_resource::<Registry<N>>()
+        .init_non_send_resource::<HeadVms>()
+        // Register head event handlers.
+        .add_observer(head::on_open::<N>)
+        .add_observer(head::on_replace::<N>)
+        .add_observer(head::on_close::<N>)
+        .add_observer(head::on_branch_head::<N>)
+        .add_observer(head::on_move_branch::<N>)
+        // Register eval entry event handler.
+        .add_observer(vm::on_eval_entry)
+        // VM init observers.
+        .add_observer(vm::on_head_opened::<N>)
+        .add_observer(vm::on_head_changed::<N>)
+        // Graph recompilation system.
+        .add_systems(Update, vm::update::<N>);
     }
 }
 

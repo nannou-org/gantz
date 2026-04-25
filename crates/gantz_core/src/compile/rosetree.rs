@@ -103,6 +103,7 @@ impl<T> RoseTree<T> {
     }
 
     /// Fallible post-order visit: children are visited before parent.
+    #[allow(dead_code)]
     pub(crate) fn try_visit_post<E>(
         &self,
         path: &[node::Id],

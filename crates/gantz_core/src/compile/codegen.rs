@@ -504,10 +504,21 @@ pub(crate) fn eval_fn_block_stmts(
     block: &Block,
     in_scope: &mut HashSet<node::Id>,
     active_phi: &HashSet<(node::Id, usize)>,
+    bridge_nodes: &BTreeSet<node::Id>,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     let mut stmts = Vec::new();
     let mut iter = block.0.iter().peekable();
     while let Some(conf) = iter.next() {
+        // Bridge nodes have their output already bound by an outlet bridge.
+        // Skip the eval but still destructure outputs for downstream use.
+        if bridge_nodes.contains(&conf.id) {
+            if iter.peek().is_some() {
+                stmts.extend(destructure_node_outputs_stmt(conf.id, conf.conns.outputs));
+                in_scope.insert(conf.id);
+            }
+            continue;
+        }
+
         // Before evaluating this node, create dedicated input bindings for
         // any inputs with multiple incoming edges (scalar or list).
         stmts.extend(define_target_input_bindings(
@@ -650,11 +661,21 @@ fn flow_node_stmts(
     in_scope: &mut HashSet<node::Id>,
     active_phi: &HashSet<(node::Id, usize)>,
     stop_at: Option<NodeIndex>,
+    bridge_nodes: &BTreeSet<node::Id>,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     // Add the block.
     let block = &fg[flow_ix];
     let mut stmts = eval_fn_block_stmts(
-        path, mg, stateful, inlets, outlets, reachable, block, in_scope, active_phi,
+        path,
+        mg,
+        stateful,
+        inlets,
+        outlets,
+        reachable,
+        block,
+        in_scope,
+        active_phi,
+        bridge_nodes,
     )?;
 
     // Collect the output branching edges.
@@ -688,8 +709,21 @@ fn flow_node_stmts(
         // Otherwise continue normally. The next block's
         // `eval_fn_block_stmts` handles input bindings via before-target.
         stmts.extend(flow_node_stmts(
-            path, dst, mg, stateful, branching, inlets, outlets, reachable, fg, post_dom,
-            phi_params, in_scope, active_phi, stop_at,
+            path,
+            dst,
+            mg,
+            stateful,
+            branching,
+            inlets,
+            outlets,
+            reachable,
+            fg,
+            post_dom,
+            phi_params,
+            in_scope,
+            active_phi,
+            stop_at,
+            bridge_nodes,
         )?);
         return Ok(stmts);
     }
@@ -775,6 +809,7 @@ fn flow_node_stmts(
                     &mut arm_scope,
                     &inner_phi,
                     Some(join_ix),
+                    bridge_nodes,
                 )?);
             }
 
@@ -798,8 +833,21 @@ fn flow_node_stmts(
 
         // After the if: generate the join block and everything after it.
         stmts.extend(flow_node_stmts(
-            path, join_ix, mg, stateful, branching, inlets, outlets, reachable, fg, post_dom,
-            phi_params, in_scope, &inner_phi, stop_at,
+            path,
+            join_ix,
+            mg,
+            stateful,
+            branching,
+            inlets,
+            outlets,
+            reachable,
+            fg,
+            post_dom,
+            phi_params,
+            in_scope,
+            &inner_phi,
+            stop_at,
+            bridge_nodes,
         )?);
 
         return Ok(stmts);
@@ -827,6 +875,7 @@ fn flow_node_stmts(
             &mut arm_scope,
             active_phi,
             stop_at,
+            bridge_nodes,
         )?;
         let dst_stmts_str = dst_stmts
             .into_iter()
@@ -860,6 +909,7 @@ pub fn entry_fn_body(
     inlets: &BTreeSet<node::Id>,
     outlets: &BTreeSet<node::Id>,
     fg: &FlowGraph,
+    bridge_nodes: &BTreeSet<node::Id>,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     let Some(entry) = flow_graph_entry(fg) else {
         return Ok(vec![]);
@@ -886,30 +936,8 @@ pub fn entry_fn_body(
         &mut HashSet::new(),
         &HashSet::new(),
         None,
+        bridge_nodes,
     )
-}
-
-/// Generate eval statements for each entrypoint at this graph level.
-///
-/// Returns a map from `EntrypointId` to the statements for that entrypoint
-/// at this level. Cross-level entrypoints will have statements at multiple
-/// levels, which are collected and concatenated by `entry_fns`.
-pub(crate) fn eval_stmts_from_flow(
-    path: &[node::Id],
-    mg: &MetaGraph,
-    stateful: &BTreeSet<node::Id>,
-    branching: &BTreeMap<node::Id, usize>,
-    inlets: &BTreeSet<node::Id>,
-    outlets: &BTreeSet<node::Id>,
-    flow: &Flow,
-) -> Result<BTreeMap<super::EntrypointId, Vec<ExprKind>>, CodegenError> {
-    flow.entrypoints
-        .iter()
-        .map(|(id, fg)| {
-            let stmts = entry_fn_body(path, mg, stateful, branching, inlets, outlets, fg)?;
-            Ok((id.clone(), stmts))
-        })
-        .collect()
 }
 
 /// Wrap statements from a nested graph level with state scope enter/exit.
@@ -952,40 +980,170 @@ fn wrap_state_scope(path: &[node::Id], stmts: Vec<ExprKind>) -> Vec<ExprKind> {
     result
 }
 
+/// Wrap inner-level statements in a `let` block that returns outlet values,
+/// binding the result as the graph node's output in the parent scope.
+///
+/// The `let` block creates a new scope so inner node bindings (e.g. `node-0`)
+/// don't collide with parent-level bindings. The outlet value(s) are the last
+/// expression in the `let` body, returned as the graph node's output.
+fn wrap_outlet_bridge(
+    inner_stmts: Vec<ExprKind>,
+    graph_node_id: node::Id,
+    inner_mg: &MetaGraph,
+    inner_outlets: &BTreeSet<node::Id>,
+    reached_outlets: &BTreeSet<node::Id>,
+) -> Vec<ExprKind> {
+    if inner_stmts.is_empty() || reached_outlets.is_empty() {
+        return inner_stmts;
+    }
+
+    // For each outlet (ordered by node ID), find the source node's output
+    // that feeds into it. Same logic as `nested_expr` outlet extraction.
+    let outlet_values: Vec<String> = inner_outlets
+        .iter()
+        .map(|&outlet_id| {
+            if !reached_outlets.contains(&outlet_id) {
+                return "'()".to_string();
+            }
+            // Find the edge incoming to this outlet in the inner MetaGraph.
+            for e_ref in inner_mg.edges_directed(outlet_id, petgraph::Incoming) {
+                let (src_id, _, edges) = (e_ref.source(), e_ref.target(), e_ref.weight());
+                for (edge, _kind) in edges {
+                    if edge.input.0 == 0 {
+                        return format!("node-{src_id}-o{}", edge.output.0);
+                    }
+                }
+            }
+            "'()".to_string()
+        })
+        .collect();
+
+    let outlet_values_expr = match outlet_values.len() {
+        0 => "'()".to_string(),
+        1 => outlet_values[0].clone(),
+        _ => format!("(list {})", outlet_values.join(" ")),
+    };
+
+    let inner_stmts_str = inner_stmts
+        .iter()
+        .map(|s| format!("{s}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let output_var = node_outputs_var(graph_node_id);
+    let wrapped = format!("(define {output_var} (let () {inner_stmts_str} {outlet_values_expr}))");
+
+    Engine::emit_ast(&wrapped).expect("failed to emit AST for outlet bridge")
+}
+
 /// Given a tree of eval plans for a gantz graph (and its nested graphs),
 /// generate all entry fns.
 ///
-/// Uses post-order traversal so nested statements execute before parent
-/// statements. Nested-level statements are wrapped with state scope
-/// enter/exit to narrow `graph-state` to the correct sub-hashmap.
+/// Uses recursive post-order traversal so nested statements execute before
+/// parent statements. When a nested entrypoint reaches outlets, its
+/// statements are wrapped in a `let` block (outlet bridge) that returns
+/// outlet values as the graph node's output, and parent-level continuation
+/// statements are generated downstream.
 pub(crate) fn entry_fns(
     flow_tree: &RoseTree<(&Meta, Flow)>,
 ) -> Result<Vec<ExprKind>, CodegenError> {
-    // Collect statements from all levels, grouped by EntrypointId.
-    // Post-order: children before parent, so nested eval runs first.
     let mut all_stmts: BTreeMap<super::EntrypointId, Vec<ExprKind>> = BTreeMap::new();
-    flow_tree.try_visit_post(&[], &mut |path, (meta, flow)| -> Result<(), CodegenError> {
-        let branching: BTreeMap<node::Id, usize> =
-            meta.branches.iter().map(|(&id, v)| (id, v.len())).collect();
-        let level_stmts = eval_stmts_from_flow(
+    entry_fns_collect(flow_tree, &[], &mut all_stmts)?;
+    Ok(all_stmts
+        .into_iter()
+        .map(|(id, stmts)| entry_fn(&entry_fn_name(&id), stmts))
+        .collect())
+}
+
+/// Recursively collect entry fn statements from the flow tree.
+///
+/// Post-order: recurse into children first. When a child entrypoint reaches
+/// outlets, wrap its statements in an outlet bridge and generate parent-level
+/// continuation statements downstream of the graph node.
+fn entry_fns_collect(
+    tree: &RoseTree<(&Meta, Flow)>,
+    path: &[node::Id],
+    all_stmts: &mut BTreeMap<super::EntrypointId, Vec<ExprKind>>,
+) -> Result<(), CodegenError> {
+    // Track which entrypoints have outlet bridges at this level, keyed by
+    // (EntrypointId, graph_node_id) -> bridged stmts.
+    let mut bridged: BTreeMap<super::EntrypointId, Vec<ExprKind>> = BTreeMap::new();
+    let mut bridge_node_ids: BTreeMap<super::EntrypointId, BTreeSet<node::Id>> = BTreeMap::new();
+
+    // 1. Recurse into children (post-order).
+    for (&graph_node_id, child_tree) in &tree.nested {
+        let mut child_path = path.to_vec();
+        child_path.push(graph_node_id);
+
+        // Collect child stmts into a temporary map so we can intercept
+        // outlet-reaching entrypoints before they go into all_stmts.
+        let mut child_stmts: BTreeMap<super::EntrypointId, Vec<ExprKind>> = BTreeMap::new();
+        entry_fns_collect(child_tree, &child_path, &mut child_stmts)?;
+
+        let (child_meta, ref child_flow) = child_tree.elem;
+
+        for (ep_id, stmts) in child_stmts {
+            if let Some(reached_outlets) = child_flow.outlet_reach.get(&ep_id) {
+                // Child stmts already include state scope wrapping from the
+                // child's own entry_fns_collect. Wrap in outlet bridge.
+                let bridge = wrap_outlet_bridge(
+                    stmts,
+                    graph_node_id,
+                    &child_meta.graph,
+                    &child_meta.outlets,
+                    reached_outlets,
+                );
+                bridged.entry(ep_id.clone()).or_default().extend(bridge);
+                bridge_node_ids
+                    .entry(ep_id)
+                    .or_default()
+                    .insert(graph_node_id);
+            } else {
+                // No outlet propagation. Child stmts already include state
+                // scope wrapping from the child's own entry_fns_collect.
+                all_stmts.entry(ep_id).or_default().extend(stmts);
+            }
+        }
+    }
+
+    // 2. Generate this level's own entrypoint stmts.
+    let (meta, flow) = &tree.elem;
+    let branching: BTreeMap<node::Id, usize> =
+        meta.branches.iter().map(|(&id, v)| (id, v.len())).collect();
+
+    // Determine bridge_nodes for each entrypoint (graph nodes whose output
+    // is already bound by an outlet bridge).
+    let empty_bridges = BTreeSet::new();
+
+    for (ep_id, fg) in &flow.entrypoints {
+        let bn = bridge_node_ids.get(ep_id).unwrap_or(&empty_bridges);
+        let stmts = entry_fn_body(
             path,
             &meta.graph,
             &meta.stateful,
             &branching,
             &meta.inlets,
             &meta.outlets,
-            flow,
+            fg,
+            bn,
         )?;
-        for (id, stmts) in level_stmts {
-            let scoped = wrap_state_scope(path, stmts);
-            all_stmts.entry(id).or_default().extend(scoped);
-        }
-        Ok(())
-    })?;
+        let scoped = wrap_state_scope(path, stmts);
 
-    // Generate one eval fn per EntrypointId.
-    Ok(all_stmts
-        .into_iter()
-        .map(|(id, stmts)| entry_fn(&entry_fn_name(&id), stmts))
-        .collect())
+        // If there are bridged stmts for this entrypoint, prepend them.
+        if let Some(bridge_stmts) = bridged.remove(ep_id) {
+            let entry = all_stmts.entry(ep_id.clone()).or_default();
+            entry.extend(bridge_stmts);
+            entry.extend(scoped);
+        } else {
+            all_stmts.entry(ep_id.clone()).or_default().extend(scoped);
+        }
+    }
+
+    // 3. Handle any remaining bridged entrypoints that have no parent-level
+    //    continuation (e.g. parent has no downstream from the graph node).
+    for (ep_id, bridge_stmts) in bridged {
+        all_stmts.entry(ep_id).or_default().extend(bridge_stmts);
+    }
+
+    Ok(())
 }

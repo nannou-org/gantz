@@ -2,7 +2,7 @@
 
 use gantz_core::{
     Edge, ROOT_STATE,
-    compile::{default_entrypoints, entry_fn_name, entrypoint},
+    compile::{entry_fn_name, entrypoint, push_pull_entrypoints},
     node::{self, Node, NodeState, WithPushEval, WithStateType},
 };
 use std::fmt::Debug;
@@ -88,7 +88,7 @@ fn test_graph_with_counter() {
 
     // Generate the module, which should have just one top-level expr for `push`.
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     // Initialise the VM.
@@ -182,7 +182,7 @@ fn test_graph_with_counters() {
 
     // Generate the module, which should have one expr for each `push`.
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     // Initialise the VM.

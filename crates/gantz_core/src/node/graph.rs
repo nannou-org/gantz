@@ -380,6 +380,7 @@ where
         &meta.inlets,
         &meta.outlets,
         &flow_graph,
+        &std::collections::BTreeSet::new(),
     )
     .map_err(|e| node::ExprError::custom(e))?;
 

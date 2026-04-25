@@ -1,6 +1,6 @@
 // Tests for the graph module.
 
-use gantz_core::compile::{default_entrypoints, entry_fn_name, entrypoint, push_source};
+use gantz_core::compile::{entry_fn_name, entrypoint, push_pull_entrypoints, push_source};
 use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
 use std::fmt::Debug;
@@ -94,7 +94,7 @@ fn test_graph_push_eval() {
     let ctx = node::MetaCtx::new(&no_lookup);
 
     // Generate the module, which should have just one top-level expr for `push`.
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
     // Function per node alongside the single push eval function.
     assert_eq!(module.len(), g.node_count() + 1);
@@ -155,7 +155,7 @@ fn test_graph_pull_eval() {
     let ctx = node::MetaCtx::new(&no_lookup);
 
     // Generate the steel module.
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     // Prepare the VM.
@@ -258,7 +258,7 @@ fn test_graph_push_cond_eval() {
     let ctx = node::MetaCtx::new(&no_lookup);
 
     // Generate the module.
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
     // Function per node alongside the two push eval functions.
     assert_eq!(module.len(), g.node_count() + 2);
@@ -424,7 +424,7 @@ fn test_graph_branch_target_is_join() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
 
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -511,7 +511,7 @@ fn test_graph_branch_both_outputs_same_target() {
     g.add_edge(select, number, Edge::from((1, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -622,7 +622,7 @@ fn test_graph_nested_diamond() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
 
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -765,7 +765,7 @@ fn test_graph_lattice_reconvergence() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
 
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -846,7 +846,7 @@ fn test_graph_eval_should_panic() {
     let ctx = node::MetaCtx::new(&no_lookup);
 
     // Generate the steel module.
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     // Prepare the VM.
@@ -923,7 +923,7 @@ fn test_graph_push_eval_subset() {
     g.add_edge(source, store_b, Edge::from((1, 0)));
 
     // Generate the module
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     // Create the VM
@@ -1019,7 +1019,7 @@ fn test_graph_multi_source_push() {
 }
 
 // Verify that push_entrypoint produces the same EntrypointId as
-// default_entrypoints for the same node, confirming naming consistency.
+// push_pull_entrypoints for the same node, confirming naming consistency.
 #[test]
 fn test_entrypoint_naming_consistency() {
     let mut g = petgraph::graph::DiGraph::new();
@@ -1029,7 +1029,7 @@ fn test_entrypoint_naming_consistency() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
 
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let manual = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
 
     // The default planner should produce a singleton push entrypoint for
@@ -1037,7 +1037,7 @@ fn test_entrypoint_naming_consistency() {
     let default_ep = eps
         .iter()
         .find(|ep| ep.0.iter().any(|s| s.path == vec![push.index()]))
-        .expect("default_entrypoints should contain push node");
+        .expect("push_pull_entrypoints should contain push node");
     assert_eq!(default_ep.id(), manual.id());
     assert_eq!(entry_fn_name(&default_ep.id()), entry_fn_name(&manual.id()));
 }
@@ -1077,7 +1077,7 @@ fn test_graph_multi_output_expr() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
 
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -1144,7 +1144,7 @@ fn test_graph_zero_output_leaf_nodes() {
     g.add_edge(push, effect2, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -1199,7 +1199,7 @@ fn test_graph_branch_node() {
     g.add_edge(seven, number, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -1273,7 +1273,7 @@ fn test_graph_multi_edge_input_list() {
     g.add_edge(sum, store, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     // Verify the generated code contains a list binding.
@@ -1351,7 +1351,7 @@ fn test_graph_branch_divergent_terminal() {
     g.add_edge(select, store_b, Edge::from((1, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -1449,7 +1449,7 @@ fn test_graph_multi_edge_in_branch_arm() {
     g.add_edge(eight, number, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -1502,7 +1502,7 @@ fn test_graph_optional_input_unconnected() {
     g.add_edge(add_opt, store, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -1548,7 +1548,7 @@ fn test_graph_optional_input_connected() {
     g.add_edge(add_opt, store, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -1627,7 +1627,7 @@ fn test_graph_three_way_branch() {
     g.add_edge(eight, number, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -1699,7 +1699,7 @@ fn test_graph_branch_single_output_dead_branch() {
     g.add_edge(branch_ix, number, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -1764,7 +1764,7 @@ fn test_graph_branch_two_outputs_one_dead() {
     g.add_edge(branch_ix, store_b, Edge::from((1, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -1831,7 +1831,7 @@ fn test_graph_branch_all_dead() {
     g.add_edge(branch_ix, number, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
@@ -1907,7 +1907,7 @@ fn test_graph_branch_optional_input_pd_add() {
     g.add_edge(pd_add_ix, number, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = default_entrypoints(&no_lookup, &g);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
 
     let mut vm = Engine::new_base();
