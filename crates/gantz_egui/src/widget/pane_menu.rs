@@ -54,7 +54,7 @@ impl<'a> PaneMenu<'a> {
         // The menu items window (separate, transparent, positioned above button).
         let menu_items_response = if openness > 0.0 {
             // Position the menu window above the button.
-            let spacing = ctx.style().spacing.item_spacing.y;
+            let spacing = ctx.global_style().spacing.item_spacing.y;
             let menu_anchor = anchor_pos
                 - egui::vec2(0.0, button_response.inner.response.rect.height() + spacing);
 

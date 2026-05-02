@@ -640,7 +640,7 @@ where
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
 
                     // Copy/paste/undo/redo keyboard shortcuts.
-                    if !ui.ctx().wants_keyboard_input() {
+                    if !ui.ctx().egui_wants_keyboard_input() {
                         // Copy is always allowed.
                         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::C)) {
                             let nodes = head_state.scene.interaction.selection.nodes.clone();
@@ -1451,7 +1451,7 @@ fn command_palette(
     ui: &mut egui::Ui,
 ) {
     // If space is pressed, toggle command palette visibility.
-    if !ui.ctx().wants_keyboard_input() {
+    if !ui.ctx().egui_wants_keyboard_input() {
         if ui.ctx().input(|i| i.key_pressed(egui::Key::Space)) {
             cmd_palette.toggle();
         }
