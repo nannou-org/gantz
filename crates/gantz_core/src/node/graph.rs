@@ -1,7 +1,7 @@
 //! An implementation of a node acting as a nested graph.
 
 use crate::{
-    Edge, GRAPH_STATE,
+    Edge, GRAPH_STATE, compile,
     node::{self, Node},
     visit,
 };
@@ -16,6 +16,7 @@ use petgraph::{
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
 };
@@ -89,9 +90,15 @@ impl<N: Node> Node for Graph<N> {
             .count()
     }
 
-    fn branches(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
-        // TODO: generate branches based on inner node branching
-        vec![]
+    fn branches(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+        // Any malformed-graph error surfaces authoritatively when `module()`
+        // builds this same graph, so falling back to "not branching" here is
+        // safe and keeps `branches()` consistent with `nested_expr`.
+        graph_branches(ctx.get_node(), self)
+            .unwrap_or_default()
+            .into_iter()
+            .map(node::EvalConf::Set)
+            .collect()
     }
 
     fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
@@ -318,7 +325,145 @@ pub fn graph_partial_eq<N: PartialEq>(a: &Graph<N>, b: &Graph<N>) -> bool {
             .all(|(a, b)| a == b)
 }
 
+/// Map a nested graph's branch arm counts (`id -> n_arms`) from its `Meta`.
+fn branch_arm_counts(meta: &compile::Meta) -> BTreeMap<node::Id, usize> {
+    meta.branches.iter().map(|(&id, v)| (id, v.len())).collect()
+}
+
+/// The distinct external branches of a nested graph, as output masks over its
+/// outlets (ascending id order), or an empty `Vec` when it does not branch.
+///
+/// Each pattern is one set of outlets that may be simultaneously active under
+/// some combination of inner branch outcomes (see [`compile::outlet_patterns`]).
+/// Fewer than two distinct patterns means the graph always produces the same
+/// outlets, i.e. it has no external branching.
+fn branch_patterns_from_flow(
+    fg: &compile::FlowGraph,
+    outlet_ids: &[node::Id],
+    branching: &BTreeMap<node::Id, usize>,
+) -> Result<Vec<node::Conns>, node::ExprError> {
+    let outlets: BTreeSet<node::Id> = outlet_ids.iter().copied().collect();
+    let mut patterns: BTreeSet<node::Conns> = BTreeSet::new();
+    for reached in compile::outlet_patterns(fg, &outlets, branching) {
+        let mut conns = node::Conns::unconnected(outlet_ids.len()).map_err(node::ExprError::custom)?;
+        for (i, id) in outlet_ids.iter().enumerate() {
+            if reached.contains(id) {
+                conns.set(i, true).map_err(node::ExprError::custom)?;
+            }
+        }
+        patterns.insert(conns);
+    }
+    if patterns.len() < 2 {
+        return Ok(vec![]);
+    }
+    Ok(patterns.into_iter().collect())
+}
+
+/// Compute the external branch masks for a nested graph (see [`Node::branches`]).
+fn graph_branches<'a, G>(
+    get_node: node::GetNode<'a>,
+    g: G,
+) -> Result<Vec<node::Conns>, node::ExprError>
+where
+    G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable + Data<EdgeWeight = Edge>,
+    G::NodeWeight: Node,
+    G::NodeId: Eq + Hash,
+{
+    let meta = compile::Meta::from_graph(get_node, g).map_err(node::ExprError::custom)?;
+    // No inner branching => no external branching.
+    if meta.branches.is_empty() {
+        return Ok(vec![]);
+    }
+    let outlet_ids: Vec<node::Id> = meta.outlets.iter().copied().collect();
+    let fg = inner_flow_graph(&meta)?;
+    branch_patterns_from_flow(&fg, &outlet_ids, &branch_arm_counts(&meta))
+}
+
+/// Build the control flow graph for a nested graph: inlets push, outlets pull.
+fn inner_flow_graph(meta: &compile::Meta) -> Result<compile::FlowGraph, node::ExprError> {
+    let conn = || node::Conns::connected(1).unwrap();
+    compile::flow_graph(
+        meta,
+        meta.inlets.iter().map(|&n| (n, conn())),
+        meta.outlets.iter().map(|&n| (n, conn())),
+    )
+    .map_err(node::ExprError::custom)
+}
+
+/// The Steel expression that yields a nested graph's outlet values, shaped by
+/// the given outlets: a single raw value for one outlet, a `(list ...)` for
+/// several, or `'()` for none. Each value is read from its hoisted `outlet-{id}`
+/// var.
+fn outlet_values_expr(outlet_ids: &[node::Id]) -> String {
+    match outlet_ids {
+        [] => "'()".to_string(),
+        [id] => format!("outlet-{id}"),
+        ids => {
+            let values: Vec<_> = ids.iter().map(|id| format!("outlet-{id}")).collect();
+            format!("(list {})", values.join(" "))
+        }
+    }
+}
+
+/// The Steel expression selecting `(list branch-ix value)` for a branching
+/// nested graph.
+///
+/// Each distinct outlet-activation pattern has a unique integer signature
+/// (outlet `i` contributes `2^i` when active); the runtime signature is built
+/// from the hoisted `outlet-active-{id}` flags and matched against each
+/// pattern's signature with a nested `if` (the last pattern is the exhaustive
+/// fallthrough). Only primitive Steel forms are used, since the VM runs the
+/// base engine without the `cond`/`and` prelude macros.
+fn branch_selector(patterns: &[node::Conns], outlet_ids: &[node::Id]) -> String {
+    // The value to return for a pattern, shaped by its active outlet count.
+    let value = |conns: &node::Conns| -> String {
+        let active: Vec<node::Id> = outlet_ids
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &id)| conns.get(i).unwrap_or(false).then_some(id))
+            .collect();
+        outlet_values_expr(&active)
+    };
+    // The unique signature of a pattern's active outlets.
+    let signature = |conns: &node::Conns| -> u128 {
+        (0..outlet_ids.len())
+            .filter(|&i| conns.get(i).unwrap_or(false))
+            .map(|i| 1u128 << i)
+            .sum()
+    };
+
+    // The runtime signature, summed from the active flags.
+    let terms: Vec<String> = outlet_ids
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| format!("(if outlet-active-{id} {} 0)", 1u128 << i))
+        .collect();
+    let sig_expr = match terms.as_slice() {
+        [] => "0".to_string(),
+        [t] => t.clone(),
+        _ => format!("(+ {})", terms.join(" ")),
+    };
+
+    // Nested `if` over patterns; the last is the exhaustive fallthrough.
+    let last = patterns.len() - 1;
+    let mut expr = format!("(list {last} {})", value(&patterns[last]));
+    for k in (0..last).rev() {
+        expr = format!(
+            "(if (= __branch-sig {}) (list {k} {}) {expr})",
+            signature(&patterns[k]),
+            value(&patterns[k]),
+        );
+    }
+    format!("(let ((__branch-sig {sig_expr})) {expr})")
+}
+
 /// The implementation of the `GraphNode`'s `Node::expr` fn.
+///
+/// The nested graph is inlined as an expression. Inlet values are bound from the
+/// node's inputs; the inner control flow runs with outlets writing their values
+/// (and, when the graph branches externally, their "active" flags) to hoisted
+/// vars. The result is the outlet values, or - when branching - a
+/// `(list branch-ix value)` pair matching [`graph_branches`].
 pub fn nested_expr<'a, G>(
     get_node: node::GetNode<'a>,
     g: G,
@@ -330,105 +475,73 @@ where
     G::NodeWeight: Node,
     G::NodeId: Eq + Hash,
 {
-    use crate::compile;
-    use petgraph::visit::EdgeRef;
+    let meta = compile::Meta::from_graph(get_node, g).map_err(node::ExprError::custom)?;
+    let inlet_ids: Vec<node::Id> = meta.inlets.iter().copied().collect();
+    let outlet_ids: Vec<node::Id> = meta.outlets.iter().copied().collect();
+    let fg = inner_flow_graph(&meta)?;
+    let arm_counts = branch_arm_counts(&meta);
 
-    let meta_ctx = node::MetaCtx::new(get_node);
+    // The external branch patterns (empty => not externally branching).
+    let patterns = branch_patterns_from_flow(&fg, &outlet_ids, &arm_counts)?;
+    let branching = !patterns.is_empty();
 
-    // Create define bindings for inlet values.
-    let inlet_ids: Vec<_> = g
-        .node_references()
-        .filter(|n_ref| n_ref.weight().inlet(meta_ctx))
-        .map(|n_ref| n_ref.id())
+    // Bind each inlet from the corresponding node input (input i -> inlet i).
+    let mut bindings: Vec<String> = inlet_ids
+        .iter()
+        .enumerate()
+        .map(|(i, &inlet_id)| {
+            let input = inputs
+                .get(i)
+                .and_then(Clone::clone)
+                .unwrap_or_else(|| "'()".to_string());
+            format!("(define inlet-{inlet_id} {input})")
+        })
         .collect();
-    let mut inlet_bindings = Vec::new();
-    for (i, &inlet_id) in inlet_ids.iter().enumerate() {
-        let node_ix = g.to_index(inlet_id);
-        let input_expr = if i < inputs.len() && inputs[i].is_some() {
-            inputs[i].as_ref().unwrap().clone()
-        } else {
-            "'()".to_string()
-        };
-        let binding = format!("(define inlet-{node_ix} {input_expr})");
-        inlet_bindings.push(binding);
+
+    // Declare the hoisted outlet value vars (and active flags when branching)
+    // that the flow statements `set!` wherever an outlet is reached.
+    for &id in &outlet_ids {
+        bindings.push(format!("(define outlet-{id} '())"));
+        if branching {
+            bindings.push(format!("(define outlet-active-{id} #f)"));
+        }
     }
 
-    // Use compile to create the evaluation order, steps, and statements.
-    let meta = compile::Meta::from_graph(get_node, g).map_err(|e| node::ExprError::custom(e))?;
-    let outlet_ids: Vec<_> = g
-        .node_references()
-        .filter(|n_ref| n_ref.weight().outlet(meta_ctx))
-        .map(|n_ref| n_ref.id())
-        .collect();
-    let flow_graph = compile::flow_graph(
-        &meta,
-        inlet_ids
-            .iter()
-            .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
-        outlet_ids
-            .iter()
-            .map(|&n| (g.to_index(n), node::Conns::connected(1).unwrap())),
-    )
-    .map_err(|e| node::ExprError::custom(e))?;
-    let branching: std::collections::BTreeMap<node::Id, usize> =
-        meta.branches.iter().map(|(&id, v)| (id, v.len())).collect();
     let stmts = compile::entry_fn_body(
         path,
         &meta.graph,
         &meta.stateful,
-        &branching,
+        &arm_counts,
         &meta.inlets,
         &meta.outlets,
-        &flow_graph,
-        &std::collections::BTreeSet::new(),
+        &fg,
+        &BTreeSet::new(),
+        branching,
     )
-    .map_err(|e| node::ExprError::custom(e))?;
+    .map_err(node::ExprError::custom)?;
 
-    // Combine inlet bindings with graph evaluation steps
-    let all_stmts = inlet_bindings
+    let body = bindings
         .into_iter()
-        .chain(stmts.iter().map(|stmt| format!("{}", stmt)))
+        .chain(stmts.iter().map(|stmt| format!("{stmt}")))
         .collect::<Vec<_>>()
         .join(" ");
 
-    // For the return values, find the source node connected to each outlet's input.
-    let outlet_values = outlet_ids
-        .iter()
-        .map(|&outlet_id| {
-            // Find the edge coming into this outlet (input index 0).
-            let incoming: Vec<_> = g.edges_directed(outlet_id, petgraph::Incoming).collect();
-            if let Some(edge_ref) = incoming.first() {
-                let src_ix = g.to_index(edge_ref.source());
-                let src_out = edge_ref.weight().output.0;
-                format!("node-{src_ix}-o{src_out}")
-            } else {
-                // No incoming edge, outlet is disconnected.
-                "'()".to_string()
-            }
-        })
-        .collect::<Vec<_>>();
-
-    // Construct the final expression based on number of outputs
-    let outlet_values_expr = if outlet_values.len() > 1 {
-        let ret_values = outlet_values.join(" ");
-        format!("(list {})", ret_values)
-    } else if outlet_values.len() == 1 {
-        outlet_values[0].clone()
+    // The node's output: a `(list branch-ix value)` when branching, else the
+    // outlet values directly.
+    let tail = if branching {
+        branch_selector(&patterns, &outlet_ids)
     } else {
-        "'()".to_string()
+        outlet_values_expr(&outlet_ids)
     };
 
-    // Only include state handling if the graph has stateful nodes.
+    // Wrap in `(let () ...)` so the inner statements form a *body*: unlike a
+    // bare `(begin ...)` used as an expression, a body permits `define`s
+    // interleaved with the branch `if` expressions of multiple components.
+    // Include state handling only if the graph has stateful nodes.
     let expr_str = if meta.stateful.is_empty() {
-        format!("(begin {} {outlet_values_expr})", all_stmts)
+        format!("(let () {body} {tail})")
     } else {
-        format!(
-            "(begin (define {GRAPH_STATE} state)
-               {}
-               (set! state {GRAPH_STATE})
-               {outlet_values_expr})",
-            all_stmts
-        )
+        format!("(let () (define {GRAPH_STATE} state) {body} (set! state {GRAPH_STATE}) {tail})")
     };
     node::parse_expr(&expr_str)
 }

@@ -3,12 +3,16 @@
 use super::{
     EntrypointId, Meta, MetaGraph,
     error::{InvalidInputIndex, InvalidOutputIndex, NodeConnsError, TooManyConns},
+    meta::EdgeKind,
     push_eval_neighbors, push_reachable,
 };
 use crate::node;
-use petgraph::visit::{EdgeRef, IntoEdgeReferences};
+use petgraph::{
+    graph::NodeIndex,
+    visit::{EdgeRef, IntoEdgeReferences},
+};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     fmt, ops,
 };
 
@@ -70,52 +74,6 @@ pub struct Branch {
     pub conns: node::Conns,
 }
 
-/// A control flow graph describing individual node function call dependency.
-///
-/// Each `NodeConf` node represents a node function call statement that should
-/// be made.
-///
-/// This is derived from the `Meta` graph and is used to construct the
-/// `FlowGraph` via edge contraction.
-///
-/// Uses a simple edge list rather than `DiGraphMap` because `DiGraphMap` only
-/// supports one edge per (source, target) pair. When multiple branch outputs
-/// feed the same target `NodeConf`, all branch edges must be preserved.
-struct NodeConfGraph {
-    nodes: BTreeSet<NodeConf>,
-    edges: BTreeSet<(NodeConf, NodeConf, Branch)>,
-}
-
-impl NodeConfGraph {
-    fn new() -> Self {
-        Self {
-            nodes: BTreeSet::new(),
-            edges: BTreeSet::new(),
-        }
-    }
-
-    fn add_node(&mut self, conf: NodeConf) {
-        self.nodes.insert(conf);
-    }
-
-    fn add_edge(&mut self, a: NodeConf, b: NodeConf, branch: Branch) {
-        self.nodes.insert(a);
-        self.nodes.insert(b);
-        self.edges.insert((a, b, branch));
-    }
-
-    fn all_edges(&self) -> impl Iterator<Item = (NodeConf, NodeConf, &Branch)> {
-        self.edges.iter().map(|(a, b, w)| (*a, *b, w))
-    }
-
-    fn node_count(&self) -> usize {
-        self.nodes.len()
-    }
-
-    fn edge_count(&self) -> usize {
-        self.edges.len()
-    }
-}
 
 /// A node within the control flow graph.
 ///
@@ -180,6 +138,10 @@ impl From<NodeOutputsError> for NodeConnsError {
 
 /// Given a meta graph and set of push and pull eval fn nodes, construct a full
 /// control flow graph.
+///
+/// Each weakly-connected component of the reachable subgraph is lowered
+/// independently - so independent chains and parallel branches each form their
+/// own flow-graph component - then merged into a single flow graph.
 pub fn flow_graph(
     meta: &Meta,
     push: impl IntoIterator<Item = (node::Id, node::Conns)>,
@@ -188,9 +150,264 @@ pub fn flow_graph(
     let order: Vec<_> = super::eval_order(&meta.graph, push, pull).collect();
     let included: HashSet<_> = order.iter().copied().collect();
     let mg = reachable_subgraph(&meta.graph, &included);
+    let mut fg = FlowGraph::default();
+    let no_shared = HashMap::new();
+    build_flow_graph(meta, &mg, &mg, &mut fg, &no_shared, None)?;
     let branching: BTreeSet<node::Id> = meta.branches.keys().copied().collect();
-    let conf_graph = node_conf_graph(meta, &mg, None)?;
-    Ok(flow_graph_from_conf_graph(&conf_graph, &branching))
+    flow_graph_edge_contraction(&mut fg, &branching);
+    Ok(fg)
+}
+
+/// Build a [`NodeConf`] for `n` from its connectivity within the (possibly
+/// arm-local) `mg`, treating `Static` edges from `outer_mg` as still in scope.
+fn make_conf(
+    meta: &Meta,
+    mg: &MetaGraph,
+    outer_mg: &MetaGraph,
+    n: node::Id,
+) -> Result<NodeConf, NodeConnsError> {
+    let n_inputs = meta.inputs.get(&n).copied().unwrap_or(0);
+    let n_outputs = meta.outputs.get(&n).copied().unwrap_or(0);
+    let inputs = node_inputs_in_scope(mg, outer_mg, n, n_inputs)?;
+    let outputs = node_outputs(mg, n, n_outputs)?;
+    Ok(NodeConf {
+        id: n,
+        conns: NodeConns { inputs, outputs },
+    })
+}
+
+/// The connected inputs of `n`, counting an incoming edge when its source is in
+/// the current arm subgraph `mg`, or when the edge is `Static` (always active,
+/// so reachable from an enclosing scope).
+fn node_inputs_in_scope(
+    mg: &MetaGraph,
+    outer_mg: &MetaGraph,
+    n: node::Id,
+    n_inputs: usize,
+) -> Result<node::Conns, NodeInputsError> {
+    let mut inputs = node::Conns::unconnected(n_inputs).map_err(|_| TooManyConns(n_inputs))?;
+    for e_ref in outer_mg.edges_directed(n, petgraph::Incoming) {
+        let src = e_ref.source();
+        for (edge, kind) in e_ref.weight() {
+            let in_arm = mg.contains_node(src);
+            let static_from_outer = matches!(kind, EdgeKind::Static);
+            if !(in_arm || static_from_outer) {
+                continue;
+            }
+            let index = edge.input.0 as usize;
+            inputs
+                .set(index, true)
+                .map_err(|_| InvalidInputIndex { index, n_inputs })?;
+        }
+    }
+    Ok(inputs)
+}
+
+/// Lower the meta graph `mg` into flow-graph blocks, returning this call's entry
+/// blocks (those with no incoming edge added here).
+///
+/// Branches are lowered by *duplicating* per-arm: each arm recursion allocates
+/// fresh blocks, so a node reached by only some arms appears once per reaching
+/// arm. A node reached by *every* live arm via either an intermediate or
+/// multiple distinct outputs is a true reconvergence point ("join"); it is
+/// pre-allocated as a single shared block so all arms converge on it, and a
+/// continuation pass lowers its downstream exactly once.
+///
+/// - `outer_mg` is the full graph (for `Static`-edge input scoping in arms).
+/// - `shared` maps join node ids to their pre-allocated block.
+/// - `skip` is the branching node owning this arm recursion (already emitted by
+///   the caller); present only in arm recursions.
+fn build_flow_graph(
+    meta: &Meta,
+    mg: &MetaGraph,
+    outer_mg: &MetaGraph,
+    fg: &mut FlowGraph,
+    shared: &HashMap<node::Id, NodeIndex>,
+    skip: Option<node::Id>,
+) -> Result<Vec<NodeIndex>, NodeConnsError> {
+    let mut topo = petgraph::visit::Topo::new(mg);
+    let mut last: Option<NodeIndex> = None;
+    let mut entries: Vec<NodeIndex> = Vec::new();
+    let mut consumed: HashSet<node::Id> = HashSet::new();
+    // Blocks allocated/reused in this call, so a shared block can link from real
+    // meta predecessors processed earlier here.
+    let mut local_blocks: HashMap<node::Id, NodeIndex> = HashMap::new();
+    // In an arm recursion, shared (join) blocks are arm terminals: chain into
+    // them but stop; the owner's continuation pass chains out of them once.
+    let stop_at_shared = skip.is_some();
+
+    while let Some(n) = topo.next(mg) {
+        if consumed.contains(&n) || Some(n) == skip {
+            continue;
+        }
+
+        // Reuse a shared join block, else allocate a fresh one. Fresh allocation
+        // gives the same node id distinct identity in sibling arms (duplication).
+        let is_shared = shared.contains_key(&n);
+        let block_ix = match shared.get(&n) {
+            Some(&ix) => ix,
+            None => {
+                let conf = make_conf(meta, mg, outer_mg, n)?;
+                fg.add_node(Block(vec![conf]))
+            }
+        };
+        local_blocks.insert(n, block_ix);
+
+        // Incoming edges: shared blocks link from their real meta predecessors
+        // (so sibling joins don't get fake chain edges); non-shared blocks chain
+        // via `last` so parallel siblings collapse into one block after
+        // contraction.
+        let mut incoming_added = false;
+        if is_shared {
+            for e_ref in mg.edges_directed(n, petgraph::Incoming) {
+                let src_id = e_ref.source();
+                if Some(src_id) == skip {
+                    continue;
+                }
+                if let Some(&src_block) = local_blocks.get(&src_id) {
+                    let branch = default_branch(fg, src_block);
+                    fg.add_edge(src_block, block_ix, branch);
+                    incoming_added = true;
+                }
+            }
+        } else if let Some(prev_ix) = last {
+            let branch = default_branch(fg, prev_ix);
+            fg.add_edge(prev_ix, block_ix, branch);
+            incoming_added = true;
+        }
+
+        // No incoming edge added: a fresh entry into this recursion. The arm
+        // caller links the arm-branch edge to it.
+        if !incoming_added {
+            entries.push(block_ix);
+        }
+
+        // In an arm recursion, stop at shared blocks; the continuation owns them.
+        if is_shared && stop_at_shared {
+            last = None;
+            continue;
+        }
+
+        if let Some(branches) = meta.branches.get(&n) {
+            let per_arm: Vec<HashSet<node::Id>> = branches
+                .iter()
+                .map(|conns| push_reachable(mg, n, &push_eval_neighbors(mg, n, conns)).collect())
+                .collect();
+
+            // Live arms reach beyond `n`; a dead arm reaching nothing must not
+            // veto a join.
+            let live_arms = per_arm.iter().filter(|r| r.iter().any(|&id| id != n)).count();
+            let mut arm_count: HashMap<node::Id, usize> = HashMap::new();
+            for r in &per_arm {
+                for &id in r.iter().filter(|&&id| id != n) {
+                    *arm_count.entry(id).or_default() += 1;
+                }
+            }
+
+            // Joins: reached by every live arm AND fed via an intermediate or by
+            // multiple distinct outputs of `n` (so a phi var must consolidate
+            // the per-arm value). A "pure parallel sibling" - a direct successor
+            // via a single output reached by every arm - is excluded and instead
+            // duplicated per arm, so codegen keeps each arm body intact.
+            let joins: HashSet<node::Id> = arm_count
+                .iter()
+                .filter(|&(_, &c)| c == live_arms && c > 1)
+                .filter(|&(&id, _)| is_join(mg, n, id))
+                .map(|(&id, _)| id)
+                .collect();
+
+            // Pre-allocate fresh blocks for newly-discovered joins so all arms
+            // converge on the same block; inherited joins keep their block.
+            let mut sub_shared = shared.clone();
+            for &id in &joins {
+                if !sub_shared.contains_key(&id) {
+                    let conf = make_conf(meta, mg, outer_mg, id)?;
+                    let join_ix = fg.add_node(Block(vec![conf]));
+                    sub_shared.insert(id, join_ix);
+                }
+            }
+
+            // Nodes strictly downstream of any join: lowered once in the
+            // continuation pass, excluded from arm recursions.
+            let downstream = strictly_downstream(mg, &joins);
+
+            for (ix, (conns, reachable)) in branches.iter().zip(&per_arm).enumerate() {
+                let arm_reachable: HashSet<_> =
+                    reachable.iter().copied().filter(|id| !downstream.contains(id)).collect();
+                let arm_mg = reachable_subgraph(mg, &arm_reachable);
+                let arm_entries = build_flow_graph(meta, &arm_mg, outer_mg, fg, &sub_shared, Some(n))?;
+                let arm_branch = Branch { ix, conns: *conns };
+                for entry in arm_entries {
+                    fg.add_edge(block_ix, entry, arm_branch);
+                }
+            }
+
+            // Continuation: chain each newly-allocated join's downstream once.
+            if !joins.is_empty() {
+                let mut cont: HashSet<node::Id> = HashSet::new();
+                for &j in &joins {
+                    let mut bfs = petgraph::visit::Bfs::new(mg, j);
+                    while let Some(d) = bfs.next(mg) {
+                        cont.insert(d);
+                    }
+                }
+                let cont_mg = reachable_subgraph(mg, &cont);
+                build_flow_graph(meta, &cont_mg, outer_mg, fg, &sub_shared, None)?;
+            }
+
+            for r in &per_arm {
+                consumed.extend(r.iter().copied().filter(|&id| id != n));
+            }
+            last = None;
+            continue;
+        }
+
+        last = Some(block_ix);
+    }
+
+    Ok(entries)
+}
+
+/// The default (non-branching) [`Branch`] label for an edge out of `src_block`.
+fn default_branch(fg: &FlowGraph, src_block: NodeIndex) -> Branch {
+    let conns = fg[src_block]
+        .last()
+        .expect("flow graph block must be non-empty")
+        .conns
+        .outputs;
+    Branch { ix: 0, conns }
+}
+
+/// Whether `id` (reached by every live arm of branch `n`) is a true phi-join:
+/// fed via an intermediate (a source other than `n`) or by more than one
+/// distinct output of `n`.
+fn is_join(mg: &MetaGraph, n: node::Id, id: node::Id) -> bool {
+    let via_intermediate = mg
+        .edges_directed(id, petgraph::Incoming)
+        .any(|e_ref| e_ref.source() != n);
+    if via_intermediate {
+        return true;
+    }
+    let mut outputs: HashSet<usize> = HashSet::new();
+    for e_ref in mg.edges_directed(n, petgraph::Outgoing) {
+        if e_ref.target() == id {
+            outputs.extend(e_ref.weight().iter().map(|(e, _)| e.output.0 as usize));
+        }
+    }
+    outputs.len() > 1
+}
+
+/// The nodes strictly downstream of any node in `roots` (excluding the roots).
+fn strictly_downstream(mg: &MetaGraph, roots: &HashSet<node::Id>) -> HashSet<node::Id> {
+    let mut downstream = HashSet::new();
+    for &r in roots {
+        let mut bfs = petgraph::visit::Bfs::new(mg, r);
+        let _ = bfs.next(mg); // skip `r` itself
+        while let Some(d) = bfs.next(mg) {
+            downstream.insert(d);
+        }
+    }
+    downstream
 }
 
 /// Filter unreachable nodes from the given metagraph.
@@ -199,25 +416,6 @@ fn reachable_subgraph(g: &MetaGraph, reachable: &HashSet<node::Id>) -> MetaGraph
         .filter(|(a, b, _)| reachable.contains(a) && reachable.contains(b))
         .map(|(a, b, w)| (a, b, w.clone()))
         .collect()
-}
-
-/// Given a node configuration flow graph, return the reduced control flow graph
-/// of basic blocks.
-fn flow_graph_from_conf_graph(cg: &NodeConfGraph, branching: &BTreeSet<node::Id>) -> FlowGraph {
-    // Initialise the flow graph with the same nodes and edges.
-    let mut g = FlowGraph::with_capacity(cg.node_count(), cg.edge_count());
-    let mut visited = HashMap::with_capacity(cg.node_count());
-    for (a, b, &branch) in cg.all_edges() {
-        let na = *visited
-            .entry(a)
-            .or_insert_with(|| g.add_node(Block(vec![a])));
-        let nb = *visited
-            .entry(b)
-            .or_insert_with(|| g.add_node(Block(vec![b])));
-        g.add_edge(na, nb, branch);
-    }
-    flow_graph_edge_contraction(&mut g, branching);
-    g
 }
 
 /// For the given flow graph, contract all edges into basic blocks where
@@ -273,25 +471,6 @@ fn flow_graph_edge_contraction(g: &mut FlowGraph, branching: &BTreeSet<node::Id>
 }
 
 /// Given some node within a given meta graph with an expected total number of
-/// inputs, return the list of inputs that are actually connected.
-fn node_inputs(
-    g: &MetaGraph,
-    n: node::Id,
-    n_inputs: usize,
-) -> Result<node::Conns, NodeInputsError> {
-    let mut inputs = node::Conns::unconnected(n_inputs).map_err(|_| TooManyConns(n_inputs))?;
-    for e_ref in g.edges_directed(n, petgraph::Incoming) {
-        for (edge, _kind) in e_ref.weight() {
-            let index = edge.input.0 as usize;
-            inputs
-                .set(index, true)
-                .map_err(|_| InvalidInputIndex { index, n_inputs })?;
-        }
-    }
-    Ok(inputs)
-}
-
-/// Given some node within a given meta graph with an expected total number of
 /// outputs, return the list of outputs that are actually connected.
 fn node_outputs(
     g: &MetaGraph,
@@ -310,82 +489,116 @@ fn node_outputs(
     Ok(outputs)
 }
 
-/// For the given meta graph `mg`, produce its control flow graph.
+/// All root blocks (no incoming edges) of the flow graph.
 ///
-/// The given meta graph should only contain the nodes reachable in the desired
-/// evaluation path.
-//
-// FIXME:
-// - The first edge from branching nodes should use `branch` - is this
-//   happening?
-// - Refactor this to not use recursion on branching.
-// TODO:
-// - Refactor to avoid gross `first_node_conns` and `first_branch_ix` inputs.
-fn node_conf_graph(
-    meta: &Meta,
-    mg: &MetaGraph,
-    // The `NodeConns` is the conns of the branching node.
-    mut from_branch: Option<(NodeConns, Branch)>,
-) -> Result<NodeConfGraph, NodeConnsError> {
-    let mut g = NodeConfGraph::new();
+/// A flow graph may comprise multiple disconnected components - e.g. when
+/// independent inlet→outlet chains (such as parallel inner branches) are
+/// evaluated together - and each component contributes its own root.
+pub(crate) fn flow_graph_roots(fg: &FlowGraph) -> Vec<NodeIndex> {
+    let mut roots: Vec<_> = fg
+        .node_indices()
+        .filter(|&n| fg.edges_directed(n, petgraph::Incoming).next().is_none())
+        .collect();
+    // Sort by the block's first node id for stable output independent of block
+    // allocation order.
+    roots.sort_by_key(|&ix| fg[ix].first().map(|c| c.id).unwrap_or(node::Id::MAX));
+    roots
+}
 
-    // Walk nodes in topological order until we hit a branch.
-    let mut topo = petgraph::visit::Topo::new(mg);
-    let mut last = None;
-    while let Some(n) = topo.next(mg) {
-        // Determine the configuration and add it.
-        let n_inputs = meta.inputs.get(&n).copied().unwrap_or(0);
-        let n_outputs = meta.outputs.get(&n).copied().unwrap_or(0);
-        let inputs = node_inputs(mg, n, n_inputs)?;
-        let outputs = node_outputs(mg, n, n_outputs)?;
-        let conns = NodeConns { inputs, outputs };
-        let mut conf = NodeConf { id: n, conns };
-
-        // Add an edge from the prev node.
-        if let Some(prev) = last {
-            let branch = from_branch.take().map(|(_, b)| b).unwrap_or_else(|| {
-                let conns = outputs;
-                Branch { ix: 0, conns }
-            });
-            g.add_edge(prev, conf, branch);
-
-        // If there is no last node, this is the first node.
-        } else {
-            // If a set of outputs were provided for the first node, this is for
-            // the beginning node in a branch.
-            if let Some((conns, _branch)) = from_branch {
-                conf.conns = conns;
+/// The distinct sets of outlets that may be simultaneously active across every
+/// combination of inner branch outcomes, computed by walking the flow graph as
+/// a decision tree.
+///
+/// `branching` maps each branching node's id to its declared arm count. A
+/// *world* assigns one arm to each branch block actually reached; the reached
+/// outlets of a world are the outlets appearing in blocks reachable when each
+/// branch follows only its assigned arm's edge. A declared arm with no matching
+/// edge is dead - it extends reachability no further.
+///
+/// Because this walks the *same* flow graph the codegen lowers, the resulting
+/// patterns are aligned with the code that actually sets each outlet.
+pub(crate) fn outlet_patterns(
+    fg: &FlowGraph,
+    outlets: &BTreeSet<node::Id>,
+    branching: &BTreeMap<node::Id, usize>,
+) -> BTreeSet<BTreeSet<node::Id>> {
+    let roots = flow_graph_roots(fg);
+    let mut patterns = BTreeSet::new();
+    // Each entry is a partial world: an arm assignment per branch block.
+    let mut stack: Vec<BTreeMap<NodeIndex, usize>> = vec![BTreeMap::new()];
+    while let Some(world) = stack.pop() {
+        match reach_world(fg, &roots, outlets, branching, &world) {
+            WorldReach::Complete(reached) => {
+                patterns.insert(reached);
             }
-            g.add_node(conf);
-        }
-
-        // If this is not the first node, and the node branches,
-        // determine all possible branching outputs from this node.
-        if let (Some(branches), true) = (meta.branches.get(&n), last.is_some()) {
-            // For each branch, collect the subgraph.
-            // FIXME: Make this non-recursive.
-
-            for (ix, branch) in branches.iter().enumerate() {
-                let nbs = push_eval_neighbors(mg, n, branch);
-                let reachable: HashSet<_> = push_reachable(mg, n, &nbs).collect();
-                let sub_mg = reachable_subgraph(mg, &reachable);
-                let branch = Branch { ix, conns: *branch };
-                // FIXME: This adds the branching node, but with a subset of
-                // outputs. We only want the branching node at the end of the
-                // block with all connected outputs in the config, then the
-                // *edges* should have the branch subsets.
-                let sub_ncg = node_conf_graph(meta, &sub_mg, Some((conns, branch)))?;
-                for (a, b, &w) in sub_ncg.all_edges() {
-                    g.add_edge(a, b, w);
+            WorldReach::Frontier(block, n_arms) => {
+                for arm in 0..n_arms {
+                    let mut next = world.clone();
+                    next.insert(block, arm);
+                    stack.push(next);
                 }
             }
-
-            // We've handled the branches in the recursive cases - we're done.
-            break;
         }
-
-        last = Some(conf);
     }
+    patterns
+}
 
-    Ok(g)
+/// Outcome of walking one (partial) world in [`outlet_patterns`].
+enum WorldReach {
+    /// Every reached branch block was assigned; these outlets were reached.
+    Complete(BTreeSet<node::Id>),
+    /// A reached branch block (with the given arm count) was unassigned.
+    Frontier(NodeIndex, usize),
+}
+
+/// BFS the flow graph following only assigned branch arms. Returns the
+/// deterministic-min unassigned reached branch block, or - when every reached
+/// branch is assigned - the reached outlets.
+fn reach_world(
+    fg: &FlowGraph,
+    roots: &[NodeIndex],
+    outlets: &BTreeSet<node::Id>,
+    branching: &BTreeMap<node::Id, usize>,
+    world: &BTreeMap<NodeIndex, usize>,
+) -> WorldReach {
+    let mut visited: HashSet<NodeIndex> = HashSet::new();
+    let mut queue: VecDeque<NodeIndex> = roots.iter().copied().collect();
+    let mut reached: BTreeSet<node::Id> = BTreeSet::new();
+    let mut frontier: Option<NodeIndex> = None;
+    while let Some(blk) = queue.pop_front() {
+        if !visited.insert(blk) {
+            continue;
+        }
+        let block = &fg[blk];
+        for conf in block.iter() {
+            if outlets.contains(&conf.id) {
+                reached.insert(conf.id);
+            }
+        }
+        let last = block.last().expect("flow block must not be empty");
+        if branching.contains_key(&last.id) {
+            // A branch block only proceeds along its assigned arm's edge.
+            match world.get(&blk) {
+                None => frontier = Some(frontier.map_or(blk, |f| f.min(blk))),
+                Some(&arm) => {
+                    for e_ref in fg.edges_directed(blk, petgraph::Outgoing) {
+                        if e_ref.weight().ix == arm {
+                            queue.push_back(e_ref.target());
+                        }
+                    }
+                }
+            }
+        } else {
+            for e_ref in fg.edges_directed(blk, petgraph::Outgoing) {
+                queue.push_back(e_ref.target());
+            }
+        }
+    }
+    match frontier {
+        Some(blk) => {
+            let id = fg[blk].last().expect("non-empty block").id;
+            WorldReach::Frontier(blk, branching[&id])
+        }
+        None => WorldReach::Complete(reached),
+    }
 }

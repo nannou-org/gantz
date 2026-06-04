@@ -15,6 +15,7 @@ pub use entrypoint::{
 pub use error::ModuleError;
 #[doc(inline)]
 pub use flow::{Block, Flow, FlowGraph, NodeConf, NodeConns, flow_graph};
+pub(crate) use flow::{flow_graph_roots, outlet_patterns};
 use meta::MetaTree;
 #[doc(inline)]
 pub use meta::{EdgeKind, Meta, MetaGraph};
