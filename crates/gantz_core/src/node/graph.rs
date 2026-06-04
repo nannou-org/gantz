@@ -464,7 +464,7 @@ fn branch_selector(patterns: &[node::Conns], outlet_ids: &[node::Id]) -> String 
 /// node's inputs; the inner control flow runs with outlets writing their values
 /// (and, when the graph branches externally, their "active" flags) to hoisted
 /// vars. The result is the outlet values, or - when branching - a
-/// `(list branch-ix value)` pair matching [`graph_branches`].
+/// `(list branch-ix value)` pair matching `graph_branches`.
 pub fn nested_expr<'a, G>(
     get_node: node::GetNode<'a>,
     g: G,
