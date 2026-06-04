@@ -1110,9 +1110,8 @@ fn wrap_outlet_bridge(
         .join(" ");
 
     let output_var = node_outputs_var(graph_node_id);
-    let wrapped = format!(
-        "(define {output_var} (let () {declares} {inner_stmts_str} {outlet_values_expr}))"
-    );
+    let wrapped =
+        format!("(define {output_var} (let () {declares} {inner_stmts_str} {outlet_values_expr}))");
 
     Engine::emit_ast(&wrapped).expect("failed to emit AST for outlet bridge")
 }
@@ -1167,12 +1166,8 @@ fn entry_fns_collect(
             if let Some(reached_outlets) = child_flow.outlet_reach.get(&ep_id) {
                 // Child stmts already include state scope wrapping from the
                 // child's own entry_fns_collect. Wrap in outlet bridge.
-                let bridge = wrap_outlet_bridge(
-                    stmts,
-                    graph_node_id,
-                    &child_meta.outlets,
-                    reached_outlets,
-                );
+                let bridge =
+                    wrap_outlet_bridge(stmts, graph_node_id, &child_meta.outlets, reached_outlets);
                 bridged.entry(ep_id.clone()).or_default().extend(bridge);
                 bridge_node_ids
                     .entry(ep_id)

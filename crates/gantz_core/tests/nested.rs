@@ -1051,7 +1051,9 @@ fn compile_and_push<N: DebugNode + ?Sized>(
 
 // `Some(v)` if the store node holds a number, else `None` (never evaluated).
 fn store_val(vm: &Engine, store: petgraph::graph::NodeIndex) -> Option<i32> {
-    node::state::extract::<i32>(vm, &[store.index()]).ok().flatten()
+    node::state::extract::<i32>(vm, &[store.index()])
+        .ok()
+        .flatten()
 }
 
 // Divergent branch: each arm routes to its own outlet.  branches: [{A}, {B}]
@@ -1588,7 +1590,6 @@ fn test_graph_nested_three_arm_branch() {
     assert_eq!(build(2), [None, None, Some(3)]);
 }
 
-
 // Two levels of nesting: branching propagates outward through both.
 // inner1.branches: [{X}, {Y}]
 //
@@ -1746,7 +1747,9 @@ fn test_graph_nested_branches_align_with_meta() {
 
     assert_eq!(observed.len(), declared.len());
     for (got, want) in observed.iter().zip(&declared) {
-        let node::EvalConf::Set(want) = want else { panic!("expected Set") };
+        let node::EvalConf::Set(want) = want else {
+            panic!("expected Set")
+        };
         assert_eq!(got, want);
     }
 }
@@ -2083,13 +2086,19 @@ fn test_graph_nested_static_inlet_at_depth_three() {
         let n3 = g.add_node(Box::new(node_int(c)) as Box<_>);
         let nv = g.add_node(Box::new(node_int(v)) as Box<_>);
         let inner_node = g.add_node(Box::new(make_inner()) as Box<_>);
-        let st: Vec<_> = (0..4).map(|_| g.add_node(Box::new(node_number()) as Box<_>)).collect();
-        for n in [n1, n2, n3, nv] { g.add_edge(push, n, Edge::from((0, 0))); }
+        let st: Vec<_> = (0..4)
+            .map(|_| g.add_node(Box::new(node_number()) as Box<_>))
+            .collect();
+        for n in [n1, n2, n3, nv] {
+            g.add_edge(push, n, Edge::from((0, 0)));
+        }
         g.add_edge(n1, inner_node, Edge::from((0, 0)));
         g.add_edge(n2, inner_node, Edge::from((0, 1)));
         g.add_edge(n3, inner_node, Edge::from((0, 2)));
         g.add_edge(nv, inner_node, Edge::from((0, 3)));
-        for (k, &s) in st.iter().enumerate() { g.add_edge(inner_node, s, Edge::from((k as u16, 0))); }
+        for (k, &s) in st.iter().enumerate() {
+            g.add_edge(inner_node, s, Edge::from((k as u16, 0)));
+        }
         let vm = compile_and_push(&g, push);
         st.iter().map(|&s| store_val(&vm, s)).collect::<Vec<_>>()
     };
@@ -2111,13 +2120,20 @@ fn test_graph_nested_multi_branch_three() {
         let s1 = inner.add_node(Box::new(node_select()) as Box<_>);
         let s2 = inner.add_node(Box::new(node_select()) as Box<_>);
         let s3 = inner.add_node(Box::new(node_select()) as Box<_>);
-        let mut add = |n: i32| inner.add_node(Box::new(node::expr(format!("(+ $x {n})")).unwrap()) as Box<_>);
+        let mut add =
+            |n: i32| inner.add_node(Box::new(node::expr(format!("(+ $x {n})")).unwrap()) as Box<_>);
         let (a10, a20, a30, a40, a50, a60) = (add(10), add(20), add(30), add(40), add(50), add(60));
-        let o: Vec<_> = (0..6).map(|_| inner.add_node(Box::new(node::graph::Outlet) as Box<_>)).collect();
+        let o: Vec<_> = (0..6)
+            .map(|_| inner.add_node(Box::new(node::graph::Outlet) as Box<_>))
+            .collect();
         inner.add_edge(i1, s1, Edge::from((0, 0)));
         inner.add_edge(i2, s2, Edge::from((0, 0)));
         inner.add_edge(i3, s3, Edge::from((0, 0)));
-        for (sel, lo, hi, ol, oh) in [(s1, a10, a20, o[0], o[1]), (s2, a30, a40, o[2], o[3]), (s3, a50, a60, o[4], o[5])] {
+        for (sel, lo, hi, ol, oh) in [
+            (s1, a10, a20, o[0], o[1]),
+            (s2, a30, a40, o[2], o[3]),
+            (s3, a50, a60, o[4], o[5]),
+        ] {
             inner.add_edge(sel, lo, Edge::from((0, 0)));
             inner.add_edge(lo, ol, Edge::from((0, 0)));
             inner.add_edge(sel, hi, Edge::from((1, 0)));
@@ -2125,10 +2141,20 @@ fn test_graph_nested_multi_branch_three() {
         }
         inner
     };
-    assert_inner_branches(&make_inner(), 6, &[
-        &[0, 2, 4], &[0, 2, 5], &[0, 3, 4], &[0, 3, 5],
-        &[1, 2, 4], &[1, 2, 5], &[1, 3, 4], &[1, 3, 5],
-    ]);
+    assert_inner_branches(
+        &make_inner(),
+        6,
+        &[
+            &[0, 2, 4],
+            &[0, 2, 5],
+            &[0, 3, 4],
+            &[0, 3, 5],
+            &[1, 2, 4],
+            &[1, 2, 5],
+            &[1, 3, 4],
+            &[1, 3, 5],
+        ],
+    );
     let build = |a: i32, b: i32, c: i32| {
         let mut g = petgraph::graph::DiGraph::new();
         let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
@@ -2136,19 +2162,34 @@ fn test_graph_nested_multi_branch_three() {
         let n2 = g.add_node(Box::new(node_int(b)) as Box<_>);
         let n3 = g.add_node(Box::new(node_int(c)) as Box<_>);
         let inner_node = g.add_node(Box::new(make_inner()) as Box<_>);
-        let st: Vec<_> = (0..6).map(|_| g.add_node(Box::new(node_number()) as Box<_>)).collect();
-        for n in [n1, n2, n3] { g.add_edge(push, n, Edge::from((0, 0))); }
+        let st: Vec<_> = (0..6)
+            .map(|_| g.add_node(Box::new(node_number()) as Box<_>))
+            .collect();
+        for n in [n1, n2, n3] {
+            g.add_edge(push, n, Edge::from((0, 0)));
+        }
         g.add_edge(n1, inner_node, Edge::from((0, 0)));
         g.add_edge(n2, inner_node, Edge::from((0, 1)));
         g.add_edge(n3, inner_node, Edge::from((0, 2)));
-        for (k, &s) in st.iter().enumerate() { g.add_edge(inner_node, s, Edge::from((k as u16, 0))); }
+        for (k, &s) in st.iter().enumerate() {
+            g.add_edge(inner_node, s, Edge::from((k as u16, 0)));
+        }
         let vm = compile_and_push(&g, push);
         st.iter().map(|&s| store_val(&vm, s)).collect::<Vec<_>>()
     };
     // (0,0,0): A=42+10, C=42+30, E=42+50 fire; B,D,F dead.
-    assert_eq!(build(0, 0, 0), [Some(52), None, Some(72), None, Some(92), None]);
+    assert_eq!(
+        build(0, 0, 0),
+        [Some(52), None, Some(72), None, Some(92), None]
+    );
     // (1,1,1): B=99+20, D=99+40, F=99+60.
-    assert_eq!(build(1, 1, 1), [None, Some(119), None, Some(139), None, Some(159)]);
+    assert_eq!(
+        build(1, 1, 1),
+        [None, Some(119), None, Some(139), None, Some(159)]
+    );
     // (0,1,0): A, D, E.
-    assert_eq!(build(0, 1, 0), [Some(52), None, None, Some(139), Some(92), None]);
+    assert_eq!(
+        build(0, 1, 0),
+        [Some(52), None, None, Some(139), Some(92), None]
+    );
 }

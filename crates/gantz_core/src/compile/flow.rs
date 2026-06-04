@@ -74,7 +74,6 @@ pub struct Branch {
     pub conns: node::Conns,
 }
 
-
 /// A node within the control flow graph.
 ///
 /// Maps directly to a node function.
@@ -296,7 +295,10 @@ fn build_flow_graph(
 
             // Live arms reach beyond `n`; a dead arm reaching nothing must not
             // veto a join.
-            let live_arms = per_arm.iter().filter(|r| r.iter().any(|&id| id != n)).count();
+            let live_arms = per_arm
+                .iter()
+                .filter(|r| r.iter().any(|&id| id != n))
+                .count();
             let mut arm_count: HashMap<node::Id, usize> = HashMap::new();
             for r in &per_arm {
                 for &id in r.iter().filter(|&&id| id != n) {
@@ -332,10 +334,14 @@ fn build_flow_graph(
             let downstream = strictly_downstream(mg, &joins);
 
             for (ix, (conns, reachable)) in branches.iter().zip(&per_arm).enumerate() {
-                let arm_reachable: HashSet<_> =
-                    reachable.iter().copied().filter(|id| !downstream.contains(id)).collect();
+                let arm_reachable: HashSet<_> = reachable
+                    .iter()
+                    .copied()
+                    .filter(|id| !downstream.contains(id))
+                    .collect();
                 let arm_mg = reachable_subgraph(mg, &arm_reachable);
-                let arm_entries = build_flow_graph(meta, &arm_mg, outer_mg, fg, &sub_shared, Some(n))?;
+                let arm_entries =
+                    build_flow_graph(meta, &arm_mg, outer_mg, fg, &sub_shared, Some(n))?;
                 let arm_branch = Branch { ix, conns: *conns };
                 for entry in arm_entries {
                     fg.add_edge(block_ix, entry, arm_branch);

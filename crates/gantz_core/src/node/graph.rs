@@ -345,7 +345,8 @@ fn branch_patterns_from_flow(
     let outlets: BTreeSet<node::Id> = outlet_ids.iter().copied().collect();
     let mut patterns: BTreeSet<node::Conns> = BTreeSet::new();
     for reached in compile::outlet_patterns(fg, &outlets, branching) {
-        let mut conns = node::Conns::unconnected(outlet_ids.len()).map_err(node::ExprError::custom)?;
+        let mut conns =
+            node::Conns::unconnected(outlet_ids.len()).map_err(node::ExprError::custom)?;
         for (i, id) in outlet_ids.iter().enumerate() {
             if reached.contains(id) {
                 conns.set(i, true).map_err(node::ExprError::custom)?;
