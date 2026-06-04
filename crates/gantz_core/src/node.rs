@@ -278,6 +278,11 @@ impl<'a> MetaCtx<'a> {
     pub fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&'a dyn Node> {
         (self.get_node)(ca)
     }
+
+    /// Access to the node lookup function.
+    pub fn get_node(&self) -> GetNode<'a> {
+        self.get_node
+    }
 }
 
 impl<'env, 'data> RegCtx<'env, 'data> {

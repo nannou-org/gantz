@@ -5,6 +5,7 @@ use crate::{
     compile::{
         Block, Flow, FlowGraph, Meta, MetaGraph, NodeConns, RoseTree,
         error::{CodegenError, InvalidInputIndex, TooManyConns},
+        flow_graph_roots,
     },
     node,
 };
@@ -33,8 +34,18 @@ enum NodeFnCallArg {
 
 /// Binding used for `state` local to each node fn.
 const STATE: &str = "state";
-/// Binding used for the current branch index.
-const BRANCH_IX: &str = "branch-ix";
+
+/// Whether a nested graph's outlets should record their activation.
+///
+/// `Tracked` makes each outlet also `set!` an `outlet-active-{id}` flag (in
+/// addition to its value), which the external branch selector reads to pick
+/// which branch fired. Only needed when the graph branches externally;
+/// top-level and push-through evaluation use `Untracked`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OutletActivity {
+    Tracked,
+    Untracked,
+}
 
 /// The expression for a call to a node function.
 fn node_fn_call(
@@ -74,6 +85,49 @@ fn node_output_var(node_ix: node::Id, out_ix: usize) -> String {
 /// The binding name given to the node's output.
 fn node_outputs_var(node_ix: node::Id) -> String {
     format!("node-{node_ix}")
+}
+
+/// The hoisted binding holding an outlet's value within a nested graph body.
+///
+/// Declared once in the body's enclosing scope and `set!` wherever the outlet
+/// is reached, so its value survives out of any branch arm that produced it.
+fn outlet_var(outlet_id: node::Id) -> String {
+    format!("outlet-{outlet_id}")
+}
+
+/// The hoisted boolean flag recording whether an outlet was reached.
+///
+/// Only used when the nested graph branches externally; the final branch
+/// selector reads these flags to determine which branch was taken.
+fn outlet_active_var(outlet_id: node::Id) -> String {
+    format!("outlet-active-{outlet_id}")
+}
+
+/// The per-branching-node binding holding its selected branch index.
+///
+/// Declared once per body (see [`declare_branch_ix_placeholders`]) and `set!`
+/// when the branch destructures, so it is readable from any arm scope without
+/// colliding with sibling branches' selectors.
+fn branch_ix_var(node_ix: node::Id) -> String {
+    format!("branch-ix-{node_ix}")
+}
+
+/// `(define branch-ix-{id} -1)` placeholders for every branching node, declared
+/// at the top of a body before any branch `set!`s them.
+fn declare_branch_ix_placeholders(branching: &BTreeMap<node::Id, usize>) -> Vec<ExprKind> {
+    branching
+        .keys()
+        .map(|&id| emit_one(&format!("(define {} -1)", branch_ix_var(id))))
+        .collect()
+}
+
+/// Parse a single Steel statement string into its AST node.
+fn emit_one(src: &str) -> ExprKind {
+    Engine::emit_ast(src)
+        .expect("failed to emit AST")
+        .into_iter()
+        .next()
+        .unwrap()
 }
 
 /// Find the arguments for a call to the node with the given ID with the given
@@ -132,6 +186,7 @@ fn eval_stmt(
     inputs: &node::Conns,
     outputs: &node::Conns,
     stateful: bool,
+    outlet_activity: OutletActivity,
 ) -> Result<Option<ExprKind>, CodegenError> {
     // An expression for a node's key into the graph state hashmap.
     fn node_state_key(node_id: usize) -> ExprKind {
@@ -190,13 +245,7 @@ fn eval_stmt(
         )));
     }
 
-    // Skip outlet nodes entirely - their values are read directly from source
-    // node output bindings by nested_expr.
-    if outlets.contains(&node_ix) {
-        return Ok(None);
-    }
-
-    // Determine the input arg names.
+    // Determine the input arg names (used for outlet hoisting and node calls).
     let input_args: Vec<_> = node_fn_call_args(mg, reachable, node_ix, inputs)?
         .into_iter()
         .enumerate()
@@ -207,6 +256,27 @@ fn eval_stmt(
             })
         })
         .collect();
+
+    // For outlet nodes, set the hoisted `outlet-{id}` var (and, in branching
+    // mode, its active flag) from the connected input rather than calling a node
+    // function. Placed by the surrounding flow recursion within whatever branch
+    // arm reaches the outlet; the parent reads the hoisted var. A disconnected
+    // outlet leaves its var at the `'()` default.
+    if outlets.contains(&node_ix) {
+        let Some(src) = input_args.first().and_then(Option::as_ref) else {
+            return Ok(None);
+        };
+        let set_value = format!("(set! {} {src})", outlet_var(node_ix));
+        let s = if outlet_activity == OutletActivity::Tracked {
+            format!(
+                "(begin {set_value} (set! {} #t))",
+                outlet_active_var(node_ix)
+            )
+        } else {
+            set_value
+        };
+        return Ok(Some(emit_one(&s)));
+    }
 
     // The expression for the node function call.
     let node_fn_call_expr = node_fn_call(node_path, &input_args, outputs, stateful)?;
@@ -262,15 +332,16 @@ fn destructure_node_outputs_stmt(n: node::Id, outputs: node::Conns) -> Option<Ex
     )
 }
 
-/// Create a statement that destructures the node
+/// Destructure a branching node's `(branch-ix value)` output: store the branch
+/// index in its pre-declared `branch-ix-{n}` var and rebind the node's var to
+/// the value. Uses `set!` (not a fresh `define`) so it works from any arm scope.
 fn destructure_node_branch_stmt(n: node::Id) -> ExprKind {
     let outputs_var = node_outputs_var(n);
-    let stmt = format!("(define-values (branch-ix {outputs_var}) {outputs_var})");
-    Engine::emit_ast(&stmt)
-        .expect("failed to emit AST")
-        .into_iter()
-        .next()
-        .unwrap()
+    let branch_ix = branch_ix_var(n);
+    emit_one(&format!(
+        "(begin (set! {branch_ix} (list-ref {outputs_var} 0)) \
+               (set! {outputs_var} (list-ref {outputs_var} 1)))"
+    ))
 }
 
 /// Generate a function for performing evaluation of the given statements.
@@ -505,6 +576,7 @@ pub(crate) fn eval_fn_block_stmts(
     in_scope: &mut HashSet<node::Id>,
     active_phi: &HashSet<(node::Id, usize)>,
     bridge_nodes: &BTreeSet<node::Id>,
+    outlet_activity: OutletActivity,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     let mut stmts = Vec::new();
     let mut iter = block.0.iter().peekable();
@@ -534,7 +606,15 @@ pub(crate) fn eval_fn_block_stmts(
         let stateful = stateful.contains(&conf.id);
         let NodeConns { inputs, outputs } = conf.conns;
         let Some(stmt) = eval_stmt(
-            mg, reachable, inlets, outlets, &node_path, &inputs, &outputs, stateful,
+            mg,
+            reachable,
+            inlets,
+            outlets,
+            &node_path,
+            &inputs,
+            &outputs,
+            stateful,
+            outlet_activity,
         )?
         else {
             continue;
@@ -552,20 +632,6 @@ pub(crate) fn eval_fn_block_stmts(
         in_scope.insert(conf.id);
     }
     Ok(stmts)
-}
-
-/// Find the entrypoint to the flow graph.
-fn flow_graph_entry(fg: &FlowGraph) -> Option<NodeIndex<u32>> {
-    let mut iter = fg
-        .node_references()
-        .map(|n_ref| n_ref.id())
-        .filter(|&n| fg.edges_directed(n, petgraph::Incoming).next().is_none());
-    let entry = iter.next();
-    assert!(
-        iter.next().is_none(),
-        "flow graph should have only one entry"
-    );
-    entry
 }
 
 /// The set of unique nodes in the flow graph.
@@ -662,6 +728,7 @@ fn flow_node_stmts(
     active_phi: &HashSet<(node::Id, usize)>,
     stop_at: Option<NodeIndex>,
     bridge_nodes: &BTreeSet<node::Id>,
+    outlet_activity: OutletActivity,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     // Add the block.
     let block = &fg[flow_ix];
@@ -676,6 +743,7 @@ fn flow_node_stmts(
         in_scope,
         active_phi,
         bridge_nodes,
+        outlet_activity,
     )?;
 
     // Collect the output branching edges.
@@ -724,6 +792,7 @@ fn flow_node_stmts(
             active_phi,
             stop_at,
             bridge_nodes,
+            outlet_activity,
         )?);
         return Ok(stmts);
     }
@@ -810,6 +879,7 @@ fn flow_node_stmts(
                     &inner_phi,
                     Some(join_ix),
                     bridge_nodes,
+                    outlet_activity,
                 )?);
             }
 
@@ -819,8 +889,9 @@ fn flow_node_stmts(
                 .collect::<Vec<_>>()
                 .join(" ");
             expr = format!(
-                "(if (= {} {BRANCH_IX}) (begin {branch_str}) {expr})",
-                branch.ix
+                "(if (= {} {}) (begin {branch_str}) {expr})",
+                branch.ix,
+                branch_ix_var(conf.id),
             );
         }
 
@@ -848,6 +919,7 @@ fn flow_node_stmts(
             &inner_phi,
             stop_at,
             bridge_nodes,
+            outlet_activity,
         )?);
 
         return Ok(stmts);
@@ -876,6 +948,7 @@ fn flow_node_stmts(
             active_phi,
             stop_at,
             bridge_nodes,
+            outlet_activity,
         )?;
         let dst_stmts_str = dst_stmts
             .into_iter()
@@ -886,7 +959,11 @@ fn flow_node_stmts(
             .map(|e| format!("{e}"))
             .unwrap_or_default();
         let dst_expr = format!("(begin {} {} '())", destructure_str, dst_stmts_str,);
-        expr = format!("(if (= {} {BRANCH_IX}) {dst_expr} {expr})", branch.ix);
+        expr = format!(
+            "(if (= {} {}) {dst_expr} {expr})",
+            branch.ix,
+            branch_ix_var(conf.id),
+        );
     }
 
     let expr = Engine::emit_ast(&expr)
@@ -910,10 +987,12 @@ pub fn entry_fn_body(
     outlets: &BTreeSet<node::Id>,
     fg: &FlowGraph,
     bridge_nodes: &BTreeSet<node::Id>,
+    outlet_activity: OutletActivity,
 ) -> Result<Vec<ExprKind>, CodegenError> {
-    let Some(entry) = flow_graph_entry(fg) else {
+    let roots = flow_graph_roots(fg);
+    if roots.is_empty() {
         return Ok(vec![]);
-    };
+    }
     let reachable = flow_graph_nodes(fg);
     let join_points = find_join_points(fg);
     let post_dom = compute_post_dominators(fg);
@@ -921,23 +1000,34 @@ pub fn entry_fn_body(
     for &j in &join_points {
         phi_params_map.insert(j, join_phi_params(mg, &reachable, &fg[j])?);
     }
-    flow_node_stmts(
-        path,
-        entry.id(),
-        mg,
-        stateful,
-        branching,
-        inlets,
-        outlets,
-        &reachable,
-        fg,
-        &post_dom,
-        &phi_params_map,
-        &mut HashSet::new(),
-        &HashSet::new(),
-        None,
-        bridge_nodes,
-    )
+    // A flow graph may contain multiple disconnected components (e.g. parallel
+    // branches, or independent inlet→outlet chains). Generate each from its
+    // root, sharing scope so bindings remain visible across the whole body.
+    // Per-node `branch-ix-{id}` placeholders are declared up-front so each
+    // branch can `set!` its selector and any arm can read it.
+    let mut in_scope = HashSet::new();
+    let mut stmts = declare_branch_ix_placeholders(branching);
+    for root in roots {
+        stmts.extend(flow_node_stmts(
+            path,
+            root,
+            mg,
+            stateful,
+            branching,
+            inlets,
+            outlets,
+            &reachable,
+            fg,
+            &post_dom,
+            &phi_params_map,
+            &mut in_scope,
+            &HashSet::new(),
+            None,
+            bridge_nodes,
+            outlet_activity,
+        )?);
+    }
+    Ok(stmts)
 }
 
 /// Wrap statements from a nested graph level with state scope enter/exit.
@@ -989,7 +1079,6 @@ fn wrap_state_scope(path: &[node::Id], stmts: Vec<ExprKind>) -> Vec<ExprKind> {
 fn wrap_outlet_bridge(
     inner_stmts: Vec<ExprKind>,
     graph_node_id: node::Id,
-    inner_mg: &MetaGraph,
     inner_outlets: &BTreeSet<node::Id>,
     reached_outlets: &BTreeSet<node::Id>,
 ) -> Vec<ExprKind> {
@@ -997,27 +1086,17 @@ fn wrap_outlet_bridge(
         return inner_stmts;
     }
 
-    // For each outlet (ordered by node ID), find the source node's output
-    // that feeds into it. Same logic as `nested_expr` outlet extraction.
-    let outlet_values: Vec<String> = inner_outlets
+    // Outlets write their values to hoisted `outlet-{id}` vars (see `eval_stmt`).
+    // Declare them within the `let` so the inner statements set them and we read
+    // them back as the graph node's output. Unreached outlets keep their `'()`
+    // default.
+    let declares: String = inner_outlets
         .iter()
-        .map(|&outlet_id| {
-            if !reached_outlets.contains(&outlet_id) {
-                return "'()".to_string();
-            }
-            // Find the edge incoming to this outlet in the inner MetaGraph.
-            for e_ref in inner_mg.edges_directed(outlet_id, petgraph::Incoming) {
-                let (src_id, _, edges) = (e_ref.source(), e_ref.target(), e_ref.weight());
-                for (edge, _kind) in edges {
-                    if edge.input.0 == 0 {
-                        return format!("node-{src_id}-o{}", edge.output.0);
-                    }
-                }
-            }
-            "'()".to_string()
-        })
-        .collect();
+        .map(|&id| format!("(define {} '())", outlet_var(id)))
+        .collect::<Vec<_>>()
+        .join(" ");
 
+    let outlet_values: Vec<String> = inner_outlets.iter().map(|&id| outlet_var(id)).collect();
     let outlet_values_expr = match outlet_values.len() {
         0 => "'()".to_string(),
         1 => outlet_values[0].clone(),
@@ -1031,7 +1110,8 @@ fn wrap_outlet_bridge(
         .join(" ");
 
     let output_var = node_outputs_var(graph_node_id);
-    let wrapped = format!("(define {output_var} (let () {inner_stmts_str} {outlet_values_expr}))");
+    let wrapped =
+        format!("(define {output_var} (let () {declares} {inner_stmts_str} {outlet_values_expr}))");
 
     Engine::emit_ast(&wrapped).expect("failed to emit AST for outlet bridge")
 }
@@ -1086,13 +1166,8 @@ fn entry_fns_collect(
             if let Some(reached_outlets) = child_flow.outlet_reach.get(&ep_id) {
                 // Child stmts already include state scope wrapping from the
                 // child's own entry_fns_collect. Wrap in outlet bridge.
-                let bridge = wrap_outlet_bridge(
-                    stmts,
-                    graph_node_id,
-                    &child_meta.graph,
-                    &child_meta.outlets,
-                    reached_outlets,
-                );
+                let bridge =
+                    wrap_outlet_bridge(stmts, graph_node_id, &child_meta.outlets, reached_outlets);
                 bridged.entry(ep_id.clone()).or_default().extend(bridge);
                 bridge_node_ids
                     .entry(ep_id)
@@ -1126,6 +1201,9 @@ fn entry_fns_collect(
             &meta.outlets,
             fg,
             bn,
+            // Top-level/push-through entrypoints don't track outlet activation;
+            // branch-aware outlet propagation is node-style only (`nested_expr`).
+            OutletActivity::Untracked,
         )?;
         let scoped = wrap_state_scope(path, stmts);
 
