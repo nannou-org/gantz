@@ -4,6 +4,7 @@
   lib,
   libGL,
   mkShell,
+  rustfmt,
   stdenv,
   trunk,
   binaryen,
@@ -14,6 +15,11 @@ mkShell {
   inputsFrom = [
     gantz-unwrapped
     gantz-website
+  ];
+  # The rust toolchain comes via `inputsFrom` (gantz-unwrapped) but does not
+  # include rustfmt, which `nix develop -c cargo fmt` (and CI) requires.
+  packages = [
+    rustfmt
   ];
   # FIXME: Remove this, see #122.
   buildInputs = [
