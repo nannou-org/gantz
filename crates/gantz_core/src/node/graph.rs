@@ -484,6 +484,11 @@ where
     // The external branch patterns (empty => not externally branching).
     let patterns = branch_patterns_from_flow(&fg, &outlet_ids, &arm_counts)?;
     let branching = !patterns.is_empty();
+    let outlet_activity = if branching {
+        compile::OutletActivity::Tracked
+    } else {
+        compile::OutletActivity::Untracked
+    };
 
     // Bind each inlet from the corresponding node input (input i -> inlet i).
     let mut bindings: Vec<String> = inlet_ids
@@ -516,7 +521,7 @@ where
         &meta.outlets,
         &fg,
         &BTreeSet::new(),
-        branching,
+        outlet_activity,
     )
     .map_err(node::ExprError::custom)?;
 

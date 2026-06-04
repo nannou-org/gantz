@@ -35,6 +35,18 @@ enum NodeFnCallArg {
 /// Binding used for `state` local to each node fn.
 const STATE: &str = "state";
 
+/// Whether a nested graph's outlets should record their activation.
+///
+/// `Tracked` makes each outlet also `set!` an `outlet-active-{id}` flag (in
+/// addition to its value), which the external branch selector reads to pick
+/// which branch fired. Only needed when the graph branches externally;
+/// top-level and push-through evaluation use `Untracked`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OutletActivity {
+    Tracked,
+    Untracked,
+}
+
 /// The expression for a call to a node function.
 fn node_fn_call(
     node_path: &[node::Id],
@@ -174,7 +186,7 @@ fn eval_stmt(
     inputs: &node::Conns,
     outputs: &node::Conns,
     stateful: bool,
-    track_outlet_active: bool,
+    outlet_activity: OutletActivity,
 ) -> Result<Option<ExprKind>, CodegenError> {
     // An expression for a node's key into the graph state hashmap.
     fn node_state_key(node_id: usize) -> ExprKind {
@@ -255,7 +267,7 @@ fn eval_stmt(
             return Ok(None);
         };
         let set_value = format!("(set! {} {src})", outlet_var(node_ix));
-        let s = if track_outlet_active {
+        let s = if outlet_activity == OutletActivity::Tracked {
             format!(
                 "(begin {set_value} (set! {} #t))",
                 outlet_active_var(node_ix)
@@ -564,7 +576,7 @@ pub(crate) fn eval_fn_block_stmts(
     in_scope: &mut HashSet<node::Id>,
     active_phi: &HashSet<(node::Id, usize)>,
     bridge_nodes: &BTreeSet<node::Id>,
-    track_outlet_active: bool,
+    outlet_activity: OutletActivity,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     let mut stmts = Vec::new();
     let mut iter = block.0.iter().peekable();
@@ -602,7 +614,7 @@ pub(crate) fn eval_fn_block_stmts(
             &inputs,
             &outputs,
             stateful,
-            track_outlet_active,
+            outlet_activity,
         )?
         else {
             continue;
@@ -716,7 +728,7 @@ fn flow_node_stmts(
     active_phi: &HashSet<(node::Id, usize)>,
     stop_at: Option<NodeIndex>,
     bridge_nodes: &BTreeSet<node::Id>,
-    track_outlet_active: bool,
+    outlet_activity: OutletActivity,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     // Add the block.
     let block = &fg[flow_ix];
@@ -731,7 +743,7 @@ fn flow_node_stmts(
         in_scope,
         active_phi,
         bridge_nodes,
-        track_outlet_active,
+        outlet_activity,
     )?;
 
     // Collect the output branching edges.
@@ -780,7 +792,7 @@ fn flow_node_stmts(
             active_phi,
             stop_at,
             bridge_nodes,
-            track_outlet_active,
+            outlet_activity,
         )?);
         return Ok(stmts);
     }
@@ -867,7 +879,7 @@ fn flow_node_stmts(
                     &inner_phi,
                     Some(join_ix),
                     bridge_nodes,
-                    track_outlet_active,
+                    outlet_activity,
                 )?);
             }
 
@@ -907,7 +919,7 @@ fn flow_node_stmts(
             &inner_phi,
             stop_at,
             bridge_nodes,
-            track_outlet_active,
+            outlet_activity,
         )?);
 
         return Ok(stmts);
@@ -936,7 +948,7 @@ fn flow_node_stmts(
             active_phi,
             stop_at,
             bridge_nodes,
-            track_outlet_active,
+            outlet_activity,
         )?;
         let dst_stmts_str = dst_stmts
             .into_iter()
@@ -975,7 +987,7 @@ pub fn entry_fn_body(
     outlets: &BTreeSet<node::Id>,
     fg: &FlowGraph,
     bridge_nodes: &BTreeSet<node::Id>,
-    track_outlet_active: bool,
+    outlet_activity: OutletActivity,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     let roots = flow_graph_roots(fg);
     if roots.is_empty() {
@@ -1012,7 +1024,7 @@ pub fn entry_fn_body(
             &HashSet::new(),
             None,
             bridge_nodes,
-            track_outlet_active,
+            outlet_activity,
         )?);
     }
     Ok(stmts)
@@ -1196,7 +1208,7 @@ fn entry_fns_collect(
             bn,
             // Top-level/push-through entrypoints don't track outlet activation;
             // branch-aware outlet propagation is node-style only (`nested_expr`).
-            false,
+            OutletActivity::Untracked,
         )?;
         let scoped = wrap_state_scope(path, stmts);
 
