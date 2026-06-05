@@ -822,8 +822,17 @@ fn flow_node_stmts(
         .collect();
     edges.sort();
 
-    // If there are no edges, we're done.
+    // If there are no edges, we're done. Destructure the block's last node so a
+    // consumer in another flow component - e.g. a branch's reconvergence join on
+    // a different root, emitted later after `order_roots` - can reference its
+    // outputs. (Within a component, a downstream node would do this; a terminal
+    // node otherwise leaves them undefined.) A terminal branch is left alone.
     if edges.is_empty() {
+        let conf = *block.last().unwrap();
+        if !branching.contains_key(&conf.id) {
+            stmts.extend(destructure_node_outputs_stmt(conf.id, conf.conns.outputs));
+            in_scope.insert(conf.id);
+        }
         return Ok(stmts);
 
     // Single successor: either a linear continuation or leads to a join.
@@ -1045,6 +1054,75 @@ fn flow_node_stmts(
     Ok(stmts)
 }
 
+/// Order flow-graph roots so that a root whose component produces a value
+/// consumed by another root's component is emitted first.
+///
+/// `build_flow_graph` can leave a branch's reconvergence join in a different
+/// flow component from a predecessor it depends on: the predecessor was lowered
+/// on a separate root with no flow edge to the join (a branch resets the
+/// topological chaining). The join is emitted inline with its branch, so its
+/// cross-component predecessor must be emitted *before* that branch - otherwise
+/// codegen references the predecessor's output before it is defined.
+///
+/// Components are stably topologically sorted by the cross-component data
+/// dependencies in `mg`; the incoming (id-sorted) order breaks ties so output
+/// stays deterministic.
+fn order_roots(mg: &MetaGraph, fg: &FlowGraph, roots: Vec<NodeIndex>) -> Vec<NodeIndex> {
+    if roots.len() < 2 {
+        return roots;
+    }
+    // Forward-reachable node ids for each root (its flow component).
+    let reach: Vec<HashSet<node::Id>> = roots
+        .iter()
+        .map(|&r| {
+            let mut set = HashSet::new();
+            let mut dfs = petgraph::visit::Dfs::new(fg, r);
+            while let Some(b) = dfs.next(fg) {
+                set.extend(fg[b].iter().map(|c| c.id));
+            }
+            set
+        })
+        .collect();
+
+    // `preceded_by[i]` = roots that must be emitted before root `i`, because a
+    // meta edge feeds from their (exclusive) reach into root `i`'s reach.
+    let n = roots.len();
+    let mut preceded_by: Vec<HashSet<usize>> = vec![HashSet::new(); n];
+    for (u, v, _) in mg.all_edges() {
+        for i in 0..n {
+            if !reach[i].contains(&v) || reach[i].contains(&u) {
+                continue;
+            }
+            for j in 0..n {
+                if j != i && reach[j].contains(&u) {
+                    preceded_by[i].insert(j);
+                }
+            }
+        }
+    }
+
+    // Stable topological sort (Kahn): repeatedly emit the lowest-index root with
+    // no remaining predecessor.
+    let mut indegree: Vec<usize> = preceded_by.iter().map(|s| s.len()).collect();
+    let mut emitted = vec![false; n];
+    let mut order = Vec::with_capacity(n);
+    while order.len() < n {
+        let Some(i) = (0..n).find(|&i| !emitted[i] && indegree[i] == 0) else {
+            // Unexpected cycle (the dataflow is acyclic); emit the rest in order.
+            order.extend((0..n).filter(|&k| !emitted[k]).map(|k| roots[k]));
+            break;
+        };
+        emitted[i] = true;
+        order.push(roots[i]);
+        for k in 0..n {
+            if !emitted[k] && preceded_by[k].contains(&i) {
+                indegree[k] -= 1;
+            }
+        }
+    }
+    order
+}
+
 /// Given the flow graph for an entry point eval fn, generate the body for the
 /// fn. as a list of statements.
 pub fn entry_fn_body(
@@ -1058,7 +1136,7 @@ pub fn entry_fn_body(
     bridge_nodes: &BTreeSet<node::Id>,
     outlet_activity: OutletActivity,
 ) -> Result<Vec<ExprKind>, CodegenError> {
-    let roots = flow_graph_roots(fg);
+    let roots = order_roots(mg, fg, flow_graph_roots(fg));
     if roots.is_empty() {
         return Ok(vec![]);
     }

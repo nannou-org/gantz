@@ -2492,3 +2492,139 @@ fn test_graph_nested_push_through_branch_with_constant_outlet() {
     assert_eq!(build(1), (None, Some(99), Some(7))); // arm 1 -> b, plus constant c
 }
 
+// ===========================================================================
+// Multi-root branch-reconvergence ordering tests.
+//
+// A single entrypoint with two flow roots, where one root branches and its arms
+// reconverge at a join that ALSO consumes the other root's value. The join is
+// the branch's post-dominator yet depends on a second root: previously the
+// branch root was emitted first and the join referenced the second root's output
+// before it was defined (a `FreeIdentifier` VM error). Fixed by `order_roots`
+// (emit a producing component before a consuming one) plus destructuring a
+// terminal block's last node so its outputs are available cross-component.
+// ===========================================================================
+
+// Build, compile and run `g` from two push sources in one entrypoint; returns
+// the VM for state queries.
+fn run_two_push<N: DebugNode + ?Sized>(
+    g: &petgraph::graph::DiGraph<Box<N>, Edge>,
+    a: (Vec<usize>, u8),
+    b: (Vec<usize>, u8),
+) -> Engine {
+    let ep = entrypoint::from_sources([push_source(a.0, a.1), push_source(b.0, b.1)]);
+    let module = gantz_core::compile::module(&no_lookup, g, &[ep.clone()]).unwrap();
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, g, &[], &mut vm);
+    for f in &module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+    vm
+}
+
+// Two push roots; Root A branches and its arms reconverge at `add`, which also
+// takes Root B's `int(20)`.
+//
+//   ROOT A: [push_a]->[int sel]->[select]   o0,o1 -> add.$l (phi)
+//   ROOT B: [push_b]->[int 20] -------------------> add.$r ;  add -> store
+#[test]
+fn test_multiroot_branch_join_external_pred() {
+    let build = |sel: i32| {
+        let mut g = petgraph::graph::DiGraph::new();
+        let push_a = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let int = g.add_node(Box::new(node_int(sel)) as Box<_>);
+        let select = g.add_node(Box::new(node_select()) as Box<_>);
+        let push_b = g.add_node(Box::new(node_push()) as Box<_>);
+        let twenty = g.add_node(Box::new(node_int(20)) as Box<_>);
+        let add = g.add_node(Box::new(node::expr("(+ $l $r)").unwrap()) as Box<_>);
+        let store = g.add_node(Box::new(node_number()) as Box<_>);
+        g.add_edge(push_a, int, Edge::from((0, 0)));
+        g.add_edge(int, select, Edge::from((0, 0)));
+        g.add_edge(select, add, Edge::from((0, 0))); // arm 0 -> add.l
+        g.add_edge(select, add, Edge::from((1, 0))); // arm 1 -> add.l
+        g.add_edge(push_b, twenty, Edge::from((0, 0)));
+        g.add_edge(twenty, add, Edge::from((0, 1))); // -> add.r
+        g.add_edge(add, store, Edge::from((0, 0)));
+        let n = g[push_a].n_outputs(node::MetaCtx::new(&no_lookup)) as u8;
+        let vm = run_two_push(&g, (vec![push_a.index()], n), (vec![push_b.index()], n));
+        store_val(&vm, store)
+    };
+    assert_eq!(build(0), Some(62)); // arm 0: 42 + 20
+    assert_eq!(build(1), Some(119)); // arm 1: 99 + 20
+}
+
+// Sibling-shape guard: the same logical graph, but the predecessor's nodes are
+// added first so the topological `last`-chaining linearizes `int(20)` ahead of
+// the branch within a single component. This shape already worked; it verifies
+// the terminal-destructure / `order_roots` changes don't regress the linearized
+// form.
+#[test]
+fn test_multiroot_branch_join_external_pred_reversed() {
+    let build = |sel: i32| {
+        let mut g = petgraph::graph::DiGraph::new();
+        // Root B first (lower ids).
+        let push_b = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let twenty = g.add_node(Box::new(node_int(20)) as Box<_>);
+        // Root A second.
+        let push_a = g.add_node(Box::new(node_push()) as Box<_>);
+        let int = g.add_node(Box::new(node_int(sel)) as Box<_>);
+        let select = g.add_node(Box::new(node_select()) as Box<_>);
+        let add = g.add_node(Box::new(node::expr("(+ $l $r)").unwrap()) as Box<_>);
+        let store = g.add_node(Box::new(node_number()) as Box<_>);
+        g.add_edge(push_b, twenty, Edge::from((0, 0)));
+        g.add_edge(twenty, add, Edge::from((0, 1))); // -> add.r
+        g.add_edge(push_a, int, Edge::from((0, 0)));
+        g.add_edge(int, select, Edge::from((0, 0)));
+        g.add_edge(select, add, Edge::from((0, 0))); // arm 0 -> add.l
+        g.add_edge(select, add, Edge::from((1, 0))); // arm 1 -> add.l
+        g.add_edge(add, store, Edge::from((0, 0)));
+        let n = g[push_a].n_outputs(node::MetaCtx::new(&no_lookup)) as u8;
+        let vm = run_two_push(&g, (vec![push_a.index()], n), (vec![push_b.index()], n));
+        store_val(&vm, store)
+    };
+    assert_eq!(build(0), Some(62));
+    assert_eq!(build(1), Some(119));
+}
+
+// The same branch-join shape one level down: inside a nested graph, inlet_a
+// branches and its arms reconverge at `add`, which also takes inlet_b. Here the
+// inlets linearize into one component, so it already worked - this guards the
+// node-style `nested_expr` codegen path against the terminal-destructure change.
+//
+//   INNER: [inlet_a]->[select] o0,o1 -> add.$l ;  [inlet_b] -> add.$r ;  add -> outlet
+//   OUTER: [push]->[int sel]->inlet_a ;  [push]->[int 20]->inlet_b ;  inner -> store
+#[test]
+fn test_nested_branch_join_external_inlet() {
+    let make_inner = || {
+        let mut inner = GraphNode::default();
+        let inlet_a = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+        let inlet_b = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
+        let select = inner.add_node(Box::new(node_select()) as Box<_>);
+        let add = inner.add_node(Box::new(node::expr("(+ $l $r)").unwrap()) as Box<_>);
+        let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        inner.add_edge(inlet_a, select, Edge::from((0, 0)));
+        inner.add_edge(select, add, Edge::from((0, 0)));
+        inner.add_edge(select, add, Edge::from((1, 0)));
+        inner.add_edge(inlet_b, add, Edge::from((0, 1)));
+        inner.add_edge(add, outlet, Edge::from((0, 0)));
+        inner
+    };
+    let build = |sel: i32| {
+        let mut g = petgraph::graph::DiGraph::new();
+        let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let int = g.add_node(Box::new(node_int(sel)) as Box<_>);
+        let twenty = g.add_node(Box::new(node_int(20)) as Box<_>);
+        let inner_node = g.add_node(Box::new(make_inner()) as Box<_>);
+        let store = g.add_node(Box::new(node_number()) as Box<_>);
+        g.add_edge(push, int, Edge::from((0, 0)));
+        g.add_edge(push, twenty, Edge::from((0, 0)));
+        g.add_edge(int, inner_node, Edge::from((0, 0))); // -> inlet_a (input 0)
+        g.add_edge(twenty, inner_node, Edge::from((0, 1))); // -> inlet_b (input 1)
+        g.add_edge(inner_node, store, Edge::from((0, 0)));
+        store_val(&compile_and_push(&g, push), store)
+    };
+    assert_eq!(build(0), Some(62));
+    assert_eq!(build(1), Some(119));
+}
