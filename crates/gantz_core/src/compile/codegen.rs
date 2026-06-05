@@ -103,6 +103,75 @@ fn outlet_active_var(outlet_id: node::Id) -> String {
     format!("outlet-active-{outlet_id}")
 }
 
+/// The Steel expression yielding the outlet values shaped by `outlet_ids`: a
+/// single raw value for one outlet, a `(list ...)` for several, or `'()` for
+/// none. Each value is read from its hoisted `outlet-{id}` var.
+pub(crate) fn outlet_values_expr(outlet_ids: &[node::Id]) -> String {
+    match outlet_ids {
+        [] => "'()".to_string(),
+        [id] => outlet_var(*id),
+        ids => {
+            let values: Vec<_> = ids.iter().map(|&id| outlet_var(id)).collect();
+            format!("(list {})", values.join(" "))
+        }
+    }
+}
+
+/// The Steel expression selecting `(list branch-ix value)` for an externally
+/// branching nested graph.
+///
+/// Each distinct outlet-activation pattern has a unique integer signature
+/// (outlet `i` contributes `2^i` when active); the runtime signature is built
+/// from the hoisted `outlet-active-{id}` flags and matched against each
+/// pattern's signature with a nested `if` (the last pattern is the exhaustive
+/// fallthrough). Only primitive Steel forms are used, since the VM runs the base
+/// engine without the `cond`/`and` prelude macros.
+///
+/// Reused by both `nested_expr` (node-style branching) and `wrap_outlet_bridge`
+/// (branch-aware push-through-outlet propagation).
+pub(crate) fn branch_selector(patterns: &[node::Conns], outlet_ids: &[node::Id]) -> String {
+    // The value to return for a pattern, shaped by its active outlet count.
+    let value = |conns: &node::Conns| -> String {
+        let active: Vec<node::Id> = outlet_ids
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &id)| conns.get(i).unwrap_or(false).then_some(id))
+            .collect();
+        outlet_values_expr(&active)
+    };
+    // The unique signature of a pattern's active outlets.
+    let signature = |conns: &node::Conns| -> u128 {
+        (0..outlet_ids.len())
+            .filter(|&i| conns.get(i).unwrap_or(false))
+            .map(|i| 1u128 << i)
+            .sum()
+    };
+
+    // The runtime signature, summed from the active flags.
+    let terms: Vec<String> = outlet_ids
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| format!("(if {} {} 0)", outlet_active_var(id), 1u128 << i))
+        .collect();
+    let sig_expr = match terms.as_slice() {
+        [] => "0".to_string(),
+        [t] => t.clone(),
+        _ => format!("(+ {})", terms.join(" ")),
+    };
+
+    // Nested `if` over patterns; the last is the exhaustive fallthrough.
+    let last = patterns.len() - 1;
+    let mut expr = format!("(list {last} {})", value(&patterns[last]));
+    for k in (0..last).rev() {
+        expr = format!(
+            "(if (= __branch-sig {}) (list {k} {}) {expr})",
+            signature(&patterns[k]),
+            value(&patterns[k]),
+        );
+    }
+    format!("(let ((__branch-sig {sig_expr})) {expr})")
+}
+
 /// The per-branching-node binding holding its selected branch index.
 ///
 /// Declared once per body (see [`declare_branch_ix_placeholders`]) and `set!`
@@ -1070,37 +1139,45 @@ fn wrap_state_scope(path: &[node::Id], stmts: Vec<ExprKind>) -> Vec<ExprKind> {
     result
 }
 
-/// Wrap inner-level statements in a `let` block that returns outlet values,
+/// Wrap inner-level statements in a `let` block that returns the outlet values,
 /// binding the result as the graph node's output in the parent scope.
 ///
 /// The `let` block creates a new scope so inner node bindings (e.g. `node-0`)
-/// don't collide with parent-level bindings. The outlet value(s) are the last
-/// expression in the `let` body, returned as the graph node's output.
+/// don't collide with parent-level bindings. The tail expression - the graph
+/// node's output - is the outlet values directly, or, when the push reaches the
+/// outlets through branching (`patterns.len() >= 2`), a `(list branch-ix value)`
+/// the parent branch-selects on (mirroring `node::graph::nested_expr`).
 fn wrap_outlet_bridge(
     inner_stmts: Vec<ExprKind>,
     graph_node_id: node::Id,
     inner_outlets: &BTreeSet<node::Id>,
     reached_outlets: &BTreeSet<node::Id>,
+    patterns: &[node::Conns],
 ) -> Vec<ExprKind> {
     if inner_stmts.is_empty() || reached_outlets.is_empty() {
         return inner_stmts;
     }
 
-    // Outlets write their values to hoisted `outlet-{id}` vars (see `eval_stmt`).
-    // Declare them within the `let` so the inner statements set them and we read
-    // them back as the graph node's output. Unreached outlets keep their `'()`
-    // default.
-    let declares: String = inner_outlets
-        .iter()
-        .map(|&id| format!("(define {} '())", outlet_var(id)))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let branching = patterns.len() >= 2;
 
-    let outlet_values: Vec<String> = inner_outlets.iter().map(|&id| outlet_var(id)).collect();
-    let outlet_values_expr = match outlet_values.len() {
-        0 => "'()".to_string(),
-        1 => outlet_values[0].clone(),
-        _ => format!("(list {})", outlet_values.join(" ")),
+    // Outlets write their values to hoisted `outlet-{id}` vars (see `eval_stmt`),
+    // and - when branching - their `outlet-active-{id}` flags. Declare them
+    // within the `let` so the inner statements set them and we read them back as
+    // the graph node's output. Unreached outlets keep their `'()`/`#f` defaults.
+    let mut declares: Vec<String> = Vec::new();
+    for &id in inner_outlets {
+        declares.push(format!("(define {} '())", outlet_var(id)));
+        if branching {
+            declares.push(format!("(define {} #f)", outlet_active_var(id)));
+        }
+    }
+    let declares = declares.join(" ");
+
+    let outlet_ids: Vec<node::Id> = inner_outlets.iter().copied().collect();
+    let tail = if branching {
+        branch_selector(patterns, &outlet_ids)
+    } else {
+        outlet_values_expr(&outlet_ids)
     };
 
     let inner_stmts_str = inner_stmts
@@ -1110,8 +1187,7 @@ fn wrap_outlet_bridge(
         .join(" ");
 
     let output_var = node_outputs_var(graph_node_id);
-    let wrapped =
-        format!("(define {output_var} (let () {declares} {inner_stmts_str} {outlet_values_expr}))");
+    let wrapped = format!("(define {output_var} (let () {declares} {inner_stmts_str} {tail}))");
 
     Engine::emit_ast(&wrapped).expect("failed to emit AST for outlet bridge")
 }
@@ -1149,6 +1225,10 @@ fn entry_fns_collect(
     // (EntrypointId, graph_node_id) -> bridged stmts.
     let mut bridged: BTreeMap<super::EntrypointId, Vec<ExprKind>> = BTreeMap::new();
     let mut bridge_node_ids: BTreeMap<super::EntrypointId, BTreeSet<node::Id>> = BTreeMap::new();
+    // Bridge graph nodes whose push reaches outlets through branching, so the
+    // parent treats them as branch nodes for that entrypoint: node -> arm count.
+    let mut branch_bridges: BTreeMap<super::EntrypointId, BTreeMap<node::Id, usize>> =
+        BTreeMap::new();
 
     // 1. Recurse into children (post-order).
     for (&graph_node_id, child_tree) in &tree.nested {
@@ -1163,16 +1243,30 @@ fn entry_fns_collect(
         let (child_meta, ref child_flow) = child_tree.elem;
 
         for (ep_id, stmts) in child_stmts {
-            if let Some(reached_outlets) = child_flow.outlet_reach.get(&ep_id) {
+            if let Some(reach) = child_flow.outlet_reach.get(&ep_id) {
                 // Child stmts already include state scope wrapping from the
-                // child's own entry_fns_collect. Wrap in outlet bridge.
-                let bridge =
-                    wrap_outlet_bridge(stmts, graph_node_id, &child_meta.outlets, reached_outlets);
+                // child's own entry_fns_collect. Wrap in an outlet bridge that
+                // binds `node-{graph_node}`; when the child's push reaches its
+                // outlets through branching, the bridge yields a
+                // `(list branch-ix value)` the parent branch-selects on.
+                let bridge = wrap_outlet_bridge(
+                    stmts,
+                    graph_node_id,
+                    &child_meta.outlets,
+                    &reach.reached,
+                    &reach.patterns,
+                );
                 bridged.entry(ep_id.clone()).or_default().extend(bridge);
                 bridge_node_ids
-                    .entry(ep_id)
+                    .entry(ep_id.clone())
                     .or_default()
                     .insert(graph_node_id);
+                if reach.patterns.len() >= 2 {
+                    branch_bridges
+                        .entry(ep_id)
+                        .or_default()
+                        .insert(graph_node_id, reach.patterns.len());
+                }
             } else {
                 // No outlet propagation. Child stmts already include state
                 // scope wrapping from the child's own entry_fns_collect.
@@ -1183,15 +1277,38 @@ fn entry_fns_collect(
 
     // 2. Generate this level's own entrypoint stmts.
     let (meta, flow) = &tree.elem;
-    let branching: BTreeMap<node::Id, usize> =
+    let graph_branching: BTreeMap<node::Id, usize> =
         meta.branches.iter().map(|(&id, v)| (id, v.len())).collect();
 
     // Determine bridge_nodes for each entrypoint (graph nodes whose output
     // is already bound by an outlet bridge).
     let empty_bridges = BTreeSet::new();
+    let empty_branch_bridges = BTreeMap::new();
 
     for (ep_id, fg) in &flow.entrypoints {
         let bn = bridge_node_ids.get(ep_id).unwrap_or(&empty_bridges);
+        // Per-entrypoint branch nodes: this graph's own branches plus any
+        // branch-aware push-through bridges for this entrypoint.
+        let mut branching = graph_branching.clone();
+        branching.extend(
+            branch_bridges
+                .get(ep_id)
+                .unwrap_or(&empty_branch_bridges)
+                .iter()
+                .map(|(&id, &n)| (id, n)),
+        );
+        // Track outlet activation iff this graph's own push reaches its outlets
+        // through branching, so its parent can branch-select on the flags
+        // (mirrors `node::graph::nested_expr`).
+        let outlet_activity = if flow
+            .outlet_reach
+            .get(ep_id)
+            .map_or(false, |reach| reach.patterns.len() >= 2)
+        {
+            OutletActivity::Tracked
+        } else {
+            OutletActivity::Untracked
+        };
         let stmts = entry_fn_body(
             path,
             &meta.graph,
@@ -1201,9 +1318,7 @@ fn entry_fns_collect(
             &meta.outlets,
             fg,
             bn,
-            // Top-level/push-through entrypoints don't track outlet activation;
-            // branch-aware outlet propagation is node-style only (`nested_expr`).
-            OutletActivity::Untracked,
+            outlet_activity,
         )?;
         let scoped = wrap_state_scope(path, stmts);
 

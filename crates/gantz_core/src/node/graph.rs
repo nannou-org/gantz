@@ -330,36 +330,6 @@ fn branch_arm_counts(meta: &compile::Meta) -> BTreeMap<node::Id, usize> {
     meta.branches.iter().map(|(&id, v)| (id, v.len())).collect()
 }
 
-/// The distinct external branches of a nested graph, as output masks over its
-/// outlets (ascending id order), or an empty `Vec` when it does not branch.
-///
-/// Each pattern is one set of outlets that may be simultaneously active under
-/// some combination of inner branch outcomes (see [`compile::outlet_patterns`]).
-/// Fewer than two distinct patterns means the graph always produces the same
-/// outlets, i.e. it has no external branching.
-fn branch_patterns_from_flow(
-    fg: &compile::FlowGraph,
-    outlet_ids: &[node::Id],
-    branching: &BTreeMap<node::Id, usize>,
-) -> Result<Vec<node::Conns>, node::ExprError> {
-    let outlets: BTreeSet<node::Id> = outlet_ids.iter().copied().collect();
-    let mut patterns: BTreeSet<node::Conns> = BTreeSet::new();
-    for reached in compile::outlet_patterns(fg, &outlets, branching) {
-        let mut conns =
-            node::Conns::unconnected(outlet_ids.len()).map_err(node::ExprError::custom)?;
-        for (i, id) in outlet_ids.iter().enumerate() {
-            if reached.contains(id) {
-                conns.set(i, true).map_err(node::ExprError::custom)?;
-            }
-        }
-        patterns.insert(conns);
-    }
-    if patterns.len() < 2 {
-        return Ok(vec![]);
-    }
-    Ok(patterns.into_iter().collect())
-}
-
 /// Compute the external branch masks for a nested graph (see [`Node::branches`]).
 fn graph_branches<'a, G>(
     get_node: node::GetNode<'a>,
@@ -377,7 +347,8 @@ where
     }
     let outlet_ids: Vec<node::Id> = meta.outlets.iter().copied().collect();
     let fg = inner_flow_graph(&meta)?;
-    branch_patterns_from_flow(&fg, &outlet_ids, &branch_arm_counts(&meta))
+    compile::branch_patterns_from_flow(&fg, &outlet_ids, &branch_arm_counts(&meta))
+        .map_err(node::ExprError::custom)
 }
 
 /// Build the control flow graph for a nested graph: inlets push, outlets pull.
@@ -389,73 +360,6 @@ fn inner_flow_graph(meta: &compile::Meta) -> Result<compile::FlowGraph, node::Ex
         meta.outlets.iter().map(|&n| (n, conn())),
     )
     .map_err(node::ExprError::custom)
-}
-
-/// The Steel expression that yields a nested graph's outlet values, shaped by
-/// the given outlets: a single raw value for one outlet, a `(list ...)` for
-/// several, or `'()` for none. Each value is read from its hoisted `outlet-{id}`
-/// var.
-fn outlet_values_expr(outlet_ids: &[node::Id]) -> String {
-    match outlet_ids {
-        [] => "'()".to_string(),
-        [id] => format!("outlet-{id}"),
-        ids => {
-            let values: Vec<_> = ids.iter().map(|id| format!("outlet-{id}")).collect();
-            format!("(list {})", values.join(" "))
-        }
-    }
-}
-
-/// The Steel expression selecting `(list branch-ix value)` for a branching
-/// nested graph.
-///
-/// Each distinct outlet-activation pattern has a unique integer signature
-/// (outlet `i` contributes `2^i` when active); the runtime signature is built
-/// from the hoisted `outlet-active-{id}` flags and matched against each
-/// pattern's signature with a nested `if` (the last pattern is the exhaustive
-/// fallthrough). Only primitive Steel forms are used, since the VM runs the
-/// base engine without the `cond`/`and` prelude macros.
-fn branch_selector(patterns: &[node::Conns], outlet_ids: &[node::Id]) -> String {
-    // The value to return for a pattern, shaped by its active outlet count.
-    let value = |conns: &node::Conns| -> String {
-        let active: Vec<node::Id> = outlet_ids
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &id)| conns.get(i).unwrap_or(false).then_some(id))
-            .collect();
-        outlet_values_expr(&active)
-    };
-    // The unique signature of a pattern's active outlets.
-    let signature = |conns: &node::Conns| -> u128 {
-        (0..outlet_ids.len())
-            .filter(|&i| conns.get(i).unwrap_or(false))
-            .map(|i| 1u128 << i)
-            .sum()
-    };
-
-    // The runtime signature, summed from the active flags.
-    let terms: Vec<String> = outlet_ids
-        .iter()
-        .enumerate()
-        .map(|(i, &id)| format!("(if outlet-active-{id} {} 0)", 1u128 << i))
-        .collect();
-    let sig_expr = match terms.as_slice() {
-        [] => "0".to_string(),
-        [t] => t.clone(),
-        _ => format!("(+ {})", terms.join(" ")),
-    };
-
-    // Nested `if` over patterns; the last is the exhaustive fallthrough.
-    let last = patterns.len() - 1;
-    let mut expr = format!("(list {last} {})", value(&patterns[last]));
-    for k in (0..last).rev() {
-        expr = format!(
-            "(if (= __branch-sig {}) (list {k} {}) {expr})",
-            signature(&patterns[k]),
-            value(&patterns[k]),
-        );
-    }
-    format!("(let ((__branch-sig {sig_expr})) {expr})")
 }
 
 /// The implementation of the `GraphNode`'s `Node::expr` fn.
@@ -483,7 +387,8 @@ where
     let arm_counts = branch_arm_counts(&meta);
 
     // The external branch patterns (empty => not externally branching).
-    let patterns = branch_patterns_from_flow(&fg, &outlet_ids, &arm_counts)?;
+    let patterns = compile::branch_patterns_from_flow(&fg, &outlet_ids, &arm_counts)
+        .map_err(node::ExprError::custom)?;
     let branching = !patterns.is_empty();
     let outlet_activity = if branching {
         compile::OutletActivity::Tracked
@@ -535,9 +440,9 @@ where
     // The node's output: a `(list branch-ix value)` when branching, else the
     // outlet values directly.
     let tail = if branching {
-        branch_selector(&patterns, &outlet_ids)
+        compile::branch_selector(&patterns, &outlet_ids)
     } else {
-        outlet_values_expr(&outlet_ids)
+        compile::outlet_values_expr(&outlet_ids)
     };
 
     // Wrap in `(let () ...)` so the inner statements form a *body*: unlike a

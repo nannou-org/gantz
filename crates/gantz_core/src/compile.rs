@@ -7,6 +7,7 @@ use crate::{
 };
 #[doc(inline)]
 pub use codegen::{OutletActivity, entry_fn_body, entry_fn_name};
+pub(crate) use codegen::{branch_selector, outlet_values_expr};
 #[doc(inline)]
 pub use entrypoint::{
     Entrypoint, EntrypointId, EvalKind, EvalSource, pull_source, push_pull_entrypoints, push_source,
@@ -14,8 +15,8 @@ pub use entrypoint::{
 #[doc(inline)]
 pub use error::ModuleError;
 #[doc(inline)]
-pub use flow::{Block, Flow, FlowGraph, NodeConf, NodeConns, flow_graph};
-pub(crate) use flow::{flow_graph_roots, outlet_patterns};
+pub use flow::{Block, Flow, FlowGraph, NodeConf, NodeConns, OutletReach, flow_graph};
+pub(crate) use flow::{branch_patterns_from_flow, flow_graph_roots};
 use meta::MetaTree;
 #[doc(inline)]
 pub use meta::{EdgeKind, Meta, MetaGraph};
@@ -290,6 +291,16 @@ fn group_sources_by_level(
         .collect()
 }
 
+/// Bitwise-OR of the branch patterns (all of equal width): the set of outputs a
+/// branching push-through can produce across all its branch outcomes.
+fn or_patterns(patterns: &[node::Conns]) -> Result<node::Conns, error::NodeConnsError> {
+    let n = patterns.first().map_or(0, node::Conns::len);
+    let bits: Vec<bool> = (0..n)
+        .map(|i| patterns.iter().any(|p| p.get(i).unwrap_or(false)))
+        .collect();
+    node::Conns::try_from_slice(&bits).map_err(|_| error::TooManyConns(n).into())
+}
+
 /// Recursively build a flow tree, routing entrypoint sources to each nesting
 /// level.
 ///
@@ -324,18 +335,34 @@ fn build_flow_tree<'a>(
     )?;
     let mut nested = std::collections::BTreeMap::new();
 
-    // 1. Recurse into children, collect outlet-reaching push sources.
+    // 1. Recurse into children, collect outlet-reaching push sources. When a
+    //    child's push reaches its outlets through branching (>= 2 distinct outlet
+    //    patterns), record those patterns as the bridged graph node's branches
+    //    for this entrypoint, so the parent gates its continuation per branch.
     let mut outlet_push: std::collections::BTreeMap<EntrypointId, Vec<(node::Id, node::Conns)>> =
         std::collections::BTreeMap::new();
+    let mut extra_branches: std::collections::BTreeMap<
+        EntrypointId,
+        std::collections::BTreeMap<node::Id, Vec<node::Conns>>,
+    > = std::collections::BTreeMap::new();
     for (&id, subtree) in &meta_tree.nested {
         let mut child_path = current_path.clone();
         child_path.push(id);
         let child_tree = build_flow_tree(subtree, level_sources, child_path)?;
         let (_, ref child_flow) = child_tree.elem;
-        for ep_id in child_flow.outlet_reach.keys() {
-            let n_outputs = meta_tree.elem.outputs.get(&id).copied().unwrap_or(0);
-            if n_outputs > 0 {
-                let conns = node::Conns::connected(n_outputs).unwrap();
+        let n_outputs = meta_tree.elem.outputs.get(&id).copied().unwrap_or(0);
+        if n_outputs > 0 {
+            for (ep_id, reach) in &child_flow.outlet_reach {
+                let conns = if reach.patterns.len() >= 2 {
+                    extra_branches
+                        .entry(ep_id.clone())
+                        .or_default()
+                        .insert(id, reach.patterns.clone());
+                    // Only the outputs some branch can produce reach downstream.
+                    or_patterns(&reach.patterns)?
+                } else {
+                    node::Conns::connected(n_outputs).map_err(|_| error::TooManyConns(n_outputs))?
+                };
                 outlet_push
                     .entry(ep_id.clone())
                     .or_default()
@@ -366,15 +393,18 @@ fn build_flow_tree<'a>(
         ep_push.entry(ep_id).or_default().extend(srcs);
     }
 
-    // 3. Build one flow graph per entrypoint with complete sources.
+    // 3. Build one flow graph per entrypoint with complete sources, treating any
+    //    branch-aware bridged graph nodes as branch nodes for that entrypoint.
     let mut entrypoints = std::collections::BTreeMap::new();
     let mut outlet_reach = std::collections::BTreeMap::new();
     let ep_ids: std::collections::BTreeSet<_> =
         ep_push.keys().chain(ep_pull.keys()).cloned().collect();
+    let outlet_ids: Vec<node::Id> = meta_tree.elem.outlets.iter().copied().collect();
     for ep_id in ep_ids {
         let push = ep_push.remove(&ep_id).unwrap_or_default();
         let pull = ep_pull.remove(&ep_id).unwrap_or_default();
-        let fg = flow::flow_graph(&meta_tree.elem, push, pull)?;
+        let extra = extra_branches.remove(&ep_id).unwrap_or_default();
+        let fg = flow::flow_graph_with_extra(&meta_tree.elem, push, pull, &extra)?;
         let reached: std::collections::BTreeSet<node::Id> = fg
             .node_weights()
             .flat_map(|blk| blk.iter())
@@ -382,7 +412,18 @@ fn build_flow_tree<'a>(
             .filter(|nid| meta_tree.elem.outlets.contains(nid))
             .collect();
         if !reached.is_empty() {
-            outlet_reach.insert(ep_id.clone(), reached);
+            // Patterns of this graph's outlets reachable from this entrypoint -
+            // for the parent's branch-aware propagation. Account for this graph's
+            // own branches plus this entrypoint's push-through (extra) branches.
+            let mut arm_counts: std::collections::BTreeMap<node::Id, usize> = meta_tree
+                .elem
+                .branches
+                .iter()
+                .map(|(&i, v)| (i, v.len()))
+                .collect();
+            arm_counts.extend(extra.iter().map(|(&i, m)| (i, m.len())));
+            let patterns = flow::branch_patterns_from_flow(&fg, &outlet_ids, &arm_counts)?;
+            outlet_reach.insert(ep_id.clone(), flow::OutletReach { reached, patterns });
         }
         entrypoints.insert(ep_id, fg);
     }
