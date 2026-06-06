@@ -50,9 +50,22 @@ pub struct Flow {
     /// Control flow graph for each entrypoint at this graph level.
     /// An entrypoint appears here only if it has sources at this level.
     pub entrypoints: BTreeMap<EntrypointId, FlowGraph>,
-    /// For each entrypoint, the outlet node IDs its FlowGraph reaches.
-    /// Only populated for entrypoints whose flow reaches at least one outlet.
-    pub outlet_reach: BTreeMap<EntrypointId, BTreeSet<node::Id>>,
+    /// For each entrypoint, what its FlowGraph reaches in terms of this graph's
+    /// outlets. Only populated for entrypoints whose flow reaches at least one
+    /// outlet.
+    pub outlet_reach: BTreeMap<EntrypointId, OutletReach>,
+}
+
+/// What one entrypoint's flow graph reaches among its graph's outlets, for
+/// push-through-outlet propagation to the parent.
+#[derive(Clone, Debug)]
+pub struct OutletReach {
+    /// The outlet node ids reached (the union over all branch outcomes).
+    pub reached: BTreeSet<node::Id>,
+    /// The distinct external branch masks (over this graph's outputs) the push
+    /// can produce, or empty when it always produces the same outlets (so no
+    /// branch-aware propagation is needed). See `branch_patterns_from_flow`.
+    pub patterns: Vec<node::Conns>,
 }
 
 /// Represents a basic, linear block of node function calls.
@@ -146,13 +159,31 @@ pub fn flow_graph(
     push: impl IntoIterator<Item = (node::Id, node::Conns)>,
     pull: impl IntoIterator<Item = (node::Id, node::Conns)>,
 ) -> Result<FlowGraph, NodeConnsError> {
+    flow_graph_with_extra(meta, push, pull, &BTreeMap::new())
+}
+
+/// Like [`flow_graph`], but treats `extra_branches` (graph-node id -> per-arm
+/// output masks) as branch nodes in addition to `meta.branches`.
+///
+/// Used for branch-aware push-through-outlet propagation, where a bridged graph
+/// node branches for a *specific entrypoint only* (so its masks can't live in
+/// the graph-wide `meta.branches`).
+pub(crate) fn flow_graph_with_extra(
+    meta: &Meta,
+    push: impl IntoIterator<Item = (node::Id, node::Conns)>,
+    pull: impl IntoIterator<Item = (node::Id, node::Conns)>,
+    extra_branches: &BTreeMap<node::Id, Vec<node::Conns>>,
+) -> Result<FlowGraph, NodeConnsError> {
     let order: Vec<_> = super::eval_order(&meta.graph, push, pull).collect();
     let included: HashSet<_> = order.iter().copied().collect();
     let mg = reachable_subgraph(&meta.graph, &included);
+    // Graph-wide branches plus this entrypoint's push-through branch nodes.
+    let mut all_branches = meta.branches.clone();
+    all_branches.extend(extra_branches.iter().map(|(&id, m)| (id, m.clone())));
     let mut fg = FlowGraph::default();
     let no_shared = HashMap::new();
-    build_flow_graph(meta, &mg, &mg, &mut fg, &no_shared, None)?;
-    let branching: BTreeSet<node::Id> = meta.branches.keys().copied().collect();
+    build_flow_graph(meta, &mg, &mg, &mut fg, &no_shared, None, &all_branches)?;
+    let branching: BTreeSet<node::Id> = all_branches.keys().copied().collect();
     flow_graph_edge_contraction(&mut fg, &branching);
     Ok(fg)
 }
@@ -223,6 +254,7 @@ fn build_flow_graph(
     fg: &mut FlowGraph,
     shared: &HashMap<node::Id, NodeIndex>,
     skip: Option<node::Id>,
+    all_branches: &BTreeMap<node::Id, Vec<node::Conns>>,
 ) -> Result<Vec<NodeIndex>, NodeConnsError> {
     let mut topo = petgraph::visit::Topo::new(mg);
     let mut last: Option<NodeIndex> = None;
@@ -287,7 +319,7 @@ fn build_flow_graph(
             continue;
         }
 
-        if let Some(branches) = meta.branches.get(&n) {
+        if let Some(branches) = all_branches.get(&n) {
             let per_arm: Vec<HashSet<node::Id>> = branches
                 .iter()
                 .map(|conns| push_reachable(mg, n, &push_eval_neighbors(mg, n, conns)).collect())
@@ -340,8 +372,15 @@ fn build_flow_graph(
                     .filter(|id| !downstream.contains(id))
                     .collect();
                 let arm_mg = reachable_subgraph(mg, &arm_reachable);
-                let arm_entries =
-                    build_flow_graph(meta, &arm_mg, outer_mg, fg, &sub_shared, Some(n))?;
+                let arm_entries = build_flow_graph(
+                    meta,
+                    &arm_mg,
+                    outer_mg,
+                    fg,
+                    &sub_shared,
+                    Some(n),
+                    all_branches,
+                )?;
                 let arm_branch = Branch { ix, conns: *conns };
                 for entry in arm_entries {
                     fg.add_edge(block_ix, entry, arm_branch);
@@ -358,7 +397,15 @@ fn build_flow_graph(
                     }
                 }
                 let cont_mg = reachable_subgraph(mg, &cont);
-                build_flow_graph(meta, &cont_mg, outer_mg, fg, &sub_shared, None)?;
+                build_flow_graph(
+                    meta,
+                    &cont_mg,
+                    outer_mg,
+                    fg,
+                    &sub_shared,
+                    None,
+                    all_branches,
+                )?;
             }
 
             for r in &per_arm {
@@ -547,6 +594,37 @@ pub(crate) fn outlet_patterns(
         }
     }
     patterns
+}
+
+/// The distinct external branch masks for a flow graph reaching `outlet_ids`
+/// (ascending id order), or an empty `Vec` when fewer than two distinct outlet
+/// patterns are reachable (i.e. no external branching).
+///
+/// Maps each reached-outlet set from [`outlet_patterns`] to a `Conns` over
+/// `outlet_ids`. Used both by `GraphNode`'s node-style `branches()` (inlets ->
+/// outlets) and by branch-aware push-through-outlet propagation (a push source
+/// inside the graph -> outlets).
+pub(crate) fn branch_patterns_from_flow(
+    fg: &FlowGraph,
+    outlet_ids: &[node::Id],
+    branching: &BTreeMap<node::Id, usize>,
+) -> Result<Vec<node::Conns>, TooManyConns> {
+    let n = outlet_ids.len();
+    let outlets: BTreeSet<node::Id> = outlet_ids.iter().copied().collect();
+    let mut patterns: BTreeSet<node::Conns> = BTreeSet::new();
+    for reached in outlet_patterns(fg, &outlets, branching) {
+        let mut conns = node::Conns::unconnected(n).map_err(|_| TooManyConns(n))?;
+        for (i, id) in outlet_ids.iter().enumerate() {
+            if reached.contains(id) {
+                conns.set(i, true).map_err(|_| TooManyConns(n))?;
+            }
+        }
+        patterns.insert(conns);
+    }
+    if patterns.len() < 2 {
+        return Ok(vec![]);
+    }
+    Ok(patterns.into_iter().collect())
 }
 
 /// Outcome of walking one (partial) world in [`outlet_patterns`].

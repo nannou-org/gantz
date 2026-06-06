@@ -1056,6 +1056,28 @@ fn store_val(vm: &Engine, store: petgraph::graph::NodeIndex) -> Option<i32> {
         .flatten()
 }
 
+// Build, compile and run `g` from a `push_eval` nested at `path` (e.g.
+// `[graph_node, push]`); returns the VM for state queries. Unlike
+// `compile_and_push`, the push lives *inside* a nested graph and propagates out
+// through that graph's outlets.
+fn compile_and_push_nested<N: DebugNode + ?Sized>(
+    g: &petgraph::graph::DiGraph<Box<N>, Edge>,
+    path: Vec<usize>,
+    push_n_outputs: u8,
+) -> Engine {
+    let ep = entrypoint::from_source(push_source(path, push_n_outputs));
+    let module = gantz_core::compile::module(&no_lookup, g, &[ep.clone()]).unwrap();
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, g, &[], &mut vm);
+    for f in &module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+    vm
+}
+
 // Divergent branch: each arm routes to its own outlet.  branches: [{A}, {B}]
 //
 //        [In]
@@ -2192,4 +2214,417 @@ fn test_graph_nested_multi_branch_three() {
         build(0, 1, 0),
         [Some(52), None, None, Some(139), Some(92), None]
     );
+}
+
+// ===========================================================================
+// Push-through-outlet branching tests.
+//
+// Here the `push_eval` lives *inside* the nested graph and propagates *out*
+// through the graph's outlets via an interior branch. The bridged graph node
+// therefore acts as a branch node in the parent for that entrypoint, so the
+// parent only evaluates downstream of the outlets the taken arm produced.
+// Each test's INNER graph (with the push inside) is sketched above it; `[Sel]`
+// is `node_select` (input ==0 -> o0(42), else -> o1(99)).
+// ===========================================================================
+
+// Divergent push-through: each arm drives its own outlet -> its own outer store.
+//
+//   INNER: [push]->[int(sel)]->[Sel]        OUTER: [inner]
+//                            o0/  \o1               o0/  \o1
+//                        [OutA]   [OutB]      [store_a] [store_b]
+#[test]
+fn test_graph_nested_push_through_divergent_branch() {
+    let build = |sel: i32| {
+        let mut inner = GraphNode::default();
+        let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let int = inner.add_node(Box::new(node_int(sel)) as Box<_>);
+        let select = inner.add_node(Box::new(node_select()) as Box<_>);
+        let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        inner.add_edge(push, int, Edge::from((0, 0)));
+        inner.add_edge(int, select, Edge::from((0, 0)));
+        inner.add_edge(select, outlet_a, Edge::from((0, 0)));
+        inner.add_edge(select, outlet_b, Edge::from((1, 0)));
+
+        let ctx = node::MetaCtx::new(&no_lookup);
+        let push_n = inner[push].n_outputs(ctx) as u8;
+
+        let mut g = petgraph::graph::DiGraph::new();
+        let inner_node = g.add_node(Box::new(inner) as Box<dyn DebugNode>);
+        let store_a = g.add_node(Box::new(node_number()) as Box<_>);
+        let store_b = g.add_node(Box::new(node_number()) as Box<_>);
+        g.add_edge(inner_node, store_a, Edge::from((0, 0)));
+        g.add_edge(inner_node, store_b, Edge::from((1, 0)));
+
+        let vm = compile_and_push_nested(&g, vec![inner_node.index(), push.index()], push_n);
+        (store_val(&vm, store_a), store_val(&vm, store_b))
+    };
+
+    assert_eq!(build(0), (Some(42), None)); // arm 0 -> outlet A -> store_a
+    assert_eq!(build(1), (None, Some(99))); // arm 1 -> outlet B -> store_b
+}
+
+// Dead-arm push-through: arm 1 leaves the select output unconnected, so it
+// produces nothing and no outer store is written.
+//
+//   INNER: [push]->[int(sel)]->[Sel]        OUTER: [inner]
+//                            o0|  \o1 (dead)         o0|
+//                        [OutA]    x              [store]
+#[test]
+fn test_graph_nested_push_through_dead_arm() {
+    let build = |sel: i32| {
+        let mut inner = GraphNode::default();
+        let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let int = inner.add_node(Box::new(node_int(sel)) as Box<_>);
+        let select = inner.add_node(Box::new(node_select()) as Box<_>);
+        let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        inner.add_edge(push, int, Edge::from((0, 0)));
+        inner.add_edge(int, select, Edge::from((0, 0)));
+        inner.add_edge(select, outlet, Edge::from((0, 0)));
+        // Select output 1 left unconnected (dead arm).
+
+        let ctx = node::MetaCtx::new(&no_lookup);
+        let push_n = inner[push].n_outputs(ctx) as u8;
+
+        let mut g = petgraph::graph::DiGraph::new();
+        let inner_node = g.add_node(Box::new(inner) as Box<dyn DebugNode>);
+        let store = g.add_node(Box::new(node_number()) as Box<_>);
+        g.add_edge(inner_node, store, Edge::from((0, 0)));
+
+        let vm = compile_and_push_nested(&g, vec![inner_node.index(), push.index()], push_n);
+        store_val(&vm, store)
+    };
+
+    assert_eq!(build(0), Some(42)); // arm 0 -> outlet -> store
+    assert_eq!(build(1), None); // arm 1 -> dead, store never evaluated
+}
+
+// Multi-output-arm push-through: arm 0 fires two outlets, arm 1 fires one.
+//
+//   INNER: [push]->[int(sel)]->[Branch]     arm 0 -> o0,o1 (values 10,20)
+//                          o0/o1|\o2         arm 1 -> o2    (value 30)
+//                     [A][B][C]              OUTER stores: a,b,c
+#[test]
+fn test_graph_nested_push_through_multi_outlet_arm() {
+    let branch3 = || {
+        node::branch(
+            "(if (= 0 $x) (list 0 (list 10 20)) (list 1 30))",
+            vec![
+                node::Conns::try_from([true, true, false]).unwrap(),
+                node::Conns::try_from([false, false, true]).unwrap(),
+            ],
+        )
+        .unwrap()
+    };
+    let build = |sel: i32| {
+        let mut inner = GraphNode::default();
+        let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let int = inner.add_node(Box::new(node_int(sel)) as Box<_>);
+        let br = inner.add_node(Box::new(branch3()) as Box<_>);
+        let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet_c = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        inner.add_edge(push, int, Edge::from((0, 0)));
+        inner.add_edge(int, br, Edge::from((0, 0)));
+        inner.add_edge(br, outlet_a, Edge::from((0, 0)));
+        inner.add_edge(br, outlet_b, Edge::from((1, 0)));
+        inner.add_edge(br, outlet_c, Edge::from((2, 0)));
+
+        let ctx = node::MetaCtx::new(&no_lookup);
+        let push_n = inner[push].n_outputs(ctx) as u8;
+
+        let mut g = petgraph::graph::DiGraph::new();
+        let inner_node = g.add_node(Box::new(inner) as Box<dyn DebugNode>);
+        let store_a = g.add_node(Box::new(node_number()) as Box<_>);
+        let store_b = g.add_node(Box::new(node_number()) as Box<_>);
+        let store_c = g.add_node(Box::new(node_number()) as Box<_>);
+        g.add_edge(inner_node, store_a, Edge::from((0, 0)));
+        g.add_edge(inner_node, store_b, Edge::from((1, 0)));
+        g.add_edge(inner_node, store_c, Edge::from((2, 0)));
+
+        let vm = compile_and_push_nested(&g, vec![inner_node.index(), push.index()], push_n);
+        (
+            store_val(&vm, store_a),
+            store_val(&vm, store_b),
+            store_val(&vm, store_c),
+        )
+    };
+
+    assert_eq!(build(0), (Some(10), Some(20), None)); // arm 0 -> a,b
+    assert_eq!(build(1), (None, None, Some(30))); // arm 1 -> c
+}
+
+// Two-level push-through: the push is inside the *innermost* graph; its branch
+// propagates out through two levels of outlets. The middle graph branches
+// because the inner one does (multi-level pattern threading).
+//
+//   INNER2: [push]->[int(sel)]->[Sel]->{oa,ob}
+//   INNER1: [inner2]->{ox,oy}
+//   OUTER:  [inner1]->{store_x, store_y}
+#[test]
+fn test_graph_nested_push_through_two_levels() {
+    let build = |sel: i32| {
+        let mut inner2 = GraphNode::default();
+        let push = inner2.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let int = inner2.add_node(Box::new(node_int(sel)) as Box<_>);
+        let select = inner2.add_node(Box::new(node_select()) as Box<_>);
+        let oa = inner2.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let ob = inner2.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        inner2.add_edge(push, int, Edge::from((0, 0)));
+        inner2.add_edge(int, select, Edge::from((0, 0)));
+        inner2.add_edge(select, oa, Edge::from((0, 0)));
+        inner2.add_edge(select, ob, Edge::from((1, 0)));
+
+        let ctx = node::MetaCtx::new(&no_lookup);
+        let push_n = inner2[push].n_outputs(ctx) as u8;
+
+        let mut inner1 = GraphNode::default();
+        let inner2_node = inner1.add_node(Box::new(inner2) as Box<dyn DebugNode>);
+        let ox = inner1.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let oy = inner1.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        inner1.add_edge(inner2_node, ox, Edge::from((0, 0)));
+        inner1.add_edge(inner2_node, oy, Edge::from((1, 0)));
+
+        let mut g = petgraph::graph::DiGraph::new();
+        let inner1_node = g.add_node(Box::new(inner1) as Box<dyn DebugNode>);
+        let store_x = g.add_node(Box::new(node_number()) as Box<_>);
+        let store_y = g.add_node(Box::new(node_number()) as Box<_>);
+        g.add_edge(inner1_node, store_x, Edge::from((0, 0)));
+        g.add_edge(inner1_node, store_y, Edge::from((1, 0)));
+
+        let vm = compile_and_push_nested(
+            &g,
+            vec![inner1_node.index(), inner2_node.index(), push.index()],
+            push_n,
+        );
+        (store_val(&vm, store_x), store_val(&vm, store_y))
+    };
+
+    assert_eq!(build(0), (Some(42), None));
+    assert_eq!(build(1), (None, Some(99)));
+}
+
+// Reconvergent push-through: a divergent interior branch whose two arms feed
+// distinct outlets that re-join at a single outer store - a phi across the
+// bridge boundary. The store always fires, with the taken arm's value.
+//
+//   INNER: [push]->[int(sel)]->[Sel]->{oa(o0), ob(o1)}
+//   OUTER: inner.o0 -\
+//          inner.o1 --> [store]
+#[test]
+fn test_graph_nested_push_through_reconvergent_branch() {
+    let build = |sel: i32| {
+        let mut inner = GraphNode::default();
+        let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let int = inner.add_node(Box::new(node_int(sel)) as Box<_>);
+        let select = inner.add_node(Box::new(node_select()) as Box<_>);
+        let oa = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let ob = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        inner.add_edge(push, int, Edge::from((0, 0)));
+        inner.add_edge(int, select, Edge::from((0, 0)));
+        inner.add_edge(select, oa, Edge::from((0, 0)));
+        inner.add_edge(select, ob, Edge::from((1, 0)));
+
+        let ctx = node::MetaCtx::new(&no_lookup);
+        let push_n = inner[push].n_outputs(ctx) as u8;
+
+        let mut g = petgraph::graph::DiGraph::new();
+        let inner_node = g.add_node(Box::new(inner) as Box<dyn DebugNode>);
+        let store = g.add_node(Box::new(node_number()) as Box<_>);
+        // Both arms route to the same store (phi reconvergence across the bridge).
+        g.add_edge(inner_node, store, Edge::from((0, 0)));
+        g.add_edge(inner_node, store, Edge::from((1, 0)));
+
+        let vm = compile_and_push_nested(&g, vec![inner_node.index(), push.index()], push_n);
+        store_val(&vm, store)
+    };
+
+    assert_eq!(build(0), Some(42)); // arm 0 -> outlet A -> store
+    assert_eq!(build(1), Some(99)); // arm 1 -> outlet B -> store
+}
+
+// Push-through branch alongside an always-active outlet: the push also drives a
+// constant-fed outlet that every arm produces, so its store always fires while
+// the branch arms route to their own stores.
+//
+//   INNER: [push]-+->[int(sel)]->[Sel]->{oa(o0), ob(o1)}
+//                 +->[int(7)]---------->{oc(o2)}   (always produced)
+//   OUTER: inner.{o0,o1,o2} -> {store_a, store_b, store_c}
+#[test]
+fn test_graph_nested_push_through_branch_with_constant_outlet() {
+    let build = |sel: i32| {
+        let mut inner = GraphNode::default();
+        let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let int = inner.add_node(Box::new(node_int(sel)) as Box<_>);
+        let select = inner.add_node(Box::new(node_select()) as Box<_>);
+        let seven = inner.add_node(Box::new(node_int(7)) as Box<_>);
+        let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet_c = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        inner.add_edge(push, int, Edge::from((0, 0)));
+        inner.add_edge(int, select, Edge::from((0, 0)));
+        inner.add_edge(select, outlet_a, Edge::from((0, 0)));
+        inner.add_edge(select, outlet_b, Edge::from((1, 0)));
+        inner.add_edge(push, seven, Edge::from((0, 0)));
+        inner.add_edge(seven, outlet_c, Edge::from((0, 0)));
+
+        let ctx = node::MetaCtx::new(&no_lookup);
+        let push_n = inner[push].n_outputs(ctx) as u8;
+
+        let mut g = petgraph::graph::DiGraph::new();
+        let inner_node = g.add_node(Box::new(inner) as Box<dyn DebugNode>);
+        let store_a = g.add_node(Box::new(node_number()) as Box<_>);
+        let store_b = g.add_node(Box::new(node_number()) as Box<_>);
+        let store_c = g.add_node(Box::new(node_number()) as Box<_>);
+        g.add_edge(inner_node, store_a, Edge::from((0, 0)));
+        g.add_edge(inner_node, store_b, Edge::from((1, 0)));
+        g.add_edge(inner_node, store_c, Edge::from((2, 0)));
+
+        let vm = compile_and_push_nested(&g, vec![inner_node.index(), push.index()], push_n);
+        (
+            store_val(&vm, store_a),
+            store_val(&vm, store_b),
+            store_val(&vm, store_c),
+        )
+    };
+
+    assert_eq!(build(0), (Some(42), None, Some(7))); // arm 0 -> a, plus constant c
+    assert_eq!(build(1), (None, Some(99), Some(7))); // arm 1 -> b, plus constant c
+}
+
+// ===========================================================================
+// Multi-root branch-reconvergence ordering tests.
+//
+// A single entrypoint with two flow roots, where one root branches and its arms
+// reconverge at a join that ALSO consumes the other root's value. The join is
+// the branch's post-dominator yet depends on a second root: previously the
+// branch root was emitted first and the join referenced the second root's output
+// before it was defined (a `FreeIdentifier` VM error). Fixed by `order_roots`
+// (emit a producing component before a consuming one) plus destructuring a
+// terminal block's last node so its outputs are available cross-component.
+// ===========================================================================
+
+// Build, compile and run `g` from two push sources in one entrypoint; returns
+// the VM for state queries.
+fn run_two_push<N: DebugNode + ?Sized>(
+    g: &petgraph::graph::DiGraph<Box<N>, Edge>,
+    a: (Vec<usize>, u8),
+    b: (Vec<usize>, u8),
+) -> Engine {
+    let ep = entrypoint::from_sources([push_source(a.0, a.1), push_source(b.0, b.1)]);
+    let module = gantz_core::compile::module(&no_lookup, g, &[ep.clone()]).unwrap();
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, g, &[], &mut vm);
+    for f in &module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+    vm
+}
+
+// Two push roots; Root A branches and its arms reconverge at `add`, which also
+// takes Root B's `int(20)`.
+//
+//   ROOT A: [push_a]->[int sel]->[select]   o0,o1 -> add.$l (phi)
+//   ROOT B: [push_b]->[int 20] -------------------> add.$r ;  add -> store
+#[test]
+fn test_multiroot_branch_join_external_pred() {
+    let build = |sel: i32| {
+        let mut g = petgraph::graph::DiGraph::new();
+        let push_a = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let int = g.add_node(Box::new(node_int(sel)) as Box<_>);
+        let select = g.add_node(Box::new(node_select()) as Box<_>);
+        let push_b = g.add_node(Box::new(node_push()) as Box<_>);
+        let twenty = g.add_node(Box::new(node_int(20)) as Box<_>);
+        let add = g.add_node(Box::new(node::expr("(+ $l $r)").unwrap()) as Box<_>);
+        let store = g.add_node(Box::new(node_number()) as Box<_>);
+        g.add_edge(push_a, int, Edge::from((0, 0)));
+        g.add_edge(int, select, Edge::from((0, 0)));
+        g.add_edge(select, add, Edge::from((0, 0))); // arm 0 -> add.l
+        g.add_edge(select, add, Edge::from((1, 0))); // arm 1 -> add.l
+        g.add_edge(push_b, twenty, Edge::from((0, 0)));
+        g.add_edge(twenty, add, Edge::from((0, 1))); // -> add.r
+        g.add_edge(add, store, Edge::from((0, 0)));
+        let n = g[push_a].n_outputs(node::MetaCtx::new(&no_lookup)) as u8;
+        let vm = run_two_push(&g, (vec![push_a.index()], n), (vec![push_b.index()], n));
+        store_val(&vm, store)
+    };
+    assert_eq!(build(0), Some(62)); // arm 0: 42 + 20
+    assert_eq!(build(1), Some(119)); // arm 1: 99 + 20
+}
+
+// Sibling-shape guard: the same logical graph, but the predecessor's nodes are
+// added first so the topological `last`-chaining linearizes `int(20)` ahead of
+// the branch within a single component. This shape already worked; it verifies
+// the terminal-destructure / `order_roots` changes don't regress the linearized
+// form.
+#[test]
+fn test_multiroot_branch_join_external_pred_reversed() {
+    let build = |sel: i32| {
+        let mut g = petgraph::graph::DiGraph::new();
+        // Root B first (lower ids).
+        let push_b = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let twenty = g.add_node(Box::new(node_int(20)) as Box<_>);
+        // Root A second.
+        let push_a = g.add_node(Box::new(node_push()) as Box<_>);
+        let int = g.add_node(Box::new(node_int(sel)) as Box<_>);
+        let select = g.add_node(Box::new(node_select()) as Box<_>);
+        let add = g.add_node(Box::new(node::expr("(+ $l $r)").unwrap()) as Box<_>);
+        let store = g.add_node(Box::new(node_number()) as Box<_>);
+        g.add_edge(push_b, twenty, Edge::from((0, 0)));
+        g.add_edge(twenty, add, Edge::from((0, 1))); // -> add.r
+        g.add_edge(push_a, int, Edge::from((0, 0)));
+        g.add_edge(int, select, Edge::from((0, 0)));
+        g.add_edge(select, add, Edge::from((0, 0))); // arm 0 -> add.l
+        g.add_edge(select, add, Edge::from((1, 0))); // arm 1 -> add.l
+        g.add_edge(add, store, Edge::from((0, 0)));
+        let n = g[push_a].n_outputs(node::MetaCtx::new(&no_lookup)) as u8;
+        let vm = run_two_push(&g, (vec![push_a.index()], n), (vec![push_b.index()], n));
+        store_val(&vm, store)
+    };
+    assert_eq!(build(0), Some(62));
+    assert_eq!(build(1), Some(119));
+}
+
+// The same branch-join shape one level down: inside a nested graph, inlet_a
+// branches and its arms reconverge at `add`, which also takes inlet_b. Here the
+// inlets linearize into one component, so it already worked - this guards the
+// node-style `nested_expr` codegen path against the terminal-destructure change.
+//
+//   INNER: [inlet_a]->[select] o0,o1 -> add.$l ;  [inlet_b] -> add.$r ;  add -> outlet
+//   OUTER: [push]->[int sel]->inlet_a ;  [push]->[int 20]->inlet_b ;  inner -> store
+#[test]
+fn test_nested_branch_join_external_inlet() {
+    let make_inner = || {
+        let mut inner = GraphNode::default();
+        let inlet_a = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+        let inlet_b = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
+        let select = inner.add_node(Box::new(node_select()) as Box<_>);
+        let add = inner.add_node(Box::new(node::expr("(+ $l $r)").unwrap()) as Box<_>);
+        let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        inner.add_edge(inlet_a, select, Edge::from((0, 0)));
+        inner.add_edge(select, add, Edge::from((0, 0)));
+        inner.add_edge(select, add, Edge::from((1, 0)));
+        inner.add_edge(inlet_b, add, Edge::from((0, 1)));
+        inner.add_edge(add, outlet, Edge::from((0, 0)));
+        inner
+    };
+    let build = |sel: i32| {
+        let mut g = petgraph::graph::DiGraph::new();
+        let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let int = g.add_node(Box::new(node_int(sel)) as Box<_>);
+        let twenty = g.add_node(Box::new(node_int(20)) as Box<_>);
+        let inner_node = g.add_node(Box::new(make_inner()) as Box<_>);
+        let store = g.add_node(Box::new(node_number()) as Box<_>);
+        g.add_edge(push, int, Edge::from((0, 0)));
+        g.add_edge(push, twenty, Edge::from((0, 0)));
+        g.add_edge(int, inner_node, Edge::from((0, 0))); // -> inlet_a (input 0)
+        g.add_edge(twenty, inner_node, Edge::from((0, 1))); // -> inlet_b (input 1)
+        g.add_edge(inner_node, store, Edge::from((0, 0)));
+        store_val(&compile_and_push(&g, push), store)
+    };
+    assert_eq!(build(0), Some(62));
+    assert_eq!(build(1), Some(119));
 }
