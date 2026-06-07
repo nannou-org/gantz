@@ -2628,3 +2628,54 @@ fn test_nested_branch_join_external_inlet() {
     assert_eq!(build(0), Some(62));
     assert_eq!(build(1), Some(119));
 }
+
+// An `Outlet` at the *root* level (no enclosing graph node) must compile and be
+// ignored: there is no parent to read its value, so it is a no-op while the rest
+// of the graph still evaluates.
+//
+//    --------
+//    | push | // push_eval
+//    -+------
+//     |
+//    -+----
+//    | 42 |
+//    -+----
+//     |
+//    -+--------
+//    | number | (stores received value in state)
+//    -+--------
+//     |
+//    -+--------
+//    | Outlet | (root-level: ignored)
+//    ----------
+#[test]
+fn test_graph_root_outlet_connected() {
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let int = g.add_node(Box::new(node_int(42)) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    let outlet = g.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    g.add_edge(push, int, Edge::from((0, 0)));
+    g.add_edge(int, store, Edge::from((0, 0)));
+    g.add_edge(store, outlet, Edge::from((0, 0)));
+
+    // Compiles, runs, and the upstream `number` still receives the value even
+    // though the root outlet leads nowhere.
+    assert_eq!(store_val(&compile_and_push(&g, push), store), Some(42));
+}
+
+// A *disconnected* `Outlet` at the root level (no incoming edge) is never
+// reached by the flow, so it emits nothing and the rest of the graph evaluates
+// normally.
+#[test]
+fn test_graph_root_outlet_disconnected() {
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let int = g.add_node(Box::new(node_int(42)) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    let _outlet = g.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    g.add_edge(push, int, Edge::from((0, 0)));
+    g.add_edge(int, store, Edge::from((0, 0)));
+
+    assert_eq!(store_val(&compile_and_push(&g, push), store), Some(42));
+}

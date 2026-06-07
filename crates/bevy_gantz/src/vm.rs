@@ -129,6 +129,15 @@ fn init_head_vm<N>(
         Ok(result) => result,
         Err(e) => {
             log::error!("Failed to init VM for head: {e}");
+            // Don't leave a stale VM/module from a previously-active graph in
+            // place: surface the error in the compiled module and drop the VM so
+            // eval systems (e.g. `drive_frame_bangs`, `on_eval_entry`) stop
+            // driving the wrong graph - which otherwise manifests as a confusing
+            // "free identifier: entry-fn-..." against an unrelated module.
+            cmds.entity(entity).insert(head::CompiledModule(format!(
+                "; failed to compile graph:\n; {e}"
+            )));
+            vms.remove(&entity);
             return;
         }
     };
@@ -303,7 +312,12 @@ pub fn update<N>(
                 let entrypoints = collect_entrypoints(&ep_fns, &get_node, graph);
                 match compile(&get_node, graph, vm, &entrypoints) {
                     Ok(module) => data.compiled.0 = module,
-                    Err(e) => log::error!("Failed to compile graph: {e}"),
+                    Err(e) => {
+                        log::error!("Failed to compile graph: {e}");
+                        // Surface the error rather than leaving the prior module
+                        // displayed, which would misleadingly look up-to-date.
+                        data.compiled.0 = format!("; failed to compile graph:\n; {e}");
+                    }
                 }
             }
         }
