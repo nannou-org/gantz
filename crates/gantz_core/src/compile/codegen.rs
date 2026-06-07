@@ -103,6 +103,24 @@ fn outlet_active_var(outlet_id: node::Id) -> String {
     format!("outlet-active-{outlet_id}")
 }
 
+/// The `(define outlet-{id} '())` declarations (plus `outlet-active-{id}` flags
+/// when `branching`) that hoist a graph's outlet value vars, so the
+/// `(set! outlet-{id} ...)` statements emitted by `eval_stmt` have a binding.
+///
+/// Shared by `wrap_outlet_bridge` (nested graphs, read by the parent) and
+/// `entry_fn_body` (a root graph's own outlets, which are never read - so root
+/// outlets are effectively ignored).
+fn outlet_var_declarations(outlets: &BTreeSet<node::Id>, branching: bool) -> Vec<String> {
+    let mut declares = Vec::new();
+    for &id in outlets {
+        declares.push(format!("(define {} '())", outlet_var(id)));
+        if branching {
+            declares.push(format!("(define {} #f)", outlet_active_var(id)));
+        }
+    }
+    declares
+}
+
 /// The Steel expression yielding the outlet values shaped by `outlet_ids`: a
 /// single raw value for one outlet, a `(list ...)` for several, or `'()` for
 /// none. Each value is read from its hoisted `outlet-{id}` var.
@@ -1154,6 +1172,17 @@ pub fn entry_fn_body(
     // branch can `set!` its selector and any arm can read it.
     let mut in_scope = HashSet::new();
     let mut stmts = declare_branch_ix_placeholders(branching);
+    // A root graph (no enclosing graph node) may itself contain outlets - e.g.
+    // a subgraph opened directly as a head. Nested levels have their outlet vars
+    // hoisted by `wrap_outlet_bridge`; the root has no parent to do so, so hoist
+    // them here. The values are never read at the root, so root outlets are
+    // ignored.
+    if path.is_empty() && !outlets.is_empty() {
+        let decls = outlet_var_declarations(outlets, outlet_activity == OutletActivity::Tracked);
+        for decl in decls {
+            stmts.extend(Engine::emit_ast(&decl).expect("failed to emit root outlet declaration"));
+        }
+    }
     for root in roots {
         stmts.extend(flow_node_stmts(
             path,
@@ -1242,14 +1271,7 @@ fn wrap_outlet_bridge(
     // and - when branching - their `outlet-active-{id}` flags. Declare them
     // within the `let` so the inner statements set them and we read them back as
     // the graph node's output. Unreached outlets keep their `'()`/`#f` defaults.
-    let mut declares: Vec<String> = Vec::new();
-    for &id in inner_outlets {
-        declares.push(format!("(define {} '())", outlet_var(id)));
-        if branching {
-            declares.push(format!("(define {} #f)", outlet_active_var(id)));
-        }
-    }
-    let declares = declares.join(" ");
+    let declares = outlet_var_declarations(inner_outlets, branching).join(" ");
 
     let outlet_ids: Vec<node::Id> = inner_outlets.iter().copied().collect();
     let tail = if branching {
