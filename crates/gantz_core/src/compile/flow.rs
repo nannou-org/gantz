@@ -276,7 +276,11 @@ fn make_conf(
     let n_inputs = meta.inputs.get(&n).copied().unwrap_or(0);
     let n_outputs = meta.outputs.get(&n).copied().unwrap_or(0);
     let inputs = node_inputs_in_scope(mg, outer_mg, n, n_inputs)?;
-    let outputs = node_outputs(mg, n, n_outputs)?;
+    // A node's connected outputs are intrinsic (independent of which arm subgraph
+    // it is lowered in), so count them from the full graph. This matters for a
+    // loop's deciding branch reached inside an inner branch's arm: its back-edge
+    // output would otherwise be missing from its arm-local subgraph.
+    let outputs = node_outputs(outer_mg, n, n_outputs)?;
     Ok(NodeConf {
         id: n,
         conns: NodeConns { inputs, outputs },

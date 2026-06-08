@@ -292,6 +292,47 @@ fn two_carried_params_loop() {
     assert_eq!(result, SteelVal::IntV(6), "sum of 1+2+3 = 6");
 }
 
+/// Nested loops: an inner loop (counts a value up to 3) runs inside an outer loop
+/// (continues while the value < 9). The inner loop fn is emitted inside the outer
+/// loop fn, closing over the same state. The first outer pass drives the value to
+/// 3 via the inner loop; each later outer pass increments it by 1 (the inner loop
+/// exits immediately), so the loop exits with 9.
+#[test]
+fn nested_loops() {
+    let mut g = petgraph::graph::DiGraph::new();
+    let seed = g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
+    let oh = g.add_node(Box::new(node::expr("(+ $o 1)").unwrap()) as Box<_>); // outer header
+    let ih = g.add_node(Box::new(node::expr("$i").unwrap()) as Box<_>); // inner header (passthrough)
+    let ib = g.add_node(Box::new(
+        node::branch(
+            "(if (< $v 3) (list 0 (+ $v 1)) (list 1 $v))",
+            vec!["10".parse().unwrap(), "01".parse().unwrap()],
+        )
+        .unwrap(),
+    ) as Box<_>); // inner branch
+    let ob = g.add_node(Box::new(
+        node::branch(
+            "(if (< $w 9) (list 0 $w) (list 1 $w))",
+            vec!["10".parse().unwrap(), "01".parse().unwrap()],
+        )
+        .unwrap(),
+    ) as Box<_>); // outer branch
+    let out = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(seed, oh, Edge::from((0, 0)));
+    g.add_edge(oh, ih, Edge::from((0, 0)));
+    g.add_edge(ih, ib, Edge::from((0, 0)));
+    g.add_edge(ib, ih, Edge::from((0, 0))); // inner continue (back-edge)
+    g.add_edge(ib, ob, Edge::from((1, 0))); // inner exit
+    g.add_edge(ob, oh, Edge::from((0, 0))); // outer continue (back-edge)
+    g.add_edge(ob, out, Edge::from((1, 0))); // outer exit
+
+    let vm = run_once(&g, seed);
+    let result = node::state::extract_value(&vm, &[out.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(result, SteelVal::IntV(9), "nested loop should exit at 9");
+}
+
 /// Compiling a cyclic graph is reproducible (required for content addressing).
 #[test]
 fn cyclic_codegen_is_deterministic() {

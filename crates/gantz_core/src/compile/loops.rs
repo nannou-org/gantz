@@ -15,8 +15,9 @@
 //! may still run forever depending on runtime branch decisions (that is the
 //! user's responsibility, as with any hand-written `while`).
 //!
-//! Nested loops are not yet handled here; they are detected and rejected with
-//! [`LoopError::NestedLoopsUnsupported`] (planned: residual-SCC recursion).
+//! Nested loops are found by residual-SCC recursion: after recording a loop, its
+//! body (minus its back-edges) is re-analyzed to expose inner loops, stored flat
+//! in the table keyed by their own header.
 
 use super::{MetaGraph, error::LoopError};
 use crate::{Edge, node};
@@ -68,22 +69,14 @@ pub(crate) fn analyze(
         let header = find_header(mg, &body)?;
         let back_edges = back_edges_into(mg, &body, header);
 
-        // Reject nested loops for now: if removing the header's back-edges leaves
-        // the body still cyclic, an inner loop remains (handled in a later step).
+        let continue_arms = classify_arms(&body, &back_edges, branches)?;
+        let carried = carried_params(mg, &body, header, &back_edges);
+        // Recurse into the residual (this loop's body with its back-edges removed)
+        // to discover nested inner loops. They are stored flat in the table, keyed
+        // by their own header; nesting is recovered from `body` containment.
         let removed: HashSet<(node::Id, node::Id)> =
             back_edges.iter().map(|(src, _)| (*src, header)).collect();
         let residual = sub_graph(mg, &body, &removed);
-        let still_cyclic = tarjan_scc(&residual)
-            .iter()
-            .any(|s| s.len() > 1 || (s.len() == 1 && residual.contains_edge(s[0], s[0])));
-        if still_cyclic {
-            return Err(LoopError::NestedLoopsUnsupported {
-                nodes: body.iter().copied().collect(),
-            });
-        }
-
-        let continue_arms = classify_arms(&body, &back_edges, branches)?;
-        let carried = carried_params(mg, &body, header, &back_edges);
         table.insert(
             header,
             LoopInfo {
@@ -94,6 +87,7 @@ pub(crate) fn analyze(
                 continue_arms,
             },
         );
+        table.extend(analyze(&residual, branches)?);
     }
     Ok(table)
 }
@@ -399,9 +393,10 @@ mod tests {
         assert_eq!(table.keys().copied().collect::<Vec<_>>(), vec![1, 4]);
     }
 
-    /// Nested loops are rejected for now.
+    /// Nested loops are found as two entries, the inner body contained in the
+    /// outer, each keyed by its own header with its own deciding branch.
     #[test]
-    fn nested_loops_unsupported() {
+    fn nested_loops() {
         let mut g = MetaGraph::new();
         // Outer header 1, inner header 2, inner branch 3, outer branch 4.
         g.add_edge(0, 1, edge(0, 0));
@@ -414,7 +409,13 @@ mod tests {
         let branches =
             BTreeMap::from([(3, vec![conns("10"), conns("01")]), (4, vec![conns("10"), conns("01")])]);
 
-        let err = analyze(&g, &branches).unwrap_err();
-        assert!(matches!(err, LoopError::NestedLoopsUnsupported { .. }));
+        let table = analyze(&g, &branches).unwrap();
+        assert_eq!(table.keys().copied().collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(table[&1].body, BTreeSet::from([1, 2, 3, 4]));
+        assert_eq!(table[&2].body, BTreeSet::from([2, 3]));
+        assert!(table[&2].body.is_subset(&table[&1].body));
+        // The outer loop is decided by branch 4, the inner by branch 3.
+        assert_eq!(table[&1].continue_arms.keys().copied().collect::<Vec<_>>(), vec![4]);
+        assert_eq!(table[&2].continue_arms.keys().copied().collect::<Vec<_>>(), vec![3]);
     }
 }

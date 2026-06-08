@@ -91,10 +91,6 @@ pub enum LoopError {
         nodes: Vec<node::Id>,
         entries: Vec<node::Id>,
     },
-    /// A loop nested within another loop.
-    // TODO(graph-cycles Step F): support nested loops via residual-SCC recursion.
-    #[error("nested feedback loops through nodes {nodes:?} are not yet supported")]
-    NestedLoopsUnsupported { nodes: Vec<node::Id> },
     /// A loop with more than one deciding branch (multiple exit decisions).
     // TODO(graph-cycles): support multi-exit loops (return exit-tag + value, then
     // branch-select at the call site).
