@@ -262,6 +262,36 @@ fn inner_branch_loop() {
     assert_eq!(result, SteelVal::IntV(3), "inner-branch loop should reach 3");
 }
 
+/// A loop carrying two accumulators: each iteration count += 1 and sum += count,
+/// exiting when count reaches 3. Exercises multiple loop-carried params (two
+/// back-edges feeding two header inputs).
+#[test]
+fn two_carried_params_loop() {
+    let mut g = petgraph::graph::DiGraph::new();
+    let start = g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
+    // Var order gives inputs i0 = $count, i1 = $sum. Outputs: o0 = next count,
+    // o1 = next sum (both fed back on the continue arm), o2 = exit value (sum).
+    let counter = g.add_node(Box::new(
+        node::branch(
+            "(let ((c (+ $count 1))) (if (< c 4) (list 0 (list c (+ $sum c))) (list 1 $sum)))",
+            vec!["110".parse().unwrap(), "001".parse().unwrap()],
+        )
+        .unwrap(),
+    ) as Box<_>);
+    let out = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(start, counter, Edge::from((0, 0))); // count seed = 0
+    g.add_edge(start, counter, Edge::from((0, 1))); // sum seed = 0
+    g.add_edge(counter, counter, Edge::from((0, 0))); // count back-edge
+    g.add_edge(counter, counter, Edge::from((1, 1))); // sum back-edge
+    g.add_edge(counter, out, Edge::from((2, 0))); // exit -> out
+
+    let vm = run_once(&g, start);
+    let result = node::state::extract_value(&vm, &[out.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(result, SteelVal::IntV(6), "sum of 1+2+3 = 6");
+}
+
 /// Compiling a cyclic graph is reproducible (required for content addressing).
 #[test]
 fn cyclic_codegen_is_deterministic() {

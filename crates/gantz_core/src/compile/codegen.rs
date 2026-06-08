@@ -859,10 +859,10 @@ fn flow_node_stmts(
     // decision (continue arm -> tail-call, exit arm -> return value) and stop;
     // the exit downstream is lowered by the loop wrapper after the call.
     if let Some(loop_info) = current_loop {
-        let last_id = block.last().expect("flow block must not be empty").id;
-        if loop_info.continue_arms.contains_key(&last_id) {
-            stmts.push(destructure_node_branch_stmt(last_id));
-            stmts.push(loop_decision_if(loop_info, last_id));
+        let last = *block.last().expect("flow block must not be empty");
+        if loop_info.continue_arms.contains_key(&last.id) {
+            stmts.push(destructure_node_branch_stmt(last.id));
+            stmts.push(loop_decision_if(loop_info, last.id, last.conns.outputs));
             return Ok(stmts);
         }
     }
@@ -1123,16 +1123,49 @@ fn loop_fn_name(header: node::Id) -> String {
 /// branch: each continue arm tail-calls the loop fn with the fed-back value, any
 /// other (exit) arm returns it. `node-{decide}` is the per-iteration value (the
 /// branch's selected-arm value, after `destructure_node_branch_stmt`).
-fn loop_decision_if(loop_info: &LoopInfo, decide_id: node::Id) -> ExprKind {
+fn loop_decision_if(
+    loop_info: &LoopInfo,
+    decide_id: node::Id,
+    decide_outputs: node::Conns,
+) -> ExprKind {
     let loop_fn = loop_fn_name(loop_info.header);
     let branch_val = node_outputs_var(decide_id);
     let bix = branch_ix_var(decide_id);
-    // F2: a single loop-carried param, so the tail arg is the branch value.
-    // (F3 generalizes to one arg per carried param, from the back-edge outputs.)
-    let tail_args = branch_val.clone();
+
+    // The tail call passes one arg per loop-carried param, taken from the branch
+    // output that drives that header input's back-edge.
+    let tail_call = if loop_info.carried.len() <= 1 {
+        // Single param: the branch value is the fed-back value directly.
+        format!("({loop_fn} {branch_val})")
+    } else {
+        // Multiple params: the continue arm's value is a list shaped by the
+        // back-edge outputs; destructure it into per-output vars, then pass the
+        // arg feeding each param (in carried order).
+        let back_by_input: BTreeMap<usize, usize> = loop_info
+            .back_edges
+            .iter()
+            .filter(|(src, _)| *src == decide_id)
+            .map(|(_, e)| (e.input.0 as usize, e.output.0 as usize))
+            .collect();
+        let mut continue_conns =
+            node::Conns::unconnected(decide_outputs.len()).expect("conns len within bounds");
+        for &o in back_by_input.values() {
+            let _ = continue_conns.set(o, true);
+        }
+        let destructure = destructure_node_outputs_stmt(decide_id, continue_conns)
+            .map(|e| format!("{e} "))
+            .unwrap_or_default();
+        let tail_args: Vec<String> = loop_info
+            .carried
+            .iter()
+            .map(|p| node_output_var(decide_id, back_by_input[&p.header_input]))
+            .collect();
+        format!("(begin {destructure}({loop_fn} {}))", tail_args.join(" "))
+    };
+
     let mut if_expr = branch_val.clone();
     for arm in &loop_info.continue_arms[&decide_id] {
-        if_expr = format!("(if (= {arm} {bix}) ({loop_fn} {tail_args}) {if_expr})");
+        if_expr = format!("(if (= {arm} {bix}) {tail_call} {if_expr})");
     }
     emit_one(&if_expr)
 }
