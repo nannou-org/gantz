@@ -1,8 +1,10 @@
 //! Tests for cyclic graphs (feedback loops).
 //!
-//! gantz lowers a cycle as an iterate-until-branch loop. This file covers the
-//! ill-formed cases that must be rejected at compile time. End-to-end loop
-//! evaluation tests are added once loop codegen lands.
+//! gantz lowers a cycle as an iterate-until-branch loop: one push/pull
+//! re-evaluates the cyclic region until a branch selects an exit arm. These tests
+//! cover counters, multi-block (inner-branch) loops, multiple carried params,
+//! nested loops, stateful loop bodies, pull-driven loops and determinism, plus
+//! the ill-formed cases rejected at compile time.
 
 use gantz_core::compile::error::{LoopError, ModuleError, NodeConnsError};
 use gantz_core::compile::{entry_fn_name, entrypoint, push_pull_entrypoints};
@@ -116,7 +118,8 @@ fn run_once(
 #[test]
 fn counter_to_n() {
     let mut g = petgraph::graph::DiGraph::new();
-    let start = g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
+    let start =
+        g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
     let add = g.add_node(Box::new(node::expr("(+ $acc 1)").unwrap()) as Box<_>);
     let branch = g.add_node(Box::new(
         node::branch(
@@ -162,7 +165,8 @@ fn self_loop_counter_graph(
     petgraph::graph::NodeIndex,
 ) {
     let mut g = petgraph::graph::DiGraph::new();
-    let start = g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
+    let start =
+        g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
     let counter = g.add_node(Box::new(
         node::branch(
             format!("(let ((n (+ $acc 1))) (if (< n {limit}) (list 0 n) (list 1 n)))"),
@@ -194,7 +198,8 @@ fn self_loop_counter() {
 #[test]
 fn stateful_accumulator_in_loop() {
     let mut g = petgraph::graph::DiGraph::new();
-    let start = g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
+    let start =
+        g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
     let add = g.add_node(Box::new(node::expr("(+ $acc 1)").unwrap()) as Box<_>);
     let iter = g.add_node(Box::new(node_iter_counter()) as Box<_>);
     let branch = g.add_node(Box::new(
@@ -219,7 +224,11 @@ fn stateful_accumulator_in_loop() {
     let iters = node::state::extract_value(&vm, &[iter.index()])
         .unwrap()
         .unwrap();
-    assert_eq!(iters, SteelVal::IntV(3), "state should accumulate 3 iterations");
+    assert_eq!(
+        iters,
+        SteelVal::IntV(3),
+        "state should accumulate 3 iterations"
+    );
 }
 
 /// A loop body with an inner forward branch whose arms reconverge (via a phi var)
@@ -229,7 +238,8 @@ fn stateful_accumulator_in_loop() {
 #[test]
 fn inner_branch_loop() {
     let mut g = petgraph::graph::DiGraph::new();
-    let start = g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
+    let start =
+        g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
     let add = g.add_node(Box::new(node::expr("(+ $acc 1)").unwrap()) as Box<_>);
     // An inner forward branch whose two arms reconverge at the deciding branch;
     // `< 2` makes it take arm0 then arm1 across iterations.
@@ -259,7 +269,11 @@ fn inner_branch_loop() {
     let result = node::state::extract_value(&vm, &[out.index()])
         .unwrap()
         .unwrap();
-    assert_eq!(result, SteelVal::IntV(3), "inner-branch loop should reach 3");
+    assert_eq!(
+        result,
+        SteelVal::IntV(3),
+        "inner-branch loop should reach 3"
+    );
 }
 
 /// A loop carrying two accumulators: each iteration count += 1 and sum += count,
@@ -268,7 +282,8 @@ fn inner_branch_loop() {
 #[test]
 fn two_carried_params_loop() {
     let mut g = petgraph::graph::DiGraph::new();
-    let start = g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
+    let start =
+        g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
     // Var order gives inputs i0 = $count, i1 = $sum. Outputs: o0 = next count,
     // o1 = next sum (both fed back on the continue arm), o2 = exit value (sum).
     let counter = g.add_node(Box::new(
@@ -300,7 +315,8 @@ fn two_carried_params_loop() {
 #[test]
 fn nested_loops() {
     let mut g = petgraph::graph::DiGraph::new();
-    let seed = g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
+    let seed =
+        g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
     let oh = g.add_node(Box::new(node::expr("(+ $o 1)").unwrap()) as Box<_>); // outer header
     let ih = g.add_node(Box::new(node::expr("$i").unwrap()) as Box<_>); // inner header (passthrough)
     let ib = g.add_node(Box::new(

@@ -1,5 +1,6 @@
 //! Items related to lowering the control `Flow` graph to steel code.
 
+use super::loops::{LoopInfo, LoopTable};
 use crate::{
     GRAPH_STATE, ROOT_STATE,
     compile::{
@@ -10,7 +11,6 @@ use crate::{
     node,
 };
 pub(crate) use node_fn::{node_fns, unique_node_confs};
-use super::loops::{LoopInfo, LoopTable};
 use petgraph::{
     graph::NodeIndex,
     visit::{EdgeRef, IntoEdgeReferences, IntoNodeReferences, NodeRef},
@@ -832,9 +832,25 @@ fn flow_node_stmts(
         let already_inside = current_loop.map_or(false, |l| l.header == first_id);
         if !already_inside {
             return flow_loop_stmts(
-                path, flow_ix, loop_info, mg, stateful, branching, inlets, outlets,
-                reachable, fg, post_dom, phi_params, in_scope, active_phi, stop_at,
-                bridge_nodes, outlet_activity, current_loop, loops,
+                path,
+                flow_ix,
+                loop_info,
+                mg,
+                stateful,
+                branching,
+                inlets,
+                outlets,
+                reachable,
+                fg,
+                post_dom,
+                phi_params,
+                in_scope,
+                active_phi,
+                stop_at,
+                bridge_nodes,
+                outlet_activity,
+                current_loop,
+                loops,
             );
         }
     }
@@ -1275,7 +1291,10 @@ fn flow_loop_stmts(
         .map(|s| format!("{s}"))
         .collect::<Vec<_>>()
         .join(" ");
-    let loop_fn_def = emit_one(&format!("(define ({loop_fn} {}) {body_str})", params.join(" ")));
+    let loop_fn_def = emit_one(&format!(
+        "(define ({loop_fn} {}) {body_str})",
+        params.join(" ")
+    ));
 
     // The initial call - each param seeded from its external (pre-loop) source -
     // bound to the deciding branch's outputs var so downstream is unchanged.

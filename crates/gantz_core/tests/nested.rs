@@ -255,8 +255,7 @@ fn test_graph_nested_counter() {
 fn test_graph_nested_loop() {
     // Inner graph: inlet -> add(+1) -> tick(stateful) -> branch(< 3) -> {back | outlet}.
     let add = node::expr("(+ $acc 1)").unwrap();
-    let tick =
-        node::expr("(begin (set! state (+ (if (number? state) state 0) 1)) $x)").unwrap();
+    let tick = node::expr("(begin (set! state (+ (if (number? state) state 0) 1)) $x)").unwrap();
     let branch = node::branch(
         "(if (< $sum 3) (list 0 $sum) (list 1 $sum))",
         vec!["10".parse().unwrap(), "01".parse().unwrap()],

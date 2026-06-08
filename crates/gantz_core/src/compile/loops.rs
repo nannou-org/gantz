@@ -386,8 +386,10 @@ mod tests {
         g.add_edge(4, 5, edge(0, 0));
         g.add_edge(5, 4, edge(0, 0));
         g.add_edge(5, 6, edge(1, 0));
-        let branches =
-            BTreeMap::from([(2, vec![conns("10"), conns("01")]), (5, vec![conns("10"), conns("01")])]);
+        let branches = BTreeMap::from([
+            (2, vec![conns("10"), conns("01")]),
+            (5, vec![conns("10"), conns("01")]),
+        ]);
 
         let table = analyze(&g, &branches).unwrap();
         assert_eq!(table.keys().copied().collect::<Vec<_>>(), vec![1, 4]);
@@ -406,8 +408,10 @@ mod tests {
         g.add_edge(3, 4, edge(1, 0)); // inner exit -> outer branch
         g.add_edge(4, 1, edge(0, 0)); // outer back-edge
         g.add_edge(4, 5, edge(1, 0)); // outer exit
-        let branches =
-            BTreeMap::from([(3, vec![conns("10"), conns("01")]), (4, vec![conns("10"), conns("01")])]);
+        let branches = BTreeMap::from([
+            (3, vec![conns("10"), conns("01")]),
+            (4, vec![conns("10"), conns("01")]),
+        ]);
 
         let table = analyze(&g, &branches).unwrap();
         assert_eq!(table.keys().copied().collect::<Vec<_>>(), vec![1, 2]);
@@ -415,7 +419,13 @@ mod tests {
         assert_eq!(table[&2].body, BTreeSet::from([2, 3]));
         assert!(table[&2].body.is_subset(&table[&1].body));
         // The outer loop is decided by branch 4, the inner by branch 3.
-        assert_eq!(table[&1].continue_arms.keys().copied().collect::<Vec<_>>(), vec![4]);
-        assert_eq!(table[&2].continue_arms.keys().copied().collect::<Vec<_>>(), vec![3]);
+        assert_eq!(
+            table[&1].continue_arms.keys().copied().collect::<Vec<_>>(),
+            vec![4]
+        );
+        assert_eq!(
+            table[&2].continue_arms.keys().copied().collect::<Vec<_>>(),
+            vec![3]
+        );
     }
 }

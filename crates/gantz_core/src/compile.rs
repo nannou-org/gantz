@@ -5,9 +5,9 @@ use crate::{
     Edge,
     node::{self, Node},
 };
+pub(crate) use codegen::entry_fn_body;
 #[doc(inline)]
 pub use codegen::{OutletActivity, entry_fn_name};
-pub(crate) use codegen::entry_fn_body;
 pub(crate) use codegen::{branch_selector, outlet_values_expr};
 #[doc(inline)]
 pub use entrypoint::{
@@ -273,8 +273,10 @@ where
         .filter(|n| reachable.contains(n))
         .collect();
     let in_topo: HashSet<G::NodeId> = topo_order.iter().copied().collect();
-    let mut leftover: Vec<G::NodeId> =
-        reachable.into_iter().filter(|n| !in_topo.contains(n)).collect();
+    let mut leftover: Vec<G::NodeId> = reachable
+        .into_iter()
+        .filter(|n| !in_topo.contains(n))
+        .collect();
     leftover.sort();
     topo_order.into_iter().chain(leftover)
 }

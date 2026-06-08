@@ -123,12 +123,13 @@ pub enum CodegenError {
     /// An edge references an invalid input index.
     #[error(transparent)]
     InvalidInputIndex(#[from] InvalidInputIndex),
-    /// A feedback loop has a shape codegen does not yet support: its body is not
-    /// a single block ending in the deciding branch (e.g. it contains an inner
-    /// branch, a parallel join, or multiple branches).
+    /// A feedback loop whose deciding branch's flow block does not carry its
+    /// back-edge output - a defensive guard against an unlowerable loop shape.
+    /// (Normally guaranteed since a node's outputs are counted from the full
+    /// graph; this catches any regression in that invariant.)
     #[error(
-        "unsupported feedback loop shape at header node {header}: the loop body \
-         must currently be a single block ending in the deciding branch"
+        "unsupported feedback loop shape at header node {header}: the deciding \
+         branch does not carry its back-edge output"
     )]
     UnsupportedLoopShape { header: node::Id },
 }
