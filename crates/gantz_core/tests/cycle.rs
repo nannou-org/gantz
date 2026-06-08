@@ -4,7 +4,7 @@
 //! ill-formed cases that must be rejected at compile time. End-to-end loop
 //! evaluation tests are added once loop codegen lands.
 
-use gantz_core::compile::error::{LoopError, ModuleError, NodeConnsError};
+use gantz_core::compile::error::{CodegenError, LoopError, ModuleError, NodeConnsError};
 use gantz_core::compile::{entry_fn_name, entrypoint, push_pull_entrypoints};
 use gantz_core::node::{self, Node, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
@@ -252,16 +252,16 @@ fn inner_branch_loop_unsupported() {
     g.add_edge(decide, add, Edge::from((0, 0))); // continue (back-edge)
     g.add_edge(decide, out, Edge::from((1, 0))); // exit
 
+    // F1: analysis now allows an inner branch (no overflow); F2 codegen is not
+    // yet wired, so the multi-block body is rejected at codegen instead.
     let eps = push_pull_entrypoints(&no_lookup, &g);
     let err = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap_err();
     assert!(
         matches!(
             err,
-            ModuleError::NodeConns(NodeConnsError::Loop(
-                LoopError::MultiBranchLoopUnsupported { .. }
-            ))
+            ModuleError::Codegen(CodegenError::UnsupportedLoopShape { .. })
         ),
-        "expected MultiBranchLoopUnsupported, got {err:?}"
+        "expected UnsupportedLoopShape, got {err:?}"
     );
 }
 

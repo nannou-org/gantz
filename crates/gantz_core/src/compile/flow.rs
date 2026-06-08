@@ -9,7 +9,7 @@ use super::{
 use crate::node;
 use petgraph::{
     graph::NodeIndex,
-    visit::{EdgeFiltered, EdgeRef, IntoEdgeReferences},
+    visit::{EdgeRef, IntoEdgeReferences},
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
@@ -334,14 +334,27 @@ fn build_flow_graph(
     all_branches: &BTreeMap<node::Id, Vec<node::Conns>>,
     back_edges: &HashSet<(node::Id, node::Id)>,
 ) -> Result<Vec<NodeIndex>, NodeConnsError> {
-    // Exclude back-edges from the *ordering* traversals (topo + per-arm
-    // reachability) so a cyclic body lowers as an acyclic DAG. `mg`/`outer_mg`
+    // A back-edge-filtered copy of `mg` for all *ordering / structural*
+    // traversals (topo, per-arm reachability, join detection, continuation), so a
+    // cyclic body lowers as an acyclic DAG and these walks never follow a
+    // back-edge around the cycle (which would recurse forever). `mg`/`outer_mg`
     // stay full so `make_conf` still sees the header's loop input and the
-    // branch's back-edge output. For acyclic graphs `back_edges` is empty, so
-    // this view is identical to `mg`.
-    let order_view =
-        EdgeFiltered::from_fn(mg, |e| !back_edges.contains(&(e.source(), e.target())));
-    let mut topo = petgraph::visit::Topo::new(&order_view);
+    // deciding branch's back-edge output. For acyclic graphs `back_edges` is
+    // empty, so `order_mg` is structurally identical to `mg` (only cost: a clone).
+    let order_mg: MetaGraph = {
+        let mut g: MetaGraph = mg
+            .all_edges()
+            .filter(|(a, b, _)| !back_edges.contains(&(*a, *b)))
+            .map(|(a, b, w)| (a, b, w.clone()))
+            .collect();
+        for n in mg.nodes() {
+            if !g.contains_node(n) {
+                g.add_node(n);
+            }
+        }
+        g
+    };
+    let mut topo = petgraph::visit::Topo::new(&order_mg);
     let mut last: Option<NodeIndex> = None;
     let mut entries: Vec<NodeIndex> = Vec::new();
     let mut consumed: HashSet<node::Id> = HashSet::new();
@@ -352,7 +365,7 @@ fn build_flow_graph(
     // them but stop; the owner's continuation pass chains out of them once.
     let stop_at_shared = skip.is_some();
 
-    while let Some(n) = topo.next(&order_view) {
+    while let Some(n) = topo.next(&order_mg) {
         if consumed.contains(&n) || Some(n) == skip {
             continue;
         }
@@ -377,7 +390,9 @@ fn build_flow_graph(
         if is_shared {
             for e_ref in mg.edges_directed(n, petgraph::Incoming) {
                 let src_id = e_ref.source();
-                if Some(src_id) == skip {
+                // Skip the arm owner and back-edges (so a header that is also a
+                // join gets no chain edge from its deciding branch).
+                if Some(src_id) == skip || back_edges.contains(&(src_id, n)) {
                     continue;
                 }
                 if let Some(&src_block) = local_blocks.get(&src_id) {
@@ -408,7 +423,7 @@ fn build_flow_graph(
             let per_arm: Vec<HashSet<node::Id>> = branches
                 .iter()
                 .map(|conns| {
-                    push_reachable(&order_view, n, &push_eval_neighbors(&order_view, n, conns))
+                    push_reachable(&order_mg, n, &push_eval_neighbors(&order_mg, n, conns))
                         .collect()
                 })
                 .collect();
@@ -434,7 +449,7 @@ fn build_flow_graph(
             let joins: HashSet<node::Id> = arm_count
                 .iter()
                 .filter(|&(_, &c)| c == live_arms && c > 1)
-                .filter(|&(&id, _)| is_join(mg, n, id))
+                .filter(|&(&id, _)| is_join(&order_mg, n, id))
                 .map(|(&id, _)| id)
                 .collect();
 
@@ -451,7 +466,7 @@ fn build_flow_graph(
 
             // Nodes strictly downstream of any join: lowered once in the
             // continuation pass, excluded from arm recursions.
-            let downstream = strictly_downstream(mg, &joins);
+            let downstream = strictly_downstream(&order_mg, &joins);
 
             for (ix, (conns, reachable)) in branches.iter().zip(&per_arm).enumerate() {
                 let arm_reachable: HashSet<_> = reachable
@@ -459,7 +474,7 @@ fn build_flow_graph(
                     .copied()
                     .filter(|id| !downstream.contains(id))
                     .collect();
-                let arm_mg = reachable_subgraph(mg, &arm_reachable);
+                let arm_mg = reachable_subgraph(&order_mg, &arm_reachable);
                 let arm_entries = build_flow_graph(
                     meta,
                     &arm_mg,
@@ -480,12 +495,12 @@ fn build_flow_graph(
             if !joins.is_empty() {
                 let mut cont: HashSet<node::Id> = HashSet::new();
                 for &j in &joins {
-                    let mut bfs = petgraph::visit::Bfs::new(mg, j);
-                    while let Some(d) = bfs.next(mg) {
+                    let mut bfs = petgraph::visit::Bfs::new(&order_mg, j);
+                    while let Some(d) = bfs.next(&order_mg) {
                         cont.insert(d);
                     }
                 }
-                let cont_mg = reachable_subgraph(mg, &cont);
+                let cont_mg = reachable_subgraph(&order_mg, &cont);
                 build_flow_graph(
                     meta,
                     &cont_mg,

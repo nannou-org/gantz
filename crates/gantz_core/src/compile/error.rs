@@ -95,14 +95,14 @@ pub enum LoopError {
     // TODO(graph-cycles Step F): support nested loops via residual-SCC recursion.
     #[error("nested feedback loops through nodes {nodes:?} are not yet supported")]
     NestedLoopsUnsupported { nodes: Vec<node::Id> },
-    /// A loop containing more than one branch node (an inner/forward branch, or
-    /// multiple deciding branches).
-    // TODO(graph-cycles Step F): support multi-branch / multi-block loop bodies.
+    /// A loop with more than one deciding branch (multiple exit decisions).
+    // TODO(graph-cycles): support multi-exit loops (return exit-tag + value, then
+    // branch-select at the call site).
     #[error(
-        "feedback loop through nodes {nodes:?} contains more than one branch \
-         node, which is not yet supported"
+        "feedback loop through nodes {nodes:?} has more than one deciding branch \
+         (multi-exit), which is not yet supported"
     )]
-    MultiBranchLoopUnsupported { nodes: Vec<node::Id> },
+    MultiExitLoopUnsupported { nodes: Vec<node::Id> },
 }
 
 /// A node connection error with the path to the failing node.

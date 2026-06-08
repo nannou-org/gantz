@@ -185,16 +185,6 @@ fn classify_arms(
     back_edges: &[(node::Id, Edge)],
     branches: &BTreeMap<node::Id, Vec<node::Conns>>,
 ) -> Result<BTreeMap<node::Id, BTreeSet<usize>>, LoopError> {
-    // v1 supports a single branch per loop (the deciding branch). A loop with an
-    // inner/forward branch or multiple branches needs multi-block lowering (the
-    // flow build's join/continuation pass would otherwise follow the cycle).
-    let scc_branch_count = scc.iter().filter(|n| branches.contains_key(n)).count();
-    if scc_branch_count > 1 {
-        return Err(LoopError::MultiBranchLoopUnsupported {
-            nodes: scc.iter().copied().collect(),
-        });
-    }
-
     // The set of output indices that drive a back-edge, per source node.
     let mut back_outputs: BTreeMap<node::Id, BTreeSet<usize>> = BTreeMap::new();
     for (src, edge) in back_edges {
@@ -212,6 +202,14 @@ fn classify_arms(
         .collect();
     if deciding.is_empty() {
         return Err(LoopError::InfiniteFeedbackLoop {
+            nodes: scc.iter().copied().collect(),
+        });
+    }
+    // A loop may contain any number of inner forward branches (which reconverge
+    // within the body); v1 supports only a single *deciding* branch - the one exit
+    // decision. Multiple deciding branches (multi-exit) need a different lowering.
+    if deciding.len() > 1 {
+        return Err(LoopError::MultiExitLoopUnsupported {
             nodes: scc.iter().copied().collect(),
         });
     }
