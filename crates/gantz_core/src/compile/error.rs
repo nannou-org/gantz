@@ -95,6 +95,14 @@ pub enum LoopError {
     // TODO(graph-cycles Step F): support nested loops via residual-SCC recursion.
     #[error("nested feedback loops through nodes {nodes:?} are not yet supported")]
     NestedLoopsUnsupported { nodes: Vec<node::Id> },
+    /// A loop containing more than one branch node (an inner/forward branch, or
+    /// multiple deciding branches).
+    // TODO(graph-cycles Step F): support multi-branch / multi-block loop bodies.
+    #[error(
+        "feedback loop through nodes {nodes:?} contains more than one branch \
+         node, which is not yet supported"
+    )]
+    MultiBranchLoopUnsupported { nodes: Vec<node::Id> },
 }
 
 /// A node connection error with the path to the failing node.
@@ -119,6 +127,14 @@ pub enum CodegenError {
     /// An edge references an invalid input index.
     #[error(transparent)]
     InvalidInputIndex(#[from] InvalidInputIndex),
+    /// A feedback loop has a shape codegen does not yet support: its body is not
+    /// a single block ending in the deciding branch (e.g. it contains an inner
+    /// branch, a parallel join, or multiple branches).
+    #[error(
+        "unsupported feedback loop shape at header node {header}: the loop body \
+         must currently be a single block ending in the deciding branch"
+    )]
+    UnsupportedLoopShape { header: node::Id },
 }
 
 /// Error when generating a module from a graph.

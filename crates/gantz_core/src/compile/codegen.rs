@@ -1131,8 +1131,14 @@ fn flow_loop_stmts(
 ) -> Result<Vec<ExprKind>, CodegenError> {
     let header = loop_info.header;
     let block = &fg[flow_ix];
-    // The deciding branch is the loop body block's last node.
+    // The deciding branch is the loop body block's last node. v1 handles a
+    // single contracted body block ending in the deciding branch; inner/forward
+    // branches, parallel joins, and multi-block bodies leave the terminal as
+    // something else - reject those rather than mis-compiling.
     let branch_id = block.last().expect("loop block must not be empty").id;
+    if !loop_info.continue_arms.contains_key(&branch_id) {
+        return Err(CodegenError::UnsupportedLoopShape { header });
+    }
     let continue_arms = loop_info
         .continue_arms
         .get(&branch_id)

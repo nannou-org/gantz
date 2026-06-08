@@ -23,6 +23,12 @@ fn node_number() -> node::Expr {
     node::expr("(let ((x $x)) (set! state (if (number? x) x state)) state)").unwrap()
 }
 
+/// A stateful passthrough that counts how many times it is evaluated (its state
+/// increments each call), returning its input unchanged.
+fn node_iter_counter() -> node::Expr {
+    node::expr("(begin (set! state (+ (if (number? state) state 0) 1)) $x)").unwrap()
+}
+
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
@@ -180,6 +186,83 @@ fn self_loop_counter() {
         .unwrap()
         .unwrap();
     assert_eq!(result, SteelVal::IntV(3));
+}
+
+/// A stateful node inside the loop body accumulates across iterations - the loop
+/// fn closes over the single mutable `graph-state`, so state persists between
+/// tail-recursive calls (the basis for delays/counters with internal memory).
+#[test]
+fn stateful_accumulator_in_loop() {
+    let mut g = petgraph::graph::DiGraph::new();
+    let start = g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
+    let add = g.add_node(Box::new(node::expr("(+ $acc 1)").unwrap()) as Box<_>);
+    let iter = g.add_node(Box::new(node_iter_counter()) as Box<_>);
+    let branch = g.add_node(Box::new(
+        node::branch(
+            "(if (< $sum 3) (list 0 $sum) (list 1 $sum))",
+            vec!["10".parse().unwrap(), "01".parse().unwrap()],
+        )
+        .unwrap(),
+    ) as Box<_>);
+    let out = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(start, add, Edge::from((0, 0)));
+    g.add_edge(add, iter, Edge::from((0, 0))); // count this iteration, pass sum on
+    g.add_edge(iter, branch, Edge::from((0, 0)));
+    g.add_edge(branch, add, Edge::from((0, 0))); // continue
+    g.add_edge(branch, out, Edge::from((1, 0))); // exit
+
+    let vm = run_once(&g, start);
+    let result = node::state::extract_value(&vm, &[out.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(result, SteelVal::IntV(3), "loop result");
+    let iters = node::state::extract_value(&vm, &[iter.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(iters, SteelVal::IntV(3), "state should accumulate 3 iterations");
+}
+
+/// A loop whose body contains an inner (forward) branch is multi-block, which
+/// v1 codegen does not yet handle - it must error clearly, not mis-compile.
+#[test]
+fn inner_branch_loop_unsupported() {
+    let mut g = petgraph::graph::DiGraph::new();
+    let start = g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
+    let add = g.add_node(Box::new(node::expr("(+ $acc 1)").unwrap()) as Box<_>);
+    // An inner forward branch whose two arms reconverge at the deciding branch.
+    let inner = g.add_node(Box::new(
+        node::branch(
+            "(if (< $x 1000) (list 0 $x) (list 1 $x))",
+            vec!["10".parse().unwrap(), "01".parse().unwrap()],
+        )
+        .unwrap(),
+    ) as Box<_>);
+    let decide = g.add_node(Box::new(
+        node::branch(
+            "(if (< $sum 3) (list 0 $sum) (list 1 $sum))",
+            vec!["10".parse().unwrap(), "01".parse().unwrap()],
+        )
+        .unwrap(),
+    ) as Box<_>);
+    let out = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(start, add, Edge::from((0, 0)));
+    g.add_edge(add, inner, Edge::from((0, 0)));
+    g.add_edge(inner, decide, Edge::from((0, 0))); // inner arm0 -> decide
+    g.add_edge(inner, decide, Edge::from((1, 0))); // inner arm1 -> decide (reconverge)
+    g.add_edge(decide, add, Edge::from((0, 0))); // continue (back-edge)
+    g.add_edge(decide, out, Edge::from((1, 0))); // exit
+
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let err = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ModuleError::NodeConns(NodeConnsError::Loop(
+                LoopError::MultiBranchLoopUnsupported { .. }
+            ))
+        ),
+        "expected MultiBranchLoopUnsupported, got {err:?}"
+    );
 }
 
 /// Compiling a cyclic graph is reproducible (required for content addressing).
