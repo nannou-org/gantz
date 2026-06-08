@@ -456,6 +456,9 @@ where
         fg_body,
         &BTreeSet::new(),
         outlet_activity,
+        // TODO(graph-cycles Step G): pass the nested graph's loop table so loops
+        // inside a `GraphNode` lower with the correct nested `graph-state` scope.
+        &compile::LoopTable::new(),
     )
     .map_err(node::ExprError::custom)?;
 

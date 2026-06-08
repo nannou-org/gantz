@@ -6,7 +6,8 @@ use crate::{
     node::{self, Node},
 };
 #[doc(inline)]
-pub use codegen::{OutletActivity, entry_fn_body, entry_fn_name};
+pub use codegen::{OutletActivity, entry_fn_name};
+pub(crate) use codegen::entry_fn_body;
 pub(crate) use codegen::{branch_selector, outlet_values_expr};
 #[doc(inline)]
 pub use entrypoint::{
@@ -17,6 +18,7 @@ pub use error::ModuleError;
 #[doc(inline)]
 pub use flow::{Block, Flow, FlowGraph, NodeConf, NodeConns, OutletReach, flow_graph};
 pub(crate) use flow::{branch_patterns_from_flow, flow_graph_roots, inner_flow_graph_for};
+pub(crate) use loops::LoopTable;
 use meta::MetaTree;
 #[doc(inline)]
 pub use meta::{EdgeKind, Meta, MetaGraph};
@@ -410,6 +412,7 @@ fn build_flow_tree<'a>(
     //    branch-aware bridged graph nodes as branch nodes for that entrypoint.
     let mut entrypoints = std::collections::BTreeMap::new();
     let mut outlet_reach = std::collections::BTreeMap::new();
+    let mut loops = std::collections::BTreeMap::new();
     let ep_ids: std::collections::BTreeSet<_> =
         ep_push.keys().chain(ep_pull.keys()).cloned().collect();
     let outlet_ids: Vec<node::Id> = meta_tree.elem.outlets.iter().copied().collect();
@@ -417,8 +420,8 @@ fn build_flow_tree<'a>(
         let push = ep_push.remove(&ep_id).unwrap_or_default();
         let pull = ep_pull.remove(&ep_id).unwrap_or_default();
         let extra = extra_branches.remove(&ep_id).unwrap_or_default();
-        // TODO(graph-cycles Step D): store `_loops` in `Flow` for codegen.
-        let (fg, _loops) = flow::flow_graph_with_extra(&meta_tree.elem, push, pull, &extra)?;
+        let (fg, ep_loops) = flow::flow_graph_with_extra(&meta_tree.elem, push, pull, &extra)?;
+        loops.insert(ep_id.clone(), ep_loops);
         let reached: std::collections::BTreeSet<node::Id> = fg
             .node_weights()
             .flat_map(|blk| blk.iter())
@@ -446,6 +449,7 @@ fn build_flow_tree<'a>(
         nested: nested_fg,
         entrypoints,
         outlet_reach,
+        loops,
     };
     Ok(RoseTree {
         elem: (&meta_tree.elem, flow),

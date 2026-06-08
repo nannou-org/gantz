@@ -10,6 +10,7 @@ use crate::{
     node,
 };
 pub(crate) use node_fn::{node_fns, unique_node_confs};
+use super::loops::{LoopInfo, LoopTable};
 use petgraph::{
     graph::NodeIndex,
     visit::{EdgeRef, IntoEdgeReferences, IntoNodeReferences, NodeRef},
@@ -816,7 +817,22 @@ fn flow_node_stmts(
     stop_at: Option<NodeIndex>,
     bridge_nodes: &BTreeSet<node::Id>,
     outlet_activity: OutletActivity,
+    loops: &LoopTable,
 ) -> Result<Vec<ExprKind>, CodegenError> {
+    // A block that begins a feedback loop is lowered as a tail-recursive loop
+    // fn; everything else is the ordinary acyclic lowering below.
+    let first_id = fg[flow_ix]
+        .first()
+        .expect("flow block must not be empty")
+        .id;
+    if let Some(loop_info) = loops.get(&first_id) {
+        return flow_loop_stmts(
+            path, flow_ix, loop_info, mg, stateful, branching, inlets, outlets,
+            reachable, fg, post_dom, phi_params, in_scope, active_phi, stop_at,
+            bridge_nodes, outlet_activity, loops,
+        );
+    }
+
     // Add the block.
     let block = &fg[flow_ix];
     let mut stmts = eval_fn_block_stmts(
@@ -889,6 +905,7 @@ fn flow_node_stmts(
             stop_at,
             bridge_nodes,
             outlet_activity,
+            loops,
         )?);
         return Ok(stmts);
     }
@@ -976,6 +993,7 @@ fn flow_node_stmts(
                     Some(join_ix),
                     bridge_nodes,
                     outlet_activity,
+                    loops,
                 )?);
             }
 
@@ -1016,6 +1034,7 @@ fn flow_node_stmts(
             stop_at,
             bridge_nodes,
             outlet_activity,
+            loops,
         )?);
 
         return Ok(stmts);
@@ -1045,6 +1064,7 @@ fn flow_node_stmts(
             stop_at,
             bridge_nodes,
             outlet_activity,
+            loops,
         )?;
         let dst_stmts_str = dst_stmts
             .into_iter()
@@ -1069,6 +1089,156 @@ fn flow_node_stmts(
         .unwrap();
 
     stmts.push(expr);
+    Ok(stmts)
+}
+
+/// The name of the tail-recursive local fn generated for a loop with `header`.
+fn loop_fn_name(header: node::Id) -> String {
+    format!("loopfn-{header}")
+}
+
+/// Lower a feedback loop as a tail-recursive local fn, then continue with the
+/// loop's downstream (the exit arm's successors, which consume the result).
+///
+/// The loop body is the (contracted) header block, whose last node is the
+/// deciding branch. Each loop-carried header input becomes a fn parameter named
+/// after the header's dedicated input binding, so the header's node-fn call
+/// references the parameter directly. The branch's continue arm tail-calls the
+/// loop fn with the fed-back value; its exit arm is the fn's return value, bound
+/// to the branch's outputs var so downstream codegen is unchanged.
+///
+/// v1 handles a single loop-carried parameter and a single contracted body
+/// block; multiple parameters / multi-block bodies are future work.
+fn flow_loop_stmts(
+    path: &[node::Id],
+    flow_ix: NodeIndex,
+    loop_info: &LoopInfo,
+    mg: &MetaGraph,
+    stateful: &BTreeSet<node::Id>,
+    branching: &BTreeMap<node::Id, usize>,
+    inlets: &BTreeSet<node::Id>,
+    outlets: &BTreeSet<node::Id>,
+    reachable: &HashSet<node::Id>,
+    fg: &FlowGraph,
+    post_dom: &HashMap<NodeIndex, NodeIndex>,
+    phi_params: &BTreeMap<NodeIndex, Vec<(usize, String)>>,
+    in_scope: &mut HashSet<node::Id>,
+    active_phi: &HashSet<(node::Id, usize)>,
+    stop_at: Option<NodeIndex>,
+    bridge_nodes: &BTreeSet<node::Id>,
+    outlet_activity: OutletActivity,
+    loops: &LoopTable,
+) -> Result<Vec<ExprKind>, CodegenError> {
+    let header = loop_info.header;
+    let block = &fg[flow_ix];
+    // The deciding branch is the loop body block's last node.
+    let branch_id = block.last().expect("loop block must not be empty").id;
+    let continue_arms = loop_info
+        .continue_arms
+        .get(&branch_id)
+        .cloned()
+        .unwrap_or_default();
+
+    // Each loop-carried header input becomes a fn parameter, named after the
+    // header's dedicated input binding so the header's node-fn call uses it.
+    let params: Vec<String> = loop_info
+        .carried
+        .iter()
+        .map(|p| node_input_var(header, p.header_input))
+        .collect();
+    // Skip those inputs' dedicated-binding defines - they are the fn params.
+    let mut body_phi = active_phi.clone();
+    for p in &loop_info.carried {
+        body_phi.insert((header, p.header_input));
+    }
+
+    // Loop fn body: evaluate the block, then the branch decision.
+    let mut body_in_scope: HashSet<node::Id> = HashSet::new();
+    let mut body = eval_fn_block_stmts(
+        path,
+        mg,
+        stateful,
+        inlets,
+        outlets,
+        reachable,
+        block,
+        &mut body_in_scope,
+        &body_phi,
+        bridge_nodes,
+        outlet_activity,
+    )?;
+    // Destructure the branch's `(list branch-ix value)`; `node-{branch}` is now
+    // the selected arm's value (the fed-back value on a continue arm).
+    body.push(destructure_node_branch_stmt(branch_id));
+
+    // The branch decision: each continue arm tail-calls with the fed-back value,
+    // any other (exit) arm returns it. `node-{branch}` is the per-iteration value.
+    let branch_val = node_outputs_var(branch_id);
+    let loop_fn = loop_fn_name(header);
+    let mut if_expr = branch_val.clone();
+    for arm in continue_arms.iter() {
+        if_expr = format!(
+            "(if (= {arm} {bix}) ({loop_fn} {branch_val}) {if_expr})",
+            bix = branch_ix_var(branch_id),
+        );
+    }
+    body.push(emit_one(&if_expr));
+
+    // Emit the loop fn definition.
+    let body_str = body
+        .iter()
+        .map(|s| format!("{s}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let loop_fn_def = emit_one(&format!("(define ({loop_fn} {}) {body_str})", params.join(" ")));
+
+    // The initial call - each param seeded from its external (pre-loop) source -
+    // bound to the branch's outputs var so downstream consumers are unchanged.
+    let initial_args: Vec<String> = loop_info
+        .carried
+        .iter()
+        .map(|p| match p.initial {
+            Some((src, out)) => node_output_var(src, out.0 as usize),
+            None => "'()".to_string(),
+        })
+        .collect();
+    let call = emit_one(&format!(
+        "(define {branch_val} ({loop_fn} {}))",
+        initial_args.join(" ")
+    ));
+
+    let mut stmts = vec![loop_fn_def, call];
+    in_scope.insert(branch_id);
+
+    // Continue with the loop's downstream: the branch's flow out-edges are its
+    // exit arms. Destructure the result per arm and lower the successor.
+    let mut edges: Vec<_> = fg
+        .edges_directed(flow_ix, petgraph::Outgoing)
+        .map(|e| (*e.weight(), e.target()))
+        .collect();
+    edges.sort();
+    for (branch, dst) in edges {
+        stmts.extend(destructure_node_outputs_stmt(branch_id, branch.conns));
+        stmts.extend(flow_node_stmts(
+            path,
+            dst,
+            mg,
+            stateful,
+            branching,
+            inlets,
+            outlets,
+            reachable,
+            fg,
+            post_dom,
+            phi_params,
+            in_scope,
+            active_phi,
+            stop_at,
+            bridge_nodes,
+            outlet_activity,
+            loops,
+        )?);
+    }
     Ok(stmts)
 }
 
@@ -1143,7 +1313,7 @@ fn order_roots(mg: &MetaGraph, fg: &FlowGraph, roots: Vec<NodeIndex>) -> Vec<Nod
 
 /// Given the flow graph for an entry point eval fn, generate the body for the
 /// fn. as a list of statements.
-pub fn entry_fn_body(
+pub(crate) fn entry_fn_body(
     path: &[node::Id],
     mg: &MetaGraph,
     stateful: &BTreeSet<node::Id>,
@@ -1153,6 +1323,7 @@ pub fn entry_fn_body(
     fg: &FlowGraph,
     bridge_nodes: &BTreeSet<node::Id>,
     outlet_activity: OutletActivity,
+    loops: &LoopTable,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     let roots = order_roots(mg, fg, flow_graph_roots(fg));
     if roots.is_empty() {
@@ -1201,6 +1372,7 @@ pub fn entry_fn_body(
             None,
             bridge_nodes,
             outlet_activity,
+            loops,
         )?);
     }
     Ok(stmts)
@@ -1384,6 +1556,7 @@ fn entry_fns_collect(
     // is already bound by an outlet bridge).
     let empty_bridges = BTreeSet::new();
     let empty_branch_bridges = BTreeMap::new();
+    let empty_loops = LoopTable::new();
 
     for (ep_id, fg) in &flow.entrypoints {
         let bn = bridge_node_ids.get(ep_id).unwrap_or(&empty_bridges);
@@ -1419,6 +1592,7 @@ fn entry_fns_collect(
             fg,
             bn,
             outlet_activity,
+            flow.loops.get(ep_id).unwrap_or(&empty_loops),
         )?;
         let scoped = wrap_state_scope(path, stmts);
 

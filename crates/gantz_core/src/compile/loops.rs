@@ -18,11 +18,6 @@
 //! Nested loops are not yet handled here; they are detected and rejected with
 //! [`LoopError::NestedLoopsUnsupported`] (planned: residual-SCC recursion).
 
-// `analyze` is wired into `flow` (Step C); the remaining `LoopInfo` fields
-// (`body`, `carried`, `continue_arms`) are consumed by codegen in Step D.
-// TODO(graph-cycles Step D): remove this once codegen reads those fields.
-#![allow(dead_code)]
-
 use super::{MetaGraph, error::LoopError};
 use crate::{Edge, node};
 use petgraph::{algo::tarjan_scc, visit::EdgeRef};

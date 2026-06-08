@@ -54,6 +54,9 @@ pub struct Flow {
     /// outlets. Only populated for entrypoints whose flow reaches at least one
     /// outlet.
     pub outlet_reach: BTreeMap<EntrypointId, OutletReach>,
+    /// The feedback loops detected for each entrypoint's flow graph, keyed by
+    /// loop header. Empty for entrypoints with no cycles.
+    pub(crate) loops: BTreeMap<EntrypointId, super::loops::LoopTable>,
 }
 
 /// What one entrypoint's flow graph reaches among its graph's outlets, for
