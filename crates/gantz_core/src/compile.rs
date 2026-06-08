@@ -540,7 +540,7 @@ fn build_level_confs(
         if active_inlets.len() == meta.inlets.len() {
             continue;
         }
-        let fg = inner_flow_graph_for(meta, &active_inlets)?;
+        let (fg, _loops) = inner_flow_graph_for(meta, &active_inlets)?;
         confs.extend(fg.node_weights().flat_map(|blk| blk.iter().copied()));
         reduced.push(fg);
     }

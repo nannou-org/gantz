@@ -346,17 +346,19 @@ where
         return Ok(vec![]);
     }
     let outlet_ids: Vec<node::Id> = meta.outlets.iter().copied().collect();
-    let fg = inner_flow_graph(&meta)?;
+    let (fg, _loops) = inner_flow_graph(&meta)?;
     compile::branch_patterns_from_flow(&fg, &outlet_ids, &branch_arm_counts(&meta))
         .map_err(node::ExprError::custom)
 }
 
-/// Build the all-inlets-active interior control flow graph (inlets push,
-/// outlets pull), used by [`graph_branches`] - which must report the
-/// union/over-approximation of external branch patterns - and as the `fg_all`
-/// in [`nested_expr`]. See [`compile::inner_flow_graph_for`] for the active-set
+/// Build the all-inlets-active interior control flow graph + loop table (inlets
+/// push, outlets pull), used by [`graph_branches`] - which must report the
+/// union/over-approximation of external branch patterns - and as `fg_all` in
+/// [`nested_expr`]. See [`compile::inner_flow_graph_for`] for the active-set
 /// aware variant.
-fn inner_flow_graph(meta: &compile::Meta) -> Result<compile::FlowGraph, node::ExprError> {
+fn inner_flow_graph(
+    meta: &compile::Meta,
+) -> Result<(compile::FlowGraph, compile::LoopTable), node::ExprError> {
     let all: BTreeSet<node::Id> = meta.inlets.iter().copied().collect();
     compile::inner_flow_graph_for(meta, &all).map_err(node::ExprError::custom)
 }
@@ -402,15 +404,19 @@ where
     // active-set flow drives the body so unfired inlets' subtrees collapse and
     // optional inputs bound only to them compile to `(None)`. The two coincide
     // when every inlet is active (the dominant path), so avoid rebuilding then.
+    // `loops` is the loop table for whichever flow drives the body.
     let active_inlets = active_inlets_from_inputs(&inlet_ids, inputs);
-    let fg_all = inner_flow_graph(&meta)?;
+    let (fg_all, loops_all) = inner_flow_graph(&meta)?;
     let fg_active;
-    let fg_body = if active_inlets.len() == inlet_ids.len() {
-        &fg_all
+    let loops_active;
+    let (fg_body, loops) = if active_inlets.len() == inlet_ids.len() {
+        (&fg_all, &loops_all)
     } else {
-        fg_active = compile::inner_flow_graph_for(&meta, &active_inlets)
+        let (fg, lp) = compile::inner_flow_graph_for(&meta, &active_inlets)
             .map_err(node::ExprError::custom)?;
-        &fg_active
+        fg_active = fg;
+        loops_active = lp;
+        (&fg_active, &loops_active)
     };
     let arm_counts = branch_arm_counts(&meta);
 
@@ -456,9 +462,7 @@ where
         fg_body,
         &BTreeSet::new(),
         outlet_activity,
-        // TODO(graph-cycles Step G): pass the nested graph's loop table so loops
-        // inside a `GraphNode` lower with the correct nested `graph-state` scope.
-        &compile::LoopTable::new(),
+        loops,
     )
     .map_err(node::ExprError::custom)?;
 

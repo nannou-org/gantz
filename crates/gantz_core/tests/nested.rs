@@ -247,6 +247,72 @@ fn test_graph_nested_counter() {
     assert_eq!(number_state, 1);
 }
 
+// A feedback loop *inside* a GraphNode: the inner graph counts to 3 via a cycle +
+// branch, with a stateful `tick` node inside the loop. Verifies the loop fn is
+// emitted in the nested `graph-state` scope (so the tick's state persists at the
+// nested path) and the loop's outlet value reaches the parent.
+#[test]
+fn test_graph_nested_loop() {
+    // Inner graph: inlet -> add(+1) -> tick(stateful) -> branch(< 3) -> {back | outlet}.
+    let add = node::expr("(+ $acc 1)").unwrap();
+    let tick =
+        node::expr("(begin (set! state (+ (if (number? state) state 0) 1)) $x)").unwrap();
+    let branch = node::branch(
+        "(if (< $sum 3) (list 0 $sum) (list 1 $sum))",
+        vec!["10".parse().unwrap(), "01".parse().unwrap()],
+    )
+    .unwrap();
+
+    let mut ga = GraphNode::default();
+    let inlet = ga.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let add = ga.add_node(Box::new(add) as Box<_>);
+    let tick = ga.add_node(Box::new(tick) as Box<_>);
+    let branch = ga.add_node(Box::new(branch) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    ga.add_edge(inlet, add, Edge::from((0, 0))); // loop seed
+    ga.add_edge(add, tick, Edge::from((0, 0)));
+    ga.add_edge(tick, branch, Edge::from((0, 0)));
+    ga.add_edge(branch, add, Edge::from((0, 0))); // continue (back-edge)
+    ga.add_edge(branch, outlet, Edge::from((1, 0))); // exit
+
+    // Parent graph: push -> int(0) -> graph_a -> number.
+    let mut gb = petgraph::graph::DiGraph::new();
+    let push = gb.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let zero = gb.add_node(Box::new(node_int(0)) as Box<_>);
+    let graph_a = gb.add_node(Box::new(ga) as Box<_>);
+    let number = gb.add_node(Box::new(node_number()) as Box<_>);
+    gb.add_edge(push, zero, Edge::from((0, 0)));
+    gb.add_edge(zero, graph_a, Edge::from((0, 0)));
+    gb.add_edge(graph_a, number, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = push_pull_entrypoints(&no_lookup, &gb);
+    let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &gb, &[], &mut vm);
+    for f in module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+
+    let ep = entrypoint::push(vec![push.index()], gb[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    // The loop's outlet value (3) reached the parent number.
+    let number_state = node::state::extract::<u32>(&vm, &[number.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(number_state, 3, "loop result via outlet");
+    // The stateful tick inside the loop ran 3 times; its state persists at the
+    // nested path `[graph_a, tick]`.
+    let tick_state = node::state::extract::<u32>(&vm, &[graph_a.index(), tick.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(tick_state, 3, "stateful node inside nested loop");
+}
+
 // A simple test for pushing evaluation from a node within a nested graph.
 //
 // GRAPH A

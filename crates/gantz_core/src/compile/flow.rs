@@ -224,16 +224,17 @@ pub(crate) fn flow_graph_with_extra(
 pub(crate) fn inner_flow_graph_for(
     meta: &Meta,
     active_inlets: &BTreeSet<node::Id>,
-) -> Result<FlowGraph, NodeConnsError> {
+) -> Result<(FlowGraph, super::loops::LoopTable), NodeConnsError> {
     let conn1 = || node::Conns::connected(1).unwrap();
 
     // `active_inlets` is a subset of `meta.inlets`, so equal length => all
     // inlets active: reuse the unchanged all-connected construction.
     if active_inlets.len() == meta.inlets.len() {
-        return flow_graph(
+        return flow_graph_with_extra(
             meta,
             meta.inlets.iter().map(|&n| (n, conn1())),
             meta.outlets.iter().map(|&n| (n, conn1())),
+            &BTreeMap::new(),
         );
     }
 
@@ -262,7 +263,12 @@ pub(crate) fn inner_flow_graph_for(
         }
     }
 
-    flow_graph(meta, push, std::iter::empty::<(node::Id, node::Conns)>())
+    flow_graph_with_extra(
+        meta,
+        push,
+        std::iter::empty::<(node::Id, node::Conns)>(),
+        &BTreeMap::new(),
+    )
 }
 
 /// Build a [`NodeConf`] for `n` from its connectivity within the (possibly
