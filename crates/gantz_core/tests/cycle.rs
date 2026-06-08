@@ -4,7 +4,7 @@
 //! ill-formed cases that must be rejected at compile time. End-to-end loop
 //! evaluation tests are added once loop codegen lands.
 
-use gantz_core::compile::error::{CodegenError, LoopError, ModuleError, NodeConnsError};
+use gantz_core::compile::error::{LoopError, ModuleError, NodeConnsError};
 use gantz_core::compile::{entry_fn_name, entrypoint, push_pull_entrypoints};
 use gantz_core::node::{self, Node, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
@@ -222,17 +222,20 @@ fn stateful_accumulator_in_loop() {
     assert_eq!(iters, SteelVal::IntV(3), "state should accumulate 3 iterations");
 }
 
-/// A loop whose body contains an inner (forward) branch is multi-block, which
-/// v1 codegen does not yet handle - it must error clearly, not mis-compile.
+/// A loop body with an inner forward branch whose arms reconverge (via a phi var)
+/// at the deciding branch - a multi-block body. The inner branch takes arm0 on
+/// the first iteration and arm1 afterwards (so both reconvergence arms are
+/// exercised), passing the running sum through either way, so the loop reaches 3.
 #[test]
-fn inner_branch_loop_unsupported() {
+fn inner_branch_loop() {
     let mut g = petgraph::graph::DiGraph::new();
     let start = g.add_node(Box::new(node::expr("0").unwrap().with_push_eval()) as Box<dyn DebugNode>);
     let add = g.add_node(Box::new(node::expr("(+ $acc 1)").unwrap()) as Box<_>);
-    // An inner forward branch whose two arms reconverge at the deciding branch.
+    // An inner forward branch whose two arms reconverge at the deciding branch;
+    // `< 2` makes it take arm0 then arm1 across iterations.
     let inner = g.add_node(Box::new(
         node::branch(
-            "(if (< $x 1000) (list 0 $x) (list 1 $x))",
+            "(if (< $x 2) (list 0 $x) (list 1 $x))",
             vec!["10".parse().unwrap(), "01".parse().unwrap()],
         )
         .unwrap(),
@@ -252,17 +255,11 @@ fn inner_branch_loop_unsupported() {
     g.add_edge(decide, add, Edge::from((0, 0))); // continue (back-edge)
     g.add_edge(decide, out, Edge::from((1, 0))); // exit
 
-    // F1: analysis now allows an inner branch (no overflow); F2 codegen is not
-    // yet wired, so the multi-block body is rejected at codegen instead.
-    let eps = push_pull_entrypoints(&no_lookup, &g);
-    let err = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap_err();
-    assert!(
-        matches!(
-            err,
-            ModuleError::Codegen(CodegenError::UnsupportedLoopShape { .. })
-        ),
-        "expected UnsupportedLoopShape, got {err:?}"
-    );
+    let vm = run_once(&g, start);
+    let result = node::state::extract_value(&vm, &[out.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(result, SteelVal::IntV(3), "inner-branch loop should reach 3");
 }
 
 /// Compiling a cyclic graph is reproducible (required for content addressing).

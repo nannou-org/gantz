@@ -817,20 +817,26 @@ fn flow_node_stmts(
     stop_at: Option<NodeIndex>,
     bridge_nodes: &BTreeSet<node::Id>,
     outlet_activity: OutletActivity,
+    current_loop: Option<&LoopInfo>,
     loops: &LoopTable,
 ) -> Result<Vec<ExprKind>, CodegenError> {
-    // A block that begins a feedback loop is lowered as a tail-recursive loop
-    // fn; everything else is the ordinary acyclic lowering below.
+    // A block that begins a feedback loop opens a tail-recursive loop fn - unless
+    // we are already lowering that loop's own body (the body recursion re-enters
+    // here on the header). A *nested* header (a different id) still opens its own
+    // loop fn while inside the outer one.
     let first_id = fg[flow_ix]
         .first()
         .expect("flow block must not be empty")
         .id;
     if let Some(loop_info) = loops.get(&first_id) {
-        return flow_loop_stmts(
-            path, flow_ix, loop_info, mg, stateful, branching, inlets, outlets,
-            reachable, fg, post_dom, phi_params, in_scope, active_phi, stop_at,
-            bridge_nodes, outlet_activity, loops,
-        );
+        let already_inside = current_loop.map_or(false, |l| l.header == first_id);
+        if !already_inside {
+            return flow_loop_stmts(
+                path, flow_ix, loop_info, mg, stateful, branching, inlets, outlets,
+                reachable, fg, post_dom, phi_params, in_scope, active_phi, stop_at,
+                bridge_nodes, outlet_activity, current_loop, loops,
+            );
+        }
     }
 
     // Add the block.
@@ -848,6 +854,18 @@ fn flow_node_stmts(
         bridge_nodes,
         outlet_activity,
     )?;
+
+    // If this block ends in the current loop's deciding branch, emit the loop
+    // decision (continue arm -> tail-call, exit arm -> return value) and stop;
+    // the exit downstream is lowered by the loop wrapper after the call.
+    if let Some(loop_info) = current_loop {
+        let last_id = block.last().expect("flow block must not be empty").id;
+        if loop_info.continue_arms.contains_key(&last_id) {
+            stmts.push(destructure_node_branch_stmt(last_id));
+            stmts.push(loop_decision_if(loop_info, last_id));
+            return Ok(stmts);
+        }
+    }
 
     // Collect the output branching edges.
     let mut edges: Vec<_> = fg
@@ -905,6 +923,7 @@ fn flow_node_stmts(
             stop_at,
             bridge_nodes,
             outlet_activity,
+            current_loop,
             loops,
         )?);
         return Ok(stmts);
@@ -993,6 +1012,7 @@ fn flow_node_stmts(
                     Some(join_ix),
                     bridge_nodes,
                     outlet_activity,
+                    current_loop,
                     loops,
                 )?);
             }
@@ -1034,6 +1054,7 @@ fn flow_node_stmts(
             stop_at,
             bridge_nodes,
             outlet_activity,
+            current_loop,
             loops,
         )?);
 
@@ -1064,6 +1085,7 @@ fn flow_node_stmts(
             stop_at,
             bridge_nodes,
             outlet_activity,
+            current_loop,
             loops,
         )?;
         let dst_stmts_str = dst_stmts
@@ -1097,18 +1119,35 @@ fn loop_fn_name(header: node::Id) -> String {
     format!("loopfn-{header}")
 }
 
-/// Lower a feedback loop as a tail-recursive local fn, then continue with the
-/// loop's downstream (the exit arm's successors, which consume the result).
+/// The loop decision emitted when `flow_node_stmts` reaches a loop's deciding
+/// branch: each continue arm tail-calls the loop fn with the fed-back value, any
+/// other (exit) arm returns it. `node-{decide}` is the per-iteration value (the
+/// branch's selected-arm value, after `destructure_node_branch_stmt`).
+fn loop_decision_if(loop_info: &LoopInfo, decide_id: node::Id) -> ExprKind {
+    let loop_fn = loop_fn_name(loop_info.header);
+    let branch_val = node_outputs_var(decide_id);
+    let bix = branch_ix_var(decide_id);
+    // F2: a single loop-carried param, so the tail arg is the branch value.
+    // (F3 generalizes to one arg per carried param, from the back-edge outputs.)
+    let tail_args = branch_val.clone();
+    let mut if_expr = branch_val.clone();
+    for arm in &loop_info.continue_arms[&decide_id] {
+        if_expr = format!("(if (= {arm} {bix}) ({loop_fn} {tail_args}) {if_expr})");
+    }
+    emit_one(&if_expr)
+}
+
+/// Lower a feedback loop as a tail-recursive local fn, then continue with its
+/// downstream (the deciding branch's exit arms, which consume the result).
 ///
-/// The loop body is the (contracted) header block, whose last node is the
-/// deciding branch. Each loop-carried header input becomes a fn parameter named
-/// after the header's dedicated input binding, so the header's node-fn call
-/// references the parameter directly. The branch's continue arm tail-calls the
-/// loop fn with the fed-back value; its exit arm is the fn's return value, bound
-/// to the branch's outputs var so downstream codegen is unchanged.
-///
-/// v1 handles a single loop-carried parameter and a single contracted body
-/// block; multiple parameters / multi-block bodies are future work.
+/// The loop fn body spans the header block through the single deciding branch.
+/// It is produced by recursing the ordinary lowering (`flow_node_stmts`) over the
+/// body with this loop marked active, so any inner forward branches reuse the
+/// existing reconvergence/phi machinery; when the recursion reaches the deciding
+/// branch it emits the loop decision (see [`loop_decision_if`]) and stops. Each
+/// loop-carried header input becomes a fn parameter named after the header's
+/// dedicated input binding, so the header node-fn call is unchanged. The result
+/// is bound to the deciding branch's outputs var so downstream is unchanged.
 fn flow_loop_stmts(
     path: &[node::Id],
     flow_ix: NodeIndex,
@@ -1127,26 +1166,39 @@ fn flow_loop_stmts(
     stop_at: Option<NodeIndex>,
     bridge_nodes: &BTreeSet<node::Id>,
     outlet_activity: OutletActivity,
+    current_loop: Option<&LoopInfo>,
     loops: &LoopTable,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     let header = loop_info.header;
-    let block = &fg[flow_ix];
-    // The deciding branch is the loop body block's last node. v1 handles a
-    // single contracted body block ending in the deciding branch; inner/forward
-    // branches, parallel joins, and multi-block bodies leave the terminal as
-    // something else - reject those rather than mis-compiling.
-    let branch_id = block.last().expect("loop block must not be empty").id;
-    if !loop_info.continue_arms.contains_key(&branch_id) {
+    // Analysis guarantees exactly one deciding branch.
+    let decide_id = *loop_info
+        .continue_arms
+        .keys()
+        .next()
+        .expect("a loop has exactly one deciding branch");
+    let decide_ix = fg
+        .node_indices()
+        .find(|&ix| fg[ix].last().map_or(false, |c| c.id == decide_id))
+        .expect("the deciding branch must have a flow block");
+
+    // The deciding branch's block must carry its full outputs - true when it is
+    // the single-block body's terminal or the reconvergence join of inner
+    // branches (pre-allocated against the full graph). Some multi-block shapes
+    // (an inner branch reconverging *before* the deciding branch) can leave its
+    // back-edge output unconnected in its block; reject those rather than
+    // mis-compiling.
+    let decide_outputs = fg[decide_ix].last().expect("non-empty block").conns.outputs;
+    let back_outputs_present = loop_info
+        .back_edges
+        .iter()
+        .filter(|(src, _)| *src == decide_id)
+        .all(|(_, e)| decide_outputs.get(e.output.0 as usize).unwrap_or(false));
+    if !back_outputs_present {
         return Err(CodegenError::UnsupportedLoopShape { header });
     }
-    let continue_arms = loop_info
-        .continue_arms
-        .get(&branch_id)
-        .cloned()
-        .unwrap_or_default();
 
     // Each loop-carried header input becomes a fn parameter, named after the
-    // header's dedicated input binding so the header's node-fn call uses it.
+    // header's dedicated input binding so the header node-fn call uses it.
     let params: Vec<String> = loop_info
         .carried
         .iter()
@@ -1158,39 +1210,33 @@ fn flow_loop_stmts(
         body_phi.insert((header, p.header_input));
     }
 
-    // Loop fn body: evaluate the block, then the branch decision.
+    // The loop fn body: recurse the ordinary lowering over the body with this
+    // loop active. Inner forward branches reuse reconvergence/phi; the deciding
+    // branch emits the loop decision and stops (see `flow_node_stmts`).
     let mut body_in_scope: HashSet<node::Id> = HashSet::new();
-    let mut body = eval_fn_block_stmts(
+    let body = flow_node_stmts(
         path,
+        flow_ix,
         mg,
         stateful,
+        branching,
         inlets,
         outlets,
         reachable,
-        block,
+        fg,
+        post_dom,
+        phi_params,
         &mut body_in_scope,
         &body_phi,
+        None,
         bridge_nodes,
         outlet_activity,
+        Some(loop_info),
+        loops,
     )?;
-    // Destructure the branch's `(list branch-ix value)`; `node-{branch}` is now
-    // the selected arm's value (the fed-back value on a continue arm).
-    body.push(destructure_node_branch_stmt(branch_id));
-
-    // The branch decision: each continue arm tail-calls with the fed-back value,
-    // any other (exit) arm returns it. `node-{branch}` is the per-iteration value.
-    let branch_val = node_outputs_var(branch_id);
-    let loop_fn = loop_fn_name(header);
-    let mut if_expr = branch_val.clone();
-    for arm in continue_arms.iter() {
-        if_expr = format!(
-            "(if (= {arm} {bix}) ({loop_fn} {branch_val}) {if_expr})",
-            bix = branch_ix_var(branch_id),
-        );
-    }
-    body.push(emit_one(&if_expr));
 
     // Emit the loop fn definition.
+    let loop_fn = loop_fn_name(header);
     let body_str = body
         .iter()
         .map(|s| format!("{s}"))
@@ -1199,7 +1245,8 @@ fn flow_loop_stmts(
     let loop_fn_def = emit_one(&format!("(define ({loop_fn} {}) {body_str})", params.join(" ")));
 
     // The initial call - each param seeded from its external (pre-loop) source -
-    // bound to the branch's outputs var so downstream consumers are unchanged.
+    // bound to the deciding branch's outputs var so downstream is unchanged.
+    let branch_val = node_outputs_var(decide_id);
     let initial_args: Vec<String> = loop_info
         .carried
         .iter()
@@ -1214,17 +1261,18 @@ fn flow_loop_stmts(
     ));
 
     let mut stmts = vec![loop_fn_def, call];
-    in_scope.insert(branch_id);
+    in_scope.insert(decide_id);
 
-    // Continue with the loop's downstream: the branch's flow out-edges are its
-    // exit arms. Destructure the result per arm and lower the successor.
+    // Continue with the loop's downstream: the deciding branch's flow out-edges
+    // are its exit arms. Destructure the result per arm and lower the successor
+    // (outside the loop fn, so `current_loop` is the enclosing loop, if any).
     let mut edges: Vec<_> = fg
-        .edges_directed(flow_ix, petgraph::Outgoing)
+        .edges_directed(decide_ix, petgraph::Outgoing)
         .map(|e| (*e.weight(), e.target()))
         .collect();
     edges.sort();
     for (branch, dst) in edges {
-        stmts.extend(destructure_node_outputs_stmt(branch_id, branch.conns));
+        stmts.extend(destructure_node_outputs_stmt(decide_id, branch.conns));
         stmts.extend(flow_node_stmts(
             path,
             dst,
@@ -1242,6 +1290,7 @@ fn flow_loop_stmts(
             stop_at,
             bridge_nodes,
             outlet_activity,
+            current_loop,
             loops,
         )?);
     }
@@ -1378,6 +1427,7 @@ pub(crate) fn entry_fn_body(
             None,
             bridge_nodes,
             outlet_activity,
+            None,
             loops,
         )?);
     }
