@@ -66,6 +66,9 @@ pub enum NodeConnsError {
     /// An edge references an invalid output index.
     #[error(transparent)]
     InvalidOutputIndex(#[from] InvalidOutputIndex),
+    /// A feedback loop (directed cycle) could not be lowered.
+    #[error(transparent)]
+    Loop(#[from] LoopError),
 }
 
 /// Error analyzing feedback loops (directed cycles) at one graph level.

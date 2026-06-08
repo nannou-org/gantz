@@ -9,7 +9,7 @@ use super::{
 use crate::node;
 use petgraph::{
     graph::NodeIndex,
-    visit::{EdgeRef, IntoEdgeReferences},
+    visit::{EdgeFiltered, EdgeRef, IntoEdgeReferences},
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
@@ -159,7 +159,7 @@ pub fn flow_graph(
     push: impl IntoIterator<Item = (node::Id, node::Conns)>,
     pull: impl IntoIterator<Item = (node::Id, node::Conns)>,
 ) -> Result<FlowGraph, NodeConnsError> {
-    flow_graph_with_extra(meta, push, pull, &BTreeMap::new())
+    flow_graph_with_extra(meta, push, pull, &BTreeMap::new()).map(|(fg, _loops)| fg)
 }
 
 /// Like [`flow_graph`], but treats `extra_branches` (graph-node id -> per-arm
@@ -173,19 +173,36 @@ pub(crate) fn flow_graph_with_extra(
     push: impl IntoIterator<Item = (node::Id, node::Conns)>,
     pull: impl IntoIterator<Item = (node::Id, node::Conns)>,
     extra_branches: &BTreeMap<node::Id, Vec<node::Conns>>,
-) -> Result<FlowGraph, NodeConnsError> {
+) -> Result<(FlowGraph, super::loops::LoopTable), NodeConnsError> {
     let order: Vec<_> = super::eval_order(&meta.graph, push, pull).collect();
     let included: HashSet<_> = order.iter().copied().collect();
     let mg = reachable_subgraph(&meta.graph, &included);
     // Graph-wide branches plus this entrypoint's push-through branch nodes.
     let mut all_branches = meta.branches.clone();
     all_branches.extend(extra_branches.iter().map(|(&id, m)| (id, m.clone())));
+    // Detect + validate feedback loops, then exclude their back-edges from the
+    // flow-graph *ordering* (they remain in `mg` for connectivity).
+    let loops = super::loops::analyze(&mg, &all_branches)?;
+    let back_edges: HashSet<(node::Id, node::Id)> = loops
+        .values()
+        .flat_map(|l| l.back_edges.iter().map(move |(src, _)| (*src, l.header)))
+        .collect();
     let mut fg = FlowGraph::default();
     let no_shared = HashMap::new();
-    build_flow_graph(meta, &mg, &mg, &mut fg, &no_shared, None, &all_branches)?;
+    build_flow_graph(
+        meta,
+        &mg,
+        &mg,
+        &mut fg,
+        &no_shared,
+        None,
+        &all_branches,
+        &back_edges,
+    )?;
     let branching: BTreeSet<node::Id> = all_branches.keys().copied().collect();
-    flow_graph_edge_contraction(&mut fg, &branching);
-    Ok(fg)
+    let headers: BTreeSet<node::Id> = loops.keys().copied().collect();
+    flow_graph_edge_contraction(&mut fg, &branching, &headers);
+    Ok((fg, loops))
 }
 
 /// Build the interior control-flow graph of a nested graph, honoring which
@@ -312,8 +329,16 @@ fn build_flow_graph(
     shared: &HashMap<node::Id, NodeIndex>,
     skip: Option<node::Id>,
     all_branches: &BTreeMap<node::Id, Vec<node::Conns>>,
+    back_edges: &HashSet<(node::Id, node::Id)>,
 ) -> Result<Vec<NodeIndex>, NodeConnsError> {
-    let mut topo = petgraph::visit::Topo::new(mg);
+    // Exclude back-edges from the *ordering* traversals (topo + per-arm
+    // reachability) so a cyclic body lowers as an acyclic DAG. `mg`/`outer_mg`
+    // stay full so `make_conf` still sees the header's loop input and the
+    // branch's back-edge output. For acyclic graphs `back_edges` is empty, so
+    // this view is identical to `mg`.
+    let order_view =
+        EdgeFiltered::from_fn(mg, |e| !back_edges.contains(&(e.source(), e.target())));
+    let mut topo = petgraph::visit::Topo::new(&order_view);
     let mut last: Option<NodeIndex> = None;
     let mut entries: Vec<NodeIndex> = Vec::new();
     let mut consumed: HashSet<node::Id> = HashSet::new();
@@ -324,7 +349,7 @@ fn build_flow_graph(
     // them but stop; the owner's continuation pass chains out of them once.
     let stop_at_shared = skip.is_some();
 
-    while let Some(n) = topo.next(mg) {
+    while let Some(n) = topo.next(&order_view) {
         if consumed.contains(&n) || Some(n) == skip {
             continue;
         }
@@ -379,7 +404,10 @@ fn build_flow_graph(
         if let Some(branches) = all_branches.get(&n) {
             let per_arm: Vec<HashSet<node::Id>> = branches
                 .iter()
-                .map(|conns| push_reachable(mg, n, &push_eval_neighbors(mg, n, conns)).collect())
+                .map(|conns| {
+                    push_reachable(&order_view, n, &push_eval_neighbors(&order_view, n, conns))
+                        .collect()
+                })
                 .collect();
 
             // Live arms reach beyond `n`; a dead arm reaching nothing must not
@@ -437,6 +465,7 @@ fn build_flow_graph(
                     &sub_shared,
                     Some(n),
                     all_branches,
+                    back_edges,
                 )?;
                 let arm_branch = Branch { ix, conns: *conns };
                 for entry in arm_entries {
@@ -462,6 +491,7 @@ fn build_flow_graph(
                     &sub_shared,
                     None,
                     all_branches,
+                    back_edges,
                 )?;
             }
 
@@ -534,7 +564,11 @@ fn reachable_subgraph(g: &MetaGraph, reachable: &HashSet<node::Id>) -> MetaGraph
 /// Ie for each edge, if that edge is the only output for the source node, and
 /// the only input for the destination node, remove the edge and merge the src
 /// and dst nodes.
-fn flow_graph_edge_contraction(g: &mut FlowGraph, branching: &BTreeSet<node::Id>) {
+fn flow_graph_edge_contraction(
+    g: &mut FlowGraph,
+    branching: &BTreeSet<node::Id>,
+    headers: &BTreeSet<node::Id>,
+) {
     // Maintain a stack of all edges that require reducing.
     let mut edges: Vec<_> = g.edge_references().map(|e_ref| e_ref.id()).collect();
     while let Some(e) = edges.pop() {
@@ -546,6 +580,14 @@ fn flow_graph_edge_contraction(g: &mut FlowGraph, branching: &BTreeSet<node::Id>
         // active branch edge, the codegen must handle branch destructuring.
         if let Some(last) = g[src].last() {
             if branching.contains(&last.id) {
+                continue;
+            }
+        }
+
+        // A loop header must begin its own block so codegen can wrap the
+        // tail-recursive loop fn from it; never contract an edge *into* a header.
+        if let Some(first) = g[dst].first() {
+            if headers.contains(&first.id) {
                 continue;
             }
         }

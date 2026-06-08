@@ -417,7 +417,8 @@ fn build_flow_tree<'a>(
         let push = ep_push.remove(&ep_id).unwrap_or_default();
         let pull = ep_pull.remove(&ep_id).unwrap_or_default();
         let extra = extra_branches.remove(&ep_id).unwrap_or_default();
-        let fg = flow::flow_graph_with_extra(&meta_tree.elem, push, pull, &extra)?;
+        // TODO(graph-cycles Step D): store `_loops` in `Flow` for codegen.
+        let (fg, _loops) = flow::flow_graph_with_extra(&meta_tree.elem, push, pull, &extra)?;
         let reached: std::collections::BTreeSet<node::Id> = fg
             .node_weights()
             .flat_map(|blk| blk.iter())
