@@ -6,7 +6,7 @@
 
 use gantz_core::compile::error::{LoopError, ModuleError, NodeConnsError};
 use gantz_core::compile::{entry_fn_name, entrypoint, push_pull_entrypoints};
-use gantz_core::node::{self, Node, WithPushEval};
+use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
 use std::fmt::Debug;
 use steel::SteelVal;
@@ -331,6 +331,46 @@ fn nested_loops() {
         .unwrap()
         .unwrap();
     assert_eq!(result, SteelVal::IntV(9), "nested loop should exit at 9");
+}
+
+/// A loop driven by a *pull* entrypoint (downstream of the loop's exit) rather
+/// than a push. The loop analysis/codegen is forward-edge based and unchanged;
+/// `pull_reachable` includes the cycle, so pulling `out` runs the loop to 3.
+#[test]
+fn pull_into_cycle() {
+    let mut g = petgraph::graph::DiGraph::new();
+    let start = g.add_node(Box::new(node::expr("0").unwrap()) as Box<dyn DebugNode>); // const seed
+    let add = g.add_node(Box::new(node::expr("(+ $acc 1)").unwrap()) as Box<_>);
+    let branch = g.add_node(Box::new(
+        node::branch(
+            "(if (< $sum 3) (list 0 $sum) (list 1 $sum))",
+            vec!["10".parse().unwrap(), "01".parse().unwrap()],
+        )
+        .unwrap(),
+    ) as Box<_>);
+    let out = g.add_node(Box::new(node_number().with_pull_eval()) as Box<_>); // pull source
+    g.add_edge(start, add, Edge::from((0, 0)));
+    g.add_edge(add, branch, Edge::from((0, 0)));
+    g.add_edge(branch, add, Edge::from((0, 0))); // continue
+    g.add_edge(branch, out, Edge::from((1, 0))); // exit -> out
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &module {
+        vm.run(format!("{f}")).unwrap();
+    }
+    let ep = entrypoint::pull(vec![out.index()], g[out].n_inputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+
+    let result = node::state::extract_value(&vm, &[out.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(result, SteelVal::IntV(3), "pull-driven loop should reach 3");
 }
 
 /// Compiling a cyclic graph is reproducible (required for content addressing).
