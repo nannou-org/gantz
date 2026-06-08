@@ -68,6 +68,32 @@ pub enum NodeConnsError {
     InvalidOutputIndex(#[from] InvalidOutputIndex),
 }
 
+/// Error analyzing feedback loops (directed cycles) at one graph level.
+#[derive(Debug, Error)]
+pub enum LoopError {
+    /// A directed cycle can never terminate: it contains no branch node, or
+    /// every branch arm re-enters the loop (no arm exits it).
+    #[error(
+        "feedback loop through nodes {nodes:?} can never terminate: \
+         it has no branch node with an arm that exits the loop"
+    )]
+    InfiniteFeedbackLoop { nodes: Vec<node::Id> },
+    /// A loop is irreducible (not single-entry): its strongly-connected
+    /// component is entered at a number of nodes other than exactly one.
+    #[error(
+        "irreducible feedback loop through nodes {nodes:?}: \
+         expected exactly one entry node, found {entries:?}"
+    )]
+    IrreducibleLoop {
+        nodes: Vec<node::Id>,
+        entries: Vec<node::Id>,
+    },
+    /// A loop nested within another loop.
+    // TODO(graph-cycles Step F): support nested loops via residual-SCC recursion.
+    #[error("nested feedback loops through nodes {nodes:?} are not yet supported")]
+    NestedLoopsUnsupported { nodes: Vec<node::Id> },
+}
+
 /// A node connection error with the path to the failing node.
 #[derive(Debug)]
 pub struct MetaError {

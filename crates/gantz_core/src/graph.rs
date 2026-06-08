@@ -48,8 +48,26 @@ pub fn visit<'a, G>(
     G::NodeWeight: Node,
 {
     let mut path = path.to_vec();
+    // Visit every node, tolerating cycles: take the topological order where it
+    // exists, then append any remaining nodes (those on a directed cycle, which
+    // `Topo` never yields) in node-index order. Order is irrelevant to the
+    // visitors (they key by path/id); this keeps acyclic output identical to the
+    // previous `Topo`-only behaviour while ensuring cyclic nodes are visited too.
+    let mut visited: HashSet<usize> = HashSet::new();
+    let mut order: Vec<G::NodeId> = Vec::new();
     let mut topo = Topo::new(g);
     while let Some(n) = topo.next(g) {
+        visited.insert(g.to_index(n));
+        order.push(n);
+    }
+    let mut leftover: Vec<G::NodeId> = g
+        .node_references()
+        .map(|nref| nref.id())
+        .filter(|&n| !visited.contains(&g.to_index(n)))
+        .collect();
+    leftover.sort_by_key(|&n| g.to_index(n));
+    order.extend(leftover);
+    for n in order {
         let ix = g.to_index(n);
         path.push(ix);
         let inputs: Vec<_> = g

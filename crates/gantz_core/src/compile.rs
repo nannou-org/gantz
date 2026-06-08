@@ -32,6 +32,7 @@ mod codegen;
 pub mod entrypoint;
 pub mod error;
 mod flow;
+mod loops;
 mod meta;
 mod rosetree;
 
@@ -248,7 +249,7 @@ pub(crate) fn eval_order<G, A, B>(g: G, push: A, pull: B) -> impl Iterator<Item 
 where
     G: IntoEdgesDirected + IntoNodeReferences + Visitable,
     G::EdgeWeight: Edges,
-    G::NodeId: Eq + Hash,
+    G::NodeId: Copy + Eq + Hash + Ord,
     A: IntoIterator<Item = (G::NodeId, node::Conns)>,
     B: IntoIterator<Item = (G::NodeId, node::Conns)>,
 {
@@ -261,7 +262,19 @@ where
         let pl = pull_eval_neighbors(g, n, &conns);
         pull_reachable(g, n, &pl).collect::<Vec<_>>()
     }));
-    Topo::new(g).iter(g).filter(move |n| reachable.contains(&n))
+    // Topologically order the acyclic part, then append any reachable nodes on a
+    // directed cycle (which `Topo` never yields) in node-id order. The sole
+    // caller collects this into a set, so order only affects determinism; cyclic
+    // nodes must still be *included* so they reach the flow graph.
+    let topo_order: Vec<G::NodeId> = Topo::new(g)
+        .iter(g)
+        .filter(|n| reachable.contains(n))
+        .collect();
+    let in_topo: HashSet<G::NodeId> = topo_order.iter().copied().collect();
+    let mut leftover: Vec<G::NodeId> =
+        reachable.into_iter().filter(|n| !in_topo.contains(n)).collect();
+    leftover.sort();
+    topo_order.into_iter().chain(leftover)
 }
 
 /// Group entrypoint sources by graph level (parent path).
