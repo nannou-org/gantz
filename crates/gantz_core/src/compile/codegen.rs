@@ -255,6 +255,26 @@ fn node_fn_call_args(
     Ok(args)
 }
 
+/// An expression for a node's key into the graph state hashmap.
+fn node_state_key(node_id: usize) -> ExprKind {
+    emit_one(&format!("'{node_id}"))
+}
+
+/// Wrap a node's function-call expression so it reads its state from
+/// `graph-state`, runs the call, and writes the returned new state back.
+fn wrap_node_fn_call_with_state(call_expr: &str, node_ix: usize) -> String {
+    const NEWSTATE: &str = "newstate";
+    const OUTPUT: &str = "output";
+    let key = node_state_key(node_ix);
+    format!(
+        "(let (({STATE} (hash-ref {GRAPH_STATE} {key})))
+           (let ((results {call_expr}))
+             (let (({OUTPUT} (car results)) ({NEWSTATE} (car (cdr results))))
+                (set! {GRAPH_STATE} (hash-insert {GRAPH_STATE} {key} {NEWSTATE}))
+                {OUTPUT})))"
+    )
+}
+
 /// A statement within a sequence of statements for a top-level entrypoint or
 /// nested graph function.
 ///
@@ -276,33 +296,6 @@ fn eval_stmt(
     stateful: bool,
     outlet_activity: OutletActivity,
 ) -> Result<Option<ExprKind>, CodegenError> {
-    // An expression for a node's key into the graph state hashmap.
-    fn node_state_key(node_id: usize) -> ExprKind {
-        // Create a symbol or other hashable key to use in the hashmap
-        let key_str = format!("'{node_id}");
-        Engine::emit_ast(&key_str)
-            .expect("failed to emit AST")
-            .into_iter()
-            .next()
-            .unwrap()
-    }
-
-    // Given a node's function call expression, wrap it in an expression
-    // that provides access to its state.
-    fn wrap_node_fn_call_with_state(call_expr: &str, node_ix: usize) -> String {
-        const NEWSTATE: &str = "newstate";
-        const OUTPUT: &str = "output";
-        // Get the node's state key.
-        let key = node_state_key(node_ix);
-        format!(
-            "(let (({STATE} (hash-ref {GRAPH_STATE} {key})))
-               (let ((results {call_expr}))
-                 (let (({OUTPUT} (car results)) ({NEWSTATE} (car (cdr results))))
-                    (set! {GRAPH_STATE} (hash-insert {GRAPH_STATE} {key} {NEWSTATE}))
-                    {OUTPUT})))"
-        )
-    }
-
     // Helper to create a define expression for a single output.
     // E.g. (define foo expr)
     fn create_define_expr(var_name: String, value_expr: ExprKind) -> ExprKind {
@@ -831,27 +824,66 @@ fn flow_node_stmts(
     if let Some(loop_info) = loops.get(&first_id) {
         let already_inside = current_loop.map_or(false, |l| l.header == first_id);
         if !already_inside {
-            return flow_loop_stmts(
-                path,
-                flow_ix,
-                loop_info,
-                mg,
-                stateful,
-                branching,
-                inlets,
-                outlets,
-                reachable,
-                fg,
-                post_dom,
-                phi_params,
-                in_scope,
-                active_phi,
-                stop_at,
-                bridge_nodes,
-                outlet_activity,
-                current_loop,
-                loops,
-            );
+            // When the deciding branch is *not* itself a back-edge source it gates
+            // the back-edge from upstream through an intermediate (the pd+
+            // accumulator looped through a `store`); that needs the seed/iteration
+            // active-set split, lowered by `flow_loop_stmts_gated`. Otherwise the
+            // deciding branch *is* the source (counter / accumulator / nested):
+            // the original `flow_loop_stmts`.
+            let decide_id = *loop_info
+                .continue_arms
+                .keys()
+                .next()
+                .expect("a loop has exactly one deciding branch");
+            let gated = !loop_info
+                .back_edges
+                .iter()
+                .any(|(src, _)| *src == decide_id);
+            return if gated {
+                flow_loop_stmts_gated(
+                    path,
+                    flow_ix,
+                    loop_info,
+                    mg,
+                    stateful,
+                    branching,
+                    inlets,
+                    outlets,
+                    reachable,
+                    fg,
+                    post_dom,
+                    phi_params,
+                    in_scope,
+                    active_phi,
+                    stop_at,
+                    bridge_nodes,
+                    outlet_activity,
+                    current_loop,
+                    loops,
+                )
+            } else {
+                flow_loop_stmts(
+                    path,
+                    flow_ix,
+                    loop_info,
+                    mg,
+                    stateful,
+                    branching,
+                    inlets,
+                    outlets,
+                    reachable,
+                    fg,
+                    post_dom,
+                    phi_params,
+                    in_scope,
+                    active_phi,
+                    stop_at,
+                    bridge_nodes,
+                    outlet_activity,
+                    current_loop,
+                    loops,
+                )
+            };
         }
     }
 
@@ -1325,6 +1357,229 @@ fn flow_loop_stmts(
     edges.sort();
     for (branch, dst) in edges {
         stmts.extend(destructure_node_outputs_stmt(decide_id, branch.conns));
+        stmts.extend(flow_node_stmts(
+            path,
+            dst,
+            mg,
+            stateful,
+            branching,
+            inlets,
+            outlets,
+            reachable,
+            fg,
+            post_dom,
+            phi_params,
+            in_scope,
+            active_phi,
+            stop_at,
+            bridge_nodes,
+            outlet_activity,
+            current_loop,
+            loops,
+        )?);
+    }
+    Ok(stmts)
+}
+
+/// Lower a *gated* feedback loop - the pd+ accumulator shape - where the deciding
+/// branch is the loop **header** and gates the back-edge through its output and a
+/// "continue path" of non-branch nodes (e.g. a `store`), rather than being the
+/// back-edge source itself.
+///
+/// The header is entered with two active-input-sets: its **seed** set (the flow
+/// conf, e.g. `{hot}`) on entry, and its **iteration** set (the carried/back-edge
+/// inputs, e.g. `{cold}`) each loop pass. Emits a tail-recursive `loopfn` whose
+/// body calls the header's iteration variant and, on the continue arm, runs the
+/// continue path then tail-calls with the back-edge value; the seed call uses the
+/// header's seed variant (the flow block) and enters the loop on continue. The
+/// exit arm's value flows to the deciding branch's downstream, unchanged.
+///
+/// v1 supports a single deciding branch that *is* the header, with a single
+/// continue arm; other shapes are rejected as [`CodegenError::UnsupportedLoopShape`].
+#[allow(clippy::too_many_arguments)]
+fn flow_loop_stmts_gated(
+    path: &[node::Id],
+    flow_ix: NodeIndex,
+    loop_info: &LoopInfo,
+    mg: &MetaGraph,
+    stateful: &BTreeSet<node::Id>,
+    branching: &BTreeMap<node::Id, usize>,
+    inlets: &BTreeSet<node::Id>,
+    outlets: &BTreeSet<node::Id>,
+    reachable: &HashSet<node::Id>,
+    fg: &FlowGraph,
+    post_dom: &HashMap<NodeIndex, NodeIndex>,
+    phi_params: &BTreeMap<NodeIndex, Vec<(usize, String)>>,
+    in_scope: &mut HashSet<node::Id>,
+    active_phi: &HashSet<(node::Id, usize)>,
+    stop_at: Option<NodeIndex>,
+    bridge_nodes: &BTreeSet<node::Id>,
+    outlet_activity: OutletActivity,
+    current_loop: Option<&LoopInfo>,
+    loops: &LoopTable,
+) -> Result<Vec<ExprKind>, CodegenError> {
+    let header = loop_info.header;
+    let decide_id = *loop_info
+        .continue_arms
+        .keys()
+        .next()
+        .expect("a loop has exactly one deciding branch");
+    let continue_arms = &loop_info.continue_arms[&decide_id];
+    // v1: the gating branch must be the header, with a single continue arm.
+    if decide_id != header || continue_arms.len() != 1 {
+        return Err(CodegenError::UnsupportedLoopShape { header });
+    }
+    let continue_arm = *continue_arms.iter().next().unwrap();
+
+    let header_conf = *fg[flow_ix].last().expect("non-empty header block");
+    let header_outputs = header_conf.conns.outputs;
+    let n_inputs = header_conf.conns.inputs.len();
+
+    // Loop-carried (back-edge) inputs become fn params; the iteration active-set
+    // is those inputs active. `body_phi` marks them so the header call binds them
+    // from the params rather than resolving the back-edge.
+    let params: Vec<String> = loop_info
+        .carried
+        .iter()
+        .map(|p| node_input_var(header, p.header_input))
+        .collect();
+    let mut iter_inputs = node::Conns::unconnected(n_inputs).map_err(|_| TooManyConns(n_inputs))?;
+    for p in &loop_info.carried {
+        iter_inputs
+            .set(p.header_input, true)
+            .map_err(|_| TooManyConns(n_inputs))?;
+    }
+    let mut body_phi = active_phi.clone();
+    for p in &loop_info.carried {
+        body_phi.insert((header, p.header_input));
+    }
+
+    // The back-edge value feeding each carried input (its source's output var),
+    // in carried order - the tail-call arguments.
+    let back_by_input: BTreeMap<usize, (node::Id, usize)> = loop_info
+        .back_edges
+        .iter()
+        .map(|(src, e)| (e.input.0 as usize, (*src, e.output.0 as usize)))
+        .collect();
+    let tail_args: Vec<String> = loop_info
+        .carried
+        .iter()
+        .map(|p| {
+            let (src, out) = back_by_input[&p.header_input];
+            node_output_var(src, out)
+        })
+        .collect();
+
+    // The continue arm's flow edge: its branch conns + target (the continue path).
+    let (cont_branch, cont_target) = fg
+        .edges_directed(flow_ix, petgraph::Outgoing)
+        .map(|e| (*e.weight(), e.target()))
+        .find(|(b, _)| b.ix == continue_arm)
+        .ok_or(CodegenError::UnsupportedLoopShape { header })?;
+
+    let loop_fn = loop_fn_name(header);
+    let bix = branch_ix_var(header);
+    let header_val = node_outputs_var(header);
+
+    // The continue-arm body (shared by the loop fn and the seed): destructure the
+    // header's continue-arm output, lower the continue path to the back-edge
+    // source, then tail-call with the back-edge value.
+    let continue_body = |scope: &mut HashSet<node::Id>| -> Result<String, CodegenError> {
+        let mut s: Vec<ExprKind> = destructure_node_outputs_stmt(header, cont_branch.conns)
+            .into_iter()
+            .collect();
+        s.extend(flow_node_stmts(
+            path,
+            cont_target,
+            mg,
+            stateful,
+            branching,
+            inlets,
+            outlets,
+            reachable,
+            fg,
+            post_dom,
+            phi_params,
+            scope,
+            &body_phi,
+            None,
+            bridge_nodes,
+            outlet_activity,
+            Some(loop_info),
+            loops,
+        )?);
+        let body = s
+            .iter()
+            .map(|e| format!("{e}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        Ok(format!(
+            "(begin {body} ({loop_fn} {}))",
+            tail_args.join(" ")
+        ))
+    };
+
+    // === The loop fn: iteration call + branch destructure + decision. ===
+    // The iteration call is the header's iteration variant, with each carried
+    // (active) input bound from the fn param - not the back-edge source, which is
+    // not yet in scope at the top of the loop fn.
+    let header_path: Vec<node::Id> = path.iter().copied().chain(Some(header)).collect();
+    let stateful_h = stateful.contains(&header);
+    let iter_args: Vec<Option<String>> = (0..n_inputs)
+        .map(|i| {
+            iter_inputs
+                .get(i)
+                .unwrap_or(false)
+                .then(|| node_input_var(header, i))
+        })
+        .collect();
+    let mut iter_call_expr = format!(
+        "{}",
+        node_fn_call(&header_path, &iter_args, &header_outputs, stateful_h)?
+    );
+    if stateful_h {
+        iter_call_expr = wrap_node_fn_call_with_state(&iter_call_expr, header);
+    }
+    let iter_call_str = format!("(define {} {iter_call_expr})", node_outputs_var(header));
+    let mut iter_scope: HashSet<node::Id> = HashSet::new();
+    let cont_loop = continue_body(&mut iter_scope)?;
+    let loop_def = emit_one(&format!(
+        "(define ({loop_fn} {}) (begin {iter_call_str} {} (if (= {continue_arm} {bix}) {cont_loop} {header_val})))",
+        params.join(" "),
+        destructure_node_branch_stmt(header),
+    ));
+
+    // === The seed: seed-variant call + destructure + enter the loop on continue. ===
+    let mut stmts = vec![loop_def];
+    stmts.extend(eval_fn_block_stmts(
+        path,
+        mg,
+        stateful,
+        inlets,
+        outlets,
+        reachable,
+        &fg[flow_ix],
+        in_scope,
+        active_phi,
+        bridge_nodes,
+        outlet_activity,
+    )?);
+    stmts.push(destructure_node_branch_stmt(header));
+    let cont_seed = continue_body(in_scope)?;
+    stmts.push(emit_one(&format!(
+        "(set! {header_val} (if (= {continue_arm} {bix}) {cont_seed} {header_val}))"
+    )));
+    in_scope.insert(header);
+
+    // === Downstream: the deciding branch's exit arms. ===
+    let mut exit_edges: Vec<_> = fg
+        .edges_directed(flow_ix, petgraph::Outgoing)
+        .map(|e| (*e.weight(), e.target()))
+        .filter(|(b, _)| b.ix != continue_arm)
+        .collect();
+    exit_edges.sort();
+    for (branch, dst) in exit_edges {
+        stmts.extend(destructure_node_outputs_stmt(header, branch.conns));
         stmts.extend(flow_node_stmts(
             path,
             dst,

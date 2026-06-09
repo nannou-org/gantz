@@ -192,6 +192,51 @@ fn self_loop_counter() {
     assert_eq!(result, SteelVal::IntV(3));
 }
 
+/// A plain `Branch` header that *gates* a back-edge through an intermediate
+/// `store` (the pd+ accumulator shape, without a `GraphNode`): the deciding
+/// branch is the header, and the back-edge originates at the non-branch `store`.
+/// Isolates the gater + continue-path + seed/iteration active-set split from the
+/// `GraphNode` interior monomorphization.
+///
+/// `$?l` (the hot/trigger input, index 1) drives the decision; `$?r` (cold, index
+/// 0) accumulates. `gate -> store -> gate`'s cold input closes the cycle, so each
+/// push adds the hot value to the running total held in `gate`'s state.
+#[test]
+fn gated_branch_feedback_loop() {
+    let mut g = petgraph::graph::DiGraph::new();
+    let start =
+        g.add_node(Box::new(node::expr("1").unwrap().with_push_eval()) as Box<dyn DebugNode>);
+    let gate = g.add_node(Box::new(
+        node::branch(
+            "(begin (if (Some? $?r) (set! state (Some->value $?r)) (quote ())) \
+             (if (Some? $?l) \
+                 (list 0 (+ (Some->value $?l) (if (number? state) state 0))) \
+                 (list 1 (quote ()))))",
+            vec!["1".parse().unwrap(), "0".parse().unwrap()],
+        )
+        .unwrap(),
+    ) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(start, gate, Edge::from((0, 1))); // hot -> $?l (input 1)
+    g.add_edge(store, gate, Edge::from((0, 0))); // store -> $?r (input 0, cold) back-edge
+    g.add_edge(gate, store, Edge::from((0, 0))); // gate.o0 -> store closes the cycle
+
+    let mut vm = run_once(&g, start); // push 1: state 0 -> 1
+    assert_eq!(
+        node::state::extract_value(&vm, &[store.index()]).unwrap(),
+        Some(SteelVal::IntV(1))
+    );
+    // A second push accumulates: state 1 -> 2.
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let ep = entrypoint::push(vec![start.index()], g[start].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+    assert_eq!(
+        node::state::extract_value(&vm, &[store.index()]).unwrap(),
+        Some(SteelVal::IntV(2))
+    );
+}
+
 /// A stateful node inside the loop body accumulates across iterations - the loop
 /// fn closes over the single mutable `graph-state`, so state persists between
 /// tail-recursive calls (the basis for delays/counters with internal memory).

@@ -2904,6 +2904,33 @@ fn test_nested_pd_plus_both() {
     assert_eq!(store_val(&vm, store), Some(15)); // 10 + 5
 }
 
+// The user's feedback graph: a `pd+` accumulator looped through a `store` Number.
+// `hot` drives the left inlet; `pd+ -> store -> pd+`'s cold (right) inlet closes
+// the cycle. One push is a 2-pass loop: pd+{hot} outputs `hot + state` -> store
+// holds it -> pd+{cold} sets state to it and exits. So each push adds `hot` to the
+// running total held in pd+'s internal state (and mirrored in `store`).
+#[test]
+fn test_pd_plus_feedback_loop() {
+    let (inner, branch_ix) = pd_plus();
+    let mut g = petgraph::graph::DiGraph::new();
+    let hot = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let hot_val = g.add_node(Box::new(node_int(1)) as Box<_>);
+    let pd = g.add_node(Box::new(inner) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(hot, hot_val, Edge::from((0, 0)));
+    g.add_edge(hot_val, pd, Edge::from((0, 0))); // hot -> pd input 0 (hot/left)
+    g.add_edge(store, pd, Edge::from((0, 1))); // store -> pd input 1 (cold/right)
+    g.add_edge(pd, store, Edge::from((0, 0))); // pd -> store closes the cycle
+
+    let mut vm = compile_only(&g);
+    push_from(&mut vm, &g, hot); // 1: state 0 -> 1
+    assert_eq!(branch_state(&vm, pd, branch_ix), Some(1));
+    assert_eq!(store_val(&vm, store), Some(1));
+    push_from(&mut vm, &g, hot); // 2: state 1 -> 2
+    assert_eq!(branch_state(&vm, pd, branch_ix), Some(2));
+    assert_eq!(store_val(&vm, store), Some(2));
+}
+
 // A sequence of pushes across multiple entrypoint calls: two cold updates then
 // a hot output, exercising state persistence.
 #[test]
