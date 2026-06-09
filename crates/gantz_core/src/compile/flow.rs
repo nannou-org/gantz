@@ -188,6 +188,63 @@ pub(crate) fn flow_graph_with_extra(
     Ok(fg)
 }
 
+/// Build the interior control-flow graph of a nested graph, honoring which
+/// inlets fired this evaluation (`active_inlets`, always a subset of
+/// `meta.inlets`).
+///
+/// When every inlet is active this is the all-connected view (inlets push,
+/// outlets pull) - the dominant path, kept byte-identical to the prior
+/// behaviour. When only a subset fired, the interior is built by forward
+/// reachability from the active inlets *and* the graph's own static sources
+/// (constants / in-degree-0 non-inlet nodes), with **no outlet pull**. Dropping
+/// the pull prevents the backward `outlet <- ... <- inactive-inlet` walk from
+/// re-marking a node's input connected, so an inlet that did not fire (and its
+/// exclusive subtree) is excluded - and a `$?` optional input bound only to it
+/// compiles to `(None)`.
+pub(crate) fn inner_flow_graph_for(
+    meta: &Meta,
+    active_inlets: &BTreeSet<node::Id>,
+) -> Result<FlowGraph, NodeConnsError> {
+    let conn1 = || node::Conns::connected(1).unwrap();
+
+    // `active_inlets` is a subset of `meta.inlets`, so equal length => all
+    // inlets active: reuse the unchanged all-connected construction.
+    if active_inlets.len() == meta.inlets.len() {
+        return flow_graph(
+            meta,
+            meta.inlets.iter().map(|&n| (n, conn1())),
+            meta.outlets.iter().map(|&n| (n, conn1())),
+        );
+    }
+
+    let mut push: Vec<(node::Id, node::Conns)> =
+        active_inlets.iter().map(|&n| (n, conn1())).collect();
+
+    // Static sources (constants / input-less interior nodes) are always live
+    // regardless of which inlets fired, so they seed the forward traversal to
+    // keep static/constant-fed outlets reachable without the outlet pull.
+    for n in meta.graph.nodes() {
+        if meta.inlets.contains(&n) || meta.outlets.contains(&n) {
+            continue;
+        }
+        if meta
+            .graph
+            .edges_directed(n, petgraph::Incoming)
+            .next()
+            .is_some()
+        {
+            continue;
+        }
+        let n_out = meta.outputs.get(&n).copied().unwrap_or(0);
+        if n_out > 0 {
+            let conns = node::Conns::connected(n_out).map_err(|_| TooManyConns(n_out))?;
+            push.push((n, conns));
+        }
+    }
+
+    flow_graph(meta, push, std::iter::empty::<(node::Id, node::Conns)>())
+}
+
 /// Build a [`NodeConf`] for `n` from its connectivity within the (possibly
 /// arm-local) `mg`, treating `Static` edges from `outer_mg` as still in scope.
 fn make_conf(

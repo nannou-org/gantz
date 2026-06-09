@@ -2679,3 +2679,353 @@ fn test_graph_root_outlet_disconnected() {
 
     assert_eq!(store_val(&compile_and_push(&g, push), store), Some(42));
 }
+
+// === pd+ optional-input ($?) cold/hot inlet tests ===
+//
+// Emulates Pure Data's stateful `+`: a left "hot" inlet (always outputs the
+// sum) and a right "cold" inlet (updates internal state only, no output). The
+// node is a nested `GraphNode` whose interior is a single `Branch` reading two
+// optional inputs (`$?l`, `$?r`). The cold/hot behaviour relies on the inner
+// branch seeing `(None)` for the inlet that did not fire - which only works once
+// the active-input-set is propagated into the nested graph's interior.
+
+// The pd+ Branch: cold (`$?r`) sets state; hot (`$?l`) outputs `left + state`.
+// Branch 0 activates the single output (hot fired), branch 1 activates nothing
+// (cold-only, no output).
+fn pd_plus_branch() -> node::Branch {
+    node::Branch::new(
+        r#"
+        (begin
+          (if (Some? $?r) (set! state (Some->value $?r)) '())
+          (if (Some? $?l)
+            (list 0 (+ (Some->value $?l) (if (number? state) state 0)))
+            (list 1 '())))
+        "#,
+        vec![
+            node::Conns::try_from([true]).unwrap(),
+            node::Conns::try_from([false]).unwrap(),
+        ],
+    )
+    .unwrap()
+}
+
+// A pd+ nested graph. Input 0 = left/hot inlet, input 1 = right/cold inlet,
+// output 0 = the sum. Returns the graph and the inner branch node id (for state
+// queries via the path `[pd_node, branch]`).
+//
+//    [In L]   [In R]
+//       \       /        (In R -> $?r branch input 0, In L -> $?l branch input 1)
+//      -+-------+-
+//      | Branch |
+//      -+--------
+//       |
+//    -+--------
+//    | Outlet |
+//    ----------
+fn pd_plus() -> (GraphNode<Box<dyn DebugNode>>, usize) {
+    let mut g = GraphNode::default();
+    let inlet_l = g.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let inlet_r = g.add_node(Box::new(node::graph::Inlet) as Box<_>);
+    let branch = g.add_node(Box::new(pd_plus_branch()) as Box<_>);
+    let outlet = g.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    g.add_edge(inlet_r, branch, Edge::from((0, 0))); // In R -> $?r (branch input 0)
+    g.add_edge(inlet_l, branch, Edge::from((0, 1))); // In L -> $?l (branch input 1)
+    g.add_edge(branch, outlet, Edge::from((0, 0)));
+    (g, branch.index())
+}
+
+// Compile `g` and register fns, returning a VM ready to be pushed.
+fn compile_only<N: DebugNode + ?Sized>(g: &petgraph::graph::DiGraph<Box<N>, Edge>) -> Engine {
+    let eps = push_pull_entrypoints(&no_lookup, g);
+    let module = gantz_core::compile::module(&no_lookup, g, &eps).unwrap();
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, g, &[], &mut vm);
+    for f in &module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+    vm
+}
+
+// Fire the entrypoint that pushes from `push`.
+fn push_from<N: DebugNode + ?Sized>(
+    vm: &mut Engine,
+    g: &petgraph::graph::DiGraph<Box<N>, Edge>,
+    push: petgraph::graph::NodeIndex,
+) {
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+}
+
+// Root graph wiring a left push -> left value, a right push -> right value, into
+// a pd+ node whose output feeds a `store`. Returns (graph, left_push,
+// right_push, pd, branch_id, store).
+type PdPlusRoot = (
+    petgraph::graph::DiGraph<Box<dyn DebugNode>, Edge>,
+    petgraph::graph::NodeIndex,
+    petgraph::graph::NodeIndex,
+    petgraph::graph::NodeIndex,
+    usize,
+    petgraph::graph::NodeIndex,
+);
+fn pd_plus_root(left: i32, right: i32) -> PdPlusRoot {
+    let (inner, branch_ix) = pd_plus();
+    let mut g = petgraph::graph::DiGraph::new();
+    let left_push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let right_push = g.add_node(Box::new(node_push()) as Box<_>);
+    let left_val = g.add_node(Box::new(node_int(left)) as Box<_>);
+    let right_val = g.add_node(Box::new(node_int(right)) as Box<_>);
+    let pd = g.add_node(Box::new(inner) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(left_push, left_val, Edge::from((0, 0)));
+    g.add_edge(right_push, right_val, Edge::from((0, 0)));
+    g.add_edge(left_val, pd, Edge::from((0, 0))); // left -> pd input 0 (hot)
+    g.add_edge(right_val, pd, Edge::from((0, 1))); // right -> pd input 1 (cold)
+    g.add_edge(pd, store, Edge::from((0, 0)));
+    (g, left_push, right_push, pd, branch_ix, store)
+}
+
+fn branch_state(vm: &Engine, pd: petgraph::graph::NodeIndex, branch_ix: usize) -> Option<i32> {
+    node::state::extract::<i32>(vm, &[pd.index(), branch_ix])
+        .ok()
+        .flatten()
+}
+
+// Pushing ONLY the cold (right) inlet must set state and produce no output -
+// and crucially must NOT raise `+ expects a number, found '()`.
+#[test]
+fn test_nested_pd_plus_cold_only() {
+    let (g, _left_push, right_push, pd, branch_ix, store) = pd_plus_root(10, 5);
+    let mut vm = compile_only(&g);
+    push_from(&mut vm, &g, right_push);
+    assert_eq!(branch_state(&vm, pd, branch_ix), Some(5), "cold sets state");
+    assert_eq!(store_val(&vm, store), None, "cold produces no output");
+}
+
+// Cold (right) then hot (left): state is seeded by the cold push, the hot push
+// outputs `left + state`.
+#[test]
+fn test_nested_pd_plus_hot_after_cold() {
+    let (g, left_push, right_push, pd, branch_ix, store) = pd_plus_root(10, 5);
+    let mut vm = compile_only(&g);
+    push_from(&mut vm, &g, right_push); // cold: state = 5
+    push_from(&mut vm, &g, left_push); // hot: 10 + 5 = 15
+    assert_eq!(branch_state(&vm, pd, branch_ix), Some(5));
+    assert_eq!(store_val(&vm, store), Some(15));
+}
+
+// Firing both inlets in one push: the cold value updates state first, then the
+// hot arm outputs `left + state`.
+#[test]
+fn test_nested_pd_plus_both() {
+    let (inner, branch_ix) = pd_plus();
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let left_val = g.add_node(Box::new(node_int(10)) as Box<_>);
+    let right_val = g.add_node(Box::new(node_int(5)) as Box<_>);
+    let pd = g.add_node(Box::new(inner) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, left_val, Edge::from((0, 0)));
+    g.add_edge(push, right_val, Edge::from((0, 0)));
+    g.add_edge(left_val, pd, Edge::from((0, 0)));
+    g.add_edge(right_val, pd, Edge::from((0, 1)));
+    g.add_edge(pd, store, Edge::from((0, 0)));
+
+    let mut vm = compile_only(&g);
+    push_from(&mut vm, &g, push);
+    assert_eq!(branch_state(&vm, pd, branch_ix), Some(5));
+    assert_eq!(store_val(&vm, store), Some(15)); // 10 + 5
+}
+
+// A sequence of pushes across multiple entrypoint calls: two cold updates then
+// a hot output, exercising state persistence.
+#[test]
+fn test_nested_pd_plus_sequence() {
+    let (inner, branch_ix) = pd_plus();
+    let mut g = petgraph::graph::DiGraph::new();
+    let cold_a = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let cold_b = g.add_node(Box::new(node_push()) as Box<_>);
+    let hot = g.add_node(Box::new(node_push()) as Box<_>);
+    let cold_a_val = g.add_node(Box::new(node_int(3)) as Box<_>);
+    let cold_b_val = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let hot_val = g.add_node(Box::new(node_int(10)) as Box<_>);
+    let pd = g.add_node(Box::new(inner) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(cold_a, cold_a_val, Edge::from((0, 0)));
+    g.add_edge(cold_b, cold_b_val, Edge::from((0, 0)));
+    g.add_edge(hot, hot_val, Edge::from((0, 0)));
+    g.add_edge(cold_a_val, pd, Edge::from((0, 1))); // cold -> right
+    g.add_edge(cold_b_val, pd, Edge::from((0, 1))); // cold -> right
+    g.add_edge(hot_val, pd, Edge::from((0, 0))); // hot -> left
+    g.add_edge(pd, store, Edge::from((0, 0)));
+
+    let mut vm = compile_only(&g);
+    push_from(&mut vm, &g, cold_a); // state = 3
+    assert_eq!(branch_state(&vm, pd, branch_ix), Some(3));
+    assert_eq!(store_val(&vm, store), None);
+    push_from(&mut vm, &g, cold_b); // state = 7
+    assert_eq!(branch_state(&vm, pd, branch_ix), Some(7));
+    assert_eq!(store_val(&vm, store), None);
+    push_from(&mut vm, &g, hot); // 10 + 7 = 17
+    assert_eq!(store_val(&vm, store), Some(17));
+}
+
+// The same Branch at top level (where `$?` already works) and nested must
+// behave identically.
+fn pd_plus_top_level(
+    left: i32,
+    right: i32,
+) -> (
+    petgraph::graph::DiGraph<Box<dyn DebugNode>, Edge>,
+    petgraph::graph::NodeIndex,
+    petgraph::graph::NodeIndex,
+    petgraph::graph::NodeIndex,
+) {
+    let mut g = petgraph::graph::DiGraph::new();
+    let left_push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let right_push = g.add_node(Box::new(node_push()) as Box<_>);
+    let left_val = g.add_node(Box::new(node_int(left)) as Box<_>);
+    let right_val = g.add_node(Box::new(node_int(right)) as Box<_>);
+    let branch = g.add_node(Box::new(pd_plus_branch()) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(left_push, left_val, Edge::from((0, 0)));
+    g.add_edge(right_push, right_val, Edge::from((0, 0)));
+    g.add_edge(right_val, branch, Edge::from((0, 0))); // right -> $?r (input 0)
+    g.add_edge(left_val, branch, Edge::from((0, 1))); // left -> $?l (input 1)
+    g.add_edge(branch, store, Edge::from((0, 0)));
+    (g, left_push, right_push, store)
+}
+
+#[test]
+fn test_pd_plus_top_level_vs_nested_equivalence() {
+    // Nested: cold(5) then hot(10).
+    let (gn, ln, rn, _pd, _bix, sn) = pd_plus_root(10, 5);
+    let mut vmn = compile_only(&gn);
+    push_from(&mut vmn, &gn, rn);
+    let cold_n = store_val(&vmn, sn);
+    push_from(&mut vmn, &gn, ln);
+    let hot_n = store_val(&vmn, sn);
+
+    // Top level: same sequence.
+    let (gt, lt, rt, st) = pd_plus_top_level(10, 5);
+    let mut vmt = compile_only(&gt);
+    push_from(&mut vmt, &gt, rt);
+    let cold_t = store_val(&vmt, st);
+    push_from(&mut vmt, &gt, lt);
+    let hot_t = store_val(&vmt, st);
+
+    assert_eq!(cold_n, cold_t);
+    assert_eq!(hot_n, hot_t);
+    assert_eq!(cold_n, None);
+    assert_eq!(hot_n, Some(15));
+}
+
+// The reduced inner-branch variants (cold push -> i10, hot push -> i01) must be
+// DEFINED in the module, not just the all-connected i11. Guards the conf
+// post-pass and call/def agreement.
+#[test]
+fn test_nested_pd_plus_emits_reduced_variant() {
+    let (g, _l, _r, pd, branch_ix, _store) = pd_plus_root(10, 5);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+    let text: String = module
+        .iter()
+        .map(|f| f.to_pretty(100))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let prefix = format!("node-fn-{}:{}-", pd.index(), branch_ix);
+    assert!(
+        text.contains(&format!("{prefix}i10-o1")),
+        "missing reduced inner branch variant {prefix}i10-o1"
+    );
+    assert!(
+        text.contains(&format!("{prefix}i01-o1")),
+        "missing reduced inner branch variant {prefix}i01-o1"
+    );
+}
+
+// pd+ wrapped in a second `GraphNode`. Returns (outer, pd_id_in_outer,
+// branch_id_in_pd). Outer input 0 -> pd left (hot), input 1 -> pd right (cold).
+fn pd_plus_wrapped() -> (GraphNode<Box<dyn DebugNode>>, usize, usize) {
+    let (pd_inner, branch_ix) = pd_plus();
+    let mut outer = GraphNode::default();
+    let inlet_l = outer.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let inlet_r = outer.add_node(Box::new(node::graph::Inlet) as Box<_>);
+    let pd = outer.add_node(Box::new(pd_inner) as Box<_>);
+    let outlet = outer.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    outer.add_edge(inlet_l, pd, Edge::from((0, 0))); // outer in 0 -> pd in 0 (hot)
+    outer.add_edge(inlet_r, pd, Edge::from((0, 1))); // outer in 1 -> pd in 1 (cold)
+    outer.add_edge(pd, outlet, Edge::from((0, 0)));
+    (outer, pd.index(), branch_ix)
+}
+
+// Two-level nesting: cold-only push from the outside must propagate the reduced
+// active-set through BOTH graph layers (outer + pd) so the grandchild branch
+// sees `(None)` for the hot inlet - no error, state set, no output.
+#[test]
+fn test_nested_pd_plus_two_levels() {
+    let (outer, pd_in_outer, branch_in_pd) = pd_plus_wrapped();
+    let mut g = petgraph::graph::DiGraph::new();
+    let left_push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let right_push = g.add_node(Box::new(node_push()) as Box<_>);
+    let left_val = g.add_node(Box::new(node_int(10)) as Box<_>);
+    let right_val = g.add_node(Box::new(node_int(5)) as Box<_>);
+    let outer_node = g.add_node(Box::new(outer) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(left_push, left_val, Edge::from((0, 0)));
+    g.add_edge(right_push, right_val, Edge::from((0, 0)));
+    g.add_edge(left_val, outer_node, Edge::from((0, 0))); // -> outer in 0 (hot)
+    g.add_edge(right_val, outer_node, Edge::from((0, 1))); // -> outer in 1 (cold)
+    g.add_edge(outer_node, store, Edge::from((0, 0)));
+
+    let branch_path = [outer_node.index(), pd_in_outer, branch_in_pd];
+    let mut vm = compile_only(&g);
+
+    // Cold-only: state set deep inside, no output.
+    push_from(&mut vm, &g, right_push);
+    assert_eq!(
+        node::state::extract::<i32>(&vm, &branch_path)
+            .ok()
+            .flatten(),
+        Some(5),
+    );
+    assert_eq!(store_val(&vm, store), None);
+
+    // Hot: outputs 10 + 5 = 15.
+    push_from(&mut vm, &g, left_push);
+    assert_eq!(store_val(&vm, store), Some(15));
+}
+
+// A wrapper `GraphNode` exposing ONLY pd+'s hot inlet, leaving the cold inlet
+// permanently unconnected. Even when the wrapper is invoked all-active, its
+// interior invokes pd+ with a statically reduced active-set (only the hot inlet
+// wired), whose inner branch variant must still be defined. Guards the conf
+// post-pass recursing through an all-active parent into a reduced child.
+#[test]
+fn test_nested_reduced_child_under_active_parent() {
+    let (pd_inner, _branch_ix) = pd_plus();
+    let mut outer = GraphNode::default();
+    let inlet = outer.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let pd = outer.add_node(Box::new(pd_inner) as Box<_>);
+    let outlet = outer.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    outer.add_edge(inlet, pd, Edge::from((0, 0))); // outer inlet -> pd left (hot)
+    outer.add_edge(pd, outlet, Edge::from((0, 0))); // pd right inlet left unconnected
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let val = g.add_node(Box::new(node_int(10)) as Box<_>);
+    let outer_node = g.add_node(Box::new(outer) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, val, Edge::from((0, 0)));
+    g.add_edge(val, outer_node, Edge::from((0, 0)));
+    g.add_edge(outer_node, store, Edge::from((0, 0)));
+
+    let mut vm = compile_only(&g);
+    push_from(&mut vm, &g, push);
+    // The cold inlet is never wired => `$?r` is `(None)` => state stays 0 =>
+    // output = 10 + 0. Reaching this without a free-identifier error proves the
+    // reduced inner branch variant was defined and called.
+    assert_eq!(store_val(&vm, store), Some(10));
+}
