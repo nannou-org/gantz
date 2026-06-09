@@ -79,3 +79,21 @@ pub fn fmt_module(module: &[ExprKind]) -> String {
         .collect::<Vec<String>>()
         .join("\n\n")
 }
+
+/// Format an error together with its full [`std::error::Error::source`] chain.
+///
+/// `Display` renders only the outermost message, so a wrapper like
+/// [`CompileError`] -> [`crate::compile::ModuleError`] -> the underlying cause
+/// otherwise hides what actually went wrong (e.g. a bare "module generation
+/// failed"). This walks the `source()` chain and appends each level on its own
+/// `caused by:` line.
+pub fn error_chain(err: &dyn std::error::Error) -> String {
+    use std::fmt::Write;
+    let mut s = err.to_string();
+    let mut source = err.source();
+    while let Some(e) = source {
+        write!(s, "\ncaused by: {e}").expect("writing to a String never fails");
+        source = e.source();
+    }
+    s
+}
