@@ -351,15 +351,29 @@ where
         .map_err(node::ExprError::custom)
 }
 
-/// Build the control flow graph for a nested graph: inlets push, outlets pull.
+/// Build the all-inlets-active interior control flow graph (inlets push,
+/// outlets pull), used by [`graph_branches`] - which must report the
+/// union/over-approximation of external branch patterns - and as the `fg_all`
+/// in [`nested_expr`]. See [`compile::inner_flow_graph_for`] for the active-set
+/// aware variant.
 fn inner_flow_graph(meta: &compile::Meta) -> Result<compile::FlowGraph, node::ExprError> {
-    let conn = || node::Conns::connected(1).unwrap();
-    compile::flow_graph(
-        meta,
-        meta.inlets.iter().map(|&n| (n, conn())),
-        meta.outlets.iter().map(|&n| (n, conn())),
-    )
-    .map_err(node::ExprError::custom)
+    let all: BTreeSet<node::Id> = meta.inlets.iter().copied().collect();
+    compile::inner_flow_graph_for(meta, &all).map_err(node::ExprError::custom)
+}
+
+/// The set of inlet ids that fired this evaluation, derived from the parent's
+/// active-input-set (`inputs[i]` is `Some` iff input `i` - i.e. the `i`th inlet
+/// in id order - is connected/active for this node-fn variant).
+fn active_inlets_from_inputs(
+    inlet_ids: &[node::Id],
+    inputs: &[Option<String>],
+) -> BTreeSet<node::Id> {
+    inlet_ids
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| inputs.get(*i).map(Option::is_some).unwrap_or(false))
+        .map(|(_, &id)| id)
+        .collect()
 }
 
 /// The implementation of the `GraphNode`'s `Node::expr` fn.
@@ -383,11 +397,25 @@ where
     let meta = compile::Meta::from_graph(get_node, g).map_err(node::ExprError::custom)?;
     let inlet_ids: Vec<node::Id> = meta.inlets.iter().copied().collect();
     let outlet_ids: Vec<node::Id> = meta.outlets.iter().copied().collect();
-    let fg = inner_flow_graph(&meta)?;
+    // The all-connected flow drives the external branch patterns and selector
+    // (which must match the parent's all-connected `Node::branches`); the
+    // active-set flow drives the body so unfired inlets' subtrees collapse and
+    // optional inputs bound only to them compile to `(None)`. The two coincide
+    // when every inlet is active (the dominant path), so avoid rebuilding then.
+    let active_inlets = active_inlets_from_inputs(&inlet_ids, inputs);
+    let fg_all = inner_flow_graph(&meta)?;
+    let fg_active;
+    let fg_body = if active_inlets.len() == inlet_ids.len() {
+        &fg_all
+    } else {
+        fg_active = compile::inner_flow_graph_for(&meta, &active_inlets)
+            .map_err(node::ExprError::custom)?;
+        &fg_active
+    };
     let arm_counts = branch_arm_counts(&meta);
 
     // The external branch patterns (empty => not externally branching).
-    let patterns = compile::branch_patterns_from_flow(&fg, &outlet_ids, &arm_counts)
+    let patterns = compile::branch_patterns_from_flow(&fg_all, &outlet_ids, &arm_counts)
         .map_err(node::ExprError::custom)?;
     let branching = !patterns.is_empty();
     let outlet_activity = if branching {
@@ -425,7 +453,7 @@ where
         &arm_counts,
         &meta.inlets,
         &meta.outlets,
-        &fg,
+        fg_body,
         &BTreeSet::new(),
         outlet_activity,
     )

@@ -50,12 +50,12 @@ impl<T> RoseTree<T> {
     ///
     /// This is useful if the resulting tree requires holding references to the
     /// original tree.
-    pub(crate) fn map_ref<'a, U>(&'a self, f: &mut impl FnMut(&'a T) -> U) -> RoseTree<U> {
+    pub(crate) fn _map_ref<'a, U>(&'a self, f: &mut impl FnMut(&'a T) -> U) -> RoseTree<U> {
         let Self { elem, nested } = self;
         let elem = f(elem);
         let nested = nested
             .into_iter()
-            .map(|(&k, r)| (k, r.map_ref(f)))
+            .map(|(&k, r)| (k, r._map_ref(f)))
             .collect();
         RoseTree { elem, nested }
     }
