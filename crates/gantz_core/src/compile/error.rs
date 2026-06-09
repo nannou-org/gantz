@@ -74,11 +74,13 @@ pub enum NodeConnsError {
 /// Error analyzing feedback loops (directed cycles) at one graph level.
 #[derive(Debug, Error)]
 pub enum LoopError {
-    /// A directed cycle can never terminate: it contains no branch node, or
-    /// every branch arm re-enters the loop (no arm exits it).
+    /// A directed cycle can never terminate: no branch gates its back-edge with
+    /// an arm that exits the loop (there is no branch at all, no branch's arm
+    /// selection controls whether the back-edge fires, or every gating arm
+    /// re-enters).
     #[error(
         "feedback loop through nodes {nodes:?} can never terminate: \
-         it has no branch node with an arm that exits the loop"
+         no branch gates its back-edge with an arm that exits the loop"
     )]
     InfiniteFeedbackLoop { nodes: Vec<node::Id> },
     /// A loop is irreducible (not single-entry): its strongly-connected

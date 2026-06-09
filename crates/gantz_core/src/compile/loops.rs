@@ -69,7 +69,7 @@ pub(crate) fn analyze(
         let header = find_header(mg, &body)?;
         let back_edges = back_edges_into(mg, &body, header);
 
-        let continue_arms = classify_arms(&body, &back_edges, branches)?;
+        let continue_arms = classify_arms(mg, &body, header, &back_edges, branches)?;
         let carried = carried_params(mg, &body, header, &back_edges);
         // Recurse into the residual (this loop's body with its back-edges removed)
         // to discover nested inner loops. They are stored flat in the table, keyed
@@ -165,21 +165,38 @@ fn carried_params(
         .collect()
 }
 
-/// For each branch that drives a back-edge, the arm indices that re-enter the
-/// loop (i.e. activate a back-edge's output). Errors if no branch gates a
-/// back-edge, or if every deciding branch always re-enters (no exit arm), so the
-/// loop can never terminate.
+/// Identify the loop's single *deciding* branch - the branch whose arm-selection
+/// determines whether the back-edge fires - and that branch's continue (re-enter)
+/// arm indices.
 ///
-/// v1 requires the back-edge to originate at a branch node, so the branch
-/// directly decides continue-vs-exit (the natural counter/accumulator shape). A
-/// loop whose back-edge is unconditional from its source is reported as
-/// non-terminating.
+/// Two shapes:
+/// - **source-is-branch** (counter / accumulator / inner-branch / nested): the
+///   back-edge originates *at* a branch, so that branch directly decides - an arm
+///   continues iff it activates a back-edge output. This is the original rule and
+///   keeps nested loops unambiguous (each level's source-branch decides only that
+///   level; an inner branch is the source only of its own back-edge).
+/// - **gated non-branch source** (the pd+ accumulator): the back-edge originates
+///   at a *non-branch* (e.g. a `store`), so the deciding branch is the one upstream
+///   whose arm-selection controls whether that source is reached. Found by
+///   back-edge-filtered forward reachability: an arm continues iff its active
+///   outputs reach a back-edge source. The deciding branch is the unique branch
+///   with both a continue and an exit arm (inner forward branches, whose every arm
+///   reaches the back-edge, are excluded and reconverge via the phi machinery).
+///
+/// Errors: no deciding branch -> [`LoopError::InfiniteFeedbackLoop`] (the cycle can
+/// never exit); more than one, or a mix of branch and non-branch back-edge sources
+/// -> [`LoopError::MultiExitLoopUnsupported`] (multi-exit, not yet lowerable).
 fn classify_arms(
+    mg: &MetaGraph,
     scc: &BTreeSet<node::Id>,
+    header: node::Id,
     back_edges: &[(node::Id, Edge)],
     branches: &BTreeMap<node::Id, Vec<node::Conns>>,
 ) -> Result<BTreeMap<node::Id, BTreeSet<usize>>, LoopError> {
-    // The set of output indices that drive a back-edge, per source node.
+    let err = || -> Vec<node::Id> { scc.iter().copied().collect() };
+
+    // Back-edge sources, and per source the output indices that drive a back-edge.
+    let back_sources: BTreeSet<node::Id> = back_edges.iter().map(|(s, _)| *s).collect();
     let mut back_outputs: BTreeMap<node::Id, BTreeSet<usize>> = BTreeMap::new();
     for (src, edge) in back_edges {
         back_outputs
@@ -187,49 +204,64 @@ fn classify_arms(
             .or_default()
             .insert(edge.output.0 as usize);
     }
-
-    // The branches in this loop that directly drive a back-edge.
-    let deciding: Vec<node::Id> = scc
+    let source_branches: BTreeSet<node::Id> = back_sources
         .iter()
         .copied()
-        .filter(|n| branches.contains_key(n) && back_outputs.contains_key(n))
+        .filter(|s| branches.contains_key(s))
         .collect();
-    if deciding.is_empty() {
-        return Err(LoopError::InfiniteFeedbackLoop {
-            nodes: scc.iter().copied().collect(),
-        });
+
+    // Source-is-branch: a single branch is the sole back-edge source and decides
+    // directly. (Multiple distinct sources, or a mix of branch and non-branch
+    // sources, are multi-exit territory - deferred.)
+    if source_branches.len() == 1 && back_sources.len() == 1 {
+        let b = *source_branches.iter().next().unwrap();
+        let outs = &back_outputs[&b];
+        let arms = &branches[&b];
+        let continues: BTreeSet<usize> = arms
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| outs.iter().any(|&o| c.get(o).unwrap_or(false)))
+            .map(|(ix, _)| ix)
+            .collect();
+        return if continues.is_empty() || continues.len() == arms.len() {
+            Err(LoopError::InfiniteFeedbackLoop { nodes: err() })
+        } else {
+            Ok(BTreeMap::from([(b, continues)]))
+        };
     }
-    // A loop may contain any number of inner forward branches (which reconverge
-    // within the body); v1 supports only a single *deciding* branch - the one exit
-    // decision. Multiple deciding branches (multi-exit) need a different lowering.
-    if deciding.len() > 1 {
-        return Err(LoopError::MultiExitLoopUnsupported {
-            nodes: scc.iter().copied().collect(),
-        });
+    if !source_branches.is_empty() {
+        return Err(LoopError::MultiExitLoopUnsupported { nodes: err() });
     }
 
-    let mut continue_arms = BTreeMap::new();
-    let mut terminable = false;
-    for b in deciding {
-        let outs = &back_outputs[&b];
-        let mut continues = BTreeSet::new();
-        for (ix, conns) in branches[&b].iter().enumerate() {
-            // An arm re-enters the loop iff it activates a back-edge's output.
-            let takes_back_edge = outs.iter().any(|&o| conns.get(o).unwrap_or(false));
-            if takes_back_edge {
-                continues.insert(ix);
-            } else {
-                terminable = true;
-            }
+    // Gated non-branch source: find the unique branch gating whether a back-edge
+    // source is reached, via back-edge-filtered forward reachability (mirrors
+    // `build_flow_graph`'s `order_mg` - the walk never loops around the cycle).
+    let removed: HashSet<(node::Id, node::Id)> =
+        back_edges.iter().map(|(src, _)| (*src, header)).collect();
+    let fscc = sub_graph(mg, scc, &removed);
+    let mut deciding: BTreeMap<node::Id, BTreeSet<usize>> = BTreeMap::new();
+    for &b in scc.iter().filter(|n| branches.contains_key(n)) {
+        let arms = &branches[&b];
+        let continues: BTreeSet<usize> = arms
+            .iter()
+            .enumerate()
+            .filter(|(_, conns)| {
+                let neighbors = super::push_eval_neighbors(&fscc, b, conns);
+                let reachable: HashSet<node::Id> =
+                    super::push_reachable(&fscc, b, &neighbors).collect();
+                back_sources.iter().any(|s| reachable.contains(s))
+            })
+            .map(|(ix, _)| ix)
+            .collect();
+        if !continues.is_empty() && continues.len() < arms.len() {
+            deciding.insert(b, continues);
         }
-        continue_arms.insert(b, continues);
     }
-    if !terminable {
-        return Err(LoopError::InfiniteFeedbackLoop {
-            nodes: scc.iter().copied().collect(),
-        });
+    match deciding.len() {
+        0 => Err(LoopError::InfiniteFeedbackLoop { nodes: err() }),
+        1 => Ok(deciding),
+        _ => Err(LoopError::MultiExitLoopUnsupported { nodes: err() }),
     }
-    Ok(continue_arms)
 }
 
 /// The subgraph of `mg` induced by `nodes`, minus any `removed` edges. Isolated
@@ -295,6 +327,34 @@ mod tests {
         assert_eq!(
             info.continue_arms,
             BTreeMap::from([(2, BTreeSet::from([0]))])
+        );
+    }
+
+    /// The pd+ accumulator shape: the back-edge originates at a *non-branch*
+    /// `store`, so the deciding branch is the upstream header that gates whether
+    /// `store` is reached.
+    ///   0(seed) -> 1(branch, header); 1.o0 -> 2(store); 2.o0 -> 1 (back-edge);
+    ///   1.o1 -> 3(out) (exit).
+    #[test]
+    fn gated_nonbranch_source() {
+        let mut g = MetaGraph::new();
+        g.add_edge(0, 1, edge(0, 0)); // seed -> header input 0
+        g.add_edge(1, 2, edge(0, 0)); // header.o0 -> store
+        g.add_edge(2, 1, edge(0, 1)); // store.o0 -> header input 1 (back-edge)
+        g.add_edge(1, 3, edge(1, 0)); // header.o1 -> out (exit)
+        let branches = BTreeMap::from([(1, vec![conns("10"), conns("01")])]);
+
+        let table = analyze(&g, &branches).unwrap();
+        assert_eq!(table.len(), 1);
+        let info = &table[&1];
+        assert_eq!(info.header, 1);
+        assert_eq!(info.body, BTreeSet::from([1, 2]));
+        assert_eq!(info.back_edges, vec![(2, Edge::new(0.into(), 1.into()))]);
+        // Header (branch 1) decides: arm 0 reaches the non-branch `store`, arm 1
+        // exits.
+        assert_eq!(
+            info.continue_arms,
+            BTreeMap::from([(1, BTreeSet::from([0]))])
         );
     }
 
