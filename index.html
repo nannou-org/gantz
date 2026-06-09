@@ -77,7 +77,7 @@ async function __trunkInitializer(init, source, sourceSize, initializer, initWit
 import init, * as bindings from './gantz.js';
 import initializer from './initializer.js';
 
-const wasm = await __trunkInitializer(init, './gantz_bg.wasm', 19386908, initializer(), true);
+const wasm = await __trunkInitializer(init, './gantz_bg.wasm', 19389046, initializer(), true);
 
 
 window.wasmBindings = bindings;
@@ -137,7 +137,7 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
             transition: width 0.2s ease;
         }
     </style>
-<link rel="modulepreload" href="./gantz.js" crossorigin="anonymous" integrity="sha384-qqf0CmN++SPClVuL/rfAgLbQgIG47EmkPJxOzeOiq4eFzpLGyGaeZKTvSK96HT12"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-AUQ/wcWeusvS1MGxTIiNOqRU1Atxh7QAhWlkwAzCSVIen5YlhA7h6DtjwhGXAWUo"><link rel="preload" href="./gantz_bg.wasm" crossorigin="anonymous" integrity="sha384-B988/hXcoOk2N/46uXb0bAmmhopNKqJ7VCGCSaZPFt+gNbRCU3+/BotILLL2GAta" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./gantz.js" crossorigin="anonymous" integrity="sha384-brsRn2YE6oSURMjr/Kt7r3iy+OGSms97dwWYVuLSfPKn099/Ggra4hBeXlHtkfM+"><link rel="modulepreload" href="./initializer.js" crossorigin="anonymous" integrity="sha384-AUQ/wcWeusvS1MGxTIiNOqRU1Atxh7QAhWlkwAzCSVIen5YlhA7h6DtjwhGXAWUo"><link rel="preload" href="./gantz_bg.wasm" crossorigin="anonymous" integrity="sha384-bsUocoyEHqJKOWbhV0ZFKfXYXkE394V91ja+Dek6Rk/sRKHx7+pZS+o//KHOB2Bm" as="fetch" type="application/wasm"></head>
 <body>
     <div id="loading">
         <p id="loading-title">g a n t z</p>
