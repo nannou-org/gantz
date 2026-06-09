@@ -535,6 +535,10 @@ fn build_level_confs(
     // set it is invoked with. Keep the reduced flows so children can read their
     // confs from them too.
     let mut confs = codegen::unique_node_confs(flow);
+    // Inject each loop header's iteration (back-edge pass) variant, which the loop
+    // codegen calls but which is not itself a flow conf (the flow holds the seed
+    // variant). For a `GraphNode` header this also drives its interior below.
+    confs.extend(flow::loop_iteration_confs(flow));
     let mut reduced: Vec<FlowGraph> = Vec::new();
     for active in active_sets {
         let active_inlets = active_inlets_from_conns(&inlet_ids, active);
@@ -576,6 +580,15 @@ fn active_input_sets_for(flow: &Flow, id: node::Id) -> std::collections::BTreeSe
     {
         sets.extend(confs_of(fg, id).map(|conf| conf.conns.inputs));
     }
+    // A loop header's iteration variant is invoked by the loop codegen but is not
+    // a flow conf, so add its active-input-set too (drives the reduced interior of
+    // a `GraphNode` header like the pd+ accumulator on the back-edge pass).
+    sets.extend(
+        flow::loop_iteration_confs(flow)
+            .into_iter()
+            .filter(|c| c.id == id)
+            .map(|c| c.conns.inputs),
+    );
     sets
 }
 
