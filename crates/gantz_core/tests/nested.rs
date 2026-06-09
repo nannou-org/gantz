@@ -3029,3 +3029,62 @@ fn test_nested_reduced_child_under_active_parent() {
     // reduced inner branch variant was defined and called.
     assert_eq!(store_val(&vm, store), Some(10));
 }
+
+// Push-through reaching a nested-optional child: an interior push fires only the
+// hot inlet of a nested pd+, whose output propagates out through the wrapper's
+// outlet. Exercises a reduced inner-branch variant reached via push-through (not
+// via the wrapper's own inlets).
+#[test]
+fn test_push_through_into_nested_optional_hot() {
+    let (c_inner, _branch_ix) = pd_plus();
+    let mut l = GraphNode::default();
+    let p = l.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let val = l.add_node(Box::new(node_int(10)) as Box<_>);
+    let c = l.add_node(Box::new(c_inner) as Box<_>);
+    let outlet = l.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    l.add_edge(p, val, Edge::from((0, 0)));
+    l.add_edge(val, c, Edge::from((0, 0))); // -> C hot (input 0); C cold (input 1) unwired
+    l.add_edge(c, outlet, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let push_n = l[p].n_outputs(ctx) as u8;
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let l_node = g.add_node(Box::new(l) as Box<dyn DebugNode>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(l_node, store, Edge::from((0, 0)));
+
+    let vm = compile_and_push_nested(&g, vec![l_node.index(), p.index()], push_n);
+    assert_eq!(store_val(&vm, store), Some(10)); // 10 + state(0)
+}
+
+// Push-through into a side-effect-only nested-optional child: an interior push
+// fires only the cold inlet of a nested pd+ that produces no output and feeds no
+// outlet. The all-connected interior flow never reaches C, so C's reduced branch
+// variant is discoverable only from the interior push's flow - which the
+// all-connected nested_fg + node-style reduction miss.
+#[test]
+fn test_push_through_into_nested_optional_sideeffect() {
+    let (c_inner, branch_ix) = pd_plus();
+    let mut l = GraphNode::default();
+    let p = l.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let val = l.add_node(Box::new(node_int(5)) as Box<_>);
+    let c = l.add_node(Box::new(c_inner) as Box<_>);
+    l.add_edge(p, val, Edge::from((0, 0)));
+    l.add_edge(val, c, Edge::from((0, 1))); // -> C cold inlet (input 1); no outlet
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let push_n = l[p].n_outputs(ctx) as u8;
+    let c_in_l = c.index();
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let l_node = g.add_node(Box::new(l) as Box<dyn DebugNode>);
+
+    let vm = compile_and_push_nested(&g, vec![l_node.index(), p.index()], push_n);
+    assert_eq!(
+        node::state::extract::<i32>(&vm, &[l_node.index(), c_in_l, branch_ix])
+            .ok()
+            .flatten(),
+        Some(5),
+    );
+}

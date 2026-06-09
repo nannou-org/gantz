@@ -468,11 +468,11 @@ where
     let level_sources = group_sources_by_level(entrypoints);
     let flow_tree = build_flow_tree(&meta_tree.tree, &level_sources, vec![])?;
 
-    // Collect node fns. `unique_node_confs` only sees the all-connected nested
-    // flow, so the post-pass additionally defines the reduced inner variants a
-    // nested graph needs when invoked with a subset of its inlets active.
-    let mut node_confs_tree = flow_tree.map_ref(&mut |(_, flow)| codegen::unique_node_confs(flow));
-    augment_reduced_inner_confs(&meta_tree.tree, &flow_tree, &mut node_confs_tree)?;
+    // Collect node fns. Build the per-level conf tree top-down so each node is
+    // defined for every variant it is actually called with - including the
+    // reduced inner variants a nested graph needs when invoked with a subset of
+    // its inlets active.
+    let node_confs_tree = build_node_confs_tree(&meta_tree.tree, &flow_tree)?;
     let node_fns = codegen::node_fns(get_node, g, &node_confs_tree)?;
 
     // Collect eval fns.
@@ -480,74 +480,69 @@ where
     Ok(node_fns.into_iter().chain(entry_fns).collect())
 }
 
-/// Define the *reduced* inner node-fn variants a nested `GraphNode`'s interior
-/// needs when invoked with only a subset of its inlets active.
+/// Build the per-level node-conf tree consumed by `node_fns`, defining every
+/// variant each node is actually called with.
 ///
-/// `build_flow_tree`'s `nested_fg` is all-connected, so `unique_node_confs` only
-/// yields each inner node's all-inlets-active variant. But a `GraphNode` invoked
-/// with a reduced active-input-set (e.g. a "cold" inlet push) lowers its interior
-/// via [`inner_flow_graph_for`] with that subset (see `node::graph::nested_expr`),
-/// calling reduced inner variants that must also be *defined*. This additive pass
-/// collects, for each nested child, the distinct active-input-sets it is invoked
-/// with (from its parent's flow graphs), builds the matching reduced inner flow,
-/// and unions the resulting `NodeConf`s into the child level's conf set. Because
-/// `nested_expr` (call site) and this pass (definition site) both use
-/// `inner_flow_graph_for` with the same active set, every emitted call resolves.
-fn augment_reduced_inner_confs(
+/// A level's confs come from its own flow graphs ([`codegen::unique_node_confs`]:
+/// this level's entrypoint flows + all-connected `nested` flow) plus, when the
+/// level is a nested graph invoked with a reduced active-input-set, the confs
+/// from [`inner_flow_graph_for`] for that subset. Active-sets propagate top-down:
+/// a child's are the distinct confs it takes across every flow graph that lowers
+/// its parent (the parent's entrypoint + nested flows, and its reduced flows). So
+/// when `node::graph::nested_expr` lowers a nested graph with a reduced active set
+/// (a "cold" inlet push, or a push-through reaching only some inlets) the reduced
+/// inner variants it calls are also defined here.
+fn build_node_confs_tree(
     meta_tree: &RoseTree<Meta>,
     flow_tree: &RoseTree<(&Meta, Flow)>,
-    confs_tree: &mut RoseTree<std::collections::BTreeSet<NodeConf>>,
-) -> Result<(), error::NodeConnsError> {
-    // The root graph isn't itself a nested node; its children's active-sets come
-    // from the root's own flow graphs.
-    let (_, root_flow) = &flow_tree.elem;
-    for (&cid, child_meta) in &meta_tree.nested {
-        let Some(child_confs) = confs_tree.nested.get_mut(&cid) else {
-            continue;
-        };
-        let sets = active_input_sets_for(root_flow, cid);
-        augment_node_reduced_confs(child_meta, child_confs, &sets)?;
-    }
-    Ok(())
+) -> Result<RoseTree<std::collections::BTreeSet<NodeConf>>, error::NodeConnsError> {
+    // The root graph is not invoked as a node, so it has no reduced active-sets.
+    build_level_confs(meta_tree, flow_tree, &std::collections::BTreeSet::new())
 }
 
-/// Recursive worker for [`augment_reduced_inner_confs`]: given the
-/// active-input-sets a nested graph is invoked with, build its reduced inner flow
-/// per set, add the resulting confs, and propagate each grandchild `GraphNode`'s
-/// reduced active-sets downward.
-fn augment_node_reduced_confs(
+/// Recursive worker for [`build_node_confs_tree`]: build the confs for one level
+/// (and its descendants) given the active-input-sets this level is invoked with.
+fn build_level_confs(
     meta_tree: &RoseTree<Meta>,
-    confs_tree: &mut RoseTree<std::collections::BTreeSet<NodeConf>>,
+    flow_tree: &RoseTree<(&Meta, Flow)>,
     active_sets: &std::collections::BTreeSet<node::Conns>,
-) -> Result<(), error::NodeConnsError> {
+) -> Result<RoseTree<std::collections::BTreeSet<NodeConf>>, error::NodeConnsError> {
     let meta = &meta_tree.elem;
+    let (_, flow) = &flow_tree.elem;
     let inlet_ids: Vec<node::Id> = meta.inlets.iter().copied().collect();
-    let mut grandchild_sets: std::collections::BTreeMap<
-        node::Id,
-        std::collections::BTreeSet<node::Conns>,
-    > = std::collections::BTreeMap::new();
+
+    // This level's own flow graphs, plus a reduced flow per proper-subset active
+    // set it is invoked with. Keep the reduced flows so children can read their
+    // confs from them too.
+    let mut confs = codegen::unique_node_confs(flow);
+    let mut reduced: Vec<FlowGraph> = Vec::new();
     for active in active_sets {
         let active_inlets = active_inlets_from_conns(&inlet_ids, active);
+        // All-active coincides with the `nested` flow already in `confs`.
+        if active_inlets.len() == meta.inlets.len() {
+            continue;
+        }
         let fg = inner_flow_graph_for(meta, &active_inlets)?;
-        for conf in fg.node_weights().flat_map(|blk| blk.iter()) {
-            confs_tree.elem.insert(*conf);
-            if meta_tree.nested.contains_key(&conf.id) {
-                grandchild_sets
-                    .entry(conf.id)
-                    .or_default()
-                    .insert(conf.conns.inputs);
-            }
-        }
+        confs.extend(fg.node_weights().flat_map(|blk| blk.iter().copied()));
+        reduced.push(fg);
     }
-    for (gcid, sets) in grandchild_sets {
-        if let (Some(gc_meta), Some(gc_confs)) = (
-            meta_tree.nested.get(&gcid),
-            confs_tree.nested.get_mut(&gcid),
-        ) {
-            augment_node_reduced_confs(gc_meta, gc_confs, &sets)?;
+
+    // Each child's active-sets = the distinct confs it takes across every flow
+    // graph that lowers this level (entrypoints + nested + the reduced flows).
+    let mut nested = std::collections::BTreeMap::new();
+    for (&cid, child_meta) in &meta_tree.nested {
+        let mut child_sets = active_input_sets_for(flow, cid);
+        for fg in &reduced {
+            child_sets.extend(confs_of(fg, cid).map(|conf| conf.conns.inputs));
         }
+        let child_flow = &flow_tree.nested[&cid];
+        nested.insert(cid, build_level_confs(child_meta, child_flow, &child_sets)?);
     }
-    Ok(())
+
+    Ok(RoseTree {
+        elem: confs,
+        nested,
+    })
 }
 
 /// The distinct active-input-sets node `id` is invoked with across `flow`'s
@@ -559,13 +554,16 @@ fn active_input_sets_for(flow: &Flow, id: node::Id) -> std::collections::BTreeSe
         .values()
         .chain(std::iter::once(&flow.nested))
     {
-        for conf in fg.node_weights().flat_map(|blk| blk.iter()) {
-            if conf.id == id {
-                sets.insert(conf.conns.inputs);
-            }
-        }
+        sets.extend(confs_of(fg, id).map(|conf| conf.conns.inputs));
     }
     sets
+}
+
+/// The `NodeConf`s for node `id` appearing in flow graph `fg`.
+fn confs_of(fg: &FlowGraph, id: node::Id) -> impl Iterator<Item = &NodeConf> {
+    fg.node_weights()
+        .flat_map(|blk| blk.iter())
+        .filter(move |conf| conf.id == id)
 }
 
 /// The inlet ids active for a parent input-conns mask (bit `i` <=> `inlet_ids[i]`,
