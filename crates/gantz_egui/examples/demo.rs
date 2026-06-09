@@ -425,7 +425,7 @@ impl App {
                     compiled_modules.push(gantz_core::vm::fmt_module(&module));
                 }
                 Err(e) => {
-                    log::error!("Failed to init VM: {e}");
+                    log::error!("Failed to init VM: {}", gantz_core::vm::error_chain(&e));
                     // Push defaults to keep indices aligned
                     vms.push(Engine::new_base());
                     compiled_modules.push(String::new());
@@ -493,7 +493,12 @@ impl eframe::App for App {
                     Ok(module) => {
                         self.state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module)
                     }
-                    Err(e) => log::error!("Failed to compile graph: {e}"),
+                    Err(e) => {
+                        log::error!(
+                            "Failed to compile graph: {}",
+                            gantz_core::vm::error_chain(&e)
+                        )
+                    }
                 }
             }
         }
