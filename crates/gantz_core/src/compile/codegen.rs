@@ -646,19 +646,44 @@ fn phi_set_stmts(
 
 /// Generate a sequence of node fn call statements from the given flow graph
 /// basic block.
-pub(crate) fn eval_fn_block_stmts(
+/// The invariant compilation context for one entrypoint's flow-graph lowering -
+/// everything fixed across the whole `flow_node_stmts` recursion, bundled so the
+/// recursive calls pass only what varies (`flow_ix`, `in_scope`, `active_phi`,
+/// `stop_at`, `current_loop`, `block`). `Copy` (every field is a shared ref or
+/// `Copy`), so it threads by value.
+#[derive(Clone, Copy)]
+struct Lowering<'a> {
+    mg: &'a MetaGraph,
+    stateful: &'a BTreeSet<node::Id>,
+    branching: &'a BTreeMap<node::Id, usize>,
+    inlets: &'a BTreeSet<node::Id>,
+    outlets: &'a BTreeSet<node::Id>,
+    reachable: &'a HashSet<node::Id>,
+    fg: &'a FlowGraph,
+    post_dom: &'a HashMap<NodeIndex, NodeIndex>,
+    phi_params: &'a BTreeMap<NodeIndex, Vec<(usize, String)>>,
+    bridge_nodes: &'a BTreeSet<node::Id>,
+    outlet_activity: OutletActivity,
+    loops: &'a LoopTable,
+}
+
+fn eval_fn_block_stmts(
+    ctx: Lowering<'_>,
     path: &[node::Id],
-    mg: &MetaGraph,
-    stateful: &BTreeSet<node::Id>,
-    inlets: &BTreeSet<node::Id>,
-    outlets: &BTreeSet<node::Id>,
-    reachable: &HashSet<node::Id>,
     block: &Block,
     in_scope: &mut HashSet<node::Id>,
     active_phi: &HashSet<(node::Id, usize)>,
-    bridge_nodes: &BTreeSet<node::Id>,
-    outlet_activity: OutletActivity,
 ) -> Result<Vec<ExprKind>, CodegenError> {
+    let Lowering {
+        mg,
+        stateful,
+        inlets,
+        outlets,
+        reachable,
+        bridge_nodes,
+        outlet_activity,
+        ..
+    } = ctx;
     let mut stmts = Vec::new();
     let mut iter = block.0.iter().peekable();
     while let Some(conf) = iter.next() {
@@ -794,25 +819,23 @@ fn compute_post_dominators(fg: &FlowGraph) -> HashMap<NodeIndex, NodeIndex> {
 /// join - phi set statements are emitted and control returns to the caller
 /// which handles the join block after its branch `if`.
 fn flow_node_stmts(
+    ctx: Lowering<'_>,
     path: &[node::Id],
     flow_ix: NodeIndex,
-    mg: &MetaGraph,
-    stateful: &BTreeSet<node::Id>,
-    branching: &BTreeMap<node::Id, usize>,
-    inlets: &BTreeSet<node::Id>,
-    outlets: &BTreeSet<node::Id>,
-    reachable: &HashSet<node::Id>,
-    fg: &FlowGraph,
-    post_dom: &HashMap<NodeIndex, NodeIndex>,
-    phi_params: &BTreeMap<NodeIndex, Vec<(usize, String)>>,
     in_scope: &mut HashSet<node::Id>,
     active_phi: &HashSet<(node::Id, usize)>,
     stop_at: Option<NodeIndex>,
-    bridge_nodes: &BTreeSet<node::Id>,
-    outlet_activity: OutletActivity,
     current_loop: Option<&LoopInfo>,
-    loops: &LoopTable,
 ) -> Result<Vec<ExprKind>, CodegenError> {
+    let Lowering {
+        mg,
+        branching,
+        fg,
+        post_dom,
+        phi_params,
+        loops,
+        ..
+    } = ctx;
     // A block that begins a feedback loop opens a tail-recursive loop fn - unless
     // we are already lowering that loop's own body (the body recursion re-enters
     // here on the header). A *nested* header (a different id) still opens its own
@@ -836,47 +859,25 @@ fn flow_node_stmts(
                 .any(|(src, _)| *src == loop_info.deciding_branch);
             return if gated {
                 flow_loop_stmts_gated(
+                    ctx,
                     path,
                     flow_ix,
                     loop_info,
-                    mg,
-                    stateful,
-                    branching,
-                    inlets,
-                    outlets,
-                    reachable,
-                    fg,
-                    post_dom,
-                    phi_params,
                     in_scope,
                     active_phi,
                     stop_at,
-                    bridge_nodes,
-                    outlet_activity,
                     current_loop,
-                    loops,
                 )
             } else {
                 flow_loop_stmts(
+                    ctx,
                     path,
                     flow_ix,
                     loop_info,
-                    mg,
-                    stateful,
-                    branching,
-                    inlets,
-                    outlets,
-                    reachable,
-                    fg,
-                    post_dom,
-                    phi_params,
                     in_scope,
                     active_phi,
                     stop_at,
-                    bridge_nodes,
-                    outlet_activity,
                     current_loop,
-                    loops,
                 )
             };
         }
@@ -884,19 +885,7 @@ fn flow_node_stmts(
 
     // Add the block.
     let block = &fg[flow_ix];
-    let mut stmts = eval_fn_block_stmts(
-        path,
-        mg,
-        stateful,
-        inlets,
-        outlets,
-        reachable,
-        block,
-        in_scope,
-        active_phi,
-        bridge_nodes,
-        outlet_activity,
-    )?;
+    let mut stmts = eval_fn_block_stmts(ctx, path, block, in_scope, active_phi)?;
 
     // If this block ends in the current loop's deciding branch, emit the loop
     // decision (continue arm -> tail-call, exit arm -> return value) and stop;
@@ -950,24 +939,13 @@ fn flow_node_stmts(
         // Otherwise continue normally. The next block's
         // `eval_fn_block_stmts` handles input bindings via before-target.
         stmts.extend(flow_node_stmts(
+            ctx,
             path,
             dst,
-            mg,
-            stateful,
-            branching,
-            inlets,
-            outlets,
-            reachable,
-            fg,
-            post_dom,
-            phi_params,
             in_scope,
             active_phi,
             stop_at,
-            bridge_nodes,
-            outlet_activity,
             current_loop,
-            loops,
         )?);
         return Ok(stmts);
     }
@@ -1039,24 +1017,13 @@ fn flow_node_stmts(
                 let mut arm_scope = in_scope.clone();
                 arm_scope.insert(conf.id);
                 branch_stmts.extend(flow_node_stmts(
+                    ctx,
                     path,
                     dst,
-                    mg,
-                    stateful,
-                    branching,
-                    inlets,
-                    outlets,
-                    reachable,
-                    fg,
-                    post_dom,
-                    phi_params,
                     &mut arm_scope,
                     &inner_phi,
                     Some(join_ix),
-                    bridge_nodes,
-                    outlet_activity,
                     current_loop,
-                    loops,
                 )?);
             }
 
@@ -1081,24 +1048,13 @@ fn flow_node_stmts(
 
         // After the if: generate the join block and everything after it.
         stmts.extend(flow_node_stmts(
+            ctx,
             path,
             join_ix,
-            mg,
-            stateful,
-            branching,
-            inlets,
-            outlets,
-            reachable,
-            fg,
-            post_dom,
-            phi_params,
             in_scope,
             &inner_phi,
             stop_at,
-            bridge_nodes,
-            outlet_activity,
             current_loop,
-            loops,
         )?);
 
         return Ok(stmts);
@@ -1112,24 +1068,13 @@ fn flow_node_stmts(
         let mut arm_scope = in_scope.clone();
         arm_scope.insert(conf.id);
         let dst_stmts = flow_node_stmts(
+            ctx,
             path,
             dst,
-            mg,
-            stateful,
-            branching,
-            inlets,
-            outlets,
-            reachable,
-            fg,
-            post_dom,
-            phi_params,
             &mut arm_scope,
             active_phi,
             stop_at,
-            bridge_nodes,
-            outlet_activity,
             current_loop,
-            loops,
         )?;
         let dst_stmts_str = dst_stmts
             .into_iter()
@@ -1222,26 +1167,16 @@ fn loop_decision_if(
 /// dedicated input binding, so the header node-fn call is unchanged. The result
 /// is bound to the deciding branch's outputs var so downstream is unchanged.
 fn flow_loop_stmts(
+    ctx: Lowering<'_>,
     path: &[node::Id],
     flow_ix: NodeIndex,
     loop_info: &LoopInfo,
-    mg: &MetaGraph,
-    stateful: &BTreeSet<node::Id>,
-    branching: &BTreeMap<node::Id, usize>,
-    inlets: &BTreeSet<node::Id>,
-    outlets: &BTreeSet<node::Id>,
-    reachable: &HashSet<node::Id>,
-    fg: &FlowGraph,
-    post_dom: &HashMap<NodeIndex, NodeIndex>,
-    phi_params: &BTreeMap<NodeIndex, Vec<(usize, String)>>,
     in_scope: &mut HashSet<node::Id>,
     active_phi: &HashSet<(node::Id, usize)>,
     stop_at: Option<NodeIndex>,
-    bridge_nodes: &BTreeSet<node::Id>,
-    outlet_activity: OutletActivity,
     current_loop: Option<&LoopInfo>,
-    loops: &LoopTable,
 ) -> Result<Vec<ExprKind>, CodegenError> {
+    let Lowering { fg, .. } = ctx;
     let header = loop_info.header;
     let decide_id = loop_info.deciding_branch;
     let decide_ix = fg
@@ -1283,24 +1218,13 @@ fn flow_loop_stmts(
     // branch emits the loop decision and stops (see `flow_node_stmts`).
     let mut body_in_scope: HashSet<node::Id> = HashSet::new();
     let body = flow_node_stmts(
+        ctx,
         path,
         flow_ix,
-        mg,
-        stateful,
-        branching,
-        inlets,
-        outlets,
-        reachable,
-        fg,
-        post_dom,
-        phi_params,
         &mut body_in_scope,
         &body_phi,
         None,
-        bridge_nodes,
-        outlet_activity,
         Some(loop_info),
-        loops,
     )?;
 
     // Emit the loop fn definition.
@@ -1345,24 +1269,13 @@ fn flow_loop_stmts(
     for (branch, dst) in edges {
         stmts.extend(destructure_node_outputs_stmt(decide_id, branch.conns));
         stmts.extend(flow_node_stmts(
+            ctx,
             path,
             dst,
-            mg,
-            stateful,
-            branching,
-            inlets,
-            outlets,
-            reachable,
-            fg,
-            post_dom,
-            phi_params,
             in_scope,
             active_phi,
             stop_at,
-            bridge_nodes,
-            outlet_activity,
             current_loop,
-            loops,
         )?);
     }
     Ok(stmts)
@@ -1383,28 +1296,17 @@ fn flow_loop_stmts(
 ///
 /// v1 supports a single deciding branch that *is* the header, with a single
 /// continue arm; other shapes are rejected as [`CodegenError::UnsupportedLoopShape`].
-#[allow(clippy::too_many_arguments)]
 fn flow_loop_stmts_gated(
+    ctx: Lowering<'_>,
     path: &[node::Id],
     flow_ix: NodeIndex,
     loop_info: &LoopInfo,
-    mg: &MetaGraph,
-    stateful: &BTreeSet<node::Id>,
-    branching: &BTreeMap<node::Id, usize>,
-    inlets: &BTreeSet<node::Id>,
-    outlets: &BTreeSet<node::Id>,
-    reachable: &HashSet<node::Id>,
-    fg: &FlowGraph,
-    post_dom: &HashMap<NodeIndex, NodeIndex>,
-    phi_params: &BTreeMap<NodeIndex, Vec<(usize, String)>>,
     in_scope: &mut HashSet<node::Id>,
     active_phi: &HashSet<(node::Id, usize)>,
     stop_at: Option<NodeIndex>,
-    bridge_nodes: &BTreeSet<node::Id>,
-    outlet_activity: OutletActivity,
     current_loop: Option<&LoopInfo>,
-    loops: &LoopTable,
 ) -> Result<Vec<ExprKind>, CodegenError> {
+    let Lowering { stateful, fg, .. } = ctx;
     let header = loop_info.header;
     let decide_id = loop_info.deciding_branch;
     let continue_arms = &loop_info.continue_arms[&decide_id];
@@ -1467,24 +1369,13 @@ fn flow_loop_stmts_gated(
             .into_iter()
             .collect();
         s.extend(flow_node_stmts(
+            ctx,
             path,
             cont_target,
-            mg,
-            stateful,
-            branching,
-            inlets,
-            outlets,
-            reachable,
-            fg,
-            post_dom,
-            phi_params,
             scope,
             &body_phi,
             None,
-            bridge_nodes,
-            outlet_activity,
             Some(loop_info),
-            loops,
         )?);
         let body = s
             .iter()
@@ -1530,17 +1421,11 @@ fn flow_loop_stmts_gated(
     // === The seed: seed-variant call + destructure + enter the loop on continue. ===
     let mut stmts = vec![loop_def];
     stmts.extend(eval_fn_block_stmts(
+        ctx,
         path,
-        mg,
-        stateful,
-        inlets,
-        outlets,
-        reachable,
         &fg[flow_ix],
         in_scope,
         active_phi,
-        bridge_nodes,
-        outlet_activity,
     )?);
     stmts.push(destructure_node_branch_stmt(header));
     let cont_seed = continue_body(in_scope)?;
@@ -1559,24 +1444,13 @@ fn flow_loop_stmts_gated(
     for (branch, dst) in exit_edges {
         stmts.extend(destructure_node_outputs_stmt(header, branch.conns));
         stmts.extend(flow_node_stmts(
+            ctx,
             path,
             dst,
-            mg,
-            stateful,
-            branching,
-            inlets,
-            outlets,
-            reachable,
-            fg,
-            post_dom,
-            phi_params,
             in_scope,
             active_phi,
             stop_at,
-            bridge_nodes,
-            outlet_activity,
             current_loop,
-            loops,
         )?);
     }
     Ok(stmts)
@@ -1694,26 +1568,29 @@ pub(crate) fn entry_fn_body(
             stmts.extend(Engine::emit_ast(&decl).expect("failed to emit root outlet declaration"));
         }
     }
+    let ctx = Lowering {
+        mg,
+        stateful,
+        branching,
+        inlets,
+        outlets,
+        reachable: &reachable,
+        fg,
+        post_dom: &post_dom,
+        phi_params: &phi_params_map,
+        bridge_nodes,
+        outlet_activity,
+        loops,
+    };
     for root in roots {
         stmts.extend(flow_node_stmts(
+            ctx,
             path,
             root,
-            mg,
-            stateful,
-            branching,
-            inlets,
-            outlets,
-            &reachable,
-            fg,
-            &post_dom,
-            &phi_params_map,
             &mut in_scope,
             &HashSet::new(),
             None,
-            bridge_nodes,
-            outlet_activity,
             None,
-            loops,
         )?);
     }
     Ok(stmts)
