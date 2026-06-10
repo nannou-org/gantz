@@ -830,15 +830,10 @@ fn flow_node_stmts(
             // active-set split, lowered by `flow_loop_stmts_gated`. Otherwise the
             // deciding branch *is* the source (counter / accumulator / nested):
             // the original `flow_loop_stmts`.
-            let decide_id = *loop_info
-                .continue_arms
-                .keys()
-                .next()
-                .expect("a loop has exactly one deciding branch");
             let gated = !loop_info
                 .back_edges
                 .iter()
-                .any(|(src, _)| *src == decide_id);
+                .any(|(src, _)| *src == loop_info.deciding_branch);
             return if gated {
                 flow_loop_stmts_gated(
                     path,
@@ -1189,16 +1184,10 @@ fn loop_decision_if(
         // Multiple params: the continue arm's value is a list shaped by the
         // back-edge outputs; destructure it into per-output vars, then pass the
         // arg feeding each param (in carried order).
-        let back_by_input: BTreeMap<usize, usize> = loop_info
-            .back_edges
-            .iter()
-            .filter(|(src, _)| *src == decide_id)
-            .map(|(_, e)| (e.input.0 as usize, e.output.0 as usize))
-            .collect();
         let mut continue_conns =
             node::Conns::unconnected(decide_outputs.len()).expect("conns len within bounds");
-        for &o in back_by_input.values() {
-            let _ = continue_conns.set(o, true);
+        for (_, out) in loop_info.back_by_carried_input.values() {
+            let _ = continue_conns.set(out.0 as usize, true);
         }
         let destructure = destructure_node_outputs_stmt(decide_id, continue_conns)
             .map(|e| format!("{e} "))
@@ -1206,7 +1195,10 @@ fn loop_decision_if(
         let tail_args: Vec<String> = loop_info
             .carried
             .iter()
-            .map(|p| node_output_var(decide_id, back_by_input[&p.header_input]))
+            .map(|p| {
+                let (_, out) = loop_info.back_by_carried_input[&p.header_input];
+                node_output_var(decide_id, out.0 as usize)
+            })
             .collect();
         format!("(begin {destructure}({loop_fn} {}))", tail_args.join(" "))
     };
@@ -1251,12 +1243,7 @@ fn flow_loop_stmts(
     loops: &LoopTable,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     let header = loop_info.header;
-    // Analysis guarantees exactly one deciding branch.
-    let decide_id = *loop_info
-        .continue_arms
-        .keys()
-        .next()
-        .expect("a loop has exactly one deciding branch");
+    let decide_id = loop_info.deciding_branch;
     let decide_ix = fg
         .node_indices()
         .find(|&ix| fg[ix].last().map_or(false, |c| c.id == decide_id))
@@ -1419,11 +1406,7 @@ fn flow_loop_stmts_gated(
     loops: &LoopTable,
 ) -> Result<Vec<ExprKind>, CodegenError> {
     let header = loop_info.header;
-    let decide_id = *loop_info
-        .continue_arms
-        .keys()
-        .next()
-        .expect("a loop has exactly one deciding branch");
+    let decide_id = loop_info.deciding_branch;
     let continue_arms = &loop_info.continue_arms[&decide_id];
     // v1: the gating branch must be the header, with a single continue arm.
     if decide_id != header || continue_arms.len() != 1 {
@@ -1444,9 +1427,9 @@ fn flow_loop_stmts_gated(
         .map(|p| node_input_var(header, p.header_input))
         .collect();
     let mut iter_inputs = node::Conns::unconnected(n_inputs).map_err(|_| TooManyConns(n_inputs))?;
-    for p in &loop_info.carried {
+    for i in loop_info.iteration_inputs() {
         iter_inputs
-            .set(p.header_input, true)
+            .set(i, true)
             .map_err(|_| TooManyConns(n_inputs))?;
     }
     let mut body_phi = active_phi.clone();
@@ -1456,17 +1439,12 @@ fn flow_loop_stmts_gated(
 
     // The back-edge value feeding each carried input (its source's output var),
     // in carried order - the tail-call arguments.
-    let back_by_input: BTreeMap<usize, (node::Id, usize)> = loop_info
-        .back_edges
-        .iter()
-        .map(|(src, e)| (e.input.0 as usize, (*src, e.output.0 as usize)))
-        .collect();
     let tail_args: Vec<String> = loop_info
         .carried
         .iter()
         .map(|p| {
-            let (src, out) = back_by_input[&p.header_input];
-            node_output_var(src, out)
+            let (src, out) = loop_info.back_by_carried_input[&p.header_input];
+            node_output_var(src, out.0 as usize)
         })
         .collect();
 

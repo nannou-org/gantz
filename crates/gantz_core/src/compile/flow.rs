@@ -220,12 +220,7 @@ pub(crate) fn flow_graph_with_extra(
 /// nothing and is left untouched.
 fn mask_header_seed_confs(fg: &mut FlowGraph, loops: &super::loops::LoopTable) {
     for info in loops.values() {
-        let clear: Vec<usize> = info
-            .carried
-            .iter()
-            .filter(|p| p.initial.is_none())
-            .map(|p| p.header_input)
-            .collect();
+        let clear = info.back_edge_only_inputs();
         if clear.is_empty() {
             continue;
         }
@@ -266,8 +261,8 @@ pub(crate) fn loop_iteration_confs(flow: &Flow) -> Vec<NodeConf> {
             let Ok(mut inputs) = node::Conns::unconnected(seed.conns.inputs.len()) else {
                 continue;
             };
-            for p in &info.carried {
-                let _ = inputs.set(p.header_input, true);
+            for i in info.iteration_inputs() {
+                let _ = inputs.set(i, true);
             }
             out.push(NodeConf {
                 id: info.header,

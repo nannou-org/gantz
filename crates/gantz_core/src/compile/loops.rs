@@ -48,6 +48,31 @@ pub(crate) struct LoopInfo {
     pub carried: Vec<LoopParam>,
     /// For each branch node within the loop, the arm indices that re-enter it.
     pub continue_arms: BTreeMap<node::Id, BTreeSet<usize>>,
+    /// The loop's single deciding branch - the sole key of `continue_arms`, cached
+    /// so codegen need not re-extract it.
+    pub deciding_branch: node::Id,
+    /// For each loop-carried header input, the back-edge source output feeding it
+    /// (`header input -> (source node, source output)`). The tail-call argument map.
+    pub back_by_carried_input: BTreeMap<usize, (node::Id, node::Output)>,
+}
+
+impl LoopInfo {
+    /// The header input indices fed *only* by a back-edge (carried inputs with no
+    /// external initial source). These are cleared from the header's **seed**
+    /// active-set, since they are not yet produced on the entry pass.
+    pub fn back_edge_only_inputs(&self) -> BTreeSet<usize> {
+        self.carried
+            .iter()
+            .filter(|p| p.initial.is_none())
+            .map(|p| p.header_input)
+            .collect()
+    }
+
+    /// The header input indices active on each loop **iteration** (the carried /
+    /// back-edge inputs).
+    pub fn iteration_inputs(&self) -> BTreeSet<usize> {
+        self.carried.iter().map(|p| p.header_input).collect()
+    }
 }
 
 /// All loops at one graph level, keyed by header id.
@@ -71,6 +96,14 @@ pub(crate) fn analyze(
 
         let continue_arms = classify_arms(mg, &body, header, &back_edges, branches)?;
         let carried = carried_params(mg, &body, header, &back_edges);
+        let deciding_branch = *continue_arms
+            .keys()
+            .next()
+            .expect("a loop has exactly one deciding branch");
+        let back_by_carried_input: BTreeMap<usize, (node::Id, node::Output)> = back_edges
+            .iter()
+            .map(|(src, e)| (e.input.0 as usize, (*src, e.output)))
+            .collect();
         // Recurse into the residual (this loop's body with its back-edges removed)
         // to discover nested inner loops. They are stored flat in the table, keyed
         // by their own header; nesting is recovered from `body` containment.
@@ -85,6 +118,8 @@ pub(crate) fn analyze(
                 back_edges,
                 carried,
                 continue_arms,
+                deciding_branch,
+                back_by_carried_input,
             },
         );
         table.extend(analyze(&residual, branches)?);
