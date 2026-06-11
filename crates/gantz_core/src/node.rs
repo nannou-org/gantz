@@ -136,18 +136,6 @@ pub trait Node: std::any::Any {
         false
     }
 
-    /// Whether or not this node is implemented as a nested gantz graph.
-    ///
-    /// Such nodes compile *call-based*: the compiler lowers the nested graph
-    /// to one `graph-fn-{path}-i{mask}` per active-input variant and call
-    /// sites invoke it like a node fn ([`Node::expr`] is bypassed). Nodes
-    /// that *wrap* a graph without graph-call semantics (e.g. [`Fn`], which
-    /// inlines the wrapped expression in a lambda) must not return `true`;
-    /// delegating nodes (e.g. [`Ref`]) forward the wrapped node's answer.
-    fn graph(&self, _ctx: MetaCtx) -> bool {
-        false
-    }
-
     /// Whether or not this node is a unit delay: its output is the value its
     /// input received on the *previous* evaluation.
     ///
@@ -437,10 +425,6 @@ macro_rules! impl_node_for_ptr {
 
             fn outlet(&self, ctx: MetaCtx) -> bool {
                 (**self).outlet(ctx)
-            }
-
-            fn graph(&self, ctx: MetaCtx) -> bool {
-                (**self).graph(ctx)
             }
 
             fn delay(&self, ctx: MetaCtx) -> bool {

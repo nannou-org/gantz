@@ -40,8 +40,6 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 /// The fixed context for lowering one level.
 pub(crate) struct Cx<'a> {
     pub meta: &'a Meta,
-    /// Ids of this level's nested-graph nodes: their calls target graph fns.
-    pub nested: BTreeSet<node::Id>,
     /// Additional per-entrypoint branch masks (bridged children whose inner
     /// push reaches their outlets through branching), atop `meta.branches`.
     pub extra_branches: BTreeMap<node::Id, Vec<node::Conns>>,
@@ -373,31 +371,19 @@ fn next_node(cx: &Cx, dag: &MetaGraph, pending: &BTreeSet<node::Id>) -> Option<n
     first_branch
 }
 
-/// Build the [`NodeCall`] for `n`, resolving each input from the env. A
-/// nested-graph node's call targets its graph fn and always yields all of
-/// its outputs.
+/// Build the [`NodeCall`] for `n`, resolving each input from the env.
 fn node_call(cx: &Cx, dag: &MetaGraph, env: &Env, n: node::Id) -> Result<NodeCall, LowerError> {
-    use crate::compile::error::{NodeConnsError, TooManyConns};
     let meta = cx.meta;
     let n_inputs = meta.inputs.get(&n).copied().unwrap_or(0);
     let mut args = Vec::with_capacity(n_inputs);
     for i in 0..n_inputs {
         args.push(resolve_input(dag, env, n, i)?);
     }
-    let graph = cx.nested.contains(&n);
-    let outputs = if graph {
-        let n_outputs = meta.outputs.get(&n).copied().unwrap_or(0);
-        node::Conns::connected(n_outputs)
-            .map_err(|_| NodeConnsError::from(TooManyConns(n_outputs)))?
-    } else {
-        node_outputs(meta, dag, n)?
-    };
     Ok(NodeCall {
         node: n,
         args,
-        outputs,
+        outputs: node_outputs(meta, dag, n)?,
         stateful: meta.stateful.contains(&n),
-        graph,
     })
 }
 

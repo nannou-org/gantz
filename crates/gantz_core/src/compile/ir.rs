@@ -61,7 +61,7 @@ pub(crate) enum Arg {
     List(Vec<Atom>),
 }
 
-/// A call to a generated node fn (or graph fn, for a nested-graph node).
+/// A call to a generated node fn.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NodeCall {
     pub node: node::Id,
@@ -71,9 +71,6 @@ pub(crate) struct NodeCall {
     /// The connected-outputs mask (selects the variant and the result shape).
     pub outputs: node::Conns,
     pub stateful: bool,
-    /// Whether the node is a nested graph: the call targets the graph fn
-    /// (`graph-fn-{path}-i{mask}`) instead of a node fn.
-    pub graph: bool,
 }
 
 /// What a [`Step::Branch`] dispatches on.
@@ -379,7 +376,6 @@ mod tests {
             args,
             outputs: node::Conns::connected(n_outputs).unwrap(),
             stateful: false,
-            graph: false,
         }
     }
 

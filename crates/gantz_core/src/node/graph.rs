@@ -101,15 +101,17 @@ impl<N: Node> Node for Graph<N> {
             .collect()
     }
 
-    /// The compiler bypasses this (graph nodes lower to graph-fn calls
-    /// directly), but wrapping nodes such as [`node::Fn`] inline it: the
-    /// expression calls the graph fn for the active-input variant.
+    /// The expression calls the graph fn compiled for this graph's
+    /// active-input variant, so a graph node compiles like any other node: a
+    /// node fn whose body is the call (see [`graph_call_expr`]).
     fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
-        graph_call_expr(ctx.get_node(), self, ctx.path(), ctx.inputs())
-    }
-
-    fn graph(&self, _ctx: node::MetaCtx) -> bool {
-        true
+        graph_call_expr(
+            ctx.get_node(),
+            self,
+            ctx.path(),
+            ctx.inputs(),
+            ctx.outputs(),
+        )
     }
 
     fn stateful(&self, ctx: node::MetaCtx) -> bool {
@@ -142,10 +144,6 @@ impl<N: Node> Node for GraphNode<N> {
 
     fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         self.graph.expr(ctx)
-    }
-
-    fn graph(&self, ctx: node::MetaCtx) -> bool {
-        self.graph.graph(ctx)
     }
 
     fn stateful(&self, ctx: node::MetaCtx) -> bool {
@@ -374,15 +372,21 @@ fn inner_flow_graph(meta: &compile::Meta) -> Result<compile::FlowGraph, node::Ex
 /// The expression calling the graph fn compiled for this graph's
 /// active-input variant (`graph-fn-{path}-i{mask}`, see [`compile::module`]).
 ///
-/// The result is the outlet values (raw for one outlet, a `(list ...)` for
-/// several), or a `(list branch-ix value)` pair matching `graph_branches`
-/// when the interior branches externally. A stateful interior threads the
-/// node's `state` (the nested level's state hashmap) through the call.
+/// The graph fn yields all outlet values (raw for one outlet, a `(list ...)`
+/// for several), or a `(list branch-ix value)` pair matching
+/// `graph_branches` when the interior branches externally. Branching pairs
+/// pass through untouched (the value is already shaped per arm, mirroring
+/// the `Branch` node contract); otherwise, when only a subset of several
+/// outlets is consumed (`outputs`), the active subset is selected so the
+/// expression honours the node-fn result contract. A stateful interior
+/// threads the node's `state` (the nested level's state hashmap) through
+/// the call.
 pub fn graph_call_expr<'a, G>(
     get_node: node::GetNode<'a>,
     g: G,
     path: &[node::Id],
     inputs: &[Option<String>],
+    outputs: &node::Conns,
 ) -> node::ExprResult
 where
     G: IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable + Data<EdgeWeight = Edge>,
@@ -397,7 +401,7 @@ where
     let stateful = g
         .node_references()
         .any(|n_ref| n_ref.weight().stateful(meta_ctx));
-    let expr_str = if stateful {
+    let call = if stateful {
         args.push("state".to_string());
         format!(
             "(let ((%gantz-r ({fn_name} {})))
@@ -408,5 +412,31 @@ where
     } else {
         format!("({fn_name} {})", args.join(" "))
     };
-    node::parse_expr(&expr_str)
+
+    let n_outlets = g
+        .node_references()
+        .filter(|n_ref| n_ref.weight().outlet(meta_ctx))
+        .count();
+    let active: Vec<usize> = outputs
+        .iter()
+        .enumerate()
+        .filter_map(|(o, b)| b.then_some(o))
+        .collect();
+    let branching = !graph_branches(get_node, g)?.is_empty();
+    if branching || n_outlets <= 1 || active.is_empty() || active.len() == n_outlets {
+        return node::parse_expr(&call);
+    }
+
+    // Select the consumed subset from the full outlet list.
+    let selection = match active.as_slice() {
+        [k] => format!("(list-ref %gantz-out {k})"),
+        ks => {
+            let refs: Vec<String> = ks
+                .iter()
+                .map(|k| format!("(list-ref %gantz-out {k})"))
+                .collect();
+            format!("(list {})", refs.join(" "))
+        }
+    };
+    node::parse_expr(&format!("(let ((%gantz-out {call})) {selection})"))
 }

@@ -548,7 +548,7 @@ where
         for (path, confs) in &builder.confs {
             let sub = builder.meta_tree.tree(path).expect("conf path exists");
             for conf in confs {
-                if sub.elem.graphs.contains(&conf.id) {
+                if sub.nested.contains_key(&conf.id) {
                     let mut gpath = path.clone();
                     gpath.push(conf.id);
                     let key = (gpath, conf.conns.inputs);
@@ -768,7 +768,6 @@ impl ModuleBuilder<'_> {
 
         let cx = lower::Cx {
             meta,
-            nested: meta_node.elem.graphs.clone(),
             extra_branches,
             prebound,
         };
@@ -837,7 +836,6 @@ impl ModuleBuilder<'_> {
         let active = active_inlets_from_conns(&inlet_ids, imask);
         let cx = lower::Cx {
             meta,
-            nested: sub.elem.graphs.clone(),
             extra_branches: std::collections::BTreeMap::new(),
             prebound: std::collections::BTreeSet::new(),
         };
@@ -892,15 +890,7 @@ fn node_confs_tree(
     confs: &std::collections::BTreeMap<Vec<node::Id>, std::collections::BTreeSet<NodeConf>>,
     path: &mut Vec<node::Id>,
 ) -> RoseTree<std::collections::BTreeSet<NodeConf>> {
-    let elem = confs
-        .get(path)
-        .map(|set| {
-            set.iter()
-                .filter(|c| !meta_node.elem.graphs.contains(&c.id))
-                .copied()
-                .collect()
-        })
-        .unwrap_or_default();
+    let elem = confs.get(path).cloned().unwrap_or_default();
     let nested = meta_node
         .nested
         .iter()

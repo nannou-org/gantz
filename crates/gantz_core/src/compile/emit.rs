@@ -145,17 +145,12 @@ fn define_sexps(dst: &[Var], value: Sexp) -> Vec<Sexp> {
     }
 }
 
-/// The call expression for a node fn (or a nested level's graph fn),
-/// state-wrapped when stateful.
+/// The call expression for a node fn, state-wrapped when stateful.
 fn call_sexp(cx: &Cx, call: &NodeCall) -> Sexp {
     let inputs = node::Conns::try_from_iter(call.args.iter().map(Option::is_some))
         .expect("validated NodeCall arg count exceeds Conns::MAX");
     let node_path: Vec<node::Id> = cx.path.iter().copied().chain([call.node]).collect();
-    let fn_name = if call.graph {
-        graph_fn_name(&node_path, &inputs)
-    } else {
-        node_fn_name(&node_path, &inputs, &call.outputs)
-    };
+    let fn_name = node_fn_name(&node_path, &inputs, &call.outputs);
     let mut items = vec![a(fn_name)];
     items.extend(call.args.iter().flatten().map(arg_sexp));
     if call.stateful {
@@ -435,7 +430,6 @@ mod tests {
             args,
             outputs: outputs.parse().unwrap(),
             stateful: false,
-            graph: false,
         }
     }
 
