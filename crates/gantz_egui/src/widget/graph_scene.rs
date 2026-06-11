@@ -551,3 +551,79 @@ where
     }
     index_path_node_mut(graph, path).and_then(|node| node.to_graph_mut())
 }
+
+/// The id of the node to flag at the viewed level for a diagnostic path: the
+/// next id under the level, so diagnostics within nested graphs flag the
+/// enclosing graph node. `None` when the path is empty or lies outside the
+/// level.
+fn diagnostic_node_at_level(diag_path: &[node::Id], level: &[node::Id]) -> Option<node::Id> {
+    diag_path.strip_prefix(level)?.first().copied()
+}
+
+/// Paint a glow and hover message over the nodes implicated by diagnostics,
+/// and tint the scene border when any diagnostic cannot be attributed to a
+/// node visible at this level (e.g. a whole-graph error, or one in a level
+/// not currently viewed).
+pub fn paint_diagnostics(
+    diagnostics: &[gantz_core::Diagnostic],
+    level: &[node::Id],
+    response: &GraphSceneResponse,
+    ui: &egui::Ui,
+) {
+    if diagnostics.is_empty() {
+        return;
+    }
+    let color = ui.visuals().error_fg_color;
+    let mut unattributed = false;
+    for diag in diagnostics {
+        let flagged = diagnostic_node_at_level(&diag.path, level).and_then(|flag| {
+            let ix = response.nodes.iter().position(|(ix, _)| ix.index() == flag)?;
+            Some(&response.nodes[ix].1)
+        });
+        let Some(node_response) = flagged else {
+            unattributed = true;
+            continue;
+        };
+        // Paint on the node's own layer so the scene transform applies.
+        let painter = ui.ctx().layer_painter(node_response.layer_id);
+        for i in 0..3 {
+            let expand = 2.0 + i as f32 * 3.0;
+            let alpha = [0.9, 0.45, 0.2][i];
+            painter.rect_stroke(
+                node_response.rect.expand(expand),
+                egui::CornerRadius::same((4.0 + expand) as u8),
+                egui::Stroke::new(2.0, color.gamma_multiply(alpha)),
+                egui::StrokeKind::Outside,
+            );
+        }
+        (**node_response).clone().on_hover_text(&diag.message);
+    }
+    if unattributed {
+        ui.painter().rect_stroke(
+            response.scene.rect,
+            0,
+            egui::Stroke::new(2.0, color.gamma_multiply(0.6)),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::diagnostic_node_at_level;
+
+    #[test]
+    fn diagnostic_level_resolution() {
+        // A node at the viewed level flags itself.
+        assert_eq!(diagnostic_node_at_level(&[3], &[]), Some(3));
+        // A node within a nested graph flags the enclosing graph node.
+        assert_eq!(diagnostic_node_at_level(&[3, 2, 1], &[]), Some(3));
+        // Viewing inside the nested graph flags the inner node.
+        assert_eq!(diagnostic_node_at_level(&[3, 2, 1], &[3]), Some(2));
+        assert_eq!(diagnostic_node_at_level(&[3, 2, 1], &[3, 2]), Some(1));
+        // Outside the viewed level or empty: unattributable.
+        assert_eq!(diagnostic_node_at_level(&[3, 2], &[4]), None);
+        assert_eq!(diagnostic_node_at_level(&[], &[]), None);
+        assert_eq!(diagnostic_node_at_level(&[3], &[3]), None);
+    }
+}

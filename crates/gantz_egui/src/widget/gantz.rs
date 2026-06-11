@@ -1003,6 +1003,7 @@ where
             .expect("pane head not found in heads");
 
         let immutable = head_immutable(pane_head, self.base_immutable, self.base_names);
+        let diagnostics = self.access.diagnostics(pane_head).to_vec();
 
         let head_state = self.state.open_heads.entry(pane_head.clone()).or_default();
         let auto_layout = head_state.auto_layout;
@@ -1021,6 +1022,7 @@ where
                 layout_flow,
                 center_view,
                 immutable,
+                &diagnostics,
                 data.vm,
                 ui,
             )
@@ -1369,6 +1371,7 @@ fn graph_scene<N>(
     layout_flow: egui::Direction,
     center_view: bool,
     immutable: bool,
+    diagnostics: &[gantz_core::Diagnostic],
     vm: &mut Engine,
     ui: &mut egui::Ui,
 ) -> Option<graph_scene::GraphSceneResponse>
@@ -1406,6 +1409,8 @@ where
                 .center_view(center_view)
                 .immutable(immutable)
                 .show(view, &mut head_state.scene, vm, ui);
+
+            graph_scene::paint_diagnostics(diagnostics, &head_state.path, &response, ui);
 
             Some(response)
         }
