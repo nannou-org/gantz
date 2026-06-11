@@ -54,6 +54,8 @@ use meta::MetaTree;
 pub use names::{Name, entry_fn_name};
 pub(crate) use names::graph_fn_name;
 #[doc(inline)]
+pub use source_map::SourceMap;
+#[doc(inline)]
 pub use meta::{EdgeKind, Meta, MetaGraph};
 use petgraph::visit::{
     Data, Dfs, EdgeRef, GraphBase, GraphRef, IntoEdgesDirected, IntoNeighbors, IntoNodeReferences,
@@ -73,6 +75,7 @@ mod lower;
 mod meta;
 pub mod names;
 mod rosetree;
+pub mod source_map;
 
 /// Allows for remaining generic over graph type edges that represent one or
 /// more gantz [`Edge`]s.
