@@ -9,7 +9,7 @@ use crate::{
     },
     node,
 };
-pub(crate) use node_fn::{node_fns, unique_node_confs};
+pub(crate) use node_fn::{name as node_fn_name, node_fns, unique_node_confs};
 use petgraph::{
     graph::NodeIndex,
     visit::{EdgeRef, IntoEdgeReferences, IntoNodeReferences, NodeRef},

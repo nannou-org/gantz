@@ -29,9 +29,11 @@ use std::{collections::HashSet, hash::Hash};
 use steel::parser::ast::ExprKind;
 
 mod codegen;
+mod emit;
 pub mod entrypoint;
 pub mod error;
 mod flow;
+mod ir;
 mod meta;
 mod rosetree;
 
