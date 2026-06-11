@@ -7,7 +7,7 @@ use crate::{
 };
 use gantz_core::{Node, node};
 use petgraph::visit::{IntoNodeReferences, NodeRef};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use steel::steel_vm::engine::Engine;
 
 /// A file dropped onto a gantz pane.
@@ -761,7 +761,43 @@ where
             Pane::Logs => match &gantz.log_source {
                 None => (),
                 Some(LogSource::Logger(logger)) => {
-                    log_view(logger, ui);
+                    // Resolve labels for entries emitted by nodes of the
+                    // focused head (the target encodes the node's path).
+                    let focused = access.heads().get(*focused_head).cloned();
+                    let mut labels: HashMap<Vec<node::Id>, String> = HashMap::new();
+                    if let Some(fh) = &focused {
+                        let paths: BTreeSet<Vec<node::Id>> = logger
+                            .get_entries()
+                            .iter()
+                            .filter_map(|e| gantz_std::log::parse_log_target(&e.target))
+                            .collect();
+                        if !paths.is_empty() {
+                            let env = gantz.env;
+                            access.with_head_mut(fh, |data| {
+                                for path in paths {
+                                    let Some(node) =
+                                        graph_scene::index_path_node_mut(data.graph, &path)
+                                    else {
+                                        continue;
+                                    };
+                                    labels.insert(path, node.name(env).to_string());
+                                }
+                            });
+                        }
+                    }
+                    let res = log_view(logger, &labels, ui);
+                    // Clicking an entry navigates to and selects its node.
+                    if let (Some(path), Some(fh)) = (res.inner.clicked_path, focused) {
+                        if let Some((&node_id, parent)) = path.split_last() {
+                            let head_state = state.open_heads.entry(fh).or_default();
+                            head_state.scene.cmds.push(Cmd::OpenPath(parent.to_vec()));
+                            let selection = &mut head_state.scene.interaction.selection;
+                            selection.clear();
+                            selection
+                                .nodes
+                                .insert(graph_scene::NodeIndex::new(node_id));
+                        }
+                    }
                 }
                 #[cfg(feature = "tracing")]
                 Some(LogSource::TraceCapture(trace_capture, level)) => {
@@ -1539,9 +1575,15 @@ fn command_palette(
     }
 }
 
-fn log_view(logger: &widget::log_view::Logger, ui: &mut egui::Ui) -> egui::InnerResponse<()> {
+fn log_view(
+    logger: &widget::log_view::Logger,
+    node_labels: &HashMap<Vec<node::Id>, String>,
+    ui: &mut egui::Ui,
+) -> egui::InnerResponse<widget::log_view::LogViewResponse> {
     pane_ui(ui, |ui| {
-        widget::log_view::LogView::new("log-view".into(), logger.clone()).show(ui);
+        widget::log_view::LogView::new("log-view".into(), logger.clone())
+            .node_labels(node_labels)
+            .show(ui)
     })
 }
 

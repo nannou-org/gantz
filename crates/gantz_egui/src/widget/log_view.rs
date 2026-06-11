@@ -1,15 +1,26 @@
 use egui_extras::{Column, TableBuilder};
+use gantz_core::node;
 use log::{Level, Metadata, Record};
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
 };
 use web_time::SystemTime;
 
-/// A table presenting the
-pub struct LogView {
+/// A table presenting the log entries.
+pub struct LogView<'a> {
     logger: Logger,
     id: egui::Id,
+    /// Labels for entries whose target identifies an emitting node (see
+    /// `gantz_std::log::log_target`), keyed by node path.
+    node_labels: Option<&'a HashMap<Vec<node::Id>, String>>,
+}
+
+/// The response returned by [`LogView::show`].
+#[derive(Default)]
+pub struct LogViewResponse {
+    /// The node path of a clicked gantz-target entry, for navigation.
+    pub clicked_path: Option<Vec<node::Id>>,
 }
 
 // State that needs to persist between frames.
@@ -101,12 +112,24 @@ impl log::Log for Logger {
     fn flush(&self) {}
 }
 
-impl LogView {
+impl<'a> LogView<'a> {
     pub fn new(id: egui::Id, logger: Logger) -> Self {
-        Self { logger, id }
+        Self {
+            logger,
+            id,
+            node_labels: None,
+        }
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui) {
+    /// Provide node labels for gantz-target entries; their target cells
+    /// then show `label (path)` and become clickable for navigation.
+    pub fn node_labels(mut self, labels: &'a HashMap<Vec<node::Id>, String>) -> Self {
+        self.node_labels = Some(labels);
+        self
+    }
+
+    pub fn show(&mut self, ui: &mut egui::Ui) -> LogViewResponse {
+        let mut response = LogViewResponse::default();
         // Get or initialize our state from memory
         let state_id = self.id.with("state");
         let mut state = ui
@@ -217,7 +240,27 @@ impl LogView {
                     });
 
                     row.col(|ui| {
-                        ui.colored_label(text_color, &entry.target);
+                        let node_path = gantz_std::log::parse_log_target(&entry.target);
+                        match node_path {
+                            Some(path) => {
+                                let label = self
+                                    .node_labels
+                                    .and_then(|labels| labels.get(&path))
+                                    .map(String::as_str);
+                                let ids: Vec<String> =
+                                    path.iter().map(ToString::to_string).collect();
+                                let text = match label {
+                                    Some(label) => format!("{label} ({})", ids.join(":")),
+                                    None => ids.join(":"),
+                                };
+                                if ui.link(text).on_hover_text("select node").clicked() {
+                                    response.clicked_path = Some(path);
+                                }
+                            }
+                            None => {
+                                ui.colored_label(text_color, &entry.target);
+                            }
+                        }
                     });
 
                     row.col(|ui| {
@@ -236,5 +279,7 @@ impl LogView {
 
         // Store the modified state back in memory
         ui.memory_mut(|mem| mem.data.insert_temp(state_id, state));
+
+        response
     }
 }

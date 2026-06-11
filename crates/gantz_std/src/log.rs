@@ -1,8 +1,11 @@
-use gantz_core::node::{ExprCtx, ExprResult, MetaCtx, RegCtx};
+use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::steel::{SteelVal, steel_vm::register_fn::RegisterFn};
 use serde::{Deserialize, Serialize};
 
 /// A simple node that logs whatever value is received at a given log level.
+///
+/// The emitted expression passes the node's own path so the log entry's
+/// target identifies the emitting node (see [`log_target`]).
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct Log {
     pub level: log::Level,
@@ -32,26 +35,36 @@ impl gantz_core::Node for Log {
             log::Level::Debug => "debug",
             log::Level::Trace => "trace",
         };
+        let path = ctx
+            .path()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
         // TODO: Switch to proper logging. Reference steel logging.scm example.
-        let expr = format!("(log/{level} {input})");
+        let expr = format!("(log/{level} '({path}) {input})");
         gantz_core::node::parse_expr(&expr)
     }
 
     fn register(&self, mut ctx: RegCtx<'_, '_>) {
-        fn error(val: SteelVal) {
-            log::error!("{}", val);
+        fn log_val(level: log::Level, path: &SteelVal, val: &SteelVal) {
+            let path = path_from_val(path);
+            log::log!(target: &log_target(&path), level, "{val}");
         }
-        fn warn(val: SteelVal) {
-            log::warn!("{}", val);
+        fn error(path: SteelVal, val: SteelVal) {
+            log_val(log::Level::Error, &path, &val);
         }
-        fn info(val: SteelVal) {
-            log::info!("{}", val);
+        fn warn(path: SteelVal, val: SteelVal) {
+            log_val(log::Level::Warn, &path, &val);
         }
-        fn debug(val: SteelVal) {
-            log::debug!("{}", val);
+        fn info(path: SteelVal, val: SteelVal) {
+            log_val(log::Level::Info, &path, &val);
         }
-        fn trace(val: SteelVal) {
-            log::trace!("{}", val);
+        fn debug(path: SteelVal, val: SteelVal) {
+            log_val(log::Level::Debug, &path, &val);
+        }
+        fn trace(path: SteelVal, val: SteelVal) {
+            log_val(log::Level::Trace, &path, &val);
         }
         ctx.vm().register_fn("log/error", error);
         ctx.vm().register_fn("log/warn", warn);
@@ -64,5 +77,50 @@ impl gantz_core::Node for Log {
 impl gantz_ca::CaHash for Log {
     fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         format!("gantz_std::Log::{:?}", self.level).hash(hasher);
+    }
+}
+
+/// The log target identifying the node at the given path, e.g. `gantz:0:3:2`.
+pub fn log_target(path: &[node::Id]) -> String {
+    let path: Vec<String> = path.iter().map(ToString::to_string).collect();
+    format!("gantz:{}", path.join(":"))
+}
+
+/// Parse the node path back out of a [`log_target`]-formatted target.
+pub fn parse_log_target(target: &str) -> Option<Vec<node::Id>> {
+    let path = target.strip_prefix("gantz:")?;
+    path.split(':').map(|id| id.parse().ok()).collect()
+}
+
+/// The node path carried in a log fn's first argument (a quoted id list).
+fn path_from_val(val: &SteelVal) -> Vec<node::Id> {
+    match val {
+        SteelVal::ListV(ids) => ids
+            .iter()
+            .filter_map(|id| match id {
+                SteelVal::IntV(id) => usize::try_from(*id).ok(),
+                _ => None,
+            })
+            .collect(),
+        _ => vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_target_roundtrip() {
+        for path in [vec![0], vec![3, 2, 1], vec![10, 200]] {
+            assert_eq!(parse_log_target(&log_target(&path)), Some(path));
+        }
+    }
+
+    #[test]
+    fn non_gantz_targets_rejected() {
+        for target in ["", "gantz_std::log", "gantz:", "gantz:x", "gantz:1:x"] {
+            assert_eq!(parse_log_target(target), None, "{target}");
+        }
     }
 }
