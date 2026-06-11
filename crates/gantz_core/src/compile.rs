@@ -34,6 +34,7 @@ pub mod entrypoint;
 pub mod error;
 mod flow;
 mod ir;
+mod lower;
 mod meta;
 mod rosetree;
 
@@ -479,6 +480,66 @@ where
 
     // Collect eval fns.
     let entry_fns = codegen::entry_fns(&flow_tree)?;
+    Ok(node_fns.into_iter().chain(entry_fns).collect())
+}
+
+/// Like [`module`], but lowering through the join-point IR pipeline
+/// (`lower` -> `ir` -> `emit`) instead of the flow-graph codegen.
+///
+/// Phase 1 of the IR migration: single-level graphs only. Nested graphs and
+/// non-root entrypoint sources return [`error::ModuleError::Unsupported`].
+pub fn module_v2<'a, G>(
+    get_node: node::GetNode<'a>,
+    g: G,
+    entrypoints: &[Entrypoint],
+) -> Result<Vec<ExprKind>, ModuleError>
+where
+    G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
+    G::NodeWeight: Node,
+{
+    let mut meta_tree = MetaTree::default();
+    crate::graph::visit(get_node, g, &[], &mut meta_tree);
+    if !meta_tree.errors.is_empty() {
+        return Err(error::MetaErrors(meta_tree.errors).into());
+    }
+    if !meta_tree.tree.nested.is_empty() {
+        return Err(ModuleError::Unsupported("nested graphs"));
+    }
+    let meta = &meta_tree.tree.elem;
+
+    let level_sources = group_sources_by_level(entrypoints);
+    if level_sources.keys().any(|path| !path.is_empty()) {
+        return Err(ModuleError::Unsupported("non-root entrypoint sources"));
+    }
+
+    // Lower each entrypoint to an IR body, collecting the node variants the
+    // bodies call.
+    let mut confs = std::collections::BTreeSet::new();
+    let mut entry_fns = Vec::new();
+    let cx = emit::Cx { path: &[] };
+    for (ep_id, srcs) in level_sources.get(&vec![]).map(|v| &v[..]).unwrap_or(&[]) {
+        let mut push = Vec::new();
+        let mut pull = Vec::new();
+        for src in srcs {
+            let node_id = *src.path.last().unwrap();
+            match src.kind {
+                EvalKind::Push => push.push((node_id, src.conns)),
+                EvalKind::Pull => pull.push((node_id, src.conns)),
+            }
+        }
+        let body = lower::entry_body(meta, push, pull)?;
+        #[cfg(debug_assertions)]
+        ir::validate(&body, 0).expect("lowering produced invalid IR");
+        lower::collect_confs(&body, &mut confs);
+        entry_fns.push(emit::entry_fn(&cx, &codegen::entry_fn_name(ep_id), &body));
+    }
+
+    // Generate a node fn per variant the bodies call.
+    let confs_tree = RoseTree {
+        elem: confs,
+        nested: std::collections::BTreeMap::new(),
+    };
+    let node_fns = codegen::node_fns(get_node, g, &confs_tree)?;
     Ok(node_fns.into_iter().chain(entry_fns).collect())
 }
 

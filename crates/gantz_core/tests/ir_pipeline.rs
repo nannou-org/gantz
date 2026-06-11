@@ -1,0 +1,683 @@
+//! Differential tests for the IR pipeline (`compile::module_v2`).
+//!
+//! Every shape compiles through both the flow-graph pipeline
+//! (`compile::module`) and the IR pipeline (`compile::module_v2`), runs the
+//! same entrypoint call sequence in two fresh VMs, and the resulting root
+//! state hashmaps must be equal. The shapes mirror `tests/graph.rs`.
+
+use gantz_core::compile::{Entrypoint, entry_fn_name, entrypoint, push_pull_entrypoints};
+use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
+use gantz_core::{Edge, ROOT_STATE};
+use std::fmt::Debug;
+use steel::SteelVal;
+use steel::steel_vm::engine::Engine;
+
+trait DebugNode: Debug + Node {}
+impl<T> DebugNode for T where T: Debug + Node {}
+
+type Graph = petgraph::graph::DiGraph<Box<dyn DebugNode>, Edge>;
+
+fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
+    None
+}
+
+fn node_push() -> node::Push<node::Expr> {
+    node::expr("'()").unwrap().with_push_eval()
+}
+
+fn node_int(i: i32) -> node::Expr {
+    node::expr(format!("(begin $push {})", i)).unwrap()
+}
+
+fn node_add() -> node::Expr {
+    node::expr("(+ $l $r)").unwrap()
+}
+
+fn node_assert_eq() -> node::Expr {
+    node::expr("(assert! (equal? $l $r))").unwrap()
+}
+
+/// Stores the received number in state and returns it.
+fn node_number() -> node::Expr {
+    node::expr(
+        "
+        (let ((x $x))
+          (set! state (if (number? x) x state))
+          state)
+    ",
+    )
+    .unwrap()
+}
+
+/// A 1-in 2-out select: input 0 takes arm 0, anything else arm 1.
+#[derive(Debug)]
+struct Select;
+
+impl Node for Select {
+    fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
+        1
+    }
+    fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
+        2
+    }
+    fn branches(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+        vec![
+            node::EvalConf::Set([true, false].try_into().unwrap()),
+            node::EvalConf::Set([false, true].try_into().unwrap()),
+        ]
+    }
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+        let x = ctx.inputs()[0].as_deref().expect("must have one input");
+        node::parse_expr(&format!("(if (equal? 0 {x}) (list 0 {x}) (list 1 {x}))"))
+    }
+}
+
+/// Run `module` in a fresh VM, call the entrypoints in `calls` order, and
+/// return the final root state.
+fn run_pipeline(
+    label: &str,
+    module: &[steel::parser::ast::ExprKind],
+    g: &Graph,
+    calls: &[&Entrypoint],
+) -> SteelVal {
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, g, &[], &mut vm);
+    for f in module {
+        vm.run(f.to_pretty(100))
+            .unwrap_or_else(|e| panic!("{label}: failed to load module: {e}"));
+    }
+    for ep in calls {
+        vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+            .unwrap_or_else(|e| panic!("{label}: entry fn call failed: {e}"));
+    }
+    vm.extract_value(ROOT_STATE).unwrap()
+}
+
+/// Compile `g` through both pipelines and assert the root state after the
+/// same call sequence is identical.
+fn assert_pipelines_agree(g: &Graph, eps: &[Entrypoint], calls: &[&Entrypoint]) {
+    let m1 = gantz_core::compile::module(&no_lookup, g, eps).expect("flow pipeline failed");
+    let m2 = gantz_core::compile::module_v2(&no_lookup, g, eps).expect("IR pipeline failed");
+    if std::env::var("GANTZ_DUMP").is_ok() {
+        for e in &m2 {
+            eprintln!("{}\n", e.to_pretty(100));
+        }
+    }
+    let s2 = run_pipeline("ir", &m2, g, calls);
+    let s1 = run_pipeline("flow", &m1, g, calls);
+    let m2_str = m2
+        .iter()
+        .map(|e| e.to_pretty(100))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    assert_eq!(
+        s1, s2,
+        "pipelines disagree on root state\nflow: {s1:?}\nir: {s2:?}\n\nIR module:\n{m2_str}"
+    );
+}
+
+/// All push/pull entrypoints, each called once in order.
+fn agree_on_all_entrypoints(g: &Graph) {
+    let eps = push_pull_entrypoints(&no_lookup, g);
+    let calls: Vec<&Entrypoint> = eps.iter().collect();
+    assert_pipelines_agree(g, &eps, &calls);
+}
+
+/// push -> one -> add(x2) plus push -> two, asserting 1 + 1 == 2.
+#[test]
+fn push_eval() {
+    let mut g = Graph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let one = g.add_node(Box::new(node_int(1)) as Box<_>);
+    let add = g.add_node(Box::new(node_add()) as Box<_>);
+    let two = g.add_node(Box::new(node_int(2)) as Box<_>);
+    let assert_eq = g.add_node(Box::new(node_assert_eq()) as Box<_>);
+    g.add_edge(push, one, Edge::from((0, 0)));
+    g.add_edge(push, two, Edge::from((0, 0)));
+    g.add_edge(one, add, Edge::from((0, 0)));
+    g.add_edge(one, add, Edge::from((0, 1)));
+    g.add_edge(add, assert_eq, Edge::from((0, 0)));
+    g.add_edge(two, assert_eq, Edge::from((0, 1)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Pull evaluation of the same diamond.
+#[test]
+fn pull_eval() {
+    let mut g = Graph::new();
+    let one = g.add_node(Box::new(node_int(1)) as Box<dyn DebugNode>);
+    let add = g.add_node(Box::new(node_add()) as Box<_>);
+    let two = g.add_node(Box::new(node_int(2)) as Box<_>);
+    let assert_eq = g.add_node(Box::new(node_assert_eq().with_pull_eval()) as Box<_>);
+    g.add_edge(one, add, Edge::from((0, 0)));
+    g.add_edge(one, add, Edge::from((0, 1)));
+    g.add_edge(add, assert_eq, Edge::from((0, 0)));
+    g.add_edge(two, assert_eq, Edge::from((0, 1)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Two pushes into a select whose arms reconverge at a stateful number.
+#[test]
+fn push_cond_eval() {
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let select = g.add_node(Box::new(Select) as Box<_>);
+    let six = g.add_node(Box::new(node_int(6)) as Box<_>);
+    let seven = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, select, Edge::from((0, 0)));
+    g.add_edge(push_1, select, Edge::from((0, 0)));
+    g.add_edge(select, six, Edge::from((0, 0)));
+    g.add_edge(select, seven, Edge::from((1, 0)));
+    g.add_edge(six, number, Edge::from((0, 0)));
+    g.add_edge(seven, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// One arm goes directly to the join, the other through an intermediate.
+#[test]
+fn branch_target_is_join() {
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let select = g.add_node(Box::new(Select) as Box<_>);
+    let seven = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, select, Edge::from((0, 0)));
+    g.add_edge(push_1, select, Edge::from((0, 0)));
+    g.add_edge(select, number, Edge::from((0, 0)));
+    g.add_edge(select, seven, Edge::from((1, 0)));
+    g.add_edge(seven, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Both branch outputs feed the same target input (arm-varying scalar).
+#[test]
+fn branch_both_outputs_same_target() {
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let select = g.add_node(Box::new(Select) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, select, Edge::from((0, 0)));
+    g.add_edge(push_1, select, Edge::from((0, 0)));
+    g.add_edge(select, number, Edge::from((0, 0)));
+    g.add_edge(select, number, Edge::from((1, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Nested diamond: an inner branch inside the outer branch's first arm.
+#[test]
+fn nested_diamond() {
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let select_outer = g.add_node(Box::new(Select) as Box<_>);
+    let select_inner = g.add_node(Box::new(Select) as Box<_>);
+    let six = g.add_node(Box::new(node_int(6)) as Box<_>);
+    let seven = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let inner_result = g.add_node(Box::new(node_number()) as Box<_>);
+    let eight = g.add_node(Box::new(node_int(8)) as Box<_>);
+    let outer_result = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, select_outer, Edge::from((0, 0)));
+    g.add_edge(push_1, select_outer, Edge::from((0, 0)));
+    g.add_edge(select_outer, select_inner, Edge::from((0, 0)));
+    g.add_edge(select_outer, eight, Edge::from((1, 0)));
+    g.add_edge(select_inner, six, Edge::from((0, 0)));
+    g.add_edge(select_inner, seven, Edge::from((1, 0)));
+    g.add_edge(six, inner_result, Edge::from((0, 0)));
+    g.add_edge(seven, inner_result, Edge::from((0, 0)));
+    g.add_edge(inner_result, outer_result, Edge::from((0, 0)));
+    g.add_edge(eight, outer_result, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Lattice: two inner branches share arm targets, all converging at one join.
+#[test]
+fn lattice_reconvergence() {
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let select_outer = g.add_node(Box::new(Select) as Box<_>);
+    let sel_l = g.add_node(Box::new(Select) as Box<_>);
+    let sel_r = g.add_node(Box::new(Select) as Box<_>);
+    let six = g.add_node(Box::new(node_int(6)) as Box<_>);
+    let seven = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, select_outer, Edge::from((0, 0)));
+    g.add_edge(push_1, select_outer, Edge::from((0, 0)));
+    g.add_edge(select_outer, sel_l, Edge::from((0, 0)));
+    g.add_edge(select_outer, sel_r, Edge::from((1, 0)));
+    g.add_edge(sel_l, six, Edge::from((0, 0)));
+    g.add_edge(sel_l, seven, Edge::from((1, 0)));
+    g.add_edge(sel_r, six, Edge::from((0, 0)));
+    g.add_edge(sel_r, seven, Edge::from((1, 0)));
+    g.add_edge(six, number, Edge::from((0, 0)));
+    g.add_edge(seven, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// A combined entrypoint evaluating two independent chains in one call.
+#[test]
+fn multi_source_push() {
+    let mut g = Graph::new();
+    let push_a = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let int_a = g.add_node(Box::new(node_int(42)) as Box<_>);
+    let num_a = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_a, int_a, Edge::from((0, 0)));
+    g.add_edge(int_a, num_a, Edge::from((0, 0)));
+    let push_b = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let int_b = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let num_b = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_b, int_b, Edge::from((0, 0)));
+    g.add_edge(int_b, num_b, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let combined = entrypoint::from_sources([
+        entrypoint::push_source(vec![push_a.index()], g[push_a].n_outputs(ctx) as u8),
+        entrypoint::push_source(vec![push_b.index()], g[push_b].n_outputs(ctx) as u8),
+    ]);
+    assert_pipelines_agree(&g, std::slice::from_ref(&combined), &[&combined]);
+}
+
+/// A 2-output expr node feeding two separate stores.
+#[test]
+fn multi_output_expr() {
+    let mut g = Graph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let pair = node::expr("(begin $push (list 6 7))")
+        .unwrap()
+        .with_outputs(2);
+    let pair = g.add_node(Box::new(pair) as Box<_>);
+    let num_a = g.add_node(Box::new(node_number()) as Box<_>);
+    let num_b = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, pair, Edge::from((0, 0)));
+    g.add_edge(pair, num_a, Edge::from((0, 0)));
+    g.add_edge(pair, num_b, Edge::from((1, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Multiple zero-output side-effect leaves in one evaluation.
+#[test]
+fn zero_output_leaf_nodes() {
+    #[derive(Debug)]
+    struct Effect;
+    impl Node for Effect {
+        fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
+            1
+        }
+        fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+            let input = ctx.inputs()[0].as_deref().unwrap_or("'()");
+            node::parse_expr(&format!("(begin {input} '())"))
+        }
+    }
+    let mut g = Graph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let effect1 = g.add_node(Box::new(Effect) as Box<dyn DebugNode>);
+    let effect2 = g.add_node(Box::new(Effect) as Box<dyn DebugNode>);
+    g.add_edge(push, effect1, Edge::from((0, 0)));
+    g.add_edge(push, effect2, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// The `Branch` node type with reconvergence.
+#[test]
+fn branch_node() {
+    let branch = node::Branch::new(
+        "(if (equal? 0 $x) (list 0 '()) (list 1 '()))",
+        vec![
+            node::Conns::try_from([true, false]).unwrap(),
+            node::Conns::try_from([false, true]).unwrap(),
+        ],
+    )
+    .unwrap();
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let branch_ix = g.add_node(Box::new(branch) as Box<_>);
+    let six = g.add_node(Box::new(node_int(6)) as Box<_>);
+    let seven = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, branch_ix, Edge::from((0, 0)));
+    g.add_edge(push_1, branch_ix, Edge::from((0, 0)));
+    g.add_edge(branch_ix, six, Edge::from((0, 0)));
+    g.add_edge(branch_ix, seven, Edge::from((1, 0)));
+    g.add_edge(six, number, Edge::from((0, 0)));
+    g.add_edge(seven, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Multiple unconditional edges to one input pass as a list.
+#[test]
+fn multi_edge_input_list() {
+    let mut g = Graph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let three = g.add_node(Box::new(node_int(3)) as Box<_>);
+    let four = g.add_node(Box::new(node_int(4)) as Box<_>);
+    let sum = g.add_node(Box::new(node::expr("(apply + $x)").unwrap()) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, three, Edge::from((0, 0)));
+    g.add_edge(push, four, Edge::from((0, 0)));
+    g.add_edge(three, sum, Edge::from((0, 0)));
+    g.add_edge(four, sum, Edge::from((0, 0)));
+    g.add_edge(sum, store, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Branch arms ending at independent stateful terminals (no reconvergence).
+#[test]
+fn branch_divergent_terminal() {
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let select = g.add_node(Box::new(Select) as Box<_>);
+    let store_a = g.add_node(Box::new(node_number()) as Box<_>);
+    let store_b = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, select, Edge::from((0, 0)));
+    g.add_edge(push_1, select, Edge::from((0, 0)));
+    g.add_edge(select, store_a, Edge::from((0, 0)));
+    g.add_edge(select, store_b, Edge::from((1, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Multi-edge list binding entirely within one branch arm.
+#[test]
+fn multi_edge_in_branch_arm() {
+    #[derive(Debug)]
+    struct Select2;
+    impl Node for Select2 {
+        fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
+            1
+        }
+        fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
+            2
+        }
+        fn branches(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+            vec![
+                node::EvalConf::Set([true, false].try_into().unwrap()),
+                node::EvalConf::Set([false, true].try_into().unwrap()),
+            ]
+        }
+        fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+            let x = ctx.inputs()[0].as_deref().expect("must have one input");
+            node::parse_expr(&format!(
+                "(if (equal? 0 {x}) (list 0 '() '()) (list 1 '() '()))"
+            ))
+        }
+    }
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let select = g.add_node(Box::new(Select2) as Box<_>);
+    let three = g.add_node(Box::new(node_int(3)) as Box<_>);
+    let four = g.add_node(Box::new(node_int(4)) as Box<_>);
+    let sum = g.add_node(Box::new(node::expr("(apply + $x)").unwrap()) as Box<_>);
+    let eight = g.add_node(Box::new(node_int(8)) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, select, Edge::from((0, 0)));
+    g.add_edge(push_1, select, Edge::from((0, 0)));
+    g.add_edge(select, three, Edge::from((0, 0)));
+    g.add_edge(select, four, Edge::from((0, 0)));
+    g.add_edge(three, sum, Edge::from((0, 0)));
+    g.add_edge(four, sum, Edge::from((0, 0)));
+    g.add_edge(select, eight, Edge::from((1, 0)));
+    g.add_edge(sum, number, Edge::from((0, 0)));
+    g.add_edge(eight, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Optional `$?` input, unconnected and connected.
+#[test]
+fn optional_input() {
+    // Unconnected.
+    let mut g = Graph::new();
+    let push = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let add_opt = g.add_node(Box::new(
+        node::expr("(+ $a (if (Some? $?b) (Some->value $?b) 0))").unwrap(),
+    ) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, add_opt, Edge::from((0, 0)));
+    g.add_edge(add_opt, store, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+
+    // Connected.
+    let mut g = Graph::new();
+    let push = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let three = g.add_node(Box::new(node_int(3)) as Box<_>);
+    let add_opt = g.add_node(Box::new(
+        node::expr("(+ $a (if (Some? $?b) (Some->value $?b) 0))").unwrap(),
+    ) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, add_opt, Edge::from((0, 0)));
+    g.add_edge(push, three, Edge::from((0, 0)));
+    g.add_edge(three, add_opt, Edge::from((0, 1)));
+    g.add_edge(add_opt, store, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// A three-way branch with reconvergence.
+#[test]
+fn three_way_branch() {
+    #[derive(Debug)]
+    struct Select3;
+    impl Node for Select3 {
+        fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
+            1
+        }
+        fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
+            3
+        }
+        fn branches(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+            vec![
+                node::EvalConf::Set([true, false, false].try_into().unwrap()),
+                node::EvalConf::Set([false, true, false].try_into().unwrap()),
+                node::EvalConf::Set([false, false, true].try_into().unwrap()),
+            ]
+        }
+        fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+            let x = ctx.inputs()[0].as_deref().expect("must have one input");
+            node::parse_expr(&format!(
+                "(if (equal? 0 {x}) (list 0 '() '() '()) \
+                   (if (equal? 1 {x}) (list 1 '() '() '()) \
+                     (list 2 '() '() '())))"
+            ))
+        }
+    }
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let push_2 = g.add_node(Box::new(node_int(2).with_push_eval()) as Box<_>);
+    let select = g.add_node(Box::new(Select3) as Box<_>);
+    let six = g.add_node(Box::new(node_int(6)) as Box<_>);
+    let seven = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let eight = g.add_node(Box::new(node_int(8)) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, select, Edge::from((0, 0)));
+    g.add_edge(push_1, select, Edge::from((0, 0)));
+    g.add_edge(push_2, select, Edge::from((0, 0)));
+    g.add_edge(select, six, Edge::from((0, 0)));
+    g.add_edge(select, seven, Edge::from((1, 0)));
+    g.add_edge(select, eight, Edge::from((2, 0)));
+    g.add_edge(six, number, Edge::from((0, 0)));
+    g.add_edge(seven, number, Edge::from((0, 0)));
+    g.add_edge(eight, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// A dead arm (no active outputs) must not run downstream work.
+#[test]
+fn branch_single_output_dead_branch() {
+    let branch = node::Branch::new(
+        "(if (equal? 0 $x) (list 0 42) (list 1 99))",
+        vec![
+            node::Conns::try_from([true]).unwrap(),
+            node::Conns::try_from([false]).unwrap(),
+        ],
+    )
+    .unwrap();
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let branch_ix = g.add_node(Box::new(branch) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, branch_ix, Edge::from((0, 0)));
+    g.add_edge(push_1, branch_ix, Edge::from((0, 0)));
+    g.add_edge(branch_ix, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Two outputs, one fully dead arm.
+#[test]
+fn branch_two_outputs_one_dead() {
+    let branch = node::Branch::new(
+        "(if (equal? 0 $x) (list 0 (list 42 43)) (list 1 (list 99 100)))",
+        vec![
+            node::Conns::try_from([true, true]).unwrap(),
+            node::Conns::try_from([false, false]).unwrap(),
+        ],
+    )
+    .unwrap();
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let branch_ix = g.add_node(Box::new(branch) as Box<_>);
+    let store_a = g.add_node(Box::new(node_number()) as Box<_>);
+    let store_b = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, branch_ix, Edge::from((0, 0)));
+    g.add_edge(push_1, branch_ix, Edge::from((0, 0)));
+    g.add_edge(branch_ix, store_a, Edge::from((0, 0)));
+    g.add_edge(branch_ix, store_b, Edge::from((1, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Every arm dead: the branch's side effects run, nothing propagates.
+#[test]
+fn branch_all_dead() {
+    let branch = node::Branch::new(
+        "(begin (set! state $x) (if (equal? 0 $x) (list 0 '()) (list 1 '())))",
+        vec![
+            node::Conns::try_from([false]).unwrap(),
+            node::Conns::try_from([false]).unwrap(),
+        ],
+    )
+    .unwrap();
+    let mut g = Graph::new();
+    let push = g.add_node(Box::new(node_int(42).with_push_eval()) as Box<dyn DebugNode>);
+    let branch_ix = g.add_node(Box::new(branch) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, branch_ix, Edge::from((0, 0)));
+    g.add_edge(branch_ix, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Pd-style hot/cold `+`: cold push stores state without emitting, hot push
+/// emits. Order matters: cold first, then hot.
+#[test]
+fn branch_optional_input_pd_add() {
+    let pd_add = node::Branch::new(
+        "(begin \
+           (if (Some? $?b) (set! state (Some->value $?b)) '()) \
+           (if (number? $a) \
+               (list 0 (+ $a (if (number? state) state 0))) \
+               (list 1 '())))",
+        vec![
+            node::Conns::try_from([true]).unwrap(),
+            node::Conns::try_from([false]).unwrap(),
+        ],
+    )
+    .unwrap();
+    let mut g = Graph::new();
+    let push_hot = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let push_cold = g.add_node(Box::new(node_int(3).with_push_eval()) as Box<_>);
+    let pd_add_ix = g.add_node(Box::new(pd_add) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_cold, pd_add_ix, Edge::from((0, 0)));
+    g.add_edge(push_hot, pd_add_ix, Edge::from((0, 1)));
+    g.add_edge(pd_add_ix, number, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let ep_cold = entrypoint::push(vec![push_cold.index()], g[push_cold].n_outputs(ctx) as u8);
+    let ep_hot = entrypoint::push(vec![push_hot.index()], g[push_hot].n_outputs(ctx) as u8);
+    assert_pipelines_agree(&g, &eps, &[&ep_cold, &ep_hot]);
+}
+
+/// A stateful counter pushed several times.
+#[test]
+fn stateful_counter() {
+    let mut g = Graph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let counter = g.add_node(Box::new(
+        node::expr("(begin $push (set! state (+ (if (number? state) state 0) 1)) state)").unwrap(),
+    ) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, counter, Edge::from((0, 0)));
+    g.add_edge(counter, store, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    assert_pipelines_agree(&g, &eps, &[&ep, &ep, &ep]);
+}
+
+/// Two branches in one multi-source entrypoint reconverging at a shared add:
+/// the join of the first branch depends on the second branch's result, so
+/// the first branch must export its arm value past its own dispatch (the
+/// shape behind the old cross-component root-ordering fix).
+///
+/// NOTE: this is asserted against the IR pipeline only - the flow pipeline
+/// (`compile::module`) miscompiles this shape at runtime (`+` receives `'()`:
+/// the second branch's join reads the first branch's arm value before it is
+/// defined), a pre-existing bug beyond what `order_roots` fixed.
+#[test]
+fn two_branch_shared_join() {
+    let mut g = Graph::new();
+    let push_p = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_q = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let sel_p = g.add_node(Box::new(Select) as Box<_>);
+    let sel_q = g.add_node(Box::new(Select) as Box<_>);
+    let six = g.add_node(Box::new(node_int(6)) as Box<_>);
+    let seven = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let eight = g.add_node(Box::new(node_int(8)) as Box<_>);
+    let nine = g.add_node(Box::new(node_int(9)) as Box<_>);
+    let add = g.add_node(Box::new(node_add()) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_p, sel_p, Edge::from((0, 0)));
+    g.add_edge(push_q, sel_q, Edge::from((0, 0)));
+    g.add_edge(sel_p, six, Edge::from((0, 0)));
+    g.add_edge(sel_p, seven, Edge::from((1, 0)));
+    g.add_edge(sel_q, eight, Edge::from((0, 0)));
+    g.add_edge(sel_q, nine, Edge::from((1, 0)));
+    // Both of sel_p's arms feed add input 0; both of sel_q's feed input 1.
+    g.add_edge(six, add, Edge::from((0, 0)));
+    g.add_edge(seven, add, Edge::from((0, 0)));
+    g.add_edge(eight, add, Edge::from((0, 1)));
+    g.add_edge(nine, add, Edge::from((0, 1)));
+    g.add_edge(add, number, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let combined = entrypoint::from_sources([
+        entrypoint::push_source(vec![push_p.index()], g[push_p].n_outputs(ctx) as u8),
+        entrypoint::push_source(vec![push_q.index()], g[push_q].n_outputs(ctx) as u8),
+    ]);
+    let eps = std::slice::from_ref(&combined);
+    let m2 = gantz_core::compile::module_v2(&no_lookup, &g, eps).expect("IR pipeline failed");
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in &m2 {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+    vm.call_function_by_name_with_args(&entry_fn_name(&combined.id()), vec![])
+        .unwrap();
+
+    // push_p emits 0 -> sel_p arm 0 -> six; push_q emits 1 -> sel_q arm 1 ->
+    // nine; add = 6 + 9 = 15.
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 15);
+}

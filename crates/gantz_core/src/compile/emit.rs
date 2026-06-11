@@ -156,10 +156,7 @@ fn state_wrapped(node: node::Id, call_expr: Sexp) -> Sexp {
                 a("let"),
                 l([
                     l([a("output"), l([a("car"), a("results")])]),
-                    l([
-                        a("newstate"),
-                        l([a("car"), l([a("cdr"), a("results")])]),
-                    ]),
+                    l([a("newstate"), l([a("car"), l([a("cdr"), a("results")])])]),
                 ]),
                 l([
                     a("set!"),
@@ -246,8 +243,9 @@ fn tail_sexp(tail: &Tail) -> Sexp {
             [atom] => atom_sexp(atom),
             atoms => l(std::iter::once(a("list")).chain(atoms.iter().map(atom_sexp))),
         },
-        Tail::Jump { join, args } => l(std::iter::once(a(join_name(*join)))
-            .chain(args.iter().map(atom_sexp))),
+        Tail::Jump { join, args } => {
+            l(std::iter::once(a(join_name(*join))).chain(args.iter().map(atom_sexp)))
+        }
     }
 }
 
@@ -260,11 +258,7 @@ pub(crate) fn entry_fn(cx: &Cx, name: &str, body: &Body) -> ExprKind {
         l([a("define"), a(GRAPH_STATE), a(crate::ROOT_STATE)]),
     ];
     items.extend(body_sexps(cx, body));
-    items.push(l([
-        a("set!"),
-        a(crate::ROOT_STATE),
-        a(GRAPH_STATE),
-    ]));
+    items.push(l([a("set!"), a(crate::ROOT_STATE), a(GRAPH_STATE)]));
     parse_one(&Sexp::L(items).to_string())
 }
 
@@ -477,10 +471,7 @@ mod tests {
                     steps: vec![Step::Branch {
                         call: call(
                             1,
-                            vec![
-                                Some(Arg::One(Atom::Var(acc))),
-                                Some(Arg::One(Atom::Var(n))),
-                            ],
+                            vec![Some(Arg::One(Atom::Var(acc))), Some(Arg::One(Atom::Var(n)))],
                             "11",
                         ),
                         dst: vec![out(1, 0)],
@@ -493,10 +484,7 @@ mod tests {
                                     steps: vec![],
                                     tail: Tail::Jump {
                                         join: 1,
-                                        args: vec![
-                                            Atom::Var(out(9, 0)),
-                                            Atom::Var(out(9, 1)),
-                                        ],
+                                        args: vec![Atom::Var(out(9, 0)), Atom::Var(out(9, 1))],
                                     },
                                 },
                             },

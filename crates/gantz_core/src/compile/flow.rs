@@ -521,7 +521,7 @@ fn strictly_downstream(mg: &MetaGraph, roots: &HashSet<node::Id>) -> HashSet<nod
 }
 
 /// Filter unreachable nodes from the given metagraph.
-fn reachable_subgraph(g: &MetaGraph, reachable: &HashSet<node::Id>) -> MetaGraph {
+pub(crate) fn reachable_subgraph(g: &MetaGraph, reachable: &HashSet<node::Id>) -> MetaGraph {
     g.all_edges()
         .filter(|(a, b, _)| reachable.contains(a) && reachable.contains(b))
         .map(|(a, b, w)| (a, b, w.clone()))
