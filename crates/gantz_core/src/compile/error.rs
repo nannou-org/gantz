@@ -156,7 +156,7 @@ impl fmt::Display for MetaError {
         write!(
             f,
             "node-{}: {}",
-            super::codegen::path_string(&self.path),
+            super::names::path_string(&self.path),
             self.error
         )
     }
@@ -179,7 +179,7 @@ impl fmt::Display for NodeExprError {
         write!(
             f,
             "node-{}: {}",
-            super::codegen::path_string(&self.path),
+            super::names::path_string(&self.path),
             self.error
         )
     }

@@ -43,9 +43,6 @@ use crate::{
 };
 pub(crate) use analysis::level_branch_patterns;
 #[doc(inline)]
-pub use codegen::entry_fn_name;
-pub(crate) use emit::graph_fn_name;
-#[doc(inline)]
 pub use entrypoint::{
     Entrypoint, EntrypointId, EvalKind, EvalSource, pull_source, push_pull_entrypoints, push_source,
 };
@@ -53,6 +50,9 @@ pub use entrypoint::{
 pub use error::ModuleError;
 pub(crate) use lower::{NodeConf, NodeConns};
 use meta::MetaTree;
+#[doc(inline)]
+pub use names::{Name, entry_fn_name};
+pub(crate) use names::graph_fn_name;
 #[doc(inline)]
 pub use meta::{EdgeKind, Meta, MetaGraph};
 use petgraph::visit::{
@@ -71,6 +71,7 @@ pub mod error;
 mod ir;
 mod lower;
 mod meta;
+pub mod names;
 mod rosetree;
 
 /// Allows for remaining generic over graph type edges that represent one or
@@ -436,7 +437,7 @@ where
         ]));
         builder
             .fns
-            .push(emit::fn_def(&codegen::entry_fn_name(ep_id), &[], stmts));
+            .push(emit::fn_def(&names::entry_fn_name(ep_id), &[], stmts));
     }
 
     // Every nested level compiles its all-active variant unconditionally:
@@ -630,7 +631,7 @@ impl ModuleBuilder<'_> {
             };
             any_child = true;
             let key = a(format!("'{gid}"));
-            let pair = a(format!("node-{gid}"));
+            let pair = a(names::pair_name(gid));
             if piece.stateful {
                 let r = format!("%lvl-r-{gid}");
                 glue.push(l([
@@ -676,14 +677,16 @@ impl ModuleBuilder<'_> {
                 extra_branches.insert(gid, patterns);
             } else {
                 // Destructure all outputs from the plain result.
+                let out_name =
+                    |o: usize| names::var_name(&ir::Var::Output { node: gid, output: o });
                 match n_out {
                     0 => {}
-                    1 => glue.push(l([a("define"), a(format!("node-{gid}-o0")), pair])),
+                    1 => glue.push(l([a("define"), a(out_name(0)), pair])),
                     _ => {
                         for o in 0..n_out {
                             glue.push(l([
                                 a("define"),
-                                a(format!("node-{gid}-o{o}")),
+                                a(out_name(o)),
                                 l([a("list-ref"), pair.clone(), a(o.to_string())]),
                             ]));
                         }
@@ -764,11 +767,7 @@ impl ModuleBuilder<'_> {
         };
 
         let stateful = !meta_node.elem.stateful.is_empty();
-        let fn_name = format!(
-            "lvl-fn-{}-{}",
-            ep.0.display_short(),
-            codegen::path_string(path)
-        );
+        let fn_name = names::lvl_fn_name(ep, path);
         let mut body = Vec::new();
         let params: Vec<String> = if stateful {
             body.push(l([a("define"), a(crate::GRAPH_STATE), a("%lvl-state")]));
@@ -824,7 +823,10 @@ impl ModuleBuilder<'_> {
         let stateful = !meta.stateful.is_empty();
         let ecx = emit::Cx { path: gpath };
         let mut stmts = Vec::new();
-        let mut params: Vec<String> = active.iter().map(|&i| format!("node-{i}-o0")).collect();
+        let mut params: Vec<String> = active
+            .iter()
+            .map(|&i| names::var_name(&ir::Var::Output { node: i, output: 0 }))
+            .collect();
         if stateful {
             params.push("%lvl-state".to_string());
             stmts.push(l([a("define"), a(crate::GRAPH_STATE), a("%lvl-state")]));
@@ -835,7 +837,7 @@ impl ModuleBuilder<'_> {
         } else {
             stmts.push(result);
         }
-        let fn_def = emit::fn_def(&emit::graph_fn_name(gpath, imask), &params, stmts);
+        let fn_def = emit::fn_def(&names::graph_fn_name(gpath, imask), &params, stmts);
         self.graph_fns.push((gpath.len(), fn_def));
         Ok(())
     }

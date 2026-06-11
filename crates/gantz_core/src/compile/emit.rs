@@ -18,8 +18,8 @@
 use crate::{
     GRAPH_STATE,
     compile::{
-        codegen::node_fn_name,
-        ir::{Arg, Arm, Atom, Body, JoinId, NodeCall, Step, Subject, Tail, Var},
+        ir::{Arg, Arm, Atom, Body, NodeCall, Step, Subject, Tail, Var},
+        names::{join_name, node_fn_name, pair_name, var_name},
     },
     node,
 };
@@ -76,33 +76,6 @@ pub(crate) fn l(items: impl IntoIterator<Item = Sexp>) -> Sexp {
 /// The unit value `'()`.
 pub(crate) fn unit() -> Sexp {
     a("'()")
-}
-
-/// The emitted name of a variable.
-pub(crate) fn var_name(var: &Var) -> String {
-    match var {
-        Var::Output { node, output } => format!("node-{node}-o{output}"),
-        Var::Input { node, input } => format!("node-{node}-i{input}"),
-        Var::Result { node } => pair_name(*node),
-    }
-}
-
-/// The binding holding a branching node's raw `(branch-ix value)` result.
-fn pair_name(node: node::Id) -> String {
-    format!("node-{node}")
-}
-
-/// The name of the graph fn compiled for the nested level at `path`, for the
-/// variant invoked with the given active-input mask.
-pub(crate) fn graph_fn_name(path: &[node::Id], inputs: &node::Conns) -> String {
-    let path_string = crate::compile::codegen::path_string(path);
-    let inputs_prefix = if inputs.is_empty() { "" } else { "-i" };
-    format!("graph-fn-{path_string}{inputs_prefix}{inputs}")
-}
-
-/// The emitted name of a join point fn.
-fn join_name(join: JoinId) -> String {
-    format!("join-{join}")
 }
 
 fn atom_sexp(atom: &Atom) -> Sexp {

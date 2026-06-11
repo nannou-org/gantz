@@ -13,8 +13,8 @@ use crate::{
     Edge,
     compile::{
         NodeConf, NodeConns, RoseTree,
-        codegen::path_string,
         error::{NestedGraphNotFound, NodeExprError, NodeFnError, NodeFnErrors},
+        names::node_fn_name,
     },
     node::{self, Node},
     visit::{self, Visitor},
@@ -100,18 +100,6 @@ impl Visitor for NodeFns<'_> {
     }
 }
 
-/// Generate a function name for a node based on its path in the graph.
-///
-/// E.g. `node_fn_0_1_2_i0101_o1100
-pub(crate) fn name(node_path: &[node::Id], inputs: &node::Conns, outputs: &node::Conns) -> String {
-    let path_string = path_string(node_path);
-    let inputs_prefix = if inputs.is_empty() { "" } else { "-i" };
-    let outputs_prefix = if outputs.is_empty() { "" } else { "-o" };
-    let inputs_string = format!("{inputs}");
-    let outputs_string = format!("{outputs}");
-    format!("node-fn-{path_string}{inputs_prefix}{inputs_string}{outputs_prefix}{outputs_string}")
-}
-
 /// Generate a function for a single node with the given set of connected inputs.
 pub(crate) fn node_fn<'a>(
     get_node: node::GetNode<'a>,
@@ -150,7 +138,7 @@ pub(crate) fn node_fn<'a>(
 
     // Construct the full function definition
     // FIXME: Remove this when switching to `flow::NodeConf`.
-    let fn_name = name(node_path, &conns.inputs, &conns.outputs);
+    let fn_name = node_fn_name(node_path, &conns.inputs, &conns.outputs);
     let meta_ctx = node::MetaCtx::new(get_node);
     let fn_body = if node.stateful(meta_ctx) {
         input_args.push(STATE.to_string());
