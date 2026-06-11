@@ -452,8 +452,10 @@ where
     let mut levels = Vec::new();
     collect_levels(&meta_tree, &mut Vec::new(), &mut levels);
     for (gpath, n_inlets) in levels {
-        let imask = node::Conns::connected(n_inlets)
-            .map_err(|_| error::NodeConnsError::from(error::TooManyConns(n_inlets)))?;
+        let imask = node::Conns::connected(n_inlets).map_err(|_| ModuleError::NodeConns {
+            path: gpath.clone(),
+            error: error::TooManyConns(n_inlets).into(),
+        })?;
         if emitted.insert((gpath.clone(), imask)) {
             builder.graph_fn(&gpath, &imask)?;
         }
@@ -533,9 +535,12 @@ fn all_connected_confs(
     tree: &RoseTree<Meta>,
     path: &mut Vec<node::Id>,
     confs: &mut std::collections::BTreeMap<Vec<node::Id>, std::collections::BTreeSet<NodeConf>>,
-) -> Result<(), error::NodeConnsError> {
-    let conn = |n: usize| {
-        node::Conns::connected(n).map_err(|_| error::NodeConnsError::from(error::TooManyConns(n)))
+) -> Result<(), ModuleError> {
+    let conn = |n: usize, path: &[node::Id]| {
+        node::Conns::connected(n).map_err(|_| ModuleError::NodeConns {
+            path: path.to_vec(),
+            error: error::TooManyConns(n).into(),
+        })
     };
     let meta = &tree.elem;
     let level_confs = confs.entry(path.clone()).or_default();
@@ -543,8 +548,8 @@ fn all_connected_confs(
         if meta.inlets.contains(&n) || meta.outlets.contains(&n) || meta.delays.contains(&n) {
             continue;
         }
-        let inputs = conn(meta.inputs.get(&n).copied().unwrap_or(0))?;
-        let outputs = conn(meta.outputs.get(&n).copied().unwrap_or(0))?;
+        let inputs = conn(meta.inputs.get(&n).copied().unwrap_or(0), path)?;
+        let outputs = conn(meta.outputs.get(&n).copied().unwrap_or(0), path)?;
         let conns = NodeConns { inputs, outputs };
         level_confs.insert(NodeConf { id: n, conns });
     }
@@ -676,7 +681,12 @@ impl ModuleBuilder<'_> {
             prebound.insert(gid);
             if patterns.len() >= 2 {
                 prebound_vars.push(ir::Var::Result { node: gid });
-                push.push((gid, or_patterns(&patterns)?));
+                let pattern_union =
+                    or_patterns(&patterns).map_err(|error| ModuleError::NodeConns {
+                        path: path.to_vec(),
+                        error,
+                    })?;
+                push.push((gid, pattern_union));
                 extra_branches.insert(gid, patterns);
             } else {
                 // Destructure all outputs from the plain result.
@@ -701,8 +711,11 @@ impl ModuleBuilder<'_> {
                         output: o,
                     });
                 }
-                let conns = node::Conns::connected(n_out)
-                    .map_err(|_| error::NodeConnsError::from(error::TooManyConns(n_out)))?;
+                let conns =
+                    node::Conns::connected(n_out).map_err(|_| ModuleError::NodeConns {
+                        path: path.to_vec(),
+                        error: error::TooManyConns(n_out).into(),
+                    })?;
                 push.push((gid, conns));
             }
         }
@@ -730,7 +743,12 @@ impl ModuleBuilder<'_> {
             extra_branches,
             prebound,
         };
-        let out = lower::level_body(&cx, &lower::LevelSources::Eval { push, pull })?;
+        let out = lower::level_body(&cx, &lower::LevelSources::Eval { push, pull }).map_err(
+            |error| ModuleError::Lower {
+                path: path.to_vec(),
+                error,
+            },
+        )?;
         if self.config.validate_ir {
             ir::validate(&out.body, 0, &prebound_vars).map_err(|e| ModuleError::InvalidIr {
                 path: path.to_vec(),
@@ -758,10 +776,12 @@ impl ModuleBuilder<'_> {
         // analysed over the lowered body itself.
         let produced = out.outlets.iter().any(|o| o.atom.is_some());
         let patterns = match produced {
-            true => Some(
-                analysis::outlet_patterns(&out.body, &out.outlets)
-                    .map_err(error::NodeConnsError::from)?,
-            ),
+            true => Some(analysis::outlet_patterns(&out.body, &out.outlets).map_err(
+                |error| ModuleError::NodeConns {
+                    path: path.to_vec(),
+                    error: error.into(),
+                },
+            )?),
             false => None,
         };
         let result = match &patterns {
@@ -806,7 +826,12 @@ impl ModuleBuilder<'_> {
             extra_branches: std::collections::BTreeMap::new(),
             prebound: std::collections::BTreeSet::new(),
         };
-        let out = lower::level_body(&cx, &lower::LevelSources::Inlets(active.clone()))?;
+        let out = lower::level_body(&cx, &lower::LevelSources::Inlets(active.clone())).map_err(
+            |error| ModuleError::Lower {
+                path: gpath.to_vec(),
+                error,
+            },
+        )?;
         if self.config.validate_ir {
             let inlet_vars: Vec<ir::Var> = active
                 .iter()
@@ -821,7 +846,11 @@ impl ModuleBuilder<'_> {
 
         // The node-contract patterns: the all-active analysis, matching the
         // order `Graph::branches` reports to the parent.
-        let patterns = analysis::level_branch_patterns(meta)?;
+        let patterns =
+            analysis::level_branch_patterns(meta).map_err(|error| ModuleError::Lower {
+                path: gpath.to_vec(),
+                error,
+            })?;
         let result = emit::level_result_sexp(&out.outlets, &patterns);
         let stateful = !meta.stateful.is_empty();
         let ecx = emit::Cx { path: gpath };

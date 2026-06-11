@@ -118,7 +118,7 @@ pub fn fmt_module(module: &[ExprKind]) -> String {
         .join("\n\n")
 }
 
-/// The full path of the node best attributed to a steel error.
+/// The byte range into [`Compiled::src`] best attributed to a steel error.
 ///
 /// Uses the error's own span when it points into the compiled module's
 /// source, otherwise the innermost stack-trace frame that does. A span
@@ -126,7 +126,11 @@ pub fn fmt_module(module: &[ExprKind]) -> String {
 /// the span's source id) is exactly [`Compiled::src`] - so spans from other
 /// sources (e.g. snippets run by node UIs, or modules from before a
 /// recompile) and span-less errors yield `None`.
-pub fn steel_err_node(err: &SteelErr, vm: &Engine, compiled: &Compiled) -> Option<Vec<node::Id>> {
+pub fn steel_err_span(
+    err: &SteelErr,
+    vm: &Engine,
+    compiled: &Compiled,
+) -> Option<std::ops::Range<usize>> {
     let in_module = |span: &Span| {
         span.source_id()
             .and_then(|id| vm.get_source(&id))
@@ -143,7 +147,13 @@ pub fn steel_err_node(err: &SteelErr, vm: &Engine, compiled: &Compiled) -> Optio
             .find(|span| in_module(span))
             .copied()
     })?;
-    compiled.map.node_at(span.range())
+    Some(span.range())
+}
+
+/// The full path of the node best attributed to a steel error (see
+/// [`steel_err_span`]).
+pub fn steel_err_node(err: &SteelErr, vm: &Engine, compiled: &Compiled) -> Option<Vec<node::Id>> {
+    compiled.map.node_at(steel_err_span(err, vm, compiled)?)
 }
 
 /// Format an error together with its full [`std::error::Error::source`] chain.

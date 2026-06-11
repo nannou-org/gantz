@@ -266,7 +266,7 @@ fn strip_delay_out_edges(g: &MetaGraph, delays: &BTreeSet<node::Id>) -> MetaGrap
 /// The level's static sources: input-less interior nodes (constants), which
 /// stay live regardless of which inlets fired.
 fn static_sources(meta: &Meta) -> Result<Vec<(node::Id, node::Conns)>, LowerError> {
-    use crate::compile::error::{NodeConnsError, TooManyConns};
+    use crate::compile::error::TooManyConns;
     let mut sources = Vec::new();
     for n in meta.graph.nodes() {
         if meta.inlets.contains(&n) || meta.outlets.contains(&n) {
@@ -282,8 +282,10 @@ fn static_sources(meta: &Meta) -> Result<Vec<(node::Id, node::Conns)>, LowerErro
         }
         let n_out = meta.outputs.get(&n).copied().unwrap_or(0);
         if n_out > 0 {
-            let conns = node::Conns::connected(n_out)
-                .map_err(|_| NodeConnsError::from(TooManyConns(n_out)))?;
+            let conns = node::Conns::connected(n_out).map_err(|_| LowerError::Conns {
+                node: Some(n),
+                error: TooManyConns(n_out).into(),
+            })?;
             sources.push((n, conns));
         }
     }
@@ -480,15 +482,19 @@ fn input_sources(dag: &MetaGraph, n: node::Id, i: usize) -> Vec<(node::Id, usize
 /// The connected-outputs mask of `n` within the dag.
 fn node_outputs(meta: &Meta, dag: &MetaGraph, n: node::Id) -> Result<node::Conns, LowerError> {
     use crate::compile::error::{InvalidOutputIndex, NodeConnsError, TooManyConns};
+    let conns_err = |error: NodeConnsError| LowerError::Conns {
+        node: Some(n),
+        error,
+    };
     let n_outputs = meta.outputs.get(&n).copied().unwrap_or(0);
     let mut outputs = node::Conns::unconnected(n_outputs)
-        .map_err(|_| NodeConnsError::from(TooManyConns(n_outputs)))?;
+        .map_err(|_| conns_err(TooManyConns(n_outputs).into()))?;
     for e_ref in dag.edges_directed(n, petgraph::Outgoing) {
         for (edge, _kind) in e_ref.weight() {
             let index = edge.output.0 as usize;
             outputs
                 .set(index, true)
-                .map_err(|_| NodeConnsError::from(InvalidOutputIndex { index, n_outputs }))?;
+                .map_err(|_| conns_err(InvalidOutputIndex { index, n_outputs }.into()))?;
         }
     }
     Ok(outputs)

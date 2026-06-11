@@ -16,7 +16,7 @@
 use crate::{
     compile::{
         Meta,
-        error::{LowerError, NodeConnsError, TooManyConns},
+        error::{LowerError, TooManyConns},
         ir::{Atom, Body, Join, JoinId, Step, Tail, Var},
         lower::{self, LevelSources, OutletVal},
     },
@@ -54,7 +54,11 @@ pub(crate) fn level_branch_patterns(meta: &Meta) -> Result<Vec<node::Conns>, Low
         prebound: BTreeSet::new(),
     };
     let out = lower::level_body(&cx, &LevelSources::Inlets(all))?;
-    let patterns = outlet_patterns(&out.body, &out.outlets).map_err(NodeConnsError::from)?;
+    let patterns =
+        outlet_patterns(&out.body, &out.outlets).map_err(|error| LowerError::Conns {
+            node: None,
+            error: error.into(),
+        })?;
     Ok(patterns)
 }
 

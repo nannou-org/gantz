@@ -1472,7 +1472,7 @@ fn recompile_heads(state: &mut State) {
         let eps = push_pull_entrypoints(&get_node, graph);
         match gantz_core::vm::compile(&get_node, graph, vm, &eps, &state.compile_config) {
             Ok(module) => {
-                state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module);
+                state.compiled_modules[ix] = module.src;
             }
             Err(e) => {
                 log::error!(
