@@ -307,6 +307,7 @@ where
     let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
     let mut responses = Vec::with_capacity(node_ids.len());
     let mut nodes_to_delete = Vec::new();
+    let mut nodes_to_reset = Vec::new();
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node = &mut graph[n_id];
@@ -391,6 +392,18 @@ where
                 demo_btn.on_disabled_hover_text("no associated demo");
             }
             if !immutable {
+                let stateful = target
+                    .iter()
+                    .any(|&n| graph.contains_node(n) && graph[n].stateful(meta_ctx));
+                let reset_btn = ui.add_enabled(stateful, egui::Button::new("reset"));
+                if reset_btn
+                    .on_hover_text("reset the node to its default state")
+                    .on_disabled_hover_text("no state to reset")
+                    .clicked()
+                {
+                    nodes_to_reset.extend(target.iter().copied());
+                    ui.close();
+                }
                 if ui.button("delete").clicked() {
                     nodes_to_delete.extend(target);
                     ui.close();
@@ -410,6 +423,19 @@ where
             graph.remove_node(n_id);
             state.interaction.selection.nodes.remove(&n_id);
         }
+    }
+
+    // Reset state by removing it, then re-registering the graph.
+    // Registration is idempotent and re-initialises any missing state.
+    if !nodes_to_reset.is_empty() {
+        for n_id in nodes_to_reset {
+            if graph.contains_node(n_id) {
+                let mut node_path = path.to_vec();
+                node_path.push(n_id.index());
+                let _ = gantz_core::node::state::remove_value(vm, &node_path);
+            }
+        }
+        gantz_core::graph::register(&get_node, &*graph, &path, vm);
     }
 
     responses
