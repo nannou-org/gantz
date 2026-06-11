@@ -10,7 +10,7 @@
 use crate::{
     Edge,
     compile::{
-        Flow, NodeConf, NodeConns, RoseTree,
+        NodeConf, NodeConns, RoseTree,
         codegen::path_string,
         error::{NestedGraphNotFound, NodeExprError, NodeFnError, NodeFnErrors},
     },
@@ -31,7 +31,7 @@ type NodeConfs = BTreeSet<NodeConf>;
 /// graphs.
 struct NodeFns<'a> {
     tree: &'a RoseTree<NodeConfs>,
-    fns: Vec<ExprKind>,
+    fns: Vec<(usize, ExprKind)>,
     errors: Vec<NodeFnError>,
 }
 
@@ -85,7 +85,7 @@ impl Visitor for NodeFns<'_> {
         let input_confs = tree.elem.range(range);
         for conf in input_confs {
             match node_fn(ctx.get_node(), node, node_path, &conf.conns) {
-                Ok(fn_expr) => self.fns.push(fn_expr),
+                Ok(fn_expr) => self.fns.push((plan_path.len(), fn_expr)),
                 Err(error) => self.errors.push(
                     NodeExprError {
                         path: node_path.to_vec(),
@@ -96,22 +96,6 @@ impl Visitor for NodeFns<'_> {
             }
         }
     }
-}
-
-/// The set of unique node configurations appearing within all evaluation paths.
-pub(crate) fn unique_node_confs(flow: &Flow) -> NodeConfs {
-    let mut confs = BTreeSet::new();
-    confs.extend(
-        flow.entrypoints
-            .values()
-            .flat_map(|g| g.node_weights().flat_map(|blk| blk.iter().copied())),
-    );
-    confs.extend(
-        flow.nested
-            .node_weights()
-            .flat_map(|blk| blk.iter().copied()),
-    );
-    confs
 }
 
 /// Generate a function name for a node based on its path in the graph.
@@ -184,7 +168,7 @@ pub(crate) fn node_fns<'a, G>(
     get_node: node::GetNode<'a>,
     g: G,
     node_confs_tree: &RoseTree<NodeConfs>,
-) -> Result<Vec<ExprKind>, NodeFnErrors>
+) -> Result<Vec<(usize, ExprKind)>, NodeFnErrors>
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G::NodeWeight: Node,

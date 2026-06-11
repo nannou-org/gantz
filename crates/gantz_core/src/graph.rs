@@ -61,7 +61,7 @@ where
 }
 
 /// Visit all nodes in the graph in toposort order, and all nested nodes in
-/// depth-first order. Tolerates cycles - see [`cycle_tolerant_topo_order`]
+/// depth-first order. Tolerates cycles - see `cycle_tolerant_topo_order`
 /// (order is irrelevant to the visitors, which key by path/id).
 pub fn visit<'a, G>(
     get_node: node::GetNode<'a>,

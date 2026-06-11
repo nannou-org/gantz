@@ -462,17 +462,19 @@ fn node_outputs(meta: &Meta, dag: &MetaGraph, n: node::Id) -> Result<node::Conns
 }
 
 /// The nodes reachable from `seeds` within `within`, including the seeds.
-/// Never expands through a delay node (its value crosses evaluations).
+/// Never expands through a delay node (its value crosses evaluations), nor
+/// through a member of `stop` (the member itself is still included).
 fn descendants(
     cx: &Cx,
     dag: &MetaGraph,
     seeds: impl IntoIterator<Item = node::Id>,
     within: &BTreeSet<node::Id>,
+    stop: &BTreeSet<node::Id>,
 ) -> BTreeSet<node::Id> {
     let mut reached = BTreeSet::new();
     let mut stack: Vec<node::Id> = seeds.into_iter().filter(|n| within.contains(n)).collect();
     while let Some(n) = stack.pop() {
-        if !reached.insert(n) || cx.meta.delays.contains(&n) {
+        if !reached.insert(n) || cx.meta.delays.contains(&n) || stop.contains(&n) {
             continue;
         }
         for e_ref in dag.edges_directed(n, petgraph::Outgoing) {
@@ -547,12 +549,29 @@ fn unconditional_reach(
     reached
 }
 
-/// An export slot bound by a branch dispatch statement: the atom the join
-/// yields for it, and the atom a bypassing (dead) arm yields instead.
+/// An export slot bound by a branch dispatch statement: how the join body's
+/// final scope yields it, and the atom a bypassing (dead) arm yields instead.
 #[derive(Clone, Copy)]
 struct Slot {
-    ret: Atom,
+    ret: SlotRet,
     missing: Atom,
+}
+
+/// How a slot's value is read from the join body's final scope (resolved
+/// *after* the join lowers, since a cont source may itself be routed through
+/// a deeper branch construct's export).
+#[derive(Clone, Copy)]
+enum SlotRet {
+    /// The join param itself.
+    Param(Var),
+    /// Consumer input `consumer`: a deeper construct's export override when
+    /// present, else its single cont `source`'s value.
+    Input {
+        consumer: (node::Id, usize),
+        source: (node::Id, usize),
+    },
+    /// The cont value in the join's final scope.
+    Val((node::Id, usize)),
 }
 
 /// Lower branch node `b` and its whole region: arm bodies, the reconvergence
@@ -573,10 +592,11 @@ fn lower_branch(
         Subject::Call(node_call(cx, dag, env, b)?)
     };
 
-    // Per-arm regions: nodes reachable while that arm is live.
+    // Per-arm reach: everything possibly downstream of the arm.
+    let no_stop = BTreeSet::new();
     let r_arms: Vec<BTreeSet<node::Id>> = arm_masks
         .iter()
-        .map(|mask| descendants(cx, dag, arm_seeds(dag, b, mask, pending), pending))
+        .map(|mask| descendants(cx, dag, arm_seeds(dag, b, mask, pending), pending, &no_stop))
         .collect();
     let r_all: BTreeSet<node::Id> = r_arms.iter().flatten().copied().collect();
     // An arm is live when it propagates anywhere: into its (pending-local)
@@ -618,7 +638,7 @@ fn lower_branch(
         .copied()
         .filter(|n| !r_all.contains(n) && *n != b)
         .collect();
-    let ext_desc = descendants(cx, dag, ext.iter().copied(), pending);
+    let ext_desc = descendants(cx, dag, ext.iter().copied(), pending, &no_stop);
     if let Some(&bad) = r_all
         .iter()
         .find(|n| !cont_cand.contains(n) && ext_desc.contains(n))
@@ -629,10 +649,32 @@ fn lower_branch(
         });
     }
     let deferred: BTreeSet<node::Id> = cont_cand.intersection(&ext_desc).copied().collect();
-    let cont: BTreeSet<node::Id> = cont_cand.difference(&deferred).copied().collect();
-    let arm_regions: Vec<BTreeSet<node::Id>> = r_arms
+
+    // Arm regions hold only the work conditional on *this* branch alone:
+    // arm reach stops at reconvergence candidates, so nodes that are further
+    // conditional on a branch lowered in the join (a cascade) stay out of
+    // the arms and join the continuation's pending instead, where the inner
+    // branch's own lowering places them.
+    let arm_regions: Vec<BTreeSet<node::Id>> = arm_masks
         .iter()
-        .map(|r| r.difference(&cont_cand).copied().collect())
+        .map(|mask| {
+            descendants(
+                cx,
+                dag,
+                arm_seeds(dag, b, mask, pending),
+                pending,
+                &cont_cand,
+            )
+            .difference(&cont_cand)
+            .copied()
+            .collect()
+        })
+        .collect();
+    let in_armed: BTreeSet<node::Id> = arm_regions.iter().flatten().copied().collect();
+    let cont: BTreeSet<node::Id> = r_all
+        .iter()
+        .copied()
+        .filter(|n| !deferred.contains(n) && !in_armed.contains(n))
         .collect();
 
     // Classify each input of every consumer fed from inside this branch
@@ -695,7 +737,7 @@ fn lower_branch(
                 slots.insert(
                     param,
                     Slot {
-                        ret: Atom::Var(param),
+                        ret: SlotRet::Param(param),
                         missing,
                     },
                 );
@@ -708,11 +750,13 @@ fn lower_branch(
                 if cont_s.len() > 1 || lexical || env.inputs.contains_key(&(t, i)) {
                     return Err(LowerError::MixedInputSources { node: t, input: i });
                 }
-                let (s, o) = cont_s[0];
                 slots.insert(
                     Var::Input { node: t, input: i },
                     Slot {
-                        ret: Atom::Var(Var::Output { node: s, output: o }),
+                        ret: SlotRet::Input {
+                            consumer: (t, i),
+                            source: cont_s[0],
+                        },
                         missing,
                     },
                 );
@@ -722,7 +766,7 @@ fn lower_branch(
                     slots.insert(
                         var,
                         Slot {
-                            ret: Atom::Var(var),
+                            ret: SlotRet::Val((s, o)),
                             missing: Atom::Unit,
                         },
                     );
@@ -743,7 +787,19 @@ fn lower_branch(
             param_vars.push(param);
         }
         let join_steps = lower_steps(cx, dag, cont.clone(), &mut join_env)?;
-        let ret = slots.values().map(|slot| slot.ret).collect();
+        let ret = slots
+            .values()
+            .map(|slot| match slot.ret {
+                SlotRet::Param(p) => Atom::Var(p),
+                SlotRet::Input { consumer, source } => join_env
+                    .inputs
+                    .get(&consumer)
+                    .or(join_env.vals.get(&source))
+                    .copied()
+                    .unwrap_or(slot.missing),
+                SlotRet::Val(source) => join_env.vals.get(&source).copied().unwrap_or(slot.missing),
+            })
+            .collect();
         Some(Join {
             id: join_id,
             params: param_vars,

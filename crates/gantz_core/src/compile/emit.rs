@@ -120,17 +120,28 @@ fn arg_sexp(arg: &Arg) -> Sexp {
     }
 }
 
-/// `(define v expr)`, `(define-values (v..) expr)`, or the bare expr when
-/// `dst` is empty (the value is discarded).
-fn define_sexp(dst: &[Var], value: Sexp) -> Sexp {
+/// Bind `dst` from `value`: a plain define for one var, or - for several - a
+/// temporary bound to the `(list ...)` value, destructured by index.
+///
+/// `define-values` is deliberately avoided: steel-core 0.7's analysis pass
+/// panics on fn bodies mixing several `define-values` with local fn defines
+/// (our join points).
+fn define_sexps(dst: &[Var], value: Sexp) -> Vec<Sexp> {
     match dst {
-        [] => value,
-        [v] => l([a("define"), a(var_name(v)), value]),
-        _ => l([
-            a("define-values"),
-            l(dst.iter().map(|v| a(var_name(v)))),
-            value,
-        ]),
+        [] => vec![value],
+        [v] => vec![l([a("define"), a(var_name(v)), value])],
+        _ => {
+            let tmp = format!("%vals-{}", var_name(&dst[0]));
+            let mut stmts = vec![l([a("define"), a(tmp.clone()), value])];
+            for (k, v) in dst.iter().enumerate() {
+                stmts.push(l([
+                    a("define"),
+                    a(var_name(v)),
+                    l([a("list-ref"), a(tmp.clone()), a(k.to_string())]),
+                ]));
+            }
+            stmts
+        }
     }
 }
 
@@ -195,7 +206,7 @@ pub(crate) fn body_sexps(cx: &Cx, body: &Body) -> Vec<Sexp> {
     for step in &body.steps {
         match step {
             Step::Node { dst, call } => {
-                stmts.push(define_sexp(dst, call_sexp(cx, call)));
+                stmts.extend(define_sexps(dst, call_sexp(cx, call)));
             }
             Step::DelayRead { node } => {
                 let var = Var::Output {
@@ -237,7 +248,7 @@ pub(crate) fn body_sexps(cx: &Cx, body: &Body) -> Vec<Sexp> {
                     // Bound by enclosing glue.
                     Subject::PreBound { node } => pair_name(*node),
                 };
-                stmts.push(define_sexp(dst, dispatch_sexp(cx, &pair, arms)));
+                stmts.extend(define_sexps(dst, dispatch_sexp(cx, &pair, arms)));
             }
         }
     }
@@ -268,13 +279,13 @@ fn dispatch_sexp(cx: &Cx, pair: &str, arms: &[Arm]) -> Sexp {
 fn arm_sexp(cx: &Cx, pair: &str, arm: &Arm) -> Sexp {
     let value = || l([a("list-ref"), a(pair), a("1")]);
     let binds = match arm.binds.as_slice() {
-        [] => None,
-        binds => Some(define_sexp(binds, value())),
+        [] => vec![],
+        binds => define_sexps(binds, value()),
     };
     let body = body_sexps(cx, &arm.body);
-    match (&binds, arm.body.steps.is_empty()) {
+    match (binds.is_empty(), arm.body.steps.is_empty()) {
         // No bindings or local steps: the tail expression alone suffices.
-        (None, true) => body.into_iter().next().expect("body yields a tail expr"),
+        (true, true) => body.into_iter().next().expect("body yields a tail expr"),
         _ => {
             let mut items = vec![a("let"), l([])];
             items.extend(binds);

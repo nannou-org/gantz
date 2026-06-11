@@ -33,6 +33,9 @@ pub struct Meta {
     /// The set of unit-delay nodes (evaluation never propagates through
     /// them; cycles containing one are legal).
     pub delays: BTreeSet<node::Id>,
+    /// The set of nodes implemented as nested graphs (compiled call-based
+    /// to per-variant graph fns).
+    pub graphs: BTreeSet<node::Id>,
     /// The total number of inputs on node (whether or not they're connected).
     pub inputs: BTreeMap<node::Id, usize>,
     /// The total number of outputs on node (whether or not they're connected).
@@ -143,6 +146,9 @@ impl Meta {
         }
         if node.delay(ctx) {
             self.delays.insert(id);
+        }
+        if node.graph(ctx) {
+            self.graphs.insert(id);
         }
         if node.stateful(ctx) {
             self.stateful.insert(id);

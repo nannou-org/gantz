@@ -38,30 +38,19 @@ pub enum NodeOutputsError {
     InvalidIndex(#[from] InvalidOutputIndex),
 }
 
-/// Represents all control flow graphs for all entrypoints in a single gantz graph.
-///
-/// This includes all branches on the edges, and unique node configurations as
-/// nodes.
+/// The per-entrypoint outlet-reach analysis for a single gantz graph level.
 #[derive(Debug)]
 pub struct Flow {
-    /// Control flow graph from all inlets to all outlets, or empty in the case
-    /// that the graph has no inlets or outlets (i.e. is not nested).
-    pub nested: FlowGraph,
-    /// Control flow graph for each entrypoint at this graph level.
-    /// An entrypoint appears here only if it has sources at this level.
-    pub entrypoints: BTreeMap<EntrypointId, FlowGraph>,
-    /// For each entrypoint, what its FlowGraph reaches in terms of this graph's
-    /// outlets. Only populated for entrypoints whose flow reaches at least one
-    /// outlet.
+    /// For each entrypoint, what its evaluation reaches in terms of this
+    /// graph's outlets. Only populated for entrypoints whose flow reaches at
+    /// least one outlet.
     pub outlet_reach: BTreeMap<EntrypointId, OutletReach>,
 }
 
-/// What one entrypoint's flow graph reaches among its graph's outlets, for
+/// What one entrypoint's evaluation reaches among its graph's outlets, for
 /// push-through-outlet propagation to the parent.
 #[derive(Clone, Debug)]
 pub struct OutletReach {
-    /// The outlet node ids reached (the union over all branch outcomes).
-    pub reached: BTreeSet<node::Id>,
     /// The distinct external branch masks (over this graph's outputs) the push
     /// can produce, or empty when it always produces the same outlets (so no
     /// branch-aware propagation is needed). See `branch_patterns_from_flow`.

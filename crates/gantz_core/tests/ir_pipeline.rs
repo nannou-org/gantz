@@ -1,9 +1,10 @@
-//! Differential tests for the IR pipeline (`compile::module_v2`).
+//! Shape coverage for the IR pipeline (`compile::module`).
 //!
-//! Every shape compiles through both the flow-graph pipeline
-//! (`compile::module`) and the IR pipeline (`compile::module_v2`), runs the
-//! same entrypoint call sequence in two fresh VMs, and the resulting root
-//! state hashmaps must be equal. The shapes mirror `tests/graph.rs`.
+//! These shapes were developed as a differential suite against the old
+//! flow-graph pipeline before the cutover. Each compiles and runs a call
+//! sequence end-to-end: in-graph `assert!` nodes, explicit state
+//! assertions, and runtime errors carry the verification (`tests/graph.rs`
+//! and `tests/nested.rs` assert overlapping shapes' behavior in detail).
 
 use gantz_core::compile::{Entrypoint, entry_fn_name, entrypoint, push_pull_entrypoints};
 use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
@@ -94,27 +95,15 @@ fn run_pipeline(
     vm.extract_value(ROOT_STATE).unwrap()
 }
 
-/// Compile `g` through both pipelines and assert the root state after the
-/// same call sequence is identical.
+/// Compile `g` and run the call sequence end-to-end.
 fn assert_pipelines_agree(g: &Graph, eps: &[Entrypoint], calls: &[&Entrypoint]) {
-    let m1 = gantz_core::compile::module(&no_lookup, g, eps).expect("flow pipeline failed");
-    let m2 = gantz_core::compile::module_v2(&no_lookup, g, eps).expect("IR pipeline failed");
+    let m = gantz_core::compile::module(&no_lookup, g, eps).expect("IR pipeline failed");
     if std::env::var("GANTZ_DUMP").is_ok() {
-        for e in &m2 {
+        for e in &m {
             eprintln!("{}\n", e.to_pretty(100));
         }
     }
-    let s2 = run_pipeline("ir", &m2, g, calls);
-    let s1 = run_pipeline("flow", &m1, g, calls);
-    let m2_str = m2
-        .iter()
-        .map(|e| e.to_pretty(100))
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    assert_eq!(
-        s1, s2,
-        "pipelines disagree on root state\nflow: {s1:?}\nir: {s2:?}\n\nIR module:\n{m2_str}"
-    );
+    let _ = run_pipeline("ir", &m, g, calls);
 }
 
 /// All push/pull entrypoints, each called once in order.
@@ -663,7 +652,7 @@ fn two_branch_shared_join() {
         entrypoint::push_source(vec![push_q.index()], g[push_q].n_outputs(ctx) as u8),
     ]);
     let eps = std::slice::from_ref(&combined);
-    let m2 = gantz_core::compile::module_v2(&no_lookup, &g, eps).expect("IR pipeline failed");
+    let m2 = gantz_core::compile::module(&no_lookup, &g, eps).expect("IR pipeline failed");
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -1206,7 +1195,7 @@ fn nested_non_sequential_inlets() {
 
 /// Compile through the IR pipeline, run, and call each entrypoint in order.
 fn run_v2(g: &Graph, eps: &[Entrypoint], calls: &[&Entrypoint]) -> Engine {
-    let m2 = gantz_core::compile::module_v2(&no_lookup, g, eps).expect("IR pipeline failed");
+    let m2 = gantz_core::compile::module(&no_lookup, g, eps).expect("IR pipeline failed");
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, g, &[], &mut vm);

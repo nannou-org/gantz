@@ -1,7 +1,7 @@
 //! An implementation of a node acting as a nested graph.
 
 use crate::{
-    Edge, GRAPH_STATE, compile,
+    Edge, compile,
     node::{self, Node},
     visit,
 };
@@ -93,7 +93,7 @@ impl<N: Node> Node for Graph<N> {
     fn branches(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
         // Any malformed-graph error surfaces authoritatively when `module()`
         // builds this same graph, so falling back to "not branching" here is
-        // safe and keeps `branches()` consistent with `nested_expr`.
+        // safe and keeps `branches()` consistent with the graph fn selector.
         graph_branches(ctx.get_node(), self)
             .unwrap_or_default()
             .into_iter()
@@ -101,8 +101,15 @@ impl<N: Node> Node for Graph<N> {
             .collect()
     }
 
+    /// The compiler bypasses this (graph nodes lower to graph-fn calls
+    /// directly), but wrapping nodes such as [`node::Fn`] inline it: the
+    /// expression calls the graph fn for the active-input variant.
     fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
-        nested_expr(ctx.get_node(), self, ctx.path(), ctx.inputs())
+        graph_call_expr(ctx.get_node(), self, ctx.path(), ctx.inputs())
+    }
+
+    fn graph(&self, _ctx: node::MetaCtx) -> bool {
+        true
     }
 
     fn stateful(&self, ctx: node::MetaCtx) -> bool {
@@ -135,6 +142,10 @@ impl<N: Node> Node for GraphNode<N> {
 
     fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         self.graph.expr(ctx)
+    }
+
+    fn graph(&self, ctx: node::MetaCtx) -> bool {
+        self.graph.graph(ctx)
     }
 
     fn stateful(&self, ctx: node::MetaCtx) -> bool {
@@ -353,37 +364,21 @@ where
 
 /// Build the all-inlets-active interior control flow graph (inlets push,
 /// outlets pull), used by [`graph_branches`] - which must report the
-/// union/over-approximation of external branch patterns - and as the `fg_all`
-/// in [`nested_expr`]. See [`compile::inner_flow_graph_for`] for the active-set
-/// aware variant.
+/// union/over-approximation of external branch patterns. See
+/// [`compile::inner_flow_graph_for`] for the active-set aware variant.
 fn inner_flow_graph(meta: &compile::Meta) -> Result<compile::FlowGraph, node::ExprError> {
     let all: BTreeSet<node::Id> = meta.inlets.iter().copied().collect();
     compile::inner_flow_graph_for(meta, &all).map_err(node::ExprError::custom)
 }
 
-/// The set of inlet ids that fired this evaluation, derived from the parent's
-/// active-input-set (`inputs[i]` is `Some` iff input `i` - i.e. the `i`th inlet
-/// in id order - is connected/active for this node-fn variant).
-fn active_inlets_from_inputs(
-    inlet_ids: &[node::Id],
-    inputs: &[Option<String>],
-) -> BTreeSet<node::Id> {
-    inlet_ids
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| inputs.get(*i).map(Option::is_some).unwrap_or(false))
-        .map(|(_, &id)| id)
-        .collect()
-}
-
-/// The implementation of the `GraphNode`'s `Node::expr` fn.
+/// The expression calling the graph fn compiled for this graph's
+/// active-input variant (`graph-fn-{path}-i{mask}`, see [`compile::module`]).
 ///
-/// The nested graph is inlined as an expression. Inlet values are bound from the
-/// node's inputs; the inner control flow runs with outlets writing their values
-/// (and, when the graph branches externally, their "active" flags) to hoisted
-/// vars. The result is the outlet values, or - when branching - a
-/// `(list branch-ix value)` pair matching `graph_branches`.
-pub fn nested_expr<'a, G>(
+/// The result is the outlet values (raw for one outlet, a `(list ...)` for
+/// several), or a `(list branch-ix value)` pair matching `graph_branches`
+/// when the interior branches externally. A stateful interior threads the
+/// node's `state` (the nested level's state hashmap) through the call.
+pub fn graph_call_expr<'a, G>(
     get_node: node::GetNode<'a>,
     g: G,
     path: &[node::Id],
@@ -394,93 +389,24 @@ where
     G::NodeWeight: Node,
     G::NodeId: Eq + Hash,
 {
-    let meta = compile::Meta::from_graph(get_node, g).map_err(node::ExprError::custom)?;
-    let inlet_ids: Vec<node::Id> = meta.inlets.iter().copied().collect();
-    let outlet_ids: Vec<node::Id> = meta.outlets.iter().copied().collect();
-    // The all-connected flow drives the external branch patterns and selector
-    // (which must match the parent's all-connected `Node::branches`); the
-    // active-set flow drives the body so unfired inlets' subtrees collapse and
-    // optional inputs bound only to them compile to `(None)`. The two coincide
-    // when every inlet is active (the dominant path), so avoid rebuilding then.
-    let active_inlets = active_inlets_from_inputs(&inlet_ids, inputs);
-    let fg_all = inner_flow_graph(&meta)?;
-    let fg_active;
-    let fg_body = if active_inlets.len() == inlet_ids.len() {
-        &fg_all
-    } else {
-        fg_active = compile::inner_flow_graph_for(&meta, &active_inlets)
-            .map_err(node::ExprError::custom)?;
-        &fg_active
-    };
-    let arm_counts = branch_arm_counts(&meta);
-
-    // The external branch patterns (empty => not externally branching).
-    let patterns = compile::branch_patterns_from_flow(&fg_all, &outlet_ids, &arm_counts)
+    let imask = node::Conns::try_from_iter(inputs.iter().map(Option::is_some))
         .map_err(node::ExprError::custom)?;
-    let branching = !patterns.is_empty();
-    let outlet_activity = if branching {
-        compile::OutletActivity::Tracked
+    let fn_name = compile::graph_fn_name(path, &imask);
+    let mut args: Vec<String> = inputs.iter().flatten().cloned().collect();
+    let meta_ctx = node::MetaCtx::new(get_node);
+    let stateful = g
+        .node_references()
+        .any(|n_ref| n_ref.weight().stateful(meta_ctx));
+    let expr_str = if stateful {
+        args.push("state".to_string());
+        format!(
+            "(let ((%gantz-r ({fn_name} {})))
+               (set! state (list-ref %gantz-r 1))
+               (list-ref %gantz-r 0))",
+            args.join(" "),
+        )
     } else {
-        compile::OutletActivity::Untracked
-    };
-
-    // Bind each inlet from the corresponding node input (input i -> inlet i).
-    let mut bindings: Vec<String> = inlet_ids
-        .iter()
-        .enumerate()
-        .map(|(i, &inlet_id)| {
-            let input = inputs
-                .get(i)
-                .and_then(Clone::clone)
-                .unwrap_or_else(|| "'()".to_string());
-            format!("(define inlet-{inlet_id} {input})")
-        })
-        .collect();
-
-    // Declare the hoisted outlet value vars (and active flags when branching)
-    // that the flow statements `set!` wherever an outlet is reached.
-    for &id in &outlet_ids {
-        bindings.push(format!("(define outlet-{id} '())"));
-        if branching {
-            bindings.push(format!("(define outlet-active-{id} #f)"));
-        }
-    }
-
-    let stmts = compile::entry_fn_body(
-        path,
-        &meta.graph,
-        &meta.stateful,
-        &arm_counts,
-        &meta.inlets,
-        &meta.outlets,
-        fg_body,
-        &BTreeSet::new(),
-        outlet_activity,
-    )
-    .map_err(node::ExprError::custom)?;
-
-    let body = bindings
-        .into_iter()
-        .chain(stmts.iter().map(|stmt| format!("{stmt}")))
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    // The node's output: a `(list branch-ix value)` when branching, else the
-    // outlet values directly.
-    let tail = if branching {
-        compile::branch_selector(&patterns, &outlet_ids)
-    } else {
-        compile::outlet_values_expr(&outlet_ids)
-    };
-
-    // Wrap in `(let () ...)` so the inner statements form a *body*: unlike a
-    // bare `(begin ...)` used as an expression, a body permits `define`s
-    // interleaved with the branch `if` expressions of multiple components.
-    // Include state handling only if the graph has stateful nodes.
-    let expr_str = if meta.stateful.is_empty() {
-        format!("(let () {body} {tail})")
-    } else {
-        format!("(let () (define {GRAPH_STATE} state) {body} (set! state {GRAPH_STATE}) {tail})")
+        format!("({fn_name} {})", args.join(" "))
     };
     node::parse_expr(&expr_str)
 }
