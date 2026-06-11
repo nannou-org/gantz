@@ -681,3 +681,520 @@ fn two_branch_shared_join() {
         .expect("was None");
     assert_eq!(val, 15);
 }
+
+// ===========================================================================
+// Nested-graph shapes (mirroring tests/nested.rs).
+// ===========================================================================
+
+use gantz_core::node::GraphNode;
+use gantz_core::node::graph::{Inlet, Outlet};
+
+type Nested = GraphNode<Box<dyn DebugNode>>;
+
+/// inlet x2 -> mul -> outlet.
+fn graph_mul() -> Nested {
+    let mut ga = Nested::default();
+    let inlet_a = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let inlet_b = ga.add_node(Box::new(Inlet) as Box<_>);
+    let mul = ga.add_node(Box::new(node::expr("(* $l $r)").unwrap()) as Box<_>);
+    let outlet = ga.add_node(Box::new(Outlet) as Box<_>);
+    ga.add_edge(inlet_a, mul, Edge::from((0, 0)));
+    ga.add_edge(inlet_b, mul, Edge::from((0, 1)));
+    ga.add_edge(mul, outlet, Edge::from((0, 0)));
+    ga
+}
+
+/// A stateless nested graph: 6 * 7 == 42 asserted in the parent.
+#[test]
+fn nested_stateless() {
+    let mut g = Graph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let six = g.add_node(Box::new(node_int(6)) as Box<_>);
+    let seven = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let graph_a = g.add_node(Box::new(graph_mul()) as Box<_>);
+    let forty_two = g.add_node(Box::new(node_int(42)) as Box<_>);
+    let assert_eq = g.add_node(Box::new(node_assert_eq()) as Box<_>);
+    g.add_edge(push, six, Edge::from((0, 0)));
+    g.add_edge(push, seven, Edge::from((0, 0)));
+    g.add_edge(push, forty_two, Edge::from((0, 0)));
+    g.add_edge(six, graph_a, Edge::from((0, 0)));
+    g.add_edge(seven, graph_a, Edge::from((0, 1)));
+    g.add_edge(graph_a, assert_eq, Edge::from((0, 0)));
+    g.add_edge(forty_two, assert_eq, Edge::from((0, 1)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// A stateful nested counter, pushed twice; inner state and the propagated
+/// value must agree.
+#[test]
+fn nested_counter() {
+    let counter =
+        node::expr("(begin $bang (set! state (if (number? state) (+ state 1) 0)) state)").unwrap();
+    let mut ga = Nested::default();
+    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let counter = ga.add_node(Box::new(counter) as Box<_>);
+    let outlet = ga.add_node(Box::new(Outlet) as Box<_>);
+    ga.add_edge(inlet, counter, Edge::from((0, 0)));
+    ga.add_edge(counter, outlet, Edge::from((0, 0)));
+
+    let mut g = Graph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let graph_a = g.add_node(Box::new(ga) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, graph_a, Edge::from((0, 0)));
+    g.add_edge(graph_a, number, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    assert_pipelines_agree(&g, &eps, &[&ep, &ep]);
+}
+
+/// An entrypoint sourced inside a nested graph, not reaching any outlet.
+#[test]
+fn nested_inner_push() {
+    let mut ga = Nested::default();
+    let push = ga.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let ten = ga.add_node(Box::new(node_int(10)) as Box<_>);
+    let number = ga.add_node(Box::new(node_number()) as Box<_>);
+    ga.add_edge(push, ten, Edge::from((0, 0)));
+    ga.add_edge(ten, number, Edge::from((0, 0)));
+
+    let mut g = Graph::new();
+    let _graph_a = g.add_node(Box::new(ga) as Box<dyn DebugNode>);
+    agree_on_all_entrypoints(&g);
+}
+
+/// An inner push propagating through the outlet to parent downstream.
+#[test]
+fn nested_push_through_outlet() {
+    let mut ga = Nested::default();
+    let push = ga.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let v = ga.add_node(Box::new(node_int(42)) as Box<_>);
+    let outlet = ga.add_node(Box::new(Outlet) as Box<_>);
+    ga.add_edge(push, v, Edge::from((0, 0)));
+    ga.add_edge(v, outlet, Edge::from((0, 0)));
+
+    let mut g = Graph::new();
+    let graph_a = g.add_node(Box::new(ga) as Box<dyn DebugNode>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(graph_a, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// An inner push two levels deep, propagating through both outlets.
+#[test]
+fn nested_push_through_outlet_deep() {
+    let mut inner = Nested::default();
+    let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let v = inner.add_node(Box::new(node_int(33)) as Box<_>);
+    let outlet = inner.add_node(Box::new(Outlet) as Box<_>);
+    inner.add_edge(push, v, Edge::from((0, 0)));
+    inner.add_edge(v, outlet, Edge::from((0, 0)));
+
+    let mut mid = Nested::default();
+    let inner_ix = mid.add_node(Box::new(inner) as Box<dyn DebugNode>);
+    let double = mid.add_node(Box::new(node::expr("(* 2 $x)").unwrap()) as Box<_>);
+    let mid_outlet = mid.add_node(Box::new(Outlet) as Box<_>);
+    mid.add_edge(inner_ix, double, Edge::from((0, 0)));
+    mid.add_edge(double, mid_outlet, Edge::from((0, 0)));
+
+    let mut g = Graph::new();
+    let mid_ix = g.add_node(Box::new(mid) as Box<dyn DebugNode>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(mid_ix, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// A nested graph with two outlets feeding two parent stores.
+#[test]
+fn nested_multi_outlet() {
+    let mut ga = Nested::default();
+    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let add1 = ga.add_node(Box::new(node::expr("(+ 1 $x)").unwrap()) as Box<_>);
+    let add2 = ga.add_node(Box::new(node::expr("(+ 2 $x)").unwrap()) as Box<_>);
+    let out1 = ga.add_node(Box::new(Outlet) as Box<_>);
+    let out2 = ga.add_node(Box::new(Outlet) as Box<_>);
+    ga.add_edge(inlet, add1, Edge::from((0, 0)));
+    ga.add_edge(inlet, add2, Edge::from((0, 0)));
+    ga.add_edge(add1, out1, Edge::from((0, 0)));
+    ga.add_edge(add2, out2, Edge::from((0, 0)));
+
+    let mut g = Graph::new();
+    let push = g.add_node(Box::new(node_int(10).with_push_eval()) as Box<dyn DebugNode>);
+    let graph_a = g.add_node(Box::new(ga) as Box<_>);
+    let num_a = g.add_node(Box::new(node_number()) as Box<_>);
+    let num_b = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, graph_a, Edge::from((0, 0)));
+    g.add_edge(graph_a, num_a, Edge::from((0, 0)));
+    g.add_edge(graph_a, num_b, Edge::from((1, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Two nested pushes combined into one multi-source entrypoint, each
+/// propagating through its graph's outlet.
+#[test]
+fn nested_multi_source_outlet_propagation() {
+    let make_inner = || {
+        let mut inner = Nested::default();
+        let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let ten = inner.add_node(Box::new(node_int(10)) as Box<_>);
+        let outlet = inner.add_node(Box::new(Outlet) as Box<_>);
+        inner.add_edge(push, ten, Edge::from((0, 0)));
+        inner.add_edge(ten, outlet, Edge::from((0, 0)));
+        (inner, push)
+    };
+    let (inner_a, push_a) = make_inner();
+    let (inner_b, push_b) = make_inner();
+
+    let mut g = Graph::new();
+    let graph_a = g.add_node(Box::new(inner_a) as Box<dyn DebugNode>);
+    let graph_b = g.add_node(Box::new(inner_b) as Box<dyn DebugNode>);
+    let num_a = g.add_node(Box::new(node_number()) as Box<_>);
+    let num_b = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(graph_a, num_a, Edge::from((0, 0)));
+    g.add_edge(graph_b, num_b, Edge::from((0, 0)));
+
+    let combined = entrypoint::from_sources([
+        entrypoint::push_source(vec![graph_a.index(), push_a.index()], 1),
+        entrypoint::push_source(vec![graph_b.index(), push_b.index()], 1),
+    ]);
+    assert_pipelines_agree(&g, std::slice::from_ref(&combined), &[&combined]);
+}
+
+/// One entrypoint mixing a nested push (through an outlet) with a direct
+/// root push, both converging at an add.
+#[test]
+fn nested_mixed_level_multi_source() {
+    let mut inner = Nested::default();
+    let push_inner = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let ten = inner.add_node(Box::new(node_int(10)) as Box<_>);
+    let outlet = inner.add_node(Box::new(Outlet) as Box<_>);
+    inner.add_edge(push_inner, ten, Edge::from((0, 0)));
+    inner.add_edge(ten, outlet, Edge::from((0, 0)));
+
+    let mut g = Graph::new();
+    let graph_node = g.add_node(Box::new(inner) as Box<dyn DebugNode>);
+    let push_outer = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let twenty = g.add_node(Box::new(node_int(20)) as Box<_>);
+    let add = g.add_node(Box::new(node_add()) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(graph_node, add, Edge::from((0, 0)));
+    g.add_edge(push_outer, twenty, Edge::from((0, 0)));
+    g.add_edge(twenty, add, Edge::from((0, 1)));
+    g.add_edge(add, number, Edge::from((0, 0)));
+
+    let combined = entrypoint::from_sources([
+        entrypoint::push_source(vec![graph_node.index(), push_inner.index()], 1),
+        entrypoint::push_source(vec![push_outer.index()], 1),
+    ]);
+    assert_pipelines_agree(&g, std::slice::from_ref(&combined), &[&combined]);
+}
+
+/// A 1-in 2-out select for nested-branch shapes: 0 -> o0(42), else o1(99).
+fn node_select2() -> node::Branch {
+    node::branch(
+        "(if (= 0 $x) (list 0 42) (list 1 99))",
+        vec![
+            node::Conns::try_from([true, false]).unwrap(),
+            node::Conns::try_from([false, true]).unwrap(),
+        ],
+    )
+    .unwrap()
+}
+
+/// A divergent inner branch: each arm feeds its own outlet, so the graph
+/// node branches externally and the parent stores per arm.
+#[test]
+fn nested_divergent_branch() {
+    let mut ga = Nested::default();
+    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let sel = ga.add_node(Box::new(node_select2()) as Box<_>);
+    let out_a = ga.add_node(Box::new(Outlet) as Box<_>);
+    let out_b = ga.add_node(Box::new(Outlet) as Box<_>);
+    ga.add_edge(inlet, sel, Edge::from((0, 0)));
+    ga.add_edge(sel, out_a, Edge::from((0, 0)));
+    ga.add_edge(sel, out_b, Edge::from((1, 0)));
+
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let graph_a = g.add_node(Box::new(ga) as Box<_>);
+    let store_a = g.add_node(Box::new(node_number()) as Box<_>);
+    let store_b = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, graph_a, Edge::from((0, 0)));
+    g.add_edge(push_1, graph_a, Edge::from((0, 0)));
+    g.add_edge(graph_a, store_a, Edge::from((0, 0)));
+    g.add_edge(graph_a, store_b, Edge::from((1, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// A reconvergent inner branch: both arms reach the single outlet, so the
+/// graph node does NOT branch externally.
+#[test]
+fn nested_reconvergent_branch() {
+    let mut ga = Nested::default();
+    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let sel = ga.add_node(Box::new(node_select2()) as Box<_>);
+    let out = ga.add_node(Box::new(Outlet) as Box<_>);
+    ga.add_edge(inlet, sel, Edge::from((0, 0)));
+    ga.add_edge(sel, out, Edge::from((0, 0)));
+    ga.add_edge(sel, out, Edge::from((1, 0)));
+
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let graph_a = g.add_node(Box::new(ga) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, graph_a, Edge::from((0, 0)));
+    g.add_edge(push_1, graph_a, Edge::from((0, 0)));
+    g.add_edge(graph_a, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// An inner branch with a dead arm: one pattern produces the outlet, the
+/// other produces nothing, so downstream must not run on the dead arm.
+#[test]
+fn nested_dead_arm() {
+    let dead_sel = node::branch(
+        "(if (= 0 $x) (list 0 42) (list 1 '()))",
+        vec![
+            node::Conns::try_from([true]).unwrap(),
+            node::Conns::try_from([false]).unwrap(),
+        ],
+    )
+    .unwrap();
+    let mut ga = Nested::default();
+    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let sel = ga.add_node(Box::new(dead_sel) as Box<_>);
+    let out = ga.add_node(Box::new(Outlet) as Box<_>);
+    ga.add_edge(inlet, sel, Edge::from((0, 0)));
+    ga.add_edge(sel, out, Edge::from((0, 0)));
+
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let graph_a = g.add_node(Box::new(ga) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, graph_a, Edge::from((0, 0)));
+    g.add_edge(push_1, graph_a, Edge::from((0, 0)));
+    g.add_edge(graph_a, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Branch arms passing through intermediates before their outlets, plus a
+/// constant-fed outlet that fires on every pattern.
+#[test]
+fn nested_branch_intermediates_and_constant_outlet() {
+    let mut ga = Nested::default();
+    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let sel = ga.add_node(Box::new(node_select2()) as Box<_>);
+    let double = ga.add_node(Box::new(node::expr("(* 2 $x)").unwrap()) as Box<_>);
+    let triple = ga.add_node(Box::new(node::expr("(* 3 $x)").unwrap()) as Box<_>);
+    let constant = ga.add_node(Box::new(node::expr("7").unwrap()) as Box<_>);
+    let out_a = ga.add_node(Box::new(Outlet) as Box<_>);
+    let out_b = ga.add_node(Box::new(Outlet) as Box<_>);
+    let out_c = ga.add_node(Box::new(Outlet) as Box<_>);
+    ga.add_edge(inlet, sel, Edge::from((0, 0)));
+    ga.add_edge(sel, double, Edge::from((0, 0)));
+    ga.add_edge(sel, triple, Edge::from((1, 0)));
+    ga.add_edge(double, out_a, Edge::from((0, 0)));
+    ga.add_edge(triple, out_b, Edge::from((0, 0)));
+    ga.add_edge(constant, out_c, Edge::from((0, 0)));
+
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let graph_a = g.add_node(Box::new(ga) as Box<_>);
+    let store_a = g.add_node(Box::new(node_number()) as Box<_>);
+    let store_b = g.add_node(Box::new(node_number()) as Box<_>);
+    let store_c = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, graph_a, Edge::from((0, 0)));
+    g.add_edge(push_1, graph_a, Edge::from((0, 0)));
+    g.add_edge(graph_a, store_a, Edge::from((0, 0)));
+    g.add_edge(graph_a, store_b, Edge::from((1, 0)));
+    g.add_edge(graph_a, store_c, Edge::from((2, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// An inner push reaching the outlets through a branch: the parent only
+/// evaluates downstream of the outlet the taken arm produced.
+#[test]
+fn nested_push_through_divergent_branch() {
+    let mut ga = Nested::default();
+    let push = ga.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let sel = ga.add_node(Box::new(node_select2()) as Box<_>);
+    let out_a = ga.add_node(Box::new(Outlet) as Box<_>);
+    let out_b = ga.add_node(Box::new(Outlet) as Box<_>);
+    ga.add_edge(push, sel, Edge::from((0, 0)));
+    ga.add_edge(sel, out_a, Edge::from((0, 0)));
+    ga.add_edge(sel, out_b, Edge::from((1, 0)));
+    let inner_push = push;
+
+    let mut g = Graph::new();
+    let graph_a = g.add_node(Box::new(ga) as Box<dyn DebugNode>);
+    let store_a = g.add_node(Box::new(node_number()) as Box<_>);
+    let store_b = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(graph_a, store_a, Edge::from((0, 0)));
+    g.add_edge(graph_a, store_b, Edge::from((1, 0)));
+
+    let ep = entrypoint::push(vec![graph_a.index(), inner_push.index()], 1);
+    assert_pipelines_agree(&g, std::slice::from_ref(&ep), &[&ep]);
+}
+
+/// A cold/hot nested graph: pushing only the cold inlet must not fire the
+/// hot path (the reduced active-input-set variant).
+#[test]
+fn nested_cold_hot_inlets() {
+    let mut ga = Nested::default();
+    let inlet_hot = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let inlet_cold = ga.add_node(Box::new(Inlet) as Box<_>);
+    let add = ga.add_node(Box::new(
+        node::expr(
+            "(+ (if (Some? $?a) (Some->value $?a) 0) \
+                (if (Some? $?b) (Some->value $?b) 0))",
+        )
+        .unwrap(),
+    ) as Box<_>);
+    let out = ga.add_node(Box::new(Outlet) as Box<_>);
+    ga.add_edge(inlet_hot, add, Edge::from((0, 0)));
+    ga.add_edge(inlet_cold, add, Edge::from((0, 1)));
+    ga.add_edge(add, out, Edge::from((0, 0)));
+
+    let mut g = Graph::new();
+    let push_hot = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let push_cold = g.add_node(Box::new(node_int(3).with_push_eval()) as Box<_>);
+    let graph_a = g.add_node(Box::new(ga) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_hot, graph_a, Edge::from((0, 0)));
+    g.add_edge(push_cold, graph_a, Edge::from((0, 1)));
+    g.add_edge(graph_a, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// A three-arm inner branch with one outlet per arm.
+#[test]
+fn nested_three_arm_branch() {
+    let sel3 = node::branch(
+        "(if (= 0 $x) (list 0 6) (if (= 1 $x) (list 1 7) (list 2 8)))",
+        vec![
+            node::Conns::try_from([true, false, false]).unwrap(),
+            node::Conns::try_from([false, true, false]).unwrap(),
+            node::Conns::try_from([false, false, true]).unwrap(),
+        ],
+    )
+    .unwrap();
+    let mut ga = Nested::default();
+    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let sel = ga.add_node(Box::new(sel3) as Box<_>);
+    let outs: Vec<_> = (0..3)
+        .map(|_| ga.add_node(Box::new(Outlet) as Box<_>))
+        .collect();
+    ga.add_edge(inlet, sel, Edge::from((0, 0)));
+    for (o, &out) in outs.iter().enumerate() {
+        ga.add_edge(sel, out, Edge::from((o as u16, 0)));
+    }
+
+    let mut g = Graph::new();
+    let pushes: Vec<_> = (0..3)
+        .map(|i| g.add_node(Box::new(node_int(i).with_push_eval()) as Box<dyn DebugNode>))
+        .collect();
+    let graph_a = g.add_node(Box::new(ga) as Box<_>);
+    for &p in &pushes {
+        g.add_edge(p, graph_a, Edge::from((0, 0)));
+    }
+    for o in 0..3u16 {
+        let store = g.add_node(Box::new(node_number()) as Box<_>);
+        g.add_edge(graph_a, store, Edge::from((o, 0)));
+    }
+    agree_on_all_entrypoints(&g);
+}
+
+/// A branching graph nested inside another branching graph: the outer graph
+/// node's external branches compose from two levels of dispatch.
+#[test]
+fn nested_branch_two_levels() {
+    // Innermost: divergent select.
+    let mut inner = Nested::default();
+    let in_inlet = inner.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let in_sel = inner.add_node(Box::new(node_select2()) as Box<_>);
+    let in_out_a = inner.add_node(Box::new(Outlet) as Box<_>);
+    let in_out_b = inner.add_node(Box::new(Outlet) as Box<_>);
+    inner.add_edge(in_inlet, in_sel, Edge::from((0, 0)));
+    inner.add_edge(in_sel, in_out_a, Edge::from((0, 0)));
+    inner.add_edge(in_sel, in_out_b, Edge::from((1, 0)));
+
+    // Middle: passes through the inner branching graph to its own outlets.
+    let mut mid = Nested::default();
+    let mid_inlet = mid.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let inner_ix = mid.add_node(Box::new(inner) as Box<_>);
+    let mid_out_a = mid.add_node(Box::new(Outlet) as Box<_>);
+    let mid_out_b = mid.add_node(Box::new(Outlet) as Box<_>);
+    mid.add_edge(mid_inlet, inner_ix, Edge::from((0, 0)));
+    mid.add_edge(inner_ix, mid_out_a, Edge::from((0, 0)));
+    mid.add_edge(inner_ix, mid_out_b, Edge::from((1, 0)));
+
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let mid_ix = g.add_node(Box::new(mid) as Box<_>);
+    let store_a = g.add_node(Box::new(node_number()) as Box<_>);
+    let store_b = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, mid_ix, Edge::from((0, 0)));
+    g.add_edge(push_1, mid_ix, Edge::from((0, 0)));
+    g.add_edge(mid_ix, store_a, Edge::from((0, 0)));
+    g.add_edge(mid_ix, store_b, Edge::from((1, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// A stateful node inside an inner branch arm: it must run only on its arm.
+#[test]
+fn nested_branch_stateful_arm() {
+    let mut ga = Nested::default();
+    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let sel = ga.add_node(Box::new(node_select2()) as Box<_>);
+    let store_arm = ga.add_node(Box::new(node_number()) as Box<_>);
+    let out = ga.add_node(Box::new(Outlet) as Box<_>);
+    ga.add_edge(inlet, sel, Edge::from((0, 0)));
+    // Arm 0 passes through the stateful store; arm 1 goes straight out.
+    ga.add_edge(sel, store_arm, Edge::from((0, 0)));
+    ga.add_edge(store_arm, out, Edge::from((0, 0)));
+    ga.add_edge(sel, out, Edge::from((1, 0)));
+
+    let mut g = Graph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let graph_a = g.add_node(Box::new(ga) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_0, graph_a, Edge::from((0, 0)));
+    g.add_edge(push_1, graph_a, Edge::from((0, 0)));
+    g.add_edge(graph_a, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}
+
+/// Inlet/outlet ids interleaved with other nodes: input i must map to the
+/// i-th inlet in id order regardless of insertion order.
+#[test]
+fn nested_non_sequential_inlets() {
+    let mut ga = Nested::default();
+    let mul = ga.add_node(Box::new(node::expr("(* $l $r)").unwrap()) as Box<dyn DebugNode>);
+    let inlet_a = ga.add_node(Box::new(Inlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(Outlet) as Box<_>);
+    let inlet_b = ga.add_node(Box::new(Inlet) as Box<_>);
+    ga.add_edge(inlet_a, mul, Edge::from((0, 0)));
+    ga.add_edge(inlet_b, mul, Edge::from((0, 1)));
+    ga.add_edge(mul, outlet, Edge::from((0, 0)));
+
+    let mut g = Graph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let six = g.add_node(Box::new(node_int(6)) as Box<_>);
+    let seven = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let graph_a = g.add_node(Box::new(ga) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, six, Edge::from((0, 0)));
+    g.add_edge(push, seven, Edge::from((0, 0)));
+    g.add_edge(six, graph_a, Edge::from((0, 0)));
+    g.add_edge(seven, graph_a, Edge::from((0, 1)));
+    g.add_edge(graph_a, number, Edge::from((0, 0)));
+    agree_on_all_entrypoints(&g);
+}

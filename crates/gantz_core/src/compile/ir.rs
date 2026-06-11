@@ -30,6 +30,10 @@ pub(crate) enum Atom {
     /// The empty list `'()` - the "no value" placeholder (e.g. the export of
     /// a branch arm that does not produce it).
     Unit,
+    /// The sentinel marking an *outlet* value that was never produced,
+    /// distinguishing "did not fire" from "fired with `'()`". Only flows into
+    /// outlet-feeding exports and the fired-signature tests that read them.
+    Unfired,
 }
 
 /// A variable binding.
@@ -41,6 +45,11 @@ pub(crate) enum Var {
     /// value reaching that input varies by branch arm (a join parameter).
     /// Emitted as `node-{node}-i{input}`.
     Input { node: node::Id, input: usize },
+    /// The whole-result binding of node `node` (a branching node's
+    /// `(branch-ix value)` pair). Emitted as `node-{node}`. Bound by a
+    /// [`Step::Branch`] with a [`Subject::Call`], or by enclosing glue for a
+    /// [`Subject::PreBound`] dispatch.
+    Result { node: node::Id },
 }
 
 /// An argument to a node fn call.
@@ -52,7 +61,7 @@ pub(crate) enum Arg {
     List(Vec<Atom>),
 }
 
-/// A call to a generated node fn.
+/// A call to a generated node fn (or graph fn, for a nested-graph node).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NodeCall {
     pub node: node::Id,
@@ -62,6 +71,19 @@ pub(crate) struct NodeCall {
     /// The connected-outputs mask (selects the variant and the result shape).
     pub outputs: node::Conns,
     pub stateful: bool,
+    /// Whether the node is a nested graph: the call targets the graph fn
+    /// (`graph-fn-{path}-i{mask}`) instead of a node fn.
+    pub graph: bool,
+}
+
+/// What a [`Step::Branch`] dispatches on.
+#[derive(Debug)]
+pub(crate) enum Subject {
+    /// Call the branching node's fn, binding its `(branch-ix value)` pair.
+    Call(NodeCall),
+    /// The pair is already bound (as [`Var::Result`]) by enclosing glue -
+    /// e.g. a nested level's evaluation result bridged into this body.
+    PreBound { node: node::Id },
 }
 
 /// A single statement within a [`Body`].
@@ -72,11 +94,11 @@ pub(crate) enum Step {
     /// Define a join point. Visible to all later steps in this body, the
     /// body's tail, and (transitively) their nested arms and join bodies.
     Join(Join),
-    /// Call a branching node fn and dispatch on its `(branch-ix value)`
-    /// result. `dst` binds the values this statement exports to subsequent
-    /// steps: every path through the arms yields `dst.len()` values.
+    /// Dispatch on a branching subject's `(branch-ix value)` pair. `dst`
+    /// binds the values this statement exports to subsequent steps: every
+    /// path through the arms yields `dst.len()` values.
     Branch {
-        call: NodeCall,
+        subject: Subject,
         dst: Vec<Var>,
         arms: Vec<Arm>,
     },
@@ -177,7 +199,7 @@ impl Scope {
 
     fn check_atom(&self, atom: &Atom) -> Result<(), Invalid> {
         match atom {
-            Atom::Unit => Ok(()),
+            Atom::Unit | Atom::Unfired => Ok(()),
             Atom::Var(v) => self
                 .vars
                 .contains(v)
@@ -202,9 +224,14 @@ impl Scope {
 }
 
 /// Check the IR invariants for a whole body, given the number of values it is
-/// expected to yield (0 for an entry fn body).
-pub(crate) fn validate(body: &Body, yields: usize) -> Result<(), Invalid> {
-    let got = validate_body(body, &mut Scope::default())?;
+/// expected to yield (0 for an entry fn body) and any vars bound by enclosing
+/// glue (e.g. inlet params of a graph fn, or a pre-bound dispatch pair).
+pub(crate) fn validate(body: &Body, yields: usize, pre_bound: &[Var]) -> Result<(), Invalid> {
+    let mut scope = Scope::default();
+    for &v in pre_bound {
+        scope.bind(v)?;
+    }
+    let got = validate_body(body, &mut scope)?;
     if got.is_some_and(|got| got != yields) {
         // Reuse ExportArity with a sentinel node id for the top level.
         return Err(Invalid::ExportArity {
@@ -258,12 +285,24 @@ fn validate_body(body: &Body, scope: &mut Scope) -> Result<Option<usize>, Invali
                     },
                 );
             }
-            Step::Branch { call, dst, arms } => {
-                scope.check_call(call)?;
+            Step::Branch { subject, dst, arms } => {
+                let node = match subject {
+                    Subject::Call(call) => {
+                        scope.check_call(call)?;
+                        call.node
+                    }
+                    Subject::PreBound { node } => {
+                        let pair = Var::Result { node: *node };
+                        if !scope.vars.contains(&pair) {
+                            return Err(Invalid::UnboundVar(pair));
+                        }
+                        *node
+                    }
+                };
                 let mut seen = BTreeSet::new();
                 for arm in arms {
                     if !seen.insert(arm.ix) {
-                        return Err(Invalid::DuplicateArm(call.node, arm.ix));
+                        return Err(Invalid::DuplicateArm(node, arm.ix));
                     }
                     let mut inner = scope.clone();
                     for &b in &arm.binds {
@@ -272,7 +311,7 @@ fn validate_body(body: &Body, scope: &mut Scope) -> Result<Option<usize>, Invali
                     let yields = validate_body(&arm.body, &mut inner)?;
                     if yields.is_some_and(|got| got != dst.len()) {
                         return Err(Invalid::ExportArity {
-                            node: call.node,
+                            node,
                             arm: arm.ix,
                             expected: dst.len(),
                             got: yields.unwrap(),
@@ -324,6 +363,7 @@ mod tests {
             args,
             outputs: node::Conns::connected(n_outputs).unwrap(),
             stateful: false,
+            graph: false,
         }
     }
 
@@ -343,7 +383,7 @@ mod tests {
             ],
             tail: Tail::Ret(vec![]),
         };
-        validate(&body, 0).unwrap();
+        validate(&body, 0, &[]).unwrap();
     }
 
     #[test]
@@ -355,7 +395,7 @@ mod tests {
             }],
             tail: Tail::Ret(vec![]),
         };
-        assert_eq!(validate(&body, 0), Err(Invalid::UnboundVar(out(0, 0))));
+        assert_eq!(validate(&body, 0, &[]), Err(Invalid::UnboundVar(out(0, 0))));
     }
 
     #[test]
@@ -373,7 +413,7 @@ mod tests {
             ],
             tail: Tail::Ret(vec![]),
         };
-        assert_eq!(validate(&body, 0), Err(Invalid::Rebound(out(0, 0))));
+        assert_eq!(validate(&body, 0, &[]), Err(Invalid::Rebound(out(0, 0))));
     }
 
     /// A branch whose arms jump to a join; the join body consumes the param.
@@ -407,14 +447,14 @@ mod tests {
             steps: vec![
                 Step::Join(join),
                 Step::Branch {
-                    call: call(1, vec![], 2),
+                    subject: Subject::Call(call(1, vec![], 2)),
                     dst: vec![],
                     arms: vec![arm(0), arm(1)],
                 },
             ],
             tail: Tail::Ret(vec![]),
         };
-        validate(&body, 0).unwrap();
+        validate(&body, 0, &[]).unwrap();
     }
 
     /// Arm yield arity must match the branch's export count, whether the arm
@@ -423,7 +463,7 @@ mod tests {
     fn export_arity_mismatch_rejected() {
         let body = Body {
             steps: vec![Step::Branch {
-                call: call(1, vec![], 2),
+                subject: Subject::Call(call(1, vec![], 2)),
                 dst: vec![out(9, 0)],
                 arms: vec![Arm {
                     ix: 0,
@@ -437,7 +477,7 @@ mod tests {
             tail: Tail::Ret(vec![]),
         };
         assert_eq!(
-            validate(&body, 0),
+            validate(&body, 0, &[]),
             Err(Invalid::ExportArity {
                 node: 1,
                 arm: 0,
@@ -460,13 +500,13 @@ mod tests {
         };
         let body = Body {
             steps: vec![Step::Branch {
-                call: call(1, vec![], 1),
+                subject: Subject::Call(call(1, vec![], 1)),
                 dst: vec![out(1, 0)],
                 arms: vec![arm(0), arm(1)],
             }],
             tail: Tail::Ret(vec![]),
         };
-        validate(&body, 0).unwrap();
+        validate(&body, 0, &[]).unwrap();
     }
 
     #[test]
@@ -478,7 +518,7 @@ mod tests {
                 args: vec![],
             },
         };
-        assert_eq!(validate(&body, 0), Err(Invalid::UnknownJoin(7)));
+        assert_eq!(validate(&body, 0, &[]), Err(Invalid::UnknownJoin(7)));
     }
 
     /// A rec join may jump to itself; a non-rec join's body cannot see itself.
@@ -499,7 +539,10 @@ mod tests {
             })],
             tail: Tail::Ret(vec![]),
         };
-        validate(&rec_join(true), 0).unwrap();
-        assert_eq!(validate(&rec_join(false), 0), Err(Invalid::UnknownJoin(5)));
+        validate(&rec_join(true), 0, &[]).unwrap();
+        assert_eq!(
+            validate(&rec_join(false), 0, &[]),
+            Err(Invalid::UnknownJoin(5))
+        );
     }
 }

@@ -19,12 +19,16 @@ use crate::{
     GRAPH_STATE,
     compile::{
         codegen::node_fn_name,
-        ir::{Arg, Arm, Atom, Body, JoinId, NodeCall, Step, Tail, Var},
+        ir::{Arg, Arm, Atom, Body, JoinId, NodeCall, Step, Subject, Tail, Var},
     },
     node,
 };
 use std::fmt;
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
+
+/// The sentinel value marking an outlet that did not fire (see
+/// [`Atom::Unfired`]).
+const UNFIRED: &str = "'%gantz-unfired";
 
 /// A structurally built s-expression, displayed as Steel source.
 #[derive(Clone, Debug)]
@@ -60,31 +64,40 @@ impl fmt::Display for Sexp {
 }
 
 /// Shorthand for an atom.
-fn a(s: impl Into<String>) -> Sexp {
+pub(crate) fn a(s: impl Into<String>) -> Sexp {
     Sexp::A(s.into())
 }
 
 /// Shorthand for a list.
-fn l(items: impl IntoIterator<Item = Sexp>) -> Sexp {
+pub(crate) fn l(items: impl IntoIterator<Item = Sexp>) -> Sexp {
     Sexp::L(items.into_iter().collect())
 }
 
 /// The unit value `'()`.
-fn unit() -> Sexp {
+pub(crate) fn unit() -> Sexp {
     a("'()")
 }
 
 /// The emitted name of a variable.
-fn var_name(var: &Var) -> String {
+pub(crate) fn var_name(var: &Var) -> String {
     match var {
         Var::Output { node, output } => format!("node-{node}-o{output}"),
         Var::Input { node, input } => format!("node-{node}-i{input}"),
+        Var::Result { node } => pair_name(*node),
     }
 }
 
 /// The binding holding a branching node's raw `(branch-ix value)` result.
 fn pair_name(node: node::Id) -> String {
     format!("node-{node}")
+}
+
+/// The name of the graph fn compiled for the nested level at `path`, for the
+/// variant invoked with the given active-input mask.
+pub(crate) fn graph_fn_name(path: &[node::Id], inputs: &node::Conns) -> String {
+    let path_string = crate::compile::codegen::path_string(path);
+    let inputs_prefix = if inputs.is_empty() { "" } else { "-i" };
+    format!("graph-fn-{path_string}{inputs_prefix}{inputs}")
 }
 
 /// The emitted name of a join point fn.
@@ -96,6 +109,7 @@ fn atom_sexp(atom: &Atom) -> Sexp {
     match atom {
         Atom::Var(v) => a(var_name(v)),
         Atom::Unit => unit(),
+        Atom::Unfired => a(UNFIRED),
     }
 }
 
@@ -120,12 +134,17 @@ fn define_sexp(dst: &[Var], value: Sexp) -> Sexp {
     }
 }
 
-/// The call expression for a node fn, state-wrapped when stateful.
+/// The call expression for a node fn (or a nested level's graph fn),
+/// state-wrapped when stateful.
 fn call_sexp(cx: &Cx, call: &NodeCall) -> Sexp {
     let inputs = node::Conns::try_from_iter(call.args.iter().map(Option::is_some))
         .expect("validated NodeCall arg count exceeds Conns::MAX");
     let node_path: Vec<node::Id> = cx.path.iter().copied().chain([call.node]).collect();
-    let fn_name = node_fn_name(&node_path, &inputs, &call.outputs);
+    let fn_name = if call.graph {
+        graph_fn_name(&node_path, &inputs)
+    } else {
+        node_fn_name(&node_path, &inputs, &call.outputs)
+    };
     let mut items = vec![a(fn_name)];
     items.extend(call.args.iter().flatten().map(arg_sexp));
     if call.stateful {
@@ -185,9 +204,16 @@ pub(crate) fn body_sexps(cx: &Cx, body: &Body) -> Vec<Sexp> {
                 items.extend(body_sexps(cx, &join.body));
                 stmts.push(Sexp::L(items));
             }
-            Step::Branch { call, dst, arms } => {
-                let pair = pair_name(call.node);
-                stmts.push(l([a("define"), a(pair.clone()), call_sexp(cx, call)]));
+            Step::Branch { subject, dst, arms } => {
+                let pair = match subject {
+                    Subject::Call(call) => {
+                        let pair = pair_name(call.node);
+                        stmts.push(l([a("define"), a(pair.clone()), call_sexp(cx, call)]));
+                        pair
+                    }
+                    // Bound by enclosing glue.
+                    Subject::PreBound { node } => pair_name(*node),
+                };
                 stmts.push(define_sexp(dst, dispatch_sexp(cx, &pair, arms)));
             }
         }
@@ -249,21 +275,109 @@ fn tail_sexp(tail: &Tail) -> Sexp {
     }
 }
 
-/// Assemble a complete entry fn from a lowered body: thread the root state
-/// in, run the body, write the root state back.
-pub(crate) fn entry_fn(cx: &Cx, name: &str, body: &Body) -> ExprKind {
-    let mut items = vec![
-        a("define"),
-        l([a(name)]),
-        l([a("define"), a(GRAPH_STATE), a(crate::ROOT_STATE)]),
-    ];
-    items.extend(body_sexps(cx, body));
-    items.push(l([a("set!"), a(crate::ROOT_STATE), a(GRAPH_STATE)]));
+/// The result expression of a lowered level: the outlet values shaped by
+/// activation pattern.
+///
+/// With fewer than two patterns the level never branches externally: the
+/// result is the outlet values directly (raw for one outlet, a `(list ...)`
+/// for several, `'()` for none). Otherwise the result is
+/// `(list branch-ix value)`: the fired signature (sum of `2^i` for each fired
+/// outlet, conditional outlets tested against the unfired sentinel) selects
+/// the pattern index, and the value is shaped by that pattern's active
+/// outlets - mirroring the `Node::branches` contract of the flow pipeline.
+pub(crate) fn level_result_sexp(
+    outlets: &[crate::compile::lower::OutletVal],
+    patterns: &[node::Conns],
+) -> Sexp {
+    let atom = |o: &crate::compile::lower::OutletVal| match o.atom {
+        Some(ref atom) => atom_sexp(atom),
+        None => unit(),
+    };
+    let shaped = |active: Vec<&crate::compile::lower::OutletVal>| match active.as_slice() {
+        [] => unit(),
+        [o] => atom(o),
+        os => l(std::iter::once(a("list")).chain(os.iter().map(|o| atom(o)))),
+    };
+
+    if patterns.len() < 2 {
+        return shaped(outlets.iter().collect());
+    }
+
+    // The fired signature: constant terms for unconditionally-fired outlets,
+    // a sentinel test for conditional ones.
+    let mut base: u128 = 0;
+    let mut terms: Vec<Sexp> = Vec::new();
+    for (i, o) in outlets.iter().enumerate() {
+        match (o.atom, o.conditional) {
+            (None, _) => {}
+            (Some(_), false) => base += 1 << i,
+            (Some(atom), true) => terms.push(l([
+                a("if"),
+                l([a("equal?"), atom_sexp(&atom), a(UNFIRED)]),
+                a("0"),
+                a((1u128 << i).to_string()),
+            ])),
+        }
+    }
+    let sig_expr = match (base, terms.len()) {
+        (b, 0) => a(b.to_string()),
+        (0, 1) => terms.pop().unwrap(),
+        (b, _) => {
+            let mut items = vec![a("+"), a(b.to_string())];
+            items.extend(terms);
+            Sexp::L(items)
+        }
+    };
+
+    // The unique signature of a pattern's active outlets.
+    let signature = |conns: &node::Conns| -> u128 {
+        (0..outlets.len())
+            .filter(|&i| conns.get(i).unwrap_or(false))
+            .map(|i| 1u128 << i)
+            .sum()
+    };
+    let pattern_value = |conns: &node::Conns| -> Sexp {
+        let active: Vec<&crate::compile::lower::OutletVal> = outlets
+            .iter()
+            .enumerate()
+            .filter_map(|(i, o)| conns.get(i).unwrap_or(false).then_some(o))
+            .collect();
+        shaped(active)
+    };
+
+    // Nested `if` over patterns; the last is the exhaustive fallthrough.
+    let last = patterns.len() - 1;
+    let mut expr = l([
+        a("list"),
+        a(last.to_string()),
+        pattern_value(&patterns[last]),
+    ]);
+    for k in (0..last).rev() {
+        expr = l([
+            a("if"),
+            l([
+                a("="),
+                a("%gantz-sig"),
+                a(signature(&patterns[k]).to_string()),
+            ]),
+            l([a("list"), a(k.to_string()), pattern_value(&patterns[k])]),
+            expr,
+        ]);
+    }
+    l([a("let"), l([l([a("%gantz-sig"), sig_expr])]), expr])
+}
+
+/// Assemble a top-level fn definition from glue statements.
+pub(crate) fn fn_def(name: &str, params: &[String], stmts: Vec<Sexp>) -> ExprKind {
+    let mut sig = vec![a(name)];
+    sig.extend(params.iter().map(|p| a(p.clone())));
+    let mut items = vec![a("define"), Sexp::L(sig)];
+    items.extend(stmts);
     parse_one(&Sexp::L(items).to_string())
 }
 
 /// Parse one emitted top-level definition into the Steel AST.
-fn parse_one(src: &str) -> ExprKind {
+pub(crate) fn parse_one(src: &str) -> ExprKind {
     Engine::emit_ast(src)
         .unwrap_or_else(|e| panic!("emitted Steel failed to parse: {e}\n{src}"))
         .into_iter()
@@ -287,13 +401,14 @@ mod tests {
             args,
             outputs: outputs.parse().unwrap(),
             stateful: false,
+            graph: false,
         }
     }
 
     /// Emit `body` as a no-arg fn alongside the given node fn definitions,
     /// run it in a base VM, and return the result.
     fn run(node_fns: &[&str], body: &Body) -> SteelVal {
-        ir::validate(body, 1).unwrap();
+        ir::validate(body, 1, &[]).unwrap();
         let cx = Cx { path: &[] };
         let mut src = node_fns.join(" ");
         // A test driver without state threading: just the body statements.
@@ -437,7 +552,11 @@ mod tests {
                     },
                 }),
                 Step::Branch {
-                    call: call(1, vec![Some(Arg::One(Atom::Var(out(0, 0))))], "11"),
+                    subject: Subject::Call(call(
+                        1,
+                        vec![Some(Arg::One(Atom::Var(out(0, 0))))],
+                        "11",
+                    )),
                     dst: vec![export],
                     arms: vec![arm(0, 0), arm(1, 1)],
                 },
@@ -469,11 +588,11 @@ mod tests {
                 rec: true,
                 body: Body {
                     steps: vec![Step::Branch {
-                        call: call(
+                        subject: Subject::Call(call(
                             1,
                             vec![Some(Arg::One(Atom::Var(acc))), Some(Arg::One(Atom::Var(n)))],
                             "11",
-                        ),
+                        )),
                         dst: vec![out(1, 0)],
                         arms: vec![
                             // Continue: jump back with updated acc/n.

@@ -6,30 +6,80 @@
 //!
 //! - each arm's region (nodes reachable only while that arm is live) lowers
 //!   into the arm's body, recursively;
-//! - nodes reached by *every* live arm reconverge: they lower once into a
-//!   join point, and each consumed input whose sources are arm-varying
-//!   becomes a join parameter (arms pass their value, or `'()` when they
-//!   don't produce one);
-//! - a reconvergent node that also depends on unevaluated work *outside* the
-//!   branch region is deferred: it stays pending after the branch statement,
-//!   and the values it needs from inside flow out as branch exports (the
-//!   join returns them, the branch statement binds them). This subsumes the
-//!   old cross-component root ordering.
+//! - nodes every live arm *unconditionally* reaches reconverge: they lower
+//!   once into a join point, and each consumed input whose sources are
+//!   arm-varying becomes a join parameter (arms pass their value, or `'()`
+//!   when they don't produce one);
+//! - values consumed *outside* the branch construct - by deferred nodes,
+//!   enclosing scopes, or this level's outlets - flow out as branch exports
+//!   (the join returns them, the dispatch statement binds them). This
+//!   subsumes the old cross-component root ordering and outlet bridges.
 //!
-//! Dead arms (reaching nothing) yield `'()` for every export and bypass the
-//! join, so reconvergent work runs only when a live arm actually jumps.
+//! Dead arms (reaching nothing) yield the missing value for every export -
+//! `'()`, or the unfired sentinel for outlet-feeding exports so a level
+//! result can distinguish "didn't fire" from "fired with `'()`" - and bypass
+//! the join, so reconvergent work runs only when a live arm actually jumps.
+//!
+//! A level is lowered the same way whether entered from an entrypoint
+//! ([`LevelSources::Eval`]) or as a graph fn ([`LevelSources::Inlets`]);
+//! inlets resolve as pre-bound parameter values and outlet values are
+//! returned to the caller via [`LevelOut`].
 
 use crate::{
     compile::{
         Meta, MetaGraph,
         error::LowerError,
         flow::{NodeConf, NodeConns, reachable_subgraph},
-        ir::{Arg, Arm, Atom, Body, Join, NodeCall, Step, Tail, Var},
+        ir::{Arg, Arm, Atom, Body, Join, NodeCall, Step, Subject, Tail, Var},
     },
     node,
 };
 use petgraph::visit::EdgeRef;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+
+/// The fixed context for lowering one level.
+pub(crate) struct Cx<'a> {
+    pub meta: &'a Meta,
+    /// Ids of this level's nested-graph nodes: their calls target graph fns.
+    pub nested: BTreeSet<node::Id>,
+    /// Additional per-entrypoint branch masks (bridged children whose inner
+    /// push reaches their outlets through branching), atop `meta.branches`.
+    pub extra_branches: BTreeMap<node::Id, Vec<node::Conns>>,
+    /// Nodes already evaluated by enclosing glue: their `(branch-ix value)`
+    /// pair ([`Var::Result`]) or outputs are bound before the body runs.
+    pub prebound: BTreeSet<node::Id>,
+}
+
+/// What drives a level's evaluation.
+pub(crate) enum LevelSources {
+    /// A graph-fn variant: these inlets are active. All-active additionally
+    /// pulls from the outlets; a subset pushes from the active inlets plus
+    /// the level's static sources only (matching the flow pipeline).
+    Inlets(BTreeSet<node::Id>),
+    /// Entrypoint sources resolved at this level (including bridged
+    /// children: pre-evaluated nodes pushing over their produced outputs).
+    Eval {
+        push: Vec<(node::Id, node::Conns)>,
+        pull: Vec<(node::Id, node::Conns)>,
+    },
+}
+
+/// One outlet's resolved value after lowering a level.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OutletVal {
+    /// The atom holding the value in the body's final scope, or `None` when
+    /// this variant's evaluation can never produce it.
+    pub atom: Option<Atom>,
+    /// Whether the value may be the unfired sentinel at runtime (it flowed
+    /// through a branch export).
+    pub conditional: bool,
+}
+
+/// A lowered level: its body and the values of its outlets (in id order).
+pub(crate) struct LevelOut {
+    pub body: Body,
+    pub outlets: Vec<OutletVal>,
+}
 
 /// The lexical environment during lowering: which atom currently holds each
 /// value, and per-input overrides where arm-varying sources were merged into
@@ -42,27 +92,143 @@ struct Env {
     inputs: BTreeMap<(node::Id, usize), Atom>,
 }
 
-/// Lower one level's evaluation to a [`Body`] yielding no values.
-///
-/// `push`/`pull` are the source nodes with their participating connections
-/// (resolved at this level). Inlet/outlet nodes are excluded: at the root
-/// they are inert (outlet values are never read, inlet values never bound).
-pub(crate) fn entry_body(
-    meta: &Meta,
-    push: Vec<(node::Id, node::Conns)>,
-    pull: Vec<(node::Id, node::Conns)>,
-) -> Result<Body, LowerError> {
-    let reach: HashSet<node::Id> = super::eval_order(&meta.graph, push, pull)
-        .filter(|n| !meta.inlets.contains(n) && !meta.outlets.contains(n))
-        .collect();
+impl<'a> Cx<'a> {
+    /// The branch arm masks of `n`, when branching (entrypoint-specific
+    /// bridged branches take precedence over the graph-wide set).
+    fn branches(&self, n: node::Id) -> Option<&Vec<node::Conns>> {
+        self.extra_branches.get(&n).or(self.meta.branches.get(&n))
+    }
+}
+
+/// Lower one level's evaluation.
+pub(crate) fn level_body(cx: &Cx, sources: &LevelSources) -> Result<LevelOut, LowerError> {
+    let meta = cx.meta;
+    let conn1 = || node::Conns::connected(1).unwrap();
+
+    // Reachability sources.
+    let (push, pull) = match sources {
+        LevelSources::Inlets(active) => {
+            let mut push: Vec<(node::Id, node::Conns)> =
+                active.iter().map(|&n| (n, conn1())).collect();
+            if active.len() == meta.inlets.len() {
+                // All inlets active: inlets push, outlets pull.
+                let pull = meta.outlets.iter().map(|&n| (n, conn1())).collect();
+                (push, pull)
+            } else {
+                // Subset: static sources stay live; no outlet pull, so an
+                // unfired inlet's exclusive subtree is excluded.
+                push.extend(static_sources(meta)?);
+                (push, vec![])
+            }
+        }
+        LevelSources::Eval { push, pull } => (push.clone(), pull.clone()),
+    };
+
+    let reach: HashSet<node::Id> = super::eval_order(&meta.graph, push, pull).collect();
     let dag = reachable_subgraph(&meta.graph, &reach);
-    let pending: BTreeSet<node::Id> = dag.nodes().collect();
+
+    // Seed the env: active inlet values are bound as graph fn params;
+    // pre-bound non-branching nodes' outputs are bound by enclosing glue.
     let mut env = Env::default();
-    let steps = lower_steps(meta, &dag, pending, &mut env)?;
-    Ok(Body {
-        steps,
-        tail: Tail::Ret(vec![]),
+    if let LevelSources::Inlets(active) = sources {
+        for &i in active {
+            let var = Var::Output { node: i, output: 0 };
+            env.vals.insert((i, 0), Atom::Var(var));
+        }
+    }
+    for &n in &cx.prebound {
+        if cx.branches(n).is_none() {
+            let n_outputs = meta.outputs.get(&n).copied().unwrap_or(0);
+            for o in 0..n_outputs {
+                let var = Var::Output { node: n, output: o };
+                env.vals.insert((n, o), Atom::Var(var));
+            }
+        }
+    }
+
+    // Everything to lower: the reachable set minus inlets/outlets (resolved
+    // as values, never stepped) and pre-bound non-branching nodes. Pre-bound
+    // *branching* nodes stay pending so their dispatch lowers normally.
+    let pending: BTreeSet<node::Id> = dag
+        .nodes()
+        .filter(|n| !meta.inlets.contains(n) && !meta.outlets.contains(n))
+        .filter(|n| !cx.prebound.contains(n) || cx.branches(*n).is_some())
+        .collect();
+
+    let steps = lower_steps(cx, &dag, pending, &mut env)?;
+
+    // Resolve each outlet's value from the final scope.
+    let mut outlets = Vec::with_capacity(meta.outlets.len());
+    for &o in &meta.outlets {
+        outlets.push(resolve_outlet(&dag, &env, o)?);
+    }
+
+    Ok(LevelOut {
+        body: Body {
+            steps,
+            tail: Tail::Ret(vec![]),
+        },
+        outlets,
     })
+}
+
+/// The level's static sources: input-less interior nodes (constants), which
+/// stay live regardless of which inlets fired.
+fn static_sources(meta: &Meta) -> Result<Vec<(node::Id, node::Conns)>, LowerError> {
+    use crate::compile::error::{NodeConnsError, TooManyConns};
+    let mut sources = Vec::new();
+    for n in meta.graph.nodes() {
+        if meta.inlets.contains(&n) || meta.outlets.contains(&n) {
+            continue;
+        }
+        if meta
+            .graph
+            .edges_directed(n, petgraph::Incoming)
+            .next()
+            .is_some()
+        {
+            continue;
+        }
+        let n_out = meta.outputs.get(&n).copied().unwrap_or(0);
+        if n_out > 0 {
+            let conns = node::Conns::connected(n_out)
+                .map_err(|_| NodeConnsError::from(TooManyConns(n_out)))?;
+            sources.push((n, conns));
+        }
+    }
+    Ok(sources)
+}
+
+/// Resolve outlet `o`'s value: the merged branch export when its sources are
+/// conditional, else its single in-scope source.
+fn resolve_outlet(dag: &MetaGraph, env: &Env, o: node::Id) -> Result<OutletVal, LowerError> {
+    if !dag.contains_node(o) {
+        return Ok(OutletVal {
+            atom: None,
+            conditional: false,
+        });
+    }
+    if let Some(&atom) = env.inputs.get(&(o, 0)) {
+        return Ok(OutletVal {
+            atom: Some(atom),
+            conditional: true,
+        });
+    }
+    let atoms: Vec<Atom> = input_sources(dag, o, 0)
+        .into_iter()
+        .filter_map(|s| env.vals.get(&s).copied())
+        .collect();
+    match atoms.len() {
+        0 => Ok(OutletVal {
+            atom: None,
+            conditional: false,
+        }),
+        1 => Ok(OutletVal {
+            atom: Some(atoms[0]),
+            conditional: false,
+        }),
+        _ => Err(LowerError::MixedInputSources { node: o, input: 0 }),
+    }
 }
 
 /// Collect the node configurations (variants) called anywhere in `body`.
@@ -84,8 +250,10 @@ pub(crate) fn collect_confs(body: &Body, confs: &mut BTreeSet<NodeConf>) {
                 confs.insert(conf(call));
             }
             Step::Join(join) => collect_confs(&join.body, confs),
-            Step::Branch { call, arms, .. } => {
-                confs.insert(conf(call));
+            Step::Branch { subject, arms, .. } => {
+                if let Subject::Call(call) = subject {
+                    confs.insert(conf(call));
+                }
                 for arm in arms {
                     collect_confs(&arm.body, confs);
                 }
@@ -97,18 +265,18 @@ pub(crate) fn collect_confs(body: &Body, confs: &mut BTreeSet<NodeConf>) {
 /// Lower every node in `pending` into a sequence of steps, in deterministic
 /// dependency order.
 fn lower_steps(
-    meta: &Meta,
+    cx: &Cx,
     dag: &MetaGraph,
     mut pending: BTreeSet<node::Id>,
     env: &mut Env,
 ) -> Result<Vec<Step>, LowerError> {
     let mut steps = Vec::new();
-    while let Some(n) = next_node(meta, dag, &pending) {
+    while let Some(n) = next_node(cx, dag, &pending) {
         pending.remove(&n);
-        if meta.branches.contains_key(&n) {
-            lower_branch(meta, dag, &mut pending, env, n, &mut steps)?;
+        if cx.branches(n).is_some() {
+            lower_branch(cx, dag, &mut pending, env, n, &mut steps)?;
         } else {
-            let call = node_call(meta, dag, env, n)?;
+            let call = node_call(cx, dag, env, n)?;
             let dst: Vec<Var> = call
                 .outputs
                 .iter()
@@ -130,7 +298,7 @@ fn lower_steps(
 /// The next node to lower: among pending nodes whose in-dag predecessors are
 /// all already lowered, the lowest-id non-branch node, else the lowest-id
 /// branch (emitting independent work first minimizes branch exports).
-fn next_node(meta: &Meta, dag: &MetaGraph, pending: &BTreeSet<node::Id>) -> Option<node::Id> {
+fn next_node(cx: &Cx, dag: &MetaGraph, pending: &BTreeSet<node::Id>) -> Option<node::Id> {
     let mut first_branch = None;
     for &n in pending {
         let ready = dag
@@ -139,7 +307,7 @@ fn next_node(meta: &Meta, dag: &MetaGraph, pending: &BTreeSet<node::Id>) -> Opti
         if !ready {
             continue;
         }
-        if !meta.branches.contains_key(&n) {
+        if cx.branches(n).is_none() {
             return Some(n);
         }
         if first_branch.is_none() {
@@ -149,18 +317,31 @@ fn next_node(meta: &Meta, dag: &MetaGraph, pending: &BTreeSet<node::Id>) -> Opti
     first_branch
 }
 
-/// Build the [`NodeCall`] for `n`, resolving each input from the env.
-fn node_call(meta: &Meta, dag: &MetaGraph, env: &Env, n: node::Id) -> Result<NodeCall, LowerError> {
+/// Build the [`NodeCall`] for `n`, resolving each input from the env. A
+/// nested-graph node's call targets its graph fn and always yields all of
+/// its outputs.
+fn node_call(cx: &Cx, dag: &MetaGraph, env: &Env, n: node::Id) -> Result<NodeCall, LowerError> {
+    use crate::compile::error::{NodeConnsError, TooManyConns};
+    let meta = cx.meta;
     let n_inputs = meta.inputs.get(&n).copied().unwrap_or(0);
     let mut args = Vec::with_capacity(n_inputs);
     for i in 0..n_inputs {
         args.push(resolve_input(dag, env, n, i)?);
     }
+    let graph = cx.nested.contains(&n);
+    let outputs = if graph {
+        let n_outputs = meta.outputs.get(&n).copied().unwrap_or(0);
+        node::Conns::connected(n_outputs)
+            .map_err(|_| NodeConnsError::from(TooManyConns(n_outputs)))?
+    } else {
+        node_outputs(meta, dag, n)?
+    };
     Ok(NodeCall {
         node: n,
         args,
-        outputs: node_outputs(meta, dag, n)?,
+        outputs,
         stateful: meta.stateful.contains(&n),
+        graph,
     })
 }
 
@@ -273,7 +454,7 @@ fn arm_seeds(
 /// entirely). Unlike [`descendants`], a node reached only through some arms
 /// of a nested branch is conditional and excluded.
 fn unconditional_reach(
-    meta: &Meta,
+    cx: &Cx,
     dag: &MetaGraph,
     seeds: impl IntoIterator<Item = node::Id>,
     within: &BTreeSet<node::Id>,
@@ -284,7 +465,7 @@ fn unconditional_reach(
         if !reached.insert(n) {
             continue;
         }
-        match meta.branches.get(&n) {
+        match cx.branches(n) {
             None => {
                 for e_ref in dag.edges_directed(n, petgraph::Outgoing) {
                     let t = e_ref.target();
@@ -295,7 +476,7 @@ fn unconditional_reach(
             }
             Some(masks) => {
                 let mut arms = masks.iter().map(|mask| {
-                    unconditional_reach(meta, dag, arm_seeds(dag, n, mask, within), within)
+                    unconditional_reach(cx, dag, arm_seeds(dag, n, mask, within), within)
                 });
                 let mut shared = arms.next().unwrap_or_default();
                 for arm in arms {
@@ -308,18 +489,31 @@ fn unconditional_reach(
     reached
 }
 
+/// An export slot bound by a branch dispatch statement: the atom the join
+/// yields for it, and the atom a bypassing (dead) arm yields instead.
+#[derive(Clone, Copy)]
+struct Slot {
+    ret: Atom,
+    missing: Atom,
+}
+
 /// Lower branch node `b` and its whole region: arm bodies, the reconvergence
 /// join (if any), and the branch statement binding its exports.
 fn lower_branch(
-    meta: &Meta,
+    cx: &Cx,
     dag: &MetaGraph,
     pending: &mut BTreeSet<node::Id>,
     env: &mut Env,
     b: node::Id,
     steps: &mut Vec<Step>,
 ) -> Result<(), LowerError> {
-    let arm_masks = &meta.branches[&b];
-    let call = node_call(meta, dag, env, b)?;
+    let meta = cx.meta;
+    let arm_masks = cx.branches(b).expect("caller checked branching").clone();
+    let subject = if cx.prebound.contains(&b) {
+        Subject::PreBound { node: b }
+    } else {
+        Subject::Call(node_call(cx, dag, env, b)?)
+    };
 
     // Per-arm regions: nodes reachable while that arm is live.
     let r_arms: Vec<BTreeSet<node::Id>> = arm_masks
@@ -329,7 +523,7 @@ fn lower_branch(
     let r_all: BTreeSet<node::Id> = r_arms.iter().flatten().copied().collect();
     // An arm is live when it propagates anywhere: into its (pending-local)
     // region, or via an active output straight to a consumer outside the
-    // current lowering scope (e.g. an enclosing join's node).
+    // current lowering scope (e.g. an enclosing join's node or an outlet).
     let live: Vec<bool> = arm_masks
         .iter()
         .zip(&r_arms)
@@ -354,7 +548,7 @@ fn lower_branch(
         .iter()
         .zip(&live)
         .filter(|&(_, &l)| l)
-        .map(|(mask, _)| unconditional_reach(meta, dag, arm_seeds(dag, b, mask, pending), pending));
+        .map(|(mask, _)| unconditional_reach(cx, dag, arm_seeds(dag, b, mask, pending), pending));
     let mut cont_cand = live_ucr.next().unwrap_or_default();
     for ucr in live_ucr {
         cont_cand = cont_cand.intersection(&ucr).copied().collect();
@@ -387,9 +581,10 @@ fn lower_branch(
     // construct. Consumers within an arm resolve lexically inside the arm and
     // `b`'s own inputs were resolved above, so what remains: cont members
     // (lowered in the join; arm-varying inputs become join params) and
-    // *outside* consumers - deferred nodes or enclosing-scope nodes - whose
-    // region-fed inputs flow out as branch exports (arm-varying ones via a
-    // param the join returns, cont values under their own names).
+    // *outside* consumers - deferred nodes, enclosing-scope nodes, or this
+    // level's outlets - whose region-fed inputs flow out as branch exports.
+    // Outlet-feeding exports always get a dedicated per-input slot whose
+    // missing value is the unfired sentinel.
     let in_arms = |n: node::Id| arm_regions.iter().any(|r| r.contains(&n));
     let mut consumer_inputs: BTreeSet<(node::Id, usize)> = BTreeSet::new();
     for v in cont.iter().chain(arm_regions.iter().flatten()).chain([&b]) {
@@ -406,7 +601,7 @@ fn lower_branch(
     // (consumer, input) -> param var, for inputs with arm-varying sources.
     let mut params: BTreeMap<(node::Id, usize), Var> = BTreeMap::new();
     // Everything the branch statement binds, in deterministic Var order.
-    let mut exports: BTreeSet<Var> = BTreeSet::new();
+    let mut slots: BTreeMap<Var, Slot> = BTreeMap::new();
     for &(t, i) in &consumer_inputs {
         let sources = input_sources(dag, t, i);
         let arm_s: Vec<(node::Id, usize)> = sources
@@ -419,6 +614,8 @@ fn lower_branch(
             .copied()
             .filter(|&(s, _)| cont.contains(&s))
             .collect();
+        let outlet = meta.outlets.contains(&t);
+        let missing = if outlet { Atom::Unfired } else { Atom::Unit };
         let outside = !cont.contains(&t);
         if !arm_s.is_empty() {
             // Arm-varying sources merge into one scalar param; mixing them
@@ -432,28 +629,58 @@ fn lower_branch(
             let param = Var::Input { node: t, input: i };
             params.insert((t, i), param);
             if outside {
-                exports.insert(param);
+                slots.insert(
+                    param,
+                    Slot {
+                        ret: Atom::Var(param),
+                        missing,
+                    },
+                );
             }
-        } else if outside {
-            for (s, o) in cont_s {
-                exports.insert(Var::Output { node: s, output: o });
+        } else if outside && !cont_s.is_empty() {
+            if outlet {
+                // A dedicated slot carrying the outlet's (single) cont
+                // source, so a bypassing arm yields the unfired sentinel.
+                let lexical = sources.iter().any(|s| env.vals.contains_key(s));
+                if cont_s.len() > 1 || lexical || env.inputs.contains_key(&(t, i)) {
+                    return Err(LowerError::MixedInputSources { node: t, input: i });
+                }
+                let (s, o) = cont_s[0];
+                slots.insert(
+                    Var::Input { node: t, input: i },
+                    Slot {
+                        ret: Atom::Var(Var::Output { node: s, output: o }),
+                        missing,
+                    },
+                );
+            } else {
+                for (s, o) in cont_s {
+                    let var = Var::Output { node: s, output: o };
+                    slots.insert(
+                        var,
+                        Slot {
+                            ret: Atom::Var(var),
+                            missing: Atom::Unit,
+                        },
+                    );
+                }
             }
         }
     }
 
     // The join body: the cont nodes, with arm-varying inputs reading their
-    // params, ending by yielding the exports.
-    let export_vars: Vec<Var> = exports.iter().copied().collect();
+    // params, ending by yielding the export slots' values.
+    let export_vars: Vec<Var> = slots.keys().copied().collect();
     let join_id = cont.first().copied().unwrap_or(b);
-    let join = if !cont.is_empty() || !exports.is_empty() {
+    let join = if !cont.is_empty() || !slots.is_empty() {
         let mut join_env = env.clone();
         let mut param_vars: Vec<Var> = Vec::new();
         for (&(n, i), &param) in &params {
             join_env.inputs.insert((n, i), Atom::Var(param));
             param_vars.push(param);
         }
-        let join_steps = lower_steps(meta, dag, cont.clone(), &mut join_env)?;
-        let ret = export_vars.iter().map(|&v| Atom::Var(v)).collect();
+        let join_steps = lower_steps(cx, dag, cont.clone(), &mut join_env)?;
+        let ret = slots.values().map(|slot| slot.ret).collect();
         Some(Join {
             id: join_id,
             params: param_vars,
@@ -468,8 +695,8 @@ fn lower_branch(
     };
 
     // Arm bodies. Live arms jump to the join (when one exists) passing each
-    // param's value as produced by that arm ('() when it doesn't); dead arms
-    // yield '() for every export directly, bypassing the join.
+    // param's value as produced by that arm; dead arms yield every slot's
+    // missing value directly, bypassing the join.
     let mut arms = Vec::with_capacity(arm_masks.len());
     for (k, mask) in arm_masks.iter().enumerate() {
         let mut arm_env = env.clone();
@@ -484,10 +711,15 @@ fn lower_branch(
             };
             arm_env.vals.insert((node, output), Atom::Var(var));
         }
-        let arm_steps = lower_steps(meta, dag, arm_regions[k].clone(), &mut arm_env)?;
+        let arm_steps = lower_steps(cx, dag, arm_regions[k].clone(), &mut arm_env)?;
         let tail = if live[k] && join.is_some() {
             let mut args = Vec::with_capacity(params.len());
             for &(n, i) in params.keys() {
+                let missing = if meta.outlets.contains(&n) {
+                    Atom::Unfired
+                } else {
+                    Atom::Unit
+                };
                 args.push(arm_param_arg(
                     dag,
                     &arm_env,
@@ -496,6 +728,7 @@ fn lower_branch(
                     mask,
                     n,
                     i,
+                    missing,
                 )?);
             }
             Tail::Jump {
@@ -503,7 +736,7 @@ fn lower_branch(
                 args,
             }
         } else {
-            Tail::Ret(vec![Atom::Unit; export_vars.len()])
+            Tail::Ret(slots.values().map(|slot| slot.missing).collect())
         };
         arms.push(Arm {
             ix: k,
@@ -529,12 +762,13 @@ fn lower_branch(
             Var::Input { node, input } => {
                 env.inputs.insert((node, input), Atom::Var(var));
             }
+            Var::Result { .. } => unreachable!("exports are output or input vars"),
         }
     }
 
     steps.extend(join.map(Step::Join));
     steps.push(Step::Branch {
-        call,
+        subject,
         dst: export_vars,
         arms,
     });
@@ -542,8 +776,9 @@ fn lower_branch(
 }
 
 /// The atom arm `k` passes for the join param merging input `(n, i)`: the
-/// value of the arm-local source feeding it, or `'()` when this arm produces
-/// none.
+/// value of the arm-local source feeding it, or `missing` when this arm
+/// produces none.
+#[allow(clippy::too_many_arguments)]
 fn arm_param_arg(
     dag: &MetaGraph,
     arm_env: &Env,
@@ -552,6 +787,7 @@ fn arm_param_arg(
     mask: &node::Conns,
     n: node::Id,
     i: usize,
+    missing: Atom,
 ) -> Result<Atom, LowerError> {
     // An inner branch within this arm may already have merged the input's
     // in-arm sources into an export of its own; pass that through. A further
@@ -586,7 +822,7 @@ fn arm_param_arg(
         atoms.push(atom);
     }
     match atoms.len() {
-        0 => Ok(Atom::Unit),
+        0 => Ok(missing),
         1 => Ok(atoms[0]),
         _ => Err(LowerError::MixedInputSources { node: n, input: i }),
     }
