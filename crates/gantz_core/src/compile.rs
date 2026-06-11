@@ -646,8 +646,10 @@ impl ModuleBuilder<'_> {
             prebound,
         };
         let out = lower::level_body(&cx, &lower::LevelSources::Eval { push, pull })?;
-        #[cfg(debug_assertions)]
-        ir::validate(&out.body, 0, &prebound_vars).expect("lowering produced invalid IR");
+        ir::validate(&out.body, 0, &prebound_vars).map_err(|e| ModuleError::InvalidIr {
+            path: path.to_vec(),
+            detail: e.to_string(),
+        })?;
         lower::collect_confs(&out.body, self.confs.entry(path.to_vec()).or_default());
         Ok(Some((glue, out)))
     }
@@ -722,14 +724,14 @@ impl ModuleBuilder<'_> {
             prebound: std::collections::BTreeSet::new(),
         };
         let out = lower::level_body(&cx, &lower::LevelSources::Inlets(active.clone()))?;
-        #[cfg(debug_assertions)]
-        {
-            let inlet_vars: Vec<ir::Var> = active
-                .iter()
-                .map(|&i| ir::Var::Output { node: i, output: 0 })
-                .collect();
-            ir::validate(&out.body, 0, &inlet_vars).expect("lowering produced invalid IR");
-        }
+        let inlet_vars: Vec<ir::Var> = active
+            .iter()
+            .map(|&i| ir::Var::Output { node: i, output: 0 })
+            .collect();
+        ir::validate(&out.body, 0, &inlet_vars).map_err(|e| ModuleError::InvalidIr {
+            path: gpath.to_vec(),
+            detail: e.to_string(),
+        })?;
         lower::collect_confs(&out.body, self.confs.entry(gpath.to_vec()).or_default());
 
         // The node-contract patterns: the all-active analysis, matching the

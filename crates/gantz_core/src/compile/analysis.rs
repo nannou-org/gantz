@@ -162,6 +162,10 @@ fn finish<'a>(tail: &'a Tail, env: Env, joins: &Joins<'a>) -> Vec<(Vec<Fire>, En
         }
         Tail::Jump { join, args } => {
             let join = joins[join];
+            // The lowering does not produce `rec` joins yet (reserved for
+            // iterate-until-branch loops); their self-jumps would need
+            // fixpoint handling here rather than unbounded recursion.
+            assert!(!join.rec, "outlet analysis cannot walk rec joins yet");
             let mut env = env;
             for (&param, arg) in join.params.iter().zip(args) {
                 let fire = fire_of(&env, arg);
