@@ -53,13 +53,25 @@ impl Diagnostic {
 }
 
 /// Diagnostics for a [`vm::CompileError`] from [`vm::compile`]/[`vm::init`].
-pub fn from_compile_error(err: &vm::CompileError, vm: &Engine) -> Vec<Diagnostic> {
+pub fn from_compile_error(err: &vm::CompileError) -> Vec<Diagnostic> {
     match err {
         vm::CompileError::Module(err) => from_module_error(err),
         vm::CompileError::Eval { err, module } => {
-            let mut diag = from_eval_error(err, vm, module);
-            diag.severity = Severity::Compile;
-            vec![diag]
+            // The error came from running exactly this module, so its span
+            // needs no source verification.
+            let span = vm::steel_err_raw_span(err);
+            let path = span
+                .clone()
+                .and_then(|span| module.map.node_at(span))
+                .unwrap_or_default();
+            vec![Diagnostic {
+                path,
+                inputs: vec![],
+                outputs: vec![],
+                span,
+                message: err.to_string(),
+                severity: Severity::Compile,
+            }]
         }
     }
 }

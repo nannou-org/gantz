@@ -7,7 +7,7 @@ use bevy_gantz::{
     BuiltinNodes, CompiledModule, FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead,
     OpenHeadDataReadOnly, Registry, WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
-    reg, timestamp, vm,
+    head, reg, timestamp, vm,
 };
 use bevy_gantz_egui::{GantzEguiPlugin, GuiState, HeadGuiState, TraceCapture, Views};
 use bevy_pkv::PkvStore;
@@ -116,6 +116,8 @@ fn setup_open(
                 WorkingGraph(graph),
                 head_views,
                 CompiledModule::default(),
+                head::Module::default(),
+                head::Diagnostics::default(),
                 HeadGuiState::default(),
             ))
             .id();

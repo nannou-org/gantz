@@ -136,24 +136,42 @@ pub fn steel_err_span(
             .and_then(|id| vm.get_source(&id))
             .is_some_and(|text| text.as_ref().as_ref() == compiled.src)
     };
-    let span = err.span().filter(in_module).or_else(|| {
-        // Frames are pushed caller-first: take the innermost in-module one.
-        let trace = err.stack_trace().as_ref()?;
-        trace
-            .trace()
-            .iter()
-            .rev()
-            .filter_map(|frame| frame.span().as_ref())
-            .find(|span| in_module(span))
-            .copied()
-    })?;
-    Some(span.range())
+    steel_err_spans(err).find(in_module).map(|span| span.range())
+}
+
+/// The first span attached to a steel error, *without* verifying which
+/// source it points into.
+///
+/// Only sound when the error's provenance is already known - e.g. an error
+/// returned by [`compile`] itself, whose spans can only index the module
+/// just run.
+pub fn steel_err_raw_span(err: &SteelErr) -> Option<std::ops::Range<usize>> {
+    steel_err_spans(err).next().map(|span| span.range())
 }
 
 /// The full path of the node best attributed to a steel error (see
 /// [`steel_err_span`]).
 pub fn steel_err_node(err: &SteelErr, vm: &Engine, compiled: &Compiled) -> Option<Vec<node::Id>> {
     compiled.map.node_at(steel_err_span(err, vm, compiled)?)
+}
+
+/// Render a [`CompileError`] - with its full `source()` cause chain - as
+/// Steel comment lines for module views, so the underlying cause is visible
+/// instead of a bare "module generation failed".
+///
+/// When the module was generated but failed evaluation, its real source
+/// follows the comment so the error span context remains visible.
+pub fn compile_error_text(err: &CompileError) -> String {
+    let body: String = error_chain(err)
+        .lines()
+        .map(|line| format!("; {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let comment = format!("; failed to compile graph:\n{body}");
+    match err {
+        CompileError::Eval { module, .. } => format!("{comment}\n\n{}", module.src),
+        CompileError::Module(_) => comment,
+    }
 }
 
 /// Format an error together with its full [`std::error::Error::source`] chain.
@@ -172,4 +190,14 @@ pub fn error_chain(err: &dyn std::error::Error) -> String {
         source = e.source();
     }
     s
+}
+
+/// The spans attached to a steel error: its own span first, then its stack
+/// trace frames innermost-first (frames are pushed caller-first).
+fn steel_err_spans(err: &SteelErr) -> impl Iterator<Item = Span> + '_ {
+    err.span().into_iter().chain(
+        err.stack_trace()
+            .iter()
+            .flat_map(|trace| trace.trace().iter().rev().filter_map(|frame| *frame.span())),
+    )
 }

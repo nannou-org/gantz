@@ -28,6 +28,8 @@ pub struct OpenHeadData<N: 'static + Send + Sync> {
     pub head_ref: &'static mut HeadRef,
     pub working_graph: &'static mut WorkingGraph<N>,
     pub compiled: &'static mut CompiledModule,
+    pub module: &'static mut Module,
+    pub diagnostics: &'static mut Diagnostics,
 }
 
 // ----------------------------------------------------------------------------
@@ -46,9 +48,23 @@ pub struct HeadRef(pub ca::Head);
 #[derive(Component)]
 pub struct WorkingGraph<N>(pub gantz_core::node::graph::Graph<N>);
 
-/// The compiled Steel module for this head (as a string).
+/// The compiled Steel module for this head as displayable text (the module
+/// source, or commented error text when compilation failed).
 #[derive(Component, Default, Clone)]
 pub struct CompiledModule(pub String);
+
+/// The latest generated module artifact (source text + source map), kept for
+/// error-span and node-span resolution. `None` when module generation
+/// failed outright.
+#[derive(Component, Default)]
+pub struct Module(pub Option<gantz_core::vm::Compiled>);
+
+/// Diagnostics from the head's latest compile and entrypoint evaluations.
+///
+/// Compile diagnostics are replaced wholesale on every (re)compile; runtime
+/// diagnostics are replaced per evaluation and cleared on success.
+#[derive(Component, Default)]
+pub struct Diagnostics(pub Vec<gantz_core::Diagnostic>);
 
 // ----------------------------------------------------------------------------
 // Events

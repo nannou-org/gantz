@@ -13,27 +13,41 @@ use bevy_ecs::prelude::*;
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::node::{self, GetNode, graph::Graph};
-use gantz_core::vm::{Compiled, CompileError};
-use gantz_core::{Node, compile as core_compile};
+use gantz_core::vm::{Compiled, CompileError, compile_error_text};
+use gantz_core::{Node, compile as core_compile, diagnostic};
 use std::time::Duration;
 use steel::steel_vm::engine::Engine;
 
-/// Render a compile error - with its full `source()` cause chain - as Steel
-/// comment lines for the module view, so the underlying cause (e.g. a
-/// feedback-loop error) is visible instead of a bare "module generation failed".
-///
-/// When the module itself was generated but failed evaluation, its real
-/// source follows the comment so the error span context remains visible.
-fn compile_error_text(err: &CompileError) -> String {
-    let body: String = gantz_core::vm::error_chain(err)
-        .lines()
-        .map(|line| format!("; {line}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let comment = format!("; failed to compile graph:\n{body}");
-    match err {
-        CompileError::Eval { module, .. } => format!("{comment}\n\n{}", module.src),
-        CompileError::Module(_) => comment,
+/// The component updates for one compile attempt: the displayable module
+/// text, the module artifact for span resolution, and the extracted compile
+/// diagnostics.
+fn compile_components(
+    result: Result<Compiled, CompileError>,
+) -> (head::CompiledModule, head::Module, head::Diagnostics) {
+    match result {
+        Ok(module) => (
+            head::CompiledModule(module.src.clone()),
+            head::Module(Some(module)),
+            head::Diagnostics(vec![]),
+        ),
+        Err(e) => {
+            log::error!(
+                "Failed to compile graph: {}",
+                gantz_core::vm::error_chain(&e)
+            );
+            let text = compile_error_text(&e);
+            let diags = diagnostic::from_compile_error(&e);
+            // A module that failed evaluation still resolves spans.
+            let module = match e {
+                CompileError::Eval { module, .. } => Some(*module),
+                CompileError::Module(_) => None,
+            };
+            (
+                head::CompiledModule(text),
+                head::Module(module),
+                head::Diagnostics(diags),
+            )
+        }
     }
 }
 
@@ -151,26 +165,21 @@ fn init_head_vm<N>(
     let graph = graphs.get(entity).unwrap();
     let get_node = |ca: &ca::ContentAddr| lookup_node(registry, &**builtins, ca);
     let entrypoints = collect_entrypoints(ep_fns, &get_node, &**graph);
-    let (vm, module) = match init(&get_node, &**graph, &entrypoints, &config.0) {
-        Ok(result) => result,
+    match init(&get_node, &**graph, &entrypoints, &config.0) {
+        Ok((vm, module)) => {
+            cmds.entity(entity).insert(compile_components(Ok(module)));
+            vms.insert(entity, vm);
+        }
         Err(e) => {
-            log::error!(
-                "Failed to init VM for head: {}",
-                gantz_core::vm::error_chain(&e)
-            );
             // Don't leave a stale VM/module from a previously-active graph in
             // place: surface the error in the compiled module and drop the VM so
             // eval systems (e.g. `drive_frame_bangs`, `on_eval_entry`) stop
             // driving the wrong graph - which otherwise manifests as a confusing
             // "free identifier: entry-fn-..." against an unrelated module.
-            cmds.entity(entity)
-                .insert(head::CompiledModule(compile_error_text(&e)));
+            cmds.entity(entity).insert(compile_components(Err(e)));
             vms.remove(&entity);
-            return;
         }
-    };
-    cmds.entity(entity).insert(head::CompiledModule(module.src));
-    vms.insert(entity, vm);
+    }
 }
 
 /// VM init for opened heads.
@@ -230,12 +239,23 @@ pub fn on_eval_entry(
     trigger: On<EvalEntryEvent>,
     mut vms: NonSendMut<head::HeadVms>,
     mut cmds: Commands,
+    mut heads: Query<(&head::Module, &mut head::Diagnostics)>,
 ) {
     let event = trigger.event();
     let fn_name = core_compile::entry_fn_name(&event.entrypoint.id());
     if let Some(vm) = vms.get_mut(&event.head) {
         let start = web_time::Instant::now();
-        if let Err(e) = vm.call_function_by_name_with_args(&fn_name, vec![]) {
+        let result = vm.call_function_by_name_with_args(&fn_name, vec![]);
+        // Runtime diagnostics reflect the latest evaluation only.
+        if let Ok((module, mut diagnostics)) = heads.get_mut(event.head) {
+            diagnostics
+                .0
+                .retain(|d| d.severity != diagnostic::Severity::Runtime);
+            if let (Err(e), Some(compiled)) = (&result, &module.0) {
+                diagnostics.0.push(diagnostic::from_eval_error(e, vm, compiled));
+            }
+        }
+        if let Err(e) = result {
             log::error!("{e}");
         }
         cmds.trigger(EvalEntryComplete {
@@ -262,7 +282,7 @@ where
         .collect();
 
     let mut vms = head::HeadVms::default();
-    let mut compiled_updates: Vec<(Entity, String)> = vec![];
+    let mut compiled_updates: Vec<(Entity, Compiled)> = vec![];
     for entity in entities {
         let registry = world.resource::<Registry<N>>();
         let builtins = world.resource::<BuiltinNodes<N>>();
@@ -281,13 +301,11 @@ where
             }
         };
         vms.insert(entity, vm);
-        compiled_updates.push((entity, module.src));
+        compiled_updates.push((entity, module));
     }
 
-    for (entity, compiled_module) in compiled_updates {
-        if let Some(mut compiled) = world.get_mut::<head::CompiledModule>(entity) {
-            *compiled = head::CompiledModule(compiled_module);
-        }
+    for (entity, module) in compiled_updates {
+        world.entity_mut(entity).insert(compile_components(Ok(module)));
     }
 
     world.insert_non_send_resource(vms);
@@ -344,18 +362,14 @@ pub fn update<N>(
                 let get_node = |ca: &ca::ContentAddr| lookup_node(&registry, &**builtins, ca);
                 gantz_core::graph::register(&get_node, graph, &[], vm);
                 let entrypoints = collect_entrypoints(&ep_fns, &get_node, graph);
-                match compile(&get_node, graph, vm, &entrypoints, &config.0) {
-                    Ok(module) => data.compiled.0 = module.src,
-                    Err(e) => {
-                        log::error!(
-                            "Failed to compile graph: {}",
-                            gantz_core::vm::error_chain(&e)
-                        );
-                        // Surface the error rather than leaving the prior module
-                        // displayed, which would misleadingly look up-to-date.
-                        data.compiled.0 = compile_error_text(&e);
-                    }
-                }
+                // On error this surfaces commented error text rather than
+                // leaving the prior module displayed, which would
+                // misleadingly look up-to-date.
+                let result = compile(&get_node, graph, vm, &entrypoints, &config.0);
+                let (compiled, module, diagnostics) = compile_components(result);
+                *data.compiled = compiled;
+                *data.module = module;
+                *data.diagnostics = diagnostics;
             }
         }
     }
@@ -384,15 +398,10 @@ pub fn recompile_all<N>(
         let get_node = |ca: &ca::ContentAddr| lookup_node(&registry, &**builtins, ca);
         gantz_core::graph::register(&get_node, graph, &[], vm);
         let entrypoints = collect_entrypoints(&ep_fns, &get_node, graph);
-        match compile(&get_node, graph, vm, &entrypoints, &config.0) {
-            Ok(module) => data.compiled.0 = module.src,
-            Err(e) => {
-                log::error!(
-                    "Failed to compile graph: {}",
-                    gantz_core::vm::error_chain(&e)
-                );
-                data.compiled.0 = compile_error_text(&e);
-            }
-        }
+        let result = compile(&get_node, graph, vm, &entrypoints, &config.0);
+        let (compiled, module, diagnostics) = compile_components(result);
+        *data.compiled = compiled;
+        *data.module = module;
+        *data.diagnostics = diagnostics;
     }
 }

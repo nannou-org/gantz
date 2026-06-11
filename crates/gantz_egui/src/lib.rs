@@ -81,6 +81,18 @@ pub trait HeadAccess {
 
     /// Get the compiled module string for a head.
     fn compiled_module(&self, head: &gantz_ca::Head) -> Option<&str>;
+
+    /// The head's latest module artifact (source text + source map), for
+    /// resolving node/error spans into the compiled module source.
+    fn module(&self, _head: &gantz_ca::Head) -> Option<&gantz_core::vm::Compiled> {
+        None
+    }
+
+    /// Diagnostics from the head's latest compile and entrypoint
+    /// evaluations.
+    fn diagnostics(&self, _head: &gantz_ca::Head) -> &[gantz_core::Diagnostic] {
+        &[]
+    }
 }
 
 /// Mutable access to a head's data, provided via [`HeadAccess::with_head_mut`].
