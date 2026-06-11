@@ -1198,3 +1198,122 @@ fn nested_non_sequential_inlets() {
     g.add_edge(graph_a, number, Edge::from((0, 0)));
     agree_on_all_entrypoints(&g);
 }
+
+// ===========================================================================
+// Delay-cell feedback (IR pipeline only - the flow pipeline does not support
+// cyclic graphs, so these assert expected behavior directly).
+// ===========================================================================
+
+/// Compile through the IR pipeline, run, and call each entrypoint in order.
+fn run_v2(g: &Graph, eps: &[Entrypoint], calls: &[&Entrypoint]) -> Engine {
+    let m2 = gantz_core::compile::module_v2(&no_lookup, g, eps).expect("IR pipeline failed");
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, g, &[], &mut vm);
+    for f in &m2 {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+    for ep in calls {
+        vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+            .unwrap();
+    }
+    vm
+}
+
+/// The classic feedback accumulator: `add` sums its input with the delayed
+/// previous sum. The cycle is legal because it passes through the delay; the
+/// value crosses *between* evaluations.
+///
+///   push(5) -> add <----- delay
+///               |  \------^
+///               v
+///             number
+#[test]
+fn delay_feedback_accumulator() {
+    let mut g = Graph::new();
+    let push = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let add = g.add_node(Box::new(node::expr("(+ $x (if (number? $d) $d 0))").unwrap()) as Box<_>);
+    let delay = g.add_node(Box::new(node::Delay) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, add, Edge::from((0, 0)));
+    g.add_edge(delay, add, Edge::from((0, 1)));
+    g.add_edge(add, delay, Edge::from((0, 0))); // the feedback edge
+    g.add_edge(add, number, Edge::from((0, 0)));
+
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let ep = entrypoint::push(vec![push.index()], 1);
+    let vm = run_v2(&g, &eps, &[&ep, &ep, &ep]);
+
+    // 5, then 5+5, then 5+10.
+    let val = node::state::extract::<i32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 15);
+}
+
+/// The same accumulator inside a nested graph: the delay's state lives in
+/// the nested level's state map and the feedback survives across pushes.
+#[test]
+fn delay_feedback_in_nested_graph() {
+    let mut ga = Nested::default();
+    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let add = ga.add_node(Box::new(node::expr("(+ $x (if (number? $d) $d 0))").unwrap()) as Box<_>);
+    let delay = ga.add_node(Box::new(node::Delay) as Box<_>);
+    let outlet = ga.add_node(Box::new(Outlet) as Box<_>);
+    ga.add_edge(inlet, add, Edge::from((0, 0)));
+    ga.add_edge(delay, add, Edge::from((0, 1)));
+    ga.add_edge(add, delay, Edge::from((0, 0)));
+    ga.add_edge(add, outlet, Edge::from((0, 0)));
+
+    let mut g = Graph::new();
+    let push = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let graph_a = g.add_node(Box::new(ga) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, graph_a, Edge::from((0, 0)));
+    g.add_edge(graph_a, number, Edge::from((0, 0)));
+
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let ep = entrypoint::push(vec![push.index()], 1);
+    let vm = run_v2(&g, &eps, &[&ep, &ep, &ep]);
+
+    let val = node::state::extract::<i32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 15);
+}
+
+/// A delay read without any write this evaluation: a separate entrypoint
+/// stores into the delay; the reader sees the previous stored value only.
+#[test]
+fn delay_read_and_write_in_separate_entrypoints() {
+    let mut g = Graph::new();
+    // Writer chain: push_w(7) -> delay.
+    let push_w = g.add_node(Box::new(node_int(7).with_push_eval()) as Box<dyn DebugNode>);
+    let delay = g.add_node(Box::new(node::Delay) as Box<_>);
+    g.add_edge(push_w, delay, Edge::from((0, 0)));
+    // Reader chain: push_r -> get(reads delay) -> number.
+    let push_r = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let get = g
+        .add_node(Box::new(node::expr("(begin $bang (if (number? $d) $d -1))").unwrap()) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_r, get, Edge::from((0, 0)));
+    g.add_edge(delay, get, Edge::from((0, 1)));
+    g.add_edge(get, number, Edge::from((0, 0)));
+
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let ep_w = entrypoint::push(vec![push_w.index()], 1);
+    let ep_r = entrypoint::push(vec![push_r.index()], 1);
+
+    // Read before any write: -1. Write 7, read again: 7.
+    let vm = run_v2(&g, &eps, &[&ep_r]);
+    let val = node::state::extract::<i32>(&vm, &[number.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(val, -1, "read before any write sees the initial value");
+
+    let vm = run_v2(&g, &eps, &[&ep_w, &ep_r]);
+    let val = node::state::extract::<i32>(&vm, &[number.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(val, 7, "read after a write sees the stored value");
+}

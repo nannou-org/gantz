@@ -124,7 +124,26 @@ pub(crate) fn level_body(cx: &Cx, sources: &LevelSources) -> Result<LevelOut, Lo
         LevelSources::Eval { push, pull } => (push.clone(), pull.clone()),
     };
 
-    let reach: HashSet<node::Id> = super::eval_order(&meta.graph, push, pull).collect();
+    // Evaluation never propagates *through* a delay (its value crosses
+    // between evaluations), so ordering and reachability run on a graph with
+    // delay out-edges stripped - which is also what legalizes cycles passing
+    // through one. A delay whose stored value is consumed by a reached node
+    // joins the reach so the read binding exists.
+    let mut reach: HashSet<node::Id> = if meta.delays.is_empty() {
+        super::eval_order(&meta.graph, push, pull).collect()
+    } else {
+        let stripped = strip_delay_out_edges(&meta.graph, &meta.delays);
+        super::eval_order(&stripped, push, pull).collect()
+    };
+    for &d in &meta.delays {
+        let consumed = meta
+            .graph
+            .edges_directed(d, petgraph::Outgoing)
+            .any(|e_ref| reach.contains(&e_ref.target()));
+        if consumed {
+            reach.insert(d);
+        }
+    }
     let dag = reachable_subgraph(&meta.graph, &reach);
 
     // Seed the env: active inlet values are bound as graph fn params;
@@ -155,7 +174,19 @@ pub(crate) fn level_body(cx: &Cx, sources: &LevelSources) -> Result<LevelOut, Lo
         .filter(|n| !cx.prebound.contains(n) || cx.branches(*n).is_some())
         .collect();
 
-    let steps = lower_steps(cx, &dag, pending, &mut env)?;
+    // Delay reads: previous-evaluation values bound before anything runs.
+    let mut steps = Vec::new();
+    for &d in &meta.delays {
+        let consumed =
+            dag.contains_node(d) && dag.edges_directed(d, petgraph::Outgoing).next().is_some();
+        if consumed {
+            let var = Var::Output { node: d, output: 0 };
+            env.vals.insert((d, 0), Atom::Var(var));
+            steps.push(Step::DelayRead { node: d });
+        }
+    }
+
+    steps.extend(lower_steps(cx, &dag, pending, &mut env)?);
 
     // Resolve each outlet's value from the final scope.
     let mut outlets = Vec::with_capacity(meta.outlets.len());
@@ -170,6 +201,21 @@ pub(crate) fn level_body(cx: &Cx, sources: &LevelSources) -> Result<LevelOut, Lo
         },
         outlets,
     })
+}
+
+/// A copy of `g` without the out-edges of delay nodes (preserving all
+/// nodes), used for ordering and reachability.
+fn strip_delay_out_edges(g: &MetaGraph, delays: &BTreeSet<node::Id>) -> MetaGraph {
+    let mut out = MetaGraph::default();
+    for n in g.nodes() {
+        out.add_node(n);
+    }
+    for (a, b, w) in g.all_edges() {
+        if !delays.contains(&a) {
+            out.add_edge(a, b, w.clone());
+        }
+    }
+    out
 }
 
 /// The level's static sources: input-less interior nodes (constants), which
@@ -249,6 +295,8 @@ pub(crate) fn collect_confs(body: &Body, confs: &mut BTreeSet<NodeConf>) {
             Step::Node { call, .. } => {
                 confs.insert(conf(call));
             }
+            // Delays are intrinsics: no node fn.
+            Step::DelayRead { .. } | Step::DelayWrite { .. } => {}
             Step::Join(join) => collect_confs(&join.body, confs),
             Step::Branch { subject, arms, .. } => {
                 if let Subject::Call(call) = subject {
@@ -273,7 +321,13 @@ fn lower_steps(
     let mut steps = Vec::new();
     while let Some(n) = next_node(cx, dag, &pending) {
         pending.remove(&n);
-        if cx.branches(n).is_some() {
+        if cx.meta.delays.contains(&n) {
+            // A delay's only step is its write (the read was bound at the
+            // top of the level body); an unconnected input writes nothing.
+            if let Some(arg) = resolve_input(dag, env, n, 0)? {
+                steps.push(Step::DelayWrite { node: n, arg });
+            }
+        } else if cx.branches(n).is_some() {
             lower_branch(cx, dag, &mut pending, env, n, &mut steps)?;
         } else {
             let call = node_call(cx, dag, env, n)?;
@@ -301,9 +355,11 @@ fn lower_steps(
 fn next_node(cx: &Cx, dag: &MetaGraph, pending: &BTreeSet<node::Id>) -> Option<node::Id> {
     let mut first_branch = None;
     for &n in pending {
-        let ready = dag
-            .edges_directed(n, petgraph::Incoming)
-            .all(|e_ref| !pending.contains(&e_ref.source()));
+        // A pending *delay* predecessor never blocks: consumers read the
+        // pre-bound previous value, not the pending write.
+        let ready = dag.edges_directed(n, petgraph::Incoming).all(|e_ref| {
+            !pending.contains(&e_ref.source()) || cx.meta.delays.contains(&e_ref.source())
+        });
         if !ready {
             continue;
         }
@@ -406,7 +462,9 @@ fn node_outputs(meta: &Meta, dag: &MetaGraph, n: node::Id) -> Result<node::Conns
 }
 
 /// The nodes reachable from `seeds` within `within`, including the seeds.
+/// Never expands through a delay node (its value crosses evaluations).
 fn descendants(
+    cx: &Cx,
     dag: &MetaGraph,
     seeds: impl IntoIterator<Item = node::Id>,
     within: &BTreeSet<node::Id>,
@@ -414,7 +472,7 @@ fn descendants(
     let mut reached = BTreeSet::new();
     let mut stack: Vec<node::Id> = seeds.into_iter().filter(|n| within.contains(n)).collect();
     while let Some(n) = stack.pop() {
-        if !reached.insert(n) {
+        if !reached.insert(n) || cx.meta.delays.contains(&n) {
             continue;
         }
         for e_ref in dag.edges_directed(n, petgraph::Outgoing) {
@@ -462,7 +520,7 @@ fn unconditional_reach(
     let mut reached = BTreeSet::new();
     let mut stack: Vec<node::Id> = seeds.into_iter().filter(|n| within.contains(n)).collect();
     while let Some(n) = stack.pop() {
-        if !reached.insert(n) {
+        if !reached.insert(n) || cx.meta.delays.contains(&n) {
             continue;
         }
         match cx.branches(n) {
@@ -518,7 +576,7 @@ fn lower_branch(
     // Per-arm regions: nodes reachable while that arm is live.
     let r_arms: Vec<BTreeSet<node::Id>> = arm_masks
         .iter()
-        .map(|mask| descendants(dag, arm_seeds(dag, b, mask, pending), pending))
+        .map(|mask| descendants(cx, dag, arm_seeds(dag, b, mask, pending), pending))
         .collect();
     let r_all: BTreeSet<node::Id> = r_arms.iter().flatten().copied().collect();
     // An arm is live when it propagates anywhere: into its (pending-local)
@@ -560,7 +618,7 @@ fn lower_branch(
         .copied()
         .filter(|n| !r_all.contains(n) && *n != b)
         .collect();
-    let ext_desc = descendants(dag, ext.iter().copied(), pending);
+    let ext_desc = descendants(cx, dag, ext.iter().copied(), pending);
     if let Some(&bad) = r_all
         .iter()
         .find(|n| !cont_cand.contains(n) && ext_desc.contains(n))
@@ -587,7 +645,12 @@ fn lower_branch(
     // missing value is the unfired sentinel.
     let in_arms = |n: node::Id| arm_regions.iter().any(|r| r.contains(&n));
     let mut consumer_inputs: BTreeSet<(node::Id, usize)> = BTreeSet::new();
-    for v in cont.iter().chain(arm_regions.iter().flatten()).chain([&b]) {
+    for v in cont
+        .iter()
+        .filter(|v| !cx.meta.delays.contains(v))
+        .chain(arm_regions.iter().flatten())
+        .chain([&b])
+    {
         for e_ref in dag.edges_directed(*v, petgraph::Outgoing) {
             let t = e_ref.target();
             if t == b || in_arms(t) {

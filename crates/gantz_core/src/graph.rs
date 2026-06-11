@@ -11,8 +11,8 @@ use crate::{
     visit,
 };
 use petgraph::visit::{
-    Data, EdgeRef, IntoEdgeReferences, IntoEdgesDirected, IntoNodeReferences, NodeIndexable,
-    NodeRef, Topo, Visitable,
+    Data, EdgeRef, IntoEdgeReferences, IntoEdgesDirected, IntoNeighborsDirected,
+    IntoNodeIdentifiers, IntoNodeReferences, NodeIndexable, NodeRef, Topo, Visitable,
 };
 use steel::steel_vm::engine::Engine;
 
@@ -36,8 +36,33 @@ where
     }
 }
 
+/// All of `g`'s nodes: the topological order where it exists, then any nodes on
+/// a directed cycle (which [`Topo`] never yields) appended in index order.
+/// Keeps acyclic traversal identical to a plain `Topo` walk while ensuring
+/// cyclic nodes are still produced, deterministically.
+pub(crate) fn cycle_tolerant_topo_order<G>(g: G) -> Vec<G::NodeId>
+where
+    G: IntoNodeIdentifiers + IntoNeighborsDirected + NodeIndexable + Visitable,
+{
+    let mut visited: HashSet<usize> = HashSet::new();
+    let mut order: Vec<G::NodeId> = Vec::new();
+    let mut topo = Topo::new(g);
+    while let Some(n) = topo.next(g) {
+        visited.insert(g.to_index(n));
+        order.push(n);
+    }
+    let mut leftover: Vec<G::NodeId> = g
+        .node_identifiers()
+        .filter(|&n| !visited.contains(&g.to_index(n)))
+        .collect();
+    leftover.sort_by_key(|&n| g.to_index(n));
+    order.extend(leftover);
+    order
+}
+
 /// Visit all nodes in the graph in toposort order, and all nested nodes in
-/// depth-first order.
+/// depth-first order. Tolerates cycles - see [`cycle_tolerant_topo_order`]
+/// (order is irrelevant to the visitors, which key by path/id).
 pub fn visit<'a, G>(
     get_node: node::GetNode<'a>,
     g: G,
@@ -48,8 +73,7 @@ pub fn visit<'a, G>(
     G::NodeWeight: Node,
 {
     let mut path = path.to_vec();
-    let mut topo = Topo::new(g);
-    while let Some(n) = topo.next(g) {
+    for n in cycle_tolerant_topo_order(g) {
         let ix = g.to_index(n);
         path.push(ix);
         let inputs: Vec<_> = g

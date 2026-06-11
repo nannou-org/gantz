@@ -91,6 +91,13 @@ pub(crate) enum Subject {
 pub(crate) enum Step {
     /// Call a non-branching node fn, binding its connected outputs.
     Node { dst: Vec<Var>, call: NodeCall },
+    /// Bind a delay node's stored (previous-evaluation) value as its output.
+    /// Emitted at the top of a level body, before any node runs.
+    DelayRead { node: node::Id },
+    /// Store the value produced for a delay node's input, to be read on the
+    /// *next* evaluation. Ordered like a node call (and conditional when the
+    /// producing path is).
+    DelayWrite { node: node::Id, arg: Arg },
     /// Define a join point. Visible to all later steps in this body, the
     /// body's tail, and (transitively) their nested arms and join bodies.
     Join(Join),
@@ -255,6 +262,15 @@ fn validate_body(body: &Body, scope: &mut Scope) -> Result<Option<usize>, Invali
                 for &v in dst {
                     scope.bind(v)?;
                 }
+            }
+            Step::DelayRead { node } => {
+                scope.bind(Var::Output {
+                    node: *node,
+                    output: 0,
+                })?;
+            }
+            Step::DelayWrite { node: _, arg } => {
+                scope.check_arg(arg)?;
             }
             Step::Join(join) => {
                 if scope.joins.contains_key(&join.id) {

@@ -197,6 +197,29 @@ pub(crate) fn body_sexps(cx: &Cx, body: &Body) -> Vec<Sexp> {
             Step::Node { dst, call } => {
                 stmts.push(define_sexp(dst, call_sexp(cx, call)));
             }
+            Step::DelayRead { node } => {
+                let var = Var::Output {
+                    node: *node,
+                    output: 0,
+                };
+                stmts.push(l([
+                    a("define"),
+                    a(var_name(&var)),
+                    l([a("hash-ref"), a(GRAPH_STATE), a(format!("'{node}"))]),
+                ]));
+            }
+            Step::DelayWrite { node, arg } => {
+                stmts.push(l([
+                    a("set!"),
+                    a(GRAPH_STATE),
+                    l([
+                        a("hash-insert"),
+                        a(GRAPH_STATE),
+                        a(format!("'{node}")),
+                        arg_sexp(arg),
+                    ]),
+                ]));
+            }
             Step::Join(join) => {
                 let mut sig = vec![a(join_name(join.id))];
                 sig.extend(join.params.iter().map(|p| a(var_name(p))));
