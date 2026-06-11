@@ -97,6 +97,9 @@ fn primitives() -> Primitives {
     register_primitive(&mut p, "comment", || {
         Box::new(gantz_egui::node::Comment::default()) as Box<_>
     });
+    register_primitive(&mut p, "delay", || {
+        Box::new(gantz_core::node::Delay::default()) as Box<_>
+    });
     register_primitive(&mut p, "frame!", || {
         Box::new(bevy_gantz_egui::node::FrameBang) as Box<_>
     });

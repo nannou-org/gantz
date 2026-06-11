@@ -17,6 +17,8 @@ impl Node for gantz_core::node::Apply {}
 #[typetag::serde]
 impl Node for gantz_core::node::Branch {}
 #[typetag::serde]
+impl Node for gantz_core::node::Delay {}
+#[typetag::serde]
 impl Node for gantz_core::node::Expr {}
 #[typetag::serde]
 impl Node for gantz_core::node::GraphNode<Box<dyn Node>> {}
