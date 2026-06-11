@@ -13,7 +13,7 @@ use bevy_ecs::prelude::*;
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::node::{self, GetNode, graph::Graph};
-use gantz_core::vm::CompileError;
+use gantz_core::vm::{Compiled, CompileError};
 use gantz_core::{Node, compile as core_compile};
 use std::time::Duration;
 use steel::steel_vm::engine::Engine;
@@ -21,13 +21,20 @@ use steel::steel_vm::engine::Engine;
 /// Render a compile error - with its full `source()` cause chain - as Steel
 /// comment lines for the module view, so the underlying cause (e.g. a
 /// feedback-loop error) is visible instead of a bare "module generation failed".
-fn compile_error_comment(err: &CompileError) -> String {
+///
+/// When the module itself was generated but failed evaluation, its real
+/// source follows the comment so the error span context remains visible.
+fn compile_error_text(err: &CompileError) -> String {
     let body: String = gantz_core::vm::error_chain(err)
         .lines()
         .map(|line| format!("; {line}"))
         .collect::<Vec<_>>()
         .join("\n");
-    format!("; failed to compile graph:\n{body}")
+    let comment = format!("; failed to compile graph:\n{body}");
+    match err {
+        CompileError::Eval { module, .. } => format!("{comment}\n\n{}", module.src),
+        CompileError::Module(_) => comment,
+    }
 }
 
 /// A function that produces entrypoints for a given graph.
@@ -97,35 +104,31 @@ pub struct EvalEntryComplete {
 
 /// Initialize a new VM with root state and register the given graph.
 ///
-/// Returns the initialized VM and the compiled module as a formatted string.
+/// Returns the initialized VM and the compiled module.
 pub fn init<N>(
     get_node: GetNode,
     graph: &Graph<N>,
     entrypoints: &[core_compile::Entrypoint],
     config: &core_compile::Config,
-) -> Result<(Engine, String), CompileError>
+) -> Result<(Engine, Compiled), CompileError>
 where
     N: Node,
 {
-    let (vm, module) = gantz_core::vm::init(get_node, graph, entrypoints, config)?;
-    Ok((vm, gantz_core::vm::fmt_module(&module)))
+    gantz_core::vm::init(get_node, graph, entrypoints, config)
 }
 
 /// Compile the graph into a Steel module and run it in the VM.
-///
-/// Returns the compiled module as a formatted string.
 pub fn compile<N>(
     get_node: GetNode,
     graph: &Graph<N>,
     vm: &mut Engine,
     entrypoints: &[core_compile::Entrypoint],
     config: &core_compile::Config,
-) -> Result<String, CompileError>
+) -> Result<Compiled, CompileError>
 where
     N: Node,
 {
-    let module = gantz_core::vm::compile(get_node, graph, vm, entrypoints, config)?;
-    Ok(gantz_core::vm::fmt_module(&module))
+    gantz_core::vm::compile(get_node, graph, vm, entrypoints, config)
 }
 
 // ---------------------------------------------------------------------------
@@ -161,12 +164,12 @@ fn init_head_vm<N>(
             // driving the wrong graph - which otherwise manifests as a confusing
             // "free identifier: entry-fn-..." against an unrelated module.
             cmds.entity(entity)
-                .insert(head::CompiledModule(compile_error_comment(&e)));
+                .insert(head::CompiledModule(compile_error_text(&e)));
             vms.remove(&entity);
             return;
         }
     };
-    cmds.entity(entity).insert(head::CompiledModule(module));
+    cmds.entity(entity).insert(head::CompiledModule(module.src));
     vms.insert(entity, vm);
 }
 
@@ -278,7 +281,7 @@ where
             }
         };
         vms.insert(entity, vm);
-        compiled_updates.push((entity, module));
+        compiled_updates.push((entity, module.src));
     }
 
     for (entity, compiled_module) in compiled_updates {
@@ -342,7 +345,7 @@ pub fn update<N>(
                 gantz_core::graph::register(&get_node, graph, &[], vm);
                 let entrypoints = collect_entrypoints(&ep_fns, &get_node, graph);
                 match compile(&get_node, graph, vm, &entrypoints, &config.0) {
-                    Ok(module) => data.compiled.0 = module,
+                    Ok(module) => data.compiled.0 = module.src,
                     Err(e) => {
                         log::error!(
                             "Failed to compile graph: {}",
@@ -350,7 +353,7 @@ pub fn update<N>(
                         );
                         // Surface the error rather than leaving the prior module
                         // displayed, which would misleadingly look up-to-date.
-                        data.compiled.0 = compile_error_comment(&e);
+                        data.compiled.0 = compile_error_text(&e);
                     }
                 }
             }
@@ -382,13 +385,13 @@ pub fn recompile_all<N>(
         gantz_core::graph::register(&get_node, graph, &[], vm);
         let entrypoints = collect_entrypoints(&ep_fns, &get_node, graph);
         match compile(&get_node, graph, vm, &entrypoints, &config.0) {
-            Ok(module) => data.compiled.0 = module,
+            Ok(module) => data.compiled.0 = module.src,
             Err(e) => {
                 log::error!(
                     "Failed to compile graph: {}",
                     gantz_core::vm::error_chain(&e)
                 );
-                data.compiled.0 = compile_error_comment(&e);
+                data.compiled.0 = compile_error_text(&e);
             }
         }
     }

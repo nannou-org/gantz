@@ -425,7 +425,7 @@ impl App {
             match gantz_core::vm::init(&get_node, graph, &eps, &compile_config) {
                 Ok((vm, module)) => {
                     vms.push(vm);
-                    compiled_modules.push(gantz_core::vm::fmt_module(&module));
+                    compiled_modules.push(module.src);
                 }
                 Err(e) => {
                     log::error!("Failed to init VM: {}", gantz_core::vm::error_chain(&e));
@@ -495,9 +495,7 @@ impl eframe::App for App {
                 let eps = push_pull_entrypoints(&get_node, &*graph);
                 let config = &self.state.compile_config;
                 match gantz_core::vm::compile(&get_node, &*graph, vm, &eps, config) {
-                    Ok(module) => {
-                        self.state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module)
-                    }
+                    Ok(module) => self.state.compiled_modules[ix] = module.src,
                     Err(e) => {
                         log::error!(
                             "Failed to compile graph: {}",
@@ -1364,9 +1362,7 @@ fn open_head(state: &mut State, new_head: gantz_ca::Head) {
     match gantz_core::vm::init(&get_node, &new_graph, &eps, &state.compile_config) {
         Ok((vm, module)) => {
             state.vms.push(vm);
-            state
-                .compiled_modules
-                .push(gantz_core::vm::fmt_module(&module));
+            state.compiled_modules.push(module.src);
         }
         Err(e) => {
             log::error!("Failed to init VM for new head: {e}");
@@ -1407,7 +1403,7 @@ fn replace_head(ctx: &egui::Context, state: &mut State, new_head: gantz_ca::Head
     match gantz_core::vm::init(&get_node, &new_graph, &eps, &state.compile_config) {
         Ok((new_vm, module)) => {
             state.vms[ix] = new_vm;
-            state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module);
+            state.compiled_modules[ix] = module.src;
         }
         Err(e) => {
             log::error!("Failed to init VM for replaced head: {e}");
@@ -1456,7 +1452,7 @@ fn refresh_branch_head(state: &mut State) {
     match gantz_core::vm::init(&get_node, &*graph, &eps, &state.compile_config) {
         Ok((new_vm, module)) => {
             state.vms[ix] = new_vm;
-            state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module);
+            state.compiled_modules[ix] = module.src;
         }
         Err(e) => {
             log::error!("Failed to init VM for branch head refresh: {e}");

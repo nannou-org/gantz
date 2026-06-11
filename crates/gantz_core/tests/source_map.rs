@@ -69,7 +69,7 @@ fn source_map_roundtrip() {
     gb.add_edge(forty_two, add, Edge::from((0, 1)));
 
     let eps = push_pull_entrypoints(&no_lookup, &gb);
-    let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &gb, &eps, &Default::default()).unwrap();
     let src = gantz_core::vm::fmt_module(&module);
     let map = SourceMap::parse(&src);
 
@@ -144,7 +144,7 @@ fn source_map_level_fn() {
     gb.add_edge(graph_a, add, Edge::from((0, 0)));
 
     let eps = push_pull_entrypoints(&no_lookup, &gb);
-    let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &gb, &eps, &Default::default()).unwrap();
     let src = gantz_core::vm::fmt_module(&module);
     let map = SourceMap::parse(&src);
 
