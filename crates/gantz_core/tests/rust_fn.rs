@@ -103,7 +103,7 @@ fn test_stateless_rust_add() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &g);
-    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -173,7 +173,7 @@ fn test_stateful_rust_counter() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &g);
-    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -248,7 +248,7 @@ fn test_zero_arg_stateless() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &g);
-    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -319,7 +319,7 @@ fn test_state_only_fn() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &g);
-    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -393,7 +393,7 @@ fn test_stateful_typed_counter() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &g);
-    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -470,7 +470,7 @@ fn test_closure_with_capture() {
     g.add_edge(exp_ix, aeq_ix, Edge::from((0, 1)));
 
     let eps = push_pull_entrypoints(&no_lookup, &g);
-    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());

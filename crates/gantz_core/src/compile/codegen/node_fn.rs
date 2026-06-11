@@ -5,7 +5,9 @@
 //! node, a function is generated.
 //!
 //! These configurations are collected by traversing from each of the push/pull
-//! evaluation entrypoints.
+//! evaluation entrypoints. With
+//! [`Config::emit_all_node_fns`][crate::compile::Config], every node's
+//! all-connected configuration is included as well.
 
 use crate::{
     Edge,

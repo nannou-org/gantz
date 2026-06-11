@@ -122,7 +122,7 @@ fn test_graph_nested_stateless() {
     // Generate the module, which should have just one top-level expr for `push`.
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &gb);
-    let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &gb, &eps, &Default::default()).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -207,7 +207,7 @@ fn test_graph_nested_counter() {
     // Generate the module.
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &gb);
-    let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &gb, &eps, &Default::default()).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -319,7 +319,8 @@ fn test_graph_nested_push_eval() {
     ));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&no_lookup, &gb, &[ep.clone()]).unwrap();
+    let module =
+        gantz_core::compile::module(&no_lookup, &gb, &[ep.clone()], &Default::default()).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -436,7 +437,7 @@ fn test_graph_nested_non_sequential_inlets() {
     // Generate the module.
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &gb);
-    let module = gantz_core::compile::module(&no_lookup, &gb, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &gb, &eps, &Default::default()).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -513,7 +514,8 @@ fn test_graph_nested_push_through_outlet() {
     ));
 
     // Generate the module.
-    let module = gantz_core::compile::module(&no_lookup, &gb, &[ep.clone()]).unwrap();
+    let module =
+        gantz_core::compile::module(&no_lookup, &gb, &[ep.clone()], &Default::default()).unwrap();
 
     // Create the VM.
     let mut vm = Engine::new_base();
@@ -600,7 +602,8 @@ fn test_graph_nested_multi_outlet() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &outer);
-    let module = gantz_core::compile::module(&no_lookup, &outer, &eps).unwrap();
+    let module =
+        gantz_core::compile::module(&no_lookup, &outer, &eps, &Default::default()).unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -664,7 +667,9 @@ fn test_graph_nested_push_through_outlet_multi() {
         push_n_outputs,
     ));
 
-    let module = gantz_core::compile::module(&no_lookup, &outer, &[ep.clone()]).unwrap();
+    let module =
+        gantz_core::compile::module(&no_lookup, &outer, &[ep.clone()], &Default::default())
+            .unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -730,7 +735,9 @@ fn test_graph_nested_push_through_outlet_deep() {
         push_n_outputs,
     ));
 
-    let module = gantz_core::compile::module(&no_lookup, &outer, &[ep.clone()]).unwrap();
+    let module =
+        gantz_core::compile::module(&no_lookup, &outer, &[ep.clone()], &Default::default())
+            .unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -801,7 +808,8 @@ fn test_push_pull_entrypoints_discovers_nested_push() {
 
     // The generated module should include the entry fn for this entrypoint,
     // and it should work end-to-end (value 42 flows through outlet to number).
-    let module = gantz_core::compile::module(&no_lookup, &outer, &eps).unwrap();
+    let module =
+        gantz_core::compile::module(&no_lookup, &outer, &eps, &Default::default()).unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -878,7 +886,9 @@ fn test_graph_nested_multi_source_outlet_propagation() {
         push_source(vec![graph_b.index(), push_b.index()], push_n_outputs),
     ]);
 
-    let module = gantz_core::compile::module(&no_lookup, &outer, &[ep.clone()]).unwrap();
+    let module =
+        gantz_core::compile::module(&no_lookup, &outer, &[ep.clone()], &Default::default())
+            .unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -952,7 +962,9 @@ fn test_graph_nested_mixed_level_multi_source() {
         push_source(vec![push_outer.index()], push_outer_n),
     ]);
 
-    let module = gantz_core::compile::module(&no_lookup, &outer, &[ep.clone()]).unwrap();
+    let module =
+        gantz_core::compile::module(&no_lookup, &outer, &[ep.clone()], &Default::default())
+            .unwrap();
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -1036,7 +1048,7 @@ fn compile_and_push<N: DebugNode + ?Sized>(
 ) -> Engine {
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, g);
-    let module = gantz_core::compile::module(&no_lookup, g, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, g, &eps, &Default::default()).unwrap();
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, g, &[], &mut vm);
@@ -1066,7 +1078,8 @@ fn compile_and_push_nested<N: DebugNode + ?Sized>(
     push_n_outputs: u8,
 ) -> Engine {
     let ep = entrypoint::from_source(push_source(path, push_n_outputs));
-    let module = gantz_core::compile::module(&no_lookup, g, &[ep.clone()]).unwrap();
+    let module =
+        gantz_core::compile::module(&no_lookup, g, &[ep.clone()], &Default::default()).unwrap();
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, g, &[], &mut vm);
@@ -1707,7 +1720,7 @@ fn test_graph_nested_branch_stateful() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &g);
-    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
@@ -2512,7 +2525,8 @@ fn run_two_push<N: DebugNode + ?Sized>(
     b: (Vec<usize>, u8),
 ) -> Engine {
     let ep = entrypoint::from_sources([push_source(a.0, a.1), push_source(b.0, b.1)]);
-    let module = gantz_core::compile::module(&no_lookup, g, &[ep.clone()]).unwrap();
+    let module =
+        gantz_core::compile::module(&no_lookup, g, &[ep.clone()], &Default::default()).unwrap();
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, g, &[], &mut vm);
@@ -2737,7 +2751,7 @@ fn pd_plus() -> (GraphNode<Box<dyn DebugNode>>, usize) {
 // Compile `g` and register fns, returning a VM ready to be pushed.
 fn compile_only<N: DebugNode + ?Sized>(g: &petgraph::graph::DiGraph<Box<N>, Edge>) -> Engine {
     let eps = push_pull_entrypoints(&no_lookup, g);
-    let module = gantz_core::compile::module(&no_lookup, g, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, g, &eps, &Default::default()).unwrap();
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, g, &[], &mut vm);
@@ -2929,7 +2943,7 @@ fn test_pd_plus_top_level_vs_nested_equivalence() {
 fn test_nested_pd_plus_emits_reduced_variant() {
     let (g, _l, _r, pd, branch_ix, _store) = pd_plus_root(10, 5);
     let eps = push_pull_entrypoints(&no_lookup, &g);
-    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
     let text: String = module
         .iter()
         .map(|f| f.to_pretty(100))

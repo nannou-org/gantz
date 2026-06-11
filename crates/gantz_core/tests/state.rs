@@ -89,7 +89,7 @@ fn test_graph_with_counter() {
     // Generate the module, which should have just one top-level expr for `push`.
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &g);
-    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
 
     // Initialise the VM.
     let mut vm = Engine::new_base();
@@ -183,7 +183,7 @@ fn test_graph_with_counters() {
     // Generate the module, which should have one expr for each `push`.
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &g);
-    let module = gantz_core::compile::module(&no_lookup, &g, &eps).unwrap();
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
 
     // Initialise the VM.
     let mut vm = Engine::new_base();

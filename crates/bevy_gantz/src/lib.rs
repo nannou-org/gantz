@@ -18,7 +18,7 @@ pub use head::{
     OpenHeadDataReadOnly, WorkingGraph,
 };
 pub use reg::{Registry, lookup_node, timestamp};
-pub use vm::{EntrypointFns, EvalEntryComplete, EvalEntryEvent};
+pub use vm::{CompileConfig, EntrypointFns, EvalEntryComplete, EvalEntryEvent};
 
 /// Plugin providing core gantz functionality.
 ///
@@ -53,6 +53,7 @@ where
         .init_resource::<FocusedHead>()
         .init_resource::<HeadTabOrder>()
         .init_resource::<Registry<N>>()
+        .init_resource::<vm::CompileConfig>()
         .init_non_send_resource::<HeadVms>()
         // Register head event handlers.
         .add_observer(head::on_open::<N>)

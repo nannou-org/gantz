@@ -25,6 +25,7 @@ pub fn init<'a, G>(
     get_node: node::GetNode<'a>,
     graph: G,
     entrypoints: &[crate::compile::Entrypoint],
+    config: &crate::compile::Config,
 ) -> Result<(Engine, Vec<ExprKind>), CompileError>
 where
     G: Data<EdgeWeight = Edge>
@@ -38,7 +39,7 @@ where
     let mut vm = Engine::new_base();
     vm.register_value(crate::ROOT_STATE, SteelVal::empty_hashmap());
     crate::graph::register(get_node, graph, &[], &mut vm);
-    let module = compile(get_node, graph, &mut vm, entrypoints)?;
+    let module = compile(get_node, graph, &mut vm, entrypoints, config)?;
     Ok((vm, module))
 }
 
@@ -51,6 +52,7 @@ pub fn compile<'a, G>(
     graph: G,
     vm: &mut Engine,
     entrypoints: &[crate::compile::Entrypoint],
+    config: &crate::compile::Config,
 ) -> Result<Vec<ExprKind>, CompileError>
 where
     G: Data<EdgeWeight = Edge>
@@ -61,7 +63,7 @@ where
         + Copy,
     G::NodeWeight: Node,
 {
-    let module = crate::compile::module(get_node, graph, entrypoints)?;
+    let module = crate::compile::module(get_node, graph, entrypoints, config)?;
     for expr in &module {
         vm.run(expr.to_pretty(80))?;
     }
