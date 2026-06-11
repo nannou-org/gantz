@@ -10,8 +10,10 @@
 //!    active-inlet variant for graph fns, per entrypoint for level bodies -
 //!    to an IR (`ir`) of node-call steps, branch dispatches and join points
 //!    (local fns whose parameters carry reconverging values; values consumed
-//!    outside a branch construct ride its exports). Validated by
-//!    `ir::validate` in debug builds.
+//!    outside a branch construct ride its exports). `ir::validate` checks
+//!    the IR's scoping/arity invariants on every lowering, in every build;
+//!    a violation is a compiler bug and surfaces as
+//!    [`ModuleError::InvalidIr`].
 //! 3. **Outlet-activation analysis** (`analysis`): the distinct sets of a
 //!    level's outlets that can fire together, computed by abstract
 //!    interpretation of the lowered IR itself (forking per branch arm), so
