@@ -1,22 +1,57 @@
 //! Items related to generating steel code from a gantz graph, primarily the
 //! [`module`] fn.
+//!
+//! ## Pipeline
+//!
+//! 1. **Meta** (`meta`): a visitor walk collects one [`Meta`] per graph level
+//!    (adjacency, arities, branch masks, stateful/inlet/outlet/delay
+//!    sets) into a rose tree.
+//! 2. **Lowering** (`lower`): each level lowers once per use - per
+//!    active-inlet variant for graph fns, per entrypoint for level bodies -
+//!    to an IR (`ir`) of node-call steps, branch dispatches and join points
+//!    (local fns whose parameters carry reconverging values; values consumed
+//!    outside a branch construct ride its exports). `ir::validate` checks
+//!    the IR's scoping/arity invariants on every lowering, in every build;
+//!    a violation is a compiler bug and surfaces as
+//!    [`ModuleError::InvalidIr`].
+//! 3. **Outlet-activation analysis** (`analysis`): the distinct sets of a
+//!    level's outlets that can fire together, computed by abstract
+//!    interpretation of the lowered IR itself (forking per branch arm), so
+//!    the patterns cannot drift from the emitted code. Backs
+//!    `Graph::branches` and push-through-outlet propagation.
+//! 4. **Emission** (`emit`): a mechanical IR -> Steel walk restricted to
+//!    primitive base-engine forms, plus the per-variant node fns
+//!    (`codegen::node_fn`). Definition order is semantic (Steel resolves
+//!    free identifiers at definition): deepest levels first, a level's node
+//!    fns before its graph fns, entry fns last.
+//!
+//! Nested graphs compile *call-based*: one `graph-fn-{path}-i{mask}` per
+//! active-inlet variant, called like a node fn. An entrypoint sourced inside
+//! a nested graph becomes a per-level fn threading the level's state and
+//! returning the outlet result - a `(list branch-ix vals)` pair when the
+//! push reaches the outlets through branching - which the parent level
+//! continues from as a pre-bound source.
+//!
+//! Cycles are legal when they pass through a [`node::Delay`]: ordering and
+//! reachability never propagate through a delay, whose value crosses
+//! *between* evaluations (read at the top of a level body, written where its
+//! input is produced).
 
 use crate::{
     Edge,
     node::{self, Node},
 };
+pub(crate) use analysis::level_branch_patterns;
 #[doc(inline)]
-pub use codegen::{OutletActivity, entry_fn_body, entry_fn_name};
-pub(crate) use codegen::{branch_selector, outlet_values_expr};
+pub use codegen::entry_fn_name;
+pub(crate) use emit::graph_fn_name;
 #[doc(inline)]
 pub use entrypoint::{
     Entrypoint, EntrypointId, EvalKind, EvalSource, pull_source, push_pull_entrypoints, push_source,
 };
 #[doc(inline)]
 pub use error::ModuleError;
-#[doc(inline)]
-pub use flow::{Block, Flow, FlowGraph, NodeConf, NodeConns, OutletReach, flow_graph};
-pub(crate) use flow::{branch_patterns_from_flow, flow_graph_roots, inner_flow_graph_for};
+pub(crate) use lower::{NodeConf, NodeConns};
 use meta::MetaTree;
 #[doc(inline)]
 pub use meta::{EdgeKind, Meta, MetaGraph};
@@ -28,10 +63,13 @@ pub(crate) use rosetree::RoseTree;
 use std::{collections::HashSet, hash::Hash};
 use steel::parser::ast::ExprKind;
 
+mod analysis;
 mod codegen;
+mod emit;
 pub mod entrypoint;
 pub mod error;
-mod flow;
+mod ir;
+mod lower;
 mod meta;
 mod rosetree;
 
@@ -301,152 +339,19 @@ fn or_patterns(patterns: &[node::Conns]) -> Result<node::Conns, error::NodeConns
     node::Conns::try_from_slice(&bits).map_err(|_| error::TooManyConns(n).into())
 }
 
-/// Recursively build a flow tree, routing entrypoint sources to each nesting
-/// level.
-///
-/// Children are recursed into first so that outlet-reaching push sources can
-/// be combined with direct sources before building each entrypoint's flow
-/// graph. This ensures each flow graph is built exactly once with complete
-/// source information.
-fn build_flow_tree<'a>(
-    meta_tree: &'a RoseTree<Meta>,
-    level_sources: &std::collections::BTreeMap<
-        Vec<node::Id>,
-        Vec<(EntrypointId, Vec<&EvalSource>)>,
-    >,
-    current_path: Vec<node::Id>,
-) -> Result<RoseTree<(&'a Meta, Flow)>, error::NodeConnsError> {
-    let sources = level_sources
-        .get(&current_path)
-        .map(|v| &v[..])
-        .unwrap_or(&[]);
-    let nested_fg = flow::flow_graph(
-        &meta_tree.elem,
-        meta_tree
-            .elem
-            .inlets
-            .iter()
-            .map(|&n| (n, node::Conns::connected(1).unwrap())),
-        meta_tree
-            .elem
-            .outlets
-            .iter()
-            .map(|&n| (n, node::Conns::connected(1).unwrap())),
-    )?;
-    let mut nested = std::collections::BTreeMap::new();
-
-    // 1. Recurse into children, collect outlet-reaching push sources. When a
-    //    child's push reaches its outlets through branching (>= 2 distinct outlet
-    //    patterns), record those patterns as the bridged graph node's branches
-    //    for this entrypoint, so the parent gates its continuation per branch.
-    let mut outlet_push: std::collections::BTreeMap<EntrypointId, Vec<(node::Id, node::Conns)>> =
-        std::collections::BTreeMap::new();
-    let mut extra_branches: std::collections::BTreeMap<
-        EntrypointId,
-        std::collections::BTreeMap<node::Id, Vec<node::Conns>>,
-    > = std::collections::BTreeMap::new();
-    for (&id, subtree) in &meta_tree.nested {
-        let mut child_path = current_path.clone();
-        child_path.push(id);
-        let child_tree = build_flow_tree(subtree, level_sources, child_path)?;
-        let (_, ref child_flow) = child_tree.elem;
-        let n_outputs = meta_tree.elem.outputs.get(&id).copied().unwrap_or(0);
-        if n_outputs > 0 {
-            for (ep_id, reach) in &child_flow.outlet_reach {
-                let conns = if reach.patterns.len() >= 2 {
-                    extra_branches
-                        .entry(ep_id.clone())
-                        .or_default()
-                        .insert(id, reach.patterns.clone());
-                    // Only the outputs some branch can produce reach downstream.
-                    or_patterns(&reach.patterns)?
-                } else {
-                    node::Conns::connected(n_outputs).map_err(|_| error::TooManyConns(n_outputs))?
-                };
-                outlet_push
-                    .entry(ep_id.clone())
-                    .or_default()
-                    .push((id, conns));
-            }
-        }
-        nested.insert(id, child_tree);
-    }
-
-    // 2. Collect all push/pull sources per entrypoint: direct + outlet.
-    let mut ep_push: std::collections::BTreeMap<EntrypointId, Vec<(node::Id, node::Conns)>> =
-        std::collections::BTreeMap::new();
-    let mut ep_pull: std::collections::BTreeMap<EntrypointId, Vec<(node::Id, node::Conns)>> =
-        std::collections::BTreeMap::new();
-    for (ep_id, srcs) in sources {
-        for src in srcs {
-            let node_id = *src.path.last().unwrap();
-            let map = match src.kind {
-                EvalKind::Push => &mut ep_push,
-                EvalKind::Pull => &mut ep_pull,
-            };
-            map.entry(ep_id.clone())
-                .or_default()
-                .push((node_id, src.conns));
-        }
-    }
-    for (ep_id, srcs) in outlet_push {
-        ep_push.entry(ep_id).or_default().extend(srcs);
-    }
-
-    // 3. Build one flow graph per entrypoint with complete sources, treating any
-    //    branch-aware bridged graph nodes as branch nodes for that entrypoint.
-    let mut entrypoints = std::collections::BTreeMap::new();
-    let mut outlet_reach = std::collections::BTreeMap::new();
-    let ep_ids: std::collections::BTreeSet<_> =
-        ep_push.keys().chain(ep_pull.keys()).cloned().collect();
-    let outlet_ids: Vec<node::Id> = meta_tree.elem.outlets.iter().copied().collect();
-    for ep_id in ep_ids {
-        let push = ep_push.remove(&ep_id).unwrap_or_default();
-        let pull = ep_pull.remove(&ep_id).unwrap_or_default();
-        let extra = extra_branches.remove(&ep_id).unwrap_or_default();
-        let fg = flow::flow_graph_with_extra(&meta_tree.elem, push, pull, &extra)?;
-        let reached: std::collections::BTreeSet<node::Id> = fg
-            .node_weights()
-            .flat_map(|blk| blk.iter())
-            .map(|conf| conf.id)
-            .filter(|nid| meta_tree.elem.outlets.contains(nid))
-            .collect();
-        if !reached.is_empty() {
-            // Patterns of this graph's outlets reachable from this entrypoint -
-            // for the parent's branch-aware propagation. Account for this graph's
-            // own branches plus this entrypoint's push-through (extra) branches.
-            let mut arm_counts: std::collections::BTreeMap<node::Id, usize> = meta_tree
-                .elem
-                .branches
-                .iter()
-                .map(|(&i, v)| (i, v.len()))
-                .collect();
-            arm_counts.extend(extra.iter().map(|(&i, m)| (i, m.len())));
-            let patterns = flow::branch_patterns_from_flow(&fg, &outlet_ids, &arm_counts)?;
-            outlet_reach.insert(ep_id.clone(), flow::OutletReach { reached, patterns });
-        }
-        entrypoints.insert(ep_id, fg);
-    }
-
-    let flow = Flow {
-        nested: nested_fg,
-        entrypoints,
-        outlet_reach,
-    };
-    Ok(RoseTree {
-        elem: (&meta_tree.elem, flow),
-        nested,
-    })
-}
-
 /// Given a root gantz graph, generate the full module with all the necessary
-/// functions for executing it.
+/// functions for executing it: a function per node variant (input/output
+/// configuration), a graph fn per nested level variant, and a function per
+/// entrypoint's evaluation.
 ///
-/// This includes:
-///
-/// 1. A function for each node (and for each node input configuration).
-/// 2. A function for each entrypoint's evaluation.
-/// 3. The above for all nested graphs.
+/// Lowers through the join-point IR pipeline (`lower` -> `ir` -> `emit`).
+/// Nested graphs compile *call-based*: each level becomes one
+/// `graph-fn-{path}-i{mask}` per active-inlet variant, which parents call
+/// like a node fn. An entrypoint sourced inside a nested graph becomes a
+/// per-level fn whose result - `(list value state')`, with `value` a
+/// `(list branch-ix vals)` pair when the push reaches the outlets through
+/// branching - the parent level continues from (push-through-outlet as an
+/// ordinary value return).
 pub fn module<'a, G>(
     get_node: node::GetNode<'a>,
     g: G,
@@ -456,118 +361,428 @@ where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G::NodeWeight: Node,
 {
-    // Create a `Meta` for each graph (including nested) in a tree.
     let mut meta_tree = MetaTree::default();
     crate::graph::visit(get_node, g, &[], &mut meta_tree);
     if !meta_tree.errors.is_empty() {
         return Err(error::MetaErrors(meta_tree.errors).into());
     }
+    let meta_tree = meta_tree.tree;
 
-    // Group entrypoint sources by graph level, then recursively build a
-    // flow tree that routes each level's sources to the correct nested graph.
     let level_sources = group_sources_by_level(entrypoints);
-    let flow_tree = build_flow_tree(&meta_tree.tree, &level_sources, vec![])?;
 
-    // Collect node fns. Build the per-level conf tree top-down so each node is
-    // defined for every variant it is actually called with - including the
-    // reduced inner variants a nested graph needs when invoked with a subset of
-    // its inlets active.
-    let node_confs_tree = build_node_confs_tree(&meta_tree.tree, &flow_tree)?;
-    let node_fns = codegen::node_fns(get_node, g, &node_confs_tree)?;
+    let mut builder = ModuleBuilder {
+        meta_tree: &meta_tree,
+        level_sources: &level_sources,
+        confs: std::collections::BTreeMap::new(),
+        graph_fns: Vec::new(),
+        fns: Vec::new(),
+    };
 
-    // Collect eval fns.
-    let entry_fns = codegen::entry_fns(&flow_tree)?;
-    Ok(node_fns.into_iter().chain(entry_fns).collect())
-}
-
-/// Build the per-level node-conf tree consumed by `node_fns`, defining every
-/// variant each node is actually called with.
-///
-/// A level's confs come from its own flow graphs ([`codegen::unique_node_confs`]:
-/// this level's entrypoint flows + all-connected `nested` flow) plus, when the
-/// level is a nested graph invoked with a reduced active-input-set, the confs
-/// from [`inner_flow_graph_for`] for that subset. Active-sets propagate top-down:
-/// a child's are the distinct confs it takes across every flow graph that lowers
-/// its parent (the parent's entrypoint + nested flows, and its reduced flows). So
-/// when `node::graph::nested_expr` lowers a nested graph with a reduced active set
-/// (a "cold" inlet push, or a push-through reaching only some inlets) the reduced
-/// inner variants it calls are also defined here.
-fn build_node_confs_tree(
-    meta_tree: &RoseTree<Meta>,
-    flow_tree: &RoseTree<(&Meta, Flow)>,
-) -> Result<RoseTree<std::collections::BTreeSet<NodeConf>>, error::NodeConnsError> {
-    // The root graph is not invoked as a node, so it has no reduced active-sets.
-    build_level_confs(meta_tree, flow_tree, &std::collections::BTreeSet::new())
-}
-
-/// Recursive worker for [`build_node_confs_tree`]: build the confs for one level
-/// (and its descendants) given the active-input-sets this level is invoked with.
-fn build_level_confs(
-    meta_tree: &RoseTree<Meta>,
-    flow_tree: &RoseTree<(&Meta, Flow)>,
-    active_sets: &std::collections::BTreeSet<node::Conns>,
-) -> Result<RoseTree<std::collections::BTreeSet<NodeConf>>, error::NodeConnsError> {
-    let meta = &meta_tree.elem;
-    let (_, flow) = &flow_tree.elem;
-    let inlet_ids: Vec<node::Id> = meta.inlets.iter().copied().collect();
-
-    // This level's own flow graphs, plus a reduced flow per proper-subset active
-    // set it is invoked with. Keep the reduced flows so children can read their
-    // confs from them too.
-    let mut confs = codegen::unique_node_confs(flow);
-    let mut reduced: Vec<FlowGraph> = Vec::new();
-    for active in active_sets {
-        let active_inlets = active_inlets_from_conns(&inlet_ids, active);
-        // All-active coincides with the `nested` flow already in `confs`.
-        if active_inlets.len() == meta.inlets.len() {
-            continue;
+    // One entry fn per entrypoint; the recursive level walk emits any nested
+    // level fns and yields the root statements inline.
+    let ep_ids: std::collections::BTreeSet<EntrypointId> =
+        entrypoints.iter().map(|ep| ep.id()).collect();
+    for ep_id in &ep_ids {
+        let mut stmts = vec![emit::l([
+            emit::a("define"),
+            emit::a(crate::GRAPH_STATE),
+            emit::a(crate::ROOT_STATE),
+        ])];
+        if let Some((glue, out)) = builder.ep_level_stmts(ep_id, &meta_tree, &[])? {
+            stmts.extend(glue);
+            stmts.extend(emit::body_sexps(&emit::Cx { path: &[] }, &out.body));
         }
-        let fg = inner_flow_graph_for(meta, &active_inlets)?;
-        confs.extend(fg.node_weights().flat_map(|blk| blk.iter().copied()));
-        reduced.push(fg);
+        stmts.push(emit::l([
+            emit::a("set!"),
+            emit::a(crate::ROOT_STATE),
+            emit::a(crate::GRAPH_STATE),
+        ]));
+        builder
+            .fns
+            .push(emit::fn_def(&codegen::entry_fn_name(ep_id), &[], stmts));
     }
 
-    // Each child's active-sets = the distinct confs it takes across every flow
-    // graph that lowers this level (entrypoints + nested + the reduced flows).
-    let mut nested = std::collections::BTreeMap::new();
-    for (&cid, child_meta) in &meta_tree.nested {
-        let mut child_sets = active_input_sets_for(flow, cid);
-        for fg in &reduced {
-            child_sets.extend(confs_of(fg, cid).map(|conf| conf.conns.inputs));
+    // Every nested level compiles its all-active variant unconditionally:
+    // wrapper nodes without graph-call semantics (e.g. `Fn`) inline an
+    // expression that calls it, and its interior node fns must exist either
+    // way (mirroring the all-connected interiors of the flow pipeline).
+    let mut emitted: std::collections::BTreeSet<(Vec<node::Id>, node::Conns)> =
+        std::collections::BTreeSet::new();
+    let mut levels = Vec::new();
+    collect_levels(&meta_tree, &mut Vec::new(), &mut levels);
+    for (gpath, n_inlets) in levels {
+        let imask = node::Conns::connected(n_inlets)
+            .map_err(|_| error::NodeConnsError::from(error::TooManyConns(n_inlets)))?;
+        if emitted.insert((gpath.clone(), imask)) {
+            builder.graph_fn(&gpath, &imask)?;
         }
-        let child_flow = &flow_tree.nested[&cid];
-        nested.insert(cid, build_level_confs(child_meta, child_flow, &child_sets)?);
     }
 
-    Ok(RoseTree {
-        elem: confs,
-        nested,
-    })
-}
-
-/// The distinct active-input-sets node `id` is invoked with across `flow`'s
-/// entrypoint flow graphs and its all-connected `nested` flow.
-fn active_input_sets_for(flow: &Flow, id: node::Id) -> std::collections::BTreeSet<node::Conns> {
-    let mut sets = std::collections::BTreeSet::new();
-    for fg in flow
-        .entrypoints
-        .values()
-        .chain(std::iter::once(&flow.nested))
-    {
-        sets.extend(confs_of(fg, id).map(|conf| conf.conns.inputs));
+    // Generate a graph fn per (nested level, active-inlet variant) reachable
+    // from the lowered bodies, to a fixpoint (graph fns may call deeper
+    // variants).
+    loop {
+        let mut queue = Vec::new();
+        for (path, confs) in &builder.confs {
+            let sub = builder.meta_tree.tree(path).expect("conf path exists");
+            for conf in confs {
+                if sub.nested.contains_key(&conf.id) {
+                    let mut gpath = path.clone();
+                    gpath.push(conf.id);
+                    let key = (gpath, conf.conns.inputs);
+                    if !emitted.contains(&key) {
+                        queue.push(key);
+                    }
+                }
+            }
+        }
+        if queue.is_empty() {
+            break;
+        }
+        for (gpath, imask) in queue {
+            if emitted.insert((gpath.clone(), imask)) {
+                builder.graph_fn(&gpath, &imask)?;
+            }
+        }
     }
-    sets
+
+    // A node fn per non-graph variant. The conf tree mirrors the full meta
+    // tree so the generating visitor finds every level; graph-node confs
+    // are excluded (they are graph fns, not node fns).
+    let confs_tree = node_confs_tree(&meta_tree, &builder.confs, &mut Vec::new());
+    let node_fns = codegen::node_fns(get_node, g, &confs_tree)?;
+
+    // Definition order (Steel resolves free identifiers at definition):
+    // deepest levels first; within a depth, a level's interior node fns
+    // precede the graph fns of the levels at that depth. A wrapper node fn
+    // (e.g. `Fn`) at depth D may call a graph fn at depth D+1; a graph fn
+    // calls its interior node fns and deeper graph fns; level and entry fns
+    // come last.
+    let mut fns: Vec<(usize, usize, ExprKind)> = node_fns
+        .into_iter()
+        .map(|(depth, f)| (depth, 0, f))
+        .collect();
+    fns.extend(
+        builder
+            .graph_fns
+            .into_iter()
+            .map(|(depth, f)| (depth, 1, f)),
+    );
+    fns.sort_by(|(d1, k1, _), (d2, k2, _)| d2.cmp(d1).then(k1.cmp(k2)));
+    Ok(fns
+        .into_iter()
+        .map(|(_, _, f)| f)
+        .chain(builder.fns)
+        .collect())
 }
 
-/// The `NodeConf`s for node `id` appearing in flow graph `fg`.
-fn confs_of(fg: &FlowGraph, id: node::Id) -> impl Iterator<Item = &NodeConf> {
-    fg.node_weights()
-        .flat_map(|blk| blk.iter())
-        .filter(move |conf| conf.id == id)
+/// Collect every nested level path in the meta tree with its inlet count.
+fn collect_levels(
+    tree: &RoseTree<Meta>,
+    path: &mut Vec<node::Id>,
+    out: &mut Vec<(Vec<node::Id>, usize)>,
+) {
+    for (&id, sub) in &tree.nested {
+        path.push(id);
+        out.push((path.clone(), sub.elem.inlets.len()));
+        collect_levels(sub, path, out);
+        path.pop();
+    }
+}
+
+/// A nested level's contribution to its parent's evaluation of one
+/// entrypoint.
+struct LevelPiece {
+    /// The emitted level fn's name.
+    fn_name: String,
+    /// Whether the level's interior holds any state (the fn then threads the
+    /// level's state hashmap in and out).
+    stateful: bool,
+    /// `Some` when the level's evaluation reaches its outlets: the distinct
+    /// activation patterns (>= 2 = the parent dispatches per pattern).
+    patterns: Option<Vec<node::Conns>>,
+}
+
+/// The working state of one [`module`] invocation: accumulated node variant
+/// confs and emitted fns, with the per-entrypoint level recursion and the
+/// per-variant graph fn generation as methods.
+struct ModuleBuilder<'a> {
+    meta_tree: &'a RoseTree<Meta>,
+    level_sources:
+        &'a std::collections::BTreeMap<Vec<node::Id>, Vec<(EntrypointId, Vec<&'a EvalSource>)>>,
+    /// Node variants called by the lowered bodies, per level path.
+    confs: std::collections::BTreeMap<Vec<node::Id>, std::collections::BTreeSet<NodeConf>>,
+    /// Emitted graph fns with their level depth. A graph fn calls only
+    /// deeper graph fns, so they are defined deepest-first, before all level
+    /// and entry fns (Steel resolves free identifiers at definition).
+    graph_fns: Vec<(usize, ExprKind)>,
+    /// Emitted level and entry fns, child levels before their parents.
+    fns: Vec<ExprKind>,
+}
+
+impl ModuleBuilder<'_> {
+    /// Lower the evaluation of `ep` at the level `path`: the glue statements
+    /// calling child level fns (with state threading and result binding),
+    /// and this level's own lowered body. Returns `None` when neither this
+    /// level nor any descendant has sources for `ep`.
+    fn ep_level_stmts(
+        &mut self,
+        ep: &EntrypointId,
+        meta_node: &RoseTree<Meta>,
+        path: &[node::Id],
+    ) -> Result<Option<(Vec<emit::Sexp>, lower::LevelOut)>, ModuleError> {
+        use emit::{Sexp, a, l};
+
+        let meta = &meta_node.elem;
+        let mut glue: Vec<Sexp> = Vec::new();
+        let mut push: Vec<(node::Id, node::Conns)> = Vec::new();
+        let mut pull: Vec<(node::Id, node::Conns)> = Vec::new();
+        let mut extra_branches = std::collections::BTreeMap::new();
+        let mut prebound = std::collections::BTreeSet::new();
+        let mut prebound_vars: Vec<ir::Var> = Vec::new();
+        let mut any_child = false;
+
+        // Children first (post-order): each contributing child evaluates via
+        // its level fn; one that reaches its outlets becomes a pre-bound
+        // source this level continues from.
+        for (&gid, sub_meta) in &meta_node.nested {
+            let mut child_path = path.to_vec();
+            child_path.push(gid);
+            let Some(piece) = self.ep_level(ep, sub_meta, &child_path)? else {
+                continue;
+            };
+            any_child = true;
+            let key = a(format!("'{gid}"));
+            let pair = a(format!("node-{gid}"));
+            if piece.stateful {
+                let r = format!("%lvl-r-{gid}");
+                glue.push(l([
+                    a("define"),
+                    a(r.clone()),
+                    l([
+                        a(piece.fn_name),
+                        l([a("hash-ref"), a(crate::GRAPH_STATE), key.clone()]),
+                    ]),
+                ]));
+                glue.push(l([
+                    a("set!"),
+                    a(crate::GRAPH_STATE),
+                    l([
+                        a("hash-insert"),
+                        a(crate::GRAPH_STATE),
+                        key,
+                        l([a("list-ref"), a(r.clone()), a("1")]),
+                    ]),
+                ]));
+                if piece.patterns.is_some() {
+                    glue.push(l([
+                        a("define"),
+                        pair.clone(),
+                        l([a("list-ref"), a(r), a("0")]),
+                    ]));
+                }
+            } else if piece.patterns.is_some() {
+                glue.push(l([a("define"), pair.clone(), l([a(piece.fn_name)])]));
+            } else {
+                // Stateless, no outlets reached: evaluate for side effects.
+                glue.push(l([a(piece.fn_name)]));
+            }
+
+            let Some(patterns) = piece.patterns else {
+                continue;
+            };
+            let n_out = meta.outputs.get(&gid).copied().unwrap_or(0);
+            prebound.insert(gid);
+            if patterns.len() >= 2 {
+                prebound_vars.push(ir::Var::Result { node: gid });
+                push.push((gid, or_patterns(&patterns)?));
+                extra_branches.insert(gid, patterns);
+            } else {
+                // Destructure all outputs from the plain result.
+                match n_out {
+                    0 => {}
+                    1 => glue.push(l([a("define"), a(format!("node-{gid}-o0")), pair])),
+                    _ => {
+                        for o in 0..n_out {
+                            glue.push(l([
+                                a("define"),
+                                a(format!("node-{gid}-o{o}")),
+                                l([a("list-ref"), pair.clone(), a(o.to_string())]),
+                            ]));
+                        }
+                    }
+                }
+                for o in 0..n_out {
+                    prebound_vars.push(ir::Var::Output {
+                        node: gid,
+                        output: o,
+                    });
+                }
+                let conns = node::Conns::connected(n_out)
+                    .map_err(|_| error::NodeConnsError::from(error::TooManyConns(n_out)))?;
+                push.push((gid, conns));
+            }
+        }
+
+        // This level's direct sources.
+        for (id, srcs) in self.level_sources.get(path).map(|v| &v[..]).unwrap_or(&[]) {
+            if id != ep {
+                continue;
+            }
+            for src in srcs {
+                let node_id = *src.path.last().unwrap();
+                match src.kind {
+                    EvalKind::Push => push.push((node_id, src.conns)),
+                    EvalKind::Pull => pull.push((node_id, src.conns)),
+                }
+            }
+        }
+
+        if !any_child && push.is_empty() && pull.is_empty() {
+            return Ok(None);
+        }
+
+        let cx = lower::Cx {
+            meta,
+            extra_branches,
+            prebound,
+        };
+        let out = lower::level_body(&cx, &lower::LevelSources::Eval { push, pull })?;
+        ir::validate(&out.body, 0, &prebound_vars).map_err(|e| ModuleError::InvalidIr {
+            path: path.to_vec(),
+            detail: e.to_string(),
+        })?;
+        lower::collect_confs(&out.body, self.confs.entry(path.to_vec()).or_default());
+        Ok(Some((glue, out)))
+    }
+
+    /// Build and emit the level fn evaluating `ep` at the nested level
+    /// `path`, returning how the parent integrates it.
+    fn ep_level(
+        &mut self,
+        ep: &EntrypointId,
+        meta_node: &RoseTree<Meta>,
+        path: &[node::Id],
+    ) -> Result<Option<LevelPiece>, ModuleError> {
+        use emit::{a, l};
+        let Some((glue, out)) = self.ep_level_stmts(ep, meta_node, path)? else {
+            return Ok(None);
+        };
+
+        // Whether (and how) this level's evaluation produces its outlets,
+        // analysed over the lowered body itself.
+        let produced = out.outlets.iter().any(|o| o.atom.is_some());
+        let patterns = match produced {
+            true => Some(
+                analysis::outlet_patterns(&out.body, &out.outlets)
+                    .map_err(error::NodeConnsError::from)?,
+            ),
+            false => None,
+        };
+        let result = match &patterns {
+            Some(patterns) => emit::level_result_sexp(&out.outlets, patterns),
+            None => emit::unit(),
+        };
+
+        let stateful = !meta_node.elem.stateful.is_empty();
+        let fn_name = format!(
+            "lvl-fn-{}-{}",
+            ep.0.display_short(),
+            codegen::path_string(path)
+        );
+        let mut body = Vec::new();
+        let params: Vec<String> = if stateful {
+            body.push(l([a("define"), a(crate::GRAPH_STATE), a("%lvl-state")]));
+            vec!["%lvl-state".to_string()]
+        } else {
+            vec![]
+        };
+        body.extend(glue);
+        body.extend(emit::body_sexps(&emit::Cx { path }, &out.body));
+        if stateful {
+            body.push(l([a("list"), result, a(crate::GRAPH_STATE)]));
+        } else {
+            body.push(result);
+        }
+        self.fns.push(emit::fn_def(&fn_name, &params, body));
+        Ok(Some(LevelPiece {
+            fn_name,
+            stateful,
+            patterns,
+        }))
+    }
+
+    /// Build and emit the graph fn for the nested level at `gpath`, for the
+    /// variant invoked with the given active-input mask.
+    fn graph_fn(&mut self, gpath: &[node::Id], imask: &node::Conns) -> Result<(), ModuleError> {
+        use emit::{a, l};
+        let sub = self.meta_tree.tree(gpath).expect("nested level exists");
+        let meta = &sub.elem;
+        let inlet_ids: Vec<node::Id> = meta.inlets.iter().copied().collect();
+        let active = active_inlets_from_conns(&inlet_ids, imask);
+        let cx = lower::Cx {
+            meta,
+            extra_branches: std::collections::BTreeMap::new(),
+            prebound: std::collections::BTreeSet::new(),
+        };
+        let out = lower::level_body(&cx, &lower::LevelSources::Inlets(active.clone()))?;
+        let inlet_vars: Vec<ir::Var> = active
+            .iter()
+            .map(|&i| ir::Var::Output { node: i, output: 0 })
+            .collect();
+        ir::validate(&out.body, 0, &inlet_vars).map_err(|e| ModuleError::InvalidIr {
+            path: gpath.to_vec(),
+            detail: e.to_string(),
+        })?;
+        lower::collect_confs(&out.body, self.confs.entry(gpath.to_vec()).or_default());
+
+        // The node-contract patterns: the all-active analysis, matching the
+        // order `Graph::branches` reports to the parent.
+        let patterns = analysis::level_branch_patterns(meta)?;
+        let result = emit::level_result_sexp(&out.outlets, &patterns);
+        let stateful = !meta.stateful.is_empty();
+        let ecx = emit::Cx { path: gpath };
+        let mut stmts = Vec::new();
+        let mut params: Vec<String> = active.iter().map(|&i| format!("node-{i}-o0")).collect();
+        if stateful {
+            params.push("%lvl-state".to_string());
+            stmts.push(l([a("define"), a(crate::GRAPH_STATE), a("%lvl-state")]));
+        }
+        stmts.extend(emit::body_sexps(&ecx, &out.body));
+        if stateful {
+            stmts.push(l([a("list"), result, a(crate::GRAPH_STATE)]));
+        } else {
+            stmts.push(result);
+        }
+        let fn_def = emit::fn_def(&emit::graph_fn_name(gpath, imask), &params, stmts);
+        self.graph_fns.push((gpath.len(), fn_def));
+        Ok(())
+    }
+}
+
+/// Build the node-fn conf tree mirroring the meta tree, excluding
+/// nested-graph node confs (those compile to graph fns).
+fn node_confs_tree(
+    meta_node: &RoseTree<Meta>,
+    confs: &std::collections::BTreeMap<Vec<node::Id>, std::collections::BTreeSet<NodeConf>>,
+    path: &mut Vec<node::Id>,
+) -> RoseTree<std::collections::BTreeSet<NodeConf>> {
+    let elem = confs.get(path).cloned().unwrap_or_default();
+    let nested = meta_node
+        .nested
+        .iter()
+        .map(|(&id, sub)| {
+            path.push(id);
+            let t = node_confs_tree(sub, confs, path);
+            path.pop();
+            (id, t)
+        })
+        .collect();
+    RoseTree { elem, nested }
 }
 
 /// The inlet ids active for a parent input-conns mask (bit `i` <=> `inlet_ids[i]`,
-/// the existing "input i -> inlet i" contract in `node::graph::nested_expr`).
+/// the "input i -> inlet i" contract shared with `node::graph::graph_call_expr`).
 fn active_inlets_from_conns(
     inlet_ids: &[node::Id],
     conns: &node::Conns,

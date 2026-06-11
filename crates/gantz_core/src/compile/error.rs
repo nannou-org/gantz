@@ -92,6 +92,36 @@ pub enum CodegenError {
     InvalidInputIndex(#[from] InvalidInputIndex),
 }
 
+/// Error while lowering a graph to the IR.
+#[derive(Debug, Error)]
+pub enum LowerError {
+    /// Error computing node connections.
+    #[error(transparent)]
+    Conns(#[from] NodeConnsError),
+    /// A node conditional on a branch arm depends on work outside the
+    /// branch's region that has not yet been evaluated, so it can neither be
+    /// lowered into the arm nor deferred past the branch.
+    #[error(
+        "branch {branch}: node {node} is conditional on an arm but depends on \
+         unevaluated work outside the branch region"
+    )]
+    Entangled { branch: node::Id, node: node::Id },
+    /// An input mixes branch-arm-varying sources with sources from other
+    /// scopes (or multiple sources within one arm), which the lowering does
+    /// not yet support.
+    #[error("node {node} input {input}: unsupported mix of input sources")]
+    MixedInputSources { node: node::Id, input: usize },
+    /// Internal invariant breach: a value was needed but not in scope.
+    #[error(
+        "internal: output {output} of node {node} unavailable resolving an input of {consumer}"
+    )]
+    Unresolved {
+        node: node::Id,
+        output: usize,
+        consumer: node::Id,
+    },
+}
+
 /// Error when generating a module from a graph.
 #[derive(Debug, Error)]
 pub enum ModuleError {
@@ -101,6 +131,9 @@ pub enum ModuleError {
     /// Error during code generation.
     #[error(transparent)]
     Codegen(#[from] CodegenError),
+    /// Error during lowering to the IR.
+    #[error(transparent)]
+    Lower(#[from] LowerError),
     /// A nested graph was not found.
     #[error(transparent)]
     NestedGraphNotFound(#[from] NestedGraphNotFound),
@@ -110,6 +143,12 @@ pub enum ModuleError {
     /// Multiple errors during node function generation.
     #[error(transparent)]
     NodeFnErrors(#[from] NodeFnErrors),
+    /// The lowering produced IR violating the compiler's own invariants.
+    /// This is a bug in gantz, not in the compiled graph; validation runs in
+    /// every build so it surfaces as a compile error rather than emitting
+    /// malformed Steel.
+    #[error("internal compiler error: invalid IR for level {path:?}: {detail}")]
+    InvalidIr { path: Vec<node::Id>, detail: String },
 }
 
 impl fmt::Display for MetaError {

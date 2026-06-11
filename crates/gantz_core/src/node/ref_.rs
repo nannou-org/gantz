@@ -83,6 +83,10 @@ impl Node for Ref {
         ctx.node(&self.0).map(|n| n.outlet(ctx)).unwrap_or(false)
     }
 
+    fn delay(&self, ctx: node::MetaCtx) -> bool {
+        ctx.node(&self.0).map(|n| n.delay(ctx)).unwrap_or(false)
+    }
+
     fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
         vec![self.0]
     }

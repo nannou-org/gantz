@@ -30,6 +30,9 @@ pub struct Meta {
     pub inlets: BTreeSet<node::Id>,
     /// The set of nodes that act as outlets (for nested graphs).
     pub outlets: BTreeSet<node::Id>,
+    /// The set of unit-delay nodes (evaluation never propagates through
+    /// them; cycles containing one are legal).
+    pub delays: BTreeSet<node::Id>,
     /// The total number of inputs on node (whether or not they're connected).
     pub inputs: BTreeMap<node::Id, usize>,
     /// The total number of outputs on node (whether or not they're connected).
@@ -137,6 +140,9 @@ impl Meta {
         }
         if node.outlet(ctx) {
             self.outlets.insert(id);
+        }
+        if node.delay(ctx) {
+            self.delays.insert(id);
         }
         if node.stateful(ctx) {
             self.stateful.insert(id);

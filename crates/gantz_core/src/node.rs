@@ -6,6 +6,7 @@ pub use apply::Apply;
 pub use branch::{Branch, BranchNewError};
 #[doc(inline)]
 pub use conns::Conns;
+pub use delay::Delay;
 pub use expr::{Expr, ExprNewError};
 pub use fn_::Fn;
 use gantz_ca::CaHash;
@@ -21,6 +22,7 @@ use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 pub mod apply;
 pub mod branch;
 mod conns;
+pub mod delay;
 pub mod expr;
 pub mod fn_;
 pub mod graph;
@@ -131,6 +133,18 @@ pub trait Node: std::any::Any {
 
     /// Whether or not this node acts as an outlet for some nested graph.
     fn outlet(&self, _ctx: MetaCtx) -> bool {
+        false
+    }
+
+    /// Whether or not this node is a unit delay: its output is the value its
+    /// input received on the *previous* evaluation.
+    ///
+    /// Delay nodes are compiler intrinsics (no [`Node::expr`] is generated):
+    /// their value is read from state when an evaluation begins, and their
+    /// input is stored to state where it is produced. Evaluation never
+    /// propagates *through* a delay, so a cycle containing one is legal -
+    /// this is the pd-style feedback primitive.
+    fn delay(&self, _ctx: MetaCtx) -> bool {
         false
     }
 
@@ -411,6 +425,10 @@ macro_rules! impl_node_for_ptr {
 
             fn outlet(&self, ctx: MetaCtx) -> bool {
                 (**self).outlet(ctx)
+            }
+
+            fn delay(&self, ctx: MetaCtx) -> bool {
+                (**self).delay(ctx)
             }
 
             fn stateful(&self, ctx: MetaCtx) -> bool {

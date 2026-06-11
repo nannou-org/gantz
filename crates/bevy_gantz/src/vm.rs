@@ -18,6 +18,18 @@ use gantz_core::{Node, compile as core_compile};
 use std::time::Duration;
 use steel::steel_vm::engine::Engine;
 
+/// Render a compile error - with its full `source()` cause chain - as Steel
+/// comment lines for the module view, so the underlying cause (e.g. a
+/// feedback-loop error) is visible instead of a bare "module generation failed".
+fn compile_error_comment(err: &CompileError) -> String {
+    let body: String = gantz_core::vm::error_chain(err)
+        .lines()
+        .map(|line| format!("; {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("; failed to compile graph:\n{body}")
+}
+
 /// A function that produces entrypoints for a given graph.
 pub type EntrypointFn<N> = Box<
     dyn for<'a> Fn(node::GetNode<'a>, &Graph<N>) -> Vec<core_compile::Entrypoint> + Send + Sync,
@@ -128,15 +140,17 @@ fn init_head_vm<N>(
     let (vm, module) = match init(&get_node, &**graph, &entrypoints) {
         Ok(result) => result,
         Err(e) => {
-            log::error!("Failed to init VM for head: {e}");
+            log::error!(
+                "Failed to init VM for head: {}",
+                gantz_core::vm::error_chain(&e)
+            );
             // Don't leave a stale VM/module from a previously-active graph in
             // place: surface the error in the compiled module and drop the VM so
             // eval systems (e.g. `drive_frame_bangs`, `on_eval_entry`) stop
             // driving the wrong graph - which otherwise manifests as a confusing
             // "free identifier: entry-fn-..." against an unrelated module.
-            cmds.entity(entity).insert(head::CompiledModule(format!(
-                "; failed to compile graph:\n; {e}"
-            )));
+            cmds.entity(entity)
+                .insert(head::CompiledModule(compile_error_comment(&e)));
             vms.remove(&entity);
             return;
         }
@@ -313,10 +327,13 @@ pub fn update<N>(
                 match compile(&get_node, graph, vm, &entrypoints) {
                     Ok(module) => data.compiled.0 = module,
                     Err(e) => {
-                        log::error!("Failed to compile graph: {e}");
+                        log::error!(
+                            "Failed to compile graph: {}",
+                            gantz_core::vm::error_chain(&e)
+                        );
                         // Surface the error rather than leaving the prior module
                         // displayed, which would misleadingly look up-to-date.
-                        data.compiled.0 = format!("; failed to compile graph:\n; {e}");
+                        data.compiled.0 = compile_error_comment(&e);
                     }
                 }
             }
