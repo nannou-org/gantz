@@ -491,7 +491,7 @@ where
     let level_sources = group_sources_by_level(entrypoints);
     let flow_tree = build_flow_tree(&meta_tree, &level_sources, vec![])?;
 
-    let mut v2 = V2 {
+    let mut builder = ModuleBuilder {
         meta_tree: &meta_tree,
         level_sources: &level_sources,
         confs: std::collections::BTreeMap::new(),
@@ -509,7 +509,9 @@ where
             emit::a(crate::GRAPH_STATE),
             emit::a(crate::ROOT_STATE),
         ])];
-        if let Some((level_stmts, _)) = v2.ep_level_stmts(ep_id, &meta_tree, &flow_tree, &[])? {
+        if let Some((level_stmts, _)) =
+            builder.ep_level_stmts(ep_id, &meta_tree, &flow_tree, &[])?
+        {
             stmts.extend(level_stmts);
         }
         stmts.push(emit::l([
@@ -517,7 +519,8 @@ where
             emit::a(crate::ROOT_STATE),
             emit::a(crate::GRAPH_STATE),
         ]));
-        v2.fns
+        builder
+            .fns
             .push(emit::fn_def(&codegen::entry_fn_name(ep_id), &[], stmts));
     }
 
@@ -533,7 +536,7 @@ where
         let imask = node::Conns::connected(n_inlets)
             .map_err(|_| error::NodeConnsError::from(error::TooManyConns(n_inlets)))?;
         if emitted.insert((gpath.clone(), imask)) {
-            v2.graph_fn(&gpath, &imask)?;
+            builder.graph_fn(&gpath, &imask)?;
         }
     }
 
@@ -542,8 +545,8 @@ where
     // variants).
     loop {
         let mut queue = Vec::new();
-        for (path, confs) in &v2.confs {
-            let sub = v2.meta_tree.tree(path).expect("conf path exists");
+        for (path, confs) in &builder.confs {
+            let sub = builder.meta_tree.tree(path).expect("conf path exists");
             for conf in confs {
                 if sub.elem.graphs.contains(&conf.id) {
                     let mut gpath = path.clone();
@@ -560,7 +563,7 @@ where
         }
         for (gpath, imask) in queue {
             if emitted.insert((gpath.clone(), imask)) {
-                v2.graph_fn(&gpath, &imask)?;
+                builder.graph_fn(&gpath, &imask)?;
             }
         }
     }
@@ -568,7 +571,7 @@ where
     // A node fn per non-graph variant. The conf tree mirrors the full meta
     // tree so the generating visitor finds every level; graph-node confs
     // are excluded (they are graph fns, not node fns).
-    let confs_tree = v2_conf_tree(&meta_tree, &v2.confs, &mut Vec::new());
+    let confs_tree = node_confs_tree(&meta_tree, &builder.confs, &mut Vec::new());
     let node_fns = codegen::node_fns(get_node, g, &confs_tree)?;
 
     // Definition order (Steel resolves free identifiers at definition):
@@ -581,9 +584,18 @@ where
         .into_iter()
         .map(|(depth, f)| (depth, 0, f))
         .collect();
-    fns.extend(v2.graph_fns.into_iter().map(|(depth, f)| (depth, 1, f)));
+    fns.extend(
+        builder
+            .graph_fns
+            .into_iter()
+            .map(|(depth, f)| (depth, 1, f)),
+    );
     fns.sort_by(|(d1, k1, _), (d2, k2, _)| d2.cmp(d1).then(k1.cmp(k2)));
-    Ok(fns.into_iter().map(|(_, _, f)| f).chain(v2.fns).collect())
+    Ok(fns
+        .into_iter()
+        .map(|(_, _, f)| f)
+        .chain(builder.fns)
+        .collect())
 }
 
 /// Collect every nested level path in the meta tree with its inlet count.
@@ -613,8 +625,10 @@ struct LevelPiece {
     patterns: Option<Vec<node::Conns>>,
 }
 
-/// The working state of one `module_v2` invocation.
-struct V2<'a> {
+/// The working state of one [`module`] invocation: accumulated node variant
+/// confs and emitted fns, with the per-entrypoint level recursion and the
+/// per-variant graph fn generation as methods.
+struct ModuleBuilder<'a> {
     meta_tree: &'a RoseTree<Meta>,
     level_sources:
         &'a std::collections::BTreeMap<Vec<node::Id>, Vec<(EntrypointId, Vec<&'a EvalSource>)>>,
@@ -628,7 +642,7 @@ struct V2<'a> {
     fns: Vec<ExprKind>,
 }
 
-impl V2<'_> {
+impl ModuleBuilder<'_> {
     /// Build the statements evaluating `ep` at the level `path`: calls to
     /// child level fns (with state threading and result binding) followed by
     /// this level's own lowered body. Returns `None` when neither this level
@@ -873,7 +887,7 @@ impl V2<'_> {
 
 /// Build the node-fn conf tree mirroring the meta tree, excluding
 /// nested-graph node confs (those compile to graph fns).
-fn v2_conf_tree(
+fn node_confs_tree(
     meta_node: &RoseTree<Meta>,
     confs: &std::collections::BTreeMap<Vec<node::Id>, std::collections::BTreeSet<NodeConf>>,
     path: &mut Vec<node::Id>,
@@ -892,7 +906,7 @@ fn v2_conf_tree(
         .iter()
         .map(|(&id, sub)| {
             path.push(id);
-            let t = v2_conf_tree(sub, confs, path);
+            let t = node_confs_tree(sub, confs, path);
             path.pop();
             (id, t)
         })

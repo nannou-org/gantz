@@ -143,9 +143,6 @@ pub enum ModuleError {
     /// Multiple errors during node function generation.
     #[error(transparent)]
     NodeFnErrors(#[from] NodeFnErrors),
-    /// A shape the IR pipeline does not support yet.
-    #[error("unsupported by the IR pipeline: {0}")]
-    Unsupported(&'static str),
 }
 
 impl fmt::Display for MetaError {
