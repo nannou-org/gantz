@@ -1306,3 +1306,36 @@ fn delay_read_and_write_in_separate_entrypoints() {
         .unwrap();
     assert_eq!(val, 7, "read after a write sees the stored value");
 }
+
+/// An inner push whose value circulates through a delay cycle AND reaches
+/// the outlet: push-through-outlet bridging must work for cyclic interiors.
+/// (The pre-cutover flow analysis used a cycle-blind topological walk and
+/// would have missed the outlet reach here.)
+#[test]
+fn delay_feedback_push_through_outlet() {
+    let mut ga = Nested::default();
+    let push = ga.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let add = ga.add_node(Box::new(node::expr("(+ $x (if (number? $d) $d 0))").unwrap()) as Box<_>);
+    let delay = ga.add_node(Box::new(node::Delay) as Box<_>);
+    let outlet = ga.add_node(Box::new(Outlet) as Box<_>);
+    ga.add_edge(push, add, Edge::from((0, 0)));
+    ga.add_edge(delay, add, Edge::from((0, 1)));
+    ga.add_edge(add, delay, Edge::from((0, 0)));
+    ga.add_edge(add, outlet, Edge::from((0, 0)));
+    let inner_push = push;
+
+    let mut g = Graph::new();
+    let graph_a = g.add_node(Box::new(ga) as Box<dyn DebugNode>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(graph_a, number, Edge::from((0, 0)));
+
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let ep = entrypoint::push(vec![graph_a.index(), inner_push.index()], 1);
+    let vm = run_v2(&g, &eps, &[&ep, &ep, &ep]);
+
+    // The accumulating value propagates through the outlet each push.
+    let val = node::state::extract::<i32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 15);
+}

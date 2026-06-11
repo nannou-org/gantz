@@ -4,19 +4,19 @@
 //! ## Pipeline
 //!
 //! 1. **Meta** (`meta`): a visitor walk collects one [`Meta`] per graph level
-//!    (adjacency, arities, branch masks, stateful/inlet/outlet/delay/graph
+//!    (adjacency, arities, branch masks, stateful/inlet/outlet/delay
 //!    sets) into a rose tree.
-//! 2. **Outlet-reach analysis** (`flow`): per (level, entrypoint), which
-//!    outlets the evaluation can reach and the distinct activation patterns
-//!    (a world-walk over branch outcomes). This is the only remaining use of
-//!    the control-flow-graph machinery; the same analysis backs
-//!    `Graph::branches`.
-//! 3. **Lowering** (`lower`): each level lowers once per use - per
+//! 2. **Lowering** (`lower`): each level lowers once per use - per
 //!    active-inlet variant for graph fns, per entrypoint for level bodies -
 //!    to an IR (`ir`) of node-call steps, branch dispatches and join points
 //!    (local fns whose parameters carry reconverging values; values consumed
 //!    outside a branch construct ride its exports). Validated by
 //!    `ir::validate` in debug builds.
+//! 3. **Outlet-activation analysis** (`analysis`): the distinct sets of a
+//!    level's outlets that can fire together, computed by abstract
+//!    interpretation of the lowered IR itself (forking per branch arm), so
+//!    the patterns cannot drift from the emitted code. Backs
+//!    `Graph::branches` and push-through-outlet propagation.
 //! 4. **Emission** (`emit`): a mechanical IR -> Steel walk restricted to
 //!    primitive base-engine forms, plus the per-variant node fns
 //!    (`codegen::node_fn`). Definition order is semantic (Steel resolves
@@ -39,6 +39,7 @@ use crate::{
     Edge,
     node::{self, Node},
 };
+pub(crate) use analysis::level_branch_patterns;
 #[doc(inline)]
 pub use codegen::entry_fn_name;
 pub(crate) use emit::graph_fn_name;
@@ -48,9 +49,7 @@ pub use entrypoint::{
 };
 #[doc(inline)]
 pub use error::ModuleError;
-pub(crate) use flow::{
-    Flow, FlowGraph, NodeConf, NodeConns, branch_patterns_from_flow, inner_flow_graph_for,
-};
+pub(crate) use lower::{NodeConf, NodeConns};
 use meta::MetaTree;
 #[doc(inline)]
 pub use meta::{EdgeKind, Meta, MetaGraph};
@@ -62,11 +61,11 @@ pub(crate) use rosetree::RoseTree;
 use std::{collections::HashSet, hash::Hash};
 use steel::parser::ast::ExprKind;
 
+mod analysis;
 mod codegen;
 mod emit;
 pub mod entrypoint;
 pub mod error;
-mod flow;
 mod ir;
 mod lower;
 mod meta;
@@ -338,125 +337,6 @@ fn or_patterns(patterns: &[node::Conns]) -> Result<node::Conns, error::NodeConns
     node::Conns::try_from_slice(&bits).map_err(|_| error::TooManyConns(n).into())
 }
 
-/// Recursively build a flow tree, routing entrypoint sources to each nesting
-/// level.
-///
-/// Children are recursed into first so that outlet-reaching push sources can
-/// be combined with direct sources before building each entrypoint's flow
-/// graph. This ensures each flow graph is built exactly once with complete
-/// source information.
-fn build_flow_tree<'a>(
-    meta_tree: &'a RoseTree<Meta>,
-    level_sources: &std::collections::BTreeMap<
-        Vec<node::Id>,
-        Vec<(EntrypointId, Vec<&EvalSource>)>,
-    >,
-    current_path: Vec<node::Id>,
-) -> Result<RoseTree<(&'a Meta, Flow)>, error::NodeConnsError> {
-    let sources = level_sources
-        .get(&current_path)
-        .map(|v| &v[..])
-        .unwrap_or(&[]);
-    let mut nested = std::collections::BTreeMap::new();
-
-    // 1. Recurse into children, collect outlet-reaching push sources. When a
-    //    child's push reaches its outlets through branching (>= 2 distinct outlet
-    //    patterns), record those patterns as the bridged graph node's branches
-    //    for this entrypoint, so the parent gates its continuation per branch.
-    let mut outlet_push: std::collections::BTreeMap<EntrypointId, Vec<(node::Id, node::Conns)>> =
-        std::collections::BTreeMap::new();
-    let mut extra_branches: std::collections::BTreeMap<
-        EntrypointId,
-        std::collections::BTreeMap<node::Id, Vec<node::Conns>>,
-    > = std::collections::BTreeMap::new();
-    for (&id, subtree) in &meta_tree.nested {
-        let mut child_path = current_path.clone();
-        child_path.push(id);
-        let child_tree = build_flow_tree(subtree, level_sources, child_path)?;
-        let (_, ref child_flow) = child_tree.elem;
-        let n_outputs = meta_tree.elem.outputs.get(&id).copied().unwrap_or(0);
-        if n_outputs > 0 {
-            for (ep_id, reach) in &child_flow.outlet_reach {
-                let conns = if reach.patterns.len() >= 2 {
-                    extra_branches
-                        .entry(ep_id.clone())
-                        .or_default()
-                        .insert(id, reach.patterns.clone());
-                    // Only the outputs some branch can produce reach downstream.
-                    or_patterns(&reach.patterns)?
-                } else {
-                    node::Conns::connected(n_outputs).map_err(|_| error::TooManyConns(n_outputs))?
-                };
-                outlet_push
-                    .entry(ep_id.clone())
-                    .or_default()
-                    .push((id, conns));
-            }
-        }
-        nested.insert(id, child_tree);
-    }
-
-    // 2. Collect all push/pull sources per entrypoint: direct + outlet.
-    let mut ep_push: std::collections::BTreeMap<EntrypointId, Vec<(node::Id, node::Conns)>> =
-        std::collections::BTreeMap::new();
-    let mut ep_pull: std::collections::BTreeMap<EntrypointId, Vec<(node::Id, node::Conns)>> =
-        std::collections::BTreeMap::new();
-    for (ep_id, srcs) in sources {
-        for src in srcs {
-            let node_id = *src.path.last().unwrap();
-            let map = match src.kind {
-                EvalKind::Push => &mut ep_push,
-                EvalKind::Pull => &mut ep_pull,
-            };
-            map.entry(ep_id.clone())
-                .or_default()
-                .push((node_id, src.conns));
-        }
-    }
-    for (ep_id, srcs) in outlet_push {
-        ep_push.entry(ep_id).or_default().extend(srcs);
-    }
-
-    // 3. Build one flow graph per entrypoint with complete sources, treating any
-    //    branch-aware bridged graph nodes as branch nodes for that entrypoint.
-    let mut outlet_reach = std::collections::BTreeMap::new();
-    let ep_ids: std::collections::BTreeSet<_> =
-        ep_push.keys().chain(ep_pull.keys()).cloned().collect();
-    let outlet_ids: Vec<node::Id> = meta_tree.elem.outlets.iter().copied().collect();
-    for ep_id in ep_ids {
-        let push = ep_push.remove(&ep_id).unwrap_or_default();
-        let pull = ep_pull.remove(&ep_id).unwrap_or_default();
-        let extra = extra_branches.remove(&ep_id).unwrap_or_default();
-        let fg = flow::flow_graph_with_extra(&meta_tree.elem, push, pull, &extra)?;
-        let reached: std::collections::BTreeSet<node::Id> = fg
-            .node_weights()
-            .flat_map(|blk| blk.iter())
-            .map(|conf| conf.id)
-            .filter(|nid| meta_tree.elem.outlets.contains(nid))
-            .collect();
-        if !reached.is_empty() {
-            // Patterns of this graph's outlets reachable from this entrypoint -
-            // for the parent's branch-aware propagation. Account for this graph's
-            // own branches plus this entrypoint's push-through (extra) branches.
-            let mut arm_counts: std::collections::BTreeMap<node::Id, usize> = meta_tree
-                .elem
-                .branches
-                .iter()
-                .map(|(&i, v)| (i, v.len()))
-                .collect();
-            arm_counts.extend(extra.iter().map(|(&i, m)| (i, m.len())));
-            let patterns = flow::branch_patterns_from_flow(&fg, &outlet_ids, &arm_counts)?;
-            outlet_reach.insert(ep_id.clone(), flow::OutletReach { patterns });
-        }
-    }
-
-    let flow = Flow { outlet_reach };
-    Ok(RoseTree {
-        elem: (&meta_tree.elem, flow),
-        nested,
-    })
-}
-
 /// Given a root gantz graph, generate the full module with all the necessary
 /// functions for executing it: a function per node variant (input/output
 /// configuration), a graph fn per nested level variant, and a function per
@@ -486,10 +366,7 @@ where
     }
     let meta_tree = meta_tree.tree;
 
-    // Reuse the flow analyses for outlet reach: per (level, entrypoint), the
-    // outlets the evaluation reaches and the distinct activation patterns.
     let level_sources = group_sources_by_level(entrypoints);
-    let flow_tree = build_flow_tree(&meta_tree, &level_sources, vec![])?;
 
     let mut builder = ModuleBuilder {
         meta_tree: &meta_tree,
@@ -509,10 +386,9 @@ where
             emit::a(crate::GRAPH_STATE),
             emit::a(crate::ROOT_STATE),
         ])];
-        if let Some((level_stmts, _)) =
-            builder.ep_level_stmts(ep_id, &meta_tree, &flow_tree, &[])?
-        {
-            stmts.extend(level_stmts);
+        if let Some((glue, out)) = builder.ep_level_stmts(ep_id, &meta_tree, &[])? {
+            stmts.extend(glue);
+            stmts.extend(emit::body_sexps(&emit::Cx { path: &[] }, &out.body));
         }
         stmts.push(emit::l([
             emit::a("set!"),
@@ -643,17 +519,16 @@ struct ModuleBuilder<'a> {
 }
 
 impl ModuleBuilder<'_> {
-    /// Build the statements evaluating `ep` at the level `path`: calls to
-    /// child level fns (with state threading and result binding) followed by
-    /// this level's own lowered body. Returns `None` when neither this level
-    /// nor any descendant has sources for `ep`.
+    /// Lower the evaluation of `ep` at the level `path`: the glue statements
+    /// calling child level fns (with state threading and result binding),
+    /// and this level's own lowered body. Returns `None` when neither this
+    /// level nor any descendant has sources for `ep`.
     fn ep_level_stmts(
         &mut self,
         ep: &EntrypointId,
         meta_node: &RoseTree<Meta>,
-        flow_node: &RoseTree<(&Meta, Flow)>,
         path: &[node::Id],
-    ) -> Result<Option<(Vec<emit::Sexp>, Vec<lower::OutletVal>)>, ModuleError> {
+    ) -> Result<Option<(Vec<emit::Sexp>, lower::LevelOut)>, ModuleError> {
         use emit::{Sexp, a, l};
 
         let meta = &meta_node.elem;
@@ -669,10 +544,9 @@ impl ModuleBuilder<'_> {
         // its level fn; one that reaches its outlets becomes a pre-bound
         // source this level continues from.
         for (&gid, sub_meta) in &meta_node.nested {
-            let sub_flow = &flow_node.nested[&gid];
             let mut child_path = path.to_vec();
             child_path.push(gid);
-            let Some(piece) = self.ep_level(ep, sub_meta, sub_flow, &child_path)? else {
+            let Some(piece) = self.ep_level(ep, sub_meta, &child_path)? else {
                 continue;
             };
             any_child = true;
@@ -775,9 +649,7 @@ impl ModuleBuilder<'_> {
         #[cfg(debug_assertions)]
         ir::validate(&out.body, 0, &prebound_vars).expect("lowering produced invalid IR");
         lower::collect_confs(&out.body, self.confs.entry(path.to_vec()).or_default());
-        let ecx = emit::Cx { path };
-        glue.extend(emit::body_sexps(&ecx, &out.body));
-        Ok(Some((glue, out.outlets)))
+        Ok(Some((glue, out)))
     }
 
     /// Build and emit the level fn evaluating `ep` at the nested level
@@ -786,33 +658,43 @@ impl ModuleBuilder<'_> {
         &mut self,
         ep: &EntrypointId,
         meta_node: &RoseTree<Meta>,
-        flow_node: &RoseTree<(&Meta, Flow)>,
         path: &[node::Id],
     ) -> Result<Option<LevelPiece>, ModuleError> {
         use emit::{a, l};
-        let Some((stmts, outlets)) = self.ep_level_stmts(ep, meta_node, flow_node, path)? else {
+        let Some((glue, out)) = self.ep_level_stmts(ep, meta_node, path)? else {
             return Ok(None);
         };
-        let (_, flow) = &flow_node.elem;
-        let reach = flow.outlet_reach.get(ep);
-        let result = match reach {
-            Some(r) => emit::level_result_sexp(&outlets, &r.patterns),
+
+        // Whether (and how) this level's evaluation produces its outlets,
+        // analysed over the lowered body itself.
+        let produced = out.outlets.iter().any(|o| o.atom.is_some());
+        let patterns = match produced {
+            true => Some(
+                analysis::outlet_patterns(&out.body, &out.outlets)
+                    .map_err(error::NodeConnsError::from)?,
+            ),
+            false => None,
+        };
+        let result = match &patterns {
+            Some(patterns) => emit::level_result_sexp(&out.outlets, patterns),
             None => emit::unit(),
         };
+
         let stateful = !meta_node.elem.stateful.is_empty();
         let fn_name = format!(
             "lvl-fn-{}-{}",
             ep.0.display_short(),
             codegen::path_string(path)
         );
-        let mut body = Vec::with_capacity(stmts.len() + 2);
+        let mut body = Vec::new();
         let params: Vec<String> = if stateful {
             body.push(l([a("define"), a(crate::GRAPH_STATE), a("%lvl-state")]));
             vec!["%lvl-state".to_string()]
         } else {
             vec![]
         };
-        body.extend(stmts);
+        body.extend(glue);
+        body.extend(emit::body_sexps(&emit::Cx { path }, &out.body));
         if stateful {
             body.push(l([a("list"), result, a(crate::GRAPH_STATE)]));
         } else {
@@ -822,7 +704,7 @@ impl ModuleBuilder<'_> {
         Ok(Some(LevelPiece {
             fn_name,
             stateful,
-            patterns: reach.map(|r| r.patterns.clone()),
+            patterns,
         }))
     }
 
@@ -852,16 +734,7 @@ impl ModuleBuilder<'_> {
 
         // The node-contract patterns: the all-active analysis, matching the
         // order `Graph::branches` reports to the parent.
-        let patterns = if meta.branches.is_empty() {
-            vec![]
-        } else {
-            let outlet_ids: Vec<node::Id> = meta.outlets.iter().copied().collect();
-            let all: std::collections::BTreeSet<node::Id> = meta.inlets.iter().copied().collect();
-            let fg = inner_flow_graph_for(meta, &all)?;
-            let arm_counts = meta.branches.iter().map(|(&i, v)| (i, v.len())).collect();
-            branch_patterns_from_flow(&fg, &outlet_ids, &arm_counts)
-                .map_err(error::NodeConnsError::from)?
-        };
+        let patterns = analysis::level_branch_patterns(meta)?;
         let result = emit::level_result_sexp(&out.outlets, &patterns);
         let stateful = !meta.stateful.is_empty();
         let ecx = emit::Cx { path: gpath };

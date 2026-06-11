@@ -29,13 +29,43 @@ use crate::{
     compile::{
         Meta, MetaGraph,
         error::LowerError,
-        flow::{NodeConf, NodeConns, reachable_subgraph},
         ir::{Arg, Arm, Atom, Body, Join, NodeCall, Step, Subject, Tail, Var},
     },
     node,
 };
 use petgraph::visit::EdgeRef;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::fmt;
+
+/// A node variant within an evaluation: its identity and connectedness.
+///
+/// Maps directly to a generated node fn.
+#[derive(Copy, Clone, Eq, Hash, PartialEq, PartialOrd, Ord)]
+pub(crate) struct NodeConf {
+    pub id: node::Id,
+    pub conns: NodeConns,
+}
+
+/// The connectedness of a node for a particular evaluation step.
+#[derive(Copy, Clone, Eq, Hash, PartialEq, PartialOrd, Ord)]
+pub(crate) struct NodeConns {
+    /// The active inputs.
+    pub inputs: node::Conns,
+    /// Includes all connected outputs (whether conditional or not).
+    pub outputs: node::Conns,
+}
+
+impl fmt::Debug for NodeConf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "({:?}: {:?})", self.id, self.conns)
+    }
+}
+
+impl fmt::Debug for NodeConns {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "([{}], [{}])", self.inputs, self.outputs)
+    }
+}
 
 /// The fixed context for lowering one level.
 pub(crate) struct Cx<'a> {
@@ -98,12 +128,20 @@ impl<'a> Cx<'a> {
     }
 }
 
-/// Lower one level's evaluation.
-pub(crate) fn level_body(cx: &Cx, sources: &LevelSources) -> Result<LevelOut, LowerError> {
-    let meta = cx.meta;
+/// The reach dag for one level's evaluation: the subgraph of nodes the
+/// given sources evaluate, with all edges between them.
+///
+/// Evaluation never propagates *through* a delay (its value crosses between
+/// evaluations), so reachability runs on a graph with delay out-edges
+/// stripped - which is also what legalizes cycles passing through one. A
+/// delay whose stored value is consumed by a reached node joins the reach so
+/// its read binding exists. Shared by [`level_body`] and the
+/// outlet-activation analysis so both see identical reachability.
+pub(crate) fn level_reach_dag(
+    meta: &Meta,
+    sources: &LevelSources,
+) -> Result<MetaGraph, LowerError> {
     let conn1 = || node::Conns::connected(1).unwrap();
-
-    // Reachability sources.
     let (push, pull) = match sources {
         LevelSources::Inlets(active) => {
             let mut push: Vec<(node::Id, node::Conns)> =
@@ -122,11 +160,6 @@ pub(crate) fn level_body(cx: &Cx, sources: &LevelSources) -> Result<LevelOut, Lo
         LevelSources::Eval { push, pull } => (push.clone(), pull.clone()),
     };
 
-    // Evaluation never propagates *through* a delay (its value crosses
-    // between evaluations), so ordering and reachability run on a graph with
-    // delay out-edges stripped - which is also what legalizes cycles passing
-    // through one. A delay whose stored value is consumed by a reached node
-    // joins the reach so the read binding exists.
     let mut reach: HashSet<node::Id> = if meta.delays.is_empty() {
         super::eval_order(&meta.graph, push, pull).collect()
     } else {
@@ -142,7 +175,21 @@ pub(crate) fn level_body(cx: &Cx, sources: &LevelSources) -> Result<LevelOut, Lo
             reach.insert(d);
         }
     }
-    let dag = reachable_subgraph(&meta.graph, &reach);
+    Ok(reachable_subgraph(&meta.graph, &reach))
+}
+
+/// Filter unreachable nodes from the given metagraph.
+fn reachable_subgraph(g: &MetaGraph, reachable: &HashSet<node::Id>) -> MetaGraph {
+    g.all_edges()
+        .filter(|(a, b, _)| reachable.contains(a) && reachable.contains(b))
+        .map(|(a, b, w)| (a, b, w.clone()))
+        .collect()
+}
+
+/// Lower one level's evaluation.
+pub(crate) fn level_body(cx: &Cx, sources: &LevelSources) -> Result<LevelOut, LowerError> {
+    let meta = cx.meta;
+    let dag = level_reach_dag(meta, sources)?;
 
     // Seed the env: active inlet values are bound as graph fn params;
     // pre-bound non-branching nodes' outputs are bound by enclosing glue.

@@ -16,7 +16,6 @@ use petgraph::{
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
-    collections::{BTreeMap, BTreeSet},
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
 };
@@ -334,12 +333,8 @@ pub fn graph_partial_eq<N: PartialEq>(a: &Graph<N>, b: &Graph<N>) -> bool {
             .all(|(a, b)| a == b)
 }
 
-/// Map a nested graph's branch arm counts (`id -> n_arms`) from its `Meta`.
-fn branch_arm_counts(meta: &compile::Meta) -> BTreeMap<node::Id, usize> {
-    meta.branches.iter().map(|(&id, v)| (id, v.len())).collect()
-}
-
-/// Compute the external branch masks for a nested graph (see [`Node::branches`]).
+/// Compute the external branch masks for a nested graph (see [`Node::branches`]):
+/// the distinct outlet-activation patterns of the all-inlets-active analysis.
 fn graph_branches<'a, G>(
     get_node: node::GetNode<'a>,
     g: G,
@@ -350,23 +345,7 @@ where
     G::NodeId: Eq + Hash,
 {
     let meta = compile::Meta::from_graph(get_node, g).map_err(node::ExprError::custom)?;
-    // No inner branching => no external branching.
-    if meta.branches.is_empty() {
-        return Ok(vec![]);
-    }
-    let outlet_ids: Vec<node::Id> = meta.outlets.iter().copied().collect();
-    let fg = inner_flow_graph(&meta)?;
-    compile::branch_patterns_from_flow(&fg, &outlet_ids, &branch_arm_counts(&meta))
-        .map_err(node::ExprError::custom)
-}
-
-/// Build the all-inlets-active interior control flow graph (inlets push,
-/// outlets pull), used by [`graph_branches`] - which must report the
-/// union/over-approximation of external branch patterns. See
-/// [`compile::inner_flow_graph_for`] for the active-set aware variant.
-fn inner_flow_graph(meta: &compile::Meta) -> Result<compile::FlowGraph, node::ExprError> {
-    let all: BTreeSet<node::Id> = meta.inlets.iter().copied().collect();
-    compile::inner_flow_graph_for(meta, &all).map_err(node::ExprError::custom)
+    compile::level_branch_patterns(&meta).map_err(node::ExprError::custom)
 }
 
 /// The expression calling the graph fn compiled for this graph's
