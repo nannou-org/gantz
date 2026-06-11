@@ -779,13 +779,54 @@ where
                 }
             }
             Pane::Steel => {
-                // Use the focused head's compiled module.
-                let compiled_steel = access
-                    .heads()
-                    .get(*focused_head)
+                // Use the focused head's compiled module, highlighting the
+                // selected nodes' emitted fns/call sites and any diagnostic
+                // spans.
+                let focused = access.heads().get(*focused_head).cloned();
+                let compiled_steel = focused
+                    .as_ref()
                     .and_then(|h| access.compiled_module(h))
                     .unwrap_or("");
-                steel_view(compiled_steel, ui);
+                let mut highlights: Vec<std::ops::Range<usize>> = vec![];
+                let mut scroll_to = None;
+                let mut errors: Vec<std::ops::Range<usize>> = vec![];
+                if let Some(h) = &focused {
+                    errors = access
+                        .diagnostics(h)
+                        .iter()
+                        .filter_map(|d| d.span.clone())
+                        .collect();
+                    let head_state = state.open_heads.get(h);
+                    if let (Some(module), Some(head_state)) = (access.module(h), head_state) {
+                        let level = &head_state.path;
+                        let mut selected: Vec<node::Id> = head_state
+                            .scene
+                            .interaction
+                            .selection
+                            .nodes
+                            .iter()
+                            .map(|n| n.index())
+                            .collect();
+                        selected.sort_unstable();
+                        for &ix in &selected {
+                            let path: Vec<node::Id> =
+                                level.iter().copied().chain([ix]).collect();
+                            let spans = module.map.node_spans(&path);
+                            highlights.extend(spans.defs);
+                            highlights.extend(spans.refs);
+                        }
+                        // Scroll to the first highlighted span when the
+                        // selection changes.
+                        let state_id = egui::Id::new("steel_view_selection");
+                        let current = egui::Id::new(("steel_sel", h, level, &selected));
+                        let prev: Option<egui::Id> = ui.ctx().data(|d| d.get_temp(state_id));
+                        if prev != Some(current) {
+                            ui.ctx().data_mut(|d| d.insert_temp(state_id, current));
+                            scroll_to = highlights.iter().map(|r| r.start).min();
+                        }
+                    }
+                }
+                steel_view(compiled_steel, &highlights, &errors, scroll_to, ui);
             }
             Pane::VmPerf => {
                 if let Some(ref mut capture) = gantz.perf_vm {
@@ -1587,12 +1628,22 @@ where
     })
 }
 
-fn steel_view(compiled_steel: &str, ui: &mut egui::Ui) -> egui::InnerResponse<()> {
+fn steel_view(
+    compiled_steel: &str,
+    highlights: &[std::ops::Range<usize>],
+    errors: &[std::ops::Range<usize>],
+    scroll_to: Option<usize>,
+    ui: &mut egui::Ui,
+) -> egui::InnerResponse<()> {
     pane_ui(ui, |ui| {
         egui::ScrollArea::vertical()
             .auto_shrink(egui::Vec2b::FALSE)
             .show(ui, |ui| {
-                widget::steel_view(ui, &compiled_steel);
+                widget::SteelView::new(compiled_steel)
+                    .highlights(highlights)
+                    .errors(errors)
+                    .scroll_to(scroll_to)
+                    .show(ui);
             });
     })
 }

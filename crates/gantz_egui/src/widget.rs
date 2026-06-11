@@ -16,6 +16,7 @@ pub use log_view::LogView;
 pub use node_inspector::NodeInspector;
 pub use pane_menu::PaneMenu;
 pub use perf_view::{PerfCapture, PerfView};
+pub use steel_view::SteelView;
 
 pub mod command_palette;
 pub mod gantz;
@@ -32,6 +33,7 @@ pub mod log_view;
 pub mod node_inspector;
 pub mod pane_menu;
 pub mod perf_view;
+pub mod steel_view;
 #[cfg(feature = "tracing")]
 pub mod trace_view;
 
@@ -53,9 +55,7 @@ pub(crate) fn format_local_datetime(system_time: std::time::SystemTime) -> Strin
         .unwrap_or_else(|_| "<invalid-timestamp>".to_string())
 }
 
-/// Simple shorthand for viewing steel code.
+/// Simple shorthand for viewing steel code without highlights.
 pub fn steel_view(ui: &mut egui::Ui, code: &str) {
-    let language = "scm";
-    let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
-    egui_extras::syntax_highlighting::code_view_ui(ui, &theme, code, language);
+    SteelView::new(code).show(ui);
 }
