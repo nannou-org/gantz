@@ -6,12 +6,37 @@
 
 use crate::GraphViews;
 use gantz_ca::{CommitAddr, registry::MergeResult};
-use gantz_core::node::{self, graph::Graph};
+use gantz_core::node::{self, GetNode, graph::Graph};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 /// File extension for gantz export files (without the leading dot).
 pub const FILE_EXTENSION: &str = "gantz";
+
+/// An error produced when parsing the raw bytes of a `.gantz` file.
+#[derive(Debug)]
+pub enum ParseExportError {
+    Utf8(std::str::Utf8Error),
+    Ron(ron::de::SpannedError),
+}
+
+impl std::fmt::Display for ParseExportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Utf8(e) => write!(f, "invalid UTF-8: {e}"),
+            Self::Ron(e) => write!(f, "failed to deserialize: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ParseExportError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Utf8(e) => Some(e),
+            Self::Ron(e) => Some(e),
+        }
+    }
+}
 
 /// A serializable bundle of a registry subset and its associated view state.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -53,6 +78,46 @@ where
         views,
         demos,
     }
+}
+
+/// Parse the raw bytes of a `.gantz` file into an [`Export`].
+pub fn parse_export<N>(bytes: &[u8]) -> Result<Export<Graph<N>>, ParseExportError>
+where
+    N: serde::de::DeserializeOwned,
+{
+    let text = std::str::from_utf8(bytes).map_err(ParseExportError::Utf8)?;
+    ron::from_str(text).map_err(ParseExportError::Ron)
+}
+
+/// The unique root name of an export, if it has exactly one.
+///
+/// `get_node` resolves node lookups outside the export (e.g. builtins).
+pub fn unique_root_name<N>(get_node: GetNode, export: &Export<Graph<N>>) -> Option<String>
+where
+    N: gantz_core::Node,
+{
+    let mut roots = gantz_core::reg::root_names(get_node, &export.registry);
+    (roots.len() == 1).then(|| roots.pop().unwrap())
+}
+
+/// Build and serialize an [`Export`] for the given heads as pretty RON.
+///
+/// Covers both export-head and export-all-named: the export contains the
+/// heads' transitively required commits along with their views and demos.
+/// File IO stays with the caller.
+pub fn export_heads_ron<N>(
+    get_node: GetNode,
+    registry: &gantz_ca::Registry<Graph<N>>,
+    all_views: &HashMap<CommitAddr, GraphViews>,
+    all_demos: &HashMap<CommitAddr, String>,
+    heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
+) -> Result<String, ron::Error>
+where
+    N: gantz_core::Node + Clone + serde::Serialize,
+{
+    let export_registry = gantz_core::reg::export_heads(get_node, registry, heads);
+    let export = export_with(export_registry, all_views, all_demos);
+    ron::ser::to_string_pretty(&export, ron::ser::PrettyConfig::default())
 }
 
 /// Merge an [`Export`] into an existing registry, views and demos maps.

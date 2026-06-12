@@ -7,7 +7,7 @@ use bevy_gantz::{
     BuiltinNodes, FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead, OpenHeadDataReadOnly,
     Registry, WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
-    head, reg, timestamp, vm,
+    reg, timestamp,
 };
 use bevy_gantz_egui::{GantzEguiPlugin, GuiState, HeadGuiState, TraceCapture, Views};
 use bevy_pkv::PkvStore;
@@ -44,7 +44,6 @@ fn main() {
                 reg::prune_unused::<Box<dyn node::Node>>
                     .after(setup_resources)
                     .after(setup_open),
-                vm::setup::<Box<dyn node::Node>>.after(reg::prune_unused::<Box<dyn node::Node>>),
             ),
         )
         .add_systems(EguiPrimaryContextPass, load_egui_memory)
@@ -106,7 +105,9 @@ fn setup_open(
         bevy_gantz_egui::storage::load_open(&*storage, &mut *registry, &*views, timestamp());
     let focused_head = bevy_gantz::storage::load_focused_head(&*storage);
 
-    // Spawn entities for each open head.
+    // Spawn entities for each open head. `OpenHead`'s required components
+    // cover the compile outcome; `vm::sync` initializes the VMs on the first
+    // `Update`.
     for (head, graph, head_views) in loaded {
         let is_focused = focused_head.as_ref() == Some(&head);
         let entity = cmds
@@ -115,8 +116,6 @@ fn setup_open(
                 HeadRef(head),
                 WorkingGraph(graph),
                 head_views,
-                head::Module::default(),
-                head::Diagnostics::default(),
                 HeadGuiState::default(),
             ))
             .id();
@@ -170,7 +169,7 @@ fn persist_resources(
         }
     }
 
-    // Save all views (already updated in update_vm).
+    // Save all views (kept up to date by `persist_views`).
     bevy_gantz_egui::storage::save_views(&mut *storage, &*views);
     // Save the gantz GUI state.
     bevy_gantz_egui::storage::save_gui_state(&mut *storage, &gui_state);

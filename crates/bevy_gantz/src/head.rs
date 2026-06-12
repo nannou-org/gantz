@@ -29,6 +29,7 @@ pub struct OpenHeadData<N: 'static + Send + Sync> {
     pub working_graph: &'static mut WorkingGraph<N>,
     pub module: &'static mut Module,
     pub diagnostics: &'static mut Diagnostics,
+    pub compiled_inputs: &'static mut crate::vm::CompiledInputs,
 }
 
 // ----------------------------------------------------------------------------
@@ -36,7 +37,11 @@ pub struct OpenHeadData<N: 'static + Send + Sync> {
 // ----------------------------------------------------------------------------
 
 /// Marker component for an open gantz head entity.
+///
+/// Requires the compile-outcome components so every spawn path gets them by
+/// default; `vm::sync` fills them in on the next `Update`.
 #[derive(Component)]
+#[require(Module, Diagnostics, crate::vm::CompiledInputs)]
 pub struct OpenHead;
 
 /// The gantz_ca::Head (branch or commit reference).
@@ -135,7 +140,7 @@ pub struct BranchedHeadEvent {
 
 /// Emitted when a head's working graph is committed (graph changed).
 ///
-/// This event is emitted by `vm::update` when it detects a graph change
+/// This event is emitted by `vm::sync` when it detects a graph change
 /// and commits to the registry. Apps can observe this to update UI state.
 #[derive(Event)]
 pub struct CommittedEvent {
@@ -151,6 +156,12 @@ pub struct CommittedEvent {
 /// Per-head VMs stored in a NonSend resource.
 ///
 /// VMs are keyed by Entity ID since `Engine` is not `Send`.
+///
+/// A head's VM owns its graph's runtime node state. Paths that point a head
+/// at a *different* graph (replace, branch move) remove the VM (and reset
+/// [`vm::CompiledInputs`][crate::vm::CompiledInputs]) so that `vm::sync`
+/// performs a fresh init, discarding the old graph's state; in-place edits
+/// leave the VM so recompiles preserve it.
 #[derive(Default)]
 pub struct HeadVms(pub HashMap<Entity, Engine>);
 
@@ -286,7 +297,8 @@ pub fn on_open<N>(
         return;
     };
 
-    // Spawn entity (NO Module/Diagnostics - app observer adds them after VM init).
+    // Spawn the entity. `OpenHead`'s required components cover the compile
+    // outcome; `vm::sync` initializes the VM on the next `Update`.
     // Note: HeadGuiState and GraphViews are added by GantzEguiPlugin observer.
     let entity = cmds
         .spawn((OpenHead, HeadRef(new_head.clone()), WorkingGraph(graph)))
@@ -308,6 +320,7 @@ pub fn on_replace<N>(
     mut cmds: Commands,
     registry: Res<Registry<N>>,
     mut focused: ResMut<FocusedHead>,
+    mut vms: NonSendMut<HeadVms>,
     heads: Query<(Entity, &HeadRef), With<OpenHead>>,
 ) where
     N: 'static + Clone + Send + Sync,
@@ -331,11 +344,16 @@ pub fn on_replace<N>(
         return;
     };
 
-    // Update entity components (NO Module/Diagnostics - app observer adds them).
+    // The head now points at a different graph: drop the VM (discarding the
+    // old graph's node state) and reset the compile memo so `vm::sync`
+    // performs a fresh init.
     // Note: HeadGuiState and GraphViews are updated by GantzEguiPlugin observer.
-    cmds.entity(focused_entity)
-        .insert(HeadRef(new_head.clone()))
-        .insert(WorkingGraph(graph));
+    vms.remove(&focused_entity);
+    cmds.entity(focused_entity).insert((
+        HeadRef(new_head.clone()),
+        WorkingGraph(graph),
+        crate::vm::CompiledInputs::default(),
+    ));
 
     // Emit hook.
     if let Some(old) = old_head {
@@ -443,6 +461,7 @@ pub fn on_move_branch<N>(
     trigger: On<MoveBranchEvent>,
     mut cmds: Commands,
     mut registry: ResMut<Registry<N>>,
+    mut vms: NonSendMut<HeadVms>,
 ) where
     N: 'static + Clone + Send + Sync,
 {
@@ -453,7 +472,12 @@ pub fn on_move_branch<N>(
         log::error!("MoveBranch: graph missing for target commit");
         return;
     };
-    cmds.entity(event.entity).insert(WorkingGraph(graph));
+    // The head now points at a different graph: drop the VM (discarding the
+    // old graph's node state) and reset the compile memo so `vm::sync`
+    // performs a fresh init.
+    vms.remove(&event.entity);
+    cmds.entity(event.entity)
+        .insert((WorkingGraph(graph), crate::vm::CompiledInputs::default()));
     cmds.trigger(ChangedEvent {
         entity: event.entity,
         old_head: head.clone(),

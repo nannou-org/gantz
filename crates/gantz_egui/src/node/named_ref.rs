@@ -1,6 +1,6 @@
 //! A node that references another node by name and content address.
 
-use crate::{Cmd, NodeCtx, NodeUi, widget::node_inspector};
+use crate::{BranchNode, NodeCtx, NodeUi, OpenHead, widget::node_inspector};
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, Node, RegCtx};
 use serde::{Deserialize, Serialize};
@@ -133,7 +133,7 @@ impl NodeUi for NamedRef {
 
     fn ui(
         &mut self,
-        ctx: NodeCtx,
+        mut ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui_graph::FramedResponse<egui::Response> {
         let registry = ctx.registry();
@@ -176,8 +176,7 @@ impl NodeUi for NamedRef {
 
         // Open the node on double-click (handler decides if the node is openable).
         if response.inner.response.double_clicked() {
-            ctx.cmds
-                .push(Cmd::OpenHead(gantz_ca::Head::Branch(self.name.clone())));
+            ctx.response(OpenHead(gantz_ca::Head::Branch(self.name.clone())));
         }
 
         response
@@ -254,7 +253,7 @@ impl NodeUi for NamedRef {
                             let fork_hover = format!("fork a new node at {}", current_short);
                             if ui.button("fork").on_hover_text(fork_hover).clicked() {
                                 let new_name = format!("{}-{}", self.name, current_short);
-                                ctx.cmds.push(Cmd::BranchNode {
+                                ctx.response(BranchNode {
                                     new_name,
                                     ca: self.ref_.content_addr(),
                                     path: ctx.path.to_vec(),

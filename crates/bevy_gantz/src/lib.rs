@@ -2,6 +2,24 @@
 //!
 //! This crate provides core Bevy integration for gantz. For egui-based UI,
 //! see the `bevy_gantz_egui` crate.
+//!
+//! # Events vs Messages
+//!
+//! Observer events (`Event` + `On<T>`) are used for discrete, low-frequency
+//! intents and hooks where immediate, possibly-cascading handling matters.
+//! These come in two layers:
+//!
+//! - *Request* events ask for an operation: [`head::OpenEvent`],
+//!   [`head::CloseEvent`], [`head::ReplaceEvent`], [`head::BranchHeadEvent`],
+//!   [`head::MoveBranchEvent`], [`vm::EvalEntryEvent`].
+//! - *Hook* events announce that one happened, decoupling this crate from
+//!   downstream UI crates: [`head::OpenedEvent`], [`head::ClosedEvent`],
+//!   [`head::ChangedEvent`], [`head::BranchedHeadEvent`],
+//!   [`head::CommittedEvent`], [`vm::EvalEntryComplete`].
+//!
+//! Buffered messages (`Message` + `MessageReader`) are reserved for
+//! per-frame streams consumed by polling systems -
+//! [`debounced_input::DebouncedInputEvent`] is the one case.
 
 pub mod builtin;
 pub mod debounced_input;
@@ -11,9 +29,7 @@ pub mod storage;
 pub mod vm;
 
 use bevy_app::{App, Plugin, Update};
-use bevy_ecs::prelude::{
-    IntoScheduleConfigs, SystemCondition, not, resource_added, resource_changed,
-};
+use bevy_ecs::prelude::{IntoScheduleConfigs, SystemSet};
 pub use builtin::{BuiltinNodes, Builtins};
 use gantz_core::Node;
 pub use head::{
@@ -21,7 +37,15 @@ pub use head::{
     WorkingGraph,
 };
 pub use reg::{Registry, lookup_node, timestamp};
-pub use vm::{CompileConfig, EntrypointFns, EvalEntryComplete, EvalEntryEvent};
+pub use vm::{CompileConfig, CompiledInputs, EntrypointFns, EvalEntryComplete, EvalEntryEvent};
+
+/// The system set in which [`vm::sync`] runs (in the `Update` schedule).
+///
+/// Systems that evaluate head VMs each frame should run `.after(VmSet)` so
+/// they never observe the gap between a head pointing at a new graph and its
+/// VM being (re)initialized.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
+pub struct VmSet;
 
 /// Plugin providing core gantz functionality.
 ///
@@ -31,8 +55,7 @@ pub use vm::{CompileConfig, EntrypointFns, EvalEntryComplete, EvalEntryEvent};
 /// - Initializes core resources (Registry, HeadVms, etc.)
 /// - Registers event observers for head operations
 /// - Registers the eval event observer
-/// - Handles VM initialization for opened/changed heads
-/// - Detects graph changes and recompiles VMs
+/// - Keeps head VMs in sync with their compile inputs via [`vm::sync`]
 ///
 /// Apps should also:
 /// - Insert a `BuiltinNodes<N>` resource with their builtin nodes
@@ -66,23 +89,9 @@ where
         .add_observer(head::on_move_branch::<N>)
         // Register eval entry event handler.
         .add_observer(vm::on_eval_entry)
-        // VM init observers.
-        .add_observer(vm::on_head_opened::<N>)
-        .add_observer(vm::on_head_changed::<N>)
-        // Graph recompilation systems. `recompile_all` reacts to compile
-        // config changes; the condition order is load-bearing (`and`
-        // short-circuits, and `resource_changed` must observe every run to
-        // keep its change tick in sync).
-        .add_systems(
-            Update,
-            (
-                vm::update::<N>,
-                vm::recompile_all::<N>.run_if(
-                    resource_changed::<vm::CompileConfig>
-                        .and(not(resource_added::<vm::CompileConfig>)),
-                ),
-            ),
-        );
+        // Input-addressed VM synchronisation: (re)compiles whenever a head's
+        // compile inputs (graph content address + config) change.
+        .add_systems(Update, vm::sync::<N>.in_set(VmSet));
     }
 }
 

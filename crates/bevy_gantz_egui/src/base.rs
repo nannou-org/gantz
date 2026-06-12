@@ -102,8 +102,6 @@ where
         .map(|name| gantz_ca::Head::Branch(name.clone()))
         .collect();
 
-    let export_registry = gantz_core::reg::export_heads(&get_node, registry, named_heads.iter());
-    let export = gantz_egui::export::export_with(export_registry, views, &demos.0);
-
-    ron::ser::to_string_pretty(&export, ron::ser::PrettyConfig::default()).ok()
+    gantz_egui::export::export_heads_ron(&get_node, registry, views, &demos.0, named_heads.iter())
+        .ok()
 }
