@@ -1,6 +1,6 @@
 //! A widget for viewing commit history with All/Focused mode.
 
-use super::graph_select::{GraphRegistry, GraphSelectResponse};
+use super::graph_select::{GraphRegistry, GraphSelectResponse, click_head};
 use super::head_row::{HeadRowType, head_row};
 use std::collections::HashMap;
 
@@ -138,16 +138,7 @@ impl<'a> HistoryView<'a> {
                     let res = head_row(self.heads, &head, row_type, ca, self.focused_head, ui);
 
                     if res.row.clicked() {
-                        let ctrl = ui.input(|i| i.modifiers.ctrl);
-                        if ctrl {
-                            if self.heads.contains(&head) {
-                                response.closed = Some(head);
-                            } else {
-                                response.opened = Some(head);
-                            }
-                        } else {
-                            response.replaced = Some(head);
-                        }
+                        click_head(ui, self.heads, self.focused_head, head, &mut response);
                     }
                 }
             });

@@ -34,9 +34,13 @@ pub struct GraphSelectResponse {
     pub import: bool,
     /// Indicates the export-all button was clicked.
     pub export_all: bool,
-    /// Single click: replace the focused head with this one.
+    /// Click while the focused head is named: replace the focused head with this one.
     pub replaced: Option<gantz_ca::Head>,
-    /// Ctrl+click on a head that is not open: open this head as a new tab.
+    /// Open this head as a new tab, or focus it if already open.
+    ///
+    /// Emitted on ctrl+click of a head that is not open, or on a plain click
+    /// while the focused head is an unnamed commit (so that clicking another
+    /// head can't silently lose an unnamed graph).
     pub opened: Option<gantz_ca::Head>,
     /// Ctrl+click on a head that is already open: close this head.
     pub closed: Option<gantz_ca::Head>,
@@ -151,16 +155,7 @@ impl<'a> GraphSelect<'a> {
                         let head = gantz_ca::Head::Branch(name.to_string());
                         let res = head_row(heads, &head, row_type, ca, focused_head, ui);
                         if res.row.clicked() {
-                            let ctrl = ui.input(|i| i.modifiers.ctrl);
-                            if ctrl {
-                                if heads.contains(&head) {
-                                    response.closed = Some(head);
-                                } else {
-                                    response.opened = Some(head);
-                                }
-                            } else {
-                                response.replaced = Some(head);
-                            }
+                            click_head(ui, heads, focused_head, head, response);
                         } else if let Some(delete) = res.delete {
                             if delete.clicked() {
                                 response.name_removed = Some(name.to_string());
@@ -253,16 +248,7 @@ impl<'a> GraphSelect<'a> {
                     let row_type = HeadRowType::Unnamed(&commit.timestamp);
                     let res = head_row(self.heads, &head, row_type, ca, self.focused_head, ui);
                     if res.row.clicked() {
-                        let ctrl = ui.input(|i| i.modifiers.ctrl);
-                        if ctrl {
-                            if self.heads.contains(&head) {
-                                response.closed = Some(head);
-                            } else {
-                                response.opened = Some(head);
-                            }
-                        } else {
-                            response.replaced = Some(head);
-                        }
+                        click_head(ui, self.heads, self.focused_head, head, &mut response);
                     }
                 }
             });
@@ -301,5 +287,37 @@ impl<'a> GraphSelect<'a> {
         ui.memory_mut(|mem| mem.data.insert_temp(state_id, state));
 
         response
+    }
+}
+
+/// Update `response` for a click on the row for `head`.
+///
+/// Ctrl+click toggles the head: closes it if open, otherwise opens it as a new
+/// tab. A plain click replaces the focused head, unless the focused head is an
+/// unnamed commit, in which case the clicked head is opened as a new tab
+/// instead (or focused if already open) so that the unnamed graph isn't lost.
+pub(crate) fn click_head(
+    ui: &egui::Ui,
+    heads: &[gantz_ca::Head],
+    focused_head: Option<usize>,
+    head: gantz_ca::Head,
+    response: &mut GraphSelectResponse,
+) {
+    let ctrl = ui.input(|i| i.modifiers.ctrl);
+    if ctrl {
+        if heads.contains(&head) {
+            response.closed = Some(head);
+        } else {
+            response.opened = Some(head);
+        }
+        return;
+    }
+    let focused_is_named = focused_head
+        .and_then(|ix| heads.get(ix))
+        .is_some_and(|head| matches!(head, gantz_ca::Head::Branch(_)));
+    if focused_is_named {
+        response.replaced = Some(head);
+    } else {
+        response.opened = Some(head);
     }
 }
