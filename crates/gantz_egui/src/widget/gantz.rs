@@ -58,6 +58,7 @@ pub struct Gantz<'a> {
     perf_vm: Option<&'a mut widget::PerfCapture>,
     perf_gui: Option<&'a mut widget::PerfCapture>,
     base_immutable: bool,
+    compile_config: Option<gantz_core::compile::Config>,
 }
 
 enum LogSource {
@@ -201,6 +202,8 @@ pub struct GantzResponse {
     pub demo_changed: Option<(gantz_ca::Head, Option<String>)>,
     /// A base graph should be reset to its original state.
     pub reset_base_graph: Option<gantz_ca::Head>,
+    /// The global compile config was changed via the Graph Config pane.
+    pub compile_config: Option<gantz_core::compile::Config>,
 }
 
 /// State for editing a tab name via double-click.
@@ -295,12 +298,21 @@ impl<'a> Gantz<'a> {
             perf_vm: None,
             perf_gui: None,
             base_immutable: true,
+            compile_config: None,
         }
     }
 
     /// Provide demo graph associations for the config dropdown.
     pub fn demos(mut self, demos: &'a HashMap<gantz_ca::CommitAddr, String>) -> Self {
         self.demos = Some(demos);
+        self
+    }
+
+    /// Provide the current compile config so the Graph Config pane shows
+    /// the compile toggles. The config is global: it applies to all open
+    /// heads, and a change is reported via [`GantzResponse::compile_config`].
+    pub fn compile_config(mut self, config: gantz_core::compile::Config) -> Self {
+        self.compile_config = Some(config);
         self
     }
 
@@ -391,6 +403,7 @@ impl<'a> Gantz<'a> {
             file_drops: Vec::new(),
             demo_changed: None,
             reset_base_graph: None,
+            compile_config: None,
         };
 
         // The context for traversing the tree of tiles.
@@ -559,13 +572,17 @@ where
                         _ => None,
                     };
 
+                    let compile_config = gantz.compile_config;
                     let res = pane_ui(ui, |ui| {
-                        widget::GraphConfig::new(&head, head_state, names)
+                        let mut graph_config = widget::GraphConfig::new(&head, head_state, names)
                             .is_base(is_base)
                             .immutable(immutable)
                             .demo_names(&demo_names_vec)
-                            .current_demo(current_demo)
-                            .show(ui)
+                            .current_demo(current_demo);
+                        if let Some(cfg) = compile_config {
+                            graph_config = graph_config.compile_config(cfg);
+                        }
+                        graph_config.show(ui)
                     });
                     if res.inner.new_branch.is_some() {
                         gantz_response.new_branch = res.inner.new_branch;
@@ -575,6 +592,9 @@ where
                     }
                     if res.inner.reset_base_graph {
                         gantz_response.reset_base_graph = Some(head.clone());
+                    }
+                    if let Some(cfg) = res.inner.compile_config {
+                        gantz_response.compile_config = Some(cfg);
                     }
                     if res.inner.export {
                         let head_state = state.open_heads.entry(head).or_default();

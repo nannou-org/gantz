@@ -5,8 +5,9 @@ use super::head_name_edit::{head_name, head_name_edit};
 
 /// Per-head graph configuration widget.
 ///
-/// Provides a name-editing text field and layout settings
-/// (`auto_layout`, `layout_flow`, `center_view`).
+/// Provides a name-editing text field, layout settings
+/// (`auto_layout`, `layout_flow`, `center_view`) and the global compile
+/// config toggles.
 pub struct GraphConfig<'a> {
     head: &'a gantz_ca::Head,
     head_state: &'a mut OpenHeadState,
@@ -15,6 +16,7 @@ pub struct GraphConfig<'a> {
     immutable: bool,
     demo_names: &'a [&'a str],
     current_demo: Option<&'a str>,
+    compile_config: Option<gantz_core::compile::Config>,
 }
 
 /// Response from the [`GraphConfig`] widget.
@@ -27,6 +29,8 @@ pub struct GraphConfigResponse {
     pub demo_changed: Option<Option<String>>,
     /// The "Reset" button was clicked for a base graph.
     pub reset_base_graph: bool,
+    /// The global compile config was changed via the compile toggles.
+    pub compile_config: Option<gantz_core::compile::Config>,
 }
 
 impl<'a> GraphConfig<'a> {
@@ -43,6 +47,7 @@ impl<'a> GraphConfig<'a> {
             immutable: false,
             demo_names: &[],
             current_demo: None,
+            compile_config: None,
         }
     }
 
@@ -70,6 +75,15 @@ impl<'a> GraphConfig<'a> {
     /// The current demo graph association for this graph, if any.
     pub fn current_demo(mut self, current_demo: Option<&'a str>) -> Self {
         self.current_demo = current_demo;
+        self
+    }
+
+    /// Provide the current compile config to show the "Compile" toggles.
+    ///
+    /// The config is global - it applies to all open heads - so the section
+    /// is shown (and enabled) even for immutable/base heads.
+    pub fn compile_config(mut self, config: gantz_core::compile::Config) -> Self {
+        self.compile_config = Some(config);
         self
     }
 
@@ -159,12 +173,44 @@ impl<'a> GraphConfig<'a> {
             });
         });
 
+        // Compile config toggles. Global - applies to all open heads - so
+        // intentionally not gated by `self.immutable`.
+        let mut compile_config = None;
+        if let Some(mut cfg) = self.compile_config {
+            ui.separator();
+            ui.label("Compile:");
+            let mut changed = false;
+            changed |= ui
+                .checkbox(&mut cfg.validate_ir, "Validate IR")
+                .on_hover_text(
+                    "Check the compiler's own IR invariants on every \
+                     lowering. A violation is a bug in gantz, never in your \
+                     graph. Disable as an optimisation. Applies to all open \
+                     graphs.",
+                )
+                .changed();
+            changed |= ui
+                .checkbox(&mut cfg.emit_all_node_fns, "Emit all node fns")
+                .on_hover_text(
+                    "Emit a node fn for every node, rather than only those \
+                     called by some evaluation, so any node's generated code \
+                     can be inspected in the Steel view. The extra \
+                     definitions are never called and do not affect \
+                     evaluation. Applies to all open graphs.",
+                )
+                .changed();
+            if changed {
+                compile_config = Some(cfg);
+            }
+        }
+
         let export = ui.button("Export").clicked();
         GraphConfigResponse {
             new_branch,
             export,
             demo_changed,
             reset_base_graph,
+            compile_config,
         }
     }
 }

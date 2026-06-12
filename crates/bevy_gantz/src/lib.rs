@@ -11,6 +11,9 @@ pub mod storage;
 pub mod vm;
 
 use bevy_app::{App, Plugin, Update};
+use bevy_ecs::prelude::{
+    IntoScheduleConfigs, SystemCondition, not, resource_added, resource_changed,
+};
 pub use builtin::{BuiltinNodes, Builtins};
 use gantz_core::Node;
 pub use head::{
@@ -66,8 +69,20 @@ where
         // VM init observers.
         .add_observer(vm::on_head_opened::<N>)
         .add_observer(vm::on_head_changed::<N>)
-        // Graph recompilation system.
-        .add_systems(Update, vm::update::<N>);
+        // Graph recompilation systems. `recompile_all` reacts to compile
+        // config changes; the condition order is load-bearing (`and`
+        // short-circuits, and `resource_changed` must observe every run to
+        // keep its change tick in sync).
+        .add_systems(
+            Update,
+            (
+                vm::update::<N>,
+                vm::recompile_all::<N>.run_if(
+                    resource_changed::<vm::CompileConfig>
+                        .and(not(resource_added::<vm::CompileConfig>)),
+                ),
+            ),
+        );
     }
 }
 

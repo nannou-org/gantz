@@ -357,3 +357,39 @@ pub fn update<N>(
         }
     }
 }
+
+/// Recompile every open head's graph into its existing VM.
+///
+/// Runs when [`CompileConfig`] changes (see `GantzPlugin`). Unlike [`update`],
+/// this never commits - the graph content is unchanged, only the codegen
+/// options - and compiling into the existing VM preserves node state.
+pub fn recompile_all<N>(
+    registry: Res<Registry<N>>,
+    builtins: Res<BuiltinNodes<N>>,
+    ep_fns: Res<EntrypointFns<N>>,
+    config: Res<CompileConfig>,
+    mut vms: NonSendMut<head::HeadVms>,
+    mut heads_query: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
+) where
+    N: 'static + Node + Send + Sync,
+{
+    for mut data in heads_query.iter_mut() {
+        let graph: &Graph<N> = &*data.working_graph;
+        let Some(vm) = vms.get_mut(&data.entity) else {
+            continue;
+        };
+        let get_node = |ca: &ca::ContentAddr| lookup_node(&registry, &**builtins, ca);
+        gantz_core::graph::register(&get_node, graph, &[], vm);
+        let entrypoints = collect_entrypoints(&ep_fns, &get_node, graph);
+        match compile(&get_node, graph, vm, &entrypoints, &config.0) {
+            Ok(module) => data.compiled.0 = module,
+            Err(e) => {
+                log::error!(
+                    "Failed to compile graph: {}",
+                    gantz_core::vm::error_chain(&e)
+                );
+                data.compiled.0 = compile_error_comment(&e);
+            }
+        }
+    }
+}
