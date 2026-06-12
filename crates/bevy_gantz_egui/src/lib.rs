@@ -19,7 +19,7 @@ use gantz_ca as ca;
 use gantz_core::Node;
 use gantz_core::node::graph::Graph;
 pub use gantz_egui::RegistryRef;
-use gantz_egui::{HeadDataMut, ResponseData};
+use gantz_egui::{HeadDataMut, Payload, ResponseData};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -263,7 +263,7 @@ pub struct ResetBaseGraphEvent(pub String);
 ///
 /// The `Option<Entity>` is the open-head entity resolved from the payload's
 /// head tag (`None` for app-level payloads).
-pub type DispatchFn = fn(Option<Entity>, Box<dyn ResponseData>, &mut Commands);
+pub type DispatchFn = fn(Option<Entity>, Payload, &mut Commands);
 
 /// `TypeId`-keyed dispatchers turning the dynamic GUI response payloads into
 /// typed events. Register payload types via [`RegisterResponseExt`].
@@ -1303,12 +1303,12 @@ where
     // Dispatch the dynamic response payloads emitted during the GUI pass.
     // Payload types are registered in `ResponseDispatchers` (see
     // `RegisterResponseExt`); unregistered payloads are reported.
-    for (head, data) in response.responses.drain() {
-        log::debug!("{data:?}");
+    for (head, payload) in response.responses.drain() {
+        log::debug!("{payload:?}");
         let entity = head.and_then(|h| head_to_entity.get(&h).copied());
-        match dispatchers.0.get(&data.data_type_id()) {
-            Some(dispatch) => dispatch(entity, data, &mut cmds),
-            None => log::warn!("unhandled response payload: {}", data.data_type_name()),
+        match dispatchers.0.get(&payload.type_id()) {
+            Some(dispatch) => dispatch(entity, payload, &mut cmds),
+            None => log::warn!("unhandled response payload: {}", payload.type_name()),
         }
     }
 
@@ -1326,9 +1326,8 @@ where
 ///
 /// Dispatchers are keyed by the payload's `TypeId`, so the downcast cannot
 /// fail for a correctly registered dispatcher.
-fn downcast_payload<T: ResponseData>(data: Box<dyn ResponseData>) -> T {
-    *data
-        .into_any()
+fn downcast_payload<T: ResponseData>(payload: Payload) -> T {
+    payload
         .downcast::<T>()
         .expect("dispatcher registered for this payload type")
 }
@@ -1336,49 +1335,49 @@ fn downcast_payload<T: ResponseData>(data: Box<dyn ResponseData>) -> T {
 /// Dispatch a head-scoped payload as a [`ForHead`] event.
 fn dispatch_for_head<T: ResponseData>(
     entity: Option<Entity>,
-    data: Box<dyn ResponseData>,
+    payload: Payload,
     cmds: &mut Commands,
 ) {
     let Some(head) = entity else {
         log::error!(
             "response payload `{}` has no open-head entity",
-            data.data_type_name()
+            payload.type_name()
         );
         return;
     };
-    let data = downcast_payload::<T>(data);
+    let data = downcast_payload::<T>(payload);
     cmds.trigger(ForHead { head, data });
 }
 
 /// Dispatch a [`gantz_egui::EvalEntry`] payload as an [`EvalEntryEvent`].
-fn dispatch_eval_entry(entity: Option<Entity>, data: Box<dyn ResponseData>, cmds: &mut Commands) {
+fn dispatch_eval_entry(entity: Option<Entity>, payload: Payload, cmds: &mut Commands) {
     let Some(head) = entity else {
         log::error!("EvalEntry payload has no open-head entity");
         return;
     };
-    let gantz_egui::EvalEntry(entrypoint) = downcast_payload(data);
+    let gantz_egui::EvalEntry(entrypoint) = downcast_payload(payload);
     cmds.trigger(EvalEntryEvent { head, entrypoint });
 }
 
 /// Dispatch a [`gantz_egui::OpenHead`] payload as a [`head::OpenEvent`].
-fn dispatch_open_head(_: Option<Entity>, data: Box<dyn ResponseData>, cmds: &mut Commands) {
-    let gantz_egui::OpenHead(target) = downcast_payload(data);
+fn dispatch_open_head(_: Option<Entity>, payload: Payload, cmds: &mut Commands) {
+    let gantz_egui::OpenHead(target) = downcast_payload(payload);
     cmds.trigger(head::OpenEvent(target));
 }
 
 /// Dispatch a [`gantz_egui::ExportHead`] payload as an [`ExportHeadEvent`].
-fn dispatch_export_head(entity: Option<Entity>, data: Box<dyn ResponseData>, cmds: &mut Commands) {
+fn dispatch_export_head(entity: Option<Entity>, payload: Payload, cmds: &mut Commands) {
     let Some(head) = entity else {
         log::error!("ExportHead payload has no open-head entity");
         return;
     };
-    let gantz_egui::ExportHead = downcast_payload(data);
+    let gantz_egui::ExportHead = downcast_payload(payload);
     cmds.trigger(ExportHeadEvent { head });
 }
 
 /// Dispatch a [`gantz_egui::ExportAllNamed`] payload as an [`ExportAllNamedEvent`].
-fn dispatch_export_all_named(_: Option<Entity>, data: Box<dyn ResponseData>, cmds: &mut Commands) {
-    let gantz_egui::ExportAllNamed = downcast_payload(data);
+fn dispatch_export_all_named(_: Option<Entity>, payload: Payload, cmds: &mut Commands) {
+    let gantz_egui::ExportAllNamed = downcast_payload(payload);
     cmds.trigger(ExportAllNamedEvent);
 }
 

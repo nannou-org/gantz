@@ -20,7 +20,7 @@ pub mod widget;
 // Re-export traits that make up the Registry supertrait.
 pub use node::{FnNodeNames, NameRegistry};
 pub use reg::RegistryRef;
-pub use response::{ResponseData, Responses};
+pub use response::{Payload, ResponseData, Responses};
 pub use widget::gantz::NodeTypeRegistry;
 pub use widget::graph_select::GraphRegistry;
 
@@ -163,7 +163,7 @@ pub struct NodeCtx<'a> {
     inlets: &'a [node::Id],
     outlets: &'a [node::Id],
     vm: &'a mut Engine,
-    responses: &'a mut Vec<Box<dyn ResponseData>>,
+    responses: &'a mut Vec<Payload>,
 }
 
 /// How to position pasted nodes.
@@ -359,7 +359,7 @@ impl<'a> NodeCtx<'a> {
         inlets: &'a [node::Id],
         outlets: &'a [node::Id],
         vm: &'a mut Engine,
-        responses: &'a mut Vec<Box<dyn ResponseData>>,
+        responses: &'a mut Vec<Payload>,
     ) -> Self {
         Self {
             registry,
@@ -379,7 +379,7 @@ impl<'a> NodeCtx<'a> {
     /// independently-declared nodes to communicate with application-specific
     /// handlers.
     pub fn response<T: ResponseData>(&mut self, data: T) {
-        self.responses.push(Box::new(data));
+        self.responses.push(Payload::new(data));
     }
 
     /// Provide access to the registry.

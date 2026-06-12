@@ -1,7 +1,7 @@
 use crate::{
     CopyNodes, CreateNode, ExportAllNamed, ExportHead, GraphViews, HeadAccess, NodeCtx, NodeUi,
     OpenCommandPalette, OpenPath, Paste, Redo, Registry, Undo, export,
-    response::{ResponseData, Responses},
+    response::{Payload, Responses},
     widget::{
         self, GraphScene, GraphSceneState,
         graph_scene::{self, ToGraphMut},
@@ -829,7 +829,7 @@ where
                 if let Some(fh) = access.heads().get(*focused_head).cloned() {
                     let immutable = head_immutable(&fh, gantz.base_immutable, base_names);
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
-                    let mut responses: Vec<Box<dyn ResponseData>> = Vec::new();
+                    let mut responses: Vec<Payload> = Vec::new();
                     access.with_head_mut(&fh, |data| {
                         node_inspector(
                             gantz.env,
@@ -1664,7 +1664,7 @@ fn node_inspector<N>(
     vm: &mut Engine,
     head_state: &mut OpenHeadState,
     immutable: bool,
-    responses: &mut Vec<Box<dyn ResponseData>>,
+    responses: &mut Vec<Payload>,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<()>
 where
