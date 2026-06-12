@@ -1,4 +1,5 @@
 use crate::{Cmd, NodeUi, PastePos, Registry};
+use egui::emath::GuiRounding;
 use egui_graph::{self, SocketKind, node::EdgeEvent};
 use gantz_core::{
     Edge, Node,
@@ -587,25 +588,40 @@ pub fn paint_diagnostics(
             unattributed = true;
             continue;
         };
-        // Paint on the node's own layer so the scene transform applies. The
-        // clip must be *replaced* with a layer-local rect: egui maps a
-        // transformed layer's clip rects through its transform at
-        // tessellation, so the painter's default (global) clip - and
-        // anything intersected with it via `with_clip_rect` - is interpreted
-        // in the wrong coordinate space and cuts the glow off.
+        // Paint on the node's own layer so the scene transform applies.
+        // Everything the painter receives must be in layer-local
+        // coordinates: egui maps a transformed layer's clip rects through
+        // its transform at tessellation, so the pane's (global) clip is
+        // mapped into local space rather than intersected as-is.
+        let to_global = ui
+            .ctx()
+            .layer_transform_to_global(node_response.layer_id)
+            .unwrap_or(egui::emath::TSTransform::IDENTITY);
+        let inv = to_global.inverse();
+        // The tessellator snaps each rect to physical pixels independently
+        // (`round_rects_to_pixels`), which at fractional transforms lets the
+        // rings land +-1px off the frame's own snapped edges. Snap the frame
+        // rect the same way the frame's shape will be, derive the rings from
+        // it, and disable their re-rounding so the gap stays even.
+        let ppp = ui.ctx().pixels_per_point();
+        let frame = inv.mul_rect(to_global.mul_rect(node_response.rect).round_to_pixels(ppp));
         let mut painter = ui.ctx().layer_painter(node_response.layer_id);
-        painter.set_clip_rect(node_response.rect.expand(16.0));
+        let local_clip = inv.mul_rect(ui.clip_rect());
+        painter.set_clip_rect(local_clip.intersect(frame.expand(16.0)));
         // A soft glow: thin rings hugging the frame, fading quickly. Ring
         // corners grow from the node frame's radius (`Frame::window`, see
         // `egui_graph::node::default_frame`) so the arcs stay concentric.
         let frame_radius = ui.visuals().window_corner_radius;
         let rings = [(1.0f32, 1.5, 0.45), (3.0, 2.0, 0.16), (5.5, 2.5, 0.06)];
         for (expand, width, alpha) in rings {
-            painter.rect_stroke(
-                node_response.rect.expand(expand),
-                frame_radius + expand.round() as u8,
-                egui::Stroke::new(width, color.gamma_multiply(alpha)),
-                egui::StrokeKind::Outside,
+            painter.add(
+                egui::epaint::RectShape::stroke(
+                    frame.expand(expand),
+                    frame_radius + expand.round() as u8,
+                    egui::Stroke::new(width, color.gamma_multiply(alpha)),
+                    egui::StrokeKind::Outside,
+                )
+                .with_round_to_pixels(false),
             );
         }
         (**node_response).clone().on_hover_text(&diag.message);
