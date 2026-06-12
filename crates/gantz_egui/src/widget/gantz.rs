@@ -730,14 +730,11 @@ where
 
                     // Skip command palette when immutable.
                     if !focused_immutable {
-                        command_palette(
-                            gantz.env,
-                            &fh,
-                            head_state,
-                            &mut state.command_palette,
-                            &mut gantz_response.responses,
-                            ui,
-                        );
+                        let created =
+                            command_palette(gantz.env, head_state, &mut state.command_palette, ui);
+                        if let Some(create) = created {
+                            gantz_response.responses.push(Some(fh), create);
+                        }
                     }
                 }
 
@@ -829,19 +826,13 @@ where
                 if let Some(fh) = access.heads().get(*focused_head).cloned() {
                     let immutable = head_immutable(&fh, gantz.base_immutable, base_names);
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
-                    let mut responses: Vec<Payload> = Vec::new();
-                    access.with_head_mut(&fh, |data| {
-                        node_inspector(
-                            gantz.env,
-                            data.graph,
-                            data.vm,
-                            head_state,
-                            immutable,
-                            &mut responses,
-                            ui,
-                        );
+                    let responses = access.with_head_mut(&fh, |data| {
+                        node_inspector(gantz.env, data.graph, data.vm, head_state, immutable, ui)
+                            .inner
                     });
-                    gantz_response.responses.extend(Some(&fh), responses);
+                    gantz_response
+                        .responses
+                        .extend(Some(&fh), responses.into_iter().flatten());
                 }
             }
             Pane::Steel => {
@@ -1127,6 +1118,9 @@ where
         let layout_flow = head_state.layout_flow;
         let center_view = head_state.center_view;
 
+        // We'll use this for positioning the fixed path labels window.
+        let rect = ui.available_rect_before_wrap();
+
         // Get mutable access to this head's data and render the graph scene.
         let graph_response = self.access.with_head_mut(pane_head, |data| {
             graph_scene(
@@ -1141,17 +1135,22 @@ where
                 immutable,
                 &diagnostics,
                 data.vm,
-                self.responses,
                 ui,
             )
         });
 
-        // Focus this head when clicking on the graph or any of its nodes.
         if let Some(Some(response)) = graph_response {
+            // Focus this head when clicking on the graph or any of its nodes.
             if response.scene.clicked() || response.any_node_interacted() {
                 *self.focused_head = ix;
             }
+            // Tag the scene's emissions with this head.
+            self.responses.extend(Some(&*pane_head), response.responses);
         }
+
+        // Floating path navigation labels.
+        let labels = path_labels(rect, head_state, ui);
+        self.responses.extend(Some(&*pane_head), labels);
 
         egui_tiles::UiResponse::None
     }
@@ -1479,6 +1478,10 @@ fn perf_view(title: &str, capture: &mut widget::PerfCapture, ui: &mut egui::Ui) 
 }
 
 /// Returns the response from the graph scene if it was shown.
+///
+/// Payloads emitted within the scene are returned in
+/// [`GraphSceneResponse::responses`][graph_scene::GraphSceneResponse] for the
+/// caller to tag and merge.
 fn graph_scene<N>(
     registry: &dyn Registry,
     graph: &mut gantz_core::node::graph::Graph<N>,
@@ -1491,62 +1494,63 @@ fn graph_scene<N>(
     immutable: bool,
     diagnostics: &[gantz_core::Diagnostic],
     vm: &mut Engine,
-    responses: &mut Responses,
     ui: &mut egui::Ui,
 ) -> Option<graph_scene::GraphSceneResponse>
 where
     N: Node + NodeUi + graph_scene::ToGraphMut<Node = N>,
 {
-    // We'll use this for positioning the fixed path labels window.
-    let rect = ui.available_rect_before_wrap();
-
     // Show the `GraphScene` for the graph at the current path.
-    let response = match graph_scene::index_path_graph_mut(graph, &head_state.path) {
-        None => {
-            log::error!("path {:?} is not a graph", head_state.path);
-            None
-        }
-        Some(graph) => {
-            // Use both head and path for a unique ID per graph pane.
-            let id = egui::Id::new(head).with(&head_state.path);
-
-            // Get or create the View for this path from external storage.
-            let view = head_views
-                .entry(head_state.path.to_vec())
-                .or_insert_with(|| {
-                    let layout = widget::graph_scene::layout(graph, id, layout_flow, ui.ctx());
-                    egui_graph::View {
-                        scene_rect: egui::Rect::ZERO,
-                        layout,
-                    }
-                });
-
-            let mut response = GraphScene::new(registry, graph, &head_state.path)
-                .with_id(id)
-                .auto_layout(auto_layout)
-                .layout_flow(layout_flow)
-                .center_view(center_view)
-                .immutable(immutable)
-                .show(view, &mut head_state.scene, vm, ui);
-
-            // Tag the scene's emissions with this head.
-            responses.extend(Some(head), response.responses.drain(..));
-
-            graph_scene::paint_diagnostics(diagnostics, &head_state.path, &response, ui);
-
-            Some(response)
-        }
+    let Some(graph) = graph_scene::index_path_graph_mut(graph, &head_state.path) else {
+        log::error!("path {:?} is not a graph", head_state.path);
+        return None;
     };
 
-    // Floating path index labels over the bottom-left corner of the scene.
-    // Only show when viewing a subgraph (non-empty path).
+    // Use both head and path for a unique ID per graph pane.
+    let id = egui::Id::new(head).with(&head_state.path);
+
+    // Get or create the View for this path from external storage.
+    let view = head_views
+        .entry(head_state.path.to_vec())
+        .or_insert_with(|| {
+            let layout = widget::graph_scene::layout(graph, id, layout_flow, ui.ctx());
+            egui_graph::View {
+                scene_rect: egui::Rect::ZERO,
+                layout,
+            }
+        });
+
+    let response = GraphScene::new(registry, graph, &head_state.path)
+        .with_id(id)
+        .auto_layout(auto_layout)
+        .layout_flow(layout_flow)
+        .center_view(center_view)
+        .immutable(immutable)
+        .show(view, &mut head_state.scene, vm, ui);
+
+    graph_scene::paint_diagnostics(diagnostics, &head_state.path, &response, ui);
+
+    Some(response)
+}
+
+/// Floating path index labels over the bottom-left corner of the scene,
+/// shown when viewing a subgraph (non-empty path).
+///
+/// Returns the [`OpenPath`] payloads emitted by clicked labels. Shown even
+/// when the path failed to resolve to a graph - the labels are the recovery
+/// mechanism for navigating back out of an invalid path.
+fn path_labels(
+    scene_rect: egui::Rect,
+    head_state: &mut OpenHeadState,
+    ui: &mut egui::Ui,
+) -> Vec<Payload> {
+    let mut responses = Vec::new();
     if head_state.path.is_empty() {
-        return response;
+        return responses;
     }
     let space = ui.style().interaction.interact_radius * 3.0;
     egui::Window::new("path_label_window")
         .pivot(egui::Align2::LEFT_BOTTOM)
-        .fixed_pos(rect.left_bottom() + egui::vec2(space, -space))
+        .fixed_pos(scene_rect.left_bottom() + egui::vec2(space, -space))
         .title_bar(false)
         .resizable(false)
         .collapsible(false)
@@ -1563,7 +1567,7 @@ where
                 .show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
                         if ui.add(button("R")).on_hover_text("root graph").clicked() {
-                            responses.push(Some(head.clone()), OpenPath(vec![]));
+                            responses.push(Payload::new(OpenPath(vec![])));
                             head_state.scene.interaction.selection.clear();
                         }
                     });
@@ -1579,7 +1583,7 @@ where
                                 .clicked()
                             {
                                 if !current_path {
-                                    responses.push(Some(head.clone()), OpenPath(path.to_vec()));
+                                    responses.push(Payload::new(OpenPath(path.to_vec())));
                                     head_state.scene.interaction.selection.clear();
                                 }
                             }
@@ -1587,18 +1591,16 @@ where
                     }
                 })
         });
-
-    response
+    responses
 }
 
+/// Returns a [`CreateNode`] payload when a node type is chosen.
 fn command_palette(
     env: &dyn Registry,
-    head: &gantz_ca::Head,
     head_state: &OpenHeadState,
     cmd_palette: &mut widget::CommandPalette,
-    responses: &mut Responses,
     ui: &mut egui::Ui,
-) {
+) -> Option<CreateNode> {
     // If space is pressed, toggle command palette visibility.
     if !ui.ctx().wants_keyboard_input() {
         if ui.ctx().input(|i| i.key_pressed(egui::Key::Space)) {
@@ -1610,14 +1612,11 @@ fn command_palette(
     let types = env.node_types();
     let cmds = types.iter().map(|&k| NodeTyCmd { env, name: k });
 
-    // If a command was emitted, emit a CreateNode payload.
-    if let Some(cmd) = cmd_palette.show(ui.ctx(), cmds) {
-        let create = CreateNode {
-            path: head_state.path.clone(),
-            node_type: cmd.name.to_string(),
-        };
-        responses.push(Some(head.clone()), create);
-    }
+    // The chosen node type becomes a `CreateNode` payload.
+    cmd_palette.show(ui.ctx(), cmds).map(|cmd| CreateNode {
+        path: head_state.path.clone(),
+        node_type: cmd.name.to_string(),
+    })
 }
 
 fn log_view(
@@ -1658,19 +1657,20 @@ fn head_immutable(
     base_immutable && is_base && !is_demo
 }
 
+/// Returns the payloads emitted by node UIs within the inspector.
 fn node_inspector<N>(
     registry: &dyn Registry,
     root: &mut gantz_core::node::graph::Graph<N>,
     vm: &mut Engine,
     head_state: &mut OpenHeadState,
     immutable: bool,
-    responses: &mut Vec<Payload>,
     ui: &mut egui::Ui,
-) -> egui::InnerResponse<()>
+) -> egui::InnerResponse<Vec<Payload>>
 where
     N: Node + NodeUi + ToGraphMut<Node = N>,
 {
     pane_ui(ui, |ui| {
+        let mut responses = Vec::new();
         egui::ScrollArea::vertical()
             .auto_shrink(egui::Vec2b::FALSE)
             .show(ui, |ui| {
@@ -1690,8 +1690,14 @@ where
                         let ix = id.index();
                         let path: Vec<_> =
                             head_state.path.iter().copied().chain(Some(ix)).collect();
-                        let ctx =
-                            NodeCtx::new(registry, &path[..], &inlets, &outlets, vm, responses);
+                        let ctx = NodeCtx::new(
+                            registry,
+                            &path[..],
+                            &inlets,
+                            &outlets,
+                            vm,
+                            &mut responses,
+                        );
                         let resp = widget::NodeInspector::new(node, ctx, immutable).show(ui);
                         if resp.label_response.clicked() {
                             let sel = &mut head_state.scene.interaction.selection.nodes;
@@ -1707,6 +1713,7 @@ where
                     });
                 }
             });
+        responses
     })
 }
 
