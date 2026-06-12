@@ -139,11 +139,13 @@ where
             .add_observer(on_export_all_named::<N>)
             .add_observer(on_import_file::<N>)
             .add_observer(on_reset_base_graph::<N>)
-            // Systems
+            // Systems. `drive_frame_bangs` evaluates head VMs, so it must not
+            // observe the gap between a head pointing at a new graph and
+            // `vm::sync` (re)initializing its VM.
             .add_systems(
                 Update,
                 (
-                    node::frame_bang::drive_frame_bangs::<N>,
+                    node::frame_bang::drive_frame_bangs::<N>.after(bevy_gantz::VmSet),
                     persist_views::<N>,
                     poll_import_task,
                 ),
@@ -580,7 +582,7 @@ pub fn on_branch_created(
 
 /// Handle graph commit by updating egui state.
 ///
-/// This observer is triggered by `vm::update` when a graph change is committed.
+/// This observer is triggered by `vm::sync` when a graph change is committed.
 /// Also clears the redo stack, since a new edit invalidates the redo history.
 pub fn on_head_committed(
     trigger: On<head::CommittedEvent>,
@@ -1279,8 +1281,8 @@ where
     }
 
     // Handle compile config change. The recompile happens next frame via
-    // `bevy_gantz::vm::recompile_all` (resource change detection); the `!=`
-    // guard avoids flagging the resource changed with an equal value.
+    // `bevy_gantz::vm::sync`, which compares each head's compile inputs
+    // (graph content address + config) by value.
     if let Some(cfg) = response.compile_config {
         if compile_config.0 != cfg {
             compile_config.0 = cfg;
@@ -1384,7 +1386,7 @@ fn dispatch_export_all_named(_: Option<Entity>, payload: DynResponse, cmds: &mut
 /// Trigger the appropriate event to move a head to a target commit.
 ///
 /// Branch heads use `MoveBranchEvent` for atomic registry+graph updates
-/// (avoids oscillation with `vm::update`). Commit heads use `ReplaceEvent`.
+/// (avoids oscillation with `vm::sync`). Commit heads use `ReplaceEvent`.
 fn navigate_head(cmds: &mut Commands, entity: Entity, head: &ca::Head, target: ca::CommitAddr) {
     match head {
         ca::Head::Commit(_) => cmds.trigger(head::ReplaceEvent(ca::Head::Commit(target))),

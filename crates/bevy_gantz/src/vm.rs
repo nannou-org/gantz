@@ -3,8 +3,7 @@
 //! This module provides:
 //! - Convenience wrappers around `gantz_core::vm` (`init`, `compile`)
 //! - Evaluation events and observer (`EvalEntryEvent`, `on_eval_entry`)
-//! - Observers for VM initialization on head events (`on_head_opened`, `on_head_changed`)
-//! - Systems for VM setup and update (`setup`, `update`)
+//! - The input-addressed VM synchronisation system ([`sync`])
 
 use crate::BuiltinNodes;
 use crate::head;
@@ -82,6 +81,23 @@ pub struct CompileConfig(pub core_compile::Config);
 // Types
 // ---------------------------------------------------------------------------
 
+/// The inputs that determine a head's compiled module.
+#[derive(Clone, Copy, PartialEq)]
+struct Inputs {
+    /// The content address of the head's working graph.
+    graph: ca::GraphAddr,
+    /// The codegen configuration.
+    config: core_compile::Config,
+}
+
+/// The inputs of a head's last compile *attempt* (success or failure).
+///
+/// `None` = never attempted. [`sync`] compares this against the current
+/// inputs to decide when to (re)compile - there is no dirty flag to set or
+/// forget.
+#[derive(Component, Default)]
+pub struct CompiledInputs(Option<Inputs>);
+
 /// Event to trigger evaluation of an entrypoint.
 #[derive(Event)]
 pub struct EvalEntryEvent {
@@ -140,89 +156,6 @@ where
 // Observers
 // ---------------------------------------------------------------------------
 
-/// Initialize (or reinitialize) the VM for the given head entity.
-fn init_head_vm<N>(
-    entity: Entity,
-    registry: &Registry<N>,
-    builtins: &BuiltinNodes<N>,
-    ep_fns: &EntrypointFns<N>,
-    config: &CompileConfig,
-    vms: &mut head::HeadVms,
-    cmds: &mut Commands,
-    graphs: &Query<&head::WorkingGraph<N>>,
-) where
-    N: 'static + Node + Send + Sync,
-{
-    let graph = graphs.get(entity).unwrap();
-    let get_node = |ca: &ca::ContentAddr| lookup_node(registry, &**builtins, ca);
-    let entrypoints = collect_entrypoints(ep_fns, &get_node, &**graph);
-    match init(&get_node, &**graph, &entrypoints, &config.0) {
-        Ok((vm, module)) => {
-            cmds.entity(entity).insert(compile_components(Ok(module)));
-            vms.insert(entity, vm);
-        }
-        Err(e) => {
-            // Don't leave a stale VM/module from a previously-active graph in
-            // place: surface the error in the compiled module and drop the VM so
-            // eval systems (e.g. `drive_frame_bangs`, `on_eval_entry`) stop
-            // driving the wrong graph - which otherwise manifests as a confusing
-            // "free identifier: entry-fn-..." against an unrelated module.
-            cmds.entity(entity).insert(compile_components(Err(e)));
-            vms.remove(&entity);
-        }
-    }
-}
-
-/// VM init for opened heads.
-pub fn on_head_opened<N>(
-    trigger: On<head::OpenedEvent>,
-    registry: Res<Registry<N>>,
-    builtins: Res<BuiltinNodes<N>>,
-    ep_fns: Res<EntrypointFns<N>>,
-    config: Res<CompileConfig>,
-    mut vms: NonSendMut<head::HeadVms>,
-    mut cmds: Commands,
-    graphs: Query<&head::WorkingGraph<N>>,
-) where
-    N: 'static + Node + Send + Sync,
-{
-    init_head_vm(
-        trigger.event().entity,
-        &registry,
-        &builtins,
-        &ep_fns,
-        &config,
-        &mut vms,
-        &mut cmds,
-        &graphs,
-    );
-}
-
-/// VM init for changed heads.
-pub fn on_head_changed<N>(
-    trigger: On<head::ChangedEvent>,
-    registry: Res<Registry<N>>,
-    builtins: Res<BuiltinNodes<N>>,
-    ep_fns: Res<EntrypointFns<N>>,
-    config: Res<CompileConfig>,
-    mut vms: NonSendMut<head::HeadVms>,
-    mut cmds: Commands,
-    graphs: Query<&head::WorkingGraph<N>>,
-) where
-    N: 'static + Node + Send + Sync,
-{
-    init_head_vm(
-        trigger.event().entity,
-        &registry,
-        &builtins,
-        &ep_fns,
-        &config,
-        &mut vms,
-        &mut cmds,
-        &graphs,
-    );
-}
-
 /// Observer that handles evaluation events by calling the appropriate VM function.
 ///
 /// Emits an `EvalEntryComplete` event with timing information for UI layers to observe.
@@ -262,57 +195,25 @@ pub fn on_eval_entry(
 // Systems
 // ---------------------------------------------------------------------------
 
-/// Initialize VMs for all open heads (exclusive startup system).
-pub fn setup<N>(world: &mut World)
-where
-    N: 'static + Node + Send + Sync,
-{
-    log::info!("Setting up VMs for all open heads!");
-
-    let entities: Vec<Entity> = world
-        .query_filtered::<Entity, With<head::OpenHead>>()
-        .iter(world)
-        .collect();
-
-    let mut vms = head::HeadVms::default();
-    let mut compiled_updates: Vec<(Entity, Compiled)> = vec![];
-    for entity in entities {
-        let registry = world.resource::<Registry<N>>();
-        let builtins = world.resource::<BuiltinNodes<N>>();
-        let ep_fns = world.resource::<EntrypointFns<N>>();
-        let config = world.resource::<CompileConfig>();
-        let get_node = |ca: &ca::ContentAddr| lookup_node(registry, &**builtins, ca);
-        let Some(wg) = world.get::<head::WorkingGraph<N>>(entity) else {
-            continue;
-        };
-        let entrypoints = collect_entrypoints(ep_fns, &get_node, &**wg);
-        let (vm, module) = match init(&get_node, &**wg, &entrypoints, &config.0) {
-            Ok(result) => result,
-            Err(e) => {
-                log::error!("Failed to init VM for entity {entity}: {e}");
-                continue;
-            }
-        };
-        vms.insert(entity, vm);
-        compiled_updates.push((entity, module));
-    }
-
-    for (entity, module) in compiled_updates {
-        world
-            .entity_mut(entity)
-            .insert(compile_components(Ok(module)));
-    }
-
-    world.insert_non_send_resource(vms);
-}
-
-/// Detect graph changes and recompile into VMs.
+/// Keep every open head's VM in sync with the inputs to compilation.
 ///
-/// When a graph change is detected, this system:
-/// - Commits the new graph to the registry
-/// - Recompiles the VM
-/// - Emits a [`head::CommittedEvent`] for UI updates
-pub fn update<N>(
+/// The inputs are the working graph's content address and the
+/// [`CompileConfig`]; each head's [`CompiledInputs`] memoizes the inputs of
+/// its last compile attempt, and the VM is rebuilt whenever they differ -
+/// there is no dirty flag to set or forget. This single rule covers head
+/// open (and startup spawn), head replace/branch-move, graph edits, and
+/// config changes.
+///
+/// Whether the rebuild is a fresh `init` or an in-place `compile` is decided
+/// by VM presence in [`head::HeadVms`]: absent means a fresh init (head
+/// replace/branch-move remove the VM to discard the old graph's node state);
+/// present means an in-place compile, preserving node state (graph edits and
+/// config changes).
+///
+/// When the working graph's address has diverged from the head's commit, the
+/// graph is committed to the registry first and a [`head::CommittedEvent`]
+/// is emitted for UI state updates (handled by `GantzEguiPlugin` if present).
+pub fn sync<N>(
     mut cmds: Commands,
     mut registry: ResMut<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
@@ -324,77 +225,60 @@ pub fn update<N>(
     N: 'static + Node + Clone + ca::CaHash + Send + Sync,
 {
     for mut data in heads_query.iter_mut() {
-        let head: &mut ca::Head = &mut *data.head_ref;
         let graph: &Graph<N> = &*data.working_graph;
-
-        let new_graph_ca = ca::graph_addr(graph);
-        let Some(head_commit) = registry.head_commit(head) else {
-            continue;
+        let inputs = Inputs {
+            graph: ca::graph_addr(graph),
+            config: config.0,
         };
-        if head_commit.graph != new_graph_ca {
-            let old_head = head.clone();
-            let old_commit_ca = registry.head_commit_ca(head).copied().unwrap();
-            let new_commit_ca = registry.commit_graph_to_head(
-                crate::reg::timestamp(),
-                new_graph_ca,
-                || crate::clone_graph(graph),
-                head,
-            );
-            log::debug!(
-                "Graph changed: {} -> {}",
-                old_commit_ca.display_short(),
-                new_commit_ca.display_short()
-            );
+        if data.compiled_inputs.0 == Some(inputs) {
+            continue;
+        }
 
-            // Emit event for UI state updates (handled by GantzEguiPlugin if present).
-            cmds.trigger(head::CommittedEvent {
-                entity: data.entity,
-                old_head: old_head.clone(),
-                new_head: head.clone(),
-            });
-
-            if let Some(vm) = vms.get_mut(&data.entity) {
-                let get_node = |ca: &ca::ContentAddr| lookup_node(&registry, &**builtins, ca);
-                gantz_core::graph::register(&get_node, graph, &[], vm);
-                let entrypoints = collect_entrypoints(&ep_fns, &get_node, graph);
-                // On error this surfaces commented error text rather than
-                // leaving the prior module displayed, which would
-                // misleadingly look up-to-date.
-                let result = compile(&get_node, graph, vm, &entrypoints, &config.0);
-                let (module, diagnostics) = compile_components(result);
-                *data.module = module;
-                *data.diagnostics = diagnostics;
+        // Commit when the working copy has diverged from the head's commit.
+        let head: &mut ca::Head = &mut *data.head_ref;
+        if let Some(head_commit) = registry.head_commit(head) {
+            if head_commit.graph != inputs.graph {
+                let old_head = head.clone();
+                let old_commit_ca = registry.head_commit_ca(head).copied().unwrap();
+                let new_commit_ca = registry.commit_graph_to_head(
+                    crate::reg::timestamp(),
+                    inputs.graph,
+                    || crate::clone_graph(graph),
+                    head,
+                );
+                log::debug!(
+                    "Graph changed: {} -> {}",
+                    old_commit_ca.display_short(),
+                    new_commit_ca.display_short()
+                );
+                cmds.trigger(head::CommittedEvent {
+                    entity: data.entity,
+                    old_head,
+                    new_head: head.clone(),
+                });
             }
         }
-    }
-}
 
-/// Recompile every open head's graph into its existing VM.
-///
-/// Runs when [`CompileConfig`] changes (see `GantzPlugin`). Unlike [`update`],
-/// this never commits - the graph content is unchanged, only the codegen
-/// options - and compiling into the existing VM preserves node state.
-pub fn recompile_all<N>(
-    registry: Res<Registry<N>>,
-    builtins: Res<BuiltinNodes<N>>,
-    ep_fns: Res<EntrypointFns<N>>,
-    config: Res<CompileConfig>,
-    mut vms: NonSendMut<head::HeadVms>,
-    mut heads_query: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
-) where
-    N: 'static + Node + Send + Sync,
-{
-    for mut data in heads_query.iter_mut() {
-        let graph: &Graph<N> = &*data.working_graph;
-        let Some(vm) = vms.get_mut(&data.entity) else {
-            continue;
-        };
+        // Rebuild the VM. On an in-place compile error the VM is kept (its
+        // previous module remains evaluable) and the error surfaces via the
+        // module/diagnostics components; a failed init leaves no VM, so eval
+        // systems (e.g. `drive_frame_bangs`, `on_eval_entry`) skip the head
+        // rather than driving a stale graph.
         let get_node = |ca: &ca::ContentAddr| lookup_node(&registry, &**builtins, ca);
-        gantz_core::graph::register(&get_node, graph, &[], vm);
         let entrypoints = collect_entrypoints(&ep_fns, &get_node, graph);
-        let result = compile(&get_node, graph, vm, &entrypoints, &config.0);
+        let result = match vms.get_mut(&data.entity) {
+            None => init(&get_node, graph, &entrypoints, &config.0).map(|(vm, module)| {
+                vms.insert(data.entity, vm);
+                module
+            }),
+            Some(vm) => {
+                gantz_core::graph::register(&get_node, graph, &[], vm);
+                compile(&get_node, graph, vm, &entrypoints, &config.0)
+            }
+        };
         let (module, diagnostics) = compile_components(result);
         *data.module = module;
         *data.diagnostics = diagnostics;
+        data.compiled_inputs.0 = Some(inputs);
     }
 }
