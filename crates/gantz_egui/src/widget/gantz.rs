@@ -243,12 +243,12 @@ impl GantzResponse {
             .unwrap_or(false)
     }
 
-    /// Single click: replace the focused head with this one.
+    /// Replace the focused head with this one.
     pub fn graph_replaced(&self) -> Option<&gantz_ca::Head> {
         self.graph_select.as_ref().and_then(|g| g.replaced.as_ref())
     }
 
-    /// Open this head as a new tab.
+    /// Open this head as a new tab, or focus it if already open.
     pub fn graph_opened(&self) -> Option<&gantz_ca::Head> {
         self.graph_select.as_ref().and_then(|g| g.opened.as_ref())
     }
