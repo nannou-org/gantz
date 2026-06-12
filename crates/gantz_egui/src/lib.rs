@@ -79,12 +79,16 @@ pub trait HeadAccess {
         f: impl FnOnce(HeadDataMut<'_, Self::Node>) -> R,
     ) -> Option<R>;
 
-    /// Get the compiled module string for a head.
-    fn compiled_module(&self, head: &gantz_ca::Head) -> Option<&str>;
-
     /// The head's latest module artifact (source text + source map), for
-    /// resolving node/error spans into the compiled module source.
+    /// display and for resolving node/error spans into the module source.
     fn module(&self, _head: &gantz_ca::Head) -> Option<&gantz_core::vm::Compiled> {
+        None
+    }
+
+    /// The rendered error chain from the head's latest compile, when it
+    /// failed. May coexist with [`module`][Self::module] (a generated module
+    /// that steel rejected).
+    fn compile_error(&self, _head: &gantz_ca::Head) -> Option<&str> {
         None
     }
 

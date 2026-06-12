@@ -262,8 +262,8 @@ struct DemoHeadAccess<'a> {
     head_to_ix: HashMap<gantz_ca::Head, usize>,
     /// The underlying data.
     data: &'a mut Vec<(gantz_ca::Head, Graph, GraphViews)>,
-    compiled_modules: &'a [String],
     modules: &'a [Option<gantz_core::vm::Compiled>],
+    compile_errors: &'a [Option<String>],
     diagnostics: &'a [Vec<gantz_core::Diagnostic>],
     vms: &'a mut Vec<Engine>,
 }
@@ -271,8 +271,8 @@ struct DemoHeadAccess<'a> {
 impl<'a> DemoHeadAccess<'a> {
     fn new(
         data: &'a mut Vec<(gantz_ca::Head, Graph, GraphViews)>,
-        compiled_modules: &'a [String],
         modules: &'a [Option<gantz_core::vm::Compiled>],
+        compile_errors: &'a [Option<String>],
         diagnostics: &'a [Vec<gantz_core::Diagnostic>],
         vms: &'a mut Vec<Engine>,
     ) -> Self {
@@ -286,8 +286,8 @@ impl<'a> DemoHeadAccess<'a> {
             head_keys,
             head_to_ix,
             data,
-            compiled_modules,
             modules,
+            compile_errors,
             diagnostics,
             vms,
         }
@@ -312,14 +312,14 @@ impl<'a> HeadAccess for DemoHeadAccess<'a> {
         Some(f(HeadDataMut { graph, views, vm }))
     }
 
-    fn compiled_module(&self, head: &gantz_ca::Head) -> Option<&str> {
-        let ix = *self.head_to_ix.get(head)?;
-        Some(&self.compiled_modules[ix])
-    }
-
     fn module(&self, head: &gantz_ca::Head) -> Option<&gantz_core::vm::Compiled> {
         let ix = *self.head_to_ix.get(head)?;
         self.modules[ix].as_ref()
+    }
+
+    fn compile_error(&self, head: &gantz_ca::Head) -> Option<&str> {
+        let ix = *self.head_to_ix.get(head)?;
+        self.compile_errors[ix].as_deref()
     }
 
     fn diagnostics(&self, head: &gantz_ca::Head) -> &[gantz_core::Diagnostic] {
@@ -330,30 +330,23 @@ impl<'a> HeadAccess for DemoHeadAccess<'a> {
     }
 }
 
-/// The per-head artifacts of one compile attempt: the displayable module
-/// text, the module artifact for span resolution, and compile diagnostics.
+/// The per-head artifacts of one compile attempt: the module artifact (kept
+/// even when steel rejected it, for display and span resolution), the
+/// rendered error chain on failure, and compile diagnostics.
 fn compile_results(
     result: Result<gantz_core::vm::Compiled, gantz_core::vm::CompileError>,
 ) -> (
-    String,
     Option<gantz_core::vm::Compiled>,
+    Option<String>,
     Vec<gantz_core::Diagnostic>,
 ) {
     match result {
-        Ok(module) => (module.src.clone(), Some(module), vec![]),
+        Ok(module) => (Some(module), None, vec![]),
         Err(e) => {
-            log::error!(
-                "Failed to compile graph: {}",
-                gantz_core::vm::error_chain(&e)
-            );
-            let text = gantz_core::vm::compile_error_text(&e);
+            let error = gantz_core::vm::error_chain(&e);
+            log::error!("Failed to compile graph: {error}");
             let diags = gantz_core::diagnostic::from_compile_error(&e);
-            // A module that failed evaluation still resolves spans.
-            let module = match e {
-                gantz_core::vm::CompileError::Eval { module, .. } => Some(*module),
-                gantz_core::vm::CompileError::Module(_) => None,
-            };
-            (text, module, diags)
+            (e.into_module(), Some(error), diags)
         }
     }
 }
@@ -374,7 +367,7 @@ struct State {
     /// Each entry is a head (branch or commit), its associated graph, and view state.
     heads: Vec<(gantz_ca::Head, Graph, GraphViews)>,
     /// Per-head compiled modules, indexed to match `heads`.
-    compiled_modules: Vec<String>,
+    compile_errors: Vec<Option<String>>,
     /// Per-head module artifacts for span resolution, indexed to match `heads`.
     modules: Vec<Option<gantz_core::vm::Compiled>>,
     /// Per-head diagnostics, indexed to match `heads`.
@@ -468,7 +461,7 @@ impl App {
         // VM setup - initialize a VM for each open head.
         let compile_config = gantz_core::compile::Config::default();
         let mut vms = Vec::with_capacity(heads.len());
-        let mut compiled_modules = Vec::with_capacity(heads.len());
+        let mut compile_errors = Vec::with_capacity(heads.len());
         let mut modules = Vec::with_capacity(heads.len());
         let mut diagnostics = Vec::with_capacity(heads.len());
         for (_, graph, _) in &heads {
@@ -480,9 +473,9 @@ impl App {
                 Ok((vm, module)) => (vm, Ok(module)),
                 Err(e) => (Engine::new_base(), Err(e)),
             };
-            let (text, module, diags) = compile_results(result);
+            let (module, error, diags) = compile_results(result);
             vms.push(vm);
-            compiled_modules.push(text);
+            compile_errors.push(error);
             modules.push(module);
             diagnostics.push(diags);
         }
@@ -496,7 +489,7 @@ impl App {
             gantz,
             heads,
             env,
-            compiled_modules,
+            compile_errors,
             modules,
             diagnostics,
             vms,
@@ -548,8 +541,8 @@ impl eframe::App for App {
                 let eps = push_pull_entrypoints(&get_node, &*graph);
                 let config = &self.state.compile_config;
                 let result = gantz_core::vm::compile(&get_node, &*graph, vm, &eps, config);
-                let (text, module, diags) = compile_results(result);
-                self.state.compiled_modules[ix] = text;
+                let (module, error, diags) = compile_results(result);
+                self.state.compile_errors[ix] = error;
                 self.state.modules[ix] = module;
                 self.state.diagnostics[ix] = diags;
             }
@@ -1256,14 +1249,13 @@ fn gui(ctx: &egui::Context, state: &mut State) {
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
             // Create the head access adapter.
-            let mut access =
-                DemoHeadAccess::new(
-                    &mut state.heads,
-                    &state.compiled_modules,
-                    &state.modules,
-                    &state.diagnostics,
-                    &mut state.vms,
-                );
+            let mut access = DemoHeadAccess::new(
+                &mut state.heads,
+                &state.modules,
+                &state.compile_errors,
+                &state.diagnostics,
+                &mut state.vms,
+            );
 
             let no_base_names = Default::default();
             gantz_egui::widget::Gantz::new(&state.env, &no_base_names)
@@ -1427,9 +1419,9 @@ fn open_head(state: &mut State, new_head: gantz_ca::Head) {
             Ok((vm, module)) => (vm, Ok(module)),
             Err(e) => (Engine::new_base(), Err(e)),
         };
-    let (text, module, diags) = compile_results(result);
+    let (module, error, diags) = compile_results(result);
     state.vms.push(vm);
-    state.compiled_modules.push(text);
+    state.compile_errors.push(error);
     state.modules.push(module);
     state.diagnostics.push(diags);
 
@@ -1468,8 +1460,8 @@ fn replace_head(ctx: &egui::Context, state: &mut State, new_head: gantz_ca::Head
         }
         Err(e) => Err(e),
     };
-    let (text, module, diags) = compile_results(result);
-    state.compiled_modules[ix] = text;
+    let (module, error, diags) = compile_results(result);
+    state.compile_errors[ix] = error;
     state.modules[ix] = module;
     state.diagnostics[ix] = diags;
 
@@ -1519,8 +1511,8 @@ fn refresh_branch_head(state: &mut State) {
         }
         Err(e) => Err(e),
     };
-    let (text, module, diags) = compile_results(result);
-    state.compiled_modules[ix] = text;
+    let (module, error, diags) = compile_results(result);
+    state.compile_errors[ix] = error;
     state.modules[ix] = module;
     state.diagnostics[ix] = diags;
 }
@@ -1536,8 +1528,8 @@ fn recompile_heads(state: &mut State) {
         gantz_core::graph::register(&get_node, graph, &[], vm);
         let eps = push_pull_entrypoints(&get_node, graph);
         let result = gantz_core::vm::compile(&get_node, graph, vm, &eps, &state.compile_config);
-        let (text, module, diags) = compile_results(result);
-        state.compiled_modules[ix] = text;
+        let (module, error, diags) = compile_results(result);
+        state.compile_errors[ix] = error;
         state.modules[ix] = module;
         state.diagnostics[ix] = diags;
     }
@@ -1555,7 +1547,7 @@ fn close_head(state: &mut State, head: &gantz_ca::Head) {
     if let Some(ix) = state.heads.iter().position(|(h, _, _)| h == head) {
         state.heads.remove(ix);
         state.vms.remove(ix);
-        state.compiled_modules.remove(ix);
+        state.compile_errors.remove(ix);
         state.modules.remove(ix);
         state.diagnostics.remove(ix);
         state.gantz.open_heads.remove(head);

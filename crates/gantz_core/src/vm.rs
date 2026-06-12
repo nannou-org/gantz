@@ -46,6 +46,18 @@ pub enum CompileError {
     },
 }
 
+impl CompileError {
+    /// The generated module, when compilation got far enough to produce one
+    /// (steel rejecting the module still yields the artifact, so its source
+    /// remains displayable and error spans resolvable).
+    pub fn into_module(self) -> Option<Compiled> {
+        match self {
+            Self::Module(_) => None,
+            Self::Eval { module, .. } => Some(*module),
+        }
+    }
+}
+
 /// Initialize a new VM with root state and register the given graph.
 ///
 /// Returns the initialized VM and the compiled module.
@@ -153,25 +165,6 @@ pub fn steel_err_raw_span(err: &SteelErr) -> Option<std::ops::Range<usize>> {
 /// [`steel_err_span`]).
 pub fn steel_err_node(err: &SteelErr, vm: &Engine, compiled: &Compiled) -> Option<Vec<node::Id>> {
     compiled.map.node_at(steel_err_span(err, vm, compiled)?)
-}
-
-/// Render a [`CompileError`] - with its full `source()` cause chain - as
-/// Steel comment lines for module views, so the underlying cause is visible
-/// instead of a bare "module generation failed".
-///
-/// When the module was generated but failed evaluation, its real source
-/// follows the comment so the error span context remains visible.
-pub fn compile_error_text(err: &CompileError) -> String {
-    let body: String = error_chain(err)
-        .lines()
-        .map(|line| format!("; {line}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let comment = format!("; failed to compile graph:\n{body}");
-    match err {
-        CompileError::Eval { module, .. } => format!("{comment}\n\n{}", module.src),
-        CompileError::Module(_) => comment,
-    }
 }
 
 /// Format an error together with its full [`std::error::Error::source`] chain.

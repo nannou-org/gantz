@@ -372,16 +372,16 @@ impl<N: 'static + Send + Sync> gantz_egui::HeadAccess for HeadAccess<'_, '_, '_,
         }))
     }
 
-    fn compiled_module(&self, head: &ca::Head) -> Option<&str> {
-        let entity = *self.head_to_entity.get(head)?;
-        let data = self.query.get(entity).ok()?;
-        Some(&*data.core.compiled)
-    }
-
     fn module(&self, head: &ca::Head) -> Option<&gantz_core::vm::Compiled> {
         let entity = *self.head_to_entity.get(head)?;
         let data = self.query.get(entity).ok()?;
-        data.core.module.0.as_ref()
+        data.core.module.compiled.as_ref()
+    }
+
+    fn compile_error(&self, head: &ca::Head) -> Option<&str> {
+        let entity = *self.head_to_entity.get(head)?;
+        let data = self.query.get(entity).ok()?;
+        data.core.module.error.as_deref()
     }
 
     fn diagnostics(&self, head: &ca::Head) -> &[gantz_core::Diagnostic] {

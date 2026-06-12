@@ -817,11 +817,13 @@ where
             Pane::Steel => {
                 // Use the focused head's compiled module, highlighting the
                 // selected nodes' emitted fns/call sites and any diagnostic
-                // spans.
+                // spans. A failed compile's error renders above the code.
                 let focused = access.heads().get(*focused_head).cloned();
+                let compile_error = focused.as_ref().and_then(|h| access.compile_error(h));
                 let compiled_steel = focused
                     .as_ref()
-                    .and_then(|h| access.compiled_module(h))
+                    .and_then(|h| access.module(h))
+                    .map(|m| m.src.as_str())
                     .unwrap_or("");
                 let mut highlights: Vec<std::ops::Range<usize>> = vec![];
                 let mut scroll_to = None;
@@ -862,7 +864,14 @@ where
                         }
                     }
                 }
-                steel_view(compiled_steel, &highlights, &errors, scroll_to, ui);
+                steel_view(
+                    compiled_steel,
+                    compile_error,
+                    &highlights,
+                    &errors,
+                    scroll_to,
+                    ui,
+                );
             }
             Pane::VmPerf => {
                 if let Some(ref mut capture) = gantz.perf_vm {
@@ -1672,6 +1681,7 @@ where
 
 fn steel_view(
     compiled_steel: &str,
+    compile_error: Option<&str>,
     highlights: &[std::ops::Range<usize>],
     errors: &[std::ops::Range<usize>],
     scroll_to: Option<usize>,
@@ -1681,6 +1691,14 @@ fn steel_view(
         egui::ScrollArea::vertical()
             .auto_shrink(egui::Vec2b::FALSE)
             .show(ui, |ui| {
+                if let Some(error) = compile_error {
+                    let color = ui.visuals().error_fg_color;
+                    let text = egui::RichText::new(error).monospace().color(color);
+                    ui.add(egui::Label::new(text).selectable(true));
+                    if !compiled_steel.is_empty() {
+                        ui.separator();
+                    }
+                }
                 widget::SteelView::new(compiled_steel)
                     .highlights(highlights)
                     .errors(errors)

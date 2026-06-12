@@ -4,7 +4,7 @@ use bevy::{
 };
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use bevy_gantz::{
-    BuiltinNodes, CompiledModule, FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead,
+    BuiltinNodes, FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead,
     OpenHeadDataReadOnly, Registry, WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
     head, reg, timestamp, vm,
@@ -115,7 +115,6 @@ fn setup_open(
                 HeadRef(head),
                 WorkingGraph(graph),
                 head_views,
-                CompiledModule::default(),
                 head::Module::default(),
                 head::Diagnostics::default(),
                 HeadGuiState::default(),
