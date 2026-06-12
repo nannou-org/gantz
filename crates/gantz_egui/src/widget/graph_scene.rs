@@ -595,12 +595,15 @@ pub fn paint_diagnostics(
         // in the wrong coordinate space and cuts the glow off.
         let mut painter = ui.ctx().layer_painter(node_response.layer_id);
         painter.set_clip_rect(node_response.rect.expand(16.0));
-        // A soft glow: thin rings hugging the frame, fading quickly.
-        let rings = [(1.0, 1.5, 0.45), (3.0, 2.0, 0.16), (5.5, 2.5, 0.06)];
+        // A soft glow: thin rings hugging the frame, fading quickly. Ring
+        // corners grow from the node frame's radius (`Frame::window`, see
+        // `egui_graph::node::default_frame`) so the arcs stay concentric.
+        let frame_radius = ui.visuals().window_corner_radius;
+        let rings = [(1.0f32, 1.5, 0.45), (3.0, 2.0, 0.16), (5.5, 2.5, 0.06)];
         for (expand, width, alpha) in rings {
             painter.rect_stroke(
                 node_response.rect.expand(expand),
-                egui::CornerRadius::same((4.0 + expand) as u8),
+                frame_radius + expand.round() as u8,
                 egui::Stroke::new(width, color.gamma_multiply(alpha)),
                 egui::StrokeKind::Outside,
             );
