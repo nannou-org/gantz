@@ -61,7 +61,8 @@ fn runtime_error_diagnostic() {
     g.add_edge(push, boom, Edge::from((0, 0)));
 
     let eps = push_pull_entrypoints(&no_lookup, &g);
-    let (mut vm, compiled) = gantz_core::vm::init(&no_lookup, &g, &eps, &Default::default()).unwrap();
+    let (mut vm, compiled) =
+        gantz_core::vm::init(&no_lookup, &g, &eps, &Default::default()).unwrap();
     let ep = &eps[0];
     let fn_name = gantz_core::compile::entry_fn_name(&ep.id());
     let err = vm

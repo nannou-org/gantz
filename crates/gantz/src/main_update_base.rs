@@ -11,8 +11,8 @@
 use bevy::{prelude::*, window::Window};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use bevy_gantz::{
-    BuiltinNodes, FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead,
-    OpenHeadDataReadOnly, WorkingGraph,
+    BuiltinNodes, FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead, OpenHeadDataReadOnly,
+    WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
     head, timestamp, vm,
 };

@@ -793,9 +793,7 @@ where
                             head_state.scene.cmds.push(Cmd::OpenPath(parent.to_vec()));
                             let selection = &mut head_state.scene.interaction.selection;
                             selection.clear();
-                            selection
-                                .nodes
-                                .insert(graph_scene::NodeIndex::new(node_id));
+                            selection.nodes.insert(graph_scene::NodeIndex::new(node_id));
                         }
                     }
                 }
@@ -847,8 +845,7 @@ where
                             .collect();
                         selected.sort_unstable();
                         for &ix in &selected {
-                            let path: Vec<node::Id> =
-                                level.iter().copied().chain([ix]).collect();
+                            let path: Vec<node::Id> = level.iter().copied().chain([ix]).collect();
                             let spans = module.map.node_spans(&path);
                             highlights.extend(spans.defs);
                             highlights.extend(spans.refs);

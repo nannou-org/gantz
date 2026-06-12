@@ -148,7 +148,9 @@ pub fn steel_err_span(
             .and_then(|id| vm.get_source(&id))
             .is_some_and(|text| text.as_ref().as_ref() == compiled.src)
     };
-    steel_err_spans(err).find(in_module).map(|span| span.range())
+    steel_err_spans(err)
+        .find(in_module)
+        .map(|span| span.range())
 }
 
 /// The first span attached to a steel error, *without* verifying which

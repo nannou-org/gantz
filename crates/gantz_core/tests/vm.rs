@@ -161,7 +161,8 @@ fn steel_err_node_attribution() {
     g.add_edge(int, nested, Edge::from((0, 0)));
 
     let eps = push_pull_entrypoints(&no_lookup, &g);
-    let (mut vm, compiled) = gantz_core::vm::init(&no_lookup, &g, &eps, &Default::default()).unwrap();
+    let (mut vm, compiled) =
+        gantz_core::vm::init(&no_lookup, &g, &eps, &Default::default()).unwrap();
     let fn_name = push_fn_name(&g, push);
     let err = vm
         .call_function_by_name_with_args(&fn_name, vec![])
@@ -175,7 +176,8 @@ fn steel_err_node_attribution() {
     g[int] = Box::new(node::expr("(begin $push (car '()))").unwrap());
     gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
     let eps = push_pull_entrypoints(&no_lookup, &g);
-    let recompiled = gantz_core::vm::compile(&no_lookup, &g, &mut vm, &eps, &Default::default()).unwrap();
+    let recompiled =
+        gantz_core::vm::compile(&no_lookup, &g, &mut vm, &eps, &Default::default()).unwrap();
     let err = vm
         .call_function_by_name_with_args(&fn_name, vec![])
         .unwrap_err();

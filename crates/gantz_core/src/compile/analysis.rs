@@ -54,11 +54,10 @@ pub(crate) fn level_branch_patterns(meta: &Meta) -> Result<Vec<node::Conns>, Low
         prebound: BTreeSet::new(),
     };
     let out = lower::level_body(&cx, &LevelSources::Inlets(all))?;
-    let patterns =
-        outlet_patterns(&out.body, &out.outlets).map_err(|error| LowerError::Conns {
-            node: None,
-            error: error.into(),
-        })?;
+    let patterns = outlet_patterns(&out.body, &out.outlets).map_err(|error| LowerError::Conns {
+        node: None,
+        error: error.into(),
+    })?;
     Ok(patterns)
 }
 

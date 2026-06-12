@@ -4,8 +4,8 @@ use bevy::{
 };
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use bevy_gantz::{
-    BuiltinNodes, FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead,
-    OpenHeadDataReadOnly, Registry, WorkingGraph,
+    BuiltinNodes, FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead, OpenHeadDataReadOnly,
+    Registry, WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
     head, reg, timestamp, vm,
 };

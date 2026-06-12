@@ -296,14 +296,8 @@ mod tests {
     fn var_roundtrip() {
         let cases = [
             (
-                Var::Output {
-                    node: 0,
-                    output: 0,
-                },
-                Name::Output {
-                    node: 0,
-                    output: 0,
-                },
+                Var::Output { node: 0, output: 0 },
+                Name::Output { node: 0, output: 0 },
             ),
             (
                 Var::Output {

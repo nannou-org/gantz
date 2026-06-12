@@ -21,7 +21,8 @@ fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
 #[test]
 fn log_expr_carries_node_path() {
     let mut g = petgraph::graph::DiGraph::new();
-    let push = g.add_node(Box::new(node::expr("'()").unwrap().with_push_eval()) as Box<dyn DebugNode>);
+    let push =
+        g.add_node(Box::new(node::expr("'()").unwrap().with_push_eval()) as Box<dyn DebugNode>);
     let int = g.add_node(Box::new(node::expr("(begin $push 7)").unwrap()) as Box<_>);
     let log = g.add_node(Box::new(gantz_std::Log::default()) as Box<_>);
     g.add_edge(push, int, Edge::from((0, 0)));

@@ -13,16 +13,14 @@ use bevy_ecs::prelude::*;
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::node::{self, GetNode, graph::Graph};
-use gantz_core::vm::{Compiled, CompileError};
+use gantz_core::vm::{CompileError, Compiled};
 use gantz_core::{Node, compile as core_compile, diagnostic};
 use std::time::Duration;
 use steel::steel_vm::engine::Engine;
 
 /// The component updates for one compile attempt: the module/error outcome
 /// and the extracted compile diagnostics.
-fn compile_components(
-    result: Result<Compiled, CompileError>,
-) -> (head::Module, head::Diagnostics) {
+fn compile_components(result: Result<Compiled, CompileError>) -> (head::Module, head::Diagnostics) {
     match result {
         Ok(module) => (
             head::Module {
@@ -245,7 +243,9 @@ pub fn on_eval_entry(
                 .0
                 .retain(|d| d.severity != diagnostic::Severity::Runtime);
             if let (Err(e), Some(compiled)) = (&result, &module.compiled) {
-                diagnostics.0.push(diagnostic::from_eval_error(e, vm, compiled));
+                diagnostics
+                    .0
+                    .push(diagnostic::from_eval_error(e, vm, compiled));
             }
         }
         if let Err(e) = result {
@@ -298,7 +298,9 @@ where
     }
 
     for (entity, module) in compiled_updates {
-        world.entity_mut(entity).insert(compile_components(Ok(module)));
+        world
+            .entity_mut(entity)
+            .insert(compile_components(Ok(module)));
     }
 
     world.insert_non_send_resource(vms);

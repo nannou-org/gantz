@@ -468,8 +468,7 @@ impl App {
             let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
             let eps = push_pull_entrypoints(&get_node, graph);
             // A default engine keeps indices aligned on failure.
-            let (vm, result) = match gantz_core::vm::init(&get_node, graph, &eps, &compile_config)
-            {
+            let (vm, result) = match gantz_core::vm::init(&get_node, graph, &eps, &compile_config) {
                 Ok((vm, module)) => (vm, Ok(module)),
                 Err(e) => (Engine::new_base(), Err(e)),
             };

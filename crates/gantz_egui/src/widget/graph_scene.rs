@@ -577,7 +577,10 @@ pub fn paint_diagnostics(
     let mut unattributed = false;
     for diag in diagnostics {
         let flagged = diagnostic_node_at_level(&diag.path, level).and_then(|flag| {
-            let ix = response.nodes.iter().position(|(ix, _)| ix.index() == flag)?;
+            let ix = response
+                .nodes
+                .iter()
+                .position(|(ix, _)| ix.index() == flag)?;
             Some(&response.nodes[ix].1)
         });
         let Some(node_response) = flagged else {

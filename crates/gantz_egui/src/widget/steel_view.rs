@@ -46,8 +46,7 @@ impl<'a> SteelView<'a> {
 
     /// Render the view (expects to be shown within a `ScrollArea`).
     pub fn show(self, ui: &mut egui::Ui) -> egui::Response {
-        let theme =
-            egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
+        let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
         let mut job = egui_extras::syntax_highlighting::highlight(
             ui.ctx(),
             ui.style(),

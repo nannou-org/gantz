@@ -51,17 +51,17 @@ pub use error::ModuleError;
 pub(crate) use lower::{NodeConf, NodeConns};
 use meta::MetaTree;
 #[doc(inline)]
-pub use names::{Name, entry_fn_name};
+pub use meta::{EdgeKind, Meta, MetaGraph};
 pub(crate) use names::graph_fn_name;
 #[doc(inline)]
-pub use source_map::SourceMap;
-#[doc(inline)]
-pub use meta::{EdgeKind, Meta, MetaGraph};
+pub use names::{Name, entry_fn_name};
 use petgraph::visit::{
     Data, Dfs, EdgeRef, GraphBase, GraphRef, IntoEdgesDirected, IntoNeighbors, IntoNodeReferences,
     NodeIndexable, Topo, Visitable, Walker,
 };
 pub(crate) use rosetree::RoseTree;
+#[doc(inline)]
+pub use source_map::SourceMap;
 use std::{collections::HashSet, hash::Hash};
 use steel::parser::ast::ExprKind;
 
@@ -690,8 +690,12 @@ impl ModuleBuilder<'_> {
                 extra_branches.insert(gid, patterns);
             } else {
                 // Destructure all outputs from the plain result.
-                let out_name =
-                    |o: usize| names::var_name(&ir::Var::Output { node: gid, output: o });
+                let out_name = |o: usize| {
+                    names::var_name(&ir::Var::Output {
+                        node: gid,
+                        output: o,
+                    })
+                };
                 match n_out {
                     0 => {}
                     1 => glue.push(l([a("define"), a(out_name(0)), pair])),
@@ -711,11 +715,10 @@ impl ModuleBuilder<'_> {
                         output: o,
                     });
                 }
-                let conns =
-                    node::Conns::connected(n_out).map_err(|_| ModuleError::NodeConns {
-                        path: path.to_vec(),
-                        error: error::TooManyConns(n_out).into(),
-                    })?;
+                let conns = node::Conns::connected(n_out).map_err(|_| ModuleError::NodeConns {
+                    path: path.to_vec(),
+                    error: error::TooManyConns(n_out).into(),
+                })?;
                 push.push((gid, conns));
             }
         }
@@ -743,12 +746,13 @@ impl ModuleBuilder<'_> {
             extra_branches,
             prebound,
         };
-        let out = lower::level_body(&cx, &lower::LevelSources::Eval { push, pull }).map_err(
-            |error| ModuleError::Lower {
-                path: path.to_vec(),
-                error,
-            },
-        )?;
+        let out =
+            lower::level_body(&cx, &lower::LevelSources::Eval { push, pull }).map_err(|error| {
+                ModuleError::Lower {
+                    path: path.to_vec(),
+                    error,
+                }
+            })?;
         if self.config.validate_ir {
             ir::validate(&out.body, 0, &prebound_vars).map_err(|e| ModuleError::InvalidIr {
                 path: path.to_vec(),
@@ -775,15 +779,16 @@ impl ModuleBuilder<'_> {
         // Whether (and how) this level's evaluation produces its outlets,
         // analysed over the lowered body itself.
         let produced = out.outlets.iter().any(|o| o.atom.is_some());
-        let patterns = match produced {
-            true => Some(analysis::outlet_patterns(&out.body, &out.outlets).map_err(
-                |error| ModuleError::NodeConns {
-                    path: path.to_vec(),
-                    error: error.into(),
-                },
-            )?),
-            false => None,
-        };
+        let patterns =
+            match produced {
+                true => Some(analysis::outlet_patterns(&out.body, &out.outlets).map_err(
+                    |error| ModuleError::NodeConns {
+                        path: path.to_vec(),
+                        error: error.into(),
+                    },
+                )?),
+                false => None,
+            };
         let result = match &patterns {
             Some(patterns) => emit::level_result_sexp(&out.outlets, patterns),
             None => emit::unit(),
