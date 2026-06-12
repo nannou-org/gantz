@@ -243,6 +243,13 @@ impl gantz_egui::widget::graph_scene::ToGraphMut for Box<dyn Node> {
     }
 }
 
+// Required by `gantz_egui::ops::branch_node` to replace branched nodes.
+impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
+    fn from(named: gantz_egui::node::NamedRef) -> Self {
+        Box::new(named)
+    }
+}
+
 // ----------------------------------------------
 // Graph
 // ----------------------------------------------
@@ -912,135 +919,105 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                     open_head(state, target);
                 }
                 gantz_egui::Cmd::BranchNode { new_name, ca, path } => {
-                    let commit_ca = gantz_ca::CommitAddr::from(ca);
-                    let graph_addr = state.env.registry.commits()[&commit_ca].graph;
-                    let new_commit_ca = state.env.registry.commit_graph(
+                    let (_, graph, _) = &mut state.heads[ix];
+                    gantz_egui::ops::branch_node(
+                        &mut state.env.registry,
                         timestamp(),
-                        Some(commit_ca),
-                        graph_addr,
-                        || unreachable!("graph already exists in registry"),
+                        graph,
+                        new_name,
+                        ca,
+                        &path,
                     );
-                    state
-                        .env
-                        .registry
-                        .insert_name(new_name.clone(), new_commit_ca);
-                    let (_, root_graph, _) = &mut state.heads[ix];
-                    let (parent_path, node_ix_slice) = path.split_at(path.len() - 1);
-                    let Some(graph) = gantz_egui::widget::graph_scene::index_path_graph_mut(
-                        root_graph,
-                        parent_path,
-                    ) else {
-                        log::error!("BranchNode: could not find graph at path {parent_path:?}");
-                        continue;
-                    };
-                    let node_id = gantz_core::node::graph::NodeIx::new(node_ix_slice[0]);
-                    let new_ref = gantz_core::node::Ref::new(new_commit_ca.into());
-                    let named_ref = gantz_egui::node::NamedRef::new(new_name, new_ref);
-                    if let Some(node) = graph.node_weight_mut(node_id) {
-                        *node = Box::new(named_ref);
-                    } else {
-                        log::error!("BranchNode: node not found at index {}", node_ix_slice[0]);
-                    }
                 }
                 gantz_egui::Cmd::InspectEdge(cmd) => {
+                    let env = &state.env;
+                    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
                     let (_, graph, views) = &mut state.heads[ix];
-                    inspect_edge(&state.env, graph, views, &mut state.vms[ix], cmd);
+                    gantz_egui::ops::inspect_edge(
+                        &get_node,
+                        || env.new_node("inspect"),
+                        graph,
+                        views,
+                        &mut state.vms[ix],
+                        cmd,
+                    );
                 }
                 gantz_egui::Cmd::CreateNode(cmd) => {
+                    let env = &state.env;
+                    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
                     let (_, graph, views) = &mut state.heads[ix];
-                    create_node(&state.env, graph, views, &mut state.vms[ix], cmd);
+                    gantz_egui::ops::create_node(
+                        &get_node,
+                        |node_type| env.new_node(node_type),
+                        graph,
+                        views,
+                        &mut state.vms[ix],
+                        cmd,
+                    );
                 }
                 gantz_egui::Cmd::CopyNodes(nodes) => {
-                    copy_nodes(ctx, state, ix, &head, nodes);
+                    let head_state = state.gantz.open_heads.get_mut(&head).unwrap();
+                    let path = head_state.path.clone();
+                    let (_, graph, gv) = &mut state.heads[ix];
+                    let text = gantz_egui::ops::copy_nodes(
+                        &state.env.registry,
+                        &HashMap::new(),
+                        graph,
+                        gv,
+                        &path,
+                        &nodes,
+                    );
+                    if let Some(text) = text {
+                        ctx.copy_text(text);
+                    }
                 }
                 gantz_egui::Cmd::Paste { text, pos } => {
                     // In eframe, Event::Paste provides text directly.
                     let Some(text) = text else { continue };
-                    let copied: gantz_egui::export::Copied<Box<dyn Node>> =
-                        match ron::from_str(&text) {
-                            Ok(c) => c,
-                            Err(e) => {
-                                log::debug!(
-                                    "Clipboard does not contain a valid gantz payload: {e}"
-                                );
-                                continue;
-                            }
-                        };
-                    let offset = gantz_egui::resolve_paste_offset(&pos, &copied.positions);
                     let head_state = state.gantz.open_heads.get_mut(&head).unwrap();
-                    let path = head_state.path.clone();
                     let (_, graph, gv) = &mut state.heads[ix];
-                    let new_indices = {
-                        let Some(g) =
-                            gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path)
-                        else {
-                            continue;
-                        };
-                        let view = gv.entry(path).or_default();
-                        let mut all_views = std::collections::HashMap::new();
-                        let mut all_demos = std::collections::HashMap::new();
-                        gantz_egui::export::paste(
-                            &mut state.env.registry,
-                            &mut all_views,
-                            &mut all_demos,
-                            g,
-                            &mut view.layout,
-                            &copied,
-                            offset,
-                        )
-                    };
+                    let pasted = gantz_egui::ops::paste(
+                        &mut state.env.registry,
+                        &mut HashMap::new(),
+                        &mut HashMap::new(),
+                        graph,
+                        gv,
+                        head_state,
+                        &text,
+                        &pos,
+                    );
                     // Re-register the full root graph so pasted nodes get
                     // their state initialized. Idempotent for existing nodes.
-                    let vm = &mut state.vms[ix];
-                    let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
-                    gantz_core::graph::register(&get_node, &*graph, &[], vm);
-                    // Update selection to the pasted nodes.
-                    let head_state = state.gantz.open_heads.get_mut(&head).unwrap();
-                    head_state.scene.interaction.selection.nodes =
-                        new_indices.into_iter().collect();
-                    head_state.scene.interaction.selection.edges.clear();
+                    if pasted {
+                        let vm = &mut state.vms[ix];
+                        let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
+                        gantz_core::graph::register(&get_node, &*graph, &[], vm);
+                    }
                 }
                 gantz_egui::Cmd::Undo => {
-                    let commit_ca = state.env.registry.head_commit_ca(&head).copied();
-                    let parent = commit_ca
-                        .and_then(|ca| state.env.registry.commits().get(&ca))
-                        .and_then(|c| c.parent);
+                    let parent = gantz_egui::ops::undo(
+                        &state.env.registry,
+                        &mut state.gantz.redo_stacks,
+                        &head,
+                    );
                     if let Some(parent) = parent {
-                        if let Some(ca) = commit_ca {
-                            state
-                                .gantz
-                                .redo_stacks
-                                .entry(head.clone())
-                                .or_default()
-                                .push(ca);
-                        }
                         navigate_head(ctx, state, &head, parent);
                     }
                 }
                 gantz_egui::Cmd::Redo => {
-                    if let Some(redo_ca) = state
-                        .gantz
-                        .redo_stacks
-                        .entry(head.clone())
-                        .or_default()
-                        .pop()
-                    {
+                    let redo_ca = gantz_egui::ops::redo(&mut state.gantz.redo_stacks, &head);
+                    if let Some(redo_ca) = redo_ca {
                         navigate_head(ctx, state, &head, redo_ca);
                     }
                 }
                 gantz_egui::Cmd::ExportHead => {
                     let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
-                    let export_registry =
-                        gantz_core::reg::export_heads(&get_node, &state.env.registry, [&head]);
-                    let all_views = HashMap::new();
-                    let export = gantz_egui::export::export_with(
-                        export_registry,
-                        &all_views,
+                    let ron_str = match gantz_egui::export::export_heads_ron(
+                        &get_node,
+                        &state.env.registry,
                         &HashMap::new(),
-                    );
-                    let ron_str = match ron::ser::to_string_pretty(
-                        &export,
-                        ron::ser::PrettyConfig::default(),
+                        &HashMap::new(),
+                        [&head],
                     ) {
                         Ok(s) => s,
                         Err(e) => {
@@ -1075,20 +1052,12 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
                         log::info!("ExportAllNamed: no named graphs to export");
                         continue;
                     }
-                    let export_registry = gantz_core::reg::export_heads(
+                    let ron_str = match gantz_egui::export::export_heads_ron(
                         &get_node,
                         &state.env.registry,
-                        named_heads.iter(),
-                    );
-                    let all_views = HashMap::new();
-                    let export = gantz_egui::export::export_with(
-                        export_registry,
-                        &all_views,
                         &HashMap::new(),
-                    );
-                    let ron_str = match ron::ser::to_string_pretty(
-                        &export,
-                        ron::ser::PrettyConfig::default(),
+                        &HashMap::new(),
+                        named_heads.iter(),
                     ) {
                         Ok(s) => s,
                         Err(e) => {
@@ -1115,131 +1084,6 @@ fn process_cmds(ctx: &egui::Context, state: &mut State) {
             }
         }
     }
-}
-
-fn copy_nodes(
-    ctx: &egui::Context,
-    state: &mut State,
-    ix: usize,
-    head: &gantz_ca::Head,
-    nodes: std::collections::HashSet<gantz_egui::widget::graph_scene::NodeIndex>,
-) {
-    if nodes.is_empty() {
-        return;
-    }
-    let head_state = state.gantz.open_heads.get_mut(head).unwrap();
-    let path = head_state.path.clone();
-    let (_, graph, gv) = &mut state.heads[ix];
-    let Some(g) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
-        return;
-    };
-    let layout = gv
-        .get(&path)
-        .map(|v| &v.layout)
-        .cloned()
-        .unwrap_or_default();
-    let all_views = std::collections::HashMap::new();
-    let copied = gantz_egui::export::copy(&state.env.registry, &all_views, g, &nodes, &layout);
-    match ron::to_string(&copied) {
-        Ok(text) => ctx.copy_text(text),
-        Err(e) => log::error!("Failed to serialize copy payload: {e}"),
-    }
-}
-
-fn inspect_edge(
-    env: &Environment,
-    graph: &mut Graph,
-    views: &mut GraphViews,
-    vm: &mut Engine,
-    cmd: gantz_egui::InspectEdge,
-) {
-    let gantz_egui::InspectEdge { path, edge, pos } = cmd;
-
-    // Navigate to the nested graph at the path.
-    let Some(nested) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
-        log::error!("InspectEdge: could not find graph at path");
-        return;
-    };
-
-    // Get edge endpoints and weight.
-    let Some((src_node, dst_node)) = nested.edge_endpoints(edge) else {
-        log::error!("InspectEdge: edge not found");
-        return;
-    };
-    let edge_weight = *nested.edge_weight(edge).unwrap();
-
-    // Remove the edge.
-    nested.remove_edge(edge);
-
-    // Create a new Inspect node.
-    let Some(inspect_node) = env.new_node("inspect") else {
-        log::error!("InspectEdge: could not create inspect node");
-        return;
-    };
-    let inspect_id = nested.add_node(inspect_node);
-
-    // Determine the node path and register it with the VM.
-    let node_path: Vec<_> = path
-        .iter()
-        .copied()
-        .chain(Some(inspect_id.index()))
-        .collect();
-    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
-    let reg_ctx = gantz_core::node::RegCtx::new(&get_node, &node_path, vm);
-    nested[inspect_id].register(reg_ctx);
-
-    // Add edge: src -> inspect (using original output, input 0).
-    nested.add_edge(
-        src_node,
-        inspect_id,
-        gantz_core::Edge::new(edge_weight.output, gantz_core::node::Input(0)),
-    );
-
-    // Add edge: inspect -> dst (using output 0, original input).
-    nested.add_edge(
-        inspect_id,
-        dst_node,
-        gantz_core::Edge::new(gantz_core::node::Output(0), edge_weight.input),
-    );
-
-    // Position the new node at the click position.
-    let node_id = egui_graph::NodeId::from_u64(inspect_id.index() as u64);
-    let view = views.entry(path).or_default();
-    view.layout.insert(node_id, pos);
-}
-
-fn create_node(
-    env: &Environment,
-    graph: &mut Graph,
-    views: &mut GraphViews,
-    vm: &mut Engine,
-    cmd: gantz_egui::CreateNode,
-) {
-    let gantz_egui::CreateNode { path, node_type } = cmd;
-
-    // Navigate to the nested graph at the path.
-    let Some(nested) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
-        log::error!("CreateNode: could not find graph at path");
-        return;
-    };
-
-    // Create the new node.
-    let Some(node) = env.new_node(&node_type) else {
-        log::error!("CreateNode: unknown node type: {node_type}");
-        return;
-    };
-    let node_ix = nested.add_node(node);
-
-    // Register the new node with the VM.
-    let node_path: Vec<_> = path.iter().copied().chain(Some(node_ix.index())).collect();
-    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
-    let reg_ctx = gantz_core::node::RegCtx::new(&get_node, &node_path, vm);
-    nested[node_ix].register(reg_ctx);
-
-    // Position the new node at the scene center (or use layout default).
-    let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
-    let view = views.entry(path).or_default();
-    view.layout.entry(egui_id).or_insert(egui::Pos2::ZERO);
 }
 
 fn gui(ctx: &egui::Context, state: &mut State) {
@@ -1342,39 +1186,25 @@ fn gui(ctx: &egui::Context, state: &mut State) {
 /// Deserializes the export, merges into the registry, and optionally opens
 /// the unique root head.
 fn import_bytes(state: &mut State, bytes: Vec<u8>, open_head: bool) {
-    let text = match std::str::from_utf8(&bytes) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("Import: invalid UTF-8: {e}");
-            return;
-        }
-    };
-    let export: gantz_egui::export::Export<Graph> = match ron::from_str(text) {
+    let export = match gantz_egui::export::parse_export::<Box<dyn Node>>(&bytes) {
         Ok(e) => e,
         Err(e) => {
-            log::error!("Import: failed to deserialize: {e}");
+            log::error!("Import: {e}");
             return;
         }
     };
 
     let root_name = if open_head {
         let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
-        let roots = gantz_core::reg::root_names(&get_node, &export.registry);
-        if roots.len() == 1 {
-            Some(roots.into_iter().next().unwrap())
-        } else {
-            None
-        }
+        gantz_egui::export::unique_root_name(&get_node, &export)
     } else {
         None
     };
 
-    let mut all_views = HashMap::new();
-    let mut all_demos = HashMap::new();
     let result = gantz_egui::export::merge_with(
         &mut state.env.registry,
-        &mut all_views,
-        &mut all_demos,
+        &mut HashMap::new(),
+        &mut HashMap::new(),
         export,
     );
     log::info!(

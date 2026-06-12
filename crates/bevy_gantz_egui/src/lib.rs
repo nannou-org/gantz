@@ -23,7 +23,6 @@ pub use gantz_egui::RegistryRef;
 use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
-use steel::steel_vm::engine::Engine;
 
 pub mod base;
 pub mod node;
@@ -584,6 +583,7 @@ pub fn on_create_node<N>(
     demos: Res<Demos>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
+    mut views_query: Query<&mut GraphViews, With<head::OpenHead>>,
 ) where
     N: 'static
         + Node
@@ -597,35 +597,25 @@ pub fn on_create_node<N>(
         log::error!("CreateNode: head not found for entity {:?}", event.head);
         return;
     };
+    let Ok(mut views) = views_query.get_mut(event.head) else {
+        log::error!("CreateNode: views not found for entity {:?}", event.head);
+        return;
+    };
     let Some(vm) = vms.get_mut(&event.head) else {
         log::error!("CreateNode: VM not found for entity {:?}", event.head);
         return;
     };
 
-    let Some(graph) = gantz_egui::widget::graph_scene::index_path_graph_mut(
-        &mut data.working_graph,
-        &event.cmd.path,
-    ) else {
-        log::error!(
-            "CreateNode: could not find graph at path {:?}",
-            event.cmd.path
-        );
-        return;
-    };
-
     let node_reg = registry_ref(&registry, &builtins, &demos);
-    let Some(node) = node_reg.create_node(&event.cmd.node_type) else {
-        log::error!("CreateNode: unknown node type {:?}", event.cmd.node_type);
-        return;
-    };
-
-    let id = graph.add_node(node);
-    let ix = id.index();
-
-    let node_path: Vec<_> = event.cmd.path.iter().copied().chain(Some(ix)).collect();
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
-    let reg_ctx = gantz_core::node::RegCtx::new(&get_node, &node_path, vm);
-    graph[id].register(reg_ctx);
+    gantz_egui::ops::create_node(
+        &get_node,
+        |node_type| node_reg.create_node(node_type),
+        &mut data.working_graph,
+        &mut views,
+        vm,
+        event.cmd.clone(),
+    );
 }
 
 /// Handle branch node events.
@@ -648,37 +638,14 @@ pub fn on_branch_node<N>(
         log::error!("BranchNode: head not found for entity {:?}", event.head);
         return;
     };
-
-    let commit_ca = ca::CommitAddr::from(event.ca);
-    let Some(commit) = registry.commits().get(&commit_ca) else {
-        log::error!("BranchNode: commit not found for {:?}", commit_ca);
-        return;
-    };
-    let graph_addr = commit.graph;
-    let new_commit_ca = registry.commit_graph(
+    gantz_egui::ops::branch_node(
+        &mut registry,
         bevy_gantz::reg::timestamp(),
-        Some(commit_ca),
-        graph_addr,
-        || unreachable!("graph already exists in registry"),
+        &mut data.working_graph,
+        event.new_name.clone(),
+        event.ca,
+        &event.path,
     );
-    registry.insert_name(event.new_name.clone(), new_commit_ca);
-
-    // Replace the NamedRef node in the working graph.
-    let (parent_path, node_ix_slice) = event.path.split_at(event.path.len() - 1);
-    let Some(graph) =
-        gantz_egui::widget::graph_scene::index_path_graph_mut(&mut data.working_graph, parent_path)
-    else {
-        log::error!("BranchNode: could not find graph at path {:?}", parent_path);
-        return;
-    };
-    let node_id = gantz_core::node::graph::NodeIx::new(node_ix_slice[0]);
-    let new_ref = gantz_core::node::Ref::new(new_commit_ca.into());
-    let named_ref = gantz_egui::node::NamedRef::new(event.new_name.clone(), new_ref);
-    if let Some(node) = graph.node_weight_mut(node_id) {
-        *node = N::from(named_ref);
-    } else {
-        log::error!("BranchNode: node not found at index {}", node_ix_slice[0]);
-    }
 }
 
 /// Handle inspect edge events.
@@ -713,8 +680,10 @@ pub fn on_inspect_edge<N>(
     };
 
     let node_reg = registry_ref(&registry, &builtins, &demos);
-    inspect_edge(
-        &node_reg,
+    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+    gantz_egui::ops::inspect_edge(
+        &get_node,
+        || node_reg.create_node("inspect"),
         &mut data.working_graph,
         &mut views,
         vm,
@@ -730,7 +699,7 @@ pub fn on_inspect_edge<N>(
 pub fn on_copy_nodes<N>(
     trigger: On<CopyNodesEvent>,
     registry: Res<Registry<N>>,
-    gui_state: ResMut<GuiState>,
+    gui_state: Res<GuiState>,
     views: Res<Views>,
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
     mut heads: Query<
@@ -756,28 +725,16 @@ pub fn on_copy_nodes<N>(
         return;
     };
 
-    let path = head_state.path.clone();
-    let selection = event.nodes.clone();
-    if selection.is_empty() {
-        return;
-    }
-
-    let graph: &mut Graph<N> = &mut *wg;
-    let Some(g) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
-        log::error!("CopySelection: could not find graph at path {path:?}");
-        return;
-    };
-
-    let layout = gv
-        .get(&path)
-        .map(|v| &v.layout)
-        .cloned()
-        .unwrap_or_default();
-
-    let copied = gantz_egui::export::copy(&registry, &views, g, &selection, &layout);
-    match ron::to_string(&copied) {
-        Ok(text) => clipboard.set_text(&text),
-        Err(e) => log::error!("CopySelection: failed to serialize: {e}"),
+    let text = gantz_egui::ops::copy_nodes(
+        &registry,
+        &views,
+        &mut wg,
+        &gv,
+        &head_state.path,
+        &event.nodes,
+    );
+    if let Some(text) = text {
+        clipboard.set_text(&text);
     }
 }
 
@@ -790,7 +747,7 @@ pub fn on_paste<N>(
     trigger: On<PasteEvent>,
     mut registry: ResMut<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
-    gui_state: ResMut<GuiState>,
+    mut gui_state: ResMut<GuiState>,
     mut views: ResMut<Views>,
     mut demos: ResMut<Demos>,
     mut vms: NonSendMut<head::HeadVms>,
@@ -812,57 +769,32 @@ pub fn on_paste<N>(
         log::error!("PasteSelection: head not found for entity {:?}", event.head);
         return;
     };
-    let Some(head_state) = gui_state.open_heads.get(&**head_ref) else {
+    let Some(head_state) = gui_state.open_heads.get_mut(&**head_ref) else {
         log::error!("PasteSelection: GUI state not found for head");
         return;
     };
 
-    let copied: gantz_egui::export::Copied<N> = match ron::from_str(&event.text) {
-        Ok(c) => c,
-        Err(e) => {
-            log::debug!("Clipboard does not contain a valid gantz payload: {e}");
-            return;
-        }
-    };
-
-    let offset = gantz_egui::resolve_paste_offset(&event.pos, &copied.positions);
-
-    let path = head_state.path.clone();
-    let new_indices = {
-        let graph: &mut Graph<N> = &mut *wg;
-        let Some(g) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
-            log::error!("PasteSelection: could not find graph at path {path:?}");
-            return;
-        };
-        let view = gv.entry(path).or_default();
-        gantz_egui::export::paste(
-            &mut registry,
-            &mut views,
-            &mut demos,
-            g,
-            &mut view.layout,
-            &copied,
-            offset,
-        )
-    };
+    let pasted = gantz_egui::ops::paste(
+        &mut registry,
+        &mut views,
+        &mut demos,
+        &mut wg,
+        &mut gv,
+        head_state,
+        &event.text,
+        &event.pos,
+    );
 
     // Re-register the full root graph so pasted nodes get their state
     // initialized with the correct nested hashmap structure. Idempotent
     // for existing nodes.
-    if let Some(vm) = vms.get_mut(&event.head) {
-        let node_reg = registry_ref(&registry, &builtins, &demos);
-        let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
-        gantz_core::graph::register(&get_node, &**wg, &[], vm);
+    if pasted {
+        if let Some(vm) = vms.get_mut(&event.head) {
+            let node_reg = registry_ref(&registry, &builtins, &demos);
+            let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+            gantz_core::graph::register(&get_node, &**wg, &[], vm);
+        }
     }
-
-    // Update selection to the pasted nodes.
-    let head_state = gui_state
-        .into_inner()
-        .open_heads
-        .get_mut(&**head_ref)
-        .unwrap();
-    head_state.scene.interaction.selection.nodes = new_indices.into_iter().collect();
-    head_state.scene.interaction.selection.edges.clear();
 }
 
 /// Handle export head events.
@@ -890,16 +822,14 @@ pub fn on_export_head<N>(
     let node_reg = registry_ref(&registry, &builtins, &demos);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
 
-    let export_registry = gantz_core::reg::export_heads(&get_node, &registry, [head]);
-    let export = gantz_egui::export::export_with(export_registry, &views, &demos);
-
-    let ron_str = match ron::ser::to_string_pretty(&export, ron::ser::PrettyConfig::default()) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("ExportHead: failed to serialize: {e}");
-            return;
-        }
-    };
+    let ron_str =
+        match gantz_egui::export::export_heads_ron(&get_node, &registry, &views, &demos, [head]) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("ExportHead: failed to serialize: {e}");
+                return;
+            }
+        };
 
     // Derive a default filename from the head.
     let default_name = gantz_egui::export::default_filename(&head);
@@ -948,10 +878,13 @@ pub fn on_export_all_named<N>(
         return;
     }
 
-    let export_registry = gantz_core::reg::export_heads(&get_node, &registry, named_heads.iter());
-    let export = gantz_egui::export::export_with(export_registry, &views, &demos);
-
-    let ron_str = match ron::ser::to_string_pretty(&export, ron::ser::PrettyConfig::default()) {
+    let ron_str = match gantz_egui::export::export_heads_ron(
+        &get_node,
+        &registry,
+        &views,
+        &demos,
+        named_heads.iter(),
+    ) {
         Ok(s) => s,
         Err(e) => {
             log::error!("ExportAllNamed: failed to serialize: {e}");
@@ -991,31 +924,19 @@ pub fn on_import_file<N>(
     N: 'static + Node + Clone + serde::de::DeserializeOwned + Send + Sync,
 {
     let event = trigger.event();
-    let text = match std::str::from_utf8(&event.bytes) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("ImportFile: invalid UTF-8: {e}");
-            return;
-        }
-    };
-    let export: gantz_egui::export::Export<Graph<N>> = match ron::from_str(text) {
+    let export = match gantz_egui::export::parse_export::<N>(&event.bytes) {
         Ok(e) => e,
         Err(e) => {
-            log::error!("ImportFile: failed to deserialize: {e}");
+            log::error!("ImportFile: {e}");
             return;
         }
     };
 
-    // Compute root names before merge if we might open a head.
+    // Compute the root name before merge if we might open a head.
     let root_name = if event.open_head {
         let node_reg = registry_ref(&registry, &builtins, &demos);
         let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
-        let roots = gantz_core::reg::root_names(&get_node, &export.registry);
-        if roots.len() == 1 {
-            Some(roots.into_iter().next().unwrap())
-        } else {
-            None
-        }
+        gantz_egui::export::unique_root_name(&get_node, &export)
     } else {
         None
     };
@@ -1201,24 +1122,14 @@ pub fn process_cmds<N: 'static + Send + Sync>(
                     }
                 }
                 gantz_egui::Cmd::Undo => {
-                    let commit_ca = registry.head_commit_ca(&head).copied();
-                    let parent = commit_ca
-                        .and_then(|ca| registry.commits().get(&ca))
-                        .and_then(|c| c.parent);
+                    let parent =
+                        gantz_egui::ops::undo(&registry, &mut gui_state.redo_stacks, &head);
                     if let Some(parent) = parent {
-                        if let Some(ca) = commit_ca {
-                            gui_state
-                                .redo_stacks
-                                .entry(head.clone())
-                                .or_default()
-                                .push(ca);
-                        }
                         navigate_head(&mut cmds, entity, &head, parent);
                     }
                 }
                 gantz_egui::Cmd::Redo => {
-                    if let Some(redo_ca) =
-                        gui_state.redo_stacks.entry(head.clone()).or_default().pop()
+                    if let Some(redo_ca) = gantz_egui::ops::redo(&mut gui_state.redo_stacks, &head)
                     {
                         navigate_head(&mut cmds, entity, &head, redo_ca);
                     }
@@ -1436,69 +1347,4 @@ fn navigate_head(cmds: &mut Commands, entity: Entity, head: &ca::Head, target: c
             target,
         }),
     }
-}
-
-/// Insert an Inspect node on the given edge, replacing the edge with two edges.
-fn inspect_edge<N>(
-    node_reg: &RegistryRef<N>,
-    wg: &mut head::WorkingGraph<N>,
-    gv: &mut GraphViews,
-    vm: &mut Engine,
-    cmd: gantz_egui::InspectEdge,
-) where
-    N: 'static
-        + Node
-        + From<gantz_egui::node::NamedRef>
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
-        + Send
-        + Sync,
-{
-    let gantz_egui::InspectEdge { path, edge, pos } = cmd;
-
-    let graph: &mut Graph<N> = &mut *wg;
-    let views: &mut gantz_egui::GraphViews = &mut *gv;
-
-    let Some(nested) = gantz_egui::widget::graph_scene::index_path_graph_mut(graph, &path) else {
-        log::error!("InspectEdge: could not find graph at path");
-        return;
-    };
-
-    let Some((src_node, dst_node)) = nested.edge_endpoints(edge) else {
-        log::error!("InspectEdge: edge not found");
-        return;
-    };
-    let edge_weight = *nested.edge_weight(edge).unwrap();
-
-    nested.remove_edge(edge);
-
-    let Some(inspect_node) = node_reg.create_node("inspect") else {
-        log::error!("InspectEdge: could not create inspect node");
-        return;
-    };
-    let inspect_id = nested.add_node(inspect_node);
-
-    let node_path: Vec<_> = path
-        .iter()
-        .copied()
-        .chain(Some(inspect_id.index()))
-        .collect();
-    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
-    let reg_ctx = gantz_core::node::RegCtx::new(&get_node, &node_path, vm);
-    nested[inspect_id].register(reg_ctx);
-
-    nested.add_edge(
-        src_node,
-        inspect_id,
-        gantz_core::Edge::new(edge_weight.output, gantz_core::node::Input(0)),
-    );
-
-    nested.add_edge(
-        inspect_id,
-        dst_node,
-        gantz_core::Edge::new(gantz_core::node::Output(0), edge_weight.input),
-    );
-
-    let node_id = egui_graph::NodeId::from_u64(inspect_id.index() as u64);
-    let view = views.entry(path).or_default();
-    view.layout.insert(node_id, pos);
 }

@@ -12,6 +12,7 @@ use steel::{
 pub mod export;
 mod impls;
 pub mod node;
+pub mod ops;
 pub mod reg;
 pub mod widget;
 
