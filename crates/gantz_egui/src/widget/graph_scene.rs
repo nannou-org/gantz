@@ -595,13 +595,13 @@ pub fn paint_diagnostics(
         // in the wrong coordinate space and cuts the glow off.
         let mut painter = ui.ctx().layer_painter(node_response.layer_id);
         painter.set_clip_rect(node_response.rect.expand(16.0));
-        for i in 0..3 {
-            let expand = 2.0 + i as f32 * 3.0;
-            let alpha = [0.9, 0.45, 0.2][i];
+        // A soft glow: thin rings hugging the frame, fading quickly.
+        let rings = [(1.0, 1.5, 0.45), (3.0, 2.0, 0.16), (5.5, 2.5, 0.06)];
+        for (expand, width, alpha) in rings {
             painter.rect_stroke(
                 node_response.rect.expand(expand),
                 egui::CornerRadius::same((4.0 + expand) as u8),
-                egui::Stroke::new(2.0, color.gamma_multiply(alpha)),
+                egui::Stroke::new(width, color.gamma_multiply(alpha)),
                 egui::StrokeKind::Outside,
             );
         }
