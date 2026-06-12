@@ -1,7 +1,7 @@
 use crate::{
     CopyNodes, CreateNode, ExportAllNamed, ExportHead, GraphViews, HeadAccess, NodeCtx, NodeUi,
     OpenCommandPalette, OpenPath, Paste, Redo, Registry, Undo, export,
-    response::{Payload, Responses},
+    response::{DynResponse, Responses},
     widget::{
         self, GraphScene, GraphSceneState,
         graph_scene::{self, ToGraphMut},
@@ -1542,7 +1542,7 @@ fn path_labels(
     scene_rect: egui::Rect,
     head_state: &mut OpenHeadState,
     ui: &mut egui::Ui,
-) -> Vec<Payload> {
+) -> Vec<DynResponse> {
     let mut responses = Vec::new();
     if head_state.path.is_empty() {
         return responses;
@@ -1567,7 +1567,7 @@ fn path_labels(
                 .show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
                         if ui.add(button("R")).on_hover_text("root graph").clicked() {
-                            responses.push(Payload::new(OpenPath(vec![])));
+                            responses.push(DynResponse::new(OpenPath(vec![])));
                             head_state.scene.interaction.selection.clear();
                         }
                     });
@@ -1583,7 +1583,7 @@ fn path_labels(
                                 .clicked()
                             {
                                 if !current_path {
-                                    responses.push(Payload::new(OpenPath(path.to_vec())));
+                                    responses.push(DynResponse::new(OpenPath(path.to_vec())));
                                     head_state.scene.interaction.selection.clear();
                                 }
                             }
@@ -1665,7 +1665,7 @@ fn node_inspector<N>(
     head_state: &mut OpenHeadState,
     immutable: bool,
     ui: &mut egui::Ui,
-) -> egui::InnerResponse<Vec<Payload>>
+) -> egui::InnerResponse<Vec<DynResponse>>
 where
     N: Node + NodeUi + ToGraphMut<Node = N>,
 {

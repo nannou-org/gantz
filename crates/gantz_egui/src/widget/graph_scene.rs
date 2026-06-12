@@ -1,6 +1,6 @@
 use crate::{
     CopyNodes, InspectEdge, NodeUi, OpenCommandPalette, OpenHead, Paste, PastePos, Registry,
-    response::Payload,
+    response::DynResponse,
 };
 use egui::emath::GuiRounding;
 use egui_graph::{self, SocketKind, node::EdgeEvent};
@@ -23,7 +23,7 @@ pub struct GraphSceneResponse {
     pub nodes: Vec<(NodeIndex, NodeResponse)>,
     /// Dynamic payloads emitted within the scene (node UIs, context menus),
     /// to be handled by the application after the pass.
-    pub responses: Vec<Payload>,
+    pub responses: Vec<DynResponse>,
 }
 
 /// An alias for the node response type returned from gantz nodes.
@@ -174,7 +174,7 @@ where
             view.layout = layout(&*self.graph, self.id, self.layout_flow, ui.ctx());
         }
         let mut node_responses = Vec::new();
-        let mut responses: Vec<Payload> = Vec::new();
+        let mut responses: Vec<DynResponse> = Vec::new();
         let selected: HashSet<egui_graph::NodeId> = state
             .interaction
             .selection
@@ -224,7 +224,7 @@ where
                 // positioning.
                 let menu_screen_pos = ui.min_rect().left_top();
                 if ui.button("add node").clicked() {
-                    responses.push(Payload::new(OpenCommandPalette));
+                    responses.push(DynResponse::new(OpenCommandPalette));
                     ui.close();
                 }
                 if ui.button("paste").clicked() {
@@ -234,7 +234,7 @@ where
                         .map(|t| t * menu_screen_pos)
                         .unwrap_or(menu_screen_pos);
                     let pos = PastePos::GraphPos(graph_pos);
-                    responses.push(Payload::new(Paste { text: None, pos }));
+                    responses.push(DynResponse::new(Paste { text: None, pos }));
                     ui.close();
                 }
             });
@@ -301,7 +301,7 @@ fn nodes<N>(
     path: &[node::Id],
     nctx: &mut egui_graph::NodesCtx,
     state: &mut GraphSceneState,
-    responses: &mut Vec<Payload>,
+    responses: &mut Vec<DynResponse>,
     vm: &mut Engine,
     immutable: bool,
     ui: &mut egui::Ui,
@@ -385,7 +385,7 @@ where
                 HashSet::from([n_id])
             };
             if ui.button("copy").clicked() {
-                responses.push(Payload::new(CopyNodes(target.clone())));
+                responses.push(DynResponse::new(CopyNodes(target.clone())));
                 ui.close();
             }
             // Demo graph, if the node has one.
@@ -393,7 +393,7 @@ where
             let demo_btn = ui.add_enabled(demo_name.is_some(), egui::Button::new("demo"));
             if let Some(name) = demo_name {
                 if demo_btn.on_hover_text(format!("opens {name}")).clicked() {
-                    responses.push(Payload::new(OpenHead(gantz_ca::Head::Branch(
+                    responses.push(DynResponse::new(OpenHead(gantz_ca::Head::Branch(
                         name.to_string(),
                     ))));
                     ui.close();
@@ -456,7 +456,7 @@ fn edges<N>(
     path: &[node::Id],
     ectx: &mut egui_graph::EdgesCtx,
     state: &mut GraphSceneState,
-    responses: &mut Vec<Payload>,
+    responses: &mut Vec<DynResponse>,
     ui: &mut egui::Ui,
 ) {
     // Track whether any edge has a context menu open this frame.
@@ -499,7 +499,7 @@ fn edges<N>(
         response.context_menu(|ui| {
             if ui.button("inspect").clicked() {
                 if let Some(pos) = state.interaction.edge_context_menu_pos.take() {
-                    responses.push(Payload::new(InspectEdge {
+                    responses.push(DynResponse::new(InspectEdge {
                         path: path.to_vec(),
                         edge: e,
                         pos,

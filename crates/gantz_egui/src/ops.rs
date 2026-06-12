@@ -1,7 +1,7 @@
 //! Shared operations behind the GUI's graph-mutating response payloads.
 //!
 //! Each fn implements the state change for one payload (e.g.
-//! [`CreateNode`][crate::CreateNode]) over plain graph/view/VM/registry types
+//! [`CreateNode`]) over plain graph/view/VM/registry types
 //! so that frontends (e.g. `bevy_gantz_egui` and the pure-egui demo) remain
 //! thin adapters around identical behaviour. Frontend-specific effects
 //! (clipboard access, file dialogs, head navigation) stay with the caller.

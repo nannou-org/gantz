@@ -11,7 +11,7 @@
 //! Payloads are dynamically typed so that nodes defined downstream can emit
 //! their own custom types without this crate knowing about them: the
 //! application drains the payloads it understands via [`Responses::take`]
-//! (or dispatches on [`Payload::type_id`]) and warns on the rest.
+//! (or dispatches on [`DynResponse::type_id`]) and warns on the rest.
 
 use std::any::{Any, TypeId};
 
@@ -32,7 +32,7 @@ pub trait ResponseData: Any + std::fmt::Debug + Send + Sync {
 /// box via method calls would resolve to the *box's* impl and report the
 /// box's `TypeId` rather than the payload's, silently breaking dispatch.
 #[derive(Debug)]
-pub struct Payload {
+pub struct DynResponse {
     type_id: TypeId,
     type_name: &'static str,
     data: Box<dyn ResponseData>,
@@ -44,10 +44,10 @@ pub struct Payload {
 /// app-level emissions like [`ExportAllNamed`][crate::ExportAllNamed]).
 #[derive(Debug, Default)]
 pub struct Responses {
-    entries: Vec<(Option<gantz_ca::Head>, Payload)>,
+    entries: Vec<(Option<gantz_ca::Head>, DynResponse)>,
 }
 
-impl Payload {
+impl DynResponse {
     /// Erase a concrete payload, capturing its type identity.
     pub fn new<T: ResponseData>(data: T) -> Self {
         Self {
@@ -86,14 +86,14 @@ impl Responses {
     /// Emit a payload, tagged with the head whose UI emitted it (`None` for
     /// app-level payloads).
     pub fn push<T: ResponseData>(&mut self, head: Option<gantz_ca::Head>, data: T) {
-        self.entries.push((head, Payload::new(data)));
+        self.entries.push((head, DynResponse::new(data)));
     }
 
     /// Merge payloads emitted by a single head's widgets.
     pub fn extend(
         &mut self,
         head: Option<&gantz_ca::Head>,
-        data: impl IntoIterator<Item = Payload>,
+        data: impl IntoIterator<Item = DynResponse>,
     ) {
         self.entries
             .extend(data.into_iter().map(|d| (head.cloned(), d)));
@@ -114,7 +114,7 @@ impl Responses {
     }
 
     /// Drain all remaining entries in order of emission.
-    pub fn drain(&mut self) -> impl Iterator<Item = (Option<gantz_ca::Head>, Payload)> + '_ {
+    pub fn drain(&mut self) -> impl Iterator<Item = (Option<gantz_ca::Head>, DynResponse)> + '_ {
         self.entries.drain(..)
     }
 
@@ -152,7 +152,7 @@ mod tests {
     /// box itself satisfies the `ResponseData` blanket impl).
     #[test]
     fn payload_identity_is_the_concrete_type() {
-        let p = Payload::new(A(1));
+        let p = DynResponse::new(A(1));
         assert_eq!(p.type_id(), TypeId::of::<A>());
         assert_eq!(p.type_name(), std::any::type_name::<A>());
         assert_eq!(p.downcast::<A>().unwrap(), A(1));
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn downcast_to_wrong_type_returns_the_payload() {
-        let p = Payload::new(A(1));
+        let p = DynResponse::new(A(1));
         let p = p.downcast::<B>().unwrap_err();
         assert_eq!(p.downcast::<A>().unwrap(), A(1));
     }
@@ -183,7 +183,7 @@ mod tests {
     fn extend_tags_payloads_with_the_head() {
         let head = gantz_ca::Head::Branch("main".to_string());
         let mut rs = Responses::default();
-        rs.extend(Some(&head), [Payload::new(A(1))]);
+        rs.extend(Some(&head), [DynResponse::new(A(1))]);
         let mut taken = rs.take::<A>();
         assert_eq!(taken.len(), 1);
         let (tag, a) = taken.pop().unwrap();
