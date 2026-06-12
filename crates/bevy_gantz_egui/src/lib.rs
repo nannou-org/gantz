@@ -13,7 +13,7 @@ use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
 use bevy_gantz::head;
 use bevy_gantz::reg::Registry;
 use bevy_gantz::vm::EvalEntryEvent;
-use bevy_gantz::{BuiltinNodes, EvalEntryComplete};
+use bevy_gantz::{BuiltinNodes, CompileConfig, EvalEntryComplete};
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::Node;
@@ -1240,7 +1240,11 @@ pub fn update<N>(
     mut focused: ResMut<head::FocusedHead>,
     mut heads_query: Query<OpenHeadViews<N>, With<head::OpenHead>>,
     import_task: Option<Res<ImportTask>>,
-    (base_names, base_immutable): (Res<BaseNames>, Res<BaseImmutable>),
+    (base_names, base_immutable, mut compile_config): (
+        Res<BaseNames>,
+        Res<BaseImmutable>,
+        ResMut<CompileConfig>,
+    ),
     mut demos: ResMut<Demos>,
     mut cmds: Commands,
 ) -> Result
@@ -1272,12 +1276,14 @@ where
     let level = bevy_log::tracing_subscriber::filter::LevelFilter::current();
 
     // Build and show the Gantz widget.
+    let current_compile_config = compile_config.0;
     let response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
             gantz_egui::widget::Gantz::new(&node_reg, &base_names.0)
                 .base_immutable(base_immutable.0)
                 .demos(&demos.0)
+                .compile_config(current_compile_config)
                 .trace_capture(trace_capture.0.clone(), level)
                 .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
                 .show(&mut *gui_state, focused_ix, &mut access, ui)
@@ -1366,6 +1372,15 @@ where
     if let Some(head) = &response.reset_base_graph {
         if let ca::Head::Branch(name) = head {
             cmds.trigger(ResetBaseGraphEvent(name.clone()));
+        }
+    }
+
+    // Handle compile config change. The recompile happens next frame via
+    // `bevy_gantz::vm::recompile_all` (resource change detection); the `!=`
+    // guard avoids flagging the resource changed with an equal value.
+    if let Some(cfg) = response.compile_config {
+        if compile_config.0 != cfg {
+            compile_config.0 = cfg;
         }
     }
 

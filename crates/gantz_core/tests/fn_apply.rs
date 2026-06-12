@@ -101,7 +101,7 @@ fn test_fn_apply_identity() {
     // Generate the module.
     let ctx = node::MetaCtx::new(&get_node);
     let eps = push_pull_entrypoints(&get_node, &g);
-    let module = gantz_core::compile::module(&get_node, &g, &eps).unwrap();
+    let module = gantz_core::compile::module(&get_node, &g, &eps, &Default::default()).unwrap();
 
     // Create and setup VM.
     let mut vm = Engine::new_base();
@@ -210,7 +210,7 @@ fn test_fn_apply_graph() {
     // Generate the module.
     let ctx = node::MetaCtx::new(&get_node);
     let eps = push_pull_entrypoints(&get_node, &g);
-    let module = gantz_core::compile::module(&get_node, &g, &eps).unwrap();
+    let module = gantz_core::compile::module(&get_node, &g, &eps, &Default::default()).unwrap();
 
     // Create and setup VM.
     let mut vm = Engine::new_base();

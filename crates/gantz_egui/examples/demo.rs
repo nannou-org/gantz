@@ -333,6 +333,8 @@ struct State {
     vms: Vec<Engine>,
     /// Index of the currently focused head.
     focused_head: usize,
+    /// The compile config used for all heads (session-only, not persisted).
+    compile_config: gantz_core::compile::Config,
     logger: gantz_egui::widget::log_view::Logger,
     gantz: gantz_egui::widget::GantzState,
     env: Environment,
@@ -414,12 +416,13 @@ impl App {
         env.registry.prune_unreachable(&required);
 
         // VM setup - initialize a VM for each open head.
+        let compile_config = gantz_core::compile::Config::default();
         let mut vms = Vec::with_capacity(heads.len());
         let mut compiled_modules = Vec::with_capacity(heads.len());
         for (_, graph, _) in &heads {
             let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
             let eps = push_pull_entrypoints(&get_node, graph);
-            match gantz_core::vm::init(&get_node, graph, &eps) {
+            match gantz_core::vm::init(&get_node, graph, &eps, &compile_config) {
                 Ok((vm, module)) => {
                     vms.push(vm);
                     compiled_modules.push(gantz_core::vm::fmt_module(&module));
@@ -445,6 +448,7 @@ impl App {
             compiled_modules,
             vms,
             focused_head: 0,
+            compile_config,
         };
 
         App { state }
@@ -489,7 +493,8 @@ impl eframe::App for App {
                 let vm = &mut self.state.vms[ix];
                 let get_node = |ca: &gantz_ca::ContentAddr| self.state.env.node(ca);
                 let eps = push_pull_entrypoints(&get_node, &*graph);
-                match gantz_core::vm::compile(&get_node, &*graph, vm, &eps) {
+                let config = &self.state.compile_config;
+                match gantz_core::vm::compile(&get_node, &*graph, vm, &eps, config) {
                     Ok(module) => {
                         self.state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module)
                     }
@@ -1192,6 +1197,7 @@ fn create_node(
 }
 
 fn gui(ctx: &egui::Context, state: &mut State) {
+    let compile_config = state.compile_config;
     let response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
@@ -1202,6 +1208,7 @@ fn gui(ctx: &egui::Context, state: &mut State) {
             let no_base_names = Default::default();
             gantz_egui::widget::Gantz::new(&state.env, &no_base_names)
                 .logger(state.logger.clone())
+                .compile_config(compile_config)
                 .show(&mut state.gantz, state.focused_head, &mut access, ui)
         })
         .inner;
@@ -1270,6 +1277,12 @@ fn gui(ctx: &egui::Context, state: &mut State) {
     for drop in response.file_drops {
         let open_head = drop.target == gantz_egui::widget::gantz::FileDropTarget::GraphScene;
         import_bytes(state, drop.bytes, open_head);
+    }
+
+    // Handle compile config change: recompile all open heads.
+    if let Some(cfg) = response.compile_config {
+        state.compile_config = cfg;
+        recompile_heads(state);
     }
 }
 
@@ -1348,7 +1361,7 @@ fn open_head(state: &mut State, new_head: gantz_ca::Head) {
     // Initialise the VM for the new graph and add to per-head collections.
     let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
     let eps = push_pull_entrypoints(&get_node, &new_graph);
-    match gantz_core::vm::init(&get_node, &new_graph, &eps) {
+    match gantz_core::vm::init(&get_node, &new_graph, &eps, &state.compile_config) {
         Ok((vm, module)) => {
             state.vms.push(vm);
             state
@@ -1391,7 +1404,7 @@ fn replace_head(ctx: &egui::Context, state: &mut State, new_head: gantz_ca::Head
     // Reinitialize the VM for the new graph.
     let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
     let eps = push_pull_entrypoints(&get_node, &new_graph);
-    match gantz_core::vm::init(&get_node, &new_graph, &eps) {
+    match gantz_core::vm::init(&get_node, &new_graph, &eps, &state.compile_config) {
         Ok((new_vm, module)) => {
             state.vms[ix] = new_vm;
             state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module);
@@ -1440,13 +1453,37 @@ fn refresh_branch_head(state: &mut State) {
     *views = GraphViews::default();
     let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
     let eps = push_pull_entrypoints(&get_node, &*graph);
-    match gantz_core::vm::init(&get_node, &*graph, &eps) {
+    match gantz_core::vm::init(&get_node, &*graph, &eps, &state.compile_config) {
         Ok((new_vm, module)) => {
             state.vms[ix] = new_vm;
             state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module);
         }
         Err(e) => {
             log::error!("Failed to init VM for branch head refresh: {e}");
+        }
+    }
+}
+
+/// Recompile every open head's graph into its existing VM (no commit).
+///
+/// Used when the compile config changes: the graph content is unchanged, and
+/// compiling into the existing VM preserves node state.
+fn recompile_heads(state: &mut State) {
+    for (ix, (_, graph, _)) in state.heads.iter().enumerate() {
+        let vm = &mut state.vms[ix];
+        let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
+        gantz_core::graph::register(&get_node, graph, &[], vm);
+        let eps = push_pull_entrypoints(&get_node, graph);
+        match gantz_core::vm::compile(&get_node, graph, vm, &eps, &state.compile_config) {
+            Ok(module) => {
+                state.compiled_modules[ix] = gantz_core::vm::fmt_module(&module);
+            }
+            Err(e) => {
+                log::error!(
+                    "Failed to compile graph: {}",
+                    gantz_core::vm::error_chain(&e)
+                );
+            }
         }
     }
 }

@@ -97,7 +97,8 @@ fn run_pipeline(
 
 /// Compile `g` and run the call sequence end-to-end.
 fn assert_pipelines_agree(g: &Graph, eps: &[Entrypoint], calls: &[&Entrypoint]) {
-    let m = gantz_core::compile::module(&no_lookup, g, eps).expect("IR pipeline failed");
+    let m = gantz_core::compile::module(&no_lookup, g, eps, &Default::default())
+        .expect("IR pipeline failed");
     if std::env::var("GANTZ_DUMP").is_ok() {
         for e in &m {
             eprintln!("{}\n", e.to_pretty(100));
@@ -652,7 +653,8 @@ fn two_branch_shared_join() {
         entrypoint::push_source(vec![push_q.index()], g[push_q].n_outputs(ctx) as u8),
     ]);
     let eps = std::slice::from_ref(&combined);
-    let m2 = gantz_core::compile::module(&no_lookup, &g, eps).expect("IR pipeline failed");
+    let m2 = gantz_core::compile::module(&no_lookup, &g, eps, &Default::default())
+        .expect("IR pipeline failed");
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -1195,7 +1197,8 @@ fn nested_non_sequential_inlets() {
 
 /// Compile through the IR pipeline, run, and call each entrypoint in order.
 fn run_v2(g: &Graph, eps: &[Entrypoint], calls: &[&Entrypoint]) -> Engine {
-    let m2 = gantz_core::compile::module(&no_lookup, g, eps).expect("IR pipeline failed");
+    let m2 = gantz_core::compile::module(&no_lookup, g, eps, &Default::default())
+        .expect("IR pipeline failed");
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, g, &[], &mut vm);

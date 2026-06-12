@@ -11,9 +11,9 @@
 //!    to an IR (`ir`) of node-call steps, branch dispatches and join points
 //!    (local fns whose parameters carry reconverging values; values consumed
 //!    outside a branch construct ride its exports). `ir::validate` checks
-//!    the IR's scoping/arity invariants on every lowering, in every build;
-//!    a violation is a compiler bug and surfaces as
-//!    [`ModuleError::InvalidIr`].
+//!    the IR's scoping/arity invariants on every lowering (on by default,
+//!    see [`Config::validate_ir`]); a violation is a compiler bug and
+//!    surfaces as [`ModuleError::InvalidIr`].
 //! 3. **Outlet-activation analysis** (`analysis`): the distinct sets of a
 //!    level's outlets that can fire together, computed by abstract
 //!    interpretation of the lowered IR itself (forking per branch arm), so
@@ -92,6 +92,41 @@ impl Edges for Edge {
 impl Edges for Vec<Edge> {
     fn edges(&self) -> impl Iterator<Item = Edge> {
         self.iter().copied()
+    }
+}
+
+/// Options controlling [`module`] compilation.
+///
+/// The defaults are what regular builds want; the toggles exist for
+/// optimisation ([`validate_ir`][Self::validate_ir]) and codegen debugging
+/// ([`emit_all_node_fns`][Self::emit_all_node_fns]).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Config {
+    /// Check the scoping/arity invariants of every lowered IR body, surfacing
+    /// a violation as [`ModuleError::InvalidIr`]. A violation is a bug in the
+    /// compiler itself, never in the compiled graph.
+    ///
+    /// On by default. Disable as an optimisation, at the cost of an internal
+    /// compiler error surfacing further downstream (e.g. as a confusing Steel
+    /// evaluation error) instead of at lowering with a precise diagnosis.
+    pub validate_ir: bool,
+    /// Emit a node fn for every node - its all-connected variant - rather
+    /// than only the variants called by some lowered evaluation.
+    ///
+    /// Off by default: node fns are normally emitted on demand, so a node
+    /// that no entrypoint's evaluation calls produces no code at all. Enable
+    /// to inspect any node's generated code (e.g. in the app's module view)
+    /// before anything calls it. The extra definitions are never called and
+    /// do not affect evaluation.
+    pub emit_all_node_fns: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            validate_ir: true,
+            emit_all_node_fns: false,
+        }
     }
 }
 
@@ -344,18 +379,19 @@ fn or_patterns(patterns: &[node::Conns]) -> Result<node::Conns, error::NodeConns
 /// configuration), a graph fn per nested level variant, and a function per
 /// entrypoint's evaluation.
 ///
-/// Lowers through the join-point IR pipeline (`lower` -> `ir` -> `emit`).
-/// Nested graphs compile *call-based*: each level becomes one
-/// `graph-fn-{path}-i{mask}` per active-inlet variant, which parents call
-/// like a node fn. An entrypoint sourced inside a nested graph becomes a
-/// per-level fn whose result - `(list value state')`, with `value` a
-/// `(list branch-ix vals)` pair when the push reaches the outlets through
-/// branching - the parent level continues from (push-through-outlet as an
-/// ordinary value return).
+/// Lowers through the join-point IR pipeline (`lower` -> `ir` -> `emit`),
+/// with the toggles in [`Config`] applied along the way. Nested graphs
+/// compile *call-based*: each level becomes one `graph-fn-{path}-i{mask}`
+/// per active-inlet variant, which parents call like a node fn. An
+/// entrypoint sourced inside a nested graph becomes a per-level fn whose
+/// result - `(list value state')`, with `value` a `(list branch-ix vals)`
+/// pair when the push reaches the outlets through branching - the parent
+/// level continues from (push-through-outlet as an ordinary value return).
 pub fn module<'a, G>(
     get_node: node::GetNode<'a>,
     g: G,
     entrypoints: &[Entrypoint],
+    config: &Config,
 ) -> Result<Vec<ExprKind>, ModuleError>
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
@@ -373,6 +409,7 @@ where
     let mut builder = ModuleBuilder {
         meta_tree: &meta_tree,
         level_sources: &level_sources,
+        config,
         confs: std::collections::BTreeMap::new(),
         graph_fns: Vec::new(),
         fns: Vec::new(),
@@ -416,6 +453,14 @@ where
         if emitted.insert((gpath.clone(), imask)) {
             builder.graph_fn(&gpath, &imask)?;
         }
+    }
+
+    // With `emit_all_node_fns`, every node contributes its all-connected
+    // variant so its node fn is emitted even when nothing reachable from an
+    // entrypoint calls it. Before the fixpoint below so any graph fns these
+    // variants call are generated too.
+    if config.emit_all_node_fns {
+        all_connected_confs(&meta_tree, &mut Vec::new(), &mut builder.confs)?;
     }
 
     // Generate a graph fn per (nested level, active-inlet variant) reachable
@@ -476,6 +521,37 @@ where
         .collect())
 }
 
+/// Insert the all-connected variant conf of every node at every level of the
+/// meta tree (the [`Config::emit_all_node_fns`] set). Inlets and outlets
+/// resolve as bindings and delays are intrinsics - none have node fns - so
+/// they are skipped.
+fn all_connected_confs(
+    tree: &RoseTree<Meta>,
+    path: &mut Vec<node::Id>,
+    confs: &mut std::collections::BTreeMap<Vec<node::Id>, std::collections::BTreeSet<NodeConf>>,
+) -> Result<(), error::NodeConnsError> {
+    let conn = |n: usize| {
+        node::Conns::connected(n).map_err(|_| error::NodeConnsError::from(error::TooManyConns(n)))
+    };
+    let meta = &tree.elem;
+    let level_confs = confs.entry(path.clone()).or_default();
+    for n in meta.graph.nodes() {
+        if meta.inlets.contains(&n) || meta.outlets.contains(&n) || meta.delays.contains(&n) {
+            continue;
+        }
+        let inputs = conn(meta.inputs.get(&n).copied().unwrap_or(0))?;
+        let outputs = conn(meta.outputs.get(&n).copied().unwrap_or(0))?;
+        let conns = NodeConns { inputs, outputs };
+        level_confs.insert(NodeConf { id: n, conns });
+    }
+    for (&id, sub) in &tree.nested {
+        path.push(id);
+        all_connected_confs(sub, path, confs)?;
+        path.pop();
+    }
+    Ok(())
+}
+
 /// Collect every nested level path in the meta tree with its inlet count.
 fn collect_levels(
     tree: &RoseTree<Meta>,
@@ -510,6 +586,7 @@ struct ModuleBuilder<'a> {
     meta_tree: &'a RoseTree<Meta>,
     level_sources:
         &'a std::collections::BTreeMap<Vec<node::Id>, Vec<(EntrypointId, Vec<&'a EvalSource>)>>,
+    config: &'a Config,
     /// Node variants called by the lowered bodies, per level path.
     confs: std::collections::BTreeMap<Vec<node::Id>, std::collections::BTreeSet<NodeConf>>,
     /// Emitted graph fns with their level depth. A graph fn calls only
@@ -648,10 +725,12 @@ impl ModuleBuilder<'_> {
             prebound,
         };
         let out = lower::level_body(&cx, &lower::LevelSources::Eval { push, pull })?;
-        ir::validate(&out.body, 0, &prebound_vars).map_err(|e| ModuleError::InvalidIr {
-            path: path.to_vec(),
-            detail: e.to_string(),
-        })?;
+        if self.config.validate_ir {
+            ir::validate(&out.body, 0, &prebound_vars).map_err(|e| ModuleError::InvalidIr {
+                path: path.to_vec(),
+                detail: e.to_string(),
+            })?;
+        }
         lower::collect_confs(&out.body, self.confs.entry(path.to_vec()).or_default());
         Ok(Some((glue, out)))
     }
@@ -726,14 +805,16 @@ impl ModuleBuilder<'_> {
             prebound: std::collections::BTreeSet::new(),
         };
         let out = lower::level_body(&cx, &lower::LevelSources::Inlets(active.clone()))?;
-        let inlet_vars: Vec<ir::Var> = active
-            .iter()
-            .map(|&i| ir::Var::Output { node: i, output: 0 })
-            .collect();
-        ir::validate(&out.body, 0, &inlet_vars).map_err(|e| ModuleError::InvalidIr {
-            path: gpath.to_vec(),
-            detail: e.to_string(),
-        })?;
+        if self.config.validate_ir {
+            let inlet_vars: Vec<ir::Var> = active
+                .iter()
+                .map(|&i| ir::Var::Output { node: i, output: 0 })
+                .collect();
+            ir::validate(&out.body, 0, &inlet_vars).map_err(|e| ModuleError::InvalidIr {
+                path: gpath.to_vec(),
+                detail: e.to_string(),
+            })?;
+        }
         lower::collect_confs(&out.body, self.confs.entry(gpath.to_vec()).or_default());
 
         // The node-contract patterns: the all-active analysis, matching the
