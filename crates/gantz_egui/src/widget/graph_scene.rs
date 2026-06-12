@@ -588,15 +588,13 @@ pub fn paint_diagnostics(
             continue;
         };
         // Paint on the node's own layer so the scene transform applies. The
-        // node's rect (and therefore the painter's clip) must be layer-local:
-        // egui maps a transformed layer's clip rects through its transform at
-        // tessellation, so the default (global) clip would land elsewhere in
-        // the scene and cut the glow off.
-        let glow_rect = node_response.rect.expand(8.0);
-        let painter = ui
-            .ctx()
-            .layer_painter(node_response.layer_id)
-            .with_clip_rect(glow_rect.expand(8.0));
+        // clip must be *replaced* with a layer-local rect: egui maps a
+        // transformed layer's clip rects through its transform at
+        // tessellation, so the painter's default (global) clip - and
+        // anything intersected with it via `with_clip_rect` - is interpreted
+        // in the wrong coordinate space and cuts the glow off.
+        let mut painter = ui.ctx().layer_painter(node_response.layer_id);
+        painter.set_clip_rect(node_response.rect.expand(16.0));
         for i in 0..3 {
             let expand = 2.0 + i as f32 * 3.0;
             let alpha = [0.9, 0.45, 0.2][i];
