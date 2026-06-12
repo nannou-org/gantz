@@ -18,9 +18,10 @@ use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::Node;
 use gantz_core::node::graph::Graph;
-use gantz_egui::HeadDataMut;
 pub use gantz_egui::RegistryRef;
-use std::collections::{HashMap, HashSet};
+use gantz_egui::{HeadDataMut, ResponseData};
+use std::any::TypeId;
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 
@@ -95,6 +96,21 @@ where
                 node::frame_bang::entrypoints(get_node, graph)
             }));
 
+        // Builtin GUI response payload dispatchers. Head-scoped payloads
+        // arrive at the observers below as `ForHead<T>` events; the rest map
+        // onto existing event types via custom dispatch fns.
+        app.register_head_response::<gantz_egui::BranchNode>()
+            .register_head_response::<gantz_egui::CopyNodes>()
+            .register_head_response::<gantz_egui::CreateNode>()
+            .register_head_response::<gantz_egui::InspectEdge>()
+            .register_head_response::<gantz_egui::Paste>()
+            .register_head_response::<gantz_egui::Redo>()
+            .register_head_response::<gantz_egui::Undo>()
+            .register_response_with::<gantz_egui::EvalEntry>(dispatch_eval_entry)
+            .register_response_with::<gantz_egui::OpenHead>(dispatch_open_head)
+            .register_response_with::<gantz_egui::ExportHead>(dispatch_export_head)
+            .register_response_with::<gantz_egui::ExportAllNamed>(dispatch_export_all_named);
+
         app.insert_resource(BaseImmutable(self.base_immutable))
             .init_resource::<BaseNames>()
             .init_resource::<GuiState>()
@@ -111,12 +127,14 @@ where
             .add_observer(on_head_committed)
             // VM timing observer
             .add_observer(on_eval_entry_complete)
-            // Node creation/inspection observers
+            // GUI response payload observers
             .add_observer(on_create_node::<N>)
             .add_observer(on_branch_node::<N>)
             .add_observer(on_inspect_edge::<N>)
             .add_observer(on_copy_nodes::<N>)
             .add_observer(on_paste::<N>)
+            .add_observer(on_undo::<N>)
+            .add_observer(on_redo)
             .add_observer(on_export_head::<N>)
             .add_observer(on_export_all_named::<N>)
             .add_observer(on_import_file::<N>)
@@ -126,7 +144,6 @@ where
                 Update,
                 (
                     node::frame_bang::drive_frame_bangs::<N>,
-                    process_cmds::<N>,
                     persist_views::<N>,
                     poll_import_task,
                 ),
@@ -199,40 +216,22 @@ pub struct ImportTask(bevy_tasks::Task<Option<Vec<u8>>>);
 // Events
 // ----------------------------------------------------------------------------
 
-/// Event emitted when an edge inspection is requested.
+/// A GUI response payload targeting an open-head entity.
 ///
-/// Apps should handle this with an observer that has access to the
-/// app-specific Environment for creating and registering the inspect node.
-#[derive(Event)]
-pub struct InspectEdgeEvent {
-    /// The head entity on which the edge exists.
+/// The `update` system drains the payloads emitted during the GUI pass and
+/// dispatches each via [`ResponseDispatchers`]; head-scoped payloads arrive
+/// as this event. Observers take the mutable per-head queries that the GUI
+/// system itself cannot (ECS borrow rules).
+#[derive(EntityEvent)]
+pub struct ForHead<T: Send + Sync + 'static> {
+    /// The open-head entity the payload targets.
+    #[event_target]
     pub head: Entity,
-    /// The inspect edge command from the GUI.
-    pub cmd: gantz_egui::InspectEdge,
+    /// The payload emitted from the GUI.
+    pub data: T,
 }
 
-/// Event emitted when node creation is requested.
-///
-/// Apps should handle this with an observer that has access to the
-/// app-specific Builtins for creating nodes.
-#[derive(Event)]
-pub struct CreateNodeEvent {
-    /// The head entity where the node should be created.
-    pub head: Entity,
-    /// The create node command from the GUI.
-    pub cmd: gantz_egui::CreateNode,
-}
-
-/// Event emitted when the user copies nodes.
-#[derive(Event)]
-pub struct CopyNodesEvent {
-    /// The head entity whose selection should be copied.
-    pub head: Entity,
-    /// The nodes to copy.
-    pub nodes: HashSet<gantz_egui::widget::graph_scene::NodeIndex>,
-}
-
-/// Event emitted when the user requests exporting the focused head.
+/// Event emitted when the user requests exporting a head.
 #[derive(Event)]
 pub struct ExportHeadEvent {
     /// The head entity to export.
@@ -252,38 +251,58 @@ pub struct ImportFileEvent {
     pub open_head: bool,
 }
 
-/// Event emitted when a named node should be branched.
-///
-/// Creates a new commit (same graph, new timestamp, original as parent),
-/// inserts a new name pointing to the fresh commit, and replaces the
-/// NamedRef node in the working graph so its reference points to the new
-/// commit.
-#[derive(Event)]
-pub struct BranchNodeEvent {
-    /// The head entity containing the NamedRef node.
-    pub head: Entity,
-    /// The new branch name.
-    pub new_name: String,
-    /// Content address of the graph being branched.
-    pub ca: gantz_ca::ContentAddr,
-    /// Path from root to the NamedRef node (last element = node index).
-    pub path: Vec<gantz_core::node::Id>,
-}
-
-/// Event emitted when the user pastes from the clipboard.
-#[derive(Event)]
-pub struct PasteEvent {
-    /// The head entity to paste into.
-    pub head: Entity,
-    /// The clipboard text (RON-serialized [`gantz_egui::export::Copied`]).
-    pub text: String,
-    /// How to position the pasted nodes.
-    pub pos: gantz_egui::PastePos,
-}
-
 /// Event emitted when a base graph should be reset to its original state.
 #[derive(Event)]
 pub struct ResetBaseGraphEvent(pub String);
+
+// ----------------------------------------------------------------------------
+// Response dispatch
+// ----------------------------------------------------------------------------
+
+/// The signature of dispatch fns stored in [`ResponseDispatchers`].
+///
+/// The `Option<Entity>` is the open-head entity resolved from the payload's
+/// head tag (`None` for app-level payloads).
+pub type DispatchFn = fn(Option<Entity>, Box<dyn ResponseData>, &mut Commands);
+
+/// `TypeId`-keyed dispatchers turning the dynamic GUI response payloads into
+/// typed events. Register payload types via [`RegisterResponseExt`].
+#[derive(Default, Resource)]
+pub struct ResponseDispatchers(pub HashMap<TypeId, DispatchFn>);
+
+/// App extension for registering GUI response payload handlers.
+///
+/// This is how nodes declared in independent plugins receive custom payloads
+/// emitted from their UI (via [`gantz_egui::NodeCtx::response`]): register
+/// the payload type here and add an observer for [`ForHead<T>`]:
+///
+/// ```ignore
+/// app.register_head_response::<MyPayload>()
+///     .add_observer(|t: On<ForHead<MyPayload>>, /* any system params */| { .. });
+/// ```
+pub trait RegisterResponseExt {
+    /// Dispatch payloads of type `T` as [`ForHead<T>`] events targeting the
+    /// emitting head's entity. Pair with an observer for `On<ForHead<T>>`.
+    fn register_head_response<T: ResponseData>(&mut self) -> &mut Self;
+
+    /// Dispatch payloads of type `T` with a custom fn, e.g. to map onto an
+    /// existing event type or to handle payloads with no associated head.
+    fn register_response_with<T: ResponseData>(&mut self, f: DispatchFn) -> &mut Self;
+}
+
+impl RegisterResponseExt for App {
+    fn register_head_response<T: ResponseData>(&mut self) -> &mut Self {
+        self.register_response_with::<T>(dispatch_for_head::<T>)
+    }
+
+    fn register_response_with<T: ResponseData>(&mut self, f: DispatchFn) -> &mut Self {
+        self.world_mut()
+            .get_resource_or_init::<ResponseDispatchers>()
+            .0
+            .insert(TypeId::of::<T>(), f);
+        self
+    }
+}
 
 // ----------------------------------------------------------------------------
 // QueryData
@@ -575,9 +594,9 @@ pub fn on_head_committed(
     }
 }
 
-/// Handle create node events.
+/// Handle create node payloads.
 pub fn on_create_node<N>(
-    trigger: On<CreateNodeEvent>,
+    trigger: On<ForHead<gantz_egui::CreateNode>>,
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     demos: Res<Demos>,
@@ -614,16 +633,16 @@ pub fn on_create_node<N>(
         &mut data.working_graph,
         &mut views,
         vm,
-        event.cmd.clone(),
+        event.data.clone(),
     );
 }
 
-/// Handle branch node events.
+/// Handle branch node payloads.
 ///
 /// Creates a new commit (same graph content, new timestamp, original as parent),
 /// inserts the new name, and replaces the NamedRef node in the working graph.
 pub fn on_branch_node<N>(
-    trigger: On<BranchNodeEvent>,
+    trigger: On<ForHead<gantz_egui::BranchNode>>,
     mut registry: ResMut<Registry<N>>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
 ) where
@@ -642,15 +661,15 @@ pub fn on_branch_node<N>(
         &mut registry,
         bevy_gantz::reg::timestamp(),
         &mut data.working_graph,
-        event.new_name.clone(),
-        event.ca,
-        &event.path,
+        event.data.new_name.clone(),
+        event.data.ca,
+        &event.data.path,
     );
 }
 
-/// Handle inspect edge events.
+/// Handle inspect edge payloads.
 pub fn on_inspect_edge<N>(
-    trigger: On<InspectEdgeEvent>,
+    trigger: On<ForHead<gantz_egui::InspectEdge>>,
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     demos: Res<Demos>,
@@ -687,17 +706,17 @@ pub fn on_inspect_edge<N>(
         &mut data.working_graph,
         &mut views,
         vm,
-        event.cmd.clone(),
+        event.data.clone(),
     );
 }
 
-/// Handle copy selection events.
+/// Handle copy selection payloads.
 ///
 /// Serializes the selected nodes (and their registry dependencies) to RON
 /// and writes the result directly to the system clipboard via
 /// [`bevy_egui::EguiClipboard`].
 pub fn on_copy_nodes<N>(
-    trigger: On<CopyNodesEvent>,
+    trigger: On<ForHead<gantz_egui::CopyNodes>>,
     registry: Res<Registry<N>>,
     gui_state: Res<GuiState>,
     views: Res<Views>,
@@ -731,26 +750,29 @@ pub fn on_copy_nodes<N>(
         &mut wg,
         &gv,
         &head_state.path,
-        &event.nodes,
+        &event.data.0,
     );
     if let Some(text) = text {
         clipboard.set_text(&text);
     }
 }
 
-/// Handle paste selection events.
+/// Handle paste selection payloads.
 ///
-/// Deserializes the clipboard RON text into a [`gantz_egui::export::Copied`],
-/// merges registry dependencies, adds the subgraph, maps positions, and
-/// updates the selection to the newly pasted nodes.
+/// Resolves the clipboard text (via [`bevy_egui::EguiClipboard`] when the
+/// payload doesn't carry it), deserializes it into a
+/// [`gantz_egui::export::Copied`], merges registry dependencies, adds the
+/// subgraph, maps positions, and updates the selection to the newly pasted
+/// nodes.
 pub fn on_paste<N>(
-    trigger: On<PasteEvent>,
+    trigger: On<ForHead<gantz_egui::Paste>>,
     mut registry: ResMut<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     mut gui_state: ResMut<GuiState>,
     mut views: ResMut<Views>,
     mut demos: ResMut<Demos>,
     mut vms: NonSendMut<head::HeadVms>,
+    mut clipboard: ResMut<bevy_egui::EguiClipboard>,
     mut heads: Query<
         (&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphViews),
         With<head::OpenHead>,
@@ -765,6 +787,9 @@ pub fn on_paste<N>(
         + Sync,
 {
     let event = trigger.event();
+    let Some(text) = event.data.text.clone().or_else(|| clipboard.get_text()) else {
+        return;
+    };
     let Ok((head_ref, mut wg, mut gv)) = heads.get_mut(event.head) else {
         log::error!("PasteSelection: head not found for entity {:?}", event.head);
         return;
@@ -781,8 +806,8 @@ pub fn on_paste<N>(
         &mut wg,
         &mut gv,
         head_state,
-        &event.text,
-        &event.pos,
+        &text,
+        &event.data.pos,
     );
 
     // Re-register the full root graph so pasted nodes get their state
@@ -794,6 +819,46 @@ pub fn on_paste<N>(
             let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
             gantz_core::graph::register(&get_node, &**wg, &[], vm);
         }
+    }
+}
+
+/// Handle undo payloads: move the head back to its parent commit.
+pub fn on_undo<N>(
+    trigger: On<ForHead<gantz_egui::Undo>>,
+    registry: Res<Registry<N>>,
+    mut gui_state: ResMut<GuiState>,
+    heads: Query<&head::HeadRef, With<head::OpenHead>>,
+    mut cmds: Commands,
+) where
+    N: 'static + Send + Sync,
+{
+    let entity = trigger.event().head;
+    let Ok(head_ref) = heads.get(entity) else {
+        log::error!("Undo: head not found for entity {entity:?}");
+        return;
+    };
+    let head = (**head_ref).clone();
+    let parent = gantz_egui::ops::undo(&registry, &mut gui_state.redo_stacks, &head);
+    if let Some(parent) = parent {
+        navigate_head(&mut cmds, entity, &head, parent);
+    }
+}
+
+/// Handle redo payloads: move the head forward to a previously undone commit.
+pub fn on_redo(
+    trigger: On<ForHead<gantz_egui::Redo>>,
+    mut gui_state: ResMut<GuiState>,
+    heads: Query<&head::HeadRef, With<head::OpenHead>>,
+    mut cmds: Commands,
+) {
+    let entity = trigger.event().head;
+    let Ok(head_ref) = heads.get(entity) else {
+        log::error!("Redo: head not found for entity {entity:?}");
+        return;
+    };
+    let head = (**head_ref).clone();
+    if let Some(redo_ca) = gantz_egui::ops::redo(&mut gui_state.redo_stacks, &head) {
+        navigate_head(&mut cmds, entity, &head, redo_ca);
     }
 }
 
@@ -1048,111 +1113,12 @@ pub fn prune_views<N: 'static + Node + Send + Sync>(
     views.retain(|ca, _| required.contains(ca));
 }
 
-/// Process GUI commands from all open heads.
-///
-/// Commands are split between inline handling and event dispatch based on
-/// Bevy's ECS borrow rules. Inline-handled commands (eval, navigation,
-/// registry operations, undo/redo) only need `registry + gui_state`, which
-/// are available as system parameters. Event-dispatched commands (node
-/// creation, edge inspection, clipboard) need mutable access to per-head
-/// components (`WorkingGraph`, `GraphViews`, `HeadVms`) that would conflict
-/// with the iteration query - observers handle these with separate queries.
-///
-/// All [`gantz_egui::Cmd`] variants must be handled here *and* in the demo's
-/// `process_cmds` (see `gantz_egui/examples/demo.rs`).
-pub fn process_cmds<N: 'static + Send + Sync>(
-    registry: Res<Registry<N>>,
-    mut gui_state: ResMut<GuiState>,
-    mut clipboard: ResMut<bevy_egui::EguiClipboard>,
-    heads: Query<(Entity, &head::HeadRef), With<head::OpenHead>>,
-    mut cmds: Commands,
-) {
-    // Collect heads to process.
-    let heads_to_process: Vec<_> = heads
-        .iter()
-        .map(|(entity, head_ref)| (entity, (**head_ref).clone()))
-        .collect();
-
-    for (entity, head) in heads_to_process {
-        let head_state = gui_state.open_heads.entry(head.clone()).or_default();
-        for cmd in std::mem::take(&mut head_state.scene.cmds) {
-            log::debug!("{cmd:?}");
-            match cmd {
-                gantz_egui::Cmd::EvalEntry(entrypoint) => {
-                    cmds.trigger(EvalEntryEvent {
-                        head: entity,
-                        entrypoint,
-                    });
-                }
-                gantz_egui::Cmd::OpenPath(path) => {
-                    let head_state = gui_state.open_heads.get_mut(&head).unwrap();
-                    head_state.path = path;
-                }
-                gantz_egui::Cmd::OpenHead(target) => {
-                    cmds.trigger(head::OpenEvent(target));
-                }
-                gantz_egui::Cmd::BranchNode { new_name, ca, path } => {
-                    cmds.trigger(BranchNodeEvent {
-                        head: entity,
-                        new_name,
-                        ca,
-                        path,
-                    });
-                }
-                gantz_egui::Cmd::InspectEdge(cmd) => {
-                    cmds.trigger(InspectEdgeEvent { head: entity, cmd });
-                }
-                gantz_egui::Cmd::CreateNode(cmd) => {
-                    cmds.trigger(CreateNodeEvent { head: entity, cmd });
-                }
-                gantz_egui::Cmd::CopyNodes(nodes) => {
-                    cmds.trigger(CopyNodesEvent {
-                        head: entity,
-                        nodes,
-                    });
-                }
-                gantz_egui::Cmd::Paste { text, pos } => {
-                    let text = text.or_else(|| clipboard.get_text());
-                    if let Some(text) = text {
-                        cmds.trigger(PasteEvent {
-                            head: entity,
-                            text,
-                            pos,
-                        });
-                    }
-                }
-                gantz_egui::Cmd::Undo => {
-                    let parent =
-                        gantz_egui::ops::undo(&registry, &mut gui_state.redo_stacks, &head);
-                    if let Some(parent) = parent {
-                        navigate_head(&mut cmds, entity, &head, parent);
-                    }
-                }
-                gantz_egui::Cmd::Redo => {
-                    if let Some(redo_ca) = gantz_egui::ops::redo(&mut gui_state.redo_stacks, &head)
-                    {
-                        navigate_head(&mut cmds, entity, &head, redo_ca);
-                    }
-                }
-                gantz_egui::Cmd::ExportHead => {
-                    cmds.trigger(ExportHeadEvent { head: entity });
-                }
-                gantz_egui::Cmd::ExportAllNamed => {
-                    cmds.trigger(ExportAllNamedEvent);
-                }
-                gantz_egui::Cmd::OpenCommandPalette => {
-                    gui_state.command_palette.toggle();
-                }
-            }
-        }
-    }
-}
-
 /// Update the Gantz GUI and process widget responses.
 ///
 /// This system:
 /// - Shows the Gantz widget in an egui CentralPanel
 /// - Processes GUI responses (head open/close/replace, branch creation, etc.)
+/// - Dispatches dynamic response payloads via [`ResponseDispatchers`]
 /// - Uses TraceCapture for tracing and PerfVm/PerfGui for performance capture
 pub fn update<N>(
     trace_capture: Res<TraceCapture>,
@@ -1173,6 +1139,7 @@ pub fn update<N>(
         ResMut<CompileConfig>,
     ),
     mut demos: ResMut<Demos>,
+    dispatchers: Res<ResponseDispatchers>,
     mut cmds: Commands,
 ) -> Result
 where
@@ -1194,6 +1161,15 @@ where
         .and_then(|e| tab_order.iter().position(|&x| x == e))
         .unwrap_or(0);
 
+    // Map heads to entities for response payload dispatch (after `show`).
+    let head_to_entity: HashMap<ca::Head, Entity> = tab_order
+        .iter()
+        .filter_map(|&e| {
+            let data = heads_query.get(e).ok()?;
+            Some(((**data.core.head_ref).clone(), e))
+        })
+        .collect();
+
     // Create the head access adapter.
     let mut access = HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
 
@@ -1204,7 +1180,7 @@ where
 
     // Build and show the Gantz widget.
     let current_compile_config = compile_config.0;
-    let response = egui::containers::CentralPanel::default()
+    let mut response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show(ctx, |ui| {
             gantz_egui::widget::Gantz::new(&node_reg, &base_names.0)
@@ -1324,6 +1300,18 @@ where
         cmds.insert_resource(ImportTask(task));
     }
 
+    // Dispatch the dynamic response payloads emitted during the GUI pass.
+    // Payload types are registered in `ResponseDispatchers` (see
+    // `RegisterResponseExt`); unregistered payloads are reported.
+    for (head, data) in response.responses.drain() {
+        log::debug!("{data:?}");
+        let entity = head.and_then(|h| head_to_entity.get(&h).copied());
+        match dispatchers.0.get(&data.data_type_id()) {
+            Some(dispatch) => dispatch(entity, data, &mut cmds),
+            None => log::warn!("unhandled response payload: {}", data.data_type_name()),
+        }
+    }
+
     // Record GUI frame time.
     perf_gui.0.record(gui_start.elapsed());
 
@@ -1333,6 +1321,66 @@ where
 // ---------------------------------------------------------------------------
 // Functions
 // ---------------------------------------------------------------------------
+
+/// Downcast a dispatched payload to its concrete type.
+///
+/// Dispatchers are keyed by the payload's `TypeId`, so the downcast cannot
+/// fail for a correctly registered dispatcher.
+fn downcast_payload<T: ResponseData>(data: Box<dyn ResponseData>) -> T {
+    *data
+        .into_any()
+        .downcast::<T>()
+        .expect("dispatcher registered for this payload type")
+}
+
+/// Dispatch a head-scoped payload as a [`ForHead`] event.
+fn dispatch_for_head<T: ResponseData>(
+    entity: Option<Entity>,
+    data: Box<dyn ResponseData>,
+    cmds: &mut Commands,
+) {
+    let Some(head) = entity else {
+        log::error!(
+            "response payload `{}` has no open-head entity",
+            data.data_type_name()
+        );
+        return;
+    };
+    let data = downcast_payload::<T>(data);
+    cmds.trigger(ForHead { head, data });
+}
+
+/// Dispatch a [`gantz_egui::EvalEntry`] payload as an [`EvalEntryEvent`].
+fn dispatch_eval_entry(entity: Option<Entity>, data: Box<dyn ResponseData>, cmds: &mut Commands) {
+    let Some(head) = entity else {
+        log::error!("EvalEntry payload has no open-head entity");
+        return;
+    };
+    let gantz_egui::EvalEntry(entrypoint) = downcast_payload(data);
+    cmds.trigger(EvalEntryEvent { head, entrypoint });
+}
+
+/// Dispatch a [`gantz_egui::OpenHead`] payload as a [`head::OpenEvent`].
+fn dispatch_open_head(_: Option<Entity>, data: Box<dyn ResponseData>, cmds: &mut Commands) {
+    let gantz_egui::OpenHead(target) = downcast_payload(data);
+    cmds.trigger(head::OpenEvent(target));
+}
+
+/// Dispatch a [`gantz_egui::ExportHead`] payload as an [`ExportHeadEvent`].
+fn dispatch_export_head(entity: Option<Entity>, data: Box<dyn ResponseData>, cmds: &mut Commands) {
+    let Some(head) = entity else {
+        log::error!("ExportHead payload has no open-head entity");
+        return;
+    };
+    let gantz_egui::ExportHead = downcast_payload(data);
+    cmds.trigger(ExportHeadEvent { head });
+}
+
+/// Dispatch a [`gantz_egui::ExportAllNamed`] payload as an [`ExportAllNamedEvent`].
+fn dispatch_export_all_named(_: Option<Entity>, data: Box<dyn ResponseData>, cmds: &mut Commands) {
+    let gantz_egui::ExportAllNamed = downcast_payload(data);
+    cmds.trigger(ExportAllNamedEvent);
+}
 
 /// Trigger the appropriate event to move a head to a target commit.
 ///

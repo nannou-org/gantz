@@ -1,4 +1,4 @@
-use crate::{Cmd, NodeCtx, NodeUi, Registry, widget::node_inspector};
+use crate::{NodeCtx, NodeUi, OpenPath, Registry, widget::node_inspector};
 
 impl<N> NodeUi for gantz_core::node::GraphNode<N>
 where
@@ -10,13 +10,13 @@ where
 
     fn ui(
         &mut self,
-        ctx: NodeCtx,
+        mut ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui_graph::FramedResponse<egui::Response> {
         uictx.framed(|ui, _sockets| {
             let res = ui.add(egui::Label::new("graph").selectable(false));
             if ui.response().double_clicked() {
-                ctx.cmds.push(Cmd::OpenPath(ctx.path().to_vec()));
+                ctx.response(OpenPath(ctx.path().to_vec()));
             }
             res
         })

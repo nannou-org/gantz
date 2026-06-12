@@ -14,11 +14,13 @@ mod impls;
 pub mod node;
 pub mod ops;
 pub mod reg;
+pub mod response;
 pub mod widget;
 
 // Re-export traits that make up the Registry supertrait.
 pub use node::{FnNodeNames, NameRegistry};
 pub use reg::RegistryRef;
+pub use response::{ResponseData, Responses};
 pub use widget::gantz::NodeTypeRegistry;
 pub use widget::graph_select::GraphRegistry;
 
@@ -161,7 +163,7 @@ pub struct NodeCtx<'a> {
     inlets: &'a [node::Id],
     outlets: &'a [node::Id],
     vm: &'a mut Engine,
-    cmds: &'a mut Vec<Cmd>,
+    responses: &'a mut Vec<Box<dyn ResponseData>>,
 }
 
 /// How to position pasted nodes.
@@ -192,53 +194,31 @@ pub fn resolve_paste_offset(pos: &PastePos, copied_positions: &egui_graph::Layou
     }
 }
 
-/// Commands emitted by nodes and widgets, processed after the GUI pass.
-///
-/// All variants must be exhaustively handled in both
-/// `bevy_gantz_egui::process_cmds` and the demo's `process_cmds`
-/// (`gantz_egui/examples/demo.rs`). Adding a new variant without updating
-/// both will produce a compile error.
-#[derive(Debug)]
-pub enum Cmd {
-    /// Evaluate an entrypoint (push or pull).
-    EvalEntry(gantz_core::compile::Entrypoint),
-    /// Navigate the path within the current head's graph hierarchy.
-    OpenPath(Vec<node::Id>),
-    /// Open a head (named or commit) as a new tab.
-    OpenHead(gantz_ca::Head),
-    /// Branch a named node: create a new name with its own commit for the
-    /// given content address, and replace the node with a reference to it.
-    BranchNode {
-        new_name: String,
-        ca: gantz_ca::ContentAddr,
-        /// Path from root to the NamedRef node (last element = node index).
-        path: Vec<crate::node::Id>,
-    },
-    /// Insert an inspect node on the given edge at the given position.
-    InspectEdge(InspectEdge),
-    /// Create a new node of the given type at the current path.
-    CreateNode(CreateNode),
-    /// Copy the given nodes to the clipboard.
-    CopyNodes(std::collections::HashSet<widget::graph_scene::NodeIndex>),
-    /// Paste clipboard contents at the given position.
-    ///
-    /// `text` is `Some` when the integration layer provides clipboard text
-    /// directly (e.g. via `egui::Event::Paste` in eframe). When `None`, the
-    /// command handler is expected to read the system clipboard itself.
-    Paste { text: Option<String>, pos: PastePos },
-    /// Undo the last graph edit (move head to parent commit).
-    Undo,
-    /// Redo a previously undone edit (move head forward).
-    Redo,
-    /// Export the focused head (graph + transitive deps + views) to a `.gantz` file.
-    ExportHead,
-    /// Export all named graphs (with transitive deps + views) to a single `.gantz` file.
-    ExportAllNamed,
-    /// Open the command palette for node creation.
-    OpenCommandPalette,
+// ----------------------------------------------------------------------------
+// Response payloads
+//
+// Typed payloads emitted from within the widget tree via the dynamic
+// [`response::Responses`] channel and returned from `Gantz::show`. With the
+// exception of [`OpenPath`] and [`OpenCommandPalette`] (which `Gantz::show`
+// handles itself), applications drain and handle these after the GUI pass.
+// Unhandled payloads should be reported via [`response::Responses::type_names`].
+// ----------------------------------------------------------------------------
+
+/// Branch a named node: create a new name with its own commit for the given
+/// content address, and replace the node with a reference to it.
+#[derive(Clone, Debug)]
+pub struct BranchNode {
+    pub new_name: String,
+    pub ca: gantz_ca::ContentAddr,
+    /// Path from root to the NamedRef node (last element = node index).
+    pub path: Vec<node::Id>,
 }
 
-/// A command to create a new node.
+/// Copy the given nodes to the clipboard.
+#[derive(Clone, Debug)]
+pub struct CopyNodes(pub std::collections::HashSet<widget::graph_scene::NodeIndex>);
+
+/// Create a new node of the given type at the current path.
 #[derive(Clone, Debug)]
 pub struct CreateNode {
     /// The path within the graph hierarchy where the node should be created.
@@ -247,13 +227,62 @@ pub struct CreateNode {
     pub node_type: String,
 }
 
-/// A command to insert an Inspect node on an edge.
+/// Evaluate an entrypoint (push or pull).
+#[derive(Clone, Debug)]
+pub struct EvalEntry(pub gantz_core::compile::Entrypoint);
+
+/// Export all named graphs (with transitive deps + views) to a single
+/// `.gantz` file. Emitted without an associated head.
+#[derive(Clone, Copy, Debug)]
+pub struct ExportAllNamed;
+
+/// Export the emitting head (graph + transitive deps + views) to a `.gantz`
+/// file.
+#[derive(Clone, Copy, Debug)]
+pub struct ExportHead;
+
+/// Insert an inspect node on the given edge at the given position.
 #[derive(Clone, Debug)]
 pub struct InspectEdge {
     pub path: Vec<node::Id>,
     pub edge: petgraph::graph::EdgeIndex<usize>,
     pub pos: egui::Pos2,
 }
+
+/// Open the command palette for node creation.
+///
+/// Handled by `Gantz::show` itself - applications never see this payload.
+#[derive(Clone, Copy, Debug)]
+pub struct OpenCommandPalette;
+
+/// Open a head (named or commit) as a new tab.
+#[derive(Clone, Debug)]
+pub struct OpenHead(pub gantz_ca::Head);
+
+/// Navigate the path within the emitting head's graph hierarchy.
+///
+/// Handled by `Gantz::show` itself - applications never see this payload.
+#[derive(Clone, Debug)]
+pub struct OpenPath(pub Vec<node::Id>);
+
+/// Paste clipboard contents at the given position.
+///
+/// `text` is `Some` when the integration layer provides clipboard text
+/// directly (e.g. via `egui::Event::Paste` in eframe). When `None`, the
+/// handler is expected to read the system clipboard itself.
+#[derive(Clone, Debug)]
+pub struct Paste {
+    pub text: Option<String>,
+    pub pos: PastePos,
+}
+
+/// Redo a previously undone edit (move head forward).
+#[derive(Clone, Copy, Debug)]
+pub struct Redo;
+
+/// Undo the last graph edit (move head to parent commit).
+#[derive(Clone, Copy, Debug)]
+pub struct Undo;
 
 impl<'a, N> NodeUi for &'a mut N
 where
@@ -330,7 +359,7 @@ impl<'a> NodeCtx<'a> {
         inlets: &'a [node::Id],
         outlets: &'a [node::Id],
         vm: &'a mut Engine,
-        cmds: &'a mut Vec<Cmd>,
+        responses: &'a mut Vec<Box<dyn ResponseData>>,
     ) -> Self {
         Self {
             registry,
@@ -338,8 +367,19 @@ impl<'a> NodeCtx<'a> {
             inlets,
             outlets,
             vm,
-            cmds,
+            responses,
         }
+    }
+
+    /// Emit a response payload for the application to handle after the GUI
+    /// pass.
+    ///
+    /// Payloads may be any of the builtin types (e.g. [`OpenHead`],
+    /// [`EvalEntry`]) or custom types defined alongside the node, allowing
+    /// independently-declared nodes to communicate with application-specific
+    /// handlers.
+    pub fn response<T: ResponseData>(&mut self, data: T) {
+        self.responses.push(Box::new(data));
     }
 
     /// Provide access to the registry.
@@ -384,7 +424,7 @@ impl<'a> NodeCtx<'a> {
     /// was compiled.
     pub fn push_eval(&mut self, n_outputs: u8) {
         let ep = gantz_core::compile::entrypoint::push(self.path.to_vec(), n_outputs);
-        self.cmds.push(Cmd::EvalEntry(ep));
+        self.response(EvalEntry(ep));
     }
 
     /// Queue a call to the generated pull evaluation function for this node.
@@ -394,7 +434,7 @@ impl<'a> NodeCtx<'a> {
     /// was compiled.
     pub fn pull_eval(&mut self, n_inputs: u8) {
         let ep = gantz_core::compile::entrypoint::pull(self.path.to_vec(), n_inputs);
-        self.cmds.push(Cmd::EvalEntry(ep));
+        self.response(EvalEntry(ep));
     }
 
     /// The IDs of the inlets within the current graph.

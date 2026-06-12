@@ -1,5 +1,7 @@
 use crate::{
-    Cmd, GraphViews, HeadAccess, NodeCtx, NodeUi, Registry, export,
+    CopyNodes, CreateNode, ExportAllNamed, ExportHead, GraphViews, HeadAccess, NodeCtx, NodeUi,
+    OpenCommandPalette, OpenPath, Paste, Redo, Registry, Undo, export,
+    response::{ResponseData, Responses},
     widget::{
         self, GraphScene, GraphSceneState,
         graph_scene::{self, ToGraphMut},
@@ -29,7 +31,7 @@ pub enum FileDropTarget {
 /// A registry of available node types.
 ///
 /// Provides the list of node type names available for creation.
-/// Actual node creation is handled via [`crate::Cmd::CreateNode`].
+/// Actual node creation is handled via [`crate::CreateNode`].
 pub trait NodeTypeRegistry {
     /// The unique name of each node available.
     fn node_types(&self) -> Vec<&str>;
@@ -179,14 +181,19 @@ where
     Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
 {
     gantz: &'a mut Gantz<'s>,
-    state: &'s mut GantzState,
-    access: &'s mut Access,
+    state: &'a mut GantzState,
+    access: &'a mut Access,
     focused_head: usize,
-    base_names: &'s gantz_ca::registry::Names,
+    base_names: &'a gantz_ca::registry::Names,
     gantz_response: &'a mut GantzResponse,
 }
 
 /// Response from the top-level gantz widget.
+///
+/// Whole-widget outcomes (focus, tab management, file drops, config) are
+/// plain fields; operations emitted from deeper within the widget tree
+/// (node UIs, context menus, shortcuts) arrive as dynamic payloads in
+/// [`responses`][Self::responses] for the application to drain and handle.
 #[derive(Debug)]
 pub struct GantzResponse {
     /// The focused head index (may have changed due to user interaction).
@@ -204,6 +211,9 @@ pub struct GantzResponse {
     pub reset_base_graph: Option<gantz_ca::Head>,
     /// The global compile config was changed via the Graph Config pane.
     pub compile_config: Option<gantz_core::compile::Config>,
+    /// Dynamic payloads emitted from within the widget tree, tagged with the
+    /// emitting head. See [`crate::response`] for the handling contract.
+    pub responses: Responses,
 }
 
 /// State for editing a tab name via double-click.
@@ -275,14 +285,6 @@ impl GantzResponse {
         self.graph_select
             .as_ref()
             .map(|g| g.import)
-            .unwrap_or(false)
-    }
-
-    /// Indicates the export-all button was clicked.
-    pub fn export_all(&self) -> bool {
-        self.graph_select
-            .as_ref()
-            .map(|g| g.export_all)
             .unwrap_or(false)
     }
 }
@@ -404,6 +406,7 @@ impl<'a> Gantz<'a> {
             demo_changed: None,
             reset_base_graph: None,
             compile_config: None,
+            responses: Responses::default(),
         };
 
         // The context for traversing the tree of tiles.
@@ -424,6 +427,16 @@ impl<'a> Gantz<'a> {
         // Detect .gantz file drops globally (not per-pane, since pointer
         // position may be unavailable during OS file drags on some platforms).
         response.file_drops = collect_gantz_file_drops(ui.ctx());
+
+        // Apply payloads that only affect `GantzState`, so applications never
+        // see them: path navigation and command palette toggling.
+        for (head, OpenPath(path)) in response.responses.take::<OpenPath>() {
+            let Some(head) = head else { continue };
+            state.open_heads.entry(head).or_default().path = path;
+        }
+        for _ in response.responses.take::<OpenCommandPalette>() {
+            state.command_palette.toggle();
+        }
 
         // Persist the tree.
         ui.memory_mut(|m| m.data.insert_persisted(tree_id, Some(tree)));
@@ -597,8 +610,7 @@ where
                         gantz_response.compile_config = Some(cfg);
                     }
                     if res.inner.export {
-                        let head_state = state.open_heads.entry(head).or_default();
-                        head_state.scene.cmds.push(Cmd::ExportHead);
+                        gantz_response.responses.push(Some(head), ExportHead);
                     }
                 }
                 None => {
@@ -645,6 +657,7 @@ where
                     focused_head,
                     closed_heads: &mut gantz_response.closed_heads,
                     new_branch: &mut gantz_response.new_branch,
+                    responses: &mut gantz_response.responses,
                     base_names,
                     base_immutable: gantz.base_immutable,
                 };
@@ -664,7 +677,9 @@ where
                         // Copy is always allowed.
                         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::C)) {
                             let nodes = head_state.scene.interaction.selection.nodes.clone();
-                            head_state.scene.cmds.push(Cmd::CopyNodes(nodes));
+                            gantz_response
+                                .responses
+                                .push(Some(fh.clone()), CopyNodes(nodes));
                         }
                         // New graph: Cmd/Ctrl+N.
                         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::N)) {
@@ -687,10 +702,11 @@ where
                             let ctrl_v = paste_text.is_some()
                                 || ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::V));
                             if ctrl_v {
-                                head_state.scene.cmds.push(Cmd::Paste {
+                                let paste = Paste {
                                     text: paste_text,
                                     pos: crate::PastePos::Offset(egui::vec2(20.0, 20.0)),
-                                });
+                                };
+                                gantz_response.responses.push(Some(fh.clone()), paste);
                             }
                             // Undo: Cmd/Ctrl+Z (without Shift).
                             if ui.input(|i| {
@@ -698,7 +714,7 @@ where
                                     && !i.modifiers.shift
                                     && i.key_pressed(egui::Key::Z)
                             }) {
-                                head_state.scene.cmds.push(Cmd::Undo);
+                                gantz_response.responses.push(Some(fh.clone()), Undo);
                             }
                             // Redo: Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y.
                             if ui.input(|i| {
@@ -707,14 +723,21 @@ where
                                     && i.key_pressed(egui::Key::Z))
                                     || (i.modifiers.command && i.key_pressed(egui::Key::Y))
                             }) {
-                                head_state.scene.cmds.push(Cmd::Redo);
+                                gantz_response.responses.push(Some(fh.clone()), Redo);
                             }
                         }
                     }
 
                     // Skip command palette when immutable.
                     if !focused_immutable {
-                        command_palette(gantz.env, head_state, &mut state.command_palette, ui);
+                        command_palette(
+                            gantz.env,
+                            &fh,
+                            head_state,
+                            &mut state.command_palette,
+                            &mut gantz_response.responses,
+                            ui,
+                        );
                     }
                 }
 
@@ -735,10 +758,7 @@ where
                 let res = graph_select(gantz.env, heads, *focused_head, *base_names, ui);
 
                 if res.inner.export_all {
-                    if let Some(fh) = access.heads().get(*focused_head).cloned() {
-                        let head_state = state.open_heads.entry(fh).or_default();
-                        head_state.scene.cmds.push(Cmd::ExportAllNamed);
-                    }
+                    gantz_response.responses.push(None, ExportAllNamed);
                 }
                 match &mut gantz_response.graph_select {
                     Some(gs) => *gs |= res.inner,
@@ -789,8 +809,10 @@ where
                     // Clicking an entry navigates to and selects its node.
                     if let (Some(path), Some(fh)) = (res.inner.clicked_path, focused) {
                         if let Some((&node_id, parent)) = path.split_last() {
-                            let head_state = state.open_heads.entry(fh).or_default();
-                            head_state.scene.cmds.push(Cmd::OpenPath(parent.to_vec()));
+                            let head_state = state.open_heads.entry(fh.clone()).or_default();
+                            gantz_response
+                                .responses
+                                .push(Some(fh), OpenPath(parent.to_vec()));
                             let selection = &mut head_state.scene.interaction.selection;
                             selection.clear();
                             selection.nodes.insert(graph_scene::NodeIndex::new(node_id));
@@ -807,9 +829,19 @@ where
                 if let Some(fh) = access.heads().get(*focused_head).cloned() {
                     let immutable = head_immutable(&fh, gantz.base_immutable, base_names);
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
+                    let mut responses: Vec<Box<dyn ResponseData>> = Vec::new();
                     access.with_head_mut(&fh, |data| {
-                        node_inspector(gantz.env, data.graph, data.vm, head_state, immutable, ui);
+                        node_inspector(
+                            gantz.env,
+                            data.graph,
+                            data.vm,
+                            head_state,
+                            immutable,
+                            &mut responses,
+                            ui,
+                        );
                     });
+                    gantz_response.responses.extend(Some(&fh), responses);
                 }
             }
             Pane::Steel => {
@@ -894,6 +926,8 @@ where
     closed_heads: &'a mut Vec<gantz_ca::Head>,
     /// New branch created from tab double-click: (original_head, new_branch_name).
     new_branch: &'a mut Option<(gantz_ca::Head, String)>,
+    /// Dynamic payloads emitted from within the graph scenes.
+    responses: &'a mut Responses,
     base_names: &'a gantz_ca::registry::Names,
     base_immutable: bool,
 }
@@ -1107,6 +1141,7 @@ where
                 immutable,
                 &diagnostics,
                 data.vm,
+                self.responses,
                 ui,
             )
         });
@@ -1456,6 +1491,7 @@ fn graph_scene<N>(
     immutable: bool,
     diagnostics: &[gantz_core::Diagnostic],
     vm: &mut Engine,
+    responses: &mut Responses,
     ui: &mut egui::Ui,
 ) -> Option<graph_scene::GraphSceneResponse>
 where
@@ -1485,13 +1521,16 @@ where
                     }
                 });
 
-            let response = GraphScene::new(registry, graph, &head_state.path)
+            let mut response = GraphScene::new(registry, graph, &head_state.path)
                 .with_id(id)
                 .auto_layout(auto_layout)
                 .layout_flow(layout_flow)
                 .center_view(center_view)
                 .immutable(immutable)
                 .show(view, &mut head_state.scene, vm, ui);
+
+            // Tag the scene's emissions with this head.
+            responses.extend(Some(head), response.responses.drain(..));
 
             graph_scene::paint_diagnostics(diagnostics, &head_state.path, &response, ui);
 
@@ -1524,7 +1563,7 @@ where
                 .show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
                         if ui.add(button("R")).on_hover_text("root graph").clicked() {
-                            head_state.scene.cmds.push(Cmd::OpenPath(vec![]));
+                            responses.push(Some(head.clone()), OpenPath(vec![]));
                             head_state.scene.interaction.selection.clear();
                         }
                     });
@@ -1540,7 +1579,7 @@ where
                                 .clicked()
                             {
                                 if !current_path {
-                                    head_state.scene.cmds.push(Cmd::OpenPath(path.to_vec()));
+                                    responses.push(Some(head.clone()), OpenPath(path.to_vec()));
                                     head_state.scene.interaction.selection.clear();
                                 }
                             }
@@ -1554,8 +1593,10 @@ where
 
 fn command_palette(
     env: &dyn Registry,
-    head_state: &mut OpenHeadState,
+    head: &gantz_ca::Head,
+    head_state: &OpenHeadState,
     cmd_palette: &mut widget::CommandPalette,
+    responses: &mut Responses,
     ui: &mut egui::Ui,
 ) {
     // If space is pressed, toggle command palette visibility.
@@ -1569,15 +1610,13 @@ fn command_palette(
     let types = env.node_types();
     let cmds = types.iter().map(|&k| NodeTyCmd { env, name: k });
 
-    // If a command was emitted, emit a CreateNode command.
+    // If a command was emitted, emit a CreateNode payload.
     if let Some(cmd) = cmd_palette.show(ui.ctx(), cmds) {
-        head_state
-            .scene
-            .cmds
-            .push(crate::Cmd::CreateNode(crate::CreateNode {
-                path: head_state.path.clone(),
-                node_type: cmd.name.to_string(),
-            }));
+        let create = CreateNode {
+            path: head_state.path.clone(),
+            node_type: cmd.name.to_string(),
+        };
+        responses.push(Some(head.clone()), create);
     }
 }
 
@@ -1625,6 +1664,7 @@ fn node_inspector<N>(
     vm: &mut Engine,
     head_state: &mut OpenHeadState,
     immutable: bool,
+    responses: &mut Vec<Box<dyn ResponseData>>,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<()>
 where
@@ -1650,14 +1690,8 @@ where
                         let ix = id.index();
                         let path: Vec<_> =
                             head_state.path.iter().copied().chain(Some(ix)).collect();
-                        let ctx = NodeCtx::new(
-                            registry,
-                            &path[..],
-                            &inlets,
-                            &outlets,
-                            vm,
-                            &mut head_state.scene.cmds,
-                        );
+                        let ctx =
+                            NodeCtx::new(registry, &path[..], &inlets, &outlets, vm, responses);
                         let resp = widget::NodeInspector::new(node, ctx, immutable).show(ui);
                         if resp.label_response.clicked() {
                             let sel = &mut head_state.scene.interaction.selection.nodes;

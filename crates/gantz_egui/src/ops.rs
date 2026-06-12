@@ -1,10 +1,10 @@
-//! Shared operations behind the GUI's graph-mutating commands.
+//! Shared operations behind the GUI's graph-mutating response payloads.
 //!
-//! Each fn implements the state change for one [`Cmd`][crate::Cmd] over plain
-//! graph/view/VM/registry types so that frontends (e.g. `bevy_gantz_egui` and
-//! the pure-egui demo) remain thin adapters around identical behaviour.
-//! Frontend-specific effects (clipboard access, file dialogs, head
-//! navigation) stay with the caller.
+//! Each fn implements the state change for one payload (e.g.
+//! [`CreateNode`][crate::CreateNode]) over plain graph/view/VM/registry types
+//! so that frontends (e.g. `bevy_gantz_egui` and the pure-egui demo) remain
+//! thin adapters around identical behaviour. Frontend-specific effects
+//! (clipboard access, file dialogs, head navigation) stay with the caller.
 
 use crate::widget::gantz::OpenHeadState;
 use crate::widget::graph_scene::{self, NodeIndex, ToGraphMut};

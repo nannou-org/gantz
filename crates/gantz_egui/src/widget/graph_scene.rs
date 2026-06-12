@@ -1,4 +1,7 @@
-use crate::{Cmd, NodeUi, PastePos, Registry};
+use crate::{
+    CopyNodes, InspectEdge, NodeUi, OpenCommandPalette, OpenHead, Paste, PastePos, Registry,
+    response::ResponseData,
+};
 use egui::emath::GuiRounding;
 use egui_graph::{self, SocketKind, node::EdgeEvent};
 use gantz_core::{
@@ -18,6 +21,9 @@ pub struct GraphSceneResponse {
     pub scene: egui::Response,
     /// Responses from each node, keyed by node index.
     pub nodes: Vec<(NodeIndex, NodeResponse)>,
+    /// Dynamic payloads emitted within the scene (node UIs, context menus),
+    /// to be handled by the application after the pass.
+    pub responses: Vec<Box<dyn ResponseData>>,
 }
 
 /// An alias for the node response type returned from gantz nodes.
@@ -66,9 +72,6 @@ pub struct GraphScene<'a, N> {
 #[derive(Default, serde::Deserialize, serde::Serialize)]
 pub struct GraphSceneState {
     pub interaction: Interaction,
-    /// Commands queued within the graph scene widget to be handled externally.
-    #[serde(default, skip)]
-    pub cmds: Vec<Cmd>,
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -171,6 +174,7 @@ where
             view.layout = layout(&*self.graph, self.id, self.layout_flow, ui.ctx());
         }
         let mut node_responses = Vec::new();
+        let mut responses: Vec<Box<dyn ResponseData>> = Vec::new();
         let selected: HashSet<egui_graph::NodeId> = state
             .interaction
             .selection
@@ -191,12 +195,15 @@ where
                         self.path,
                         nctx,
                         state,
+                        &mut responses,
                         vm,
                         immutable,
                         ui,
                     );
                 })
-                .edges(ui, |ectx, ui| edges(self.graph, self.path, ectx, state, ui));
+                .edges(ui, |ectx, ui| {
+                    edges(self.graph, self.path, ectx, state, &mut responses, ui)
+                });
             });
 
         // Sync selection when egui_graph reports a change.
@@ -217,7 +224,7 @@ where
                 // positioning.
                 let menu_screen_pos = ui.min_rect().left_top();
                 if ui.button("add node").clicked() {
-                    state.cmds.push(Cmd::OpenCommandPalette);
+                    responses.push(Box::new(OpenCommandPalette));
                     ui.close();
                 }
                 if ui.button("paste").clicked() {
@@ -227,7 +234,7 @@ where
                         .map(|t| t * menu_screen_pos)
                         .unwrap_or(menu_screen_pos);
                     let pos = PastePos::GraphPos(graph_pos);
-                    state.cmds.push(Cmd::Paste { text: None, pos });
+                    responses.push(Box::new(Paste { text: None, pos }));
                     ui.close();
                 }
             });
@@ -236,6 +243,7 @@ where
         GraphSceneResponse {
             scene: graph_response.response,
             nodes: node_responses,
+            responses,
         }
     }
 }
@@ -293,6 +301,7 @@ fn nodes<N>(
     path: &[node::Id],
     nctx: &mut egui_graph::NodesCtx,
     state: &mut GraphSceneState,
+    responses: &mut Vec<Box<dyn ResponseData>>,
     vm: &mut Engine,
     immutable: bool,
     ui: &mut egui::Ui,
@@ -306,7 +315,7 @@ where
     let node_ids: Vec<_> = graph.node_identifiers().collect();
     let mut path = path.to_vec();
     let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
-    let mut responses = Vec::with_capacity(node_ids.len());
+    let mut node_responses = Vec::with_capacity(node_ids.len());
     let mut nodes_to_delete = Vec::new();
     let mut nodes_to_reset = Vec::new();
     for n_id in node_ids {
@@ -325,7 +334,7 @@ where
 
                 // Create the gantz node context.
                 let node_ctx =
-                    crate::NodeCtx::new(registry, &path, &inlets, &outlets, vm, &mut state.cmds);
+                    crate::NodeCtx::new(registry, &path, &inlets, &outlets, vm, responses);
 
                 // Instantiate the node UI, return its response.
                 let response = node.ui(node_ctx, nui_ctx);
@@ -376,7 +385,7 @@ where
                 HashSet::from([n_id])
             };
             if ui.button("copy").clicked() {
-                state.cmds.push(Cmd::CopyNodes(target.clone()));
+                responses.push(Box::new(CopyNodes(target.clone())));
                 ui.close();
             }
             // Demo graph, if the node has one.
@@ -384,9 +393,7 @@ where
             let demo_btn = ui.add_enabled(demo_name.is_some(), egui::Button::new("demo"));
             if let Some(name) = demo_name {
                 if demo_btn.on_hover_text(format!("opens {name}")).clicked() {
-                    state
-                        .cmds
-                        .push(Cmd::OpenHead(gantz_ca::Head::Branch(name.to_string())));
+                    responses.push(Box::new(OpenHead(gantz_ca::Head::Branch(name.to_string()))));
                     ui.close();
                 }
             } else {
@@ -412,7 +419,7 @@ where
             }
         });
 
-        responses.push((n_id, response));
+        node_responses.push((n_id, response));
     }
 
     // Unified delete: both keyboard and context menu deletes go through here.
@@ -439,7 +446,7 @@ where
         gantz_core::graph::register(&get_node, &*graph, &path, vm);
     }
 
-    responses
+    node_responses
 }
 
 fn edges<N>(
@@ -447,6 +454,7 @@ fn edges<N>(
     path: &[node::Id],
     ectx: &mut egui_graph::EdgesCtx,
     state: &mut GraphSceneState,
+    responses: &mut Vec<Box<dyn ResponseData>>,
     ui: &mut egui::Ui,
 ) {
     // Track whether any edge has a context menu open this frame.
@@ -489,7 +497,7 @@ fn edges<N>(
         response.context_menu(|ui| {
             if ui.button("inspect").clicked() {
                 if let Some(pos) = state.interaction.edge_context_menu_pos.take() {
-                    state.cmds.push(Cmd::InspectEdge(crate::InspectEdge {
+                    responses.push(Box::new(InspectEdge {
                         path: path.to_vec(),
                         edge: e,
                         pos,
