@@ -17,8 +17,8 @@ use bevy_ecs::prelude::{
 pub use builtin::{BuiltinNodes, Builtins};
 use gantz_core::Node;
 pub use head::{
-    CompiledModule, FocusedHead, HeadRef, HeadTabOrder, HeadVms, OpenHead, OpenHeadData,
-    OpenHeadDataReadOnly, WorkingGraph,
+    FocusedHead, HeadRef, HeadTabOrder, HeadVms, OpenHead, OpenHeadData, OpenHeadDataReadOnly,
+    WorkingGraph,
 };
 pub use reg::{Registry, lookup_node, timestamp};
 pub use vm::{CompileConfig, EntrypointFns, EvalEntryComplete, EvalEntryEvent};

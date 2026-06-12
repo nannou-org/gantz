@@ -27,7 +27,8 @@ pub struct OpenHeadData<N: 'static + Send + Sync> {
     pub entity: Entity,
     pub head_ref: &'static mut HeadRef,
     pub working_graph: &'static mut WorkingGraph<N>,
-    pub compiled: &'static mut CompiledModule,
+    pub module: &'static mut Module,
+    pub diagnostics: &'static mut Diagnostics,
 }
 
 // ----------------------------------------------------------------------------
@@ -46,9 +47,26 @@ pub struct HeadRef(pub ca::Head);
 #[derive(Component)]
 pub struct WorkingGraph<N>(pub gantz_core::node::graph::Graph<N>);
 
-/// The compiled Steel module for this head (as a string).
-#[derive(Component, Default, Clone)]
-pub struct CompiledModule(pub String);
+/// The latest compile outcome for this head.
+///
+/// `compiled` is kept even when steel rejected the generated module, so its
+/// source remains displayable and error spans resolvable; it is `None` only
+/// when module generation itself failed. Both fields can be present (a
+/// generated module that failed evaluation).
+#[derive(Component, Default)]
+pub struct Module {
+    /// The module artifact: source text + source map.
+    pub compiled: Option<gantz_core::vm::Compiled>,
+    /// The rendered error chain from a failed compile.
+    pub error: Option<String>,
+}
+
+/// Diagnostics from the head's latest compile and entrypoint evaluations.
+///
+/// Compile diagnostics are replaced wholesale on every (re)compile; runtime
+/// diagnostics are replaced per evaluation and cleared on success.
+#[derive(Component, Default)]
+pub struct Diagnostics(pub Vec<gantz_core::Diagnostic>);
 
 // ----------------------------------------------------------------------------
 // Events
@@ -174,13 +192,6 @@ impl<N> DerefMut for WorkingGraph<N> {
     }
 }
 
-impl Deref for CompiledModule {
-    type Target = str;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 impl Deref for HeadVms {
     type Target = HashMap<Entity, Engine>;
     fn deref(&self) -> &Self::Target {
@@ -275,7 +286,7 @@ pub fn on_open<N>(
         return;
     };
 
-    // Spawn entity (NO CompiledModule - app observer adds it after VM init).
+    // Spawn entity (NO Module/Diagnostics - app observer adds them after VM init).
     // Note: HeadGuiState and GraphViews are added by GantzEguiPlugin observer.
     let entity = cmds
         .spawn((OpenHead, HeadRef(new_head.clone()), WorkingGraph(graph)))
@@ -320,7 +331,7 @@ pub fn on_replace<N>(
         return;
     };
 
-    // Update entity components (NO CompiledModule - app observer adds it).
+    // Update entity components (NO Module/Diagnostics - app observer adds them).
     // Note: HeadGuiState and GraphViews are updated by GantzEguiPlugin observer.
     cmds.entity(focused_entity)
         .insert(HeadRef(new_head.clone()))

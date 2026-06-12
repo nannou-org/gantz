@@ -16,3 +16,6 @@ serde.workspace = true
 steel-core.workspace = true
 steel-derive.workspace = true
 typetag.workspace = true
+
+[dev-dependencies]
+petgraph.workspace = true

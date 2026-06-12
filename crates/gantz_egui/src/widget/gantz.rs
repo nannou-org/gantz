@@ -7,7 +7,7 @@ use crate::{
 };
 use gantz_core::{Node, node};
 use petgraph::visit::{IntoNodeReferences, NodeRef};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use steel::steel_vm::engine::Engine;
 
 /// A file dropped onto a gantz pane.
@@ -761,7 +761,41 @@ where
             Pane::Logs => match &gantz.log_source {
                 None => (),
                 Some(LogSource::Logger(logger)) => {
-                    log_view(logger, ui);
+                    // Resolve labels for entries emitted by nodes of the
+                    // focused head (the target encodes the node's path).
+                    let focused = access.heads().get(*focused_head).cloned();
+                    let mut labels: HashMap<Vec<node::Id>, String> = HashMap::new();
+                    if let Some(fh) = &focused {
+                        let paths: BTreeSet<Vec<node::Id>> = logger
+                            .get_entries()
+                            .iter()
+                            .filter_map(|e| gantz_std::log::parse_log_target(&e.target))
+                            .collect();
+                        if !paths.is_empty() {
+                            let env = gantz.env;
+                            access.with_head_mut(fh, |data| {
+                                for path in paths {
+                                    let Some(node) =
+                                        graph_scene::index_path_node_mut(data.graph, &path)
+                                    else {
+                                        continue;
+                                    };
+                                    labels.insert(path, node.name(env).to_string());
+                                }
+                            });
+                        }
+                    }
+                    let res = log_view(logger, &labels, ui);
+                    // Clicking an entry navigates to and selects its node.
+                    if let (Some(path), Some(fh)) = (res.inner.clicked_path, focused) {
+                        if let Some((&node_id, parent)) = path.split_last() {
+                            let head_state = state.open_heads.entry(fh).or_default();
+                            head_state.scene.cmds.push(Cmd::OpenPath(parent.to_vec()));
+                            let selection = &mut head_state.scene.interaction.selection;
+                            selection.clear();
+                            selection.nodes.insert(graph_scene::NodeIndex::new(node_id));
+                        }
+                    }
                 }
                 #[cfg(feature = "tracing")]
                 Some(LogSource::TraceCapture(trace_capture, level)) => {
@@ -779,13 +813,62 @@ where
                 }
             }
             Pane::Steel => {
-                // Use the focused head's compiled module.
-                let compiled_steel = access
-                    .heads()
-                    .get(*focused_head)
-                    .and_then(|h| access.compiled_module(h))
+                // Use the focused head's compiled module, highlighting the
+                // selected nodes' emitted fns/call sites and any diagnostic
+                // spans. A failed compile's error renders above the code.
+                let focused = access.heads().get(*focused_head).cloned();
+                let compile_error = focused.as_ref().and_then(|h| access.compile_error(h));
+                let compiled_steel = focused
+                    .as_ref()
+                    .and_then(|h| access.module(h))
+                    .map(|m| m.src.as_str())
                     .unwrap_or("");
-                steel_view(compiled_steel, ui);
+                let mut highlights: Vec<std::ops::Range<usize>> = vec![];
+                let mut scroll_to = None;
+                let mut errors: Vec<std::ops::Range<usize>> = vec![];
+                if let Some(h) = &focused {
+                    errors = access
+                        .diagnostics(h)
+                        .iter()
+                        .filter_map(|d| d.span.clone())
+                        .collect();
+                    let head_state = state.open_heads.get(h);
+                    if let (Some(module), Some(head_state)) = (access.module(h), head_state) {
+                        let level = &head_state.path;
+                        let mut selected: Vec<node::Id> = head_state
+                            .scene
+                            .interaction
+                            .selection
+                            .nodes
+                            .iter()
+                            .map(|n| n.index())
+                            .collect();
+                        selected.sort_unstable();
+                        for &ix in &selected {
+                            let path: Vec<node::Id> = level.iter().copied().chain([ix]).collect();
+                            let spans = module.map.node_spans(&path);
+                            highlights.extend(spans.defs);
+                            highlights.extend(spans.refs);
+                        }
+                        // Scroll to the first highlighted span when the
+                        // selection changes.
+                        let state_id = egui::Id::new("steel_view_selection");
+                        let current = egui::Id::new(("steel_sel", h, level, &selected));
+                        let prev: Option<egui::Id> = ui.ctx().data(|d| d.get_temp(state_id));
+                        if prev != Some(current) {
+                            ui.ctx().data_mut(|d| d.insert_temp(state_id, current));
+                            scroll_to = highlights.iter().map(|r| r.start).min();
+                        }
+                    }
+                }
+                steel_view(
+                    compiled_steel,
+                    compile_error,
+                    &highlights,
+                    &errors,
+                    scroll_to,
+                    ui,
+                );
             }
             Pane::VmPerf => {
                 if let Some(ref mut capture) = gantz.perf_vm {
@@ -1003,6 +1086,7 @@ where
             .expect("pane head not found in heads");
 
         let immutable = head_immutable(pane_head, self.base_immutable, self.base_names);
+        let diagnostics = self.access.diagnostics(pane_head).to_vec();
 
         let head_state = self.state.open_heads.entry(pane_head.clone()).or_default();
         let auto_layout = head_state.auto_layout;
@@ -1021,6 +1105,7 @@ where
                 layout_flow,
                 center_view,
                 immutable,
+                &diagnostics,
                 data.vm,
                 ui,
             )
@@ -1369,6 +1454,7 @@ fn graph_scene<N>(
     layout_flow: egui::Direction,
     center_view: bool,
     immutable: bool,
+    diagnostics: &[gantz_core::Diagnostic],
     vm: &mut Engine,
     ui: &mut egui::Ui,
 ) -> Option<graph_scene::GraphSceneResponse>
@@ -1406,6 +1492,8 @@ where
                 .center_view(center_view)
                 .immutable(immutable)
                 .show(view, &mut head_state.scene, vm, ui);
+
+            graph_scene::paint_diagnostics(diagnostics, &head_state.path, &response, ui);
 
             Some(response)
         }
@@ -1493,9 +1581,15 @@ fn command_palette(
     }
 }
 
-fn log_view(logger: &widget::log_view::Logger, ui: &mut egui::Ui) -> egui::InnerResponse<()> {
+fn log_view(
+    logger: &widget::log_view::Logger,
+    node_labels: &HashMap<Vec<node::Id>, String>,
+    ui: &mut egui::Ui,
+) -> egui::InnerResponse<widget::log_view::LogViewResponse> {
     pane_ui(ui, |ui| {
-        widget::log_view::LogView::new("log-view".into(), logger.clone()).show(ui);
+        widget::log_view::LogView::new("log-view".into(), logger.clone())
+            .node_labels(node_labels)
+            .show(ui)
     })
 }
 
@@ -1582,12 +1676,31 @@ where
     })
 }
 
-fn steel_view(compiled_steel: &str, ui: &mut egui::Ui) -> egui::InnerResponse<()> {
+fn steel_view(
+    compiled_steel: &str,
+    compile_error: Option<&str>,
+    highlights: &[std::ops::Range<usize>],
+    errors: &[std::ops::Range<usize>],
+    scroll_to: Option<usize>,
+    ui: &mut egui::Ui,
+) -> egui::InnerResponse<()> {
     pane_ui(ui, |ui| {
         egui::ScrollArea::vertical()
             .auto_shrink(egui::Vec2b::FALSE)
             .show(ui, |ui| {
-                widget::steel_view(ui, &compiled_steel);
+                if let Some(error) = compile_error {
+                    let color = ui.visuals().error_fg_color;
+                    let text = egui::RichText::new(error).monospace().color(color);
+                    ui.add(egui::Label::new(text).selectable(true));
+                    if !compiled_steel.is_empty() {
+                        ui.separator();
+                    }
+                }
+                widget::SteelView::new(compiled_steel)
+                    .highlights(highlights)
+                    .errors(errors)
+                    .scroll_to(scroll_to)
+                    .show(ui);
             });
     })
 }

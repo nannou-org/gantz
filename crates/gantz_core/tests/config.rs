@@ -119,7 +119,7 @@ fn emit_all_node_fns_includes_uncalled_nodes() {
     let g = test_graph();
     let eps = push_pull_entrypoints(&no_lookup, &g);
     let (mut vm, module) = gantz_core::vm::init(&no_lookup, &g, &eps, &config).unwrap();
-    let module_str = gantz_core::vm::fmt_module(&module);
+    let module_str = module.src;
     for fn_name in ORPHAN_FNS {
         assert!(module_str.contains(fn_name), "missing {fn_name}");
     }

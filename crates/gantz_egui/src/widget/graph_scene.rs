@@ -1,4 +1,5 @@
 use crate::{Cmd, NodeUi, PastePos, Registry};
+use egui::emath::GuiRounding;
 use egui_graph::{self, SocketKind, node::EdgeEvent};
 use gantz_core::{
     Edge, Node,
@@ -550,4 +551,107 @@ where
         return Some(graph);
     }
     index_path_node_mut(graph, path).and_then(|node| node.to_graph_mut())
+}
+
+/// The id of the node to flag at the viewed level for a diagnostic path: the
+/// next id under the level, so diagnostics within nested graphs flag the
+/// enclosing graph node. `None` when the path is empty or lies outside the
+/// level.
+fn diagnostic_node_at_level(diag_path: &[node::Id], level: &[node::Id]) -> Option<node::Id> {
+    diag_path.strip_prefix(level)?.first().copied()
+}
+
+/// Paint a glow and hover message over the nodes implicated by diagnostics,
+/// and tint the scene border when any diagnostic cannot be attributed to a
+/// node visible at this level (e.g. a whole-graph error, or one in a level
+/// not currently viewed).
+pub fn paint_diagnostics(
+    diagnostics: &[gantz_core::Diagnostic],
+    level: &[node::Id],
+    response: &GraphSceneResponse,
+    ui: &egui::Ui,
+) {
+    if diagnostics.is_empty() {
+        return;
+    }
+    let color = ui.visuals().error_fg_color;
+    let mut unattributed = false;
+    for diag in diagnostics {
+        let flagged = diagnostic_node_at_level(&diag.path, level).and_then(|flag| {
+            let ix = response
+                .nodes
+                .iter()
+                .position(|(ix, _)| ix.index() == flag)?;
+            Some(&response.nodes[ix].1)
+        });
+        let Some(node_response) = flagged else {
+            unattributed = true;
+            continue;
+        };
+        // Paint on the node's own layer so the scene transform applies.
+        // Everything the painter receives must be in layer-local
+        // coordinates: egui maps a transformed layer's clip rects through
+        // its transform at tessellation, so the pane's (global) clip is
+        // mapped into local space rather than intersected as-is.
+        let to_global = ui
+            .ctx()
+            .layer_transform_to_global(node_response.layer_id)
+            .unwrap_or(egui::emath::TSTransform::IDENTITY);
+        let inv = to_global.inverse();
+        // The tessellator snaps each rect to physical pixels independently
+        // (`round_rects_to_pixels`), which at fractional transforms lets the
+        // rings land +-1px off the frame's own snapped edges. Snap the frame
+        // rect the same way the frame's shape will be, derive the rings from
+        // it, and disable their re-rounding so the gap stays even.
+        let ppp = ui.ctx().pixels_per_point();
+        let frame = inv.mul_rect(to_global.mul_rect(node_response.rect).round_to_pixels(ppp));
+        let mut painter = ui.ctx().layer_painter(node_response.layer_id);
+        let local_clip = inv.mul_rect(ui.clip_rect());
+        painter.set_clip_rect(local_clip.intersect(frame.expand(16.0)));
+        // A soft glow: thin rings hugging the frame, fading quickly. Ring
+        // corners grow from the node frame's radius (`Frame::window`, see
+        // `egui_graph::node::default_frame`) so the arcs stay concentric.
+        let frame_radius = ui.visuals().window_corner_radius;
+        let rings = [(1.0f32, 1.5, 0.45), (3.0, 2.0, 0.16), (5.5, 2.5, 0.06)];
+        for (expand, width, alpha) in rings {
+            painter.add(
+                egui::epaint::RectShape::stroke(
+                    frame.expand(expand),
+                    frame_radius + expand.round() as u8,
+                    egui::Stroke::new(width, color.gamma_multiply(alpha)),
+                    egui::StrokeKind::Outside,
+                )
+                .with_round_to_pixels(false),
+            );
+        }
+        (**node_response).clone().on_hover_text(&diag.message);
+    }
+    if unattributed {
+        ui.painter().rect_stroke(
+            response.scene.rect,
+            0,
+            egui::Stroke::new(2.0, color.gamma_multiply(0.6)),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::diagnostic_node_at_level;
+
+    #[test]
+    fn diagnostic_level_resolution() {
+        // A node at the viewed level flags itself.
+        assert_eq!(diagnostic_node_at_level(&[3], &[]), Some(3));
+        // A node within a nested graph flags the enclosing graph node.
+        assert_eq!(diagnostic_node_at_level(&[3, 2, 1], &[]), Some(3));
+        // Viewing inside the nested graph flags the inner node.
+        assert_eq!(diagnostic_node_at_level(&[3, 2, 1], &[3]), Some(2));
+        assert_eq!(diagnostic_node_at_level(&[3, 2, 1], &[3, 2]), Some(1));
+        // Outside the viewed level or empty: unattributable.
+        assert_eq!(diagnostic_node_at_level(&[3, 2], &[4]), None);
+        assert_eq!(diagnostic_node_at_level(&[], &[]), None);
+        assert_eq!(diagnostic_node_at_level(&[3], &[3]), None);
+    }
 }

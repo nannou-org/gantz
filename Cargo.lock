@@ -2990,6 +2990,7 @@ dependencies = [
  "gantz_ca",
  "gantz_core",
  "log",
+ "petgraph",
  "serde",
  "steel-core",
  "steel-derive",

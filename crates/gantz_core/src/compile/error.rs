@@ -9,14 +9,6 @@ use thiserror::Error;
 #[error("too many connections ({0}), max is {max}", max = node::Conns::MAX)]
 pub struct TooManyConns(pub usize);
 
-/// An edge references an invalid input index.
-#[derive(Debug, Error)]
-#[error("edge references invalid input index {index} (node has {n_inputs} inputs)")]
-pub struct InvalidInputIndex {
-    pub index: usize,
-    pub n_inputs: usize,
-}
-
 /// An edge references an invalid output index.
 #[derive(Debug, Error)]
 #[error("edge references invalid output index {index} (node has {n_outputs} outputs)")]
@@ -60,9 +52,6 @@ pub enum NodeConnsError {
     /// The node has too many connections.
     #[error(transparent)]
     TooManyConns(#[from] TooManyConns),
-    /// An edge references an invalid input index.
-    #[error(transparent)]
-    InvalidInputIndex(#[from] InvalidInputIndex),
     /// An edge references an invalid output index.
     #[error(transparent)]
     InvalidOutputIndex(#[from] InvalidOutputIndex),
@@ -81,23 +70,18 @@ pub struct MetaError {
 #[derive(Debug)]
 pub struct MetaErrors(pub Vec<MetaError>);
 
-/// Error during code generation.
-#[derive(Debug, Error)]
-pub enum CodegenError {
-    /// The node has too many inputs.
-    #[error(transparent)]
-    TooManyInputs(#[from] TooManyConns),
-    /// An edge references an invalid input index.
-    #[error(transparent)]
-    InvalidInputIndex(#[from] InvalidInputIndex),
-}
-
 /// Error while lowering a graph to the IR.
+///
+/// Node ids are relative to the level being lowered.
 #[derive(Debug, Error)]
 pub enum LowerError {
-    /// Error computing node connections.
-    #[error(transparent)]
-    Conns(#[from] NodeConnsError),
+    /// Error computing connection masks, at a specific node when known.
+    #[error("connection error{}", at_node(node))]
+    Conns {
+        node: Option<node::Id>,
+        #[source]
+        error: NodeConnsError,
+    },
     /// A node conditional on a branch arm depends on work outside the
     /// branch's region that has not yet been evaluated, so it can neither be
     /// lowered into the arm nor deferred past the branch.
@@ -125,15 +109,23 @@ pub enum LowerError {
 /// Error when generating a module from a graph.
 #[derive(Debug, Error)]
 pub enum ModuleError {
-    /// Error computing node connections.
-    #[error(transparent)]
-    NodeConns(#[from] NodeConnsError),
-    /// Error during code generation.
-    #[error(transparent)]
-    Codegen(#[from] CodegenError),
-    /// Error during lowering to the IR.
-    #[error(transparent)]
-    Lower(#[from] LowerError),
+    /// Error computing node connections while compiling the level at `path`.
+    #[error("connection error at {}", level(path))]
+    NodeConns {
+        /// The level being compiled when the error arose.
+        path: Vec<node::Id>,
+        #[source]
+        error: NodeConnsError,
+    },
+    /// Error lowering the level at `path` to the IR. Node ids carried by the
+    /// underlying [`LowerError`] are relative to that level.
+    #[error("failed to lower {}", level(path))]
+    Lower {
+        /// The level being lowered when the error arose.
+        path: Vec<node::Id>,
+        #[source]
+        error: LowerError,
+    },
     /// A nested graph was not found.
     #[error(transparent)]
     NestedGraphNotFound(#[from] NestedGraphNotFound),
@@ -147,7 +139,7 @@ pub enum ModuleError {
     /// This is a bug in gantz, not in the compiled graph; validation runs on
     /// every lowering (unless disabled via [`Config::validate_ir`][super::Config])
     /// so it surfaces as a compile error rather than emitting malformed Steel.
-    #[error("internal compiler error: invalid IR for level {path:?}: {detail}")]
+    #[error("internal compiler error: invalid IR for {}: {detail}", level(path))]
     InvalidIr { path: Vec<node::Id>, detail: String },
 }
 
@@ -156,7 +148,7 @@ impl fmt::Display for MetaError {
         write!(
             f,
             "node-{}: {}",
-            super::codegen::path_string(&self.path),
+            super::names::path_string(&self.path),
             self.error
         )
     }
@@ -179,7 +171,7 @@ impl fmt::Display for NodeExprError {
         write!(
             f,
             "node-{}: {}",
-            super::codegen::path_string(&self.path),
+            super::names::path_string(&self.path),
             self.error
         )
     }
@@ -212,3 +204,17 @@ impl std::error::Error for NodeExprError {
 }
 
 impl std::error::Error for NodeFnErrors {}
+
+/// Format a level path for error messages.
+fn level(path: &[node::Id]) -> String {
+    if path.is_empty() {
+        "the root level".to_string()
+    } else {
+        format!("level {}", super::names::path_string(path))
+    }
+}
+
+/// Format an optional node id for error messages.
+fn at_node(node: &Option<node::Id>) -> String {
+    node.map(|n| format!(" at node {n}")).unwrap_or_default()
+}

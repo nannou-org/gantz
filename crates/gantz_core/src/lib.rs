@@ -1,10 +1,12 @@
 pub use builtin::Builtins;
+pub use diagnostic::Diagnostic;
 pub use edge::Edge;
 pub use node::Node;
 pub use steel;
 
 pub mod builtin;
 pub mod compile;
+pub mod diagnostic;
 pub mod edge;
 pub mod graph;
 pub mod node;
