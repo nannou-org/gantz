@@ -1,87 +1,87 @@
-//! Raises an [`Export`] into a [`File`] AST for serialization.
+//! Raises a registry into a [`Document`] and serializes it.
 //!
 //! The output mirrors the registry's three maps: a `(graph "<addr>" ...)` body
 //! per graph, a flat `(commits ...)` table (one head commit per graph, for
-//! validation), and a `(names ...)` table; plus `(layout ...)` keyed by graph
-//! address and `(demo ...)` by name. Addresses are emitted as short hex; nodes
-//! get generated `{keyword}{index}` labels and cross the typetag boundary as
-//! `serde_json::Value`s.
+//! validation), and a `(names ...)` table. Nodes get generated
+//! `{keyword}{index}` labels and cross the typetag boundary as
+//! `serde_json::Value`s. The returned [`Dumped`] also exposes, per graph, the
+//! id and node labels emitted - everything an extender needs to attach its own
+//! forms (e.g. `(layout ...)`) keyed by the same ids.
 
-use super::error::{ErrorKind, FormatError};
-use super::lower::Lowerable;
-use super::model::{
-    Addr, CommitDecl, Conn, Demo, Endpoint, File, GraphBody, GraphDef, Layout, NameDecl, NodeDecl,
-    NodeSpec, RefSpec,
+use crate::error::{ErrorKind, FormatError};
+use crate::lower::Lowerable;
+use crate::model::{
+    Addr, CommitDecl, Conn, Document, Endpoint, GraphBody, GraphDef, NameDecl, NodeDecl, NodeSpec,
+    RefSpec,
 };
-use super::node_value::node_to_value;
-use super::sugar::keyword_for_tag;
-use crate::export::Export;
-use gantz_ca::{ContentAddr, GraphAddr};
+use crate::node_value::node_to_value;
+use crate::sugar::keyword_for_tag;
+use gantz_ca::{ContentAddr, GraphAddr, Registry};
 use gantz_core::node::graph::Graph;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use serde_json::Value;
 use std::collections::HashMap;
 
-/// Raise an [`Export`] into a [`File`] AST.
-pub fn raise<N>(export: &Export<Graph<N>>) -> Result<File, FormatError>
+/// The result of serializing a registry: the text plus the per-graph label
+/// context an extender needs to emit its own forms.
+pub struct Dumped {
+    /// The serialized registry forms.
+    pub text: String,
+    /// Per graph address: the id emitted and the node index -> label map.
+    pub graphs: HashMap<GraphAddr, GraphLabels>,
+}
+
+/// The id string and node labels emitted for a single graph.
+pub struct GraphLabels {
+    /// The file-local id used in the text (a short content address).
+    pub id: String,
+    /// Node index -> generated label.
+    pub labels: HashMap<usize, String>,
+}
+
+/// Raise a registry into serialized text plus per-graph label context.
+pub fn raise<N>(registry: &Registry<Graph<N>>) -> Result<Dumped, FormatError>
 where
     N: Lowerable,
 {
-    let reg = &export.registry;
-    let mut file = File::default();
+    let mut doc = Document::default();
+    let mut graphs = HashMap::new();
 
-    // The top-level view of each graph, found via a commit that points at it.
-    let mut graph_view: HashMap<GraphAddr, &egui_graph::View> = HashMap::new();
-    for (commit_ca, gv) in &export.views {
-        if let (Some(commit), Some(view)) = (reg.commits().get(commit_ca), gv.get(&Vec::new())) {
-            graph_view.entry(commit.graph).or_insert(view);
-        }
-    }
-
-    // One `(graph "<addr>" ...)` per graph body, with its layout.
-    for (g_addr, graph) in reg.graphs() {
+    for (g_addr, graph) in registry.graphs() {
         let (body, labels) = graph_to_body::<N>(graph)?;
-        file.graphs.push(GraphDef {
-            id: short_addr(*g_addr),
+        let id = short_hex(*g_addr);
+        doc.graphs.push(GraphDef {
+            id: Addr::Concrete(id.clone()),
             body,
         });
-        if let Some(view) = graph_view.get(g_addr) {
-            file.layouts.push(layout_for(*g_addr, view, &labels));
-        }
+        graphs.insert(*g_addr, GraphLabels { id, labels });
     }
 
-    // One commit per graph (the export's heads), for validation.
-    for (c_addr, commit) in reg.commits() {
-        file.commits.push(CommitDecl {
-            id: short_addr(*c_addr),
+    for (c_addr, commit) in registry.commits() {
+        doc.commits.push(CommitDecl {
+            id: Addr::Concrete(short_hex(*c_addr)),
             secs: commit.timestamp.as_secs(),
             nanos: commit.timestamp.subsec_nanos(),
-            parent: commit.parent.map(short_addr),
-            graph: short_addr(commit.graph),
+            parent: commit.parent.map(|p| Addr::Concrete(short_hex(p))),
+            graph: Addr::Concrete(short_hex(commit.graph)),
         });
     }
 
-    // Name -> commit mappings, and demos (keyed by name).
-    for (name, c_addr) in reg.names() {
-        file.names.push(NameDecl {
+    for (name, c_addr) in registry.names() {
+        doc.names.push(NameDecl {
             name: name.clone(),
-            commit: short_addr(*c_addr),
+            commit: Addr::Concrete(short_hex(*c_addr)),
         });
-        if let Some(demo) = export.demos.get(c_addr) {
-            file.demos.push(Demo {
-                graph: name.clone(),
-                demo: demo.clone(),
-            });
-        }
     }
 
-    Ok(file)
+    let text = crate::writer::write_document(&doc);
+    Ok(Dumped { text, graphs })
 }
 
 // -- graph -> body -----------------------------------------------------------
 
 /// Convert a graph into a [`GraphBody`], returning the index -> label map used
-/// to resolve connections and layout positions.
+/// to resolve connections and (by extenders) layout positions.
 fn graph_to_body<N>(graph: &Graph<N>) -> Result<(GraphBody, HashMap<usize, String>), FormatError>
 where
     N: Lowerable,
@@ -176,33 +176,10 @@ where
     }
 }
 
-// -- layout ------------------------------------------------------------------
-
-fn layout_for(
-    g_addr: GraphAddr,
-    view: &egui_graph::View,
-    labels: &HashMap<usize, String>,
-) -> Layout {
-    let mut positions = Vec::new();
-    for (node_id, pos) in &view.layout {
-        if let Some(label) = labels.get(&(node_id.0 as usize)) {
-            positions.push((label.clone(), pos.x, pos.y));
-        }
-    }
-    // Stable order for deterministic output.
-    positions.sort_by(|a, b| a.0.cmp(&b.0));
-    let r = view.scene_rect;
-    Layout {
-        graph: short_addr(g_addr),
-        positions,
-        scene: Some([r.min.x, r.min.y, r.max.x, r.max.y]),
-    }
-}
-
 // -- helpers -----------------------------------------------------------------
 
-/// An address as a short-hex concrete [`Addr`] (the first 8 hex characters).
-fn short_addr(addr: impl Into<ContentAddr>) -> Addr {
+/// The first 8 hex characters of an address.
+fn short_hex(addr: impl Into<ContentAddr>) -> String {
     let hex = addr.into().to_string();
-    Addr::Concrete(hex.get(..8).unwrap_or(&hex).to_string())
+    hex.get(..8).unwrap_or(&hex).to_string()
 }

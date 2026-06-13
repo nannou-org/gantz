@@ -1,29 +1,26 @@
-//! Reads `.gantz` source text into a [`File`] AST.
+//! Reads `.gantz` source text into a [`Document`].
 //!
-//! The document is parsed with Steel's own reader
-//! ([`steel::parser::parser::Parser::parse_without_lowering`]) so that all
-//! tokenisation (strings, keywords, numbers, identifiers like `->` and `$l`,
-//! and arbitrary embedded Steel code) matches Steel exactly, and special forms
-//! are left as plain lists. Embedded `expr`/`branch` code is captured verbatim
-//! from its source span so node `src` strings - and the content addresses that
-//! hash them - are preserved byte-for-byte.
+//! Tokenisation is handled by [`crate::sexpr`] (Steel's reader). Only the
+//! registry forms - `(graph ...)`, `(commits ...)`, `(names ...)` - are
+//! interpreted; any other top-level form is preserved verbatim in
+//! [`Document::extra`] for an extender to interpret. Embedded `expr`/`branch`
+//! code is captured verbatim from its source span so node `src` strings - and
+//! the content addresses that hash them - are preserved byte-for-byte.
 
-use super::error::{ErrorKind, FormatError, Span};
-use super::model::{
-    Addr, CommitDecl, Conn, Demo, Endpoint, File, GraphBody, GraphDef, Layout, NameDecl, NodeDecl,
+use crate::error::{ErrorKind, FormatError};
+use crate::model::{
+    Addr, CommitDecl, Conn, Document, Endpoint, Form, GraphBody, GraphDef, NameDecl, NodeDecl,
     NodeSpec, RefSpec,
 };
-use super::sugar::tag_for_keyword;
+use crate::sexpr::{self, as_keyword, as_string, as_symbol, list_args, span_src};
 use serde_json::{Map, Value, json};
 use steel::parser::ast::ExprKind;
-use steel::parser::parser::Parser;
 use steel::parser::tokens::TokenType;
 
-/// Parse a complete `.gantz` document into a [`File`] AST.
-pub fn parse_file(src: &str) -> Result<File, FormatError> {
-    let forms = Parser::parse_without_lowering(src)
-        .map_err(|e| FormatError::new(ErrorKind::Read(e.to_string())))?;
-    let mut file = File::default();
+/// Parse a complete `.gantz` document.
+pub fn parse(src: &str) -> Result<Document, FormatError> {
+    let forms = sexpr::read(src)?;
+    let mut doc = Document::default();
     for form in &forms {
         let args = list_args(form)
             .ok_or_else(|| err_at(form, src, ErrorKind::Malformed("expected a list".into())))?;
@@ -35,15 +32,18 @@ pub fn parse_file(src: &str) -> Result<File, FormatError> {
             )
         })?;
         match head.as_str() {
-            "graph" => file.graphs.push(parse_graph_def(&args[1..], form, src)?),
-            "layout" => file.layouts.push(parse_layout(&args[1..], form, src)?),
-            "commits" => file.commits.extend(parse_commits_table(&args[1..], src)?),
-            "names" => file.names.extend(parse_names_table(&args[1..], src)?),
-            "demo" => file.demos.push(parse_demo(&args[1..], form, src)?),
-            other => return Err(err_at(form, src, ErrorKind::UnknownForm(other.to_string()))),
+            "graph" => doc.graphs.push(parse_graph_def(&args[1..], form, src)?),
+            "commits" => doc.commits.extend(parse_commits_table(&args[1..], src)?),
+            "names" => doc.names.extend(parse_names_table(&args[1..], src)?),
+            // Preserve anything else (e.g. `layout`, `demo`) for an extender.
+            other => doc.extra.push(Form {
+                head: other.to_string(),
+                raw: span_src(form, src).unwrap_or_default().to_string(),
+                span: sexpr::span(form).unwrap_or_default(),
+            }),
         }
     }
-    Ok(file)
+    Ok(doc)
 }
 
 // -- top-level forms ---------------------------------------------------------
@@ -216,13 +216,13 @@ fn parse_log_spec(rest: &[ExprKind], src: &str) -> Result<NodeSpec, FormatError>
 }
 
 fn parse_ref_spec(func: bool, rest: &[ExprKind], src: &str) -> Result<NodeSpec, FormatError> {
-    let name = rest.first().and_then(as_symbol).ok_or_else(|| {
-        let e = rest.first();
-        match e {
+    let name = rest
+        .first()
+        .and_then(as_symbol)
+        .ok_or_else(|| match rest.first() {
             Some(e) => err_at(e, src, ErrorKind::Malformed("ref requires a name".into())),
             None => FormatError::new(ErrorKind::Malformed("ref requires a name".into())),
-        }
-    })?;
+        })?;
     let mut addr = None;
     let mut sync = false;
     for a in &rest[1..] {
@@ -279,7 +279,7 @@ fn parse_generic_spec(rest: &[ExprKind], e: &ExprKind, src: &str) -> Result<Node
     Ok(NodeSpec::Value(Value::Object(obj)))
 }
 
-// -- connections / layout / commits / names / demo ---------------------------
+// -- connections / commits / names -------------------------------------------
 
 fn parse_conn(args: &[ExprKind], item: &ExprKind, src: &str) -> Result<Conn, FormatError> {
     if args.len() != 2 {
@@ -319,65 +319,6 @@ fn parse_endpoint(e: &ExprKind, src: &str) -> Result<Endpoint, FormatError> {
         .transpose()?
         .unwrap_or(0) as u16;
     Ok(Endpoint { node, port })
-}
-
-fn parse_layout(args: &[ExprKind], form: &ExprKind, src: &str) -> Result<Layout, FormatError> {
-    let id_expr = args.first().ok_or_else(|| {
-        err_at(
-            form,
-            src,
-            ErrorKind::Malformed("layout requires a graph id".into()),
-        )
-    })?;
-    let graph = parse_addr(id_expr, src)?;
-    let mut positions = Vec::new();
-    let mut scene = None;
-    for item in &args[1..] {
-        let iargs = list_args(item)
-            .ok_or_else(|| err_at(item, src, ErrorKind::Malformed("expected a list".into())))?;
-        match iargs.first().and_then(as_symbol).as_deref() {
-            Some("scene") => {
-                let f: Vec<f32> = iargs[1..]
-                    .iter()
-                    .map(|n| float_field(n, src))
-                    .collect::<Result<_, _>>()?;
-                if f.len() != 4 {
-                    return Err(err_at(
-                        item,
-                        src,
-                        ErrorKind::Malformed("scene needs 4 numbers".into()),
-                    ));
-                }
-                scene = Some([f[0], f[1], f[2], f[3]]);
-            }
-            Some(name) => {
-                let x = iargs.get(1).map(|n| float_field(n, src)).transpose()?;
-                let y = iargs.get(2).map(|n| float_field(n, src)).transpose()?;
-                match (x, y) {
-                    (Some(x), Some(y)) => positions.push((name.to_string(), x, y)),
-                    _ => {
-                        return Err(err_at(
-                            item,
-                            src,
-                            ErrorKind::Malformed("position must be (name x y)".into()),
-                        ));
-                    }
-                }
-            }
-            None => {
-                return Err(err_at(
-                    item,
-                    src,
-                    ErrorKind::Malformed("layout entry needs a head".into()),
-                ));
-            }
-        }
-    }
-    Ok(Layout {
-        graph,
-        positions,
-        scene,
-    })
 }
 
 fn parse_commits_table(args: &[ExprKind], src: &str) -> Result<Vec<CommitDecl>, FormatError> {
@@ -501,24 +442,6 @@ fn parse_commit_entry(
     })
 }
 
-fn parse_demo(args: &[ExprKind], form: &ExprKind, src: &str) -> Result<Demo, FormatError> {
-    let graph = args.first().and_then(as_symbol).ok_or_else(|| {
-        err_at(
-            form,
-            src,
-            ErrorKind::Malformed("demo requires a name".into()),
-        )
-    })?;
-    let demo = args.get(1).and_then(as_string).ok_or_else(|| {
-        err_at(
-            form,
-            src,
-            ErrorKind::Malformed("demo requires a demo name".into()),
-        )
-    })?;
-    Ok(Demo { graph, demo })
-}
-
 // -- addresses ---------------------------------------------------------------
 
 fn parse_addr(e: &ExprKind, src: &str) -> Result<Addr, FormatError> {
@@ -572,61 +495,11 @@ fn number_value(e: &ExprKind, src: &str) -> Value {
     }
 }
 
-// -- atom / list accessors ---------------------------------------------------
-
-fn list_args(e: &ExprKind) -> Option<&[ExprKind]> {
-    match e {
-        ExprKind::List(list) => Some(&list.args),
-        _ => None,
-    }
-}
-
-fn as_symbol(e: &ExprKind) -> Option<String> {
-    match e {
-        ExprKind::Atom(a) => match &a.syn.ty {
-            TokenType::Identifier(s) => Some(s.resolve().to_string()),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn as_string(e: &ExprKind) -> Option<String> {
-    match e {
-        ExprKind::Atom(a) => match &a.syn.ty {
-            TokenType::StringLiteral(s) => Some(s.to_string()),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn as_keyword(e: &ExprKind) -> Option<String> {
-    match e {
-        ExprKind::Atom(a) => match &a.syn.ty {
-            TokenType::Keyword(s) => Some(s.resolve().trim_start_matches("#:").to_string()),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// The verbatim source slice covered by a datum's span.
-fn span_src<'a>(e: &ExprKind, src: &'a str) -> Option<&'a str> {
-    let span = e.span()?;
-    src.get(span.start as usize..span.end as usize)
-}
+// -- small wrappers over the sexpr toolkit -----------------------------------
 
 fn int_field(e: &ExprKind, src: &str) -> Result<i64, FormatError> {
-    span_src(e, src)
-        .and_then(|s| s.parse::<i64>().ok())
+    sexpr::as_i64(e, src)
         .ok_or_else(|| err_at(e, src, ErrorKind::Malformed("expected an integer".into())))
-}
-
-fn float_field(e: &ExprKind, src: &str) -> Result<f32, FormatError> {
-    span_src(e, src)
-        .and_then(|s| s.parse::<f32>().ok())
-        .ok_or_else(|| err_at(e, src, ErrorKind::Malformed("expected a number".into())))
 }
 
 /// Find a `#:<key>` keyword in `args` and return the following integer value.
@@ -666,12 +539,12 @@ fn log_level(sym: &str, e: &ExprKind, src: &str) -> Result<String, FormatError> 
     }
 }
 
+fn tag_for_keyword(kw: &str) -> Option<&'static str> {
+    crate::sugar::tag_for_keyword(kw)
+}
+
 fn err_at(e: &ExprKind, src: &str, kind: ErrorKind) -> FormatError {
-    let span = e
-        .span()
-        .map(|s| Span::new(s.start as usize, s.end as usize))
-        .unwrap_or_default();
-    FormatError::new(kind).at(span, src)
+    FormatError::new(kind).at(sexpr::span(e).unwrap_or_default(), src)
 }
 
 #[cfg(test)]
@@ -685,9 +558,9 @@ mod tests {
   (l inlet) (r inlet) (out outlet)
   (m (expr (* $l $r)))
   (-> l (m 0)) (-> r (m 1)) (-> m out))";
-        let file = parse_file(text).expect("parse");
-        assert_eq!(file.graphs.len(), 1);
-        let g = &file.graphs[0];
+        let doc = parse(text).expect("parse");
+        assert_eq!(doc.graphs.len(), 1);
+        let g = &doc.graphs[0];
         assert_eq!(g.id, Addr::Label("mul".to_string()));
         assert_eq!(g.body.nodes.len(), 4);
         assert_eq!(g.body.conns.len(), 3);
@@ -708,14 +581,24 @@ mod tests {
     }
 
     #[test]
+    fn preserves_unrecognized_forms() {
+        let text = "(graph mul (m (expr 1)))\n(layout mul (m 1 2))";
+        let doc = parse(text).expect("parse");
+        assert_eq!(doc.graphs.len(), 1);
+        assert_eq!(doc.extra.len(), 1);
+        assert_eq!(doc.extra[0].head, "layout");
+        assert_eq!(doc.extra[0].raw, "(layout mul (m 1 2))");
+    }
+
+    #[test]
     fn reads_keywords_branch_and_ref() {
         let text = "\
 (graph g
   (s (expr (values $x (* $x 2)) #:out 2))
   (b (branch (if $n (list 0 0) (list 1 0)) \"10\" \"01\"))
   (m (ref mul \"834568e9\")))";
-        let file = parse_file(text).expect("parse");
-        let g = &file.graphs[0];
+        let doc = parse(text).expect("parse");
+        let g = &doc.graphs[0];
         let s = g.body.nodes.iter().find(|n| n.name == "s").unwrap();
         match &s.spec {
             NodeSpec::Value(v) => assert_eq!(v["outputs"], 2),

@@ -1,37 +1,31 @@
-//! Serializes a [`File`] AST to `.gantz` text.
+//! Serializes a [`Document`] to `.gantz` text.
 //!
 //! Output is reader-valid Steel: node code is spliced verbatim (it is already
 //! valid Steel), addresses are strings, placeholders are symbols, and node
 //! ports are `(name port)` sub-lists. Indentation is two spaces per nesting
 //! level.
 
-use super::model::{
-    Addr, CommitDecl, Conn, Endpoint, File, GraphBody, Layout, NameDecl, NodeDecl, NodeSpec,
+use crate::model::{
+    Addr, CommitDecl, Conn, Document, Endpoint, GraphBody, NameDecl, NodeDecl, NodeSpec,
 };
-use super::sugar::keyword_for_tag;
+use crate::sexpr::quote;
+use crate::sugar::keyword_for_tag;
 use serde_json::Value;
 
-/// Serialize a [`File`] AST to a `.gantz` document.
-pub fn write_file(file: &File) -> String {
+/// Serialize a [`Document`]'s registry forms to `.gantz` text.
+pub fn write_document(doc: &Document) -> String {
     let mut out = String::new();
-    for def in &file.graphs {
+    for def in &doc.graphs {
         write_graph(&mut out, &def.id, &def.body);
         out.push_str("\n\n");
     }
-    for layout in &file.layouts {
-        write_layout(&mut out, layout);
+    if !doc.commits.is_empty() {
+        write_commits(&mut out, &doc.commits);
         out.push_str("\n\n");
     }
-    if !file.commits.is_empty() {
-        write_commits(&mut out, &file.commits);
+    if !doc.names.is_empty() {
+        write_names(&mut out, &doc.names);
         out.push_str("\n\n");
-    }
-    if !file.names.is_empty() {
-        write_names(&mut out, &file.names);
-        out.push_str("\n\n");
-    }
-    for demo in &file.demos {
-        out.push_str(&format!("(demo {} {})\n\n", demo.graph, quote(&demo.demo)));
     }
     let trimmed = out.trim_end();
     let mut result = trimmed.to_string();
@@ -123,7 +117,7 @@ fn value_spec(v: &Value) -> String {
     }
 }
 
-fn ref_spec(r: &super::model::RefSpec) -> String {
+fn ref_spec(r: &crate::model::RefSpec) -> String {
     let keyword = if r.func { "fn-ref" } else { "ref" };
     let mut s = format!("({keyword} {}", r.name);
     if let Some(addr) = &r.addr {
@@ -192,25 +186,6 @@ fn endpoint_text(ep: &Endpoint) -> String {
     }
 }
 
-// -- layout ------------------------------------------------------------------
-
-fn write_layout(out: &mut String, layout: &Layout) {
-    out.push_str(&format!("(layout {}", addr_text(&layout.graph)));
-    for (name, x, y) in &layout.positions {
-        out.push_str(&format!("\n  ({name} {} {})", num(*x), num(*y)));
-    }
-    if let Some([min_x, min_y, max_x, max_y]) = layout.scene {
-        out.push_str(&format!(
-            "\n  (scene {} {} {} {})",
-            num(min_x),
-            num(min_y),
-            num(max_x),
-            num(max_y)
-        ));
-    }
-    out.push(')');
-}
-
 // -- commits / names ---------------------------------------------------------
 
 fn write_commits(out: &mut String, commits: &[CommitDecl]) {
@@ -245,33 +220,4 @@ fn addr_text(addr: &Addr) -> String {
         Addr::Concrete(hex) => quote(hex),
         Addr::Label(label) => label.clone(),
     }
-}
-
-/// Format a float without scientific notation, using the shortest round-tripping
-/// representation.
-fn num(x: f32) -> String {
-    let s = format!("{x}");
-    if s.contains('e') || s.contains('E') {
-        format!("{x:.6}")
-    } else {
-        s
-    }
-}
-
-/// Quote a string as a Steel string literal.
-fn quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\t' => out.push_str("\\t"),
-            '\r' => out.push_str("\\r"),
-            _ => out.push(ch),
-        }
-    }
-    out.push('"');
-    out
 }

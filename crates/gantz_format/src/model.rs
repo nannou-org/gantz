@@ -1,25 +1,36 @@
 //! The abstract syntax for the `.gantz` text format.
 //!
-//! A [`File`] is the intermediate representation between the reader
+//! A [`Document`] is the intermediate representation between the reader
 //! ([`super::parse`]) and the content-addressed registry ([`super::lower`] /
-//! [`super::raise`]). It mirrors the registry's three maps: graph bodies, a
-//! `(commits ...)` table and a `(names ...)` table, plus layout and demos.
+//! [`super::raise`]). It mirrors the registry's three maps - graph bodies, a
+//! `(commits ...)` table and a `(names ...)` table - and preserves any
+//! unrecognised top-level forms as [`Form`]s for extenders.
 
+use crate::error::Span;
 use serde_json::Value;
 
 /// A parsed `.gantz` document.
 #[derive(Clone, Debug, Default)]
-pub struct File {
+pub struct Document {
     /// Graph bodies, in source order.
     pub graphs: Vec<GraphDef>,
-    /// Layout/view sections, keyed by graph id.
-    pub layouts: Vec<Layout>,
     /// The flat commit table (at most one head commit per graph).
     pub commits: Vec<CommitDecl>,
     /// Name -> commit mappings.
     pub names: Vec<NameDecl>,
-    /// Demo associations.
-    pub demos: Vec<Demo>,
+    /// Unrecognised top-level forms, preserved verbatim for extenders.
+    pub extra: Vec<Form>,
+}
+
+/// An unrecognised top-level form, preserved for an extender to interpret.
+#[derive(Clone, Debug)]
+pub struct Form {
+    /// The form's head keyword (e.g. `"layout"`).
+    pub head: String,
+    /// The form's verbatim source text (parse with [`crate::sexpr::read`]).
+    pub raw: String,
+    /// The form's source span in the original document.
+    pub span: Span,
 }
 
 /// A graph body, identified by a file-local id.
@@ -105,17 +116,6 @@ pub struct Endpoint {
     pub port: u16,
 }
 
-/// View/layout state for a graph, keyed by the graph's id.
-#[derive(Clone, Debug)]
-pub struct Layout {
-    /// The id of the graph this layout applies to.
-    pub graph: Addr,
-    /// Node positions: `(label, x, y)`.
-    pub positions: Vec<(String, f32, f32)>,
-    /// Optional scene rect `[min_x, min_y, max_x, max_y]`.
-    pub scene: Option<[f32; 4]>,
-}
-
 /// A single entry in the `(commits ...)` table.
 #[derive(Clone, Debug)]
 pub struct CommitDecl {
@@ -138,13 +138,4 @@ pub struct NameDecl {
     pub name: String,
     /// The commit it points at.
     pub commit: Addr,
-}
-
-/// A demo association: a name and its demo string.
-#[derive(Clone, Debug)]
-pub struct Demo {
-    /// The graph name.
-    pub graph: String,
-    /// The associated demo name.
-    pub demo: String,
 }

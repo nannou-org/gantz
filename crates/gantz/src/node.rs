@@ -310,4 +310,60 @@ mod tests {
         let commit = export.registry.named_commit("gname").expect("commit");
         assert_eq!(commit.parent, None, "absent parent must be cleared to None");
     }
+
+    /// The Export-level format (gantz_egui over gantz_format) round-trips
+    /// `(layout ...)` view state: node positions and the scene rect survive
+    /// text -> Export -> text -> Export.
+    #[test]
+    fn layout_roundtrips() {
+        use std::time::Duration;
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let now = Duration::from_secs(5);
+        let text1 = "\
+(graph mul
+  (m (expr (* $l $r)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (m 0)) (-> r (m 1)) (-> m out))
+
+(layout mul
+  (m -10 20) (l 3.5 -4.5)
+  (scene -50 -50 100 100))";
+
+        let e1: gantz_egui::export::Export<G> =
+            gantz_egui::format::from_str(text1, now).expect("from_str 1");
+        let head = *e1.registry.names().get("mul").expect("mul name");
+        let view = e1
+            .views
+            .get(&head)
+            .and_then(|gv| gv.get(&Vec::new()))
+            .expect("view");
+        // `m` is node index 0, `l` is 1.
+        assert_eq!(
+            view.layout.get(&egui_graph::NodeId(0)).map(|p| (p.x, p.y)),
+            Some((-10.0, 20.0))
+        );
+        assert_eq!(
+            view.layout.get(&egui_graph::NodeId(1)).map(|p| (p.x, p.y)),
+            Some((3.5, -4.5))
+        );
+        assert_eq!(view.scene_rect.min.x, -50.0);
+        assert_eq!(view.scene_rect.max.y, 100.0);
+
+        let text2 = gantz_egui::format::to_string(&e1).expect("to_string");
+        let e2: gantz_egui::export::Export<G> =
+            gantz_egui::format::from_str(&text2, now).expect("from_str 2");
+        let head2 = *e2.registry.names().get("mul").expect("mul name 2");
+        let view2 = e2
+            .views
+            .get(&head2)
+            .and_then(|gv| gv.get(&Vec::new()))
+            .expect("view 2");
+        assert_eq!(view.layout.len(), view2.layout.len());
+        assert_eq!(
+            view2.layout.get(&egui_graph::NodeId(0)).map(|p| (p.x, p.y)),
+            Some((-10.0, 20.0))
+        );
+        assert_eq!(view2.scene_rect, view.scene_rect);
+    }
 }

@@ -1,19 +1,17 @@
-//! Lowers a [`File`] AST into an [`Export`].
+//! Lowers a [`Document`] into a registry, plus the context an extender needs.
 //!
-//! The file mirrors the registry's three maps: graph bodies (keyed by a
+//! The document mirrors the registry's three maps: graph bodies (keyed by a
 //! file-local id), a flat `(commits ...)` table and a `(names ...)` table.
 //! Graphs are built in dependency order (a graph that `ref`s another is built
 //! after it) so references resolve to already-known commits. A graph whose id
 //! is a label and which no commit references is a hand-authored named graph: it
 //! auto-registers under that label with a root commit synthesised at `now`.
 
-use super::error::{ErrorKind, FormatError};
-use super::model::{
-    Addr, CommitDecl, File, GraphBody, GraphDef, Layout, NodeDecl, NodeSpec, RefSpec,
+use crate::error::{ErrorKind, FormatError};
+use crate::model::{
+    Addr, CommitDecl, Document, Form, GraphBody, GraphDef, NameDecl, NodeDecl, NodeSpec, RefSpec,
 };
-use super::node_value::value_to_node;
-use crate::GraphViews;
-use crate::export::Export;
+use crate::node_value::value_to_node;
 use gantz_ca::{Commit, CommitAddr, ContentAddr, Registry, Timestamp};
 use gantz_core::edge::Edge;
 use gantz_core::node::graph::{Graph, GraphNode, NodeIx};
@@ -35,6 +33,21 @@ impl<N> Lowerable for N where
 {
 }
 
+/// The result of lowering a [`Document`]: the registry plus the resolution
+/// context and preserved extra forms an extender needs.
+pub struct Loaded<N> {
+    /// The content-addressed registry.
+    pub registry: Registry<Graph<N>>,
+    /// graph id -> head commit.
+    pub graph_head: HashMap<Addr, CommitAddr>,
+    /// graph id -> node label -> node index.
+    pub index: HashMap<Addr, HashMap<String, usize>>,
+    /// registry name -> head commit.
+    pub names: HashMap<String, CommitAddr>,
+    /// Unrecognised top-level forms, preserved for an extender.
+    pub extra: Vec<Form>,
+}
+
 /// Read-only reference-resolution context, threaded through graph building.
 struct Resolve<'a> {
     /// name -> head commit, for already-built graphs.
@@ -45,27 +58,32 @@ struct Resolve<'a> {
     known: &'a [CommitAddr],
 }
 
-/// Lower a parsed [`File`] into an [`Export`], synthesising root commits at
-/// `now` for any graph the `(commits ...)` table does not describe.
-pub fn lower<N>(file: File, now: Timestamp) -> Result<Export<Graph<N>>, FormatError>
+/// Lower a parsed [`Document`] into a [`Loaded`] registry, synthesising root
+/// commits at `now` for any graph the `(commits ...)` table does not describe.
+pub fn lower<N>(doc: Document, now: Timestamp) -> Result<Loaded<N>, FormatError>
 where
     N: Lowerable,
 {
-    // Index the file's three tables.
-    let graphs_by_id: HashMap<Addr, &GraphDef> =
-        file.graphs.iter().map(|g| (g.id.clone(), g)).collect();
+    let Document {
+        graphs,
+        commits,
+        names: name_decls,
+        extra,
+    } = doc;
+
+    // Index the document's three tables.
+    let graphs_by_id: HashMap<Addr, &GraphDef> = graphs.iter().map(|g| (g.id.clone(), g)).collect();
     // graph id -> the commit pointing at it (at most one per graph).
     let commit_for_graph: HashMap<Addr, &CommitDecl> =
-        file.commits.iter().map(|c| (c.graph.clone(), c)).collect();
+        commits.iter().map(|c| (c.graph.clone(), c)).collect();
     // commit id -> graph id.
-    let graph_of_commit: HashMap<Addr, Addr> = file
-        .commits
+    let graph_of_commit: HashMap<Addr, Addr> = commits
         .iter()
         .map(|c| (c.id.clone(), c.graph.clone()))
         .collect();
     // commit id -> names pointing at it.
     let mut names_of_commit: HashMap<Addr, Vec<String>> = HashMap::new();
-    for decl in &file.names {
+    for decl in &name_decls {
         names_of_commit
             .entry(decl.commit.clone())
             .or_default()
@@ -74,8 +92,8 @@ where
 
     // name -> graph id, used to order graphs by their references.
     let name_to_graph_id =
-        compute_name_to_graph_id(&file, &graphs_by_id, &commit_for_graph, &graph_of_commit);
-    let order = topo_order(&file.graphs, &graphs_by_id, &name_to_graph_id)?;
+        compute_name_to_graph_id(&graphs, &name_decls, &commit_for_graph, &graph_of_commit);
+    let order = topo_order(&graphs, &graphs_by_id, &name_to_graph_id)?;
 
     let mut registry: Registry<Graph<N>> =
         Registry::new(HashMap::new(), HashMap::new(), BTreeMap::new());
@@ -83,7 +101,7 @@ where
     let mut commit_ids: HashMap<Addr, CommitAddr> = HashMap::new();
     let mut known: Vec<CommitAddr> = Vec::new();
     let mut graph_head: HashMap<Addr, CommitAddr> = HashMap::new();
-    let mut index_maps: HashMap<Addr, HashMap<String, usize>> = HashMap::new();
+    let mut index: HashMap<Addr, HashMap<String, usize>> = HashMap::new();
 
     for id in &order {
         let def = graphs_by_id[id];
@@ -94,7 +112,7 @@ where
         };
         let (graph, index_map) = build_graph::<N>(&def.body, &resolve)?;
         let g_addr = registry.add_graph(graph);
-        index_maps.insert(id.clone(), index_map);
+        index.insert(id.clone(), index_map);
 
         // Build the head commit: from the table where present, else a fresh root.
         let head = match commit_for_graph.get(id) {
@@ -128,13 +146,12 @@ where
         }
     }
 
-    let views = build_views(&file.layouts, &graph_head, &index_maps);
-    let demos = build_demos(&file.demos, &names);
-
-    Ok(Export {
+    Ok(Loaded {
         registry,
-        views,
-        demos,
+        graph_head,
+        index,
+        names,
+        extra,
     })
 }
 
@@ -309,78 +326,29 @@ fn resolve_parent(
     }
 }
 
-// -- views / demos -----------------------------------------------------------
-
-fn build_views(
-    layouts: &[Layout],
-    graph_head: &HashMap<Addr, CommitAddr>,
-    index_maps: &HashMap<Addr, HashMap<String, usize>>,
-) -> HashMap<CommitAddr, GraphViews> {
-    let mut views: HashMap<CommitAddr, GraphViews> = HashMap::new();
-    for layout in layouts {
-        let (Some(&head), Some(index_map)) =
-            (graph_head.get(&layout.graph), index_maps.get(&layout.graph))
-        else {
-            continue;
-        };
-        let mut egui_layout = egui_graph::Layout::default();
-        for (name, x, y) in &layout.positions {
-            if let Some(&ix) = index_map.get(name) {
-                egui_layout.insert(egui_graph::NodeId(ix as u64), egui::Pos2::new(*x, *y));
-            }
-        }
-        let scene_rect = match layout.scene {
-            Some([min_x, min_y, max_x, max_y]) => {
-                egui::Rect::from_min_max(egui::pos2(min_x, min_y), egui::pos2(max_x, max_y))
-            }
-            None => egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(0.0, 0.0)),
-        };
-        let view = egui_graph::View {
-            scene_rect,
-            layout: egui_layout,
-        };
-        views.entry(head).or_default().insert(Vec::new(), view);
-    }
-    views
-}
-
-fn build_demos(
-    demos: &[super::model::Demo],
-    names: &HashMap<String, CommitAddr>,
-) -> HashMap<CommitAddr, String> {
-    let mut out = HashMap::new();
-    for demo in demos {
-        if let Some(&head) = names.get(&demo.graph) {
-            out.insert(head, demo.demo.clone());
-        }
-    }
-    out
-}
-
 // -- dependency ordering -----------------------------------------------------
 
 /// Map each registry name to the graph id it ultimately points at, via the
 /// names + commits tables, plus auto-names for un-committed label graphs.
 fn compute_name_to_graph_id(
-    file: &File,
-    graphs_by_id: &HashMap<Addr, &GraphDef>,
+    graphs: &[GraphDef],
+    name_decls: &[NameDecl],
     commit_for_graph: &HashMap<Addr, &CommitDecl>,
     graph_of_commit: &HashMap<Addr, Addr>,
 ) -> HashMap<String, Addr> {
     let mut out = HashMap::new();
-    for decl in &file.names {
+    for decl in name_decls {
         if let Some(graph_id) = graph_of_commit.get(&decl.commit) {
             out.insert(decl.name.clone(), graph_id.clone());
         }
     }
-    for def in &file.graphs {
+    for def in graphs {
         if let Addr::Label(label) = &def.id {
             if !commit_for_graph.contains_key(&def.id) {
                 out.entry(label.clone()).or_insert_with(|| def.id.clone());
             }
         }
     }
-    let _ = graphs_by_id;
     out
 }
 
