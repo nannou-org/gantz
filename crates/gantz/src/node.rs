@@ -81,49 +81,86 @@ impl gantz_egui::widget::graph_scene::ToGraphMut for Box<dyn Node> {
 mod tests {
     use super::Node;
 
-    /// Gate test for the new `.gantz` text format: confirm `Box<dyn Node>`
-    /// (typetag-dispatched) round-trips through a self-describing
-    /// `serde_json::Value`. The format bridges node specs to/from typetag via
-    /// `serde_json::Value` rather than hand-writing a parser per node type, so
-    /// this mechanism must hold for every registered node.
+    /// Gate test for the `.gantz` text format: confirm `Box<dyn Node>`
+    /// (typetag-dispatched) round-trips through the self-describing
+    /// `gantz_format::Datum` codec. The format bridges node specs to/from
+    /// typetag via this codec rather than hand-writing a parser per node type,
+    /// so the mechanism must hold for every registered node.
     #[test]
-    fn typetag_roundtrips_through_serde_json_value() {
+    fn typetag_roundtrips_through_datum() {
+        use gantz_format::{Datum, from_datum, to_datum};
+
+        fn node_datum(tag: &str, fields: Vec<(&str, Datum)>) -> Datum {
+            let mut entries = vec![("type".to_string(), Datum::Str(tag.to_string()))];
+            entries.extend(fields.into_iter().map(|(k, v)| (k.to_string(), v)));
+            Datum::Map(entries)
+        }
+        fn type_of(d: &Datum) -> Option<&str> {
+            match d {
+                Datum::Map(entries) => {
+                    entries
+                        .iter()
+                        .find(|(k, _)| k == "type")
+                        .and_then(|(_, v)| match v {
+                            Datum::Str(s) => Some(s.as_str()),
+                            _ => None,
+                        })
+                }
+                _ => None,
+            }
+        }
+
         let cases = [
-            serde_json::json!({ "type": "Inlet" }),
-            serde_json::json!({ "type": "Outlet" }),
-            serde_json::json!({ "type": "Apply" }),
-            serde_json::json!({ "type": "Delay" }),
-            serde_json::json!({ "type": "Identity" }),
-            serde_json::json!({ "type": "Bang" }),
-            serde_json::json!({ "type": "Add" }),
-            serde_json::json!({ "type": "Inspect" }),
-            serde_json::json!({ "type": "FrameBang" }),
-            serde_json::json!({ "type": "Number" }),
-            serde_json::json!({ "type": "Expr", "src": "(* $l $r)" }),
-            serde_json::json!({ "type": "Comment", "text": "hi", "size": [100, 40] }),
-            serde_json::json!({ "type": "Branch", "src": "(if $x (list 0 0) (list 1 0))", "branches": ["10", "01"] }),
-            serde_json::json!({
-                "type": "NamedRef",
-                "ref_": "0000000000000000000000000000000000000000000000000000000000000000",
-                "name": "mul",
-            }),
+            node_datum("Inlet", vec![]),
+            node_datum("Outlet", vec![]),
+            node_datum("Apply", vec![]),
+            node_datum("Delay", vec![]),
+            node_datum("Identity", vec![]),
+            node_datum("Bang", vec![]),
+            node_datum("Add", vec![]),
+            node_datum("Inspect", vec![]),
+            node_datum("FrameBang", vec![]),
+            node_datum("Number", vec![]),
+            node_datum("Expr", vec![("src", Datum::Str("(* $l $r)".into()))]),
+            node_datum(
+                "Comment",
+                vec![
+                    ("text", Datum::Str("hi".into())),
+                    ("size", Datum::Seq(vec![Datum::U64(100), Datum::U64(40)])),
+                ],
+            ),
+            node_datum(
+                "Branch",
+                vec![
+                    ("src", Datum::Str("(if $x (list 0 0) (list 1 0))".into())),
+                    (
+                        "branches",
+                        Datum::Seq(vec![Datum::Str("10".into()), Datum::Str("01".into())]),
+                    ),
+                ],
+            ),
+            node_datum(
+                "NamedRef",
+                vec![
+                    ("ref_", Datum::Str("0".repeat(64))),
+                    ("name", Datum::Str("mul".into())),
+                ],
+            ),
         ];
         for value in cases {
-            let node: Box<dyn Node> = serde_json::from_value(value.clone())
-                .unwrap_or_else(|e| panic!("from_value failed for {value}: {e}"));
-            let back =
-                serde_json::to_value(&node).unwrap_or_else(|e| panic!("to_value failed: {e}"));
+            let node: Box<dyn Node> = from_datum(value.clone())
+                .unwrap_or_else(|e| panic!("from_datum failed for {value:?}: {e}"));
+            let back = to_datum(&node).unwrap_or_else(|e| panic!("to_datum failed: {e}"));
             // The re-serialized form must itself round-trip identically, proving
-            // both directions of the typetag <-> Value bridge are stable.
-            let node2: Box<dyn Node> = serde_json::from_value(back.clone())
-                .unwrap_or_else(|e| panic!("re-deserialize failed for {back}: {e}"));
-            let back2 =
-                serde_json::to_value(&node2).unwrap_or_else(|e| panic!("re-serialize failed: {e}"));
-            assert_eq!(back, back2, "round-trip not stable for {value}");
+            // both directions of the typetag <-> Datum bridge are stable.
+            let node2: Box<dyn Node> = from_datum(back.clone())
+                .unwrap_or_else(|e| panic!("re-deserialize failed for {back:?}: {e}"));
+            let back2 = to_datum(&node2).unwrap_or_else(|e| panic!("re-serialize failed: {e}"));
+            assert_eq!(back, back2, "round-trip not stable for {value:?}");
             assert_eq!(
-                back.get("type").and_then(|t| t.as_str()),
-                value.get("type").and_then(|t| t.as_str()),
-                "type tag changed for {value}",
+                type_of(&back),
+                type_of(&value),
+                "type tag changed for {value:?}",
             );
         }
     }
