@@ -12,6 +12,7 @@
 //! `(layout ...)` - using the [`sexpr`] toolkit together with the resolution
 //! context returned by [`from_str`]/[`to_string`].
 
+mod datum;
 mod error;
 mod lower;
 mod model;
@@ -23,6 +24,7 @@ mod writer;
 
 pub mod sexpr;
 
+pub use datum::{Datum, DatumError, datum_from_expr, datum_text, from_datum, to_datum};
 pub use error::{ErrorKind, FormatError, Span};
 pub use lower::{Loaded, Lowerable};
 pub use model::{Addr, Document, Form};
