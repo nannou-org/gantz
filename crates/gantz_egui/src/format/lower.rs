@@ -272,6 +272,22 @@ fn build_history<N>(
         let timestamp = Duration::new(decl.secs, decl.nanos);
         // The registry computes the commit address from its contents.
         let commit_ca = registry.add_commit(Commit::new(timestamp, parent, graph_addr));
+        // `add_commit` clears a parent that is not present in the registry. Look
+        // the commit back up to detect that and warn - the file referenced an
+        // ancestor we do not have, so this commit became a root.
+        if let Some(declared_parent) = parent {
+            let kept = registry
+                .commits()
+                .get(&commit_ca)
+                .and_then(|c| c.parent)
+                .is_some();
+            if !kept {
+                log::warn!(
+                    "commit for `{name}` referenced absent parent `{}`; recorded it as a root commit",
+                    ContentAddr::from(declared_parent),
+                );
+            }
+        }
         // A declared id that no longer matches the recomputed address means the
         // file is stale (e.g. the hashing changed). Warn and heal rather than
         // fail; references pinned to the old address may not resolve (a planned

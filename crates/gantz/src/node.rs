@@ -293,4 +293,22 @@ mod tests {
         steel::parser::parser::Parser::parse(&out)
             .unwrap_or_else(|e| panic!("output is not valid Steel: {e}\n--- output ---\n{out}"));
     }
+
+    /// Importing a history whose commit names a parent not present in the file
+    /// records that commit as a root (the parent is cleared). The matching
+    /// warning is emitted by `build_history`.
+    #[test]
+    fn import_clears_absent_parent() {
+        use std::time::Duration;
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let parent_hex = "1".repeat(64);
+        let text = format!(
+            "(graph g (e (expr 1)))\n(history g (commit \"abcd1234\" (time 5 0) (parent \"{parent_hex}\")))",
+        );
+        let export: gantz_egui::export::Export<G> =
+            gantz_egui::format::from_str(&text, Duration::from_secs(0)).expect("import");
+        let commit = export.registry.named_commit("g").expect("g commit");
+        assert_eq!(commit.parent, None, "absent parent must be cleared to None");
+    }
 }
