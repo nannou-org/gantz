@@ -1567,4 +1567,266 @@ mod tests {
             assert_eq!(text_roundtrip(&d), d, "char round-trip for {c:?}");
         }
     }
+
+    // -- additional edge cases -----------------------------------------------
+
+    /// Round-trip a serde value through the codec *and* a text round-trip.
+    fn serde_text_roundtrip<T>(value: &T) -> T
+    where
+        T: Serialize + DeserializeOwned,
+    {
+        let datum = to_datum(value).expect("to_datum");
+        from_datum(text_roundtrip(&datum)).expect("from_datum after text")
+    }
+
+    /// Strings whose contents look like another datum kind must stay strings -
+    /// quoting is what disambiguates them from `null`/`#t`/numbers on read.
+    #[test]
+    fn strings_that_look_like_other_datums_stay_strings() {
+        for s in [
+            "null", "true", "false", "#t", "#f", "42", "-7", "3.0", "-1.5", "1e9", "", " ",
+        ] {
+            let d = Datum::Str(s.to_string());
+            assert_eq!(text_roundtrip(&d), d, "{s:?} must round-trip as a string");
+        }
+    }
+
+    /// Strings containing characters significant to the reader (quotes, escapes,
+    /// parens, comment/keyword markers, unicode) survive quoting and re-reading.
+    #[test]
+    fn string_escaping_round_trips() {
+        for s in [
+            "a\"b",         // embedded double quote
+            "a\\b",         // embedded backslash
+            "line1\nline2", // newline
+            "tab\there",    // tab
+            "ret\rhere",    // carriage return
+            "(not a list)", // parens inside a string
+            "semi;colon",   // comment char
+            "#:keyword",    // keyword marker
+            "✓ unicode ☃",
+            "",
+        ] {
+            let d = Datum::Str(s.to_string());
+            assert_eq!(
+                text_roundtrip(&d),
+                d,
+                "escaped string {s:?} must round-trip"
+            );
+        }
+    }
+
+    /// Floats survive a text round-trip bit-exactly, including fractional,
+    /// negative, very large/small, and full-precision values.
+    #[test]
+    fn floats_round_trip_exactly() {
+        let cases = [
+            0.0,
+            -0.5,
+            0.5,
+            -3.5,
+            0.1,
+            0.1 + 0.2,
+            1.0 / 3.0,
+            1e-10,
+            1e10,
+            1e20,
+            1e-20,
+            123456.789,
+            f64::MIN_POSITIVE,
+        ];
+        for x in cases {
+            match text_roundtrip(&Datum::F64(x)) {
+                Datum::F64(y) => assert_eq!(
+                    x.to_bits(),
+                    y.to_bits(),
+                    "float {x} must round-trip exactly (rendered {:?})",
+                    float_text(x),
+                ),
+                other => panic!(
+                    "float {x} read back as {other:?} (rendered {:?})",
+                    float_text(x)
+                ),
+            }
+        }
+    }
+
+    /// Integer boundary values round-trip with the correct variant; a value just
+    /// past `i64::MAX` reads back as `U64`, not an overflow.
+    #[test]
+    fn integer_boundaries_round_trip() {
+        assert_eq!(text_roundtrip(&Datum::I64(i64::MIN)), Datum::I64(i64::MIN));
+        assert_eq!(text_roundtrip(&Datum::I64(i64::MAX)), Datum::I64(i64::MAX));
+        let just_past = Datum::U64(i64::MAX as u64 + 1);
+        assert_eq!(text_roundtrip(&just_past), just_past);
+    }
+
+    /// Empty collections nested inside collections stay distinct: a seq holding
+    /// an empty map (`#(())`) is not a seq holding an empty seq (`#(#())`).
+    #[test]
+    fn nested_empty_collections_are_distinguished() {
+        let seq_of_empty_map = Datum::Seq(vec![Datum::Map(vec![])]);
+        let seq_of_empty_seq = Datum::Seq(vec![Datum::Seq(vec![])]);
+        assert_ne!(seq_of_empty_map, seq_of_empty_seq);
+        assert_eq!(text_roundtrip(&seq_of_empty_map), seq_of_empty_map);
+        assert_eq!(text_roundtrip(&seq_of_empty_seq), seq_of_empty_seq);
+        let mixed = Datum::Map(vec![
+            ("e_seq".into(), Datum::Seq(vec![])),
+            ("e_map".into(), Datum::Map(vec![])),
+        ]);
+        assert_eq!(text_roundtrip(&mixed), mixed);
+    }
+
+    /// An empty bytevector renders as `#u8()` and round-trips.
+    #[test]
+    fn empty_bytes_round_trips() {
+        let d = Datum::Bytes(vec![]);
+        assert_eq!(datum_text(&d), "#u8()");
+        assert_eq!(text_roundtrip(&d), d);
+    }
+
+    /// A deeply mixed structure (maps in seqs in maps, nulls/bytes/strings with
+    /// reader-significant characters interleaved) round-trips.
+    #[test]
+    fn deeply_mixed_nesting_round_trips() {
+        let d = Datum::Map(vec![
+            (
+                "rows".into(),
+                Datum::Seq(vec![
+                    Datum::Map(vec![
+                        ("id".into(), Datum::I64(1)),
+                        (
+                            "vals".into(),
+                            Datum::Seq(vec![Datum::F64(1.5), Datum::Null]),
+                        ),
+                    ]),
+                    Datum::Map(vec![
+                        ("id".into(), Datum::I64(2)),
+                        ("vals".into(), Datum::Seq(vec![])),
+                    ]),
+                ]),
+            ),
+            (
+                "grid".into(),
+                Datum::Seq(vec![
+                    Datum::Seq(vec![Datum::I64(0), Datum::I64(1)]),
+                    Datum::Seq(vec![Datum::Bool(true), Datum::Str("x".into())]),
+                ]),
+            ),
+            ("raw".into(), Datum::Bytes(vec![1, 2, 3])),
+            ("note".into(), Datum::Str("(parens) and \"quotes\"".into())),
+        ]);
+        assert_eq!(text_roundtrip(&d), d);
+    }
+
+    /// Characters significant to the reader (parens, brackets, quotes, hash,
+    /// comment char, a digit) round-trip via Steel's character syntax.
+    #[test]
+    fn reader_significant_chars_round_trip() {
+        for c in ['(', ')', '[', ']', '"', '\\', '#', ';', '5', '\''] {
+            let d = Datum::Char(c);
+            assert_eq!(
+                text_roundtrip(&d),
+                d,
+                "char {c:?} must round-trip (rendered {:?})",
+                char_text(c),
+            );
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    struct Meters(f64);
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    struct Pair(i32, i32);
+
+    /// An externally tagged enum (serde's default) - the single-key-map / bare
+    /// string encoding, distinct from the internally tagged path `MyNode` takes.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    enum Shape {
+        Dot,
+        Tag(String),
+        Span(i32, i32),
+        Rect { w: u32, h: u32, fill: bool },
+    }
+
+    /// Every externally tagged variant shape round-trips, exercising the
+    /// enum/variant-access paths (unit, newtype, tuple and struct variants).
+    #[test]
+    fn externally_tagged_enum_variants_round_trip() {
+        for value in [
+            Shape::Dot,
+            Shape::Tag("hi".into()),
+            Shape::Span(-1, 2),
+            Shape::Rect {
+                w: 4,
+                h: 5,
+                fill: true,
+            },
+        ] {
+            assert_eq!(serde_text_roundtrip(&value), value, "variant {value:?}");
+        }
+    }
+
+    /// Tuple structs, newtype structs and tuples round-trip as sequences.
+    #[test]
+    fn tuple_and_newtype_serde_shapes_round_trip() {
+        assert_eq!(serde_text_roundtrip(&Meters(2.5)), Meters(2.5));
+        assert_eq!(serde_text_roundtrip(&Pair(-3, 7)), Pair(-3, 7));
+        let tuple = (1u8, "two".to_string(), 3.5f64);
+        assert_eq!(serde_text_roundtrip(&tuple), tuple);
+    }
+
+    /// Maps with non-identifier string keys and with numeric keys round-trip,
+    /// exercising the map-key serializer and deserializer.
+    #[test]
+    fn map_keys_round_trip() {
+        use std::collections::BTreeMap;
+        let str_keys: BTreeMap<String, i32> = [
+            ("plain".to_string(), 1),
+            ("with space".to_string(), 2),
+            ("123".to_string(), 3), // digit-leading: must be quoted
+            (String::new(), 4),     // empty key: must be quoted
+            ("dash-ok".to_string(), 5),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(serde_text_roundtrip(&str_keys), str_keys);
+
+        let num_keys: BTreeMap<i32, String> = [(-2, "neg".to_string()), (7, "pos".to_string())]
+            .into_iter()
+            .collect();
+        assert_eq!(serde_text_roundtrip(&num_keys), num_keys);
+    }
+
+    /// `None` (the null datum) round-trips and stays distinct from a present
+    /// value.
+    #[test]
+    fn option_none_round_trips() {
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        struct Holder {
+            a: Option<i32>,
+            b: Option<String>,
+        }
+        let with_none = Holder {
+            a: None,
+            b: Some("x".into()),
+        };
+        assert_eq!(serde_text_roundtrip(&with_none), with_none);
+        let other = Holder {
+            a: Some(0),
+            b: None,
+        };
+        assert_eq!(serde_text_roundtrip(&other), other);
+    }
+
+    /// Deserializing a datum into an incompatible type fails cleanly rather than
+    /// silently coercing.
+    #[test]
+    fn type_mismatch_is_an_error() {
+        assert!(from_datum::<u8>(Datum::I64(300)).is_err()); // out of range
+        assert!(from_datum::<i64>(Datum::Str("nope".into())).is_err());
+        assert!(from_datum::<String>(Datum::I64(1)).is_err());
+        assert!(from_datum::<bool>(Datum::Null).is_err());
+    }
 }
