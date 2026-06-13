@@ -1033,7 +1033,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
     for (head, gantz_egui::ExportHead) in responses.take() {
         let Some(head) = head else { continue };
         let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
-        let ron_str = match gantz_egui::export::export_heads_ron(
+        let text = match gantz_egui::export::export_heads_sexpr(
             &get_node,
             &state.env.registry,
             &HashMap::new(),
@@ -1053,7 +1053,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             .set_file_name(&default_name)
             .add_filter("Gantz Export", &[ext]);
         if let Some(handle) = pollster::block_on(dialog.save_file()) {
-            if let Err(e) = pollster::block_on(handle.write(ron_str.as_bytes())) {
+            if let Err(e) = pollster::block_on(handle.write(text.as_bytes())) {
                 log::error!("ExportHead: failed to write: {e}");
             } else {
                 log::info!("Exported graph to {}", handle.file_name());
@@ -1074,7 +1074,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             log::info!("ExportAllNamed: no named graphs to export");
             continue;
         }
-        let ron_str = match gantz_egui::export::export_heads_ron(
+        let text = match gantz_egui::export::export_heads_sexpr(
             &get_node,
             &state.env.registry,
             &HashMap::new(),
@@ -1093,7 +1093,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             .set_file_name(&format!("gantz.{ext}"))
             .add_filter("Gantz Export", &[ext]);
         if let Some(handle) = pollster::block_on(dialog.save_file()) {
-            if let Err(e) = pollster::block_on(handle.write(ron_str.as_bytes())) {
+            if let Err(e) = pollster::block_on(handle.write(text.as_bytes())) {
                 log::error!("ExportAllNamed: failed to write: {e}");
             } else {
                 log::info!("Exported all named graphs to {}", handle.file_name());

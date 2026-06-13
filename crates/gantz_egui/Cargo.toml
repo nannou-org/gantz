@@ -28,6 +28,7 @@ log.workspace = true
 petgraph.workspace = true
 ron.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 steel-core.workspace = true
 sublime_fuzzy.workspace = true
 time.workspace = true

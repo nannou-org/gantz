@@ -147,6 +147,36 @@ impl<G> Registry<G> {
         self.names.insert(name, ca)
     }
 
+    /// Insert a commit, computing its address from the commit's contents.
+    ///
+    /// Returns the computed [`CommitAddr`], which always matches the commit.
+    pub fn add_commit(&mut self, commit: Commit) -> CommitAddr {
+        let ca = commit_addr(&commit);
+        self.commits.insert(ca, commit);
+        ca
+    }
+
+    /// Insert a graph, computing its address from the graph's contents.
+    ///
+    /// Returns the computed [`GraphAddr`], which always matches the graph.
+    /// Content-addressing makes this idempotent: an existing entry for the
+    /// computed address is identical and is left in place.
+    pub fn add_graph(&mut self, graph: G) -> GraphAddr
+    where
+        G: Data + NodeIndexable,
+        G::EdgeWeight: CaHash + Ord,
+        G::NodeWeight: CaHash,
+        G::NodeId: Eq + Hash + Ord,
+        for<'a> &'a G: Data<EdgeWeight = G::EdgeWeight, NodeWeight = G::NodeWeight>
+            + GraphBase<NodeId = G::NodeId, EdgeId = G::EdgeId>
+            + IntoNodeReferences
+            + IntoEdgeReferences,
+    {
+        let ca = graph_addr(&graph);
+        self.graphs.entry(ca).or_insert(graph);
+        ca
+    }
+
     /// Remove the given name from the registry.
     ///
     /// This does not remove the underlying commit, just the name mapping.

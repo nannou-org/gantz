@@ -28,19 +28,13 @@ pub fn load<N>(
     mut views: ResMut<crate::Views>,
     mut demos: ResMut<crate::Demos>,
 ) where
-    N: serde::de::DeserializeOwned + Send + Sync + 'static,
+    N: gantz_egui::format::Lowerable + Send + Sync,
 {
-    let text = match std::str::from_utf8(BYTES) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("base.gantz: invalid UTF-8: {e}");
-            return;
-        }
-    };
-    let export: gantz_egui::export::Export<Graph<N>> = match ron::from_str(text) {
+    let export: gantz_egui::export::Export<Graph<N>> = match gantz_egui::export::parse_export(BYTES)
+    {
         Ok(e) => e,
         Err(e) => {
-            log::error!("base.gantz: failed to deserialize: {e}");
+            log::error!("base.gantz: {e}");
             return;
         }
     };
@@ -69,29 +63,29 @@ pub fn export_to_file<N>(
     views: Res<crate::Views>,
     demos: Res<crate::Demos>,
 ) where
-    N: gantz_core::Node + Clone + serde::Serialize + Send + Sync + 'static,
+    N: gantz_egui::format::Lowerable + gantz_core::Node + Clone + Send + Sync,
 {
-    let Some(ron_str) = export_all_named_ron(&registry, &builtins, &views, &demos) else {
+    let Some(text) = export_all_named(&registry, &builtins, &views, &demos) else {
         log::error!("export_to_file: failed to serialize");
         return;
     };
-    if let Err(e) = std::fs::write(path.0, ron_str) {
+    if let Err(e) = std::fs::write(path.0, text) {
         log::error!("export_to_file: failed to write {}: {e}", path.0);
     }
 }
 
-/// Serialize all named graphs to a RON [`gantz_egui::export::Export`] string.
+/// Serialize all named graphs to a `.gantz` text [`gantz_egui::export::Export`].
 ///
 /// Useful for the `update-base` developer workflow. Returns `None` on
 /// serialization failure.
-pub fn export_all_named_ron<N>(
+pub fn export_all_named<N>(
     registry: &Registry<N>,
     builtins: &bevy_gantz::BuiltinNodes<N>,
     views: &crate::Views,
     demos: &crate::Demos,
 ) -> Option<String>
 where
-    N: gantz_core::Node + Clone + serde::Serialize + Send + Sync + 'static,
+    N: gantz_egui::format::Lowerable + gantz_core::Node + Clone + Send + Sync,
 {
     let node_reg = crate::registry_ref(registry, builtins, demos);
     let get_node = |ca: &gantz_ca::ContentAddr| node_reg.node(ca);
@@ -102,6 +96,6 @@ where
         .map(|name| gantz_ca::Head::Branch(name.clone()))
         .collect();
 
-    gantz_egui::export::export_heads_ron(&get_node, registry, views, &demos.0, named_heads.iter())
+    gantz_egui::export::export_heads_sexpr(&get_node, registry, views, &demos.0, named_heads.iter())
         .ok()
 }
