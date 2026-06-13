@@ -2,7 +2,7 @@
 //!
 //! [`gantz_format`] owns the layout-agnostic registry format. This module
 //! layers GUI view state on top - `(layout ...)` and `(demo ...)` forms - using
-//! the format's [`sexpr`](gantz_format::sexpr) toolkit and the resolution
+//! the format's [`sexpr`] toolkit and the resolution
 //! context returned by [`gantz_format::from_str`]/[`gantz_format::to_string`].
 //! It produces and consumes a full [`Export`] (registry + views + demos), so
 //! existing `crate::format::{from_str, to_string}` call sites are unchanged.

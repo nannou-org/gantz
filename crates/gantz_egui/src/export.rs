@@ -311,10 +311,10 @@ where
 
 /// Serialize a [`Copied`] payload as a `.gantz` document.
 ///
-/// The copied subgraph rides as a graph named [`CLIPBOARD_NAME`] - its positions
-/// stored as that graph's layout view - alongside the registry dependencies, so
-/// the whole payload is one ordinary `.gantz` document. [`copied_from_str`]
-/// reverses this.
+/// The copied subgraph rides as a graph named `clipboard` - its positions stored
+/// as that graph's layout view - alongside the registry dependencies, so the
+/// whole payload is one ordinary `.gantz` document. [`copied_from_str`] reverses
+/// this.
 pub fn copied_to_string<N>(copied: &Copied<N>) -> Result<String, crate::format::FormatError>
 where
     N: crate::format::Lowerable + Clone,
@@ -352,8 +352,8 @@ where
 
 /// Parse a clipboard payload produced by [`copied_to_string`].
 ///
-/// Splits the [`CLIPBOARD_NAME`] graph (and its positions) back out from the
-/// registry dependencies.
+/// Splits the `clipboard` graph (and its positions) back out from the registry
+/// dependencies.
 pub fn copied_from_str<N>(text: &str) -> Result<Copied<N>, ParseCopiedError>
 where
     N: crate::format::Lowerable + Clone,
