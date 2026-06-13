@@ -5,18 +5,19 @@
 //! ports are `(name port)` sub-lists. Indentation is two spaces per nesting
 //! level.
 
+use crate::datum::{Datum, datum_field, datum_str, datum_text};
 use crate::model::{
     Addr, CommitDecl, Conn, Document, Endpoint, GraphBody, NameDecl, NodeDecl, NodeSpec,
 };
 use crate::sexpr::quote;
-use crate::sugar::keyword_for_tag;
-use serde_json::Value;
+use crate::sugar::Sugar;
 
-/// Serialize a [`Document`]'s registry forms to `.gantz` text.
-pub fn write_document(doc: &Document) -> String {
+/// Serialize a [`Document`]'s registry forms to `.gantz` text, rendering node
+/// sugar with `sugar`.
+pub fn write_document(doc: &Document, sugar: &dyn Sugar) -> String {
     let mut out = String::new();
     for def in &doc.graphs {
-        write_graph(&mut out, &def.id, &def.body);
+        write_graph(&mut out, &def.id, &def.body, sugar);
         out.push_str("\n\n");
     }
     if !doc.commits.is_empty() {
@@ -35,20 +36,26 @@ pub fn write_document(doc: &Document) -> String {
 
 // -- graphs ------------------------------------------------------------------
 
-fn write_graph(out: &mut String, id: &Addr, body: &GraphBody) {
-    write_graph_body(out, &format!("graph {}", addr_text(id)), body, 0);
+fn write_graph(out: &mut String, id: &Addr, body: &GraphBody, sugar: &dyn Sugar) {
+    write_graph_body(out, &format!("graph {}", addr_text(id)), body, 0, sugar);
 }
 
 /// Write `(<head> <nodes...> <conns...>)` with the body indented one level
 /// deeper than `indent`.
-fn write_graph_body(out: &mut String, head: &str, body: &GraphBody, indent: usize) {
+fn write_graph_body(
+    out: &mut String,
+    head: &str,
+    body: &GraphBody,
+    indent: usize,
+    sugar: &dyn Sugar,
+) {
     out.push_str(&format!("({head}"));
     let inner = indent + 1;
     let pad = "  ".repeat(inner);
     for decl in &body.nodes {
         out.push('\n');
         out.push_str(&pad);
-        write_node_decl(out, decl, inner);
+        write_node_decl(out, decl, inner, sugar);
     }
     for conn in &body.conns {
         out.push('\n');
@@ -58,63 +65,23 @@ fn write_graph_body(out: &mut String, head: &str, body: &GraphBody, indent: usiz
     out.push(')');
 }
 
-fn write_node_decl(out: &mut String, decl: &NodeDecl, indent: usize) {
+fn write_node_decl(out: &mut String, decl: &NodeDecl, indent: usize, sugar: &dyn Sugar) {
     match &decl.spec {
         NodeSpec::Graph(body) => {
             out.push_str(&format!("({} ", decl.name));
-            write_graph_body(out, "graph", body, indent);
+            write_graph_body(out, "graph", body, indent, sugar);
             out.push(')');
         }
-        NodeSpec::Value(v) => out.push_str(&format!("({} {})", decl.name, value_spec(v))),
+        NodeSpec::Value(v) => out.push_str(&format!("({} {})", decl.name, value_spec(v, sugar))),
         NodeSpec::Ref(r) => out.push_str(&format!("({} {})", decl.name, ref_spec(r))),
     }
 }
 
-fn value_spec(v: &Value) -> String {
-    let tag = v.get("type").and_then(Value::as_str).unwrap_or("node");
-    match tag {
-        "Expr" => {
-            let src = v.get("src").and_then(Value::as_str).unwrap_or("'()");
-            match v.get("outputs").and_then(Value::as_u64) {
-                Some(n) if n != 1 => format!("(expr {src} #:out {n})"),
-                _ => format!("(expr {src})"),
-            }
-        }
-        "Branch" => {
-            let src = v.get("src").and_then(Value::as_str).unwrap_or("'()");
-            let masks = v
-                .get("branches")
-                .and_then(Value::as_array)
-                .map(|a| {
-                    a.iter()
-                        .filter_map(Value::as_str)
-                        .map(quote)
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                })
-                .unwrap_or_default();
-            format!("(branch {src} {masks})")
-        }
-        "Comment" => {
-            let text = v.get("text").and_then(Value::as_str).unwrap_or("");
-            let (w, h) = v
-                .get("size")
-                .and_then(Value::as_array)
-                .and_then(|a| Some((a.first()?.as_u64()?, a.get(1)?.as_u64()?)))
-                .unwrap_or((100, 40));
-            format!("(comment {} {w} {h})", quote(text))
-        }
-        "Log" => match v.get("level").and_then(Value::as_str) {
-            Some(level) if !level.eq_ignore_ascii_case("info") => {
-                format!("(log {})", level.to_ascii_lowercase())
-            }
-            _ => "(log)".to_string(),
-        },
-        other => match keyword_for_tag(other) {
-            Some(keyword) => keyword.to_string(),
-            None => generic_spec(v),
-        },
-    }
+/// Render a node value: a sugared form if `sugar` provides one, else the generic
+/// `(node "Tag" ...)` fallback.
+fn value_spec(v: &Datum, sugar: &dyn Sugar) -> String {
+    let tag = datum_field(v, "type").and_then(datum_str).unwrap_or("node");
+    sugar.write_spec(tag, v).unwrap_or_else(|| generic_spec(v))
 }
 
 fn ref_spec(r: &crate::model::RefSpec) -> String {
@@ -131,11 +98,11 @@ fn ref_spec(r: &crate::model::RefSpec) -> String {
     s
 }
 
-fn generic_spec(v: &Value) -> String {
-    let tag = v.get("type").and_then(Value::as_str).unwrap_or("node");
+fn generic_spec(v: &Datum) -> String {
+    let tag = datum_field(v, "type").and_then(datum_str).unwrap_or("node");
     let mut s = format!("(node {}", quote(tag));
-    if let Value::Object(map) = v {
-        for (k, val) in map {
+    if let Datum::Map(entries) = v {
+        for (k, val) in entries {
             if k == "type" {
                 continue;
             }
@@ -144,28 +111,6 @@ fn generic_spec(v: &Value) -> String {
     }
     s.push(')');
     s
-}
-
-/// Render a JSON value as a reader-valid datum.
-fn datum_text(v: &Value) -> String {
-    match v {
-        Value::Null => "null".to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Number(n) => n.to_string(),
-        Value::String(s) => quote(s),
-        Value::Array(items) => {
-            let inner = items.iter().map(datum_text).collect::<Vec<_>>().join(" ");
-            format!("({inner})")
-        }
-        Value::Object(map) => {
-            let inner = map
-                .iter()
-                .map(|(k, val)| format!("({k} {})", datum_text(val)))
-                .collect::<Vec<_>>()
-                .join(" ");
-            format!("({inner})")
-        }
-    }
 }
 
 // -- connections -------------------------------------------------------------

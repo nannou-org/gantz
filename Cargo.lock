@@ -2994,7 +2994,6 @@ dependencies = [
  "log",
  "petgraph",
  "serde",
- "serde_json",
  "steel-core",
 ]
 

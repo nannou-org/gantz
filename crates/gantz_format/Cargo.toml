@@ -14,5 +14,4 @@ gantz_core.workspace = true
 log.workspace = true
 petgraph.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 steel-core.workspace = true

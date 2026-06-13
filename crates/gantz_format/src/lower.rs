@@ -7,16 +7,15 @@
 //! is a label and which no commit references is a hand-authored named graph: it
 //! auto-registers under that label with a root commit synthesised at `now`.
 
+use crate::datum::{Datum, datum_field, datum_str, from_datum, to_datum};
 use crate::error::{ErrorKind, FormatError};
 use crate::model::{
     Addr, CommitDecl, Document, Form, GraphBody, GraphDef, NameDecl, NodeDecl, NodeSpec, RefSpec,
 };
-use crate::node_value::value_to_node;
 use gantz_ca::{Commit, CommitAddr, ContentAddr, Registry, Timestamp};
 use gantz_core::edge::Edge;
 use gantz_core::node::graph::{Graph, GraphNode, NodeIx};
 use gantz_core::node::{Input, Output};
-use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
@@ -202,38 +201,49 @@ where
     N: Lowerable,
 {
     match &decl.spec {
-        NodeSpec::Value(v) => node_from_value::<N>(v.clone()),
+        NodeSpec::Value(v) => node_from_datum::<N>(v.clone()),
         NodeSpec::Ref(refspec) => {
             let v = resolve_ref_value(refspec, resolve)?;
-            node_from_value::<N>(v)
+            node_from_datum::<N>(v)
         }
         NodeSpec::Graph(body) => {
             let (nested, _) = build_graph::<N>(body, resolve)?;
             let gn = GraphNode { graph: nested };
-            let mut v = serde_json::to_value(&gn).map_err(|e| {
+            let datum = to_datum(&gn).map_err(|e| {
                 FormatError::new(ErrorKind::NodeDeserialize {
                     tag: "GraphNode".into(),
                     msg: e.to_string(),
                 })
             })?;
-            if let Value::Object(ref mut map) = v {
-                map.insert("type".into(), Value::String("GraphNode".into()));
-            }
-            node_from_value::<N>(v)
+            node_from_datum::<N>(insert_type(datum, "GraphNode"))
         }
     }
 }
 
-fn node_from_value<N>(v: Value) -> Result<N, FormatError>
+/// Prepend a `type` field to a map datum (the typetag discriminant the node's
+/// own serialization omits).
+fn insert_type(datum: Datum, tag: &str) -> Datum {
+    match datum {
+        Datum::Map(mut entries) => {
+            entries.insert(0, ("type".to_string(), Datum::Str(tag.to_string())));
+            Datum::Map(entries)
+        }
+        other => Datum::Map(vec![
+            ("type".to_string(), Datum::Str(tag.to_string())),
+            ("value".to_string(), other),
+        ]),
+    }
+}
+
+fn node_from_datum<N>(datum: Datum) -> Result<N, FormatError>
 where
     N: serde::de::DeserializeOwned,
 {
-    let tag = v
-        .get("type")
-        .and_then(Value::as_str)
+    let tag = datum_field(&datum, "type")
+        .and_then(datum_str)
         .unwrap_or("?")
         .to_string();
-    value_to_node::<N>(v).map_err(|e| {
+    from_datum::<N>(datum).map_err(|e| {
         FormatError::new(ErrorKind::NodeDeserialize {
             tag,
             msg: e.to_string(),
@@ -241,7 +251,7 @@ where
     })
 }
 
-fn resolve_ref_value(refspec: &RefSpec, resolve: &Resolve) -> Result<Value, FormatError> {
+fn resolve_ref_value(refspec: &RefSpec, resolve: &Resolve) -> Result<Datum, FormatError> {
     let commit_ca =
         match &refspec.addr {
             None => resolve.names.get(&refspec.name).copied().ok_or_else(|| {
@@ -262,12 +272,12 @@ fn resolve_ref_value(refspec: &RefSpec, resolve: &Resolve) -> Result<Value, Form
     } else {
         "NamedRef"
     };
-    Ok(json!({
-        "type": tag,
-        "ref_": hex,
-        "name": refspec.name,
-        "sync": refspec.sync,
-    }))
+    Ok(Datum::Map(vec![
+        ("type".to_string(), Datum::Str(tag.to_string())),
+        ("ref_".to_string(), Datum::Str(hex)),
+        ("name".to_string(), Datum::Str(refspec.name.clone())),
+        ("sync".to_string(), Datum::Bool(refspec.sync)),
+    ]))
 }
 
 // -- commits -----------------------------------------------------------------

@@ -76,6 +76,52 @@ where
     T::deserialize(datum)
 }
 
+// -- accessors ---------------------------------------------------------------
+
+/// The value of a map entry, if `d` is a map with that key.
+pub(crate) fn datum_field<'a>(d: &'a Datum, key: &str) -> Option<&'a Datum> {
+    match d {
+        Datum::Map(entries) => entries
+            .iter()
+            .find(|(k, _)| k.as_str() == key)
+            .map(|(_, v)| v),
+        _ => None,
+    }
+}
+
+/// The contents of a string datum.
+pub(crate) fn datum_str(d: &Datum) -> Option<&str> {
+    match d {
+        Datum::Str(s) => Some(s),
+        _ => None,
+    }
+}
+
+/// The value of a boolean datum.
+pub(crate) fn datum_bool(d: &Datum) -> Option<bool> {
+    match d {
+        Datum::Bool(b) => Some(*b),
+        _ => None,
+    }
+}
+
+/// The value of an integer datum (signed or unsigned, if it fits in `i64`).
+pub(crate) fn datum_int(d: &Datum) -> Option<i64> {
+    match d {
+        Datum::I64(n) => Some(*n),
+        Datum::U64(n) => i64::try_from(*n).ok(),
+        _ => None,
+    }
+}
+
+/// The elements of a sequence datum.
+pub(crate) fn datum_seq(d: &Datum) -> Option<&[Datum]> {
+    match d {
+        Datum::Seq(items) => Some(items),
+        _ => None,
+    }
+}
+
 // -- error -------------------------------------------------------------------
 
 impl fmt::Display for DatumError {

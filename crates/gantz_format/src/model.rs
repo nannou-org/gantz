@@ -6,8 +6,8 @@
 //! `(commits ...)` table and a `(names ...)` table - and preserves any
 //! unrecognised top-level forms as [`Form`]s for extenders.
 
+use crate::datum::Datum;
 use crate::error::Span;
-use serde_json::Value;
 
 /// A parsed `.gantz` document.
 #[derive(Clone, Debug, Default)]
@@ -68,8 +68,8 @@ pub struct NodeDecl {
 /// A node specification.
 #[derive(Clone, Debug)]
 pub enum NodeSpec {
-    /// A self-contained typetag node as a serde object `{ "type", ... }`.
-    Value(Value),
+    /// A self-contained node as a serde [`Datum`] map (`type` field + fields).
+    Value(Datum),
     /// An inline nested graph, lowered to a `GraphNode`.
     Graph(GraphBody),
     /// A `NamedRef`/`FnNamedRef` whose address resolves at load time.
