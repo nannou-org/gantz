@@ -1,8 +1,8 @@
 //! Export/import representation for sharing node sets between gantz instances.
 //!
 //! The [`Export`] type bundles a [`gantz_ca::Registry`] subset with optional
-//! [`GraphViews`] layout data. Serialization uses RON with the `.gantz` file
-//! extension.
+//! [`GraphViews`] layout data. Serialization uses the `.gantz` S-expression text
+//! format (see [`crate::format`]) under the `.gantz` file extension.
 
 use crate::GraphViews;
 use gantz_ca::{CommitAddr, registry::MergeResult};
@@ -17,8 +17,6 @@ pub const FILE_EXTENSION: &str = "gantz";
 #[derive(Debug)]
 pub enum ParseExportError {
     Utf8(std::str::Utf8Error),
-    /// The legacy RON format failed to deserialize.
-    Ron(ron::de::SpannedError),
     /// The S-expression text format failed to parse.
     Format(crate::format::FormatError),
 }
@@ -27,7 +25,6 @@ impl std::fmt::Display for ParseExportError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::Utf8(e) => write!(f, "invalid UTF-8: {e}"),
-            Self::Ron(e) => write!(f, "failed to deserialize RON: {e}"),
             Self::Format(e) => write!(f, "failed to parse .gantz text: {e}"),
         }
     }
@@ -37,7 +34,6 @@ impl std::error::Error for ParseExportError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Utf8(e) => Some(e),
-            Self::Ron(e) => Some(e),
             Self::Format(e) => Some(e),
         }
     }
@@ -87,38 +83,15 @@ where
 
 /// Parse the raw bytes of a `.gantz` file into an [`Export`].
 ///
-/// Auto-detects the format by content: the S-expression text format (forms like
-/// `(graph ...)`) is parsed by [`crate::format`]; anything else is treated as
-/// legacy RON. Commits the text format synthesises (hand-authored graphs with no
-/// `(history ...)`) are stamped with the current time.
+/// The file is the `.gantz` S-expression text format (see [`crate::format`]).
+/// Graphs the document does not commit explicitly (hand-authored graphs with no
+/// `(commits ...)` entry) are stamped with the current time.
 pub fn parse_export<N>(bytes: &[u8]) -> Result<Export<Graph<N>>, ParseExportError>
 where
     N: crate::format::Lowerable,
 {
     let text = std::str::from_utf8(bytes).map_err(ParseExportError::Utf8)?;
-    if looks_like_text_format(text) {
-        crate::format::from_str(text, now()).map_err(ParseExportError::Format)
-    } else {
-        ron::from_str(text).map_err(ParseExportError::Ron)
-    }
-}
-
-/// Heuristic: does the document look like the S-expression text format?
-///
-/// Checks the first non-blank, non-comment line for a top-level form keyword.
-/// Legacy RON starts with a bare `(` (the `Export` tuple) instead.
-fn looks_like_text_format(text: &str) -> bool {
-    for line in text.lines() {
-        let t = line.trim_start();
-        if t.is_empty() || t.starts_with(';') {
-            continue;
-        }
-        return t.starts_with("(graph")
-            || t.starts_with("(history")
-            || t.starts_with("(layout")
-            || t.starts_with("(demo");
-    }
-    false
+    crate::format::from_str(text, now()).map_err(ParseExportError::Format)
 }
 
 /// The current time as a [`gantz_ca::Timestamp`] (duration since the Unix epoch).
@@ -139,31 +112,11 @@ where
     (roots.len() == 1).then(|| roots.pop().unwrap())
 }
 
-/// Build and serialize an [`Export`] for the given heads as pretty RON.
-///
-/// Covers both export-head and export-all-named: the export contains the
-/// heads' transitively required commits along with their views and demos.
-/// File IO stays with the caller.
-pub fn export_heads_ron<N>(
-    get_node: GetNode,
-    registry: &gantz_ca::Registry<Graph<N>>,
-    all_views: &HashMap<CommitAddr, GraphViews>,
-    all_demos: &HashMap<CommitAddr, String>,
-    heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
-) -> Result<String, ron::Error>
-where
-    N: gantz_core::Node + Clone + serde::Serialize,
-{
-    let export_registry = gantz_core::reg::export_heads(get_node, registry, heads);
-    let export = export_with(export_registry, all_views, all_demos);
-    ron::ser::to_string_pretty(&export, ron::ser::PrettyConfig::default())
-}
-
 /// Build and serialize an [`Export`] for the given heads as `.gantz` text.
 ///
-/// The text-format counterpart of [`export_heads_ron`]: the export contains the
-/// heads' transitively required commits along with their views and demos. File
-/// IO stays with the caller.
+/// Covers both export-head and export-all-named: the export contains the heads'
+/// transitively required commits along with their views and demos. File IO
+/// stays with the caller.
 pub fn export_heads_sexpr<N>(
     get_node: GetNode,
     registry: &gantz_ca::Registry<Graph<N>>,
@@ -236,7 +189,38 @@ pub fn read_dropped_file(file: &egui::DroppedFile) -> Option<Vec<u8>> {
     None
 }
 
-/// A serializable clipboard payload for copied graph nodes.
+/// Reserved registry name under which a copied subgraph travels inside a
+/// clipboard `.gantz` document (see [`copied_to_string`]).
+const CLIPBOARD_NAME: &str = "clipboard";
+
+/// An error produced when parsing a clipboard payload.
+#[derive(Debug)]
+pub enum ParseCopiedError {
+    /// The text was not a valid `.gantz` document.
+    Format(crate::format::FormatError),
+    /// The document parsed but carried no clipboard graph.
+    NotClipboard,
+}
+
+impl std::fmt::Display for ParseCopiedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Format(e) => write!(f, "failed to parse .gantz text: {e}"),
+            Self::NotClipboard => write!(f, "document carries no `{CLIPBOARD_NAME}` graph"),
+        }
+    }
+}
+
+impl std::error::Error for ParseCopiedError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Format(e) => Some(e),
+            Self::NotClipboard => None,
+        }
+    }
+}
+
+/// A clipboard payload for copied graph nodes.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Copied<N> {
     /// Registry dependencies referenced by copied nodes (e.g. Ref nodes).
@@ -325,6 +309,98 @@ where
     new_indices
 }
 
+/// Serialize a [`Copied`] payload as a `.gantz` document.
+///
+/// The copied subgraph rides as a graph named [`CLIPBOARD_NAME`] - its positions
+/// stored as that graph's layout view - alongside the registry dependencies, so
+/// the whole payload is one ordinary `.gantz` document. [`copied_from_str`]
+/// reverses this.
+pub fn copied_to_string<N>(copied: &Copied<N>) -> Result<String, crate::format::FormatError>
+where
+    N: crate::format::Lowerable + Clone,
+{
+    // Add the subgraph to the dependency registry as a fresh root commit named
+    // `CLIPBOARD_NAME`. A fixed timestamp keeps the payload deterministic.
+    let mut registry = copied.export.registry.clone();
+    let g_addr = registry.add_graph(copied.graph.clone());
+    let commit_ca = registry.add_commit(gantz_ca::Commit::new(
+        std::time::Duration::ZERO,
+        None,
+        g_addr,
+    ));
+    registry.insert_name(CLIPBOARD_NAME.to_string(), commit_ca);
+
+    // Carry the positions as the clipboard graph's top-level layout view.
+    let mut views = copied.export.views.clone();
+    let mut clip_views = GraphViews::new();
+    clip_views.insert(
+        Vec::new(),
+        egui_graph::View {
+            scene_rect: egui::Rect::ZERO,
+            layout: copied.positions.clone(),
+        },
+    );
+    views.insert(commit_ca, clip_views);
+
+    let export = Export {
+        registry,
+        views,
+        demos: copied.export.demos.clone(),
+    };
+    crate::format::to_string(&export)
+}
+
+/// Parse a clipboard payload produced by [`copied_to_string`].
+///
+/// Splits the [`CLIPBOARD_NAME`] graph (and its positions) back out from the
+/// registry dependencies.
+pub fn copied_from_str<N>(text: &str) -> Result<Copied<N>, ParseCopiedError>
+where
+    N: crate::format::Lowerable + Clone,
+{
+    let mut export = crate::format::from_str::<N>(text, now()).map_err(ParseCopiedError::Format)?;
+
+    let clip_ca = export
+        .registry
+        .names()
+        .get(CLIPBOARD_NAME)
+        .copied()
+        .ok_or(ParseCopiedError::NotClipboard)?;
+    let graph = export
+        .registry
+        .commit_graph_ref(&clip_ca)
+        .cloned()
+        .ok_or(ParseCopiedError::NotClipboard)?;
+    let positions = export
+        .views
+        .get(&clip_ca)
+        .and_then(|gv| gv.get(&Vec::new()))
+        .map(|view| view.layout.clone())
+        .unwrap_or_default();
+
+    // Everything but the clipboard commit is a dependency. `export` filters
+    // names to the kept commits, so the `clipboard` name drops out with it.
+    let deps: HashSet<CommitAddr> = export
+        .registry
+        .commits()
+        .keys()
+        .copied()
+        .filter(|&ca| ca != clip_ca)
+        .collect();
+    let registry = export.registry.export(&deps);
+    export.views.remove(&clip_ca);
+
+    Ok(Copied {
+        export: Export {
+            registry,
+            views: export.views,
+            demos: export.demos,
+        },
+        graph,
+        positions,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,37 +432,12 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_serde() {
+    fn export_merge_recovers_data() {
         let export = test_export();
-        let s = ron::to_string(&export).expect("serialize");
-        let recovered: Export<String> = ron::from_str(&s).expect("deserialize");
-        assert_eq!(
-            export.registry.commits().len(),
-            recovered.registry.commits().len()
-        );
-        assert_eq!(
-            export.registry.graphs().len(),
-            recovered.registry.graphs().len()
-        );
-        assert_eq!(
-            export.registry.names().len(),
-            recovered.registry.names().len()
-        );
-        // Verify the content survived the round-trip.
-        let ca = commit_addr_raw(10);
-        assert!(recovered.registry.commits().contains_key(&ca));
-        assert_eq!(recovered.registry.names().get("alpha"), Some(&ca));
-    }
-
-    #[test]
-    fn round_trip_export_merge_recovers_data() {
-        let export = test_export();
-        let s = ron::to_string(&export).expect("serialize");
-        let recovered: Export<String> = ron::from_str(&s).expect("deserialize");
         let mut target = gantz_ca::Registry::<String>::default();
         let mut views = HashMap::new();
         let mut demos = HashMap::new();
-        let result = merge_with(&mut target, &mut views, &mut demos, recovered);
+        let result = merge_with(&mut target, &mut views, &mut demos, export);
         assert_eq!(result.names_added, vec!["alpha".to_string()]);
         assert!(result.names_replaced.is_empty());
         let ca = commit_addr_raw(10);
@@ -411,41 +462,6 @@ mod tests {
         let export = export_with(registry, &all_views, &HashMap::new());
         assert!(export.views.contains_key(&ca));
         assert!(!export.views.contains_key(&cb));
-    }
-
-    #[test]
-    fn copied_round_trip_serde() {
-        use gantz_core::Edge;
-
-        let mut graph: Graph<String> = Graph::default();
-        let a = graph.add_node("A".to_string());
-        let b = graph.add_node("B".to_string());
-        graph.add_edge(a, b, Edge::new(0.into(), 0.into()));
-
-        let mut positions = egui_graph::Layout::default();
-        positions.insert(egui_graph::NodeId(0), egui::pos2(10.0, 20.0));
-        positions.insert(egui_graph::NodeId(1), egui::pos2(30.0, 40.0));
-
-        let copied = Copied {
-            export: Export::default(),
-            graph,
-            positions,
-        };
-
-        let s = ron::to_string(&copied).expect("serialize");
-        let recovered: Copied<String> = ron::from_str(&s).expect("deserialize");
-
-        assert_eq!(recovered.graph.node_count(), 2);
-        assert_eq!(recovered.graph.edge_count(), 1);
-        assert_eq!(recovered.positions.len(), 2);
-        assert_eq!(
-            recovered.positions[&egui_graph::NodeId(0)],
-            egui::pos2(10.0, 20.0),
-        );
-        assert_eq!(
-            recovered.positions[&egui_graph::NodeId(1)],
-            egui::pos2(30.0, 40.0),
-        );
     }
 
     #[test]

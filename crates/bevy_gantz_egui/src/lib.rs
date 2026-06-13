@@ -714,8 +714,8 @@ pub fn on_inspect_edge<N>(
 
 /// Handle copy selection payloads.
 ///
-/// Serializes the selected nodes (and their registry dependencies) to RON
-/// and writes the result directly to the system clipboard via
+/// Serializes the selected nodes (and their registry dependencies) to a `.gantz`
+/// document and writes the result directly to the system clipboard via
 /// [`bevy_egui::EguiClipboard`].
 pub fn on_copy_nodes<N>(
     trigger: On<ForHead<gantz_egui::CopyNodes>>,
@@ -731,7 +731,7 @@ pub fn on_copy_nodes<N>(
     N: 'static
         + Node
         + Clone
-        + serde::Serialize
+        + gantz_egui::format::Lowerable
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
         + Sync,
@@ -762,10 +762,9 @@ pub fn on_copy_nodes<N>(
 /// Handle paste selection payloads.
 ///
 /// Resolves the clipboard text (via [`bevy_egui::EguiClipboard`] when the
-/// payload doesn't carry it), deserializes it into a
-/// [`gantz_egui::export::Copied`], merges registry dependencies, adds the
-/// subgraph, maps positions, and updates the selection to the newly pasted
-/// nodes.
+/// payload doesn't carry it), parses it into a [`gantz_egui::export::Copied`],
+/// merges registry dependencies, adds the subgraph, maps positions, and updates
+/// the selection to the newly pasted nodes.
 pub fn on_paste<N>(
     trigger: On<ForHead<gantz_egui::Paste>>,
     mut registry: ResMut<Registry<N>>,
@@ -783,7 +782,7 @@ pub fn on_paste<N>(
     N: 'static
         + Node
         + Clone
-        + serde::de::DeserializeOwned
+        + gantz_egui::format::Lowerable
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
         + Sync,
@@ -1028,23 +1027,17 @@ pub fn on_import_file<N>(
 /// Reset a base graph to its original state by re-merging from the base export.
 pub fn on_reset_base_graph<N>(trigger: On<ResetBaseGraphEvent>, mut registry: ResMut<Registry<N>>)
 where
-    N: 'static + Clone + serde::de::DeserializeOwned + Send + Sync,
+    N: 'static + Clone + gantz_egui::format::Lowerable + Send + Sync,
 {
     let name = &trigger.event().0;
-    let text = match std::str::from_utf8(gantz_base::BYTES) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("ResetBaseGraph: invalid UTF-8: {e}");
-            return;
-        }
-    };
-    let export: gantz_egui::export::Export<Graph<N>> = match ron::from_str(text) {
-        Ok(e) => e,
-        Err(e) => {
-            log::error!("ResetBaseGraph: failed to deserialize base: {e}");
-            return;
-        }
-    };
+    let export: gantz_egui::export::Export<Graph<N>> =
+        match gantz_egui::export::parse_export::<N>(gantz_base::BYTES) {
+            Ok(e) => e,
+            Err(e) => {
+                log::error!("ResetBaseGraph: failed to parse base: {e}");
+                return;
+            }
+        };
     // Extract just the commits reachable from the target name.
     if let Some(&base_commit_ca) = export.registry.names().get(name) {
         let mut required = std::collections::HashSet::new();

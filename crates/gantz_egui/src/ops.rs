@@ -58,7 +58,7 @@ pub fn branch_node<N>(
     }
 }
 
-/// Serialize the selection at `path` to a RON clipboard payload.
+/// Serialize the selection at `path` to a `.gantz` clipboard payload.
 ///
 /// Returns `None` when the selection is empty, the path is invalid, or
 /// serialization fails (logging the cause). Writing the resulting string to
@@ -72,7 +72,7 @@ pub fn copy_nodes<N>(
     selection: &HashSet<NodeIndex>,
 ) -> Option<String>
 where
-    N: gantz_core::Node + Clone + serde::Serialize + ToGraphMut<Node = N>,
+    N: gantz_core::Node + Clone + crate::format::Lowerable + ToGraphMut<Node = N>,
 {
     if selection.is_empty() {
         return None;
@@ -87,7 +87,7 @@ where
         .cloned()
         .unwrap_or_default();
     let copied = export::copy(registry, all_views, g, selection, &layout);
-    match ron::to_string(&copied) {
+    match export::copied_to_string(&copied) {
         Ok(text) => Some(text),
         Err(e) => {
             log::error!("CopyNodes: failed to serialize: {e}");
@@ -218,9 +218,9 @@ pub fn paste<N>(
     pos: &PastePos,
 ) -> bool
 where
-    N: Clone + serde::de::DeserializeOwned + ToGraphMut<Node = N>,
+    N: Clone + crate::format::Lowerable + ToGraphMut<Node = N>,
 {
-    let copied: export::Copied<N> = match ron::from_str(text) {
+    let copied: export::Copied<N> = match export::copied_from_str(text) {
         Ok(c) => c,
         Err(e) => {
             log::debug!("Clipboard does not contain a valid gantz payload: {e}");

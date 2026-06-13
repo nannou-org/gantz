@@ -403,4 +403,57 @@ mod tests {
         );
         assert_eq!(view2.scene_rect, view.scene_rect);
     }
+
+    /// A clipboard payload round-trips through the `.gantz` text format: the
+    /// copied subgraph, its node positions and edges survive copy -> text ->
+    /// paste, and the serialized payload is reader-valid Steel.
+    #[test]
+    fn clipboard_round_trips_through_gantz_text() {
+        use bevy_egui::egui;
+        use gantz_egui::export;
+        use std::collections::{HashMap, HashSet};
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        fn node(tag: &str) -> Box<dyn Node> {
+            gantz_format::from_datum(gantz_format::Datum::Map(vec![(
+                "type".to_string(),
+                gantz_format::Datum::Str(tag.to_string()),
+            )]))
+            .expect("node")
+        }
+
+        let mut graph: G = G::default();
+        let a = graph.add_node(node("Identity"));
+        let b = graph.add_node(node("Identity"));
+        graph.add_edge(a, b, gantz_core::Edge::new(0.into(), 0.into()));
+
+        let registry = gantz_ca::Registry::<G>::default();
+        let mut layout = egui_graph::Layout::default();
+        layout.insert(egui_graph::NodeId(0), egui::pos2(1.0, 2.0));
+        layout.insert(egui_graph::NodeId(1), egui::pos2(3.0, 4.0));
+        let selected: HashSet<gantz_core::node::graph::NodeIx> = [a, b].into_iter().collect();
+
+        let copied = export::copy(&registry, &HashMap::new(), &graph, &selected, &layout);
+        let text = export::copied_to_string(&copied).expect("copied to text");
+        // The clipboard payload is itself reader-valid `.gantz` text.
+        steel::parser::parser::Parser::parse(&text)
+            .unwrap_or_else(|e| panic!("clipboard text is not valid Steel: {e}\n{text}"));
+
+        let back: export::Copied<Box<dyn Node>> =
+            export::copied_from_str(&text).expect("copied from text");
+        assert_eq!(back.graph.node_count(), 2);
+        assert_eq!(back.graph.edge_count(), 1);
+        assert_eq!(
+            back.positions
+                .get(&egui_graph::NodeId(0))
+                .map(|p| (p.x, p.y)),
+            Some((1.0, 2.0)),
+        );
+        assert_eq!(
+            back.positions
+                .get(&egui_graph::NodeId(1))
+                .map(|p| (p.x, p.y)),
+            Some((3.0, 4.0)),
+        );
+    }
 }

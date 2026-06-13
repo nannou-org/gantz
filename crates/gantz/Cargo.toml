@@ -31,7 +31,6 @@ web-time.workspace = true
 
 [dev-dependencies]
 gantz_format.workspace = true
-ron.workspace = true
 
 [[bin]]
 name = "gantz"
