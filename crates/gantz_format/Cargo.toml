@@ -1,7 +1,7 @@
 [package]
 name = "gantz_format"
 version = "0.2.0"
-description = "Human- and LLM-readable text format for gantz graph registries."
+description = "Human-readable text format for gantz graph registries."
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true

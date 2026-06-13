@@ -1,4 +1,4 @@
-//! A human- and LLM-readable text format for gantz graph registries.
+//! A human-readable text format for gantz graph registries.
 //!
 //! `gantz_format` is the layout-agnostic core of the `.gantz` format: it reads
 //! and writes a [`gantz_ca::Registry`] of graphs as S-expression text that is
