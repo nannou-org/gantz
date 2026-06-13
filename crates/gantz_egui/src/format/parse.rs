@@ -10,8 +10,8 @@
 
 use super::error::{ErrorKind, FormatError, Span};
 use super::model::{
-    Addr, CommitDecl, Conn, Demo, Endpoint, File, GraphBody, GraphDef, GraphId, History, Layout,
-    NodeDecl, NodeSpec, RefSpec,
+    Addr, CommitDecl, Conn, Demo, Endpoint, File, GraphBody, GraphDef, Layout, NameDecl, NodeDecl,
+    NodeSpec, RefSpec,
 };
 use super::sugar::tag_for_keyword;
 use serde_json::{Map, Value, json};
@@ -37,7 +37,8 @@ pub fn parse_file(src: &str) -> Result<File, FormatError> {
         match head.as_str() {
             "graph" => file.graphs.push(parse_graph_def(&args[1..], form, src)?),
             "layout" => file.layouts.push(parse_layout(&args[1..], form, src)?),
-            "history" => file.histories.push(parse_history(&args[1..], form, src)?),
+            "commits" => file.commits.extend(parse_commits_table(&args[1..], src)?),
+            "names" => file.names.extend(parse_names_table(&args[1..], src)?),
             "demo" => file.demos.push(parse_demo(&args[1..], form, src)?),
             other => return Err(err_at(form, src, ErrorKind::UnknownForm(other.to_string()))),
         }
@@ -52,20 +53,10 @@ fn parse_graph_def(args: &[ExprKind], form: &ExprKind, src: &str) -> Result<Grap
         err_at(
             form,
             src,
-            ErrorKind::Malformed("graph requires a name".into()),
+            ErrorKind::Malformed("graph requires an id".into()),
         )
     })?;
-    let id = if let Some(name) = as_symbol(id_expr) {
-        GraphId::Name(name)
-    } else if let Some(addr) = as_string(id_expr) {
-        GraphId::Addr(addr)
-    } else {
-        return Err(err_at(
-            id_expr,
-            src,
-            ErrorKind::Malformed("graph id must be a name or address string".into()),
-        ));
-    };
+    let id = parse_addr(id_expr, src)?;
     let body = parse_graph_body(&args[1..], src)?;
     Ok(GraphDef { id, body })
 }
@@ -288,7 +279,7 @@ fn parse_generic_spec(rest: &[ExprKind], e: &ExprKind, src: &str) -> Result<Node
     Ok(NodeSpec::Value(Value::Object(obj)))
 }
 
-// -- connections / layout / history / demo -----------------------------------
+// -- connections / layout / commits / names / demo ---------------------------
 
 fn parse_conn(args: &[ExprKind], item: &ExprKind, src: &str) -> Result<Conn, FormatError> {
     if args.len() != 2 {
@@ -331,23 +322,20 @@ fn parse_endpoint(e: &ExprKind, src: &str) -> Result<Endpoint, FormatError> {
 }
 
 fn parse_layout(args: &[ExprKind], form: &ExprKind, src: &str) -> Result<Layout, FormatError> {
-    let graph = args.first().and_then(as_symbol).ok_or_else(|| {
+    let id_expr = args.first().ok_or_else(|| {
         err_at(
             form,
             src,
-            ErrorKind::Malformed("layout requires a name".into()),
+            ErrorKind::Malformed("layout requires a graph id".into()),
         )
     })?;
-    let mut path = Vec::new();
+    let graph = parse_addr(id_expr, src)?;
     let mut positions = Vec::new();
     let mut scene = None;
     for item in &args[1..] {
         let iargs = list_args(item)
             .ok_or_else(|| err_at(item, src, ErrorKind::Malformed("expected a list".into())))?;
         match iargs.first().and_then(as_symbol).as_deref() {
-            Some("at") => {
-                path = iargs[1..].iter().filter_map(as_symbol).collect();
-            }
             Some("scene") => {
                 let f: Vec<f32> = iargs[1..]
                     .iter()
@@ -387,37 +375,61 @@ fn parse_layout(args: &[ExprKind], form: &ExprKind, src: &str) -> Result<Layout,
     }
     Ok(Layout {
         graph,
-        path,
         positions,
         scene,
     })
 }
 
-fn parse_history(args: &[ExprKind], form: &ExprKind, src: &str) -> Result<History, FormatError> {
-    let graph = args.first().and_then(as_symbol).ok_or_else(|| {
-        err_at(
-            form,
-            src,
-            ErrorKind::Malformed("history requires a name".into()),
-        )
-    })?;
+fn parse_commits_table(args: &[ExprKind], src: &str) -> Result<Vec<CommitDecl>, FormatError> {
     let mut commits = Vec::new();
-    for item in &args[1..] {
-        let iargs = list_args(item)
-            .ok_or_else(|| err_at(item, src, ErrorKind::Malformed("expected a commit".into())))?;
-        if iargs.first().and_then(as_symbol).as_deref() != Some("commit") {
+    for item in args {
+        let iargs = list_args(item).ok_or_else(|| {
+            err_at(
+                item,
+                src,
+                ErrorKind::Malformed("commit entry must be a list".into()),
+            )
+        })?;
+        commits.push(parse_commit_entry(iargs, item, src)?);
+    }
+    Ok(commits)
+}
+
+fn parse_names_table(args: &[ExprKind], src: &str) -> Result<Vec<NameDecl>, FormatError> {
+    let mut names = Vec::new();
+    for item in args {
+        let iargs = list_args(item).ok_or_else(|| {
+            err_at(
+                item,
+                src,
+                ErrorKind::Malformed("name entry must be (name commit)".into()),
+            )
+        })?;
+        if iargs.len() != 2 {
             return Err(err_at(
                 item,
                 src,
-                ErrorKind::Malformed("history entry must be a commit".into()),
+                ErrorKind::Malformed("name entry must be (name commit)".into()),
             ));
         }
-        commits.push(parse_commit(&iargs[1..], item, src)?);
+        let name = as_symbol(&iargs[0]).ok_or_else(|| {
+            err_at(
+                &iargs[0],
+                src,
+                ErrorKind::Malformed("name must be a symbol".into()),
+            )
+        })?;
+        let commit = parse_addr(&iargs[1], src)?;
+        names.push(NameDecl { name, commit });
     }
-    Ok(History { graph, commits })
+    Ok(names)
 }
 
-fn parse_commit(args: &[ExprKind], item: &ExprKind, src: &str) -> Result<CommitDecl, FormatError> {
+fn parse_commit_entry(
+    args: &[ExprKind],
+    item: &ExprKind,
+    src: &str,
+) -> Result<CommitDecl, FormatError> {
     let id = args
         .first()
         .map(|e| parse_addr(e, src))
@@ -473,6 +485,13 @@ fn parse_commit(args: &[ExprKind], item: &ExprKind, src: &str) -> Result<CommitD
             }
         }
     }
+    let graph = graph.ok_or_else(|| {
+        err_at(
+            item,
+            src,
+            ErrorKind::Malformed("commit requires a graph".into()),
+        )
+    })?;
     Ok(CommitDecl {
         id,
         secs,
@@ -669,7 +688,7 @@ mod tests {
         let file = parse_file(text).expect("parse");
         assert_eq!(file.graphs.len(), 1);
         let g = &file.graphs[0];
-        assert_eq!(g.id, GraphId::Name("mul".to_string()));
+        assert_eq!(g.id, Addr::Label("mul".to_string()));
         assert_eq!(g.body.nodes.len(), 4);
         assert_eq!(g.body.conns.len(), 3);
         // Embedded Steel code is captured verbatim.

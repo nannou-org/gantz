@@ -1,21 +1,22 @@
 //! Raises an [`Export`] into a [`File`] AST for serialization.
 //!
-//! Each registry name becomes a `(graph ...)` (its head body), a
-//! `(history ...)` (its commit chain, so commit identity round-trips), an
-//! optional `(layout ...)` (its top-level view) and an optional `(demo ...)`.
-//! Nodes are emitted in index order with generated `{keyword}{index}` labels;
-//! node payloads cross the typetag boundary as `serde_json::Value`s.
+//! The output mirrors the registry's three maps: a `(graph "<addr>" ...)` body
+//! per graph, a flat `(commits ...)` table (one head commit per graph, for
+//! validation), and a `(names ...)` table; plus `(layout ...)` keyed by graph
+//! address and `(demo ...)` by name. Addresses are emitted as short hex; nodes
+//! get generated `{keyword}{index}` labels and cross the typetag boundary as
+//! `serde_json::Value`s.
 
 use super::error::{ErrorKind, FormatError};
 use super::lower::Lowerable;
 use super::model::{
-    Addr, CommitDecl, Conn, Demo, Endpoint, File, GraphBody, GraphDef, GraphId, History, Layout,
-    NodeDecl, NodeSpec, RefSpec,
+    Addr, CommitDecl, Conn, Demo, Endpoint, File, GraphBody, GraphDef, Layout, NameDecl, NodeDecl,
+    NodeSpec, RefSpec,
 };
 use super::node_value::node_to_value;
 use super::sugar::keyword_for_tag;
 use crate::export::Export;
-use gantz_ca::{CommitAddr, ContentAddr};
+use gantz_ca::{ContentAddr, GraphAddr};
 use gantz_core::node::graph::Graph;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use serde_json::Value;
@@ -29,29 +30,44 @@ where
     let reg = &export.registry;
     let mut file = File::default();
 
-    for (name, &head_ca) in reg.names() {
-        let commit = reg
-            .commits()
-            .get(&head_ca)
-            .ok_or_else(|| FormatError::new(ErrorKind::MissingDependency(name.clone())))?;
-        let head_graph_addr = commit.graph;
-        let graph = reg
-            .commit_graph_ref(&head_ca)
-            .ok_or_else(|| FormatError::new(ErrorKind::MissingDependency(name.clone())))?;
+    // The top-level view of each graph, found via a commit that points at it.
+    let mut graph_view: HashMap<GraphAddr, &egui_graph::View> = HashMap::new();
+    for (commit_ca, gv) in &export.views {
+        if let (Some(commit), Some(view)) = (reg.commits().get(commit_ca), gv.get(&Vec::new())) {
+            graph_view.entry(commit.graph).or_insert(view);
+        }
+    }
 
+    // One `(graph "<addr>" ...)` per graph body, with its layout.
+    for (g_addr, graph) in reg.graphs() {
         let (body, labels) = graph_to_body::<N>(graph)?;
         file.graphs.push(GraphDef {
-            id: GraphId::Name(name.clone()),
+            id: short_addr(*g_addr),
             body,
         });
-
-        file.histories
-            .push(history_for(reg, name, head_ca, head_graph_addr));
-
-        if let Some(layout) = layout_for(export, name, head_ca, &labels) {
-            file.layouts.push(layout);
+        if let Some(view) = graph_view.get(g_addr) {
+            file.layouts.push(layout_for(*g_addr, view, &labels));
         }
-        if let Some(demo) = export.demos.get(&head_ca) {
+    }
+
+    // One commit per graph (the export's heads), for validation.
+    for (c_addr, commit) in reg.commits() {
+        file.commits.push(CommitDecl {
+            id: short_addr(*c_addr),
+            secs: commit.timestamp.as_secs(),
+            nanos: commit.timestamp.subsec_nanos(),
+            parent: commit.parent.map(short_addr),
+            graph: short_addr(commit.graph),
+        });
+    }
+
+    // Name -> commit mappings, and demos (keyed by name).
+    for (name, c_addr) in reg.names() {
+        file.names.push(NameDecl {
+            name: name.clone(),
+            commit: short_addr(*c_addr),
+        });
+        if let Some(demo) = export.demos.get(c_addr) {
             file.demos.push(Demo {
                 graph: name.clone(),
                 demo: demo.clone(),
@@ -132,7 +148,7 @@ where
                 .get("ref_")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let short = short_hex(hex);
+            let short = hex.get(..8).unwrap_or(hex).to_string();
             let sync = value.get("sync").and_then(Value::as_bool).unwrap_or(false);
             let spec = NodeSpec::Ref(RefSpec {
                 func,
@@ -160,62 +176,13 @@ where
     }
 }
 
-// -- history -----------------------------------------------------------------
-
-fn history_for<N>(
-    reg: &gantz_ca::Registry<Graph<N>>,
-    name: &str,
-    head_ca: CommitAddr,
-    head_graph_addr: gantz_ca::GraphAddr,
-) -> History {
-    // Walk newest -> oldest along parent links that are present in the registry.
-    let mut chain = Vec::new();
-    let mut cur = Some(head_ca);
-    while let Some(ca) = cur {
-        match reg.commits().get(&ca) {
-            Some(commit) => {
-                chain.push((ca, commit.clone()));
-                cur = commit.parent;
-            }
-            None => break,
-        }
-    }
-    chain.reverse();
-
-    let commits = chain
-        .into_iter()
-        .map(|(ca, commit)| CommitDecl {
-            // Short id, verified by prefix on load.
-            id: Addr::Concrete(short_hex(&ContentAddr::from(ca).to_string())),
-            secs: commit.timestamp.as_secs(),
-            nanos: commit.timestamp.subsec_nanos(),
-            // Full parent hex so it parses even when the parent is pruned.
-            parent: commit
-                .parent
-                .map(|p| Addr::Concrete(ContentAddr::from(p).to_string())),
-            // Omit the graph for the head body, which is recomputed from the
-            // named `(graph ...)` on load (healing any stale address with a
-            // warning); ancestors spell theirs out, as their bodies are absent.
-            graph: (commit.graph != head_graph_addr)
-                .then(|| Addr::Concrete(ContentAddr::from(commit.graph).to_string())),
-        })
-        .collect();
-
-    History {
-        graph: name.to_string(),
-        commits,
-    }
-}
-
 // -- layout ------------------------------------------------------------------
 
-fn layout_for<N>(
-    export: &Export<Graph<N>>,
-    name: &str,
-    head_ca: CommitAddr,
+fn layout_for(
+    g_addr: GraphAddr,
+    view: &egui_graph::View,
     labels: &HashMap<usize, String>,
-) -> Option<Layout> {
-    let view = export.views.get(&head_ca)?.get(&Vec::new())?;
+) -> Layout {
     let mut positions = Vec::new();
     for (node_id, pos) in &view.layout {
         if let Some(label) = labels.get(&(node_id.0 as usize)) {
@@ -225,17 +192,17 @@ fn layout_for<N>(
     // Stable order for deterministic output.
     positions.sort_by(|a, b| a.0.cmp(&b.0));
     let r = view.scene_rect;
-    Some(Layout {
-        graph: name.to_string(),
-        path: Vec::new(),
+    Layout {
+        graph: short_addr(g_addr),
         positions,
         scene: Some([r.min.x, r.min.y, r.max.x, r.max.y]),
-    })
+    }
 }
 
 // -- helpers -----------------------------------------------------------------
 
-/// The first 8 hex characters of an address string.
-fn short_hex(hex: &str) -> String {
-    hex.get(..8).unwrap_or(hex).to_string()
+/// An address as a short-hex concrete [`Addr`] (the first 8 hex characters).
+fn short_addr(addr: impl Into<ContentAddr>) -> Addr {
+    let hex = addr.into().to_string();
+    Addr::Concrete(hex.get(..8).unwrap_or(&hex).to_string())
 }

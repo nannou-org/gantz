@@ -25,7 +25,7 @@ pub enum ErrorKind {
     Read(String),
     /// A form was malformed (wrong shape or arity).
     Malformed(String),
-    /// An unrecognised top-level form (not `graph`/`layout`/`history`/`demo`).
+    /// An unrecognised top-level form (not `graph`/`layout`/`commits`/`names`/`demo`).
     UnknownForm(String),
     /// An unrecognised node keyword.
     UnknownNodeKeyword(String),

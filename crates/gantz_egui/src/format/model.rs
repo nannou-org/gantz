@@ -1,41 +1,36 @@
 //! The abstract syntax for the `.gantz` text format.
 //!
-//! A [`File`] is the intermediate representation between the raw datum reader
-//! ([`super::sexpr`]) and the content-addressed registry ([`super::lower`] /
-//! [`super::raise`]). It mirrors the textual forms one-to-one without resolving
-//! any content addresses, so it is cheap to construct from either direction.
+//! A [`File`] is the intermediate representation between the reader
+//! ([`super::parse`]) and the content-addressed registry ([`super::lower`] /
+//! [`super::raise`]). It mirrors the registry's three maps: graph bodies, a
+//! `(commits ...)` table and a `(names ...)` table, plus layout and demos.
 
 use serde_json::Value;
 
-/// A parsed `.gantz` document: a sequence of top-level forms.
+/// A parsed `.gantz` document.
 #[derive(Clone, Debug, Default)]
 pub struct File {
-    /// Graph definitions, in source order.
+    /// Graph bodies, in source order.
     pub graphs: Vec<GraphDef>,
-    /// Layout/view sections.
+    /// Layout/view sections, keyed by graph id.
     pub layouts: Vec<Layout>,
-    /// Commit histories.
-    pub histories: Vec<History>,
+    /// The flat commit table (at most one head commit per graph).
+    pub commits: Vec<CommitDecl>,
+    /// Name -> commit mappings.
+    pub names: Vec<NameDecl>,
     /// Demo associations.
     pub demos: Vec<Demo>,
 }
 
-/// A top-level graph definition.
+/// A graph body, identified by a file-local id.
 #[derive(Clone, Debug)]
 pub struct GraphDef {
-    /// How the graph is labelled (a name, or a concrete content address).
-    pub id: GraphId,
+    /// The graph's file-local id: a concrete graph address (string) or a label
+    /// (symbol). A label that no `(commits ...)` entry references is treated as
+    /// a registry name with a synthesised root commit (the hand-authoring path).
+    pub id: Addr,
     /// The graph interior.
     pub body: GraphBody,
-}
-
-/// The label of a top-level graph.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum GraphId {
-    /// A registry name (branch); this graph is the name's head body.
-    Name(String),
-    /// A concrete content address (hex string) for a non-head body.
-    Addr(String),
 }
 
 /// The interior of a graph: node declarations (in index order) and connections.
@@ -52,8 +47,8 @@ pub struct GraphBody {
 pub struct NodeDecl {
     /// File-local label, referenced by connections and layout.
     pub name: String,
-    /// Explicit node index, overriding the sequential default (used to
-    /// reproduce `StableGraph` holes); `None` means "previous index + 1".
+    /// Explicit node index, overriding the sequential default (reserved for
+    /// reproducing `StableGraph` holes); `None` means "previous index + 1".
     pub index: Option<usize>,
     /// The node specification.
     pub spec: NodeSpec,
@@ -63,9 +58,6 @@ pub struct NodeDecl {
 #[derive(Clone, Debug)]
 pub enum NodeSpec {
     /// A self-contained typetag node as a serde object `{ "type", ... }`.
-    ///
-    /// Covers every node with no file-level references to resolve (`expr`,
-    /// `branch`, `inlet`, `number`, the generic `node` form, etc.).
     Value(Value),
     /// An inline nested graph, lowered to a `GraphNode`.
     Graph(GraphBody),
@@ -80,18 +72,18 @@ pub struct RefSpec {
     pub func: bool,
     /// The referenced name.
     pub name: String,
-    /// Optional pinned address; `None` resolves to the name's head commit.
+    /// Optional pinned commit; `None` resolves to the name's head commit.
     pub addr: Option<Addr>,
     /// Whether the reference should track the latest commit.
     pub sync: bool,
 }
 
-/// An address token: a concrete content address or a file-local label.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A file-local address token: a concrete content address or a label.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Addr {
     /// A concrete content address as a hex string (full or unambiguous prefix).
     Concrete(String),
-    /// A file-local placeholder, resolved to a computed address on load.
+    /// A file-local label (symbol), resolved to a computed address on load.
     Label(String),
 }
 
@@ -113,44 +105,42 @@ pub struct Endpoint {
     pub port: u16,
 }
 
-/// View/layout state for a graph.
+/// View/layout state for a graph, keyed by the graph's id.
 #[derive(Clone, Debug)]
 pub struct Layout {
-    /// The graph name this layout applies to.
-    pub graph: String,
-    /// Descent path into nested graphs, as local node labels (empty = top).
-    pub path: Vec<String>,
+    /// The id of the graph this layout applies to.
+    pub graph: Addr,
     /// Node positions: `(label, x, y)`.
     pub positions: Vec<(String, f32, f32)>,
     /// Optional scene rect `[min_x, min_y, max_x, max_y]`.
     pub scene: Option<[f32; 4]>,
 }
 
-/// The commit history for a name.
-#[derive(Clone, Debug)]
-pub struct History {
-    /// The graph name this history applies to.
-    pub graph: String,
-    /// The commits, oldest first.
-    pub commits: Vec<CommitDecl>,
-}
-
-/// A single commit within a history.
+/// A single entry in the `(commits ...)` table.
 #[derive(Clone, Debug)]
 pub struct CommitDecl {
-    /// This commit's own address.
+    /// This commit's own id (a concrete address or a file-local label).
     pub id: Addr,
     /// Seconds since the Unix epoch.
     pub secs: u64,
     /// Sub-second nanoseconds.
     pub nanos: u32,
-    /// The parent commit, or `None` for a root commit (`none`).
+    /// The parent commit, or `None` for a root commit.
     pub parent: Option<Addr>,
-    /// The graph body address; `None` means the head body for this name.
-    pub graph: Option<Addr>,
+    /// The id of the graph this commit points at.
+    pub graph: Addr,
 }
 
-/// A demo association for a name's head commit.
+/// A single entry in the `(names ...)` table.
+#[derive(Clone, Debug)]
+pub struct NameDecl {
+    /// The registry name (branch).
+    pub name: String,
+    /// The commit it points at.
+    pub commit: Addr,
+}
+
+/// A demo association: a name and its demo string.
 #[derive(Clone, Debug)]
 pub struct Demo {
     /// The graph name.

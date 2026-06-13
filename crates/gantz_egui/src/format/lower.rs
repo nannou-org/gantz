@@ -1,20 +1,20 @@
 //! Lowers a [`File`] AST into an [`Export`].
 //!
+//! The file mirrors the registry's three maps: graph bodies (keyed by a
+//! file-local id), a flat `(commits ...)` table and a `(names ...)` table.
 //! Graphs are built in dependency order (a graph that `ref`s another is built
-//! after it), so each reference resolves to an already-known commit address.
-//! Node indices follow declaration order. Commit identity comes from an
-//! explicit `(history ...)` block when present (reproducing every
-//! [`CommitAddr`] exactly), or is synthesised as a single root commit at `now`
-//! for hand-authored files with no history.
+//! after it) so references resolve to already-known commits. A graph whose id
+//! is a label and which no commit references is a hand-authored named graph: it
+//! auto-registers under that label with a root commit synthesised at `now`.
 
 use super::error::{ErrorKind, FormatError};
 use super::model::{
-    Addr, File, GraphBody, GraphDef, GraphId, History, Layout, NodeDecl, NodeSpec, RefSpec,
+    Addr, CommitDecl, File, GraphBody, GraphDef, Layout, NodeDecl, NodeSpec, RefSpec,
 };
 use super::node_value::value_to_node;
 use crate::GraphViews;
 use crate::export::Export;
-use gantz_ca::{Commit, CommitAddr, ContentAddr, GraphAddr, Registry, Timestamp};
+use gantz_ca::{Commit, CommitAddr, ContentAddr, Registry, Timestamp};
 use gantz_core::edge::Edge;
 use gantz_core::node::graph::{Graph, GraphNode, NodeIx};
 use gantz_core::node::{Input, Output};
@@ -38,80 +38,98 @@ impl<N> Lowerable for N where
 /// Read-only reference-resolution context, threaded through graph building.
 struct Resolve<'a> {
     /// name -> head commit, for already-built graphs.
-    heads: &'a HashMap<String, CommitAddr>,
-    /// label -> commit, for history placeholders of already-built graphs.
-    labels: &'a HashMap<String, CommitAddr>,
+    names: &'a HashMap<String, CommitAddr>,
+    /// commit id -> commit, for resolving pinned references by id.
+    commit_ids: &'a HashMap<Addr, CommitAddr>,
     /// every commit built so far, for resolving concrete-address prefixes.
     known: &'a [CommitAddr],
 }
 
-/// Lower a parsed [`File`] into an [`Export`], synthesising commits at `now`
-/// where no history is provided.
+/// Lower a parsed [`File`] into an [`Export`], synthesising root commits at
+/// `now` for any graph the `(commits ...)` table does not describe.
 pub fn lower<N>(file: File, now: Timestamp) -> Result<Export<Graph<N>>, FormatError>
 where
     N: Lowerable,
 {
-    // Index named graphs and histories.
-    let mut defs: BTreeMap<String, &GraphDef> = BTreeMap::new();
-    for def in &file.graphs {
-        if let GraphId::Name(name) = &def.id {
-            defs.insert(name.clone(), def);
-        }
-    }
-    let histories: HashMap<&str, &History> = file
-        .histories
+    // Index the file's three tables.
+    let graphs_by_id: HashMap<Addr, &GraphDef> =
+        file.graphs.iter().map(|g| (g.id.clone(), g)).collect();
+    // graph id -> the commit pointing at it (at most one per graph).
+    let commit_for_graph: HashMap<Addr, &CommitDecl> =
+        file.commits.iter().map(|c| (c.graph.clone(), c)).collect();
+    // commit id -> graph id.
+    let graph_of_commit: HashMap<Addr, Addr> = file
+        .commits
         .iter()
-        .map(|h| (h.graph.as_str(), h))
+        .map(|c| (c.id.clone(), c.graph.clone()))
         .collect();
+    // commit id -> names pointing at it.
+    let mut names_of_commit: HashMap<Addr, Vec<String>> = HashMap::new();
+    for decl in &file.names {
+        names_of_commit
+            .entry(decl.commit.clone())
+            .or_default()
+            .push(decl.name.clone());
+    }
 
-    let order = topo_order(&defs)?;
+    // name -> graph id, used to order graphs by their references.
+    let name_to_graph_id =
+        compute_name_to_graph_id(&file, &graphs_by_id, &commit_for_graph, &graph_of_commit);
+    let order = topo_order(&file.graphs, &graphs_by_id, &name_to_graph_id)?;
 
     let mut registry: Registry<Graph<N>> =
         Registry::new(HashMap::new(), HashMap::new(), BTreeMap::new());
-    let mut heads: HashMap<String, CommitAddr> = HashMap::new();
-    let mut labels: HashMap<String, CommitAddr> = HashMap::new();
+    let mut names: HashMap<String, CommitAddr> = HashMap::new();
+    let mut commit_ids: HashMap<Addr, CommitAddr> = HashMap::new();
     let mut known: Vec<CommitAddr> = Vec::new();
-    // name -> (head commit, node-name -> index) for layout resolution.
-    let mut index_maps: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    let mut graph_head: HashMap<Addr, CommitAddr> = HashMap::new();
+    let mut index_maps: HashMap<Addr, HashMap<String, usize>> = HashMap::new();
 
-    for name in &order {
-        let def = defs[name];
+    for id in &order {
+        let def = graphs_by_id[id];
         let resolve = Resolve {
-            heads: &heads,
-            labels: &labels,
+            names: &names,
+            commit_ids: &commit_ids,
             known: &known,
         };
         let (graph, index_map) = build_graph::<N>(&def.body, &resolve)?;
-        // The registry computes and returns the body's address.
         let g_addr = registry.add_graph(graph);
+        index_maps.insert(id.clone(), index_map);
 
-        let head = match histories.get(name.as_str()) {
-            Some(history) => {
-                // `build_history` records every commit (including the head) in
-                // `known`.
-                build_history(
-                    &mut registry,
-                    history,
-                    name,
-                    g_addr,
-                    &mut labels,
-                    &mut known,
-                )?
-            }
+        // Build the head commit: from the table where present, else a fresh root.
+        let head = match commit_for_graph.get(id) {
+            Some(decl) => build_commit(&mut registry, decl, g_addr, &commit_ids, &mut known),
             None => {
                 let ca = registry.add_commit(Commit::new(now, None, g_addr));
-                registry.insert_name(name.clone(), ca);
                 known.push(ca);
                 ca
             }
         };
+        graph_head.insert(id.clone(), head);
 
-        heads.insert(name.clone(), head);
-        index_maps.insert(name.clone(), index_map);
+        // Register names for this commit: explicit ones from the names table,
+        // plus an auto-name for an un-committed label graph (hand-authored).
+        let mut register = |name: String| {
+            names.insert(name.clone(), head);
+            registry.insert_name(name, head);
+        };
+        match commit_for_graph.get(id) {
+            Some(decl) => {
+                commit_ids.insert(decl.id.clone(), head);
+                if let Some(ns) = names_of_commit.get(&decl.id) {
+                    ns.iter().for_each(|n| register(n.clone()));
+                }
+            }
+            None => {
+                if let Addr::Label(label) = id {
+                    register(label.clone());
+                }
+            }
+        }
     }
 
-    let views = build_views(&file.layouts, &heads, &index_maps)?;
-    let demos = build_demos(&file.demos, &heads);
+    let views = build_views(&file.layouts, &graph_head, &index_maps);
+    let demos = build_demos(&file.demos, &names);
 
     Ok(Export {
         registry,
@@ -209,12 +227,12 @@ where
 fn resolve_ref_value(refspec: &RefSpec, resolve: &Resolve) -> Result<Value, FormatError> {
     let commit_ca =
         match &refspec.addr {
-            None => resolve.heads.get(&refspec.name).copied().ok_or_else(|| {
+            None => resolve.names.get(&refspec.name).copied().ok_or_else(|| {
                 FormatError::new(ErrorKind::MissingDependency(refspec.name.clone()))
             })?,
             Some(Addr::Label(label)) => resolve
-                .labels
-                .get(label)
+                .commit_ids
+                .get(&Addr::Label(label.clone()))
                 .copied()
                 .ok_or_else(|| FormatError::new(ErrorKind::MissingDependency(label.clone())))?,
             Some(Addr::Concrete(hex)) => resolve_commit(hex, resolve.known)
@@ -235,104 +253,74 @@ fn resolve_ref_value(refspec: &RefSpec, resolve: &Resolve) -> Result<Value, Form
     }))
 }
 
-// -- commit history ----------------------------------------------------------
+// -- commits -----------------------------------------------------------------
 
-fn build_history<N>(
+/// Build the head commit described by `decl`, pointing at `g_addr` (the graph
+/// it references, which has just been built).
+fn build_commit<N>(
     registry: &mut Registry<Graph<N>>,
-    history: &History,
-    name: &str,
-    head_graph_addr: GraphAddr,
-    labels: &mut HashMap<String, CommitAddr>,
+    decl: &CommitDecl,
+    g_addr: gantz_ca::GraphAddr,
+    commit_ids: &HashMap<Addr, CommitAddr>,
     known: &mut Vec<CommitAddr>,
-) -> Result<CommitAddr, FormatError> {
-    let mut head: Option<CommitAddr> = None;
-    for decl in &history.commits {
-        // An omitted graph means the named head body; ancestors carry their own
-        // (possibly body-less) graph address.
-        let graph_addr = match &decl.graph {
-            None => head_graph_addr,
-            Some(Addr::Concrete(hex)) => GraphAddr::from(parse_full_addr(hex)?),
-            Some(Addr::Label(l)) => {
-                return Err(FormatError::new(ErrorKind::BadAddr(format!(
-                    "graph label `{l}` unsupported"
-                ))));
-            }
-        };
-        // The parent is taken from the declaration (not chain order) so a
-        // dangling/pruned parent still reproduces the exact commit address.
-        let parent = match &decl.parent {
-            None => None,
-            Some(Addr::Concrete(hex)) => Some(CommitAddr::from(parse_full_addr(hex)?)),
-            Some(Addr::Label(l)) => Some(
-                *labels
-                    .get(l)
-                    .ok_or_else(|| FormatError::new(ErrorKind::MissingDependency(l.clone())))?,
-            ),
-        };
-        let timestamp = Duration::new(decl.secs, decl.nanos);
-        // The registry computes the commit address from its contents.
-        let commit_ca = registry.add_commit(Commit::new(timestamp, parent, graph_addr));
-        // `add_commit` clears a parent that is not present in the registry. Look
-        // the commit back up to detect that and warn - the file referenced an
-        // ancestor we do not have, so this commit became a root.
-        if let Some(declared_parent) = parent {
-            let kept = registry
-                .commits()
-                .get(&commit_ca)
-                .and_then(|c| c.parent)
-                .is_some();
-            if !kept {
-                log::warn!(
-                    "commit for `{name}` referenced absent parent `{}`; recorded it as a root commit",
-                    ContentAddr::from(declared_parent),
-                );
-            }
+) -> CommitAddr {
+    let parent = resolve_parent(&decl.parent, commit_ids, known);
+    let timestamp = Duration::new(decl.secs, decl.nanos);
+    let commit_ca = registry.add_commit(Commit::new(timestamp, parent, g_addr));
+    // Warn if a declared id no longer matches the recomputed address (a stale
+    // file - e.g. the hashing changed). Heal rather than fail; refs pinned to
+    // the old address may not resolve (a planned follow-up remaps them).
+    if let Addr::Concrete(hex) = &decl.id {
+        let computed = ContentAddr::from(commit_ca).to_string();
+        if !computed.starts_with(hex.as_str()) {
+            log::warn!(
+                "commit `{hex}` no longer matches its contents (recomputed `{computed}`); \
+                 using the recomputed address",
+            );
         }
-        // A declared id that no longer matches the recomputed address means the
-        // file is stale (e.g. the hashing changed). Warn and heal rather than
-        // fail; references pinned to the old address may not resolve (a planned
-        // follow-up is to remap such references).
-        if let Addr::Concrete(hex) = &decl.id {
-            let computed = ContentAddr::from(commit_ca).to_string();
-            if !computed.starts_with(hex.as_str()) {
-                log::warn!(
-                    "commit `{hex}` for `{name}` no longer matches its contents \
-                     (recomputed `{computed}`); using the recomputed address",
-                );
-            }
-        }
-        if let Addr::Label(label) = &decl.id {
-            labels.insert(label.clone(), commit_ca);
-        }
-        known.push(commit_ca);
-        head = Some(commit_ca);
     }
-    let head = head.ok_or_else(|| {
-        FormatError::new(ErrorKind::Malformed(format!(
-            "history for `{name}` is empty"
-        )))
-    })?;
-    registry.insert_name(name.to_string(), head);
-    Ok(head)
+    known.push(commit_ca);
+    commit_ca
+}
+
+/// Resolve a commit's declared parent to a present commit, warning when a
+/// named parent is not in the file (it becomes a root).
+fn resolve_parent(
+    parent: &Option<Addr>,
+    commit_ids: &HashMap<Addr, CommitAddr>,
+    known: &[CommitAddr],
+) -> Option<CommitAddr> {
+    match parent {
+        None => None,
+        Some(addr @ Addr::Label(label)) => match commit_ids.get(addr) {
+            Some(ca) => Some(*ca),
+            None => {
+                log::warn!("commit parent label `{label}` not present; recorded as a root commit");
+                None
+            }
+        },
+        Some(Addr::Concrete(hex)) => match resolve_commit(hex, known) {
+            Some(ca) => Some(ca),
+            None => {
+                log::warn!("commit parent `{hex}` not present; recorded as a root commit");
+                None
+            }
+        },
+    }
 }
 
 // -- views / demos -----------------------------------------------------------
 
 fn build_views(
     layouts: &[Layout],
-    heads: &HashMap<String, CommitAddr>,
-    index_maps: &HashMap<String, HashMap<String, usize>>,
-) -> Result<HashMap<CommitAddr, GraphViews>, FormatError> {
+    graph_head: &HashMap<Addr, CommitAddr>,
+    index_maps: &HashMap<Addr, HashMap<String, usize>>,
+) -> HashMap<CommitAddr, GraphViews> {
     let mut views: HashMap<CommitAddr, GraphViews> = HashMap::new();
     for layout in layouts {
-        // Only top-level layouts (no descent path) are supported for now.
-        if !layout.path.is_empty() {
-            continue;
-        }
-        let Some(&head) = heads.get(&layout.graph) else {
-            continue;
-        };
-        let Some(index_map) = index_maps.get(&layout.graph) else {
+        let (Some(&head), Some(index_map)) =
+            (graph_head.get(&layout.graph), index_maps.get(&layout.graph))
+        else {
             continue;
         };
         let mut egui_layout = egui_graph::Layout::default();
@@ -353,16 +341,16 @@ fn build_views(
         };
         views.entry(head).or_default().insert(Vec::new(), view);
     }
-    Ok(views)
+    views
 }
 
 fn build_demos(
     demos: &[super::model::Demo],
-    heads: &HashMap<String, CommitAddr>,
+    names: &HashMap<String, CommitAddr>,
 ) -> HashMap<CommitAddr, String> {
     let mut out = HashMap::new();
     for demo in demos {
-        if let Some(&head) = heads.get(&demo.graph) {
+        if let Some(&head) = names.get(&demo.graph) {
             out.insert(head, demo.demo.clone());
         }
     }
@@ -371,42 +359,80 @@ fn build_demos(
 
 // -- dependency ordering -----------------------------------------------------
 
-/// Topologically order names so that a graph is built after every name it
-/// references. Returns an error on a reference cycle.
-fn topo_order(defs: &BTreeMap<String, &GraphDef>) -> Result<Vec<String>, FormatError> {
+/// Map each registry name to the graph id it ultimately points at, via the
+/// names + commits tables, plus auto-names for un-committed label graphs.
+fn compute_name_to_graph_id(
+    file: &File,
+    graphs_by_id: &HashMap<Addr, &GraphDef>,
+    commit_for_graph: &HashMap<Addr, &CommitDecl>,
+    graph_of_commit: &HashMap<Addr, Addr>,
+) -> HashMap<String, Addr> {
+    let mut out = HashMap::new();
+    for decl in &file.names {
+        if let Some(graph_id) = graph_of_commit.get(&decl.commit) {
+            out.insert(decl.name.clone(), graph_id.clone());
+        }
+    }
+    for def in &file.graphs {
+        if let Addr::Label(label) = &def.id {
+            if !commit_for_graph.contains_key(&def.id) {
+                out.entry(label.clone()).or_insert_with(|| def.id.clone());
+            }
+        }
+    }
+    let _ = graphs_by_id;
+    out
+}
+
+/// Topologically order graph ids so that a graph is built after every graph it
+/// references (by name). Returns an error on a reference cycle.
+fn topo_order(
+    graphs: &[GraphDef],
+    graphs_by_id: &HashMap<Addr, &GraphDef>,
+    name_to_graph_id: &HashMap<String, Addr>,
+) -> Result<Vec<Addr>, FormatError> {
     let mut order = Vec::new();
-    let mut state: HashMap<String, u8> = HashMap::new(); // 0 visiting, 1 done
-    for name in defs.keys() {
-        visit(name, defs, &mut state, &mut order)?;
+    let mut state: HashMap<Addr, u8> = HashMap::new(); // 0 visiting, 1 done
+    for def in graphs {
+        visit(
+            &def.id,
+            graphs_by_id,
+            name_to_graph_id,
+            &mut state,
+            &mut order,
+        )?;
     }
     Ok(order)
 }
 
 fn visit(
-    name: &str,
-    defs: &BTreeMap<String, &GraphDef>,
-    state: &mut HashMap<String, u8>,
-    order: &mut Vec<String>,
+    id: &Addr,
+    graphs_by_id: &HashMap<Addr, &GraphDef>,
+    name_to_graph_id: &HashMap<String, Addr>,
+    state: &mut HashMap<Addr, u8>,
+    order: &mut Vec<Addr>,
 ) -> Result<(), FormatError> {
-    match state.get(name) {
+    match state.get(id) {
         Some(1) => return Ok(()),
         Some(0) => {
-            return Err(FormatError::new(ErrorKind::CycleInRefs(vec![
-                name.to_string(),
-            ])));
+            return Err(FormatError::new(ErrorKind::CycleInRefs(vec![format!(
+                "{id:?}"
+            )])));
         }
         _ => {}
     }
-    state.insert(name.to_string(), 0);
-    if let Some(def) = defs.get(name) {
-        for dep in referenced_names(&def.body) {
-            if defs.contains_key(&dep) {
-                visit(&dep, defs, state, order)?;
+    state.insert(id.clone(), 0);
+    if let Some(def) = graphs_by_id.get(id) {
+        for name in referenced_names(&def.body) {
+            if let Some(dep) = name_to_graph_id.get(&name) {
+                if graphs_by_id.contains_key(dep) {
+                    visit(dep, graphs_by_id, name_to_graph_id, state, order)?;
+                }
             }
         }
     }
-    state.insert(name.to_string(), 1);
-    order.push(name.to_string());
+    state.insert(id.clone(), 1);
+    order.push(id.clone());
     Ok(())
 }
 
@@ -425,21 +451,9 @@ fn referenced_names(body: &GraphBody) -> Vec<String> {
 
 // -- address helpers ---------------------------------------------------------
 
-fn parse_full_addr(hex: &str) -> Result<ContentAddr, FormatError> {
-    hex.parse::<ContentAddr>()
-        .map_err(|_| FormatError::new(ErrorKind::BadAddr(hex.to_string())))
-}
-
-/// Resolve a concrete address (full hex or unambiguous prefix) to a commit.
-///
-/// A prefix is ambiguous only when it matches two *distinct* commits;
-/// duplicate entries for the same commit are fine.
+/// Resolve a concrete address (full hex or unambiguous prefix) to a *present*
+/// commit. A prefix is ambiguous only when it matches two distinct commits.
 fn resolve_commit(hex: &str, known: &[CommitAddr]) -> Option<CommitAddr> {
-    if hex.len() == 64 {
-        if let Ok(content) = hex.parse::<ContentAddr>() {
-            return Some(CommitAddr::from(content));
-        }
-    }
     let mut matches: Vec<CommitAddr> = known
         .iter()
         .copied()

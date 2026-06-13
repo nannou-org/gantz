@@ -6,7 +6,7 @@
 //! level.
 
 use super::model::{
-    Addr, CommitDecl, Conn, Endpoint, File, GraphBody, GraphId, History, Layout, NodeDecl, NodeSpec,
+    Addr, CommitDecl, Conn, Endpoint, File, GraphBody, Layout, NameDecl, NodeDecl, NodeSpec,
 };
 use super::sugar::keyword_for_tag;
 use serde_json::Value;
@@ -22,8 +22,12 @@ pub fn write_file(file: &File) -> String {
         write_layout(&mut out, layout);
         out.push_str("\n\n");
     }
-    for history in &file.histories {
-        write_history(&mut out, history);
+    if !file.commits.is_empty() {
+        write_commits(&mut out, &file.commits);
+        out.push_str("\n\n");
+    }
+    if !file.names.is_empty() {
+        write_names(&mut out, &file.names);
         out.push_str("\n\n");
     }
     for demo in &file.demos {
@@ -37,12 +41,8 @@ pub fn write_file(file: &File) -> String {
 
 // -- graphs ------------------------------------------------------------------
 
-fn write_graph(out: &mut String, id: &GraphId, body: &GraphBody) {
-    let head = match id {
-        GraphId::Name(name) => format!("graph {name}"),
-        GraphId::Addr(hex) => format!("graph {}", quote(hex)),
-    };
-    write_graph_body(out, &head, body, 0);
+fn write_graph(out: &mut String, id: &Addr, body: &GraphBody) {
+    write_graph_body(out, &format!("graph {}", addr_text(id)), body, 0);
 }
 
 /// Write `(<head> <nodes...> <conns...>)` with the body indented one level
@@ -195,10 +195,7 @@ fn endpoint_text(ep: &Endpoint) -> String {
 // -- layout ------------------------------------------------------------------
 
 fn write_layout(out: &mut String, layout: &Layout) {
-    out.push_str(&format!("(layout {}", layout.graph));
-    if !layout.path.is_empty() {
-        out.push_str(&format!("\n  (at {})", layout.path.join(" ")));
-    }
+    out.push_str(&format!("(layout {}", addr_text(&layout.graph)));
     for (name, x, y) in &layout.positions {
         out.push_str(&format!("\n  ({name} {} {})", num(*x), num(*y)));
     }
@@ -214,27 +211,31 @@ fn write_layout(out: &mut String, layout: &Layout) {
     out.push(')');
 }
 
-// -- history -----------------------------------------------------------------
+// -- commits / names ---------------------------------------------------------
 
-fn write_history(out: &mut String, history: &History) {
-    out.push_str(&format!("(history {}", history.graph));
-    for commit in &history.commits {
-        out.push_str(&format!("\n  {}", commit_text(commit)));
+fn write_commits(out: &mut String, commits: &[CommitDecl]) {
+    out.push_str("(commits");
+    for c in commits {
+        out.push_str(&format!("\n  {}", commit_text(c)));
     }
     out.push(')');
 }
 
 fn commit_text(c: &CommitDecl) -> String {
-    let mut s = format!("(commit {} (time {} {})", addr_text(&c.id), c.secs, c.nanos);
-    match &c.parent {
-        Some(addr) => s.push_str(&format!(" (parent {})", addr_text(addr))),
-        None => s.push_str(" (parent none)"),
+    let mut s = format!("({} (time {} {})", addr_text(&c.id), c.secs, c.nanos);
+    if let Some(addr) = &c.parent {
+        s.push_str(&format!(" (parent {})", addr_text(addr)));
     }
-    if let Some(addr) = &c.graph {
-        s.push_str(&format!(" (graph {})", addr_text(addr)));
-    }
-    s.push(')');
+    s.push_str(&format!(" (graph {}))", addr_text(&c.graph)));
     s
+}
+
+fn write_names(out: &mut String, names: &[NameDecl]) {
+    out.push_str("(names");
+    for n in names {
+        out.push_str(&format!("\n  ({} {})", n.name, addr_text(&n.commit)));
+    }
+    out.push(')');
 }
 
 // -- helpers -----------------------------------------------------------------

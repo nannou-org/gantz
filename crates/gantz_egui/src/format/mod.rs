@@ -32,7 +32,7 @@ use gantz_core::node::graph::Graph;
 /// Parse a `.gantz` document into an [`Export`].
 ///
 /// `now` provides the timestamp for any commit that the document does not
-/// describe explicitly (i.e. hand-authored graphs with no `(history ...)`).
+/// describe explicitly (i.e. hand-authored graphs with no `(commits ...)`).
 pub fn from_str<N>(text: &str, now: Timestamp) -> Result<Export<Graph<N>>, FormatError>
 where
     N: Lowerable,

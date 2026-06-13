@@ -163,7 +163,7 @@ mod tests {
 
     /// Round-tripping a consistent export (text -> Export -> text -> Export)
     /// must preserve every name, commit address and graph address. Exercises a
-    /// cross-graph `ref` and the default-on history emission.
+    /// cross-graph `ref` and the `(commits ...)`/`(names ...)` tables.
     #[test]
     fn text_roundtrip_preserves_addrs() {
         use std::collections::BTreeSet;
@@ -294,21 +294,20 @@ mod tests {
             .unwrap_or_else(|e| panic!("output is not valid Steel: {e}\n--- output ---\n{out}"));
     }
 
-    /// Importing a history whose commit names a parent not present in the file
-    /// records that commit as a root (the parent is cleared). The matching
-    /// warning is emitted by `build_history`.
+    /// Importing a commit whose parent is not present in the file records that
+    /// commit as a root (the parent is cleared, with a warning).
     #[test]
     fn import_clears_absent_parent() {
         use std::time::Duration;
         type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
 
-        let parent_hex = "1".repeat(64);
-        let text = format!(
-            "(graph g (e (expr 1)))\n(history g (commit \"abcd1234\" (time 5 0) (parent \"{parent_hex}\")))",
-        );
+        let text = "\
+(graph g (e (expr 1)))
+(commits (\"abcd1234\" (time 5 0) (parent \"deadbeef\") (graph g)))
+(names (gname \"abcd1234\"))";
         let export: gantz_egui::export::Export<G> =
-            gantz_egui::format::from_str(&text, Duration::from_secs(0)).expect("import");
-        let commit = export.registry.named_commit("g").expect("g commit");
+            gantz_egui::format::from_str(text, Duration::from_secs(0)).expect("import");
+        let commit = export.registry.named_commit("gname").expect("commit");
         assert_eq!(commit.parent, None, "absent parent must be cleared to None");
     }
 }
