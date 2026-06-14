@@ -4,7 +4,7 @@
 //! Core storage functions (registry, graphs, commits, names) are provided
 //! by `bevy_gantz::storage`.
 
-use crate::{GraphViews, GuiState, Views};
+use crate::{GraphView, GuiState, Views};
 use bevy_egui::egui;
 use bevy_gantz::clone_graph;
 use bevy_gantz::reg::Registry;
@@ -26,18 +26,16 @@ mod key {
 
 /// Save all graph views to storage under a single key.
 ///
-/// Keys are sorted at both levels to produce deterministic output.
+/// Keys are sorted to produce deterministic output.
 pub fn save_views(storage: &mut impl bevy_gantz::storage::Save, views: &Views) {
-    let sorted: std::collections::BTreeMap<_, std::collections::BTreeMap<_, _>> =
-        views.iter().map(|(k, v)| (k, v.iter().collect())).collect();
+    let sorted: std::collections::BTreeMap<_, _> = views.iter().collect();
     save(storage, key::VIEWS, &sorted);
 }
 
 /// Load all graph views from storage.
 pub fn load_views(storage: &impl Load) -> Views {
     Views(
-        load::<HashMap<ca::CommitAddr, gantz_egui::GraphViews>>(storage, key::VIEWS)
-            .unwrap_or_default(),
+        load::<HashMap<ca::CommitAddr, egui_graph::View>>(storage, key::VIEWS).unwrap_or_default(),
     )
 }
 
@@ -60,7 +58,7 @@ pub fn load_open<N>(
     registry: &mut Registry<N>,
     views: &Views,
     ts: Duration,
-) -> Vec<(ca::Head, Graph<N>, GraphViews)>
+) -> Vec<(ca::Head, Graph<N>, GraphView)>
 where
     N: 'static + Clone + DeserializeOwned + ca::CaHash,
 {
@@ -72,12 +70,12 @@ where
         .filter_map(|head| {
             let graph = clone_graph(registry.head_graph(&head)?);
             // Load the views for this head's commit, or create empty.
-            let head_views = registry
+            let head_view = registry
                 .head_commit_ca(&head)
                 .and_then(|ca| views.get(ca).cloned())
-                .map(GraphViews)
+                .map(GraphView)
                 .unwrap_or_default();
-            Some((head, graph, head_views))
+            Some((head, graph, head_view))
         })
         .collect();
 
@@ -85,8 +83,8 @@ where
     if heads.is_empty() {
         let head = registry.init_head(ts);
         let graph = clone_graph(registry.head_graph(&head).unwrap());
-        let head_views = GraphViews::default();
-        vec![(head, graph, head_views)]
+        let head_view = GraphView::default();
+        vec![(head, graph, head_view)]
     } else {
         heads
     }

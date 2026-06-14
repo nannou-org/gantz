@@ -8,7 +8,7 @@
 
 use crate::widget::gantz::OpenHeadState;
 use crate::widget::graph_scene::NodeIndex;
-use crate::{CreateNode, GraphViews, InspectEdge, PastePos, export, node::NamedRef};
+use crate::{CreateNode, InspectEdge, PastePos, export, node::NamedRef};
 use gantz_ca::{CaHash, CommitAddr};
 use gantz_core::node::{self, GetNode, graph::Graph};
 use serde::Serialize;
@@ -63,9 +63,9 @@ pub fn branch_node<N>(
 /// responsibility.
 pub fn copy_nodes<N>(
     registry: &gantz_ca::Registry<Graph<N>>,
-    all_views: &HashMap<CommitAddr, GraphViews>,
+    all_views: &HashMap<CommitAddr, egui_graph::View>,
     graph: &Graph<N>,
-    head_views: &GraphViews,
+    head_view: &egui_graph::View,
     selection: &HashSet<NodeIndex>,
 ) -> Option<String>
 where
@@ -74,12 +74,7 @@ where
     if selection.is_empty() {
         return None;
     }
-    let layout = head_views
-        .get(&Vec::new())
-        .map(|v| &v.layout)
-        .cloned()
-        .unwrap_or_default();
-    let copied = export::copy(registry, all_views, graph, selection, &layout);
+    let copied = export::copy(registry, all_views, graph, selection, &head_view.layout);
     match export::copied_to_string(&copied) {
         Ok(text) => Some(text),
         Err(e) => {
@@ -97,7 +92,7 @@ pub fn create_node<N>(
     get_node: GetNode,
     new_node: impl FnOnce(&str) -> Option<N>,
     graph: &mut Graph<N>,
-    views: &mut GraphViews,
+    view: &mut egui_graph::View,
     vm: &mut Engine,
     cmd: CreateNode,
 ) -> Option<NodeIndex>
@@ -118,7 +113,6 @@ where
 
     // Position the new node at the scene center (or use layout default).
     let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
-    let view = views.entry(Vec::new()).or_default();
     view.layout.entry(egui_id).or_insert(egui::Pos2::ZERO);
 
     Some(node_ix)
@@ -134,7 +128,7 @@ pub fn create_nested_graph<N>(
     registry: &mut gantz_ca::Registry<Graph<N>>,
     timestamp: std::time::Duration,
     graph: &mut Graph<N>,
-    views: &mut GraphViews,
+    view: &mut egui_graph::View,
     parent: &str,
 ) -> Option<NodeIndex>
 where
@@ -164,7 +158,6 @@ where
 
     // Position the new node at the scene center (or use layout default).
     let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
-    let view = views.entry(Vec::new()).or_default();
     view.layout.entry(egui_id).or_insert(egui::Pos2::ZERO);
 
     Some(node_ix)
@@ -176,7 +169,7 @@ pub fn inspect_edge<N>(
     get_node: GetNode,
     new_inspect: impl FnOnce() -> Option<N>,
     graph: &mut Graph<N>,
-    views: &mut GraphViews,
+    view: &mut egui_graph::View,
     vm: &mut Engine,
     cmd: InspectEdge,
 ) where
@@ -222,7 +215,6 @@ pub fn inspect_edge<N>(
 
     // Position the new node at the click position.
     let node_id = egui_graph::NodeId::from_u64(inspect_id.index() as u64);
-    let view = views.entry(Vec::new()).or_default();
     view.layout.insert(node_id, pos);
 }
 
@@ -234,10 +226,10 @@ pub fn inspect_edge<N>(
 /// their state initialized.
 pub fn paste<N>(
     registry: &mut gantz_ca::Registry<Graph<N>>,
-    all_views: &mut HashMap<CommitAddr, GraphViews>,
+    all_views: &mut HashMap<CommitAddr, egui_graph::View>,
     all_demos: &mut HashMap<CommitAddr, String>,
     graph: &mut Graph<N>,
-    head_views: &mut GraphViews,
+    head_view: &mut egui_graph::View,
     head_state: &mut OpenHeadState,
     text: &str,
     pos: &PastePos,
@@ -254,13 +246,12 @@ where
     };
     let offset = crate::resolve_paste_offset(pos, &copied.positions);
 
-    let view = head_views.entry(Vec::new()).or_default();
     let new_indices = export::paste(
         registry,
         all_views,
         all_demos,
         graph,
-        &mut view.layout,
+        &mut head_view.layout,
         &copied,
         offset,
     );

@@ -2,7 +2,6 @@
 //! gantz using `egui`.
 
 use petgraph::visit::{IntoNodeReferences, NodeRef};
-use std::collections::HashMap;
 use steel::{
     SteelErr, SteelVal,
     rvals::{FromSteelVal, IntoSteelVal},
@@ -107,12 +106,12 @@ pub trait HeadAccess {
 /// Mutable access to a head's data, provided via [`HeadAccess::with_head_mut`].
 pub struct HeadDataMut<'a, N> {
     pub graph: &'a mut gantz_core::node::graph::Graph<N>,
-    pub views: &'a mut GraphViews,
+    /// View state (node layout + camera) for this head's graph. Nested graphs
+    /// are separate named heads with their own view, so one view per head
+    /// suffices (no path-keyed map).
+    pub view: &'a mut egui_graph::View,
     pub vm: &'a mut Engine,
 }
-
-/// View state (layout + camera) for a graph and all its nested subgraphs, keyed by path.
-pub type GraphViews = HashMap<Vec<node::Id>, egui_graph::View>;
 
 /// A trait providing an egui `Ui` implementation for gantz nodes.
 pub trait NodeUi {

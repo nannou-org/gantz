@@ -1,6 +1,6 @@
 use crate::{
-    CopyNodes, CreateNestedGraph, CreateNode, ExportAllNamed, ExportHead, GraphViews, HeadAccess,
-    NodeCtx, NodeUi, OpenCommandPalette, Paste, Redo, Registry, ReplaceHead, Undo, export,
+    CopyNodes, CreateNestedGraph, CreateNode, ExportAllNamed, ExportHead, HeadAccess, NodeCtx,
+    NodeUi, OpenCommandPalette, Paste, Redo, Registry, ReplaceHead, Undo, export,
     response::{DynResponse, Responses},
     widget::{self, GraphScene, GraphSceneState, graph_scene},
 };
@@ -1130,7 +1130,7 @@ where
                 data.graph,
                 pane_head,
                 head_state,
-                data.views,
+                data.view,
                 auto_layout,
                 layout_flow,
                 center_view,
@@ -1489,7 +1489,7 @@ fn graph_scene<N>(
     graph: &mut gantz_core::node::graph::Graph<N>,
     head: &gantz_ca::Head,
     head_state: &mut OpenHeadState,
-    head_views: &mut GraphViews,
+    head_view: &mut egui_graph::View,
     auto_layout: bool,
     layout_flow: egui::Direction,
     center_view: bool,
@@ -1504,14 +1504,10 @@ where
     // A head shows exactly its root graph (nested graphs are separate heads).
     let id = egui::Id::new(head);
 
-    // Get or create the View for this head from external storage.
-    let view = head_views.entry(Vec::new()).or_insert_with(|| {
-        let layout = widget::graph_scene::layout(graph, id, layout_flow, ui.ctx());
-        egui_graph::View {
-            scene_rect: egui::Rect::ZERO,
-            layout,
-        }
-    });
+    // Seed the node layout the first time this graph is shown.
+    if head_view.layout.is_empty() {
+        head_view.layout = widget::graph_scene::layout(graph, id, layout_flow, ui.ctx());
+    }
 
     let response = GraphScene::new(registry, graph, &[])
         .with_id(id)
@@ -1519,7 +1515,7 @@ where
         .layout_flow(layout_flow)
         .center_view(center_view)
         .immutable(immutable)
-        .show(view, &mut head_state.scene, vm, ui);
+        .show(head_view, &mut head_state.scene, vm, ui);
 
     graph_scene::paint_diagnostics(diagnostics, &[], &response, ui);
 

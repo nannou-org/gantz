@@ -370,11 +370,7 @@ mod tests {
         let e1: gantz_egui::export::Export<G> =
             gantz_egui::format::from_str(text1, now).expect("from_str 1");
         let head = *e1.registry.names().get("mul").expect("mul name");
-        let view = e1
-            .views
-            .get(&head)
-            .and_then(|gv| gv.get(&Vec::new()))
-            .expect("view");
+        let view = e1.views.get(&head).expect("view");
         // `m` is node index 0, `l` is 1.
         assert_eq!(
             view.layout.get(&egui_graph::NodeId(0)).map(|p| (p.x, p.y)),
@@ -391,11 +387,7 @@ mod tests {
         let e2: gantz_egui::export::Export<G> =
             gantz_egui::format::from_str(&text2, now).expect("from_str 2");
         let head2 = *e2.registry.names().get("mul").expect("mul name 2");
-        let view2 = e2
-            .views
-            .get(&head2)
-            .and_then(|gv| gv.get(&Vec::new()))
-            .expect("view 2");
+        let view2 = e2.views.get(&head2).expect("view 2");
         assert_eq!(view.layout.len(), view2.layout.len());
         assert_eq!(
             view2.layout.get(&egui_graph::NodeId(0)).map(|p| (p.x, p.y)),

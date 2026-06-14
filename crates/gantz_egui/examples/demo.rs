@@ -267,7 +267,7 @@ struct DemoHeadAccess<'a> {
     /// Map from head to index for lookup.
     head_to_ix: HashMap<gantz_ca::Head, usize>,
     /// The underlying data.
-    data: &'a mut Vec<(gantz_ca::Head, Graph, GraphViews)>,
+    data: &'a mut Vec<(gantz_ca::Head, Graph, egui_graph::View)>,
     modules: &'a [Option<gantz_core::vm::Compiled>],
     compile_errors: &'a [Option<String>],
     diagnostics: &'a [Vec<gantz_core::Diagnostic>],
@@ -276,7 +276,7 @@ struct DemoHeadAccess<'a> {
 
 impl<'a> DemoHeadAccess<'a> {
     fn new(
-        data: &'a mut Vec<(gantz_ca::Head, Graph, GraphViews)>,
+        data: &'a mut Vec<(gantz_ca::Head, Graph, egui_graph::View)>,
         modules: &'a [Option<gantz_core::vm::Compiled>],
         compile_errors: &'a [Option<String>],
         diagnostics: &'a [Vec<gantz_core::Diagnostic>],
@@ -313,9 +313,9 @@ impl<'a> HeadAccess for DemoHeadAccess<'a> {
         f: impl FnOnce(HeadDataMut<'_, Self::Node>) -> R,
     ) -> Option<R> {
         let ix = *self.head_to_ix.get(head)?;
-        let (_, graph, views) = &mut self.data[ix];
+        let (_, graph, view) = &mut self.data[ix];
         let vm = &mut self.vms[ix];
-        Some(f(HeadDataMut { graph, views, vm }))
+        Some(f(HeadDataMut { graph, view, vm }))
     }
 
     fn module(&self, head: &gantz_ca::Head) -> Option<&gantz_core::vm::Compiled> {
@@ -365,13 +365,10 @@ struct App {
     state: State,
 }
 
-/// View state (layout + camera) for a graph and all its nested subgraphs, keyed by path.
-type GraphViews = gantz_egui::GraphViews;
-
 struct State {
     /// The currently open graphs/heads.
     /// Each entry is a head (branch or commit), its associated graph, and view state.
-    heads: Vec<(gantz_ca::Head, Graph, GraphViews)>,
+    heads: Vec<(gantz_ca::Head, Graph, egui_graph::View)>,
     /// Per-head compiled modules, indexed to match `heads`.
     compile_errors: Vec<Option<String>>,
     /// Per-head module artifacts for span resolution, indexed to match `heads`.
@@ -436,8 +433,8 @@ impl App {
             .into_iter()
             .filter_map(|head| {
                 let graph = clone_graph(registry.head_graph(&head)?);
-                let views = GraphViews::default();
-                Some((head, graph, views))
+                let view = egui_graph::View::default();
+                Some((head, graph, view))
             })
             .collect();
 
@@ -445,8 +442,8 @@ impl App {
         let heads = if heads.is_empty() {
             let head = registry.init_head(timestamp());
             let graph = clone_graph(registry.head_graph(&head).unwrap());
-            let views = GraphViews::default();
-            vec![(head, graph, views)]
+            let view = egui_graph::View::default();
+            vec![(head, graph, view)]
         } else {
             heads
         };
@@ -944,12 +941,12 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         };
         let env = &state.env;
         let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
-        let (_, graph, views) = &mut state.heads[ix];
+        let (_, graph, view) = &mut state.heads[ix];
         gantz_egui::ops::inspect_edge(
             &get_node,
             || env.new_node("inspect"),
             graph,
-            views,
+            view,
             &mut state.vms[ix],
             inspect,
         );
@@ -961,12 +958,12 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         };
         let env = &state.env;
         let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
-        let (_, graph, views) = &mut state.heads[ix];
+        let (_, graph, view) = &mut state.heads[ix];
         gantz_egui::ops::create_node(
             &get_node,
             |node_type| env.new_node(node_type),
             graph,
-            views,
+            view,
             &mut state.vms[ix],
             create,
         );
@@ -980,12 +977,12 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             log::warn!("CreateNestedGraph: name the graph before adding a nested graph");
             continue;
         };
-        let (_, graph, views) = &mut state.heads[ix];
+        let (_, graph, view) = &mut state.heads[ix];
         gantz_egui::ops::create_nested_graph(
             &mut state.env.registry,
             timestamp(),
             graph,
-            views,
+            view,
             &parent,
         );
     }
@@ -1275,11 +1272,11 @@ fn open_head(state: &mut State, new_head: gantz_ca::Head) {
     // Head is not open - add it as a new tab.
     let graph = state.env.registry.head_graph(&new_head).unwrap();
     let new_graph = clone_graph(graph);
-    let views = GraphViews::default();
+    let view = egui_graph::View::default();
 
     state
         .heads
-        .push((new_head.clone(), new_graph.clone(), views));
+        .push((new_head.clone(), new_graph.clone(), view));
     state.focused_head = state.heads.len() - 1;
 
     // Initialise the VM for the new graph and add to per-head collections.
@@ -1317,10 +1314,10 @@ fn replace_head(ctx: &egui::Context, state: &mut State, new_head: gantz_ca::Head
     // Load the new graph.
     let graph = state.env.registry.head_graph(&new_head).unwrap();
     let new_graph = clone_graph(graph);
-    let views = GraphViews::default();
+    let view = egui_graph::View::default();
 
     // Replace at the focused index.
-    state.heads[ix] = (new_head.clone(), new_graph.clone(), views);
+    state.heads[ix] = (new_head.clone(), new_graph.clone(), view);
 
     // Reinitialize the VM for the new graph.
     let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
@@ -1367,13 +1364,13 @@ fn navigate_head(
 
 /// Refresh the focused branch head after its commit pointer has been moved.
 ///
-/// Reloads the graph, views, and VM from the registry for the focused head.
+/// Reloads the graph, view, and VM from the registry for the focused head.
 fn refresh_branch_head(state: &mut State) {
     let ix = state.focused_head;
-    let (ref head, ref mut graph, ref mut views) = state.heads[ix];
+    let (ref head, ref mut graph, ref mut view) = state.heads[ix];
     let new_graph = state.env.registry.head_graph(head).unwrap();
     *graph = clone_graph(new_graph);
-    *views = GraphViews::default();
+    *view = egui_graph::View::default();
     let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
     let eps = push_pull_entrypoints(&get_node, &*graph);
     let result = match gantz_core::vm::init(&get_node, &*graph, &eps, &state.compile_config) {
@@ -1467,7 +1464,7 @@ fn create_branch_from_head(
     };
 
     // Create a new commit pointing to the same graph so the new branch gets
-    // its own independent `CommitAddr` (and therefore its own views/layout).
+    // its own independent `CommitAddr` (and therefore its own view/layout).
     let graph_addr = state.env.registry.commits()[&commit_ca].graph;
     let new_commit_ca =
         state

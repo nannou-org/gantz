@@ -172,7 +172,7 @@ pub struct HeadGuiState(pub gantz_egui::widget::gantz::OpenHeadState);
 
 /// Views for a single head's graphs (keyed by subgraph path).
 #[derive(Component, Default, Clone)]
-pub struct GraphViews(pub gantz_egui::GraphViews);
+pub struct GraphView(pub egui_graph::View);
 
 // ----------------------------------------------------------------------------
 // Resources
@@ -196,7 +196,7 @@ pub struct GuiState(pub gantz_egui::widget::GantzState);
 
 /// Views (layout + camera) for all known commits.
 #[derive(Resource, Default)]
-pub struct Views(pub HashMap<ca::CommitAddr, gantz_egui::GraphViews>);
+pub struct Views(pub HashMap<ca::CommitAddr, egui_graph::View>);
 
 /// Demo graph associations: maps a commit to its associated `demo-*` graph name.
 #[derive(Resource, Default)]
@@ -320,7 +320,7 @@ impl RegisterResponseExt for App {
 #[query_data(mutable)]
 pub struct OpenHeadViews<N: 'static + Send + Sync> {
     pub core: head::OpenHeadData<N>,
-    pub views: &'static mut GraphViews,
+    pub view: &'static mut GraphView,
 }
 
 // ----------------------------------------------------------------------------
@@ -392,7 +392,7 @@ impl<N: 'static + Send + Sync> gantz_egui::HeadAccess for HeadAccess<'_, '_, '_,
         let vm = self.vms.get_mut(&entity)?;
         Some(f(HeadDataMut {
             graph: &mut *data.core.working_graph,
-            views: &mut *data.views,
+            view: &mut *data.view,
             vm,
         }))
     }
@@ -451,7 +451,7 @@ impl DerefMut for GuiState {
 }
 
 impl Deref for Views {
-    type Target = HashMap<ca::CommitAddr, gantz_egui::GraphViews>;
+    type Target = HashMap<ca::CommitAddr, egui_graph::View>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -476,14 +476,14 @@ impl DerefMut for Demos {
     }
 }
 
-impl Deref for GraphViews {
-    type Target = gantz_egui::GraphViews;
+impl Deref for GraphView {
+    type Target = egui_graph::View;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl DerefMut for GraphViews {
+impl DerefMut for GraphView {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -515,7 +515,7 @@ fn on_eval_entry_complete(trigger: On<EvalEntryComplete>, mut perf_vm: ResMut<Pe
 
 /// Initialize GUI state entry and components for opened head.
 ///
-/// Loads views from the `Views` resource and spawns `GraphViews` + `HeadGuiState` components.
+/// Loads views from the `Views` resource and spawns `GraphView` + `HeadGuiState` components.
 pub fn on_head_opened<N: 'static + Send + Sync>(
     trigger: On<head::OpenedEvent>,
     registry: Res<Registry<N>>,
@@ -526,20 +526,20 @@ pub fn on_head_opened<N: 'static + Send + Sync>(
     let event = trigger.event();
     gui_state.open_heads.entry(event.head.clone()).or_default();
 
-    // Load views for this head's commit.
-    let head_views = registry
+    // Load the view for this head's commit.
+    let head_view = registry
         .head_commit_ca(&event.head)
         .and_then(|ca| views.get(ca).cloned())
         .unwrap_or_default();
 
     cmds.entity(event.entity)
         .insert(HeadGuiState::default())
-        .insert(GraphViews(head_views));
+        .insert(GraphView(head_view));
 }
 
 /// Migrate GUI state for changed head and reset components.
 ///
-/// Loads views for the new head and updates `GraphViews` + `HeadGuiState` components.
+/// Loads views for the new head and updates `GraphView` + `HeadGuiState` components.
 pub fn on_head_changed<N: 'static + Send + Sync>(
     trigger: On<head::ChangedEvent>,
     registry: Res<Registry<N>>,
@@ -554,15 +554,15 @@ pub fn on_head_changed<N: 'static + Send + Sync>(
         gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
     }
 
-    // Load views for the new head's commit.
-    let head_views = registry
+    // Load the view for the new head's commit.
+    let head_view = registry
         .head_commit_ca(&event.new_head)
         .and_then(|ca| views.get(ca).cloned())
         .unwrap_or_default();
 
     cmds.entity(event.entity)
         .insert(HeadGuiState::default())
-        .insert(GraphViews(head_views));
+        .insert(GraphView(head_view));
 }
 
 /// Remove GUI state for closed head.
@@ -678,7 +678,7 @@ pub fn on_create_node<N>(
     demos: Res<Demos>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
-    mut views_query: Query<&mut GraphViews, With<head::OpenHead>>,
+    mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
 ) where
     N: 'static + Node + From<gantz_egui::node::NamedRef> + Send + Sync,
 {
@@ -743,7 +743,7 @@ pub fn on_create_nested_graph<N>(
     trigger: On<ForHead<gantz_egui::CreateNestedGraph>>,
     mut registry: ResMut<Registry<N>>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
-    mut views_query: Query<&mut GraphViews, With<head::OpenHead>>,
+    mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
 ) where
     N: 'static + Node + From<gantz_egui::node::NamedRef> + ca::CaHash + Send + Sync,
 {
@@ -783,7 +783,7 @@ pub fn on_inspect_edge<N>(
     demos: Res<Demos>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
-    mut views_query: Query<&mut GraphViews, With<head::OpenHead>>,
+    mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
 ) where
     N: 'static + Node + From<gantz_egui::node::NamedRef> + Send + Sync,
 {
@@ -823,7 +823,7 @@ pub fn on_copy_nodes<N>(
     registry: Res<Registry<N>>,
     views: Res<Views>,
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
-    mut heads: Query<(&mut head::WorkingGraph<N>, &GraphViews), With<head::OpenHead>>,
+    mut heads: Query<(&mut head::WorkingGraph<N>, &GraphView), With<head::OpenHead>>,
 ) where
     N: 'static
         + Node
@@ -862,7 +862,7 @@ pub fn on_paste<N>(
     mut vms: NonSendMut<head::HeadVms>,
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
     mut heads: Query<
-        (&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphViews),
+        (&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphView),
         With<head::OpenHead>,
     >,
 ) where
@@ -1164,7 +1164,7 @@ where
 pub fn persist_views<N: 'static + Send + Sync>(
     registry: Res<Registry<N>>,
     mut views: ResMut<Views>,
-    heads: Query<(&head::HeadRef, &GraphViews), With<head::OpenHead>>,
+    heads: Query<(&head::HeadRef, &GraphView), With<head::OpenHead>>,
 ) {
     for (head_ref, head_views) in heads.iter() {
         if let Some(commit_addr) = registry.head_commit_ca(&**head_ref).copied() {
