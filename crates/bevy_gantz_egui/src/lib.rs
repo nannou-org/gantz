@@ -78,6 +78,7 @@ where
         + Clone
         + gantz_ca::CaHash
         + From<gantz_egui::node::NamedRef>
+        + gantz_egui::sync::AsNamedRefMut
         + gantz_egui::NodeUi
         + node::ToFrameBang
         + serde::Serialize
@@ -126,6 +127,8 @@ where
             .add_observer(on_head_closed)
             .add_observer(on_branch_created)
             .add_observer(on_head_committed)
+            .add_observer(on_head_committed_resync::<N>)
+            .add_observer(on_branched_head_fork_nested::<N>)
             // VM timing observer
             .add_observer(on_eval_entry_complete)
             // GUI response payload observers
@@ -595,6 +598,75 @@ pub fn on_head_committed(
     gui_state.migrate_head(&event.old_head, &event.new_head, true);
     if let Ok(ctx) = ctxs.ctx_mut() {
         gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
+    }
+}
+
+/// On any head commit, propagate the change to referrers: bring all
+/// sync-enabled `NamedRef`s up to date and refresh any open head whose commit
+/// moved (e.g. a nested graph edit propagating up to its open parent).
+pub fn on_head_committed_resync<N>(
+    _trigger: On<head::CommittedEvent>,
+    mut registry: ResMut<Registry<N>>,
+    mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
+    mut views: ResMut<Views>,
+) where
+    N: 'static + Clone + ca::CaHash + gantz_egui::sync::AsNamedRefMut + Send + Sync,
+{
+    let moves = gantz_egui::sync::resync(&mut registry, bevy_gantz::reg::timestamp());
+    refresh_moved_heads(&moves, &registry, &mut heads, &mut views);
+}
+
+/// On a fork (branch from a head), give the fork independent nested children:
+/// copy the original's `parent:*` subtree to the fork and rewrite its
+/// references, then refresh the open fork.
+pub fn on_branched_head_fork_nested<N>(
+    trigger: On<head::BranchedHeadEvent>,
+    mut registry: ResMut<Registry<N>>,
+    mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
+    mut views: ResMut<Views>,
+) where
+    N: 'static + Clone + ca::CaHash + gantz_egui::sync::AsNamedRefMut + Send + Sync,
+{
+    let event = trigger.event();
+    let (ca::Head::Branch(old), ca::Head::Branch(new)) = (&event.old_head, &event.new_head) else {
+        return;
+    };
+    let moves =
+        gantz_egui::sync::fork_nested(&mut registry, bevy_gantz::reg::timestamp(), old, new);
+    refresh_moved_heads(&moves, &registry, &mut heads, &mut views);
+}
+
+/// Carry moved graphs' views forward to their new commits, and refresh any open
+/// head whose commit moved: reload its working graph to the new version and
+/// clear its compile memo so `vm::sync` recompiles it (without re-committing,
+/// since the registry already holds this graph).
+fn refresh_moved_heads<N>(
+    moves: &[gantz_egui::sync::Moved],
+    registry: &Registry<N>,
+    heads: &mut Query<head::OpenHeadData<N>, With<head::OpenHead>>,
+    views: &mut Views,
+) where
+    N: 'static + Clone + Send + Sync,
+{
+    if moves.is_empty() {
+        return;
+    }
+    for m in moves {
+        if let Some(gv) = views.0.get(&m.old_commit).cloned() {
+            views.0.entry(m.new_commit).or_insert(gv);
+        }
+    }
+    for mut data in heads.iter_mut() {
+        let ca::Head::Branch(name) = data.head_ref.0.clone() else {
+            continue;
+        };
+        let Some(m) = moves.iter().find(|m| m.name == name) else {
+            continue;
+        };
+        if let Some(graph) = registry.commit_graph_ref(&m.new_commit) {
+            data.working_graph.0 = graph.clone();
+            *data.compiled_inputs = bevy_gantz::vm::CompiledInputs::default();
+        }
     }
 }
 

@@ -95,6 +95,14 @@ impl NamedRef {
         self.ref_ = ref_;
     }
 
+    /// Re-point this reference at a renamed target: change the stored name and
+    /// repoint at the renamed graph's commit. Used by the rename cascade so a
+    /// renamed parent keeps referencing its (also-renamed) children.
+    pub fn rename(&mut self, name: String, ca: gantz_ca::ContentAddr) {
+        self.name = name;
+        self.ref_ = gantz_core::node::Ref::new(ca);
+    }
+
     /// Bring the reference up to date with the name's current commit.
     ///
     /// When sync is enabled and `resolve(name)` differs from the current

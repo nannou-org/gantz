@@ -16,6 +16,7 @@ pub mod node;
 pub mod ops;
 pub mod reg;
 pub mod response;
+pub mod sync;
 pub mod widget;
 
 // Re-export traits that make up the Registry supertrait.

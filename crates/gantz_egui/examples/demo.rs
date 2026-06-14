@@ -243,6 +243,13 @@ impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
     }
 }
 
+// Lets the reference-resync machinery find `NamedRef`s within an erased node.
+impl gantz_egui::sync::AsNamedRefMut for Box<dyn Node> {
+    fn as_named_ref_mut(&mut self) -> Option<&mut gantz_egui::node::NamedRef> {
+        ((&mut **self) as &mut dyn Any).downcast_mut::<gantz_egui::node::NamedRef>()
+    }
+}
+
 // ----------------------------------------------
 // Graph
 // ----------------------------------------------
@@ -506,10 +513,12 @@ impl eframe::App for App {
         // Check for changes to each open graph and commit/recompile them.
         // FIXME: Rather than checking changed CA to monitor changes, ideally
         // `Gantz` widget can tell us this in a custom response.
+        let mut committed = false;
         for (ix, (head, graph, _)) in self.state.heads.iter_mut().enumerate() {
             let new_graph_ca = gantz_ca::graph_addr(&*graph);
             let head_commit = self.state.env.registry.head_commit(head).unwrap();
             if head_commit.graph != new_graph_ca {
+                committed = true;
                 let old_head = head.clone();
                 let old_commit_ca = self
                     .state
@@ -544,6 +553,11 @@ impl eframe::App for App {
                 self.state.modules[ix] = module;
                 self.state.diagnostics[ix] = diags;
             }
+        }
+
+        // Propagate committed edits to referrers (e.g. nested graph -> parent).
+        if committed {
+            resync_and_refresh(&mut self.state);
         }
 
         // Process any pending response payloads generated from the UI.
@@ -1379,6 +1393,27 @@ fn refresh_branch_head(state: &mut State) {
 ///
 /// Used when the compile config changes: the graph content is unchanged, and
 /// compiling into the existing VM preserves node state.
+/// After committing edited heads, bring referrers up to date: resync all
+/// sync-enabled `NamedRef`s, reload any open head whose commit moved, and
+/// recompile. This is how editing a nested graph propagates to its parents.
+fn resync_and_refresh(state: &mut State) {
+    let moves = gantz_egui::sync::resync(&mut state.env.registry, timestamp());
+    if moves.is_empty() {
+        return;
+    }
+    for m in &moves {
+        let Some(new_graph) = state.env.registry.commit_graph_ref(&m.new_commit).cloned() else {
+            continue;
+        };
+        for (head, graph, _) in state.heads.iter_mut() {
+            if matches!(head, gantz_ca::Head::Branch(name) if *name == m.name) {
+                *graph = new_graph.clone();
+            }
+        }
+    }
+    recompile_heads(state);
+}
+
 fn recompile_heads(state: &mut State) {
     for (ix, (_, graph, _)) in state.heads.iter().enumerate() {
         let vm = &mut state.vms[ix];
@@ -1457,5 +1492,23 @@ fn create_branch_from_head(
         // Update the graph pane to show the new head.
         gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
         state.gantz.migrate_head(&old_head, &new_head, false);
+    }
+
+    // Give the fork independent nested children.
+    if let (gantz_ca::Head::Branch(old), gantz_ca::Head::Branch(new)) = (original_head, &new_head) {
+        let moves = gantz_egui::sync::fork_nested(&mut state.env.registry, timestamp(), old, new);
+        if !moves.is_empty() {
+            for m in &moves {
+                if let Some(g) = state.env.registry.commit_graph_ref(&m.new_commit).cloned() {
+                    for (head, graph, _) in state.heads.iter_mut() {
+                        if matches!(head, gantz_ca::Head::Branch(n) if *n == m.name) {
+                            *graph = g;
+                            break;
+                        }
+                    }
+                }
+            }
+            recompile_heads(state);
+        }
     }
 }
