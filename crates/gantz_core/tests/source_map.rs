@@ -4,7 +4,7 @@
 use gantz_core::{
     Edge,
     compile::{Name, SourceMap, push_pull_entrypoints},
-    node::{self, GraphNode, Node, WithPushEval},
+    node::{self, Node, WithPushEval},
 };
 use std::fmt::Debug;
 
@@ -28,6 +28,10 @@ fn node_add() -> node::Expr {
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
+// A nested graph: an ordinary `Graph` (which implements `Node`) boxed into its
+// parent, in place of the removed `GraphNode` wrapper.
+type Nested = node::graph::Graph<Box<dyn DebugNode>>;
+
 // A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
@@ -43,7 +47,7 @@ fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
 #[test]
 fn source_map_roundtrip() {
     // The nested graph: mul of two inlets.
-    let mut ga = GraphNode::default();
+    let mut ga = Nested::default();
     let inlet_a = ga.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
     let inlet_b = ga.add_node(Box::new(node::graph::Inlet) as Box<_>);
     let mul = ga.add_node(Box::new(node_mul()) as Box<_>);
@@ -131,7 +135,7 @@ fn source_map_roundtrip() {
 // def and call site both resolve to the nested graph node's path.
 #[test]
 fn source_map_level_fn() {
-    let mut ga = GraphNode::default();
+    let mut ga = Nested::default();
     let push = ga.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let int = ga.add_node(Box::new(node_int(7)) as Box<_>);
     let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);

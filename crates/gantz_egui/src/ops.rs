@@ -7,10 +7,8 @@
 //! (clipboard access, file dialogs, head navigation) stay with the caller.
 
 use crate::widget::gantz::OpenHeadState;
-use crate::widget::graph_scene::{self, NodeIndex, ToGraphMut};
-use crate::{
-    CreateNestedGraph, CreateNode, GraphViews, InspectEdge, PastePos, export, node::NamedRef,
-};
+use crate::widget::graph_scene::NodeIndex;
+use crate::{CreateNode, GraphViews, InspectEdge, PastePos, export, node::NamedRef};
 use gantz_ca::{CaHash, CommitAddr};
 use gantz_core::node::{self, GetNode, graph::Graph};
 use serde::Serialize;
@@ -21,7 +19,7 @@ use steel::steel_vm::engine::Engine;
 /// Branch a named node: create a new commit for the given content address
 /// (original commit as parent), insert the new name pointing at it, and
 /// replace the node at `path` with a [`NamedRef`] referencing the fresh
-/// commit.
+/// commit. `path`'s last element is the node's index within the graph.
 pub fn branch_node<N>(
     registry: &mut gantz_ca::Registry<Graph<N>>,
     timestamp: std::time::Duration,
@@ -30,7 +28,7 @@ pub fn branch_node<N>(
     ca: gantz_ca::ContentAddr,
     path: &[node::Id],
 ) where
-    N: From<NamedRef> + ToGraphMut<Node = N>,
+    N: From<NamedRef>,
 {
     let commit_ca = CommitAddr::from(ca);
     let Some(commit) = registry.commits().get(&commit_ca) else {
@@ -44,59 +42,44 @@ pub fn branch_node<N>(
     registry.insert_name(new_name.clone(), new_commit_ca);
 
     // Replace the NamedRef node in the working graph.
-    let Some((&node_ix, parent_path)) = path.split_last() else {
+    let Some(&node_ix) = path.last() else {
         log::error!("BranchNode: empty node path");
-        return;
-    };
-    let Some(g) = graph_scene::index_path_graph_mut(graph, parent_path) else {
-        log::error!("BranchNode: could not find graph at path {parent_path:?}");
         return;
     };
     let node_id = node::graph::NodeIx::new(node_ix);
     let new_ref = node::Ref::new(new_commit_ca.into());
     let named_ref = NamedRef::new(new_name, new_ref);
-    if let Some(node) = g.node_weight_mut(node_id) {
+    if let Some(node) = graph.node_weight_mut(node_id) {
         *node = N::from(named_ref);
     } else {
         log::error!("BranchNode: node not found at index {node_ix}");
     }
 }
 
-/// Serialize the selection at `path` to a `.gantz` clipboard payload.
+/// Serialize the current selection to a `.gantz` clipboard payload.
 ///
-/// Returns `None` when the selection is empty, the path is invalid, or
-/// serialization fails (logging the cause). Writing the resulting string to
-/// the clipboard is the caller's responsibility.
+/// Returns `None` when the selection is empty or serialization fails (logging
+/// the cause). Writing the resulting string to the clipboard is the caller's
+/// responsibility.
 pub fn copy_nodes<N>(
     registry: &gantz_ca::Registry<Graph<N>>,
     all_views: &HashMap<CommitAddr, GraphViews>,
-    graph: &mut Graph<N>,
+    graph: &Graph<N>,
     head_views: &GraphViews,
-    path: &[node::Id],
     selection: &HashSet<NodeIndex>,
 ) -> Option<String>
 where
-    N: gantz_core::Node
-        + Clone
-        + Serialize
-        + DeserializeOwned
-        + CaHash
-        + ToGraphMut<Node = N>
-        + 'static,
+    N: gantz_core::Node + Clone + Serialize + DeserializeOwned + CaHash + 'static,
 {
     if selection.is_empty() {
         return None;
     }
-    let Some(g) = graph_scene::index_path_graph_mut(graph, path) else {
-        log::error!("CopyNodes: could not find graph at path {path:?}");
-        return None;
-    };
     let layout = head_views
-        .get(path)
+        .get(&Vec::new())
         .map(|v| &v.layout)
         .cloned()
         .unwrap_or_default();
-    let copied = export::copy(registry, all_views, g, selection, &layout);
+    let copied = export::copy(registry, all_views, graph, selection, &layout);
     match export::copied_to_string(&copied) {
         Ok(text) => Some(text),
         Err(e) => {
@@ -106,10 +89,10 @@ where
     }
 }
 
-/// Create a node of the given type at `cmd.path`, register it with the VM,
-/// and ensure it has a layout entry.
+/// Create a node of the given type in `graph`, register it with the VM, and
+/// ensure it has a layout entry.
 ///
-/// Returns the index of the new node within the graph at `cmd.path`.
+/// Returns the index of the new node.
 pub fn create_node<N>(
     get_node: GetNode,
     new_node: impl FnOnce(&str) -> Option<N>,
@@ -119,35 +102,31 @@ pub fn create_node<N>(
     cmd: CreateNode,
 ) -> Option<NodeIndex>
 where
-    N: gantz_core::Node + ToGraphMut<Node = N>,
+    N: gantz_core::Node,
 {
-    let CreateNode { path, node_type } = cmd;
-    let Some(nested) = graph_scene::index_path_graph_mut(graph, &path) else {
-        log::error!("CreateNode: could not find graph at path {path:?}");
-        return None;
-    };
+    let CreateNode { node_type } = cmd;
     let Some(node) = new_node(&node_type) else {
         log::error!("CreateNode: unknown node type: {node_type}");
         return None;
     };
-    let node_ix = nested.add_node(node);
+    let node_ix = graph.add_node(node);
 
     // Register the new node with the VM.
-    let node_path: Vec<_> = path.iter().copied().chain(Some(node_ix.index())).collect();
+    let node_path = [node_ix.index()];
     let reg_ctx = node::RegCtx::new(get_node, &node_path, vm);
-    nested[node_ix].register(reg_ctx);
+    graph[node_ix].register(reg_ctx);
 
     // Position the new node at the scene center (or use layout default).
     let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
-    let view = views.entry(path).or_default();
+    let view = views.entry(Vec::new()).or_default();
     view.layout.entry(egui_id).or_insert(egui::Pos2::ZERO);
 
     Some(node_ix)
 }
 
-/// Create a nested graph at `cmd.path`: commit a fresh empty graph to the
-/// registry under the name `<parent>:<n>` and insert a synced [`NamedRef`] to
-/// it, registering it with the VM and seeding its layout entry.
+/// Create a nested graph: commit a fresh empty graph to the registry under the
+/// name `<parent>:<n>` and insert a synced [`NamedRef`] to it in `graph`,
+/// seeding its layout entry.
 ///
 /// `parent` is the emitting head's name; the new graph is named with the first
 /// free `<parent>:<n>` leaf. Returns the index of the new node.
@@ -157,13 +136,10 @@ pub fn create_nested_graph<N>(
     graph: &mut Graph<N>,
     views: &mut GraphViews,
     parent: &str,
-    cmd: CreateNestedGraph,
 ) -> Option<NodeIndex>
 where
-    N: gantz_core::Node + From<NamedRef> + CaHash + ToGraphMut<Node = N>,
+    N: gantz_core::Node + From<NamedRef> + CaHash,
 {
-    let CreateNestedGraph { path } = cmd;
-
     // Pick the first free `<parent>:<n>` leaf name.
     let sep = crate::node::NESTED_SEP;
     let mut n = 1u32;
@@ -183,16 +159,12 @@ where
     // Insert a synced reference to the new nested graph. The referenced graph is
     // empty, so the node has no state to register here; the next `vm::sync`
     // recompile re-registers the whole working graph.
-    let Some(parent_graph) = graph_scene::index_path_graph_mut(graph, &path) else {
-        log::error!("CreateNestedGraph: could not find graph at path {path:?}");
-        return None;
-    };
     let named_ref = NamedRef::with_sync(name, node::Ref::new(commit_ca.into()));
-    let node_ix = parent_graph.add_node(N::from(named_ref));
+    let node_ix = graph.add_node(N::from(named_ref));
 
     // Position the new node at the scene center (or use layout default).
     let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
-    let view = views.entry(path).or_default();
+    let view = views.entry(Vec::new()).or_default();
     view.layout.entry(egui_id).or_insert(egui::Pos2::ZERO);
 
     Some(node_ix)
@@ -208,51 +180,41 @@ pub fn inspect_edge<N>(
     vm: &mut Engine,
     cmd: InspectEdge,
 ) where
-    N: gantz_core::Node + ToGraphMut<Node = N>,
+    N: gantz_core::Node,
 {
-    let InspectEdge { path, edge, pos } = cmd;
-
-    // Navigate to the nested graph at the path.
-    let Some(nested) = graph_scene::index_path_graph_mut(graph, &path) else {
-        log::error!("InspectEdge: could not find graph at path {path:?}");
-        return;
-    };
+    let InspectEdge { edge, pos } = cmd;
 
     // Get edge endpoints and weight.
-    let Some((src_node, dst_node)) = nested.edge_endpoints(edge) else {
+    let Some((src_node, dst_node)) = graph.edge_endpoints(edge) else {
         log::error!("InspectEdge: edge not found");
         return;
     };
-    let edge_weight = *nested.edge_weight(edge).unwrap();
+    let edge_weight = *graph.edge_weight(edge).unwrap();
 
     // Remove the edge.
-    nested.remove_edge(edge);
+    graph.remove_edge(edge);
 
     // Create a new Inspect node.
     let Some(inspect_node) = new_inspect() else {
         log::error!("InspectEdge: could not create inspect node");
         return;
     };
-    let inspect_id = nested.add_node(inspect_node);
+    let inspect_id = graph.add_node(inspect_node);
 
-    // Determine the node path and register it with the VM.
-    let node_path: Vec<_> = path
-        .iter()
-        .copied()
-        .chain(Some(inspect_id.index()))
-        .collect();
+    // Register the new node with the VM.
+    let node_path = [inspect_id.index()];
     let reg_ctx = node::RegCtx::new(get_node, &node_path, vm);
-    nested[inspect_id].register(reg_ctx);
+    graph[inspect_id].register(reg_ctx);
 
     // Add edge: src -> inspect (using original output, input 0).
-    nested.add_edge(
+    graph.add_edge(
         src_node,
         inspect_id,
         gantz_core::Edge::new(edge_weight.output, node::Input(0)),
     );
 
     // Add edge: inspect -> dst (using output 0, original input).
-    nested.add_edge(
+    graph.add_edge(
         inspect_id,
         dst_node,
         gantz_core::Edge::new(node::Output(0), edge_weight.input),
@@ -260,7 +222,7 @@ pub fn inspect_edge<N>(
 
     // Position the new node at the click position.
     let node_id = egui_graph::NodeId::from_u64(inspect_id.index() as u64);
-    let view = views.entry(path).or_default();
+    let view = views.entry(Vec::new()).or_default();
     view.layout.insert(node_id, pos);
 }
 
@@ -281,7 +243,7 @@ pub fn paste<N>(
     pos: &PastePos,
 ) -> bool
 where
-    N: Clone + Serialize + DeserializeOwned + CaHash + ToGraphMut<Node = N> + 'static,
+    N: Clone + Serialize + DeserializeOwned + CaHash + 'static,
 {
     let copied: export::Copied<N> = match export::copied_from_str(text) {
         Ok(c) => c,
@@ -292,17 +254,12 @@ where
     };
     let offset = crate::resolve_paste_offset(pos, &copied.positions);
 
-    let path = head_state.path.clone();
-    let Some(g) = graph_scene::index_path_graph_mut(graph, &path) else {
-        log::error!("Paste: could not find graph at path {path:?}");
-        return false;
-    };
-    let view = head_views.entry(path).or_default();
+    let view = head_views.entry(Vec::new()).or_default();
     let new_indices = export::paste(
         registry,
         all_views,
         all_demos,
-        g,
+        graph,
         &mut view.layout,
         &copied,
         offset,

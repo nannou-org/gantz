@@ -3,7 +3,7 @@
 use gantz_core::{
     Edge,
     compile::{Config, entry_fn_name, push_pull_entrypoints},
-    node::{self, GraphNode, Node, WithPushEval},
+    node::{self, Node, WithPushEval},
 };
 use std::fmt::Debug;
 
@@ -45,6 +45,9 @@ fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
 }
 
 type TestGraph = petgraph::graph::DiGraph<Box<dyn DebugNode>, Edge, usize>;
+// A nested graph: an ordinary `Graph` (which implements `Node`) boxed into its
+// parent, in place of the removed `GraphNode` wrapper.
+type Nested = node::graph::Graph<Box<dyn DebugNode>>;
 
 // A graph exercising both toggles: a reachable push chain through a nested
 // graph, an unreachable node at the root level (`mul`, id 4), an unreachable
@@ -71,7 +74,7 @@ type TestGraph = petgraph::graph::DiGraph<Box<dyn DebugNode>, Edge, usize>;
 //    | assert_eq       |  | mul |   | number |
 //    -------------------  -------   ----------
 fn test_graph() -> TestGraph {
-    let mut inner = GraphNode::default();
+    let mut inner = Nested::default();
     let inlet = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
     let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
     let _orphan = inner.add_node(Box::new(node_mul()) as Box<_>);

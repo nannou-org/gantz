@@ -7,16 +7,15 @@
 //! is a label and which no commit references is a hand-authored named graph: it
 //! auto-registers under that label with a root commit synthesised at `now`.
 
-use crate::datum::{Datum, from_datum, to_datum};
+use crate::datum::{Datum, from_datum};
 use crate::error::{ErrorKind, FormatError};
 use crate::model::{
     Addr, CommitDecl, Document, Form, GraphBody, GraphDef, NameDecl, NodeDecl, NodeSpec, RefSpec,
 };
 use gantz_ca::{CaHash, Commit, CommitAddr, ContentAddr, Registry, Timestamp};
 use gantz_core::edge::Edge;
-use gantz_core::node::graph::{Graph, GraphNode, NodeIx};
+use gantz_core::node::graph::{Graph, NodeIx};
 use gantz_core::node::{Input, Output};
-use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
@@ -52,7 +51,8 @@ pub fn lower<N>(doc: Document, now: Timestamp) -> Result<Loaded<N>, FormatError>
 where
     // `'static` is required by content-addressing (`Registry::add_graph`), whose
     // `for<'a> &'a Graph<N>` bound only holds for all `'a` when `N: 'static`.
-    N: Serialize + DeserializeOwned + CaHash + 'static,
+    // Lowering only ever *deserializes* nodes, hence no `Serialize` bound.
+    N: DeserializeOwned + CaHash + 'static,
 {
     let Document {
         graphs,
@@ -152,7 +152,7 @@ fn build_graph<N>(
     resolve: &Resolve,
 ) -> Result<(Graph<N>, HashMap<String, usize>), FormatError>
 where
-    N: Serialize + DeserializeOwned,
+    N: DeserializeOwned,
 {
     let mut graph: Graph<N> = Graph::default();
     let mut index: HashMap<String, usize> = HashMap::new();
@@ -189,7 +189,7 @@ where
 
 fn build_node<N>(decl: &NodeDecl, resolve: &Resolve) -> Result<N, FormatError>
 where
-    N: Serialize + DeserializeOwned,
+    N: DeserializeOwned,
 {
     match &decl.spec {
         NodeSpec::Value(v) => node_from_datum::<N>(v.clone()),
@@ -197,22 +197,6 @@ where
             let v = resolve_ref_value(refspec, resolve)?;
             node_from_datum::<N>(v)
         }
-        NodeSpec::Graph(body) => {
-            let (nested, _) = build_graph::<N>(body, resolve)?;
-            let gn = GraphNode { graph: nested };
-            let datum = to_datum(&gn)
-                .map_err(|e| FormatError::node_deserialize("GraphNode", e.to_string()))?;
-            node_from_datum::<N>(insert_type(datum, "GraphNode"))
-        }
-    }
-}
-
-/// Prepend a `type` field to a map datum (the typetag discriminant the node's
-/// own serialization omits).
-fn insert_type(datum: Datum, tag: &str) -> Datum {
-    match datum {
-        Datum::Map(entries) => Datum::tagged(tag, entries),
-        other => Datum::tagged(tag, vec![("value".to_string(), other)]),
     }
 }
 
@@ -399,7 +383,6 @@ fn referenced_names(body: &GraphBody) -> Vec<String> {
     for decl in &body.nodes {
         match &decl.spec {
             NodeSpec::Ref(r) => names.push(r.name.clone()),
-            NodeSpec::Graph(nested) => names.extend(referenced_names(nested)),
             NodeSpec::Value(_) => {}
         }
     }

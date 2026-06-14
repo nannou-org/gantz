@@ -31,6 +31,18 @@ fn node_counter() -> node::State<node::Expr, Counter> {
     node::expr(expr).unwrap().with_state_type::<Counter>()
 }
 
+// A counter driven by a nested graph's inlet (input `$x`) rather than `$push`,
+// so it can live inside a nested graph.
+fn node_inlet_counter() -> node::State<node::Expr, Counter> {
+    let expr = r#"
+        (begin
+          $x
+          (counter-increment state)
+          (counter-value state))
+    "#;
+    node::expr(expr).unwrap().with_state_type::<Counter>()
+}
+
 /// The state type used for the counter.
 #[derive(Clone, Debug, Default, PartialEq, Steel)]
 struct Counter(u32);
@@ -219,4 +231,66 @@ fn test_graph_with_counters() {
         .unwrap()
         .unwrap();
     assert_eq!([a, b, c], [Counter(1), Counter(2), Counter(3)]);
+}
+
+// Two `Ref`s to the *same* nested graph commit, at different positions in the
+// parent, must keep independent runtime state. State is keyed by the ref's
+// positional path (`graph-fn-{path}` + a per-path state slot), not by the
+// shared graph's identity - so a shared definition still yields per-instance
+// state, exactly as the old inline `GraphNode` (a separate copy) did.
+#[test]
+fn nested_ref_instances_have_independent_state() {
+    use gantz_core::node::Ref;
+    type Nested = node::graph::Graph<Box<dyn DebugNode>>;
+
+    // Nested graph: inlet -> counter -> outlet. Each evaluation increments the
+    // counter's state.
+    let mut inner = Nested::default();
+    let i = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let c = inner.add_node(Box::new(node_inlet_counter()) as Box<_>);
+    let o = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    inner.add_edge(i, c, Edge::from((0, 0)));
+    inner.add_edge(c, o, Edge::from((0, 0)));
+    let counter_ix = c.index();
+
+    // Reference the same nested graph commit from two positions.
+    let inner_ca = gantz_ca::ContentAddr::from([1u8; 32]);
+    let get_node = |ca: &gantz_ca::ContentAddr| -> Option<&dyn Node> {
+        (*ca == inner_ca).then_some(&inner as &dyn Node)
+    };
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let ref1 = g.add_node(Box::new(Ref::new(inner_ca)) as Box<_>);
+    let ref2 = g.add_node(Box::new(Ref::new(inner_ca)) as Box<_>);
+    g.add_edge(push, ref1, Edge::from((0, 0)));
+    g.add_edge(push, ref2, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&get_node);
+    let eps = push_pull_entrypoints(&get_node, &g);
+    let module = gantz_core::compile::module(&get_node, &g, &eps, &Default::default()).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&get_node, &g, &[], &mut vm);
+    for f in module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    // Each push evaluates both refs, incrementing each counter once; push twice.
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    let fn_name = entry_fn_name(&ep.id());
+    for _ in 0..2 {
+        vm.call_function_by_name_with_args(&fn_name, vec![])
+            .unwrap();
+    }
+
+    // Independent state: each instance counted 2 (a shared slot would read 4).
+    let s1 = node::state::extract::<Counter>(&vm, &[ref1.index(), counter_ix])
+        .unwrap()
+        .unwrap();
+    let s2 = node::state::extract::<Counter>(&vm, &[ref2.index(), counter_ix])
+        .unwrap()
+        .unwrap();
+    assert_eq!([s1, s2], [Counter(2), Counter(2)]);
 }

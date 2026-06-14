@@ -21,8 +21,6 @@ impl Node for gantz_core::node::Delay {}
 #[typetag::serde]
 impl Node for gantz_core::node::Expr {}
 #[typetag::serde]
-impl Node for gantz_core::node::GraphNode<Box<dyn Node>> {}
-#[typetag::serde]
 impl Node for gantz_core::node::Identity {}
 #[typetag::serde]
 impl Node for gantz_core::node::graph::Inlet {}
@@ -65,17 +63,6 @@ impl bevy_gantz_egui::node::ToFrameBang for Box<dyn Node> {
 
 #[typetag::serde]
 impl Node for Box<dyn Node> {}
-
-// To allow for navigating between nested graphs in a graph scene, we need to be
-// able to downcast a node to a graph node.
-impl gantz_egui::widget::graph_scene::ToGraphMut for Box<dyn Node> {
-    type Node = Self;
-    fn to_graph_mut(&mut self) -> Option<&mut gantz_core::node::graph::Graph<Self::Node>> {
-        ((&mut **self) as &mut dyn Any)
-            .downcast_mut::<gantz_core::node::GraphNode<Self::Node>>()
-            .map(|node| &mut node.graph)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -277,8 +264,9 @@ mod tests {
         }
     }
 
-    /// A nested `(graph ...)` node (a `GraphNode`) round-trips: the outer graph
-    /// address is preserved through text -> Export -> text -> Export.
+    /// Nested graphs are now ordinary named graphs referenced by `(ref ...)`,
+    /// so a parent referencing a `<parent>:<n>` child round-trips: both graph
+    /// addresses are preserved through text -> Export -> text -> Export.
     #[test]
     fn nested_graph_roundtrips() {
         use std::time::Duration;
@@ -286,12 +274,14 @@ mod tests {
 
         let now = Duration::from_secs(42);
         let text1 = "\
+(graph env:1
+  (i inlet) (o outlet)
+  (e (expr (+ $x 1)))
+  (-> i (e 0)) (-> e o))
+
 (graph env
   (in inlet) (out outlet)
-  (sub (graph
-         (i inlet) (o outlet)
-         (e (expr (+ $x 1)))
-         (-> i (e 0)) (-> e o)))
+  (sub (ref env:1))
   (-> in (sub 0)) (-> sub out))";
         let e1: gantz_egui::export::Export<G> =
             gantz_egui::format::from_str(text1, now).expect("from_str 1");
@@ -299,14 +289,16 @@ mod tests {
         let e2: gantz_egui::export::Export<G> =
             gantz_egui::format::from_str(&text2, now).expect("from_str 2");
 
-        let head1 = gantz_ca::Head::Branch("env".to_string());
-        let g1 = e1.registry.head_graph(&head1).expect("g1");
-        let g2 = e2.registry.head_graph(&head1).expect("g2");
-        assert_eq!(
-            gantz_ca::graph_addr(g1),
-            gantz_ca::graph_addr(g2),
-            "nested graph addr must survive round-trip\n--- text2 ---\n{text2}",
-        );
+        for name in ["env", "env:1"] {
+            let head = gantz_ca::Head::Branch(name.to_string());
+            let g1 = e1.registry.head_graph(&head).expect("g1");
+            let g2 = e2.registry.head_graph(&head).expect("g2");
+            assert_eq!(
+                gantz_ca::graph_addr(g1),
+                gantz_ca::graph_addr(g2),
+                "graph addr for `{name}` must survive round-trip\n--- text2 ---\n{text2}",
+            );
+        }
     }
 
     /// The serializer's output is reader-valid Steel: Steel's own parser accepts

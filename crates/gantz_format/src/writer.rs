@@ -55,7 +55,7 @@ fn write_graph_body(
     for decl in &body.nodes {
         out.push('\n');
         out.push_str(&pad);
-        write_node_decl(out, decl, inner, sugar);
+        write_node_decl(out, decl, sugar);
     }
     for conn in &body.conns {
         out.push('\n');
@@ -65,13 +65,8 @@ fn write_graph_body(
     out.push(')');
 }
 
-fn write_node_decl(out: &mut String, decl: &NodeDecl, indent: usize, sugar: &dyn Sugar) {
+fn write_node_decl(out: &mut String, decl: &NodeDecl, sugar: &dyn Sugar) {
     match &decl.spec {
-        NodeSpec::Graph(body) => {
-            out.push_str(&format!("({} ", decl.name));
-            write_graph_body(out, "graph", body, indent, sugar);
-            out.push(')');
-        }
         NodeSpec::Value(v) => out.push_str(&format!("({} {})", decl.name, value_spec(v, sugar))),
         NodeSpec::Ref(r) => out.push_str(&format!("({} {})", decl.name, ref_spec(r))),
     }

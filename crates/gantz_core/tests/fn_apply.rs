@@ -161,18 +161,12 @@ fn test_fn_apply_graph() {
     // Connect add output to outlet.
     double_graph.add_edge(add, outlet, Edge::from((0, 0)));
 
-    let double_node = graph::GraphNode {
-        graph: double_graph,
-    };
-
-    // Setup the node registry as a HashMap.
-    let mut nodes: HashMap<gantz_ca::ContentAddr, Box<dyn DebugNode>> = HashMap::new();
-    let double_ca = gantz_ca::content_addr(&double_node);
-    nodes.insert(double_ca, Box::new(double_node) as Box<dyn DebugNode>);
-
-    // Create closure for node lookup.
+    // The nested "double" graph is referenced by content address. A bare
+    // `Graph` implements `Node`, so the `get_node` lookup returns it directly
+    // (no inline `GraphNode` wrapper).
+    let double_ca: gantz_ca::ContentAddr = gantz_ca::graph_addr(&double_graph).into();
     let get_node = |ca: &gantz_ca::ContentAddr| -> Option<&dyn Node> {
-        nodes.get(ca).map(|b| &**b as &dyn Node)
+        (*ca == double_ca).then_some(&double_graph as &dyn Node)
     };
 
     // Now create the main graph that uses Fn<Ref> to wrap the double graph.

@@ -43,14 +43,6 @@ impl GraphSceneResponse {
     }
 }
 
-/// For node types that may represent a nested [`Graph`].
-pub trait ToGraphMut {
-    /// The type of the node used within the [`Graph`].
-    type Node;
-    /// If this node is a nested graph, return a mutable reference to it.
-    fn to_graph_mut(&mut self) -> Option<&mut Graph<Self::Node>>;
-}
-
 pub type EdgeIndex = petgraph::graph::EdgeIndex<usize>;
 pub type NodeIndex = petgraph::graph::NodeIndex<usize>;
 
@@ -202,7 +194,7 @@ where
                     );
                 })
                 .edges(ui, |ectx, ui| {
-                    edges(self.graph, self.path, ectx, state, &mut responses, ui)
+                    edges(self.graph, ectx, state, &mut responses, ui)
                 });
             });
 
@@ -453,7 +445,6 @@ where
 
 fn edges<N>(
     graph: &mut Graph<N>,
-    path: &[node::Id],
     ectx: &mut egui_graph::EdgesCtx,
     state: &mut GraphSceneState,
     responses: &mut Vec<DynResponse>,
@@ -499,11 +490,7 @@ fn edges<N>(
         response.context_menu(|ui| {
             if ui.button("inspect").clicked() {
                 if let Some(pos) = state.interaction.edge_context_menu_pos.take() {
-                    responses.push(DynResponse::new(InspectEdge {
-                        path: path.to_vec(),
-                        edge: e,
-                        pos,
-                    }));
+                    responses.push(DynResponse::new(InspectEdge { edge: e, pos }));
                 }
                 ui.close();
             }
@@ -521,46 +508,25 @@ fn edges<N>(
     }
 }
 
-/// Index into the given graph using the given path.
+/// The node at the given `path` within `graph`, if any.
 ///
-/// Returns `None` in the case that `path` is empty, or if there is no node at a
-/// given `node::Id` in the path.
-pub fn index_path_node_mut<'a, N>(graph: &'a mut Graph<N>, path: &[node::Id]) -> Option<&'a mut N>
-where
-    N: ToGraphMut<Node = N>,
-{
-    if path.is_empty() {
-        return None;
+/// Nested graphs are now separate named heads rather than inline subgraphs, so a
+/// path only ever addresses a node at this level: a single-element path resolves
+/// to that node, anything else yields `None`.
+pub fn index_path_node_mut<'a, N>(graph: &'a mut Graph<N>, path: &[node::Id]) -> Option<&'a mut N> {
+    match path {
+        [ix] => graph.node_weight_mut(petgraph::graph::NodeIndex::new(*ix)),
+        _ => None,
     }
-
-    let node_id = petgraph::graph::NodeIndex::new(path[0]);
-    let node = graph.node_weight_mut(node_id)?;
-    if path.len() == 1 {
-        // If this is the end of the path, return the node
-        return Some(node);
-    }
-
-    // If there are more elements in the path, this node should be a graph node
-    // Try to get the nested graph and continue traversing
-    let nested = node.to_graph_mut()?;
-    index_path_node_mut(nested, &path[1..])
 }
 
-/// Index into the given graph using the given path.
-///
-/// Returns `None` in the case that `path` is empty, or if there is no node at a
-/// given `node::Id` in the path.
+/// The graph at the given `path`. Only the empty (root) path resolves, since
+/// nested graphs are no longer inline (see [`index_path_node_mut`]).
 pub fn index_path_graph_mut<'a, N>(
     graph: &'a mut Graph<N>,
     path: &[node::Id],
-) -> Option<&'a mut Graph<N>>
-where
-    N: ToGraphMut<Node = N>,
-{
-    if path.is_empty() {
-        return Some(graph);
-    }
-    index_path_node_mut(graph, path).and_then(|node| node.to_graph_mut())
+) -> Option<&'a mut Graph<N>> {
+    path.is_empty().then_some(graph)
 }
 
 /// The id of the node to flag at the viewed level for a diagnostic path: the

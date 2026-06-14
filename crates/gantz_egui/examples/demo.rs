@@ -55,10 +55,17 @@ type Primitives = BTreeMap<String, Box<dyn Fn() -> Box<dyn Node>>>;
 // Provide the `NodeTypeRegistry` implementation required by `gantz_egui`.
 impl gantz_egui::NodeTypeRegistry for Environment {
     fn node_types(&self) -> Vec<&str> {
-        let mut types = vec![];
+        let mut types = vec![gantz_egui::widget::gantz::NESTED_GRAPH_TYPE];
         types.extend(self.primitives.keys().map(|s| &s[..]));
-        types.extend(self.registry.names().keys().map(|s| &s[..]));
+        types.extend(
+            self.registry
+                .names()
+                .keys()
+                .filter(|n| !n.contains(gantz_egui::node::NESTED_SEP))
+                .map(|s| &s[..]),
+        );
         types.sort();
+        types.dedup();
         types
     }
 }
@@ -165,7 +172,6 @@ fn primitives() -> Primitives {
     register_primitive(&mut p, "expr", || {
         Box::new(gantz_core::node::Expr::new("()").unwrap()) as Box<_>
     });
-    register_primitive(&mut p, "graph", || Box::new(GraphNode::default()) as Box<_>);
     register_primitive(&mut p, "inlet", || {
         Box::new(gantz_core::node::graph::Inlet::default()) as Box<_>
     });
@@ -209,8 +215,6 @@ impl Node for gantz_core::node::Delay {}
 #[typetag::serde]
 impl Node for gantz_core::node::Expr {}
 #[typetag::serde]
-impl Node for gantz_core::node::GraphNode<Box<dyn Node>> {}
-#[typetag::serde]
 impl Node for gantz_core::node::graph::Inlet {}
 #[typetag::serde]
 impl Node for gantz_core::node::graph::Outlet {}
@@ -232,17 +236,6 @@ impl Node for gantz_egui::node::NamedRef {}
 #[typetag::serde]
 impl Node for Box<dyn Node> {}
 
-// To allow for navigating between nested graphs in a graph scene, we need to be
-// able to downcast a node to a graph node.
-impl gantz_egui::widget::graph_scene::ToGraphMut for Box<dyn Node> {
-    type Node = Self;
-    fn to_graph_mut(&mut self) -> Option<&mut gantz_core::node::graph::Graph<Self::Node>> {
-        ((&mut **self) as &mut dyn Any)
-            .downcast_mut::<gantz_core::node::GraphNode<Self::Node>>()
-            .map(|node| &mut node.graph)
-    }
-}
-
 // Required by `gantz_egui::ops::branch_node` to replace branched nodes.
 impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
     fn from(named: gantz_egui::node::NamedRef) -> Self {
@@ -255,7 +248,6 @@ impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
 // ----------------------------------------------
 
 type Graph = gantz_core::node::graph::Graph<Box<dyn Node>>;
-type GraphNode = gantz_core::node::GraphNode<Box<dyn Node>>;
 
 // ----------------------------------------------
 // HeadAccess
@@ -962,7 +954,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         );
     }
 
-    for (head, create) in responses.take::<gantz_egui::CreateNestedGraph>() {
+    for (head, _) in responses.take::<gantz_egui::CreateNestedGraph>() {
         let Some((head, ix)) = tagged_head(state, head) else {
             continue;
         };
@@ -977,25 +969,16 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             graph,
             views,
             &parent,
-            create,
         );
     }
 
     for (head, gantz_egui::CopyNodes(nodes)) in responses.take() {
-        let Some((head, ix)) = tagged_head(state, head) else {
+        let Some((_, ix)) = tagged_head(state, head) else {
             continue;
         };
-        let head_state = state.gantz.open_heads.entry(head).or_default();
-        let path = head_state.path.clone();
         let (_, graph, gv) = &mut state.heads[ix];
-        let text = gantz_egui::ops::copy_nodes(
-            &state.env.registry,
-            &HashMap::new(),
-            graph,
-            gv,
-            &path,
-            &nodes,
-        );
+        let text =
+            gantz_egui::ops::copy_nodes(&state.env.registry, &HashMap::new(), graph, gv, &nodes);
         if let Some(text) = text {
             ctx.copy_text(text);
         }

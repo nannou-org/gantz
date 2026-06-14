@@ -79,7 +79,6 @@ where
         + gantz_ca::CaHash
         + From<gantz_egui::node::NamedRef>
         + gantz_egui::NodeUi
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + node::ToFrameBang
         + serde::Serialize
         + serde::de::DeserializeOwned
@@ -608,12 +607,7 @@ pub fn on_create_node<N>(
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views_query: Query<&mut GraphViews, With<head::OpenHead>>,
 ) where
-    N: 'static
-        + Node
-        + From<gantz_egui::node::NamedRef>
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
-        + Send
-        + Sync,
+    N: 'static + Node + From<gantz_egui::node::NamedRef> + Send + Sync,
 {
     let event = trigger.event();
     let Ok(mut data) = heads.get_mut(event.head) else {
@@ -650,11 +644,7 @@ pub fn on_branch_node<N>(
     mut registry: ResMut<Registry<N>>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
 ) where
-    N: 'static
-        + From<gantz_egui::node::NamedRef>
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
-        + Send
-        + Sync,
+    N: 'static + From<gantz_egui::node::NamedRef> + Send + Sync,
 {
     let event = trigger.event();
     let Ok(mut data) = heads.get_mut(event.head) else {
@@ -682,13 +672,7 @@ pub fn on_create_nested_graph<N>(
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views_query: Query<&mut GraphViews, With<head::OpenHead>>,
 ) where
-    N: 'static
-        + Node
-        + From<gantz_egui::node::NamedRef>
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
-        + ca::CaHash
-        + Send
-        + Sync,
+    N: 'static + Node + From<gantz_egui::node::NamedRef> + ca::CaHash + Send + Sync,
 {
     let event = trigger.event();
     let Ok(mut data) = heads.get_mut(event.head) else {
@@ -715,7 +699,6 @@ pub fn on_create_nested_graph<N>(
         &mut data.working_graph,
         &mut views,
         &parent,
-        event.data.clone(),
     );
 }
 
@@ -729,12 +712,7 @@ pub fn on_inspect_edge<N>(
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views_query: Query<&mut GraphViews, With<head::OpenHead>>,
 ) where
-    N: 'static
-        + Node
-        + From<gantz_egui::node::NamedRef>
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
-        + Send
-        + Sync,
+    N: 'static + Node + From<gantz_egui::node::NamedRef> + Send + Sync,
 {
     let event = trigger.event();
     let Ok(mut data) = heads.get_mut(event.head) else {
@@ -770,13 +748,9 @@ pub fn on_inspect_edge<N>(
 pub fn on_copy_nodes<N>(
     trigger: On<ForHead<gantz_egui::CopyNodes>>,
     registry: Res<Registry<N>>,
-    gui_state: Res<GuiState>,
     views: Res<Views>,
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
-    mut heads: Query<
-        (&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphViews),
-        With<head::OpenHead>,
-    >,
+    mut heads: Query<(&mut head::WorkingGraph<N>, &GraphViews), With<head::OpenHead>>,
 ) where
     N: 'static
         + Node
@@ -784,28 +758,16 @@ pub fn on_copy_nodes<N>(
         + serde::Serialize
         + serde::de::DeserializeOwned
         + ca::CaHash
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
         + Sync,
 {
     let event = trigger.event();
-    let Ok((head_ref, mut wg, gv)) = heads.get_mut(event.head) else {
+    let Ok((wg, gv)) = heads.get_mut(event.head) else {
         log::error!("CopySelection: head not found for entity {:?}", event.head);
         return;
     };
-    let Some(head_state) = gui_state.open_heads.get(&**head_ref) else {
-        log::error!("CopySelection: GUI state not found for head");
-        return;
-    };
 
-    let text = gantz_egui::ops::copy_nodes(
-        &registry,
-        &views,
-        &mut wg,
-        &gv,
-        &head_state.path,
-        &event.data.0,
-    );
+    let text = gantz_egui::ops::copy_nodes(&registry, &views, &wg, gv, &event.data.0);
     if let Some(text) = text {
         clipboard.set_text(&text);
     }
@@ -837,7 +799,6 @@ pub fn on_paste<N>(
         + serde::Serialize
         + serde::de::DeserializeOwned
         + ca::CaHash
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
         + Sync,
 {
@@ -1204,13 +1165,7 @@ pub fn update<N>(
     mut cmds: Commands,
 ) -> Result
 where
-    N: 'static
-        + Node
-        + gantz_ca::CaHash
-        + gantz_egui::NodeUi
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
-        + Send
-        + Sync,
+    N: 'static + Node + gantz_ca::CaHash + gantz_egui::NodeUi + Send + Sync,
 {
     let ctx = ctxs.ctx_mut()?;
 

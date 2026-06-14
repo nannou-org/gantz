@@ -1,4 +1,9 @@
-//! An implementation of a node acting as a nested graph.
+//! [`Node`] implementations for nested graphs.
+//!
+//! A nested graph is a [`Graph`] referenced by a [`Ref`](crate::node::Ref):
+//! the `Graph<N>: Node` impl here compiles it (a call to its graph fn, see
+//! [`graph_call_expr`]), while [`Inlet`]/[`Outlet`] mark its input/output
+//! interface.
 
 use crate::{
     Edge, compile,
@@ -14,13 +19,10 @@ use petgraph::{
         Visitable,
     },
 };
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{
-    hash::{Hash, Hasher},
-    ops::{Deref, DerefMut},
-};
+use serde::{Deserialize, Serialize};
+use std::hash::Hash;
 
-/// The graph type used by the graph node to represent its nested graph.
+/// The graph type used to represent a nested graph.
 pub type Graph<N> = petgraph::stable_graph::StableGraph<N, Edge, Directed, Index>;
 
 /// The type used for indexing into the graph.
@@ -29,19 +31,6 @@ pub type Index = usize;
 pub type NodeIx = NodeIndex<Index>;
 /// The type used to index into a graph's edge's.
 pub type EdgeIx = EdgeIndex<Index>;
-
-/// A node that itself is implemented in terms of a graph of nodes.
-///
-/// While an implementation of [`Node`] is also provided for [`Graph`], the
-/// `Graph` type is defined in the petgraph crate. As a result, we cannot ensure
-/// it implements all of the upstream traits we require. By providing a
-/// dedicated `GraphNode` type, we can also provide implementations for any
-/// upstream traits we might need.
-#[derive(Clone, Debug)]
-pub struct GraphNode<N> {
-    /// The nested graph.
-    pub graph: Graph<N>,
-}
 
 /// An inlet to a nested graph.
 ///
@@ -56,25 +45,6 @@ pub struct Inlet;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, CaHash)]
 #[cahash("gantz.outlet")]
 pub struct Outlet;
-
-impl<N> Default for GraphNode<N> {
-    fn default() -> Self {
-        let graph = Default::default();
-        GraphNode { graph }
-    }
-}
-
-impl<N> Hash for GraphNode<N>
-where
-    N: Hash,
-{
-    fn hash<H>(&self, hasher: &mut H)
-    where
-        H: Hasher,
-    {
-        crate::graph::hash(&self.graph, hasher);
-    }
-}
 
 impl<N: Node> Node for Graph<N> {
     fn n_inputs(&self, ctx: node::MetaCtx) -> usize {
@@ -128,127 +98,6 @@ impl<N: Node> Node for Graph<N> {
     }
 }
 
-impl<N: Node> Node for GraphNode<N> {
-    fn n_inputs(&self, ctx: node::MetaCtx) -> usize {
-        self.graph.n_inputs(ctx)
-    }
-
-    fn n_outputs(&self, ctx: node::MetaCtx) -> usize {
-        self.graph.n_outputs(ctx)
-    }
-
-    fn branches(&self, ctx: node::MetaCtx) -> Vec<node::EvalConf> {
-        self.graph.branches(ctx)
-    }
-
-    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
-        self.graph.expr(ctx)
-    }
-
-    fn stateful(&self, ctx: node::MetaCtx) -> bool {
-        self.graph.stateful(ctx)
-    }
-
-    fn register(&self, ctx: node::RegCtx<'_, '_>) {
-        self.graph.register(ctx)
-    }
-
-    fn visit(&self, ctx: visit::Ctx<'_, '_>, visitor: &mut dyn node::Visitor) {
-        self.graph.visit(ctx, visitor)
-    }
-}
-
-impl<N: PartialEq> PartialEq for GraphNode<N> {
-    fn eq(&self, other: &Self) -> bool {
-        graph_partial_eq(self, other)
-    }
-}
-
-impl<N: Eq> Eq for GraphNode<N> {}
-
-// Manual implementation of `Deserialize` as it cannot be derived for a struct with associated
-// types without unnecessary trait bounds on the struct itself.
-impl<'de, N> Deserialize<'de> for GraphNode<N>
-where
-    N: Deserialize<'de>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::{self, MapAccess, SeqAccess, Visitor};
-
-        #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "lowercase")]
-        enum Field {
-            Graph,
-        }
-
-        struct GraphNodeVisitor<G>(std::marker::PhantomData<G>);
-
-        impl<'de, N> Visitor<'de> for GraphNodeVisitor<Graph<N>>
-        where
-            N: Deserialize<'de>,
-        {
-            type Value = GraphNode<N>;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("struct GraphNode")
-            }
-
-            fn visit_seq<V>(self, mut seq: V) -> Result<GraphNode<N>, V::Error>
-            where
-                V: SeqAccess<'de>,
-            {
-                let graph = seq
-                    .next_element()?
-                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
-                Ok(GraphNode { graph })
-            }
-
-            fn visit_map<V>(self, mut map: V) -> Result<GraphNode<N>, V::Error>
-            where
-                V: MapAccess<'de>,
-            {
-                let mut graph = None;
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::Graph => {
-                            if graph.is_some() {
-                                return Err(de::Error::duplicate_field("graph"));
-                            }
-                            graph = Some(map.next_value()?);
-                        }
-                    }
-                }
-                let graph = graph.ok_or_else(|| de::Error::missing_field("graph"))?;
-                Ok(GraphNode { graph })
-            }
-        }
-
-        const FIELDS: &[&str] = &["graph"];
-        let visitor: GraphNodeVisitor<Graph<N>> = GraphNodeVisitor(std::marker::PhantomData);
-        deserializer.deserialize_struct("GraphNode", FIELDS, visitor)
-    }
-}
-
-// Manual implementation of `Serialize` as it cannot be derived for a struct with associated
-// types without unnecessary trait bounds on the struct itself.
-impl<N> Serialize for GraphNode<N>
-where
-    N: Serialize,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("GraphNode", 3)?;
-        state.serialize_field("graph", &self.graph)?;
-        state.end()
-    }
-}
-
 impl Node for Inlet {
     /// This method should never be called during compilation.
     ///
@@ -298,28 +147,6 @@ impl Node for Outlet {
 
     fn outlet(&self, _ctx: node::MetaCtx) -> bool {
         true
-    }
-}
-
-impl<N> CaHash for GraphNode<N>
-where
-    N: CaHash,
-{
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        gantz_ca::hash_graph(&self.graph, hasher);
-    }
-}
-
-impl<N> Deref for GraphNode<N> {
-    type Target = Graph<N>;
-    fn deref(&self) -> &Self::Target {
-        &self.graph
-    }
-}
-
-impl<N> DerefMut for GraphNode<N> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.graph
     }
 }
 

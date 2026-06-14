@@ -87,10 +87,20 @@ impl<N: 'static + Node + Send + Sync> RegistryRef<'_, N> {
 
 impl<N: 'static + Node + Send + Sync> NodeTypeRegistry for RegistryRef<'_, N> {
     fn node_types(&self) -> Vec<&str> {
-        let mut types = vec![];
+        // The reserved nested-graph entry replaces the old `graph` builtin.
+        let mut types = vec![crate::widget::gantz::NESTED_GRAPH_TYPE];
         types.extend(self.builtins.names());
-        types.extend(self.ca_registry.names().keys().map(|s| &s[..]));
+        // Nested graphs are hidden from the root graph-select list, so don't
+        // offer them as creatable node types either.
+        types.extend(
+            self.ca_registry
+                .names()
+                .keys()
+                .filter(|n| !n.contains(crate::node::NESTED_SEP))
+                .map(|s| &s[..]),
+        );
         types.sort();
+        types.dedup();
         types
     }
 }

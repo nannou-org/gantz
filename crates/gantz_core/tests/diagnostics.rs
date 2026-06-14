@@ -4,12 +4,16 @@ use gantz_core::{
     Edge,
     compile::push_pull_entrypoints,
     diagnostic::{self, Severity},
-    node::{self, GraphNode, Node, WithPushEval},
+    node::{self, Node, WithPushEval},
 };
 use std::fmt::Debug;
 
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
+
+// A nested graph: an ordinary `Graph` (which implements `Node`) boxed into its
+// parent, in place of the removed `GraphNode` wrapper.
+type Nested = node::graph::Graph<Box<dyn DebugNode>>;
 
 // A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
@@ -25,7 +29,7 @@ fn node_push() -> node::Push<node::Expr> {
 // including inside a nested graph.
 #[test]
 fn invalid_edge_diagnostic() {
-    let mut ga = GraphNode::default();
+    let mut ga = Nested::default();
     let inlet = ga.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
     // `(+ $l 1)` has one output; the edge below leaves from output 5.
     let inc = ga.add_node(Box::new(node::expr("(+ $l 1)").unwrap()) as Box<_>);

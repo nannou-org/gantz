@@ -219,26 +219,21 @@ pub struct BranchNode {
 #[derive(Clone, Debug)]
 pub struct CopyNodes(pub std::collections::HashSet<widget::graph_scene::NodeIndex>);
 
-/// Create a new node of the given type at the current path.
+/// Create a new node of the given type in the emitting head's graph.
 #[derive(Clone, Debug)]
 pub struct CreateNode {
-    /// The path within the graph hierarchy where the node should be created.
-    pub path: Vec<node::Id>,
     /// The type name of the node to create.
     pub node_type: String,
 }
 
-/// Create a new nested graph at the current path.
+/// Create a new nested graph in the emitting head's graph.
 ///
 /// Commits a fresh empty graph to the registry under the name `<parent>:<n>`
 /// (where `<parent>` is the emitting head's name) and inserts a synced
 /// [`node::NamedRef`](crate::node::NamedRef) to it. Behaves like creating any
 /// other node, but is registry-aware.
-#[derive(Clone, Debug)]
-pub struct CreateNestedGraph {
-    /// The path within the graph hierarchy where the node should be created.
-    pub path: Vec<node::Id>,
-}
+#[derive(Clone, Copy, Debug)]
+pub struct CreateNestedGraph;
 
 /// Evaluate an entrypoint (push or pull).
 #[derive(Clone, Debug)]
@@ -257,7 +252,6 @@ pub struct ExportHead;
 /// Insert an inspect node on the given edge at the given position.
 #[derive(Clone, Debug)]
 pub struct InspectEdge {
-    pub path: Vec<node::Id>,
     pub edge: petgraph::graph::EdgeIndex<usize>,
     pub pos: egui::Pos2,
 }

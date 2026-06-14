@@ -2,10 +2,7 @@ use crate::{
     CopyNodes, CreateNestedGraph, CreateNode, ExportAllNamed, ExportHead, GraphViews, HeadAccess,
     NodeCtx, NodeUi, OpenCommandPalette, OpenPath, Paste, Redo, Registry, Undo, export,
     response::{DynResponse, Responses},
-    widget::{
-        self, GraphScene, GraphSceneState,
-        graph_scene::{self, ToGraphMut},
-    },
+    widget::{self, GraphScene, GraphSceneState, graph_scene},
 };
 use gantz_core::{Node, node};
 use petgraph::visit::{IntoNodeReferences, NodeRef};
@@ -186,7 +183,7 @@ pub fn update_graph_pane_head(
 struct TreeBehaviour<'a, 's, Access>
 where
     Access: HeadAccess,
-    Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
+    Access::Node: Node + NodeUi,
 {
     gantz: &'a mut Gantz<'s>,
     state: &'a mut GantzState,
@@ -383,7 +380,7 @@ impl<'a> Gantz<'a> {
     where
         's: 'a,
         Access: HeadAccess,
-        Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
+        Access::Node: Node + NodeUi,
     {
         // TODO: Load the tiling tree, or initialise.
         let tree_id = egui::Id::new("gantz-tiles-tree-storage");
@@ -492,7 +489,7 @@ impl GantzState {
 impl<'a, 's, Access> egui_tiles::Behavior<Pane> for TreeBehaviour<'a, 's, Access>
 where
     Access: HeadAccess,
-    Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
+    Access::Node: Node + NodeUi,
 {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
         match pane {
@@ -738,8 +735,7 @@ where
 
                     // Skip command palette when immutable.
                     if !focused_immutable {
-                        let created =
-                            command_palette(gantz.env, head_state, &mut state.command_palette, ui);
+                        let created = command_palette(gantz.env, &mut state.command_palette, ui);
                         match created {
                             Some(PaletteChoice::Node(create)) => {
                                 gantz_response.responses.push(Some(fh), create);
@@ -817,13 +813,12 @@ where
                         }
                     }
                     let res = log_view(logger, &labels, ui);
-                    // Clicking an entry navigates to and selects its node.
+                    // Clicking an entry selects its node. Only root-level nodes
+                    // live in the focused head; entries from a nested graph
+                    // (deeper path) are skipped until name-based navigation lands.
                     if let (Some(path), Some(fh)) = (res.inner.clicked_path, focused) {
-                        if let Some((&node_id, parent)) = path.split_last() {
+                        if let [node_id] = path[..] {
                             let head_state = state.open_heads.entry(fh.clone()).or_default();
-                            gantz_response
-                                .responses
-                                .push(Some(fh), OpenPath(parent.to_vec()));
                             let selection = &mut head_state.scene.interaction.selection;
                             selection.clear();
                             selection.nodes.insert(graph_scene::NodeIndex::new(node_id));
@@ -921,7 +916,7 @@ where
 struct GraphTreeBehaviour<'a, Access>
 where
     Access: HeadAccess,
-    Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
+    Access::Node: Node + NodeUi,
 {
     env: &'a dyn Registry,
     access: &'a mut Access,
@@ -940,7 +935,7 @@ where
 impl<'a, Access> egui_tiles::Behavior<GraphPane> for GraphTreeBehaviour<'a, Access>
 where
     Access: HeadAccess,
-    Access::Node: Node + NodeUi + ToGraphMut<Node = Access::Node>,
+    Access::Node: Node + NodeUi,
 {
     fn tab_title_for_pane(&mut self, pane: &GraphPane) -> egui::WidgetText {
         let GraphPane(head) = pane;
@@ -1511,7 +1506,7 @@ fn graph_scene<N>(
     ui: &mut egui::Ui,
 ) -> Option<graph_scene::GraphSceneResponse>
 where
-    N: Node + NodeUi + graph_scene::ToGraphMut<Node = N>,
+    N: Node + NodeUi,
 {
     // Show the `GraphScene` for the graph at the current path.
     let Some(graph) = graph_scene::index_path_graph_mut(graph, &head_state.path) else {
@@ -1619,7 +1614,6 @@ enum PaletteChoice {
 /// Returns a node-creation payload when a node type is chosen.
 fn command_palette(
     env: &dyn Registry,
-    head_state: &OpenHeadState,
     cmd_palette: &mut widget::CommandPalette,
     ui: &mut egui::Ui,
 ) -> Option<PaletteChoice> {
@@ -1638,12 +1632,9 @@ fn command_palette(
     // `NESTED_GRAPH_TYPE` routes to the registry-aware nested-graph op.
     cmd_palette.show(ui.ctx(), cmds).map(|cmd| {
         if cmd.name == NESTED_GRAPH_TYPE {
-            PaletteChoice::NestedGraph(CreateNestedGraph {
-                path: head_state.path.clone(),
-            })
+            PaletteChoice::NestedGraph(CreateNestedGraph)
         } else {
             PaletteChoice::Node(CreateNode {
-                path: head_state.path.clone(),
                 node_type: cmd.name.to_string(),
             })
         }
@@ -1698,7 +1689,7 @@ fn node_inspector<N>(
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<Vec<DynResponse>>
 where
-    N: Node + NodeUi + ToGraphMut<Node = N>,
+    N: Node + NodeUi,
 {
     pane_ui(ui, |ui| {
         let mut responses = Vec::new();
