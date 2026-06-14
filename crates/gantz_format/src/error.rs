@@ -78,6 +78,14 @@ impl FormatError {
         }
     }
 
+    /// Construct a [`ErrorKind::NodeDeserialize`] error for node `tag`.
+    pub(crate) fn node_deserialize(tag: impl Into<String>, msg: impl Into<String>) -> Self {
+        Self::new(ErrorKind::NodeDeserialize {
+            tag: tag.into(),
+            msg: msg.into(),
+        })
+    }
+
     /// Attach a source location derived from a byte span within `src`.
     pub fn at(mut self, span: Span, src: &str) -> Self {
         let (line, col) = line_col(src, span.start);

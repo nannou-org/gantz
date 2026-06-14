@@ -76,49 +76,60 @@ where
     T::deserialize(datum)
 }
 
-// -- accessors ---------------------------------------------------------------
+// -- constructors / accessors ------------------------------------------------
 
-/// The value of a map entry, if `d` is a map with that key.
-pub(crate) fn datum_field<'a>(d: &'a Datum, key: &str) -> Option<&'a Datum> {
-    match d {
-        Datum::Map(entries) => entries
-            .iter()
-            .find(|(k, _)| k.as_str() == key)
-            .map(|(_, v)| v),
-        _ => None,
+impl Datum {
+    /// Build a node datum: a `type` field (the typetag tag) prepended to
+    /// `fields`. The single canonical way the format constructs a tagged map.
+    pub(crate) fn tagged(tag: &str, fields: Vec<(String, Datum)>) -> Datum {
+        let mut entries = Vec::with_capacity(fields.len() + 1);
+        entries.push(("type".to_string(), Datum::Str(tag.to_string())));
+        entries.extend(fields);
+        Datum::Map(entries)
     }
-}
 
-/// The contents of a string datum.
-pub(crate) fn datum_str(d: &Datum) -> Option<&str> {
-    match d {
-        Datum::Str(s) => Some(s),
-        _ => None,
+    /// The value of the map entry `key`, if this is a map containing it.
+    pub(crate) fn get(&self, key: &str) -> Option<&Datum> {
+        match self {
+            Datum::Map(entries) => entries
+                .iter()
+                .find(|(k, _)| k.as_str() == key)
+                .map(|(_, v)| v),
+            _ => None,
+        }
     }
-}
 
-/// The value of a boolean datum.
-pub(crate) fn datum_bool(d: &Datum) -> Option<bool> {
-    match d {
-        Datum::Bool(b) => Some(*b),
-        _ => None,
+    /// The contents of a string datum.
+    pub(crate) fn as_str(&self) -> Option<&str> {
+        match self {
+            Datum::Str(s) => Some(s),
+            _ => None,
+        }
     }
-}
 
-/// The value of an integer datum (signed or unsigned, if it fits in `i64`).
-pub(crate) fn datum_int(d: &Datum) -> Option<i64> {
-    match d {
-        Datum::I64(n) => Some(*n),
-        Datum::U64(n) => i64::try_from(*n).ok(),
-        _ => None,
+    /// The value of a boolean datum.
+    pub(crate) fn as_bool(&self) -> Option<bool> {
+        match self {
+            Datum::Bool(b) => Some(*b),
+            _ => None,
+        }
     }
-}
 
-/// The elements of a sequence datum.
-pub(crate) fn datum_seq(d: &Datum) -> Option<&[Datum]> {
-    match d {
-        Datum::Seq(items) => Some(items),
-        _ => None,
+    /// The value of an integer datum (signed or unsigned, if it fits in `i64`).
+    pub(crate) fn as_i64(&self) -> Option<i64> {
+        match self {
+            Datum::I64(n) => Some(*n),
+            Datum::U64(n) => i64::try_from(*n).ok(),
+            _ => None,
+        }
+    }
+
+    /// The elements of a sequence datum.
+    pub(crate) fn as_seq(&self) -> Option<&[Datum]> {
+        match self {
+            Datum::Seq(items) => Some(items),
+            _ => None,
+        }
     }
 }
 

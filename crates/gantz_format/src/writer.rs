@@ -5,7 +5,7 @@
 //! ports are `(name port)` sub-lists. Indentation is two spaces per nesting
 //! level.
 
-use crate::datum::{Datum, datum_field, datum_str, datum_text};
+use crate::datum::{Datum, datum_text};
 use crate::model::{
     Addr, CommitDecl, Conn, Document, Endpoint, GraphBody, NameDecl, NodeDecl, NodeSpec,
 };
@@ -80,7 +80,7 @@ fn write_node_decl(out: &mut String, decl: &NodeDecl, indent: usize, sugar: &dyn
 /// Render a node value: a sugared form if `sugar` provides one, else the generic
 /// `(node "Tag" ...)` fallback.
 fn value_spec(v: &Datum, sugar: &dyn Sugar) -> String {
-    let tag = datum_field(v, "type").and_then(datum_str).unwrap_or("node");
+    let tag = v.get("type").and_then(Datum::as_str).unwrap_or("node");
     sugar.write_spec(tag, v).unwrap_or_else(|| generic_spec(v))
 }
 
@@ -99,7 +99,7 @@ fn ref_spec(r: &crate::model::RefSpec) -> String {
 }
 
 fn generic_spec(v: &Datum) -> String {
-    let tag = datum_field(v, "type").and_then(datum_str).unwrap_or("node");
+    let tag = v.get("type").and_then(Datum::as_str).unwrap_or("node");
     let mut s = format!("(node {}", quote(tag));
     if let Datum::Map(entries) = v {
         for (k, val) in entries {

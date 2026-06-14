@@ -13,7 +13,7 @@ use crate::model::{
     Addr, CommitDecl, Conn, Document, Endpoint, Form, GraphBody, GraphDef, NameDecl, NodeDecl,
     NodeSpec, RefSpec,
 };
-use crate::sexpr::{self, as_keyword, as_string, as_symbol, list_args, span_src};
+use crate::sexpr::{self, as_keyword, as_string, as_symbol, err_at, list_args, span_src};
 use crate::sugar::Sugar;
 use steel::parser::ast::ExprKind;
 
@@ -191,7 +191,7 @@ fn parse_generic_spec(rest: &[ExprKind], e: &ExprKind, src: &str) -> Result<Node
             ErrorKind::Malformed("node requires a type string".into()),
         )
     })?;
-    let mut entries = vec![("type".to_string(), Datum::Str(tag))];
+    let mut fields: Vec<(String, Datum)> = Vec::new();
     for field in &rest[1..] {
         let fargs = list_args(field).ok_or_else(|| {
             err_at(
@@ -214,9 +214,9 @@ fn parse_generic_spec(rest: &[ExprKind], e: &ExprKind, src: &str) -> Result<Node
                 ErrorKind::Malformed("field name must be a symbol".into()),
             )
         })?;
-        entries.push((fname, datum_from_expr(&fargs[1], src)));
+        fields.push((fname, datum_from_expr(&fargs[1], src)));
     }
-    Ok(NodeSpec::Value(Datum::Map(entries)))
+    Ok(NodeSpec::Value(Datum::tagged(&tag, fields)))
 }
 
 // -- connections / commits / names -------------------------------------------
@@ -405,14 +405,9 @@ fn int_field(e: &ExprKind, src: &str) -> Result<i64, FormatError> {
         .ok_or_else(|| err_at(e, src, ErrorKind::Malformed("expected an integer".into())))
 }
 
-fn err_at(e: &ExprKind, src: &str, kind: ErrorKind) -> FormatError {
-    FormatError::new(kind).at(sexpr::span(e).unwrap_or_default(), src)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::datum::{datum_field, datum_int, datum_seq, datum_str};
     use crate::sugar::DefaultSugar;
 
     #[test]
@@ -432,8 +427,8 @@ mod tests {
         let m = g.body.nodes.iter().find(|n| n.name == "m").unwrap();
         match &m.spec {
             NodeSpec::Value(v) => {
-                assert_eq!(datum_field(v, "type").and_then(datum_str), Some("Expr"));
-                assert_eq!(datum_field(v, "src").and_then(datum_str), Some("(* $l $r)"));
+                assert_eq!(v.get("type").and_then(Datum::as_str), Some("Expr"));
+                assert_eq!(v.get("src").and_then(Datum::as_str), Some("(* $l $r)"));
             }
             other => panic!("expected expr value, got {other:?}"),
         }
@@ -466,7 +461,7 @@ mod tests {
         let s = g.body.nodes.iter().find(|n| n.name == "s").unwrap();
         match &s.spec {
             NodeSpec::Value(v) => {
-                assert_eq!(datum_field(v, "outputs").and_then(datum_int), Some(2))
+                assert_eq!(v.get("outputs").and_then(Datum::as_i64), Some(2))
             }
             _ => panic!("expected expr"),
         }
@@ -474,11 +469,11 @@ mod tests {
         match &b.spec {
             NodeSpec::Value(v) => {
                 assert_eq!(
-                    datum_field(v, "src").and_then(datum_str),
+                    v.get("src").and_then(Datum::as_str),
                     Some("(if $n (list 0 0) (list 1 0))")
                 );
                 assert_eq!(
-                    datum_field(v, "branches").and_then(datum_seq),
+                    v.get("branches").and_then(Datum::as_seq),
                     Some(&[Datum::Str("10".into()), Datum::Str("01".into())][..])
                 );
             }
@@ -509,19 +504,19 @@ mod tests {
         let node1 = &doc1.graphs[0].body.nodes[0];
         match &node1.spec {
             NodeSpec::Value(v) => {
-                assert_eq!(datum_field(v, "type").and_then(datum_str), Some("Custom"));
+                assert_eq!(v.get("type").and_then(Datum::as_str), Some("Custom"));
                 // The lossy bug turned this nested object into an array; it must
                 // stay a map.
                 assert!(
-                    matches!(datum_field(v, "cfg"), Some(Datum::Map(_))),
+                    matches!(v.get("cfg"), Some(Datum::Map(_))),
                     "cfg must be a map, got {:?}",
-                    datum_field(v, "cfg"),
+                    v.get("cfg"),
                 );
                 assert!(
-                    matches!(datum_field(v, "tags"), Some(Datum::Seq(_))),
+                    matches!(v.get("tags"), Some(Datum::Seq(_))),
                     "tags must be a seq",
                 );
-                assert_eq!(datum_field(v, "flag"), Some(&Datum::Bool(true)));
+                assert_eq!(v.get("flag"), Some(&Datum::Bool(true)));
             }
             other => panic!("expected value, got {other:?}"),
         }

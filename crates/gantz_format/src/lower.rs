@@ -7,7 +7,7 @@
 //! is a label and which no commit references is a hand-authored named graph: it
 //! auto-registers under that label with a root commit synthesised at `now`.
 
-use crate::datum::{Datum, datum_field, datum_str, from_datum, to_datum};
+use crate::datum::{Datum, from_datum, to_datum};
 use crate::error::{ErrorKind, FormatError};
 use crate::model::{
     Addr, CommitDecl, Document, Form, GraphBody, GraphDef, NameDecl, NodeDecl, NodeSpec, RefSpec,
@@ -200,12 +200,8 @@ where
         NodeSpec::Graph(body) => {
             let (nested, _) = build_graph::<N>(body, resolve)?;
             let gn = GraphNode { graph: nested };
-            let datum = to_datum(&gn).map_err(|e| {
-                FormatError::new(ErrorKind::NodeDeserialize {
-                    tag: "GraphNode".into(),
-                    msg: e.to_string(),
-                })
-            })?;
+            let datum = to_datum(&gn)
+                .map_err(|e| FormatError::node_deserialize("GraphNode", e.to_string()))?;
             node_from_datum::<N>(insert_type(datum, "GraphNode"))
         }
     }
@@ -215,14 +211,8 @@ where
 /// own serialization omits).
 fn insert_type(datum: Datum, tag: &str) -> Datum {
     match datum {
-        Datum::Map(mut entries) => {
-            entries.insert(0, ("type".to_string(), Datum::Str(tag.to_string())));
-            Datum::Map(entries)
-        }
-        other => Datum::Map(vec![
-            ("type".to_string(), Datum::Str(tag.to_string())),
-            ("value".to_string(), other),
-        ]),
+        Datum::Map(entries) => Datum::tagged(tag, entries),
+        other => Datum::tagged(tag, vec![("value".to_string(), other)]),
     }
 }
 
@@ -230,16 +220,12 @@ fn node_from_datum<N>(datum: Datum) -> Result<N, FormatError>
 where
     N: DeserializeOwned,
 {
-    let tag = datum_field(&datum, "type")
-        .and_then(datum_str)
+    let tag = datum
+        .get("type")
+        .and_then(Datum::as_str)
         .unwrap_or("?")
         .to_string();
-    from_datum::<N>(datum).map_err(|e| {
-        FormatError::new(ErrorKind::NodeDeserialize {
-            tag,
-            msg: e.to_string(),
-        })
-    })
+    from_datum::<N>(datum).map_err(|e| FormatError::node_deserialize(tag, e.to_string()))
 }
 
 fn resolve_ref_value(refspec: &RefSpec, resolve: &Resolve) -> Result<Datum, FormatError> {
@@ -263,12 +249,14 @@ fn resolve_ref_value(refspec: &RefSpec, resolve: &Resolve) -> Result<Datum, Form
     } else {
         "NamedRef"
     };
-    Ok(Datum::Map(vec![
-        ("type".to_string(), Datum::Str(tag.to_string())),
-        ("ref_".to_string(), Datum::Str(hex)),
-        ("name".to_string(), Datum::Str(refspec.name.clone())),
-        ("sync".to_string(), Datum::Bool(refspec.sync)),
-    ]))
+    Ok(Datum::tagged(
+        tag,
+        vec![
+            ("ref_".to_string(), Datum::Str(hex)),
+            ("name".to_string(), Datum::Str(refspec.name.clone())),
+            ("sync".to_string(), Datum::Bool(refspec.sync)),
+        ],
+    ))
 }
 
 // -- commits -----------------------------------------------------------------

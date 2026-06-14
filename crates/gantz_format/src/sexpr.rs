@@ -72,6 +72,11 @@ pub fn span_src<'a>(e: &ExprKind, src: &'a str) -> Option<&'a str> {
     src.get(s.start as usize..s.end as usize)
 }
 
+/// Build a [`FormatError`] of `kind` located at the datum's source span.
+pub(crate) fn err_at(e: &ExprKind, src: &str, kind: ErrorKind) -> FormatError {
+    FormatError::new(kind).at(span(e).unwrap_or_default(), src)
+}
+
 /// A numeric datum parsed as an integer (from its verbatim source).
 pub fn as_i64(e: &ExprKind, src: &str) -> Option<i64> {
     span_src(e, src)?.parse().ok()

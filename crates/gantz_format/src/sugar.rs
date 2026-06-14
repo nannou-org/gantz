@@ -11,9 +11,9 @@
 //! A `Sugar` only ever deals in tag *strings* and serde [`Datum`]s, so it adds
 //! no dependency on the concrete node crates.
 
-use crate::datum::{Datum, datum_field, datum_int, datum_seq, datum_str};
+use crate::datum::Datum;
 use crate::error::{ErrorKind, FormatError};
-use crate::sexpr::{self, as_keyword, as_string, as_symbol, quote, span_src};
+use crate::sexpr::{self, as_keyword, as_string, as_symbol, err_at, quote, span_src};
 use steel::parser::ast::ExprKind;
 
 /// A set of keyword sugars layered over the generic `(node "Tag" ...)` form.
@@ -184,13 +184,16 @@ impl Sugar for DefaultSugar {
 
 // -- built-in reading --------------------------------------------------------
 
-/// Build a node datum from a typetag tag and ordered fields (the `type` field
-/// is prepended).
+/// Build a node datum from a typetag tag and ordered fields - an `&str`-keyed
+/// convenience over [`Datum::tagged`].
 fn node_datum(tag: &str, fields: Vec<(&str, Datum)>) -> Datum {
-    let mut entries = Vec::with_capacity(fields.len() + 1);
-    entries.push(("type".to_string(), Datum::Str(tag.to_string())));
-    entries.extend(fields.into_iter().map(|(k, v)| (k.to_string(), v)));
-    Datum::Map(entries)
+    Datum::tagged(
+        tag,
+        fields
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
+    )
 }
 
 fn expr_spec(args: &[ExprKind], src: &str) -> Result<Datum, FormatError> {
@@ -272,24 +275,21 @@ fn log_spec(args: &[ExprKind], src: &str) -> Result<Datum, FormatError> {
 // -- built-in writing --------------------------------------------------------
 
 fn write_expr(node: &Datum) -> String {
-    let src = datum_field(node, "src")
-        .and_then(datum_str)
-        .unwrap_or("'()");
-    match datum_field(node, "outputs").and_then(datum_int) {
+    let src = node.get("src").and_then(Datum::as_str).unwrap_or("'()");
+    match node.get("outputs").and_then(Datum::as_i64) {
         Some(n) if n != 1 => format!("(expr {src} #:out {n})"),
         _ => format!("(expr {src})"),
     }
 }
 
 fn write_branch(node: &Datum) -> String {
-    let src = datum_field(node, "src")
-        .and_then(datum_str)
-        .unwrap_or("'()");
-    let masks = datum_field(node, "branches")
-        .and_then(datum_seq)
+    let src = node.get("src").and_then(Datum::as_str).unwrap_or("'()");
+    let masks = node
+        .get("branches")
+        .and_then(Datum::as_seq)
         .map(|a| {
             a.iter()
-                .filter_map(datum_str)
+                .filter_map(Datum::as_str)
                 .map(quote)
                 .collect::<Vec<_>>()
                 .join(" ")
@@ -299,16 +299,17 @@ fn write_branch(node: &Datum) -> String {
 }
 
 fn write_comment(node: &Datum) -> String {
-    let text = datum_field(node, "text").and_then(datum_str).unwrap_or("");
-    let (w, h) = datum_field(node, "size")
-        .and_then(datum_seq)
-        .and_then(|a| Some((datum_int(a.first()?)?, datum_int(a.get(1)?)?)))
+    let text = node.get("text").and_then(Datum::as_str).unwrap_or("");
+    let (w, h) = node
+        .get("size")
+        .and_then(Datum::as_seq)
+        .and_then(|a| Some((a.first()?.as_i64()?, a.get(1)?.as_i64()?)))
         .unwrap_or((100, 40));
     format!("(comment {} {w} {h})", quote(text))
 }
 
 fn write_log(node: &Datum) -> String {
-    match datum_field(node, "level").and_then(datum_str) {
+    match node.get("level").and_then(Datum::as_str) {
         Some(level) if !level.eq_ignore_ascii_case("info") => {
             format!("(log {})", level.to_ascii_lowercase())
         }
@@ -360,14 +361,9 @@ fn log_level(sym: &str, e: &ExprKind, src: &str) -> Result<String, FormatError> 
     }
 }
 
-fn err_at(e: &ExprKind, src: &str, kind: ErrorKind) -> FormatError {
-    FormatError::new(kind).at(sexpr::span(e).unwrap_or_default(), src)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::datum::datum_int;
 
     /// A custom sugar for a hypothetical node set: `(gain <db>)` and bare `mute`.
     struct GainSugar;
@@ -396,7 +392,7 @@ mod tests {
         fn write_spec(&self, tag: &str, node: &Datum) -> Option<String> {
             match tag {
                 "Gain" => {
-                    let db = datum_field(node, "db").and_then(datum_int).unwrap_or(0);
+                    let db = node.get("db").and_then(Datum::as_i64).unwrap_or(0);
                     Some(format!("(gain {db})"))
                 }
                 "Mute" => Some("mute".to_string()),
@@ -424,11 +420,8 @@ mod tests {
     fn custom_sugar_reads_and_writes() {
         let s = GainSugar;
         let datum = read_spec(&s, "(gain 6)").expect("recognised");
-        assert_eq!(
-            datum_field(&datum, "type").and_then(datum_str),
-            Some("Gain")
-        );
-        assert_eq!(datum_field(&datum, "db").and_then(datum_int), Some(6));
+        assert_eq!(datum.get("type").and_then(Datum::as_str), Some("Gain"));
+        assert_eq!(datum.get("db").and_then(Datum::as_i64), Some(6));
         assert_eq!(s.write_spec("Gain", &datum).as_deref(), Some("(gain 6)"));
         assert_eq!(
             s.write_spec("Mute", &node_datum("Mute", vec![])).as_deref(),
@@ -444,11 +437,11 @@ mod tests {
 
         // The custom keyword is handled by GainSugar.
         let g = read_spec(&sugars, "(gain 3)").expect("gain recognised");
-        assert_eq!(datum_field(&g, "db").and_then(datum_int), Some(3));
+        assert_eq!(g.get("db").and_then(Datum::as_i64), Some(3));
 
         // A built-in keyword still resolves through the composed DefaultSugar.
         let e = read_spec(&sugars, "(expr (+ 1 2))").expect("expr recognised");
-        assert_eq!(datum_field(&e, "type").and_then(datum_str), Some("Expr"));
+        assert_eq!(e.get("type").and_then(Datum::as_str), Some("Expr"));
 
         // keyword_for_tag composes across both sugars.
         assert_eq!(sugars.keyword_for_tag("Gain"), Some("gain"));

@@ -8,8 +8,8 @@
 //! labels emitted - everything an extender needs to attach its own forms (e.g.
 //! `(layout ...)`) keyed by the same ids.
 
-use crate::datum::{Datum, datum_bool, datum_field, datum_str, from_datum, to_datum};
-use crate::error::{ErrorKind, FormatError};
+use crate::datum::{Datum, from_datum, to_datum};
+use crate::error::FormatError;
 use crate::model::{
     Addr, CommitDecl, Conn, Document, Endpoint, GraphBody, GraphDef, NameDecl, NodeDecl, NodeSpec,
     RefSpec,
@@ -93,12 +93,8 @@ where
     let mut labels: HashMap<usize, String> = HashMap::new();
 
     for ix in graph.node_indices() {
-        let value = to_datum(&graph[ix]).map_err(|e| {
-            FormatError::new(ErrorKind::NodeDeserialize {
-                tag: "?".into(),
-                msg: e.to_string(),
-            })
-        })?;
+        let value =
+            to_datum(&graph[ix]).map_err(|e| FormatError::node_deserialize("?", e.to_string()))?;
         let (spec, keyword) = node_spec_from_datum::<N>(value, sugar)?;
         let label = format!("{keyword}{}", ix.index());
         labels.insert(ix.index(), label.clone());
@@ -137,24 +133,25 @@ fn node_spec_from_datum<N>(
 where
     N: Serialize + DeserializeOwned,
 {
-    let tag = datum_field(&value, "type")
-        .and_then(datum_str)
+    let tag = value
+        .get("type")
+        .and_then(Datum::as_str)
         .unwrap_or("")
         .to_string();
     match tag.as_str() {
         "NamedRef" | "FnNamedRef" => {
             let func = tag == "FnNamedRef";
-            let name = datum_field(&value, "name")
-                .and_then(datum_str)
+            let name = value
+                .get("name")
+                .and_then(Datum::as_str)
                 .unwrap_or_default()
                 .to_string();
-            let hex = datum_field(&value, "ref_")
-                .and_then(datum_str)
+            let hex = value
+                .get("ref_")
+                .and_then(Datum::as_str)
                 .unwrap_or_default();
             let short = hex.get(..8).unwrap_or(hex).to_string();
-            let sync = datum_field(&value, "sync")
-                .and_then(datum_bool)
-                .unwrap_or(false);
+            let sync = value.get("sync").and_then(Datum::as_bool).unwrap_or(false);
             let spec = NodeSpec::Ref(RefSpec {
                 func,
                 name,
@@ -164,13 +161,9 @@ where
             Ok((spec, if func { "fnref" } else { "ref" }.to_string()))
         }
         "GraphNode" => {
-            let inner = datum_field(&value, "graph").cloned().unwrap_or(Datum::Null);
-            let nested: Graph<N> = from_datum(inner).map_err(|e| {
-                FormatError::new(ErrorKind::NodeDeserialize {
-                    tag: "GraphNode".into(),
-                    msg: e.to_string(),
-                })
-            })?;
+            let inner = value.get("graph").cloned().unwrap_or(Datum::Null);
+            let nested: Graph<N> = from_datum(inner)
+                .map_err(|e| FormatError::node_deserialize("GraphNode", e.to_string()))?;
             let (body, _) = graph_to_body::<N>(&nested, sugar)?;
             Ok((NodeSpec::Graph(body), "graph".to_string()))
         }
