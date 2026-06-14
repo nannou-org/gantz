@@ -1,6 +1,6 @@
 use crate::{
     CopyNodes, CreateNestedGraph, CreateNode, ExportAllNamed, ExportHead, GraphViews, HeadAccess,
-    NodeCtx, NodeUi, OpenCommandPalette, OpenPath, Paste, Redo, Registry, Undo, export,
+    NodeCtx, NodeUi, OpenCommandPalette, Paste, Redo, Registry, ReplaceHead, Undo, export,
     response::{DynResponse, Responses},
     widget::{self, GraphScene, GraphSceneState, graph_scene},
 };
@@ -92,11 +92,9 @@ pub struct GantzState {
 
 pub type OpenHeadStates = HashMap<gantz_ca::Head, OpenHeadState>;
 
-/// State associated with a single open root graph.
+/// State associated with a single open graph.
 #[derive(serde::Deserialize, serde::Serialize)]
 pub struct OpenHeadState {
-    /// The path to the currently visible graph within the open graph tree.
-    pub path: Vec<node::Id>,
     /// State associated with the `GraphScene` widget.
     pub scene: GraphSceneState,
     #[serde(default)]
@@ -114,7 +112,6 @@ fn default_layout_flow() -> egui::Direction {
 impl Default for OpenHeadState {
     fn default() -> Self {
         Self {
-            path: Vec::new(),
             scene: GraphSceneState::default(),
             auto_layout: false,
             layout_flow: GantzState::DEFAULT_DIRECTION,
@@ -434,11 +431,7 @@ impl<'a> Gantz<'a> {
         response.file_drops = collect_gantz_file_drops(ui.ctx());
 
         // Apply payloads that only affect `GantzState`, so applications never
-        // see them: path navigation and command palette toggling.
-        for (head, OpenPath(path)) in response.responses.take::<OpenPath>() {
-            let Some(head) = head else { continue };
-            state.open_heads.entry(head).or_default().path = path;
-        }
+        // see them: command palette toggling.
         for _ in response.responses.take::<OpenCommandPalette>() {
             state.command_palette.toggle();
         }
@@ -866,7 +859,6 @@ where
                         .collect();
                     let head_state = state.open_heads.get(h);
                     if let (Some(module), Some(head_state)) = (access.module(h), head_state) {
-                        let level = &head_state.path;
                         let mut selected: Vec<node::Id> = head_state
                             .scene
                             .interaction
@@ -877,15 +869,16 @@ where
                             .collect();
                         selected.sort_unstable();
                         for &ix in &selected {
-                            let path: Vec<node::Id> = level.iter().copied().chain([ix]).collect();
-                            let spans = module.map.node_spans(&path);
+                            // A node at this (root) level has the single-element
+                            // path `[ix]` in the compiled module's source map.
+                            let spans = module.map.node_spans(&[ix]);
                             highlights.extend(spans.defs);
                             highlights.extend(spans.refs);
                         }
                         // Scroll to the first highlighted span when the
                         // selection changes.
                         let state_id = egui::Id::new("steel_view_selection");
-                        let current = egui::Id::new(("steel_sel", h, level, &selected));
+                        let current = egui::Id::new(("steel_sel", h, &selected));
                         let prev: Option<egui::Id> = ui.ctx().data(|d| d.get_temp(state_id));
                         if prev != Some(current) {
                             ui.ctx().data_mut(|d| d.insert_temp(state_id, current));
@@ -1157,9 +1150,9 @@ where
             self.responses.extend(Some(&*pane_head), response.responses);
         }
 
-        // Floating path navigation labels.
-        let labels = path_labels(rect, head_state, ui);
-        self.responses.extend(Some(&*pane_head), labels);
+        // Floating name breadcrumb for nested graphs.
+        let crumbs = name_breadcrumb(rect, pane_head, ui);
+        self.responses.extend(Some(&*pane_head), crumbs);
 
         egui_tiles::UiResponse::None
     }
@@ -1508,27 +1501,19 @@ fn graph_scene<N>(
 where
     N: Node + NodeUi,
 {
-    // Show the `GraphScene` for the graph at the current path.
-    let Some(graph) = graph_scene::index_path_graph_mut(graph, &head_state.path) else {
-        log::error!("path {:?} is not a graph", head_state.path);
-        return None;
-    };
+    // A head shows exactly its root graph (nested graphs are separate heads).
+    let id = egui::Id::new(head);
 
-    // Use both head and path for a unique ID per graph pane.
-    let id = egui::Id::new(head).with(&head_state.path);
+    // Get or create the View for this head from external storage.
+    let view = head_views.entry(Vec::new()).or_insert_with(|| {
+        let layout = widget::graph_scene::layout(graph, id, layout_flow, ui.ctx());
+        egui_graph::View {
+            scene_rect: egui::Rect::ZERO,
+            layout,
+        }
+    });
 
-    // Get or create the View for this path from external storage.
-    let view = head_views
-        .entry(head_state.path.to_vec())
-        .or_insert_with(|| {
-            let layout = widget::graph_scene::layout(graph, id, layout_flow, ui.ctx());
-            egui_graph::View {
-                scene_rect: egui::Rect::ZERO,
-                layout,
-            }
-        });
-
-    let response = GraphScene::new(registry, graph, &head_state.path)
+    let response = GraphScene::new(registry, graph, &[])
         .with_id(id)
         .auto_layout(auto_layout)
         .layout_flow(layout_flow)
@@ -1536,28 +1521,35 @@ where
         .immutable(immutable)
         .show(view, &mut head_state.scene, vm, ui);
 
-    graph_scene::paint_diagnostics(diagnostics, &head_state.path, &response, ui);
+    graph_scene::paint_diagnostics(diagnostics, &[], &response, ui);
 
     Some(response)
 }
 
-/// Floating path index labels over the bottom-left corner of the scene,
-/// shown when viewing a subgraph (non-empty path).
+/// Floating name breadcrumb over the bottom-left corner of the scene, shown
+/// when viewing a nested graph (a `parent:child` head). Each crumb is a
+/// `:`-separated name segment; the prefix it represents is the head it
+/// navigates to.
 ///
-/// Returns the [`OpenPath`] payloads emitted by clicked labels. Shown even
-/// when the path failed to resolve to a graph - the labels are the recovery
-/// mechanism for navigating back out of an invalid path.
-fn path_labels(
+/// Returns the [`ReplaceHead`] payloads emitted by clicked crumbs, which
+/// navigate the focused tab to an ancestor level in place.
+fn name_breadcrumb(
     scene_rect: egui::Rect,
-    head_state: &mut OpenHeadState,
+    head: &gantz_ca::Head,
     ui: &mut egui::Ui,
 ) -> Vec<DynResponse> {
     let mut responses = Vec::new();
-    if head_state.path.is_empty() {
+    let gantz_ca::Head::Branch(name) = head else {
         return responses;
+    };
+    let sep = crate::node::NESTED_SEP;
+    if !name.contains(sep) {
+        return responses; // a root graph has no ancestor levels
     }
+    let segs: Vec<&str> = name.split(sep).collect();
+    let sep_str = sep.to_string();
     let space = ui.style().interaction.interact_radius * 3.0;
-    egui::Window::new("path_label_window")
+    egui::Window::new("breadcrumb_window")
         .pivot(egui::Align2::LEFT_BOTTOM)
         .fixed_pos(scene_rect.left_bottom() + egui::vec2(space, -space))
         .title_bar(false)
@@ -1565,36 +1557,24 @@ fn path_labels(
         .collapsible(false)
         .frame(egui::Frame::NONE)
         .show(ui.ctx(), |ui| {
-            fn button<'a>(s: &str) -> widget::LabelButton {
+            fn button(s: &str) -> widget::LabelButton {
                 let text = egui::RichText::new(s).size(24.0);
                 widget::LabelButton::new(text)
             }
             let col_w = ui.style().interaction.interact_radius * 4.0;
-            egui::Grid::new("path_labels")
+            egui::Grid::new("breadcrumb")
                 .min_col_width(col_w)
                 .max_col_width(col_w)
                 .show(ui, |ui| {
-                    ui.vertical_centered_justified(|ui| {
-                        if ui.add(button("R")).on_hover_text("root graph").clicked() {
-                            responses.push(DynResponse::new(OpenPath(vec![])));
-                            head_state.scene.interaction.selection.clear();
-                        }
-                    });
-                    for ix in 0..head_state.path.len() {
-                        let id = head_state.path[ix];
+                    for (i, seg) in segs.iter().enumerate() {
+                        let is_current = i + 1 == segs.len();
+                        let prefix = segs[..=i].join(&sep_str);
                         ui.vertical_centered_justified(|ui| {
-                            let s = format!("{}", id);
-                            let path = &head_state.path[..ix + 1];
-                            let current_path = path == head_state.path;
-                            if ui
-                                .add(button(&s))
-                                .on_hover_text(format!("graph at {path:?}"))
-                                .clicked()
-                            {
-                                if !current_path {
-                                    responses.push(DynResponse::new(OpenPath(path.to_vec())));
-                                    head_state.scene.interaction.selection.clear();
-                                }
+                            let resp = ui.add(button(seg)).on_hover_text(&prefix);
+                            if resp.clicked() && !is_current {
+                                responses.push(DynResponse::new(ReplaceHead(
+                                    gantz_ca::Head::Branch(prefix),
+                                )));
                             }
                         });
                     }
@@ -1696,7 +1676,7 @@ where
         egui::ScrollArea::vertical()
             .auto_shrink(egui::Vec2b::FALSE)
             .show(ui, |ui| {
-                let graph = graph_scene::index_path_graph_mut(root, &head_state.path).unwrap();
+                let graph = &mut *root;
                 let ids: Vec<_> = graph.node_references().map(|n_ref| n_ref.id()).collect();
                 // Collect the inlets and outlets.
                 let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
@@ -1710,8 +1690,7 @@ where
                             return;
                         };
                         let ix = id.index();
-                        let path: Vec<_> =
-                            head_state.path.iter().copied().chain(Some(ix)).collect();
+                        let path = [ix];
                         let ctx = NodeCtx::new(
                             registry,
                             &path[..],

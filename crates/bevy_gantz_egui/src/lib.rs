@@ -108,6 +108,7 @@ where
             .register_head_response::<gantz_egui::Undo>()
             .register_response_with::<gantz_egui::EvalEntry>(dispatch_eval_entry)
             .register_response_with::<gantz_egui::OpenHead>(dispatch_open_head)
+            .register_response_with::<gantz_egui::ReplaceHead>(dispatch_replace_head)
             .register_response_with::<gantz_egui::ExportHead>(dispatch_export_head)
             .register_response_with::<gantz_egui::ExportAllNamed>(dispatch_export_all_named);
 
@@ -1379,6 +1380,14 @@ fn dispatch_eval_entry(entity: Option<Entity>, payload: DynResponse, cmds: &mut 
 fn dispatch_open_head(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
     let gantz_egui::OpenHead(target) = downcast_payload(payload);
     cmds.trigger(head::OpenEvent(target));
+}
+
+/// Dispatch a [`gantz_egui::ReplaceHead`] payload as a [`head::ReplaceEvent`],
+/// navigating the focused tab to the target head in place (e.g. entering a
+/// nested graph or breadcrumb navigation).
+fn dispatch_replace_head(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
+    let gantz_egui::ReplaceHead(target) = downcast_payload(payload);
+    cmds.trigger(head::ReplaceEvent(target));
 }
 
 /// Dispatch a [`gantz_egui::ExportHead`] payload as an [`ExportHeadEvent`].

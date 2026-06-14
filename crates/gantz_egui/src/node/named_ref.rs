@@ -1,6 +1,6 @@
 //! A node that references another node by name and content address.
 
-use crate::{BranchNode, NodeCtx, NodeUi, OpenHead, widget::node_inspector};
+use crate::{BranchNode, NodeCtx, NodeUi, OpenHead, ReplaceHead, widget::node_inspector};
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, Node, RegCtx};
 use serde::{Deserialize, Serialize};
@@ -174,6 +174,10 @@ impl NodeUi for NamedRef {
         registry.demo_graph(&self.ref_.content_addr())
     }
 
+    fn nav_head(&self, _registry: &dyn crate::Registry) -> Option<gantz_ca::Head> {
+        Some(gantz_ca::Head::Branch(self.name.clone()))
+    }
+
     fn ui(
         &mut self,
         mut ctx: NodeCtx,
@@ -210,9 +214,18 @@ impl NodeUi for NamedRef {
             ui.add(egui::Label::new(name_text).selectable(false))
         });
 
-        // Open the node on double-click (handler decides if the node is openable).
+        // Enter the referenced graph on double-click. A nested graph is entered
+        // *in place* (the focused tab navigates to it; the breadcrumb returns to
+        // the parent); a reference to a root graph opens as a new tab. Either
+        // way, the scene's "open in new tab" context-menu action (see
+        // `nav_head`) opens it as a separate tab.
         if response.inner.response.double_clicked() {
-            ctx.response(OpenHead(gantz_ca::Head::Branch(self.name.clone())));
+            let head = gantz_ca::Head::Branch(self.name.clone());
+            if self.is_nested() {
+                ctx.response(ReplaceHead(head));
+            } else {
+                ctx.response(OpenHead(head));
+            }
         }
 
         response

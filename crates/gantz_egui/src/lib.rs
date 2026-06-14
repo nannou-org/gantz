@@ -154,6 +154,15 @@ pub trait NodeUi {
     fn demo_graph<'a>(&self, _registry: &'a dyn Registry) -> Option<&'a str> {
         None
     }
+
+    /// The head this node navigates to when entered, if any.
+    ///
+    /// Returned for nodes that reference a named graph (e.g.
+    /// [`NamedRef`](crate::node::NamedRef)): double-clicking enters it in place,
+    /// and the scene offers an "open in new tab" context-menu action.
+    fn nav_head(&self, _registry: &dyn Registry) -> Option<gantz_ca::Head> {
+        None
+    }
 }
 
 /// A wrapper around a node's path and the VM providing easy access to the
@@ -200,8 +209,8 @@ pub fn resolve_paste_offset(pos: &PastePos, copied_positions: &egui_graph::Layou
 //
 // Typed payloads emitted from within the widget tree via the dynamic
 // [`response::Responses`] channel and returned from `Gantz::show`. With the
-// exception of [`OpenPath`] and [`OpenCommandPalette`] (which `Gantz::show`
-// handles itself), applications drain and handle these after the GUI pass.
+// exception of [`OpenCommandPalette`] (which `Gantz::show` handles itself),
+// applications drain and handle these after the GUI pass.
 // Unhandled payloads should be reported via [`response::Responses::type_names`].
 // ----------------------------------------------------------------------------
 
@@ -266,11 +275,11 @@ pub struct OpenCommandPalette;
 #[derive(Clone, Debug)]
 pub struct OpenHead(pub gantz_ca::Head);
 
-/// Navigate the path within the emitting head's graph hierarchy.
-///
-/// Handled by `Gantz::show` itself - applications never see this payload.
+/// Navigate the *focused* tab to a head in place (replacing it), rather than
+/// opening a new tab. Used for entering a nested graph and for breadcrumb
+/// navigation between `parent:child` levels.
 #[derive(Clone, Debug)]
-pub struct OpenPath(pub Vec<node::Id>);
+pub struct ReplaceHead(pub gantz_ca::Head);
 
 /// Paste clipboard contents at the given position.
 ///
@@ -322,6 +331,10 @@ where
     fn demo_graph<'b>(&self, registry: &'b dyn Registry) -> Option<&'b str> {
         (**self).demo_graph(registry)
     }
+
+    fn nav_head(&self, registry: &dyn Registry) -> Option<gantz_ca::Head> {
+        (**self).nav_head(registry)
+    }
 }
 
 macro_rules! impl_node_ui_for_ptr {
@@ -352,6 +365,10 @@ macro_rules! impl_node_ui_for_ptr {
 
             fn demo_graph<'a>(&self, registry: &'a dyn Registry) -> Option<&'a str> {
                 (**self).demo_graph(registry)
+            }
+
+            fn nav_head(&self, registry: &dyn Registry) -> Option<gantz_ca::Head> {
+                (**self).nav_head(registry)
             }
         }
     };

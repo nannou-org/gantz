@@ -393,6 +393,17 @@ where
             } else {
                 demo_btn.on_disabled_hover_text("no associated demo");
             }
+            // "open in new tab" for nodes that reference a named graph.
+            if let Some(head) = graph[n_id].nav_head(registry) {
+                if ui
+                    .button("open tab")
+                    .on_hover_text("open the referenced graph in a new tab")
+                    .clicked()
+                {
+                    responses.push(DynResponse::new(OpenHead(head)));
+                    ui.close();
+                }
+            }
             if !immutable {
                 let stateful = target
                     .iter()
@@ -518,15 +529,6 @@ pub fn index_path_node_mut<'a, N>(graph: &'a mut Graph<N>, path: &[node::Id]) ->
         [ix] => graph.node_weight_mut(petgraph::graph::NodeIndex::new(*ix)),
         _ => None,
     }
-}
-
-/// The graph at the given `path`. Only the empty (root) path resolves, since
-/// nested graphs are no longer inline (see [`index_path_node_mut`]).
-pub fn index_path_graph_mut<'a, N>(
-    graph: &'a mut Graph<N>,
-    path: &[node::Id],
-) -> Option<&'a mut Graph<N>> {
-    path.is_empty().then_some(graph)
 }
 
 /// The id of the node to flag at the viewed level for a diagnostic path: the

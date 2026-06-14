@@ -904,6 +904,10 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         open_head(state, target);
     }
 
+    for (_, gantz_egui::ReplaceHead(target)) in responses.take() {
+        replace_head(ctx, state, target);
+    }
+
     for (head, branch) in responses.take::<gantz_egui::BranchNode>() {
         let Some((_, ix)) = tagged_head(state, head) else {
             continue;
