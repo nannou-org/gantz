@@ -10,6 +10,7 @@ use steel::{
 };
 
 pub mod export;
+pub mod format;
 mod impls;
 pub mod node;
 pub mod ops;

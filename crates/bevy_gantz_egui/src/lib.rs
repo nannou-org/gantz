@@ -714,8 +714,8 @@ pub fn on_inspect_edge<N>(
 
 /// Handle copy selection payloads.
 ///
-/// Serializes the selected nodes (and their registry dependencies) to RON
-/// and writes the result directly to the system clipboard via
+/// Serializes the selected nodes (and their registry dependencies) to a `.gantz`
+/// document and writes the result directly to the system clipboard via
 /// [`bevy_egui::EguiClipboard`].
 pub fn on_copy_nodes<N>(
     trigger: On<ForHead<gantz_egui::CopyNodes>>,
@@ -732,6 +732,8 @@ pub fn on_copy_nodes<N>(
         + Node
         + Clone
         + serde::Serialize
+        + serde::de::DeserializeOwned
+        + ca::CaHash
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
         + Sync,
@@ -762,10 +764,9 @@ pub fn on_copy_nodes<N>(
 /// Handle paste selection payloads.
 ///
 /// Resolves the clipboard text (via [`bevy_egui::EguiClipboard`] when the
-/// payload doesn't carry it), deserializes it into a
-/// [`gantz_egui::export::Copied`], merges registry dependencies, adds the
-/// subgraph, maps positions, and updates the selection to the newly pasted
-/// nodes.
+/// payload doesn't carry it), parses it into a [`gantz_egui::export::Copied`],
+/// merges registry dependencies, adds the subgraph, maps positions, and updates
+/// the selection to the newly pasted nodes.
 pub fn on_paste<N>(
     trigger: On<ForHead<gantz_egui::Paste>>,
     mut registry: ResMut<Registry<N>>,
@@ -783,7 +784,9 @@ pub fn on_paste<N>(
     N: 'static
         + Node
         + Clone
+        + serde::Serialize
         + serde::de::DeserializeOwned
+        + ca::CaHash
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
         + Sync,
@@ -867,8 +870,8 @@ pub fn on_redo(
 /// Handle export head events.
 ///
 /// Exports the head's graph (with transitive dependencies and views) to a
-/// `.gantz` file chosen via an `rfd` file dialog. The export is serialized
-/// as RON using the existing [`gantz_egui::export`] infrastructure.
+/// `.gantz` file chosen via an `rfd` file dialog. The export is serialized as
+/// `.gantz` text using the [`gantz_egui::export`] infrastructure.
 pub fn on_export_head<N>(
     trigger: On<ExportHeadEvent>,
     registry: Res<Registry<N>>,
@@ -877,7 +880,7 @@ pub fn on_export_head<N>(
     demos: Res<Demos>,
     heads: Query<&head::HeadRef, With<head::OpenHead>>,
 ) where
-    N: 'static + Node + Clone + serde::Serialize + Send + Sync,
+    N: 'static + serde::Serialize + serde::de::DeserializeOwned + Node + Clone + Send + Sync,
 {
     let event = trigger.event();
     let Ok(head_ref) = heads.get(event.head) else {
@@ -889,14 +892,19 @@ pub fn on_export_head<N>(
     let node_reg = registry_ref(&registry, &builtins, &demos);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
 
-    let ron_str =
-        match gantz_egui::export::export_heads_ron(&get_node, &registry, &views, &demos, [head]) {
-            Ok(s) => s,
-            Err(e) => {
-                log::error!("ExportHead: failed to serialize: {e}");
-                return;
-            }
-        };
+    let text = match gantz_egui::export::export_heads_sexpr(
+        &get_node,
+        &registry,
+        &views,
+        &demos,
+        [head],
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("ExportHead: failed to serialize: {e}");
+            return;
+        }
+    };
 
     // Derive a default filename from the head.
     let default_name = gantz_egui::export::default_filename(&head);
@@ -908,7 +916,7 @@ pub fn on_export_head<N>(
     bevy_tasks::AsyncComputeTaskPool::get()
         .spawn(async move {
             if let Some(handle) = dialog.save_file().await {
-                if let Err(e) = handle.write(ron_str.as_bytes()).await {
+                if let Err(e) = handle.write(text.as_bytes()).await {
                     log::error!("ExportHead: failed to write: {e}");
                 } else {
                     log::info!("Exported graph to {}", handle.file_name());
@@ -929,7 +937,7 @@ pub fn on_export_all_named<N>(
     views: Res<Views>,
     demos: Res<Demos>,
 ) where
-    N: 'static + Node + Clone + serde::Serialize + Send + Sync,
+    N: 'static + serde::Serialize + serde::de::DeserializeOwned + Node + Clone + Send + Sync,
 {
     let node_reg = registry_ref(&registry, &builtins, &demos);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
@@ -945,7 +953,7 @@ pub fn on_export_all_named<N>(
         return;
     }
 
-    let ron_str = match gantz_egui::export::export_heads_ron(
+    let text = match gantz_egui::export::export_heads_sexpr(
         &get_node,
         &registry,
         &views,
@@ -966,7 +974,7 @@ pub fn on_export_all_named<N>(
     bevy_tasks::AsyncComputeTaskPool::get()
         .spawn(async move {
             if let Some(handle) = dialog.save_file().await {
-                if let Err(e) = handle.write(ron_str.as_bytes()).await {
+                if let Err(e) = handle.write(text.as_bytes()).await {
                     log::error!("ExportAllNamed: failed to write: {e}");
                 } else {
                     log::info!("Exported all named graphs to {}", handle.file_name());
@@ -988,7 +996,14 @@ pub fn on_import_file<N>(
     mut demos: ResMut<Demos>,
     mut cmds: Commands,
 ) where
-    N: 'static + Node + Clone + serde::de::DeserializeOwned + Send + Sync,
+    N: 'static
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + ca::CaHash
+        + Node
+        + Clone
+        + Send
+        + Sync,
 {
     let event = trigger.event();
     let export = match gantz_egui::export::parse_export::<N>(&event.bytes) {
@@ -1023,23 +1038,17 @@ pub fn on_import_file<N>(
 /// Reset a base graph to its original state by re-merging from the base export.
 pub fn on_reset_base_graph<N>(trigger: On<ResetBaseGraphEvent>, mut registry: ResMut<Registry<N>>)
 where
-    N: 'static + Clone + serde::de::DeserializeOwned + Send + Sync,
+    N: 'static + Clone + serde::Serialize + serde::de::DeserializeOwned + ca::CaHash + Send + Sync,
 {
     let name = &trigger.event().0;
-    let text = match std::str::from_utf8(gantz_base::BYTES) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("ResetBaseGraph: invalid UTF-8: {e}");
-            return;
-        }
-    };
-    let export: gantz_egui::export::Export<Graph<N>> = match ron::from_str(text) {
-        Ok(e) => e,
-        Err(e) => {
-            log::error!("ResetBaseGraph: failed to deserialize base: {e}");
-            return;
-        }
-    };
+    let export: gantz_egui::export::Export<Graph<N>> =
+        match gantz_egui::export::parse_export::<N>(gantz_base::BYTES) {
+            Ok(e) => e,
+            Err(e) => {
+                log::error!("ResetBaseGraph: failed to parse base: {e}");
+                return;
+            }
+        };
     // Extract just the commits reachable from the target name.
     if let Some(&base_commit_ca) = export.registry.names().get(name) {
         let mut required = std::collections::HashSet::new();

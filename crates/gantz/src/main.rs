@@ -185,9 +185,8 @@ mod tests {
 
     #[test]
     fn base_gantz_deserializes() {
-        let text = std::str::from_utf8(BASE_GANTZ).expect("valid UTF-8");
         let _export: gantz_egui::export::Export<
             gantz_core::node::graph::Graph<Box<dyn super::node::Node>>,
-        > = ron::from_str(text).expect("valid RON");
+        > = gantz_egui::export::parse_export(BASE_GANTZ).expect("valid .gantz");
     }
 }

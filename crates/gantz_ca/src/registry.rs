@@ -147,6 +147,48 @@ impl<G> Registry<G> {
         self.names.insert(name, ca)
     }
 
+    /// Insert a commit, computing its address from the commit's contents.
+    ///
+    /// A commit must not reference a parent that is not in the registry, so a
+    /// parent that is absent is cleared to `None` *before* the address is
+    /// computed. Because the parent is part of the hashed content, the returned
+    /// address reflects the cleared parent: to preserve a chain's addresses,
+    /// insert its commits oldest-first so each parent is already present.
+    ///
+    /// Returns the computed [`CommitAddr`], which always matches the stored
+    /// commit.
+    pub fn add_commit(&mut self, mut commit: Commit) -> CommitAddr {
+        if let Some(parent) = commit.parent {
+            if !self.commits.contains_key(&parent) {
+                commit.parent = None;
+            }
+        }
+        let ca = commit_addr(&commit);
+        self.commits.insert(ca, commit);
+        ca
+    }
+
+    /// Insert a graph, computing its address from the graph's contents.
+    ///
+    /// Returns the computed [`GraphAddr`], which always matches the graph.
+    /// Content-addressing makes this idempotent: an existing entry for the
+    /// computed address is identical and is left in place.
+    pub fn add_graph(&mut self, graph: G) -> GraphAddr
+    where
+        G: Data + NodeIndexable,
+        G::EdgeWeight: CaHash + Ord,
+        G::NodeWeight: CaHash,
+        G::NodeId: Eq + Hash + Ord,
+        for<'a> &'a G: Data<EdgeWeight = G::EdgeWeight, NodeWeight = G::NodeWeight>
+            + GraphBase<NodeId = G::NodeId, EdgeId = G::EdgeId>
+            + IntoNodeReferences
+            + IntoEdgeReferences,
+    {
+        let ca = graph_addr(&graph);
+        self.graphs.entry(ca).or_insert(graph);
+        ca
+    }
+
     /// Remove the given name from the registry.
     ///
     /// This does not remove the underlying commit, just the name mapping.
@@ -452,5 +494,32 @@ mod tests {
         assert!(exported.commits().is_empty());
         assert!(exported.graphs().is_empty());
         assert!(exported.names().is_empty());
+    }
+
+    #[test]
+    fn add_commit_clears_absent_parent() {
+        let mut reg: Registry<String> =
+            Registry::new(HashMap::new(), HashMap::new(), BTreeMap::new());
+        let ga = graph_addr(1);
+        let absent_parent = commit_addr_raw(99);
+        // A commit naming a parent that is not present is stored as a root.
+        let ca = reg.add_commit(Commit::new(Duration::from_secs(1), Some(absent_parent), ga));
+        assert_eq!(reg.commits()[&ca].parent, None);
+        // Its address is that of the equivalent root commit.
+        let root = Commit::new(Duration::from_secs(1), None, ga);
+        assert_eq!(ca, crate::commit_addr(&root));
+    }
+
+    #[test]
+    fn add_commit_keeps_present_parent() {
+        let mut reg: Registry<String> =
+            Registry::new(HashMap::new(), HashMap::new(), BTreeMap::new());
+        let root = reg.add_commit(Commit::new(Duration::from_secs(1), None, graph_addr(1)));
+        let child = reg.add_commit(Commit::new(
+            Duration::from_secs(2),
+            Some(root),
+            graph_addr(2),
+        ));
+        assert_eq!(reg.commits()[&child].parent, Some(root));
     }
 }

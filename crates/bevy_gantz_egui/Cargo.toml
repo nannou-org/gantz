@@ -22,7 +22,6 @@ gantz_ca.workspace = true
 gantz_core.workspace = true
 gantz_egui.workspace = true
 rfd.workspace = true
-ron.workspace = true
 serde.workspace = true
 steel-core.workspace = true
 web-time.workspace = true

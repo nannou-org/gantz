@@ -21,12 +21,12 @@ egui_plot.workspace = true
 egui_tiles.workspace = true
 gantz_ca.workspace = true
 gantz_core.workspace = true
+gantz_format.workspace = true
 gantz_std.workspace = true
 hex.workspace = true
 humantime.workspace = true
 log.workspace = true
 petgraph.workspace = true
-ron.workspace = true
 serde.workspace = true
 steel-core.workspace = true
 sublime_fuzzy.workspace = true
@@ -40,6 +40,9 @@ dyn-clone.workspace = true
 eframe.workspace = true
 pollster.workspace = true
 rfd.workspace = true
+# The demo example persists session state (registry, heads) as RON; the library
+# itself no longer depends on RON.
+ron.workspace = true
 typetag.workspace = true
 # FIXME: temporarily disabled, see #122.
 # Workaround for https://github.com/emilk/egui/issues/7106

@@ -1,0 +1,17 @@
+[package]
+name = "gantz_format"
+version = "0.2.0"
+description = "Human-readable text format for gantz graph registries."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+gantz_ca.workspace = true
+gantz_core.workspace = true
+log.workspace = true
+petgraph.workspace = true
+serde.workspace = true
+steel-core.workspace = true
