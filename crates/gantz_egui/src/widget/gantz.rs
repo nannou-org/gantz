@@ -1,6 +1,6 @@
 use crate::{
-    CopyNodes, CreateNode, ExportAllNamed, ExportHead, GraphViews, HeadAccess, NodeCtx, NodeUi,
-    OpenCommandPalette, OpenPath, Paste, Redo, Registry, Undo, export,
+    CopyNodes, CreateNestedGraph, CreateNode, ExportAllNamed, ExportHead, GraphViews, HeadAccess,
+    NodeCtx, NodeUi, OpenCommandPalette, OpenPath, Paste, Redo, Registry, Undo, export,
     response::{DynResponse, Responses},
     widget::{
         self, GraphScene, GraphSceneState,
@@ -27,6 +27,14 @@ pub enum FileDropTarget {
     /// GraphScene pane: merge + open the root graph if unique.
     GraphScene,
 }
+
+/// The reserved node-type name that creates a new nested graph.
+///
+/// Selecting this entry in the command palette emits a
+/// [`CreateNestedGraph`](crate::CreateNestedGraph) rather than a
+/// [`CreateNode`](crate::CreateNode), so a nested graph is created like any
+/// other node but routed through the registry-aware op.
+pub const NESTED_GRAPH_TYPE: &str = "graph";
 
 /// A registry of available node types.
 ///
@@ -732,8 +740,14 @@ where
                     if !focused_immutable {
                         let created =
                             command_palette(gantz.env, head_state, &mut state.command_palette, ui);
-                        if let Some(create) = created {
-                            gantz_response.responses.push(Some(fh), create);
+                        match created {
+                            Some(PaletteChoice::Node(create)) => {
+                                gantz_response.responses.push(Some(fh), create);
+                            }
+                            Some(PaletteChoice::NestedGraph(create)) => {
+                                gantz_response.responses.push(Some(fh), create);
+                            }
+                            None => {}
                         }
                     }
                 }
@@ -1594,13 +1608,21 @@ fn path_labels(
     responses
 }
 
-/// Returns a [`CreateNode`] payload when a node type is chosen.
+/// A node-creation choice made in the command palette.
+enum PaletteChoice {
+    /// Create an ordinary node of the given type.
+    Node(CreateNode),
+    /// Create a new nested graph (the reserved [`NESTED_GRAPH_TYPE`] entry).
+    NestedGraph(CreateNestedGraph),
+}
+
+/// Returns a node-creation payload when a node type is chosen.
 fn command_palette(
     env: &dyn Registry,
     head_state: &OpenHeadState,
     cmd_palette: &mut widget::CommandPalette,
     ui: &mut egui::Ui,
-) -> Option<CreateNode> {
+) -> Option<PaletteChoice> {
     // If space is pressed, toggle command palette visibility.
     if !ui.ctx().wants_keyboard_input() {
         if ui.ctx().input(|i| i.key_pressed(egui::Key::Space)) {
@@ -1612,10 +1634,19 @@ fn command_palette(
     let types = env.node_types();
     let cmds = types.iter().map(|&k| NodeTyCmd { env, name: k });
 
-    // The chosen node type becomes a `CreateNode` payload.
-    cmd_palette.show(ui.ctx(), cmds).map(|cmd| CreateNode {
-        path: head_state.path.clone(),
-        node_type: cmd.name.to_string(),
+    // The chosen node type becomes a creation payload. The reserved
+    // `NESTED_GRAPH_TYPE` routes to the registry-aware nested-graph op.
+    cmd_palette.show(ui.ctx(), cmds).map(|cmd| {
+        if cmd.name == NESTED_GRAPH_TYPE {
+            PaletteChoice::NestedGraph(CreateNestedGraph {
+                path: head_state.path.clone(),
+            })
+        } else {
+            PaletteChoice::Node(CreateNode {
+                path: head_state.path.clone(),
+                node_type: cmd.name.to_string(),
+            })
+        }
     })
 }
 

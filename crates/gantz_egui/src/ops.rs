@@ -8,7 +8,9 @@
 
 use crate::widget::gantz::OpenHeadState;
 use crate::widget::graph_scene::{self, NodeIndex, ToGraphMut};
-use crate::{CreateNode, GraphViews, InspectEdge, PastePos, export, node::NamedRef};
+use crate::{
+    CreateNestedGraph, CreateNode, GraphViews, InspectEdge, PastePos, export, node::NamedRef,
+};
 use gantz_ca::{CaHash, CommitAddr};
 use gantz_core::node::{self, GetNode, graph::Graph};
 use serde::Serialize;
@@ -134,6 +136,59 @@ where
     let node_path: Vec<_> = path.iter().copied().chain(Some(node_ix.index())).collect();
     let reg_ctx = node::RegCtx::new(get_node, &node_path, vm);
     nested[node_ix].register(reg_ctx);
+
+    // Position the new node at the scene center (or use layout default).
+    let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
+    let view = views.entry(path).or_default();
+    view.layout.entry(egui_id).or_insert(egui::Pos2::ZERO);
+
+    Some(node_ix)
+}
+
+/// Create a nested graph at `cmd.path`: commit a fresh empty graph to the
+/// registry under the name `<parent>:<n>` and insert a synced [`NamedRef`] to
+/// it, registering it with the VM and seeding its layout entry.
+///
+/// `parent` is the emitting head's name; the new graph is named with the first
+/// free `<parent>:<n>` leaf. Returns the index of the new node.
+pub fn create_nested_graph<N>(
+    registry: &mut gantz_ca::Registry<Graph<N>>,
+    timestamp: std::time::Duration,
+    graph: &mut Graph<N>,
+    views: &mut GraphViews,
+    parent: &str,
+    cmd: CreateNestedGraph,
+) -> Option<NodeIndex>
+where
+    N: gantz_core::Node + From<NamedRef> + CaHash + ToGraphMut<Node = N>,
+{
+    let CreateNestedGraph { path } = cmd;
+
+    // Pick the first free `<parent>:<n>` leaf name.
+    let sep = crate::node::NESTED_SEP;
+    let mut n = 1u32;
+    let name = loop {
+        let candidate = format!("{parent}{sep}{n}");
+        if !registry.names().contains_key(&candidate) {
+            break candidate;
+        }
+        n += 1;
+    };
+
+    // Commit a fresh empty graph under the chosen name.
+    let nested_graph = Graph::<N>::default();
+    let graph_ca = gantz_ca::graph_addr(&nested_graph);
+    let commit_ca = registry.commit_graph_to_name(timestamp, graph_ca, || nested_graph, &name);
+
+    // Insert a synced reference to the new nested graph. The referenced graph is
+    // empty, so the node has no state to register here; the next `vm::sync`
+    // recompile re-registers the whole working graph.
+    let Some(parent_graph) = graph_scene::index_path_graph_mut(graph, &path) else {
+        log::error!("CreateNestedGraph: could not find graph at path {path:?}");
+        return None;
+    };
+    let named_ref = NamedRef::with_sync(name, node::Ref::new(commit_ca.into()));
+    let node_ix = parent_graph.add_node(N::from(named_ref));
 
     // Position the new node at the scene center (or use layout default).
     let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);

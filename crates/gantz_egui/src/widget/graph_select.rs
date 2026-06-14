@@ -133,6 +133,9 @@ impl<'a> GraphSelect<'a> {
                 // 3. All demos (alphabetical, regardless of user/base)
                 let is_base = |name: &str| self.base_names.contains_key(name);
                 let is_demo = |name: &str| name.starts_with("demo-");
+                // Nested graphs (`parent:child`) are hidden from the root list;
+                // they are reached by navigating into their parent.
+                let is_nested = |name: &str| name.contains(crate::node::NESTED_SEP);
                 let matches_filter = |name: &str| {
                     state.name_filter.is_empty()
                         || state
@@ -164,7 +167,10 @@ impl<'a> GraphSelect<'a> {
                     };
 
                 // 1. User-named, non-demo.
-                for (name, ca) in names.iter().filter(|(n, _)| !is_base(n) && !is_demo(n)) {
+                for (name, ca) in names
+                    .iter()
+                    .filter(|(n, _)| !is_base(n) && !is_demo(n) && !is_nested(n))
+                {
                     if !matches_filter(name) {
                         continue;
                     }
@@ -181,7 +187,10 @@ impl<'a> GraphSelect<'a> {
                 }
 
                 // 2. Base-named, non-demo.
-                for (name, ca) in names.iter().filter(|(n, _)| is_base(n) && !is_demo(n)) {
+                for (name, ca) in names
+                    .iter()
+                    .filter(|(n, _)| is_base(n) && !is_demo(n) && !is_nested(n))
+                {
                     if !matches_filter(name) {
                         continue;
                     }
@@ -198,7 +207,7 @@ impl<'a> GraphSelect<'a> {
                 }
 
                 // 3. All demos, alphabetical, regardless of user/base.
-                for (name, ca) in names.iter().filter(|(n, _)| is_demo(n)) {
+                for (name, ca) in names.iter().filter(|(n, _)| is_demo(n) && !is_nested(n)) {
                     if !matches_filter(name) {
                         continue;
                     }

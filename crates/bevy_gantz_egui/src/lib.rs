@@ -102,6 +102,7 @@ where
         app.register_head_response::<gantz_egui::BranchNode>()
             .register_head_response::<gantz_egui::CopyNodes>()
             .register_head_response::<gantz_egui::CreateNode>()
+            .register_head_response::<gantz_egui::CreateNestedGraph>()
             .register_head_response::<gantz_egui::InspectEdge>()
             .register_head_response::<gantz_egui::Paste>()
             .register_head_response::<gantz_egui::Redo>()
@@ -129,6 +130,7 @@ where
             .add_observer(on_eval_entry_complete)
             // GUI response payload observers
             .add_observer(on_create_node::<N>)
+            .add_observer(on_create_nested_graph::<N>)
             .add_observer(on_branch_node::<N>)
             .add_observer(on_inspect_edge::<N>)
             .add_observer(on_copy_nodes::<N>)
@@ -666,6 +668,54 @@ pub fn on_branch_node<N>(
         event.data.new_name.clone(),
         event.data.ca,
         &event.data.path,
+    );
+}
+
+/// Handle create nested graph payloads.
+///
+/// Commits a fresh empty graph named `<parent>:<n>` (where `<parent>` is the
+/// head's branch name) and inserts a synced `NamedRef` to it in the head's
+/// working graph. Requires the head to be named.
+pub fn on_create_nested_graph<N>(
+    trigger: On<ForHead<gantz_egui::CreateNestedGraph>>,
+    mut registry: ResMut<Registry<N>>,
+    mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
+    mut views_query: Query<&mut GraphViews, With<head::OpenHead>>,
+) where
+    N: 'static
+        + Node
+        + From<gantz_egui::node::NamedRef>
+        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
+        + ca::CaHash
+        + Send
+        + Sync,
+{
+    let event = trigger.event();
+    let Ok(mut data) = heads.get_mut(event.head) else {
+        log::error!(
+            "CreateNestedGraph: head not found for entity {:?}",
+            event.head
+        );
+        return;
+    };
+    let ca::Head::Branch(parent) = data.head_ref.0.clone() else {
+        log::warn!("CreateNestedGraph: name the graph before adding a nested graph");
+        return;
+    };
+    let Ok(mut views) = views_query.get_mut(event.head) else {
+        log::error!(
+            "CreateNestedGraph: views not found for entity {:?}",
+            event.head
+        );
+        return;
+    };
+    gantz_egui::ops::create_nested_graph(
+        &mut registry,
+        bevy_gantz::reg::timestamp(),
+        &mut data.working_graph,
+        &mut views,
+        &parent,
+        event.data.clone(),
     );
 }
 

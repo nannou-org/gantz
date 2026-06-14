@@ -962,6 +962,25 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         );
     }
 
+    for (head, create) in responses.take::<gantz_egui::CreateNestedGraph>() {
+        let Some((head, ix)) = tagged_head(state, head) else {
+            continue;
+        };
+        let gantz_ca::Head::Branch(parent) = head else {
+            log::warn!("CreateNestedGraph: name the graph before adding a nested graph");
+            continue;
+        };
+        let (_, graph, views) = &mut state.heads[ix];
+        gantz_egui::ops::create_nested_graph(
+            &mut state.env.registry,
+            timestamp(),
+            graph,
+            views,
+            &parent,
+            create,
+        );
+    }
+
     for (head, gantz_egui::CopyNodes(nodes)) in responses.take() {
         let Some((head, ix)) = tagged_head(state, head) else {
             continue;

@@ -228,6 +228,18 @@ pub struct CreateNode {
     pub node_type: String,
 }
 
+/// Create a new nested graph at the current path.
+///
+/// Commits a fresh empty graph to the registry under the name `<parent>:<n>`
+/// (where `<parent>` is the emitting head's name) and inserts a synced
+/// [`node::NamedRef`](crate::node::NamedRef) to it. Behaves like creating any
+/// other node, but is registry-aware.
+#[derive(Clone, Debug)]
+pub struct CreateNestedGraph {
+    /// The path within the graph hierarchy where the node should be created.
+    pub path: Vec<node::Id>,
+}
+
 /// Evaluate an entrypoint (push or pull).
 #[derive(Clone, Debug)]
 pub struct EvalEntry(pub gantz_core::compile::Entrypoint);
