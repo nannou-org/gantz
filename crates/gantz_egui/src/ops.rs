@@ -9,8 +9,10 @@
 use crate::widget::gantz::OpenHeadState;
 use crate::widget::graph_scene::{self, NodeIndex, ToGraphMut};
 use crate::{CreateNode, GraphViews, InspectEdge, PastePos, export, node::NamedRef};
-use gantz_ca::CommitAddr;
+use gantz_ca::{CaHash, CommitAddr};
 use gantz_core::node::{self, GetNode, graph::Graph};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::collections::{HashMap, HashSet};
 use steel::steel_vm::engine::Engine;
 
@@ -72,7 +74,13 @@ pub fn copy_nodes<N>(
     selection: &HashSet<NodeIndex>,
 ) -> Option<String>
 where
-    N: gantz_core::Node + Clone + crate::format::Lowerable + ToGraphMut<Node = N>,
+    N: gantz_core::Node
+        + Clone
+        + Serialize
+        + DeserializeOwned
+        + CaHash
+        + ToGraphMut<Node = N>
+        + 'static,
 {
     if selection.is_empty() {
         return None;
@@ -218,7 +226,7 @@ pub fn paste<N>(
     pos: &PastePos,
 ) -> bool
 where
-    N: Clone + crate::format::Lowerable + ToGraphMut<Node = N>,
+    N: Clone + Serialize + DeserializeOwned + CaHash + ToGraphMut<Node = N> + 'static,
 {
     let copied: export::Copied<N> = match export::copied_from_str(text) {
         Ok(c) => c,

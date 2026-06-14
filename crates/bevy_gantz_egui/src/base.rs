@@ -28,7 +28,7 @@ pub fn load<N>(
     mut views: ResMut<crate::Views>,
     mut demos: ResMut<crate::Demos>,
 ) where
-    N: gantz_egui::format::Lowerable + Send + Sync,
+    N: 'static + serde::Serialize + serde::de::DeserializeOwned + gantz_ca::CaHash + Send + Sync,
 {
     let export: gantz_egui::export::Export<Graph<N>> = match gantz_egui::export::parse_export(BYTES)
     {
@@ -63,7 +63,13 @@ pub fn export_to_file<N>(
     views: Res<crate::Views>,
     demos: Res<crate::Demos>,
 ) where
-    N: gantz_egui::format::Lowerable + gantz_core::Node + Clone + Send + Sync,
+    N: 'static
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + gantz_core::Node
+        + Clone
+        + Send
+        + Sync,
 {
     let Some(text) = export_all_named(&registry, &builtins, &views, &demos) else {
         log::error!("export_to_file: failed to serialize");
@@ -85,7 +91,13 @@ pub fn export_all_named<N>(
     demos: &crate::Demos,
 ) -> Option<String>
 where
-    N: gantz_egui::format::Lowerable + gantz_core::Node + Clone + Send + Sync,
+    N: 'static
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + gantz_core::Node
+        + Clone
+        + Send
+        + Sync,
 {
     let node_reg = crate::registry_ref(registry, builtins, demos);
     let get_node = |ca: &gantz_ca::ContentAddr| node_reg.node(ca);

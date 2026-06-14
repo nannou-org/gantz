@@ -731,7 +731,9 @@ pub fn on_copy_nodes<N>(
     N: 'static
         + Node
         + Clone
-        + gantz_egui::format::Lowerable
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + ca::CaHash
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
         + Sync,
@@ -782,7 +784,9 @@ pub fn on_paste<N>(
     N: 'static
         + Node
         + Clone
-        + gantz_egui::format::Lowerable
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + ca::CaHash
         + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
         + Sync,
@@ -876,7 +880,7 @@ pub fn on_export_head<N>(
     demos: Res<Demos>,
     heads: Query<&head::HeadRef, With<head::OpenHead>>,
 ) where
-    N: gantz_egui::format::Lowerable + Node + Clone + Send + Sync,
+    N: 'static + serde::Serialize + serde::de::DeserializeOwned + Node + Clone + Send + Sync,
 {
     let event = trigger.event();
     let Ok(head_ref) = heads.get(event.head) else {
@@ -933,7 +937,7 @@ pub fn on_export_all_named<N>(
     views: Res<Views>,
     demos: Res<Demos>,
 ) where
-    N: gantz_egui::format::Lowerable + Node + Clone + Send + Sync,
+    N: 'static + serde::Serialize + serde::de::DeserializeOwned + Node + Clone + Send + Sync,
 {
     let node_reg = registry_ref(&registry, &builtins, &demos);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
@@ -992,7 +996,14 @@ pub fn on_import_file<N>(
     mut demos: ResMut<Demos>,
     mut cmds: Commands,
 ) where
-    N: gantz_egui::format::Lowerable + Node + Clone + Send + Sync,
+    N: 'static
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + ca::CaHash
+        + Node
+        + Clone
+        + Send
+        + Sync,
 {
     let event = trigger.event();
     let export = match gantz_egui::export::parse_export::<N>(&event.bytes) {
@@ -1027,7 +1038,7 @@ pub fn on_import_file<N>(
 /// Reset a base graph to its original state by re-merging from the base export.
 pub fn on_reset_base_graph<N>(trigger: On<ResetBaseGraphEvent>, mut registry: ResMut<Registry<N>>)
 where
-    N: 'static + Clone + gantz_egui::format::Lowerable + Send + Sync,
+    N: 'static + Clone + serde::Serialize + serde::de::DeserializeOwned + ca::CaHash + Send + Sync,
 {
     let name = &trigger.event().0;
     let export: gantz_egui::export::Export<Graph<N>> =

@@ -9,13 +9,15 @@
 
 use crate::GraphViews;
 use crate::export::Export;
-use gantz_ca::{CommitAddr, Registry, Timestamp};
+use gantz_ca::{CaHash, CommitAddr, Registry, Timestamp};
 use gantz_core::node::graph::Graph;
 use gantz_format::sexpr;
 use gantz_format::{Addr, Form, GraphLabels, Loaded};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 
-pub use gantz_format::{FormatError, Lowerable};
+pub use gantz_format::FormatError;
 
 /// Parse a `.gantz` document into an [`Export`] (registry + views + demos).
 ///
@@ -23,7 +25,7 @@ pub use gantz_format::{FormatError, Lowerable};
 /// explicitly (hand-authored graphs).
 pub fn from_str<N>(text: &str, now: Timestamp) -> Result<Export<Graph<N>>, FormatError>
 where
-    N: Lowerable,
+    N: Serialize + DeserializeOwned + CaHash + 'static,
 {
     let loaded = gantz_format::from_str::<N>(text, now)?;
     let mut views: HashMap<CommitAddr, GraphViews> = HashMap::new();
@@ -45,7 +47,7 @@ where
 /// Serialize an [`Export`] to a `.gantz` document.
 pub fn to_string<N>(export: &Export<Graph<N>>) -> Result<String, FormatError>
 where
-    N: Lowerable,
+    N: Serialize + DeserializeOwned,
 {
     let dumped = gantz_format::to_string::<N>(&export.registry)?;
     // Each top-level block is a section; they are joined with a blank line.

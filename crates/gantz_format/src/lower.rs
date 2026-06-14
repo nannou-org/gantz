@@ -12,25 +12,14 @@ use crate::error::{ErrorKind, FormatError};
 use crate::model::{
     Addr, CommitDecl, Document, Form, GraphBody, GraphDef, NameDecl, NodeDecl, NodeSpec, RefSpec,
 };
-use gantz_ca::{Commit, CommitAddr, ContentAddr, Registry, Timestamp};
+use gantz_ca::{CaHash, Commit, CommitAddr, ContentAddr, Registry, Timestamp};
 use gantz_core::edge::Edge;
 use gantz_core::node::graph::{Graph, GraphNode, NodeIx};
 use gantz_core::node::{Input, Output};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
-
-/// The bounds a node type must satisfy to be lowered from the text format.
-///
-/// `'static` is required because content-addressing borrows the graph for
-/// every lifetime (`for<'a> &'a Graph<N>: ..`).
-pub trait Lowerable:
-    'static + serde::Serialize + serde::de::DeserializeOwned + gantz_ca::CaHash
-{
-}
-impl<N> Lowerable for N where
-    N: 'static + serde::Serialize + serde::de::DeserializeOwned + gantz_ca::CaHash
-{
-}
 
 /// The result of lowering a [`Document`]: the registry plus the resolution
 /// context and preserved extra forms an extender needs.
@@ -61,7 +50,9 @@ struct Resolve<'a> {
 /// commits at `now` for any graph the `(commits ...)` table does not describe.
 pub fn lower<N>(doc: Document, now: Timestamp) -> Result<Loaded<N>, FormatError>
 where
-    N: Lowerable,
+    // `'static` is required by content-addressing (`Registry::add_graph`), whose
+    // `for<'a> &'a Graph<N>` bound only holds for all `'a` when `N: 'static`.
+    N: Serialize + DeserializeOwned + CaHash + 'static,
 {
     let Document {
         graphs,
@@ -161,7 +152,7 @@ fn build_graph<N>(
     resolve: &Resolve,
 ) -> Result<(Graph<N>, HashMap<String, usize>), FormatError>
 where
-    N: Lowerable,
+    N: Serialize + DeserializeOwned,
 {
     let mut graph: Graph<N> = Graph::default();
     let mut index: HashMap<String, usize> = HashMap::new();
@@ -198,7 +189,7 @@ where
 
 fn build_node<N>(decl: &NodeDecl, resolve: &Resolve) -> Result<N, FormatError>
 where
-    N: Lowerable,
+    N: Serialize + DeserializeOwned,
 {
     match &decl.spec {
         NodeSpec::Value(v) => node_from_datum::<N>(v.clone()),
@@ -237,7 +228,7 @@ fn insert_type(datum: Datum, tag: &str) -> Datum {
 
 fn node_from_datum<N>(datum: Datum) -> Result<N, FormatError>
 where
-    N: serde::de::DeserializeOwned,
+    N: DeserializeOwned,
 {
     let tag = datum_field(&datum, "type")
         .and_then(datum_str)

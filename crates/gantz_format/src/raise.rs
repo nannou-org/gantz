@@ -10,7 +10,6 @@
 
 use crate::datum::{Datum, datum_bool, datum_field, datum_str, from_datum, to_datum};
 use crate::error::{ErrorKind, FormatError};
-use crate::lower::Lowerable;
 use crate::model::{
     Addr, CommitDecl, Conn, Document, Endpoint, GraphBody, GraphDef, NameDecl, NodeDecl, NodeSpec,
     RefSpec,
@@ -19,6 +18,8 @@ use crate::sugar::Sugar;
 use gantz_ca::{ContentAddr, GraphAddr, Registry};
 use gantz_core::node::graph::Graph;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 
 /// The result of serializing a registry: the text plus the per-graph label
@@ -41,7 +42,7 @@ pub struct GraphLabels {
 /// Raise a registry into serialized text plus per-graph label context.
 pub fn raise<N>(registry: &Registry<Graph<N>>, sugar: &dyn Sugar) -> Result<Dumped, FormatError>
 where
-    N: Lowerable,
+    N: Serialize + DeserializeOwned,
 {
     let mut doc = Document::default();
     let mut graphs = HashMap::new();
@@ -86,7 +87,7 @@ fn graph_to_body<N>(
     sugar: &dyn Sugar,
 ) -> Result<(GraphBody, HashMap<usize, String>), FormatError>
 where
-    N: Lowerable,
+    N: Serialize + DeserializeOwned,
 {
     let mut nodes = Vec::new();
     let mut labels: HashMap<usize, String> = HashMap::new();
@@ -134,7 +135,7 @@ fn node_spec_from_datum<N>(
     sugar: &dyn Sugar,
 ) -> Result<(NodeSpec, String), FormatError>
 where
-    N: Lowerable,
+    N: Serialize + DeserializeOwned,
 {
     let tag = datum_field(&value, "type")
         .and_then(datum_str)
