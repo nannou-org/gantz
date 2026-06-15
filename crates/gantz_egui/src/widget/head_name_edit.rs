@@ -10,9 +10,14 @@ pub struct HeadNameEditResponse {
 
 /// Show a validated name-editing `TextEdit` for the given head.
 ///
-/// Text is red when the name is empty or already exists (excluding the head's
-/// own current name). Returns a valid `new_branch` when a rename is committed
-/// via Enter or focus loss.
+/// Text is red when the name is empty, already exists (excluding the head's own
+/// current name), or contains the reserved nested-graph separator `:`. Returns
+/// a valid `new_branch` when a rename is committed via Enter or focus loss.
+///
+/// `:` is reserved for the `parent:child` nesting convention and is only ever
+/// produced by creating a nested graph - so renaming always targets a plain
+/// (root) name. For a nested graph, that effectively saves it as a new root
+/// graph copy.
 pub fn head_name_edit(
     head: &gantz_ca::Head,
     name: &mut String,
@@ -22,7 +27,8 @@ pub fn head_name_edit(
     let name_exists = names.contains_key(name.as_str());
     let is_current_name = matches!(head, gantz_ca::Head::Branch(n) if n == name);
     let is_empty = name.is_empty();
-    let is_invalid = is_empty || (name_exists && !is_current_name);
+    let has_separator = name.contains(crate::node::NESTED_SEP);
+    let is_invalid = is_empty || (!is_current_name && (name_exists || has_separator));
 
     let text_color = if is_invalid && !is_current_name {
         egui::Color32::RED
@@ -34,7 +40,13 @@ pub fn head_name_edit(
         .desired_width(ui.available_width())
         .text_color(text_color)
         .hint_text("name");
-    let response = ui.add(text_edit);
+    let mut response = ui.add(text_edit);
+    if has_separator && !is_current_name {
+        response = response.on_hover_text(format!(
+            "'{}' is reserved for nested graphs; use a plain name",
+            crate::node::NESTED_SEP,
+        ));
+    }
 
     let enter_pressed = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
     let focus_lost = response.lost_focus() && !ui.input(|i| i.key_pressed(egui::Key::Escape));

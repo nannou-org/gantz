@@ -568,4 +568,71 @@ mod tests {
             "the original child A:1 must remain"
         );
     }
+
+    /// Copying a node that references a nested graph and pasting it must keep the
+    /// reference. The format preserves only the head commit per graph, so an
+    /// *edited* nested graph's head address heals on paste (its parent is
+    /// dropped); the `NamedRef` must still resolve - by name - rather than
+    /// vanish.
+    #[test]
+    fn clipboard_round_trips_nested_ref() {
+        use gantz_core::node::{Identity, Ref};
+        use gantz_egui::export;
+        use gantz_egui::node::NamedRef;
+        use std::any::Any;
+        use std::collections::{HashMap, HashSet};
+        use std::time::Duration;
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let mut registry = gantz_ca::Registry::<G>::default();
+
+        // Nested graph "A:1", committed twice so its head commit has a parent
+        // (the format does not preserve it, so the head address heals on paste).
+        let mut v1 = G::default();
+        v1.add_node(Box::new(Identity) as Box<dyn Node>);
+        registry.commit_graph_to_name(
+            Duration::from_secs(1),
+            gantz_ca::graph_addr(&v1),
+            || v1,
+            "A:1",
+        );
+        let mut v2 = G::default();
+        v2.add_node(Box::new(Identity) as Box<dyn Node>);
+        v2.add_node(Box::new(Identity) as Box<dyn Node>);
+        let head = registry.commit_graph_to_name(
+            Duration::from_secs(2),
+            gantz_ca::graph_addr(&v2),
+            || v2,
+            "A:1",
+        );
+
+        // A graph holding a synced NamedRef to "A:1".
+        let mut graph: G = G::default();
+        let nref = graph.add_node(Box::new(NamedRef::with_sync(
+            "A:1".to_string(),
+            Ref::new(head.into()),
+        )) as Box<dyn Node>);
+        let selected: HashSet<_> = [nref].into_iter().collect();
+
+        // Copy -> clipboard text -> paste.
+        let copied = export::copy(
+            &registry,
+            &HashMap::new(),
+            &graph,
+            &selected,
+            &egui_graph::Layout::default(),
+        );
+        let text = export::copied_to_string(&copied).expect("copied to text");
+        let back: export::Copied<Box<dyn Node>> =
+            export::copied_from_str(&text).expect("copied from text");
+
+        assert_eq!(back.graph.node_count(), 1, "the nested-ref node must paste");
+        let kept = back.graph.node_weights().any(|n| {
+            ((&**n) as &dyn Any)
+                .downcast_ref::<NamedRef>()
+                .map(|nr| nr.name() == "A:1")
+                .unwrap_or(false)
+        });
+        assert!(kept, "the pasted node must still be a NamedRef to A:1");
+    }
 }

@@ -223,7 +223,14 @@ fn resolve_ref_value(refspec: &RefSpec, resolve: &Resolve) -> Result<Datum, Form
                 .get(&Addr::Label(label.clone()))
                 .copied()
                 .ok_or_else(|| FormatError::new(ErrorKind::MissingDependency(label.clone())))?,
+            // A pinned address is advisory: if it no longer resolves (e.g. the
+            // commit healed because the format keeps only the head commit per
+            // graph, so a parent was dropped and the address recomputed), fall
+            // back to the reference's name. This keeps `NamedRef`s - including
+            // nested-graph refs in a copy/paste payload - resolving across the
+            // address drift (#232).
             Some(Addr::Concrete(hex)) => resolve_commit(hex, resolve.known)
+                .or_else(|| resolve.names.get(&refspec.name).copied())
                 .ok_or_else(|| FormatError::new(ErrorKind::MissingDependency(hex.clone())))?,
         };
     let content: ContentAddr = commit_ca.into();
@@ -257,13 +264,14 @@ fn build_commit<N>(
     let parent = resolve_parent(&decl.parent, commit_ids, known);
     let timestamp = Duration::new(decl.secs, decl.nanos);
     let commit_ca = registry.add_commit(Commit::new(timestamp, parent, g_addr));
-    // Warn if a declared id no longer matches the recomputed address (a stale
-    // file - e.g. the hashing changed). Heal rather than fail; refs pinned to
-    // the old address may not resolve (a planned follow-up remaps them).
+    // A declared id may not match the recomputed address - e.g. the format
+    // keeps only the head commit per graph, so a dropped parent re-roots the
+    // commit and changes its hash. This is routine (refs recover by name in
+    // `resolve_ref_value`), so it is logged at debug rather than warned.
     if let Addr::Concrete(hex) = &decl.id {
         let computed = ContentAddr::from(commit_ca).to_string();
         if !computed.starts_with(hex.as_str()) {
-            log::warn!(
+            log::debug!(
                 "commit `{hex}` no longer matches its contents (recomputed `{computed}`); \
                  using the recomputed address",
             );
@@ -273,8 +281,10 @@ fn build_commit<N>(
     commit_ca
 }
 
-/// Resolve a commit's declared parent to a present commit, warning when a
-/// named parent is not in the file (it becomes a root).
+/// Resolve a commit's declared parent to a present commit. A parent absent from
+/// the document re-roots the commit; this is routine (the format keeps only the
+/// head commit per graph, so history parents are commonly absent), so it is
+/// logged at debug rather than warned.
 fn resolve_parent(
     parent: &Option<Addr>,
     commit_ids: &HashMap<Addr, CommitAddr>,
@@ -285,14 +295,14 @@ fn resolve_parent(
         Some(addr @ Addr::Label(label)) => match commit_ids.get(addr) {
             Some(ca) => Some(*ca),
             None => {
-                log::warn!("commit parent label `{label}` not present; recorded as a root commit");
+                log::debug!("commit parent label `{label}` not present; recorded as a root commit");
                 None
             }
         },
         Some(Addr::Concrete(hex)) => match resolve_commit(hex, known) {
             Some(ca) => Some(ca),
             None => {
-                log::warn!("commit parent `{hex}` not present; recorded as a root commit");
+                log::debug!("commit parent `{hex}` not present; recorded as a root commit");
                 None
             }
         },

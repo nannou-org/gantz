@@ -252,14 +252,27 @@ where
         }
     }
 
-    // Collect registry deps: gather ContentAddrs from nodes, convert to
-    // CommitAddrs, filter to those present in the registry, then export.
+    // Collect registry deps transitively: the commits the selected nodes
+    // reference, and the commits *those* graphs reference in turn (a nested
+    // graph that itself contains nested graphs), so the whole subtree travels
+    // with the clipboard.
     let mut required_commits = HashSet::new();
-    for n in subgraph.node_indices() {
-        for ca in subgraph[n].required_addrs() {
-            let commit_ca = CommitAddr::from(ca);
-            if registry.commits().contains_key(&commit_ca) {
-                required_commits.insert(commit_ca);
+    let mut stack: Vec<CommitAddr> = subgraph
+        .node_weights()
+        .flat_map(|n| n.required_addrs())
+        .map(CommitAddr::from)
+        .filter(|ca| registry.commits().contains_key(ca))
+        .collect();
+    while let Some(commit_ca) = stack.pop() {
+        if !required_commits.insert(commit_ca) {
+            continue;
+        }
+        if let Some(nested) = registry.commit_graph_ref(&commit_ca) {
+            for ca in nested.node_weights().flat_map(|n| n.required_addrs()) {
+                let dep = CommitAddr::from(ca);
+                if registry.commits().contains_key(&dep) {
+                    stack.push(dep);
+                }
             }
         }
     }

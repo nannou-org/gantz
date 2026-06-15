@@ -1565,8 +1565,15 @@ fn name_breadcrumb(
                     for (i, seg) in segs.iter().enumerate() {
                         let is_current = i + 1 == segs.len();
                         let prefix = segs[..=i].join(&sep_str);
+                        // The crumbs are tiny: the root is `R` (its name is too
+                        // big to fit), and each nested level is its short leaf.
+                        let (label, hover) = if i == 0 {
+                            ("R".to_string(), format!("navigate to {seg} root"))
+                        } else {
+                            (seg.to_string(), format!("navigate to {prefix}"))
+                        };
                         ui.vertical_centered_justified(|ui| {
-                            let resp = ui.add(button(seg)).on_hover_text(&prefix);
+                            let resp = ui.add(button(&label)).on_hover_text(hover);
                             if resp.clicked() && !is_current {
                                 responses.push(DynResponse::new(ReplaceHead(
                                     gantz_ca::Head::Branch(prefix),
