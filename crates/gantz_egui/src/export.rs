@@ -1,10 +1,9 @@
 //! Export/import representation for sharing node sets between gantz instances.
 //!
 //! The [`Export`] type bundles a [`gantz_ca::Registry`] subset with optional
-//! [`GraphViews`] layout data. Serialization uses the `.gantz` S-expression text
+//! [`egui_graph::View`] layout data. Serialization uses the `.gantz` S-expression text
 //! format (see [`crate::format`]) under the `.gantz` file extension.
 
-use crate::GraphViews;
 use gantz_ca::{CaHash, CommitAddr, registry::MergeResult};
 use gantz_core::node::{self, GetNode, graph::Graph};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -43,11 +42,8 @@ impl std::error::Error for ParseExportError {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Export<G> {
     pub registry: gantz_ca::Registry<G>,
-    #[serde(
-        default,
-        serialize_with = "gantz_ca::serde_sorted::serialize_map_of_maps"
-    )]
-    pub views: HashMap<CommitAddr, GraphViews>,
+    #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
+    pub views: HashMap<CommitAddr, egui_graph::View>,
     /// Maps commits to their associated demo graph name (a `demo-*` name).
     #[serde(default)]
     pub demos: HashMap<CommitAddr, String>,
@@ -56,7 +52,7 @@ pub struct Export<G> {
 /// Produce an [`Export`] by filtering views and demos to commits present in the registry.
 pub fn export_with<G>(
     registry: gantz_ca::Registry<G>,
-    all_views: &HashMap<CommitAddr, GraphViews>,
+    all_views: &HashMap<CommitAddr, egui_graph::View>,
     all_demos: &HashMap<CommitAddr, String>,
 ) -> Export<G>
 where
@@ -120,7 +116,7 @@ where
 pub fn export_heads_sexpr<N>(
     get_node: GetNode,
     registry: &gantz_ca::Registry<Graph<N>>,
-    all_views: &HashMap<CommitAddr, GraphViews>,
+    all_views: &HashMap<CommitAddr, egui_graph::View>,
     all_demos: &HashMap<CommitAddr, String>,
     heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
 ) -> Result<String, crate::format::FormatError>
@@ -138,7 +134,7 @@ where
 /// entries for known commits are kept.
 pub fn merge_with<G>(
     registry: &mut gantz_ca::Registry<G>,
-    views: &mut HashMap<CommitAddr, GraphViews>,
+    views: &mut HashMap<CommitAddr, egui_graph::View>,
     demos: &mut HashMap<CommitAddr, String>,
     export: Export<G>,
 ) -> MergeResult {
@@ -234,7 +230,7 @@ pub struct Copied<N> {
 /// Build a [`Copied`] payload from the selected nodes in a graph.
 pub fn copy<N>(
     registry: &gantz_ca::Registry<Graph<N>>,
-    all_views: &HashMap<CommitAddr, GraphViews>,
+    all_views: &HashMap<CommitAddr, egui_graph::View>,
     graph: &Graph<N>,
     selected: &HashSet<node::graph::NodeIx>,
     layout: &egui_graph::Layout,
@@ -256,14 +252,27 @@ where
         }
     }
 
-    // Collect registry deps: gather ContentAddrs from nodes, convert to
-    // CommitAddrs, filter to those present in the registry, then export.
+    // Collect registry deps transitively: the commits the selected nodes
+    // reference, and the commits *those* graphs reference in turn (a nested
+    // graph that itself contains nested graphs), so the whole subtree travels
+    // with the clipboard.
     let mut required_commits = HashSet::new();
-    for n in subgraph.node_indices() {
-        for ca in subgraph[n].required_addrs() {
-            let commit_ca = CommitAddr::from(ca);
-            if registry.commits().contains_key(&commit_ca) {
-                required_commits.insert(commit_ca);
+    let mut stack: Vec<CommitAddr> = subgraph
+        .node_weights()
+        .flat_map(|n| n.required_addrs())
+        .map(CommitAddr::from)
+        .filter(|ca| registry.commits().contains_key(ca))
+        .collect();
+    while let Some(commit_ca) = stack.pop() {
+        if !required_commits.insert(commit_ca) {
+            continue;
+        }
+        if let Some(nested) = registry.commit_graph_ref(&commit_ca) {
+            for ca in nested.node_weights().flat_map(|n| n.required_addrs()) {
+                let dep = CommitAddr::from(ca);
+                if registry.commits().contains_key(&dep) {
+                    stack.push(dep);
+                }
             }
         }
     }
@@ -284,7 +293,7 @@ where
 /// target graph.
 pub fn paste<N>(
     registry: &mut gantz_ca::Registry<Graph<N>>,
-    views: &mut HashMap<CommitAddr, GraphViews>,
+    views: &mut HashMap<CommitAddr, egui_graph::View>,
     demos: &mut HashMap<CommitAddr, String>,
     target_graph: &mut Graph<N>,
     target_layout: &mut egui_graph::Layout,
@@ -330,17 +339,15 @@ where
     ));
     registry.insert_name(CLIPBOARD_NAME.to_string(), commit_ca);
 
-    // Carry the positions as the clipboard graph's top-level layout view.
+    // Carry the positions as the clipboard graph's layout view.
     let mut views = copied.export.views.clone();
-    let mut clip_views = GraphViews::new();
-    clip_views.insert(
-        Vec::new(),
+    views.insert(
+        commit_ca,
         egui_graph::View {
             scene_rect: egui::Rect::ZERO,
             layout: copied.positions.clone(),
         },
     );
-    views.insert(commit_ca, clip_views);
 
     let export = Export {
         registry,
@@ -374,7 +381,6 @@ where
     let positions = export
         .views
         .get(&clip_ca)
-        .and_then(|gv| gv.get(&Vec::new()))
         .map(|view| view.layout.clone())
         .unwrap_or_default();
 
@@ -457,8 +463,8 @@ mod tests {
             BTreeMap::new(),
         );
         let mut all_views = HashMap::new();
-        all_views.insert(ca, GraphViews::new());
-        all_views.insert(cb, GraphViews::new()); // cb not in registry
+        all_views.insert(ca, egui_graph::View::default());
+        all_views.insert(cb, egui_graph::View::default()); // cb not in registry
         let export = export_with(registry, &all_views, &HashMap::new());
         assert!(export.views.contains_key(&ca));
         assert!(!export.views.contains_key(&cb));
@@ -474,8 +480,10 @@ mod tests {
             HashMap::from([(ca, commit.clone())]),
             BTreeMap::new(),
         );
-        let mut existing_view = GraphViews::new();
-        existing_view.insert(vec![0], egui_graph::View::default());
+        let mut existing_view = egui_graph::View::default();
+        existing_view
+            .layout
+            .insert(egui_graph::NodeId(0), Default::default());
         let mut views = HashMap::from([(ca, existing_view)]);
         let mut demos = HashMap::new();
         let export = Export {
@@ -484,12 +492,12 @@ mod tests {
                 HashMap::from([(ca, commit)]),
                 BTreeMap::new(),
             ),
-            views: HashMap::from([(ca, GraphViews::new())]),
+            views: HashMap::from([(ca, egui_graph::View::default())]),
             demos: HashMap::new(),
         };
         merge_with(&mut registry, &mut views, &mut demos, export);
-        // Existing view (with 1 entry) should be preserved, not replaced by empty.
-        assert_eq!(views[&ca].len(), 1);
+        // Existing view (with 1 layout entry) should be preserved, not replaced.
+        assert_eq!(views[&ca].layout.len(), 1);
     }
 
     #[test]

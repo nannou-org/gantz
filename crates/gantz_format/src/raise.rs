@@ -8,7 +8,7 @@
 //! labels emitted - everything an extender needs to attach its own forms (e.g.
 //! `(layout ...)`) keyed by the same ids.
 
-use crate::datum::{Datum, from_datum, to_datum};
+use crate::datum::{Datum, to_datum};
 use crate::error::FormatError;
 use crate::model::{
     Addr, CommitDecl, Conn, Document, Endpoint, GraphBody, GraphDef, NameDecl, NodeDecl, NodeSpec,
@@ -19,7 +19,6 @@ use gantz_ca::{ContentAddr, GraphAddr, Registry};
 use gantz_core::node::graph::Graph;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 
 /// The result of serializing a registry: the text plus the per-graph label
@@ -42,7 +41,8 @@ pub struct GraphLabels {
 /// Raise a registry into serialized text plus per-graph label context.
 pub fn raise<N>(registry: &Registry<Graph<N>>, sugar: &dyn Sugar) -> Result<Dumped, FormatError>
 where
-    N: Serialize + DeserializeOwned,
+    // Raising only ever *serializes* nodes, hence no `DeserializeOwned` bound.
+    N: Serialize,
 {
     let mut doc = Document::default();
     let mut graphs = HashMap::new();
@@ -87,7 +87,7 @@ fn graph_to_body<N>(
     sugar: &dyn Sugar,
 ) -> Result<(GraphBody, HashMap<usize, String>), FormatError>
 where
-    N: Serialize + DeserializeOwned,
+    N: Serialize,
 {
     let mut nodes = Vec::new();
     let mut labels: HashMap<usize, String> = HashMap::new();
@@ -95,7 +95,7 @@ where
     for ix in graph.node_indices() {
         let value =
             to_datum(&graph[ix]).map_err(|e| FormatError::node_deserialize("?", e.to_string()))?;
-        let (spec, keyword) = node_spec_from_datum::<N>(value, sugar)?;
+        let (spec, keyword) = node_spec_from_datum(value, sugar)?;
         let label = format!("{keyword}{}", ix.index());
         labels.insert(ix.index(), label.clone());
         nodes.push(NodeDecl {
@@ -126,13 +126,10 @@ where
 }
 
 /// Convert a node's serde [`Datum`] into a [`NodeSpec`] and a label keyword.
-fn node_spec_from_datum<N>(
+fn node_spec_from_datum(
     value: Datum,
     sugar: &dyn Sugar,
-) -> Result<(NodeSpec, String), FormatError>
-where
-    N: Serialize + DeserializeOwned,
-{
+) -> Result<(NodeSpec, String), FormatError> {
     let tag = value
         .get("type")
         .and_then(Datum::as_str)
@@ -159,13 +156,6 @@ where
                 sync,
             });
             Ok((spec, if func { "fnref" } else { "ref" }.to_string()))
-        }
-        "GraphNode" => {
-            let inner = value.get("graph").cloned().unwrap_or(Datum::Null);
-            let nested: Graph<N> = from_datum(inner)
-                .map_err(|e| FormatError::node_deserialize("GraphNode", e.to_string()))?;
-            let (body, _) = graph_to_body::<N>(&nested, sugar)?;
-            Ok((NodeSpec::Graph(body), "graph".to_string()))
         }
         other => {
             let keyword = sugar.keyword_for_tag(other).unwrap_or("node").to_string();

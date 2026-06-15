@@ -7,7 +7,6 @@
 //! It produces and consumes a full [`Export`] (registry + views + demos), so
 //! existing `crate::format::{from_str, to_string}` call sites are unchanged.
 
-use crate::GraphViews;
 use crate::export::Export;
 use gantz_ca::{CaHash, CommitAddr, Registry, Timestamp};
 use gantz_core::node::graph::Graph;
@@ -28,7 +27,7 @@ where
     N: Serialize + DeserializeOwned + CaHash + 'static,
 {
     let loaded = gantz_format::from_str::<N>(text, now)?;
-    let mut views: HashMap<CommitAddr, GraphViews> = HashMap::new();
+    let mut views: HashMap<CommitAddr, egui_graph::View> = HashMap::new();
     let mut demos: HashMap<CommitAddr, String> = HashMap::new();
     for form in &loaded.extra {
         match form.head.as_str() {
@@ -56,11 +55,8 @@ where
     // `(layout ...)` per graph that has a top-level view, keyed by graph id.
     let mut views: Vec<_> = export.views.iter().collect();
     views.sort_by_key(|(ca, _)| **ca);
-    for (commit_ca, gv) in views {
-        let (Some(view), Some(commit)) = (
-            gv.get(&Vec::new()),
-            export.registry.commits().get(commit_ca),
-        ) else {
+    for (commit_ca, view) in views {
+        let Some(commit) = export.registry.commits().get(commit_ca) else {
             continue;
         };
         if let Some(labels) = dumped.graphs.get(&commit.graph) {
@@ -84,7 +80,11 @@ where
 
 // -- layout ------------------------------------------------------------------
 
-fn apply_layout<N>(form: &Form, loaded: &Loaded<N>, views: &mut HashMap<CommitAddr, GraphViews>) {
+fn apply_layout<N>(
+    form: &Form,
+    loaded: &Loaded<N>,
+    views: &mut HashMap<CommitAddr, egui_graph::View>,
+) {
     let src = &form.raw;
     let Ok(forms) = sexpr::read(src) else { return };
     let Some(args) = forms.first().and_then(sexpr::list_args) else {
@@ -132,7 +132,7 @@ fn apply_layout<N>(form: &Form, loaded: &Loaded<N>, views: &mut HashMap<CommitAd
         scene_rect: scene,
         layout,
     };
-    views.entry(head).or_default().insert(Vec::new(), view);
+    views.insert(head, view);
 }
 
 fn layout_text(labels: &GraphLabels, view: &egui_graph::View) -> String {

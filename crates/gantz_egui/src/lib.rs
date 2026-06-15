@@ -2,7 +2,6 @@
 //! gantz using `egui`.
 
 use petgraph::visit::{IntoNodeReferences, NodeRef};
-use std::collections::HashMap;
 use steel::{
     SteelErr, SteelVal,
     rvals::{FromSteelVal, IntoSteelVal},
@@ -16,6 +15,7 @@ pub mod node;
 pub mod ops;
 pub mod reg;
 pub mod response;
+pub mod sync;
 pub mod widget;
 
 // Re-export traits that make up the Registry supertrait.
@@ -106,12 +106,12 @@ pub trait HeadAccess {
 /// Mutable access to a head's data, provided via [`HeadAccess::with_head_mut`].
 pub struct HeadDataMut<'a, N> {
     pub graph: &'a mut gantz_core::node::graph::Graph<N>,
-    pub views: &'a mut GraphViews,
+    /// View state (node layout + camera) for this head's graph. Nested graphs
+    /// are separate named heads with their own view, so one view per head
+    /// suffices (no path-keyed map).
+    pub view: &'a mut egui_graph::View,
     pub vm: &'a mut Engine,
 }
-
-/// View state (layout + camera) for a graph and all its nested subgraphs, keyed by path.
-pub type GraphViews = HashMap<Vec<node::Id>, egui_graph::View>;
 
 /// A trait providing an egui `Ui` implementation for gantz nodes.
 pub trait NodeUi {
@@ -152,6 +152,15 @@ pub trait NodeUi {
 
     /// Look up the demo graph name associated with this node, if any.
     fn demo_graph<'a>(&self, _registry: &'a dyn Registry) -> Option<&'a str> {
+        None
+    }
+
+    /// The head this node navigates to when entered, if any.
+    ///
+    /// Returned for nodes that reference a named graph (e.g.
+    /// [`NamedRef`](crate::node::NamedRef)): double-clicking enters it in place,
+    /// and the scene offers an "open in new tab" context-menu action.
+    fn nav_head(&self, _registry: &dyn Registry) -> Option<gantz_ca::Head> {
         None
     }
 }
@@ -200,8 +209,8 @@ pub fn resolve_paste_offset(pos: &PastePos, copied_positions: &egui_graph::Layou
 //
 // Typed payloads emitted from within the widget tree via the dynamic
 // [`response::Responses`] channel and returned from `Gantz::show`. With the
-// exception of [`OpenPath`] and [`OpenCommandPalette`] (which `Gantz::show`
-// handles itself), applications drain and handle these after the GUI pass.
+// exception of [`OpenCommandPalette`] (which `Gantz::show` handles itself),
+// applications drain and handle these after the GUI pass.
 // Unhandled payloads should be reported via [`response::Responses::type_names`].
 // ----------------------------------------------------------------------------
 
@@ -219,14 +228,21 @@ pub struct BranchNode {
 #[derive(Clone, Debug)]
 pub struct CopyNodes(pub std::collections::HashSet<widget::graph_scene::NodeIndex>);
 
-/// Create a new node of the given type at the current path.
+/// Create a new node of the given type in the emitting head's graph.
 #[derive(Clone, Debug)]
 pub struct CreateNode {
-    /// The path within the graph hierarchy where the node should be created.
-    pub path: Vec<node::Id>,
     /// The type name of the node to create.
     pub node_type: String,
 }
+
+/// Create a new nested graph in the emitting head's graph.
+///
+/// Commits a fresh empty graph to the registry under the name `<parent>:<n>`
+/// (where `<parent>` is the emitting head's name) and inserts a synced
+/// [`node::NamedRef`] to it. Behaves like creating any
+/// other node, but is registry-aware.
+#[derive(Clone, Copy, Debug)]
+pub struct CreateNestedGraph;
 
 /// Evaluate an entrypoint (push or pull).
 #[derive(Clone, Debug)]
@@ -245,7 +261,6 @@ pub struct ExportHead;
 /// Insert an inspect node on the given edge at the given position.
 #[derive(Clone, Debug)]
 pub struct InspectEdge {
-    pub path: Vec<node::Id>,
     pub edge: petgraph::graph::EdgeIndex<usize>,
     pub pos: egui::Pos2,
 }
@@ -260,11 +275,11 @@ pub struct OpenCommandPalette;
 #[derive(Clone, Debug)]
 pub struct OpenHead(pub gantz_ca::Head);
 
-/// Navigate the path within the emitting head's graph hierarchy.
-///
-/// Handled by `Gantz::show` itself - applications never see this payload.
+/// Navigate the *focused* tab to a head in place (replacing it), rather than
+/// opening a new tab. Used for entering a nested graph and for breadcrumb
+/// navigation between `parent:child` levels.
 #[derive(Clone, Debug)]
-pub struct OpenPath(pub Vec<node::Id>);
+pub struct ReplaceHead(pub gantz_ca::Head);
 
 /// Paste clipboard contents at the given position.
 ///
@@ -316,6 +331,10 @@ where
     fn demo_graph<'b>(&self, registry: &'b dyn Registry) -> Option<&'b str> {
         (**self).demo_graph(registry)
     }
+
+    fn nav_head(&self, registry: &dyn Registry) -> Option<gantz_ca::Head> {
+        (**self).nav_head(registry)
+    }
 }
 
 macro_rules! impl_node_ui_for_ptr {
@@ -346,6 +365,10 @@ macro_rules! impl_node_ui_for_ptr {
 
             fn demo_graph<'a>(&self, registry: &'a dyn Registry) -> Option<&'a str> {
                 (**self).demo_graph(registry)
+            }
+
+            fn nav_head(&self, registry: &dyn Registry) -> Option<gantz_ca::Head> {
+                (**self).nav_head(registry)
             }
         }
     };

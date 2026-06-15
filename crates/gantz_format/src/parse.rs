@@ -143,7 +143,6 @@ fn parse_node_spec(e: &ExprKind, src: &str, sugar: &dyn Sugar) -> Result<NodeSpe
     match head.as_str() {
         "ref" => parse_ref_spec(false, rest, src),
         "fn-ref" => parse_ref_spec(true, rest, src),
-        "graph" => Ok(NodeSpec::Graph(parse_graph_body(rest, src, sugar)?)),
         "node" => parse_generic_spec(rest, e, src),
         other => match sugar.read_spec(other, rest, src)? {
             Some(datum) => Ok(NodeSpec::Value(datum)),

@@ -70,9 +70,10 @@ pub struct NodeDecl {
 pub enum NodeSpec {
     /// A self-contained node as a serde [`Datum`] map (`type` field + fields).
     Value(Datum),
-    /// An inline nested graph, lowered to a `GraphNode`.
-    Graph(GraphBody),
     /// A `NamedRef`/`FnNamedRef` whose address resolves at load time.
+    ///
+    /// Nested graphs are *not* inlined: they are ordinary named graphs in the
+    /// registry, referenced here like any other named graph.
     Ref(RefSpec),
 }
 

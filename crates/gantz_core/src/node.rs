@@ -10,7 +10,6 @@ pub use delay::Delay;
 pub use expr::{Expr, ExprNewError};
 pub use fn_::Fn;
 use gantz_ca::CaHash;
-pub use graph::GraphNode;
 pub use id::{IDENTITY_NAME, Identity};
 pub use pull::{Pull, WithPullEval};
 pub use push::{Push, WithPushEval};

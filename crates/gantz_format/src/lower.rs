@@ -7,16 +7,15 @@
 //! is a label and which no commit references is a hand-authored named graph: it
 //! auto-registers under that label with a root commit synthesised at `now`.
 
-use crate::datum::{Datum, from_datum, to_datum};
+use crate::datum::{Datum, from_datum};
 use crate::error::{ErrorKind, FormatError};
 use crate::model::{
     Addr, CommitDecl, Document, Form, GraphBody, GraphDef, NameDecl, NodeDecl, NodeSpec, RefSpec,
 };
 use gantz_ca::{CaHash, Commit, CommitAddr, ContentAddr, Registry, Timestamp};
 use gantz_core::edge::Edge;
-use gantz_core::node::graph::{Graph, GraphNode, NodeIx};
+use gantz_core::node::graph::{Graph, NodeIx};
 use gantz_core::node::{Input, Output};
-use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
@@ -52,7 +51,8 @@ pub fn lower<N>(doc: Document, now: Timestamp) -> Result<Loaded<N>, FormatError>
 where
     // `'static` is required by content-addressing (`Registry::add_graph`), whose
     // `for<'a> &'a Graph<N>` bound only holds for all `'a` when `N: 'static`.
-    N: Serialize + DeserializeOwned + CaHash + 'static,
+    // Lowering only ever *deserializes* nodes, hence no `Serialize` bound.
+    N: DeserializeOwned + CaHash + 'static,
 {
     let Document {
         graphs,
@@ -152,7 +152,7 @@ fn build_graph<N>(
     resolve: &Resolve,
 ) -> Result<(Graph<N>, HashMap<String, usize>), FormatError>
 where
-    N: Serialize + DeserializeOwned,
+    N: DeserializeOwned,
 {
     let mut graph: Graph<N> = Graph::default();
     let mut index: HashMap<String, usize> = HashMap::new();
@@ -189,7 +189,7 @@ where
 
 fn build_node<N>(decl: &NodeDecl, resolve: &Resolve) -> Result<N, FormatError>
 where
-    N: Serialize + DeserializeOwned,
+    N: DeserializeOwned,
 {
     match &decl.spec {
         NodeSpec::Value(v) => node_from_datum::<N>(v.clone()),
@@ -197,22 +197,6 @@ where
             let v = resolve_ref_value(refspec, resolve)?;
             node_from_datum::<N>(v)
         }
-        NodeSpec::Graph(body) => {
-            let (nested, _) = build_graph::<N>(body, resolve)?;
-            let gn = GraphNode { graph: nested };
-            let datum = to_datum(&gn)
-                .map_err(|e| FormatError::node_deserialize("GraphNode", e.to_string()))?;
-            node_from_datum::<N>(insert_type(datum, "GraphNode"))
-        }
-    }
-}
-
-/// Prepend a `type` field to a map datum (the typetag discriminant the node's
-/// own serialization omits).
-fn insert_type(datum: Datum, tag: &str) -> Datum {
-    match datum {
-        Datum::Map(entries) => Datum::tagged(tag, entries),
-        other => Datum::tagged(tag, vec![("value".to_string(), other)]),
     }
 }
 
@@ -239,7 +223,14 @@ fn resolve_ref_value(refspec: &RefSpec, resolve: &Resolve) -> Result<Datum, Form
                 .get(&Addr::Label(label.clone()))
                 .copied()
                 .ok_or_else(|| FormatError::new(ErrorKind::MissingDependency(label.clone())))?,
+            // A pinned address is advisory: if it no longer resolves (e.g. the
+            // commit healed because the format keeps only the head commit per
+            // graph, so a parent was dropped and the address recomputed), fall
+            // back to the reference's name. This keeps `NamedRef`s - including
+            // nested-graph refs in a copy/paste payload - resolving across the
+            // address drift (#232).
             Some(Addr::Concrete(hex)) => resolve_commit(hex, resolve.known)
+                .or_else(|| resolve.names.get(&refspec.name).copied())
                 .ok_or_else(|| FormatError::new(ErrorKind::MissingDependency(hex.clone())))?,
         };
     let content: ContentAddr = commit_ca.into();
@@ -273,13 +264,14 @@ fn build_commit<N>(
     let parent = resolve_parent(&decl.parent, commit_ids, known);
     let timestamp = Duration::new(decl.secs, decl.nanos);
     let commit_ca = registry.add_commit(Commit::new(timestamp, parent, g_addr));
-    // Warn if a declared id no longer matches the recomputed address (a stale
-    // file - e.g. the hashing changed). Heal rather than fail; refs pinned to
-    // the old address may not resolve (a planned follow-up remaps them).
+    // A declared id may not match the recomputed address - e.g. the format
+    // keeps only the head commit per graph, so a dropped parent re-roots the
+    // commit and changes its hash. This is routine (refs recover by name in
+    // `resolve_ref_value`), so it is logged at debug rather than warned.
     if let Addr::Concrete(hex) = &decl.id {
         let computed = ContentAddr::from(commit_ca).to_string();
         if !computed.starts_with(hex.as_str()) {
-            log::warn!(
+            log::debug!(
                 "commit `{hex}` no longer matches its contents (recomputed `{computed}`); \
                  using the recomputed address",
             );
@@ -289,8 +281,10 @@ fn build_commit<N>(
     commit_ca
 }
 
-/// Resolve a commit's declared parent to a present commit, warning when a
-/// named parent is not in the file (it becomes a root).
+/// Resolve a commit's declared parent to a present commit. A parent absent from
+/// the document re-roots the commit; this is routine (the format keeps only the
+/// head commit per graph, so history parents are commonly absent), so it is
+/// logged at debug rather than warned.
 fn resolve_parent(
     parent: &Option<Addr>,
     commit_ids: &HashMap<Addr, CommitAddr>,
@@ -301,14 +295,14 @@ fn resolve_parent(
         Some(addr @ Addr::Label(label)) => match commit_ids.get(addr) {
             Some(ca) => Some(*ca),
             None => {
-                log::warn!("commit parent label `{label}` not present; recorded as a root commit");
+                log::debug!("commit parent label `{label}` not present; recorded as a root commit");
                 None
             }
         },
         Some(Addr::Concrete(hex)) => match resolve_commit(hex, known) {
             Some(ca) => Some(ca),
             None => {
-                log::warn!("commit parent `{hex}` not present; recorded as a root commit");
+                log::debug!("commit parent `{hex}` not present; recorded as a root commit");
                 None
             }
         },
@@ -399,7 +393,6 @@ fn referenced_names(body: &GraphBody) -> Vec<String> {
     for decl in &body.nodes {
         match &decl.spec {
             NodeSpec::Ref(r) => names.push(r.name.clone()),
-            NodeSpec::Graph(nested) => names.extend(referenced_names(nested)),
             NodeSpec::Value(_) => {}
         }
     }

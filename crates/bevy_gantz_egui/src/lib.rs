@@ -78,8 +78,8 @@ where
         + Clone
         + gantz_ca::CaHash
         + From<gantz_egui::node::NamedRef>
+        + gantz_egui::sync::AsNamedRefMut
         + gantz_egui::NodeUi
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + node::ToFrameBang
         + serde::Serialize
         + serde::de::DeserializeOwned
@@ -102,12 +102,14 @@ where
         app.register_head_response::<gantz_egui::BranchNode>()
             .register_head_response::<gantz_egui::CopyNodes>()
             .register_head_response::<gantz_egui::CreateNode>()
+            .register_head_response::<gantz_egui::CreateNestedGraph>()
             .register_head_response::<gantz_egui::InspectEdge>()
             .register_head_response::<gantz_egui::Paste>()
             .register_head_response::<gantz_egui::Redo>()
             .register_head_response::<gantz_egui::Undo>()
             .register_response_with::<gantz_egui::EvalEntry>(dispatch_eval_entry)
             .register_response_with::<gantz_egui::OpenHead>(dispatch_open_head)
+            .register_response_with::<gantz_egui::ReplaceHead>(dispatch_replace_head)
             .register_response_with::<gantz_egui::ExportHead>(dispatch_export_head)
             .register_response_with::<gantz_egui::ExportAllNamed>(dispatch_export_all_named);
 
@@ -125,10 +127,13 @@ where
             .add_observer(on_head_closed)
             .add_observer(on_branch_created)
             .add_observer(on_head_committed)
+            .add_observer(on_head_committed_resync::<N>)
+            .add_observer(on_branched_head_fork_nested::<N>)
             // VM timing observer
             .add_observer(on_eval_entry_complete)
             // GUI response payload observers
             .add_observer(on_create_node::<N>)
+            .add_observer(on_create_nested_graph::<N>)
             .add_observer(on_branch_node::<N>)
             .add_observer(on_inspect_edge::<N>)
             .add_observer(on_copy_nodes::<N>)
@@ -167,7 +172,7 @@ pub struct HeadGuiState(pub gantz_egui::widget::gantz::OpenHeadState);
 
 /// Views for a single head's graphs (keyed by subgraph path).
 #[derive(Component, Default, Clone)]
-pub struct GraphViews(pub gantz_egui::GraphViews);
+pub struct GraphView(pub egui_graph::View);
 
 // ----------------------------------------------------------------------------
 // Resources
@@ -191,7 +196,7 @@ pub struct GuiState(pub gantz_egui::widget::GantzState);
 
 /// Views (layout + camera) for all known commits.
 #[derive(Resource, Default)]
-pub struct Views(pub HashMap<ca::CommitAddr, gantz_egui::GraphViews>);
+pub struct Views(pub HashMap<ca::CommitAddr, egui_graph::View>);
 
 /// Demo graph associations: maps a commit to its associated `demo-*` graph name.
 #[derive(Resource, Default)]
@@ -315,7 +320,7 @@ impl RegisterResponseExt for App {
 #[query_data(mutable)]
 pub struct OpenHeadViews<N: 'static + Send + Sync> {
     pub core: head::OpenHeadData<N>,
-    pub views: &'static mut GraphViews,
+    pub view: &'static mut GraphView,
 }
 
 // ----------------------------------------------------------------------------
@@ -387,7 +392,7 @@ impl<N: 'static + Send + Sync> gantz_egui::HeadAccess for HeadAccess<'_, '_, '_,
         let vm = self.vms.get_mut(&entity)?;
         Some(f(HeadDataMut {
             graph: &mut *data.core.working_graph,
-            views: &mut *data.views,
+            view: &mut *data.view,
             vm,
         }))
     }
@@ -446,7 +451,7 @@ impl DerefMut for GuiState {
 }
 
 impl Deref for Views {
-    type Target = HashMap<ca::CommitAddr, gantz_egui::GraphViews>;
+    type Target = HashMap<ca::CommitAddr, egui_graph::View>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -471,14 +476,14 @@ impl DerefMut for Demos {
     }
 }
 
-impl Deref for GraphViews {
-    type Target = gantz_egui::GraphViews;
+impl Deref for GraphView {
+    type Target = egui_graph::View;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl DerefMut for GraphViews {
+impl DerefMut for GraphView {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -510,7 +515,7 @@ fn on_eval_entry_complete(trigger: On<EvalEntryComplete>, mut perf_vm: ResMut<Pe
 
 /// Initialize GUI state entry and components for opened head.
 ///
-/// Loads views from the `Views` resource and spawns `GraphViews` + `HeadGuiState` components.
+/// Loads views from the `Views` resource and spawns `GraphView` + `HeadGuiState` components.
 pub fn on_head_opened<N: 'static + Send + Sync>(
     trigger: On<head::OpenedEvent>,
     registry: Res<Registry<N>>,
@@ -521,20 +526,20 @@ pub fn on_head_opened<N: 'static + Send + Sync>(
     let event = trigger.event();
     gui_state.open_heads.entry(event.head.clone()).or_default();
 
-    // Load views for this head's commit.
-    let head_views = registry
+    // Load the view for this head's commit.
+    let head_view = registry
         .head_commit_ca(&event.head)
         .and_then(|ca| views.get(ca).cloned())
         .unwrap_or_default();
 
     cmds.entity(event.entity)
         .insert(HeadGuiState::default())
-        .insert(GraphViews(head_views));
+        .insert(GraphView(head_view));
 }
 
 /// Migrate GUI state for changed head and reset components.
 ///
-/// Loads views for the new head and updates `GraphViews` + `HeadGuiState` components.
+/// Loads views for the new head and updates `GraphView` + `HeadGuiState` components.
 pub fn on_head_changed<N: 'static + Send + Sync>(
     trigger: On<head::ChangedEvent>,
     registry: Res<Registry<N>>,
@@ -549,15 +554,15 @@ pub fn on_head_changed<N: 'static + Send + Sync>(
         gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
     }
 
-    // Load views for the new head's commit.
-    let head_views = registry
+    // Load the view for the new head's commit.
+    let head_view = registry
         .head_commit_ca(&event.new_head)
         .and_then(|ca| views.get(ca).cloned())
         .unwrap_or_default();
 
     cmds.entity(event.entity)
         .insert(HeadGuiState::default())
-        .insert(GraphViews(head_views));
+        .insert(GraphView(head_view));
 }
 
 /// Remove GUI state for closed head.
@@ -596,6 +601,83 @@ pub fn on_head_committed(
     }
 }
 
+/// On any head commit, propagate the change to referrers: bring all
+/// sync-enabled `NamedRef`s up to date and refresh any open head whose commit
+/// moved (e.g. a nested graph edit propagating up to its open parent).
+pub fn on_head_committed_resync<N>(
+    _trigger: On<head::CommittedEvent>,
+    mut registry: ResMut<Registry<N>>,
+    mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
+    mut views: ResMut<Views>,
+) where
+    N: 'static + Clone + ca::CaHash + gantz_egui::sync::AsNamedRefMut + Send + Sync,
+{
+    let moves = gantz_egui::sync::resync(&mut registry, bevy_gantz::reg::timestamp());
+    refresh_moved_heads(&moves, &registry, &mut heads, &mut views);
+}
+
+/// On a fork (branch from a head), give the fork independent nested children:
+/// copy the original's `parent:*` subtree to the fork and rewrite its
+/// references, then refresh the open fork.
+pub fn on_branched_head_fork_nested<N>(
+    trigger: On<head::BranchedHeadEvent>,
+    mut registry: ResMut<Registry<N>>,
+    mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
+    mut views: ResMut<Views>,
+) where
+    N: 'static + Clone + ca::CaHash + gantz_egui::sync::AsNamedRefMut + Send + Sync,
+{
+    let event = trigger.event();
+    let (ca::Head::Branch(old), ca::Head::Branch(new)) = (&event.old_head, &event.new_head) else {
+        return;
+    };
+    let ts = bevy_gantz::reg::timestamp();
+    // Give the fork independent nested children, then (when the fork renamed a
+    // *nested* graph to a root name) repoint the parent's references to it.
+    let mut moves = gantz_egui::sync::fork_nested(&mut registry, ts, old, new);
+    moves.extend(gantz_egui::sync::promote_nested(
+        &mut registry,
+        ts,
+        old,
+        new,
+    ));
+    refresh_moved_heads(&moves, &registry, &mut heads, &mut views);
+}
+
+/// Carry moved graphs' views forward to their new commits, and refresh any open
+/// head whose commit moved: reload its working graph to the new version and
+/// clear its compile memo so `vm::sync` recompiles it (without re-committing,
+/// since the registry already holds this graph).
+fn refresh_moved_heads<N>(
+    moves: &[gantz_egui::sync::Moved],
+    registry: &Registry<N>,
+    heads: &mut Query<head::OpenHeadData<N>, With<head::OpenHead>>,
+    views: &mut Views,
+) where
+    N: 'static + Clone + Send + Sync,
+{
+    if moves.is_empty() {
+        return;
+    }
+    for m in moves {
+        if let Some(gv) = views.0.get(&m.old_commit).cloned() {
+            views.0.entry(m.new_commit).or_insert(gv);
+        }
+    }
+    for mut data in heads.iter_mut() {
+        let ca::Head::Branch(name) = data.head_ref.0.clone() else {
+            continue;
+        };
+        let Some(m) = moves.iter().find(|m| m.name == name) else {
+            continue;
+        };
+        if let Some(graph) = registry.commit_graph_ref(&m.new_commit) {
+            data.working_graph.0 = graph.clone();
+            *data.compiled_inputs = bevy_gantz::vm::CompiledInputs::default();
+        }
+    }
+}
+
 /// Handle create node payloads.
 pub fn on_create_node<N>(
     trigger: On<ForHead<gantz_egui::CreateNode>>,
@@ -604,14 +686,9 @@ pub fn on_create_node<N>(
     demos: Res<Demos>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
-    mut views_query: Query<&mut GraphViews, With<head::OpenHead>>,
+    mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
 ) where
-    N: 'static
-        + Node
-        + From<gantz_egui::node::NamedRef>
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
-        + Send
-        + Sync,
+    N: 'static + Node + From<gantz_egui::node::NamedRef> + Send + Sync,
 {
     let event = trigger.event();
     let Ok(mut data) = heads.get_mut(event.head) else {
@@ -648,11 +725,7 @@ pub fn on_branch_node<N>(
     mut registry: ResMut<Registry<N>>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
 ) where
-    N: 'static
-        + From<gantz_egui::node::NamedRef>
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
-        + Send
-        + Sync,
+    N: 'static + From<gantz_egui::node::NamedRef> + Send + Sync,
 {
     let event = trigger.event();
     let Ok(mut data) = heads.get_mut(event.head) else {
@@ -669,6 +742,47 @@ pub fn on_branch_node<N>(
     );
 }
 
+/// Handle create nested graph payloads.
+///
+/// Commits a fresh empty graph named `<parent>:<n>` (where `<parent>` is the
+/// head's branch name) and inserts a synced `NamedRef` to it in the head's
+/// working graph. Requires the head to be named.
+pub fn on_create_nested_graph<N>(
+    trigger: On<ForHead<gantz_egui::CreateNestedGraph>>,
+    mut registry: ResMut<Registry<N>>,
+    mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
+    mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
+) where
+    N: 'static + Node + From<gantz_egui::node::NamedRef> + ca::CaHash + Send + Sync,
+{
+    let event = trigger.event();
+    let Ok(mut data) = heads.get_mut(event.head) else {
+        log::error!(
+            "CreateNestedGraph: head not found for entity {:?}",
+            event.head
+        );
+        return;
+    };
+    let ca::Head::Branch(parent) = data.head_ref.0.clone() else {
+        log::warn!("CreateNestedGraph: name the graph before adding a nested graph");
+        return;
+    };
+    let Ok(mut views) = views_query.get_mut(event.head) else {
+        log::error!(
+            "CreateNestedGraph: views not found for entity {:?}",
+            event.head
+        );
+        return;
+    };
+    gantz_egui::ops::create_nested_graph(
+        &mut registry,
+        bevy_gantz::reg::timestamp(),
+        &mut data.working_graph,
+        &mut views,
+        &parent,
+    );
+}
+
 /// Handle inspect edge payloads.
 pub fn on_inspect_edge<N>(
     trigger: On<ForHead<gantz_egui::InspectEdge>>,
@@ -677,14 +791,9 @@ pub fn on_inspect_edge<N>(
     demos: Res<Demos>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
-    mut views_query: Query<&mut GraphViews, With<head::OpenHead>>,
+    mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
 ) where
-    N: 'static
-        + Node
-        + From<gantz_egui::node::NamedRef>
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
-        + Send
-        + Sync,
+    N: 'static + Node + From<gantz_egui::node::NamedRef> + Send + Sync,
 {
     let event = trigger.event();
     let Ok(mut data) = heads.get_mut(event.head) else {
@@ -720,13 +829,9 @@ pub fn on_inspect_edge<N>(
 pub fn on_copy_nodes<N>(
     trigger: On<ForHead<gantz_egui::CopyNodes>>,
     registry: Res<Registry<N>>,
-    gui_state: Res<GuiState>,
     views: Res<Views>,
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
-    mut heads: Query<
-        (&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphViews),
-        With<head::OpenHead>,
-    >,
+    mut heads: Query<(&mut head::WorkingGraph<N>, &GraphView), With<head::OpenHead>>,
 ) where
     N: 'static
         + Node
@@ -734,28 +839,16 @@ pub fn on_copy_nodes<N>(
         + serde::Serialize
         + serde::de::DeserializeOwned
         + ca::CaHash
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
         + Sync,
 {
     let event = trigger.event();
-    let Ok((head_ref, mut wg, gv)) = heads.get_mut(event.head) else {
+    let Ok((wg, gv)) = heads.get_mut(event.head) else {
         log::error!("CopySelection: head not found for entity {:?}", event.head);
         return;
     };
-    let Some(head_state) = gui_state.open_heads.get(&**head_ref) else {
-        log::error!("CopySelection: GUI state not found for head");
-        return;
-    };
 
-    let text = gantz_egui::ops::copy_nodes(
-        &registry,
-        &views,
-        &mut wg,
-        &gv,
-        &head_state.path,
-        &event.data.0,
-    );
+    let text = gantz_egui::ops::copy_nodes(&registry, &views, &wg, gv, &event.data.0);
     if let Some(text) = text {
         clipboard.set_text(&text);
     }
@@ -777,7 +870,7 @@ pub fn on_paste<N>(
     mut vms: NonSendMut<head::HeadVms>,
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
     mut heads: Query<
-        (&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphViews),
+        (&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphView),
         With<head::OpenHead>,
     >,
 ) where
@@ -787,7 +880,6 @@ pub fn on_paste<N>(
         + serde::Serialize
         + serde::de::DeserializeOwned
         + ca::CaHash
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
         + Send
         + Sync,
 {
@@ -1080,7 +1172,7 @@ where
 pub fn persist_views<N: 'static + Send + Sync>(
     registry: Res<Registry<N>>,
     mut views: ResMut<Views>,
-    heads: Query<(&head::HeadRef, &GraphViews), With<head::OpenHead>>,
+    heads: Query<(&head::HeadRef, &GraphView), With<head::OpenHead>>,
 ) {
     for (head_ref, head_views) in heads.iter() {
         if let Some(commit_addr) = registry.head_commit_ca(&**head_ref).copied() {
@@ -1154,13 +1246,7 @@ pub fn update<N>(
     mut cmds: Commands,
 ) -> Result
 where
-    N: 'static
-        + Node
-        + gantz_ca::CaHash
-        + gantz_egui::NodeUi
-        + gantz_egui::widget::graph_scene::ToGraphMut<Node = N>
-        + Send
-        + Sync,
+    N: 'static + Node + gantz_ca::CaHash + gantz_egui::NodeUi + Send + Sync,
 {
     let ctx = ctxs.ctx_mut()?;
 
@@ -1374,6 +1460,14 @@ fn dispatch_eval_entry(entity: Option<Entity>, payload: DynResponse, cmds: &mut 
 fn dispatch_open_head(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
     let gantz_egui::OpenHead(target) = downcast_payload(payload);
     cmds.trigger(head::OpenEvent(target));
+}
+
+/// Dispatch a [`gantz_egui::ReplaceHead`] payload as a [`head::ReplaceEvent`],
+/// navigating the focused tab to the target head in place (e.g. entering a
+/// nested graph or breadcrumb navigation).
+fn dispatch_replace_head(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
+    let gantz_egui::ReplaceHead(target) = downcast_payload(payload);
+    cmds.trigger(head::ReplaceEvent(target));
 }
 
 /// Dispatch a [`gantz_egui::ExportHead`] payload as an [`ExportHeadEvent`].

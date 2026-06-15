@@ -5,7 +5,6 @@ mod bang;
 mod branch;
 mod delay;
 mod expr;
-mod graph;
 mod identity;
 mod inlet;
 mod log;

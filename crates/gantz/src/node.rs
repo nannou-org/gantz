@@ -21,8 +21,6 @@ impl Node for gantz_core::node::Delay {}
 #[typetag::serde]
 impl Node for gantz_core::node::Expr {}
 #[typetag::serde]
-impl Node for gantz_core::node::GraphNode<Box<dyn Node>> {}
-#[typetag::serde]
 impl Node for gantz_core::node::Identity {}
 #[typetag::serde]
 impl Node for gantz_core::node::graph::Inlet {}
@@ -56,6 +54,14 @@ impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
     }
 }
 
+// Lets the reference-resync / rename machinery find `NamedRef`s within an
+// erased node by downcasting.
+impl gantz_egui::sync::AsNamedRefMut for Box<dyn Node> {
+    fn as_named_ref_mut(&mut self) -> Option<&mut gantz_egui::node::NamedRef> {
+        ((&mut **self) as &mut dyn Any).downcast_mut::<gantz_egui::node::NamedRef>()
+    }
+}
+
 impl bevy_gantz_egui::node::ToFrameBang for Box<dyn Node> {
     fn to_frame_bang(&self) -> Option<&bevy_gantz_egui::node::FrameBang> {
         let any: &dyn std::any::Any = &**self;
@@ -65,17 +71,6 @@ impl bevy_gantz_egui::node::ToFrameBang for Box<dyn Node> {
 
 #[typetag::serde]
 impl Node for Box<dyn Node> {}
-
-// To allow for navigating between nested graphs in a graph scene, we need to be
-// able to downcast a node to a graph node.
-impl gantz_egui::widget::graph_scene::ToGraphMut for Box<dyn Node> {
-    type Node = Self;
-    fn to_graph_mut(&mut self) -> Option<&mut gantz_core::node::graph::Graph<Self::Node>> {
-        ((&mut **self) as &mut dyn Any)
-            .downcast_mut::<gantz_core::node::GraphNode<Self::Node>>()
-            .map(|node| &mut node.graph)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -277,8 +272,9 @@ mod tests {
         }
     }
 
-    /// A nested `(graph ...)` node (a `GraphNode`) round-trips: the outer graph
-    /// address is preserved through text -> Export -> text -> Export.
+    /// Nested graphs are now ordinary named graphs referenced by `(ref ...)`,
+    /// so a parent referencing a `<parent>:<n>` child round-trips: both graph
+    /// addresses are preserved through text -> Export -> text -> Export.
     #[test]
     fn nested_graph_roundtrips() {
         use std::time::Duration;
@@ -286,12 +282,14 @@ mod tests {
 
         let now = Duration::from_secs(42);
         let text1 = "\
+(graph env:1
+  (i inlet) (o outlet)
+  (e (expr (+ $x 1)))
+  (-> i (e 0)) (-> e o))
+
 (graph env
   (in inlet) (out outlet)
-  (sub (graph
-         (i inlet) (o outlet)
-         (e (expr (+ $x 1)))
-         (-> i (e 0)) (-> e o)))
+  (sub (ref env:1))
   (-> in (sub 0)) (-> sub out))";
         let e1: gantz_egui::export::Export<G> =
             gantz_egui::format::from_str(text1, now).expect("from_str 1");
@@ -299,14 +297,16 @@ mod tests {
         let e2: gantz_egui::export::Export<G> =
             gantz_egui::format::from_str(&text2, now).expect("from_str 2");
 
-        let head1 = gantz_ca::Head::Branch("env".to_string());
-        let g1 = e1.registry.head_graph(&head1).expect("g1");
-        let g2 = e2.registry.head_graph(&head1).expect("g2");
-        assert_eq!(
-            gantz_ca::graph_addr(g1),
-            gantz_ca::graph_addr(g2),
-            "nested graph addr must survive round-trip\n--- text2 ---\n{text2}",
-        );
+        for name in ["env", "env:1"] {
+            let head = gantz_ca::Head::Branch(name.to_string());
+            let g1 = e1.registry.head_graph(&head).expect("g1");
+            let g2 = e2.registry.head_graph(&head).expect("g2");
+            assert_eq!(
+                gantz_ca::graph_addr(g1),
+                gantz_ca::graph_addr(g2),
+                "graph addr for `{name}` must survive round-trip\n--- text2 ---\n{text2}",
+            );
+        }
     }
 
     /// The serializer's output is reader-valid Steel: Steel's own parser accepts
@@ -370,11 +370,7 @@ mod tests {
         let e1: gantz_egui::export::Export<G> =
             gantz_egui::format::from_str(text1, now).expect("from_str 1");
         let head = *e1.registry.names().get("mul").expect("mul name");
-        let view = e1
-            .views
-            .get(&head)
-            .and_then(|gv| gv.get(&Vec::new()))
-            .expect("view");
+        let view = e1.views.get(&head).expect("view");
         // `m` is node index 0, `l` is 1.
         assert_eq!(
             view.layout.get(&egui_graph::NodeId(0)).map(|p| (p.x, p.y)),
@@ -391,11 +387,7 @@ mod tests {
         let e2: gantz_egui::export::Export<G> =
             gantz_egui::format::from_str(&text2, now).expect("from_str 2");
         let head2 = *e2.registry.names().get("mul").expect("mul name 2");
-        let view2 = e2
-            .views
-            .get(&head2)
-            .and_then(|gv| gv.get(&Vec::new()))
-            .expect("view 2");
+        let view2 = e2.views.get(&head2).expect("view 2");
         assert_eq!(view.layout.len(), view2.layout.len());
         assert_eq!(
             view2.layout.get(&egui_graph::NodeId(0)).map(|p| (p.x, p.y)),
@@ -455,5 +447,252 @@ mod tests {
                 .map(|p| (p.x, p.y)),
             Some((3.0, 4.0)),
         );
+    }
+
+    /// Editing a nested child commits it to a new address; [`sync::resync`] must
+    /// then propagate that up to its parent, recommitting the parent so its
+    /// `NamedRef` references the child's new commit.
+    #[test]
+    fn resync_propagates_child_edit_to_parent() {
+        use gantz_core::node::{Identity, Ref};
+        use gantz_egui::node::NamedRef;
+        use std::any::Any;
+        use std::time::Duration;
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let ts = Duration::from_secs(0);
+        let mut registry = gantz_ca::Registry::<G>::default();
+
+        // Child "p:1": a single node.
+        let mut child = G::default();
+        child.add_node(Box::new(Identity) as Box<dyn Node>);
+        let child_old =
+            registry.commit_graph_to_name(ts, gantz_ca::graph_addr(&child), || child, "p:1");
+
+        // Parent "p": a sync-enabled NamedRef to "p:1".
+        let mut parent = G::default();
+        parent.add_node(Box::new(NamedRef::with_sync(
+            "p:1".to_string(),
+            Ref::new(child_old.into()),
+        )) as Box<dyn Node>);
+        let parent_old =
+            registry.commit_graph_to_name(ts, gantz_ca::graph_addr(&parent), || parent, "p");
+
+        // Edit the child: commit a different graph under "p:1".
+        let mut child2 = G::default();
+        child2.add_node(Box::new(Identity) as Box<dyn Node>);
+        child2.add_node(Box::new(Identity) as Box<dyn Node>);
+        let child_new =
+            registry.commit_graph_to_name(ts, gantz_ca::graph_addr(&child2), || child2, "p:1");
+        assert_ne!(child_old, child_new);
+
+        // Resync: the parent must follow the child's new commit.
+        let moves = gantz_egui::sync::resync(&mut registry, ts);
+        assert!(
+            moves.iter().any(|m| m.name == "p"),
+            "parent should have recommitted: {moves:?}"
+        );
+
+        let parent_new = *registry.names().get("p").unwrap();
+        assert_ne!(parent_old, parent_new, "parent commit must change");
+        let p_graph = registry.commit_graph_ref(&parent_new).unwrap();
+        let points_at_new_child = p_graph.node_weights().any(|n| {
+            ((&**n) as &dyn Any)
+                .downcast_ref::<NamedRef>()
+                .map(|nr| nr.content_addr() == child_new.into())
+                .unwrap_or(false)
+        });
+        assert!(
+            points_at_new_child,
+            "parent's NamedRef must reference the child's new commit"
+        );
+    }
+
+    /// Forking a graph with a nested child gives the fork its *own* child:
+    /// [`sync::fork_nested`] copies the `parent:*` subtree to the fork and
+    /// rewrites its references, leaving the original's children untouched.
+    #[test]
+    fn fork_nested_gives_independent_children() {
+        use gantz_core::node::{Identity, Ref};
+        use gantz_egui::node::NamedRef;
+        use std::any::Any;
+        use std::time::Duration;
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let ts = Duration::from_secs(0);
+        let mut registry = gantz_ca::Registry::<G>::default();
+
+        // Child "A:1" and parent "A" referencing it.
+        let mut child = G::default();
+        child.add_node(Box::new(Identity) as Box<dyn Node>);
+        let child_ca =
+            registry.commit_graph_to_name(ts, gantz_ca::graph_addr(&child), || child, "A:1");
+        let mut parent = G::default();
+        parent.add_node(Box::new(NamedRef::with_sync(
+            "A:1".to_string(),
+            Ref::new(child_ca.into()),
+        )) as Box<dyn Node>);
+        registry.commit_graph_to_name(ts, gantz_ca::graph_addr(&parent), || parent, "A");
+
+        // Fork "A" -> "B": a fresh commit over A's graph (as `on_branch_head` does),
+        // so "B" initially references A's child "A:1".
+        let a_commit = *registry.names().get("A").unwrap();
+        let a_graph = registry.commits()[&a_commit].graph;
+        let b_commit = registry.commit_graph(ts, Some(a_commit), a_graph, || unreachable!());
+        registry.insert_name("B".to_string(), b_commit);
+
+        // Cascade: give "B" its own nested child "B:1".
+        let moves = gantz_egui::sync::fork_nested(&mut registry, ts, "A", "B");
+        assert!(
+            moves.iter().any(|m| m.name == "B:1"),
+            "B:1 should be created: {moves:?}"
+        );
+        assert!(
+            moves.iter().any(|m| m.name == "B"),
+            "B's root should be rewritten: {moves:?}"
+        );
+
+        // B references its own child B:1; A:1 is untouched.
+        let b1: gantz_ca::ContentAddr = (*registry.names().get("B:1").unwrap()).into();
+        let b_new = *registry.names().get("B").unwrap();
+        let b_graph = registry.commit_graph_ref(&b_new).unwrap();
+        let refs_b1 = b_graph.node_weights().any(|n| {
+            ((&**n) as &dyn Any)
+                .downcast_ref::<NamedRef>()
+                .map(|nr| nr.name() == "B:1" && nr.content_addr() == b1)
+                .unwrap_or(false)
+        });
+        assert!(refs_b1, "the fork's root must reference its own child B:1");
+        assert!(
+            registry.names().contains_key("A:1"),
+            "the original child A:1 must remain"
+        );
+    }
+
+    /// Copying a node that references a nested graph and pasting it must keep the
+    /// reference. The format preserves only the head commit per graph, so an
+    /// *edited* nested graph's head address heals on paste (its parent is
+    /// dropped); the `NamedRef` must still resolve - by name - rather than
+    /// vanish.
+    #[test]
+    fn clipboard_round_trips_nested_ref() {
+        use gantz_core::node::{Identity, Ref};
+        use gantz_egui::export;
+        use gantz_egui::node::NamedRef;
+        use std::any::Any;
+        use std::collections::{HashMap, HashSet};
+        use std::time::Duration;
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let mut registry = gantz_ca::Registry::<G>::default();
+
+        // Nested graph "A:1", committed twice so its head commit has a parent
+        // (the format does not preserve it, so the head address heals on paste).
+        let mut v1 = G::default();
+        v1.add_node(Box::new(Identity) as Box<dyn Node>);
+        registry.commit_graph_to_name(
+            Duration::from_secs(1),
+            gantz_ca::graph_addr(&v1),
+            || v1,
+            "A:1",
+        );
+        let mut v2 = G::default();
+        v2.add_node(Box::new(Identity) as Box<dyn Node>);
+        v2.add_node(Box::new(Identity) as Box<dyn Node>);
+        let head = registry.commit_graph_to_name(
+            Duration::from_secs(2),
+            gantz_ca::graph_addr(&v2),
+            || v2,
+            "A:1",
+        );
+
+        // A graph holding a synced NamedRef to "A:1".
+        let mut graph: G = G::default();
+        let nref = graph.add_node(Box::new(NamedRef::with_sync(
+            "A:1".to_string(),
+            Ref::new(head.into()),
+        )) as Box<dyn Node>);
+        let selected: HashSet<_> = [nref].into_iter().collect();
+
+        // Copy -> clipboard text -> paste.
+        let copied = export::copy(
+            &registry,
+            &HashMap::new(),
+            &graph,
+            &selected,
+            &egui_graph::Layout::default(),
+        );
+        let text = export::copied_to_string(&copied).expect("copied to text");
+        let back: export::Copied<Box<dyn Node>> =
+            export::copied_from_str(&text).expect("copied from text");
+
+        assert_eq!(back.graph.node_count(), 1, "the nested-ref node must paste");
+        let kept = back.graph.node_weights().any(|n| {
+            ((&**n) as &dyn Any)
+                .downcast_ref::<NamedRef>()
+                .map(|nr| nr.name() == "A:1")
+                .unwrap_or(false)
+        });
+        assert!(kept, "the pasted node must still be a NamedRef to A:1");
+    }
+
+    /// Renaming a nested graph to a root name promotes it: every reference in
+    /// the parent (there may be several instances, each with its own state) is
+    /// repointed to the new name, and the orphaned nested name is dropped.
+    #[test]
+    fn promote_nested_repoints_all_parent_instances() {
+        use gantz_core::node::{Identity, Ref};
+        use gantz_egui::node::NamedRef;
+        use std::any::Any;
+        use std::time::Duration;
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let ts = Duration::from_secs(0);
+        let mut registry = gantz_ca::Registry::<G>::default();
+
+        // Nested child "A:1".
+        let mut child = G::default();
+        child.add_node(Box::new(Identity) as Box<dyn Node>);
+        let a1 = registry.commit_graph_to_name(ts, gantz_ca::graph_addr(&child), || child, "A:1");
+
+        // Parent "A" with THREE instances of the nested graph.
+        let mut parent = G::default();
+        for _ in 0..3 {
+            parent.add_node(
+                Box::new(NamedRef::with_sync("A:1".to_string(), Ref::new(a1.into())))
+                    as Box<dyn Node>,
+            );
+        }
+        registry.commit_graph_to_name(ts, gantz_ca::graph_addr(&parent), || parent, "A");
+
+        // Simulate "rename A:1 -> B": a root "B" copy of A:1's graph (as the
+        // fork does), then promote.
+        let a1_graph = registry.commits()[&a1].graph;
+        let b = registry.commit_graph(ts, Some(a1), a1_graph, || unreachable!());
+        registry.insert_name("B".to_string(), b);
+        let moves = gantz_egui::sync::promote_nested(&mut registry, ts, "A:1", "B");
+
+        assert!(
+            moves.iter().any(|m| m.name == "A"),
+            "parent A must recommit"
+        );
+        assert!(
+            !registry.names().contains_key("A:1"),
+            "the orphaned nested name must be dropped"
+        );
+
+        // All three parent references now point at "B".
+        let a_commit = *registry.names().get("A").unwrap();
+        let a_graph = registry.commit_graph_ref(&a_commit).unwrap();
+        let to_b = a_graph
+            .node_weights()
+            .filter(|n| {
+                ((&***n) as &dyn Any)
+                    .downcast_ref::<NamedRef>()
+                    .map(|nr| nr.name() == "B")
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(to_b, 3, "all instances must be repointed to B");
     }
 }

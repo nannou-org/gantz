@@ -677,10 +677,12 @@ fn two_branch_shared_join() {
 // Nested-graph shapes (mirroring tests/nested.rs).
 // ===========================================================================
 
-use gantz_core::node::GraphNode;
 use gantz_core::node::graph::{Inlet, Outlet};
 
-type Nested = GraphNode<Box<dyn DebugNode>>;
+// A nested graph: an ordinary `Graph` (which implements `Node`) boxed into its
+// parent, in place of the removed `GraphNode` wrapper. (`Graph` here is the
+// outer DiGraph alias, so the nested type is spelled out in full.)
+type Nested = gantz_core::node::graph::Graph<Box<dyn DebugNode>>;
 
 /// inlet x2 -> mul -> outlet.
 fn graph_mul() -> Nested {

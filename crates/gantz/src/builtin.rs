@@ -2,7 +2,6 @@
 
 use crate::node::Node;
 use gantz_ca as ca;
-use gantz_core::node::GraphNode;
 use std::collections::{BTreeMap, HashMap};
 
 /// Constructors for all builtin nodes.
@@ -115,7 +114,6 @@ fn primitives() -> Primitives {
         );
         Box::new(gantz_core::node::Fn::new(named_ref)) as Box<_>
     });
-    register_primitive(&mut p, "graph", || Box::new(GraphNode::default()) as Box<_>);
     register_primitive(&mut p, gantz_core::node::IDENTITY_NAME, || {
         Box::new(gantz_core::node::Identity::default()) as Box<_>
     });

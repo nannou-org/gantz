@@ -1,6 +1,6 @@
 //! A node that references another node by name and content address.
 
-use crate::{BranchNode, NodeCtx, NodeUi, OpenHead, widget::node_inspector};
+use crate::{BranchNode, NodeCtx, NodeUi, OpenHead, ReplaceHead, widget::node_inspector};
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, Node, RegCtx};
 use serde::{Deserialize, Serialize};
@@ -41,8 +41,15 @@ pub trait NameRegistry {
     fn node_exists(&self, ca: &gantz_ca::ContentAddr) -> bool;
 }
 
+/// The separator reserved for nested-graph names (`parent:child`).
+///
+/// A `NamedRef` whose name contains this character is a *nested* graph: it is
+/// hidden from the root graph-select list and its `sync` toggle is forced on so
+/// edits to the child always propagate back to its parent.
+pub const NESTED_SEP: char = ':';
+
 impl NamedRef {
-    /// Construct a `NamedRef` node.
+    /// Construct a `NamedRef` node (auto-sync disabled).
     pub fn new(name: String, ref_: gantz_core::node::Ref) -> Self {
         Self {
             ref_,
@@ -51,9 +58,26 @@ impl NamedRef {
         }
     }
 
+    /// Construct a `NamedRef` node with auto-sync enabled.
+    ///
+    /// Used for nested graphs, whose parent must always follow the child's
+    /// latest commit.
+    pub fn with_sync(name: String, ref_: gantz_core::node::Ref) -> Self {
+        Self {
+            ref_,
+            name,
+            sync: true,
+        }
+    }
+
     /// The human-readable name associated with this reference.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Whether this reference names a nested graph (`parent:child`).
+    pub fn is_nested(&self) -> bool {
+        self.name.contains(NESTED_SEP)
     }
 
     /// The underlying reference.
@@ -69,6 +93,33 @@ impl NamedRef {
     /// Update the reference to a new content address.
     pub fn set_ref(&mut self, ref_: gantz_core::node::Ref) {
         self.ref_ = ref_;
+    }
+
+    /// Re-point this reference at a renamed target: change the stored name and
+    /// repoint at the renamed graph's commit. Used by the rename cascade so a
+    /// renamed parent keeps referencing its (also-renamed) children.
+    pub fn rename(&mut self, name: String, ca: gantz_ca::ContentAddr) {
+        self.name = name;
+        self.ref_ = gantz_core::node::Ref::new(ca);
+    }
+
+    /// Bring the reference up to date with the name's current commit.
+    ///
+    /// When sync is enabled and `resolve(name)` differs from the current
+    /// reference, the reference is repointed at the resolved address. Returns
+    /// `true` if the reference changed. This is the single implementation shared
+    /// by the inspector UI and the headless propagation pass.
+    pub fn resync(&mut self, resolve: impl Fn(&str) -> Option<gantz_ca::ContentAddr>) -> bool {
+        if !self.sync {
+            return false;
+        }
+        match resolve(&self.name) {
+            Some(ca) if ca != self.ref_.content_addr() => {
+                self.ref_ = gantz_core::node::Ref::new(ca);
+                true
+            }
+            _ => false,
+        }
     }
 }
 
@@ -131,27 +182,24 @@ impl NodeUi for NamedRef {
         registry.demo_graph(&self.ref_.content_addr())
     }
 
+    fn nav_head(&self, _registry: &dyn crate::Registry) -> Option<gantz_ca::Head> {
+        Some(gantz_ca::Head::Branch(self.name.clone()))
+    }
+
     fn ui(
         &mut self,
         mut ctx: NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> egui_graph::FramedResponse<egui::Response> {
         let registry = ctx.registry();
-        let ref_ca = self.ref_.content_addr();
 
-        // Check if the referenced CA exists in registry.
-        let is_missing = !registry.node_exists(&ref_ca);
-
-        // Check if outdated (name points to different CA).
-        let current_ca = registry.name_ca(&self.name);
-        let is_outdated = !is_missing && current_ca.map(|ca| ca != ref_ca).unwrap_or(false);
-
-        // Auto-sync if enabled and outdated (skip if missing).
-        if self.sync && is_outdated {
-            if let Some(ca) = current_ca {
-                self.ref_ = gantz_core::node::Ref::new(ca);
-            }
+        // Nested graphs always sync so parents follow their children's edits.
+        if self.is_nested() {
+            self.sync = true;
         }
+
+        // Auto-sync if enabled and the name points at a newer commit.
+        self.resync(|name| registry.name_ca(name));
 
         // Recalculate after potential sync.
         let ref_ca = self.ref_.content_addr();
@@ -174,9 +222,18 @@ impl NodeUi for NamedRef {
             ui.add(egui::Label::new(name_text).selectable(false))
         });
 
-        // Open the node on double-click (handler decides if the node is openable).
+        // Enter the referenced graph on double-click. A nested graph is entered
+        // *in place* (the focused tab navigates to it; the breadcrumb returns to
+        // the parent); a reference to a root graph opens as a new tab. Either
+        // way, the scene's "open in new tab" context-menu action (see
+        // `nav_head`) opens it as a separate tab.
         if response.inner.response.double_clicked() {
-            ctx.response(OpenHead(gantz_ca::Head::Branch(self.name.clone())));
+            let head = gantz_ca::Head::Branch(self.name.clone());
+            if self.is_nested() {
+                ctx.response(ReplaceHead(head));
+            } else {
+                ctx.response(OpenHead(head));
+            }
         }
 
         response
@@ -205,14 +262,26 @@ impl NodeUi for NamedRef {
             });
         });
 
-        // Sync toggle row.
+        // Sync toggle row. Forced on (and disabled) for nested graphs.
+        let nested = self.is_nested();
+        if nested {
+            self.sync = true;
+        }
         body.row(row_h, |mut row| {
             row.col(|ui| {
                 ui.label("sync");
             });
             row.col(|ui| {
-                ui.checkbox(&mut self.sync, "")
-                    .on_hover_text("automatically update to the latest commit");
+                if nested {
+                    ui.add_enabled(false, egui::Checkbox::new(&mut self.sync, ""))
+                        .on_disabled_hover_text(
+                            "sync is always on for nested graphs so the parent \
+                             follows the child's edits",
+                        );
+                } else {
+                    ui.checkbox(&mut self.sync, "")
+                        .on_hover_text("automatically update to the latest commit");
+                }
             });
         });
 

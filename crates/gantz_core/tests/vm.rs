@@ -4,13 +4,17 @@
 use gantz_core::{
     Edge, ROOT_STATE,
     compile::{entry_fn_name, push_pull_entrypoints},
-    node::{self, GraphNode, Node, WithPushEval},
+    node::{self, Node, WithPushEval},
 };
 use std::fmt::Debug;
 use steel::{SteelVal, steel_vm::engine::Engine};
 
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
+
+// A nested graph: an ordinary `Graph` (which implements `Node`) boxed into its
+// parent, in place of the removed `GraphNode` wrapper.
+type Nested = node::graph::Graph<Box<dyn DebugNode>>;
 
 // A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
@@ -44,7 +48,7 @@ fn test_graph() -> (
     petgraph::graph::NodeIndex,
     petgraph::graph::NodeIndex,
 ) {
-    let mut ga = GraphNode::default();
+    let mut ga = Nested::default();
     let inlet = ga.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
     let inc = ga.add_node(Box::new(node::expr("(+ $x 1)").unwrap()) as Box<_>);
     let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
@@ -146,7 +150,7 @@ fn recompile_redefines_module() {
 fn steel_err_node_attribution() {
     // The failing node lives inside a nested graph to exercise full-path
     // resolution: push -> int -> [inlet -> car-of-int -> outlet].
-    let mut ga = GraphNode::default();
+    let mut ga = Nested::default();
     let inlet = ga.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
     let boom = ga.add_node(Box::new(node::expr("(car $x)").unwrap()) as Box<_>);
     let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
