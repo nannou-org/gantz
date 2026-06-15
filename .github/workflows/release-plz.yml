@@ -30,7 +30,8 @@ jobs:
         uses: rust-lang/crates-io-auth-action@v1
       - run: nix develop -c release-plz release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # release-plz reads the git-forge token from GIT_TOKEN.
+          GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   # Keep the version-bump + changelog PR up to date on every push to master.
@@ -51,4 +52,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
       - run: nix develop -c release-plz release-pr
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
