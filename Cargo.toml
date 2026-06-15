@@ -29,8 +29,8 @@ bevy_ecs = "0.17"
 bevy_log = "0.17"
 bevy_tasks = "0.17"
 bevy_egui = { version = "0.38", features = ["serde"] }
-bevy_gantz = { version = "0.2.0", path = "crates/bevy_gantz" }
-bevy_gantz_egui = { version = "0.2.0", path = "crates/bevy_gantz_egui" }
+bevy_gantz = { version = "0.3.0", path = "crates/bevy_gantz" }
+bevy_gantz_egui = { version = "0.3.0", path = "crates/bevy_gantz_egui" }
 bevy_input = "0.17"
 bevy_pkv = "0.14"
 bevy_time = "0.17"
@@ -51,13 +51,13 @@ egui_graph = "0.14"
 egui_plot = "0.34"
 egui_tiles = "0.14"
 env_logger = { version = "0.11", default-features = false }
-gantz_base = { version = "0.2.0", path = "crates/gantz_base" }
-gantz_ca = { version = "0.2.0", path = "crates/gantz_ca" }
+gantz_base = { version = "0.2.1", path = "crates/gantz_base" }
+gantz_ca = { version = "0.2.1", path = "crates/gantz_ca" }
 gantz_ca_derive = { version = "0.2.0", path = "crates/gantz_ca_derive" }
-gantz_core = { version = "0.2.0", path = "crates/gantz_core" }
-gantz_egui = { version = "0.2.0", path = "crates/gantz_egui" }
+gantz_core = { version = "0.3.0", path = "crates/gantz_core" }
+gantz_egui = { version = "0.3.0", path = "crates/gantz_egui" }
 gantz_format = { version = "0.2.0", path = "crates/gantz_format" }
-gantz_std = { version = "0.2.0", path = "crates/gantz_std" }
+gantz_std = { version = "0.2.1", path = "crates/gantz_std" }
 hex = "0.4"
 humantime = "2.3"
 log = { version = "0.4", features = ["serde"] }
