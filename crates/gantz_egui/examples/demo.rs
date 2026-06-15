@@ -1386,31 +1386,38 @@ fn refresh_branch_head(state: &mut State) {
     state.diagnostics[ix] = diags;
 }
 
-/// Recompile every open head's graph into its existing VM (no commit).
-///
-/// Used when the compile config changes: the graph content is unchanged, and
-/// compiling into the existing VM preserves node state.
-/// After committing edited heads, bring referrers up to date: resync all
-/// sync-enabled `NamedRef`s, reload any open head whose commit moved, and
-/// recompile. This is how editing a nested graph propagates to its parents.
-fn resync_and_refresh(state: &mut State) {
-    let moves = gantz_egui::sync::resync(&mut state.env.registry, timestamp());
+/// Reload any open head whose commit moved (to its new registry graph) and
+/// recompile. A no-op when there are no moves.
+fn apply_moves(state: &mut State, moves: &[gantz_egui::sync::Moved]) {
     if moves.is_empty() {
         return;
     }
-    for m in &moves {
+    for m in moves {
         let Some(new_graph) = state.env.registry.commit_graph_ref(&m.new_commit).cloned() else {
             continue;
         };
         for (head, graph, _) in state.heads.iter_mut() {
             if matches!(head, gantz_ca::Head::Branch(name) if *name == m.name) {
-                *graph = new_graph.clone();
+                *graph = new_graph;
+                break;
             }
         }
     }
     recompile_heads(state);
 }
 
+/// After committing edited heads, bring referrers up to date: resync all
+/// sync-enabled `NamedRef`s, reload any open head whose commit moved, and
+/// recompile. This is how editing a nested graph propagates to its parents.
+fn resync_and_refresh(state: &mut State) {
+    let moves = gantz_egui::sync::resync(&mut state.env.registry, timestamp());
+    apply_moves(state, &moves);
+}
+
+/// Recompile every open head's graph into its existing VM (no commit).
+///
+/// Used when the compile config changes: the graph content is unchanged, and
+/// compiling into the existing VM preserves node state.
 fn recompile_heads(state: &mut State) {
     for (ix, (_, graph, _)) in state.heads.iter().enumerate() {
         let vm = &mut state.vms[ix];
@@ -1502,18 +1509,6 @@ fn create_branch_from_head(
             old,
             new,
         ));
-        if !moves.is_empty() {
-            for m in &moves {
-                if let Some(g) = state.env.registry.commit_graph_ref(&m.new_commit).cloned() {
-                    for (head, graph, _) in state.heads.iter_mut() {
-                        if matches!(head, gantz_ca::Head::Branch(n) if *n == m.name) {
-                            *graph = g;
-                            break;
-                        }
-                    }
-                }
-            }
-            recompile_heads(state);
-        }
+        apply_moves(state, &moves);
     }
 }
