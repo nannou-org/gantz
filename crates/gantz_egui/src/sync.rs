@@ -39,6 +39,63 @@ fn depth(name: &str) -> usize {
     name.matches(NESTED_SEP).count()
 }
 
+/// Apply `mutate` to every inner [`NamedRef`] of a clone of `graph`, returning
+/// the rewritten graph and whether any reference changed.
+fn rewrite_refs<N>(
+    graph: &Graph<N>,
+    mut mutate: impl FnMut(&mut NamedRef) -> bool,
+) -> (Graph<N>, bool)
+where
+    N: Clone + AsNamedRefMut,
+{
+    let mut g = graph.clone();
+    let mut changed = false;
+    for weight in g.node_weights_mut() {
+        if let Some(named_ref) = weight.as_named_ref_mut() {
+            changed |= mutate(named_ref);
+        }
+    }
+    (g, changed)
+}
+
+/// Rewrite the references in the graph at `source_commit` via `mutate`, and -
+/// when something changed - commit the result under `name`. Returns the
+/// resulting [`Moved`], or `None` when nothing changed.
+fn commit_rewritten<N>(
+    registry: &mut Registry<Graph<N>>,
+    timestamp: Duration,
+    name: &str,
+    source_commit: CommitAddr,
+    mutate: impl FnMut(&mut NamedRef) -> bool,
+) -> Option<Moved>
+where
+    N: Clone + CaHash + AsNamedRefMut,
+{
+    let (g, changed) = rewrite_refs(registry.commit_graph_ref(&source_commit)?, mutate);
+    if !changed {
+        return None;
+    }
+    let graph_ca = gantz_ca::graph_addr(&g);
+    let new_commit = registry.commit_graph_to_name(timestamp, graph_ca, || g, name);
+    Some(Moved {
+        name: name.to_string(),
+        old_commit: source_commit,
+        new_commit,
+    })
+}
+
+/// Repoint a [`NamedRef`] whose name was renamed, per a `old -> (new, commit)`
+/// map. Returns whether it changed.
+fn remap_ref(named_ref: &mut NamedRef, remap: &HashMap<String, (String, CommitAddr)>) -> bool {
+    match remap.get(named_ref.name()) {
+        Some((new_name, new_commit)) => {
+            named_ref.rename(new_name.clone(), (*new_commit).into());
+            true
+        }
+        None => false,
+    }
+}
+
 /// Give a freshly-forked graph independent nested children.
 ///
 /// Forking `old` to `new` copies `old`'s graph (done by the caller), but that
@@ -72,20 +129,8 @@ where
     let mut remap: HashMap<String, (String, CommitAddr)> = HashMap::new();
     let mut moves = Vec::new();
 
-    // Rewrites refs to already-copied descendants; returns whether it changed.
-    let rewrite = |graph: &mut Graph<N>, remap: &HashMap<String, (String, CommitAddr)>| {
-        let mut changed = false;
-        for weight in graph.node_weights_mut() {
-            if let Some(named_ref) = weight.as_named_ref_mut() {
-                if let Some((new_name, new_commit)) = remap.get(named_ref.name()) {
-                    named_ref.rename(new_name.clone(), (*new_commit).into());
-                    changed = true;
-                }
-            }
-        }
-        changed
-    };
-
+    // Each descendant is copied (under a fresh `new:*` name) with its references
+    // to already-copied descendants repointed.
     for d in &descendants {
         let d_new = format!("{new}{}", &d[old.len()..]);
         let Some(&commit) = registry.names().get(d) else {
@@ -94,8 +139,7 @@ where
         let Some(graph) = registry.commit_graph_ref(&commit) else {
             continue;
         };
-        let mut g = graph.clone();
-        rewrite(&mut g, &remap);
+        let (g, _) = rewrite_refs(graph, |nr| remap_ref(nr, &remap));
         let graph_ca = gantz_ca::graph_addr(&g);
         let new_commit = registry.commit_graph_to_name(timestamp, graph_ca, || g, &d_new);
         remap.insert(d.clone(), (d_new.clone(), new_commit));
@@ -106,20 +150,15 @@ where
         });
     }
 
-    // Rewrite the already-created `new` root's references to its own children.
+    // Repoint the already-created `new` root's references to its own children.
     if let Some(&root_commit) = registry.names().get(new) {
-        if let Some(graph) = registry.commit_graph_ref(&root_commit) {
-            let mut g = graph.clone();
-            if rewrite(&mut g, &remap) {
-                let graph_ca = gantz_ca::graph_addr(&g);
-                let new_commit = registry.commit_graph_to_name(timestamp, graph_ca, || g, new);
-                moves.push(Moved {
-                    name: new.to_string(),
-                    old_commit: root_commit,
-                    new_commit,
-                });
-            }
-        }
+        moves.extend(commit_rewritten(
+            registry,
+            timestamp,
+            new,
+            root_commit,
+            |nr| remap_ref(nr, &remap),
+        ));
     }
 
     moves
@@ -160,29 +199,12 @@ where
             let Some(&commit_ca) = current.get(name) else {
                 continue;
             };
-            let Some(graph) = registry.commit_graph_ref(&commit_ca) else {
-                continue;
-            };
-            let mut new_graph = graph.clone();
-
             let resolve = |m: &str| current.get(m).copied().map(gantz_ca::ContentAddr::from);
-            let mut changed = false;
-            for weight in new_graph.node_weights_mut() {
-                if let Some(named_ref) = weight.as_named_ref_mut() {
-                    changed |= named_ref.resync(&resolve);
-                }
-            }
-
-            if changed {
-                let graph_ca = gantz_ca::graph_addr(&new_graph);
-                let new_commit =
-                    registry.commit_graph_to_name(timestamp, graph_ca, || new_graph, name);
-                current.insert(name.clone(), new_commit);
-                moves.push(Moved {
-                    name: name.clone(),
-                    old_commit: commit_ca,
-                    new_commit,
-                });
+            if let Some(moved) = commit_rewritten(registry, timestamp, name, commit_ca, |nr| {
+                nr.resync(&resolve)
+            }) {
+                current.insert(name.clone(), moved.new_commit);
+                moves.push(moved);
                 changed_any = true;
             }
         }
@@ -227,27 +249,20 @@ where
 
     // Repoint every parent reference (each a distinct instance) to the new name.
     let mut moves = Vec::new();
-    if let Some(graph) = registry.commit_graph_ref(&parent_commit) {
-        let mut g = graph.clone();
-        let mut changed = false;
-        for weight in g.node_weights_mut() {
-            if let Some(named_ref) = weight.as_named_ref_mut() {
-                if named_ref.name() == old_nested {
-                    named_ref.rename(new_name.to_string(), new_commit.into());
-                    changed = true;
-                }
+    moves.extend(commit_rewritten(
+        registry,
+        timestamp,
+        &parent,
+        parent_commit,
+        |nr| {
+            if nr.name() == old_nested {
+                nr.rename(new_name.to_string(), new_commit.into());
+                true
+            } else {
+                false
             }
-        }
-        if changed {
-            let graph_ca = gantz_ca::graph_addr(&g);
-            let moved = registry.commit_graph_to_name(timestamp, graph_ca, || g, &parent);
-            moves.push(Moved {
-                name: parent,
-                old_commit: parent_commit,
-                new_commit: moved,
-            });
-        }
-    }
+        },
+    ));
 
     // Drop the orphaned nested name and its descendants (their content survives
     // as the new root graph copy).
