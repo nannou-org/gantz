@@ -51,7 +51,6 @@ pub type NodeIndex = petgraph::graph::NodeIndex<usize>;
 pub struct GraphScene<'a, N> {
     registry: &'a dyn Registry,
     graph: &'a mut Graph<N>,
-    path: &'a [node::Id],
     id: egui::Id,
     auto_layout: bool,
     layout_flow: egui::Direction,
@@ -86,19 +85,12 @@ impl<'a, N> GraphScene<'a, N>
 where
     N: Node + NodeUi,
 {
-    /// Create a graph scene for the given graph that resides at the given path
-    /// from the root.
-    ///
-    /// E.g. to present the root graph, provide the root graph and an empty
-    /// slice.
-    ///
-    /// NOTE: this means the `path` is not an index into the graph, but is the
-    /// path that this braph resides at within some root graph.
-    pub fn new(registry: &'a dyn Registry, graph: &'a mut Graph<N>, path: &'a [node::Id]) -> Self {
+    /// Create a graph scene for the given graph (a head's root graph; nested
+    /// graphs are separate heads).
+    pub fn new(registry: &'a dyn Registry, graph: &'a mut Graph<N>) -> Self {
         Self {
             registry,
             graph,
-            path,
             id: egui::Id::new("gantz-graph-scene"),
             auto_layout: false,
             layout_flow: egui::Direction::TopDown,
@@ -184,7 +176,6 @@ where
                     node_responses = nodes(
                         self.registry,
                         self.graph,
-                        self.path,
                         nctx,
                         state,
                         &mut responses,
@@ -290,7 +281,6 @@ pub fn layout<N>(
 fn nodes<N>(
     registry: &dyn Registry,
     graph: &mut Graph<N>,
-    path: &[node::Id],
     nctx: &mut egui_graph::NodesCtx,
     state: &mut GraphSceneState,
     responses: &mut Vec<DynResponse>,
@@ -305,7 +295,6 @@ where
     let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
     let meta_ctx = gantz_core::node::MetaCtx::new(&get_node);
     let node_ids: Vec<_> = graph.node_identifiers().collect();
-    let mut path = path.to_vec();
     let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
     let mut node_responses = Vec::with_capacity(node_ids.len());
     let mut nodes_to_delete = Vec::new();
@@ -322,17 +311,12 @@ where
             .flow(node.flow(registry))
             .max_width(f32::INFINITY)
             .show(nctx, ui, |nui_ctx| {
-                path.push(n_ix);
-
-                // Create the gantz node context.
+                // A node at this (root) level has the single-element state path
+                // `[n_ix]`.
+                let node_path = [n_ix];
                 let node_ctx =
-                    crate::NodeCtx::new(registry, &path, &inlets, &outlets, vm, responses);
-
-                // Instantiate the node UI, return its response.
-                let response = node.ui(node_ctx, nui_ctx);
-
-                path.pop();
-                response
+                    crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, vm, responses);
+                node.ui(node_ctx, nui_ctx)
             });
 
         if response.changed() {
@@ -430,9 +414,7 @@ where
     // Unified delete: both keyboard and context menu deletes go through here.
     for n_id in nodes_to_delete {
         if graph.contains_node(n_id) {
-            let mut node_path = path.to_vec();
-            node_path.push(n_id.index());
-            let _ = gantz_core::node::state::remove_value(vm, &node_path);
+            let _ = gantz_core::node::state::remove_value(vm, &[n_id.index()]);
             graph.remove_node(n_id);
             state.interaction.selection.nodes.remove(&n_id);
         }
@@ -443,12 +425,10 @@ where
     if !nodes_to_reset.is_empty() {
         for n_id in nodes_to_reset {
             if graph.contains_node(n_id) {
-                let mut node_path = path.to_vec();
-                node_path.push(n_id.index());
-                let _ = gantz_core::node::state::remove_value(vm, &node_path);
+                let _ = gantz_core::node::state::remove_value(vm, &[n_id.index()]);
             }
         }
-        gantz_core::graph::register(&get_node, &*graph, &path, vm);
+        gantz_core::graph::register(&get_node, &*graph, &[], vm);
     }
 
     node_responses

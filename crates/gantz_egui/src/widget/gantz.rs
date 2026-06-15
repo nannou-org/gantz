@@ -1509,7 +1509,7 @@ where
         head_view.layout = widget::graph_scene::layout(graph, id, layout_flow, ui.ctx());
     }
 
-    let response = GraphScene::new(registry, graph, &[])
+    let response = GraphScene::new(registry, graph)
         .with_id(id)
         .auto_layout(auto_layout)
         .layout_flow(layout_flow)
