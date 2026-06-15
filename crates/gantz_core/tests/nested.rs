@@ -97,7 +97,7 @@ fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
 fn test_graph_nested_stateless() {
     env_logger::init();
 
-    // Graph A, nested within a node.
+    // Graph A, used as a nested node.
     let mut ga = Nested::default();
     let inlet_a = ga.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
     let inlet_b = ga.add_node(Box::new(node::graph::Inlet) as Box<_>);
@@ -1001,7 +1001,7 @@ fn test_graph_nested_mixed_level_multi_source() {
 //   [In]     inlet            [Out X]  outlet
 //   [Sel]    node_select: input ==0 -> o0(42), else -> o1(99)
 //   oN       branch output N    /  \   the two arms of a branch
-// The OUTER graph is uniform: push -> int value(s) -> [GraphNode] -> a `number`
+// The OUTER graph is uniform: push -> int value(s) -> [Nested] -> a `number`
 // store per output (which records the value it receives).
 // ===========================================================================
 
@@ -1635,7 +1635,7 @@ fn test_graph_nested_three_arm_branch() {
 //  inner2:            inner1 (wraps inner2):
 //    [In]               [In]
 //     |                  |
-//   [Sel]            [inner2]   <- itself a branching GraphNode
+//   [Sel]            [inner2]   <- itself a branching nested graph
 //  o0/ \o1           o0/  \o1
 // [A]   [B]      [Out X]  [Out Y]
 #[test]
@@ -2702,7 +2702,7 @@ fn test_graph_root_outlet_disconnected() {
 //
 // Emulates Pure Data's stateful `+`: a left "hot" inlet (always outputs the
 // sum) and a right "cold" inlet (updates internal state only, no output). The
-// node is a nested `GraphNode` whose interior is a single `Branch` reading two
+// node is a nested `Graph` whose interior is a single `Branch` reading two
 // optional inputs (`$?l`, `$?r`). The cold/hot behaviour relies on the inner
 // branch seeing `(None)` for the inlet that did not fire - which only works once
 // the active-input-set is propagated into the nested graph's interior.
@@ -2964,7 +2964,7 @@ fn test_nested_pd_plus_emits_reduced_variant() {
     );
 }
 
-// pd+ wrapped in a second `GraphNode`. Returns (outer, pd_id_in_outer,
+// pd+ wrapped in a second nested `Graph`. Returns (outer, pd_id_in_outer,
 // branch_id_in_pd). Outer input 0 -> pd left (hot), input 1 -> pd right (cold).
 fn pd_plus_wrapped() -> (Nested, usize, usize) {
     let (pd_inner, branch_ix) = pd_plus();
@@ -3016,7 +3016,7 @@ fn test_nested_pd_plus_two_levels() {
     assert_eq!(store_val(&vm, store), Some(15));
 }
 
-// A wrapper `GraphNode` exposing ONLY pd+'s hot inlet, leaving the cold inlet
+// A wrapper `Graph` exposing ONLY pd+'s hot inlet, leaving the cold inlet
 // permanently unconnected. Even when the wrapper is invoked all-active, its
 // interior invokes pd+ with a statically reduced active-set (only the hot inlet
 // wired), whose inner branch variant must still be defined. Guards the conf

@@ -14,10 +14,7 @@ use gantz_ca::CaHash;
 use petgraph::{
     Directed,
     graph::{EdgeIndex, NodeIndex},
-    visit::{
-        Data, IntoEdgeReferences, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, NodeRef,
-        Visitable,
-    },
+    visit::{Data, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, NodeRef, Visitable},
 };
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
@@ -148,16 +145,6 @@ impl Node for Outlet {
     fn outlet(&self, _ctx: node::MetaCtx) -> bool {
         true
     }
-}
-
-/// A `PartialEq` implementation for [`Graph`].
-pub fn graph_partial_eq<N: PartialEq>(a: &Graph<N>, b: &Graph<N>) -> bool {
-    a.node_references()
-        .zip(b.node_references())
-        .all(|(a, b)| a == b)
-        && a.edge_references()
-            .zip(b.edge_references())
-            .all(|(a, b)| a == b)
 }
 
 /// Compute the external branch masks for a nested graph (see [`Node::branches`]):
