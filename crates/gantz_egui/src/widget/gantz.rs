@@ -795,8 +795,11 @@ where
                             let env = gantz.env;
                             access.with_head_mut(fh, |data| {
                                 for path in paths {
+                                    // Log targets are state paths; only root-level
+                                    // (single-segment) ones name a node in this graph.
+                                    let [ix] = path[..] else { continue };
                                     let Some(node) =
-                                        graph_scene::index_path_node_mut(data.graph, &path)
+                                        data.graph.node_weight_mut(graph_scene::NodeIndex::new(ix))
                                     else {
                                         continue;
                                     };

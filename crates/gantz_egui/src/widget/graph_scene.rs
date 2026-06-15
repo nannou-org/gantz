@@ -499,18 +499,6 @@ fn edges<N>(
     }
 }
 
-/// The node at the given `path` within `graph`, if any.
-///
-/// Nested graphs are now separate named heads rather than inline subgraphs, so a
-/// path only ever addresses a node at this level: a single-element path resolves
-/// to that node, anything else yields `None`.
-pub fn index_path_node_mut<'a, N>(graph: &'a mut Graph<N>, path: &[node::Id]) -> Option<&'a mut N> {
-    match path {
-        [ix] => graph.node_weight_mut(petgraph::graph::NodeIndex::new(*ix)),
-        _ => None,
-    }
-}
-
 /// The id of the node to flag at the viewed level for a diagnostic path: the
 /// next id under the level, so diagnostics within nested graphs flag the
 /// enclosing graph node. `None` when the path is empty or lies outside the
