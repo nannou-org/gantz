@@ -61,30 +61,6 @@ jobs:
           name: pr-preview-${{ github.event.pull_request.number }}
           path: artifact/
 
-  cargo-publish:
-    needs: nix
-    permissions:
-      id-token: "write"
-      contents: "read"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@v13
-      - uses: nicknovitski/nix-develop@v1
-      - uses: Swatinem/rust-cache@v2
-      - uses: katyo/publish-crates@v2
-        id: publish-crates
-        with:
-          registry-token: ${{ secrets.CRATESIO_TOKEN }}
-          dry-run: ${{ github.event_name != 'push' }}
-          ignore-unpublished-changes: true
-      - name: List published crates
-        if: ${{ steps.publish-crates.outputs.published != '' }}
-        run: |
-          LIST="${{ join(fromJSON(steps.publish-crates.outputs.published).*.name, ', ') }}"
-          echo "Published crates: $LIST"
-
   deploy-gantz-website:
     needs: nix
     if: github.ref == 'refs/heads/master'
