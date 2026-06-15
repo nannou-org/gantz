@@ -2,7 +2,7 @@
 //!
 //! When a named graph is edited it commits to a new address; every graph that
 //! references it by name must then follow. [`resync`] brings all sync-enabled
-//! [`NamedRef`](crate::node::NamedRef)s up to their name's current commit,
+//! [`NamedRef`]s up to their name's current commit,
 //! recommitting any graph whose references changed. This is the headless
 //! counterpart of the inspector's render-time auto-sync, and the mechanism by
 //! which editing a nested graph propagates up to its parents.

@@ -28,9 +28,8 @@ pub enum FileDropTarget {
 /// The reserved node-type name that creates a new nested graph.
 ///
 /// Selecting this entry in the command palette emits a
-/// [`CreateNestedGraph`](crate::CreateNestedGraph) rather than a
-/// [`CreateNode`](crate::CreateNode), so a nested graph is created like any
-/// other node but routed through the registry-aware op.
+/// [`CreateNestedGraph`] rather than a [`CreateNode`], so a nested graph is
+/// created like any other node but routed through the registry-aware op.
 pub const NESTED_GRAPH_TYPE: &str = "graph";
 
 /// A registry of available node types.

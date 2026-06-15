@@ -239,7 +239,7 @@ pub struct CreateNode {
 ///
 /// Commits a fresh empty graph to the registry under the name `<parent>:<n>`
 /// (where `<parent>` is the emitting head's name) and inserts a synced
-/// [`node::NamedRef`](crate::node::NamedRef) to it. Behaves like creating any
+/// [`node::NamedRef`] to it. Behaves like creating any
 /// other node, but is registry-aware.
 #[derive(Clone, Copy, Debug)]
 pub struct CreateNestedGraph;
