@@ -1,0 +1,9 @@
+[workspace]
+# Per-crate independent versioning (release-plz default): each crate bumps from
+# its own Conventional Commits, with cargo-semver-checks forcing a bump when a
+# breaking API change is detected. A dependent gets a patch bump when an internal
+# dependency it relies on is updated.
+#
+# If strict lockstep is ever wanted (all crates always share one version), add
+# `version_group = "gantz"` to a `[[package]]` entry for every crate.
+semver_check = true
