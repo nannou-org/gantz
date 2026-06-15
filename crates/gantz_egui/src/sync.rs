@@ -192,3 +192,75 @@ where
     }
     moves
 }
+
+/// Promote a nested graph that was renamed to a (root) name: repoint its
+/// parent's references from the old nested name to `new_name`, then drop the
+/// now-orphaned nested name and its descendants.
+///
+/// `old_nested` is the renamed graph's former `parent:child` name; `new_name`
+/// is its new root name (a fresh copy of its graph already committed under it).
+/// The parent may hold *several* references to the nested graph - each an
+/// independent instance with its own state - and they are all repointed.
+/// Returns the parent's move (if it changed) so an open parent head can be
+/// refreshed. A no-op (empty) when `old_nested` is not a nested name.
+pub fn promote_nested<N>(
+    registry: &mut Registry<Graph<N>>,
+    timestamp: Duration,
+    old_nested: &str,
+    new_name: &str,
+) -> Vec<Moved>
+where
+    N: Clone + CaHash + AsNamedRefMut,
+{
+    // The parent referencing the nested graph: the name with the last leaf
+    // stripped (`A:1` -> `A`, `A:1:2` -> `A:1`).
+    let Some((parent, _)) = old_nested.rsplit_once(NESTED_SEP) else {
+        return Vec::new();
+    };
+    let parent = parent.to_string();
+    let (Some(&new_commit), Some(&parent_commit)) = (
+        registry.names().get(new_name),
+        registry.names().get(&parent),
+    ) else {
+        return Vec::new();
+    };
+
+    // Repoint every parent reference (each a distinct instance) to the new name.
+    let mut moves = Vec::new();
+    if let Some(graph) = registry.commit_graph_ref(&parent_commit) {
+        let mut g = graph.clone();
+        let mut changed = false;
+        for weight in g.node_weights_mut() {
+            if let Some(named_ref) = weight.as_named_ref_mut() {
+                if named_ref.name() == old_nested {
+                    named_ref.rename(new_name.to_string(), new_commit.into());
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            let graph_ca = gantz_ca::graph_addr(&g);
+            let moved = registry.commit_graph_to_name(timestamp, graph_ca, || g, &parent);
+            moves.push(Moved {
+                name: parent,
+                old_commit: parent_commit,
+                new_commit: moved,
+            });
+        }
+    }
+
+    // Drop the orphaned nested name and its descendants (their content survives
+    // as the new root graph copy).
+    let child_prefix = format!("{old_nested}{NESTED_SEP}");
+    let orphans: Vec<String> = registry
+        .names()
+        .keys()
+        .filter(|n| n.as_str() == old_nested || n.starts_with(&child_prefix))
+        .cloned()
+        .collect();
+    for orphan in orphans {
+        registry.remove_name(&orphan);
+    }
+
+    moves
+}

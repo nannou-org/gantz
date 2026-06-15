@@ -631,8 +631,16 @@ pub fn on_branched_head_fork_nested<N>(
     let (ca::Head::Branch(old), ca::Head::Branch(new)) = (&event.old_head, &event.new_head) else {
         return;
     };
-    let moves =
-        gantz_egui::sync::fork_nested(&mut registry, bevy_gantz::reg::timestamp(), old, new);
+    let ts = bevy_gantz::reg::timestamp();
+    // Give the fork independent nested children, then (when the fork renamed a
+    // *nested* graph to a root name) repoint the parent's references to it.
+    let mut moves = gantz_egui::sync::fork_nested(&mut registry, ts, old, new);
+    moves.extend(gantz_egui::sync::promote_nested(
+        &mut registry,
+        ts,
+        old,
+        new,
+    ));
     refresh_moved_heads(&moves, &registry, &mut heads, &mut views);
 }
 

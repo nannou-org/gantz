@@ -635,4 +635,64 @@ mod tests {
         });
         assert!(kept, "the pasted node must still be a NamedRef to A:1");
     }
+
+    /// Renaming a nested graph to a root name promotes it: every reference in
+    /// the parent (there may be several instances, each with its own state) is
+    /// repointed to the new name, and the orphaned nested name is dropped.
+    #[test]
+    fn promote_nested_repoints_all_parent_instances() {
+        use gantz_core::node::{Identity, Ref};
+        use gantz_egui::node::NamedRef;
+        use std::any::Any;
+        use std::time::Duration;
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let ts = Duration::from_secs(0);
+        let mut registry = gantz_ca::Registry::<G>::default();
+
+        // Nested child "A:1".
+        let mut child = G::default();
+        child.add_node(Box::new(Identity) as Box<dyn Node>);
+        let a1 = registry.commit_graph_to_name(ts, gantz_ca::graph_addr(&child), || child, "A:1");
+
+        // Parent "A" with THREE instances of the nested graph.
+        let mut parent = G::default();
+        for _ in 0..3 {
+            parent.add_node(
+                Box::new(NamedRef::with_sync("A:1".to_string(), Ref::new(a1.into())))
+                    as Box<dyn Node>,
+            );
+        }
+        registry.commit_graph_to_name(ts, gantz_ca::graph_addr(&parent), || parent, "A");
+
+        // Simulate "rename A:1 -> B": a root "B" copy of A:1's graph (as the
+        // fork does), then promote.
+        let a1_graph = registry.commits()[&a1].graph;
+        let b = registry.commit_graph(ts, Some(a1), a1_graph, || unreachable!());
+        registry.insert_name("B".to_string(), b);
+        let moves = gantz_egui::sync::promote_nested(&mut registry, ts, "A:1", "B");
+
+        assert!(
+            moves.iter().any(|m| m.name == "A"),
+            "parent A must recommit"
+        );
+        assert!(
+            !registry.names().contains_key("A:1"),
+            "the orphaned nested name must be dropped"
+        );
+
+        // All three parent references now point at "B".
+        let a_commit = *registry.names().get("A").unwrap();
+        let a_graph = registry.commit_graph_ref(&a_commit).unwrap();
+        let to_b = a_graph
+            .node_weights()
+            .filter(|n| {
+                ((&***n) as &dyn Any)
+                    .downcast_ref::<NamedRef>()
+                    .map(|nr| nr.name() == "B")
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(to_b, 3, "all instances must be repointed to B");
+    }
 }

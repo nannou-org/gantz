@@ -1491,9 +1491,17 @@ fn create_branch_from_head(
         state.gantz.migrate_head(&old_head, &new_head, false);
     }
 
-    // Give the fork independent nested children.
+    // Give the fork independent nested children, then (when a nested graph was
+    // renamed to a root name) repoint its parent's references to it.
     if let (gantz_ca::Head::Branch(old), gantz_ca::Head::Branch(new)) = (original_head, &new_head) {
-        let moves = gantz_egui::sync::fork_nested(&mut state.env.registry, timestamp(), old, new);
+        let ts = timestamp();
+        let mut moves = gantz_egui::sync::fork_nested(&mut state.env.registry, ts, old, new);
+        moves.extend(gantz_egui::sync::promote_nested(
+            &mut state.env.registry,
+            ts,
+            old,
+            new,
+        ));
         if !moves.is_empty() {
             for m in &moves {
                 if let Some(g) = state.env.registry.commit_graph_ref(&m.new_commit).cloned() {
