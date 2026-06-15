@@ -1,6 +1,6 @@
 use bevy::{
     prelude::*,
-    window::{Window, WindowPlugin},
+    window::{PrimaryWindow, Window},
 };
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use bevy_gantz::{
@@ -17,6 +17,7 @@ use storage::Pkv;
 mod builtin;
 mod node;
 mod storage;
+mod window;
 
 fn main() {
     App::new()
@@ -28,7 +29,7 @@ fn main() {
         .insert_resource(BuiltinNodes::<Box<dyn node::Node>>(Box::new(
             Builtins::new(),
         )))
-        .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
+        .add_plugins(DefaultPlugins.set(log_plugin()).set(window::plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::new(0.25))
         .insert_resource(Pkv(PkvStore::new("nannou-org", "gantz")))
@@ -36,6 +37,7 @@ fn main() {
             Startup,
             (
                 setup_camera,
+                setup_window,
                 setup_resources,
                 bevy_gantz_egui::base::load::<Box<dyn node::Node>>
                     .after(setup_resources)
@@ -64,24 +66,15 @@ fn log_plugin() -> bevy::log::LogPlugin {
     }
 }
 
-fn window_plugin() -> WindowPlugin {
-    WindowPlugin {
-        primary_window: Some(Window {
-            title: "gantz".into(),
-            name: Some("gantz".into()),
-            fit_canvas_to_parent: true,
-            // NOTE: This vastly improves input-latency on wayland. If you
-            // notice tearing or simialr issues, open an issue so we can try and
-            // select the right `PresentMode` for each system!
-            present_mode: bevy::window::PresentMode::AutoNoVsync,
-            ..default()
-        }),
-        ..default()
-    }
-}
-
 fn setup_camera(mut cmds: Commands) {
     cmds.spawn(Camera2d);
+}
+
+/// Restore the persisted window size (native only; no-op on web).
+fn setup_window(storage: Res<Pkv>, mut windows: Query<&mut Window, With<PrimaryWindow>>) {
+    if let Ok(mut window) = windows.single_mut() {
+        window::apply_saved_size(&*storage, &mut window);
+    }
 }
 
 fn setup_resources(storage: Res<Pkv>, mut cmds: Commands) {
@@ -148,6 +141,7 @@ fn persist_resources(
     tab_order: Res<HeadTabOrder>,
     focused: Res<FocusedHead>,
     heads_query: Query<OpenHeadDataReadOnly<Box<dyn node::Node>>, With<OpenHead>>,
+    primary_window: Query<&Window, With<PrimaryWindow>>,
 ) {
     // Save registry (graphs, commits, names).
     bevy_gantz::storage::save_registry(&mut *storage, &registry);
@@ -176,6 +170,10 @@ fn persist_resources(
     // Save egui memory (widget states).
     if let Ok(ctx) = ctxs.ctx_mut() {
         bevy_gantz_egui::storage::save_egui_memory(&mut *storage, ctx);
+    }
+    // Save the native window size (no-op on web).
+    if let Ok(window) = primary_window.single() {
+        window::save(&mut *storage, window);
     }
 }
 
