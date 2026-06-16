@@ -29,10 +29,12 @@ where
     let loaded = gantz_format::from_str::<N>(text, now)?;
     let mut views: HashMap<CommitAddr, egui_graph::View> = HashMap::new();
     let mut demos: HashMap<CommitAddr, String> = HashMap::new();
+    let mut interface_docs: HashMap<CommitAddr, crate::InterfaceDocs> = HashMap::new();
     for form in &loaded.extra {
         match form.head.as_str() {
             "layout" => apply_layout(form, &loaded, &mut views),
             "demo" => apply_demo(form, &loaded, &mut demos),
+            "docs" => apply_docs(form, &loaded, &mut interface_docs),
             other => log::warn!("ignoring unrecognised `.gantz` form `{other}`"),
         }
     }
@@ -40,6 +42,7 @@ where
         registry: loaded.registry,
         views,
         demos,
+        interface_docs,
     })
 }
 
@@ -70,6 +73,16 @@ where
     for (commit_ca, demo) in demos {
         if let Some(name) = name_for_commit(&export.registry, commit_ca) {
             sections.push(format!("(demo {} {})", name, sexpr::quote(demo)));
+        }
+    }
+
+    // `(docs <name> (in <ix> <ty> <desc>) (out <ix> <ty> <desc>) ...)` per
+    // commit with inlet/outlet documentation.
+    let mut docs: Vec<_> = export.interface_docs.iter().collect();
+    docs.sort_by_key(|(ca, _)| **ca);
+    for (commit_ca, doc) in docs {
+        if let Some(name) = name_for_commit(&export.registry, commit_ca) {
+            sections.push(docs_text(&name, doc));
         }
     }
 
@@ -185,6 +198,77 @@ fn apply_demo<N>(form: &Form, loaded: &Loaded<N>, demos: &mut HashMap<CommitAddr
     if let Some(&commit) = loaded.names.get(&name) {
         demos.insert(commit, demo);
     }
+}
+
+// -- docs --------------------------------------------------------------------
+
+fn apply_docs<N>(
+    form: &Form,
+    loaded: &Loaded<N>,
+    docs: &mut HashMap<CommitAddr, crate::InterfaceDocs>,
+) {
+    let src = &form.raw;
+    let Ok(forms) = sexpr::read(src) else { return };
+    let Some(args) = forms.first().and_then(sexpr::list_args) else {
+        return;
+    };
+    // args = [docs, <name>, (in <ix> <ty> <desc>)..., (out <ix> <ty> <desc>)...]
+    let Some(name) = args.get(1).and_then(sexpr::as_symbol) else {
+        return;
+    };
+    let Some(&commit) = loaded.names.get(&name) else {
+        return;
+    };
+    let mut interface = crate::InterfaceDocs::default();
+    for entry in &args[2..] {
+        let Some(eargs) = sexpr::list_args(entry) else {
+            continue;
+        };
+        let (Some(kind), Some(ix), Some(ty)) = (
+            eargs.first().and_then(sexpr::as_symbol),
+            eargs.get(1).and_then(|n| sexpr::as_i64(n, src)),
+            eargs.get(2).and_then(sexpr::as_string),
+        ) else {
+            continue;
+        };
+        let desc = eargs.get(3).and_then(sexpr::as_string).unwrap_or_default();
+        let doc = crate::SocketDoc {
+            ty: ty.into(),
+            description: (!desc.is_empty()).then(|| desc.into()),
+        };
+        let map = match kind.as_str() {
+            "in" => &mut interface.inlets,
+            "out" => &mut interface.outlets,
+            _ => continue,
+        };
+        map.insert(ix as usize, doc);
+    }
+    if !interface.inlets.is_empty() || !interface.outlets.is_empty() {
+        docs.insert(commit, interface);
+    }
+}
+
+fn docs_text(name: &str, docs: &crate::InterfaceDocs) -> String {
+    let mut s = format!("(docs {}", sexpr::quote(name));
+    let entry = |kind: &str, ix: usize, doc: &crate::SocketDoc| {
+        format!(
+            "\n  ({kind} {ix} {} {})",
+            sexpr::quote(&doc.ty),
+            sexpr::quote(doc.description.as_deref().unwrap_or("")),
+        )
+    };
+    let mut inlets: Vec<_> = docs.inlets.iter().collect();
+    inlets.sort_by_key(|(ix, _)| **ix);
+    for (ix, doc) in inlets {
+        s.push_str(&entry("in", *ix, doc));
+    }
+    let mut outlets: Vec<_> = docs.outlets.iter().collect();
+    outlets.sort_by_key(|(ix, _)| **ix);
+    for (ix, doc) in outlets {
+        s.push_str(&entry("out", *ix, doc));
+    }
+    s.push(')');
+    s
 }
 
 // -- helpers -----------------------------------------------------------------

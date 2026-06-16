@@ -55,6 +55,17 @@ impl gantz_egui::NodeUi for FrameBang {
     ) -> egui_graph::FramedResponse<egui::Response> {
         uictx.framed(|ui, _sockets| ui.add(egui::Label::new("frame!").selectable(false)))
     }
+
+    fn output_doc(
+        &self,
+        _: &dyn gantz_egui::Registry,
+        _ix: usize,
+    ) -> Option<gantz_egui::SocketDoc> {
+        Some(
+            gantz_egui::SocketDoc::ty("number")
+                .with_description("Frame delta time in seconds; emitted every frame"),
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------

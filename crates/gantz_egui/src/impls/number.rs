@@ -1,4 +1,4 @@
-use crate::{NodeCtx, NodeUi, Registry};
+use crate::{NodeCtx, NodeUi, Registry, SocketDoc};
 use steel::SteelVal;
 
 impl NodeUi for gantz_std::number::Number {
@@ -24,5 +24,16 @@ impl NodeUi for gantz_std::number::Number {
             }
             res
         })
+    }
+
+    fn input_doc(&self, _: &dyn Registry, _ix: usize) -> Option<SocketDoc> {
+        Some(
+            SocketDoc::ty("number")
+                .with_description("New value to store; if unconnected the stored value is reused"),
+        )
+    }
+
+    fn output_doc(&self, _: &dyn Registry, _ix: usize) -> Option<SocketDoc> {
+        Some(SocketDoc::ty("number").with_description("The current stored value"))
     }
 }

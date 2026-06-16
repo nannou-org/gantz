@@ -4,7 +4,7 @@
 //! Core storage functions (registry, graphs, commits, names) are provided
 //! by `bevy_gantz::storage`.
 
-use crate::{GraphView, GuiState, Views};
+use crate::{Docs, GraphView, GuiState, Views};
 use bevy_egui::egui;
 use bevy_gantz::clone_graph;
 use bevy_gantz::reg::Registry;
@@ -18,6 +18,8 @@ use std::time::Duration;
 mod key {
     /// The key at which all graph views (layout + camera) are stored.
     pub const VIEWS: &str = "views";
+    /// The key at which inlet/outlet docs (per commit) are stored.
+    pub const DOCS: &str = "interface-docs";
     /// The key at which the gantz GUI state is stored.
     pub const GUI_STATE: &str = "gui-state";
     /// The key at which egui memory (widget states) is saved/loaded.
@@ -36,6 +38,22 @@ pub fn save_views(storage: &mut impl bevy_gantz::storage::Save, views: &Views) {
 pub fn load_views(storage: &impl Load) -> Views {
     Views(
         load::<HashMap<ca::CommitAddr, egui_graph::View>>(storage, key::VIEWS).unwrap_or_default(),
+    )
+}
+
+/// Save all inlet/outlet docs to storage under a single key.
+///
+/// Keys are sorted to produce deterministic output.
+pub fn save_docs(storage: &mut impl bevy_gantz::storage::Save, docs: &Docs) {
+    let sorted: std::collections::BTreeMap<_, _> = docs.iter().collect();
+    save(storage, key::DOCS, &sorted);
+}
+
+/// Load all inlet/outlet docs from storage.
+pub fn load_docs(storage: &impl Load) -> Docs {
+    Docs(
+        load::<HashMap<ca::CommitAddr, gantz_egui::InterfaceDocs>>(storage, key::DOCS)
+            .unwrap_or_default(),
     )
 }
 

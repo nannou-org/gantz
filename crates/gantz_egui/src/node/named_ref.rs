@@ -1,6 +1,8 @@
 //! A node that references another node by name and content address.
 
-use crate::{BranchNode, NodeCtx, NodeUi, OpenHead, ReplaceHead, widget::node_inspector};
+use crate::{
+    BranchNode, NodeCtx, NodeUi, OpenHead, ReplaceHead, SocketDoc, widget::node_inspector,
+};
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, Node, RegCtx};
 use serde::{Deserialize, Serialize};
@@ -184,6 +186,24 @@ impl NodeUi for NamedRef {
 
     fn nav_head(&self, _registry: &dyn crate::Registry) -> Option<gantz_ca::Head> {
         Some(gantz_ca::Head::Branch(self.name.clone()))
+    }
+
+    fn input_doc(&self, registry: &dyn crate::Registry, ix: usize) -> Option<SocketDoc> {
+        // Surface the referenced graph's inlet docs.
+        registry
+            .interface_docs(&self.ref_.content_addr())?
+            .inlets
+            .get(&ix)
+            .cloned()
+    }
+
+    fn output_doc(&self, registry: &dyn crate::Registry, ix: usize) -> Option<SocketDoc> {
+        // Surface the referenced graph's outlet docs.
+        registry
+            .interface_docs(&self.ref_.content_addr())?
+            .outlets
+            .get(&ix)
+            .cloned()
     }
 
     fn ui(

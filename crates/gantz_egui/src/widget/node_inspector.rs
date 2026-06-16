@@ -159,3 +159,52 @@ pub fn path_string(path: &[node::Id]) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+
+/// A small editor for an inlet/outlet's [`SocketDoc`](crate::SocketDoc) (a type
+/// label and an optional description).
+///
+/// The fields are seeded from `current` each frame; on edit, returns the new
+/// doc (`None` when both fields are blank, i.e. cleared) along with the
+/// triggering response. `id_salt` scopes the text edit state to the node.
+pub(crate) fn socket_doc_editor(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash,
+    current: Option<&crate::SocketDoc>,
+) -> Option<(Option<crate::SocketDoc>, egui::Response)> {
+    let id = egui::Id::new("socket-doc-editor").with(&id_salt);
+    let mut ty = current.map(|d| d.ty.to_string()).unwrap_or_default();
+    let mut desc = current
+        .and_then(|d| d.description.as_deref())
+        .unwrap_or_default()
+        .to_string();
+    let ty_resp = ui.add(
+        egui::TextEdit::singleline(&mut ty)
+            .id(id.with("ty"))
+            .hint_text("type")
+            .desired_width(f32::INFINITY),
+    );
+    let desc_resp = ui.add(
+        egui::TextEdit::multiline(&mut desc)
+            .id(id.with("desc"))
+            .hint_text("description")
+            .desired_rows(2)
+            .desired_width(f32::INFINITY),
+    );
+    let changed = ty_resp.changed() || desc_resp.changed();
+    let resp = ty_resp.union(desc_resp);
+    if !changed {
+        return None;
+    }
+    let ty = ty.trim();
+    let desc = desc.trim();
+    let doc = if ty.is_empty() && desc.is_empty() {
+        None
+    } else {
+        let mut d = crate::SocketDoc::ty(ty.to_string());
+        if !desc.is_empty() {
+            d = d.with_description(desc.to_string());
+        }
+        Some(d)
+    };
+    Some((doc, resp))
+}

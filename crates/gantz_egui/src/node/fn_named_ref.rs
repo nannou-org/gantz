@@ -1,7 +1,7 @@
 //! `Fn<NamedRef>` type alias and NodeUi implementation.
 
 use super::{NameRegistry, NamedRef, missing_color, outdated_color};
-use crate::{NodeCtx, NodeUi, Registry, widget::node_inspector};
+use crate::{NodeCtx, NodeUi, Registry, SocketDoc, widget::node_inspector};
 
 /// A function node wrapping a named reference.
 pub type FnNamedRef = gantz_core::node::Fn<NamedRef>;
@@ -95,5 +95,13 @@ impl NodeUi for FnNamedRef {
 
         // Delegate to NamedRef's inspector rows for CA and update button.
         self.0.inspector_rows(ctx, body);
+    }
+
+    fn input_doc(&self, _: &dyn Registry, _ix: usize) -> Option<SocketDoc> {
+        Some(SocketDoc::ty("bang").with_description("Trigger to emit the named graph as a lambda"))
+    }
+
+    fn output_doc(&self, _: &dyn Registry, _ix: usize) -> Option<SocketDoc> {
+        Some(SocketDoc::ty("function").with_description("Lambda wrapping the named graph"))
     }
 }

@@ -22,19 +22,23 @@ pub struct RegistryRef<'a, N: 'static + Send + Sync> {
     ca_registry: &'a ca::Registry<Graph<N>>,
     builtins: &'a dyn Builtins<Node = N>,
     demos: &'a HashMap<ca::CommitAddr, String>,
+    docs: &'a HashMap<ca::CommitAddr, crate::InterfaceDocs>,
 }
 
 impl<'a, N: 'static + Send + Sync> RegistryRef<'a, N> {
-    /// Construct from a CA registry, builtins provider and demo associations.
+    /// Construct from a CA registry, builtins provider, demo associations and
+    /// inlet/outlet docs.
     pub fn new(
         ca_registry: &'a ca::Registry<Graph<N>>,
         builtins: &'a dyn Builtins<Node = N>,
         demos: &'a HashMap<ca::CommitAddr, String>,
+        docs: &'a HashMap<ca::CommitAddr, crate::InterfaceDocs>,
     ) -> Self {
         Self {
             ca_registry,
             builtins,
             demos,
+            docs,
         }
     }
 
@@ -176,5 +180,10 @@ impl<N: 'static + Node + Send + Sync> Registry for RegistryRef<'_, N> {
             return self.builtins.demo_graph(builtin_name);
         }
         None
+    }
+
+    fn interface_docs(&self, ca: &ca::ContentAddr) -> Option<&crate::InterfaceDocs> {
+        let commit_ca = ca::CommitAddr::from(*ca);
+        self.docs.get(&commit_ca)
     }
 }

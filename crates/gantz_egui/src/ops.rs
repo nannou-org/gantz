@@ -8,7 +8,10 @@
 
 use crate::widget::gantz::OpenHeadState;
 use crate::widget::graph_scene::NodeIndex;
-use crate::{CreateNode, InspectEdge, PastePos, export, node::NamedRef};
+use crate::{
+    CreateNode, InspectEdge, InterfaceDocs, PastePos, SetInterfaceDoc, SocketDocKind, export,
+    node::NamedRef,
+};
 use gantz_ca::{CaHash, CommitAddr};
 use gantz_core::node::{self, GetNode, graph::Graph};
 use serde::Serialize;
@@ -228,6 +231,7 @@ pub fn paste<N>(
     registry: &mut gantz_ca::Registry<Graph<N>>,
     all_views: &mut HashMap<CommitAddr, egui_graph::View>,
     all_demos: &mut HashMap<CommitAddr, String>,
+    all_docs: &mut HashMap<CommitAddr, InterfaceDocs>,
     graph: &mut Graph<N>,
     head_view: &mut egui_graph::View,
     head_state: &mut OpenHeadState,
@@ -250,6 +254,7 @@ where
         registry,
         all_views,
         all_demos,
+        all_docs,
         graph,
         &mut head_view.layout,
         &copied,
@@ -286,4 +291,31 @@ pub fn redo(
     head: &gantz_ca::Head,
 ) -> Option<CommitAddr> {
     redo_stacks.get_mut(head)?.pop()
+}
+
+/// Apply a [`SetInterfaceDoc`] to the inlet/outlet docs for `commit_ca`.
+///
+/// Inserts the doc, or removes the entry when the doc is `None`/empty. Empty
+/// `InterfaceDocs` are pruned so the map only holds documented graphs.
+pub fn set_interface_doc(
+    all_docs: &mut HashMap<CommitAddr, InterfaceDocs>,
+    commit_ca: CommitAddr,
+    set: &SetInterfaceDoc,
+) {
+    let entry = all_docs.entry(commit_ca).or_default();
+    let map = match set.kind {
+        SocketDocKind::Inlet => &mut entry.inlets,
+        SocketDocKind::Outlet => &mut entry.outlets,
+    };
+    match &set.doc {
+        Some(doc) if !doc.is_empty() => {
+            map.insert(set.ix, doc.clone());
+        }
+        _ => {
+            map.remove(&set.ix);
+        }
+    }
+    if entry.inlets.is_empty() && entry.outlets.is_empty() {
+        all_docs.remove(&commit_ca);
+    }
 }
