@@ -113,7 +113,6 @@ const KEYWORD_TAG: &[(&str, &str)] = &[
     ("delay", "Delay"),
     ("id", "Identity"),
     ("bang", "Bang"),
-    ("add", "Add"),
     ("inspect", "Inspect"),
     ("frame-bang", "FrameBang"),
     ("number", "Number"),
@@ -147,6 +146,8 @@ impl Sugar for DefaultSugar {
         src: &str,
     ) -> Result<Option<Datum>, FormatError> {
         let datum = match head {
+            "inlet" => inlet_outlet_spec("Inlet", args),
+            "outlet" => inlet_outlet_spec("Outlet", args),
             "expr" => expr_spec(args, src)?,
             "branch" => branch_spec(args, src)?,
             "comment" => comment_spec(args, src)?,
@@ -169,6 +170,8 @@ impl Sugar for DefaultSugar {
 
     fn write_spec(&self, tag: &str, node: &Datum) -> Option<String> {
         match tag {
+            "Inlet" => Some(write_inlet_outlet("inlet", node)),
+            "Outlet" => Some(write_inlet_outlet("outlet", node)),
             "Expr" => Some(write_expr(node)),
             "Branch" => Some(write_branch(node)),
             "Comment" => Some(write_comment(node)),
@@ -194,6 +197,20 @@ fn node_datum(tag: &str, fields: Vec<(&str, Datum)>) -> Datum {
             .map(|(k, v)| (k.to_string(), v))
             .collect(),
     )
+}
+
+/// Read an `(inlet [ty [description]])` / `(outlet ...)` form: two optional
+/// string args carrying the socket's hover-doc type label and description.
+/// Empty strings are omitted so they serialize as the struct's defaults.
+fn inlet_outlet_spec(tag: &str, args: &[ExprKind]) -> Datum {
+    let mut fields = Vec::new();
+    if let Some(ty) = args.first().and_then(as_string).filter(|s| !s.is_empty()) {
+        fields.push(("ty", Datum::Str(ty)));
+    }
+    if let Some(desc) = args.get(1).and_then(as_string).filter(|s| !s.is_empty()) {
+        fields.push(("description", Datum::Str(desc)));
+    }
+    node_datum(tag, fields)
 }
 
 fn expr_spec(args: &[ExprKind], src: &str) -> Result<Datum, FormatError> {
@@ -296,6 +313,21 @@ fn write_branch(node: &Datum) -> String {
         })
         .unwrap_or_default();
     format!("(branch {src} {masks})")
+}
+
+/// Write an `Inlet`/`Outlet` as a bare keyword when it carries no socket docs,
+/// else as `(inlet ty [description])` so the hover docs round-trip.
+fn write_inlet_outlet(keyword: &str, node: &Datum) -> String {
+    let ty = node.get("ty").and_then(Datum::as_str).unwrap_or("");
+    let desc = node
+        .get("description")
+        .and_then(Datum::as_str)
+        .unwrap_or("");
+    match (ty.is_empty(), desc.is_empty()) {
+        (true, true) => keyword.to_string(),
+        (false, true) => format!("({keyword} {})", quote(ty)),
+        (_, false) => format!("({keyword} {} {})", quote(ty), quote(desc)),
+    }
 }
 
 fn write_comment(node: &Datum) -> String {
@@ -461,5 +493,41 @@ mod tests {
                 .is_none()
         );
         assert!(s.keyword_for_tag("Inlet").is_none());
+    }
+
+    #[test]
+    fn inlet_outlet_docs_round_trip() {
+        let s = DefaultSugar;
+
+        // Both type and description.
+        let d = read_spec(&s, r#"(inlet "number" "left operand")"#).expect("recognised");
+        assert_eq!(d.get("type").and_then(Datum::as_str), Some("Inlet"));
+        assert_eq!(d.get("ty").and_then(Datum::as_str), Some("number"));
+        assert_eq!(
+            d.get("description").and_then(Datum::as_str),
+            Some("left operand"),
+        );
+        assert_eq!(
+            s.write_spec("Inlet", &d).as_deref(),
+            Some(r#"(inlet "number" "left operand")"#),
+        );
+
+        // Type only.
+        let ty_only = read_spec(&s, r#"(inlet "number")"#).expect("ty only");
+        assert_eq!(
+            s.write_spec("Inlet", &ty_only).as_deref(),
+            Some(r#"(inlet "number")"#),
+        );
+
+        // Outlet round-trips the same way.
+        let o = read_spec(&s, r#"(outlet "list" "the reversed list")"#).expect("outlet");
+        assert_eq!(
+            s.write_spec("Outlet", &o).as_deref(),
+            Some(r#"(outlet "list" "the reversed list")"#),
+        );
+
+        // A bare (undocumented) inlet still writes as the bare keyword.
+        let bare = s.read_bare("inlet").expect("bare inlet");
+        assert_eq!(s.write_spec("Inlet", &bare).as_deref(), Some("inlet"));
     }
 }

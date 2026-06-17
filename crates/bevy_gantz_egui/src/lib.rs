@@ -1133,14 +1133,16 @@ where
     N: 'static + Clone + serde::Serialize + serde::de::DeserializeOwned + ca::CaHash + Send + Sync,
 {
     let name = &trigger.event().0;
-    let export: gantz_egui::export::Export<Graph<N>> =
-        match gantz_egui::export::parse_export::<N>(gantz_base::BYTES) {
-            Ok(e) => e,
-            Err(e) => {
-                log::error!("ResetBaseGraph: failed to parse base: {e}");
-                return;
-            }
-        };
+    let export: gantz_egui::export::Export<Graph<N>> = match gantz_egui::export::parse_export_at::<N>(
+        gantz_base::BYTES,
+        crate::base::BASE_TIMESTAMP,
+    ) {
+        Ok(e) => e,
+        Err(e) => {
+            log::error!("ResetBaseGraph: failed to parse base: {e}");
+            return;
+        }
+    };
     // Extract just the commits reachable from the target name.
     if let Some(&base_commit_ca) = export.registry.names().get(name) {
         let mut required = std::collections::HashSet::new();

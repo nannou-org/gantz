@@ -7,4 +7,3 @@ pub use number::Number;
 pub mod bang;
 pub mod log;
 pub mod number;
-pub mod ops;

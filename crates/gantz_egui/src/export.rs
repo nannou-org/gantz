@@ -82,13 +82,33 @@ where
 ///
 /// The file is the `.gantz` S-expression text format (see [`crate::format`]).
 /// Graphs the document does not commit explicitly (hand-authored graphs with no
-/// `(commits ...)` entry) are stamped with the current time.
+/// `(commits ...)` entry) are stamped with the current time. Use
+/// [`parse_export_at`] to stamp them with a fixed timestamp instead.
 pub fn parse_export<N>(bytes: &[u8]) -> Result<Export<Graph<N>>, ParseExportError>
 where
     N: Serialize + DeserializeOwned + CaHash + 'static,
 {
+    parse_export_at(bytes, now())
+}
+
+/// Like [`parse_export`], but stamps uncommitted (hand-authored) graphs with the
+/// given timestamp rather than the current time.
+///
+/// A fixed timestamp makes the resulting commit addresses reproducible across
+/// loads. This matters for content that is re-parsed and whose graphs reference
+/// each other by content address - e.g. the baked-in base, which is parsed both
+/// at startup and on demo reset: a wall-clock timestamp would give each parse
+/// distinct commit addresses, so a reset demo's `ref`s would point at commits
+/// absent from the already-loaded registry.
+pub fn parse_export_at<N>(
+    bytes: &[u8],
+    now: gantz_ca::Timestamp,
+) -> Result<Export<Graph<N>>, ParseExportError>
+where
+    N: Serialize + DeserializeOwned + CaHash + 'static,
+{
     let text = std::str::from_utf8(bytes).map_err(ParseExportError::Utf8)?;
-    crate::format::from_str(text, now()).map_err(ParseExportError::Format)
+    crate::format::from_str(text, now).map_err(ParseExportError::Format)
 }
 
 /// The current time as a [`gantz_ca::Timestamp`] (duration since the Unix epoch).
@@ -127,6 +147,25 @@ where
     let export_registry = gantz_core::reg::export_heads(get_node, registry, heads);
     let export = export_with(export_registry, all_views, all_demos);
     crate::format::to_string(&export)
+}
+
+/// As [`export_heads_sexpr`], but serializes in the inline-name format (see
+/// [`crate::format::to_string_named`]): graphs named inline, no commits/names
+/// tables, references by name. Used for the baked-in base so its file stays
+/// hand-editable and free of churning addresses.
+pub fn export_heads_sexpr_named<N>(
+    get_node: GetNode,
+    registry: &gantz_ca::Registry<Graph<N>>,
+    all_views: &HashMap<CommitAddr, egui_graph::View>,
+    all_demos: &HashMap<CommitAddr, String>,
+    heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
+) -> Result<String, crate::format::FormatError>
+where
+    N: Serialize + DeserializeOwned + gantz_core::Node + Clone,
+{
+    let export_registry = gantz_core::reg::export_heads(get_node, registry, heads);
+    let export = export_with(export_registry, all_views, all_demos);
+    crate::format::to_string_named(&export)
 }
 
 /// Merge an [`Export`] into an existing registry, views and demos maps.

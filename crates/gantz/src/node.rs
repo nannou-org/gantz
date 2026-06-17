@@ -28,8 +28,6 @@ impl Node for gantz_core::node::graph::Inlet {}
 impl Node for gantz_core::node::graph::Outlet {}
 
 #[typetag::serde]
-impl Node for gantz_std::ops::Add {}
-#[typetag::serde]
 impl Node for gantz_std::Bang {}
 #[typetag::serde]
 impl Node for gantz_std::Log {}
@@ -112,7 +110,6 @@ mod tests {
             node_datum("Delay", vec![]),
             node_datum("Identity", vec![]),
             node_datum("Bang", vec![]),
-            node_datum("Add", vec![]),
             node_datum("Inspect", vec![]),
             node_datum("FrameBang", vec![]),
             node_datum("Number", vec![]),
@@ -182,7 +179,7 @@ mod tests {
         let text = "\
 (graph mul
   (m (expr (* $l $r)))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet \"number\" \"left operand\")) (r (inlet \"number\" \"right operand\")) (out (outlet \"number\" \"product\"))
   (-> l (m 0)) (-> r (m 1)) (-> m out))";
         let mine: gantz_egui::export::Export<G> =
             gantz_egui::format::from_str(text, Duration::from_secs(0)).expect("lower");
@@ -694,5 +691,276 @@ mod tests {
             })
             .count();
         assert_eq!(to_b, 3, "all instances must be repointed to B");
+    }
+
+    /// Every named graph shipped in `base.gantz` - all primitives, the `demo-*`
+    /// graphs, and the unconnected `demo-all` catalog - must compile to a valid
+    /// Steel module under the same `Engine::new_base()` the runtime uses. This
+    /// guards against authoring a graph that relies on a prelude-only binding
+    /// (`map`, `and`, `cond`, `min`, ...) or otherwise emits invalid Steel,
+    /// which the base engine (no prelude) rejects. Mirrors the live compile path
+    /// in `bevy_gantz::vm` (`push_pull_entrypoints` + `vm::init`).
+    ///
+    /// Compiled under both configs: the default (node fns emitted on demand) and
+    /// `emit_all_node_fns` (the app's "inspect every node's code" toggle, which
+    /// emits each node's all-connected variant - the case that exercises the
+    /// `demo-all` catalog's otherwise-unconnected `ref` nodes).
+    #[test]
+    fn base_graphs_all_compile() {
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let base: gantz_egui::export::Export<G> =
+            gantz_egui::export::parse_export(gantz_base::BYTES).expect("parse base");
+        let builtins = crate::builtin::Builtins::new();
+        let reg_ref = gantz_egui::RegistryRef::new(&base.registry, &builtins, &base.demos);
+        let get_node = |ca: &gantz_ca::ContentAddr| reg_ref.node(ca);
+        let configs = [
+            gantz_core::compile::Config::default(),
+            gantz_core::compile::Config {
+                validate_ir: true,
+                emit_all_node_fns: true,
+            },
+        ];
+
+        assert!(
+            !base.registry.names().is_empty(),
+            "base.gantz registered no named graphs",
+        );
+        for name in base.registry.names().keys() {
+            let head = gantz_ca::Head::Branch(name.clone());
+            let graph = base
+                .registry
+                .head_graph(&head)
+                .unwrap_or_else(|| panic!("`{name}` has no head graph"));
+            let entrypoints = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
+            for config in &configs {
+                gantz_core::vm::init(&get_node, graph, &entrypoints, config).unwrap_or_else(|e| {
+                    panic!(
+                        "base graph `{name}` failed to compile (emit_all_node_fns={}):\n{}",
+                        config.emit_all_node_fns,
+                        gantz_core::vm::error_chain(&e),
+                    )
+                });
+            }
+        }
+    }
+
+    /// Every `ref` in `base.gantz` is auto-syncing, so the demos track the latest
+    /// primitive commits automatically. Verified through a load + re-serialize
+    /// round-trip (the `update-base` export path): a loaded `NamedRef` whose
+    /// `sync` was set re-emits `#:sync`, so the re-serialized text carries one
+    /// `#:sync` per `ref`.
+    #[test]
+    fn base_refs_are_synced() {
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+        let base: gantz_egui::export::Export<G> =
+            gantz_egui::export::parse_export(gantz_base::BYTES).expect("parse base");
+        let text = gantz_egui::format::to_string(&base).expect("to_string");
+        let refs = text.matches("(ref ").count() + text.matches("(fn-ref ").count();
+        let synced = text.matches("#:sync").count();
+        assert!(refs > 0, "expected base to contain refs");
+        assert_eq!(
+            refs, synced,
+            "every base ref must auto-sync (#:sync); got {synced}/{refs}\n--- text ---\n{text}",
+        );
+    }
+
+    /// Every base-primitive socket carries a hover doc (type + description), and
+    /// those docs resolve through a `ref` to the referenced graph's inlet/outlet
+    /// markers - exactly the path the GUI uses for a `NamedRef`'s socket tooltip.
+    #[test]
+    fn base_socket_docs() {
+        use gantz_egui::{Registry as _, SocketKind};
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+        let base: gantz_egui::export::Export<G> =
+            gantz_egui::export::parse_export(gantz_base::BYTES).expect("parse base");
+
+        // Completeness: no primitive socket serializes as a bare `inlet`/`outlet`.
+        let text = gantz_egui::format::to_string(&base).expect("to_string");
+        let bare = text.matches(" inlet)").count() + text.matches(" outlet)").count();
+        assert_eq!(
+            bare, 0,
+            "every base socket must be documented\n--- text ---\n{text}"
+        );
+
+        // Resolution: a `ref add` exposes `add`'s socket docs.
+        let builtins = crate::builtin::Builtins::new();
+        let reg_ref = gantz_egui::RegistryRef::new(&base.registry, &builtins, &base.demos);
+        let add = gantz_ca::ContentAddr::from(*base.registry.names().get("add").expect("add"));
+        let doc = |kind, ix| reg_ref.socket_doc(&add, kind, ix);
+
+        let l = doc(SocketKind::Input, 0).expect("add input 0 doc");
+        assert_eq!(
+            (l.ty.as_ref(), l.description.as_deref()),
+            ("number", Some("left operand"))
+        );
+        let out = doc(SocketKind::Output, 0).expect("add output doc");
+        assert_eq!(
+            (out.ty.as_ref(), out.description.as_deref()),
+            ("number", Some("sum"))
+        );
+    }
+
+    /// End-to-end check of every `demo-*` graph: firing its `bang` must evaluate
+    /// all ops without a runtime error *or panic*, with default inputs. The bang
+    /// feeds every interactive input, so all of an op's inputs are active in one
+    /// push (guarding the "single input active" failure). It also guards two
+    /// integer-op gotchas: `number` outputs floats, so `list-ref`/`mod` coerce
+    /// via `(exact (round ...))`, and `mod` must stay *total* - Steel's `modulo`
+    /// panics (aborts) on a zero divisor, which `mod` avoids by returning the
+    /// dividend, so firing `demo-arithmetic` with its default `0`/`0` inputs no
+    /// longer crashes the process.
+    #[test]
+    fn demos_evaluate() {
+        use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let base: gantz_egui::export::Export<G> =
+            gantz_egui::export::parse_export(gantz_base::BYTES).expect("parse base");
+        let builtins = crate::builtin::Builtins::new();
+        let reg_ref = gantz_egui::RegistryRef::new(&base.registry, &builtins, &base.demos);
+        let get_node = |ca: &gantz_ca::ContentAddr| reg_ref.node(ca);
+        let config = gantz_core::compile::Config::default();
+
+        let demos = [
+            "demo-arithmetic",
+            "demo-comparison",
+            "demo-logic",
+            "demo-list",
+            "demo-predicate",
+        ];
+        for name in demos {
+            let head = gantz_ca::Head::Branch(name.to_string());
+            let graph = base
+                .registry
+                .head_graph(&head)
+                .unwrap_or_else(|| panic!("{name} graph"));
+
+            // The single `bang` node drives every pipeline in the demo.
+            let go = graph
+                .node_indices()
+                .find(|&ix| {
+                    (&*graph[ix] as &dyn std::any::Any)
+                        .downcast_ref::<gantz_std::Bang>()
+                        .is_some()
+                })
+                .map(|ix| ix.index())
+                .unwrap_or_else(|| panic!("{name} has a bang"));
+
+            let eps = push_pull_entrypoints(&get_node, graph);
+            let (mut vm, _compiled) = gantz_core::vm::init(&get_node, graph, &eps, &config)
+                .unwrap_or_else(|e| panic!("init {name}: {}", gantz_core::vm::error_chain(&e)));
+
+            let go_ep = eps
+                .iter()
+                .find(|ep| {
+                    ep.0.iter()
+                        .any(|s| s.kind == EvalKind::Push && s.path == [go])
+                })
+                .unwrap_or_else(|| panic!("{name} bang entrypoint"));
+            vm.call_function_by_name_with_args(&entry_fn_name(&go_ep.id()), vec![])
+                .unwrap_or_else(|e| panic!("firing {name} bang errored: {e}"));
+        }
+    }
+
+    /// Resetting a demo re-parses the base and merges the demo's commit subset
+    /// back in. Because the base's hand-authored graphs are stamped at a fixed
+    /// [`bevy_gantz_egui::base::BASE_TIMESTAMP`], the re-parse reproduces the
+    /// primitive commit addresses loaded at startup, so the reset demo's `ref`s
+    /// still resolve and it recompiles. (With a wall-clock timestamp the
+    /// re-parsed demo would reference fresh primitive commits absent from the
+    /// registry, failing with "node has 0 outputs".)
+    #[test]
+    fn reset_then_reopen_demo_recompiles() {
+        use gantz_core::compile::{Config, push_pull_entrypoints};
+        use std::collections::HashSet;
+
+        let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
+        let parse = || {
+            gantz_egui::export::parse_export_at::<Box<dyn Node>>(gantz_base::BYTES, ts)
+                .expect("parse base")
+        };
+
+        // Parsing the base at the fixed timestamp is reproducible: every name
+        // maps to the same commit both times - what lets a reset agree with the
+        // registry loaded at startup.
+        let startup = parse();
+        let reparse = parse();
+        assert_eq!(
+            startup.registry.names(),
+            reparse.registry.names(),
+            "base commit addresses must be reproducible across parses",
+        );
+
+        // Simulate `on_reset_base_graph`: re-export the demo's commit subset
+        // from a fresh parse and merge it into the startup registry.
+        let mut registry = startup.registry;
+        let name = "demo-arithmetic";
+        let &demo_commit = reparse.registry.names().get(name).expect("demo name");
+        let mut required = HashSet::new();
+        let mut ca = demo_commit;
+        loop {
+            required.insert(ca);
+            match reparse.registry.commits().get(&ca).and_then(|c| c.parent) {
+                Some(parent) => ca = parent,
+                None => break,
+            }
+        }
+        let mut subset = reparse.registry.export(&required);
+        subset.insert_name(name.to_string(), demo_commit);
+        registry.merge(subset);
+
+        // Reopen: the reset demo must still compile, i.e. every `ref` resolves.
+        let builtins = crate::builtin::Builtins::new();
+        let reg_ref = gantz_egui::RegistryRef::new(&registry, &builtins, &startup.demos);
+        let get_node = |ca: &gantz_ca::ContentAddr| reg_ref.node(ca);
+        let head = gantz_ca::Head::Branch(name.to_string());
+        let graph = registry.head_graph(&head).expect("demo graph");
+        let eps = push_pull_entrypoints(&get_node, graph);
+        gantz_core::vm::init(&get_node, graph, &eps, &Config::default()).unwrap_or_else(|e| {
+            panic!(
+                "recompile after reset failed: {}",
+                gantz_core::vm::error_chain(&e)
+            )
+        });
+    }
+
+    /// The inline-name base export (`format::to_string_named`) names every graph
+    /// inline, drops the `(commits ...)`/`(names ...)` tables and the pinned ref
+    /// addresses, and is *stable*: re-exporting an unchanged base produces byte
+    /// -identical text (no churning addresses), which is the whole point - a
+    /// cleaner, hand-editable `base.gantz`.
+    #[test]
+    fn base_named_export_is_stable() {
+        use std::collections::BTreeSet;
+        use std::time::Duration;
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let base: gantz_egui::export::Export<G> =
+            gantz_egui::export::parse_export(gantz_base::BYTES).expect("parse base");
+        let text = gantz_egui::format::to_string_named(&base).expect("to_string_named");
+
+        // Inline names, no tables, references by name.
+        assert!(!text.contains("(commits"), "no commits table:\n{text}");
+        assert!(!text.contains("(names"), "no names table:\n{text}");
+        assert!(
+            text.contains("(graph add\n"),
+            "graphs named inline:\n{text}"
+        );
+        assert!(
+            text.contains("(ref add #:sync)"),
+            "refs resolve by name, no pinned address:\n{text}",
+        );
+
+        // Stable: reload the simplified text and re-serialize - byte-identical.
+        let back: gantz_egui::export::Export<G> =
+            gantz_egui::format::from_str(&text, Duration::from_secs(0)).expect("from_str");
+        let text2 = gantz_egui::format::to_string_named(&back).expect("to_string_named 2");
+        assert_eq!(text, text2, "inline-name export must be idempotent");
+
+        // Names survive the round-trip.
+        let n1: BTreeSet<_> = base.registry.names().keys().cloned().collect();
+        let n2: BTreeSet<_> = back.registry.names().keys().cloned().collect();
+        assert_eq!(n1, n2, "names preserved");
     }
 }

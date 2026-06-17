@@ -20,6 +20,14 @@ use crate::BaseNames;
 /// Raw bytes of the baked-in base `.gantz` export, embedded at compile time.
 const BYTES: &[u8] = gantz_base::BYTES;
 
+/// Fixed timestamp used to stamp the base's hand-authored (uncommitted) graphs.
+///
+/// The base is parsed at startup *and* again on demo reset; both must agree on
+/// the synthesized commit addresses, otherwise a reset demo's `ref`s point at
+/// commits that are absent from the already-loaded registry (its primitives
+/// were stamped at startup). A constant makes those addresses reproducible.
+pub const BASE_TIMESTAMP: gantz_ca::Timestamp = std::time::Duration::ZERO;
+
 /// Startup system that deserializes the embedded base export and merges it
 /// into the registry, populating [`BaseNames`].
 pub fn load<N>(
@@ -30,14 +38,14 @@ pub fn load<N>(
 ) where
     N: 'static + serde::Serialize + serde::de::DeserializeOwned + gantz_ca::CaHash + Send + Sync,
 {
-    let export: gantz_egui::export::Export<Graph<N>> = match gantz_egui::export::parse_export(BYTES)
-    {
-        Ok(e) => e,
-        Err(e) => {
-            log::error!("base.gantz: {e}");
-            return;
-        }
-    };
+    let export: gantz_egui::export::Export<Graph<N>> =
+        match gantz_egui::export::parse_export_at(BYTES, BASE_TIMESTAMP) {
+            Ok(e) => e,
+            Err(e) => {
+                log::error!("base.gantz: {e}");
+                return;
+            }
+        };
     base_names.0 = export.registry.names().clone();
     registry.merge(export.registry);
     views.0.extend(export.views);
@@ -80,10 +88,13 @@ pub fn export_to_file<N>(
     }
 }
 
-/// Serialize all named graphs to a `.gantz` text [`gantz_egui::export::Export`].
+/// Serialize all named graphs to `.gantz` text in the inline-name format.
 ///
-/// Useful for the `update-base` developer workflow. Returns `None` on
-/// serialization failure.
+/// This is the base writer for the `update-base` developer workflow, so it uses
+/// [`gantz_egui::export::export_heads_sexpr_named`]: graphs named inline, no
+/// commits/names tables, references by name - keeping `base.gantz` hand-editable
+/// and free of churning addresses. (Other export paths keep the default
+/// address-based format.) Returns `None` on serialization failure.
 pub fn export_all_named<N>(
     registry: &Registry<N>,
     builtins: &bevy_gantz::BuiltinNodes<N>,
@@ -108,6 +119,12 @@ where
         .map(|name| gantz_ca::Head::Branch(name.clone()))
         .collect();
 
-    gantz_egui::export::export_heads_sexpr(&get_node, registry, views, &demos.0, named_heads.iter())
-        .ok()
+    gantz_egui::export::export_heads_sexpr_named(
+        &get_node,
+        registry,
+        views,
+        &demos.0,
+        named_heads.iter(),
+    )
+    .ok()
 }
