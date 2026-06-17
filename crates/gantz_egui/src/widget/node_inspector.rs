@@ -224,6 +224,11 @@ pub(crate) fn socket_doc_editor(
     );
     let desc_enter = desc_resp.has_focus()
         && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.any());
+    // Drop focus on commit so the description behaves like the single-line type
+    // field (whose default return-key handling already surrenders focus).
+    if desc_enter {
+        desc_resp.surrender_focus();
+    }
     let commit = ty_resp.lost_focus() || desc_resp.lost_focus() || desc_enter;
 
     let resp = ty_resp.union(desc_resp);
