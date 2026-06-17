@@ -90,8 +90,8 @@ where
 
 /// Serialize a registry in the inline-name format: each named graph is emitted
 /// under its registry name, with no `(commits ...)` / `(names ...)` tables and
-/// references resolved by name. See [`raise::raise_named`]. Intended for
-/// hand-editable, churn-free files such as the baked-in base.
+/// references resolved by name. Intended for hand-editable, churn-free files
+/// such as the baked-in base.
 pub fn to_string_named<N>(registry: &Registry<Graph<N>>) -> Result<Dumped, FormatError>
 where
     N: Serialize + DeserializeOwned,
