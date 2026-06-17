@@ -49,9 +49,9 @@ fn test_graph() -> (
     petgraph::graph::NodeIndex,
 ) {
     let mut ga = Nested::default();
-    let inlet = ga.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let inlet = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
     let inc = ga.add_node(Box::new(node::expr("(+ $x 1)").unwrap()) as Box<_>);
-    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     ga.add_edge(inlet, inc, Edge::from((0, 0)));
     ga.add_edge(inc, outlet, Edge::from((0, 0)));
 
@@ -151,9 +151,9 @@ fn steel_err_node_attribution() {
     // The failing node lives inside a nested graph to exercise full-path
     // resolution: push -> int -> [inlet -> car-of-int -> outlet].
     let mut ga = Nested::default();
-    let inlet = ga.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let inlet = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
     let boom = ga.add_node(Box::new(node::expr("(car $x)").unwrap()) as Box<_>);
-    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     ga.add_edge(inlet, boom, Edge::from((0, 0)));
     ga.add_edge(boom, outlet, Edge::from((0, 0)));
 

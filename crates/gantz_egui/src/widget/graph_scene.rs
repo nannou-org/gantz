@@ -1,6 +1,6 @@
 use crate::{
-    CopyNodes, InspectEdge, InterfaceDocs, NodeUi, OpenCommandPalette, OpenHead, Paste, PastePos,
-    Registry, SocketDoc, response::DynResponse,
+    CopyNodes, InspectEdge, NodeUi, OpenCommandPalette, OpenHead, Paste, PastePos, Registry,
+    SocketDoc, response::DynResponse,
 };
 use egui::emath::GuiRounding;
 use egui_graph::{self, SocketKind, node::EdgeEvent};
@@ -56,7 +56,6 @@ pub struct GraphScene<'a, N> {
     layout_flow: egui::Direction,
     center_view: bool,
     immutable: bool,
-    interface_docs: Option<&'a InterfaceDocs>,
 }
 
 /// State associated with the [`GraphScene`] widget that can be useful to access
@@ -97,7 +96,6 @@ where
             layout_flow: egui::Direction::TopDown,
             center_view: false,
             immutable: false,
-            interface_docs: None,
         }
     }
 
@@ -146,18 +144,6 @@ where
         self
     }
 
-    /// The inlet/outlet docs for the graph being shown.
-    ///
-    /// Used to render socket hover tooltips for this graph's own inlet/outlet
-    /// marker nodes. References to *other* graphs resolve their docs via the
-    /// registry instead.
-    ///
-    /// Default: `None`
-    pub fn interface_docs(mut self, docs: Option<&'a InterfaceDocs>) -> Self {
-        self.interface_docs = docs;
-        self
-    }
-
     /// Show the graph scene.
     ///
     /// Returns a response containing both the scene response and all node responses.
@@ -195,7 +181,6 @@ where
                         &mut responses,
                         vm,
                         immutable,
-                        self.interface_docs,
                         ui,
                     );
                 })
@@ -301,7 +286,6 @@ fn nodes<N>(
     responses: &mut Vec<DynResponse>,
     vm: &mut Engine,
     immutable: bool,
-    interface_docs: Option<&InterfaceDocs>,
     ui: &mut egui::Ui,
 ) -> Vec<(NodeIndex, NodeResponse)>
 where
@@ -330,46 +314,21 @@ where
                 // A node at this (root) level has the single-element state path
                 // `[n_ix]`.
                 let node_path = [n_ix];
-                let node_ctx = crate::NodeCtx::new(
-                    registry,
-                    &node_path,
-                    &inlets,
-                    &outlets,
-                    interface_docs,
-                    vm,
-                    responses,
-                );
+                let node_ctx =
+                    crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, vm, responses);
                 node.ui(node_ctx, nui_ctx)
             });
 
-        // Attach on-hover docs to each socket.
+        // Attach on-hover docs to each socket. Each node describes its own
+        // sockets (markers read their stored docs; references resolve the
+        // referenced graph's marker docs via the registry).
         for (ix, sock) in response.sockets().inputs() {
-            if let Some(doc) = socket_doc(
-                node,
-                registry,
-                meta_ctx,
-                interface_docs,
-                &inlets,
-                &outlets,
-                n_ix,
-                SocketKind::Input,
-                ix,
-            ) {
+            if let Some(doc) = node.socket_doc(registry, SocketKind::Input, ix) {
                 socket_hover(sock, &doc);
             }
         }
         for (ix, sock) in response.sockets().outputs() {
-            if let Some(doc) = socket_doc(
-                node,
-                registry,
-                meta_ctx,
-                interface_docs,
-                &inlets,
-                &outlets,
-                n_ix,
-                SocketKind::Output,
-                ix,
-            ) {
+            if let Some(doc) = node.socket_doc(registry, SocketKind::Output, ix) {
                 socket_hover(sock, &doc);
             }
         }
@@ -487,58 +446,6 @@ where
     }
 
     node_responses
-}
-
-/// Resolve the on-hover doc for a single socket.
-///
-/// The graph's own inlet/outlet marker nodes read from the current graph's
-/// [`InterfaceDocs`] by ordinal (falling back to a generic label); all other
-/// nodes provide their docs via [`NodeUi::socket_doc`] (which, for references,
-/// resolves the referenced graph's docs).
-#[allow(clippy::too_many_arguments)]
-fn socket_doc<N>(
-    node: &N,
-    registry: &dyn Registry,
-    meta_ctx: node::MetaCtx,
-    interface_docs: Option<&InterfaceDocs>,
-    inlets: &[node::Id],
-    outlets: &[node::Id],
-    n_ix: node::Id,
-    kind: SocketKind,
-    ix: usize,
-) -> Option<SocketDoc>
-where
-    N: Node + NodeUi,
-{
-    if node.inlet(meta_ctx) {
-        return match kind {
-            SocketKind::Output => {
-                let ord = inlets.iter().position(|&id| id == n_ix)?;
-                Some(
-                    interface_docs
-                        .and_then(|d| d.inlets.get(&ord))
-                        .cloned()
-                        .unwrap_or_else(|| SocketDoc::ty("input")),
-                )
-            }
-            SocketKind::Input => None,
-        };
-    }
-    if node.outlet(meta_ctx) {
-        return match kind {
-            SocketKind::Input => {
-                let ord = outlets.iter().position(|&id| id == n_ix)?;
-                Some(
-                    interface_docs
-                        .and_then(|d| d.outlets.get(&ord))
-                        .cloned()
-                        .unwrap_or_else(|| SocketDoc::ty("output")),
-                )
-            }
-            SocketKind::Output => None,
-        };
-    }
-    node.socket_doc(registry, kind, ix)
 }
 
 /// Show a socket's doc as a hover tooltip (type label in bold, description

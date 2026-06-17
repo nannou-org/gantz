@@ -9,7 +9,7 @@ use bevy_gantz::{
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
     reg, timestamp,
 };
-use bevy_gantz_egui::{Docs, GantzEguiPlugin, GuiState, HeadGuiState, TraceCapture, Views};
+use bevy_gantz_egui::{GantzEguiPlugin, GuiState, HeadGuiState, TraceCapture, Views};
 use bevy_pkv::PkvStore;
 use builtin::Builtins;
 use storage::Pkv;
@@ -80,11 +80,9 @@ fn setup_window(storage: Res<Pkv>, mut windows: Query<&mut Window, With<PrimaryW
 fn setup_resources(storage: Res<Pkv>, mut cmds: Commands) {
     let registry: Registry<Box<dyn node::Node>> = bevy_gantz::storage::load_registry(&*storage);
     let views = bevy_gantz_egui::storage::load_views(&*storage);
-    let docs = bevy_gantz_egui::storage::load_docs(&*storage);
     let gui_state = bevy_gantz_egui::storage::load_gui_state(&*storage);
     cmds.insert_resource(registry);
     cmds.insert_resource(views);
-    cmds.insert_resource(docs);
     cmds.insert_resource(gui_state);
 }
 
@@ -137,7 +135,6 @@ fn load_egui_memory(mut ctxs: EguiContexts, mut storage: ResMut<Pkv>, mut loaded
 fn persist_resources(
     registry: Res<Registry<Box<dyn node::Node>>>,
     views: Res<Views>,
-    docs: Res<Docs>,
     gui_state: Res<GuiState>,
     mut storage: ResMut<Pkv>,
     mut ctxs: EguiContexts,
@@ -168,8 +165,6 @@ fn persist_resources(
 
     // Save all views (kept up to date by `persist_views`).
     bevy_gantz_egui::storage::save_views(&mut *storage, &*views);
-    // Save all inlet/outlet docs.
-    bevy_gantz_egui::storage::save_docs(&mut *storage, &*docs);
     // Save the gantz GUI state.
     bevy_gantz_egui::storage::save_gui_state(&mut *storage, &gui_state);
     // Save egui memory (widget states).

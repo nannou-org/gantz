@@ -32,16 +32,32 @@ pub type EdgeIx = EdgeIndex<Index>;
 /// An inlet to a nested graph.
 ///
 /// Inlet values are provided via `define` bindings by the parent graph node.
+///
+/// `ty` and `description` are optional, GUI-facing documentation for the inlet
+/// (a short "type" label and a longer note). They are plain data stored with
+/// the node; the GUI layer interprets and presents them.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, CaHash)]
 #[cahash("gantz.inlet")]
-pub struct Inlet;
+pub struct Inlet {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub ty: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+}
 
 /// An outlet from a nested graph.
 ///
 /// Outlet values are passed through directly as the node's output.
+///
+/// See [`Inlet`] regarding `ty`/`description`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, CaHash)]
 #[cahash("gantz.outlet")]
-pub struct Outlet;
+pub struct Outlet {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub ty: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+}
 
 impl<N: Node> Node for Graph<N> {
     fn n_inputs(&self, ctx: node::MetaCtx) -> usize {

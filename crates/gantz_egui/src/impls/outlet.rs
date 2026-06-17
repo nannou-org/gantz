@@ -1,4 +1,4 @@
-use crate::{NodeCtx, NodeUi, Registry, SetInterfaceDoc, SocketDocKind, widget::node_inspector};
+use crate::{NodeCtx, NodeUi, Registry, SocketDoc, SocketKind, widget::node_inspector};
 use gantz_core::node;
 
 impl NodeUi for gantz_core::node::graph::Outlet {
@@ -32,21 +32,25 @@ impl NodeUi for gantz_core::node::graph::Outlet {
         });
     }
 
-    fn inspector_ui(&mut self, mut ctx: NodeCtx, ui: &mut egui::Ui) -> Option<egui::Response> {
-        let ix = outlet_ix(ctx.path(), ctx.outlets());
-        let current = ctx
-            .interface_docs()
-            .and_then(|d| d.outlets.get(&ix))
-            .cloned();
+    fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> Option<egui::Response> {
         ui.separator();
-        let edit = node_inspector::socket_doc_editor(ui, ctx.path(), current.as_ref());
-        let (doc, resp) = edit?;
-        ctx.response(SetInterfaceDoc {
-            kind: SocketDocKind::Outlet,
-            ix,
-            doc,
-        });
-        Some(resp)
+        Some(node_inspector::socket_doc_editor(
+            ui,
+            ctx.path(),
+            &mut self.ty,
+            &mut self.description,
+        ))
+    }
+
+    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+        match kind {
+            SocketKind::Input => Some(super::inlet::socket_doc(
+                &self.ty,
+                &self.description,
+                "output",
+            )),
+            SocketKind::Output => None,
+        }
     }
 }
 

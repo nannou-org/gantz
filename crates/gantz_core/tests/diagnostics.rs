@@ -30,10 +30,10 @@ fn node_push() -> node::Push<node::Expr> {
 #[test]
 fn invalid_edge_diagnostic() {
     let mut ga = Nested::default();
-    let inlet = ga.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let inlet = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
     // `(+ $l 1)` has one output; the edge below leaves from output 5.
     let inc = ga.add_node(Box::new(node::expr("(+ $l 1)").unwrap()) as Box<_>);
-    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     ga.add_edge(inlet, inc, Edge::from((0, 0)));
     ga.add_edge(inc, outlet, Edge::from((5, 0)));
 

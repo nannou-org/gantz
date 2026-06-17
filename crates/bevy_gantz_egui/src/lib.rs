@@ -107,7 +107,6 @@ where
             .register_head_response::<gantz_egui::Paste>()
             .register_head_response::<gantz_egui::Redo>()
             .register_head_response::<gantz_egui::Undo>()
-            .register_head_response::<gantz_egui::SetInterfaceDoc>()
             .register_response_with::<gantz_egui::EvalEntry>(dispatch_eval_entry)
             .register_response_with::<gantz_egui::OpenHead>(dispatch_open_head)
             .register_response_with::<gantz_egui::ReplaceHead>(dispatch_replace_head)
@@ -122,13 +121,12 @@ where
             .init_resource::<PerfGui>()
             .init_resource::<Views>()
             .init_resource::<Demos>()
-            .init_resource::<Docs>()
             // GUI state observers
             .add_observer(on_head_opened::<N>)
             .add_observer(on_head_changed::<N>)
             .add_observer(on_head_closed)
             .add_observer(on_branch_created)
-            .add_observer(on_head_committed::<N>)
+            .add_observer(on_head_committed)
             .add_observer(on_head_committed_resync::<N>)
             .add_observer(on_branched_head_fork_nested::<N>)
             // VM timing observer
@@ -140,7 +138,6 @@ where
             .add_observer(on_inspect_edge::<N>)
             .add_observer(on_copy_nodes::<N>)
             .add_observer(on_paste::<N>)
-            .add_observer(on_set_interface_doc::<N>)
             .add_observer(on_undo::<N>)
             .add_observer(on_redo)
             .add_observer(on_export_head::<N>)
@@ -204,10 +201,6 @@ pub struct Views(pub HashMap<ca::CommitAddr, egui_graph::View>);
 /// Demo graph associations: maps a commit to its associated `demo-*` graph name.
 #[derive(Resource, Default)]
 pub struct Demos(pub HashMap<ca::CommitAddr, String>);
-
-/// Inlet/outlet documentation: maps a commit to its [`gantz_egui::InterfaceDocs`].
-#[derive(Resource, Default)]
-pub struct Docs(pub HashMap<ca::CommitAddr, gantz_egui::InterfaceDocs>);
 
 /// Names of base nodes baked into the binary.
 ///
@@ -483,19 +476,6 @@ impl DerefMut for Demos {
     }
 }
 
-impl Deref for Docs {
-    type Target = HashMap<ca::CommitAddr, gantz_egui::InterfaceDocs>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Docs {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
 impl Deref for GraphView {
     type Target = egui_graph::View;
     fn deref(&self) -> &Self::Target {
@@ -512,15 +492,13 @@ impl DerefMut for GraphView {
 /// Construct a `RegistryRef` from Bevy resources.
 ///
 /// This is a convenience function that extracts the underlying references
-/// from the Bevy resource wrappers. `docs` carries inlet/outlet docs so socket
-/// hover tooltips and the inlet/outlet inspector editor resolve correctly.
+/// from the Bevy resource wrappers.
 pub fn registry_ref<'a, N: 'static + Send + Sync>(
     registry: &'a Registry<N>,
     builtins: &'a BuiltinNodes<N>,
     demos: &'a Demos,
-    docs: &'a Docs,
 ) -> RegistryRef<'a, N> {
-    RegistryRef::new(&**registry, &*builtins.0, &demos.0, &docs.0)
+    RegistryRef::new(&**registry, &*builtins.0, &demos.0)
 }
 
 // ----------------------------------------------------------------------------
@@ -611,28 +589,13 @@ pub fn on_branch_created(
 ///
 /// This observer is triggered by `vm::sync` when a graph change is committed.
 /// Also clears the redo stack, since a new edit invalidates the redo history.
-pub fn on_head_committed<N>(
+pub fn on_head_committed(
     trigger: On<head::CommittedEvent>,
     mut gui_state: ResMut<GuiState>,
-    registry: Res<Registry<N>>,
-    mut docs: ResMut<Docs>,
     mut ctxs: EguiContexts,
-) where
-    N: 'static + Send + Sync,
-{
+) {
     let event = trigger.event();
     gui_state.migrate_head(&event.old_head, &event.new_head, true);
-
-    // Carry inlet/outlet docs forward from the parent commit to the new one, so
-    // editing a graph's structure doesn't orphan its documentation.
-    if let Some(&new_ca) = registry.head_commit_ca(&event.new_head) {
-        if let Some(parent) = registry.commits().get(&new_ca).and_then(|c| c.parent) {
-            if let Some(d) = docs.0.get(&parent).cloned() {
-                docs.0.entry(new_ca).or_insert(d);
-            }
-        }
-    }
-
     if let Ok(ctx) = ctxs.ctx_mut() {
         gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
     }
@@ -646,12 +609,11 @@ pub fn on_head_committed_resync<N>(
     mut registry: ResMut<Registry<N>>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views: ResMut<Views>,
-    mut docs: ResMut<Docs>,
 ) where
     N: 'static + Clone + ca::CaHash + gantz_egui::sync::AsNamedRefMut + Send + Sync,
 {
     let moves = gantz_egui::sync::resync(&mut registry, bevy_gantz::reg::timestamp());
-    refresh_moved_heads(&moves, &registry, &mut heads, &mut views, &mut docs);
+    refresh_moved_heads(&moves, &registry, &mut heads, &mut views);
 }
 
 /// On a fork (branch from a head), give the fork independent nested children:
@@ -662,7 +624,6 @@ pub fn on_branched_head_fork_nested<N>(
     mut registry: ResMut<Registry<N>>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views: ResMut<Views>,
-    mut docs: ResMut<Docs>,
 ) where
     N: 'static + Clone + ca::CaHash + gantz_egui::sync::AsNamedRefMut + Send + Sync,
 {
@@ -680,7 +641,7 @@ pub fn on_branched_head_fork_nested<N>(
         old,
         new,
     ));
-    refresh_moved_heads(&moves, &registry, &mut heads, &mut views, &mut docs);
+    refresh_moved_heads(&moves, &registry, &mut heads, &mut views);
 }
 
 /// Carry moved graphs' views forward to their new commits, and refresh any open
@@ -692,7 +653,6 @@ fn refresh_moved_heads<N>(
     registry: &Registry<N>,
     heads: &mut Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     views: &mut Views,
-    docs: &mut Docs,
 ) where
     N: 'static + Clone + Send + Sync,
 {
@@ -702,9 +662,6 @@ fn refresh_moved_heads<N>(
     for m in moves {
         if let Some(gv) = views.0.get(&m.old_commit).cloned() {
             views.0.entry(m.new_commit).or_insert(gv);
-        }
-        if let Some(d) = docs.0.get(&m.old_commit).cloned() {
-            docs.0.entry(m.new_commit).or_insert(d);
         }
     }
     for mut data in heads.iter_mut() {
@@ -727,7 +684,6 @@ pub fn on_create_node<N>(
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     demos: Res<Demos>,
-    docs: Res<Docs>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
@@ -748,7 +704,7 @@ pub fn on_create_node<N>(
         return;
     };
 
-    let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
+    let node_reg = registry_ref(&registry, &builtins, &demos);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
     gantz_egui::ops::create_node(
         &get_node,
@@ -833,7 +789,6 @@ pub fn on_inspect_edge<N>(
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     demos: Res<Demos>,
-    docs: Res<Docs>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
@@ -854,7 +809,7 @@ pub fn on_inspect_edge<N>(
         return;
     };
 
-    let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
+    let node_reg = registry_ref(&registry, &builtins, &demos);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
     gantz_egui::ops::inspect_edge(
         &get_node,
@@ -912,7 +867,6 @@ pub fn on_paste<N>(
     mut gui_state: ResMut<GuiState>,
     mut views: ResMut<Views>,
     mut demos: ResMut<Demos>,
-    mut docs: ResMut<Docs>,
     mut vms: NonSendMut<head::HeadVms>,
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
     mut heads: Query<
@@ -946,7 +900,6 @@ pub fn on_paste<N>(
         &mut registry,
         &mut views,
         &mut demos,
-        &mut docs,
         &mut wg,
         &mut gv,
         head_state,
@@ -959,36 +912,11 @@ pub fn on_paste<N>(
     // for existing nodes.
     if pasted {
         if let Some(vm) = vms.get_mut(&event.head) {
-            let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
+            let node_reg = registry_ref(&registry, &builtins, &demos);
             let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
             gantz_core::graph::register(&get_node, &**wg, &[], vm);
         }
     }
-}
-
-/// Handle inlet/outlet doc edits: apply to the [`Docs`] resource keyed by the
-/// editing head's current commit.
-pub fn on_set_interface_doc<N>(
-    trigger: On<ForHead<gantz_egui::SetInterfaceDoc>>,
-    registry: Res<Registry<N>>,
-    mut docs: ResMut<Docs>,
-    heads: Query<&head::HeadRef, With<head::OpenHead>>,
-) where
-    N: 'static + Send + Sync,
-{
-    let event = trigger.event();
-    let Ok(head_ref) = heads.get(event.head) else {
-        log::error!(
-            "SetInterfaceDoc: head not found for entity {:?}",
-            event.head
-        );
-        return;
-    };
-    let Some(&commit_ca) = registry.head_commit_ca(&**head_ref) else {
-        log::error!("SetInterfaceDoc: no commit for head");
-        return;
-    };
-    gantz_egui::ops::set_interface_doc(&mut docs.0, commit_ca, &event.data);
 }
 
 /// Handle undo payloads: move the head back to its parent commit.
@@ -1042,7 +970,6 @@ pub fn on_export_head<N>(
     builtins: Res<BuiltinNodes<N>>,
     views: Res<Views>,
     demos: Res<Demos>,
-    docs: Res<Docs>,
     heads: Query<&head::HeadRef, With<head::OpenHead>>,
 ) where
     N: 'static + serde::Serialize + serde::de::DeserializeOwned + Node + Clone + Send + Sync,
@@ -1054,7 +981,7 @@ pub fn on_export_head<N>(
     };
     let head: &ca::Head = &**head_ref;
 
-    let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
+    let node_reg = registry_ref(&registry, &builtins, &demos);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
 
     let text = match gantz_egui::export::export_heads_sexpr(
@@ -1062,7 +989,6 @@ pub fn on_export_head<N>(
         &registry,
         &views,
         &demos,
-        &docs,
         [head],
     ) {
         Ok(s) => s,
@@ -1102,11 +1028,10 @@ pub fn on_export_all_named<N>(
     builtins: Res<BuiltinNodes<N>>,
     views: Res<Views>,
     demos: Res<Demos>,
-    docs: Res<Docs>,
 ) where
     N: 'static + serde::Serialize + serde::de::DeserializeOwned + Node + Clone + Send + Sync,
 {
-    let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
+    let node_reg = registry_ref(&registry, &builtins, &demos);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
 
     let named_heads: Vec<ca::Head> = registry
@@ -1125,7 +1050,6 @@ pub fn on_export_all_named<N>(
         &registry,
         &views,
         &demos,
-        &docs,
         named_heads.iter(),
     ) {
         Ok(s) => s,
@@ -1162,7 +1086,6 @@ pub fn on_import_file<N>(
     builtins: Res<BuiltinNodes<N>>,
     mut views: ResMut<Views>,
     mut demos: ResMut<Demos>,
-    mut docs: ResMut<Docs>,
     mut cmds: Commands,
 ) where
     N: 'static
@@ -1185,15 +1108,14 @@ pub fn on_import_file<N>(
 
     // Compute the root name before merge if we might open a head.
     let root_name = if event.open_head {
-        let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
+        let node_reg = registry_ref(&registry, &builtins, &demos);
         let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
         gantz_egui::export::unique_root_name(&get_node, &export)
     } else {
         None
     };
 
-    let result =
-        gantz_egui::export::merge_with(&mut registry, &mut views, &mut demos, &mut docs, export);
+    let result = gantz_egui::export::merge_with(&mut registry, &mut views, &mut demos, export);
     log::info!(
         "Imported: {} names added, {} replaced",
         result.names_added.len(),
@@ -1284,11 +1206,10 @@ pub fn prune_views<N: 'static + Node + Send + Sync>(
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     demos: Res<Demos>,
-    docs: Res<Docs>,
     mut views: ResMut<Views>,
     heads: Query<&head::HeadRef, With<head::OpenHead>>,
 ) {
-    let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
+    let node_reg = registry_ref(&registry, &builtins, &demos);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
     let head_iter = heads.iter().map(|h| &**h);
     let required = gantz_core::reg::required_commits(&get_node, &registry, head_iter);
@@ -1315,11 +1236,10 @@ pub fn update<N>(
     mut focused: ResMut<head::FocusedHead>,
     mut heads_query: Query<OpenHeadViews<N>, With<head::OpenHead>>,
     import_task: Option<Res<ImportTask>>,
-    (base_names, base_immutable, mut compile_config, docs): (
+    (base_names, base_immutable, mut compile_config): (
         Res<BaseNames>,
         Res<BaseImmutable>,
         ResMut<CompileConfig>,
-        Res<Docs>,
     ),
     mut demos: ResMut<Demos>,
     dispatchers: Res<ResponseDispatchers>,
@@ -1351,7 +1271,7 @@ where
     let mut access = HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
 
     // Construct node registry on-demand for the widget (with demo + doc lookup).
-    let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
+    let node_reg = registry_ref(&registry, &builtins, &demos);
 
     let level = bevy_log::tracing_subscriber::filter::LevelFilter::current();
 

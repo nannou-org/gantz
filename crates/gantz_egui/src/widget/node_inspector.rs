@@ -172,32 +172,28 @@ struct SocketDocEditState {
     seeded: (String, String),
 }
 
-/// A small editor for an inlet/outlet's [`SocketDoc`](crate::SocketDoc) (a type
-/// label and an optional description).
+/// A small editor for an inlet/outlet marker's stored `ty`/`description`
+/// fields (a type label and a longer note).
 ///
-/// Edits are buffered in egui memory and only committed - returned as the new
-/// doc (`None` when both fields are blank, i.e. cleared), along with the
-/// triggering response - when a field loses focus or the user presses Enter in
-/// the description (Ctrl/Cmd+Enter inserts a newline). This avoids the buffer
-/// being re-seeded (and trailing whitespace trimmed) on every keystroke.
-/// `id_salt` scopes the edit state to the node.
+/// Edits are buffered in egui memory and written back into `ty`/`description`
+/// (trimmed) only when a field loses focus or the user presses Enter in the
+/// description (Ctrl/Cmd+Enter inserts a newline). Buffering avoids re-seeding
+/// (and trimming trailing whitespace) on every keystroke, and means the node -
+/// and thus the working graph - only changes on commit, so editing produces a
+/// single graph edit rather than one per keystroke. `id_salt` scopes the edit
+/// state to the node. Returns the combined field response.
 pub(crate) fn socket_doc_editor(
     ui: &mut egui::Ui,
     id_salt: impl std::hash::Hash,
-    current: Option<&crate::SocketDoc>,
-) -> Option<(Option<crate::SocketDoc>, egui::Response)> {
+    ty: &mut String,
+    description: &mut String,
+) -> egui::Response {
     let id = egui::Id::new("socket-doc-editor").with(&id_salt);
     let mut st: SocketDocEditState = ui.memory(|m| m.data.get_temp(id)).unwrap_or_default();
 
-    // Re-seed the buffer only when the stored doc changed externally (never
-    // mid-edit, since our own edits don't update `current` until committed).
-    let cur = (
-        current.map(|d| d.ty.to_string()).unwrap_or_default(),
-        current
-            .and_then(|d| d.description.as_deref())
-            .unwrap_or_default()
-            .to_string(),
-    );
+    // Re-seed the buffer only when the stored fields changed externally (never
+    // mid-edit, since our own edits aren't written back until committed).
+    let cur = (ty.clone(), description.clone());
     if st.seeded != cur {
         st.ty = cur.0.clone();
         st.desc = cur.1.clone();
@@ -232,21 +228,18 @@ pub(crate) fn socket_doc_editor(
     let commit = ty_resp.lost_focus() || desc_resp.lost_focus() || desc_enter;
 
     let resp = ty_resp.union(desc_resp);
-    ui.memory_mut(|m| m.data.insert_temp(id, st.clone()));
 
-    if !commit {
-        return None;
+    if commit {
+        let new = (st.ty.trim().to_string(), st.desc.trim().to_string());
+        *ty = new.0.clone();
+        *description = new.1.clone();
+        // Keep the seed in sync with what we just wrote back so the trimmed
+        // values aren't treated as an external change next frame.
+        st.ty = new.0.clone();
+        st.desc = new.1.clone();
+        st.seeded = new;
     }
-    let ty = st.ty.trim();
-    let desc = st.desc.trim();
-    let doc = if ty.is_empty() && desc.is_empty() {
-        None
-    } else {
-        let mut d = crate::SocketDoc::ty(ty.to_string());
-        if !desc.is_empty() {
-            d = d.with_description(desc.to_string());
-        }
-        Some(d)
-    };
-    Some((doc, resp))
+
+    ui.memory_mut(|m| m.data.insert_temp(id, st));
+    resp
 }

@@ -3,7 +3,6 @@
 
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use std::borrow::Cow;
-use std::collections::HashMap;
 use steel::{
     SteelErr, SteelVal,
     rvals::{FromSteelVal, IntoSteelVal},
@@ -64,15 +63,19 @@ pub trait Registry: NameRegistry + FnNodeNames + NodeTypeRegistry + GraphRegistr
         None
     }
 
-    /// The inlet/outlet documentation associated with the graph at the given
-    /// content address, if any.
+    /// The [`SocketDoc`] for the given socket of the graph referenced by `ca`.
     ///
-    /// This is GUI-side metadata (authored in the inspector, stored separately
-    /// from the graph's content like demos and views) rather than part of the
-    /// node itself. It enables a referencing node (e.g. [`node::NamedRef`]) to
-    /// surface the referenced graph's socket docs - see [`SocketDoc`].
-    fn interface_docs(&self, ca: &gantz_ca::ContentAddr) -> Option<&InterfaceDocs> {
-        let _ = ca;
+    /// Lets a referencing node (e.g. [`node::NamedRef`]) surface the referenced
+    /// graph's inlet/outlet docs. The standard impl resolves the referenced
+    /// graph and reads the relevant `Inlet`/`Outlet` marker's own doc, so docs
+    /// live on the nodes rather than in side-metadata.
+    fn socket_doc(
+        &self,
+        ca: &gantz_ca::ContentAddr,
+        kind: SocketKind,
+        ix: usize,
+    ) -> Option<SocketDoc> {
+        let _ = (ca, kind, ix);
         None
     }
 }
@@ -88,19 +91,6 @@ pub struct SocketDoc {
     pub ty: Cow<'static, str>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<Cow<'static, str>>,
-}
-
-/// Per-graph inlet/outlet documentation, keyed by socket ordinal.
-///
-/// Stored as GUI side-metadata keyed by the graph's commit (mirroring `demos`
-/// and views) so the core `Inlet`/`Outlet` nodes - and thus content addresses -
-/// stay untouched.
-#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct InterfaceDocs {
-    #[serde(default)]
-    pub inlets: HashMap<usize, SocketDoc>,
-    #[serde(default)]
-    pub outlets: HashMap<usize, SocketDoc>,
 }
 
 impl SocketDoc {
@@ -121,21 +111,6 @@ impl SocketDoc {
     /// Whether this doc carries no content (empty type and no description).
     pub fn is_empty(&self) -> bool {
         self.ty.is_empty() && self.description.is_none()
-    }
-}
-
-/// Resolve a head to its current commit address via the registry.
-///
-/// A `Commit` head is its own address; a `Branch` head resolves through the
-/// registry's name map. Used to key GUI side-metadata (e.g. [`InterfaceDocs`])
-/// by the head's current commit.
-pub fn head_commit_addr(
-    registry: &dyn Registry,
-    head: &gantz_ca::Head,
-) -> Option<gantz_ca::CommitAddr> {
-    match head {
-        gantz_ca::Head::Commit(ca) => Some(*ca),
-        gantz_ca::Head::Branch(name) => registry.names().get(name).copied(),
     }
 }
 
@@ -243,9 +218,9 @@ pub trait NodeUi {
 
     /// On-hover documentation for the socket of the given kind and index.
     ///
-    /// Shown as a tooltip when the user hovers the socket. Nodes that reference
-    /// a graph resolve the referenced graph's docs via
-    /// [`Registry::interface_docs`].
+    /// Shown as a tooltip when the user hovers the socket. `Inlet`/`Outlet`
+    /// read their own stored docs; nodes that reference a graph resolve the
+    /// referenced graph's docs via [`Registry::socket_doc`].
     fn socket_doc(
         &self,
         _registry: &dyn Registry,
@@ -263,9 +238,6 @@ pub struct NodeCtx<'a> {
     path: &'a [node::Id],
     inlets: &'a [node::Id],
     outlets: &'a [node::Id],
-    /// Inlet/outlet docs for the graph currently being shown, if any. Lets
-    /// `Inlet`/`Outlet` inspector UIs read and pre-fill the doc being edited.
-    interface_docs: Option<&'a InterfaceDocs>,
     vm: &'a mut Engine,
     responses: &'a mut Vec<DynResponse>,
 }
@@ -394,26 +366,6 @@ pub struct Redo;
 #[derive(Clone, Copy, Debug)]
 pub struct Undo;
 
-/// Whether a [`SetInterfaceDoc`] targets an inlet or an outlet.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SocketDocKind {
-    Inlet,
-    Outlet,
-}
-
-/// Set (or clear) the documentation for an inlet or outlet of the emitting
-/// head's graph.
-///
-/// `doc == None` (or an empty doc) clears the entry. Applied to the GUI-side
-/// [`InterfaceDocs`] keyed by the head's current commit.
-#[derive(Clone, Debug)]
-pub struct SetInterfaceDoc {
-    pub kind: SocketDocKind,
-    /// The inlet/outlet ordinal within the graph.
-    pub ix: usize,
-    pub doc: Option<SocketDoc>,
-}
-
 impl<'a, N> NodeUi for &'a mut N
 where
     N: ?Sized + NodeUi,
@@ -509,7 +461,6 @@ impl<'a> NodeCtx<'a> {
         path: &'a [node::Id],
         inlets: &'a [node::Id],
         outlets: &'a [node::Id],
-        interface_docs: Option<&'a InterfaceDocs>,
         vm: &'a mut Engine,
         responses: &'a mut Vec<DynResponse>,
     ) -> Self {
@@ -518,7 +469,6 @@ impl<'a> NodeCtx<'a> {
             path,
             inlets,
             outlets,
-            interface_docs,
             vm,
             responses,
         }
@@ -602,14 +552,6 @@ impl<'a> NodeCtx<'a> {
     /// Primarily exposed so that `Outlet` nodes can present their index.
     pub fn outlets(&self) -> &[node::Id] {
         self.outlets
-    }
-
-    /// The inlet/outlet docs for the graph currently being shown, if any.
-    ///
-    /// Exposed so that `Inlet`/`Outlet` inspector UIs can read and pre-fill the
-    /// doc being edited.
-    pub fn interface_docs(&self) -> Option<&InterfaceDocs> {
-        self.interface_docs
     }
 }
 

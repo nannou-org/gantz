@@ -151,9 +151,9 @@ fn test_fn_apply_graph() {
     // First, create the "double" graph: inlet -> add -> outlet
     let mut double_graph = graph::Graph::<Box<dyn DebugNode>>::default();
 
-    let inlet = double_graph.add_node(Box::new(graph::Inlet) as Box<dyn DebugNode>);
+    let inlet = double_graph.add_node(Box::new(graph::Inlet::default()) as Box<dyn DebugNode>);
     let add = double_graph.add_node(Box::new(node::expr("(+ $l $r)").unwrap()) as Box<_>);
-    let outlet = double_graph.add_node(Box::new(graph::Outlet) as Box<_>);
+    let outlet = double_graph.add_node(Box::new(graph::Outlet::default()) as Box<_>);
 
     // Connect inlet to both inputs of add.
     double_graph.add_edge(inlet, add, Edge::from((0, 0)));

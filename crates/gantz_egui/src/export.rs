@@ -47,18 +47,14 @@ pub struct Export<G> {
     /// Maps commits to their associated demo graph name (a `demo-*` name).
     #[serde(default)]
     pub demos: HashMap<CommitAddr, String>,
-    /// Maps commits to their inlet/outlet documentation.
-    #[serde(default)]
-    pub interface_docs: HashMap<CommitAddr, crate::InterfaceDocs>,
 }
 
-/// Produce an [`Export`] by filtering views, demos and docs to commits present
-/// in the registry.
+/// Produce an [`Export`] by filtering views and demos to commits present in
+/// the registry.
 pub fn export_with<G>(
     registry: gantz_ca::Registry<G>,
     all_views: &HashMap<CommitAddr, egui_graph::View>,
     all_demos: &HashMap<CommitAddr, String>,
-    all_docs: &HashMap<CommitAddr, crate::InterfaceDocs>,
 ) -> Export<G>
 where
     G: Clone,
@@ -75,16 +71,10 @@ where
         .filter(|(ca, _)| filter(ca))
         .map(|(&ca, v)| (ca, v.clone()))
         .collect();
-    let interface_docs = all_docs
-        .iter()
-        .filter(|(ca, _)| filter(ca))
-        .map(|(&ca, v)| (ca, v.clone()))
-        .collect();
     Export {
         registry,
         views,
         demos,
-        interface_docs,
     }
 }
 
@@ -129,26 +119,24 @@ pub fn export_heads_sexpr<N>(
     registry: &gantz_ca::Registry<Graph<N>>,
     all_views: &HashMap<CommitAddr, egui_graph::View>,
     all_demos: &HashMap<CommitAddr, String>,
-    all_docs: &HashMap<CommitAddr, crate::InterfaceDocs>,
     heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
 ) -> Result<String, crate::format::FormatError>
 where
     N: Serialize + DeserializeOwned + gantz_core::Node + Clone,
 {
     let export_registry = gantz_core::reg::export_heads(get_node, registry, heads);
-    let export = export_with(export_registry, all_views, all_demos, all_docs);
+    let export = export_with(export_registry, all_views, all_demos);
     crate::format::to_string(&export)
 }
 
-/// Merge an [`Export`] into an existing registry, views, demos and docs maps.
+/// Merge an [`Export`] into an existing registry, views and demos maps.
 ///
-/// Incoming views, demos and docs for new commits are inserted; existing
-/// entries for known commits are kept.
+/// Incoming views and demos for new commits are inserted; existing entries for
+/// known commits are kept.
 pub fn merge_with<G>(
     registry: &mut gantz_ca::Registry<G>,
     views: &mut HashMap<CommitAddr, egui_graph::View>,
     demos: &mut HashMap<CommitAddr, String>,
-    docs: &mut HashMap<CommitAddr, crate::InterfaceDocs>,
     export: Export<G>,
 ) -> MergeResult {
     let result = registry.merge(export.registry);
@@ -157,9 +145,6 @@ pub fn merge_with<G>(
     }
     for (ca, d) in export.demos {
         demos.entry(ca).or_insert(d);
-    }
-    for (ca, d) in export.interface_docs {
-        docs.entry(ca).or_insert(d);
     }
     result
 }
@@ -293,7 +278,7 @@ where
         }
     }
     let export_registry = registry.export(&required_commits);
-    let export = export_with(export_registry, all_views, &HashMap::new(), &HashMap::new());
+    let export = export_with(export_registry, all_views, &HashMap::new());
 
     Copied {
         export,
@@ -311,7 +296,6 @@ pub fn paste<N>(
     registry: &mut gantz_ca::Registry<Graph<N>>,
     views: &mut HashMap<CommitAddr, egui_graph::View>,
     demos: &mut HashMap<CommitAddr, String>,
-    docs: &mut HashMap<CommitAddr, crate::InterfaceDocs>,
     target_graph: &mut Graph<N>,
     target_layout: &mut egui_graph::Layout,
     copied: &Copied<N>,
@@ -320,7 +304,7 @@ pub fn paste<N>(
 where
     N: Clone,
 {
-    merge_with(registry, views, demos, docs, copied.export.clone());
+    merge_with(registry, views, demos, copied.export.clone());
     let new_indices = gantz_core::graph::add_subgraph(target_graph, &copied.graph);
 
     // Map positions from subgraph indices to target indices with offset.
@@ -370,7 +354,6 @@ where
         registry,
         views,
         demos: copied.export.demos.clone(),
-        interface_docs: copied.export.interface_docs.clone(),
     };
     crate::format::to_string(&export)
 }
@@ -419,7 +402,6 @@ where
             registry,
             views: export.views,
             demos: export.demos,
-            interface_docs: export.interface_docs,
         },
         graph,
         positions,
@@ -453,7 +435,6 @@ mod tests {
             registry,
             views: HashMap::new(),
             demos: HashMap::new(),
-            interface_docs: HashMap::new(),
         }
     }
 
@@ -463,8 +444,7 @@ mod tests {
         let mut target = gantz_ca::Registry::<String>::default();
         let mut views = HashMap::new();
         let mut demos = HashMap::new();
-        let mut docs = HashMap::new();
-        let result = merge_with(&mut target, &mut views, &mut demos, &mut docs, export);
+        let result = merge_with(&mut target, &mut views, &mut demos, export);
         assert_eq!(result.names_added, vec!["alpha".to_string()]);
         assert!(result.names_replaced.is_empty());
         let ca = commit_addr_raw(10);
@@ -486,7 +466,7 @@ mod tests {
         let mut all_views = HashMap::new();
         all_views.insert(ca, egui_graph::View::default());
         all_views.insert(cb, egui_graph::View::default()); // cb not in registry
-        let export = export_with(registry, &all_views, &HashMap::new(), &HashMap::new());
+        let export = export_with(registry, &all_views, &HashMap::new());
         assert!(export.views.contains_key(&ca));
         assert!(!export.views.contains_key(&cb));
     }
@@ -507,7 +487,6 @@ mod tests {
             .insert(egui_graph::NodeId(0), Default::default());
         let mut views = HashMap::from([(ca, existing_view)]);
         let mut demos = HashMap::new();
-        let mut docs = HashMap::new();
         let export = Export {
             registry: gantz_ca::Registry::new(
                 HashMap::from([(ga, "g".to_string())]),
@@ -516,9 +495,8 @@ mod tests {
             ),
             views: HashMap::from([(ca, egui_graph::View::default())]),
             demos: HashMap::new(),
-            interface_docs: HashMap::new(),
         };
-        merge_with(&mut registry, &mut views, &mut demos, &mut docs, export);
+        merge_with(&mut registry, &mut views, &mut demos, export);
         // Existing view (with 1 layout entry) should be preserved, not replaced.
         assert_eq!(views[&ca].layout.len(), 1);
     }

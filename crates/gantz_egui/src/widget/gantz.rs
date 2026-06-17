@@ -831,10 +831,8 @@ where
                     let immutable = head_immutable(&fh, gantz.base_immutable, base_names);
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
                     let responses = access.with_head_mut(&fh, |data| {
-                        node_inspector(
-                            gantz.env, &fh, data.graph, data.vm, head_state, immutable, ui,
-                        )
-                        .inner
+                        node_inspector(gantz.env, data.graph, data.vm, head_state, immutable, ui)
+                            .inner
                     });
                     gantz_response
                         .responses
@@ -1513,17 +1511,12 @@ where
         head_view.layout = widget::graph_scene::layout(graph, id, layout_flow, ui.ctx());
     }
 
-    // The graph's own inlet/outlet docs (GUI side-metadata keyed by commit).
-    let interface_docs =
-        crate::head_commit_addr(registry, head).and_then(|ca| registry.interface_docs(&ca));
-
     let response = GraphScene::new(registry, graph)
         .with_id(id)
         .auto_layout(auto_layout)
         .layout_flow(layout_flow)
         .center_view(center_view)
         .immutable(immutable)
-        .interface_docs(interface_docs)
         .show(head_view, &mut head_state.scene, vm, ui);
 
     graph_scene::paint_diagnostics(diagnostics, &[], &response, ui);
@@ -1674,7 +1667,6 @@ fn head_immutable(
 /// Returns the payloads emitted by node UIs within the inspector.
 fn node_inspector<N>(
     registry: &dyn Registry,
-    head: &gantz_ca::Head,
     root: &mut gantz_core::node::graph::Graph<N>,
     vm: &mut Engine,
     head_state: &mut OpenHeadState,
@@ -1684,10 +1676,6 @@ fn node_inspector<N>(
 where
     N: Node + NodeUi,
 {
-    // The graph's own inlet/outlet docs (GUI side-metadata keyed by commit),
-    // so `Inlet`/`Outlet` inspector UIs can read and pre-fill the current doc.
-    let interface_docs =
-        crate::head_commit_addr(registry, head).and_then(|ca| registry.interface_docs(&ca));
     pane_ui(ui, |ui| {
         let mut responses = Vec::new();
         egui::ScrollArea::vertical()
@@ -1713,7 +1701,6 @@ where
                             &path[..],
                             &inlets,
                             &outlets,
-                            interface_docs,
                             vm,
                             &mut responses,
                         );

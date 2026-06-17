@@ -62,7 +62,6 @@ pub fn export_to_file<N>(
     builtins: Res<bevy_gantz::BuiltinNodes<N>>,
     views: Res<crate::Views>,
     demos: Res<crate::Demos>,
-    docs: Res<crate::Docs>,
 ) where
     N: 'static
         + serde::Serialize
@@ -72,7 +71,7 @@ pub fn export_to_file<N>(
         + Send
         + Sync,
 {
-    let Some(text) = export_all_named(&registry, &builtins, &views, &demos, &docs) else {
+    let Some(text) = export_all_named(&registry, &builtins, &views, &demos) else {
         log::error!("export_to_file: failed to serialize");
         return;
     };
@@ -90,7 +89,6 @@ pub fn export_all_named<N>(
     builtins: &bevy_gantz::BuiltinNodes<N>,
     views: &crate::Views,
     demos: &crate::Demos,
-    docs: &crate::Docs,
 ) -> Option<String>
 where
     N: 'static
@@ -101,7 +99,7 @@ where
         + Send
         + Sync,
 {
-    let node_reg = crate::registry_ref(registry, builtins, demos, docs);
+    let node_reg = crate::registry_ref(registry, builtins, demos);
     let get_node = |ca: &gantz_ca::ContentAddr| node_reg.node(ca);
 
     let named_heads: Vec<gantz_ca::Head> = registry
@@ -110,13 +108,6 @@ where
         .map(|name| gantz_ca::Head::Branch(name.clone()))
         .collect();
 
-    gantz_egui::export::export_heads_sexpr(
-        &get_node,
-        registry,
-        views,
-        &demos.0,
-        &docs.0,
-        named_heads.iter(),
-    )
-    .ok()
+    gantz_egui::export::export_heads_sexpr(&get_node, registry, views, &demos.0, named_heads.iter())
+        .ok()
 }

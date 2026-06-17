@@ -194,13 +194,8 @@ impl NodeUi for NamedRef {
         kind: crate::SocketKind,
         ix: usize,
     ) -> Option<SocketDoc> {
-        // Surface the referenced graph's inlet/outlet docs.
-        let docs = registry.interface_docs(&self.ref_.content_addr())?;
-        let map = match kind {
-            crate::SocketKind::Input => &docs.inlets,
-            crate::SocketKind::Output => &docs.outlets,
-        };
-        map.get(&ix).cloned()
+        // Surface the referenced graph's inlet/outlet marker docs.
+        registry.socket_doc(&self.ref_.content_addr(), kind, ix)
     }
 
     fn ui(

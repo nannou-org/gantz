@@ -33,8 +33,6 @@ struct Environment {
     primitives: Primitives,
     /// The registry of all nodes composed from other nodes.
     registry: Registry,
-    /// Inlet/outlet docs per commit (session-only in the demo).
-    docs: HashMap<gantz_ca::CommitAddr, gantz_egui::InterfaceDocs>,
 }
 
 impl Environment {
@@ -155,9 +153,32 @@ impl gantz_egui::Registry for Environment {
             .map(|g| g as &dyn gantz_core::Node)
     }
 
-    fn interface_docs(&self, ca: &gantz_ca::ContentAddr) -> Option<&gantz_egui::InterfaceDocs> {
+    fn socket_doc(
+        &self,
+        ca: &gantz_ca::ContentAddr,
+        kind: gantz_egui::SocketKind,
+        ix: usize,
+    ) -> Option<gantz_egui::SocketDoc> {
+        use gantz_core::Node as _;
+        use petgraph::visit::{IntoNodeReferences, NodeRef};
+        // Resolve the referenced graph and read the ix-th inlet/outlet marker's
+        // own doc.
         let commit_ca = gantz_ca::CommitAddr::from(*ca);
-        self.docs.get(&commit_ca)
+        let graph = self.registry.commit_graph_ref(&commit_ca)?;
+        let get_node = |c: &gantz_ca::ContentAddr| self.node(c);
+        let meta_ctx = gantz_core::node::MetaCtx::new(&get_node);
+        let node_ref = graph
+            .node_references()
+            .filter(|n| match kind {
+                gantz_egui::SocketKind::Input => n.weight().inlet(meta_ctx),
+                gantz_egui::SocketKind::Output => n.weight().outlet(meta_ctx),
+            })
+            .nth(ix)?;
+        let marker_kind = match kind {
+            gantz_egui::SocketKind::Input => gantz_egui::SocketKind::Output,
+            gantz_egui::SocketKind::Output => gantz_egui::SocketKind::Input,
+        };
+        gantz_egui::NodeUi::socket_doc(node_ref.weight(), self, marker_kind, 0)
     }
 }
 
@@ -460,7 +481,6 @@ impl App {
         let mut env = Environment {
             registry,
             primitives,
-            docs: HashMap::new(),
         };
 
         // Prune unused graphs now that we have the environment for node lookups.
@@ -1019,7 +1039,6 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             &mut state.env.registry,
             &mut HashMap::new(),
             &mut HashMap::new(),
-            &mut state.env.docs,
             graph,
             gv,
             head_state,
@@ -1064,7 +1083,6 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             &state.env.registry,
             &HashMap::new(),
             &HashMap::new(),
-            &state.env.docs,
             [&head],
         ) {
             Ok(s) => s,
@@ -1106,7 +1124,6 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             &state.env.registry,
             &HashMap::new(),
             &HashMap::new(),
-            &state.env.docs,
             named_heads.iter(),
         ) {
             Ok(s) => s,
@@ -1126,15 +1143,6 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             } else {
                 log::info!("Exported all named graphs to {}", handle.file_name());
             }
-        }
-    }
-
-    for (head, set) in responses.take::<gantz_egui::SetInterfaceDoc>() {
-        let Some((head, _)) = tagged_head(state, head) else {
-            continue;
-        };
-        if let Some(commit_ca) = state.env.registry.head_commit_ca(&head).copied() {
-            gantz_egui::ops::set_interface_doc(&mut state.env.docs, commit_ca, &set);
         }
     }
 
@@ -1265,7 +1273,6 @@ fn import_bytes(state: &mut State, bytes: Vec<u8>, open_head: bool) {
         &mut state.env.registry,
         &mut HashMap::new(),
         &mut HashMap::new(),
-        &mut state.env.docs,
         export,
     );
     log::info!(
