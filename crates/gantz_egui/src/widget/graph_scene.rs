@@ -452,6 +452,14 @@ where
 /// below).
 fn socket_hover(resp: &egui::Response, doc: &SocketDoc) {
     resp.clone().on_hover_ui(|ui| {
+        // Re-assert the wrap width every frame. The tooltip's `Area` caches the
+        // width it first rendered at (e.g. tiny, just fitting a bare "input"),
+        // and wrapped text keeps "fitting" that stale width - so docs added to a
+        // referenced graph later never widen it until egui memory is cleared
+        // (an app restart). Forcing the max width breaks that feedback loop
+        // while still letting short tooltips stay narrow.
+        let max_width = ui.spacing().tooltip_width;
+        ui.set_max_width(max_width);
         if !doc.ty.is_empty() {
             ui.strong(doc.ty.as_ref());
         }
