@@ -19,7 +19,7 @@
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph mod
-  (op (expr (modulo (exact (round $l)) (exact (round $r)))))
+  (op (expr (let ((n (exact (round $l))) (d (exact (round $r)))) (if (zero? d) n (modulo n d)))))
   (l inlet) (r inlet) (out outlet)
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
