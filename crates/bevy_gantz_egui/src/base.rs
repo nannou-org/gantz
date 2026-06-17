@@ -101,7 +101,7 @@ where
         + Send
         + Sync,
 {
-    let node_reg = crate::registry_ref(registry, builtins, demos);
+    let node_reg = crate::registry_ref(registry, builtins, demos, docs);
     let get_node = |ca: &gantz_ca::ContentAddr| node_reg.node(ca);
 
     let named_heads: Vec<gantz_ca::Head> = registry

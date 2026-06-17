@@ -39,7 +39,6 @@ impl NodeUi for gantz_core::node::graph::Outlet {
             .and_then(|d| d.outlets.get(&ix))
             .cloned();
         ui.separator();
-        ui.label("docs");
         let edit = node_inspector::socket_doc_editor(ui, ctx.path(), current.as_ref());
         let (doc, resp) = edit?;
         ctx.response(SetInterfaceDoc {

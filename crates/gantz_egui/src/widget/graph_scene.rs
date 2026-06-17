@@ -493,8 +493,8 @@ where
 ///
 /// The graph's own inlet/outlet marker nodes read from the current graph's
 /// [`InterfaceDocs`] by ordinal (falling back to a generic label); all other
-/// nodes provide their docs via [`NodeUi::input_doc`]/[`NodeUi::output_doc`]
-/// (which, for references, resolve the referenced graph's docs).
+/// nodes provide their docs via [`NodeUi::socket_doc`] (which, for references,
+/// resolves the referenced graph's docs).
 #[allow(clippy::too_many_arguments)]
 fn socket_doc<N>(
     node: &N,
@@ -538,10 +538,7 @@ where
             SocketKind::Output => None,
         };
     }
-    match kind {
-        SocketKind::Input => node.input_doc(registry, ix),
-        SocketKind::Output => node.output_doc(registry, ix),
-    }
+    node.socket_doc(registry, kind, ix)
 }
 
 /// Show a socket's doc as a hover tooltip (type label in bold, description

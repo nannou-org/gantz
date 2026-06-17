@@ -160,43 +160,80 @@ pub fn path_string(path: &[node::Id]) -> String {
         .join(" ")
 }
 
+/// Working state for the [`socket_doc_editor`], persisted in egui memory so
+/// in-progress text isn't clobbered by re-seeding every frame.
+#[derive(Clone, Default)]
+struct SocketDocEditState {
+    ty: String,
+    desc: String,
+    /// The `(ty, desc)` of the `current` doc we last seeded from, used to detect
+    /// external changes (e.g. a carried-forward edit) without overwriting
+    /// in-progress typing.
+    seeded: (String, String),
+}
+
 /// A small editor for an inlet/outlet's [`SocketDoc`](crate::SocketDoc) (a type
 /// label and an optional description).
 ///
-/// The fields are seeded from `current` each frame; on edit, returns the new
-/// doc (`None` when both fields are blank, i.e. cleared) along with the
-/// triggering response. `id_salt` scopes the text edit state to the node.
+/// Edits are buffered in egui memory and only committed - returned as the new
+/// doc (`None` when both fields are blank, i.e. cleared), along with the
+/// triggering response - when a field loses focus or the user presses Enter in
+/// the description (Ctrl/Cmd+Enter inserts a newline). This avoids the buffer
+/// being re-seeded (and trailing whitespace trimmed) on every keystroke.
+/// `id_salt` scopes the edit state to the node.
 pub(crate) fn socket_doc_editor(
     ui: &mut egui::Ui,
     id_salt: impl std::hash::Hash,
     current: Option<&crate::SocketDoc>,
 ) -> Option<(Option<crate::SocketDoc>, egui::Response)> {
     let id = egui::Id::new("socket-doc-editor").with(&id_salt);
-    let mut ty = current.map(|d| d.ty.to_string()).unwrap_or_default();
-    let mut desc = current
-        .and_then(|d| d.description.as_deref())
-        .unwrap_or_default()
-        .to_string();
+    let mut st: SocketDocEditState = ui.memory(|m| m.data.get_temp(id)).unwrap_or_default();
+
+    // Re-seed the buffer only when the stored doc changed externally (never
+    // mid-edit, since our own edits don't update `current` until committed).
+    let cur = (
+        current.map(|d| d.ty.to_string()).unwrap_or_default(),
+        current
+            .and_then(|d| d.description.as_deref())
+            .unwrap_or_default()
+            .to_string(),
+    );
+    if st.seeded != cur {
+        st.ty = cur.0.clone();
+        st.desc = cur.1.clone();
+        st.seeded = cur;
+    }
+
     let ty_resp = ui.add(
-        egui::TextEdit::singleline(&mut ty)
+        egui::TextEdit::singleline(&mut st.ty)
             .id(id.with("ty"))
             .hint_text("type")
             .desired_width(f32::INFINITY),
     );
+    // Plain Enter commits; Ctrl/Cmd+Enter inserts a newline.
     let desc_resp = ui.add(
-        egui::TextEdit::multiline(&mut desc)
+        egui::TextEdit::multiline(&mut st.desc)
             .id(id.with("desc"))
             .hint_text("description")
             .desired_rows(2)
-            .desired_width(f32::INFINITY),
+            .desired_width(f32::INFINITY)
+            .return_key(egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::Enter,
+            )),
     );
-    let changed = ty_resp.changed() || desc_resp.changed();
+    let desc_enter = desc_resp.has_focus()
+        && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.any());
+    let commit = ty_resp.lost_focus() || desc_resp.lost_focus() || desc_enter;
+
     let resp = ty_resp.union(desc_resp);
-    if !changed {
+    ui.memory_mut(|m| m.data.insert_temp(id, st.clone()));
+
+    if !commit {
         return None;
     }
-    let ty = ty.trim();
-    let desc = desc.trim();
+    let ty = st.ty.trim();
+    let desc = st.desc.trim();
     let doc = if ty.is_empty() && desc.is_empty() {
         None
     } else {

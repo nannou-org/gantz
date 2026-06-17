@@ -1,4 +1,4 @@
-use crate::{NodeCtx, NodeUi, Registry, SocketDoc};
+use crate::{NodeCtx, NodeUi, Registry, SocketDoc, SocketKind};
 
 impl NodeUi for gantz_core::node::Delay {
     fn name(&self, _: &dyn Registry) -> &str {
@@ -13,13 +13,14 @@ impl NodeUi for gantz_core::node::Delay {
         uictx.framed(|ui, _sockets| ui.add(egui::Label::new("delay").selectable(false)))
     }
 
-    fn input_doc(&self, _: &dyn Registry, _ix: usize) -> Option<SocketDoc> {
-        Some(SocketDoc::ty("any").with_description("Value stored for the next evaluation"))
-    }
-
-    fn output_doc(&self, _: &dyn Registry, _ix: usize) -> Option<SocketDoc> {
-        Some(SocketDoc::ty("any").with_description(
-            "Value from the previous evaluation (initially '()); enables feedback cycles",
-        ))
+    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+        Some(match kind {
+            SocketKind::Input => {
+                SocketDoc::ty("any").with_description("value stored for the next evaluation")
+            }
+            SocketKind::Output => SocketDoc::ty("any").with_description(
+                "value from the previous evaluation (initially '()); enables feedback cycles",
+            ),
+        })
     }
 }

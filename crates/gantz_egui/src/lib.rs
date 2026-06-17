@@ -21,6 +21,7 @@ pub mod sync;
 pub mod widget;
 
 // Re-export traits that make up the Registry supertrait.
+pub use egui_graph::SocketKind;
 pub use node::{FnNodeNames, NameRegistry};
 pub use reg::RegistryRef;
 pub use response::{DynResponse, ResponseData, Responses};
@@ -240,19 +241,17 @@ pub trait NodeUi {
         None
     }
 
-    /// On-hover documentation for the input socket at the given index.
+    /// On-hover documentation for the socket of the given kind and index.
     ///
-    /// Shown as a tooltip when the user hovers the inlet. Wrapper nodes should
-    /// delegate to their inner node; nodes that reference a graph resolve the
-    /// referenced graph's docs via [`Registry::interface_docs`].
-    fn input_doc(&self, _registry: &dyn Registry, _ix: usize) -> Option<SocketDoc> {
-        None
-    }
-
-    /// On-hover documentation for the output socket at the given index.
-    ///
-    /// See [`NodeUi::input_doc`].
-    fn output_doc(&self, _registry: &dyn Registry, _ix: usize) -> Option<SocketDoc> {
+    /// Shown as a tooltip when the user hovers the socket. Nodes that reference
+    /// a graph resolve the referenced graph's docs via
+    /// [`Registry::interface_docs`].
+    fn socket_doc(
+        &self,
+        _registry: &dyn Registry,
+        _kind: SocketKind,
+        _ix: usize,
+    ) -> Option<SocketDoc> {
         None
     }
 }
@@ -451,12 +450,13 @@ where
         (**self).nav_head(registry)
     }
 
-    fn input_doc(&self, registry: &dyn Registry, ix: usize) -> Option<SocketDoc> {
-        (**self).input_doc(registry, ix)
-    }
-
-    fn output_doc(&self, registry: &dyn Registry, ix: usize) -> Option<SocketDoc> {
-        (**self).output_doc(registry, ix)
+    fn socket_doc(
+        &self,
+        registry: &dyn Registry,
+        kind: SocketKind,
+        ix: usize,
+    ) -> Option<SocketDoc> {
+        (**self).socket_doc(registry, kind, ix)
     }
 }
 
@@ -494,12 +494,8 @@ macro_rules! impl_node_ui_for_ptr {
                 (**self).nav_head(registry)
             }
 
-            fn input_doc(&self, registry: &dyn Registry, ix: usize) -> Option<SocketDoc> {
-                (**self).input_doc(registry, ix)
-            }
-
-            fn output_doc(&self, registry: &dyn Registry, ix: usize) -> Option<SocketDoc> {
-                (**self).output_doc(registry, ix)
+            fn socket_doc(&self, registry: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
+                (**self).socket_doc(registry, kind, ix)
             }
         }
     };

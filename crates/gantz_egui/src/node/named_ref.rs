@@ -188,22 +188,19 @@ impl NodeUi for NamedRef {
         Some(gantz_ca::Head::Branch(self.name.clone()))
     }
 
-    fn input_doc(&self, registry: &dyn crate::Registry, ix: usize) -> Option<SocketDoc> {
-        // Surface the referenced graph's inlet docs.
-        registry
-            .interface_docs(&self.ref_.content_addr())?
-            .inlets
-            .get(&ix)
-            .cloned()
-    }
-
-    fn output_doc(&self, registry: &dyn crate::Registry, ix: usize) -> Option<SocketDoc> {
-        // Surface the referenced graph's outlet docs.
-        registry
-            .interface_docs(&self.ref_.content_addr())?
-            .outlets
-            .get(&ix)
-            .cloned()
+    fn socket_doc(
+        &self,
+        registry: &dyn crate::Registry,
+        kind: crate::SocketKind,
+        ix: usize,
+    ) -> Option<SocketDoc> {
+        // Surface the referenced graph's inlet/outlet docs.
+        let docs = registry.interface_docs(&self.ref_.content_addr())?;
+        let map = match kind {
+            crate::SocketKind::Input => &docs.inlets,
+            crate::SocketKind::Output => &docs.outlets,
+        };
+        map.get(&ix).cloned()
     }
 
     fn ui(

@@ -1,4 +1,4 @@
-use crate::{NodeCtx, NodeUi, Registry, SocketDoc};
+use crate::{NodeCtx, NodeUi, Registry, SocketDoc, SocketKind};
 
 impl NodeUi for gantz_std::Bang {
     fn name(&self, _: &dyn Registry) -> &str {
@@ -19,10 +19,13 @@ impl NodeUi for gantz_std::Bang {
         })
     }
 
-    fn output_doc(&self, _: &dyn Registry, _ix: usize) -> Option<SocketDoc> {
-        Some(
-            SocketDoc::ty("bang")
-                .with_description("Empty list '() emitted to trigger downstream evaluation"),
-        )
+    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+        match kind {
+            SocketKind::Output => Some(
+                SocketDoc::ty("bang")
+                    .with_description("empty list '() emitted to trigger downstream evaluation"),
+            ),
+            SocketKind::Input => None,
+        }
     }
 }

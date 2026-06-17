@@ -1,4 +1,4 @@
-use crate::{NodeCtx, NodeUi, Registry, SocketDoc};
+use crate::{NodeCtx, NodeUi, Registry, SocketDoc, SocketKind};
 
 impl NodeUi for gantz_core::node::Identity {
     fn name(&self, _: &dyn Registry) -> &str {
@@ -15,11 +15,12 @@ impl NodeUi for gantz_core::node::Identity {
         })
     }
 
-    fn input_doc(&self, _: &dyn Registry, _ix: usize) -> Option<SocketDoc> {
-        Some(SocketDoc::ty("any").with_description("Input value"))
-    }
-
-    fn output_doc(&self, _: &dyn Registry, _ix: usize) -> Option<SocketDoc> {
-        Some(SocketDoc::ty("any").with_description("The input value, unchanged"))
+    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+        Some(match kind {
+            SocketKind::Input => SocketDoc::ty("any").with_description("input value"),
+            SocketKind::Output => {
+                SocketDoc::ty("any").with_description("the input value, unchanged")
+            }
+        })
     }
 }

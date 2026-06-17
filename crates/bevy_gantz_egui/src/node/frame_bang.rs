@@ -56,15 +56,19 @@ impl gantz_egui::NodeUi for FrameBang {
         uictx.framed(|ui, _sockets| ui.add(egui::Label::new("frame!").selectable(false)))
     }
 
-    fn output_doc(
+    fn socket_doc(
         &self,
         _: &dyn gantz_egui::Registry,
+        kind: gantz_egui::SocketKind,
         _ix: usize,
     ) -> Option<gantz_egui::SocketDoc> {
-        Some(
-            gantz_egui::SocketDoc::ty("number")
-                .with_description("Frame delta time in seconds; emitted every frame"),
-        )
+        match kind {
+            gantz_egui::SocketKind::Output => Some(
+                gantz_egui::SocketDoc::ty("number")
+                    .with_description("frame delta time in seconds; emitted every frame"),
+            ),
+            gantz_egui::SocketKind::Input => None,
+        }
     }
 }
 
@@ -144,6 +148,7 @@ pub fn drive_frame_bangs<N>(
     registry: Res<crate::Registry<N>>,
     builtins: Res<bevy_gantz::BuiltinNodes<N>>,
     demos: Res<crate::Demos>,
+    docs: Res<crate::Docs>,
     mut vms: NonSendMut<bevy_gantz::head::HeadVms>,
     heads: Query<(Entity, &bevy_gantz::head::WorkingGraph<N>), With<bevy_gantz::head::OpenHead>>,
     mut cmds: Commands,
@@ -153,7 +158,7 @@ pub fn drive_frame_bangs<N>(
     let dt = time.delta_secs_f64();
 
     for (entity, wg) in heads.iter() {
-        let node_reg = crate::registry_ref(&registry, &builtins, &demos);
+        let node_reg = crate::registry_ref(&registry, &builtins, &demos, &docs);
         let get_node = |ca: &gantz_ca::ContentAddr| node_reg.node(ca);
 
         // Collect all FrameBang paths.

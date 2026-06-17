@@ -512,33 +512,15 @@ impl DerefMut for GraphView {
 /// Construct a `RegistryRef` from Bevy resources.
 ///
 /// This is a convenience function that extracts the underlying references
-/// from the Bevy resource wrappers. Inlet/outlet docs are empty; use
-/// [`registry_ref_with_docs`] on the GUI render path where socket hover and
-/// inspector docs are resolved.
+/// from the Bevy resource wrappers. `docs` carries inlet/outlet docs so socket
+/// hover tooltips and the inlet/outlet inspector editor resolve correctly.
 pub fn registry_ref<'a, N: 'static + Send + Sync>(
-    registry: &'a Registry<N>,
-    builtins: &'a BuiltinNodes<N>,
-    demos: &'a Demos,
-) -> RegistryRef<'a, N> {
-    RegistryRef::new(&**registry, &*builtins.0, &demos.0, empty_interface_docs())
-}
-
-/// Like [`registry_ref`], but carries inlet/outlet docs so socket hover
-/// tooltips and the inlet/outlet inspector editor resolve correctly.
-pub fn registry_ref_with_docs<'a, N: 'static + Send + Sync>(
     registry: &'a Registry<N>,
     builtins: &'a BuiltinNodes<N>,
     demos: &'a Demos,
     docs: &'a Docs,
 ) -> RegistryRef<'a, N> {
     RegistryRef::new(&**registry, &*builtins.0, &demos.0, &docs.0)
-}
-
-/// A shared empty docs map for [`registry_ref`] callers that don't render docs.
-fn empty_interface_docs() -> &'static HashMap<ca::CommitAddr, gantz_egui::InterfaceDocs> {
-    static EMPTY: std::sync::OnceLock<HashMap<ca::CommitAddr, gantz_egui::InterfaceDocs>> =
-        std::sync::OnceLock::new();
-    EMPTY.get_or_init(HashMap::new)
 }
 
 // ----------------------------------------------------------------------------
@@ -745,6 +727,7 @@ pub fn on_create_node<N>(
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     demos: Res<Demos>,
+    docs: Res<Docs>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
@@ -765,7 +748,7 @@ pub fn on_create_node<N>(
         return;
     };
 
-    let node_reg = registry_ref(&registry, &builtins, &demos);
+    let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
     gantz_egui::ops::create_node(
         &get_node,
@@ -850,6 +833,7 @@ pub fn on_inspect_edge<N>(
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     demos: Res<Demos>,
+    docs: Res<Docs>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
@@ -870,7 +854,7 @@ pub fn on_inspect_edge<N>(
         return;
     };
 
-    let node_reg = registry_ref(&registry, &builtins, &demos);
+    let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
     gantz_egui::ops::inspect_edge(
         &get_node,
@@ -975,7 +959,7 @@ pub fn on_paste<N>(
     // for existing nodes.
     if pasted {
         if let Some(vm) = vms.get_mut(&event.head) {
-            let node_reg = registry_ref(&registry, &builtins, &demos);
+            let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
             let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
             gantz_core::graph::register(&get_node, &**wg, &[], vm);
         }
@@ -1070,7 +1054,7 @@ pub fn on_export_head<N>(
     };
     let head: &ca::Head = &**head_ref;
 
-    let node_reg = registry_ref(&registry, &builtins, &demos);
+    let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
 
     let text = match gantz_egui::export::export_heads_sexpr(
@@ -1122,7 +1106,7 @@ pub fn on_export_all_named<N>(
 ) where
     N: 'static + serde::Serialize + serde::de::DeserializeOwned + Node + Clone + Send + Sync,
 {
-    let node_reg = registry_ref(&registry, &builtins, &demos);
+    let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
 
     let named_heads: Vec<ca::Head> = registry
@@ -1201,7 +1185,7 @@ pub fn on_import_file<N>(
 
     // Compute the root name before merge if we might open a head.
     let root_name = if event.open_head {
-        let node_reg = registry_ref(&registry, &builtins, &demos);
+        let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
         let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
         gantz_egui::export::unique_root_name(&get_node, &export)
     } else {
@@ -1300,10 +1284,11 @@ pub fn prune_views<N: 'static + Node + Send + Sync>(
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     demos: Res<Demos>,
+    docs: Res<Docs>,
     mut views: ResMut<Views>,
     heads: Query<&head::HeadRef, With<head::OpenHead>>,
 ) {
-    let node_reg = registry_ref(&registry, &builtins, &demos);
+    let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
     let head_iter = heads.iter().map(|h| &**h);
     let required = gantz_core::reg::required_commits(&get_node, &registry, head_iter);
@@ -1366,7 +1351,7 @@ where
     let mut access = HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
 
     // Construct node registry on-demand for the widget (with demo + doc lookup).
-    let node_reg = registry_ref_with_docs(&registry, &builtins, &demos, &docs);
+    let node_reg = registry_ref(&registry, &builtins, &demos, &docs);
 
     let level = bevy_log::tracing_subscriber::filter::LevelFilter::current();
 
