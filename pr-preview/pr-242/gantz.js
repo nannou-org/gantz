@@ -323,12 +323,12 @@ function __wasm_bindgen_func_elem_20534(arg0, arg1, arg2) {
     wasm.__wasm_bindgen_func_elem_20534(arg0, arg1, addHeapObject(arg2));
 }
 
-function __wasm_bindgen_func_elem_73147(arg0, arg1) {
-    wasm.__wasm_bindgen_func_elem_73147(arg0, arg1);
-}
-
 function __wasm_bindgen_func_elem_69200(arg0, arg1, arg2, arg3) {
     wasm.__wasm_bindgen_func_elem_69200(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
+}
+
+function __wasm_bindgen_func_elem_73147(arg0, arg1) {
+    wasm.__wasm_bindgen_func_elem_73147(arg0, arg1);
 }
 
 const __wbindgen_enum_ResizeObserverBoxOptions = ["border-box", "content-box", "device-pixel-content-box"];
