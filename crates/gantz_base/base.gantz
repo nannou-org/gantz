@@ -1,141 +1,141 @@
 (graph add
   (op (expr (+ $l $r)))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet "number" "left operand")) (r (inlet "number" "right operand")) (out (outlet "number" "sum"))
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph sub
   (op (expr (- $l $r)))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet "number" "left operand")) (r (inlet "number" "right operand")) (out (outlet "number" "difference"))
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph mul
   (op (expr (* $l $r)))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet "number" "left operand")) (r (inlet "number" "right operand")) (out (outlet "number" "product"))
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph div
   (op (expr (/ $l $r)))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet "number" "left operand")) (r (inlet "number" "right operand")) (out (outlet "number" "quotient"))
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph mod
   (op (expr (let ((n (exact (round $l))) (d (exact (round $r)))) (if (zero? d) n (modulo n d)))))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet "number" "left operand")) (r (inlet "number" "right operand")) (out (outlet "number" "remainder"))
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph neg
   (op (expr (- 0 $x)))
-  (x inlet) (out outlet)
+  (x (inlet "number" "value to negate")) (out (outlet "number" "negated value"))
   (-> x (op 0)) (-> op out))
 
 (graph abs
   (op (expr (abs $x)))
-  (x inlet) (out outlet)
+  (x (inlet "number" "value")) (out (outlet "number" "absolute value"))
   (-> x (op 0)) (-> op out))
 
 (graph eq
   (op (expr (equal? $l $r)))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet "value" "left value")) (r (inlet "value" "right value")) (out (outlet "boolean" "true if equal"))
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph neq
   (op (expr (not (equal? $l $r))))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet "value" "left value")) (r (inlet "value" "right value")) (out (outlet "boolean" "true if not equal"))
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph lt
   (op (expr (< $l $r)))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet "number" "left operand")) (r (inlet "number" "right operand")) (out (outlet "boolean" "true if left < right"))
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph gt
   (op (expr (> $l $r)))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet "number" "left operand")) (r (inlet "number" "right operand")) (out (outlet "boolean" "true if left > right"))
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph lte
   (op (expr (<= $l $r)))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet "number" "left operand")) (r (inlet "number" "right operand")) (out (outlet "boolean" "true if left <= right"))
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph gte
   (op (expr (>= $l $r)))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet "number" "left operand")) (r (inlet "number" "right operand")) (out (outlet "boolean" "true if left >= right"))
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph not
   (op (expr (not $x)))
-  (x inlet) (out outlet)
+  (x (inlet "boolean" "value to invert")) (out (outlet "boolean" "logical negation"))
   (-> x (op 0)) (-> op out))
 
 (graph and
   (op (expr (if $l $r #f)))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet "boolean" "left operand")) (r (inlet "boolean" "right operand")) (out (outlet "boolean" "true if both are truthy"))
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph or
   (op (expr (if $l $l $r)))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet "boolean" "left operand")) (r (inlet "boolean" "right operand")) (out (outlet "boolean" "true if either is truthy"))
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph select
   (op (expr (if $cond $then $else)))
-  (cond inlet) (then inlet) (else inlet) (out outlet)
+  (cond (inlet "boolean" "condition")) (then (inlet "value" "result if true")) (else (inlet "value" "result if false")) (out (outlet "value" "selected value"))
   (-> cond (op 0)) (-> then (op 1)) (-> else (op 2)) (-> op out))
 
 (graph cons
   (op (expr (cons $head $tail)))
-  (head inlet) (tail inlet) (out outlet)
+  (head (inlet "value" "new first element")) (tail (inlet "list" "rest of the list")) (out (outlet "list" "new list"))
   (-> head (op 0)) (-> tail (op 1)) (-> op out))
 
 (graph first
   (op (expr (car $list)))
-  (list inlet) (out outlet)
+  (list (inlet "list" "input list")) (out (outlet "value" "first element"))
   (-> list (op 0)) (-> op out))
 
 (graph rest
   (op (expr (cdr $list)))
-  (list inlet) (out outlet)
+  (list (inlet "list" "input list")) (out (outlet "list" "all but the first element"))
   (-> list (op 0)) (-> op out))
 
 (graph length
   (op (expr (length $list)))
-  (list inlet) (out outlet)
+  (list (inlet "list" "input list")) (out (outlet "number" "element count"))
   (-> list (op 0)) (-> op out))
 
 (graph append
   (op (expr (append $l $r)))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet "list" "first list")) (r (inlet "list" "second list")) (out (outlet "list" "concatenated list"))
   (-> l (op 0)) (-> r (op 1)) (-> op out))
 
 (graph list-ref
   (op (expr (list-ref $list (exact (round $index)))))
-  (list inlet) (index inlet) (out outlet)
+  (list (inlet "list" "input list")) (index (inlet "number" "zero-based index")) (out (outlet "value" "element at index"))
   (-> list (op 0)) (-> index (op 1)) (-> op out))
 
 (graph reverse
   (op (expr (reverse $list)))
-  (list inlet) (out outlet)
+  (list (inlet "list" "input list")) (out (outlet "list" "reversed list"))
   (-> list (op 0)) (-> op out))
 
 (graph empty?
   (op (expr (empty? $list)))
-  (list inlet) (out outlet)
+  (list (inlet "list" "input list")) (out (outlet "boolean" "true if empty"))
   (-> list (op 0)) (-> op out))
 
 (graph number?
   (op (expr (number? $x)))
-  (x inlet) (out outlet)
+  (x (inlet "value" "value to test")) (out (outlet "boolean" "true if a number"))
   (-> x (op 0)) (-> op out))
 
 (graph string?
   (op (expr (string? $x)))
-  (x inlet) (out outlet)
+  (x (inlet "value" "value to test")) (out (outlet "boolean" "true if a string"))
   (-> x (op 0)) (-> op out))
 
 (graph list?
   (op (expr (list? $x)))
-  (x inlet) (out outlet)
+  (x (inlet "value" "value to test")) (out (outlet "boolean" "true if a list"))
   (-> x (op 0)) (-> op out))
 
 (graph demo-arithmetic

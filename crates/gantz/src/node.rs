@@ -179,7 +179,7 @@ mod tests {
         let text = "\
 (graph mul
   (m (expr (* $l $r)))
-  (l inlet) (r inlet) (out outlet)
+  (l (inlet \"number\" \"left operand\")) (r (inlet \"number\" \"right operand\")) (out (outlet \"number\" \"product\"))
   (-> l (m 0)) (-> r (m 1)) (-> m out))";
         let mine: gantz_egui::export::Export<G> =
             gantz_egui::format::from_str(text, Duration::from_secs(0)).expect("lower");
@@ -762,6 +762,42 @@ mod tests {
         assert_eq!(
             refs, synced,
             "every base ref must auto-sync (#:sync); got {synced}/{refs}\n--- text ---\n{text}",
+        );
+    }
+
+    /// Every base-primitive socket carries a hover doc (type + description), and
+    /// those docs resolve through a `ref` to the referenced graph's inlet/outlet
+    /// markers - exactly the path the GUI uses for a `NamedRef`'s socket tooltip.
+    #[test]
+    fn base_socket_docs() {
+        use gantz_egui::{Registry as _, SocketKind};
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+        let base: gantz_egui::export::Export<G> =
+            gantz_egui::export::parse_export(gantz_base::BYTES).expect("parse base");
+
+        // Completeness: no primitive socket serializes as a bare `inlet`/`outlet`.
+        let text = gantz_egui::format::to_string(&base).expect("to_string");
+        let bare = text.matches(" inlet)").count() + text.matches(" outlet)").count();
+        assert_eq!(
+            bare, 0,
+            "every base socket must be documented\n--- text ---\n{text}"
+        );
+
+        // Resolution: a `ref add` exposes `add`'s socket docs.
+        let builtins = crate::builtin::Builtins::new();
+        let reg_ref = gantz_egui::RegistryRef::new(&base.registry, &builtins, &base.demos);
+        let add = gantz_ca::ContentAddr::from(*base.registry.names().get("add").expect("add"));
+        let doc = |kind, ix| reg_ref.socket_doc(&add, kind, ix);
+
+        let l = doc(SocketKind::Input, 0).expect("add input 0 doc");
+        assert_eq!(
+            (l.ty.as_ref(), l.description.as_deref()),
+            ("number", Some("left operand"))
+        );
+        let out = doc(SocketKind::Output, 0).expect("add output doc");
+        assert_eq!(
+            (out.ty.as_ref(), out.description.as_deref()),
+            ("number", Some("sum"))
         );
     }
 
