@@ -730,4 +730,53 @@ mod tests {
             });
         }
     }
+
+    /// End-to-end check of the `demo-list` graph: firing its `bang` must
+    /// evaluate every list op without a runtime error. The bang feeds the list
+    /// source *and* the `idx`/`hd` number inputs, so all op inputs are active in
+    /// one push (guarding the "single input active" failure), and `list-ref`
+    /// receives an index it can use (guarding the float-index `list-ref`/`modulo`
+    /// type error - `number` outputs floats, so the primitives coerce via
+    /// `(exact (round ...))`). With default inputs `idx` is 0, so `list-ref`
+    /// returns the first element rather than erroring.
+    #[test]
+    fn demo_list_evaluates() {
+        use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let base: gantz_egui::export::Export<G> =
+            gantz_egui::export::parse_export(gantz_base::BYTES).expect("parse base");
+        let builtins = crate::builtin::Builtins::new();
+        let reg_ref = gantz_egui::RegistryRef::new(&base.registry, &builtins, &base.demos);
+        let get_node = |ca: &gantz_ca::ContentAddr| reg_ref.node(ca);
+
+        let head = gantz_ca::Head::Branch("demo-list".to_string());
+        let graph = base.registry.head_graph(&head).expect("demo-list graph");
+
+        // The single `bang` node drives every list pipeline.
+        let go = graph
+            .node_indices()
+            .find(|&ix| {
+                (&*graph[ix] as &dyn std::any::Any)
+                    .downcast_ref::<gantz_std::Bang>()
+                    .is_some()
+            })
+            .map(|ix| ix.index())
+            .expect("demo-list has a bang");
+
+        let eps = push_pull_entrypoints(&get_node, graph);
+        let config = gantz_core::compile::Config::default();
+        let (mut vm, _compiled) =
+            gantz_core::vm::init(&get_node, graph, &eps, &config).expect("init demo-list");
+
+        let go_ep = eps
+            .iter()
+            .find(|ep| {
+                ep.0.iter()
+                    .any(|s| s.kind == EvalKind::Push && s.path == [go])
+            })
+            .expect("bang entrypoint");
+        vm.call_function_by_name_with_args(&entry_fn_name(&go_ep.id()), vec![])
+            .expect("firing the demo-list bang must evaluate every op without error");
+    }
 }
