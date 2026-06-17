@@ -924,4 +924,43 @@ mod tests {
             )
         });
     }
+
+    /// The inline-name base export (`format::to_string_named`) names every graph
+    /// inline, drops the `(commits ...)`/`(names ...)` tables and the pinned ref
+    /// addresses, and is *stable*: re-exporting an unchanged base produces byte
+    /// -identical text (no churning addresses), which is the whole point - a
+    /// cleaner, hand-editable `base.gantz`.
+    #[test]
+    fn base_named_export_is_stable() {
+        use std::collections::BTreeSet;
+        use std::time::Duration;
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let base: gantz_egui::export::Export<G> =
+            gantz_egui::export::parse_export(gantz_base::BYTES).expect("parse base");
+        let text = gantz_egui::format::to_string_named(&base).expect("to_string_named");
+
+        // Inline names, no tables, references by name.
+        assert!(!text.contains("(commits"), "no commits table:\n{text}");
+        assert!(!text.contains("(names"), "no names table:\n{text}");
+        assert!(
+            text.contains("(graph add\n"),
+            "graphs named inline:\n{text}"
+        );
+        assert!(
+            text.contains("(ref add #:sync)"),
+            "refs resolve by name, no pinned address:\n{text}",
+        );
+
+        // Stable: reload the simplified text and re-serialize - byte-identical.
+        let back: gantz_egui::export::Export<G> =
+            gantz_egui::format::from_str(&text, Duration::from_secs(0)).expect("from_str");
+        let text2 = gantz_egui::format::to_string_named(&back).expect("to_string_named 2");
+        assert_eq!(text, text2, "inline-name export must be idempotent");
+
+        // Names survive the round-trip.
+        let n1: BTreeSet<_> = base.registry.names().keys().cloned().collect();
+        let n2: BTreeSet<_> = back.registry.names().keys().cloned().collect();
+        assert_eq!(n1, n2, "names preserved");
+    }
 }

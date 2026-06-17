@@ -60,7 +60,7 @@ where
             continue;
         };
         if let Some(labels) = dumped.graphs.get(&commit.graph) {
-            sections.push(layout_text(labels, view));
+            sections.push(layout_text(labels, view, false));
         }
     }
 
@@ -69,6 +69,43 @@ where
     demos.sort_by_key(|(ca, _)| **ca);
     for (commit_ca, demo) in demos {
         if let Some(name) = name_for_commit(&export.registry, commit_ca) {
+            sections.push(format!("(demo {} {})", name, sexpr::quote(demo)));
+        }
+    }
+
+    let mut result = sections.join("\n\n");
+    result.push('\n');
+    Ok(result)
+}
+
+/// Serialize an [`Export`] in the inline-name format (see
+/// [`gantz_format::to_string_named`]): graphs named inline, no commits/names
+/// tables, references by name. The `(layout ...)` and `(demo ...)` forms are
+/// emitted in graph-name order so the output is stable across address changes -
+/// suited to a hand-editable, git-friendly base file.
+pub fn to_string_named<N>(export: &Export<Graph<N>>) -> Result<String, FormatError>
+where
+    N: Serialize + DeserializeOwned,
+{
+    let dumped = gantz_format::to_string_named::<N>(&export.registry)?;
+    let mut sections = vec![dumped.text.trim_end().to_string()];
+
+    // `(layout ...)` per named graph that has a view, in name order.
+    for (_name, commit_ca) in export.registry.names() {
+        let (Some(view), Some(commit)) = (
+            export.views.get(commit_ca),
+            export.registry.commits().get(commit_ca),
+        ) else {
+            continue;
+        };
+        if let Some(labels) = dumped.graphs.get(&commit.graph) {
+            sections.push(layout_text(labels, view, true));
+        }
+    }
+
+    // `(demo <name> ...)` per named graph that has a demo, in name order.
+    for (name, commit_ca) in export.registry.names() {
+        if let Some(demo) = export.demos.get(commit_ca) {
             sections.push(format!("(demo {} {})", name, sexpr::quote(demo)));
         }
     }
@@ -135,7 +172,11 @@ fn apply_layout<N>(
     views.insert(head, view);
 }
 
-fn layout_text(labels: &GraphLabels, view: &egui_graph::View) -> String {
+/// `bare_id` writes the graph id as a bare symbol (the inline-name format, where
+/// the graph itself is `(graph <name> ...)`); otherwise it is quoted (the
+/// address-based format, `(graph "<hex>" ...)`). The id must round-trip to the
+/// same `Addr` kind as the graph, or the layout fails to resolve on load.
+fn layout_text(labels: &GraphLabels, view: &egui_graph::View, bare_id: bool) -> String {
     let mut positions: Vec<(String, f32, f32)> = view
         .layout
         .iter()
@@ -148,7 +189,12 @@ fn layout_text(labels: &GraphLabels, view: &egui_graph::View) -> String {
         .collect();
     positions.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let mut s = format!("(layout {}", sexpr::quote(&labels.id));
+    let id = if bare_id {
+        labels.id.clone()
+    } else {
+        sexpr::quote(&labels.id)
+    };
+    let mut s = format!("(layout {id}");
     for (label, x, y) in positions {
         s.push_str(&format!(
             "\n  ({label} {} {})",

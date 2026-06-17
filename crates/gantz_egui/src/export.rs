@@ -149,6 +149,25 @@ where
     crate::format::to_string(&export)
 }
 
+/// As [`export_heads_sexpr`], but serializes in the inline-name format (see
+/// [`crate::format::to_string_named`]): graphs named inline, no commits/names
+/// tables, references by name. Used for the baked-in base so its file stays
+/// hand-editable and free of churning addresses.
+pub fn export_heads_sexpr_named<N>(
+    get_node: GetNode,
+    registry: &gantz_ca::Registry<Graph<N>>,
+    all_views: &HashMap<CommitAddr, egui_graph::View>,
+    all_demos: &HashMap<CommitAddr, String>,
+    heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
+) -> Result<String, crate::format::FormatError>
+where
+    N: Serialize + DeserializeOwned + gantz_core::Node + Clone,
+{
+    let export_registry = gantz_core::reg::export_heads(get_node, registry, heads);
+    let export = export_with(export_registry, all_views, all_demos);
+    crate::format::to_string_named(&export)
+}
+
 /// Merge an [`Export`] into an existing registry, views and demos maps.
 ///
 /// Incoming views and demos for new commits are inserted; existing entries for

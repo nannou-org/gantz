@@ -48,7 +48,7 @@ where
     let mut graphs = HashMap::new();
 
     for (g_addr, graph) in registry.graphs() {
-        let (body, labels) = graph_to_body::<N>(graph, sugar)?;
+        let (body, labels) = graph_to_body::<N>(graph, sugar, true)?;
         let id = short_hex(*g_addr);
         doc.graphs.push(GraphDef {
             id: Addr::Concrete(id.clone()),
@@ -78,6 +78,50 @@ where
     Ok(Dumped { text, graphs })
 }
 
+/// Raise a registry into the inline-name format: each named graph is emitted
+/// under its registry name (sorted, as [`Registry::names`] is a `BTreeMap`),
+/// references resolve by name (no pinned address), and the `(commits ...)` /
+/// `(names ...)` tables are omitted - the loader reconstructs them by
+/// auto-registering each labelled graph under its name. Intended for the
+/// baked-in base, whose addresses would otherwise churn the git history.
+///
+/// Graphs with no name are skipped: a name-resolved `ref` can only target a
+/// named graph, so an unnamed graph is unreachable in this format.
+pub fn raise_named<N>(
+    registry: &Registry<Graph<N>>,
+    sugar: &dyn Sugar,
+) -> Result<Dumped, FormatError>
+where
+    N: Serialize,
+{
+    let mut doc = Document::default();
+    let mut graphs = HashMap::new();
+
+    for (name, c_addr) in registry.names() {
+        let Some(commit) = registry.commits().get(c_addr) else {
+            continue;
+        };
+        let Some(graph) = registry.graphs().get(&commit.graph) else {
+            continue;
+        };
+        let (body, labels) = graph_to_body::<N>(graph, sugar, false)?;
+        doc.graphs.push(GraphDef {
+            id: Addr::Label(name.clone()),
+            body,
+        });
+        graphs.insert(
+            commit.graph,
+            GraphLabels {
+                id: name.clone(),
+                labels,
+            },
+        );
+    }
+
+    let text = crate::writer::write_document(&doc, sugar);
+    Ok(Dumped { text, graphs })
+}
+
 // -- graph -> body -----------------------------------------------------------
 
 /// Convert a graph into a [`GraphBody`], returning the index -> label map used
@@ -85,6 +129,7 @@ where
 fn graph_to_body<N>(
     graph: &Graph<N>,
     sugar: &dyn Sugar,
+    pin: bool,
 ) -> Result<(GraphBody, HashMap<usize, String>), FormatError>
 where
     N: Serialize,
@@ -95,7 +140,7 @@ where
     for ix in graph.node_indices() {
         let value =
             to_datum(&graph[ix]).map_err(|e| FormatError::node_deserialize("?", e.to_string()))?;
-        let (spec, keyword) = node_spec_from_datum(value, sugar)?;
+        let (spec, keyword) = node_spec_from_datum(value, sugar, pin)?;
         let label = format!("{keyword}{}", ix.index());
         labels.insert(ix.index(), label.clone());
         nodes.push(NodeDecl {
@@ -126,9 +171,13 @@ where
 }
 
 /// Convert a node's serde [`Datum`] into a [`NodeSpec`] and a label keyword.
+///
+/// `pin` controls whether a reference records its (advisory) pinned commit
+/// address. The inline-name format omits it so refs resolve purely by name.
 fn node_spec_from_datum(
     value: Datum,
     sugar: &dyn Sugar,
+    pin: bool,
 ) -> Result<(NodeSpec, String), FormatError> {
     let tag = value
         .get("type")
@@ -143,16 +192,18 @@ fn node_spec_from_datum(
                 .and_then(Datum::as_str)
                 .unwrap_or_default()
                 .to_string();
-            let hex = value
-                .get("ref_")
-                .and_then(Datum::as_str)
-                .unwrap_or_default();
-            let short = hex.get(..8).unwrap_or(hex).to_string();
+            let addr = pin.then(|| {
+                let hex = value
+                    .get("ref_")
+                    .and_then(Datum::as_str)
+                    .unwrap_or_default();
+                Addr::Concrete(hex.get(..8).unwrap_or(hex).to_string())
+            });
             let sync = value.get("sync").and_then(Datum::as_bool).unwrap_or(false);
             let spec = NodeSpec::Ref(RefSpec {
                 func,
                 name,
-                addr: Some(Addr::Concrete(short)),
+                addr,
                 sync,
             });
             Ok((spec, if func { "fnref" } else { "ref" }.to_string()))

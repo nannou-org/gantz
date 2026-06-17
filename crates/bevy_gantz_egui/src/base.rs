@@ -88,10 +88,13 @@ pub fn export_to_file<N>(
     }
 }
 
-/// Serialize all named graphs to a `.gantz` text [`gantz_egui::export::Export`].
+/// Serialize all named graphs to `.gantz` text in the inline-name format.
 ///
-/// Useful for the `update-base` developer workflow. Returns `None` on
-/// serialization failure.
+/// This is the base writer for the `update-base` developer workflow, so it uses
+/// [`gantz_egui::export::export_heads_sexpr_named`]: graphs named inline, no
+/// commits/names tables, references by name - keeping `base.gantz` hand-editable
+/// and free of churning addresses. (Other export paths keep the default
+/// address-based format.) Returns `None` on serialization failure.
 pub fn export_all_named<N>(
     registry: &Registry<N>,
     builtins: &bevy_gantz::BuiltinNodes<N>,
@@ -116,6 +119,12 @@ where
         .map(|name| gantz_ca::Head::Branch(name.clone()))
         .collect();
 
-    gantz_egui::export::export_heads_sexpr(&get_node, registry, views, &demos.0, named_heads.iter())
-        .ok()
+    gantz_egui::export::export_heads_sexpr_named(
+        &get_node,
+        registry,
+        views,
+        &demos.0,
+        named_heads.iter(),
+    )
+    .ok()
 }
