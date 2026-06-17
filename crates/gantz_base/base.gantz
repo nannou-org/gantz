@@ -230,6 +230,19 @@
   (-> v-str (p3 0)) (-> p3 i3)
   (-> v-lst (p4 0)) (-> p4 i4))
 
+(graph demo-all
+  (title (comment "All base nodes. Right-click any node and choose 'demo'." 360 28))
+  (h-arith (comment "Arithmetic" 110 26))
+  (add (ref add)) (sub (ref sub)) (mul (ref mul)) (div (ref div)) (mod (ref mod)) (neg (ref neg)) (abs (ref abs))
+  (h-cmp (comment "Comparison" 110 26))
+  (eq (ref eq)) (neq (ref neq)) (lt (ref lt)) (gt (ref gt)) (lte (ref lte)) (gte (ref gte))
+  (h-bool (comment "Boolean" 110 26))
+  (not (ref not)) (and (ref and)) (or (ref or)) (select (ref select))
+  (h-list (comment "Lists" 110 26))
+  (cons (ref cons)) (first (ref first)) (rest (ref rest)) (length (ref length)) (append (ref append)) (list-ref (ref list-ref)) (reverse (ref reverse)) (empty? (ref empty?))
+  (h-pred (comment "Predicates" 110 26))
+  (number? (ref number?)) (string? (ref string?)) (list? (ref list?)))
+
 (layout demo-arithmetic
   (intro 0 -210)
   (go 0 -140) (a 160 -140) (b 320 -140)
@@ -287,6 +300,15 @@
   (lbl3 400 30) (p3 400 110) (i3 400 200)
   (lbl4 600 30) (p4 600 110) (i4 600 200)
   (scene -40 -250 700 270))
+
+(layout demo-all
+  (title 0 -110)
+  (h-arith 0 -40) (add 0 30) (sub 0 90) (mul 0 150) (div 0 210) (mod 0 270) (neg 0 330) (abs 0 390)
+  (h-cmp 180 -40) (eq 180 30) (neq 180 90) (lt 180 150) (gt 180 210) (lte 180 270) (gte 180 330)
+  (h-bool 360 -40) (not 360 30) (and 360 90) (or 360 150) (select 360 210)
+  (h-list 540 -40) (cons 540 30) (first 540 90) (rest 540 150) (length 540 210) (append 540 270) (list-ref 540 330) (reverse 540 390) (empty? 540 450)
+  (h-pred 720 -40) (number? 720 30) (string? 720 90) (list? 720 150)
+  (scene -40 -150 830 510))
 
 (demo add "demo-arithmetic")
 (demo sub "demo-arithmetic")

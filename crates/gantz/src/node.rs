@@ -693,13 +693,18 @@ mod tests {
         assert_eq!(to_b, 3, "all instances must be repointed to B");
     }
 
-    /// Every named graph shipped in `base.gantz` - all primitives and their
-    /// `demo-*` graphs - must compile to a valid Steel module under the same
-    /// `Engine::new_base()` the runtime uses. This guards against authoring a
-    /// graph that relies on a prelude-only binding (`map`, `and`, `cond`,
-    /// `min`, ...) or otherwise emits invalid Steel, which the base engine
-    /// (no prelude) rejects. Mirrors the live compile path in `bevy_gantz::vm`
-    /// (`push_pull_entrypoints` + `vm::init`).
+    /// Every named graph shipped in `base.gantz` - all primitives, the `demo-*`
+    /// graphs, and the unconnected `demo-all` catalog - must compile to a valid
+    /// Steel module under the same `Engine::new_base()` the runtime uses. This
+    /// guards against authoring a graph that relies on a prelude-only binding
+    /// (`map`, `and`, `cond`, `min`, ...) or otherwise emits invalid Steel,
+    /// which the base engine (no prelude) rejects. Mirrors the live compile path
+    /// in `bevy_gantz::vm` (`push_pull_entrypoints` + `vm::init`).
+    ///
+    /// Compiled under both configs: the default (node fns emitted on demand) and
+    /// `emit_all_node_fns` (the app's "inspect every node's code" toggle, which
+    /// emits each node's all-connected variant - the case that exercises the
+    /// `demo-all` catalog's otherwise-unconnected `ref` nodes).
     #[test]
     fn base_graphs_all_compile() {
         type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
@@ -709,7 +714,13 @@ mod tests {
         let builtins = crate::builtin::Builtins::new();
         let reg_ref = gantz_egui::RegistryRef::new(&base.registry, &builtins, &base.demos);
         let get_node = |ca: &gantz_ca::ContentAddr| reg_ref.node(ca);
-        let config = gantz_core::compile::Config::default();
+        let configs = [
+            gantz_core::compile::Config::default(),
+            gantz_core::compile::Config {
+                validate_ir: true,
+                emit_all_node_fns: true,
+            },
+        ];
 
         assert!(
             !base.registry.names().is_empty(),
@@ -722,12 +733,15 @@ mod tests {
                 .head_graph(&head)
                 .unwrap_or_else(|| panic!("`{name}` has no head graph"));
             let entrypoints = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
-            gantz_core::vm::init(&get_node, graph, &entrypoints, &config).unwrap_or_else(|e| {
-                panic!(
-                    "base graph `{name}` failed to compile:\n{}",
-                    gantz_core::vm::error_chain(&e),
-                )
-            });
+            for config in &configs {
+                gantz_core::vm::init(&get_node, graph, &entrypoints, config).unwrap_or_else(|e| {
+                    panic!(
+                        "base graph `{name}` failed to compile (emit_all_node_fns={}):\n{}",
+                        config.emit_all_node_fns,
+                        gantz_core::vm::error_chain(&e),
+                    )
+                });
+            }
         }
     }
 
@@ -804,7 +818,6 @@ mod tests {
     fn reset_then_reopen_demo_recompiles() {
         use gantz_core::compile::{Config, push_pull_entrypoints};
         use std::collections::HashSet;
-        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
 
         let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
         let parse = || {
