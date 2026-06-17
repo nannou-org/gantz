@@ -687,10 +687,10 @@ type Nested = gantz_core::node::graph::Graph<Box<dyn DebugNode>>;
 /// inlet x2 -> mul -> outlet.
 fn graph_mul() -> Nested {
     let mut ga = Nested::default();
-    let inlet_a = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
-    let inlet_b = ga.add_node(Box::new(Inlet) as Box<_>);
+    let inlet_a = ga.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
+    let inlet_b = ga.add_node(Box::new(Inlet::default()) as Box<_>);
     let mul = ga.add_node(Box::new(node::expr("(* $l $r)").unwrap()) as Box<_>);
-    let outlet = ga.add_node(Box::new(Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(Outlet::default()) as Box<_>);
     ga.add_edge(inlet_a, mul, Edge::from((0, 0)));
     ga.add_edge(inlet_b, mul, Edge::from((0, 1)));
     ga.add_edge(mul, outlet, Edge::from((0, 0)));
@@ -724,9 +724,9 @@ fn nested_counter() {
     let counter =
         node::expr("(begin $bang (set! state (if (number? state) (+ state 1) 0)) state)").unwrap();
     let mut ga = Nested::default();
-    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let inlet = ga.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
     let counter = ga.add_node(Box::new(counter) as Box<_>);
-    let outlet = ga.add_node(Box::new(Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(Outlet::default()) as Box<_>);
     ga.add_edge(inlet, counter, Edge::from((0, 0)));
     ga.add_edge(counter, outlet, Edge::from((0, 0)));
 
@@ -764,7 +764,7 @@ fn nested_push_through_outlet() {
     let mut ga = Nested::default();
     let push = ga.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let v = ga.add_node(Box::new(node_int(42)) as Box<_>);
-    let outlet = ga.add_node(Box::new(Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(Outlet::default()) as Box<_>);
     ga.add_edge(push, v, Edge::from((0, 0)));
     ga.add_edge(v, outlet, Edge::from((0, 0)));
 
@@ -781,14 +781,14 @@ fn nested_push_through_outlet_deep() {
     let mut inner = Nested::default();
     let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let v = inner.add_node(Box::new(node_int(33)) as Box<_>);
-    let outlet = inner.add_node(Box::new(Outlet) as Box<_>);
+    let outlet = inner.add_node(Box::new(Outlet::default()) as Box<_>);
     inner.add_edge(push, v, Edge::from((0, 0)));
     inner.add_edge(v, outlet, Edge::from((0, 0)));
 
     let mut mid = Nested::default();
     let inner_ix = mid.add_node(Box::new(inner) as Box<dyn DebugNode>);
     let double = mid.add_node(Box::new(node::expr("(* 2 $x)").unwrap()) as Box<_>);
-    let mid_outlet = mid.add_node(Box::new(Outlet) as Box<_>);
+    let mid_outlet = mid.add_node(Box::new(Outlet::default()) as Box<_>);
     mid.add_edge(inner_ix, double, Edge::from((0, 0)));
     mid.add_edge(double, mid_outlet, Edge::from((0, 0)));
 
@@ -803,11 +803,11 @@ fn nested_push_through_outlet_deep() {
 #[test]
 fn nested_multi_outlet() {
     let mut ga = Nested::default();
-    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let inlet = ga.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
     let add1 = ga.add_node(Box::new(node::expr("(+ 1 $x)").unwrap()) as Box<_>);
     let add2 = ga.add_node(Box::new(node::expr("(+ 2 $x)").unwrap()) as Box<_>);
-    let out1 = ga.add_node(Box::new(Outlet) as Box<_>);
-    let out2 = ga.add_node(Box::new(Outlet) as Box<_>);
+    let out1 = ga.add_node(Box::new(Outlet::default()) as Box<_>);
+    let out2 = ga.add_node(Box::new(Outlet::default()) as Box<_>);
     ga.add_edge(inlet, add1, Edge::from((0, 0)));
     ga.add_edge(inlet, add2, Edge::from((0, 0)));
     ga.add_edge(add1, out1, Edge::from((0, 0)));
@@ -832,7 +832,7 @@ fn nested_multi_source_outlet_propagation() {
         let mut inner = Nested::default();
         let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
         let ten = inner.add_node(Box::new(node_int(10)) as Box<_>);
-        let outlet = inner.add_node(Box::new(Outlet) as Box<_>);
+        let outlet = inner.add_node(Box::new(Outlet::default()) as Box<_>);
         inner.add_edge(push, ten, Edge::from((0, 0)));
         inner.add_edge(ten, outlet, Edge::from((0, 0)));
         (inner, push)
@@ -862,7 +862,7 @@ fn nested_mixed_level_multi_source() {
     let mut inner = Nested::default();
     let push_inner = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let ten = inner.add_node(Box::new(node_int(10)) as Box<_>);
-    let outlet = inner.add_node(Box::new(Outlet) as Box<_>);
+    let outlet = inner.add_node(Box::new(Outlet::default()) as Box<_>);
     inner.add_edge(push_inner, ten, Edge::from((0, 0)));
     inner.add_edge(ten, outlet, Edge::from((0, 0)));
 
@@ -901,10 +901,10 @@ fn node_select2() -> node::Branch {
 #[test]
 fn nested_divergent_branch() {
     let mut ga = Nested::default();
-    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let inlet = ga.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
     let sel = ga.add_node(Box::new(node_select2()) as Box<_>);
-    let out_a = ga.add_node(Box::new(Outlet) as Box<_>);
-    let out_b = ga.add_node(Box::new(Outlet) as Box<_>);
+    let out_a = ga.add_node(Box::new(Outlet::default()) as Box<_>);
+    let out_b = ga.add_node(Box::new(Outlet::default()) as Box<_>);
     ga.add_edge(inlet, sel, Edge::from((0, 0)));
     ga.add_edge(sel, out_a, Edge::from((0, 0)));
     ga.add_edge(sel, out_b, Edge::from((1, 0)));
@@ -927,9 +927,9 @@ fn nested_divergent_branch() {
 #[test]
 fn nested_reconvergent_branch() {
     let mut ga = Nested::default();
-    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let inlet = ga.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
     let sel = ga.add_node(Box::new(node_select2()) as Box<_>);
-    let out = ga.add_node(Box::new(Outlet) as Box<_>);
+    let out = ga.add_node(Box::new(Outlet::default()) as Box<_>);
     ga.add_edge(inlet, sel, Edge::from((0, 0)));
     ga.add_edge(sel, out, Edge::from((0, 0)));
     ga.add_edge(sel, out, Edge::from((1, 0)));
@@ -958,9 +958,9 @@ fn nested_dead_arm() {
     )
     .unwrap();
     let mut ga = Nested::default();
-    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let inlet = ga.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
     let sel = ga.add_node(Box::new(dead_sel) as Box<_>);
-    let out = ga.add_node(Box::new(Outlet) as Box<_>);
+    let out = ga.add_node(Box::new(Outlet::default()) as Box<_>);
     ga.add_edge(inlet, sel, Edge::from((0, 0)));
     ga.add_edge(sel, out, Edge::from((0, 0)));
 
@@ -980,14 +980,14 @@ fn nested_dead_arm() {
 #[test]
 fn nested_branch_intermediates_and_constant_outlet() {
     let mut ga = Nested::default();
-    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let inlet = ga.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
     let sel = ga.add_node(Box::new(node_select2()) as Box<_>);
     let double = ga.add_node(Box::new(node::expr("(* 2 $x)").unwrap()) as Box<_>);
     let triple = ga.add_node(Box::new(node::expr("(* 3 $x)").unwrap()) as Box<_>);
     let constant = ga.add_node(Box::new(node::expr("7").unwrap()) as Box<_>);
-    let out_a = ga.add_node(Box::new(Outlet) as Box<_>);
-    let out_b = ga.add_node(Box::new(Outlet) as Box<_>);
-    let out_c = ga.add_node(Box::new(Outlet) as Box<_>);
+    let out_a = ga.add_node(Box::new(Outlet::default()) as Box<_>);
+    let out_b = ga.add_node(Box::new(Outlet::default()) as Box<_>);
+    let out_c = ga.add_node(Box::new(Outlet::default()) as Box<_>);
     ga.add_edge(inlet, sel, Edge::from((0, 0)));
     ga.add_edge(sel, double, Edge::from((0, 0)));
     ga.add_edge(sel, triple, Edge::from((1, 0)));
@@ -1017,8 +1017,8 @@ fn nested_push_through_divergent_branch() {
     let mut ga = Nested::default();
     let push = ga.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
     let sel = ga.add_node(Box::new(node_select2()) as Box<_>);
-    let out_a = ga.add_node(Box::new(Outlet) as Box<_>);
-    let out_b = ga.add_node(Box::new(Outlet) as Box<_>);
+    let out_a = ga.add_node(Box::new(Outlet::default()) as Box<_>);
+    let out_b = ga.add_node(Box::new(Outlet::default()) as Box<_>);
     ga.add_edge(push, sel, Edge::from((0, 0)));
     ga.add_edge(sel, out_a, Edge::from((0, 0)));
     ga.add_edge(sel, out_b, Edge::from((1, 0)));
@@ -1040,8 +1040,8 @@ fn nested_push_through_divergent_branch() {
 #[test]
 fn nested_cold_hot_inlets() {
     let mut ga = Nested::default();
-    let inlet_hot = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
-    let inlet_cold = ga.add_node(Box::new(Inlet) as Box<_>);
+    let inlet_hot = ga.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
+    let inlet_cold = ga.add_node(Box::new(Inlet::default()) as Box<_>);
     let add = ga.add_node(Box::new(
         node::expr(
             "(+ (if (Some? $?a) (Some->value $?a) 0) \
@@ -1049,7 +1049,7 @@ fn nested_cold_hot_inlets() {
         )
         .unwrap(),
     ) as Box<_>);
-    let out = ga.add_node(Box::new(Outlet) as Box<_>);
+    let out = ga.add_node(Box::new(Outlet::default()) as Box<_>);
     ga.add_edge(inlet_hot, add, Edge::from((0, 0)));
     ga.add_edge(inlet_cold, add, Edge::from((0, 1)));
     ga.add_edge(add, out, Edge::from((0, 0)));
@@ -1078,10 +1078,10 @@ fn nested_three_arm_branch() {
     )
     .unwrap();
     let mut ga = Nested::default();
-    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let inlet = ga.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
     let sel = ga.add_node(Box::new(sel3) as Box<_>);
     let outs: Vec<_> = (0..3)
-        .map(|_| ga.add_node(Box::new(Outlet) as Box<_>))
+        .map(|_| ga.add_node(Box::new(Outlet::default()) as Box<_>))
         .collect();
     ga.add_edge(inlet, sel, Edge::from((0, 0)));
     for (o, &out) in outs.iter().enumerate() {
@@ -1109,20 +1109,20 @@ fn nested_three_arm_branch() {
 fn nested_branch_two_levels() {
     // Innermost: divergent select.
     let mut inner = Nested::default();
-    let in_inlet = inner.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let in_inlet = inner.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
     let in_sel = inner.add_node(Box::new(node_select2()) as Box<_>);
-    let in_out_a = inner.add_node(Box::new(Outlet) as Box<_>);
-    let in_out_b = inner.add_node(Box::new(Outlet) as Box<_>);
+    let in_out_a = inner.add_node(Box::new(Outlet::default()) as Box<_>);
+    let in_out_b = inner.add_node(Box::new(Outlet::default()) as Box<_>);
     inner.add_edge(in_inlet, in_sel, Edge::from((0, 0)));
     inner.add_edge(in_sel, in_out_a, Edge::from((0, 0)));
     inner.add_edge(in_sel, in_out_b, Edge::from((1, 0)));
 
     // Middle: passes through the inner branching graph to its own outlets.
     let mut mid = Nested::default();
-    let mid_inlet = mid.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let mid_inlet = mid.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
     let inner_ix = mid.add_node(Box::new(inner) as Box<_>);
-    let mid_out_a = mid.add_node(Box::new(Outlet) as Box<_>);
-    let mid_out_b = mid.add_node(Box::new(Outlet) as Box<_>);
+    let mid_out_a = mid.add_node(Box::new(Outlet::default()) as Box<_>);
+    let mid_out_b = mid.add_node(Box::new(Outlet::default()) as Box<_>);
     mid.add_edge(mid_inlet, inner_ix, Edge::from((0, 0)));
     mid.add_edge(inner_ix, mid_out_a, Edge::from((0, 0)));
     mid.add_edge(inner_ix, mid_out_b, Edge::from((1, 0)));
@@ -1144,10 +1144,10 @@ fn nested_branch_two_levels() {
 #[test]
 fn nested_branch_stateful_arm() {
     let mut ga = Nested::default();
-    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let inlet = ga.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
     let sel = ga.add_node(Box::new(node_select2()) as Box<_>);
     let store_arm = ga.add_node(Box::new(node_number()) as Box<_>);
-    let out = ga.add_node(Box::new(Outlet) as Box<_>);
+    let out = ga.add_node(Box::new(Outlet::default()) as Box<_>);
     ga.add_edge(inlet, sel, Edge::from((0, 0)));
     // Arm 0 passes through the stateful store; arm 1 goes straight out.
     ga.add_edge(sel, store_arm, Edge::from((0, 0)));
@@ -1171,9 +1171,9 @@ fn nested_branch_stateful_arm() {
 fn nested_non_sequential_inlets() {
     let mut ga = Nested::default();
     let mul = ga.add_node(Box::new(node::expr("(* $l $r)").unwrap()) as Box<dyn DebugNode>);
-    let inlet_a = ga.add_node(Box::new(Inlet) as Box<_>);
-    let outlet = ga.add_node(Box::new(Outlet) as Box<_>);
-    let inlet_b = ga.add_node(Box::new(Inlet) as Box<_>);
+    let inlet_a = ga.add_node(Box::new(Inlet::default()) as Box<_>);
+    let outlet = ga.add_node(Box::new(Outlet::default()) as Box<_>);
+    let inlet_b = ga.add_node(Box::new(Inlet::default()) as Box<_>);
     ga.add_edge(inlet_a, mul, Edge::from((0, 0)));
     ga.add_edge(inlet_b, mul, Edge::from((0, 1)));
     ga.add_edge(mul, outlet, Edge::from((0, 0)));
@@ -1250,10 +1250,10 @@ fn delay_feedback_accumulator() {
 #[test]
 fn delay_feedback_in_nested_graph() {
     let mut ga = Nested::default();
-    let inlet = ga.add_node(Box::new(Inlet) as Box<dyn DebugNode>);
+    let inlet = ga.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
     let add = ga.add_node(Box::new(node::expr("(+ $x (if (number? $d) $d 0))").unwrap()) as Box<_>);
     let delay = ga.add_node(Box::new(node::Delay) as Box<_>);
-    let outlet = ga.add_node(Box::new(Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(Outlet::default()) as Box<_>);
     ga.add_edge(inlet, add, Edge::from((0, 0)));
     ga.add_edge(delay, add, Edge::from((0, 1)));
     ga.add_edge(add, delay, Edge::from((0, 0)));
@@ -1322,7 +1322,7 @@ fn delay_feedback_push_through_outlet() {
     let push = ga.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
     let add = ga.add_node(Box::new(node::expr("(+ $x (if (number? $d) $d 0))").unwrap()) as Box<_>);
     let delay = ga.add_node(Box::new(node::Delay) as Box<_>);
-    let outlet = ga.add_node(Box::new(Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(Outlet::default()) as Box<_>);
     ga.add_edge(push, add, Edge::from((0, 0)));
     ga.add_edge(delay, add, Edge::from((0, 1)));
     ga.add_edge(add, delay, Edge::from((0, 0)));

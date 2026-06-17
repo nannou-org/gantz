@@ -48,10 +48,10 @@ fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
 fn source_map_roundtrip() {
     // The nested graph: mul of two inlets.
     let mut ga = Nested::default();
-    let inlet_a = ga.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-    let inlet_b = ga.add_node(Box::new(node::graph::Inlet) as Box<_>);
+    let inlet_a = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+    let inlet_b = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
     let mul = ga.add_node(Box::new(node_mul()) as Box<_>);
-    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     ga.add_edge(inlet_a, mul, Edge::from((0, 0)));
     ga.add_edge(inlet_b, mul, Edge::from((0, 1)));
     ga.add_edge(mul, outlet, Edge::from((0, 0)));
@@ -138,7 +138,7 @@ fn source_map_level_fn() {
     let mut ga = Nested::default();
     let push = ga.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let int = ga.add_node(Box::new(node_int(7)) as Box<_>);
-    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     ga.add_edge(push, int, Edge::from((0, 0)));
     ga.add_edge(int, outlet, Edge::from((0, 0)));
 

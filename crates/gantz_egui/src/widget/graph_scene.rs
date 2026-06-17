@@ -1,6 +1,6 @@
 use crate::{
     CopyNodes, InspectEdge, NodeUi, OpenCommandPalette, OpenHead, Paste, PastePos, Registry,
-    response::DynResponse,
+    SocketDoc, response::DynResponse,
 };
 use egui::emath::GuiRounding;
 use egui_graph::{self, SocketKind, node::EdgeEvent};
@@ -319,6 +319,20 @@ where
                 node.ui(node_ctx, nui_ctx)
             });
 
+        // Attach on-hover docs to each socket. Each node describes its own
+        // sockets (markers read their stored docs; references resolve the
+        // referenced graph's marker docs via the registry).
+        for (ix, sock) in response.sockets().inputs() {
+            if let Some(doc) = node.socket_doc(registry, SocketKind::Input, ix) {
+                socket_hover(sock, &doc);
+            }
+        }
+        for (ix, sock) in response.sockets().outputs() {
+            if let Some(doc) = node.socket_doc(registry, SocketKind::Output, ix) {
+                socket_hover(sock, &doc);
+            }
+        }
+
         if response.changed() {
             // Check for an edge event.
             if let Some(ev) = response.edge_event() {
@@ -432,6 +446,27 @@ where
     }
 
     node_responses
+}
+
+/// Show a socket's doc as a hover tooltip (type label in bold, description
+/// below).
+fn socket_hover(resp: &egui::Response, doc: &SocketDoc) {
+    resp.clone().on_hover_ui(|ui| {
+        // Re-assert the wrap width every frame. The tooltip's `Area` caches the
+        // width it first rendered at (e.g. tiny, just fitting a bare "input"),
+        // and wrapped text keeps "fitting" that stale width - so docs added to a
+        // referenced graph later never widen it until egui memory is cleared
+        // (an app restart). Forcing the max width breaks that feedback loop
+        // while still letting short tooltips stay narrow.
+        let max_width = ui.spacing().tooltip_width;
+        ui.set_max_width(max_width);
+        if !doc.ty.is_empty() {
+            ui.strong(doc.ty.as_ref());
+        }
+        if let Some(desc) = &doc.description {
+            ui.label(desc.as_ref());
+        }
+    });
 }
 
 fn edges<N>(

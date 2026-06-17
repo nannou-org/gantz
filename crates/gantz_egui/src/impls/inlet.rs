@@ -1,4 +1,4 @@
-use crate::{NodeCtx, NodeUi, Registry, widget::node_inspector};
+use crate::{NodeCtx, NodeUi, Registry, SocketDoc, SocketKind, widget::node_inspector};
 use gantz_core::node;
 
 impl NodeUi for gantz_core::node::graph::Inlet {
@@ -31,6 +31,37 @@ impl NodeUi for gantz_core::node::graph::Inlet {
             });
         });
     }
+
+    fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> Option<egui::Response> {
+        ui.separator();
+        Some(node_inspector::socket_doc_editor(
+            ui,
+            ctx.path(),
+            &mut self.ty,
+            &mut self.description,
+        ))
+    }
+
+    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+        match kind {
+            SocketKind::Output => Some(socket_doc(&self.ty, &self.description, "input")),
+            SocketKind::Input => None,
+        }
+    }
+}
+
+/// Build a [`SocketDoc`] from a marker's stored fields, defaulting the type
+/// label when unset.
+pub(crate) fn socket_doc(ty: &str, description: &str, default_ty: &'static str) -> SocketDoc {
+    let mut doc = if ty.is_empty() {
+        SocketDoc::ty(default_ty)
+    } else {
+        SocketDoc::ty(ty.to_string())
+    };
+    if !description.is_empty() {
+        doc = doc.with_description(description.to_string());
+    }
+    doc
 }
 
 /// Determine the inlet's index.

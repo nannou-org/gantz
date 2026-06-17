@@ -137,6 +137,14 @@ impl Branch {
         &self.src
     }
 
+    /// The unique `$` variable names, in order of first appearance.
+    ///
+    /// Each name maps to the input at the same index, including the `$` or
+    /// `$?` (optional) prefix.
+    pub fn vars(&self) -> &[String] {
+        &self.vars
+    }
+
     /// The number of outputs, inferred from the `Conns` length.
     pub fn outputs(&self) -> u8 {
         self.branches[0].len() as u8

@@ -246,9 +246,9 @@ fn nested_ref_instances_have_independent_state() {
     // Nested graph: inlet -> counter -> outlet. Each evaluation increments the
     // counter's state.
     let mut inner = Nested::default();
-    let i = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let i = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
     let c = inner.add_node(Box::new(node_inlet_counter()) as Box<_>);
-    let o = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let o = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     inner.add_edge(i, c, Edge::from((0, 0)));
     inner.add_edge(c, o, Edge::from((0, 0)));
     let counter_ix = c.index();

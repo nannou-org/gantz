@@ -2,6 +2,7 @@
 //! gantz using `egui`.
 
 use petgraph::visit::{IntoNodeReferences, NodeRef};
+use std::borrow::Cow;
 use steel::{
     SteelErr, SteelVal,
     rvals::{FromSteelVal, IntoSteelVal},
@@ -19,6 +20,7 @@ pub mod sync;
 pub mod widget;
 
 // Re-export traits that make up the Registry supertrait.
+pub use egui_graph::SocketKind;
 pub use node::{FnNodeNames, NameRegistry};
 pub use reg::RegistryRef;
 pub use response::{DynResponse, ResponseData, Responses};
@@ -59,6 +61,56 @@ pub trait Registry: NameRegistry + FnNodeNames + NodeTypeRegistry + GraphRegistr
     fn demo_graph(&self, ca: &gantz_ca::ContentAddr) -> Option<&str> {
         let _ = ca;
         None
+    }
+
+    /// The [`SocketDoc`] for the given socket of the graph referenced by `ca`.
+    ///
+    /// Lets a referencing node (e.g. [`node::NamedRef`]) surface the referenced
+    /// graph's inlet/outlet docs. The standard impl resolves the referenced
+    /// graph and reads the relevant `Inlet`/`Outlet` marker's own doc, so docs
+    /// live on the nodes rather than in side-metadata.
+    fn socket_doc(
+        &self,
+        ca: &gantz_ca::ContentAddr,
+        kind: SocketKind,
+        ix: usize,
+    ) -> Option<SocketDoc> {
+        let _ = (ca, kind, ix);
+        None
+    }
+}
+
+/// On-hover documentation for a single node inlet or outlet.
+///
+/// `ty` is a short, free-form label for the expected/produced "type" (e.g.
+/// `"number"`, `"function"`, `"bang"`, `"any"`). gantz values are dynamic Steel
+/// values, so this is a human hint rather than a checked type. `description` is
+/// an optional concise note for extra context.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct SocketDoc {
+    pub ty: Cow<'static, str>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<Cow<'static, str>>,
+}
+
+impl SocketDoc {
+    /// A doc with just a type label and no description.
+    pub fn ty(ty: impl Into<Cow<'static, str>>) -> Self {
+        SocketDoc {
+            ty: ty.into(),
+            description: None,
+        }
+    }
+
+    /// Attach a concise description.
+    pub fn with_description(mut self, description: impl Into<Cow<'static, str>>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Whether this doc carries no content (empty type and no description).
+    pub fn is_empty(&self) -> bool {
+        self.ty.is_empty() && self.description.is_none()
     }
 }
 
@@ -161,6 +213,20 @@ pub trait NodeUi {
     /// [`NamedRef`](crate::node::NamedRef)): double-clicking enters it in place,
     /// and the scene offers an "open in new tab" context-menu action.
     fn nav_head(&self, _registry: &dyn Registry) -> Option<gantz_ca::Head> {
+        None
+    }
+
+    /// On-hover documentation for the socket of the given kind and index.
+    ///
+    /// Shown as a tooltip when the user hovers the socket. `Inlet`/`Outlet`
+    /// read their own stored docs; nodes that reference a graph resolve the
+    /// referenced graph's docs via [`Registry::socket_doc`].
+    fn socket_doc(
+        &self,
+        _registry: &dyn Registry,
+        _kind: SocketKind,
+        _ix: usize,
+    ) -> Option<SocketDoc> {
         None
     }
 }
@@ -335,6 +401,15 @@ where
     fn nav_head(&self, registry: &dyn Registry) -> Option<gantz_ca::Head> {
         (**self).nav_head(registry)
     }
+
+    fn socket_doc(
+        &self,
+        registry: &dyn Registry,
+        kind: SocketKind,
+        ix: usize,
+    ) -> Option<SocketDoc> {
+        (**self).socket_doc(registry, kind, ix)
+    }
 }
 
 macro_rules! impl_node_ui_for_ptr {
@@ -369,6 +444,10 @@ macro_rules! impl_node_ui_for_ptr {
 
             fn nav_head(&self, registry: &dyn Registry) -> Option<gantz_ca::Head> {
                 (**self).nav_head(registry)
+            }
+
+            fn socket_doc(&self, registry: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
+                (**self).socket_doc(registry, kind, ix)
             }
         }
     };

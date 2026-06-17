@@ -1270,7 +1270,7 @@ where
     // Create the head access adapter.
     let mut access = HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
 
-    // Construct node registry on-demand for the widget (with demo lookup).
+    // Construct node registry on-demand for the widget (with demo + doc lookup).
     let node_reg = registry_ref(&registry, &builtins, &demos);
 
     let level = bevy_log::tracing_subscriber::filter::LevelFilter::current();

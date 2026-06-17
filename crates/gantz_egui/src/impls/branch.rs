@@ -1,4 +1,4 @@
-use crate::{NodeCtx, NodeUi};
+use crate::{NodeCtx, NodeUi, Registry, SocketDoc, SocketKind};
 
 /// A widget used to allow for editing and parsing a branch expression.
 pub struct BranchEdit<'a> {
@@ -181,6 +181,22 @@ impl NodeUi for gantz_core::node::Branch {
 
         if changed {
             self.set_branch_conns(branches);
+        }
+    }
+
+    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
+        match kind {
+            SocketKind::Input => {
+                let var = self.vars().get(ix)?;
+                Some(
+                    SocketDoc::ty(var.clone())
+                        .with_description("value used in the branch expression"),
+                )
+            }
+            SocketKind::Output => Some(
+                SocketDoc::ty(format!("out {ix}"))
+                    .with_description("active only on branches whose mask selects this output"),
+            ),
         }
     }
 }

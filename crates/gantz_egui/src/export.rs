@@ -49,7 +49,8 @@ pub struct Export<G> {
     pub demos: HashMap<CommitAddr, String>,
 }
 
-/// Produce an [`Export`] by filtering views and demos to commits present in the registry.
+/// Produce an [`Export`] by filtering views and demos to commits present in
+/// the registry.
 pub fn export_with<G>(
     registry: gantz_ca::Registry<G>,
     all_views: &HashMap<CommitAddr, egui_graph::View>,
@@ -130,8 +131,8 @@ where
 
 /// Merge an [`Export`] into an existing registry, views and demos maps.
 ///
-/// Incoming views and demos for new commits are inserted; existing
-/// entries for known commits are kept.
+/// Incoming views and demos for new commits are inserted; existing entries for
+/// known commits are kept.
 pub fn merge_with<G>(
     registry: &mut gantz_ca::Registry<G>,
     views: &mut HashMap<CommitAddr, egui_graph::View>,

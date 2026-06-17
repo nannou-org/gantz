@@ -99,10 +99,10 @@ fn test_graph_nested_stateless() {
 
     // Graph A, used as a nested node.
     let mut ga = Nested::default();
-    let inlet_a = ga.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-    let inlet_b = ga.add_node(Box::new(node::graph::Inlet) as Box<_>);
+    let inlet_a = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+    let inlet_b = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
     let mul = ga.add_node(Box::new(node_mul()) as Box<_>);
-    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     ga.add_edge(inlet_a, mul, Edge::from((0, 0)));
     ga.add_edge(inlet_b, mul, Edge::from((0, 1)));
     ga.add_edge(mul, outlet, Edge::from((0, 0)));
@@ -194,9 +194,9 @@ fn test_graph_nested_counter() {
 
     // Graph A.
     let mut ga = Nested::default();
-    let inlet = ga.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let inlet = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
     let counter = ga.add_node(Box::new(counter) as Box<_>);
-    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     ga.add_edge(inlet, counter, Edge::from((0, 0)));
     ga.add_edge(counter, outlet, Edge::from((0, 0)));
 
@@ -409,12 +409,12 @@ fn test_graph_nested_non_sequential_inlets() {
     let _dummy2 = ga.add_node(Box::new(node_int(998)) as Box<_>);
 
     // Now add inlets - they'll have indices 2 and 3
-    let inlet_a = ga.add_node(Box::new(node::graph::Inlet) as Box<_>);
-    let inlet_b = ga.add_node(Box::new(node::graph::Inlet) as Box<_>);
+    let inlet_a = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
+    let inlet_b = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
 
     // Add processing nodes
     let sub = ga.add_node(Box::new(node::expr("(- $l $r)").unwrap()) as Box<_>);
-    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
 
     // Connect the graph
     ga.add_edge(inlet_a, sub, Edge::from((0, 0)));
@@ -497,7 +497,7 @@ fn test_graph_nested_push_through_outlet() {
     let mut ga = Nested::default();
     let push = ga.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let forty_two = ga.add_node(Box::new(node_int(42)) as Box<_>);
-    let outlet = ga.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     ga.add_edge(push, forty_two, Edge::from((0, 0)));
     ga.add_edge(forty_two, outlet, Edge::from((0, 0)));
 
@@ -581,10 +581,10 @@ fn test_graph_nested_push_through_outlet() {
 fn test_graph_nested_multi_outlet() {
     // Inner graph: 2 inlets pass through to 2 outlets.
     let mut inner = Nested::default();
-    let inlet_a = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-    let inlet_b = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
-    let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-    let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let inlet_a = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+    let inlet_b = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
+    let outlet_a = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+    let outlet_b = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     inner.add_edge(inlet_a, outlet_a, Edge::from((0, 0)));
     inner.add_edge(inlet_b, outlet_b, Edge::from((0, 0)));
 
@@ -649,8 +649,8 @@ fn test_graph_nested_push_through_outlet_multi() {
     let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let ten = inner.add_node(Box::new(node_int(10)) as Box<_>);
     let twenty = inner.add_node(Box::new(node_int(20)) as Box<_>);
-    let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-    let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet_a = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+    let outlet_b = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     inner.add_edge(push, ten, Edge::from((0, 0)));
     inner.add_edge(push, twenty, Edge::from((0, 0)));
     inner.add_edge(ten, outlet_a, Edge::from((0, 0)));
@@ -715,7 +715,7 @@ fn test_graph_nested_push_through_outlet_deep() {
     let mut innermost = Nested::default();
     let push = innermost.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let ninety_nine = innermost.add_node(Box::new(node_int(99)) as Box<_>);
-    let outlet_inner = innermost.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet_inner = innermost.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     innermost.add_edge(push, ninety_nine, Edge::from((0, 0)));
     innermost.add_edge(ninety_nine, outlet_inner, Edge::from((0, 0)));
 
@@ -725,7 +725,7 @@ fn test_graph_nested_push_through_outlet_deep() {
     // Middle: innermost_graph -> outlet
     let mut middle = Nested::default();
     let innermost_node = middle.add_node(Box::new(innermost) as Box<dyn DebugNode>);
-    let outlet_mid = middle.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet_mid = middle.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     middle.add_edge(innermost_node, outlet_mid, Edge::from((0, 0)));
 
     // Outer: middle_graph -> number
@@ -778,7 +778,7 @@ fn test_push_pull_entrypoints_discovers_nested_push() {
     let mut inner = Nested::default();
     let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let forty_two = inner.add_node(Box::new(node_int(42)) as Box<_>);
-    let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     inner.add_edge(push, forty_two, Edge::from((0, 0)));
     inner.add_edge(forty_two, outlet, Edge::from((0, 0)));
 
@@ -863,7 +863,7 @@ fn test_graph_nested_multi_source_outlet_propagation() {
         let mut inner = Nested::default();
         let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
         let ten = inner.add_node(Box::new(node_int(10)) as Box<_>);
-        let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(push, ten, Edge::from((0, 0)));
         inner.add_edge(ten, outlet, Edge::from((0, 0)));
         (inner, push)
@@ -938,7 +938,7 @@ fn test_graph_nested_mixed_level_multi_source() {
     let mut inner = Nested::default();
     let push_inner = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let ten = inner.add_node(Box::new(node_int(10)) as Box<_>);
-    let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     inner.add_edge(push_inner, ten, Edge::from((0, 0)));
     inner.add_edge(ten, outlet, Edge::from((0, 0)));
 
@@ -1106,10 +1106,10 @@ fn compile_and_push_nested<N: DebugNode + ?Sized>(
 fn test_graph_nested_divergent_branch() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let inlet = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+        let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
         let select = inner.add_node(Box::new(node_select()) as Box<_>);
-        let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet_a = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let outlet_b = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet, select, Edge::from((0, 0)));
         inner.add_edge(select, outlet_a, Edge::from((0, 0)));
         inner.add_edge(select, outlet_b, Edge::from((1, 0)));
@@ -1152,9 +1152,9 @@ fn test_graph_nested_divergent_branch() {
 fn test_graph_nested_reconvergent_branch() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let inlet = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+        let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
         let select = inner.add_node(Box::new(node_select()) as Box<_>);
-        let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet, select, Edge::from((0, 0)));
         inner.add_edge(select, outlet, Edge::from((0, 0)));
         inner.add_edge(select, outlet, Edge::from((1, 0)));
@@ -1193,9 +1193,9 @@ fn test_graph_nested_reconvergent_branch() {
 fn test_graph_nested_dead_arm() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let inlet = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+        let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
         let select = inner.add_node(Box::new(node_select()) as Box<_>);
-        let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet, select, Edge::from((0, 0)));
         inner.add_edge(select, outlet, Edge::from((0, 0)));
         // Output 1 of Select is left unconnected (a dead arm).
@@ -1235,12 +1235,12 @@ fn test_graph_nested_dead_arm() {
 fn test_graph_nested_branch_intermediates() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let inlet = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+        let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
         let select = inner.add_node(Box::new(node_select()) as Box<_>);
         let add10 = inner.add_node(Box::new(node::expr("(+ $x 10)").unwrap()) as Box<_>);
         let add20 = inner.add_node(Box::new(node::expr("(+ $x 20)").unwrap()) as Box<_>);
-        let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet_a = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let outlet_b = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet, select, Edge::from((0, 0)));
         inner.add_edge(select, add10, Edge::from((0, 0)));
         inner.add_edge(add10, outlet_a, Edge::from((0, 0)));
@@ -1292,11 +1292,11 @@ fn test_graph_nested_branch_multi_outlet_arm() {
     };
     let make_inner = || {
         let mut inner = Nested::default();
-        let inlet = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+        let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
         let br = inner.add_node(Box::new(branch3()) as Box<_>);
-        let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let outlet_c = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet_a = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let outlet_b = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let outlet_c = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet, br, Edge::from((0, 0)));
         inner.add_edge(br, outlet_a, Edge::from((0, 0)));
         inner.add_edge(br, outlet_b, Edge::from((1, 0)));
@@ -1344,14 +1344,14 @@ fn test_graph_nested_branch_multi_outlet_arm() {
 fn test_graph_nested_parallel_branches() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let inlet_a = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-        let inlet_b = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
+        let inlet_a = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+        let inlet_b = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
         let sel1 = inner.add_node(Box::new(node_select()) as Box<_>);
         let sel2 = inner.add_node(Box::new(node_select()) as Box<_>);
-        let oa = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let ob = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let oc = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let od = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let oa = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let ob = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let oc = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let od = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet_a, sel1, Edge::from((0, 0)));
         inner.add_edge(inlet_b, sel2, Edge::from((0, 0)));
         inner.add_edge(sel1, oa, Edge::from((0, 0)));
@@ -1423,13 +1423,14 @@ fn test_graph_nested_sequential_branches() {
     };
     let make_inner = || {
         let mut inner = Nested::default();
-        let inlet_sel = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-        let inlet_val = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
+        let inlet_sel =
+            inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+        let inlet_val = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
         let sel1 = inner.add_node(Box::new(outer_sel()) as Box<_>);
         let gate = inner.add_node(Box::new(node_select()) as Box<_>);
-        let oa = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let ob = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let oc = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let oa = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let ob = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let oc = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet_sel, sel1, Edge::from((0, 0))); // $sel
         inner.add_edge(inlet_val, sel1, Edge::from((0, 1))); // $val
         inner.add_edge(sel1, gate, Edge::from((0, 0))); // arm 0 -> gate input
@@ -1482,12 +1483,12 @@ fn test_graph_nested_sequential_branches() {
 fn test_graph_nested_branch_after_join() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let inlet_l = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-        let inlet_r = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
+        let inlet_l = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+        let inlet_r = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
         let sum = inner.add_node(Box::new(node::expr("(+ $a $b)").unwrap()) as Box<_>);
         let select = inner.add_node(Box::new(node_select()) as Box<_>);
-        let oa = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let ob = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let oa = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let ob = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet_l, sum, Edge::from((0, 0)));
         inner.add_edge(inlet_r, sum, Edge::from((0, 1)));
         inner.add_edge(sum, select, Edge::from((0, 0)));
@@ -1533,12 +1534,12 @@ fn test_graph_nested_branch_after_join() {
 fn test_graph_nested_branch_with_constant_outlet() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let inlet = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+        let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
         let select = inner.add_node(Box::new(node_select()) as Box<_>);
-        let oa = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let ob = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let oa = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let ob = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         let konst = inner.add_node(Box::new(node::expr("123").unwrap()) as Box<_>);
-        let oc = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let oc = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet, select, Edge::from((0, 0)));
         inner.add_edge(select, oa, Edge::from((0, 0)));
         inner.add_edge(select, ob, Edge::from((1, 0)));
@@ -1593,11 +1594,11 @@ fn test_graph_nested_three_arm_branch() {
     };
     let make_inner = || {
         let mut inner = Nested::default();
-        let inlet = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+        let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
         let br = inner.add_node(Box::new(branch3()) as Box<_>);
-        let oa = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let ob = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let oc = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let oa = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let ob = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let oc = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet, br, Edge::from((0, 0)));
         inner.add_edge(br, oa, Edge::from((0, 0)));
         inner.add_edge(br, ob, Edge::from((1, 0)));
@@ -1642,10 +1643,10 @@ fn test_graph_nested_three_arm_branch() {
 fn test_graph_nested_branch_two_levels() {
     let make_inner2 = || {
         let mut g = Nested::default();
-        let inlet = g.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+        let inlet = g.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
         let select = g.add_node(Box::new(node_select()) as Box<_>);
-        let oa = g.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let ob = g.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let oa = g.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let ob = g.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         g.add_edge(inlet, select, Edge::from((0, 0)));
         g.add_edge(select, oa, Edge::from((0, 0)));
         g.add_edge(select, ob, Edge::from((1, 0)));
@@ -1653,10 +1654,10 @@ fn test_graph_nested_branch_two_levels() {
     };
     let make_inner1 = || {
         let mut g = Nested::default();
-        let inlet = g.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+        let inlet = g.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
         let inner2 = g.add_node(Box::new(make_inner2()) as Box<_>);
-        let ox = g.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let oy = g.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let ox = g.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let oy = g.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         g.add_edge(inlet, inner2, Edge::from((0, 0)));
         g.add_edge(inner2, ox, Edge::from((0, 0)));
         g.add_edge(inner2, oy, Edge::from((1, 0)));
@@ -1701,11 +1702,11 @@ fn test_graph_nested_branch_stateful() {
         node::expr("(begin $bang (set! state (if (number? state) (+ state 1) 0)) state)").unwrap()
     };
     let mut inner = Nested::default();
-    let inlet = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
     let select = inner.add_node(Box::new(node_select()) as Box<_>);
     let count = inner.add_node(Box::new(counter()) as Box<_>);
-    let oa = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-    let ob = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let oa = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+    let ob = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     inner.add_edge(inlet, select, Edge::from((0, 0)));
     inner.add_edge(select, count, Edge::from((0, 0)));
     inner.add_edge(count, oa, Edge::from((0, 0)));
@@ -1756,14 +1757,14 @@ fn test_graph_nested_branch_stateful() {
 #[test]
 fn test_graph_nested_branches_align_with_meta() {
     let mut inner = Nested::default();
-    let inlet_a = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-    let inlet_b = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
+    let inlet_a = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+    let inlet_b = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
     let sel1 = inner.add_node(Box::new(node_select()) as Box<_>);
     let sel2 = inner.add_node(Box::new(node_select()) as Box<_>);
-    let oa = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-    let ob = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-    let oc = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-    let od = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let oa = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+    let ob = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+    let oc = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+    let od = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     inner.add_edge(inlet_a, sel1, Edge::from((0, 0)));
     inner.add_edge(inlet_b, sel2, Edge::from((0, 0)));
     inner.add_edge(sel1, oa, Edge::from((0, 0)));
@@ -1805,12 +1806,12 @@ fn test_graph_nested_branches_align_with_meta() {
 #[test]
 fn test_graph_nested_multi_component_no_branch() {
     let mut inner = Nested::default();
-    let inlet_a = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-    let inlet_b = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
+    let inlet_a = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+    let inlet_b = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
     let id_a = inner.add_node(Box::new(node::expr("(+ $x 1)").unwrap()) as Box<_>);
     let id_b = inner.add_node(Box::new(node::expr("(+ $x 2)").unwrap()) as Box<_>);
-    let oa = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-    let ob = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let oa = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+    let ob = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     inner.add_edge(inlet_a, id_a, Edge::from((0, 0)));
     inner.add_edge(id_a, oa, Edge::from((0, 0)));
     inner.add_edge(inlet_b, id_b, Edge::from((0, 0)));
@@ -1852,11 +1853,11 @@ fn test_graph_nested_multi_component_no_branch() {
 fn test_graph_nested_branch_reconvergent_intermediates() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let inlet = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+        let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
         let select = inner.add_node(Box::new(node_select()) as Box<_>);
         let add10 = inner.add_node(Box::new(node::expr("(+ $x 10)").unwrap()) as Box<_>);
         let add1 = inner.add_node(Box::new(node::expr("(+ $x 1)").unwrap()) as Box<_>);
-        let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet, select, Edge::from((0, 0)));
         inner.add_edge(select, add10, Edge::from((0, 0)));
         inner.add_edge(add10, outlet, Edge::from((0, 0)));
@@ -1886,11 +1887,11 @@ fn test_graph_nested_branch_reconvergent_intermediates() {
 fn test_graph_nested_branch_mixed_direct_intermediate() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let inlet = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+        let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
         let select = inner.add_node(Box::new(node_select()) as Box<_>);
         let add1 = inner.add_node(Box::new(node::expr("(+ $x 1)").unwrap()) as Box<_>);
-        let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet_a = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let outlet_b = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet, select, Edge::from((0, 0)));
         inner.add_edge(select, outlet_a, Edge::from((0, 0)));
         inner.add_edge(select, add1, Edge::from((1, 0)));
@@ -1922,14 +1923,14 @@ fn test_graph_nested_branch_mixed_direct_intermediate() {
 fn test_graph_nested_branch_chained_intermediates() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let inlet = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+        let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
         let select = inner.add_node(Box::new(node_select()) as Box<_>);
         let a10 = inner.add_node(Box::new(node::expr("(+ $x 10)").unwrap()) as Box<_>);
         let a1 = inner.add_node(Box::new(node::expr("(+ $x 1)").unwrap()) as Box<_>);
         let b10 = inner.add_node(Box::new(node::expr("(+ $x 10)").unwrap()) as Box<_>);
         let b1 = inner.add_node(Box::new(node::expr("(+ $x 1)").unwrap()) as Box<_>);
-        let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet_a = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let outlet_b = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet, select, Edge::from((0, 0)));
         inner.add_edge(select, a10, Edge::from((0, 0)));
         inner.add_edge(a10, a1, Edge::from((0, 0)));
@@ -1966,9 +1967,9 @@ fn test_graph_nested_branch_chained_intermediates() {
 fn test_graph_nested_cascading_reconvergence() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let in1 = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-        let in2 = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
-        let in3 = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
+        let in1 = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+        let in2 = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
+        let in3 = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
         let sa = inner.add_node(Box::new(node_select()) as Box<_>);
         let a10 = inner.add_node(Box::new(node::expr("(+ $x 10)").unwrap()) as Box<_>);
         let a20 = inner.add_node(Box::new(node::expr("(+ $x 20)").unwrap()) as Box<_>);
@@ -1980,8 +1981,8 @@ fn test_graph_nested_cascading_reconvergence() {
         let joinb = inner.add_node(Box::new(node::expr("(begin $x)").unwrap()) as Box<_>);
         let passb = inner.add_node(Box::new(node::expr("(begin $l $r)").unwrap()) as Box<_>);
         let sc = inner.add_node(Box::new(node_select()) as Box<_>);
-        let oa = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let ob = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let oa = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let ob = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(in1, sa, Edge::from((0, 0)));
         inner.add_edge(sa, a10, Edge::from((0, 0)));
         inner.add_edge(sa, a20, Edge::from((1, 0)));
@@ -2033,16 +2034,16 @@ fn test_graph_nested_cascading_reconvergence() {
 fn test_graph_nested_inner_reconvergence_outer_branching() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let in1 = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-        let in2 = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
+        let in1 = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+        let in2 = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
         let s1 = inner.add_node(Box::new(node_select()) as Box<_>);
         let a10 = inner.add_node(Box::new(node::expr("(+ $x 10)").unwrap()) as Box<_>);
         let a20 = inner.add_node(Box::new(node::expr("(+ $x 20)").unwrap()) as Box<_>);
         let join = inner.add_node(Box::new(node::expr("(begin $x)").unwrap()) as Box<_>);
         let s2 = inner.add_node(Box::new(node_select()) as Box<_>);
-        let oa = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let ob = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let oc = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let oa = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let ob = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let oc = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(in1, s1, Edge::from((0, 0)));
         inner.add_edge(s1, a10, Edge::from((0, 0)));
         inner.add_edge(s1, a20, Edge::from((1, 0)));
@@ -2087,20 +2088,20 @@ fn test_graph_nested_inner_reconvergence_outer_branching() {
 fn test_graph_nested_static_inlet_at_depth_three() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let f1 = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-        let f2 = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
-        let f3 = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
-        let value = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
+        let f1 = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+        let f2 = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
+        let f3 = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
+        let value = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
         let s1 = inner.add_node(Box::new(node_select()) as Box<_>);
         let pa = inner.add_node(Box::new(node::expr("(begin $l $r)").unwrap()) as Box<_>);
         let s2 = inner.add_node(Box::new(node_select()) as Box<_>);
         let pb = inner.add_node(Box::new(node::expr("(begin $l $r)").unwrap()) as Box<_>);
         let s3 = inner.add_node(Box::new(node_select()) as Box<_>);
         let d3 = inner.add_node(Box::new(node::expr("(begin $l $r)").unwrap()) as Box<_>);
-        let oa = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let ob = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let oc = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let od = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let oa = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let ob = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let oc = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let od = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(f1, s1, Edge::from((0, 0)));
         inner.add_edge(s1, oa, Edge::from((0, 0)));
         inner.add_edge(s1, pa, Edge::from((1, 0)));
@@ -2153,9 +2154,9 @@ fn test_graph_nested_static_inlet_at_depth_three() {
 fn test_graph_nested_multi_branch_three() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let i1 = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-        let i2 = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
-        let i3 = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
+        let i1 = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+        let i2 = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
+        let i3 = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
         let s1 = inner.add_node(Box::new(node_select()) as Box<_>);
         let s2 = inner.add_node(Box::new(node_select()) as Box<_>);
         let s3 = inner.add_node(Box::new(node_select()) as Box<_>);
@@ -2163,7 +2164,7 @@ fn test_graph_nested_multi_branch_three() {
             |n: i32| inner.add_node(Box::new(node::expr(format!("(+ $x {n})")).unwrap()) as Box<_>);
         let (a10, a20, a30, a40, a50, a60) = (add(10), add(20), add(30), add(40), add(50), add(60));
         let o: Vec<_> = (0..6)
-            .map(|_| inner.add_node(Box::new(node::graph::Outlet) as Box<_>))
+            .map(|_| inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>))
             .collect();
         inner.add_edge(i1, s1, Edge::from((0, 0)));
         inner.add_edge(i2, s2, Edge::from((0, 0)));
@@ -2256,8 +2257,8 @@ fn test_graph_nested_push_through_divergent_branch() {
         let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
         let int = inner.add_node(Box::new(node_int(sel)) as Box<_>);
         let select = inner.add_node(Box::new(node_select()) as Box<_>);
-        let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet_a = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let outlet_b = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(push, int, Edge::from((0, 0)));
         inner.add_edge(int, select, Edge::from((0, 0)));
         inner.add_edge(select, outlet_a, Edge::from((0, 0)));
@@ -2294,7 +2295,7 @@ fn test_graph_nested_push_through_dead_arm() {
         let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
         let int = inner.add_node(Box::new(node_int(sel)) as Box<_>);
         let select = inner.add_node(Box::new(node_select()) as Box<_>);
-        let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(push, int, Edge::from((0, 0)));
         inner.add_edge(int, select, Edge::from((0, 0)));
         inner.add_edge(select, outlet, Edge::from((0, 0)));
@@ -2338,9 +2339,9 @@ fn test_graph_nested_push_through_multi_outlet_arm() {
         let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
         let int = inner.add_node(Box::new(node_int(sel)) as Box<_>);
         let br = inner.add_node(Box::new(branch3()) as Box<_>);
-        let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let outlet_c = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet_a = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let outlet_b = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let outlet_c = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(push, int, Edge::from((0, 0)));
         inner.add_edge(int, br, Edge::from((0, 0)));
         inner.add_edge(br, outlet_a, Edge::from((0, 0)));
@@ -2385,8 +2386,8 @@ fn test_graph_nested_push_through_two_levels() {
         let push = inner2.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
         let int = inner2.add_node(Box::new(node_int(sel)) as Box<_>);
         let select = inner2.add_node(Box::new(node_select()) as Box<_>);
-        let oa = inner2.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let ob = inner2.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let oa = inner2.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let ob = inner2.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner2.add_edge(push, int, Edge::from((0, 0)));
         inner2.add_edge(int, select, Edge::from((0, 0)));
         inner2.add_edge(select, oa, Edge::from((0, 0)));
@@ -2397,8 +2398,8 @@ fn test_graph_nested_push_through_two_levels() {
 
         let mut inner1 = Nested::default();
         let inner2_node = inner1.add_node(Box::new(inner2) as Box<dyn DebugNode>);
-        let ox = inner1.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let oy = inner1.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let ox = inner1.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let oy = inner1.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner1.add_edge(inner2_node, ox, Edge::from((0, 0)));
         inner1.add_edge(inner2_node, oy, Edge::from((1, 0)));
 
@@ -2435,8 +2436,8 @@ fn test_graph_nested_push_through_reconvergent_branch() {
         let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
         let int = inner.add_node(Box::new(node_int(sel)) as Box<_>);
         let select = inner.add_node(Box::new(node_select()) as Box<_>);
-        let oa = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let ob = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let oa = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let ob = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(push, int, Edge::from((0, 0)));
         inner.add_edge(int, select, Edge::from((0, 0)));
         inner.add_edge(select, oa, Edge::from((0, 0)));
@@ -2475,9 +2476,9 @@ fn test_graph_nested_push_through_branch_with_constant_outlet() {
         let int = inner.add_node(Box::new(node_int(sel)) as Box<_>);
         let select = inner.add_node(Box::new(node_select()) as Box<_>);
         let seven = inner.add_node(Box::new(node_int(7)) as Box<_>);
-        let outlet_a = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let outlet_b = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
-        let outlet_c = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet_a = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let outlet_b = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let outlet_c = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(push, int, Edge::from((0, 0)));
         inner.add_edge(int, select, Edge::from((0, 0)));
         inner.add_edge(select, outlet_a, Edge::from((0, 0)));
@@ -2617,11 +2618,11 @@ fn test_multiroot_branch_join_external_pred_reversed() {
 fn test_nested_branch_join_external_inlet() {
     let make_inner = || {
         let mut inner = Nested::default();
-        let inlet_a = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-        let inlet_b = inner.add_node(Box::new(node::graph::Inlet) as Box<_>);
+        let inlet_a = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+        let inlet_b = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
         let select = inner.add_node(Box::new(node_select()) as Box<_>);
         let add = inner.add_node(Box::new(node::expr("(+ $l $r)").unwrap()) as Box<_>);
-        let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+        let outlet = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet_a, select, Edge::from((0, 0)));
         inner.add_edge(select, add, Edge::from((0, 0)));
         inner.add_edge(select, add, Edge::from((1, 0)));
@@ -2672,7 +2673,7 @@ fn test_graph_root_outlet_connected() {
     let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let int = g.add_node(Box::new(node_int(42)) as Box<_>);
     let store = g.add_node(Box::new(node_number()) as Box<_>);
-    let outlet = g.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = g.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     g.add_edge(push, int, Edge::from((0, 0)));
     g.add_edge(int, store, Edge::from((0, 0)));
     g.add_edge(store, outlet, Edge::from((0, 0)));
@@ -2691,7 +2692,7 @@ fn test_graph_root_outlet_disconnected() {
     let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let int = g.add_node(Box::new(node_int(42)) as Box<_>);
     let store = g.add_node(Box::new(node_number()) as Box<_>);
-    let _outlet = g.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let _outlet = g.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     g.add_edge(push, int, Edge::from((0, 0)));
     g.add_edge(int, store, Edge::from((0, 0)));
 
@@ -2742,10 +2743,10 @@ fn pd_plus_branch() -> node::Branch {
 //    ----------
 fn pd_plus() -> (Nested, usize) {
     let mut g = Nested::default();
-    let inlet_l = g.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-    let inlet_r = g.add_node(Box::new(node::graph::Inlet) as Box<_>);
+    let inlet_l = g.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+    let inlet_r = g.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
     let branch = g.add_node(Box::new(pd_plus_branch()) as Box<_>);
-    let outlet = g.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = g.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     g.add_edge(inlet_r, branch, Edge::from((0, 0))); // In R -> $?r (branch input 0)
     g.add_edge(inlet_l, branch, Edge::from((0, 1))); // In L -> $?l (branch input 1)
     g.add_edge(branch, outlet, Edge::from((0, 0)));
@@ -2969,10 +2970,10 @@ fn test_nested_pd_plus_emits_reduced_variant() {
 fn pd_plus_wrapped() -> (Nested, usize, usize) {
     let (pd_inner, branch_ix) = pd_plus();
     let mut outer = Nested::default();
-    let inlet_l = outer.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-    let inlet_r = outer.add_node(Box::new(node::graph::Inlet) as Box<_>);
+    let inlet_l = outer.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+    let inlet_r = outer.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
     let pd = outer.add_node(Box::new(pd_inner) as Box<_>);
-    let outlet = outer.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = outer.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     outer.add_edge(inlet_l, pd, Edge::from((0, 0))); // outer in 0 -> pd in 0 (hot)
     outer.add_edge(inlet_r, pd, Edge::from((0, 1))); // outer in 1 -> pd in 1 (cold)
     outer.add_edge(pd, outlet, Edge::from((0, 0)));
@@ -3025,9 +3026,9 @@ fn test_nested_pd_plus_two_levels() {
 fn test_nested_reduced_child_under_active_parent() {
     let (pd_inner, _branch_ix) = pd_plus();
     let mut outer = Nested::default();
-    let inlet = outer.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
+    let inlet = outer.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
     let pd = outer.add_node(Box::new(pd_inner) as Box<_>);
-    let outlet = outer.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = outer.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     outer.add_edge(inlet, pd, Edge::from((0, 0))); // outer inlet -> pd left (hot)
     outer.add_edge(pd, outlet, Edge::from((0, 0))); // pd right inlet left unconnected
 
@@ -3059,7 +3060,7 @@ fn test_push_through_into_nested_optional_hot() {
     let p = l.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let val = l.add_node(Box::new(node_int(10)) as Box<_>);
     let c = l.add_node(Box::new(c_inner) as Box<_>);
-    let outlet = l.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let outlet = l.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     l.add_edge(p, val, Edge::from((0, 0)));
     l.add_edge(val, c, Edge::from((0, 0))); // -> C hot (input 0); C cold (input 1) unwired
     l.add_edge(c, outlet, Edge::from((0, 0)));

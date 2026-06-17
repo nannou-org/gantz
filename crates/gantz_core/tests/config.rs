@@ -75,8 +75,8 @@ type Nested = node::graph::Graph<Box<dyn DebugNode>>;
 //    -------------------  -------   ----------
 fn test_graph() -> TestGraph {
     let mut inner = Nested::default();
-    let inlet = inner.add_node(Box::new(node::graph::Inlet) as Box<dyn DebugNode>);
-    let outlet = inner.add_node(Box::new(node::graph::Outlet) as Box<_>);
+    let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+    let outlet = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     let _orphan = inner.add_node(Box::new(node_mul()) as Box<_>);
     inner.add_edge(inlet, outlet, Edge::from((0, 0)));
 

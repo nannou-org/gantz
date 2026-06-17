@@ -1,4 +1,4 @@
-use crate::{NodeCtx, NodeUi, Registry};
+use crate::{NodeCtx, NodeUi, Registry, SocketDoc, SocketKind};
 
 impl NodeUi for gantz_std::log::Log {
     fn name(&self, _: &dyn Registry) -> &str {
@@ -20,5 +20,14 @@ impl NodeUi for gantz_std::log::Log {
             let level = format!("{:?}", self.level).to_lowercase();
             ui.add(egui::Label::new(&level).selectable(false))
         })
+    }
+
+    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+        match kind {
+            SocketKind::Input => {
+                Some(SocketDoc::ty("any").with_description("value logged at this node's level"))
+            }
+            SocketKind::Output => None,
+        }
     }
 }

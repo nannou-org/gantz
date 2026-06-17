@@ -152,6 +152,34 @@ impl gantz_egui::Registry for Environment {
             .commit_graph_ref(&commit_ca)
             .map(|g| g as &dyn gantz_core::Node)
     }
+
+    fn socket_doc(
+        &self,
+        ca: &gantz_ca::ContentAddr,
+        kind: gantz_egui::SocketKind,
+        ix: usize,
+    ) -> Option<gantz_egui::SocketDoc> {
+        use gantz_core::Node as _;
+        use petgraph::visit::{IntoNodeReferences, NodeRef};
+        // Resolve the referenced graph and read the ix-th inlet/outlet marker's
+        // own doc.
+        let commit_ca = gantz_ca::CommitAddr::from(*ca);
+        let graph = self.registry.commit_graph_ref(&commit_ca)?;
+        let get_node = |c: &gantz_ca::ContentAddr| self.node(c);
+        let meta_ctx = gantz_core::node::MetaCtx::new(&get_node);
+        let node_ref = graph
+            .node_references()
+            .filter(|n| match kind {
+                gantz_egui::SocketKind::Input => n.weight().inlet(meta_ctx),
+                gantz_egui::SocketKind::Output => n.weight().outlet(meta_ctx),
+            })
+            .nth(ix)?;
+        let marker_kind = match kind {
+            gantz_egui::SocketKind::Input => gantz_egui::SocketKind::Output,
+            gantz_egui::SocketKind::Output => gantz_egui::SocketKind::Input,
+        };
+        gantz_egui::NodeUi::socket_doc(node_ref.weight(), self, marker_kind, 0)
+    }
 }
 
 /// The set of all known node types accessible to gantz.

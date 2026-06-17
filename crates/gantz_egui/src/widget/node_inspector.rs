@@ -159,3 +159,87 @@ pub fn path_string(path: &[node::Id]) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+
+/// Working state for the [`socket_doc_editor`], persisted in egui memory so
+/// in-progress text isn't clobbered by re-seeding every frame.
+#[derive(Clone, Default)]
+struct SocketDocEditState {
+    ty: String,
+    desc: String,
+    /// The `(ty, desc)` of the `current` doc we last seeded from, used to detect
+    /// external changes (e.g. a carried-forward edit) without overwriting
+    /// in-progress typing.
+    seeded: (String, String),
+}
+
+/// A small editor for an inlet/outlet marker's stored `ty`/`description`
+/// fields (a type label and a longer note).
+///
+/// Edits are buffered in egui memory and written back into `ty`/`description`
+/// (trimmed) only when a field loses focus or the user presses Enter in the
+/// description (Ctrl/Cmd+Enter inserts a newline). Buffering avoids re-seeding
+/// (and trimming trailing whitespace) on every keystroke, and means the node -
+/// and thus the working graph - only changes on commit, so editing produces a
+/// single graph edit rather than one per keystroke. `id_salt` scopes the edit
+/// state to the node. Returns the combined field response.
+pub(crate) fn socket_doc_editor(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash,
+    ty: &mut String,
+    description: &mut String,
+) -> egui::Response {
+    let id = egui::Id::new("socket-doc-editor").with(&id_salt);
+    let mut st: SocketDocEditState = ui.memory(|m| m.data.get_temp(id)).unwrap_or_default();
+
+    // Re-seed the buffer only when the stored fields changed externally (never
+    // mid-edit, since our own edits aren't written back until committed).
+    let cur = (ty.clone(), description.clone());
+    if st.seeded != cur {
+        st.ty = cur.0.clone();
+        st.desc = cur.1.clone();
+        st.seeded = cur;
+    }
+
+    let ty_resp = ui.add(
+        egui::TextEdit::singleline(&mut st.ty)
+            .id(id.with("ty"))
+            .hint_text("type")
+            .desired_width(f32::INFINITY),
+    );
+    // Plain Enter commits; Ctrl/Cmd+Enter inserts a newline.
+    let desc_resp = ui.add(
+        egui::TextEdit::multiline(&mut st.desc)
+            .id(id.with("desc"))
+            .hint_text("description")
+            .desired_rows(2)
+            .desired_width(f32::INFINITY)
+            .return_key(egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::Enter,
+            )),
+    );
+    let desc_enter = desc_resp.has_focus()
+        && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.any());
+    // Drop focus on commit so the description behaves like the single-line type
+    // field (whose default return-key handling already surrenders focus).
+    if desc_enter {
+        desc_resp.surrender_focus();
+    }
+    let commit = ty_resp.lost_focus() || desc_resp.lost_focus() || desc_enter;
+
+    let resp = ty_resp.union(desc_resp);
+
+    if commit {
+        let new = (st.ty.trim().to_string(), st.desc.trim().to_string());
+        *ty = new.0.clone();
+        *description = new.1.clone();
+        // Keep the seed in sync with what we just wrote back so the trimmed
+        // values aren't treated as an external change next frame.
+        st.ty = new.0.clone();
+        st.desc = new.1.clone();
+        st.seeded = new;
+    }
+
+    ui.memory_mut(|m| m.data.insert_temp(id, st));
+    resp
+}

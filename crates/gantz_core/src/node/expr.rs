@@ -140,6 +140,14 @@ impl Expr {
     pub fn src(&self) -> &str {
         &self.src
     }
+
+    /// The unique `$` variable names, in order of first appearance.
+    ///
+    /// Each name maps to the input at the same index, including the `$` or
+    /// `$?` (optional) prefix.
+    pub fn vars(&self) -> &[String] {
+        &self.vars
+    }
 }
 
 fn default_outputs() -> u8 {

@@ -11,6 +11,7 @@ use crate::widget::graph_select::GraphRegistry;
 use gantz_ca as ca;
 use gantz_core::node::{self, graph::Graph};
 use gantz_core::{Builtins, Node};
+use petgraph::visit::{IntoNodeReferences, NodeRef};
 use std::collections::{BTreeMap, HashMap};
 
 /// Registry reference providing unified node access.
@@ -160,7 +161,7 @@ impl<N: 'static + Node + Send + Sync> FnNodeNames for RegistryRef<'_, N> {
     }
 }
 
-impl<N: 'static + Node + Send + Sync> Registry for RegistryRef<'_, N> {
+impl<N: 'static + Node + crate::NodeUi + Send + Sync> Registry for RegistryRef<'_, N> {
     fn node(&self, ca: &ca::ContentAddr) -> Option<&dyn Node> {
         RegistryRef::node(self, ca)
     }
@@ -176,5 +177,33 @@ impl<N: 'static + Node + Send + Sync> Registry for RegistryRef<'_, N> {
             return self.builtins.demo_graph(builtin_name);
         }
         None
+    }
+
+    fn socket_doc(
+        &self,
+        ca: &ca::ContentAddr,
+        kind: crate::SocketKind,
+        ix: usize,
+    ) -> Option<crate::SocketDoc> {
+        // Resolve the referenced graph and read the ix-th inlet/outlet marker's
+        // own doc (docs live on the `Inlet`/`Outlet` nodes).
+        let commit_ca = ca::CommitAddr::from(*ca);
+        let graph = self.ca_registry.commit_graph_ref(&commit_ca)?;
+        let get_node = |c: &ca::ContentAddr| self.node(c);
+        let meta_ctx = node::MetaCtx::new(&get_node);
+        let node_ref = graph
+            .node_references()
+            .filter(|n| match kind {
+                crate::SocketKind::Input => n.weight().inlet(meta_ctx),
+                crate::SocketKind::Output => n.weight().outlet(meta_ctx),
+            })
+            .nth(ix)?;
+        let marker = node_ref.weight();
+        // An inlet exposes its doc on its output socket; an outlet on its input.
+        let marker_kind = match kind {
+            crate::SocketKind::Input => crate::SocketKind::Output,
+            crate::SocketKind::Output => crate::SocketKind::Input,
+        };
+        marker.socket_doc(self, marker_kind, 0)
     }
 }
