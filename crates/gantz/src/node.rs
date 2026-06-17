@@ -28,8 +28,6 @@ impl Node for gantz_core::node::graph::Inlet {}
 impl Node for gantz_core::node::graph::Outlet {}
 
 #[typetag::serde]
-impl Node for gantz_std::ops::Add {}
-#[typetag::serde]
 impl Node for gantz_std::Bang {}
 #[typetag::serde]
 impl Node for gantz_std::Log {}
@@ -112,7 +110,6 @@ mod tests {
             node_datum("Delay", vec![]),
             node_datum("Identity", vec![]),
             node_datum("Bang", vec![]),
-            node_datum("Add", vec![]),
             node_datum("Inspect", vec![]),
             node_datum("FrameBang", vec![]),
             node_datum("Number", vec![]),
@@ -694,5 +691,43 @@ mod tests {
             })
             .count();
         assert_eq!(to_b, 3, "all instances must be repointed to B");
+    }
+
+    /// Every named graph shipped in `base.gantz` - all primitives and their
+    /// `demo-*` graphs - must compile to a valid Steel module under the same
+    /// `Engine::new_base()` the runtime uses. This guards against authoring a
+    /// graph that relies on a prelude-only binding (`map`, `and`, `cond`,
+    /// `min`, ...) or otherwise emits invalid Steel, which the base engine
+    /// (no prelude) rejects. Mirrors the live compile path in `bevy_gantz::vm`
+    /// (`push_pull_entrypoints` + `vm::init`).
+    #[test]
+    fn base_graphs_all_compile() {
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let base: gantz_egui::export::Export<G> =
+            gantz_egui::export::parse_export(gantz_base::BYTES).expect("parse base");
+        let builtins = crate::builtin::Builtins::new();
+        let reg_ref = gantz_egui::RegistryRef::new(&base.registry, &builtins, &base.demos);
+        let get_node = |ca: &gantz_ca::ContentAddr| reg_ref.node(ca);
+        let config = gantz_core::compile::Config::default();
+
+        assert!(
+            !base.registry.names().is_empty(),
+            "base.gantz registered no named graphs",
+        );
+        for name in base.registry.names().keys() {
+            let head = gantz_ca::Head::Branch(name.clone());
+            let graph = base
+                .registry
+                .head_graph(&head)
+                .unwrap_or_else(|| panic!("`{name}` has no head graph"));
+            let entrypoints = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
+            gantz_core::vm::init(&get_node, graph, &entrypoints, &config).unwrap_or_else(|e| {
+                panic!(
+                    "base graph `{name}` failed to compile:\n{}",
+                    gantz_core::vm::error_chain(&e),
+                )
+            });
+        }
     }
 }

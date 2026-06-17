@@ -9,5 +9,4 @@ mod identity;
 mod inlet;
 mod log;
 mod number;
-mod ops;
 mod outlet;

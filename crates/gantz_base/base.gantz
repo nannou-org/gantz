@@ -1,21 +1,256 @@
-(graph "c3b0e49e"
-  (expr0 (expr (* $l $r)))
-  (inlet1 inlet)
-  (inlet2 inlet)
-  (outlet3 outlet)
-  (-> inlet1 expr0)
-  (-> inlet2 (expr0 1))
-  (-> expr0 outlet3))
+(graph add
+  (op (expr (+ $l $r)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (op 0)) (-> r (op 1)) (-> op out))
 
-(commits
-  ("ffa16025" (time 1773828677 728729908) (graph "c3b0e49e")))
+(graph sub
+  (op (expr (- $l $r)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (op 0)) (-> r (op 1)) (-> op out))
 
-(names
-  (mul "ffa16025"))
+(graph mul
+  (op (expr (* $l $r)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (op 0)) (-> r (op 1)) (-> op out))
 
-(layout "c3b0e49e"
-  (expr0 -39.625 13.40625)
-  (inlet1 -39.625 -75.78125)
-  (inlet2 60.002007 -75.78125)
-  (outlet3 -39.625 106.59375)
-  (scene -53.55 -89.70625 113.55 149.70625))
+(graph div
+  (op (expr (/ $l $r)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (op 0)) (-> r (op 1)) (-> op out))
+
+(graph mod
+  (op (expr (modulo $l $r)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (op 0)) (-> r (op 1)) (-> op out))
+
+(graph neg
+  (op (expr (- 0 $x)))
+  (x inlet) (out outlet)
+  (-> x (op 0)) (-> op out))
+
+(graph abs
+  (op (expr (abs $x)))
+  (x inlet) (out outlet)
+  (-> x (op 0)) (-> op out))
+
+(graph eq
+  (op (expr (equal? $l $r)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (op 0)) (-> r (op 1)) (-> op out))
+
+(graph neq
+  (op (expr (not (equal? $l $r))))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (op 0)) (-> r (op 1)) (-> op out))
+
+(graph lt
+  (op (expr (< $l $r)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (op 0)) (-> r (op 1)) (-> op out))
+
+(graph gt
+  (op (expr (> $l $r)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (op 0)) (-> r (op 1)) (-> op out))
+
+(graph lte
+  (op (expr (<= $l $r)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (op 0)) (-> r (op 1)) (-> op out))
+
+(graph gte
+  (op (expr (>= $l $r)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (op 0)) (-> r (op 1)) (-> op out))
+
+(graph not
+  (op (expr (not $x)))
+  (x inlet) (out outlet)
+  (-> x (op 0)) (-> op out))
+
+(graph and
+  (op (expr (if $l $r #f)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (op 0)) (-> r (op 1)) (-> op out))
+
+(graph or
+  (op (expr (if $l $l $r)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (op 0)) (-> r (op 1)) (-> op out))
+
+(graph select
+  (op (expr (if $cond $then $else)))
+  (cond inlet) (then inlet) (else inlet) (out outlet)
+  (-> cond (op 0)) (-> then (op 1)) (-> else (op 2)) (-> op out))
+
+(graph cons
+  (op (expr (cons $head $tail)))
+  (head inlet) (tail inlet) (out outlet)
+  (-> head (op 0)) (-> tail (op 1)) (-> op out))
+
+(graph first
+  (op (expr (car $list)))
+  (list inlet) (out outlet)
+  (-> list (op 0)) (-> op out))
+
+(graph rest
+  (op (expr (cdr $list)))
+  (list inlet) (out outlet)
+  (-> list (op 0)) (-> op out))
+
+(graph length
+  (op (expr (length $list)))
+  (list inlet) (out outlet)
+  (-> list (op 0)) (-> op out))
+
+(graph append
+  (op (expr (append $l $r)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (op 0)) (-> r (op 1)) (-> op out))
+
+(graph list-ref
+  (op (expr (list-ref $list $index)))
+  (list inlet) (index inlet) (out outlet)
+  (-> list (op 0)) (-> index (op 1)) (-> op out))
+
+(graph reverse
+  (op (expr (reverse $list)))
+  (list inlet) (out outlet)
+  (-> list (op 0)) (-> op out))
+
+(graph empty?
+  (op (expr (empty? $list)))
+  (list inlet) (out outlet)
+  (-> list (op 0)) (-> op out))
+
+(graph number?
+  (op (expr (number? $x)))
+  (x inlet) (out outlet)
+  (-> x (op 0)) (-> op out))
+
+(graph string?
+  (op (expr (string? $x)))
+  (x inlet) (out outlet)
+  (-> x (op 0)) (-> op out))
+
+(graph list?
+  (op (expr (list? $x)))
+  (x inlet) (out outlet)
+  (-> x (op 0)) (-> op out))
+
+(graph demo-arithmetic
+  (intro (comment "Arithmetic. Edit a or b to push results through each op." 420 28))
+  (a number) (b number)
+  (lbl-add (comment "add: a + b" 130 24)) (r-add (ref add)) (i-add inspect)
+  (lbl-sub (comment "sub: a - b" 130 24)) (r-sub (ref sub)) (i-sub inspect)
+  (lbl-mul (comment "mul: a * b" 130 24)) (r-mul (ref mul)) (i-mul inspect)
+  (lbl-div (comment "div: a / b" 130 24)) (r-div (ref div)) (i-div inspect)
+  (lbl-mod (comment "mod: a modulo b" 150 24)) (r-mod (ref mod)) (i-mod inspect)
+  (lbl-neg (comment "neg: 0 - a" 130 24)) (r-neg (ref neg)) (i-neg inspect)
+  (lbl-abs (comment "abs: magnitude of a" 180 24)) (r-abs (ref abs)) (i-abs inspect)
+  (-> a (r-add 0)) (-> b (r-add 1)) (-> r-add i-add)
+  (-> a (r-sub 0)) (-> b (r-sub 1)) (-> r-sub i-sub)
+  (-> a (r-mul 0)) (-> b (r-mul 1)) (-> r-mul i-mul)
+  (-> a (r-div 0)) (-> b (r-div 1)) (-> r-div i-div)
+  (-> a (r-mod 0)) (-> b (r-mod 1)) (-> r-mod i-mod)
+  (-> a (r-neg 0)) (-> r-neg i-neg)
+  (-> a (r-abs 0)) (-> r-abs i-abs))
+
+(graph demo-comparison
+  (intro (comment "Comparison. Edit a or b; each result is a boolean." 420 28))
+  (a number) (b number)
+  (lbl-eq (comment "eq: a equals b" 160 24)) (r-eq (ref eq)) (i-eq inspect)
+  (lbl-neq (comment "neq: a not equal b" 180 24)) (r-neq (ref neq)) (i-neq inspect)
+  (lbl-lt (comment "lt: a less than b" 170 24)) (r-lt (ref lt)) (i-lt inspect)
+  (lbl-gt (comment "gt: a greater than b" 190 24)) (r-gt (ref gt)) (i-gt inspect)
+  (lbl-lte (comment "lte: a at most b" 170 24)) (r-lte (ref lte)) (i-lte inspect)
+  (lbl-gte (comment "gte: a at least b" 170 24)) (r-gte (ref gte)) (i-gte inspect)
+  (-> a (r-eq 0)) (-> b (r-eq 1)) (-> r-eq i-eq)
+  (-> a (r-neq 0)) (-> b (r-neq 1)) (-> r-neq i-neq)
+  (-> a (r-lt 0)) (-> b (r-lt 1)) (-> r-lt i-lt)
+  (-> a (r-gt 0)) (-> b (r-gt 1)) (-> r-gt i-gt)
+  (-> a (r-lte 0)) (-> b (r-lte 1)) (-> r-lte i-lte)
+  (-> a (r-gte 0)) (-> b (r-gte 1)) (-> r-gte i-gte))
+
+(graph demo-logic
+  (intro (comment "Boolean logic and select. p = a<b, q = a>b. Edit a or b." 440 28))
+  (a number) (b number)
+  (lbl-p (comment "p = a less than b" 170 24)) (r-p (ref lt)) (i-p inspect)
+  (lbl-q (comment "q = a greater than b" 190 24)) (r-q (ref gt)) (i-q inspect)
+  (lbl-not (comment "not p" 110 24)) (r-not (ref not)) (i-not inspect)
+  (lbl-and (comment "p and q" 120 24)) (r-and (ref and)) (i-and inspect)
+  (lbl-or (comment "p or q" 120 24)) (r-or (ref or)) (i-or inspect)
+  (lbl-sel (comment "select p a b -> min of a and b" 250 24)) (r-sel (ref select)) (i-sel inspect)
+  (-> a (r-p 0)) (-> b (r-p 1)) (-> r-p i-p)
+  (-> a (r-q 0)) (-> b (r-q 1)) (-> r-q i-q)
+  (-> r-p (r-not 0)) (-> r-not i-not)
+  (-> r-p (r-and 0)) (-> r-q (r-and 1)) (-> r-and i-and)
+  (-> r-p (r-or 0)) (-> r-q (r-or 1)) (-> r-or i-or)
+  (-> r-p (r-sel 0)) (-> a (r-sel 1)) (-> b (r-sel 2)) (-> r-sel i-sel))
+
+(graph demo-list
+  (intro (comment "Lists. Press bang to push the example list. Edit idx or hd too." 460 28))
+  (go bang)
+  (src (expr (begin $bang (list 1 2 3)))) (lbl-src (comment "src = list 1 2 3" 170 24)) (i-src inspect)
+  (lbl-first (comment "first src" 130 24)) (r-first (ref first)) (i-first inspect)
+  (lbl-rest (comment "rest src" 130 24)) (r-rest (ref rest)) (i-rest inspect)
+  (lbl-len (comment "length src" 130 24)) (r-len (ref length)) (i-len inspect)
+  (lbl-rev (comment "reverse src" 130 24)) (r-rev (ref reverse)) (i-rev inspect)
+  (lbl-empty (comment "empty? src" 130 24)) (r-empty (ref empty?)) (i-empty inspect)
+  (idx number) (lbl-ref (comment "list-ref src idx" 170 24)) (r-ref (ref list-ref)) (i-ref inspect)
+  (hd number) (lbl-cons (comment "cons hd src" 150 24)) (r-cons (ref cons)) (i-cons inspect)
+  (lbl-app (comment "append src src" 160 24)) (r-app (ref append)) (i-app inspect)
+  (-> go (src 0)) (-> src i-src)
+  (-> src (r-first 0)) (-> r-first i-first)
+  (-> src (r-rest 0)) (-> r-rest i-rest)
+  (-> src (r-len 0)) (-> r-len i-len)
+  (-> src (r-rev 0)) (-> r-rev i-rev)
+  (-> src (r-empty 0)) (-> r-empty i-empty)
+  (-> src (r-ref 0)) (-> idx (r-ref 1)) (-> r-ref i-ref)
+  (-> hd (r-cons 0)) (-> src (r-cons 1)) (-> r-cons i-cons)
+  (-> src (r-app 0)) (-> src (r-app 1)) (-> r-app i-app))
+
+(graph demo-predicate
+  (intro (comment "Type predicates. Press bang to test values of each type." 460 28))
+  (go bang)
+  (v-num (expr (begin $bang 42)))
+  (v-str (expr (begin $bang "hi")))
+  (v-lst (expr (begin $bang (list 1 2 3))))
+  (lbl1 (comment "number? on a number -> true" 240 24)) (p1 (ref number?)) (i1 inspect)
+  (lbl2 (comment "number? on a string -> false" 240 24)) (p2 (ref number?)) (i2 inspect)
+  (lbl3 (comment "string? on a string -> true" 240 24)) (p3 (ref string?)) (i3 inspect)
+  (lbl4 (comment "list? on a list -> true" 220 24)) (p4 (ref list?)) (i4 inspect)
+  (-> go (v-num 0)) (-> go (v-str 0)) (-> go (v-lst 0))
+  (-> v-num (p1 0)) (-> p1 i1)
+  (-> v-str (p2 0)) (-> p2 i2)
+  (-> v-str (p3 0)) (-> p3 i3)
+  (-> v-lst (p4 0)) (-> p4 i4))
+
+(demo add "demo-arithmetic")
+(demo sub "demo-arithmetic")
+(demo mul "demo-arithmetic")
+(demo div "demo-arithmetic")
+(demo mod "demo-arithmetic")
+(demo neg "demo-arithmetic")
+(demo abs "demo-arithmetic")
+(demo eq "demo-comparison")
+(demo neq "demo-comparison")
+(demo lt "demo-comparison")
+(demo gt "demo-comparison")
+(demo lte "demo-comparison")
+(demo gte "demo-comparison")
+(demo not "demo-logic")
+(demo and "demo-logic")
+(demo or "demo-logic")
+(demo select "demo-logic")
+(demo cons "demo-list")
+(demo first "demo-list")
+(demo rest "demo-list")
+(demo length "demo-list")
+(demo append "demo-list")
+(demo list-ref "demo-list")
+(demo reverse "demo-list")
+(demo empty? "demo-list")
+(demo number? "demo-predicate")
+(demo string? "demo-predicate")
+(demo list? "demo-predicate")

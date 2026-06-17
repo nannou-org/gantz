@@ -185,9 +185,6 @@ impl gantz_egui::Registry for Environment {
 /// The set of all known node types accessible to gantz.
 fn primitives() -> Primitives {
     let mut p = Primitives::default();
-    register_primitive(&mut p, "add", || {
-        Box::new(gantz_std::ops::Add::default()) as Box<_>
-    });
     register_primitive(&mut p, "bang", || {
         Box::new(gantz_std::Bang::default()) as Box<_>
     });
@@ -247,8 +244,6 @@ impl Node for gantz_core::node::graph::Inlet {}
 #[typetag::serde]
 impl Node for gantz_core::node::graph::Outlet {}
 
-#[typetag::serde]
-impl Node for gantz_std::ops::Add {}
 #[typetag::serde]
 impl Node for gantz_std::Bang {}
 #[typetag::serde]

@@ -81,9 +81,6 @@ impl gantz_core::Builtins for Builtins {
 
 fn primitives() -> Primitives {
     let mut p = Primitives::default();
-    register_primitive(&mut p, "add", || {
-        Box::new(gantz_std::ops::Add::default()) as Box<_>
-    });
     register_primitive(&mut p, "apply", || {
         Box::new(gantz_core::node::Apply::default()) as Box<_>
     });

@@ -113,7 +113,6 @@ const KEYWORD_TAG: &[(&str, &str)] = &[
     ("delay", "Delay"),
     ("id", "Identity"),
     ("bang", "Bang"),
-    ("add", "Add"),
     ("inspect", "Inspect"),
     ("frame-bang", "FrameBang"),
     ("number", "Number"),
