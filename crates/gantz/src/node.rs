@@ -792,4 +792,67 @@ mod tests {
                 .unwrap_or_else(|e| panic!("firing {name} bang errored: {e}"));
         }
     }
+
+    /// Resetting a demo re-parses the base and merges the demo's commit subset
+    /// back in. Because the base's hand-authored graphs are stamped at a fixed
+    /// [`bevy_gantz_egui::base::BASE_TIMESTAMP`], the re-parse reproduces the
+    /// primitive commit addresses loaded at startup, so the reset demo's `ref`s
+    /// still resolve and it recompiles. (With a wall-clock timestamp the
+    /// re-parsed demo would reference fresh primitive commits absent from the
+    /// registry, failing with "node has 0 outputs".)
+    #[test]
+    fn reset_then_reopen_demo_recompiles() {
+        use gantz_core::compile::{Config, push_pull_entrypoints};
+        use std::collections::HashSet;
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
+        let parse = || {
+            gantz_egui::export::parse_export_at::<Box<dyn Node>>(gantz_base::BYTES, ts)
+                .expect("parse base")
+        };
+
+        // Parsing the base at the fixed timestamp is reproducible: every name
+        // maps to the same commit both times - what lets a reset agree with the
+        // registry loaded at startup.
+        let startup = parse();
+        let reparse = parse();
+        assert_eq!(
+            startup.registry.names(),
+            reparse.registry.names(),
+            "base commit addresses must be reproducible across parses",
+        );
+
+        // Simulate `on_reset_base_graph`: re-export the demo's commit subset
+        // from a fresh parse and merge it into the startup registry.
+        let mut registry = startup.registry;
+        let name = "demo-arithmetic";
+        let &demo_commit = reparse.registry.names().get(name).expect("demo name");
+        let mut required = HashSet::new();
+        let mut ca = demo_commit;
+        loop {
+            required.insert(ca);
+            match reparse.registry.commits().get(&ca).and_then(|c| c.parent) {
+                Some(parent) => ca = parent,
+                None => break,
+            }
+        }
+        let mut subset = reparse.registry.export(&required);
+        subset.insert_name(name.to_string(), demo_commit);
+        registry.merge(subset);
+
+        // Reopen: the reset demo must still compile, i.e. every `ref` resolves.
+        let builtins = crate::builtin::Builtins::new();
+        let reg_ref = gantz_egui::RegistryRef::new(&registry, &builtins, &startup.demos);
+        let get_node = |ca: &gantz_ca::ContentAddr| reg_ref.node(ca);
+        let head = gantz_ca::Head::Branch(name.to_string());
+        let graph = registry.head_graph(&head).expect("demo graph");
+        let eps = push_pull_entrypoints(&get_node, graph);
+        gantz_core::vm::init(&get_node, graph, &eps, &Config::default()).unwrap_or_else(|e| {
+            panic!(
+                "recompile after reset failed: {}",
+                gantz_core::vm::error_chain(&e)
+            )
+        });
+    }
 }

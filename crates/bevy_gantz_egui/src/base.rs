@@ -20,6 +20,14 @@ use crate::BaseNames;
 /// Raw bytes of the baked-in base `.gantz` export, embedded at compile time.
 const BYTES: &[u8] = gantz_base::BYTES;
 
+/// Fixed timestamp used to stamp the base's hand-authored (uncommitted) graphs.
+///
+/// The base is parsed at startup *and* again on demo reset; both must agree on
+/// the synthesized commit addresses, otherwise a reset demo's `ref`s point at
+/// commits that are absent from the already-loaded registry (its primitives
+/// were stamped at startup). A constant makes those addresses reproducible.
+pub const BASE_TIMESTAMP: gantz_ca::Timestamp = std::time::Duration::ZERO;
+
 /// Startup system that deserializes the embedded base export and merges it
 /// into the registry, populating [`BaseNames`].
 pub fn load<N>(
@@ -30,14 +38,14 @@ pub fn load<N>(
 ) where
     N: 'static + serde::Serialize + serde::de::DeserializeOwned + gantz_ca::CaHash + Send + Sync,
 {
-    let export: gantz_egui::export::Export<Graph<N>> = match gantz_egui::export::parse_export(BYTES)
-    {
-        Ok(e) => e,
-        Err(e) => {
-            log::error!("base.gantz: {e}");
-            return;
-        }
-    };
+    let export: gantz_egui::export::Export<Graph<N>> =
+        match gantz_egui::export::parse_export_at(BYTES, BASE_TIMESTAMP) {
+            Ok(e) => e,
+            Err(e) => {
+                log::error!("base.gantz: {e}");
+                return;
+            }
+        };
     base_names.0 = export.registry.names().clone();
     registry.merge(export.registry);
     views.0.extend(export.views);
