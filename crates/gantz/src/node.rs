@@ -745,6 +745,26 @@ mod tests {
         }
     }
 
+    /// Every `ref` in `base.gantz` is auto-syncing, so the demos track the latest
+    /// primitive commits automatically. Verified through a load + re-serialize
+    /// round-trip (the `update-base` export path): a loaded `NamedRef` whose
+    /// `sync` was set re-emits `#:sync`, so the re-serialized text carries one
+    /// `#:sync` per `ref`.
+    #[test]
+    fn base_refs_are_synced() {
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+        let base: gantz_egui::export::Export<G> =
+            gantz_egui::export::parse_export(gantz_base::BYTES).expect("parse base");
+        let text = gantz_egui::format::to_string(&base).expect("to_string");
+        let refs = text.matches("(ref ").count() + text.matches("(fn-ref ").count();
+        let synced = text.matches("#:sync").count();
+        assert!(refs > 0, "expected base to contain refs");
+        assert_eq!(
+            refs, synced,
+            "every base ref must auto-sync (#:sync); got {synced}/{refs}\n--- text ---\n{text}",
+        );
+    }
+
     /// End-to-end check of every `demo-*` graph: firing its `bang` must evaluate
     /// all ops without a runtime error *or panic*, with default inputs. The bang
     /// feeds every interactive input, so all of an op's inputs are active in one
