@@ -1779,10 +1779,9 @@ fn sidebar_toggle(ctx: &egui::Context, anchor_pos: egui::Pos2, open: &mut bool) 
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             egui::Frame::NONE.show(ui, |ui| {
-                // An arrow pointing in the direction the scene's edge will move:
-                // ◀ collapses the sidebar, ▶ opens it. Painted in the same faint
-                // colour as egui_graph's dot grid so it isn't distracting.
-                let icon = if *open { "◀" } else { "▶" };
+                // A hamburger that toggles the sidebar. Painted in the same
+                // faint colour as egui_graph's dot grid so it isn't distracting.
+                let icon = "☰";
                 let faint = ui.style().noninteractive().bg_stroke.color;
                 let text = egui::RichText::new(icon)
                     .size(SIDEBAR_TOGGLE_ICON_SIZE)
