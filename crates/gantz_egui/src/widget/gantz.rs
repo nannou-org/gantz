@@ -498,6 +498,12 @@ impl<'a> Gantz<'a> {
             // Restore the default sidebar width / tray height too.
             state.sidebar_width = default_sidebar_width();
             state.tray_height = default_tray_height();
+            // Restore default pane visibility (e.g. the perf panes turn off),
+            // but keep the sidebar's open/closed state since the user just
+            // acted from within it.
+            let sidebar_open = state.view_toggles.sidebar_open;
+            state.view_toggles = ViewToggles::default();
+            state.view_toggles.sidebar_open = sidebar_open;
         }
 
         // Persist the tree.
@@ -1579,7 +1585,12 @@ fn capture_fixed_sizes(tree: &egui_tiles::Tree<Pane>, state: &mut GantzState, ar
     let Some(anchors) = layout_anchors(tree) else {
         return;
     };
-    if state.view_toggles.sidebar_open {
+    // Gate on the *laid-out* visibility, not `sidebar_open`: the hamburger can
+    // flip `sidebar_open` mid-frame, but `set_tile_visibility` only runs at the
+    // frame start, so the layout (and thus the captured share) reflects the
+    // visibility from frame start. Capturing against a stale layout would
+    // compute the column's size against the wrong set of visible siblings.
+    if tree.is_visible(anchors.left_column) {
         if let Some(width) = linear_child_points(
             tree,
             anchors.root,
@@ -1591,7 +1602,7 @@ fn capture_fixed_sizes(tree: &egui_tiles::Tree<Pane>, state: &mut GantzState, ar
             }
         }
     }
-    if state.view_toggles.logs || state.view_toggles.steel {
+    if tree.is_visible(anchors.tray) {
         if let Some(height) = linear_child_points(
             tree,
             anchors.right_column,
@@ -2151,6 +2162,24 @@ mod tests {
         state.sidebar_width = 240.0;
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
         impose_fixed_sizes(&mut tree, &state, area);
+        capture_fixed_sizes(&tree, &mut state, area);
+        assert!((state.sidebar_width - 240.0).abs() < 0.01);
+    }
+
+    /// Reopening the sidebar must not inflate its width. On the open-transition
+    /// frame `sidebar_open` is already true but the layout still has the left
+    /// column hidden; capturing then would size it against the wrong siblings.
+    #[test]
+    fn capture_skips_while_sidebar_laid_out_hidden() {
+        let mut tree = create_tree();
+        let anchors = layout_anchors(&tree).unwrap();
+        // Layout state: sidebar hidden (as at frame start)...
+        tree.set_visible(anchors.left_column, false);
+        let mut state = GantzState::new();
+        // ...but `sidebar_open` was just toggled on mid-frame.
+        state.view_toggles.sidebar_open = true;
+        state.sidebar_width = 240.0;
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
         capture_fixed_sizes(&tree, &mut state, area);
         assert!((state.sidebar_width - 240.0).abs() < 0.01);
     }
