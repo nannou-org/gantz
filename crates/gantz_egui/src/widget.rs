@@ -3,6 +3,7 @@ use time::{OffsetDateTime, UtcOffset, format_description};
 
 pub use command_palette::CommandPalette;
 pub use gantz::{Gantz, GantzState, update_graph_pane_head};
+pub use global_config::{GlobalConfigResponse, global_config};
 pub use graph_config::{GraphConfig, GraphConfigResponse};
 pub use graph_scene::{GraphScene, GraphSceneState};
 pub use graph_select::GraphSelect;
@@ -14,12 +15,13 @@ pub use label_button::LabelButton;
 pub use label_toggle::LabelToggle;
 pub use log_view::LogView;
 pub use node_inspector::NodeInspector;
-pub use pane_menu::PaneMenu;
+pub use panes_config::panes_config;
 pub use perf_view::{PerfCapture, PerfView};
 pub use steel_view::SteelView;
 
 pub mod command_palette;
 pub mod gantz;
+pub mod global_config;
 pub mod graph_config;
 pub mod graph_scene;
 pub mod graph_select;
@@ -31,7 +33,7 @@ pub mod label_button;
 pub mod label_toggle;
 pub mod log_view;
 pub mod node_inspector;
-pub mod pane_menu;
+pub mod panes_config;
 pub mod perf_view;
 pub mod steel_view;
 #[cfg(feature = "tracing")]

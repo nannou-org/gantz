@@ -56,6 +56,9 @@ pub struct GraphScene<'a, N> {
     layout_flow: egui::Direction,
     center_view: bool,
     immutable: bool,
+    /// When set, the background context menu gains a "Panes" submenu of
+    /// pane-visibility checkboxes.
+    view_toggles: Option<&'a mut crate::widget::gantz::ViewToggles>,
 }
 
 /// State associated with the [`GraphScene`] widget that can be useful to access
@@ -96,6 +99,7 @@ where
             layout_flow: egui::Direction::TopDown,
             center_view: false,
             immutable: false,
+            view_toggles: None,
         }
     }
 
@@ -141,6 +145,13 @@ where
     /// Default: `false`
     pub fn immutable(mut self, immutable: bool) -> Self {
         self.immutable = immutable;
+        self
+    }
+
+    /// Provide the pane-visibility toggles, adding a "Panes" submenu to the
+    /// background (graph-area) context menu. Available even in immutable mode.
+    pub fn view_toggles(mut self, view_toggles: &'a mut crate::widget::gantz::ViewToggles) -> Self {
+        self.view_toggles = Some(view_toggles);
         self
     }
 
@@ -197,28 +208,38 @@ where
                 .collect();
         }
 
-        // Background context menu.
-        if !self.immutable {
+        // Background context menu: graph actions (when mutable) plus a "Panes"
+        // submenu for toggling pane visibility (available even when immutable).
+        let immutable = self.immutable;
+        let view_toggles = self.view_toggles;
+        if !immutable || view_toggles.is_some() {
             let layer_id = graph_response.response.layer_id;
             graph_response.response.context_menu(|ui| {
-                // The popup is placed at the right-click location, so its
-                // top-left corner in screen space corresponds to where the
-                // user clicked. Convert that to graph space for paste
-                // positioning.
-                let menu_screen_pos = ui.min_rect().left_top();
-                if ui.button("add node").clicked() {
-                    responses.push(DynResponse::new(OpenCommandPalette));
-                    ui.close();
+                if !immutable {
+                    // The popup is placed at the right-click location, so its
+                    // top-left corner in screen space corresponds to where the
+                    // user clicked. Convert that to graph space for paste
+                    // positioning.
+                    let menu_screen_pos = ui.min_rect().left_top();
+                    if ui.button("add node").clicked() {
+                        responses.push(DynResponse::new(OpenCommandPalette));
+                        ui.close();
+                    }
+                    if ui.button("paste").clicked() {
+                        let graph_pos = ui
+                            .ctx()
+                            .layer_transform_from_global(layer_id)
+                            .map(|t| t * menu_screen_pos)
+                            .unwrap_or(menu_screen_pos);
+                        let pos = PastePos::GraphPos(graph_pos);
+                        responses.push(DynResponse::new(Paste { text: None, pos }));
+                        ui.close();
+                    }
                 }
-                if ui.button("paste").clicked() {
-                    let graph_pos = ui
-                        .ctx()
-                        .layer_transform_from_global(layer_id)
-                        .map(|t| t * menu_screen_pos)
-                        .unwrap_or(menu_screen_pos);
-                    let pos = PastePos::GraphPos(graph_pos);
-                    responses.push(DynResponse::new(Paste { text: None, pos }));
-                    ui.close();
+                if let Some(view) = view_toggles {
+                    ui.menu_button("Panes", |ui| {
+                        crate::widget::panes_config(view, ui);
+                    });
                 }
             });
         }

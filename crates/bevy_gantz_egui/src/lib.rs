@@ -1377,6 +1377,15 @@ where
         }
     }
 
+    // Handle "reset all demos" - re-merge every `demo-*` base graph.
+    if response.reset_all_demos {
+        for name in base_names.0.keys() {
+            if name.starts_with("demo-") {
+                cmds.trigger(ResetBaseGraphEvent(name.clone()));
+            }
+        }
+    }
+
     // Handle compile config change. The recompile happens next frame via
     // `bevy_gantz::vm::sync`, which compares each head's compile inputs
     // (graph content address + config) by value.
