@@ -842,7 +842,14 @@ where
                 paint_gantz_file_hover_overlay(ui);
 
                 let heads = access.heads();
-                let res = graph_select(gantz.env, heads, *focused_head, *base_names, ui);
+                let res = graph_select(
+                    gantz.env,
+                    heads,
+                    *focused_head,
+                    *base_names,
+                    gantz.demos,
+                    ui,
+                );
 
                 if res.inner.export_all {
                     gantz_response.responses.push(None, ExportAllNamed);
@@ -1814,11 +1821,13 @@ fn graph_select(
     heads: &[gantz_ca::Head],
     focused_head: usize,
     base_names: &gantz_ca::registry::Names,
+    demos: Option<&HashMap<gantz_ca::CommitAddr, String>>,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse> {
     pane_ui(ui, |ui| {
         widget::GraphSelect::new(env, heads, base_names)
             .focused_head(focused_head)
+            .demos(demos)
             .show(ui)
     })
 }

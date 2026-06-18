@@ -1,7 +1,7 @@
 //! A simple widget for selecting between, naming and creating new graphs.
 
 use super::head_row::{HeadRowType, head_row};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// A widget for selecting between, naming, and creating new graphs.
 pub struct GraphSelect<'a> {
@@ -10,11 +10,27 @@ pub struct GraphSelect<'a> {
     heads: &'a [gantz_ca::Head],
     focused_head: Option<usize>,
     base_names: &'a gantz_ca::registry::Names,
+    /// Demo associations (commit -> demo name), for the row context menu.
+    demos: Option<&'a HashMap<gantz_ca::CommitAddr, String>>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct GraphSelectState {
     name_filter: String,
+    /// Whether base (non-demo) graphs are shown.
+    show_base: bool,
+    /// Whether demo graphs are shown (including base demos).
+    show_demo: bool,
+}
+
+impl Default for GraphSelectState {
+    fn default() -> Self {
+        Self {
+            name_filter: String::new(),
+            show_base: true,
+            show_demo: true,
+        }
+    }
 }
 
 /// Methods required on the provided graph registry.
@@ -89,11 +105,19 @@ impl<'a> GraphSelect<'a> {
             id,
             focused_head: None,
             base_names,
+            demos: None,
         }
     }
 
     pub fn with_id(mut self, id: egui::Id) -> Self {
         self.id = id;
+        self
+    }
+
+    /// Provide demo associations so a graph's row context menu can offer to
+    /// open its associated demo.
+    pub fn demos(mut self, demos: Option<&'a HashMap<gantz_ca::CommitAddr, String>>) -> Self {
+        self.demos = demos;
         self
     }
 
@@ -118,7 +142,30 @@ impl<'a> GraphSelect<'a> {
             .hint_text("🔎 Name Filter")
             .show(ui);
 
+        // Toggle filters for base nodes and demos, as subtle label toggles.
+        // Override the selected colour to regular text (rather than the bright
+        // accent) so the enabled state stays subtle: dim when off, regular when
+        // on, brighter on hover.
+        ui.horizontal(|ui| {
+            let visuals = ui.visuals();
+            let hovered = visuals.text_color();
+            let selected = visuals.strong_text_color();
+            ui.add(
+                super::LabelToggle::new("base", &mut state.show_base)
+                    .hovered_color(hovered)
+                    .selected_color(selected),
+            )
+            .on_hover_text("show base nodes");
+            ui.add(
+                super::LabelToggle::new("demo", &mut state.show_demo)
+                    .hovered_color(hovered)
+                    .selected_color(selected),
+            )
+            .on_hover_text("show demos");
+        });
+
         let names = self.registry.names();
+        let demos = self.demos;
 
         // List all the graphs, named then unnamed.
         egui::ScrollArea::vertical()
@@ -146,7 +193,8 @@ impl<'a> GraphSelect<'a> {
 
                 let mut visited = HashSet::new();
 
-                // Helper: show a named graph row and handle clicks.
+                // Helper: show a named graph row, its right-click menu, and
+                // handle clicks.
                 let show_named =
                     |ui: &mut egui::Ui,
                      name: &str,
@@ -157,6 +205,35 @@ impl<'a> GraphSelect<'a> {
                      response: &mut GraphSelectResponse| {
                         let head = gantz_ca::Head::Branch(name.to_string());
                         let res = head_row(heads, &head, row_type, ca, focused_head, ui);
+                        // Deletable iff the row offers an `×` (named, non-base).
+                        let deletable = res.delete.is_some();
+                        // The associated demo to offer, if any.
+                        let demo = demos.and_then(|d| d.get(ca)).cloned();
+                        res.row.context_menu(|ui| {
+                            if ui.button("open").clicked() {
+                                response.replaced = Some(head.clone());
+                                ui.close();
+                            }
+                            if ui.button("open tab").clicked() {
+                                response.opened = Some(head.clone());
+                                ui.close();
+                            }
+                            if let Some(demo_name) = &demo {
+                                if ui
+                                    .button("demo")
+                                    .on_hover_text("open the associated demo in a new tab")
+                                    .clicked()
+                                {
+                                    response.opened =
+                                        Some(gantz_ca::Head::Branch(demo_name.clone()));
+                                    ui.close();
+                                }
+                            }
+                            if deletable && ui.button("delete").clicked() {
+                                response.name_removed = Some(name.to_string());
+                                ui.close();
+                            }
+                        });
                         if res.row.clicked() {
                             click_head(ui, heads, focused_head, head, response);
                         } else if let Some(delete) = res.delete {
@@ -186,10 +263,10 @@ impl<'a> GraphSelect<'a> {
                     );
                 }
 
-                // 2. Base-named, non-demo.
+                // 2. Base-named, non-demo (hidden when the `base` filter is off).
                 for (name, ca) in names
                     .iter()
-                    .filter(|(n, _)| is_base(n) && !is_demo(n) && !is_nested(n))
+                    .filter(|(n, _)| state.show_base && is_base(n) && !is_demo(n) && !is_nested(n))
                 {
                     if !matches_filter(name) {
                         continue;
@@ -206,8 +283,12 @@ impl<'a> GraphSelect<'a> {
                     );
                 }
 
-                // 3. All demos, alphabetical, regardless of user/base.
-                for (name, ca) in names.iter().filter(|(n, _)| is_demo(n) && !is_nested(n)) {
+                // 3. All demos, alphabetical, regardless of user/base (hidden
+                //    when the `demo` filter is off; shown even if also a base).
+                for (name, ca) in names
+                    .iter()
+                    .filter(|(n, _)| state.show_demo && is_demo(n) && !is_nested(n))
+                {
                     if !matches_filter(name) {
                         continue;
                     }
