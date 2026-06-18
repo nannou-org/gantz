@@ -98,7 +98,7 @@ pub struct GantzState {
 
 /// The default fixed sidebar width, in points.
 fn default_sidebar_width() -> f32 {
-    240.0
+    270.0
 }
 
 /// The default fixed bottom-tray height, in points.
@@ -1762,8 +1762,9 @@ fn pane_ui<R>(ui: &mut egui::Ui, pane: impl FnOnce(&mut egui::Ui) -> R) -> egui:
     egui::CentralPanel::default().show_inside(ui, |ui| pane(ui))
 }
 
-/// The size of the floating sidebar hamburger glyph, also used to stack the
-/// nested-graph breadcrumb above it (they share the scene's bottom-left corner).
+/// The size of the floating sidebar toggle glyph, also used to offset the
+/// nested-graph breadcrumb to its right (they share the scene's bottom-left
+/// corner).
 const SIDEBAR_TOGGLE_ICON_SIZE: f32 = 24.0;
 
 /// A floating hamburger button that toggles the sidebar open/closed.
@@ -1909,12 +1910,12 @@ fn name_breadcrumb(
     let segs: Vec<&str> = name.split(sep).collect();
     let sep_str = sep.to_string();
     let space = ui.style().interaction.interact_radius * 3.0;
-    // Sit above the floating sidebar hamburger, which occupies the very
-    // bottom-left corner of the scene.
-    let hamburger_h = SIDEBAR_TOGGLE_ICON_SIZE + ui.style().spacing.item_spacing.y;
+    // Sit to the right of the floating sidebar toggle, which occupies the very
+    // bottom-left corner of the scene, so the levels stay on the bottom row.
+    let toggle_w = SIDEBAR_TOGGLE_ICON_SIZE + ui.style().spacing.item_spacing.x;
     egui::Window::new("breadcrumb_window")
         .pivot(egui::Align2::LEFT_BOTTOM)
-        .fixed_pos(scene_rect.left_bottom() + egui::vec2(space, -space - hamburger_h))
+        .fixed_pos(scene_rect.left_bottom() + egui::vec2(space + toggle_w, -space))
         .title_bar(false)
         .resizable(false)
         .collapsible(false)
