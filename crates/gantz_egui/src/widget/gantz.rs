@@ -87,13 +87,23 @@ pub struct GantzState {
     /// Per-head redo stacks for undo/redo support.
     #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub redo_stacks: HashMap<gantz_ca::Head, Vec<gantz_ca::CommitAddr>>,
-    /// The sidebar's pixel width, maintained across window resizes. `None`
-    /// until the sidebar has first been laid out.
-    #[serde(default)]
-    pub sidebar_width: Option<f32>,
+    /// The sidebar's pixel width, maintained across window resizes (fixed, not
+    /// proportional). Updated when the user drags the divider.
+    #[serde(default = "default_sidebar_width")]
+    pub sidebar_width: f32,
     /// The bottom tray's pixel height, maintained across window resizes.
-    #[serde(default)]
-    pub tray_height: Option<f32>,
+    #[serde(default = "default_tray_height")]
+    pub tray_height: f32,
+}
+
+/// The default fixed sidebar width, in points.
+fn default_sidebar_width() -> f32 {
+    240.0
+}
+
+/// The default fixed bottom-tray height, in points.
+fn default_tray_height() -> f32 {
+    220.0
 }
 
 pub type OpenHeadStates = HashMap<gantz_ca::Head, OpenHeadState>;
@@ -485,8 +495,8 @@ impl<'a> Gantz<'a> {
         for _ in response.responses.take::<ResetTilesLayout>() {
             tree = create_tree();
             // Restore the default sidebar width / tray height too.
-            state.sidebar_width = None;
-            state.tray_height = None;
+            state.sidebar_width = default_sidebar_width();
+            state.tray_height = default_tray_height();
         }
 
         // Persist the tree.
@@ -511,8 +521,8 @@ impl GantzState {
             command_palette: widget::CommandPalette::default(),
             view_toggles: ViewToggles::default(),
             redo_stacks: HashMap::new(),
-            sidebar_width: None,
-            tray_height: None,
+            sidebar_width: default_sidebar_width(),
+            tray_height: default_tray_height(),
         }
     }
 
@@ -1338,9 +1348,9 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
         0.7,
     ));
 
-    // The root with both columns. The initial split only seeds the first
-    // frame's pixel width; thereafter `Gantz::show` maintains the sidebar's
-    // pixel width across window resizes (see `impose_fixed_sizes`).
+    // The root with both columns. The split here is only a fallback; the
+    // sidebar normally has a fixed pixel width maintained across window resizes
+    // (see `impose_fixed_sizes` / `default_sidebar_width`).
     let root = tiles.insert_container(egui_tiles::Linear::new_binary(
         egui_tiles::LinearDir::Horizontal,
         [left_column, right_column],
@@ -1528,32 +1538,32 @@ fn impose_fixed_sizes(tree: &mut egui_tiles::Tree<Pane>, state: &GantzState, are
     // Both columns span the full height, so the tray's available height is the
     // area height less the gap; the sidebar's available width likewise.
     if state.view_toggles.sidebar_open {
-        if let Some(width) = state.sidebar_width {
-            let avail = area.width() - TILE_GAP;
-            let width = width.clamp(MIN_PANE_SIZE, (avail - MIN_PANE_SIZE).max(MIN_PANE_SIZE));
-            set_linear_shares(
-                tree,
-                anchors.root,
-                anchors.left_column,
-                width,
-                anchors.right_column,
-                (avail - width).max(1.0),
-            );
-        }
+        let avail = area.width() - TILE_GAP;
+        let width = state
+            .sidebar_width
+            .clamp(MIN_PANE_SIZE, (avail - MIN_PANE_SIZE).max(MIN_PANE_SIZE));
+        set_linear_shares(
+            tree,
+            anchors.root,
+            anchors.left_column,
+            width,
+            anchors.right_column,
+            (avail - width).max(1.0),
+        );
     }
     if state.view_toggles.logs || state.view_toggles.steel {
-        if let Some(height) = state.tray_height {
-            let avail = area.height() - TILE_GAP;
-            let height = height.clamp(MIN_PANE_SIZE, (avail - MIN_PANE_SIZE).max(MIN_PANE_SIZE));
-            set_linear_shares(
-                tree,
-                anchors.right_column,
-                anchors.graph_scene,
-                (avail - height).max(1.0),
-                anchors.tray,
-                height,
-            );
-        }
+        let avail = area.height() - TILE_GAP;
+        let height = state
+            .tray_height
+            .clamp(MIN_PANE_SIZE, (avail - MIN_PANE_SIZE).max(MIN_PANE_SIZE));
+        set_linear_shares(
+            tree,
+            anchors.right_column,
+            anchors.graph_scene,
+            (avail - height).max(1.0),
+            anchors.tray,
+            height,
+        );
     }
 }
 
@@ -1567,14 +1577,14 @@ fn capture_fixed_sizes(tree: &egui_tiles::Tree<Pane>, state: &mut GantzState) {
     if state.view_toggles.sidebar_open {
         if let Some(rect) = tree.tiles.rect(anchors.left_column) {
             if rect.width() > 1.0 {
-                state.sidebar_width = Some(rect.width());
+                state.sidebar_width = rect.width();
             }
         }
     }
     if state.view_toggles.logs || state.view_toggles.steel {
         if let Some(rect) = tree.tiles.rect(anchors.tray) {
             if rect.height() > 1.0 {
-                state.tray_height = Some(rect.height());
+                state.tray_height = rect.height();
             }
         }
     }
@@ -1723,14 +1733,19 @@ fn sidebar_toggle(ctx: &egui::Context, anchor_pos: egui::Pos2, open: &mut bool) 
         .show(ctx, |ui| {
             egui::Frame::NONE.show(ui, |ui| {
                 // An arrow pointing in the direction the scene's edge will move:
-                // ◀ collapses the sidebar, ▶ opens it. Kept a subtle, regular
-                // colour (no selection highlight) so it isn't distracting.
+                // ◀ collapses the sidebar, ▶ opens it. Painted in the same faint
+                // colour as egui_graph's dot grid so it isn't distracting.
                 let icon = if *open { "◀" } else { "▶" };
-                let text = egui::RichText::new(icon).size(SIDEBAR_TOGGLE_ICON_SIZE);
+                let faint = ui.style().noninteractive().bg_stroke.color;
+                let text = egui::RichText::new(icon)
+                    .size(SIDEBAR_TOGGLE_ICON_SIZE)
+                    .color(faint);
                 let label = egui::Label::new(text)
                     .sense(egui::Sense::click())
                     .selectable(false);
-                let response = ui.add(label);
+                let response = ui
+                    .add(label)
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
                 if response.clicked() {
                     *open = !*open;
                 }
@@ -2054,4 +2069,40 @@ fn steel_view(
                     .show(ui);
             });
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The fixed sidebar width must be imposed on the sidebar (left column),
+    /// not the main area, and the anchors must identify the sidebar as the
+    /// column that does not contain the graph scene.
+    #[test]
+    fn impose_sets_sidebar_width_on_left_column() {
+        let mut tree = create_tree();
+        let anchors = layout_anchors(&tree).expect("default tree has layout anchors");
+
+        let graph_scene = tree.tiles.find_pane(&Pane::GraphScene).unwrap();
+        assert_ne!(anchors.left_column, anchors.right_column);
+        assert_eq!(
+            tree.tiles.parent_of(graph_scene),
+            Some(anchors.right_column)
+        );
+
+        let mut state = GantzState::new();
+        state.view_toggles.sidebar_open = true;
+        state.sidebar_width = 240.0;
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        impose_fixed_sizes(&mut tree, &state, area);
+
+        let Some(egui_tiles::Container::Linear(root)) = tree.tiles.get_container(anchors.root)
+        else {
+            panic!("root is not a linear container");
+        };
+        let avail = 1000.0 - TILE_GAP;
+        // The sidebar gets the fixed width; the main area gets the remainder.
+        assert!((root.shares[anchors.left_column] - 240.0).abs() < 0.01);
+        assert!((root.shares[anchors.right_column] - (avail - 240.0)).abs() < 0.01);
+    }
 }
