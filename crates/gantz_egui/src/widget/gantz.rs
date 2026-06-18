@@ -87,6 +87,13 @@ pub struct GantzState {
     /// Per-head redo stacks for undo/redo support.
     #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub redo_stacks: HashMap<gantz_ca::Head, Vec<gantz_ca::CommitAddr>>,
+    /// The sidebar's pixel width, maintained across window resizes. `None`
+    /// until the sidebar has first been laid out.
+    #[serde(default)]
+    pub sidebar_width: Option<f32>,
+    /// The bottom tray's pixel height, maintained across window resizes.
+    #[serde(default)]
+    pub tray_height: Option<f32>,
 }
 
 pub type OpenHeadStates = HashMap<gantz_ca::Head, OpenHeadState>;
@@ -426,6 +433,11 @@ impl<'a> Gantz<'a> {
         // Simplify the tree, and ensure tabs are where they should be.
         simplify_tree(&mut tree, ui.ctx());
 
+        // Maintain a fixed sidebar width / tray height across window resizes by
+        // imposing the stored pixel sizes on the share splits before layout.
+        // `available_rect_before_wrap` matches the root rect `Tree::ui` uses.
+        impose_fixed_sizes(&mut tree, state, ui.available_rect_before_wrap());
+
         // Initialise the response.
         // We'll collect it during traversal of the tree of tiles.
         let mut response = GantzResponse {
@@ -456,6 +468,10 @@ impl<'a> Gantz<'a> {
         // Update the response with the final focused head.
         response.focused_head = behaviour.focused_head;
 
+        // Capture the sidebar width / tray height from the laid-out tree (which
+        // reflects any manual divider drag) to re-impose next frame.
+        capture_fixed_sizes(&tree, state);
+
         // Detect .gantz file drops globally (not per-pane, since pointer
         // position may be unavailable during OS file drags on some platforms).
         response.file_drops = collect_gantz_file_drops(ui.ctx());
@@ -468,6 +484,9 @@ impl<'a> Gantz<'a> {
         }
         for _ in response.responses.take::<ResetTilesLayout>() {
             tree = create_tree();
+            // Restore the default sidebar width / tray height too.
+            state.sidebar_width = None;
+            state.tray_height = None;
         }
 
         // Persist the tree.
@@ -492,6 +511,8 @@ impl GantzState {
             command_palette: widget::CommandPalette::default(),
             view_toggles: ViewToggles::default(),
             redo_stacks: HashMap::new(),
+            sidebar_width: None,
+            tray_height: None,
         }
     }
 
@@ -1317,11 +1338,13 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
         0.7,
     ));
 
-    // The root with both columns.
+    // The root with both columns. The initial split only seeds the first
+    // frame's pixel width; thereafter `Gantz::show` maintains the sidebar's
+    // pixel width across window resizes (see `impose_fixed_sizes`).
     let root = tiles.insert_container(egui_tiles::Linear::new_binary(
         egui_tiles::LinearDir::Horizontal,
         [left_column, right_column],
-        0.22,
+        0.18,
     ));
 
     egui_tiles::Tree::new("gantz-tiles-tree", root, tiles)
@@ -1410,6 +1433,150 @@ fn simplify_tree(tree: &mut egui_tiles::Tree<Pane>, ctx: &egui::Context) {
         tree.tiles.remove(graph_scene_id);
         tree.tiles
             .insert(parent_id, egui_tiles::Tile::Pane(Pane::GraphScene));
+    }
+}
+
+/// The gap between sibling tiles, in points. Must match the (unoverridden)
+/// default `egui_tiles::Behavior::gap_width`, so imposed pixel sizes are exact
+/// and don't drift when re-imposed each frame.
+const TILE_GAP: f32 = 1.0;
+
+/// The minimum sidebar width / tray height, in points.
+const MIN_PANE_SIZE: f32 = 80.0;
+
+/// The tiles whose Linear share splits hold the sidebar width and tray height,
+/// when the tree has its default top-level shape.
+struct LayoutAnchors {
+    /// Root horizontal Linear: `[left_column | right_column]`.
+    root: egui_tiles::TileId,
+    left_column: egui_tiles::TileId,
+    /// Right column vertical Linear: `[graph_scene / tray]`.
+    right_column: egui_tiles::TileId,
+    graph_scene: egui_tiles::TileId,
+    tray: egui_tiles::TileId,
+}
+
+/// Identify the layout anchors, or `None` if the tree isn't in its default
+/// top-level shape (mid-drag, or after the user rearranged panes), in which
+/// case the proportional layout is left untouched.
+fn layout_anchors(tree: &egui_tiles::Tree<Pane>) -> Option<LayoutAnchors> {
+    let graph_scene = tree.tiles.find_pane(&Pane::GraphScene)?;
+    let right_column = tree.tiles.parent_of(graph_scene)?;
+    let root = tree.root()?;
+    let &[a, b] = linear_children(tree, root, egui_tiles::LinearDir::Horizontal)?.as_slice() else {
+        return None;
+    };
+    let left_column = match (a == right_column, b == right_column) {
+        (false, true) => a,
+        (true, false) => b,
+        _ => return None,
+    };
+    let &[c, d] = linear_children(tree, right_column, egui_tiles::LinearDir::Vertical)?.as_slice()
+    else {
+        return None;
+    };
+    let tray = match (c == graph_scene, d == graph_scene) {
+        (true, false) => d,
+        (false, true) => c,
+        _ => return None,
+    };
+    Some(LayoutAnchors {
+        root,
+        left_column,
+        right_column,
+        graph_scene,
+        tray,
+    })
+}
+
+/// The children of `id` if it is a Linear container with direction `dir`.
+fn linear_children(
+    tree: &egui_tiles::Tree<Pane>,
+    id: egui_tiles::TileId,
+    dir: egui_tiles::LinearDir,
+) -> Option<Vec<egui_tiles::TileId>> {
+    match tree.tiles.get_container(id)? {
+        egui_tiles::Container::Linear(l) if l.dir == dir => Some(l.children.clone()),
+        _ => None,
+    }
+}
+
+/// Set the two shares of a binary Linear container.
+fn set_linear_shares(
+    tree: &mut egui_tiles::Tree<Pane>,
+    container: egui_tiles::TileId,
+    a: egui_tiles::TileId,
+    a_share: f32,
+    b: egui_tiles::TileId,
+    b_share: f32,
+) {
+    if let Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(l))) =
+        tree.tiles.get_mut(container)
+    {
+        l.shares.set_share(a, a_share);
+        l.shares.set_share(b, b_share);
+    }
+}
+
+/// Impose the stored sidebar width / tray height (in points) on the tree's
+/// share splits so they stay fixed as the window resizes. Call after
+/// `simplify_tree`, before `tree.ui`.
+fn impose_fixed_sizes(tree: &mut egui_tiles::Tree<Pane>, state: &GantzState, area: egui::Rect) {
+    let Some(anchors) = layout_anchors(tree) else {
+        return;
+    };
+    // Both columns span the full height, so the tray's available height is the
+    // area height less the gap; the sidebar's available width likewise.
+    if state.view_toggles.sidebar_open {
+        if let Some(width) = state.sidebar_width {
+            let avail = area.width() - TILE_GAP;
+            let width = width.clamp(MIN_PANE_SIZE, (avail - MIN_PANE_SIZE).max(MIN_PANE_SIZE));
+            set_linear_shares(
+                tree,
+                anchors.root,
+                anchors.left_column,
+                width,
+                anchors.right_column,
+                (avail - width).max(1.0),
+            );
+        }
+    }
+    if state.view_toggles.logs || state.view_toggles.steel {
+        if let Some(height) = state.tray_height {
+            let avail = area.height() - TILE_GAP;
+            let height = height.clamp(MIN_PANE_SIZE, (avail - MIN_PANE_SIZE).max(MIN_PANE_SIZE));
+            set_linear_shares(
+                tree,
+                anchors.right_column,
+                anchors.graph_scene,
+                (avail - height).max(1.0),
+                anchors.tray,
+                height,
+            );
+        }
+    }
+}
+
+/// Capture the sidebar width / tray height (in points) from the laid-out tree,
+/// so they can be re-imposed next frame (including after manual divider drags).
+/// Call after `tree.ui`.
+fn capture_fixed_sizes(tree: &egui_tiles::Tree<Pane>, state: &mut GantzState) {
+    let Some(anchors) = layout_anchors(tree) else {
+        return;
+    };
+    if state.view_toggles.sidebar_open {
+        if let Some(rect) = tree.tiles.rect(anchors.left_column) {
+            if rect.width() > 1.0 {
+                state.sidebar_width = Some(rect.width());
+            }
+        }
+    }
+    if state.view_toggles.logs || state.view_toggles.steel {
+        if let Some(rect) = tree.tiles.rect(anchors.tray) {
+            if rect.height() > 1.0 {
+                state.tray_height = Some(rect.height());
+            }
+        }
     }
 }
 
@@ -1555,8 +1722,18 @@ fn sidebar_toggle(ctx: &egui::Context, anchor_pos: egui::Pos2, open: &mut bool) 
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             egui::Frame::NONE.show(ui, |ui| {
-                let icon = egui::RichText::new("☰").size(SIDEBAR_TOGGLE_ICON_SIZE);
-                let response = ui.add(widget::LabelToggle::new(icon, open));
+                // An arrow pointing in the direction the scene's edge will move:
+                // ◀ collapses the sidebar, ▶ opens it. Kept a subtle, regular
+                // colour (no selection highlight) so it isn't distracting.
+                let icon = if *open { "◀" } else { "▶" };
+                let text = egui::RichText::new(icon).size(SIDEBAR_TOGGLE_ICON_SIZE);
+                let label = egui::Label::new(text)
+                    .sense(egui::Sense::click())
+                    .selectable(false);
+                let response = ui.add(label);
+                if response.clicked() {
+                    *open = !*open;
+                }
                 let hint = if *open {
                     "close sidebar"
                 } else {

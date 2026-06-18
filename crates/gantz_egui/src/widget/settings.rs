@@ -35,9 +35,9 @@ pub fn settings(
         .unwrap_or_default();
 
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut tab, SettingsTab::Panes, "Panes");
-        ui.selectable_value(&mut tab, SettingsTab::Style, "Style");
         ui.selectable_value(&mut tab, SettingsTab::Global, "Global");
+        ui.selectable_value(&mut tab, SettingsTab::Style, "Style");
+        ui.selectable_value(&mut tab, SettingsTab::Panes, "Panes");
     });
     ui.separator();
 
@@ -45,16 +45,21 @@ pub fn settings(
     match tab {
         SettingsTab::Panes => {
             // Pin "reset all" to the bottom; the toggles scroll above it.
+            // `Frame::NONE` keeps the inner margin matching the other subtabs,
+            // which render directly in the pane's central panel.
             egui::TopBottomPanel::bottom(id.with("reset"))
                 .show_separator_line(false)
+                .frame(egui::Frame::NONE)
                 .show_inside(ui, |ui| {
                     res.reset_layout = super::reset_layout_button(ui);
                 });
-            egui::CentralPanel::default().show_inside(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| super::panes_config(view, ui));
-            });
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show_inside(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| super::panes_config(view, ui));
+                });
         }
         SettingsTab::Style => {
             ui.weak("Style configuration coming soon.");
