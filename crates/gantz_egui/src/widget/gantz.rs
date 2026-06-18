@@ -1779,19 +1779,21 @@ fn sidebar_toggle(ctx: &egui::Context, anchor_pos: egui::Pos2, open: &mut bool) 
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             egui::Frame::NONE.show(ui, |ui| {
-                // A hamburger that toggles the sidebar. Painted in the same
-                // faint colour as egui_graph's dot grid so it isn't distracting.
-                let icon = "☰";
-                let faint = ui.style().noninteractive().bg_stroke.color;
-                let text = egui::RichText::new(icon)
-                    .size(SIDEBAR_TOGGLE_ICON_SIZE)
-                    .color(faint);
-                let label = egui::Label::new(text)
-                    .sense(egui::Sense::click())
-                    .selectable(false);
-                let response = ui
-                    .add(label)
-                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                // A hamburger that toggles the sidebar. Idle, it matches the
+                // faint colour of egui_graph's dot grid; on hover it brightens a
+                // little to signal it's interactive (no selection colour when
+                // open). Laid out manually so the colour can depend on hover.
+                let font = egui::FontId::proportional(SIDEBAR_TOGGLE_ICON_SIZE);
+                let galley =
+                    ui.painter()
+                        .layout_no_wrap("☰".to_owned(), font, egui::Color32::PLACEHOLDER);
+                let (rect, response) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
+                let color = if response.hovered() {
+                    ui.visuals().weak_text_color()
+                } else {
+                    ui.style().noninteractive().bg_stroke.color
+                };
+                ui.painter().galley(rect.min, galley, color);
                 if response.clicked() {
                     *open = !*open;
                 }
@@ -1800,7 +1802,9 @@ fn sidebar_toggle(ctx: &egui::Context, anchor_pos: egui::Pos2, open: &mut bool) 
                 } else {
                     "open sidebar"
                 };
-                response.on_hover_text(hint);
+                response
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(hint);
             });
         });
 }
