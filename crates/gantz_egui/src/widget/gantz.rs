@@ -277,8 +277,8 @@ impl Default for ViewToggles {
             history: true,
             logs: false,
             node_inspector: true,
-            perf_gui: true,
-            perf_vm: true,
+            perf_gui: false,
+            perf_vm: false,
             steel: false,
             graph_config: true,
         }
@@ -446,7 +446,8 @@ impl<'a> Gantz<'a> {
         // Maintain a fixed sidebar width / tray height across window resizes by
         // imposing the stored pixel sizes on the share splits before layout.
         // `available_rect_before_wrap` matches the root rect `Tree::ui` uses.
-        impose_fixed_sizes(&mut tree, state, ui.available_rect_before_wrap());
+        let widget_area = ui.available_rect_before_wrap();
+        impose_fixed_sizes(&mut tree, state, widget_area);
 
         // Initialise the response.
         // We'll collect it during traversal of the tree of tiles.
@@ -480,7 +481,7 @@ impl<'a> Gantz<'a> {
 
         // Capture the sidebar width / tray height from the laid-out tree (which
         // reflects any manual divider drag) to re-impose next frame.
-        capture_fixed_sizes(&tree, state);
+        capture_fixed_sizes(&tree, state, widget_area);
 
         // Detect .gantz file drops globally (not per-pane, since pointer
         // position may be unavailable during OS file drags on some platforms).
@@ -1570,24 +1571,58 @@ fn impose_fixed_sizes(tree: &mut egui_tiles::Tree<Pane>, state: &GantzState, are
 /// Capture the sidebar width / tray height (in points) from the laid-out tree,
 /// so they can be re-imposed next frame (including after manual divider drags).
 /// Call after `tree.ui`.
-fn capture_fixed_sizes(tree: &egui_tiles::Tree<Pane>, state: &mut GantzState) {
+///
+/// This reads the post-layout *shares* rather than the cached rects: a resize
+/// drag updates the shares during `tree.ui`, but the rects it computes reflect
+/// the pre-drag split, so reading rects would never see the drag.
+fn capture_fixed_sizes(tree: &egui_tiles::Tree<Pane>, state: &mut GantzState, area: egui::Rect) {
     let Some(anchors) = layout_anchors(tree) else {
         return;
     };
     if state.view_toggles.sidebar_open {
-        if let Some(rect) = tree.tiles.rect(anchors.left_column) {
-            if rect.width() > 1.0 {
-                state.sidebar_width = rect.width();
+        if let Some(width) = linear_child_points(
+            tree,
+            anchors.root,
+            anchors.left_column,
+            area.width() - TILE_GAP,
+        ) {
+            if width > 1.0 {
+                state.sidebar_width = width;
             }
         }
     }
     if state.view_toggles.logs || state.view_toggles.steel {
-        if let Some(rect) = tree.tiles.rect(anchors.tray) {
-            if rect.height() > 1.0 {
-                state.tray_height = rect.height();
+        if let Some(height) = linear_child_points(
+            tree,
+            anchors.right_column,
+            anchors.tray,
+            area.height() - TILE_GAP,
+        ) {
+            if height > 1.0 {
+                state.tray_height = height;
             }
         }
     }
+}
+
+/// The points a Linear child currently occupies, derived from its share of the
+/// visible children (mirroring `egui_tiles::Shares::split`).
+fn linear_child_points(
+    tree: &egui_tiles::Tree<Pane>,
+    container: egui_tiles::TileId,
+    child: egui_tiles::TileId,
+    available: f32,
+) -> Option<f32> {
+    let egui_tiles::Container::Linear(l) = tree.tiles.get_container(container)? else {
+        return None;
+    };
+    let total: f32 = l
+        .children
+        .iter()
+        .filter(|&&c| tree.is_visible(c))
+        .map(|&c| l.shares[c])
+        .sum();
+    (total > 0.0).then(|| available * l.shares[child] / total)
 }
 
 /// Whether a tab's pane can be hidden via its right-click menu. The main graph
@@ -2104,5 +2139,19 @@ mod tests {
         // The sidebar gets the fixed width; the main area gets the remainder.
         assert!((root.shares[anchors.left_column] - 240.0).abs() < 0.01);
         assert!((root.shares[anchors.right_column] - (avail - 240.0)).abs() < 0.01);
+    }
+
+    /// `capture_fixed_sizes` must recover the same width `impose_fixed_sizes`
+    /// set, so a sidebar that isn't dragged doesn't drift frame to frame.
+    #[test]
+    fn capture_round_trips_imposed_sidebar_width() {
+        let mut tree = create_tree();
+        let mut state = GantzState::new();
+        state.view_toggles.sidebar_open = true;
+        state.sidebar_width = 240.0;
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        impose_fixed_sizes(&mut tree, &state, area);
+        capture_fixed_sizes(&tree, &mut state, area);
+        assert!((state.sidebar_width - 240.0).abs() < 0.01);
     }
 }
