@@ -103,7 +103,7 @@ fn default_sidebar_width() -> f32 {
 
 /// The default fixed bottom-tray height, in points.
 fn default_tray_height() -> f32 {
-    220.0
+    300.0
 }
 
 pub type OpenHeadStates = HashMap<gantz_ca::Head, OpenHeadState>;
@@ -1765,7 +1765,7 @@ fn pane_ui<R>(ui: &mut egui::Ui, pane: impl FnOnce(&mut egui::Ui) -> R) -> egui:
 /// The size of the floating sidebar toggle glyph, also used to offset the
 /// nested-graph breadcrumb to its right (they share the scene's bottom-left
 /// corner).
-const SIDEBAR_TOGGLE_ICON_SIZE: f32 = 24.0;
+const SIDEBAR_TOGGLE_ICON_SIZE: f32 = 18.0;
 
 /// A floating hamburger button that toggles the sidebar open/closed.
 ///
