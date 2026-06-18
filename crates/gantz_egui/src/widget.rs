@@ -15,8 +15,9 @@ pub use label_button::LabelButton;
 pub use label_toggle::LabelToggle;
 pub use log_view::LogView;
 pub use node_inspector::NodeInspector;
-pub use panes_config::panes_config;
+pub use panes_config::{panes_config, reset_layout_button};
 pub use perf_view::{PerfCapture, PerfView};
+pub use settings::{SettingsResponse, settings};
 pub use steel_view::SteelView;
 
 pub mod command_palette;
@@ -35,6 +36,7 @@ pub mod log_view;
 pub mod node_inspector;
 pub mod panes_config;
 pub mod perf_view;
+pub mod settings;
 pub mod steel_view;
 #[cfg(feature = "tracing")]
 pub mod trace_view;

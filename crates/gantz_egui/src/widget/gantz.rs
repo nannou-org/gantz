@@ -1,6 +1,6 @@
 use crate::{
     CopyNodes, CreateNestedGraph, CreateNode, ExportAllNamed, ExportHead, HeadAccess, NodeCtx,
-    NodeUi, OpenCommandPalette, Paste, Redo, Registry, ReplaceHead, Undo, export,
+    NodeUi, OpenCommandPalette, Paste, Redo, Registry, ReplaceHead, ResetTilesLayout, Undo, export,
     response::{DynResponse, Responses},
     widget::{self, GraphScene, GraphSceneState, graph_scene},
 };
@@ -122,8 +122,6 @@ impl Default for OpenHeadState {
 /// A pane within the outer tree.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum Pane {
-    /// Globally relevant configuration (compile options, reset all demos).
-    Global,
     GraphConfig,
     /// Contains the inner graph tree with all open graph tabs.
     GraphScene,
@@ -132,11 +130,10 @@ pub enum Pane {
     History,
     Logs,
     NodeInspector,
-    /// Per-pane visibility toggles (what the bottom-right eye used to do).
-    Panes,
+    /// Globally relevant configuration grouped into Panes / Style / Global
+    /// subtabs (pane visibility, style, compile options, reset all demos).
+    Settings,
     Steel,
-    /// Style configuration (egui style, socket stroke, ...). Placeholder for now.
-    Style,
     VmPerf,
 }
 
@@ -409,10 +406,10 @@ impl<'a> Gantz<'a> {
         Access: HeadAccess,
         Access::Node: Node + NodeUi,
     {
-        // The persisted outer tree. The `-v2` suffix invalidates any tree
+        // The persisted outer tree. The version suffix invalidates any tree
         // persisted before the sidebar overhaul (which lacks the new panes and
         // tab containers), forcing a rebuild via `create_tree`.
-        let tree_id = egui::Id::new("gantz-tiles-tree-storage-v2");
+        let tree_id = egui::Id::new("gantz-tiles-tree-storage-v3");
 
         // Retrieve the tree of persistent storage, or load the default.
         let mut tree: egui_tiles::Tree<Pane> = ui
@@ -463,10 +460,14 @@ impl<'a> Gantz<'a> {
         // position may be unavailable during OS file drags on some platforms).
         response.file_drops = collect_gantz_file_drops(ui.ctx());
 
-        // Apply payloads that only affect `GantzState`, so applications never
-        // see them: command palette toggling.
+        // Apply payloads that only affect the widget's own state, so
+        // applications never see them: command palette toggling and resetting
+        // the tile layout to its default arrangement.
         for _ in response.responses.take::<OpenCommandPalette>() {
             state.command_palette.toggle();
+        }
+        for _ in response.responses.take::<ResetTilesLayout>() {
+            tree = create_tree();
         }
 
         // Persist the tree.
@@ -519,17 +520,15 @@ where
 {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
         match pane {
-            Pane::Global => "Global".into(),
             Pane::GraphConfig => match self.access.heads().get(self.focused_head) {
-                Some(head) => format!("Graph Config - {head}").into(),
-                None => "Graph Config".into(),
+                Some(head) => format!("Graph - {head}").into(),
+                None => "Graph".into(),
             },
             Pane::GraphScene => "Graphs".into(),
             Pane::Graphs => "Graphs".into(),
             Pane::GuiPerf => "GUI Perf".into(),
             Pane::History => "History".into(),
-            Pane::Panes => "Panes".into(),
-            Pane::Style => "Style".into(),
+            Pane::Settings => "Settings".into(),
             Pane::Logs => match self.gantz.log_source {
                 None => "Logs (No Source)".into(),
                 Some(LogSource::Logger(_)) => "Logs".into(),
@@ -546,6 +545,26 @@ where
             },
             Pane::VmPerf => "VM Perf".into(),
         }
+    }
+
+    fn on_tab_button(
+        &mut self,
+        tiles: &egui_tiles::Tiles<Pane>,
+        tile_id: egui_tiles::TileId,
+        button_response: egui::Response,
+    ) -> egui::Response {
+        // Right-click a (hideable) tab to hide its pane.
+        let pane = match tiles.get(tile_id) {
+            Some(egui_tiles::Tile::Pane(pane)) if pane_is_hideable(pane) => pane.clone(),
+            _ => return button_response,
+        };
+        button_response.context_menu(|ui| {
+            if ui.button("hide").clicked() {
+                set_pane_visible(&mut self.state.view_toggles, &pane, false);
+                ui.close();
+            }
+        });
+        button_response
     }
 
     fn tab_bar_color(&self, visuals: &egui::Visuals) -> egui::Color32 {
@@ -933,24 +952,19 @@ where
                     perf_view("VM Perf", capture, ui);
                 }
             }
-            Pane::Panes => {
-                pane_ui(ui, |ui| {
-                    widget::panes_config(&mut state.view_toggles, ui);
-                });
-            }
-            Pane::Style => {
-                pane_ui(ui, |ui| {
-                    ui.weak("Style configuration coming soon.");
-                });
-            }
-            Pane::Global => {
+            Pane::Settings => {
                 let compile_config = gantz.compile_config;
-                let res = pane_ui(ui, |ui| widget::global_config(compile_config, ui));
+                let res = pane_ui(ui, |ui| {
+                    widget::settings(&mut state.view_toggles, compile_config, ui)
+                });
                 if let Some(cfg) = res.inner.compile_config {
                     gantz_response.compile_config = Some(cfg);
                 }
                 if res.inner.reset_all_demos {
                     gantz_response.reset_all_demos = true;
+                }
+                if res.inner.reset_layout {
+                    gantz_response.responses.push(None, ResetTilesLayout);
                 }
             }
         }
@@ -1250,17 +1264,15 @@ impl Default for GantzState {
 ///
 /// Roughly something like this:
 ///
-/// -------------------------------------
-/// |grs/hist  |scene                    |
-/// |----------|                         |
-/// |pn/sty/glb|                         |
-/// |----------|                         |
-/// |vm/gui    |-------------------------|
-/// |----------|logs          |steel     |
-/// |conf      |              |          |
-/// |----------|              |          |
-/// |insp      |              |          |
-/// -------------------------------------
+/// -----------------------------------------
+/// |grs/hist/settings |scene               |
+/// |------------------|                     |
+/// |vm/gui            |                     |
+/// |------------------|---------------------|
+/// |conf              |logs      |steel     |
+/// |------------------|          |          |
+/// |insp              |          |          |
+/// -----------------------------------------
 ///
 /// The active tab of each tab container defaults to its first child (see
 /// `egui_tiles::Tabs::new`), so child ordering picks the default tabs.
@@ -1268,7 +1280,6 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
     let mut tiles = egui_tiles::Tiles::default();
 
     // The leaf panes.
-    let global = tiles.insert_pane(Pane::Global);
     let graph_config = tiles.insert_pane(Pane::GraphConfig);
     let graph_scene = tiles.insert_pane(Pane::GraphScene);
     let graphs = tiles.insert_pane(Pane::Graphs);
@@ -1276,25 +1287,22 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
     let history = tiles.insert_pane(Pane::History);
     let logs = tiles.insert_pane(Pane::Logs);
     let node_inspector = tiles.insert_pane(Pane::NodeInspector);
-    let panes = tiles.insert_pane(Pane::Panes);
+    let settings = tiles.insert_pane(Pane::Settings);
     let steel = tiles.insert_pane(Pane::Steel);
-    let style = tiles.insert_pane(Pane::Style);
     let vm_perf = tiles.insert_pane(Pane::VmPerf);
 
     // Sidebar tab containers (first child is the default-active tab).
-    let graphs_history = tiles.insert_tab_tile(vec![graphs, history]);
-    let control = tiles.insert_tab_tile(vec![panes, style, global]);
+    let graphs_history_settings = tiles.insert_tab_tile(vec![graphs, history, settings]);
     let perf = tiles.insert_tab_tile(vec![vm_perf, gui_perf]);
 
     // The left column (sidebar).
     let mut shares = egui_tiles::Shares::default();
-    shares.set_share(graphs_history, 0.30);
-    shares.set_share(control, 0.22);
+    shares.set_share(graphs_history_settings, 0.30);
     shares.set_share(perf, 0.10);
     shares.set_share(graph_config, 0.13);
     shares.set_share(node_inspector, 0.25);
     let left_column = tiles.insert_container(egui_tiles::Linear {
-        children: vec![graphs_history, control, perf, graph_config, node_inspector],
+        children: vec![graphs_history_settings, perf, graph_config, node_inspector],
         dir: egui_tiles::LinearDir::Vertical,
         shares,
     });
@@ -1405,19 +1413,40 @@ fn simplify_tree(tree: &mut egui_tiles::Tree<Pane>, ctx: &egui::Context) {
     }
 }
 
+/// Whether a tab's pane can be hidden via its right-click menu. The main graph
+/// scene and the Settings control surface are not hideable this way.
+fn pane_is_hideable(pane: &Pane) -> bool {
+    !matches!(pane, Pane::GraphScene | Pane::Settings)
+}
+
+/// Set a pane's visibility toggle. No-op for panes without one.
+fn set_pane_visible(view: &mut ViewToggles, pane: &Pane, visible: bool) {
+    match pane {
+        Pane::Graphs => view.graphs = visible,
+        Pane::History => view.history = visible,
+        Pane::GraphConfig => view.graph_config = visible,
+        Pane::NodeInspector => view.node_inspector = visible,
+        Pane::VmPerf => view.perf_vm = visible,
+        Pane::GuiPerf => view.perf_gui = visible,
+        Pane::Logs => view.logs = visible,
+        Pane::Steel => view.steel = visible,
+        Pane::GraphScene | Pane::Settings => {}
+    }
+}
+
 /// Ensure the view toggles match the pane visibility.
 fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
     let ids: Vec<_> = tree.tiles.tile_ids().collect();
     let open = view.sidebar_open;
     // Set visibility for panes. Sidebar content panes are gated by both the
-    // sidebar being open and their individual toggle; the sidebar's control
-    // tile (Panes/Style/Global) is gated only by the sidebar being open; the
-    // tray panes (Logs/Steel) are independent of the sidebar.
+    // sidebar being open and their individual toggle; the Settings control
+    // pane is gated only by the sidebar being open; the tray panes
+    // (Logs/Steel) are independent of the sidebar.
     for &id in &ids {
         if let Some(pane) = tree.tiles.get_pane(&id) {
             match pane {
                 Pane::GraphScene => (),
-                Pane::Global | Pane::Panes | Pane::Style => tree.set_visible(id, open),
+                Pane::Settings => tree.set_visible(id, open),
                 Pane::GraphConfig => tree.set_visible(id, open && view.graph_config),
                 Pane::Graphs => tree.set_visible(id, open && view.graphs),
                 Pane::GuiPerf => tree.set_visible(id, open && view.perf_gui),

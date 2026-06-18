@@ -337,6 +337,12 @@ pub struct InspectEdge {
 #[derive(Clone, Copy, Debug)]
 pub struct OpenCommandPalette;
 
+/// Reset the top-level tile layout to its default arrangement.
+///
+/// Handled by `Gantz::show` itself - applications never see this payload.
+#[derive(Clone, Copy, Debug)]
+pub struct ResetTilesLayout;
+
 /// Open a head (named or commit) as a new tab.
 #[derive(Clone, Debug)]
 pub struct OpenHead(pub gantz_ca::Head);

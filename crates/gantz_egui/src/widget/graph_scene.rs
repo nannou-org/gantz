@@ -1,6 +1,6 @@
 use crate::{
     CopyNodes, InspectEdge, NodeUi, OpenCommandPalette, OpenHead, Paste, PastePos, Registry,
-    SocketDoc, response::DynResponse,
+    ResetTilesLayout, SocketDoc, response::DynResponse,
 };
 use egui::emath::GuiRounding;
 use egui_graph::{self, SocketKind, node::EdgeEvent};
@@ -208,10 +208,11 @@ where
                 .collect();
         }
 
-        // Background context menu: graph actions (when mutable) plus a "Panes"
+        // Background context menu: graph actions (when mutable) plus a "panes"
         // submenu for toggling pane visibility (available even when immutable).
         let immutable = self.immutable;
         let view_toggles = self.view_toggles;
+        let mut reset_layout = false;
         if !immutable || view_toggles.is_some() {
             let layer_id = graph_response.response.layer_id;
             graph_response.response.context_menu(|ui| {
@@ -237,11 +238,19 @@ where
                     }
                 }
                 if let Some(view) = view_toggles {
-                    ui.menu_button("Panes", |ui| {
+                    ui.menu_button("panes", |ui| {
                         crate::widget::panes_config(view, ui);
+                        ui.separator();
+                        if crate::widget::reset_layout_button(ui) {
+                            reset_layout = true;
+                            ui.close();
+                        }
                     });
                 }
             });
+        }
+        if reset_layout {
+            responses.push(DynResponse::new(ResetTilesLayout));
         }
 
         GraphSceneResponse {
