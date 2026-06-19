@@ -25,6 +25,13 @@ pub fn panes_config(view: &mut ViewToggles, ui: &mut egui::Ui) {
     sidebar_pane(
         ui,
         &mut view.sidebar_open,
+        &mut view.settings,
+        "Settings",
+        "Global / Style / Panes settings (also reachable from this menu).",
+    );
+    sidebar_pane(
+        ui,
+        &mut view.sidebar_open,
         &mut view.graph_config,
         "Graph Config",
         "Per-graph layout settings and rename.",

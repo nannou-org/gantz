@@ -257,6 +257,7 @@ pub struct ViewToggles {
     pub sidebar_open: bool,
     pub graphs: bool,
     pub history: bool,
+    pub settings: bool,
     pub logs: bool,
     pub node_inspector: bool,
     pub perf_gui: bool,
@@ -275,6 +276,7 @@ impl Default for ViewToggles {
             sidebar_open: false,
             graphs: true,
             history: true,
+            settings: true,
             logs: true,
             node_inspector: true,
             perf_gui: false,
@@ -1755,7 +1757,7 @@ fn linear_child_points(
 /// Whether a tab's pane can be hidden via its right-click menu. The main graph
 /// scene and the Settings control surface are not hideable this way.
 fn pane_is_hideable(pane: &Pane) -> bool {
-    !matches!(pane, Pane::GraphScene | Pane::Settings)
+    !matches!(pane, Pane::GraphScene)
 }
 
 /// Set a pane's visibility toggle. No-op for panes without one.
@@ -1763,13 +1765,14 @@ fn set_pane_visible(view: &mut ViewToggles, pane: &Pane, visible: bool) {
     match pane {
         Pane::Graphs => view.graphs = visible,
         Pane::History => view.history = visible,
+        Pane::Settings => view.settings = visible,
         Pane::GraphConfig => view.graph_config = visible,
         Pane::NodeInspector => view.node_inspector = visible,
         Pane::VmPerf => view.perf_vm = visible,
         Pane::GuiPerf => view.perf_gui = visible,
         Pane::Logs => view.logs = visible,
         Pane::Steel => view.steel = visible,
-        Pane::GraphScene | Pane::Settings => {}
+        Pane::GraphScene => {}
     }
 }
 
@@ -1785,7 +1788,7 @@ fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
         if let Some(pane) = tree.tiles.get_pane(&id) {
             match pane {
                 Pane::GraphScene => (),
-                Pane::Settings => tree.set_visible(id, open),
+                Pane::Settings => tree.set_visible(id, open && view.settings),
                 Pane::GraphConfig => tree.set_visible(id, open && view.graph_config),
                 Pane::Graphs => tree.set_visible(id, open && view.graphs),
                 Pane::GuiPerf => tree.set_visible(id, open && view.perf_gui),
