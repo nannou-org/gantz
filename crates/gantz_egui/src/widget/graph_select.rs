@@ -3,6 +3,9 @@
 use super::head_row::{HeadRowType, head_row};
 use std::collections::{HashMap, HashSet};
 
+/// The glyph for the filter-options button (swap if it doesn't render).
+const FILTER_GLYPH: &str = "⋮";
+
 /// A widget for selecting between, naming, and creating new graphs.
 pub struct GraphSelect<'a> {
     id: egui::Id,
@@ -136,35 +139,26 @@ impl<'a> GraphSelect<'a> {
 
         let mut response = GraphSelectResponse::default();
 
-        // A text edit for filtering names.
-        egui::TextEdit::singleline(&mut state.name_filter)
-            .desired_width(ui.available_width())
-            .hint_text("🔎 Name Filter")
-            .show(ui);
-
-        // Toggle filters for base nodes and demos, as subtle label toggles.
-        // Override the selected colour to regular text (rather than the bright
-        // accent) so the enabled state stays subtle: dim when off, regular when
-        // on, brighter on hover.
+        // A name filter text field, with a filter-options button on the right
+        // that opens a menu of `base`/`demo` visibility checkboxes.
         ui.horizontal(|ui| {
-            let visuals = ui.visuals();
-            let hovered = visuals.text_color();
-            // Halfway between the regular and strong text colours (tweak `t`).
-            let selected = visuals
-                .text_color()
-                .lerp_to_gamma(visuals.strong_text_color(), 0.5);
-            ui.add(
-                super::LabelToggle::new("base", &mut state.show_base)
-                    .hovered_color(hovered)
-                    .selected_color(selected),
-            )
-            .on_hover_text("show base nodes");
-            ui.add(
-                super::LabelToggle::new("demo", &mut state.show_demo)
-                    .hovered_color(hovered)
-                    .selected_color(selected),
-            )
-            .on_hover_text("show demos");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let h = ui.spacing().interact_size.y;
+                let btn = ui
+                    .add_sized([h, h], egui::Button::new(FILTER_GLYPH))
+                    .on_hover_text("filter options");
+                egui::Popup::menu(&btn)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        ui.checkbox(&mut state.show_base, "base");
+                        ui.checkbox(&mut state.show_demo, "demo");
+                    });
+                // The name filter fills the remaining width.
+                egui::TextEdit::singleline(&mut state.name_filter)
+                    .desired_width(ui.available_width())
+                    .hint_text("🔎 Name Filter")
+                    .show(ui);
+            });
         });
 
         let names = self.registry.names();
