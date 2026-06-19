@@ -22,6 +22,24 @@ impl NodeUi for gantz_std::log::Log {
         })
     }
 
+    fn inspector_rows(&mut self, ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
+        let row_h = crate::widget::node_inspector::table_row_h(body.ui_mut());
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("logs");
+            });
+            row.col(|ui| {
+                if ui
+                    .button("open")
+                    .on_hover_text("show the logs pane")
+                    .clicked()
+                {
+                    ctx.response(OpenLogs);
+                }
+            });
+        });
+    }
+
     fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         match kind {
             SocketKind::Input => {
