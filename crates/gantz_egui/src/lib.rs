@@ -429,6 +429,10 @@ where
     ) -> Option<SocketDoc> {
         (**self).socket_doc(registry, kind, ix)
     }
+
+    fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+        (**self).context_menu(ctx, ui)
+    }
 }
 
 macro_rules! impl_node_ui_for_ptr {
@@ -467,6 +471,10 @@ macro_rules! impl_node_ui_for_ptr {
 
             fn socket_doc(&self, registry: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
                 (**self).socket_doc(registry, kind, ix)
+            }
+
+            fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+                (**self).context_menu(ctx, ui)
             }
         }
     };
