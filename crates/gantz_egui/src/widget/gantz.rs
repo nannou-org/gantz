@@ -275,7 +275,7 @@ impl Default for ViewToggles {
             sidebar_open: false,
             graphs: true,
             history: true,
-            logs: false,
+            logs: true,
             node_inspector: true,
             perf_gui: false,
             perf_vm: false,
@@ -603,6 +603,29 @@ where
             }
         });
         button_response
+    }
+
+    fn is_tab_closable(
+        &self,
+        tiles: &egui_tiles::Tiles<Pane>,
+        tile_id: egui_tiles::TileId,
+    ) -> bool {
+        // The tray panes get a close button; the rest are toggled via the
+        // Panes settings or the tab right-click menu.
+        matches!(tiles.get_pane(&tile_id), Some(Pane::Logs | Pane::Steel))
+    }
+
+    fn on_tab_close(
+        &mut self,
+        tiles: &mut egui_tiles::Tiles<Pane>,
+        tile_id: egui_tiles::TileId,
+    ) -> bool {
+        // Hide the pane via its toggle (so it can be reopened) rather than
+        // letting egui_tiles remove the tile from the tree.
+        if let Some(pane) = tiles.get_pane(&tile_id).cloned() {
+            set_pane_visible(&mut self.state.view_toggles, &pane, false);
+        }
+        false
     }
 
     fn tab_bar_color(&self, visuals: &egui::Visuals) -> egui::Color32 {
