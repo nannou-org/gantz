@@ -30,7 +30,7 @@ impl Default for GraphSelectState {
     fn default() -> Self {
         Self {
             name_filter: String::new(),
-            show_base: true,
+            show_base: false,
             show_demo: true,
         }
     }
@@ -150,8 +150,11 @@ impl<'a> GraphSelect<'a> {
                 egui::Popup::menu(&btn)
                     .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                     .show(|ui| {
-                        ui.checkbox(&mut state.show_base, "base");
-                        ui.checkbox(&mut state.show_demo, "demo");
+                        ui.checkbox(&mut state.show_base, "base").on_hover_text(
+                            "show base nodes, the pre-composed nodes provided with gantz",
+                        );
+                        ui.checkbox(&mut state.show_demo, "demo")
+                            .on_hover_text("show demos");
                     });
                 // The name filter fills the remaining width.
                 egui::TextEdit::singleline(&mut state.name_filter)
