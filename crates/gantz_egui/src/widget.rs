@@ -3,10 +3,10 @@ use time::{OffsetDateTime, UtcOffset, format_description};
 
 pub use command_palette::CommandPalette;
 pub use gantz::{Gantz, GantzState, update_graph_pane_head};
+pub use global_config::{GlobalConfigResponse, global_config};
 pub use graph_config::{GraphConfig, GraphConfigResponse};
 pub use graph_scene::{GraphScene, GraphSceneState};
 pub use graph_select::GraphSelect;
-pub use graph_tab::{GraphTab, GraphTabResponse};
 pub use head_name_edit::{HeadNameEditResponse, head_name, head_name_edit};
 pub use head_row::{HeadRowResponse, HeadRowType, fmt_commit_timestamp, head_row};
 pub use history_view::{HistoryMode, HistoryView, HistoryViewState};
@@ -14,16 +14,18 @@ pub use label_button::LabelButton;
 pub use label_toggle::LabelToggle;
 pub use log_view::LogView;
 pub use node_inspector::NodeInspector;
-pub use pane_menu::PaneMenu;
+pub use panes_config::{panes_config, reset_layout_button};
 pub use perf_view::{PerfCapture, PerfView};
+pub use settings::{SettingsResponse, settings};
 pub use steel_view::SteelView;
+pub use tab::{Tab, TabResponse};
 
 pub mod command_palette;
 pub mod gantz;
+pub mod global_config;
 pub mod graph_config;
 pub mod graph_scene;
 pub mod graph_select;
-pub mod graph_tab;
 pub mod head_name_edit;
 pub mod head_row;
 pub mod history_view;
@@ -31,9 +33,11 @@ pub mod label_button;
 pub mod label_toggle;
 pub mod log_view;
 pub mod node_inspector;
-pub mod pane_menu;
+pub mod panes_config;
 pub mod perf_view;
+pub mod settings;
 pub mod steel_view;
+pub mod tab;
 #[cfg(feature = "tracing")]
 pub mod trace_view;
 

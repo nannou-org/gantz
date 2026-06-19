@@ -1,6 +1,7 @@
 use crate::{
     CopyNodes, CreateNestedGraph, CreateNode, ExportAllNamed, ExportHead, HeadAccess, NodeCtx,
-    NodeUi, OpenCommandPalette, Paste, Redo, Registry, ReplaceHead, Undo, export,
+    NodeUi, OpenCommandPalette, OpenLogs, Paste, Redo, Registry, ReplaceHead, ResetTilesLayout,
+    Undo, export,
     response::{DynResponse, Responses},
     widget::{self, GraphScene, GraphSceneState, graph_scene},
 };
@@ -87,6 +88,23 @@ pub struct GantzState {
     /// Per-head redo stacks for undo/redo support.
     #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub redo_stacks: HashMap<gantz_ca::Head, Vec<gantz_ca::CommitAddr>>,
+    /// The sidebar's pixel width, maintained across window resizes (fixed, not
+    /// proportional). Updated when the user drags the divider.
+    #[serde(default = "default_sidebar_width")]
+    pub sidebar_width: f32,
+    /// The bottom tray's pixel height, maintained across window resizes.
+    #[serde(default = "default_tray_height")]
+    pub tray_height: f32,
+}
+
+/// The default fixed sidebar width, in points.
+fn default_sidebar_width() -> f32 {
+    270.0
+}
+
+/// The default fixed bottom-tray height, in points.
+fn default_tray_height() -> f32 {
+    300.0
 }
 
 pub type OpenHeadStates = HashMap<gantz_ca::Head, OpenHeadState>;
@@ -130,6 +148,9 @@ pub enum Pane {
     History,
     Logs,
     NodeInspector,
+    /// Globally relevant configuration grouped into Panes / Style / Global
+    /// subtabs (pane visibility, style, compile options, reset all demos).
+    Settings,
     Steel,
     VmPerf,
 }
@@ -210,6 +231,8 @@ pub struct GantzResponse {
     pub demo_changed: Option<(gantz_ca::Head, Option<String>)>,
     /// A base graph should be reset to its original state.
     pub reset_base_graph: Option<gantz_ca::Head>,
+    /// All `demo-*` base graphs should be reset to their original state.
+    pub reset_all_demos: bool,
     /// The global compile config was changed via the Graph Config pane.
     pub compile_config: Option<gantz_core::compile::Config>,
     /// Dynamic payloads emitted from within the widget tree, tagged with the
@@ -228,16 +251,41 @@ struct TabEditState {
     request_focus: bool,
 }
 
-#[derive(Default, serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(default)]
 pub struct ViewToggles {
+    /// Whether the sidebar (left column) is open. Toggled by the hamburger.
+    pub sidebar_open: bool,
     pub graphs: bool,
     pub history: bool,
+    pub settings: bool,
     pub logs: bool,
     pub node_inspector: bool,
     pub perf_gui: bool,
     pub perf_vm: bool,
     pub steel: bool,
     pub graph_config: bool,
+}
+
+impl Default for ViewToggles {
+    fn default() -> Self {
+        // The sidebar starts closed so a fresh launch shows only the graph
+        // scene, but its content panes default to visible so that opening the
+        // sidebar reveals the full arrangement. The Logs/Steel tray stays
+        // hidden until toggled.
+        Self {
+            sidebar_open: false,
+            graphs: true,
+            history: true,
+            settings: true,
+            logs: false,
+            node_inspector: true,
+            perf_gui: false,
+            perf_vm: false,
+            steel: false,
+            graph_config: true,
+        }
+    }
 }
 
 struct NodeTyCmd<'a> {
@@ -378,8 +426,10 @@ impl<'a> Gantz<'a> {
         Access: HeadAccess,
         Access::Node: Node + NodeUi,
     {
-        // TODO: Load the tiling tree, or initialise.
-        let tree_id = egui::Id::new("gantz-tiles-tree-storage");
+        // The persisted outer tree. The version suffix invalidates any tree
+        // persisted before the sidebar overhaul (which lacks the new panes and
+        // tab containers), forcing a rebuild via `create_tree`.
+        let tree_id = egui::Id::new("gantz-tiles-tree-storage-v3");
 
         // Retrieve the tree of persistent storage, or load the default.
         let mut tree: egui_tiles::Tree<Pane> = ui
@@ -396,6 +446,12 @@ impl<'a> Gantz<'a> {
         // Simplify the tree, and ensure tabs are where they should be.
         simplify_tree(&mut tree, ui.ctx());
 
+        // Maintain a fixed sidebar width / tray height across window resizes by
+        // imposing the stored pixel sizes on the share splits before layout.
+        // `available_rect_before_wrap` matches the root rect `Tree::ui` uses.
+        let widget_area = ui.available_rect_before_wrap();
+        impose_fixed_sizes(&mut tree, state, widget_area);
+
         // Initialise the response.
         // We'll collect it during traversal of the tree of tiles.
         let mut response = GantzResponse {
@@ -406,6 +462,7 @@ impl<'a> Gantz<'a> {
             file_drops: Vec::new(),
             demo_changed: None,
             reset_base_graph: None,
+            reset_all_demos: false,
             compile_config: None,
             responses: Responses::default(),
         };
@@ -425,14 +482,34 @@ impl<'a> Gantz<'a> {
         // Update the response with the final focused head.
         response.focused_head = behaviour.focused_head;
 
+        // Capture the sidebar width / tray height from the laid-out tree (which
+        // reflects any manual divider drag) to re-impose next frame.
+        capture_fixed_sizes(&tree, state, widget_area);
+
         // Detect .gantz file drops globally (not per-pane, since pointer
         // position may be unavailable during OS file drags on some platforms).
         response.file_drops = collect_gantz_file_drops(ui.ctx());
 
-        // Apply payloads that only affect `GantzState`, so applications never
-        // see them: command palette toggling.
+        // Apply payloads that only affect the widget's own state, so
+        // applications never see them: command palette toggling and resetting
+        // the tile layout to its default arrangement.
         for _ in response.responses.take::<OpenCommandPalette>() {
             state.command_palette.toggle();
+        }
+        for _ in response.responses.take::<ResetTilesLayout>() {
+            tree = create_tree();
+            // Restore the default sidebar width / tray height too.
+            state.sidebar_width = default_sidebar_width();
+            state.tray_height = default_tray_height();
+            // Restore default pane visibility (e.g. the perf panes turn off),
+            // but keep the sidebar's open/closed state since the user just
+            // acted from within it.
+            let sidebar_open = state.view_toggles.sidebar_open;
+            state.view_toggles = ViewToggles::default();
+            state.view_toggles.sidebar_open = sidebar_open;
+        }
+        for _ in response.responses.take::<OpenLogs>() {
+            state.view_toggles.logs = true;
         }
 
         // Persist the tree.
@@ -457,6 +534,8 @@ impl GantzState {
             command_palette: widget::CommandPalette::default(),
             view_toggles: ViewToggles::default(),
             redo_stacks: HashMap::new(),
+            sidebar_width: default_sidebar_width(),
+            tray_height: default_tray_height(),
         }
     }
 
@@ -486,13 +565,14 @@ where
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
         match pane {
             Pane::GraphConfig => match self.access.heads().get(self.focused_head) {
-                Some(head) => format!("Graph Config - {head}").into(),
-                None => "Graph Config".into(),
+                Some(head) => format!("Graph - {head}").into(),
+                None => "Graph".into(),
             },
             Pane::GraphScene => "Graphs".into(),
             Pane::Graphs => "Graphs".into(),
             Pane::GuiPerf => "GUI Perf".into(),
             Pane::History => "History".into(),
+            Pane::Settings => "Settings".into(),
             Pane::Logs => match self.gantz.log_source {
                 None => "Logs (No Source)".into(),
                 Some(LogSource::Logger(_)) => "Logs".into(),
@@ -509,6 +589,71 @@ where
             },
             Pane::VmPerf => "VM Perf".into(),
         }
+    }
+
+    fn on_tab_button(
+        &mut self,
+        tiles: &egui_tiles::Tiles<Pane>,
+        tile_id: egui_tiles::TileId,
+        button_response: egui::Response,
+    ) -> egui::Response {
+        // Right-click a (hideable) tab to hide its pane.
+        let pane = match tiles.get(tile_id) {
+            Some(egui_tiles::Tile::Pane(pane)) if pane_is_hideable(pane) => pane.clone(),
+            _ => return button_response,
+        };
+        button_response.context_menu(|ui| {
+            if ui.button("hide").clicked() {
+                set_pane_visible(&mut self.state.view_toggles, &pane, false);
+                ui.close();
+            }
+        });
+        button_response
+    }
+
+    fn is_tab_closable(
+        &self,
+        tiles: &egui_tiles::Tiles<Pane>,
+        tile_id: egui_tiles::TileId,
+    ) -> bool {
+        // The tray panes get a close button; the rest are toggled via the
+        // Panes settings or the tab right-click menu.
+        matches!(tiles.get_pane(&tile_id), Some(Pane::Logs | Pane::Steel))
+    }
+
+    fn on_tab_close(
+        &mut self,
+        tiles: &mut egui_tiles::Tiles<Pane>,
+        tile_id: egui_tiles::TileId,
+    ) -> bool {
+        // Hide the pane via its toggle (so it can be reopened) rather than
+        // letting egui_tiles remove the tile from the tree.
+        if let Some(pane) = tiles.get_pane(&tile_id).cloned() {
+            set_pane_visible(&mut self.state.view_toggles, &pane, false);
+        }
+        false
+    }
+
+    fn tab_ui(
+        &mut self,
+        tiles: &mut egui_tiles::Tiles<Pane>,
+        ui: &mut egui::Ui,
+        id: egui::Id,
+        tile_id: egui_tiles::TileId,
+        state: &egui_tiles::TabState,
+    ) -> egui::Response {
+        // Render with the shared `Tab` widget so the sidebar/tray tabs (and
+        // their small close button) match the graph tabs.
+        let title = self.tab_title_for_tile(tiles, tile_id);
+        let res = widget::Tab::new(title, id)
+            .active(state.active)
+            .closable(state.closable)
+            .show(ui);
+        if res.close.is_some_and(|r| r.clicked()) && self.on_tab_close(tiles, tile_id) {
+            tiles.remove(tile_id);
+        }
+        // Preserve the right-click-to-hide menu.
+        self.on_tab_button(tiles, tile_id, res.tab)
     }
 
     fn tab_bar_color(&self, visuals: &egui::Visuals) -> egui::Color32 {
@@ -582,17 +727,13 @@ where
                         _ => None,
                     };
 
-                    let compile_config = gantz.compile_config;
                     let res = pane_ui(ui, |ui| {
-                        let mut graph_config = widget::GraphConfig::new(&head, head_state, names)
+                        widget::GraphConfig::new(&head, head_state, names)
                             .is_base(is_base)
                             .immutable(immutable)
                             .demo_names(&demo_names_vec)
-                            .current_demo(current_demo);
-                        if let Some(cfg) = compile_config {
-                            graph_config = graph_config.compile_config(cfg);
-                        }
-                        graph_config.show(ui)
+                            .current_demo(current_demo)
+                            .show(ui)
                     });
                     if res.inner.new_branch.is_some() {
                         gantz_response.new_branch = res.inner.new_branch;
@@ -602,9 +743,6 @@ where
                     }
                     if res.inner.reset_base_graph {
                         gantz_response.reset_base_graph = Some(head.clone());
-                    }
-                    if let Some(cfg) = res.inner.compile_config {
-                        gantz_response.compile_config = Some(cfg);
                     }
                     if res.inner.export {
                         gantz_response.responses.push(Some(head), ExportHead);
@@ -619,7 +757,7 @@ where
             Pane::GraphScene => {
                 paint_gantz_file_hover_overlay(ui);
 
-                // We'll use this for positioning the floating toggle window.
+                // We'll use this to position the floating sidebar toggle.
                 let rect = ui.available_rect_before_wrap();
 
                 // Retrieve the inner graph tree from persistent storage, or create empty.
@@ -740,10 +878,11 @@ where
                     }
                 }
 
-                // Floating pane menu over the bottom right corner of the graph scene pane.
+                // Floating hamburger over the bottom-left corner of the graph
+                // scene that opens/closes the sidebar (left column).
                 let space = ui.style().interaction.interact_radius * 3.0;
-                let anchor = rect.right_bottom() + egui::vec2(-space, -space);
-                widget::PaneMenu::new(&mut state.view_toggles).show(ui.ctx(), anchor);
+                let anchor = rect.left_bottom() + egui::vec2(space, -space);
+                sidebar_toggle(ui.ctx(), anchor, &mut state.view_toggles.sidebar_open);
             }
             Pane::Graphs => {
                 // Store the pane rect for file drop targeting.
@@ -754,7 +893,14 @@ where
                 paint_gantz_file_hover_overlay(ui);
 
                 let heads = access.heads();
-                let res = graph_select(gantz.env, heads, *focused_head, *base_names, ui);
+                let res = graph_select(
+                    gantz.env,
+                    heads,
+                    *focused_head,
+                    *base_names,
+                    gantz.demos,
+                    ui,
+                );
 
                 if res.inner.export_all {
                     gantz_response.responses.push(None, ExportAllNamed);
@@ -900,6 +1046,21 @@ where
             Pane::VmPerf => {
                 if let Some(ref mut capture) = gantz.perf_vm {
                     perf_view("VM Perf", capture, ui);
+                }
+            }
+            Pane::Settings => {
+                let compile_config = gantz.compile_config;
+                let res = pane_ui(ui, |ui| {
+                    widget::settings(&mut state.view_toggles, compile_config, ui)
+                });
+                if let Some(cfg) = res.inner.compile_config {
+                    gantz_response.compile_config = Some(cfg);
+                }
+                if res.inner.reset_all_demos {
+                    gantz_response.reset_all_demos = true;
+                }
+                if res.inner.reset_layout {
+                    gantz_response.responses.push(None, ResetTilesLayout);
                 }
             }
         }
@@ -1054,9 +1215,10 @@ where
                     title.push_str(" ⚫");
                 }
             }
-            let res = widget::GraphTab::new(title, id)
+            let res = widget::Tab::new(title, id)
                 .active(state.active)
                 .closable(state.closable)
+                .hint("double-click to rename")
                 .show(ui);
 
             // Handle double-click to enter edit mode.
@@ -1121,6 +1283,9 @@ where
         let auto_layout = head_state.auto_layout;
         let layout_flow = head_state.layout_flow;
         let center_view = head_state.center_view;
+        // Disjoint borrow of a sibling field of `open_heads` for the graph
+        // scene's "Panes" context submenu.
+        let view_toggles = &mut self.state.view_toggles;
 
         // We'll use this for positioning the fixed path labels window.
         let rect = ui.available_rect_before_wrap();
@@ -1132,6 +1297,7 @@ where
                 data.graph,
                 pane_head,
                 head_state,
+                view_toggles,
                 data.view,
                 auto_layout,
                 layout_flow,
@@ -1195,15 +1361,18 @@ impl Default for GantzState {
 ///
 /// Roughly something like this:
 ///
-/// -------------------------------------
-/// |grs  |scene                        |
-/// |-----|                             |
-/// |conf |                             |
-/// |-----|                             |
-/// |hist |-----------------------------|
-/// |-----|logs          |steel         |
-/// |insp |              |              |
-/// -------------------------------------
+/// -----------------------------------------
+/// |grs/hist/settings |scene               |
+/// |------------------|                     |
+/// |vm/gui            |                     |
+/// |------------------|---------------------|
+/// |conf              |logs      |steel     |
+/// |------------------|          |          |
+/// |insp              |          |          |
+/// -----------------------------------------
+///
+/// The active tab of each tab container defaults to its first child (see
+/// `egui_tiles::Tabs::new`), so child ordering picks the default tabs.
 fn create_tree() -> egui_tiles::Tree<Pane> {
     let mut tiles = egui_tiles::Tiles::default();
 
@@ -1215,26 +1384,22 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
     let history = tiles.insert_pane(Pane::History);
     let logs = tiles.insert_pane(Pane::Logs);
     let node_inspector = tiles.insert_pane(Pane::NodeInspector);
+    let settings = tiles.insert_pane(Pane::Settings);
     let steel = tiles.insert_pane(Pane::Steel);
     let vm_perf = tiles.insert_pane(Pane::VmPerf);
 
-    // The left column.
+    // Sidebar tab containers (first child is the default-active tab).
+    let graphs_history_settings = tiles.insert_tab_tile(vec![graphs, history, settings]);
+    let perf = tiles.insert_tab_tile(vec![vm_perf, gui_perf]);
+
+    // The left column (sidebar).
     let mut shares = egui_tiles::Shares::default();
-    shares.set_share(graphs, 0.22);
-    shares.set_share(graph_config, 0.12);
-    shares.set_share(history, 0.18);
-    shares.set_share(vm_perf, 0.10);
-    shares.set_share(gui_perf, 0.10);
-    shares.set_share(node_inspector, 0.28);
+    shares.set_share(graphs_history_settings, 0.30);
+    shares.set_share(perf, 0.10);
+    shares.set_share(graph_config, 0.13);
+    shares.set_share(node_inspector, 0.25);
     let left_column = tiles.insert_container(egui_tiles::Linear {
-        children: vec![
-            graphs,
-            graph_config,
-            history,
-            vm_perf,
-            gui_perf,
-            node_inspector,
-        ],
+        children: vec![graphs_history_settings, perf, graph_config, node_inspector],
         dir: egui_tiles::LinearDir::Vertical,
         shares,
     });
@@ -1249,11 +1414,13 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
         0.7,
     ));
 
-    // The root with both columns.
+    // The root with both columns. The split here is only a fallback; the
+    // sidebar normally has a fixed pixel width maintained across window resizes
+    // (see `impose_fixed_sizes` / `default_sidebar_width`).
     let root = tiles.insert_container(egui_tiles::Linear::new_binary(
         egui_tiles::LinearDir::Horizontal,
         [left_column, right_column],
-        0.22,
+        0.18,
     ));
 
     egui_tiles::Tree::new("gantz-tiles-tree", root, tiles)
@@ -1345,22 +1512,232 @@ fn simplify_tree(tree: &mut egui_tiles::Tree<Pane>, ctx: &egui::Context) {
     }
 }
 
+/// The gap between sibling tiles, in points. Must match the (unoverridden)
+/// default `egui_tiles::Behavior::gap_width`, so imposed pixel sizes are exact
+/// and don't drift when re-imposed each frame.
+const TILE_GAP: f32 = 1.0;
+
+/// The minimum sidebar width / tray height, in points.
+const MIN_PANE_SIZE: f32 = 80.0;
+
+/// The tiles whose Linear share splits hold the sidebar width and tray height,
+/// when the tree has its default top-level shape.
+struct LayoutAnchors {
+    /// Root horizontal Linear: `[left_column | right_column]`.
+    root: egui_tiles::TileId,
+    left_column: egui_tiles::TileId,
+    /// Right column vertical Linear: `[graph_scene / tray]`.
+    right_column: egui_tiles::TileId,
+    graph_scene: egui_tiles::TileId,
+    tray: egui_tiles::TileId,
+}
+
+/// Identify the layout anchors, or `None` if the tree isn't in its default
+/// top-level shape (mid-drag, or after the user rearranged panes), in which
+/// case the proportional layout is left untouched.
+fn layout_anchors(tree: &egui_tiles::Tree<Pane>) -> Option<LayoutAnchors> {
+    let graph_scene = tree.tiles.find_pane(&Pane::GraphScene)?;
+    let right_column = tree.tiles.parent_of(graph_scene)?;
+    let root = tree.root()?;
+    let &[a, b] = linear_children(tree, root, egui_tiles::LinearDir::Horizontal)?.as_slice() else {
+        return None;
+    };
+    let left_column = match (a == right_column, b == right_column) {
+        (false, true) => a,
+        (true, false) => b,
+        _ => return None,
+    };
+    let &[c, d] = linear_children(tree, right_column, egui_tiles::LinearDir::Vertical)?.as_slice()
+    else {
+        return None;
+    };
+    let tray = match (c == graph_scene, d == graph_scene) {
+        (true, false) => d,
+        (false, true) => c,
+        _ => return None,
+    };
+    Some(LayoutAnchors {
+        root,
+        left_column,
+        right_column,
+        graph_scene,
+        tray,
+    })
+}
+
+/// The children of `id` if it is a Linear container with direction `dir`.
+fn linear_children(
+    tree: &egui_tiles::Tree<Pane>,
+    id: egui_tiles::TileId,
+    dir: egui_tiles::LinearDir,
+) -> Option<Vec<egui_tiles::TileId>> {
+    match tree.tiles.get_container(id)? {
+        egui_tiles::Container::Linear(l) if l.dir == dir => Some(l.children.clone()),
+        _ => None,
+    }
+}
+
+/// Set the two shares of a binary Linear container.
+fn set_linear_shares(
+    tree: &mut egui_tiles::Tree<Pane>,
+    container: egui_tiles::TileId,
+    a: egui_tiles::TileId,
+    a_share: f32,
+    b: egui_tiles::TileId,
+    b_share: f32,
+) {
+    if let Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(l))) =
+        tree.tiles.get_mut(container)
+    {
+        l.shares.set_share(a, a_share);
+        l.shares.set_share(b, b_share);
+    }
+}
+
+/// Impose the stored sidebar width / tray height (in points) on the tree's
+/// share splits so they stay fixed as the window resizes. Call after
+/// `simplify_tree`, before `tree.ui`.
+fn impose_fixed_sizes(tree: &mut egui_tiles::Tree<Pane>, state: &GantzState, area: egui::Rect) {
+    let Some(anchors) = layout_anchors(tree) else {
+        return;
+    };
+    // Both columns span the full height, so the tray's available height is the
+    // area height less the gap; the sidebar's available width likewise.
+    if state.view_toggles.sidebar_open {
+        let avail = area.width() - TILE_GAP;
+        let width = state
+            .sidebar_width
+            .clamp(MIN_PANE_SIZE, (avail - MIN_PANE_SIZE).max(MIN_PANE_SIZE));
+        set_linear_shares(
+            tree,
+            anchors.root,
+            anchors.left_column,
+            width,
+            anchors.right_column,
+            (avail - width).max(1.0),
+        );
+    }
+    if state.view_toggles.logs || state.view_toggles.steel {
+        let avail = area.height() - TILE_GAP;
+        let height = state
+            .tray_height
+            .clamp(MIN_PANE_SIZE, (avail - MIN_PANE_SIZE).max(MIN_PANE_SIZE));
+        set_linear_shares(
+            tree,
+            anchors.right_column,
+            anchors.graph_scene,
+            (avail - height).max(1.0),
+            anchors.tray,
+            height,
+        );
+    }
+}
+
+/// Capture the sidebar width / tray height (in points) from the laid-out tree,
+/// so they can be re-imposed next frame (including after manual divider drags).
+/// Call after `tree.ui`.
+///
+/// This reads the post-layout *shares* rather than the cached rects: a resize
+/// drag updates the shares during `tree.ui`, but the rects it computes reflect
+/// the pre-drag split, so reading rects would never see the drag.
+fn capture_fixed_sizes(tree: &egui_tiles::Tree<Pane>, state: &mut GantzState, area: egui::Rect) {
+    let Some(anchors) = layout_anchors(tree) else {
+        return;
+    };
+    // Gate on the *laid-out* visibility, not `sidebar_open`: the hamburger can
+    // flip `sidebar_open` mid-frame, but `set_tile_visibility` only runs at the
+    // frame start, so the layout (and thus the captured share) reflects the
+    // visibility from frame start. Capturing against a stale layout would
+    // compute the column's size against the wrong set of visible siblings.
+    if tree.is_visible(anchors.left_column) {
+        if let Some(width) = linear_child_points(
+            tree,
+            anchors.root,
+            anchors.left_column,
+            area.width() - TILE_GAP,
+        ) {
+            if width > 1.0 {
+                state.sidebar_width = width;
+            }
+        }
+    }
+    if tree.is_visible(anchors.tray) {
+        if let Some(height) = linear_child_points(
+            tree,
+            anchors.right_column,
+            anchors.tray,
+            area.height() - TILE_GAP,
+        ) {
+            if height > 1.0 {
+                state.tray_height = height;
+            }
+        }
+    }
+}
+
+/// The points a Linear child currently occupies, derived from its share of the
+/// visible children (mirroring `egui_tiles::Shares::split`).
+fn linear_child_points(
+    tree: &egui_tiles::Tree<Pane>,
+    container: egui_tiles::TileId,
+    child: egui_tiles::TileId,
+    available: f32,
+) -> Option<f32> {
+    let egui_tiles::Container::Linear(l) = tree.tiles.get_container(container)? else {
+        return None;
+    };
+    let total: f32 = l
+        .children
+        .iter()
+        .filter(|&&c| tree.is_visible(c))
+        .map(|&c| l.shares[c])
+        .sum();
+    (total > 0.0).then(|| available * l.shares[child] / total)
+}
+
+/// Whether a tab's pane can be hidden via its right-click menu. The main graph
+/// scene and the Settings control surface are not hideable this way.
+fn pane_is_hideable(pane: &Pane) -> bool {
+    !matches!(pane, Pane::GraphScene)
+}
+
+/// Set a pane's visibility toggle. No-op for panes without one.
+fn set_pane_visible(view: &mut ViewToggles, pane: &Pane, visible: bool) {
+    match pane {
+        Pane::Graphs => view.graphs = visible,
+        Pane::History => view.history = visible,
+        Pane::Settings => view.settings = visible,
+        Pane::GraphConfig => view.graph_config = visible,
+        Pane::NodeInspector => view.node_inspector = visible,
+        Pane::VmPerf => view.perf_vm = visible,
+        Pane::GuiPerf => view.perf_gui = visible,
+        Pane::Logs => view.logs = visible,
+        Pane::Steel => view.steel = visible,
+        Pane::GraphScene => {}
+    }
+}
+
 /// Ensure the view toggles match the pane visibility.
 fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
     let ids: Vec<_> = tree.tiles.tile_ids().collect();
-    // Set visibility for panes.
+    let open = view.sidebar_open;
+    // Set visibility for panes. Sidebar content panes are gated by both the
+    // sidebar being open and their individual toggle; the Settings control
+    // pane is gated only by the sidebar being open; the tray panes
+    // (Logs/Steel) are independent of the sidebar.
     for &id in &ids {
         if let Some(pane) = tree.tiles.get_pane(&id) {
             match pane {
-                Pane::GraphConfig => tree.set_visible(id, view.graph_config),
                 Pane::GraphScene => (),
-                Pane::Graphs => tree.set_visible(id, view.graphs),
-                Pane::GuiPerf => tree.set_visible(id, view.perf_gui),
-                Pane::History => tree.set_visible(id, view.history),
+                Pane::Settings => tree.set_visible(id, open && view.settings),
+                Pane::GraphConfig => tree.set_visible(id, open && view.graph_config),
+                Pane::Graphs => tree.set_visible(id, open && view.graphs),
+                Pane::GuiPerf => tree.set_visible(id, open && view.perf_gui),
+                Pane::History => tree.set_visible(id, open && view.history),
+                Pane::NodeInspector => tree.set_visible(id, open && view.node_inspector),
+                Pane::VmPerf => tree.set_visible(id, open && view.perf_vm),
                 Pane::Logs => tree.set_visible(id, view.logs),
-                Pane::NodeInspector => tree.set_visible(id, view.node_inspector),
                 Pane::Steel => tree.set_visible(id, view.steel),
-                Pane::VmPerf => tree.set_visible(id, view.perf_vm),
             }
         }
     }
@@ -1445,16 +1822,65 @@ fn pane_ui<R>(ui: &mut egui::Ui, pane: impl FnOnce(&mut egui::Ui) -> R) -> egui:
     egui::CentralPanel::default().show_inside(ui, |ui| pane(ui))
 }
 
+/// The size of the floating sidebar toggle glyph, also used to offset the
+/// nested-graph breadcrumb to its right (they share the scene's bottom-left
+/// corner).
+const SIDEBAR_TOGGLE_ICON_SIZE: f32 = 18.0;
+
+/// A floating hamburger button that toggles the sidebar open/closed.
+///
+/// Anchored to the given bottom-left position over the graph scene, so it
+/// tracks the scene's corner rather than the whole window.
+fn sidebar_toggle(ctx: &egui::Context, anchor_pos: egui::Pos2, open: &mut bool) {
+    let id = egui::Id::new("gantz-sidebar-toggle");
+    egui::Area::new(id)
+        .pivot(egui::Align2::LEFT_BOTTOM)
+        .fixed_pos(anchor_pos)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame::NONE.show(ui, |ui| {
+                // A hamburger that toggles the sidebar. Idle, it matches the
+                // faint colour of egui_graph's dot grid; on hover it brightens a
+                // little to signal it's interactive (no selection colour when
+                // open). Laid out manually so the colour can depend on hover.
+                let font = egui::FontId::proportional(SIDEBAR_TOGGLE_ICON_SIZE);
+                let galley =
+                    ui.painter()
+                        .layout_no_wrap("☰".to_owned(), font, egui::Color32::PLACEHOLDER);
+                let (rect, response) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
+                let color = if response.hovered() {
+                    ui.visuals().weak_text_color()
+                } else {
+                    ui.style().noninteractive().bg_stroke.color
+                };
+                ui.painter().galley(rect.min, galley, color);
+                if response.clicked() {
+                    *open = !*open;
+                }
+                let hint = if *open {
+                    "close sidebar"
+                } else {
+                    "open sidebar"
+                };
+                response
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(hint);
+            });
+        });
+}
+
 fn graph_select(
     env: &dyn Registry,
     heads: &[gantz_ca::Head],
     focused_head: usize,
     base_names: &gantz_ca::registry::Names,
+    demos: Option<&HashMap<gantz_ca::CommitAddr, String>>,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse> {
     pane_ui(ui, |ui| {
         widget::GraphSelect::new(env, heads, base_names)
             .focused_head(focused_head)
+            .demos(demos)
             .show(ui)
     })
 }
@@ -1491,6 +1917,7 @@ fn graph_scene<N>(
     graph: &mut gantz_core::node::graph::Graph<N>,
     head: &gantz_ca::Head,
     head_state: &mut OpenHeadState,
+    view_toggles: &mut ViewToggles,
     head_view: &mut egui_graph::View,
     auto_layout: bool,
     layout_flow: egui::Direction,
@@ -1517,6 +1944,7 @@ where
         .layout_flow(layout_flow)
         .center_view(center_view)
         .immutable(immutable)
+        .view_toggles(view_toggles)
         .show(head_view, &mut head_state.scene, vm, ui);
 
     graph_scene::paint_diagnostics(diagnostics, &[], &response, ui);
@@ -1547,9 +1975,12 @@ fn name_breadcrumb(
     let segs: Vec<&str> = name.split(sep).collect();
     let sep_str = sep.to_string();
     let space = ui.style().interaction.interact_radius * 3.0;
+    // Sit to the right of the floating sidebar toggle, which occupies the very
+    // bottom-left corner of the scene, so the levels stay on the bottom row.
+    let toggle_w = SIDEBAR_TOGGLE_ICON_SIZE + ui.style().spacing.item_spacing.x;
     egui::Window::new("breadcrumb_window")
         .pivot(egui::Align2::LEFT_BOTTOM)
-        .fixed_pos(scene_rect.left_bottom() + egui::vec2(space, -space))
+        .fixed_pos(scene_rect.left_bottom() + egui::vec2(space + toggle_w, -space))
         .title_bar(false)
         .resizable(false)
         .collapsible(false)
@@ -1750,4 +2181,72 @@ fn steel_view(
                     .show(ui);
             });
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The fixed sidebar width must be imposed on the sidebar (left column),
+    /// not the main area, and the anchors must identify the sidebar as the
+    /// column that does not contain the graph scene.
+    #[test]
+    fn impose_sets_sidebar_width_on_left_column() {
+        let mut tree = create_tree();
+        let anchors = layout_anchors(&tree).expect("default tree has layout anchors");
+
+        let graph_scene = tree.tiles.find_pane(&Pane::GraphScene).unwrap();
+        assert_ne!(anchors.left_column, anchors.right_column);
+        assert_eq!(
+            tree.tiles.parent_of(graph_scene),
+            Some(anchors.right_column)
+        );
+
+        let mut state = GantzState::new();
+        state.view_toggles.sidebar_open = true;
+        state.sidebar_width = 240.0;
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        impose_fixed_sizes(&mut tree, &state, area);
+
+        let Some(egui_tiles::Container::Linear(root)) = tree.tiles.get_container(anchors.root)
+        else {
+            panic!("root is not a linear container");
+        };
+        let avail = 1000.0 - TILE_GAP;
+        // The sidebar gets the fixed width; the main area gets the remainder.
+        assert!((root.shares[anchors.left_column] - 240.0).abs() < 0.01);
+        assert!((root.shares[anchors.right_column] - (avail - 240.0)).abs() < 0.01);
+    }
+
+    /// `capture_fixed_sizes` must recover the same width `impose_fixed_sizes`
+    /// set, so a sidebar that isn't dragged doesn't drift frame to frame.
+    #[test]
+    fn capture_round_trips_imposed_sidebar_width() {
+        let mut tree = create_tree();
+        let mut state = GantzState::new();
+        state.view_toggles.sidebar_open = true;
+        state.sidebar_width = 240.0;
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        impose_fixed_sizes(&mut tree, &state, area);
+        capture_fixed_sizes(&tree, &mut state, area);
+        assert!((state.sidebar_width - 240.0).abs() < 0.01);
+    }
+
+    /// Reopening the sidebar must not inflate its width. On the open-transition
+    /// frame `sidebar_open` is already true but the layout still has the left
+    /// column hidden; capturing then would size it against the wrong siblings.
+    #[test]
+    fn capture_skips_while_sidebar_laid_out_hidden() {
+        let mut tree = create_tree();
+        let anchors = layout_anchors(&tree).unwrap();
+        // Layout state: sidebar hidden (as at frame start)...
+        tree.set_visible(anchors.left_column, false);
+        let mut state = GantzState::new();
+        // ...but `sidebar_open` was just toggled on mid-frame.
+        state.view_toggles.sidebar_open = true;
+        state.sidebar_width = 240.0;
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        capture_fixed_sizes(&tree, &mut state, area);
+        assert!((state.sidebar_width - 240.0).abs() < 0.01);
+    }
 }

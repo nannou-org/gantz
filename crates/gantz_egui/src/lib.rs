@@ -197,6 +197,13 @@ pub trait NodeUi {
         None
     }
 
+    /// Add node-specific items to the node's right-click context menu.
+    ///
+    /// Called after the built-in items (copy, reset, delete, ...). Emit
+    /// responses for the application (or `Gantz::show`) to handle via
+    /// [`NodeCtx::response`].
+    fn context_menu(&mut self, _ctx: &mut NodeCtx, _ui: &mut egui::Ui) {}
+
     /// The layout direction of the node's inputs to outputs.
     fn flow(&self, _registry: &dyn Registry) -> egui::Direction {
         egui::Direction::TopDown
@@ -337,6 +344,18 @@ pub struct InspectEdge {
 #[derive(Clone, Copy, Debug)]
 pub struct OpenCommandPalette;
 
+/// Reset the top-level tile layout to its default arrangement.
+///
+/// Handled by `Gantz::show` itself - applications never see this payload.
+#[derive(Clone, Copy, Debug)]
+pub struct ResetTilesLayout;
+
+/// Open (show) the logs pane.
+///
+/// Handled by `Gantz::show` itself - applications never see this payload.
+#[derive(Clone, Copy, Debug)]
+pub struct OpenLogs;
+
 /// Open a head (named or commit) as a new tab.
 #[derive(Clone, Debug)]
 pub struct OpenHead(pub gantz_ca::Head);
@@ -410,6 +429,10 @@ where
     ) -> Option<SocketDoc> {
         (**self).socket_doc(registry, kind, ix)
     }
+
+    fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+        (**self).context_menu(ctx, ui)
+    }
 }
 
 macro_rules! impl_node_ui_for_ptr {
@@ -448,6 +471,10 @@ macro_rules! impl_node_ui_for_ptr {
 
             fn socket_doc(&self, registry: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
                 (**self).socket_doc(registry, kind, ix)
+            }
+
+            fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+                (**self).context_menu(ctx, ui)
             }
         }
     };

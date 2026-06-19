@@ -1,0 +1,95 @@
+//! The "Settings" sidebar tab: globally-relevant configuration grouped into
+//! Panes / Style / Global subtabs.
+
+use super::gantz::ViewToggles;
+
+/// Which settings subtab is selected. Persisted only within a session.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum SettingsTab {
+    #[default]
+    Global,
+    Style,
+    Panes,
+}
+
+/// Response from [`settings`].
+#[derive(Default)]
+pub struct SettingsResponse {
+    /// The global compile config was changed (Global subtab).
+    pub compile_config: Option<gantz_core::compile::Config>,
+    /// The "Reset all demos" button was clicked (Global subtab).
+    pub reset_all_demos: bool,
+    /// The "reset all" layout button was clicked (Panes subtab).
+    pub reset_layout: bool,
+}
+
+/// Render the Settings pane: a subtab selector over Panes / Style / Global.
+pub fn settings(
+    view: &mut ViewToggles,
+    compile_config: Option<gantz_core::compile::Config>,
+    ui: &mut egui::Ui,
+) -> SettingsResponse {
+    let id = ui.id().with("settings_subtab");
+    let mut tab = ui
+        .data(|d| d.get_temp::<SettingsTab>(id))
+        .unwrap_or_default();
+
+    // Subtab selector rendered like the shared tab widget: plain labels (no
+    // box), the active tab in the strong text colour and the rest dim.
+    ui.horizontal(|ui| {
+        let mut tab_label = |ui: &mut egui::Ui, this: SettingsTab, label: &str| {
+            let color = if tab == this {
+                ui.visuals().strong_text_color()
+            } else {
+                ui.visuals().weak_text_color()
+            };
+            let resp = ui
+                .add(
+                    egui::Label::new(egui::RichText::new(label).color(color))
+                        .sense(egui::Sense::click())
+                        .selectable(false),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if resp.clicked() {
+                tab = this;
+            }
+        };
+        tab_label(ui, SettingsTab::Global, "Global");
+        tab_label(ui, SettingsTab::Style, "Style");
+        tab_label(ui, SettingsTab::Panes, "Panes");
+    });
+    ui.separator();
+
+    let mut res = SettingsResponse::default();
+    match tab {
+        SettingsTab::Panes => {
+            // Pin "reset all" to the bottom; the toggles scroll above it.
+            // `Frame::NONE` keeps the inner margin matching the other subtabs,
+            // which render directly in the pane's central panel.
+            egui::TopBottomPanel::bottom(id.with("reset"))
+                .show_separator_line(false)
+                .frame(egui::Frame::NONE)
+                .show_inside(ui, |ui| {
+                    res.reset_layout = super::reset_layout_button(ui);
+                });
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show_inside(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| super::panes_config(view, ui));
+                });
+        }
+        SettingsTab::Style => {
+            ui.weak("Style configuration coming soon.");
+        }
+        SettingsTab::Global => {
+            let g = super::global_config(compile_config, ui);
+            res.compile_config = g.compile_config;
+            res.reset_all_demos = g.reset_all_demos;
+        }
+    }
+
+    ui.data_mut(|d| d.insert_temp(id, tab));
+    res
+}
