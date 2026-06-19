@@ -7,9 +7,9 @@ use super::gantz::ViewToggles;
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum SettingsTab {
     #[default]
-    Panes,
-    Style,
     Global,
+    Style,
+    Panes,
 }
 
 /// Response from [`settings`].
