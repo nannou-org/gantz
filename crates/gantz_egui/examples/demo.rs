@@ -1044,10 +1044,15 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         };
         // In eframe, Event::Paste provides text directly.
         let Some(text) = text else { continue };
+        let editing = match &head {
+            gantz_ca::Head::Branch(name) => Some(name.clone()),
+            gantz_ca::Head::Commit(_) => None,
+        };
         let head_state = state.gantz.open_heads.entry(head).or_default();
         let (_, graph, gv) = &mut state.heads[ix];
         let pasted = gantz_egui::ops::paste(
             &mut state.env.registry,
+            editing.as_deref(),
             &mut HashMap::new(),
             &mut HashMap::new(),
             graph,

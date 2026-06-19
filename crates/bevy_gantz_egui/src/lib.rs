@@ -892,6 +892,7 @@ pub fn on_paste<N>(
         + serde::Serialize
         + serde::de::DeserializeOwned
         + ca::CaHash
+        + gantz_egui::sync::AsNamedRef
         + Send
         + Sync,
 {
@@ -903,6 +904,10 @@ pub fn on_paste<N>(
         log::error!("PasteSelection: head not found for entity {:?}", event.head);
         return;
     };
+    let editing = match &**head_ref {
+        ca::Head::Branch(name) => Some(name.clone()),
+        ca::Head::Commit(_) => None,
+    };
     let Some(head_state) = gui_state.open_heads.get_mut(&**head_ref) else {
         log::error!("PasteSelection: GUI state not found for head");
         return;
@@ -910,6 +915,7 @@ pub fn on_paste<N>(
 
     let pasted = gantz_egui::ops::paste(
         &mut registry,
+        editing.as_deref(),
         &mut views,
         &mut demos,
         &mut wg,
