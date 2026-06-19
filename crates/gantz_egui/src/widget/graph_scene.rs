@@ -450,6 +450,11 @@ where
                     ui.close();
                 }
             }
+            // Node-specific items (e.g. the log node's "open logs").
+            let node_path = [n_ix];
+            let mut node_ctx =
+                crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, vm, responses);
+            graph[n_id].context_menu(&mut node_ctx, ui);
         });
 
         node_responses.push((n_id, response));

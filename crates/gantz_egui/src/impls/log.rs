@@ -1,4 +1,4 @@
-use crate::{NodeCtx, NodeUi, Registry, SocketDoc, SocketKind};
+use crate::{NodeCtx, NodeUi, OpenLogs, Registry, SocketDoc, SocketKind};
 
 impl NodeUi for gantz_std::log::Log {
     fn name(&self, _: &dyn Registry) -> &str {
@@ -28,6 +28,17 @@ impl NodeUi for gantz_std::log::Log {
                 Some(SocketDoc::ty("any").with_description("value logged at this node's level"))
             }
             SocketKind::Output => None,
+        }
+    }
+
+    fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+        if ui
+            .button("open logs")
+            .on_hover_text("show the logs pane")
+            .clicked()
+        {
+            ctx.response(OpenLogs);
+            ui.close();
         }
     }
 }

@@ -1,6 +1,7 @@
 use crate::{
     CopyNodes, CreateNestedGraph, CreateNode, ExportAllNamed, ExportHead, HeadAccess, NodeCtx,
-    NodeUi, OpenCommandPalette, Paste, Redo, Registry, ReplaceHead, ResetTilesLayout, Undo, export,
+    NodeUi, OpenCommandPalette, OpenLogs, Paste, Redo, Registry, ReplaceHead, ResetTilesLayout,
+    Undo, export,
     response::{DynResponse, Responses},
     widget::{self, GraphScene, GraphSceneState, graph_scene},
 };
@@ -277,7 +278,7 @@ impl Default for ViewToggles {
             graphs: true,
             history: true,
             settings: true,
-            logs: true,
+            logs: false,
             node_inspector: true,
             perf_gui: false,
             perf_vm: false,
@@ -506,6 +507,9 @@ impl<'a> Gantz<'a> {
             let sidebar_open = state.view_toggles.sidebar_open;
             state.view_toggles = ViewToggles::default();
             state.view_toggles.sidebar_open = sidebar_open;
+        }
+        for _ in response.responses.take::<OpenLogs>() {
+            state.view_toggles.logs = true;
         }
 
         // Persist the tree.

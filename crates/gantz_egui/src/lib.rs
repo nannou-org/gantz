@@ -197,6 +197,13 @@ pub trait NodeUi {
         None
     }
 
+    /// Add node-specific items to the node's right-click context menu.
+    ///
+    /// Called after the built-in items (copy, reset, delete, ...). Emit
+    /// responses for the application (or `Gantz::show`) to handle via
+    /// [`NodeCtx::response`].
+    fn context_menu(&mut self, _ctx: &mut NodeCtx, _ui: &mut egui::Ui) {}
+
     /// The layout direction of the node's inputs to outputs.
     fn flow(&self, _registry: &dyn Registry) -> egui::Direction {
         egui::Direction::TopDown
@@ -342,6 +349,12 @@ pub struct OpenCommandPalette;
 /// Handled by `Gantz::show` itself - applications never see this payload.
 #[derive(Clone, Copy, Debug)]
 pub struct ResetTilesLayout;
+
+/// Open (show) the logs pane.
+///
+/// Handled by `Gantz::show` itself - applications never see this payload.
+#[derive(Clone, Copy, Debug)]
+pub struct OpenLogs;
 
 /// Open a head (named or commit) as a new tab.
 #[derive(Clone, Debug)]
