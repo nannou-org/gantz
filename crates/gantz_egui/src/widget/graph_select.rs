@@ -4,7 +4,7 @@ use super::head_row::{HeadRowType, head_row};
 use std::collections::{HashMap, HashSet};
 
 /// The glyph for the filter-options button (swap if it doesn't render).
-const FILTER_GLYPH: &str = "⋮";
+const FILTER_GLYPH: &str = "⛭";
 
 /// A widget for selecting between, naming, and creating new graphs.
 pub struct GraphSelect<'a> {
