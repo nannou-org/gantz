@@ -628,6 +628,92 @@ where
         false
     }
 
+    fn tab_ui(
+        &mut self,
+        tiles: &mut egui_tiles::Tiles<Pane>,
+        ui: &mut egui::Ui,
+        id: egui::Id,
+        tile_id: egui_tiles::TileId,
+        state: &egui_tiles::TabState,
+    ) -> egui::Response {
+        // Mirrors egui_tiles' default `tab_ui`, but paints the close button in a
+        // subtle weak/strong colour (like the graph tabs) instead of the more
+        // prominent interaction stroke. Everything else (titles, background,
+        // the right-click-to-hide menu via `on_tab_button`) is unchanged.
+        let text = self.tab_title_for_tile(tiles, tile_id);
+        let close_btn_size = egui::Vec2::splat(self.close_button_outer_size());
+        let close_btn_left_padding = 4.0;
+        let font_id = egui::TextStyle::Button.resolve(ui.style());
+        let galley = text.into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, font_id);
+
+        let x_margin = self.tab_title_spacing(ui.visuals());
+        let button_width = galley.size().x
+            + 2.0 * x_margin
+            + f32::from(state.closable) * (close_btn_left_padding + close_btn_size.x);
+        let (_, tab_rect) = ui.allocate_space(egui::vec2(button_width, ui.available_height()));
+
+        let tab_response = ui
+            .interact(tab_rect, id, egui::Sense::click_and_drag())
+            .on_hover_cursor(self.tab_hover_cursor_icon());
+
+        if ui.is_rect_visible(tab_rect) && !state.is_being_dragged {
+            let bg_color = self.tab_bg_color(ui.visuals(), tiles, tile_id, state);
+            let stroke = self.tab_outline_stroke(ui.visuals(), tiles, tile_id, state);
+            ui.painter().rect(
+                tab_rect.shrink(0.5),
+                0.0,
+                bg_color,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+            if state.active {
+                // Connect the active tab with the pane area below it.
+                ui.painter().hline(
+                    tab_rect.x_range(),
+                    tab_rect.bottom(),
+                    egui::Stroke::new(stroke.width + 1.0, bg_color),
+                );
+            }
+
+            let text_color = self.tab_text_color(ui.visuals(), tiles, tile_id, state);
+            let text_position = egui::Align2::LEFT_CENTER
+                .align_size_within_rect(galley.size(), tab_rect.shrink(x_margin))
+                .min;
+            ui.painter().galley(text_position, galley, text_color);
+
+            if state.closable {
+                let close_btn_rect = egui::Align2::RIGHT_CENTER
+                    .align_size_within_rect(close_btn_size, tab_rect.shrink(x_margin));
+                let close_btn_id = ui.auto_id_with("tab_close_btn");
+                let close_btn_response = ui
+                    .interact(close_btn_rect, close_btn_id, egui::Sense::click_and_drag())
+                    .on_hover_cursor(egui::CursorIcon::Default);
+
+                let visuals = ui.style().interact(&close_btn_response);
+                let rect = close_btn_rect
+                    .shrink(self.close_button_inner_margin())
+                    .expand(visuals.expansion);
+                // Subtle close: weak when idle, strong on hover (like graph tabs).
+                let color = if close_btn_response.hovered() {
+                    ui.visuals().strong_text_color()
+                } else {
+                    ui.visuals().weak_text_color()
+                };
+                let stroke = egui::Stroke::new(visuals.fg_stroke.width, color);
+                ui.painter()
+                    .line_segment([rect.left_top(), rect.right_bottom()], stroke);
+                ui.painter()
+                    .line_segment([rect.right_top(), rect.left_bottom()], stroke);
+
+                if close_btn_response.clicked() && self.on_tab_close(tiles, tile_id) {
+                    tiles.remove(tile_id);
+                }
+            }
+        }
+
+        self.on_tab_button(tiles, tile_id, tab_response)
+    }
+
     fn tab_bar_color(&self, visuals: &egui::Visuals) -> egui::Color32 {
         // This matches the `CentralPanel` fill so that the color looks
         // continuous.
