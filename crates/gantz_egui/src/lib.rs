@@ -9,6 +9,7 @@ use steel::{
     steel_vm::engine::Engine,
 };
 
+pub mod cycle;
 pub mod export;
 pub mod format;
 mod impls;
@@ -56,6 +57,17 @@ pub use widget::graph_select::GraphRegistry;
 pub trait Registry: NameRegistry + FnNodeNames + NodeTypeRegistry + GraphRegistry {
     /// Look up a node by content address.
     fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&dyn gantz_core::Node>;
+
+    /// Whether referencing the graph named `target` from the graph named
+    /// `editing` would create a reference cycle (see [`cycle::would_cycle`]).
+    ///
+    /// Used by the command palette to hide node types that would form a cycle.
+    /// The default is conservative (never a cycle); the standard [`RegistryRef`]
+    /// implementation walks the registry.
+    fn would_ref_cycle(&self, target: &str, editing: &str) -> bool {
+        let _ = (target, editing);
+        false
+    }
 
     /// Get the demo graph name for a node at the given content address.
     fn demo_graph(&self, ca: &gantz_ca::ContentAddr) -> Option<&str> {

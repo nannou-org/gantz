@@ -89,6 +89,8 @@ where
 ///
 /// Returns the index of the new node.
 pub fn create_node<N>(
+    registry: &gantz_ca::Registry<Graph<N>>,
+    editing: Option<&str>,
     get_node: GetNode,
     new_node: impl FnOnce(&str) -> Option<N>,
     graph: &mut Graph<N>,
@@ -97,9 +99,16 @@ pub fn create_node<N>(
     cmd: CreateNode,
 ) -> Option<NodeIndex>
 where
-    N: gantz_core::Node,
+    N: gantz_core::Node + crate::sync::AsNamedRef,
 {
     let CreateNode { node_type } = cmd;
+    // Refuse references that would form a cycle back to the editing graph; with
+    // sync on such a cycle recommits endlessly (see `crate::cycle`). A nameless
+    // (detached commit) head can't be the target of a name-based cycle.
+    if editing.is_some_and(|editing| crate::cycle::would_cycle(registry, &node_type, editing)) {
+        log::warn!("CreateNode: '{node_type}' would create a reference cycle; skipping");
+        return None;
+    }
     let Some(node) = new_node(&node_type) else {
         log::error!("CreateNode: unknown node type: {node_type}");
         return None;

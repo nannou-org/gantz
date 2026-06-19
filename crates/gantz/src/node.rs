@@ -60,6 +60,12 @@ impl gantz_egui::sync::AsNamedRefMut for Box<dyn Node> {
     }
 }
 
+impl gantz_egui::sync::AsNamedRef for Box<dyn Node> {
+    fn as_named_ref(&self) -> Option<&gantz_egui::node::NamedRef> {
+        ((&**self) as &dyn Any).downcast_ref::<gantz_egui::node::NamedRef>()
+    }
+}
+
 impl bevy_gantz_egui::node::ToFrameBang for Box<dyn Node> {
     fn to_frame_bang(&self) -> Option<&bevy_gantz_egui::node::FrameBang> {
         let any: &dyn std::any::Any = &**self;

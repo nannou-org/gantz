@@ -865,7 +865,12 @@ where
 
                     // Skip command palette when immutable.
                     if !focused_immutable {
-                        let created = command_palette(gantz.env, &mut state.command_palette, ui);
+                        let editing = match &fh {
+                            gantz_ca::Head::Branch(name) => Some(name.as_str()),
+                            _ => None,
+                        };
+                        let created =
+                            command_palette(gantz.env, editing, &mut state.command_palette, ui);
                         match created {
                             Some(PaletteChoice::Node(create)) => {
                                 gantz_response.responses.push(Some(fh), create);
@@ -2028,8 +2033,12 @@ enum PaletteChoice {
 }
 
 /// Returns a node-creation payload when a node type is chosen.
+///
+/// `editing` is the focused head's name (when it is a branch), used to hide node
+/// types whose reference would cycle back to the graph being edited.
 fn command_palette(
     env: &dyn Registry,
+    editing: Option<&str>,
     cmd_palette: &mut widget::CommandPalette,
     ui: &mut egui::Ui,
 ) -> Option<PaletteChoice> {
@@ -2040,8 +2049,14 @@ fn command_palette(
         }
     }
 
-    // Map the node types to commands for the command palette.
-    let types = env.node_types();
+    // Map the node types to commands for the command palette, dropping any type
+    // whose reference would form a cycle back to the editing graph. The reserved
+    // nested-graph entry always mints a fresh child, so it is never cyclic.
+    let types: Vec<&str> = env
+        .node_types()
+        .into_iter()
+        .filter(|&k| k == NESTED_GRAPH_TYPE || editing.is_none_or(|e| !env.would_ref_cycle(k, e)))
+        .collect();
     let cmds = types.iter().map(|&k| NodeTyCmd { env, name: k });
 
     // The chosen node type becomes a creation payload. The reserved
