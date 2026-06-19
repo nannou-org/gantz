@@ -34,15 +34,14 @@ pub fn settings(
         .data(|d| d.get_temp::<SettingsTab>(id))
         .unwrap_or_default();
 
-    // Subtab selector rendered like the egui_tiles tab bar: plain labels (no
-    // box), the active tab in the active text colour and the rest in the
-    // noninteractive text colour.
+    // Subtab selector rendered like the shared tab widget: plain labels (no
+    // box), the active tab in the strong text colour and the rest dim.
     ui.horizontal(|ui| {
         let mut tab_label = |ui: &mut egui::Ui, this: SettingsTab, label: &str| {
             let color = if tab == this {
-                ui.visuals().widgets.active.text_color()
+                ui.visuals().strong_text_color()
             } else {
-                ui.visuals().widgets.noninteractive.text_color()
+                ui.visuals().weak_text_color()
             };
             let resp = ui
                 .add(

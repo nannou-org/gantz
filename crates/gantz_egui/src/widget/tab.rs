@@ -1,31 +1,34 @@
-//! A custom tab widget for the graph tree.
+//! A custom tab widget shared by the inner graph tree and the outer pane tree.
 //!
-//! This is used within `egui_tiles` to render graph tabs with a consistent style
-//! and a smaller close button.
+//! It renders a tab as plain text (no background box) coloured by state, with a
+//! small close button, so all tabs look consistent.
 
-/// Response from the [`GraphTab`] widget.
-pub struct GraphTabResponse {
+/// Response from the [`Tab`] widget.
+pub struct TabResponse {
     /// The response for the tab area (for click/drag detection).
     pub tab: egui::Response,
     /// The response for the close button, if present.
     pub close: Option<egui::Response>,
 }
 
-/// A tab widget for displaying graph names with an optional close button.
-pub struct GraphTab {
+/// A tab widget displaying a title with an optional close button.
+pub struct Tab {
     text: egui::WidgetText,
     active: bool,
     closable: bool,
     id: egui::Id,
+    /// Optional hover hint for the tab (e.g. "double-click to rename").
+    hint: Option<egui::WidgetText>,
 }
 
-impl GraphTab {
+impl Tab {
     pub fn new(text: impl Into<egui::WidgetText>, id: egui::Id) -> Self {
         Self {
             text: text.into(),
             active: false,
             closable: false,
             id,
+            hint: None,
         }
     }
 
@@ -41,13 +44,20 @@ impl GraphTab {
         self
     }
 
+    /// Set a hover hint shown over the tab.
+    pub fn hint(mut self, hint: impl Into<egui::WidgetText>) -> Self {
+        self.hint = Some(hint.into());
+        self
+    }
+
     /// Show the widget.
-    pub fn show(self, ui: &mut egui::Ui) -> GraphTabResponse {
+    pub fn show(self, ui: &mut egui::Ui) -> TabResponse {
         let Self {
             text,
             active,
             closable,
             id,
+            hint,
         } = self;
 
         let font_id = egui::TextStyle::Button.resolve(ui.style());
@@ -68,10 +78,12 @@ impl GraphTab {
 
         let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
         // Use ui.interact for proper drag support, like egui_tiles does.
-        let tab_response = ui
+        let mut tab_response = ui
             .interact(rect, id, egui::Sense::click_and_drag())
-            .on_hover_cursor(egui::CursorIcon::Grab)
-            .on_hover_text("double-click to rename");
+            .on_hover_cursor(egui::CursorIcon::Grab);
+        if let Some(hint) = hint {
+            tab_response = tab_response.on_hover_text(hint);
+        }
 
         let mut close_response = None;
 
@@ -127,7 +139,7 @@ impl GraphTab {
             }
         }
 
-        GraphTabResponse {
+        TabResponse {
             tab: tab_response,
             close: close_response,
         }
