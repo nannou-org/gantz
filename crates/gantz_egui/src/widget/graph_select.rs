@@ -149,7 +149,10 @@ impl<'a> GraphSelect<'a> {
         ui.horizontal(|ui| {
             let visuals = ui.visuals();
             let hovered = visuals.text_color();
-            let selected = visuals.strong_text_color();
+            // Halfway between the regular and strong text colours (tweak `t`).
+            let selected = visuals
+                .text_color()
+                .lerp_to_gamma(visuals.strong_text_color(), 0.5);
             ui.add(
                 super::LabelToggle::new("base", &mut state.show_base)
                     .hovered_color(hovered)
