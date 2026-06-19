@@ -34,10 +34,30 @@ pub fn settings(
         .data(|d| d.get_temp::<SettingsTab>(id))
         .unwrap_or_default();
 
+    // Subtab selector rendered like the egui_tiles tab bar: plain labels (no
+    // box), the active tab in the active text colour and the rest in the
+    // noninteractive text colour.
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut tab, SettingsTab::Global, "Global");
-        ui.selectable_value(&mut tab, SettingsTab::Style, "Style");
-        ui.selectable_value(&mut tab, SettingsTab::Panes, "Panes");
+        let mut tab_label = |ui: &mut egui::Ui, this: SettingsTab, label: &str| {
+            let color = if tab == this {
+                ui.visuals().widgets.active.text_color()
+            } else {
+                ui.visuals().widgets.noninteractive.text_color()
+            };
+            let resp = ui
+                .add(
+                    egui::Label::new(egui::RichText::new(label).color(color))
+                        .sense(egui::Sense::click())
+                        .selectable(false),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if resp.clicked() {
+                tab = this;
+            }
+        };
+        tab_label(ui, SettingsTab::Global, "Global");
+        tab_label(ui, SettingsTab::Style, "Style");
+        tab_label(ui, SettingsTab::Panes, "Panes");
     });
     ui.separator();
 
