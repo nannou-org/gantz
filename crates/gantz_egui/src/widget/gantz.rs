@@ -593,7 +593,7 @@ where
 
     fn on_tab_button(
         &mut self,
-        tiles: &egui_tiles::Tiles<Pane>,
+        tiles: &mut egui_tiles::Tiles<Pane>,
         tile_id: egui_tiles::TileId,
         button_response: egui::Response,
     ) -> egui::Response {

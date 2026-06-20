@@ -1313,7 +1313,7 @@ where
     );
     panel_ui.set_clip_rect(ctx.content_rect());
 
-    let response = egui::containers::CentralPanel::default()
+    let mut response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show_inside(&mut panel_ui, |ui| {
             gantz_egui::widget::Gantz::new(&node_reg, &base_names.0)

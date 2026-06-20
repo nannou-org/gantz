@@ -10,7 +10,7 @@ license = "Apache-2.0"
 repository = "https://github.com/nannou-org/gantz"
 
 [workspace.dependencies]
-bevy = { version = "0.18", default-features = false, features = [
+bevy = { version = "0.19", default-features = false, features = [
     "bevy_asset",
     "bevy_camera",
     "bevy_core_pipeline",
@@ -24,17 +24,17 @@ bevy = { version = "0.18", default-features = false, features = [
     "wayland",
     "webgl2",
 ] }
-bevy_app = "0.18"
-bevy_ecs = "0.18"
-bevy_log = "0.18"
-bevy_tasks = "0.18"
-bevy_egui = { git = "https://github.com/freesig/bevy_egui", branch = "freesig/bump-egui", features = ["serde"] }
+bevy_app = "0.19"
+bevy_ecs = "0.19"
+bevy_log = "0.19"
+bevy_tasks = "0.19"
+bevy_egui = { version = "0.40", features = ["serde"] }
 bevy_gantz = { version = "0.3.0", path = "crates/bevy_gantz" }
 bevy_gantz_egui = { version = "0.3.0", path = "crates/bevy_gantz_egui" }
-bevy_input = "0.18"
+bevy_input = "0.19"
 bevy_pkv = "0.14"
-bevy_time = "0.18"
-bevy_window = "0.18"
+bevy_time = "0.19"
+bevy_window = "0.19"
 blake3 = "1"
 dyn-clone = "1"
 dyn-hash = "0.2.2"
@@ -47,7 +47,7 @@ eframe = { version = "0.34", default-features = false, features = [
 ] }
 egui = { version = "0.34", default-features = false, features = ["serde", "persistence"] }
 egui_extras = { version = "0.34", default-features = false, features = ["syntect"] }
-egui_graph = { version = "0.15", git = "https://github.com/nannou-org/egui_graph", branch = "freesig/bump-egui" }
+egui_graph = "0.16"
 egui_plot = "0.35"
 egui_tiles = "0.15"
 env_logger = { version = "0.11", default-features = false }

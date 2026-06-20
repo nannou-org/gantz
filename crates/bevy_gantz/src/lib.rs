@@ -80,7 +80,7 @@ where
         .init_resource::<HeadTabOrder>()
         .init_resource::<Registry<N>>()
         .init_resource::<vm::CompileConfig>()
-        .init_non_send_resource::<HeadVms>()
+        .init_non_send::<HeadVms>()
         // Register head event handlers.
         .add_observer(head::on_open::<N>)
         .add_observer(head::on_replace::<N>)
