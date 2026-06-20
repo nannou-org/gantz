@@ -98,6 +98,17 @@ pub fn save_egui_memory(storage: &mut impl Save, ctx: &egui::Context) {
 /// Load the egui Memory from storage.
 pub fn load_egui_memory(storage: &impl Load, ctx: &egui::Context) {
     if let Some(memory) = load::<egui::Memory>(storage, key::EGUI_MEMORY) {
-        ctx.memory_mut(|m| *m = memory);
+        ctx.memory_mut(|m| {
+            // Preserve the live zoom factor rather than restoring the persisted
+            // one. egui's `zoom_factor` is the display-driven scale here (set by
+            // bevy_egui from `native_pixels_per_point`), not a user preference.
+            // Persisted memory can carry a stale value from older bevy_egui that
+            // folded the display scale into egui's zoom via `set_pixels_per_point`,
+            // which now double-applies on top of `native_pixels_per_point` and
+            // over-scales the UI on fractional/HiDPI displays.
+            let zoom_factor = m.options.zoom_factor;
+            *m = memory;
+            m.options.zoom_factor = zoom_factor;
+        });
     }
 }

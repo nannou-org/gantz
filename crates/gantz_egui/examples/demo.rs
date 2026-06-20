@@ -16,7 +16,10 @@ use std::{
 // ----------------------------------------------
 
 fn main() -> Result<(), eframe::Error> {
-    let options = eframe::NativeOptions::default();
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        ..Default::default()
+    };
     let name = "g a n t z";
     eframe::run_native(name, options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
 }
@@ -537,8 +540,9 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let responses = gui(ctx, &mut self.state);
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        let responses = gui(ui, &mut self.state);
 
         // Check for changes to each open graph and commit/recompile them.
         // FIXME: Rather than checking changed CA to monitor changes, ideally
@@ -569,7 +573,7 @@ impl eframe::App for App {
                     new_commit_ca.display_short()
                 );
                 // Update the graph pane if the head's commit CA changed.
-                gantz_egui::widget::update_graph_pane_head(ctx, &old_head, head);
+                gantz_egui::widget::update_graph_pane_head(&ctx, &old_head, head);
                 self.state.gantz.migrate_head(&old_head, head, true);
 
                 // Recompile this head's graph into its VM.
@@ -591,7 +595,7 @@ impl eframe::App for App {
         }
 
         // Process any pending response payloads generated from the UI.
-        process_responses(ctx, &mut self.state, responses);
+        process_responses(&ctx, &mut self.state, responses);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -1168,11 +1172,12 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
     }
 }
 
-fn gui(ctx: &egui::Context, state: &mut State) -> gantz_egui::Responses {
+fn gui(ui: &mut egui::Ui, state: &mut State) -> gantz_egui::Responses {
     let compile_config = state.compile_config;
+    let ctx = ui.ctx().clone();
     let response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
-        .show(ctx, |ui| {
+        .show_inside(ui, |ui| {
             // Create the head access adapter.
             let mut access = DemoHeadAccess::new(
                 &mut state.heads,
@@ -1209,7 +1214,7 @@ fn gui(ctx: &egui::Context, state: &mut State) -> gantz_egui::Responses {
 
     // Single click: replace the focused head with the selected one.
     if let Some(new_head) = response.graph_replaced() {
-        replace_head(ctx, state, new_head.clone());
+        replace_head(&ctx, state, new_head.clone());
     }
 
     // Open as a new tab (or focus if already open).
@@ -1235,7 +1240,7 @@ fn gui(ctx: &egui::Context, state: &mut State) -> gantz_egui::Responses {
 
     // Handle new branch created from tab double-click.
     if let Some((original_head, new_name)) = response.new_branch() {
-        create_branch_from_head(ctx, state, original_head, new_name.clone());
+        create_branch_from_head(&ctx, state, original_head, new_name.clone());
     }
 
     // Handle import button click.

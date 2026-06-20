@@ -593,7 +593,7 @@ where
 
     fn on_tab_button(
         &mut self,
-        tiles: &egui_tiles::Tiles<Pane>,
+        tiles: &mut egui_tiles::Tiles<Pane>,
         tile_id: egui_tiles::TileId,
         button_response: egui::Response,
     ) -> egui::Response {
@@ -808,7 +808,7 @@ where
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
 
                     // Copy/paste/undo/redo keyboard shortcuts.
-                    if !ui.ctx().wants_keyboard_input() {
+                    if !ui.ctx().egui_wants_keyboard_input() {
                         // Copy is always allowed.
                         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::C)) {
                             let nodes = head_state.scene.interaction.selection.nodes.clone();
@@ -1940,7 +1940,7 @@ where
 
     // Seed the node layout the first time this graph is shown.
     if head_view.layout.is_empty() {
-        head_view.layout = widget::graph_scene::layout(graph, id, layout_flow, ui.ctx());
+        head_view.layout = widget::graph_scene::layout(registry, graph, id, layout_flow, ui.ctx());
     }
 
     let response = GraphScene::new(registry, graph)
@@ -2043,7 +2043,7 @@ fn command_palette(
     ui: &mut egui::Ui,
 ) -> Option<PaletteChoice> {
     // If space is pressed, toggle command palette visibility.
-    if !ui.ctx().wants_keyboard_input() {
+    if !ui.ctx().egui_wants_keyboard_input() {
         if ui.ctx().input(|i| i.key_pressed(egui::Key::Space)) {
             cmd_palette.toggle();
         }

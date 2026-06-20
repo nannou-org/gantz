@@ -44,29 +44,23 @@ impl<'a> egui::Widget for ExprEdit<'a> {
             ui.fonts_mut(|fonts| fonts.layout_job(layout_job))
         };
 
-        // Find the longest line width.
-        let mut max_line_width: f32 = 0.0;
-        let font_sel = egui::FontSelection::from(egui::TextStyle::Monospace);
-        let font_id = font_sel.resolve(ui.style());
-        ui.fonts_mut(|fonts| {
-            for line in state.code.split('\n') {
-                let galley = fonts.layout_no_wrap(
-                    line.to_string(),
-                    font_id.clone(),
-                    egui::Color32::PLACEHOLDER,
-                );
-                max_line_width = max_line_width.max(galley.rect.width());
-            }
-        });
-        max_line_width += 7.0;
+        // Size the editor to its widest line. A multiline `TextEdit` wraps its
+        // text within `desired_width` minus its horizontal margin, so measure
+        // the same (unwrapped) highlighted layout the editor renders and pass a
+        // matching `desired_width` and `margin`.
+        let font_id = egui::FontSelection::from(egui::TextStyle::Monospace).resolve(ui.style());
+        let margin = egui::Margin::symmetric(4, 2);
+        let desired_width =
+            super::code_edit_desired_width(ui, &theme, &state.code, language, margin);
 
         let response = ui.add(
             egui::TextEdit::multiline(&mut state.code)
                 .id(id)
                 .code_editor()
                 .font(font_id)
+                .margin(margin)
                 .desired_rows(1)
-                .desired_width(max_line_width)
+                .desired_width(desired_width)
                 .hint_text("(+ $l $r)")
                 .layouter(&mut layouter),
         );

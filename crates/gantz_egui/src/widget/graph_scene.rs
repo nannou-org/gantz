@@ -166,7 +166,13 @@ where
         ui: &mut egui::Ui,
     ) -> GraphSceneResponse {
         if self.auto_layout {
-            view.layout = layout(&*self.graph, self.id, self.layout_flow, ui.ctx());
+            view.layout = layout(
+                self.registry,
+                &*self.graph,
+                self.id,
+                self.layout_flow,
+                ui.ctx(),
+            );
         }
         let mut node_responses = Vec::new();
         let mut responses: Vec<DynResponse> = Vec::new();
@@ -273,14 +279,24 @@ impl Selection {
 /// The `graph_id` is used to scope node IDs so that nodes with the same index
 /// in different graphs don't share egui memory state.
 pub fn layout<N>(
+    registry: &dyn Registry,
     graph: &Graph<N>,
     graph_id: egui::Id,
     flow: egui::Direction,
     ctx: &egui::Context,
-) -> egui_graph::Layout {
+) -> egui_graph::Layout
+where
+    N: Node,
+{
     if graph.node_count() == 0 {
         return Default::default();
     }
+    // Describe each node's sockets (count + padding) and each edge's actual
+    // source/destination socket so the (socket-aware) layout can order sockets
+    // and minimise edge crossings, matching how the nodes are rendered.
+    let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
+    let meta_ctx = gantz_core::node::MetaCtx::new(&get_node);
+    let socket_padding = egui_graph::socket_padding(&ctx.global_style());
     let nodes_vec = egui_graph::with_graph_memory(ctx, graph_id, |gmem| {
         let node_sizes = gmem.node_sizes();
         graph
@@ -291,20 +307,30 @@ pub fn layout<N>(
                     .get(&node_id)
                     .cloned()
                     .unwrap_or_else(|| [200.0, 50.0].into());
-                (node_id, size)
+                let node = &graph[n];
+                let layout_node = egui_graph::LayoutNode::new(size)
+                    .inputs(node.n_inputs(meta_ctx))
+                    .outputs(node.n_outputs(meta_ctx))
+                    .socket_padding(socket_padding);
+                (node_id, layout_node)
             })
             .collect::<Vec<_>>()
     });
     let nodes = nodes_vec.into_iter();
-    let edges = graph
-        .edge_indices()
-        .filter_map(|e| graph.edge_endpoints(e))
-        .map(|(a, b)| {
+    let edges = graph.edge_indices().filter_map(|e| {
+        let (a, b) = graph.edge_endpoints(e)?;
+        let edge = graph.edge_weight(e)?;
+        Some((
             (
                 egui_graph::NodeId::from_u64(a.index() as u64),
+                edge.output.0 as usize,
+            ),
+            (
                 egui_graph::NodeId::from_u64(b.index() as u64),
-            )
-        });
+                edge.input.0 as usize,
+            ),
+        ))
+    });
     egui_graph::layout(nodes, edges, flow)
 }
 
@@ -565,7 +591,7 @@ fn edges<N>(
 
     // Draw the in-progress edge if there is one.
     if let Some(edge) = ectx.in_progress(ui) {
-        edge.show(ui);
+        edge.show(ui, egui_graph::bezier::Cubic::DEFAULT_CURVATURE);
     }
 }
 
