@@ -1940,7 +1940,7 @@ where
 
     // Seed the node layout the first time this graph is shown.
     if head_view.layout.is_empty() {
-        head_view.layout = widget::graph_scene::layout(graph, id, layout_flow, ui.ctx());
+        head_view.layout = widget::graph_scene::layout(registry, graph, id, layout_flow, ui.ctx());
     }
 
     let response = GraphScene::new(registry, graph)
