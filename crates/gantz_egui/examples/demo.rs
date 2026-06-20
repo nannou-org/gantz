@@ -16,7 +16,10 @@ use std::{
 // ----------------------------------------------
 
 fn main() -> Result<(), eframe::Error> {
-    let options = eframe::NativeOptions::default();
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        ..Default::default()
+    };
     let name = "g a n t z";
     eframe::run_native(name, options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
 }
