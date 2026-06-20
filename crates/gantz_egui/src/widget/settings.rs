@@ -66,7 +66,7 @@ pub fn settings(
             // Pin "reset all" to the bottom; the toggles scroll above it.
             // `Frame::NONE` keeps the inner margin matching the other subtabs,
             // which render directly in the pane's central panel.
-            egui::TopBottomPanel::bottom(id.with("reset"))
+            egui::Panel::bottom(id.with("reset"))
                 .show_separator_line(false)
                 .frame(egui::Frame::NONE)
                 .show_inside(ui, |ui| {

@@ -295,17 +295,22 @@ pub fn layout<N>(
             })
             .collect::<Vec<_>>()
     });
-    let nodes = nodes_vec.into_iter();
+    let nodes = nodes_vec
+        .into_iter()
+        .map(|(id, size)| (id, egui_graph::LayoutNode::new(size)));
     let edges = graph
         .edge_indices()
         .filter_map(|e| graph.edge_endpoints(e))
         .map(|(a, b)| {
             (
-                egui_graph::NodeId::from_u64(a.index() as u64),
-                egui_graph::NodeId::from_u64(b.index() as u64),
+                (egui_graph::NodeId::from_u64(a.index() as u64), 0),
+                (egui_graph::NodeId::from_u64(b.index() as u64), 0),
             )
         });
-    egui_graph::layout(nodes, edges, flow)
+    // Preserve the prior node-size-only layout (sockets ignored).
+    let mut params = egui_graph::LayoutParams::from(flow);
+    params.socket_aware = false;
+    egui_graph::layout(nodes, edges, params)
 }
 
 fn nodes<N>(
@@ -565,7 +570,7 @@ fn edges<N>(
 
     // Draw the in-progress edge if there is one.
     if let Some(edge) = ectx.in_progress(ui) {
-        edge.show(ui);
+        edge.show(ui, egui_graph::bezier::Cubic::DEFAULT_CURVATURE);
     }
 }
 
