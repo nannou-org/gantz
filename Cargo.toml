@@ -32,7 +32,7 @@ bevy_egui = { version = "0.40", features = ["serde"] }
 bevy_gantz = { version = "0.3.0", path = "crates/bevy_gantz" }
 bevy_gantz_egui = { version = "0.3.0", path = "crates/bevy_gantz_egui" }
 bevy_input = "0.19"
-bevy_pkv = "0.14"
+bevy_pkv = "0.16"
 bevy_time = "0.19"
 bevy_window = "0.19"
 blake3 = "1"
