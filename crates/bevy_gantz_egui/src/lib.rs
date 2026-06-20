@@ -79,6 +79,7 @@ where
         + gantz_ca::CaHash
         + From<gantz_egui::node::NamedRef>
         + gantz_egui::sync::AsNamedRefMut
+        + gantz_egui::sync::AsNamedRef
         + gantz_egui::NodeUi
         + node::ToFrameBang
         + serde::Serialize
@@ -688,12 +689,21 @@ pub fn on_create_node<N>(
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
 ) where
-    N: 'static + Node + From<gantz_egui::node::NamedRef> + Send + Sync,
+    N: 'static
+        + Node
+        + From<gantz_egui::node::NamedRef>
+        + gantz_egui::sync::AsNamedRef
+        + Send
+        + Sync,
 {
     let event = trigger.event();
     let Ok(mut data) = heads.get_mut(event.head) else {
         log::error!("CreateNode: head not found for entity {:?}", event.head);
         return;
+    };
+    let editing = match &**data.head_ref {
+        ca::Head::Branch(name) => Some(name.clone()),
+        ca::Head::Commit(_) => None,
     };
     let Ok(mut views) = views_query.get_mut(event.head) else {
         log::error!("CreateNode: views not found for entity {:?}", event.head);
@@ -707,6 +717,8 @@ pub fn on_create_node<N>(
     let node_reg = registry_ref(&registry, &builtins, &demos);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
     gantz_egui::ops::create_node(
+        node_reg.ca_registry(),
+        editing.as_deref(),
         &get_node,
         |node_type| node_reg.create_node(node_type),
         &mut data.working_graph,
@@ -880,6 +892,7 @@ pub fn on_paste<N>(
         + serde::Serialize
         + serde::de::DeserializeOwned
         + ca::CaHash
+        + gantz_egui::sync::AsNamedRef
         + Send
         + Sync,
 {
@@ -891,6 +904,10 @@ pub fn on_paste<N>(
         log::error!("PasteSelection: head not found for entity {:?}", event.head);
         return;
     };
+    let editing = match &**head_ref {
+        ca::Head::Branch(name) => Some(name.clone()),
+        ca::Head::Commit(_) => None,
+    };
     let Some(head_state) = gui_state.open_heads.get_mut(&**head_ref) else {
         log::error!("PasteSelection: GUI state not found for head");
         return;
@@ -898,6 +915,7 @@ pub fn on_paste<N>(
 
     let pasted = gantz_egui::ops::paste(
         &mut registry,
+        editing.as_deref(),
         &mut views,
         &mut demos,
         &mut wg,
@@ -1248,7 +1266,13 @@ pub fn update<N>(
     mut cmds: Commands,
 ) -> Result
 where
-    N: 'static + Node + gantz_ca::CaHash + gantz_egui::NodeUi + Send + Sync,
+    N: 'static
+        + Node
+        + gantz_ca::CaHash
+        + gantz_egui::NodeUi
+        + gantz_egui::sync::AsNamedRef
+        + Send
+        + Sync,
 {
     let ctx = ctxs.ctx_mut()?;
 

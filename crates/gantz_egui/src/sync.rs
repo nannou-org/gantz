@@ -23,6 +23,15 @@ pub trait AsNamedRefMut {
     fn as_named_ref_mut(&mut self) -> Option<&mut NamedRef>;
 }
 
+/// Access the [`NamedRef`] within a frontend's node type, if any.
+///
+/// The read-only companion to [`AsNamedRefMut`], used by the reference-cycle
+/// check (`crate::cycle`) to walk a graph's named references without mutating.
+pub trait AsNamedRef {
+    /// A shared reference to the inner [`NamedRef`], if this node is one.
+    fn as_named_ref(&self) -> Option<&NamedRef>;
+}
+
 /// A named graph whose commit moved during [`resync`] or a rename cascade.
 #[derive(Clone, Debug)]
 pub struct Moved {

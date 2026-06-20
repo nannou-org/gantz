@@ -161,9 +161,15 @@ impl<N: 'static + Node + Send + Sync> FnNodeNames for RegistryRef<'_, N> {
     }
 }
 
-impl<N: 'static + Node + crate::NodeUi + Send + Sync> Registry for RegistryRef<'_, N> {
+impl<N: 'static + Node + crate::NodeUi + crate::sync::AsNamedRef + Send + Sync> Registry
+    for RegistryRef<'_, N>
+{
     fn node(&self, ca: &ca::ContentAddr) -> Option<&dyn Node> {
         RegistryRef::node(self, ca)
+    }
+
+    fn would_ref_cycle(&self, target: &str, editing: &str) -> bool {
+        crate::cycle::would_cycle(self.ca_registry, target, editing)
     }
 
     fn demo_graph(&self, ca: &ca::ContentAddr) -> Option<&str> {

@@ -153,6 +153,10 @@ impl gantz_egui::Registry for Environment {
             .map(|g| g as &dyn gantz_core::Node)
     }
 
+    fn would_ref_cycle(&self, target: &str, editing: &str) -> bool {
+        gantz_egui::cycle::would_cycle(&self.registry, target, editing)
+    }
+
     fn socket_doc(
         &self,
         ca: &gantz_ca::ContentAddr,
@@ -270,6 +274,12 @@ impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
 impl gantz_egui::sync::AsNamedRefMut for Box<dyn Node> {
     fn as_named_ref_mut(&mut self) -> Option<&mut gantz_egui::node::NamedRef> {
         ((&mut **self) as &mut dyn Any).downcast_mut::<gantz_egui::node::NamedRef>()
+    }
+}
+
+impl gantz_egui::sync::AsNamedRef for Box<dyn Node> {
+    fn as_named_ref(&self) -> Option<&gantz_egui::node::NamedRef> {
+        ((&**self) as &dyn Any).downcast_ref::<gantz_egui::node::NamedRef>()
     }
 }
 
@@ -976,13 +986,19 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
     }
 
     for (head, create) in responses.take::<gantz_egui::CreateNode>() {
-        let Some((_, ix)) = tagged_head(state, head) else {
+        let Some((head, ix)) = tagged_head(state, head) else {
             continue;
+        };
+        let editing = match head {
+            gantz_ca::Head::Branch(name) => Some(name),
+            gantz_ca::Head::Commit(_) => None,
         };
         let env = &state.env;
         let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
         let (_, graph, view) = &mut state.heads[ix];
         gantz_egui::ops::create_node(
+            &state.env.registry,
+            editing.as_deref(),
             &get_node,
             |node_type| env.new_node(node_type),
             graph,
@@ -1028,10 +1044,15 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         };
         // In eframe, Event::Paste provides text directly.
         let Some(text) = text else { continue };
+        let editing = match &head {
+            gantz_ca::Head::Branch(name) => Some(name.clone()),
+            gantz_ca::Head::Commit(_) => None,
+        };
         let head_state = state.gantz.open_heads.entry(head).or_default();
         let (_, graph, gv) = &mut state.heads[ix];
         let pasted = gantz_egui::ops::paste(
             &mut state.env.registry,
+            editing.as_deref(),
             &mut HashMap::new(),
             &mut HashMap::new(),
             graph,

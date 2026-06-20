@@ -6,6 +6,7 @@
 //! thin adapters around identical behaviour. Frontend-specific effects
 //! (clipboard access, file dialogs, head navigation) stay with the caller.
 
+use crate::sync::AsNamedRef;
 use crate::widget::gantz::OpenHeadState;
 use crate::widget::graph_scene::NodeIndex;
 use crate::{CreateNode, InspectEdge, PastePos, export, node::NamedRef};
@@ -89,6 +90,8 @@ where
 ///
 /// Returns the index of the new node.
 pub fn create_node<N>(
+    registry: &gantz_ca::Registry<Graph<N>>,
+    editing: Option<&str>,
     get_node: GetNode,
     new_node: impl FnOnce(&str) -> Option<N>,
     graph: &mut Graph<N>,
@@ -97,9 +100,16 @@ pub fn create_node<N>(
     cmd: CreateNode,
 ) -> Option<NodeIndex>
 where
-    N: gantz_core::Node,
+    N: gantz_core::Node + crate::sync::AsNamedRef,
 {
     let CreateNode { node_type } = cmd;
+    // Refuse references that would form a cycle back to the editing graph; with
+    // sync on such a cycle recommits endlessly (see `crate::cycle`). A nameless
+    // (detached commit) head can't be the target of a name-based cycle.
+    if editing.is_some_and(|editing| crate::cycle::would_cycle(registry, &node_type, editing)) {
+        log::warn!("CreateNode: '{node_type}' would create a reference cycle; skipping");
+        return None;
+    }
     let Some(node) = new_node(&node_type) else {
         log::error!("CreateNode: unknown node type: {node_type}");
         return None;
@@ -226,6 +236,7 @@ pub fn inspect_edge<N>(
 /// their state initialized.
 pub fn paste<N>(
     registry: &mut gantz_ca::Registry<Graph<N>>,
+    editing: Option<&str>,
     all_views: &mut HashMap<CommitAddr, egui_graph::View>,
     all_demos: &mut HashMap<CommitAddr, String>,
     graph: &mut Graph<N>,
@@ -235,7 +246,7 @@ pub fn paste<N>(
     pos: &PastePos,
 ) -> bool
 where
-    N: Clone + Serialize + DeserializeOwned + CaHash + 'static,
+    N: Clone + Serialize + DeserializeOwned + CaHash + AsNamedRef + 'static,
 {
     let copied: export::Copied<N> = match export::copied_from_str(text) {
         Ok(c) => c,
@@ -244,6 +255,27 @@ where
             return false;
         }
     };
+
+    // Refuse the whole paste if any pasted `NamedRef` would reference the
+    // editing graph (a cycle); with sync on such a cycle recommits endlessly
+    // (see `crate::cycle`). Checked against the live registry before merging, so
+    // a refused paste mutates nothing. A nameless (detached commit) head can't
+    // be a name-based cycle target.
+    if let Some(editing) = editing {
+        if let Some(named) = copied
+            .graph
+            .node_weights()
+            .filter_map(|n| n.as_named_ref())
+            .find(|nr| crate::cycle::would_cycle(registry, nr.name(), editing))
+        {
+            log::warn!(
+                "Paste: '{}' would create a reference cycle in '{editing}'; skipping paste",
+                named.name()
+            );
+            return false;
+        }
+    }
+
     let offset = crate::resolve_paste_offset(pos, &copied.positions);
 
     let new_indices = export::paste(

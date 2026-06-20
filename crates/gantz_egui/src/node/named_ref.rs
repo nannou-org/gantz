@@ -125,6 +125,12 @@ impl NamedRef {
     }
 }
 
+impl crate::sync::AsNamedRef for NamedRef {
+    fn as_named_ref(&self) -> Option<&NamedRef> {
+        Some(self)
+    }
+}
+
 impl Node for NamedRef {
     fn n_inputs(&self, ctx: MetaCtx) -> usize {
         self.ref_.n_inputs(ctx)
