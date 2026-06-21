@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/nannou-org/gantz/compare/gantz-v0.2.1...gantz-v0.2.2) - 2026-06-21
+
+### Added
+
+- *(named-ref)* guard against reference cycles when adding a NamedRef
+- *(format)* add inline-name export for base.gantz
+- *(base)* document every base node socket
+- *(base)* enable auto-sync on all demo refs
+- *(base)* add demo-all catalog of every base node
+- *(base)* add pure-primitive node library with per-category demos
+
+### Fixed
+
+- *(base)* stamp base graphs with a fixed timestamp so reset keeps refs valid
+- *(base)* make mod total so a zero divisor cannot panic the app
+- *(base)* coerce integer ops, bang both inputs, add demo layouts
+
 ## [0.2.1](https://github.com/nannou-org/gantz/compare/gantz-v0.2.0...gantz-v0.2.1) - 2026-06-15
 
 ### Added

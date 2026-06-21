@@ -1,6 +1,6 @@
 [package]
 name = "bevy_gantz"
-version = "0.3.0"
+version = "0.3.1"
 description = "A bevy plugin for gantz"
 authors.workspace = true
 edition.workspace = true

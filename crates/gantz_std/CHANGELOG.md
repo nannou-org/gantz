@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_std-v0.2.1...gantz_std-v0.3.0) - 2026-06-21
+
+### Added
+
+- *(base)* add pure-primitive node library with per-category demos
+
 ## [0.2.1](https://github.com/nannou-org/gantz/compare/gantz_std-v0.2.0...gantz_std-v0.2.1) - 2026-06-15
 
 ### Added

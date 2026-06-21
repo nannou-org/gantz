@@ -1,6 +1,6 @@
 [package]
 name = "gantz_format"
-version = "0.2.0"
+version = "0.2.1"
 description = "Human-readable text format for gantz graph registries."
 authors.workspace = true
 edition.workspace = true

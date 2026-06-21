@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/nannou-org/gantz/compare/bevy_gantz-v0.3.0...bevy_gantz-v0.3.1) - 2026-06-21
+
+### Other
+
+- *(deps)* bump bevy 0.18->0.19 and adopt the published egui 0.34 stack
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/bevy_gantz-v0.2.0...bevy_gantz-v0.3.0) - 2026-06-15
 
 ### Added

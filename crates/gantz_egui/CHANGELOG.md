@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.3.0...gantz_egui-v0.4.0) - 2026-06-21
+
+### Added
+
+- *(egui)* make the auto-layout socket-aware
+- *(named-ref)* extend the reference-cycle guard to paste
+- *(named-ref)* guard against reference cycles when adding a NamedRef
+- *(egui)* add a "logs: open" inspector row to the log node
+- *(egui)* "open logs" on the log node menu; logs hidden by default
+- *(egui)* make Settings a toggleable, hideable pane
+- *(egui)* move base/demo filters into a filter-options menu button
+- *(egui)* closable Logs/Steel tray tabs; Logs open by default
+- *(egui)* default the Settings tab to Global
+- *(egui)* render Settings subtabs like egui_tiles tabs (no box)
+- *(egui)* selected filter colour lerps between text and strong
+- *(egui)* base/demo filters + right-click menu in the Graphs pane
+- *(egui)* brighten the sidebar toggle on hover
+- *(egui)* use a hamburger glyph for the sidebar toggle
+- *(egui)* fixed sidebar/tray sizes, subtle arrow toggle, settings polish
+- *(egui)* Settings tab with subtabs, tab-hide, reset-layout
+- *(egui)* sidebar hamburger + tabbed pane layout
+- *(format)* add inline-name export for base.gantz
+- *(base)* add pure-primitive node library with per-category demos
+- *(gui)* inlet/outlet hover docs
+
+### Fixed
+
+- *(egui)* size Expr/Branch editors to text so lines stop wrapping
+- *(egui)* forward NodeUi::context_menu through the Box/&mut wrappers
+- Use filter option button glyph that egui can render
+- *(egui)* subtle close button on Logs/Steel tabs, like graph tabs
+- *(egui)* make the sidebar open/close toggle smaller (24->18pt)
+- *(egui)* wider default sidebar; breadcrumb beside toggle, not above
+- *(egui)* stop sidebar width growing on reopen; reset pane visibility
+- *(egui)* make sidebar/tray draggable again; perf panes off by default
+- *(egui)* fixed-px sidebar width + fainter toggle arrow
+- *(command-palette)* keep palette open when interacting with scrollbar
+- *(base)* stamp base graphs with a fixed timestamp so reset keeps refs valid
+- *(gui)* keep socket tooltip width adaptive
+- *(gui)* drop description focus on commit
+
+### Other
+
+- *(demo)* render the demo on wgpu instead of glow
+- *(deps)* bump bevy 0.18->0.19 and adopt the published egui 0.34 stack
+- Disable base nodes by default, provide on_hover text for filter opts
+- *(egui)* share a general Tab widget for all tabs
+- *(gui)* store inlet/outlet docs on the nodes
+- *(gui)* address socket-doc review feedback
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.2.0...gantz_egui-v0.3.0) - 2026-06-15
 
 ### Added
