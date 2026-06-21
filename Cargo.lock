@@ -876,7 +876,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_gantz"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
@@ -896,7 +896,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_gantz_egui"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
@@ -3189,7 +3189,7 @@ dependencies = [
 
 [[package]]
 name = "gantz"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bevy",
  "bevy_egui",
@@ -3214,7 +3214,7 @@ dependencies = [
 
 [[package]]
 name = "gantz_base"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "gantz_ca"
@@ -3238,7 +3238,7 @@ dependencies = [
 
 [[package]]
 name = "gantz_core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "env_logger",
  "gantz_ca",
@@ -3253,7 +3253,7 @@ dependencies = [
 
 [[package]]
 name = "gantz_egui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "blake3",
  "dyn-clone",
@@ -3287,7 +3287,7 @@ dependencies = [
 
 [[package]]
 name = "gantz_format"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "gantz_ca",
  "gantz_core",
@@ -3299,7 +3299,7 @@ dependencies = [
 
 [[package]]
 name = "gantz_std"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "gantz_ca",
  "gantz_core",

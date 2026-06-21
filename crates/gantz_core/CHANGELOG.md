@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.3.0...gantz_core-v0.4.0) - 2026-06-21
+
+### Added
+
+- *(gui)* inlet/outlet hover docs
+
+### Other
+
+- *(gui)* store inlet/outlet docs on the nodes
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.2.0...gantz_core-v0.3.0) - 2026-06-15
 
 ### Added

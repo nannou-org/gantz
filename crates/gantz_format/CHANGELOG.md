@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/nannou-org/gantz/compare/gantz_format-v0.2.0...gantz_format-v0.2.1) - 2026-06-21
+
+### Added
+
+- *(format)* add inline-name export for base.gantz
+- *(format)* round-trip inlet/outlet socket docs
+- *(base)* add pure-primitive node library with per-category demos
+
+### Other
+
+- *(format)* drop private intra-doc link in to_string_named
+
 ## [0.2.0](https://github.com/nannou-org/gantz/compare/gantz_format-v0.0.1...gantz_format-v0.2.0) - 2026-06-15
 
 ### Added

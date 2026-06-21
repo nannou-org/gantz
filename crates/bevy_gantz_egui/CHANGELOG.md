@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.3.0...bevy_gantz_egui-v0.3.1) - 2026-06-21
+
+### Added
+
+- *(named-ref)* extend the reference-cycle guard to paste
+- *(named-ref)* guard against reference cycles when adding a NamedRef
+- *(egui)* sidebar hamburger + tabbed pane layout
+- *(format)* add inline-name export for base.gantz
+- *(gui)* inlet/outlet hover docs
+
+### Fixed
+
+- *(egui)* don't restore stale persisted egui zoom_factor
+- *(base)* stamp base graphs with a fixed timestamp so reset keeps refs valid
+
+### Other
+
+- *(deps)* bump bevy 0.18->0.19 and adopt the published egui 0.34 stack
+- *(gui)* store inlet/outlet docs on the nodes
+- *(gui)* address socket-doc review feedback
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.2.0...bevy_gantz_egui-v0.3.0) - 2026-06-15
 
 ### Added
