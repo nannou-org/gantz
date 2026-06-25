@@ -30,8 +30,11 @@ pub struct NamedRef {
     /// The human-readable name associated with this reference.
     name: String,
     /// Whether to automatically sync to the latest commit.
+    ///
+    /// Part of the content address: toggling it is a genuine edit, so the
+    /// change rides the normal commit + export pipeline and persists (rather
+    /// than being silently dropped by the registry's content-addressed dedup).
     #[serde(default)]
-    #[cahash(skip)]
     pub(crate) sync: bool,
 }
 

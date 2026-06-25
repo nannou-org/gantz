@@ -771,6 +771,27 @@ mod tests {
         );
     }
 
+    /// A `NamedRef`'s `sync` flag is part of its content address. This is what
+    /// lets `base_refs_are_synced` hold in practice: toggling `sync` in the
+    /// inspector must change the node's address so the edit rides the normal
+    /// commit + export pipeline rather than being silently dropped by the
+    /// registry's content-addressed dedup. Guards against re-adding
+    /// `#[cahash(skip)]` to `NamedRef::sync`.
+    #[test]
+    fn named_ref_sync_affects_content_addr() {
+        use gantz_egui::node::NamedRef;
+        let ca = gantz_ca::ContentAddr::from([0u8; 32]);
+        let ref_ = gantz_core::node::Ref::new(ca);
+        let off = NamedRef::new("x".to_string(), ref_.clone());
+        let on = NamedRef::with_sync("x".to_string(), ref_);
+        assert_ne!(
+            gantz_ca::content_addr(&off),
+            gantz_ca::content_addr(&on),
+            "toggling `sync` must change the content address, otherwise the \
+             toggle can't trigger a commit and won't persist",
+        );
+    }
+
     /// Every base-primitive socket carries a hover doc (type + description), and
     /// those docs resolve through a `ref` to the referenced graph's inlet/outlet
     /// markers - exactly the path the GUI uses for a `NamedRef`'s socket tooltip.
