@@ -115,6 +115,47 @@ fn test_graph_push_eval() {
         .unwrap();
 }
 
+// A `0`-var `expr` exposes a single trigger input whose value is ignored. A push
+// into that input still forces the expression to evaluate. Here two constant
+// exprs are fired via their trigger inputs and compared, proving the
+// connected-but-unreferenced trigger param compiles and the constants propagate.
+#[test]
+fn test_expr_trigger_input() {
+    let mut g = petgraph::graph::DiGraph::new();
+
+    // `left` and `right` have no `$vars`, so each has a single trigger input.
+    let push = node_push();
+    let left = node::expr("(+ 1 2)").unwrap();
+    let right = node::expr("3").unwrap();
+    let assert_eq = node_assert_eq();
+
+    let push = g.add_node(Box::new(push) as Box<dyn DebugNode>);
+    let left = g.add_node(Box::new(left) as Box<_>);
+    let right = g.add_node(Box::new(right) as Box<_>);
+    let assert_eq = g.add_node(Box::new(assert_eq) as Box<_>);
+
+    // The push fires both constants via their trigger inputs.
+    g.add_edge(push, left, Edge::from((0, 0)));
+    g.add_edge(push, right, Edge::from((0, 0)));
+    g.add_edge(left, assert_eq, Edge::from((0, 0)));
+    g.add_edge(right, assert_eq, Edge::from((0, 1)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in module {
+        vm.run(format!("{f}")).unwrap();
+    }
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+}
+
 // A simple test graph that adds two "one"s and checks that it equals "two".
 //
 //    -+-----

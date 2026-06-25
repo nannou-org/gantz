@@ -19,6 +19,14 @@ use thiserror::Error;
 /// Variables are identified by unique names - if the same `$var` appears
 /// multiple times in the expression, it refers to the same inlet.
 ///
+/// ## Trigger input
+///
+/// An expression always has at least one input. When it contains no `$vars`
+/// (e.g. `(list 1 2 3)`), it still exposes a single *trigger* input whose value
+/// is ignored; a push into it simply forces the expression to evaluate. This
+/// makes it easy to author constant values that fire on demand without a dummy
+/// `$bang` variable.
+///
 /// ## Optional inputs
 ///
 /// Variables prefixed with `$?` are treated as optional inputs. When
@@ -219,7 +227,9 @@ pub(crate) fn interpolate_tokens(
 
 impl Node for Expr {
     fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
-        self.vars.len()
+        // Always expose at least one input. With no `$vars`, the single input
+        // is a trigger whose value is ignored (see the type docs).
+        self.vars.len().max(1)
     }
 
     fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
@@ -314,6 +324,24 @@ fn test_collect_unique_vars() {
     // Mixed required and optional.
     let vars = vars_from_src("(+ $a $?b $?c)");
     assert_eq!(vars, vec!["$a", "$?b", "$?c"]);
+}
+
+// A no-op node lookup for constructing a `MetaCtx` in tests.
+#[cfg(test)]
+fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
+    None
+}
+
+#[test]
+fn test_n_inputs_min_one() {
+    let ctx = || node::MetaCtx::new(&no_lookup);
+    // No `$vars` - still exposes a single trigger input.
+    assert_eq!(Expr::new("(list 1 2 3)").unwrap().n_inputs(ctx()), 1);
+    assert_eq!(Expr::new("42").unwrap().n_inputs(ctx()), 1);
+    // A single var.
+    assert_eq!(Expr::new("$foo").unwrap().n_inputs(ctx()), 1);
+    // Multiple vars are unaffected.
+    assert_eq!(Expr::new("(+ $l $r)").unwrap().n_inputs(ctx()), 2);
 }
 
 #[test]
