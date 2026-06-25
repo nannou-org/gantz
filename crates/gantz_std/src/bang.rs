@@ -3,11 +3,20 @@ use gantz_core::node::{EvalConf, ExprCtx, ExprResult, MetaCtx};
 use serde::{Deserialize, Serialize};
 
 /// A simple node for pushing evaluation through the graph.
+///
+/// Exposes a single *trigger* input whose value is ignored: a push into it
+/// emits a bang (`'()`) downstream. This lets a bang be fired from upstream as
+/// well as from its button, normalising any value to a bang.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
 #[cahash("gantz.bang")]
 pub struct Bang;
 
 impl gantz_core::Node for Bang {
+    /// A single trigger input whose value is ignored.
+    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
+        1
+    }
+
     fn n_outputs(&self, _ctx: MetaCtx) -> usize {
         1
     }

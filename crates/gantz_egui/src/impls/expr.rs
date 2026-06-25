@@ -113,15 +113,21 @@ impl NodeUi for gantz_core::node::Expr {
 
     fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
         match kind {
-            SocketKind::Input => {
-                let var = self.vars().get(ix)?;
-                let desc = if var.starts_with("$?") {
-                    "optional input; bound as (Some value) or (None)"
-                } else {
-                    "substituted into the expression"
-                };
-                Some(SocketDoc::ty(var.clone()).with_description(desc))
-            }
+            SocketKind::Input => match self.vars().get(ix) {
+                Some(var) => {
+                    let desc = if var.starts_with("$?") {
+                        "optional input; bound as (Some value) or (None)"
+                    } else {
+                        "substituted into the expression"
+                    };
+                    Some(SocketDoc::ty(var.clone()).with_description(desc))
+                }
+                // The synthetic trigger input present when there are no `$vars`.
+                None => Some(
+                    SocketDoc::ty("trigger")
+                        .with_description("ignored; forces the expression to evaluate"),
+                ),
+            },
             SocketKind::Output if self.outputs() <= 1 => {
                 Some(SocketDoc::ty("any").with_description("expression result"))
             }
