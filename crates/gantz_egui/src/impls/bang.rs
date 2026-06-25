@@ -25,7 +25,9 @@ impl NodeUi for gantz_std::Bang {
                 SocketDoc::ty("bang")
                     .with_description("empty list '() emitted to trigger downstream evaluation"),
             ),
-            SocketKind::Input => None,
+            SocketKind::Input => {
+                Some(SocketDoc::ty("trigger").with_description("ignored; emits a bang when pushed"))
+            }
         }
     }
 }
