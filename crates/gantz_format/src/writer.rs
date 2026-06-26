@@ -7,7 +7,8 @@
 
 use crate::datum::{Datum, datum_text};
 use crate::model::{
-    Addr, CommitDecl, Conn, Document, Endpoint, GraphBody, NameDecl, NodeDecl, NodeSpec,
+    Addr, CommitDecl, Conn, DescriptionDecl, Document, Endpoint, GraphBody, NameDecl, NodeDecl,
+    NodeSpec,
 };
 use crate::sexpr::quote;
 use crate::sugar::Sugar;
@@ -26,6 +27,10 @@ pub fn write_document(doc: &Document, sugar: &dyn Sugar) -> String {
     }
     if !doc.names.is_empty() {
         write_names(&mut out, &doc.names);
+        out.push_str("\n\n");
+    }
+    if !doc.descriptions.is_empty() {
+        write_descriptions(&mut out, &doc.descriptions);
         out.push_str("\n\n");
     }
     let trimmed = out.trim_end();
@@ -149,6 +154,14 @@ fn write_names(out: &mut String, names: &[NameDecl]) {
     out.push_str("(names");
     for n in names {
         out.push_str(&format!("\n  ({} {})", n.name, addr_text(&n.commit)));
+    }
+    out.push(')');
+}
+
+fn write_descriptions(out: &mut String, descriptions: &[DescriptionDecl]) {
+    out.push_str("(descriptions");
+    for d in descriptions {
+        out.push_str(&format!("\n  ({} {})", d.name, quote(&d.description)));
     }
     out.push(')');
 }

@@ -73,6 +73,10 @@ impl NodeUi for Comment {
         "comment"
     }
 
+    fn description(&self) -> Option<&'static str> {
+        Some("A free-floating text note")
+    }
+
     fn ui(
         &mut self,
         _ctx: NodeCtx,

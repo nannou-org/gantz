@@ -9,7 +9,7 @@ const FILTER_GLYPH: &str = "⛭";
 /// A widget for selecting between, naming, and creating new graphs.
 pub struct GraphSelect<'a> {
     id: egui::Id,
-    registry: &'a dyn GraphRegistry,
+    registry: &'a dyn crate::Registry,
     heads: &'a [gantz_ca::Head],
     focused_head: Option<usize>,
     base_names: &'a gantz_ca::registry::Names,
@@ -97,7 +97,7 @@ impl std::ops::BitOrAssign for GraphSelectResponse {
 
 impl<'a> GraphSelect<'a> {
     pub fn new(
-        registry: &'a dyn GraphRegistry,
+        registry: &'a dyn crate::Registry,
         heads: &'a [gantz_ca::Head],
         base_names: &'a gantz_ca::registry::Names,
     ) -> Self {
@@ -166,6 +166,9 @@ impl<'a> GraphSelect<'a> {
 
         let names = self.registry.names();
         let demos = self.demos;
+        // Captured by `show_named` to surface each named graph's description and
+        // input/output docs on hover.
+        let registry = self.registry;
 
         // List all the graphs, named then unnamed.
         egui::ScrollArea::vertical()
@@ -204,7 +207,14 @@ impl<'a> GraphSelect<'a> {
                      focused_head: Option<usize>,
                      response: &mut GraphSelectResponse| {
                         let head = gantz_ca::Head::Branch(name.to_string());
-                        let res = head_row(heads, &head, row_type, ca, focused_head, ui);
+                        let mut res = head_row(heads, &head, row_type, ca, focused_head, ui);
+                        // Show the graph's description + input/output docs on hover.
+                        res.row = res.row.on_hover_ui(|ui| {
+                            // Re-assert wrap width every frame (see `socket_hover`).
+                            let max_width = ui.spacing().tooltip_width;
+                            ui.set_max_width(max_width);
+                            crate::node_info_ui(&registry.command_info(name), ui);
+                        });
                         // Deletable iff the row offers an `×` (named, non-base).
                         let deletable = res.delete.is_some();
                         // The associated demo to offer, if any.

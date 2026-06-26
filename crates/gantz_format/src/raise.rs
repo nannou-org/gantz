@@ -11,8 +11,8 @@
 use crate::datum::{Datum, to_datum};
 use crate::error::FormatError;
 use crate::model::{
-    Addr, CommitDecl, Conn, Document, Endpoint, GraphBody, GraphDef, NameDecl, NodeDecl, NodeSpec,
-    RefSpec,
+    Addr, CommitDecl, Conn, DescriptionDecl, Document, Endpoint, GraphBody, GraphDef, NameDecl,
+    NodeDecl, NodeSpec, RefSpec,
 };
 use crate::sugar::Sugar;
 use gantz_ca::{ContentAddr, GraphAddr, Registry};
@@ -74,8 +74,21 @@ where
         });
     }
 
+    push_descriptions(&mut doc, registry);
+
     let text = crate::writer::write_document(&doc, sugar);
     Ok(Dumped { text, graphs })
+}
+
+/// Push the registry's name-keyed descriptions onto the document, so both the
+/// full and inline-name formats round-trip them via a `(descriptions ...)` form.
+fn push_descriptions<N>(doc: &mut Document, registry: &Registry<Graph<N>>) {
+    for (name, description) in registry.descriptions() {
+        doc.descriptions.push(DescriptionDecl {
+            name: name.clone(),
+            description: description.clone(),
+        });
+    }
 }
 
 /// Raise a registry into the inline-name format: each named graph is emitted
@@ -117,6 +130,8 @@ where
             },
         );
     }
+
+    push_descriptions(&mut doc, registry);
 
     let text = crate::writer::write_document(&doc, sugar);
     Ok(Dumped { text, graphs })

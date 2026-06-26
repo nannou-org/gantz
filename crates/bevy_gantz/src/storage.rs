@@ -79,6 +79,8 @@ mod key {
     pub const COMMIT_ADDRS: &str = "commit-addrs";
     /// The key at which the mapping from names to graph CAs is stored.
     pub const NAMES: &str = "graph-names";
+    /// The key at which the mapping from names to descriptions is stored.
+    pub const DESCRIPTIONS: &str = "graph-descriptions";
     /// The key at which the list of open heads is stored.
     pub const OPEN_HEADS: &str = "open-heads";
     /// The key at which the focused head is stored.
@@ -116,6 +118,7 @@ pub fn save_registry<N: Serialize>(storage: &mut impl Save, registry: &Registry<
     }
 
     save(storage, key::NAMES, registry.names());
+    save(storage, key::DESCRIPTIONS, registry.descriptions());
 }
 
 /// Load the registry from storage.
@@ -133,7 +136,13 @@ pub fn load_registry<N: DeserializeOwned>(storage: &impl Load) -> Registry<N> {
         .collect();
 
     let names = load(storage, key::NAMES).unwrap_or_default();
-    Registry(ca::Registry::new(graphs, commits, names))
+    let mut registry = ca::Registry::new(graphs, commits, names);
+    let descriptions: std::collections::BTreeMap<String, String> =
+        load(storage, key::DESCRIPTIONS).unwrap_or_default();
+    for (name, description) in descriptions {
+        registry.set_description(name, description);
+    }
+    Registry(registry)
 }
 
 // ---------------------------------------------------------------------------

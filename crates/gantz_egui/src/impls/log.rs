@@ -11,6 +11,16 @@ impl NodeUi for gantz_std::log::Log {
         }
     }
 
+    fn description(&self) -> Option<&'static str> {
+        Some(match self.level {
+            log::Level::Error => "Log a value at error level",
+            log::Level::Warn => "Log a value at warning level",
+            log::Level::Info => "Log a value at info level",
+            log::Level::Debug => "Log a value at debug level",
+            log::Level::Trace => "Log a value at trace level",
+        })
+    }
+
     fn ui(
         &mut self,
         _ctx: NodeCtx,

@@ -84,6 +84,10 @@ impl NodeUi for gantz_core::node::Branch {
         "branch"
     }
 
+    fn description(&self) -> Option<&'static str> {
+        Some("Route to an output arm by predicate")
+    }
+
     fn ui(
         &mut self,
         ctx: NodeCtx,

@@ -6,6 +6,10 @@ impl NodeUi for gantz_core::node::graph::Outlet {
         "out"
     }
 
+    fn description(&self) -> Option<&'static str> {
+        Some("A graph output")
+    }
+
     fn ui(
         &mut self,
         ctx: NodeCtx,

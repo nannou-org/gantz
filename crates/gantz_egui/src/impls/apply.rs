@@ -5,6 +5,10 @@ impl NodeUi for gantz_core::node::Apply {
         "apply"
     }
 
+    fn description(&self) -> Option<&'static str> {
+        Some("Apply a function to arguments")
+    }
+
     fn ui(
         &mut self,
         _ctx: NodeCtx,

@@ -1,16 +1,20 @@
 //! A generic command palette widget adapted from rerun's command palette.
 
 use egui::{Align2, Key, NumExt as _};
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 /// Trait that must be implemented by command types
 pub trait Command: Copy + Sized {
     /// The text used for display and fuzzy matching
     fn text(&self) -> &str;
-    /// A more detailed description shown in tooltips
-    fn tooltip(&self) -> &str {
-        ""
+    /// A concise description shown inline, right of the name. Default none.
+    fn description(&self) -> Option<Cow<'static, str>> {
+        None
     }
+    /// Detailed information for this command, rendered within the per-entry
+    /// hover tooltip. Default renders nothing.
+    fn info_ui(&self, _ui: &mut egui::Ui) {}
     /// Optional keyboard shortcut for the command
     fn formatted_kb_shortcut(&self, _ctx: &egui::Context) -> Option<String> {
         None
@@ -21,7 +25,9 @@ pub trait Command: Copy + Sized {
 pub struct CommandPalette {
     visible: bool,
     query: String,
-    selected_alternative: usize,
+    /// The highlighted entry, or `None` when nothing is highlighted (the
+    /// just-opened, browse-and-click state). Set by typing or arrow navigation.
+    selected_alternative: Option<usize>,
 }
 
 impl CommandPalette {
@@ -34,8 +40,15 @@ impl CommandPalette {
     }
 
     /// Show the command palette, if it is visible.
+    ///
+    /// `area` is the rect the palette is centered over (e.g. the graph scene).
     #[must_use = "Returns the command that was selected"]
-    pub fn show<T, I>(&mut self, egui_ctx: &egui::Context, commands: I) -> Option<T>
+    pub fn show<T, I>(
+        &mut self,
+        egui_ctx: &egui::Context,
+        area: egui::Rect,
+        commands: I,
+    ) -> Option<T>
     where
         T: Command,
         I: IntoIterator<Item = T>,
@@ -49,12 +62,13 @@ impl CommandPalette {
         // Collect commands early since we'll need them multiple times
         let commands: Vec<T> = commands.into_iter().collect();
 
-        let content_rect = egui_ctx.content_rect();
-        let width = 300.0;
-        let max_height = 320.0.at_most(content_rect.height());
+        // A modest widening to fit each entry's inline description; the full
+        // details remain available via the entry's hover tooltip.
+        let width = 400.0.at_most(area.width());
+        let max_height = 320.0.at_most(area.height());
 
         let window_response = egui::Window::new("Command Palette")
-            .fixed_pos(content_rect.center() - 0.5 * max_height * egui::Vec2::Y)
+            .fixed_pos(area.center() - 0.5 * max_height * egui::Vec2::Y)
             .fixed_size([width, max_height])
             .pivot(egui::Align2::CENTER_TOP)
             .resizable(false)
@@ -95,8 +109,10 @@ impl CommandPalette {
         text_response.request_focus();
         let mut scroll_to_selected_alternative = false;
         if text_response.changed() {
-            self.selected_alternative = 0;
-            scroll_to_selected_alternative = true;
+            // Highlight the top match while filtering (so Enter works), but show
+            // no highlight for an empty query - it's a browse-and-click list.
+            self.selected_alternative = (!self.query.is_empty()).then_some(0);
+            scroll_to_selected_alternative = self.selected_alternative.is_some();
         }
 
         let selected_command = egui::ScrollArea::vertical()
@@ -113,6 +129,8 @@ impl CommandPalette {
         selected_command
     }
 
+    /// Render the matching entries. Returns the command chosen by click/Enter
+    /// (which closes the palette).
     fn alternatives_ui<T: Command>(
         &mut self,
         ui: &mut egui::Ui,
@@ -133,6 +151,25 @@ impl CommandPalette {
 
         let matches = commands_that_match(&query, commands);
 
+        // Align descriptions into a single column just past the widest name (so
+        // names align at the left and descriptions align at `desc_x`), capped so
+        // the description always keeps at least ~half the row.
+        let row_width = ui.available_width();
+        let name_col_w = matches
+            .iter()
+            .map(|m| {
+                ui.painter()
+                    .layout_no_wrap(
+                        m.command.text().to_owned(),
+                        font_id.clone(),
+                        egui::Color32::WHITE,
+                    )
+                    .size()
+                    .x
+            })
+            .fold(0.0_f32, f32::max);
+        let desc_x = (name_col_w + 12.0).at_most(row_width * 0.55);
+
         for (i, fuzzy_match) in matches.iter().enumerate() {
             let command = fuzzy_match.command;
             let kb_shortcut_text = command.formatted_kb_shortcut(ui.ctx()).unwrap_or_default();
@@ -142,13 +179,19 @@ impl CommandPalette {
                 egui::Sense::click(),
             );
 
-            let response = response.on_hover_text(command.tooltip());
+            let response = response.on_hover_ui(|ui| {
+                // Re-assert the wrap width every frame so the tooltip widens as
+                // content grows (see the note in `graph_scene::socket_hover`).
+                let max_width = ui.spacing().tooltip_width;
+                ui.set_max_width(max_width);
+                command.info_ui(ui);
+            });
 
             if response.clicked() {
                 selected_command = Some(command);
             }
 
-            let selected = i == self.selected_alternative;
+            let selected = self.selected_alternative == Some(i);
             let style = ui.style().interact_selectable(&response, selected);
 
             if selected {
@@ -189,6 +232,23 @@ impl CommandPalette {
                 },
             );
 
+            // The description, aligned in its own column right of the name and
+            // dimmed. Overflow is clipped by the scroll area; the hover tooltip
+            // carries the full text.
+            if let Some(desc) = command.description() {
+                ui.painter().text(
+                    egui::pos2(rect.left() + desc_x, rect.center().y),
+                    Align2::LEFT_CENTER,
+                    desc.as_ref(),
+                    font_id.clone(),
+                    if selected {
+                        style.text_color()
+                    } else {
+                        ui.visuals().weak_text_color()
+                    },
+                );
+            }
+
             num_alternatives += 1;
         }
 
@@ -196,17 +256,22 @@ impl CommandPalette {
             ui.weak("No matching results");
         }
 
-        // Move up/down in the list:
-        self.selected_alternative = self.selected_alternative.saturating_sub(
-            ui.input_mut(|i| i.count_and_consume_key(Default::default(), Key::ArrowUp)),
-        );
-        self.selected_alternative = self.selected_alternative.saturating_add(
-            ui.input_mut(|i| i.count_and_consume_key(Default::default(), Key::ArrowDown)),
-        );
-
-        self.selected_alternative = self
-            .selected_alternative
-            .clamp(0, num_alternatives.saturating_sub(1));
+        // Move up/down in the list. From no highlight, the first arrow press
+        // starts at the top; otherwise step and keep the highlight in range.
+        let up = ui.input_mut(|i| i.count_and_consume_key(Default::default(), Key::ArrowUp));
+        let down = ui.input_mut(|i| i.count_and_consume_key(Default::default(), Key::ArrowDown));
+        self.selected_alternative = if num_alternatives == 0 {
+            None
+        } else if up == 0 && down == 0 {
+            self.selected_alternative
+                .map(|sel| sel.min(num_alternatives - 1))
+        } else {
+            let next = match self.selected_alternative {
+                None => 0,
+                Some(cur) => (cur + down).saturating_sub(up),
+            };
+            Some(next.min(num_alternatives - 1))
+        };
 
         selected_command
     }

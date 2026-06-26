@@ -5,6 +5,10 @@ impl NodeUi for gantz_std::Bang {
         "!"
     }
 
+    fn description(&self) -> Option<&'static str> {
+        Some("Trigger downstream evaluation")
+    }
+
     fn ui(
         &mut self,
         mut ctx: NodeCtx,

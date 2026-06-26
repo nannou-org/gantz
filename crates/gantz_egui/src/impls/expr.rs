@@ -82,6 +82,10 @@ impl NodeUi for gantz_core::node::Expr {
         "expr"
     }
 
+    fn description(&self) -> Option<&'static str> {
+        Some("Evaluate a Steel expression")
+    }
+
     fn ui(
         &mut self,
         ctx: NodeCtx,

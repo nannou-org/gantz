@@ -41,11 +41,6 @@ pub trait NodeTypeRegistry {
     /// The unique name of each node available.
     fn node_types(&self) -> Vec<&str>;
 
-    /// The tooltip shown for this node type within the command palette.
-    fn command_tooltip(&self, _node_type: &str) -> &str {
-        ""
-    }
-
     /// The formatted keyboard shortcut for the command palette.
     fn command_formatted_kb_shortcut(
         &self,
@@ -286,6 +281,9 @@ pub struct GantzResponse {
     pub file_drops: Vec<FileDrop>,
     /// Demo graph association changed: (head, Some(demo_name) | None).
     pub demo_changed: Option<(gantz_ca::Head, Option<String>)>,
+    /// A named graph's description was edited: (head, new_description). An empty
+    /// string clears the description.
+    pub description_changed: Option<(gantz_ca::Head, String)>,
     /// A base graph should be reset to its original state.
     pub reset_base_graph: Option<gantz_ca::Head>,
     /// All `demo-*` base graphs should be reset to their original state.
@@ -518,6 +516,7 @@ impl<'a> Gantz<'a> {
             new_branch: None,
             file_drops: Vec::new(),
             demo_changed: None,
+            description_changed: None,
             reset_base_graph: None,
             reset_all_demos: false,
             compile_config: None,
@@ -785,12 +784,19 @@ where
                         _ => None,
                     };
 
+                    // The graph's current description (named graphs only).
+                    let current_description = match &head {
+                        gantz_ca::Head::Branch(name) => gantz.env.graph_description(name),
+                        _ => None,
+                    };
+
                     let res = pane_ui(ui, |ui| {
                         widget::GraphConfig::new(&head, head_state, names)
                             .is_base(is_base)
                             .immutable(immutable)
                             .demo_names(&demo_names_vec)
                             .current_demo(current_demo)
+                            .current_description(current_description)
                             .show(ui)
                     });
                     if res.inner.new_branch.is_some() {
@@ -798,6 +804,9 @@ where
                     }
                     if let Some(demo_val) = res.inner.demo_changed {
                         gantz_response.demo_changed = Some((head.clone(), demo_val));
+                    }
+                    if let Some(description) = res.inner.description_changed {
+                        gantz_response.description_changed = Some((head.clone(), description));
                     }
                     if res.inner.reset_base_graph {
                         gantz_response.reset_base_graph = Some(head.clone());
@@ -1403,8 +1412,12 @@ impl widget::command_palette::Command for NodeTyCmd<'_> {
         self.name
     }
 
-    fn tooltip(&self) -> &str {
-        self.env.command_tooltip(self.name)
+    fn description(&self) -> Option<std::borrow::Cow<'static, str>> {
+        self.env.node_description(self.name)
+    }
+
+    fn info_ui(&self, ui: &mut egui::Ui) {
+        crate::node_info_ui(&self.env.command_info(self.name), ui);
     }
 
     fn formatted_kb_shortcut(&self, ctx: &egui::Context) -> Option<String> {
@@ -2124,8 +2137,10 @@ fn command_palette(
     let cmds = types.iter().map(|&k| NodeTyCmd { env, name: k });
 
     // The chosen node type becomes a creation payload. The reserved
-    // `NESTED_GRAPH_TYPE` routes to the registry-aware nested-graph op.
-    cmd_palette.show(ui.ctx(), cmds).map(|cmd| {
+    // `NESTED_GRAPH_TYPE` routes to the registry-aware nested-graph op. The
+    // palette is centered over the graph scene (this `ui`'s rect).
+    let scene_rect = ui.max_rect();
+    cmd_palette.show(ui.ctx(), scene_rect, cmds).map(|cmd| {
         // The placement position is filled in by the caller, which has access to
         // the focused head's last pointer position.
         if cmd.name == NESTED_GRAPH_TYPE {

@@ -90,6 +90,38 @@ pub trait Registry: NameRegistry + FnNodeNames + NodeTypeRegistry + GraphRegistr
         let _ = (ca, kind, ix);
         None
     }
+
+    /// Display-ready documentation for the creatable node type named `name`.
+    ///
+    /// Combines the node's description with its derived input/output
+    /// [`SocketDoc`]s. Shown beside the highlighted entry in the command palette
+    /// and as hover documentation in the "Graphs" select widget. The standard
+    /// [`RegistryRef`] impl introspects a builtin instance or resolves a named
+    /// graph; the default returns just the name.
+    fn command_info(&self, name: &str) -> CommandInfo {
+        CommandInfo {
+            name: name.to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// The stored description for the named graph `name`, if any.
+    ///
+    /// Used to seed the description editor in the graph config pane. The
+    /// standard [`RegistryRef`] impl reads it from the content-addressed
+    /// registry; the default has none.
+    fn graph_description(&self, name: &str) -> Option<&str> {
+        let _ = name;
+        None
+    }
+
+    /// A concise description of the creatable node type `name`, for inline
+    /// display in the command palette. Lighter than [`command_info`](Self::command_info)
+    /// (it derives no input/output docs); the default has none.
+    fn node_description(&self, name: &str) -> Option<Cow<'static, str>> {
+        let _ = name;
+        None
+    }
 }
 
 /// On-hover documentation for a single node inlet or outlet.
@@ -123,6 +155,63 @@ impl SocketDoc {
     /// Whether this doc carries no content (empty type and no description).
     pub fn is_empty(&self) -> bool {
         self.ty.is_empty() && self.description.is_none()
+    }
+}
+
+/// Display-ready documentation for a creatable node type.
+///
+/// Built by [`Registry::command_info`] from a node's [`description`] and its
+/// derived per-socket [`SocketDoc`]s, and rendered by [`node_info_ui`] in the
+/// command palette and the "Graphs" select hover.
+///
+/// [`description`]: NodeUi::description
+#[derive(Clone, Debug, Default)]
+pub struct CommandInfo {
+    /// The node type's name (the palette entry text).
+    pub name: String,
+    /// A concise description of what the node does, if any.
+    pub description: Option<Cow<'static, str>>,
+    /// One [`SocketDoc`] per input, in socket order.
+    pub inputs: Vec<SocketDoc>,
+    /// One [`SocketDoc`] per output, in socket order.
+    pub outputs: Vec<SocketDoc>,
+}
+
+/// Render a [`CommandInfo`] as a name heading, description, and labelled
+/// input/output lists.
+///
+/// Used both for the command palette's side panel and as the body of the
+/// per-item / graph-select hover tooltips. Callers that render inside a tooltip
+/// should set a max width first (see the tooltip-width note in `socket_hover`).
+pub fn node_info_ui(info: &CommandInfo, ui: &mut egui::Ui) {
+    if !info.name.is_empty() {
+        ui.strong(&info.name);
+    }
+    if let Some(desc) = &info.description {
+        ui.label(desc.as_ref());
+    }
+    socket_doc_list(ui, "Inputs", &info.inputs);
+    socket_doc_list(ui, "Outputs", &info.outputs);
+}
+
+/// Render a labelled list of socket docs as `[ix] ty - description` rows.
+fn socket_doc_list(ui: &mut egui::Ui, heading: &str, docs: &[SocketDoc]) {
+    if docs.is_empty() {
+        return;
+    }
+    ui.add_space(4.0);
+    ui.weak(heading);
+    for (ix, doc) in docs.iter().enumerate() {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.weak(format!("{ix}"));
+            if !doc.ty.is_empty() {
+                ui.strong(doc.ty.as_ref());
+            }
+            if let Some(desc) = &doc.description {
+                ui.label(format!("- {desc}"));
+            }
+        });
     }
 }
 
@@ -232,6 +321,16 @@ pub trait NodeUi {
     /// [`NamedRef`](crate::node::NamedRef)): double-clicking enters it in place,
     /// and the scene offers an "open in new tab" context-menu action.
     fn nav_head(&self, _registry: &dyn Registry) -> Option<gantz_ca::Head> {
+        None
+    }
+
+    /// A concise, free-form description of what the node does.
+    ///
+    /// Shown alongside the node's inputs/outputs in the command palette and as
+    /// hover documentation in the "Graphs" select widget. Builtins hardcode a
+    /// short string; nodes that reference a named graph resolve the graph's
+    /// stored description via [`Registry::command_info`].
+    fn description(&self) -> Option<&'static str> {
         None
     }
 
@@ -412,6 +511,10 @@ where
         (**self).name(registry)
     }
 
+    fn description(&self) -> Option<&'static str> {
+        (**self).description()
+    }
+
     fn ui(
         &mut self,
         ctx: NodeCtx,
@@ -462,6 +565,10 @@ macro_rules! impl_node_ui_for_ptr {
         {
             fn name(&self, registry: &dyn Registry) -> &str {
                 (**self).name(registry)
+            }
+
+            fn description(&self) -> Option<&'static str> {
+                (**self).description()
             }
 
             fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> egui_graph::FramedResponse<egui::Response> {
