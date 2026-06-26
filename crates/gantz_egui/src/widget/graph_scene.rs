@@ -12,7 +12,7 @@ use petgraph::{
     self,
     visit::{EdgeRef, IntoNodeIdentifiers, NodeIndexable},
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use steel::steel_vm::engine::Engine;
 
 /// Response from the [`GraphScene`] widget.
@@ -52,9 +52,7 @@ pub struct GraphScene<'a, N> {
     registry: &'a dyn Registry,
     graph: &'a mut Graph<N>,
     id: egui::Id,
-    auto_layout: bool,
-    layout_flow: egui::Direction,
-    center_view: bool,
+    layout_params: egui_graph::LayoutParams,
     immutable: bool,
     /// When set, the background context menu gains a "Panes" submenu of
     /// pane-visibility checkboxes.
@@ -66,6 +64,14 @@ pub struct GraphScene<'a, N> {
 #[derive(Default, serde::Deserialize, serde::Serialize)]
 pub struct GraphSceneState {
     pub interaction: Interaction,
+    /// One-shot request to auto-layout, set by a button or context menu and
+    /// consumed by [`GraphScene::show`] on the next pass. Applies to the
+    /// current selection, or the whole graph when nothing is selected.
+    #[serde(default, skip)]
+    pub pending_auto_layout: bool,
+    /// One-shot request to center the view, consumed by [`GraphScene::show`].
+    #[serde(default, skip)]
+    pub pending_center_view: bool,
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -100,9 +106,7 @@ where
             registry,
             graph,
             id: egui::Id::new("gantz-graph-scene"),
-            auto_layout: false,
-            layout_flow: egui::Direction::TopDown,
-            center_view: false,
+            layout_params: egui_graph::LayoutParams::new(egui::Direction::TopDown),
             immutable: false,
             view_toggles: None,
         }
@@ -116,28 +120,12 @@ where
         self
     }
 
-    /// Whether or not to automatically layout the graph using
-    /// [`egui_graph::layout()`].
+    /// The parameters used when auto-layout is invoked (one-shot, via the
+    /// pending request flags on [`GraphSceneState`]).
     ///
-    /// Default: `false`
-    pub fn auto_layout(mut self, auto: bool) -> Self {
-        self.auto_layout = auto;
-        self
-    }
-
-    /// The direction in which the egui_graph autolayout.
-    ///
-    /// Default: [`egui::Direction::TopDown`]
-    pub fn layout_flow(mut self, flow: egui::Direction) -> Self {
-        self.layout_flow = flow;
-        self
-    }
-
-    /// Whether or not to center the view over the graph.
-    ///
-    /// Default: `false`
-    pub fn center_view(mut self, center: bool) -> Self {
-        self.center_view = center;
+    /// Default: [`egui_graph::LayoutParams::new`] with [`egui::Direction::TopDown`].
+    pub fn layout_params(mut self, params: egui_graph::LayoutParams) -> Self {
+        self.layout_params = params;
         self
     }
 
@@ -170,13 +158,30 @@ where
         vm: &mut Engine,
         ui: &mut egui::Ui,
     ) -> GraphSceneResponse {
-        if self.auto_layout {
-            view.layout = layout(
+        // Consume one-shot layout/center requests (set by buttons and context
+        // menus). A request raised during this pass (e.g. by a context menu)
+        // is applied on the next pass.
+        let do_layout = std::mem::take(&mut state.pending_auto_layout);
+        let do_center = std::mem::take(&mut state.pending_center_view);
+        if do_layout {
+            // Lay out the selection, or the whole graph when nothing is
+            // selected. The whole-graph case centers at the origin; a subset is
+            // aligned to its prior bounding-box centre.
+            let target: HashSet<NodeIndex> = if state.interaction.selection.nodes.is_empty() {
+                self.graph.node_indices().collect()
+            } else {
+                state.interaction.selection.nodes.clone()
+            };
+            let whole = state.interaction.selection.nodes.is_empty();
+            apply_auto_layout(
                 self.registry,
                 &*self.graph,
                 self.id,
-                self.layout_flow,
+                &self.layout_params,
                 ui.ctx(),
+                view,
+                &target,
+                whole,
             );
         }
         let mut node_responses = Vec::new();
@@ -189,7 +194,7 @@ where
             .map(|ix| egui_graph::NodeId::from_u64(ix.index() as u64))
             .collect();
         let graph_response = egui_graph::Graph::from_id(self.id)
-            .center_view(self.center_view)
+            .center_view(do_center)
             .selected_nodes(selected)
             .immutable(self.immutable)
             .show(view, ui, |ui, show| {
@@ -238,6 +243,7 @@ where
         let immutable = self.immutable;
         let view_toggles = self.view_toggles;
         let mut reset_layout = false;
+        let mut request_layout = false;
         if !immutable || view_toggles.is_some() {
             let layer_id = graph_response.response.layer_id;
             graph_response.response.context_menu(|ui| {
@@ -261,6 +267,16 @@ where
                         responses.push(DynResponse::new(Paste { text: None, pos }));
                         ui.close();
                     }
+                    if ui
+                        .button("auto-layout")
+                        .on_hover_text(
+                            "lay out the selection, or the whole graph when nothing is selected",
+                        )
+                        .clicked()
+                    {
+                        request_layout = true;
+                        ui.close();
+                    }
                 }
                 if let Some(view) = view_toggles {
                     ui.menu_button("panes", |ui| {
@@ -273,6 +289,9 @@ where
                     });
                 }
             });
+        }
+        if request_layout {
+            state.pending_auto_layout = true;
         }
         if reset_layout {
             responses.push(DynResponse::new(ResetTilesLayout));
@@ -293,21 +312,26 @@ impl Selection {
     }
 }
 
-/// Produce the layout for the given graph.
+/// Produce the layout for the given graph (or a `subset` of its nodes).
 ///
 /// The `graph_id` is used to scope node IDs so that nodes with the same index
-/// in different graphs don't share egui memory state.
+/// in different graphs don't share egui memory state. When `subset` is `Some`,
+/// only those nodes and the edges between them are laid out. The result's
+/// bounding box is centred on the origin (see [`apply_auto_layout`] for
+/// selection-relative placement).
 pub fn layout<N>(
     registry: &dyn Registry,
     graph: &Graph<N>,
     graph_id: egui::Id,
-    flow: egui::Direction,
+    params: &egui_graph::LayoutParams,
     ctx: &egui::Context,
+    subset: Option<&HashSet<NodeIndex>>,
 ) -> egui_graph::Layout
 where
     N: Node,
 {
-    if graph.node_count() == 0 {
+    let included = |n: NodeIndex| subset.is_none_or(|s| s.contains(&n));
+    if !graph.node_indices().any(included) {
         return Default::default();
     }
     // Describe each node's sockets (count + padding) and each edge's actual
@@ -320,6 +344,7 @@ where
         let node_sizes = gmem.node_sizes();
         graph
             .node_indices()
+            .filter(|&n| included(n))
             .map(|n| {
                 let node_id = egui_graph::NodeId::from_u64(n.index() as u64);
                 let size = node_sizes
@@ -338,6 +363,9 @@ where
     let nodes = nodes_vec.into_iter();
     let edges = graph.edge_indices().filter_map(|e| {
         let (a, b) = graph.edge_endpoints(e)?;
+        if !included(a) || !included(b) {
+            return None;
+        }
         let edge = graph.edge_weight(e)?;
         Some((
             (
@@ -350,7 +378,82 @@ where
             ),
         ))
     });
-    egui_graph::layout(nodes, edges, flow)
+    egui_graph::layout(nodes, edges, params.clone())
+}
+
+/// Apply a one-shot auto-layout to `view`, laying out `target` and merging the
+/// result back into `view.layout`.
+///
+/// When `whole` (the target is the entire graph), the result is used as-is -
+/// centred on the origin. Otherwise the result's bounding box is translated to
+/// match the centre of `target`'s current bounding box, so a selection lays out
+/// in place rather than snapping toward the origin. Nodes outside `target` are
+/// left untouched.
+pub fn apply_auto_layout<N>(
+    registry: &dyn Registry,
+    graph: &Graph<N>,
+    graph_id: egui::Id,
+    params: &egui_graph::LayoutParams,
+    ctx: &egui::Context,
+    view: &mut egui_graph::View,
+    target: &HashSet<NodeIndex>,
+    whole: bool,
+) where
+    N: Node,
+{
+    let new = layout(registry, graph, graph_id, params, ctx, Some(target));
+    if whole {
+        view.layout = new;
+        return;
+    }
+    // Sizes of the target nodes, so bounding boxes use full node rects.
+    let sizes: HashMap<egui_graph::NodeId, egui::Vec2> =
+        egui_graph::with_graph_memory(ctx, graph_id, |gmem| {
+            let node_sizes = gmem.node_sizes();
+            target
+                .iter()
+                .map(|ix| {
+                    let id = egui_graph::NodeId::from_u64(ix.index() as u64);
+                    let size = node_sizes
+                        .get(&id)
+                        .copied()
+                        .unwrap_or_else(|| [200.0, 50.0].into());
+                    (id, size)
+                })
+                .collect()
+        });
+    let shift = match (
+        bbox_centre(target, &view.layout, &sizes),
+        bbox_centre(target, &new, &sizes),
+    ) {
+        (Some(orig), Some(next)) => orig - next,
+        _ => egui::Vec2::ZERO,
+    };
+    for (id, pos) in new {
+        view.layout.insert(id, pos + shift);
+    }
+}
+
+/// The centre of the bounding box of `target`'s nodes in `layout`, using full
+/// node rects (top-left position + size). Returns `None` when no target node
+/// has a position in `layout`.
+fn bbox_centre(
+    target: &HashSet<NodeIndex>,
+    layout: &egui_graph::Layout,
+    sizes: &HashMap<egui_graph::NodeId, egui::Vec2>,
+) -> Option<egui::Pos2> {
+    let mut bb: Option<egui::Rect> = None;
+    for ix in target {
+        let id = egui_graph::NodeId::from_u64(ix.index() as u64);
+        let Some(&tl) = layout.get(&id) else { continue };
+        let size = sizes
+            .get(&id)
+            .copied()
+            .unwrap_or_else(|| [200.0, 50.0].into());
+        let rect = egui::Rect::from_min_size(tl, size);
+        bb = Some(bb.map_or(rect, |b| b.union(rect)));
+    }
+    bb.map(|b| b.center())
 }
 
 fn nodes<N>(
@@ -374,6 +477,7 @@ where
     let mut node_responses = Vec::with_capacity(node_ids.len());
     let mut nodes_to_delete = Vec::new();
     let mut nodes_to_reset = Vec::new();
+    let mut request_layout = false;
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node = &mut graph[n_id];
@@ -449,6 +553,9 @@ where
             } else {
                 HashSet::from([n_id])
             };
+            // Whether the action target is a multi-node selection (this node is
+            // part of a selection of >1). Captured before `target` may be moved.
+            let multi = target.len() > 1;
             if ui.button("copy").clicked() {
                 responses.push(DynResponse::new(CopyNodes(target.clone())));
                 ui.close();
@@ -494,6 +601,16 @@ where
                     nodes_to_delete.extend(target);
                     ui.close();
                 }
+                // Auto-layout the selection (only meaningful for >1 node).
+                if multi
+                    && ui
+                        .button("auto-layout")
+                        .on_hover_text("lay out the selected nodes")
+                        .clicked()
+                {
+                    request_layout = true;
+                    ui.close();
+                }
             }
             // Node-specific items (e.g. the log node's "open logs").
             let node_path = [n_ix];
@@ -523,6 +640,11 @@ where
             }
         }
         gantz_core::graph::register(&get_node, &*graph, &[], vm);
+    }
+
+    // A node-menu "auto-layout" click is applied on the next pass by `show`.
+    if request_layout {
+        state.pending_auto_layout = true;
     }
 
     node_responses

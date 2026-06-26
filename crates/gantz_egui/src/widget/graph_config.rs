@@ -5,8 +5,9 @@ use super::head_name_edit::{head_name, head_name_edit};
 
 /// Per-head graph configuration widget.
 ///
-/// Provides a name-editing text field and layout settings
-/// (`auto_layout`, `layout_flow`, `center_view`).
+/// Provides a name-editing text field, one-shot `auto-layout`/`center view`
+/// buttons, and the per-head layout flow direction. The non-flow layout
+/// parameters live globally in `Settings > Global`.
 pub struct GraphConfig<'a> {
     head: &'a gantz_ca::Head,
     head_state: &'a mut OpenHeadState,
@@ -138,12 +139,24 @@ impl<'a> GraphConfig<'a> {
             );
         }
 
-        // Layout config.
-        ui.checkbox(&mut self.head_state.center_view, "Center View");
+        // Layout actions. Auto-layout and center-view are one-shot: they apply
+        // once when clicked (consumed by the graph scene on the next pass), so
+        // arranging nodes by hand is never disturbed.
+        if ui
+            .button("center view")
+            .on_hover_text("center the view over the graph")
+            .clicked()
+        {
+            self.head_state.scene.pending_center_view = true;
+        }
         ui.add_enabled_ui(!self.immutable, |ui| {
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut self.head_state.auto_layout, "Automatic Layout");
-            });
+            if ui
+                .button("auto-layout")
+                .on_hover_text("lay out the selection, or the whole graph when nothing is selected")
+                .clicked()
+            {
+                self.head_state.scene.pending_auto_layout = true;
+            }
             ui.horizontal(|ui| {
                 ui.label("Flow:");
                 ui.radio_value(
