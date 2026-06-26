@@ -96,13 +96,14 @@ pub fn create_node<N>(
     new_node: impl FnOnce(&str) -> Option<N>,
     graph: &mut Graph<N>,
     view: &mut egui_graph::View,
+    head_state: &mut OpenHeadState,
     vm: &mut Engine,
     cmd: CreateNode,
 ) -> Option<NodeIndex>
 where
     N: gantz_core::Node + crate::sync::AsNamedRef,
 {
-    let CreateNode { node_type } = cmd;
+    let CreateNode { node_type, pos } = cmd;
     // Refuse references that would form a cycle back to the editing graph; with
     // sync on such a cycle recommits endlessly (see `crate::cycle`). A nameless
     // (detached commit) head can't be the target of a name-based cycle.
@@ -121,9 +122,18 @@ where
     let reg_ctx = node::RegCtx::new(get_node, &node_path, vm);
     graph[node_ix].register(reg_ctx);
 
-    // Position the new node at the scene center (or use layout default).
+    // Position the new node under the pointer, falling back to the center of the
+    // current view. `insert` (not `entry`) so a reused stable-graph index can't
+    // inherit a removed node's stale position.
+    let pos = pos.unwrap_or_else(|| view.scene_rect.center());
     let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
-    view.layout.entry(egui_id).or_insert(egui::Pos2::ZERO);
+    view.layout.insert(egui_id, pos);
+
+    // Make the new node the sole selection (clearing the previous one).
+    let sel = &mut head_state.scene.interaction.selection;
+    sel.nodes.clear();
+    sel.edges.clear();
+    sel.nodes.insert(node_ix);
 
     Some(node_ix)
 }
@@ -139,6 +149,8 @@ pub fn create_nested_graph<N>(
     timestamp: std::time::Duration,
     graph: &mut Graph<N>,
     view: &mut egui_graph::View,
+    head_state: &mut OpenHeadState,
+    pos: Option<egui::Pos2>,
     parent: &str,
 ) -> Option<NodeIndex>
 where
@@ -166,9 +178,18 @@ where
     let named_ref = NamedRef::with_sync(name, node::Ref::new(commit_ca.into()));
     let node_ix = graph.add_node(N::from(named_ref));
 
-    // Position the new node at the scene center (or use layout default).
+    // Position the new node under the pointer, falling back to the center of the
+    // current view. `insert` (not `entry`) so a reused stable-graph index can't
+    // inherit a removed node's stale position.
+    let pos = pos.unwrap_or_else(|| view.scene_rect.center());
     let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
-    view.layout.entry(egui_id).or_insert(egui::Pos2::ZERO);
+    view.layout.insert(egui_id, pos);
+
+    // Make the new node the sole selection (clearing the previous one).
+    let sel = &mut head_state.scene.interaction.selection;
+    sel.nodes.clear();
+    sel.edges.clear();
+    sel.nodes.insert(node_ix);
 
     Some(node_ix)
 }

@@ -76,6 +76,11 @@ pub struct Interaction {
     /// Position where an edge context menu was opened (in graph coordinates).
     #[serde(default, skip)]
     pub edge_context_menu_pos: Option<egui::Pos2>,
+    /// Latest pointer position over the scene, in graph coordinates. Updated
+    /// each frame the scene is hovered; used to place palette-created nodes
+    /// under the pointer.
+    #[serde(default, skip)]
+    pub last_pointer_pos: Option<egui::Pos2>,
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -212,6 +217,20 @@ where
                 .into_iter()
                 .map(|id| NodeIndex::new(id.value() as usize))
                 .collect();
+        }
+
+        // Track the latest pointer position over the scene (in graph space) so a
+        // node added via the command palette lands under the pointer. While the
+        // palette window covers the scene, `contains_pointer` is false, so this
+        // retains the pre-open position.
+        if graph_response.response.contains_pointer() {
+            let layer_id = graph_response.response.layer_id;
+            let ptr = ui
+                .ctx()
+                .input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos()));
+            if let (Some(ptr), Some(t)) = (ptr, ui.ctx().layer_transform_from_global(layer_id)) {
+                state.interaction.last_pointer_pos = Some(t.mul_pos(ptr));
+            }
         }
 
         // Background context menu: graph actions (when mutable) plus a "panes"

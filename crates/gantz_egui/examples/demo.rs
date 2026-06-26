@@ -993,10 +993,11 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         let Some((head, ix)) = tagged_head(state, head) else {
             continue;
         };
-        let editing = match head {
-            gantz_ca::Head::Branch(name) => Some(name),
+        let editing = match &head {
+            gantz_ca::Head::Branch(name) => Some(name.clone()),
             gantz_ca::Head::Commit(_) => None,
         };
+        let head_state = state.gantz.open_heads.entry(head).or_default();
         let env = &state.env;
         let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
         let (_, graph, view) = &mut state.heads[ix];
@@ -1007,12 +1008,13 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             |node_type| env.new_node(node_type),
             graph,
             view,
+            head_state,
             &mut state.vms[ix],
             create,
         );
     }
 
-    for (head, _) in responses.take::<gantz_egui::CreateNestedGraph>() {
+    for (head, create) in responses.take::<gantz_egui::CreateNestedGraph>() {
         let Some((head, ix)) = tagged_head(state, head) else {
             continue;
         };
@@ -1020,12 +1022,19 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             log::warn!("CreateNestedGraph: name the graph before adding a nested graph");
             continue;
         };
+        let head_state = state
+            .gantz
+            .open_heads
+            .entry(gantz_ca::Head::Branch(parent.clone()))
+            .or_default();
         let (_, graph, view) = &mut state.heads[ix];
         gantz_egui::ops::create_nested_graph(
             &mut state.env.registry,
             timestamp(),
             graph,
             view,
+            head_state,
+            create.pos,
             &parent,
         );
     }

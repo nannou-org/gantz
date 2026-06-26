@@ -869,13 +869,19 @@ where
                             gantz_ca::Head::Branch(name) => Some(name.as_str()),
                             _ => None,
                         };
+                        // The pointer position over the focused head's scene
+                        // (graph coords) recorded this frame; new nodes are placed
+                        // here. `Copy`, so no borrow is held across the call.
+                        let pointer_pos = head_state.scene.interaction.last_pointer_pos;
                         let created =
                             command_palette(gantz.env, editing, &mut state.command_palette, ui);
                         match created {
-                            Some(PaletteChoice::Node(create)) => {
+                            Some(PaletteChoice::Node(mut create)) => {
+                                create.pos = pointer_pos;
                                 gantz_response.responses.push(Some(fh), create);
                             }
-                            Some(PaletteChoice::NestedGraph(create)) => {
+                            Some(PaletteChoice::NestedGraph(mut create)) => {
+                                create.pos = pointer_pos;
                                 gantz_response.responses.push(Some(fh), create);
                             }
                             None => {}
@@ -2062,11 +2068,14 @@ fn command_palette(
     // The chosen node type becomes a creation payload. The reserved
     // `NESTED_GRAPH_TYPE` routes to the registry-aware nested-graph op.
     cmd_palette.show(ui.ctx(), cmds).map(|cmd| {
+        // The placement position is filled in by the caller, which has access to
+        // the focused head's last pointer position.
         if cmd.name == NESTED_GRAPH_TYPE {
-            PaletteChoice::NestedGraph(CreateNestedGraph)
+            PaletteChoice::NestedGraph(CreateNestedGraph { pos: None })
         } else {
             PaletteChoice::Node(CreateNode {
                 node_type: cmd.name.to_string(),
+                pos: None,
             })
         }
     })
