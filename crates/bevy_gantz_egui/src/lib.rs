@@ -152,7 +152,15 @@ where
                 Update,
                 (
                     node::frame_bang::drive_frame_bangs::<N>.after(bevy_gantz::VmSet),
-                    persist_views::<N>,
+                    persist_camera_and_seed::<N>,
+                    // On layout settle, fork a layout-only commit. Runs after
+                    // `VmSet` (so a graph edit commits first and its baseline is
+                    // already seeded - no spurious layout commit) and after the
+                    // camera/seed pass (so the head's baseline exists).
+                    settle_layout::<N>
+                        .after(bevy_gantz::VmSet)
+                        .after(persist_camera_and_seed::<N>)
+                        .run_if(on_message::<bevy_gantz::debounced_input::DebouncedInputEvent>),
                     poll_import_task,
                 ),
             )
@@ -547,6 +555,7 @@ pub fn on_head_changed<N: 'static + Send + Sync>(
     views: Res<Views>,
     mut gui_state: ResMut<GuiState>,
     mut ctxs: EguiContexts,
+    graph_views: Query<&GraphView>,
     mut cmds: Commands,
 ) {
     let event = trigger.event();
@@ -556,10 +565,19 @@ pub fn on_head_changed<N: 'static + Send + Sync>(
     }
 
     // Load the view for the new head's commit.
-    let head_view = registry
+    let mut head_view = registry
         .head_commit_ca(&event.new_head)
         .and_then(|ca| views.get(ca).cloned())
         .unwrap_or_default();
+
+    // Camera (`scene_rect`) is excluded from undo: on a same-graph navigation
+    // (a layout undo/redo) keep the live camera rather than restoring the target
+    // commit's stored camera.
+    if event.same_graph {
+        if let Ok(current) = graph_views.get(event.entity) {
+            head_view.scene_rect = current.scene_rect;
+        }
+    }
 
     cmds.entity(event.entity)
         .insert(HeadGuiState::default())
@@ -1185,18 +1203,75 @@ where
 // Systems
 // ---------------------------------------------------------------------------
 
-/// Persist views for all open heads to the Views resource.
+/// Keep each open head's camera current and seed its commit's layout baseline.
 ///
-/// This runs every frame to capture layout changes (node dragging, etc.)
-/// that occur without graph topology changes.
-pub fn persist_views<N: 'static + Send + Sync>(
+/// Runs every frame. Unlike a blind per-frame copy, this keeps each commit's
+/// stored `layout` (node positions) *frozen* as an undo baseline: it is written
+/// exactly once - when a commit first has a populated live layout - and is never
+/// overwritten in place. Node-position changes only ever produce a *new* commit
+/// (see [`settle_layout`]). The camera (`scene_rect`) is excluded from undo, so
+/// it tracks the live view in place every frame.
+pub fn persist_camera_and_seed<N: 'static + Send + Sync>(
     registry: Res<Registry<N>>,
     mut views: ResMut<Views>,
     heads: Query<(&head::HeadRef, &GraphView), With<head::OpenHead>>,
 ) {
-    for (head_ref, head_views) in heads.iter() {
-        if let Some(commit_addr) = registry.head_commit_ca(&**head_ref).copied() {
-            views.insert(commit_addr, (**head_views).clone());
+    for (head_ref, head_view) in heads.iter() {
+        let Some(commit_addr) = registry.head_commit_ca(&**head_ref).copied() else {
+            continue;
+        };
+        match views.get_mut(&commit_addr) {
+            // Layout frozen as the undo baseline; only the camera tracks live.
+            Some(view) => view.scene_rect = head_view.scene_rect,
+            // Seed the baseline once the scene has laid the graph out. Guarding
+            // on a non-empty layout avoids capturing an empty pre-layout frame.
+            None if !head_view.layout.is_empty() => {
+                views.insert(commit_addr, (**head_view).clone());
+            }
+            None => {}
+        }
+    }
+}
+
+/// On layout settle ([`DebouncedInputEvent`]), fork a layout-only commit for any
+/// open head whose node positions changed since its frozen baseline view.
+///
+/// Mirrors the graph-commit path's GUI bookkeeping (migrate per-head GUI state,
+/// clear redo, migrate the graph pane) but deliberately does *not* fire
+/// [`head::CommittedEvent`]: the graph content is unchanged, so there is nothing
+/// to resync, and firing it would churn every sync-enabled referrer's history
+/// for a pure layout move. `GraphView` is left untouched - it already holds the
+/// settled layout, which now matches the new commit's seeded baseline.
+///
+/// [`DebouncedInputEvent`]: bevy_gantz::debounced_input::DebouncedInputEvent
+pub fn settle_layout<N>(
+    mut registry: ResMut<Registry<N>>,
+    mut views: ResMut<Views>,
+    mut gui_state: ResMut<GuiState>,
+    mut ctxs: EguiContexts,
+    mut heads: Query<(&mut head::HeadRef, &GraphView), With<head::OpenHead>>,
+) where
+    N: 'static + Send + Sync,
+{
+    for (mut head_ref, head_view) in heads.iter_mut() {
+        let old_head = (**head_ref).clone();
+        let Some(new_commit) = gantz_egui::ops::commit_layout(
+            &mut registry,
+            &views,
+            bevy_gantz::reg::timestamp(),
+            &mut head_ref,
+            head_view,
+        ) else {
+            continue;
+        };
+        // Freeze the new commit's layout baseline this frame, before any
+        // debounce-gated `save_views`/export reads the `Views` resource.
+        views.insert(new_commit, (**head_view).clone());
+        // Clear redo (a new commit invalidates it) and migrate GUI state.
+        let new_head = (**head_ref).clone();
+        gui_state.migrate_head(&old_head, &new_head, true);
+        if let Ok(ctx) = ctxs.ctx_mut() {
+            gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
         }
     }
 }

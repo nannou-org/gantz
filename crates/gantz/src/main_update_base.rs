@@ -56,6 +56,9 @@ fn main() {
                 bevy_gantz_egui::base::export_to_file::<Box<dyn node::Node>>,
                 persist_state,
             )
+                // After `settle_layout` so a layout commit settled this frame
+                // (and its seeded view) is exported/saved in the same pass.
+                .after(bevy_gantz_egui::settle_layout::<Box<dyn node::Node>>)
                 .run_if(on_message::<DebouncedInputEvent>),
         )
         .run();

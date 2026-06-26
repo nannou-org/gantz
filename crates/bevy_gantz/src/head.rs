@@ -128,6 +128,10 @@ pub struct ChangedEvent {
     pub entity: Entity,
     pub old_head: ca::Head,
     pub new_head: ca::Head,
+    /// Whether the new commit shares the previous commit's graph content
+    /// address, i.e. only layout/metadata changed (e.g. a layout undo/redo).
+    /// The VM and its node state are preserved across such a change.
+    pub same_graph: bool,
 }
 
 /// Emitted after a branch has been created from a head.
@@ -344,16 +348,28 @@ pub fn on_replace<N>(
         return;
     };
 
-    // The head now points at a different graph: drop the VM (discarding the
-    // old graph's node state) and reset the compile memo so `vm::sync`
-    // performs a fresh init.
+    // When the new commit shares the old commit's graph content (a layout-only
+    // change, e.g. a layout undo/redo), the graph is byte-identical, so keep the
+    // VM and its node state and leave the compile memo intact (`vm::sync` then
+    // skips recompilation). Only when the graph actually differs do we drop the
+    // VM and reset the memo so `vm::sync` performs a fresh init.
     // Note: HeadGuiState and GraphViews are updated by GantzEguiPlugin observer.
-    vms.remove(&focused_entity);
-    cmds.entity(focused_entity).insert((
-        HeadRef(new_head.clone()),
-        WorkingGraph(graph),
-        crate::vm::CompiledInputs::default(),
-    ));
+    let old_graph = old_head
+        .as_ref()
+        .and_then(|h| registry.head_commit(h).map(|c| c.graph));
+    let new_graph = registry.head_commit(new_head).map(|c| c.graph);
+    let same_graph = matches!((old_graph, new_graph), (Some(a), Some(b)) if a == b);
+    if same_graph {
+        cmds.entity(focused_entity)
+            .insert((HeadRef(new_head.clone()), WorkingGraph(graph)));
+    } else {
+        vms.remove(&focused_entity);
+        cmds.entity(focused_entity).insert((
+            HeadRef(new_head.clone()),
+            WorkingGraph(graph),
+            crate::vm::CompiledInputs::default(),
+        ));
+    }
 
     // Emit hook.
     if let Some(old) = old_head {
@@ -361,6 +377,7 @@ pub fn on_replace<N>(
             entity: focused_entity,
             old_head: old,
             new_head: new_head.clone(),
+            same_graph,
         });
     }
 }
@@ -466,21 +483,32 @@ pub fn on_move_branch<N>(
     N: 'static + Clone + Send + Sync,
 {
     let event = trigger.event();
-    registry.insert_name(event.name.clone(), event.target);
     let head = ca::Head::Branch(event.name.clone());
+    // Capture the current graph before moving the branch pointer so we can
+    // detect a same-graph move (a layout-only undo/redo) below.
+    let old_graph = registry.head_commit(&head).map(|c| c.graph);
+    registry.insert_name(event.name.clone(), event.target);
     let Some(graph) = registry.head_graph(&head).cloned() else {
         log::error!("MoveBranch: graph missing for target commit");
         return;
     };
-    // The head now points at a different graph: drop the VM (discarding the
-    // old graph's node state) and reset the compile memo so `vm::sync`
-    // performs a fresh init.
-    vms.remove(&event.entity);
-    cmds.entity(event.entity)
-        .insert((WorkingGraph(graph), crate::vm::CompiledInputs::default()));
+    // When the target shares the old commit's graph content (a layout-only
+    // change), keep the VM, its node state and the compile memo intact so
+    // `vm::sync` skips recompilation. Otherwise drop the VM and reset the memo
+    // so `vm::sync` performs a fresh init.
+    let new_graph = registry.head_commit(&head).map(|c| c.graph);
+    let same_graph = matches!((old_graph, new_graph), (Some(a), Some(b)) if a == b);
+    if same_graph {
+        cmds.entity(event.entity).insert(WorkingGraph(graph));
+    } else {
+        vms.remove(&event.entity);
+        cmds.entity(event.entity)
+            .insert((WorkingGraph(graph), crate::vm::CompiledInputs::default()));
+    }
     cmds.trigger(ChangedEvent {
         entity: event.entity,
         old_head: head.clone(),
         new_head: head,
+        same_graph,
     });
 }

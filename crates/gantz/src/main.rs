@@ -51,7 +51,11 @@ fn main() {
         .add_systems(EguiPrimaryContextPass, load_egui_memory)
         .add_systems(
             Update,
-            persist_resources.run_if(on_message::<DebouncedInputEvent>),
+            persist_resources
+                // After `settle_layout` so a layout commit settled this frame
+                // (and its seeded view) is saved in the same pass.
+                .after(bevy_gantz_egui::settle_layout::<Box<dyn node::Node>>)
+                .run_if(on_message::<DebouncedInputEvent>),
         )
         .run();
 }
@@ -163,7 +167,8 @@ fn persist_resources(
         }
     }
 
-    // Save all views (kept up to date by `persist_views`).
+    // Save all views (kept up to date by `persist_camera_and_seed` and
+    // `settle_layout`).
     bevy_gantz_egui::storage::save_views(&mut *storage, &*views);
     // Save the gantz GUI state.
     bevy_gantz_egui::storage::save_gui_state(&mut *storage, &gui_state);
