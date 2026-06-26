@@ -40,8 +40,15 @@ impl CommandPalette {
     }
 
     /// Show the command palette, if it is visible.
+    ///
+    /// `area` is the rect the palette is centered over (e.g. the graph scene).
     #[must_use = "Returns the command that was selected"]
-    pub fn show<T, I>(&mut self, egui_ctx: &egui::Context, commands: I) -> Option<T>
+    pub fn show<T, I>(
+        &mut self,
+        egui_ctx: &egui::Context,
+        area: egui::Rect,
+        commands: I,
+    ) -> Option<T>
     where
         T: Command,
         I: IntoIterator<Item = T>,
@@ -55,14 +62,13 @@ impl CommandPalette {
         // Collect commands early since we'll need them multiple times
         let commands: Vec<T> = commands.into_iter().collect();
 
-        let content_rect = egui_ctx.content_rect();
         // A modest widening to fit each entry's inline description; the full
         // details remain available via the entry's hover tooltip.
-        let width = 400.0;
-        let max_height = 320.0.at_most(content_rect.height());
+        let width = 400.0.at_most(area.width());
+        let max_height = 320.0.at_most(area.height());
 
         let window_response = egui::Window::new("Command Palette")
-            .fixed_pos(content_rect.center() - 0.5 * max_height * egui::Vec2::Y)
+            .fixed_pos(area.center() - 0.5 * max_height * egui::Vec2::Y)
             .fixed_size([width, max_height])
             .pivot(egui::Align2::CENTER_TOP)
             .resizable(false)

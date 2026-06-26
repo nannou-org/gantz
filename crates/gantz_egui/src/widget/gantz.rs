@@ -2137,8 +2137,10 @@ fn command_palette(
     let cmds = types.iter().map(|&k| NodeTyCmd { env, name: k });
 
     // The chosen node type becomes a creation payload. The reserved
-    // `NESTED_GRAPH_TYPE` routes to the registry-aware nested-graph op.
-    cmd_palette.show(ui.ctx(), cmds).map(|cmd| {
+    // `NESTED_GRAPH_TYPE` routes to the registry-aware nested-graph op. The
+    // palette is centered over the graph scene (this `ui`'s rect).
+    let scene_rect = ui.max_rect();
+    cmd_palette.show(ui.ctx(), scene_rect, cmds).map(|cmd| {
         // The placement position is filled in by the caller, which has access to
         // the focused head's last pointer position.
         if cmd.name == NESTED_GRAPH_TYPE {
