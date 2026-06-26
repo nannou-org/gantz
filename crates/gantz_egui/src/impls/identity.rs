@@ -6,7 +6,7 @@ impl NodeUi for gantz_core::node::Identity {
     }
 
     fn description(&self) -> Option<&'static str> {
-        Some("Pass a value through unchanged.")
+        Some("Pass a value through unchanged")
     }
 
     fn ui(

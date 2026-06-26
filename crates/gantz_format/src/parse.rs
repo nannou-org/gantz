@@ -509,6 +509,17 @@ mod tests {
         assert_eq!(reparsed.descriptions[0].description, "multiply two numbers");
     }
 
+    /// The shipped `base.gantz` parses, including its `(descriptions ...)` form
+    /// over names with `?`/`-` (e.g. `empty?`, `list-ref`).
+    #[test]
+    fn parses_base_gantz() {
+        let text = include_str!("../../gantz_base/base.gantz");
+        let doc = parse(text, &DefaultSugar).expect("base.gantz must parse");
+        assert!(doc.descriptions.iter().any(|d| d.name == "add"));
+        assert!(doc.descriptions.iter().any(|d| d.name == "empty?"));
+        assert!(doc.descriptions.iter().any(|d| d.name == "list-ref"));
+    }
+
     #[test]
     fn reads_keywords_branch_and_ref() {
         let text = "\

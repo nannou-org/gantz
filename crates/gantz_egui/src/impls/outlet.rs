@@ -7,7 +7,7 @@ impl NodeUi for gantz_core::node::graph::Outlet {
     }
 
     fn description(&self) -> Option<&'static str> {
-        Some("Marks an output of the enclosing graph.")
+        Some("A graph output")
     }
 
     fn ui(
