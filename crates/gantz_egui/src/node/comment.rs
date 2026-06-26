@@ -105,90 +105,110 @@ impl NodeUi for Comment {
         let min_resize = egui::Vec2::splat(style.interaction.interact_radius);
         let default_size = egui::vec2(self.size[0] as f32, self.size[1] as f32);
         let response = uictx.framed_with(frame, |ui, _sockets| {
+            // `Resize` registers its corner interaction under this salt (egui
+            // 0.34.x internal, see `containers/resize.rs`). Reading the previous
+            // frame's response tells us whether the corner is being dragged.
+            let corner_id = resize_id.with("__resize_corner");
+            let resizing = ui
+                .ctx()
+                .read_response(corner_id)
+                .is_some_and(|r| r.dragged());
+
+            // While dragging, keep requesting repaints so the frame *after*
+            // release - when the height snaps back to fit the text - is drawn.
+            if resizing {
+                ui.ctx().request_repaint();
+            }
+
             egui::containers::Resize::default()
                 .id(resize_id)
-                .resizable(interaction.selected)
+                // Width is user-resizable (and persists). Height auto-fits the
+                // text - except while the corner is actively dragged, when it
+                // follows the cursor and snaps back to fit on release.
+                .resizable(egui::Vec2b::new(
+                    interaction.selected,
+                    interaction.selected && resizing,
+                ))
                 .default_size(default_size)
                 .min_size(min_resize)
                 .with_stroke(false)
                 .show(ui, |ui| {
-                    let size = ui.available_size();
-                    self.size = [size.x as u16, size.y as u16];
-                    let row_height = {
-                        let font_id = egui::FontSelection::default().resolve(ui.style());
-                        ui.fonts_mut(|f| f.row_height(&font_id))
-                    };
-                    egui::ScrollArea::vertical()
-                        .min_scrolled_height(row_height)
-                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                        .auto_shrink(false)
-                        .show(ui, |ui| {
-                            let text_id = node_egui_id.with("comment_text");
+                    // The width the user has dragged to; the height auto-fits the
+                    // text below (so we don't read it from `available_size`).
+                    let width = ui.available_width();
 
-                            // Load or initialize the editing state.
-                            let mut state: CommentEditState = ui
-                                .memory_mut(|m| m.data.remove_temp(text_id))
-                                .unwrap_or_default();
+                    let text_id = node_egui_id.with("comment_text");
 
-                            // Sync from node if the node's text changed externally (undo, etc.).
-                            let current_hash = text_hash(&self.text);
-                            if current_hash != state.text_hash {
-                                state.text_hash = current_hash;
-                                state.text = self.text.clone();
-                            }
+                    // Load or initialize the editing state.
+                    let mut state: CommentEditState = ui
+                        .memory_mut(|m| m.data.remove_temp(text_id))
+                        .unwrap_or_default();
 
-                            // Render the TextEdit against the buffered string.
-                            let response = ui.add(
-                                egui::TextEdit::multiline(&mut state.text)
-                                    .desired_rows(1)
-                                    .hint_text("Add comment...")
-                                    .frame(egui::Frame::NONE)
-                                    .desired_width(f32::INFINITY),
-                            );
+                    // Sync from node if the node's text changed externally (undo, etc.).
+                    let current_hash = text_hash(&self.text);
+                    if current_hash != state.text_hash {
+                        state.text_hash = current_hash;
+                        state.text = self.text.clone();
+                    }
 
-                            // Track when the buffer was last edited.
-                            let time = ui.input(|i| i.time);
-                            if response.changed() {
-                                state.last_edit_time = time;
-                            }
+                    // Render the TextEdit against the buffered string. With
+                    // auto-height the box always fits its text, so no scroll
+                    // area is needed - the TextEdit reports its wrapped height.
+                    let response = ui.add(
+                        egui::TextEdit::multiline(&mut state.text)
+                            .desired_rows(1)
+                            .hint_text("Add comment...")
+                            .frame(egui::Frame::NONE)
+                            .desired_width(f32::INFINITY),
+                    );
 
-                            // Determine whether the buffer has uncommitted changes.
-                            let buffer_dirty = text_hash(&state.text) != state.text_hash;
+                    // Track when the buffer was last edited.
+                    let time = ui.input(|i| i.time);
+                    if response.changed() {
+                        state.last_edit_time = time;
+                    }
 
-                            // Flush conditions:
-                            // 1. Focus lost (existing)
-                            // 2. 5+ seconds since last edit with dirty buffer
-                            // 3. Any mouse activity with dirty buffer
-                            let timed_out = buffer_dirty && (time - state.last_edit_time >= 5.0);
-                            let mouse_active = buffer_dirty
-                                && ui.input(|i| {
-                                    i.pointer.is_moving()
-                                        || i.pointer.any_pressed()
-                                        || i.pointer.any_released()
-                                });
-                            let should_flush = response.lost_focus() || timed_out || mouse_active;
+                    // Determine whether the buffer has uncommitted changes.
+                    let buffer_dirty = text_hash(&state.text) != state.text_hash;
 
-                            if should_flush {
-                                self.text = state.text.clone();
-                                state.text_hash = text_hash(&self.text);
-                            }
+                    // Flush conditions:
+                    // 1. Focus lost (existing)
+                    // 2. 5+ seconds since last edit with dirty buffer
+                    // 3. Any mouse activity with dirty buffer
+                    let timed_out = buffer_dirty && (time - state.last_edit_time >= 5.0);
+                    let mouse_active = buffer_dirty
+                        && ui.input(|i| {
+                            i.pointer.is_moving()
+                                || i.pointer.any_pressed()
+                                || i.pointer.any_released()
+                        });
+                    let should_flush = response.lost_focus() || timed_out || mouse_active;
 
-                            // Schedule a repaint at the timeout for reactive mode.
-                            if buffer_dirty && !should_flush {
-                                let remaining = 10.0 - (time - state.last_edit_time);
-                                if remaining > 0.0 {
-                                    ui.ctx().request_repaint_after(
-                                        std::time::Duration::from_secs_f64(remaining),
-                                    );
-                                }
-                            }
+                    if should_flush {
+                        self.text = state.text.clone();
+                        state.text_hash = text_hash(&self.text);
+                    }
 
-                            // Persist the editing state.
-                            ui.memory_mut(|m| m.data.insert_temp(text_id, state));
+                    // Schedule a repaint at the timeout for reactive mode.
+                    if buffer_dirty && !should_flush {
+                        let remaining = 10.0 - (time - state.last_edit_time);
+                        if remaining > 0.0 {
+                            ui.ctx()
+                                .request_repaint_after(std::time::Duration::from_secs_f64(
+                                    remaining,
+                                ));
+                        }
+                    }
 
-                            response
-                        })
-                        .inner
+                    // Persist the editing state.
+                    ui.memory_mut(|m| m.data.insert_temp(text_id, state));
+
+                    // Record the fitted size: the dragged width and the content
+                    // height the box auto-fits to. `size` is skipped from the
+                    // cahash, so this only feeds serialization and the next load.
+                    self.size = [width as u16, ui.min_rect().height() as u16];
+
+                    response
                 })
         });
 
