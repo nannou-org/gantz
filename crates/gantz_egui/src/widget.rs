@@ -2,7 +2,7 @@
 use time::{OffsetDateTime, UtcOffset, format_description};
 
 pub use command_palette::CommandPalette;
-pub use gantz::{Gantz, GantzState, update_graph_pane_head};
+pub use gantz::{Gantz, GantzState, LayoutConfig, update_graph_pane_head};
 pub use global_config::{GlobalConfigResponse, global_config};
 pub use graph_config::{GraphConfig, GraphConfigResponse};
 pub use graph_scene::{GraphScene, GraphSceneState};

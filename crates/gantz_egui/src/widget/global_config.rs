@@ -1,7 +1,10 @@
 //! The "Global" sidebar tab: globally relevant configuration.
 //!
 //! Hosts the global compile config toggles (moved here from the per-head Graph
-//! Config pane) and a button to reset all demo graphs to their initial state.
+//! Config pane), the global auto-layout parameters, and a button to reset all
+//! demo graphs to their initial state.
+
+use super::gantz::LayoutConfig;
 
 /// Response from [`global_config`].
 #[derive(Default)]
@@ -15,9 +18,11 @@ pub struct GlobalConfigResponse {
 /// Render the global configuration controls.
 ///
 /// `compile_config` is the current global config; when `Some` the compile
-/// toggles are shown. The config applies to all open heads.
+/// toggles are shown. `layout_config` holds the global auto-layout parameters
+/// (mutated in place). The config applies to all open heads.
 pub fn global_config(
     compile_config: Option<gantz_core::compile::Config>,
+    layout_config: &mut LayoutConfig,
     ui: &mut egui::Ui,
 ) -> GlobalConfigResponse {
     let mut changed_config = None;
@@ -47,6 +52,47 @@ pub fn global_config(
         }
         ui.separator();
     }
+
+    // Auto-layout parameters (the non-flow `egui_graph` layout params; flow is
+    // per-head, in the Graph Config pane). Applied on the next auto-layout.
+    ui.label("Layout:");
+    let gap = |ui: &mut egui::Ui, label: &str, value: &mut f32, hover: &str| {
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::DragValue::new(value)
+                    .speed(0.5)
+                    .range(0.0..=500.0)
+                    .suffix(" px"),
+            )
+            .on_hover_text(hover);
+            ui.label(label);
+        });
+    };
+    gap(
+        ui,
+        "Layer gap",
+        &mut layout_config.layer_gap,
+        "Gap between adjacent layers along the flow direction.",
+    );
+    gap(
+        ui,
+        "Node gap",
+        &mut layout_config.node_gap,
+        "Gap between adjacent nodes within a layer.",
+    );
+    gap(
+        ui,
+        "Component gap",
+        &mut layout_config.component_gap,
+        "Gap between disconnected components of the graph.",
+    );
+    ui.checkbox(&mut layout_config.socket_aware, "Socket-aware")
+        .on_hover_text(
+            "Account for the socket each edge connects to when ordering nodes \
+             and minimising edge crossings. When off, edges anchor at node \
+             centres (classic node-size-only layout).",
+        );
+    ui.separator();
 
     let reset_all_demos = ui
         .button("Reset all demos")

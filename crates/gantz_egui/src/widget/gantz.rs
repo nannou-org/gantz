@@ -85,6 +85,10 @@ pub struct GantzState {
     pub open_heads: OpenHeadStates,
     pub view_toggles: ViewToggles,
     pub command_palette: widget::CommandPalette,
+    /// Global auto-layout parameters (the non-flow `egui_graph` layout params;
+    /// flow stays per-head in [`OpenHeadState::layout_flow`]).
+    #[serde(default)]
+    pub layout_config: LayoutConfig,
     /// Per-head redo stacks for undo/redo support.
     #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub redo_stacks: HashMap<gantz_ca::Head, Vec<gantz_ca::CommitAddr>>,
@@ -114,12 +118,9 @@ pub type OpenHeadStates = HashMap<gantz_ca::Head, OpenHeadState>;
 pub struct OpenHeadState {
     /// State associated with the `GraphScene` widget.
     pub scene: GraphSceneState,
-    #[serde(default)]
-    pub auto_layout: bool,
+    /// The per-head flow direction used when auto-layout is invoked.
     #[serde(default = "default_layout_flow")]
     pub layout_flow: egui::Direction,
-    #[serde(default)]
-    pub center_view: bool,
 }
 
 fn default_layout_flow() -> egui::Direction {
@@ -130,10 +131,66 @@ impl Default for OpenHeadState {
     fn default() -> Self {
         Self {
             scene: GraphSceneState::default(),
-            auto_layout: false,
             layout_flow: GantzState::DEFAULT_DIRECTION,
-            center_view: false,
         }
+    }
+}
+
+/// Global auto-layout parameters, mirroring the non-flow fields of
+/// [`egui_graph::LayoutParams`]. Flow stays per-head (see
+/// [`OpenHeadState::layout_flow`]); these apply to every head's auto-layout.
+#[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
+pub struct LayoutConfig {
+    /// The gap between adjacent layers along the flow direction.
+    #[serde(default = "default_layer_gap")]
+    pub layer_gap: f32,
+    /// The gap between adjacent nodes within a layer.
+    #[serde(default = "default_node_gap")]
+    pub node_gap: f32,
+    /// The gap between disconnected components of the graph.
+    #[serde(default = "default_component_gap")]
+    pub component_gap: f32,
+    /// Whether the layout accounts for the socket each edge connects to.
+    #[serde(default = "default_socket_aware")]
+    pub socket_aware: bool,
+}
+
+fn default_layer_gap() -> f32 {
+    egui_graph::LayoutParams::DEFAULT_LAYER_GAP
+}
+
+fn default_node_gap() -> f32 {
+    egui_graph::LayoutParams::DEFAULT_NODE_GAP
+}
+
+fn default_component_gap() -> f32 {
+    egui_graph::LayoutParams::DEFAULT_COMPONENT_GAP
+}
+
+fn default_socket_aware() -> bool {
+    true
+}
+
+impl Default for LayoutConfig {
+    fn default() -> Self {
+        Self {
+            layer_gap: default_layer_gap(),
+            node_gap: default_node_gap(),
+            component_gap: default_component_gap(),
+            socket_aware: default_socket_aware(),
+        }
+    }
+}
+
+impl LayoutConfig {
+    /// Build [`egui_graph::LayoutParams`] from these globals plus a per-head
+    /// `flow` direction.
+    pub fn to_params(&self, flow: egui::Direction) -> egui_graph::LayoutParams {
+        egui_graph::LayoutParams::new(flow)
+            .layer_gap(self.layer_gap)
+            .node_gap(self.node_gap)
+            .component_gap(self.component_gap)
+            .socket_aware(self.socket_aware)
     }
 }
 
@@ -533,6 +590,7 @@ impl GantzState {
             open_heads,
             command_palette: widget::CommandPalette::default(),
             view_toggles: ViewToggles::default(),
+            layout_config: LayoutConfig::default(),
             redo_stacks: HashMap::new(),
             sidebar_width: default_sidebar_width(),
             tray_height: default_tray_height(),
@@ -1062,7 +1120,12 @@ where
             Pane::Settings => {
                 let compile_config = gantz.compile_config;
                 let res = pane_ui(ui, |ui| {
-                    widget::settings(&mut state.view_toggles, compile_config, ui)
+                    widget::settings(
+                        &mut state.view_toggles,
+                        compile_config,
+                        &mut state.layout_config,
+                        ui,
+                    )
                 });
                 if let Some(cfg) = res.inner.compile_config {
                     gantz_response.compile_config = Some(cfg);
@@ -1290,10 +1353,10 @@ where
         let immutable = head_immutable(pane_head, self.base_immutable, self.base_names);
         let diagnostics = self.access.diagnostics(pane_head).to_vec();
 
+        // Global layout params (Copy) combined with this head's flow.
+        let layout_config = self.state.layout_config;
         let head_state = self.state.open_heads.entry(pane_head.clone()).or_default();
-        let auto_layout = head_state.auto_layout;
-        let layout_flow = head_state.layout_flow;
-        let center_view = head_state.center_view;
+        let layout_params = layout_config.to_params(head_state.layout_flow);
         // Disjoint borrow of a sibling field of `open_heads` for the graph
         // scene's "Panes" context submenu.
         let view_toggles = &mut self.state.view_toggles;
@@ -1310,9 +1373,7 @@ where
                 head_state,
                 view_toggles,
                 data.view,
-                auto_layout,
-                layout_flow,
-                center_view,
+                layout_params,
                 immutable,
                 &diagnostics,
                 data.vm,
@@ -1930,9 +1991,7 @@ fn graph_scene<N>(
     head_state: &mut OpenHeadState,
     view_toggles: &mut ViewToggles,
     head_view: &mut egui_graph::View,
-    auto_layout: bool,
-    layout_flow: egui::Direction,
-    center_view: bool,
+    layout_params: egui_graph::LayoutParams,
     immutable: bool,
     diagnostics: &[gantz_core::Diagnostic],
     vm: &mut Engine,
@@ -1946,14 +2005,13 @@ where
 
     // Seed the node layout the first time this graph is shown.
     if head_view.layout.is_empty() {
-        head_view.layout = widget::graph_scene::layout(registry, graph, id, layout_flow, ui.ctx());
+        head_view.layout =
+            widget::graph_scene::layout(registry, graph, id, &layout_params, ui.ctx(), None);
     }
 
     let response = GraphScene::new(registry, graph)
         .with_id(id)
-        .auto_layout(auto_layout)
-        .layout_flow(layout_flow)
-        .center_view(center_view)
+        .layout_params(layout_params)
         .immutable(immutable)
         .view_toggles(view_toggles)
         .show(head_view, &mut head_state.scene, vm, ui);

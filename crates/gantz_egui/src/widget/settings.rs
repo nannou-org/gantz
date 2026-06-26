@@ -1,7 +1,7 @@
 //! The "Settings" sidebar tab: globally-relevant configuration grouped into
 //! Panes / Style / Global subtabs.
 
-use super::gantz::ViewToggles;
+use super::gantz::{LayoutConfig, ViewToggles};
 
 /// Which settings subtab is selected. Persisted only within a session.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -27,6 +27,7 @@ pub struct SettingsResponse {
 pub fn settings(
     view: &mut ViewToggles,
     compile_config: Option<gantz_core::compile::Config>,
+    layout_config: &mut LayoutConfig,
     ui: &mut egui::Ui,
 ) -> SettingsResponse {
     let id = ui.id().with("settings_subtab");
@@ -84,7 +85,7 @@ pub fn settings(
             ui.weak("Style configuration coming soon.");
         }
         SettingsTab::Global => {
-            let g = super::global_config(compile_config, ui);
+            let g = super::global_config(compile_config, layout_config, ui);
             res.compile_config = g.compile_config;
             res.reset_all_demos = g.reset_all_demos;
         }
