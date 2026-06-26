@@ -207,9 +207,11 @@ pub struct GuiState(pub gantz_egui::widget::GantzState);
 #[derive(Resource, Default)]
 pub struct Views(pub HashMap<ca::CommitAddr, egui_graph::View>);
 
-/// Demo graph associations: maps a commit to its associated `demo-*` graph name.
+/// Demo graph associations: maps a graph *name* to its associated `demo-*`
+/// graph name. Keyed by name (not commit) so the association survives edits,
+/// which mint a new commit but keep the name.
 #[derive(Resource, Default)]
-pub struct Demos(pub HashMap<ca::CommitAddr, String>);
+pub struct Demos(pub HashMap<String, String>);
 
 /// Names of base nodes baked into the binary.
 ///
@@ -473,7 +475,7 @@ impl DerefMut for Views {
 }
 
 impl Deref for Demos {
-    type Target = HashMap<ca::CommitAddr, String>;
+    type Target = HashMap<String, String>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -1478,16 +1480,15 @@ where
         });
     }
 
-    // Handle demo graph association change.
-    if let Some((head, demo_val)) = &response.demo_changed {
-        if let Some(commit_ca) = registry.head_commit_ca(head).copied() {
-            match demo_val {
-                Some(name) => {
-                    demos.insert(commit_ca, name.clone());
-                }
-                None => {
-                    demos.remove(&commit_ca);
-                }
+    // Handle demo graph association change. Keyed by the head's branch name so
+    // the association survives later edits (which mint a new commit).
+    if let Some((ca::Head::Branch(graph_name), demo_val)) = &response.demo_changed {
+        match demo_val {
+            Some(demo) => {
+                demos.insert(graph_name.clone(), demo.clone());
+            }
+            None => {
+                demos.remove(graph_name);
             }
         }
     }

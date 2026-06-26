@@ -69,9 +69,9 @@ pub trait Registry: NameRegistry + FnNodeNames + NodeTypeRegistry + GraphRegistr
         false
     }
 
-    /// Get the demo graph name for a node at the given content address.
-    fn demo_graph(&self, ca: &gantz_ca::ContentAddr) -> Option<&str> {
-        let _ = ca;
+    /// Get the demo graph name associated with the graph of the given name.
+    fn demo_graph(&self, name: &str) -> Option<&str> {
+        let _ = name;
         None
     }
 

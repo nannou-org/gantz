@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, HashMap};
 pub struct RegistryRef<'a, N: 'static + Send + Sync> {
     ca_registry: &'a ca::Registry<Graph<N>>,
     builtins: &'a dyn Builtins<Node = N>,
-    demos: &'a HashMap<ca::CommitAddr, String>,
+    demos: &'a HashMap<String, String>,
 }
 
 impl<'a, N: 'static + Send + Sync> RegistryRef<'a, N> {
@@ -31,7 +31,7 @@ impl<'a, N: 'static + Send + Sync> RegistryRef<'a, N> {
     pub fn new(
         ca_registry: &'a ca::Registry<Graph<N>>,
         builtins: &'a dyn Builtins<Node = N>,
-        demos: &'a HashMap<ca::CommitAddr, String>,
+        demos: &'a HashMap<String, String>,
     ) -> Self {
         Self {
             ca_registry,
@@ -173,17 +173,13 @@ impl<N: 'static + Node + crate::NodeUi + crate::sync::AsNamedRef + Send + Sync> 
         crate::cycle::would_cycle(self.ca_registry, target, editing)
     }
 
-    fn demo_graph(&self, ca: &ca::ContentAddr) -> Option<&str> {
-        // Check demos map (commit-level associations from Export).
-        let commit_ca = ca::CommitAddr::from(*ca);
-        if let Some(name) = self.demos.get(&commit_ca) {
-            return Some(name.as_str());
-        }
-        // Check builtins.
-        if let Some(builtin_name) = self.builtins.name(ca) {
-            return self.builtins.demo_graph(builtin_name);
-        }
-        None
+    fn demo_graph(&self, name: &str) -> Option<&str> {
+        // User-graph associations (from Export) are keyed by name; builtins
+        // expose their own demo by builtin name.
+        self.demos
+            .get(name)
+            .map(String::as_str)
+            .or_else(|| self.builtins.demo_graph(name))
     }
 
     fn socket_doc(
