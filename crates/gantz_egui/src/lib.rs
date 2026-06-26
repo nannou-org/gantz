@@ -318,6 +318,9 @@ pub struct CopyNodes(pub std::collections::HashSet<widget::graph_scene::NodeInde
 pub struct CreateNode {
     /// The type name of the node to create.
     pub node_type: String,
+    /// Where to place the new node, in graph coordinates. When `None`, the node
+    /// is placed at the center of the current view.
+    pub pos: Option<egui::Pos2>,
 }
 
 /// Create a new nested graph in the emitting head's graph.
@@ -327,7 +330,11 @@ pub struct CreateNode {
 /// [`node::NamedRef`] to it. Behaves like creating any
 /// other node, but is registry-aware.
 #[derive(Clone, Copy, Debug)]
-pub struct CreateNestedGraph;
+pub struct CreateNestedGraph {
+    /// Where to place the new node, in graph coordinates. When `None`, the node
+    /// is placed at the center of the current view.
+    pub pos: Option<egui::Pos2>,
+}
 
 /// Evaluate an entrypoint (push or pull).
 #[derive(Clone, Debug)]

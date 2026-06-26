@@ -703,6 +703,7 @@ pub fn on_create_node<N>(
     registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     demos: Res<Demos>,
+    mut gui_state: ResMut<GuiState>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
@@ -731,6 +732,10 @@ pub fn on_create_node<N>(
         log::error!("CreateNode: VM not found for entity {:?}", event.head);
         return;
     };
+    let Some(head_state) = gui_state.open_heads.get_mut(&**data.head_ref) else {
+        log::error!("CreateNode: GUI state not found for head");
+        return;
+    };
 
     let node_reg = registry_ref(&registry, &builtins, &demos);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
@@ -741,6 +746,7 @@ pub fn on_create_node<N>(
         |node_type| node_reg.create_node(node_type),
         &mut data.working_graph,
         &mut views,
+        head_state,
         vm,
         event.data.clone(),
     );
@@ -780,6 +786,7 @@ pub fn on_branch_node<N>(
 pub fn on_create_nested_graph<N>(
     trigger: On<ForHead<gantz_egui::CreateNestedGraph>>,
     mut registry: ResMut<Registry<N>>,
+    mut gui_state: ResMut<GuiState>,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
 ) where
@@ -804,11 +811,17 @@ pub fn on_create_nested_graph<N>(
         );
         return;
     };
+    let Some(head_state) = gui_state.open_heads.get_mut(&**data.head_ref) else {
+        log::error!("CreateNestedGraph: GUI state not found for head");
+        return;
+    };
     gantz_egui::ops::create_nested_graph(
         &mut registry,
         bevy_gantz::reg::timestamp(),
         &mut data.working_graph,
         &mut views,
+        head_state,
+        event.data.pos,
         &parent,
     );
 }
