@@ -1,4 +1,6 @@
-use crate::{NodeCtx, NodeUi, Registry, SocketDoc, SocketKind};
+use crate::{
+    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind,
+};
 
 /// A widget used to allow for editing and parsing a steel expression.
 pub struct ExprEdit<'a> {
@@ -88,18 +90,26 @@ impl NodeUi for gantz_core::node::Expr {
         Some("Evaluate a Steel expression")
     }
 
-    fn ui(
-        &mut self,
-        ctx: NodeCtx,
-        uictx: egui_graph::NodeCtx,
-    ) -> egui_graph::FramedResponse<egui::Response> {
-        uictx.framed(|ui, _sockets| {
+    fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
+        // `src` is part of the content address. Detect a real edit by hashing
+        // the node before and after the editor: a keystroke that fails to parse
+        // changes the buffer but not the node, and so must not mark `changed`.
+        let before = expr_hash(self);
+        let framed = uictx.framed(|ui, _sockets| {
             let id = egui::Id::new("ExprEdit").with(ctx.path());
             ui.add(ExprEdit::new(self, id))
-        })
+        });
+        let mut resp = NodeUiResponse::new(framed);
+        resp.set_changed(expr_hash(self) != before);
+        resp
     }
 
-    fn inspector_rows(&mut self, _ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(
+        &mut self,
+        _ctx: &mut NodeCtx,
+        body: &mut egui_extras::TableBody,
+    ) -> InspectorRowsResponse {
+        let mut resp = InspectorRowsResponse::default();
         let row_h = crate::widget::node_inspector::table_row_h(body.ui_mut());
         body.row(row_h, |mut row| {
             row.col(|ui| {
@@ -112,9 +122,11 @@ impl NodeUi for gantz_core::node::Expr {
                     .changed()
                 {
                     self.set_outputs(n.clamp(1, 16) as u8);
+                    resp.mark_changed();
                 }
             });
         });
+        resp
     }
 
     fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {

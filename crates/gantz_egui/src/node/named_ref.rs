@@ -1,7 +1,8 @@
 //! A node that references another node by name and content address.
 
 use crate::{
-    BranchNode, NodeCtx, NodeUi, OpenHead, ReplaceHead, SocketDoc, widget::node_inspector,
+    BranchNode, ContextMenuResponse, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse,
+    OpenHead, ReplaceHead, SocketDoc, widget::node_inspector,
 };
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, Node, RegCtx};
@@ -207,20 +208,22 @@ impl NodeUi for NamedRef {
         registry.socket_doc(&self.ref_.content_addr(), kind, ix)
     }
 
-    fn ui(
-        &mut self,
-        mut ctx: NodeCtx,
-        uictx: egui_graph::NodeCtx,
-    ) -> egui_graph::FramedResponse<egui::Response> {
+    fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
         let registry = ctx.registry();
+        let mut changed = false;
 
         // Nested graphs always sync so parents follow their children's edits.
-        if self.is_nested() {
+        // Flipping the (CA-relevant) `sync` flag on is a genuine edit.
+        if self.is_nested() && !self.sync {
             self.sync = true;
+            changed = true;
         }
 
-        // Auto-sync if enabled and the name points at a newer commit.
-        self.resync(|name| registry.name_ca(name));
+        // Auto-sync if enabled and the name points at a newer commit. This is a
+        // silent mutation (no widget touched) that still changes the node's CA.
+        if self.resync(|name| registry.name_ca(name)) {
+            changed = true;
+        }
 
         // Recalculate after potential sync.
         let ref_ca = self.ref_.content_addr();
@@ -232,7 +235,7 @@ impl NodeUi for NamedRef {
                 .unwrap_or(false);
 
         // Regular frame, error color if missing, warning color if outdated.
-        let response = uictx.framed(|ui, _sockets| {
+        let framed = uictx.framed(|ui, _sockets| {
             let name_text = if is_missing {
                 egui::RichText::new(&self.name).color(missing_color())
             } else if is_outdated {
@@ -243,26 +246,35 @@ impl NodeUi for NamedRef {
             ui.add(egui::Label::new(name_text).selectable(false))
         });
 
+        let mut resp = NodeUiResponse::new(framed);
+        resp.set_changed(changed);
+
         // Enter the referenced graph on double-click. A nested graph is entered
         // *in place* (the focused tab navigates to it; the breadcrumb returns to
         // the parent); a reference to a root graph opens as a new tab. Either
         // way, the scene's "open in new tab" context-menu action (see
         // `nav_head`) opens it as a separate tab.
-        if response.inner.response.double_clicked() {
+        if resp.framed.inner.response.double_clicked() {
             let head = gantz_ca::Head::Branch(self.name.clone());
             if self.is_nested() {
-                ctx.response(ReplaceHead(head));
+                resp.emit(ReplaceHead(head));
             } else {
-                ctx.response(OpenHead(head));
+                resp.emit(OpenHead(head));
             }
         }
 
-        response
+        resp
     }
 
-    fn inspector_rows(&mut self, ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(
+        &mut self,
+        ctx: &mut NodeCtx,
+        body: &mut egui_extras::TableBody,
+    ) -> InspectorRowsResponse {
+        let mut resp = InspectorRowsResponse::default();
         let row_h = node_inspector::table_row_h(body.ui_mut());
         let registry = ctx.registry();
+        let path = ctx.path().to_vec();
 
         // Whether the referenced CA exists in the registry.
         let is_missing = !registry.node_exists(&self.ref_.content_addr());
@@ -280,8 +292,9 @@ impl NodeUi for NamedRef {
 
         // Sync toggle row. Forced on (and disabled) for nested graphs.
         let nested = self.is_nested();
-        if nested {
+        if nested && !self.sync {
             self.sync = true;
+            resp.mark_changed();
         }
         body.row(row_h, |mut row| {
             row.col(|ui| {
@@ -294,9 +307,12 @@ impl NodeUi for NamedRef {
                             "sync is always on for nested graphs so the parent \
                              follows the child's edits",
                         );
-                } else {
-                    ui.checkbox(&mut self.sync, "")
-                        .on_hover_text("automatically update to the latest commit");
+                } else if ui
+                    .checkbox(&mut self.sync, "")
+                    .on_hover_text("automatically update to the latest commit")
+                    .changed()
+                {
+                    resp.mark_changed();
                 }
             });
         });
@@ -322,20 +338,36 @@ impl NodeUi for NamedRef {
                     ui.horizontal(|ui| {
                         let warn_text = egui::RichText::new("outdated").color(outdated_color());
                         ui.label(warn_text);
-                        sync_fork_buttons(self, ctx, ui, latest_ca);
+                        match sync_fork_buttons(self, &path, ui, latest_ca) {
+                            SyncForkAction::Synced => resp.mark_changed(),
+                            SyncForkAction::Forked(branch) => resp.emit(branch),
+                            SyncForkAction::None => {}
+                        }
                     });
                 });
             });
         }
+        resp
     }
 
-    fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+    fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> ContextMenuResponse {
+        let mut resp = ContextMenuResponse::default();
         // Offer sync/fork on the node itself when the reference is outdated.
         if let Some(latest_ca) = outdated_latest(self, ctx.registry()) {
-            if sync_fork_buttons(self, ctx, ui, latest_ca) {
-                ui.close();
+            let path = ctx.path().to_vec();
+            match sync_fork_buttons(self, &path, ui, latest_ca) {
+                SyncForkAction::Synced => {
+                    resp.mark_changed();
+                    ui.close();
+                }
+                SyncForkAction::Forked(branch) => {
+                    resp.emit(branch);
+                    ui.close();
+                }
+                SyncForkAction::None => {}
             }
         }
+        resp
     }
 }
 
@@ -359,35 +391,45 @@ fn outdated_latest(
     }
 }
 
-/// Render the `sync` and `fork` buttons for an outdated reference, returning
-/// `true` if either was clicked. `sync` repoints the reference at `latest`;
-/// `fork` emits a [`BranchNode`] pinning a fresh name at the current (outdated)
-/// commit. Shared by the inspector and the node context menu.
+/// The outcome of [`sync_fork_buttons`], applied to the caller's response.
+enum SyncForkAction {
+    /// Neither button was clicked.
+    None,
+    /// `sync` was clicked: the reference was repointed (a CA-affecting edit).
+    Synced,
+    /// `fork` was clicked: emit this [`BranchNode`] payload.
+    Forked(BranchNode),
+}
+
+/// Render the `sync` and `fork` buttons for an outdated reference. `sync`
+/// repoints the reference at `latest` (mutating `named`); `fork` produces a
+/// [`BranchNode`] pinning a fresh name at the current (outdated) commit. Shared
+/// by the inspector and the node context menu, which apply the returned
+/// [`SyncForkAction`] to their own response (`changed` / emitted payload).
 fn sync_fork_buttons(
     named: &mut NamedRef,
-    ctx: &mut NodeCtx,
+    path: &[node::Id],
     ui: &mut egui::Ui,
     latest: gantz_ca::ContentAddr,
-) -> bool {
+) -> SyncForkAction {
     let current_short = named.ref_.content_addr().display_short().to_string();
     let latest_short = latest.display_short().to_string();
 
     let sync_hover = format!("sync reference from {current_short} to {latest_short}");
     if ui.button("sync").on_hover_text(sync_hover).clicked() {
         named.ref_ = gantz_core::node::Ref::new(latest);
-        return true;
+        return SyncForkAction::Synced;
     }
 
     let fork_hover = format!("fork a new node at {current_short}");
     if ui.button("fork").on_hover_text(fork_hover).clicked() {
         let new_name = format!("{}-{}", named.name, current_short);
-        ctx.response(BranchNode {
+        return SyncForkAction::Forked(BranchNode {
             new_name,
             ca: named.ref_.content_addr(),
-            path: ctx.path.to_vec(),
+            path: path.to_vec(),
         });
-        return true;
     }
 
-    false
+    SyncForkAction::None
 }

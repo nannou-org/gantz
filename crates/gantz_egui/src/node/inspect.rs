@@ -1,6 +1,6 @@
 //! An Inspect node for viewing SteelVals flowing through the graph.
 
-use crate::{NodeCtx, NodeUi, Registry, SocketDoc, SocketKind};
+use crate::{NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind};
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use serde::{Deserialize, Serialize};
@@ -42,21 +42,18 @@ impl NodeUi for Inspect {
         "inspect"
     }
 
-    fn ui(
-        &mut self,
-        ctx: NodeCtx,
-        uictx: egui_graph::NodeCtx,
-    ) -> egui_graph::FramedResponse<egui::Response> {
+    fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
         let mut frame = egui_graph::node::default_frame(uictx.style(), uictx.interaction());
         frame.fill = uictx.style().visuals.extreme_bg_color;
-        uictx.framed_with(frame, |ui, _sockets| {
+        let framed = uictx.framed_with(frame, |ui, _sockets| {
             let text = match ctx.extract_value() {
                 Ok(Some(val)) => format!("{:?}", val),
                 Ok(None) => "∅".to_string(),
                 Err(_) => "ERR".to_string(),
             };
             ui.add(egui::Label::new(&text).selectable(false))
-        })
+        });
+        NodeUiResponse::new(framed)
     }
 
     fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {

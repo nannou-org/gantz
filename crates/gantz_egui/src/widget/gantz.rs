@@ -290,6 +290,11 @@ pub struct GantzResponse {
     pub reset_all_demos: bool,
     /// The global compile config was changed via the Graph Config pane.
     pub compile_config: Option<gantz_core::compile::Config>,
+    /// Heads whose graph had a CA-affecting edit this frame (from a node UI, an
+    /// inspector edit, or a structural scene edit). Lets the application
+    /// commit/recompile only the changed heads instead of re-hashing every open
+    /// graph each frame. May contain duplicates; treat membership as a set.
+    pub changed_heads: Vec<gantz_ca::Head>,
     /// Dynamic payloads emitted from within the widget tree, tagged with the
     /// emitting head. See [`crate::response`] for the handling contract.
     pub responses: Responses,
@@ -520,6 +525,7 @@ impl<'a> Gantz<'a> {
             reset_base_graph: None,
             reset_all_demos: false,
             compile_config: None,
+            changed_heads: Vec::new(),
             responses: Responses::default(),
         };
 
@@ -859,6 +865,7 @@ where
                     closed_heads: &mut gantz_response.closed_heads,
                     new_branch: &mut gantz_response.new_branch,
                     responses: &mut gantz_response.responses,
+                    changed_heads: &mut gantz_response.changed_heads,
                     base_names,
                     base_immutable: gantz.base_immutable,
                 };
@@ -1053,13 +1060,16 @@ where
                 if let Some(fh) = access.heads().get(*focused_head).cloned() {
                     let immutable = head_immutable(&fh, gantz.base_immutable, base_names);
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
-                    let responses = access.with_head_mut(&fh, |data| {
+                    let result = access.with_head_mut(&fh, |data| {
                         node_inspector(gantz.env, data.graph, data.vm, head_state, immutable, ui)
                             .inner
                     });
-                    gantz_response
-                        .responses
-                        .extend(Some(&fh), responses.into_iter().flatten());
+                    if let Some((changed, payloads)) = result {
+                        if changed {
+                            gantz_response.changed_heads.push(fh.clone());
+                        }
+                        gantz_response.responses.extend(Some(&fh), payloads);
+                    }
                 }
             }
             Pane::Steel => {
@@ -1166,6 +1176,8 @@ where
     new_branch: &'a mut Option<(gantz_ca::Head, String)>,
     /// Dynamic payloads emitted from within the graph scenes.
     responses: &'a mut Responses,
+    /// Heads whose graph had a CA-affecting edit this frame.
+    changed_heads: &'a mut Vec<gantz_ca::Head>,
     base_names: &'a gantz_ca::registry::Names,
     base_immutable: bool,
 }
@@ -1393,6 +1405,10 @@ where
             // Focus this head when clicking on the graph or any of its nodes.
             if response.scene.clicked() || response.any_node_interacted() {
                 *self.focused_head = ix;
+            }
+            // Record a CA-affecting edit so the app can commit just this head.
+            if response.changed {
+                self.changed_heads.push(pane_head.clone());
             }
             // Tag the scene's emissions with this head.
             self.responses.extend(Some(&*pane_head), response.responses);
@@ -2191,7 +2207,8 @@ fn head_immutable(
     base_immutable && is_base && !is_demo
 }
 
-/// Returns the payloads emitted by node UIs within the inspector.
+/// Returns whether any inspected node had a CA-affecting edit, together with
+/// the payloads emitted by node UIs within the inspector.
 fn node_inspector<N>(
     registry: &dyn Registry,
     root: &mut gantz_core::node::graph::Graph<N>,
@@ -2199,12 +2216,13 @@ fn node_inspector<N>(
     head_state: &mut OpenHeadState,
     immutable: bool,
     ui: &mut egui::Ui,
-) -> egui::InnerResponse<Vec<DynResponse>>
+) -> egui::InnerResponse<(bool, Vec<DynResponse>)>
 where
     N: Node + NodeUi,
 {
     pane_ui(ui, |ui| {
         let mut responses = Vec::new();
+        let mut changed = false;
         egui::ScrollArea::vertical()
             .auto_shrink(egui::Vec2b::FALSE)
             .show(ui, |ui| {
@@ -2223,15 +2241,10 @@ where
                         };
                         let ix = id.index();
                         let path = [ix];
-                        let ctx = NodeCtx::new(
-                            registry,
-                            &path[..],
-                            &inlets,
-                            &outlets,
-                            vm,
-                            &mut responses,
-                        );
+                        let ctx = NodeCtx::new(registry, &path[..], &inlets, &outlets, vm);
                         let resp = widget::NodeInspector::new(node, ctx, immutable).show(ui);
+                        changed |= resp.changed;
+                        responses.extend(resp.payloads);
                         if resp.label_response.clicked() {
                             let sel = &mut head_state.scene.interaction.selection.nodes;
                             if ui.input(|i| i.modifiers.command) {
@@ -2246,7 +2259,7 @@ where
                     });
                 }
             });
-        responses
+        (changed, responses)
     })
 }
 

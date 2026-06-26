@@ -1,4 +1,4 @@
-use crate::{NodeCtx, NodeUi, Registry, SocketDoc, SocketKind};
+use crate::{NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind};
 
 impl NodeUi for gantz_core::node::Apply {
     fn name(&self, _: &dyn Registry) -> &str {
@@ -9,12 +9,10 @@ impl NodeUi for gantz_core::node::Apply {
         Some("Apply a function to arguments")
     }
 
-    fn ui(
-        &mut self,
-        _ctx: NodeCtx,
-        uictx: egui_graph::NodeCtx,
-    ) -> egui_graph::FramedResponse<egui::Response> {
-        uictx.framed(|ui, _sockets| ui.add(egui::Label::new("apply").selectable(false)))
+    fn ui(&mut self, _ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
+        let framed =
+            uictx.framed(|ui, _sockets| ui.add(egui::Label::new("apply").selectable(false)));
+        NodeUiResponse::new(framed)
     }
 
     fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {

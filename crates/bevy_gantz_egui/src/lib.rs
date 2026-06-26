@@ -291,8 +291,9 @@ pub struct ResponseDispatchers(pub HashMap<TypeId, DispatchFn>);
 /// App extension for registering GUI response payload handlers.
 ///
 /// This is how nodes declared in independent plugins receive custom payloads
-/// emitted from their UI (via [`gantz_egui::NodeCtx::response`]): register
-/// the payload type here and add an observer for [`ForHead<T>`]:
+/// emitted from their UI (via the `emit` helper on the node's returned
+/// [`gantz_egui::NodeUiResponse`] and friends): register the payload type here
+/// and add an observer for [`ForHead<T>`]:
 ///
 /// ```ignore
 /// app.register_head_response::<MyPayload>()

@@ -1,4 +1,4 @@
-use crate::{NodeCtx, NodeUi, Registry, SocketDoc, SocketKind};
+use crate::{NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind};
 use steel::SteelVal;
 
 impl NodeUi for gantz_std::number::Number {
@@ -10,12 +10,12 @@ impl NodeUi for gantz_std::number::Number {
         Some("A numeric value")
     }
 
-    fn ui(
-        &mut self,
-        mut ctx: NodeCtx,
-        uictx: egui_graph::NodeCtx,
-    ) -> egui_graph::FramedResponse<egui::Response> {
-        uictx.framed(|ui, _sockets| {
+    fn ui(&mut self, mut ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
+        // The numeric value lives in VM runtime state, not the node weight, so
+        // editing it does NOT change the graph's content address - we only
+        // queue an evaluation, never mark `changed`.
+        let mut do_eval = false;
+        let framed = uictx.framed(|ui, _sockets| {
             let mut val = ctx.extract_value().unwrap().unwrap();
             let res = match val {
                 SteelVal::NumV(ref mut f) => ui.add(egui::DragValue::new(f)),
@@ -24,10 +24,15 @@ impl NodeUi for gantz_std::number::Number {
             };
             if res.changed() {
                 ctx.update_value(val).unwrap();
-                ctx.push_eval(1);
+                do_eval = true;
             }
             res
-        })
+        });
+        let mut resp = NodeUiResponse::new(framed);
+        if do_eval {
+            resp.push_eval(ctx.path(), 1);
+        }
+        resp
     }
 
     fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {

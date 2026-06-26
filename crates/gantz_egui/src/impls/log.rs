@@ -1,4 +1,7 @@
-use crate::{NodeCtx, NodeUi, OpenLogs, Registry, SocketDoc, SocketKind};
+use crate::{
+    ContextMenuResponse, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, OpenLogs,
+    Registry, SocketDoc, SocketKind,
+};
 
 impl NodeUi for gantz_std::log::Log {
     fn name(&self, _: &dyn Registry) -> &str {
@@ -21,18 +24,20 @@ impl NodeUi for gantz_std::log::Log {
         })
     }
 
-    fn ui(
-        &mut self,
-        _ctx: NodeCtx,
-        uictx: egui_graph::NodeCtx,
-    ) -> egui_graph::FramedResponse<egui::Response> {
-        uictx.framed(|ui, _sockets| {
+    fn ui(&mut self, _ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
+        let framed = uictx.framed(|ui, _sockets| {
             let level = format!("{:?}", self.level).to_lowercase();
             ui.add(egui::Label::new(&level).selectable(false))
-        })
+        });
+        NodeUiResponse::new(framed)
     }
 
-    fn inspector_rows(&mut self, ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(
+        &mut self,
+        _ctx: &mut NodeCtx,
+        body: &mut egui_extras::TableBody,
+    ) -> InspectorRowsResponse {
+        let mut resp = InspectorRowsResponse::default();
         let row_h = crate::widget::node_inspector::table_row_h(body.ui_mut());
         body.row(row_h, |mut row| {
             row.col(|ui| {
@@ -44,10 +49,11 @@ impl NodeUi for gantz_std::log::Log {
                     .on_hover_text("show the logs pane")
                     .clicked()
                 {
-                    ctx.response(OpenLogs);
+                    resp.emit(OpenLogs);
                 }
             });
         });
+        resp
     }
 
     fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
@@ -59,14 +65,16 @@ impl NodeUi for gantz_std::log::Log {
         }
     }
 
-    fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+    fn context_menu(&mut self, _ctx: &mut NodeCtx, ui: &mut egui::Ui) -> ContextMenuResponse {
+        let mut resp = ContextMenuResponse::default();
         if ui
             .button("open logs")
             .on_hover_text("show the logs pane")
             .clicked()
         {
-            ctx.response(OpenLogs);
+            resp.emit(OpenLogs);
             ui.close();
         }
+        resp
     }
 }
