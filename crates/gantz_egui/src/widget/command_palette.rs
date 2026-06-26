@@ -25,7 +25,9 @@ pub trait Command: Copy + Sized {
 pub struct CommandPalette {
     visible: bool,
     query: String,
-    selected_alternative: usize,
+    /// The highlighted entry, or `None` when nothing is highlighted (the
+    /// just-opened, browse-and-click state). Set by typing or arrow navigation.
+    selected_alternative: Option<usize>,
 }
 
 impl CommandPalette {
@@ -101,8 +103,10 @@ impl CommandPalette {
         text_response.request_focus();
         let mut scroll_to_selected_alternative = false;
         if text_response.changed() {
-            self.selected_alternative = 0;
-            scroll_to_selected_alternative = true;
+            // Highlight the top match while filtering (so Enter works), but show
+            // no highlight for an empty query - it's a browse-and-click list.
+            self.selected_alternative = (!self.query.is_empty()).then_some(0);
+            scroll_to_selected_alternative = self.selected_alternative.is_some();
         }
 
         let selected_command = egui::ScrollArea::vertical()
@@ -181,7 +185,7 @@ impl CommandPalette {
                 selected_command = Some(command);
             }
 
-            let selected = i == self.selected_alternative;
+            let selected = self.selected_alternative == Some(i);
             let style = ui.style().interact_selectable(&response, selected);
 
             if selected {
@@ -246,17 +250,22 @@ impl CommandPalette {
             ui.weak("No matching results");
         }
 
-        // Move up/down in the list:
-        self.selected_alternative = self.selected_alternative.saturating_sub(
-            ui.input_mut(|i| i.count_and_consume_key(Default::default(), Key::ArrowUp)),
-        );
-        self.selected_alternative = self.selected_alternative.saturating_add(
-            ui.input_mut(|i| i.count_and_consume_key(Default::default(), Key::ArrowDown)),
-        );
-
-        self.selected_alternative = self
-            .selected_alternative
-            .clamp(0, num_alternatives.saturating_sub(1));
+        // Move up/down in the list. From no highlight, the first arrow press
+        // starts at the top; otherwise step and keep the highlight in range.
+        let up = ui.input_mut(|i| i.count_and_consume_key(Default::default(), Key::ArrowUp));
+        let down = ui.input_mut(|i| i.count_and_consume_key(Default::default(), Key::ArrowDown));
+        self.selected_alternative = if num_alternatives == 0 {
+            None
+        } else if up == 0 && down == 0 {
+            self.selected_alternative
+                .map(|sel| sel.min(num_alternatives - 1))
+        } else {
+            let next = match self.selected_alternative {
+                None => 0,
+                Some(cur) => (cur + down).saturating_sub(up),
+            };
+            Some(next.min(num_alternatives - 1))
+        };
 
         selected_command
     }
