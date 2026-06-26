@@ -16,6 +16,7 @@ pub struct GraphConfig<'a> {
     immutable: bool,
     demo_names: &'a [&'a str],
     current_demo: Option<&'a str>,
+    current_description: Option<&'a str>,
 }
 
 /// Response from the [`GraphConfig`] widget.
@@ -28,6 +29,9 @@ pub struct GraphConfigResponse {
     pub demo_changed: Option<Option<String>>,
     /// The "Reset" button was clicked for a base graph.
     pub reset_base_graph: bool,
+    /// The graph's description was edited (committed on focus loss). An empty
+    /// string clears the description.
+    pub description_changed: Option<String>,
 }
 
 impl<'a> GraphConfig<'a> {
@@ -44,6 +48,7 @@ impl<'a> GraphConfig<'a> {
             immutable: false,
             demo_names: &[],
             current_demo: None,
+            current_description: None,
         }
     }
 
@@ -74,6 +79,12 @@ impl<'a> GraphConfig<'a> {
         self
     }
 
+    /// The graph's current description, used to seed the description editor.
+    pub fn current_description(mut self, current_description: Option<&'a str>) -> Self {
+        self.current_description = current_description;
+        self
+    }
+
     pub fn show(self, ui: &mut egui::Ui) -> GraphConfigResponse {
         // Name editing TextEdit with per-head temp state.
         let edit_id = egui::Id::new("graph_config_name_edit").with(self.head);
@@ -84,10 +95,33 @@ impl<'a> GraphConfig<'a> {
         ui.memory_mut(|m| m.data.insert_temp(edit_id, name));
         let new_branch = name_res.new_branch;
 
-        // Demo graph selector (only for named, non-demo graphs).
         let is_named = matches!(self.head, gantz_ca::Head::Branch(_));
         let is_demo =
             matches!(&self.head, gantz_ca::Head::Branch(name) if name.starts_with("demo-"));
+
+        // Description editor (per-head temp state), for named graphs. The edit
+        // is committed when the field loses focus to avoid a commit per keypress.
+        let mut description_changed = None;
+        if is_named {
+            let desc_id = egui::Id::new("graph_config_desc_edit").with(self.head);
+            let current = self.current_description.unwrap_or("");
+            let mut desc = ui
+                .memory_mut(|m| m.data.get_temp::<String>(desc_id))
+                .unwrap_or_else(|| current.to_string());
+            let resp = ui.add_enabled(
+                !self.immutable,
+                egui::TextEdit::multiline(&mut desc)
+                    .hint_text("Description")
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY),
+            );
+            if resp.lost_focus() && desc != current {
+                description_changed = Some(desc.clone());
+            }
+            ui.memory_mut(|m| m.data.insert_temp(desc_id, desc));
+        }
+
+        // Demo graph selector (only for named, non-demo graphs).
         let mut demo_changed = None;
         if is_named && !is_demo && !self.demo_names.is_empty() {
             ui.add_enabled_ui(!self.immutable, |ui| {
@@ -178,6 +212,7 @@ impl<'a> GraphConfig<'a> {
             export,
             demo_changed,
             reset_base_graph,
+            description_changed,
         }
     }
 }

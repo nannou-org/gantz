@@ -5,6 +5,12 @@ impl NodeUi for gantz_std::Bang {
         "!"
     }
 
+    fn description(&self) -> Option<&'static str> {
+        Some(
+            "A trigger. Click it (or push to its input) to emit a bang that forces downstream evaluation.",
+        )
+    }
+
     fn ui(
         &mut self,
         mut ctx: NodeCtx,

@@ -6,6 +6,10 @@ impl NodeUi for gantz_std::number::Number {
         "number"
     }
 
+    fn description(&self) -> Option<&'static str> {
+        Some("A numeric value. Drag to edit; outputs the stored number.")
+    }
+
     fn ui(
         &mut self,
         mut ctx: NodeCtx,

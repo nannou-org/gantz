@@ -5,6 +5,12 @@ impl NodeUi for gantz_core::node::Delay {
         "delay"
     }
 
+    fn description(&self) -> Option<&'static str> {
+        Some(
+            "A one-evaluation delay cell. Outputs the value from the previous evaluation, enabling feedback cycles.",
+        )
+    }
+
     fn ui(
         &mut self,
         _ctx: NodeCtx,

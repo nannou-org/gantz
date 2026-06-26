@@ -12,6 +12,7 @@ use gantz_ca as ca;
 use gantz_core::node::{self, graph::Graph};
 use gantz_core::{Builtins, Node};
 use petgraph::visit::{IntoNodeReferences, NodeRef};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 
 /// Registry reference providing unified node access.
@@ -211,5 +212,61 @@ impl<N: 'static + Node + crate::NodeUi + crate::sync::AsNamedRef + Send + Sync> 
             crate::SocketKind::Output => crate::SocketKind::Input,
         };
         marker.socket_doc(self, marker_kind, 0)
+    }
+
+    fn command_info(&self, name: &str) -> crate::CommandInfo {
+        use crate::SocketKind;
+        let mut info = crate::CommandInfo {
+            name: name.to_string(),
+            ..Default::default()
+        };
+
+        // The reserved nested-graph entry mints a fresh, empty child graph.
+        if name == crate::widget::gantz::NESTED_GRAPH_TYPE {
+            info.description = Some(Cow::Borrowed(
+                "Create a new nested graph. Its inlets and outlets become this node's sockets.",
+            ));
+            return info;
+        }
+
+        let get_node = |c: &ca::ContentAddr| self.node(c);
+        let meta_ctx = node::MetaCtx::new(&get_node);
+        // Collect `n` socket docs, defaulting a missing doc to a bare "any".
+        let collect =
+            |n: usize,
+             kind: SocketKind,
+             f: &dyn Fn(SocketKind, usize) -> Option<crate::SocketDoc>| {
+                (0..n)
+                    .map(|ix| f(kind, ix).unwrap_or_else(|| crate::SocketDoc::ty("any")))
+                    .collect::<Vec<_>>()
+            };
+
+        if let Some(commit_ca) = self.ca_registry.names().get(name) {
+            // A named graph: description from the registry; socket docs resolved
+            // from the referenced graph's inlet/outlet markers.
+            info.description = self
+                .ca_registry
+                .description(name)
+                .map(|s| Cow::Owned(s.to_string()));
+            if let Some(graph) = self.ca_registry.commit_graph_ref(commit_ca) {
+                let ca: ca::ContentAddr = (*commit_ca).into();
+                let socket =
+                    |kind: SocketKind, ix: usize| Registry::socket_doc(self, &ca, kind, ix);
+                info.inputs = collect(graph.n_inputs(meta_ctx), SocketKind::Input, &socket);
+                info.outputs = collect(graph.n_outputs(meta_ctx), SocketKind::Output, &socket);
+            }
+        } else if let Some(builtin) = self.builtins.create(name) {
+            // A builtin: introspect a fresh instance.
+            info.description = builtin.description().map(Cow::Borrowed);
+            let socket = |kind: SocketKind, ix: usize| builtin.socket_doc(self, kind, ix);
+            info.inputs = collect(builtin.n_inputs(meta_ctx), SocketKind::Input, &socket);
+            info.outputs = collect(builtin.n_outputs(meta_ctx), SocketKind::Output, &socket);
+        }
+
+        info
+    }
+
+    fn graph_description(&self, name: &str) -> Option<&str> {
+        self.ca_registry.description(name)
     }
 }

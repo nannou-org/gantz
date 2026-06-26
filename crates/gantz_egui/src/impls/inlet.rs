@@ -6,6 +6,10 @@ impl NodeUi for gantz_core::node::graph::Inlet {
         "in"
     }
 
+    fn description(&self) -> Option<&'static str> {
+        Some("Marks an input to the enclosing graph.")
+    }
+
     fn ui(
         &mut self,
         ctx: NodeCtx,
