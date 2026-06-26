@@ -319,3 +319,39 @@ pub fn redo(
 ) -> Option<CommitAddr> {
     redo_stacks.get_mut(head)?.pop()
 }
+
+/// Commit the current layout as a new commit on the head's *existing* graph
+/// when node positions have changed since the head commit's frozen baseline
+/// view, advancing `head` to the new commit.
+///
+/// The graph content is unchanged, so the new commit reuses the head's
+/// [`gantz_ca::GraphAddr`]: the registry dedups the graph (the `graph` closure
+/// passed to [`gantz_ca::Registry::commit_graph_to_head`] is never called) and
+/// the VM does not need to recompile. Only `layout` (node positions) is
+/// compared; `scene_rect` (camera) is excluded, so camera pan/zoom never
+/// produces a layout commit.
+///
+/// Returns the new commit address when a layout commit was created, else `None`
+/// (no baseline view yet - i.e. the head commit's layout has not been seeded -
+/// or no node-position change). Seeding `views[new]`, clearing the redo stack
+/// and migrating GUI state stay with the caller.
+pub fn commit_layout<G>(
+    registry: &mut gantz_ca::Registry<G>,
+    views: &HashMap<CommitAddr, egui_graph::View>,
+    timestamp: gantz_ca::Timestamp,
+    head: &mut gantz_ca::Head,
+    live: &egui_graph::View,
+) -> Option<CommitAddr> {
+    let head_commit_ca = *registry.head_commit_ca(head)?;
+    let baseline = views.get(&head_commit_ca)?;
+    if baseline.layout == live.layout {
+        return None;
+    }
+    let graph_addr = registry.commits().get(&head_commit_ca)?.graph;
+    Some(registry.commit_graph_to_head(
+        timestamp,
+        graph_addr,
+        || unreachable!("layout commit reuses an existing graph"),
+        head,
+    ))
+}
