@@ -263,14 +263,9 @@ impl NodeUi for NamedRef {
     fn inspector_rows(&mut self, ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
         let row_h = node_inspector::table_row_h(body.ui_mut());
         let registry = ctx.registry();
-        let ref_ca = self.ref_.content_addr();
 
-        // Check if the referenced CA exists in registry.
-        let is_missing = !registry.node_exists(&ref_ca);
-
-        // Check if outdated (name points to different CA).
-        let current_ca = registry.name_ca(&self.name);
-        let is_outdated = !is_missing && current_ca.map(|ca| ca != ref_ca).unwrap_or(false);
+        // Whether the referenced CA exists in the registry.
+        let is_missing = !registry.node_exists(&self.ref_.content_addr());
 
         // CA row.
         body.row(row_h, |mut row| {
@@ -317,42 +312,82 @@ impl NodeUi for NamedRef {
                     ui.label(err_text);
                 });
             });
-        // Status row for outdated CA - only shown when sync is disabled.
-        } else if !self.sync && is_outdated {
-            if let Some(latest_ca) = current_ca {
-                let current_short = self.ref_.content_addr().display_short().to_string();
-                let latest_short = latest_ca.display_short().to_string();
-
-                body.row(row_h, |mut row| {
-                    row.col(|ui| {
-                        ui.label("status");
-                    });
-                    row.col(|ui| {
-                        ui.horizontal(|ui| {
-                            let warn_text = egui::RichText::new("outdated").color(outdated_color());
-                            ui.label(warn_text);
-
-                            let sync_hover = format!(
-                                "sync reference from {} to {}",
-                                current_short, latest_short
-                            );
-                            if ui.button("sync").on_hover_text(sync_hover).clicked() {
-                                self.ref_ = gantz_core::node::Ref::new(latest_ca);
-                            }
-
-                            let fork_hover = format!("fork a new node at {}", current_short);
-                            if ui.button("fork").on_hover_text(fork_hover).clicked() {
-                                let new_name = format!("{}-{}", self.name, current_short);
-                                ctx.response(BranchNode {
-                                    new_name,
-                                    ca: self.ref_.content_addr(),
-                                    path: ctx.path.to_vec(),
-                                });
-                            }
-                        });
+        // Status row for an outdated reference - sync/fork to resolve it.
+        } else if let Some(latest_ca) = outdated_latest(self, registry) {
+            body.row(row_h, |mut row| {
+                row.col(|ui| {
+                    ui.label("status");
+                });
+                row.col(|ui| {
+                    ui.horizontal(|ui| {
+                        let warn_text = egui::RichText::new("outdated").color(outdated_color());
+                        ui.label(warn_text);
+                        sync_fork_buttons(self, ctx, ui, latest_ca);
                     });
                 });
+            });
+        }
+    }
+
+    fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+        // Offer sync/fork on the node itself when the reference is outdated.
+        if let Some(latest_ca) = outdated_latest(self, ctx.registry()) {
+            if sync_fork_buttons(self, ctx, ui, latest_ca) {
+                ui.close();
             }
         }
     }
+}
+
+/// The name's current commit CA when this reference is *outdated*: it exists,
+/// auto-sync is off, and the name now points at a different commit. `None`
+/// otherwise (missing, synced, or already up to date).
+fn outdated_latest(
+    named: &NamedRef,
+    registry: &dyn crate::Registry,
+) -> Option<gantz_ca::ContentAddr> {
+    if named.sync {
+        return None;
+    }
+    let ref_ca = named.ref_.content_addr();
+    if !registry.node_exists(&ref_ca) {
+        return None;
+    }
+    match registry.name_ca(&named.name) {
+        Some(latest) if latest != ref_ca => Some(latest),
+        _ => None,
+    }
+}
+
+/// Render the `sync` and `fork` buttons for an outdated reference, returning
+/// `true` if either was clicked. `sync` repoints the reference at `latest`;
+/// `fork` emits a [`BranchNode`] pinning a fresh name at the current (outdated)
+/// commit. Shared by the inspector and the node context menu.
+fn sync_fork_buttons(
+    named: &mut NamedRef,
+    ctx: &mut NodeCtx,
+    ui: &mut egui::Ui,
+    latest: gantz_ca::ContentAddr,
+) -> bool {
+    let current_short = named.ref_.content_addr().display_short().to_string();
+    let latest_short = latest.display_short().to_string();
+
+    let sync_hover = format!("sync reference from {current_short} to {latest_short}");
+    if ui.button("sync").on_hover_text(sync_hover).clicked() {
+        named.ref_ = gantz_core::node::Ref::new(latest);
+        return true;
+    }
+
+    let fork_hover = format!("fork a new node at {current_short}");
+    if ui.button("fork").on_hover_text(fork_hover).clicked() {
+        let new_name = format!("{}-{}", named.name, current_short);
+        ctx.response(BranchNode {
+            new_name,
+            ca: named.ref_.content_addr(),
+            path: ctx.path.to_vec(),
+        });
+        return true;
+    }
+
+    false
 }
