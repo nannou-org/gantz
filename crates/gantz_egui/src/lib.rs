@@ -24,7 +24,10 @@ pub mod widget;
 pub use egui_graph::SocketKind;
 pub use node::{FnNodeNames, NameRegistry};
 pub use reg::RegistryRef;
-pub use response::{DynResponse, ResponseData, Responses};
+pub use response::{
+    ContextMenuResponse, DynResponse, InspectorRowsResponse, InspectorUiResponse, NodeUiResponse,
+    ResponseData, Responses,
+};
 pub use widget::gantz::NodeTypeRegistry;
 pub use widget::graph_select::GraphRegistry;
 
@@ -265,115 +268,6 @@ pub struct HeadDataMut<'a, N> {
     pub view: &'a mut egui_graph::View,
     pub vm: &'a mut Engine,
 }
-
-/// The response from [`NodeUi::ui`].
-///
-/// Bundles the node body's framed egui response with whether the node mutated
-/// its content-addressed (CA) state this frame and any payloads it emitted for
-/// the application to handle. See the [`NodeUi`] docs for the `changed`
-/// contract.
-pub struct NodeUiResponse {
-    /// The framed egui response for the node body.
-    pub framed: egui_graph::FramedResponse<egui::Response>,
-    /// Whether the node mutated CA-affecting state this frame.
-    pub changed: bool,
-    /// Payloads emitted by the node for the application to handle after the
-    /// GUI pass.
-    pub payloads: Vec<DynResponse>,
-}
-
-impl NodeUiResponse {
-    /// A response wrapping `framed`, initially unchanged and with no payloads.
-    pub fn new(framed: egui_graph::FramedResponse<egui::Response>) -> Self {
-        Self {
-            framed,
-            changed: false,
-            payloads: Vec::new(),
-        }
-    }
-}
-
-/// The response from [`NodeUi::inspector_rows`].
-#[derive(Debug, Default)]
-pub struct InspectorRowsResponse {
-    /// Whether the node mutated CA-affecting state this frame.
-    pub changed: bool,
-    /// Payloads emitted by the node for the application to handle.
-    pub payloads: Vec<DynResponse>,
-}
-
-/// The response from [`NodeUi::inspector_ui`].
-#[derive(Debug, Default)]
-pub struct InspectorUiResponse {
-    /// The egui response for the extra inspector UI, if any.
-    pub inner: Option<egui::Response>,
-    /// Whether the node mutated CA-affecting state this frame.
-    pub changed: bool,
-    /// Payloads emitted by the node for the application to handle.
-    pub payloads: Vec<DynResponse>,
-}
-
-/// The response from [`NodeUi::context_menu`].
-#[derive(Debug, Default)]
-pub struct ContextMenuResponse {
-    /// Whether the node mutated CA-affecting state this frame.
-    pub changed: bool,
-    /// Payloads emitted by the node for the application to handle.
-    pub payloads: Vec<DynResponse>,
-}
-
-/// Implement the shared `changed`/payload builder helpers on each node
-/// response type. These replace the old `NodeCtx::response` side-channel: a
-/// node records CA-affecting edits and emitted payloads on its returned
-/// response.
-macro_rules! impl_node_response_emit {
-    ($($Ty:ty),* $(,)?) => {$(
-        impl $Ty {
-            /// Mark that the node mutated CA-affecting state this frame.
-            pub fn mark_changed(&mut self) {
-                self.changed = true;
-            }
-
-            /// OR `changed` into the existing flag.
-            pub fn set_changed(&mut self, changed: bool) {
-                self.changed |= changed;
-            }
-
-            /// Emit a payload for the application to handle after the GUI pass.
-            pub fn emit<T: ResponseData>(&mut self, data: T) {
-                self.payloads.push(DynResponse::new(data));
-            }
-
-            /// Queue a call to the generated push evaluation fn for the node at
-            /// `path` (typically [`NodeCtx::path`]).
-            ///
-            /// Only successful if the node's [`gantz_core::Node::push_eval`]
-            /// returned `Some` at the last compile. Does not imply `changed`:
-            /// an eval is a runtime trigger, not an edit to the graph's
-            /// identity.
-            pub fn push_eval(&mut self, path: &[node::Id], n_outputs: u8) {
-                let ep = gantz_core::compile::entrypoint::push(path.to_vec(), n_outputs);
-                self.emit(EvalEntry(ep));
-            }
-
-            /// Queue a call to the generated pull evaluation fn for the node at
-            /// `path` (typically [`NodeCtx::path`]).
-            ///
-            /// See [`push_eval`](Self::push_eval) for the caveats.
-            pub fn pull_eval(&mut self, path: &[node::Id], n_inputs: u8) {
-                let ep = gantz_core::compile::entrypoint::pull(path.to_vec(), n_inputs);
-                self.emit(EvalEntry(ep));
-            }
-        }
-    )*};
-}
-
-impl_node_response_emit!(
-    NodeUiResponse,
-    InspectorRowsResponse,
-    InspectorUiResponse,
-    ContextMenuResponse,
-);
 
 /// A trait providing an egui `Ui` implementation for gantz nodes.
 ///

@@ -106,7 +106,7 @@ pub struct CompiledInputs(Option<Inputs>);
 /// Defaults to `false` (no extra hashing); enable at runtime to debug a
 /// suspected missing commit.
 #[derive(Default, Resource)]
-pub struct ChangeTrackingValidation(pub bool);
+pub struct ValidateCommitted(pub bool);
 
 /// Event to trigger evaluation of an entrypoint.
 #[derive(Event)]
@@ -316,12 +316,12 @@ pub fn sync<N>(
 /// Debug check for the [`WorkingGraph`](head::WorkingGraph) commit-before-return
 /// invariant.
 ///
-/// When [`ChangeTrackingValidation`] is enabled, hash every open head's working
+/// When [`ValidateCommitted`] is enabled, hash every open head's working
 /// graph and warn if it differs from the head's committed graph CA - i.e. a
 /// system mutated the working graph without committing it. A no-op (no hashing)
 /// when disabled, which is the default.
 pub fn validate_committed<N>(
-    validate: Res<ChangeTrackingValidation>,
+    validate: Res<ValidateCommitted>,
     registry: Res<Registry<N>>,
     heads: Query<head::OpenHeadDataReadOnly<N>, With<head::OpenHead>>,
 ) where

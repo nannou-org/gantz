@@ -38,8 +38,8 @@ pub use head::{
 };
 pub use reg::{Registry, lookup_node, timestamp};
 pub use vm::{
-    ChangeTrackingValidation, CompileConfig, CompiledInputs, EntrypointFns, EvalEntryComplete,
-    EvalEntryEvent, commit_working_graph,
+    CompileConfig, CompiledInputs, EntrypointFns, EvalEntryComplete, EvalEntryEvent,
+    ValidateCommitted, commit_working_graph,
 };
 
 /// The system set in which [`vm::sync`] runs (in the `Update` schedule).
@@ -83,7 +83,7 @@ where
         .init_resource::<HeadTabOrder>()
         .init_resource::<Registry<N>>()
         .init_resource::<vm::CompileConfig>()
-        .init_resource::<vm::ChangeTrackingValidation>()
+        .init_resource::<vm::ValidateCommitted>()
         .init_non_send::<HeadVms>()
         // Register head event handlers.
         .add_observer(head::on_open::<N>)
@@ -97,7 +97,7 @@ where
         // compile inputs (committed graph content address + config) change.
         .add_systems(Update, vm::sync::<N>.in_set(VmSet))
         // Debug check for the WorkingGraph commit-before-return invariant
-        // (no-op unless `ChangeTrackingValidation` is enabled).
+        // (no-op unless `ValidateCommitted` is enabled).
         .add_systems(Update, vm::validate_committed::<N>.after(VmSet));
     }
 }

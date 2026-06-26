@@ -1399,7 +1399,7 @@ pub fn update<N>(
         Res<BaseNames>,
         Res<BaseImmutable>,
         ResMut<CompileConfig>,
-        ResMut<bevy_gantz::ChangeTrackingValidation>,
+        ResMut<bevy_gantz::ValidateCommitted>,
     ),
     mut demos: ResMut<Demos>,
     dispatchers: Res<ResponseDispatchers>,
