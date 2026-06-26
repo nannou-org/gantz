@@ -17,6 +17,8 @@ enum SettingsTab {
 pub struct SettingsResponse {
     /// The global compile config was changed (Global subtab).
     pub compile_config: Option<gantz_core::compile::Config>,
+    /// The change-tracking validation toggle was changed (Global subtab).
+    pub validate_change_tracking: Option<bool>,
     /// The "Reset all demos" button was clicked (Global subtab).
     pub reset_all_demos: bool,
     /// The "reset all" layout button was clicked (Panes subtab).
@@ -27,6 +29,7 @@ pub struct SettingsResponse {
 pub fn settings(
     view: &mut ViewToggles,
     compile_config: Option<gantz_core::compile::Config>,
+    validate_change_tracking: Option<bool>,
     layout_config: &mut LayoutConfig,
     ui: &mut egui::Ui,
 ) -> SettingsResponse {
@@ -85,8 +88,10 @@ pub fn settings(
             ui.weak("Style configuration coming soon.");
         }
         SettingsTab::Global => {
-            let g = super::global_config(compile_config, layout_config, ui);
+            let g =
+                super::global_config(compile_config, validate_change_tracking, layout_config, ui);
             res.compile_config = g.compile_config;
+            res.validate_change_tracking = g.validate_change_tracking;
             res.reset_all_demos = g.reset_all_demos;
         }
     }

@@ -61,6 +61,7 @@ pub struct Gantz<'a> {
     perf_gui: Option<&'a mut widget::PerfCapture>,
     base_immutable: bool,
     compile_config: Option<gantz_core::compile::Config>,
+    validate_change_tracking: Option<bool>,
 }
 
 enum LogSource {
@@ -290,6 +291,8 @@ pub struct GantzResponse {
     pub reset_all_demos: bool,
     /// The global compile config was changed via the Graph Config pane.
     pub compile_config: Option<gantz_core::compile::Config>,
+    /// The change-tracking validation toggle was changed (its new value).
+    pub validate_change_tracking: Option<bool>,
     /// Heads whose graph had a CA-affecting edit this frame (from a node UI, an
     /// inspector edit, or a structural scene edit). Lets the application
     /// commit/recompile only the changed heads instead of re-hashing every open
@@ -410,6 +413,7 @@ impl<'a> Gantz<'a> {
             perf_gui: None,
             base_immutable: true,
             compile_config: None,
+            validate_change_tracking: None,
         }
     }
 
@@ -424,6 +428,14 @@ impl<'a> Gantz<'a> {
     /// heads, and a change is reported via [`GantzResponse::compile_config`].
     pub fn compile_config(mut self, config: gantz_core::compile::Config) -> Self {
         self.compile_config = Some(config);
+        self
+    }
+
+    /// Provide the current change-tracking validation state so the Settings >
+    /// Global pane shows its toggle. A change is reported via
+    /// [`GantzResponse::validate_change_tracking`].
+    pub fn validate_change_tracking(mut self, enabled: bool) -> Self {
+        self.validate_change_tracking = Some(enabled);
         self
     }
 
@@ -525,6 +537,7 @@ impl<'a> Gantz<'a> {
             reset_base_graph: None,
             reset_all_demos: false,
             compile_config: None,
+            validate_change_tracking: None,
             changed_heads: Vec::new(),
             responses: Responses::default(),
         };
@@ -1137,16 +1150,21 @@ where
             }
             Pane::Settings => {
                 let compile_config = gantz.compile_config;
+                let validate_change_tracking = gantz.validate_change_tracking;
                 let res = pane_ui(ui, |ui| {
                     widget::settings(
                         &mut state.view_toggles,
                         compile_config,
+                        validate_change_tracking,
                         &mut state.layout_config,
                         ui,
                     )
                 });
                 if let Some(cfg) = res.inner.compile_config {
                     gantz_response.compile_config = Some(cfg);
+                }
+                if let Some(v) = res.inner.validate_change_tracking {
+                    gantz_response.validate_change_tracking = Some(v);
                 }
                 if res.inner.reset_all_demos {
                     gantz_response.reset_all_demos = true;

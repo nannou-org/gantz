@@ -99,7 +99,9 @@ where
 
         // Builtin GUI response payload dispatchers. Head-scoped payloads
         // arrive at the observers below as `ForHead<T>` events; the rest map
-        // onto existing event types via custom dispatch fns.
+        // onto existing event types via custom dispatch fns. Observers that edit
+        // a head's working graph commit it before returning (see the
+        // `WorkingGraph` invariant), so no dispatch-side handling is needed.
         app.register_head_response::<gantz_egui::BranchNode>()
             .register_head_response::<gantz_egui::CopyNodes>()
             .register_head_response::<gantz_egui::CreateNode>()
@@ -703,16 +705,19 @@ fn refresh_moved_heads<N>(
 /// Handle create node payloads.
 pub fn on_create_node<N>(
     trigger: On<ForHead<gantz_egui::CreateNode>>,
-    registry: Res<Registry<N>>,
+    mut registry: ResMut<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     demos: Res<Demos>,
     mut gui_state: ResMut<GuiState>,
     mut vms: NonSendMut<head::HeadVms>,
+    mut cmds: Commands,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
 ) where
     N: 'static
         + Node
+        + Clone
+        + ca::CaHash
         + From<gantz_egui::node::NamedRef>
         + gantz_egui::sync::AsNamedRef
         + Send
@@ -753,6 +758,14 @@ pub fn on_create_node<N>(
         vm,
         event.data.clone(),
     );
+    // Uphold the `WorkingGraph` invariant: commit the in-place edit.
+    bevy_gantz::commit_working_graph(
+        &mut registry,
+        &mut cmds,
+        event.head,
+        &mut data.head_ref.0,
+        &data.working_graph.0,
+    );
 }
 
 /// Handle branch node payloads.
@@ -762,9 +775,10 @@ pub fn on_create_node<N>(
 pub fn on_branch_node<N>(
     trigger: On<ForHead<gantz_egui::BranchNode>>,
     mut registry: ResMut<Registry<N>>,
+    mut cmds: Commands,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
 ) where
-    N: 'static + From<gantz_egui::node::NamedRef> + Send + Sync,
+    N: 'static + Clone + ca::CaHash + From<gantz_egui::node::NamedRef> + Send + Sync,
 {
     let event = trigger.event();
     let Ok(mut data) = heads.get_mut(event.head) else {
@@ -779,6 +793,14 @@ pub fn on_branch_node<N>(
         event.data.ca,
         &event.data.path,
     );
+    // Uphold the `WorkingGraph` invariant: commit the in-place edit.
+    bevy_gantz::commit_working_graph(
+        &mut registry,
+        &mut cmds,
+        event.head,
+        &mut data.head_ref.0,
+        &data.working_graph.0,
+    );
 }
 
 /// Handle create nested graph payloads.
@@ -790,10 +812,11 @@ pub fn on_create_nested_graph<N>(
     trigger: On<ForHead<gantz_egui::CreateNestedGraph>>,
     mut registry: ResMut<Registry<N>>,
     mut gui_state: ResMut<GuiState>,
+    mut cmds: Commands,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
 ) where
-    N: 'static + Node + From<gantz_egui::node::NamedRef> + ca::CaHash + Send + Sync,
+    N: 'static + Node + Clone + From<gantz_egui::node::NamedRef> + ca::CaHash + Send + Sync,
 {
     let event = trigger.event();
     let Ok(mut data) = heads.get_mut(event.head) else {
@@ -827,19 +850,28 @@ pub fn on_create_nested_graph<N>(
         event.data.pos,
         &parent,
     );
+    // Uphold the `WorkingGraph` invariant: commit the in-place edit.
+    bevy_gantz::commit_working_graph(
+        &mut registry,
+        &mut cmds,
+        event.head,
+        &mut data.head_ref.0,
+        &data.working_graph.0,
+    );
 }
 
 /// Handle inspect edge payloads.
 pub fn on_inspect_edge<N>(
     trigger: On<ForHead<gantz_egui::InspectEdge>>,
-    registry: Res<Registry<N>>,
+    mut registry: ResMut<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     demos: Res<Demos>,
     mut vms: NonSendMut<head::HeadVms>,
+    mut cmds: Commands,
     mut heads: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
     mut views_query: Query<&mut GraphView, With<head::OpenHead>>,
 ) where
-    N: 'static + Node + From<gantz_egui::node::NamedRef> + Send + Sync,
+    N: 'static + Node + Clone + ca::CaHash + From<gantz_egui::node::NamedRef> + Send + Sync,
 {
     let event = trigger.event();
     let Ok(mut data) = heads.get_mut(event.head) else {
@@ -864,6 +896,14 @@ pub fn on_inspect_edge<N>(
         &mut views,
         vm,
         event.data.clone(),
+    );
+    // Uphold the `WorkingGraph` invariant: commit the in-place edit.
+    bevy_gantz::commit_working_graph(
+        &mut registry,
+        &mut cmds,
+        event.head,
+        &mut data.head_ref.0,
+        &data.working_graph.0,
     );
 }
 
@@ -915,8 +955,13 @@ pub fn on_paste<N>(
     mut demos: ResMut<Demos>,
     mut vms: NonSendMut<head::HeadVms>,
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
+    mut cmds: Commands,
     mut heads: Query<
-        (&head::HeadRef, &mut head::WorkingGraph<N>, &mut GraphView),
+        (
+            &mut head::HeadRef,
+            &mut head::WorkingGraph<N>,
+            &mut GraphView,
+        ),
         With<head::OpenHead>,
     >,
 ) where
@@ -934,7 +979,7 @@ pub fn on_paste<N>(
     let Some(text) = event.data.text.clone().or_else(|| clipboard.get_text()) else {
         return;
     };
-    let Ok((head_ref, mut wg, mut gv)) = heads.get_mut(event.head) else {
+    let Ok((mut head_ref, mut wg, mut gv)) = heads.get_mut(event.head) else {
         log::error!("PasteSelection: head not found for entity {:?}", event.head);
         return;
     };
@@ -969,6 +1014,9 @@ pub fn on_paste<N>(
             gantz_core::graph::register(&get_node, &**wg, &[], vm);
         }
     }
+
+    // Uphold the `WorkingGraph` invariant: commit the in-place edit.
+    bevy_gantz::commit_working_graph(&mut registry, &mut cmds, event.head, &mut head_ref.0, &wg.0);
 }
 
 /// Handle undo payloads: move the head back to its parent commit.
@@ -1347,10 +1395,11 @@ pub fn update<N>(
     mut focused: ResMut<head::FocusedHead>,
     mut heads_query: Query<OpenHeadViews<N>, With<head::OpenHead>>,
     import_task: Option<Res<ImportTask>>,
-    (base_names, base_immutable, mut compile_config): (
+    (base_names, base_immutable, mut compile_config, mut change_validation): (
         Res<BaseNames>,
         Res<BaseImmutable>,
         ResMut<CompileConfig>,
+        ResMut<bevy_gantz::ChangeTrackingValidation>,
     ),
     mut demos: ResMut<Demos>,
     dispatchers: Res<ResponseDispatchers>,
@@ -1359,6 +1408,7 @@ pub fn update<N>(
 where
     N: 'static
         + Node
+        + Clone
         + gantz_ca::CaHash
         + gantz_egui::NodeUi
         + gantz_egui::sync::AsNamedRef
@@ -1394,6 +1444,7 @@ where
 
     // Build and show the Gantz widget.
     let current_compile_config = compile_config.0;
+    let current_validate_change_tracking = change_validation.0;
     let panel_id = egui::Id::new((ctx.viewport_id(), "central_panel"));
     let mut panel_ui = egui::Ui::new(
         ctx.clone(),
@@ -1411,6 +1462,7 @@ where
                 .base_immutable(base_immutable.0)
                 .demos(&demos.0)
                 .compile_config(current_compile_config)
+                .validate_change_tracking(current_validate_change_tracking)
                 .trace_capture(trace_capture.0.clone(), level)
                 .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
                 .show(&mut *gui_state, focused_ix, &mut access, ui)
@@ -1524,6 +1576,11 @@ where
         }
     }
 
+    // Toggle change-tracking validation (a debugging aid; see `vm::sync`).
+    if let Some(enabled) = response.validate_change_tracking {
+        change_validation.0 = enabled;
+    }
+
     // Handle import button - open a file dialog (only if none already in flight).
     if response.import() && import_task.is_none() {
         let ext = gantz_egui::export::FILE_EXTENSION;
@@ -1535,6 +1592,27 @@ where
             Some(handle.read().await)
         });
         cmds.insert_resource(ImportTask(task));
+    }
+
+    // Commit each head whose graph the GUI edited in place this pass (node UI
+    // edits + structural scene edits) before returning, upholding the
+    // `WorkingGraph` invariant so `vm::sync` recompiles it from the committed
+    // address without re-hashing every open graph (#159). Graph ops applied via
+    // response observers commit themselves.
+    for head in &response.changed_heads {
+        let Some(&entity) = head_to_entity.get(head) else {
+            continue;
+        };
+        let Ok(mut data) = heads_query.get_mut(entity) else {
+            continue;
+        };
+        bevy_gantz::commit_working_graph(
+            &mut registry,
+            &mut cmds,
+            entity,
+            &mut data.core.head_ref.0,
+            &data.core.working_graph.0,
+        );
     }
 
     // Dispatch the dynamic response payloads emitted during the GUI pass.

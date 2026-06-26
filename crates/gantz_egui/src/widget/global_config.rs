@@ -11,6 +11,8 @@ use super::gantz::LayoutConfig;
 pub struct GlobalConfigResponse {
     /// The global compile config was changed via the compile toggles.
     pub compile_config: Option<gantz_core::compile::Config>,
+    /// The change-tracking validation toggle was changed (its new value).
+    pub validate_change_tracking: Option<bool>,
     /// The "Reset all demos" button was clicked.
     pub reset_all_demos: bool,
 }
@@ -18,16 +20,22 @@ pub struct GlobalConfigResponse {
 /// Render the global configuration controls.
 ///
 /// `compile_config` is the current global config; when `Some` the compile
-/// toggles are shown. `layout_config` holds the global auto-layout parameters
-/// (mutated in place). The config applies to all open heads.
+/// toggles are shown. `validate_change_tracking` is the current state of the
+/// change-tracking validation toggle; when `Some` the toggle is shown.
+/// `layout_config` holds the global auto-layout parameters (mutated in place).
+/// The config applies to all open heads.
 pub fn global_config(
     compile_config: Option<gantz_core::compile::Config>,
+    validate_change_tracking: Option<bool>,
     layout_config: &mut LayoutConfig,
     ui: &mut egui::Ui,
 ) -> GlobalConfigResponse {
     let mut changed_config = None;
-    if let Some(mut cfg) = compile_config {
+    let mut changed_validate = None;
+    if compile_config.is_some() || validate_change_tracking.is_some() {
         ui.label("Compile:");
+    }
+    if let Some(mut cfg) = compile_config {
         let mut changed = false;
         changed |= ui
             .checkbox(&mut cfg.validate_ir, "Validate IR")
@@ -50,6 +58,22 @@ pub fn global_config(
         if changed {
             changed_config = Some(cfg);
         }
+    }
+    if let Some(mut v) = validate_change_tracking {
+        if ui
+            .checkbox(&mut v, "Validate change tracking")
+            .on_hover_text(
+                "Re-hash every open graph each frame and warn if one changed \
+                 without being reported - a way to catch a missed `changed` \
+                 signal. A debugging aid only; leave off in normal use as it \
+                 reinstates the per-frame hashing this avoids.",
+            )
+            .changed()
+        {
+            changed_validate = Some(v);
+        }
+    }
+    if compile_config.is_some() || validate_change_tracking.is_some() {
         ui.separator();
     }
 
@@ -101,6 +125,7 @@ pub fn global_config(
 
     GlobalConfigResponse {
         compile_config: changed_config,
+        validate_change_tracking: changed_validate,
         reset_all_demos,
     }
 }
