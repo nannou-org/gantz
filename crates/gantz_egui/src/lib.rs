@@ -114,6 +114,14 @@ pub trait Registry: NameRegistry + FnNodeNames + NodeTypeRegistry + GraphRegistr
         let _ = name;
         None
     }
+
+    /// A concise description of the creatable node type `name`, for inline
+    /// display in the command palette. Lighter than [`command_info`](Self::command_info)
+    /// (it derives no input/output docs); the default has none.
+    fn node_description(&self, name: &str) -> Option<Cow<'static, str>> {
+        let _ = name;
+        None
+    }
 }
 
 /// On-hover documentation for a single node inlet or outlet.

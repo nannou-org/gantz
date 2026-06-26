@@ -191,17 +191,14 @@ impl gantz_egui::Registry for Environment {
     fn command_info(&self, name: &str) -> gantz_egui::CommandInfo {
         use gantz_core::Node as _;
         use gantz_egui::{CommandInfo, NodeUi as _, SocketDoc, SocketKind};
-        use std::borrow::Cow;
 
         let mut info = CommandInfo {
             name: name.to_string(),
+            description: self.node_description(name),
             ..Default::default()
         };
 
         if name == gantz_egui::widget::gantz::NESTED_GRAPH_TYPE {
-            info.description = Some(Cow::Borrowed(
-                "Create a new nested graph. Its inlets and outlets become this node's sockets.",
-            ));
             return info;
         }
 
@@ -215,19 +212,15 @@ impl gantz_egui::Registry for Environment {
             };
 
         if let Some(commit_ca) = self.registry.names().get(name) {
-            info.description = self
-                .registry
-                .description(name)
-                .map(|s| Cow::Owned(s.to_string()));
             if let Some(graph) = self.registry.commit_graph_ref(commit_ca) {
                 let ca: gantz_ca::ContentAddr = (*commit_ca).into();
-                let socket =
-                    |kind: SocketKind, ix: usize| gantz_egui::Registry::socket_doc(self, &ca, kind, ix);
+                let socket = |kind: SocketKind, ix: usize| {
+                    gantz_egui::Registry::socket_doc(self, &ca, kind, ix)
+                };
                 info.inputs = collect(graph.n_inputs(meta_ctx), SocketKind::Input, &socket);
                 info.outputs = collect(graph.n_outputs(meta_ctx), SocketKind::Output, &socket);
             }
         } else if let Some(node) = self.new_node(name) {
-            info.description = node.description().map(Cow::Borrowed);
             let socket = |kind: SocketKind, ix: usize| node.socket_doc(self, kind, ix);
             info.inputs = collect(node.n_inputs(meta_ctx), SocketKind::Input, &socket);
             info.outputs = collect(node.n_outputs(meta_ctx), SocketKind::Output, &socket);
@@ -238,6 +231,25 @@ impl gantz_egui::Registry for Environment {
 
     fn graph_description(&self, name: &str) -> Option<&str> {
         self.registry.description(name)
+    }
+
+    fn node_description(&self, name: &str) -> Option<std::borrow::Cow<'static, str>> {
+        use gantz_egui::NodeUi as _;
+        use std::borrow::Cow;
+        if name == gantz_egui::widget::gantz::NESTED_GRAPH_TYPE {
+            return Some(Cow::Borrowed(
+                "Create a new nested graph. Its inlets and outlets become this node's sockets.",
+            ));
+        }
+        if self.registry.names().contains_key(name) {
+            return self
+                .registry
+                .description(name)
+                .map(|s| Cow::Owned(s.to_string()));
+        }
+        self.new_node(name)
+            .and_then(|n| n.description())
+            .map(Cow::Borrowed)
     }
 }
 

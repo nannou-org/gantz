@@ -1,14 +1,19 @@
 //! A generic command palette widget adapted from rerun's command palette.
 
 use egui::{Align2, Key, NumExt as _};
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 /// Trait that must be implemented by command types
 pub trait Command: Copy + Sized {
     /// The text used for display and fuzzy matching
     fn text(&self) -> &str;
-    /// Detailed information for this command, rendered beside the highlighted
-    /// entry and within the per-entry hover tooltip. Default renders nothing.
+    /// A concise description shown inline, right of the name. Default none.
+    fn description(&self) -> Option<Cow<'static, str>> {
+        None
+    }
+    /// Detailed information for this command, rendered within the per-entry
+    /// hover tooltip. Default renders nothing.
     fn info_ui(&self, _ui: &mut egui::Ui) {}
     /// Optional keyboard shortcut for the command
     fn formatted_kb_shortcut(&self, _ctx: &egui::Context) -> Option<String> {
@@ -49,8 +54,8 @@ impl CommandPalette {
         let commands: Vec<T> = commands.into_iter().collect();
 
         let content_rect = egui_ctx.content_rect();
-        // A modest widening over the bare list to fit a slim info panel beside
-        // it; the full details remain available via each entry's hover tooltip.
+        // A modest widening to fit each entry's inline description; the full
+        // details remain available via the entry's hover tooltip.
         let width = 400.0;
         let max_height = 320.0.at_most(content_rect.height());
 
@@ -100,49 +105,12 @@ impl CommandPalette {
             scroll_to_selected_alternative = true;
         }
 
-        // Split the remaining height between the scrollable list (left) and a
-        // slim info panel for the highlighted entry (right). Bound both columns
-        // so long results/details scroll rather than overflow the window.
-        let body_height = ui.available_height();
-        let list_width = 200.0;
-        let mut selected_command = None;
-        let mut highlighted = None;
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(list_width, body_height),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("command-palette-list")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            let (sel, hl) = self.alternatives_ui(
-                                ui,
-                                commands,
-                                enter_pressed,
-                                scroll_to_selected_alternative,
-                            );
-                            selected_command = sel;
-                            highlighted = hl;
-                        });
-                },
-            );
-            ui.separator();
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), body_height),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("command-palette-info")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            if let Some(cmd) = highlighted {
-                                cmd.info_ui(ui);
-                            }
-                        });
-                },
-            );
-        });
+        let selected_command = egui::ScrollArea::vertical()
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                self.alternatives_ui(ui, commands, enter_pressed, scroll_to_selected_alternative)
+            })
+            .inner;
 
         if selected_command.is_some() {
             *self = Self::new();
@@ -151,16 +119,15 @@ impl CommandPalette {
         selected_command
     }
 
-    /// Render the matching entries. Returns `(selected, highlighted)`: the
-    /// command chosen by click/Enter (which closes the palette), and the
-    /// keyboard-highlighted command (whose details fill the info panel).
+    /// Render the matching entries. Returns the command chosen by click/Enter
+    /// (which closes the palette).
     fn alternatives_ui<T: Command>(
         &mut self,
         ui: &mut egui::Ui,
         commands: &[T],
         enter_pressed: bool,
         mut scroll_to_selected_alternative: bool,
-    ) -> (Option<T>, Option<T>) {
+    ) -> Option<T> {
         scroll_to_selected_alternative |= ui.input(|i| i.key_pressed(Key::ArrowUp));
         scroll_to_selected_alternative |= ui.input(|i| i.key_pressed(Key::ArrowDown));
 
@@ -173,6 +140,25 @@ impl CommandPalette {
         let mut selected_command = None;
 
         let matches = commands_that_match(&query, commands);
+
+        // Align descriptions into a single column just past the widest name (so
+        // names align at the left and descriptions align at `desc_x`), capped so
+        // the description always keeps at least ~half the row.
+        let row_width = ui.available_width();
+        let name_col_w = matches
+            .iter()
+            .map(|m| {
+                ui.painter()
+                    .layout_no_wrap(
+                        m.command.text().to_owned(),
+                        font_id.clone(),
+                        egui::Color32::WHITE,
+                    )
+                    .size()
+                    .x
+            })
+            .fold(0.0_f32, f32::max);
+        let desc_x = (name_col_w + 12.0).at_most(row_width * 0.55);
 
         for (i, fuzzy_match) in matches.iter().enumerate() {
             let command = fuzzy_match.command;
@@ -236,6 +222,23 @@ impl CommandPalette {
                 },
             );
 
+            // The description, aligned in its own column right of the name and
+            // dimmed. Overflow is clipped by the scroll area; the hover tooltip
+            // carries the full text.
+            if let Some(desc) = command.description() {
+                ui.painter().text(
+                    egui::pos2(rect.left() + desc_x, rect.center().y),
+                    Align2::LEFT_CENTER,
+                    desc.as_ref(),
+                    font_id.clone(),
+                    if selected {
+                        style.text_color()
+                    } else {
+                        ui.visuals().weak_text_color()
+                    },
+                );
+            }
+
             num_alternatives += 1;
         }
 
@@ -255,8 +258,7 @@ impl CommandPalette {
             .selected_alternative
             .clamp(0, num_alternatives.saturating_sub(1));
 
-        let highlighted = matches.get(self.selected_alternative).map(|fm| fm.command);
-        (selected_command, highlighted)
+        selected_command
     }
 }
 

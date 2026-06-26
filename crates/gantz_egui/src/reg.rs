@@ -218,14 +218,12 @@ impl<N: 'static + Node + crate::NodeUi + crate::sync::AsNamedRef + Send + Sync> 
         use crate::SocketKind;
         let mut info = crate::CommandInfo {
             name: name.to_string(),
+            description: self.node_description(name),
             ..Default::default()
         };
 
         // The reserved nested-graph entry mints a fresh, empty child graph.
         if name == crate::widget::gantz::NESTED_GRAPH_TYPE {
-            info.description = Some(Cow::Borrowed(
-                "Create a new nested graph. Its inlets and outlets become this node's sockets.",
-            ));
             return info;
         }
 
@@ -242,12 +240,8 @@ impl<N: 'static + Node + crate::NodeUi + crate::sync::AsNamedRef + Send + Sync> 
             };
 
         if let Some(commit_ca) = self.ca_registry.names().get(name) {
-            // A named graph: description from the registry; socket docs resolved
-            // from the referenced graph's inlet/outlet markers.
-            info.description = self
-                .ca_registry
-                .description(name)
-                .map(|s| Cow::Owned(s.to_string()));
+            // A named graph: socket docs resolved from the referenced graph's
+            // inlet/outlet markers.
             if let Some(graph) = self.ca_registry.commit_graph_ref(commit_ca) {
                 let ca: ca::ContentAddr = (*commit_ca).into();
                 let socket =
@@ -257,7 +251,6 @@ impl<N: 'static + Node + crate::NodeUi + crate::sync::AsNamedRef + Send + Sync> 
             }
         } else if let Some(builtin) = self.builtins.create(name) {
             // A builtin: introspect a fresh instance.
-            info.description = builtin.description().map(Cow::Borrowed);
             let socket = |kind: SocketKind, ix: usize| builtin.socket_doc(self, kind, ix);
             info.inputs = collect(builtin.n_inputs(meta_ctx), SocketKind::Input, &socket);
             info.outputs = collect(builtin.n_outputs(meta_ctx), SocketKind::Output, &socket);
@@ -268,5 +261,23 @@ impl<N: 'static + Node + crate::NodeUi + crate::sync::AsNamedRef + Send + Sync> 
 
     fn graph_description(&self, name: &str) -> Option<&str> {
         self.ca_registry.description(name)
+    }
+
+    fn node_description(&self, name: &str) -> Option<Cow<'static, str>> {
+        if name == crate::widget::gantz::NESTED_GRAPH_TYPE {
+            return Some(Cow::Borrowed(
+                "Create a new nested graph. Its inlets and outlets become this node's sockets.",
+            ));
+        }
+        if self.ca_registry.names().contains_key(name) {
+            return self
+                .ca_registry
+                .description(name)
+                .map(|s| Cow::Owned(s.to_string()));
+        }
+        self.builtins
+            .create(name)
+            .and_then(|n| n.description())
+            .map(Cow::Borrowed)
     }
 }

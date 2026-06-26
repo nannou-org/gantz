@@ -1412,6 +1412,10 @@ impl widget::command_palette::Command for NodeTyCmd<'_> {
         self.name
     }
 
+    fn description(&self) -> Option<std::borrow::Cow<'static, str>> {
+        self.env.node_description(self.name)
+    }
+
     fn info_ui(&self, ui: &mut egui::Ui) {
         crate::node_info_ui(&self.env.command_info(self.name), ui);
     }
