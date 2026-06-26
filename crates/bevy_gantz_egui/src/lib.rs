@@ -1492,6 +1492,11 @@ where
         }
     }
 
+    // Handle a graph description edit (keyed by the graph's name).
+    if let Some((ca::Head::Branch(name), description)) = &response.description_changed {
+        registry.set_description(name.clone(), description.clone());
+    }
+
     // Handle demo reset - re-merge the base version of the demo graph.
     if let Some(head) = &response.reset_base_graph {
         if let ca::Head::Branch(name) = head {

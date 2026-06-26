@@ -453,6 +453,13 @@ pub fn on_branch_head<N>(
     // Insert new branch name pointing to the fresh commit.
     registry.insert_name(new_name.clone(), new_commit_ca);
 
+    // Inherit the original graph's description, if any.
+    if let ca::Head::Branch(orig_name) = original {
+        if let Some(desc) = registry.description(orig_name).map(str::to_string) {
+            registry.set_description(new_name.clone(), desc);
+        }
+    }
+
     // Find and update the entity.
     let new_head = ca::Head::Branch(new_name.clone());
     for (entity, mut head_ref) in heads.iter_mut() {
