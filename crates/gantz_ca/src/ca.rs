@@ -70,7 +70,7 @@ impl str::FromStr for ContentAddr {
 }
 
 /// Hash some type implementing [`CaHash`].
-pub fn content_addr<T: CaHash>(t: &T) -> ContentAddr {
+pub fn content_addr<T: CaHash + ?Sized>(t: &T) -> ContentAddr {
     let mut hasher = Hasher::new();
     t.hash(&mut hasher);
     ContentAddr(hasher.finalize().into())

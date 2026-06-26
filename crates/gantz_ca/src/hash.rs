@@ -75,9 +75,14 @@ impl CaHash for bool {
     }
 }
 
-impl<const N: usize> CaHash for [u8; N] {
+impl<T: CaHash, const N: usize> CaHash for [T; N] {
     fn hash(&self, hasher: &mut Hasher) {
-        hasher.update(&self[..]);
+        // No length prefix: the element count is fixed by the type. For `[u8;
+        // N]` this streams the same bytes as a single bulk update, so existing
+        // content addresses are unchanged.
+        for elem in self {
+            elem.hash(hasher);
+        }
     }
 }
 
@@ -166,5 +171,27 @@ impl<T: CaHash> CaHash for std::collections::BTreeSet<T> {
 impl CaHash for crate::ContentAddr {
     fn hash(&self, hasher: &mut Hasher) {
         self.0.hash(hasher);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::content_addr;
+
+    /// The generalized `[T; N]` impl must stream `[u8; N]` byte-for-byte the
+    /// same as the slice impl, so promoting it doesn't shift existing content
+    /// addresses.
+    #[test]
+    fn u8_array_matches_slice() {
+        let arr: [u8; 3] = [1, 2, 3];
+        let slice: &[u8] = &arr[..];
+        assert_eq!(content_addr(&arr), content_addr(slice));
+    }
+
+    /// Non-`u8` arrays now hash element-wise and are order-sensitive.
+    #[test]
+    fn u16_array_is_element_and_order_sensitive() {
+        assert_ne!(content_addr(&[1u16, 2]), content_addr(&[2u16, 1]));
+        assert_eq!(content_addr(&[1u16, 2]), content_addr(&[1u16, 2]));
     }
 }
