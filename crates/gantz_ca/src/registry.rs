@@ -21,6 +21,13 @@ pub struct Registry<G> {
     commits: HashMap<CommitAddr, Commit>,
     /// A mapping from names to graph content addresses.
     names: BTreeMap<String, CommitAddr>,
+    /// Optional human-facing descriptions for named graphs, keyed by name.
+    ///
+    /// A sibling of [`names`](Self::names): both are mutable, name-keyed
+    /// metadata rather than content. Empty by default and omitted from
+    /// serialized output, so older `.gantz` files load unchanged.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    descriptions: BTreeMap<String, String>,
 }
 
 pub type Graphs<G> = HashMap<GraphAddr, G>;
@@ -47,6 +54,7 @@ impl<G> Registry<G> {
             graphs,
             commits,
             names,
+            descriptions: BTreeMap::new(),
         }
     }
 
@@ -63,6 +71,25 @@ impl<G> Registry<G> {
     /// A mapping from names to graph content addresses.
     pub fn names(&self) -> &Names {
         &self.names
+    }
+
+    /// A mapping from names to their human-facing descriptions.
+    pub fn descriptions(&self) -> &BTreeMap<String, String> {
+        &self.descriptions
+    }
+
+    /// The description for the given name, if any.
+    pub fn description(&self, name: &str) -> Option<&str> {
+        self.descriptions.get(name).map(String::as_str)
+    }
+
+    /// Set (or, when given an empty string, clear) the description for `name`.
+    pub fn set_description(&mut self, name: String, description: String) {
+        if description.is_empty() {
+            self.descriptions.remove(&name);
+        } else {
+            self.descriptions.insert(name, description);
+        }
     }
 
     /// Lookup the commit for the given name.
@@ -191,8 +218,10 @@ impl<G> Registry<G> {
 
     /// Remove the given name from the registry.
     ///
-    /// This does not remove the underlying commit, just the name mapping.
+    /// This does not remove the underlying commit, just the name mapping (and
+    /// any description associated with the name).
     pub fn remove_name(&mut self, name: &str) -> Option<CommitAddr> {
+        self.descriptions.remove(name);
         self.names.remove(name)
     }
 
@@ -216,6 +245,11 @@ impl<G> Registry<G> {
     pub fn merge(&mut self, incoming: Registry<G>) -> MergeResult {
         self.graphs.extend(incoming.graphs);
         self.commits.extend(incoming.commits);
+        // Bring over descriptions for names we don't already describe locally,
+        // mirroring how `merge_with` keeps existing views/demos.
+        for (name, description) in incoming.descriptions {
+            self.descriptions.entry(name).or_insert(description);
+        }
         let mut result = MergeResult::default();
         for (name, new_ca) in incoming.names {
             match self.names.get(&name) {
@@ -262,7 +296,16 @@ where
             .filter(|(_, ca)| required_commits.contains(ca))
             .map(|(name, &ca)| (name.clone(), ca))
             .collect();
-        Registry::new(graphs, commits, names)
+        // Carry descriptions only for the names that survived the filter.
+        let descriptions: BTreeMap<String, String> = self
+            .descriptions
+            .iter()
+            .filter(|(name, _)| names.contains_key(name.as_str()))
+            .map(|(name, desc)| (name.clone(), desc.clone()))
+            .collect();
+        let mut exported = Registry::new(graphs, commits, names);
+        exported.descriptions = descriptions;
+        exported
     }
 }
 
@@ -508,6 +551,57 @@ mod tests {
         // Its address is that of the equivalent root commit.
         let root = Commit::new(Duration::from_secs(1), None, ga);
         assert_eq!(ca, crate::commit_addr(&root));
+    }
+
+    #[test]
+    fn set_description_round_trips_and_clears() {
+        let (mut reg, _ca, _cb) = test_registry();
+        reg.set_description("alpha".to_string(), "the alpha graph".to_string());
+        assert_eq!(reg.description("alpha"), Some("the alpha graph"));
+        // An empty string clears the entry.
+        reg.set_description("alpha".to_string(), String::new());
+        assert_eq!(reg.description("alpha"), None);
+    }
+
+    #[test]
+    fn remove_name_drops_description() {
+        let (mut reg, _ca, _cb) = test_registry();
+        reg.set_description("alpha".to_string(), "doc".to_string());
+        reg.remove_name("alpha");
+        assert_eq!(reg.description("alpha"), None);
+        assert!(reg.descriptions().is_empty());
+    }
+
+    #[test]
+    fn export_filters_descriptions_to_required_names() {
+        let (mut reg, ca, cb) = test_registry();
+        reg.set_description("alpha".to_string(), "doc".to_string());
+        // alpha points at `ca`; requiring only `cb` drops both the name and doc.
+        let exported = reg.export(&[cb].into_iter().collect());
+        assert!(exported.descriptions().is_empty());
+        // Requiring `ca` keeps the name and its description.
+        let exported = reg.export(&[ca].into_iter().collect());
+        assert_eq!(exported.description("alpha"), Some("doc"));
+    }
+
+    #[test]
+    fn merge_brings_over_new_descriptions_but_keeps_local() {
+        let (mut base, _ca, _cb) = test_registry();
+        base.set_description("alpha".to_string(), "local".to_string());
+        let gc = graph_addr(3);
+        let cc = commit_addr_raw(30);
+        let commit_c = Commit::new(Duration::from_secs(3), None, gc);
+        let mut incoming = Registry::new(
+            HashMap::from([(gc, "graph_c".to_string())]),
+            HashMap::from([(cc, commit_c)]),
+            BTreeMap::from([("beta".to_string(), cc)]),
+        );
+        incoming.set_description("beta".to_string(), "imported".to_string());
+        // Incoming also tries to overwrite alpha; the local description wins.
+        incoming.set_description("alpha".to_string(), "imported-alpha".to_string());
+        base.merge(incoming);
+        assert_eq!(base.description("beta"), Some("imported"));
+        assert_eq!(base.description("alpha"), Some("local"));
     }
 
     #[test]
