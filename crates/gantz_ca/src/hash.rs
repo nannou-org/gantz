@@ -69,6 +69,12 @@ impl CaHash for isize {
     }
 }
 
+impl CaHash for bool {
+    fn hash(&self, hasher: &mut Hasher) {
+        hasher.update(&[*self as u8]);
+    }
+}
+
 impl<const N: usize> CaHash for [u8; N] {
     fn hash(&self, hasher: &mut Hasher) {
         hasher.update(&self[..]);
