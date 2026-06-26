@@ -81,9 +81,10 @@ impl NodeUi for Comment {
         // Get interaction state
         let interaction = uictx.interaction();
         let style = uictx.style();
-        // Use the default margin as the stroke width, as this will be the only
-        // draggable part of the node.
-        let stroke_w = style.spacing.window_margin.top as f32;
+        // Match the regular node selection outline: a thin stroke at the node's
+        // edge. The large draggable band lives in the (invisible) inner margin
+        // below, so the border stays subtle while the node remains easy to grab.
+        let stroke_w = style.visuals.selection.stroke.width;
         let stroke_color = if interaction.selected {
             style.visuals.selection.stroke.color
         } else if interaction.in_selection_rect || interaction.hovered {
@@ -93,9 +94,12 @@ impl NodeUi for Comment {
         };
         let stroke = egui::Stroke::new(stroke_w, stroke_color);
 
-        // Use a custom, transparent frame for comment nodes.
+        // Use a custom, transparent frame for comment nodes. The window margin
+        // becomes an inner margin: an invisible band around the text that is the
+        // node's only draggable region (the text itself captures the pointer).
         let frame = egui::Frame::new()
             .fill(egui::Color32::TRANSPARENT)
+            .inner_margin(style.spacing.window_margin)
             .corner_radius(style.visuals.window_corner_radius)
             .stroke(stroke);
 
