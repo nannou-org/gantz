@@ -124,6 +124,16 @@ impl Datum {
         }
     }
 
+    /// The value of a float datum, coercing integer datums to `f64`.
+    pub(crate) fn as_f64(&self) -> Option<f64> {
+        match self {
+            Datum::F64(n) => Some(*n),
+            Datum::I64(n) => Some(*n as f64),
+            Datum::U64(n) => Some(*n as f64),
+            _ => None,
+        }
+    }
+
     /// The elements of a sequence datum.
     pub(crate) fn as_seq(&self) -> Option<&[Datum]> {
         match self {

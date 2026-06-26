@@ -89,6 +89,11 @@ pub fn as_f32(e: &ExprKind, src: &str) -> Option<f32> {
     span_src(e, src)?.parse().ok()
 }
 
+/// A numeric datum parsed as a double (from its verbatim source).
+pub fn as_f64(e: &ExprKind, src: &str) -> Option<f64> {
+    span_src(e, src)?.parse().ok()
+}
+
 /// Quote a string as a Steel string literal.
 pub fn quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);

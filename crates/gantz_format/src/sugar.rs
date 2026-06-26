@@ -151,7 +151,7 @@ impl Sugar for DefaultSugar {
             "expr" => expr_spec(args, src)?,
             "branch" => branch_spec(args, src)?,
             "comment" => comment_spec(args, src)?,
-            "number" => node_datum("Number", vec![]),
+            "number" => number_spec(args, src)?,
             "log" => log_spec(args, src)?,
             _ => return Ok(None),
         };
@@ -175,6 +175,7 @@ impl Sugar for DefaultSugar {
             "Expr" => Some(write_expr(node)),
             "Branch" => Some(write_branch(node)),
             "Comment" => Some(write_comment(node)),
+            "Number" => Some(write_number(node)),
             "Log" => Some(write_log(node)),
             other => keyword_for_tag(other).map(str::to_string),
         }
@@ -281,6 +282,25 @@ fn comment_spec(args: &[ExprKind], src: &str) -> Result<Datum, FormatError> {
     ))
 }
 
+/// Read a `(number [#:min m] [#:max m] [#:precision n] [#:no-push-eval])` form.
+/// Only the non-default fields are emitted, so a bare `number` stays bare.
+fn number_spec(args: &[ExprKind], src: &str) -> Result<Datum, FormatError> {
+    let mut fields = Vec::new();
+    if let Some(min) = keyword_f64(args, "min", src)? {
+        fields.push(("min", Datum::F64(min)));
+    }
+    if let Some(max) = keyword_f64(args, "max", src)? {
+        fields.push(("max", Datum::F64(max)));
+    }
+    if let Some(precision) = keyword_int(args, "precision", src)? {
+        fields.push(("precision", Datum::U64(precision.max(0) as u64)));
+    }
+    if has_flag(args, "no-push-eval") {
+        fields.push(("push_eval_on_edit", Datum::Bool(false)));
+    }
+    Ok(node_datum("Number", fields))
+}
+
 fn log_spec(args: &[ExprKind], src: &str) -> Result<Datum, FormatError> {
     let level = match args.first().and_then(as_symbol) {
         Some(s) => log_level(&s, &args[0], src)?,
@@ -340,6 +360,36 @@ fn write_comment(node: &Datum) -> String {
     format!("(comment {} {w} {h})", quote(text))
 }
 
+/// Write a `Number` as a bare `number` when all config is default, else as
+/// `(number #:min m #:max m #:precision n #:no-push-eval)` with only the
+/// non-default fields.
+fn write_number(node: &Datum) -> String {
+    let min = node.get("min").and_then(Datum::as_f64);
+    let max = node.get("max").and_then(Datum::as_f64);
+    let precision = node.get("precision").and_then(Datum::as_i64);
+    let push = node
+        .get("push_eval_on_edit")
+        .and_then(Datum::as_bool)
+        .unwrap_or(true);
+    if min.is_none() && max.is_none() && precision.is_none() && push {
+        return "number".to_string();
+    }
+    let mut parts = Vec::new();
+    if let Some(min) = min {
+        parts.push(format!("#:min {min}"));
+    }
+    if let Some(max) = max {
+        parts.push(format!("#:max {max}"));
+    }
+    if let Some(precision) = precision {
+        parts.push(format!("#:precision {precision}"));
+    }
+    if !push {
+        parts.push("#:no-push-eval".to_string());
+    }
+    format!("(number {})", parts.join(" "))
+}
+
 fn write_log(node: &Datum) -> String {
     match node.get("level").and_then(Datum::as_str) {
         Some(level) if !level.eq_ignore_ascii_case("info") => {
@@ -375,6 +425,37 @@ fn keyword_int(args: &[ExprKind], key: &str, src: &str) -> Result<Option<i64>, F
         }
     }
     Ok(None)
+}
+
+fn float_at(e: &ExprKind, src: &str) -> Result<f64, FormatError> {
+    sexpr::as_f64(e, src)
+        .ok_or_else(|| err_at(e, src, ErrorKind::Malformed("expected a number".into())))
+}
+
+/// Find a `#:<key>` keyword in `args` and return the following float value.
+fn keyword_f64(args: &[ExprKind], key: &str, src: &str) -> Result<Option<f64>, FormatError> {
+    for (i, a) in args.iter().enumerate() {
+        if as_keyword(a).as_deref() == Some(key) {
+            let val = args
+                .get(i + 1)
+                .map(|v| float_at(v, src))
+                .transpose()?
+                .ok_or_else(|| {
+                    err_at(
+                        a,
+                        src,
+                        ErrorKind::Malformed(format!("#:{key} requires a number")),
+                    )
+                })?;
+            return Ok(Some(val));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether a bare `#:<key>` flag keyword is present in `args`.
+fn has_flag(args: &[ExprKind], key: &str) -> bool {
+    args.iter().any(|a| as_keyword(a).as_deref() == Some(key))
 }
 
 /// Map a log-level symbol to the `log::Level` serde representation.
@@ -529,5 +610,55 @@ mod tests {
         // A bare (undocumented) inlet still writes as the bare keyword.
         let bare = s.read_bare("inlet").expect("bare inlet");
         assert_eq!(s.write_spec("Inlet", &bare).as_deref(), Some("inlet"));
+    }
+
+    #[test]
+    fn number_config_round_trips() {
+        let s = DefaultSugar;
+
+        // A bare (default) number stays bare, whether read as a keyword or spec.
+        let bare = s.read_bare("number").expect("bare number");
+        assert_eq!(s.write_spec("Number", &bare).as_deref(), Some("number"));
+        let empty = read_spec(&s, "(number)").expect("empty spec");
+        assert_eq!(s.write_spec("Number", &empty).as_deref(), Some("number"));
+
+        // Min/max bounds.
+        let mm = read_spec(&s, "(number #:min 0 #:max 100)").expect("min/max");
+        assert_eq!(mm.get("min").and_then(Datum::as_f64), Some(0.0));
+        assert_eq!(mm.get("max").and_then(Datum::as_f64), Some(100.0));
+        assert_eq!(
+            s.write_spec("Number", &mm).as_deref(),
+            Some("(number #:min 0 #:max 100)"),
+        );
+
+        // Display precision.
+        let p = read_spec(&s, "(number #:precision 2)").expect("precision");
+        assert_eq!(p.get("precision").and_then(Datum::as_i64), Some(2));
+        assert_eq!(
+            s.write_spec("Number", &p).as_deref(),
+            Some("(number #:precision 2)"),
+        );
+
+        // Disabled push-eval.
+        let np = read_spec(&s, "(number #:no-push-eval)").expect("no push-eval");
+        assert_eq!(
+            np.get("push_eval_on_edit").and_then(Datum::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            s.write_spec("Number", &np).as_deref(),
+            Some("(number #:no-push-eval)"),
+        );
+
+        // Everything at once round-trips in canonical order.
+        let all = read_spec(
+            &s,
+            "(number #:min -1.5 #:max 1.5 #:precision 3 #:no-push-eval)",
+        )
+        .expect("all");
+        assert_eq!(
+            s.write_spec("Number", &all).as_deref(),
+            Some("(number #:min -1.5 #:max 1.5 #:precision 3 #:no-push-eval)"),
+        );
     }
 }
