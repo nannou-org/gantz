@@ -511,6 +511,10 @@ where
         (**self).name(registry)
     }
 
+    fn description(&self) -> Option<&'static str> {
+        (**self).description()
+    }
+
     fn ui(
         &mut self,
         ctx: NodeCtx,
@@ -561,6 +565,10 @@ macro_rules! impl_node_ui_for_ptr {
         {
             fn name(&self, registry: &dyn Registry) -> &str {
                 (**self).name(registry)
+            }
+
+            fn description(&self) -> Option<&'static str> {
+                (**self).description()
             }
 
             fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> egui_graph::FramedResponse<egui::Response> {
