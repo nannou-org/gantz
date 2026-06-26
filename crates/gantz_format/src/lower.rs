@@ -58,6 +58,7 @@ where
         graphs,
         commits,
         names: name_decls,
+        descriptions,
         extra,
     } = doc;
 
@@ -134,6 +135,11 @@ where
                 }
             }
         }
+    }
+
+    // Apply name-keyed descriptions (independent of how each name registered).
+    for decl in descriptions {
+        registry.set_description(decl.name, decl.description);
     }
 
     Ok(Loaded {

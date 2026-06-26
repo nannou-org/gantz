@@ -10,8 +10,8 @@
 use crate::datum::{Datum, datum_from_expr};
 use crate::error::{ErrorKind, FormatError};
 use crate::model::{
-    Addr, CommitDecl, Conn, Document, Endpoint, Form, GraphBody, GraphDef, NameDecl, NodeDecl,
-    NodeSpec, RefSpec,
+    Addr, CommitDecl, Conn, DescriptionDecl, Document, Endpoint, Form, GraphBody, GraphDef,
+    NameDecl, NodeDecl, NodeSpec, RefSpec,
 };
 use crate::sexpr::{self, as_keyword, as_string, as_symbol, err_at, list_args, span_src};
 use crate::sugar::Sugar;
@@ -37,6 +37,9 @@ pub fn parse(src: &str, sugar: &dyn Sugar) -> Result<Document, FormatError> {
                 .push(parse_graph_def(&args[1..], form, src, sugar)?),
             "commits" => doc.commits.extend(parse_commits_table(&args[1..], src)?),
             "names" => doc.names.extend(parse_names_table(&args[1..], src)?),
+            "descriptions" => doc
+                .descriptions
+                .extend(parse_descriptions_table(&args[1..], src)?),
             // Preserve anything else (e.g. `layout`, `demo`) for an extender.
             other => doc.extra.push(Form {
                 head: other.to_string(),
@@ -305,6 +308,45 @@ fn parse_names_table(args: &[ExprKind], src: &str) -> Result<Vec<NameDecl>, Form
     Ok(names)
 }
 
+fn parse_descriptions_table(
+    args: &[ExprKind],
+    src: &str,
+) -> Result<Vec<DescriptionDecl>, FormatError> {
+    let mut descriptions = Vec::new();
+    for item in args {
+        let iargs = list_args(item).ok_or_else(|| {
+            err_at(
+                item,
+                src,
+                ErrorKind::Malformed("description entry must be (name \"text\")".into()),
+            )
+        })?;
+        if iargs.len() != 2 {
+            return Err(err_at(
+                item,
+                src,
+                ErrorKind::Malformed("description entry must be (name \"text\")".into()),
+            ));
+        }
+        let name = as_symbol(&iargs[0]).ok_or_else(|| {
+            err_at(
+                &iargs[0],
+                src,
+                ErrorKind::Malformed("description name must be a symbol".into()),
+            )
+        })?;
+        let description = as_string(&iargs[1]).ok_or_else(|| {
+            err_at(
+                &iargs[1],
+                src,
+                ErrorKind::Malformed("description must be a string".into()),
+            )
+        })?;
+        descriptions.push(DescriptionDecl { name, description });
+    }
+    Ok(descriptions)
+}
+
 fn parse_commit_entry(
     args: &[ExprKind],
     item: &ExprKind,
@@ -446,6 +488,25 @@ mod tests {
         assert_eq!(doc.extra.len(), 1);
         assert_eq!(doc.extra[0].head, "layout");
         assert_eq!(doc.extra[0].raw, "(layout mul (m 1 2))");
+    }
+
+    #[test]
+    fn round_trips_descriptions() {
+        let text = "\
+(graph mul (m (expr 1)))
+(descriptions
+  (mul \"multiply two numbers\"))";
+        let doc = parse(text, &DefaultSugar).expect("parse");
+        assert_eq!(doc.descriptions.len(), 1);
+        assert_eq!(doc.descriptions[0].name, "mul");
+        assert_eq!(doc.descriptions[0].description, "multiply two numbers");
+
+        // write -> parse preserves the description verbatim.
+        let written = crate::writer::write_document(&doc, &DefaultSugar);
+        let reparsed = parse(&written, &DefaultSugar).expect("reparse");
+        assert_eq!(reparsed.descriptions.len(), 1);
+        assert_eq!(reparsed.descriptions[0].name, "mul");
+        assert_eq!(reparsed.descriptions[0].description, "multiply two numbers");
     }
 
     #[test]

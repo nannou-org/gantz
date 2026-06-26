@@ -18,6 +18,8 @@ pub struct Document {
     pub commits: Vec<CommitDecl>,
     /// Name -> commit mappings.
     pub names: Vec<NameDecl>,
+    /// Name -> human-facing description mappings.
+    pub descriptions: Vec<DescriptionDecl>,
     /// Unrecognised top-level forms, preserved verbatim for extenders.
     pub extra: Vec<Form>,
 }
@@ -139,4 +141,13 @@ pub struct NameDecl {
     pub name: String,
     /// The commit it points at.
     pub commit: Addr,
+}
+
+/// A single entry in the `(descriptions ...)` table.
+#[derive(Clone, Debug)]
+pub struct DescriptionDecl {
+    /// The registry name (branch) the description applies to.
+    pub name: String,
+    /// The human-facing description text.
+    pub description: String,
 }
