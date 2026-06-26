@@ -190,7 +190,7 @@ impl NodeUi for NamedRef {
     }
 
     fn demo_graph<'a>(&self, registry: &'a dyn crate::Registry) -> Option<&'a str> {
-        registry.demo_graph(&self.ref_.content_addr())
+        registry.demo_graph(&self.name)
     }
 
     fn nav_head(&self, _registry: &dyn crate::Registry) -> Option<gantz_ca::Head> {

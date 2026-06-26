@@ -44,32 +44,35 @@ pub struct Export<G> {
     pub registry: gantz_ca::Registry<G>,
     #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub views: HashMap<CommitAddr, egui_graph::View>,
-    /// Maps commits to their associated demo graph name (a `demo-*` name).
+    /// Maps a graph *name* to its associated demo graph name (a `demo-*` name).
+    ///
+    /// Keyed by name (rather than commit) so the association survives an edit:
+    /// editing a graph mints a new commit but keeps the name.
     #[serde(default)]
-    pub demos: HashMap<CommitAddr, String>,
+    pub demos: HashMap<String, String>,
 }
 
-/// Produce an [`Export`] by filtering views and demos to commits present in
-/// the registry.
+/// Produce an [`Export`] by filtering views to commits, and demos to names,
+/// present in the registry.
 pub fn export_with<G>(
     registry: gantz_ca::Registry<G>,
     all_views: &HashMap<CommitAddr, egui_graph::View>,
-    all_demos: &HashMap<CommitAddr, String>,
+    all_demos: &HashMap<String, String>,
 ) -> Export<G>
 where
     G: Clone,
 {
     let commits = registry.commits();
-    let filter = |ca: &&CommitAddr| commits.contains_key(ca);
     let views = all_views
         .iter()
-        .filter(|(ca, _)| filter(ca))
+        .filter(|(ca, _)| commits.contains_key(ca))
         .map(|(&ca, v)| (ca, v.clone()))
         .collect();
+    let names = registry.names();
     let demos = all_demos
         .iter()
-        .filter(|(ca, _)| filter(ca))
-        .map(|(&ca, v)| (ca, v.clone()))
+        .filter(|(name, _)| names.contains_key(name.as_str()))
+        .map(|(name, demo)| (name.clone(), demo.clone()))
         .collect();
     Export {
         registry,
@@ -138,7 +141,7 @@ pub fn export_heads_sexpr<N>(
     get_node: GetNode,
     registry: &gantz_ca::Registry<Graph<N>>,
     all_views: &HashMap<CommitAddr, egui_graph::View>,
-    all_demos: &HashMap<CommitAddr, String>,
+    all_demos: &HashMap<String, String>,
     heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
 ) -> Result<String, crate::format::FormatError>
 where
@@ -157,7 +160,7 @@ pub fn export_heads_sexpr_named<N>(
     get_node: GetNode,
     registry: &gantz_ca::Registry<Graph<N>>,
     all_views: &HashMap<CommitAddr, egui_graph::View>,
-    all_demos: &HashMap<CommitAddr, String>,
+    all_demos: &HashMap<String, String>,
     heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
 ) -> Result<String, crate::format::FormatError>
 where
@@ -175,15 +178,15 @@ where
 pub fn merge_with<G>(
     registry: &mut gantz_ca::Registry<G>,
     views: &mut HashMap<CommitAddr, egui_graph::View>,
-    demos: &mut HashMap<CommitAddr, String>,
+    demos: &mut HashMap<String, String>,
     export: Export<G>,
 ) -> MergeResult {
     let result = registry.merge(export.registry);
     for (ca, v) in export.views {
         views.entry(ca).or_insert(v);
     }
-    for (ca, d) in export.demos {
-        demos.entry(ca).or_insert(d);
+    for (name, d) in export.demos {
+        demos.entry(name).or_insert(d);
     }
     result
 }
@@ -334,7 +337,7 @@ where
 pub fn paste<N>(
     registry: &mut gantz_ca::Registry<Graph<N>>,
     views: &mut HashMap<CommitAddr, egui_graph::View>,
-    demos: &mut HashMap<CommitAddr, String>,
+    demos: &mut HashMap<String, String>,
     target_graph: &mut Graph<N>,
     target_layout: &mut egui_graph::Layout,
     copied: &Copied<N>,
@@ -508,6 +511,29 @@ mod tests {
         let export = export_with(registry, &all_views, &HashMap::new());
         assert!(export.views.contains_key(&ca));
         assert!(!export.views.contains_key(&cb));
+    }
+
+    #[test]
+    fn export_with_filters_demos() {
+        let ga = graph_addr(1);
+        let ca = commit_addr_raw(10);
+        let commit = Commit::new(Duration::from_secs(1), None, ga);
+        let registry = gantz_ca::Registry::new(
+            HashMap::from([(ga, "g".to_string())]),
+            HashMap::from([(ca, commit)]),
+            BTreeMap::from([("alpha".to_string(), ca)]),
+        );
+        let all_demos = HashMap::from([
+            ("alpha".to_string(), "demo-alpha".to_string()),
+            // `beta` is not a name in the registry, so it is dropped.
+            ("beta".to_string(), "demo-beta".to_string()),
+        ]);
+        let export = export_with(registry, &HashMap::new(), &all_demos);
+        assert_eq!(
+            export.demos.get("alpha").map(String::as_str),
+            Some("demo-alpha")
+        );
+        assert!(!export.demos.contains_key("beta"));
     }
 
     #[test]

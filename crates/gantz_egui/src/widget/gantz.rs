@@ -55,7 +55,7 @@ pub trait NodeTypeRegistry {
 pub struct Gantz<'a> {
     env: &'a dyn Registry,
     base_names: &'a gantz_ca::registry::Names,
-    demos: Option<&'a HashMap<gantz_ca::CommitAddr, String>>,
+    demos: Option<&'a HashMap<String, String>>,
     log_source: Option<LogSource>,
     perf_vm: Option<&'a mut widget::PerfCapture>,
     perf_gui: Option<&'a mut widget::PerfCapture>,
@@ -409,7 +409,7 @@ impl<'a> Gantz<'a> {
     }
 
     /// Provide demo graph associations for the config dropdown.
-    pub fn demos(mut self, demos: &'a HashMap<gantz_ca::CommitAddr, String>) -> Self {
+    pub fn demos(mut self, demos: &'a HashMap<String, String>) -> Self {
         self.demos = Some(demos);
         self
     }
@@ -777,10 +777,9 @@ where
 
                     // Look up the current demo association for this head.
                     let current_demo = match &head {
-                        gantz_ca::Head::Branch(name) => names
-                            .get(name)
-                            .and_then(|ca| gantz.demos.and_then(|d| d.get(ca)))
-                            .map(|s| s.as_str()),
+                        gantz_ca::Head::Branch(name) => {
+                            gantz.demos.and_then(|d| d.get(name)).map(|s| s.as_str())
+                        }
                         _ => None,
                     };
 
@@ -1959,7 +1958,7 @@ fn graph_select(
     heads: &[gantz_ca::Head],
     focused_head: usize,
     base_names: &gantz_ca::registry::Names,
-    demos: Option<&HashMap<gantz_ca::CommitAddr, String>>,
+    demos: Option<&HashMap<String, String>>,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse> {
     pane_ui(ui, |ui| {

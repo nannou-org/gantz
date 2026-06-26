@@ -13,8 +13,8 @@ pub struct GraphSelect<'a> {
     heads: &'a [gantz_ca::Head],
     focused_head: Option<usize>,
     base_names: &'a gantz_ca::registry::Names,
-    /// Demo associations (commit -> demo name), for the row context menu.
-    demos: Option<&'a HashMap<gantz_ca::CommitAddr, String>>,
+    /// Demo associations (graph name -> demo name), for the row context menu.
+    demos: Option<&'a HashMap<String, String>>,
 }
 
 #[derive(Clone)]
@@ -119,7 +119,7 @@ impl<'a> GraphSelect<'a> {
 
     /// Provide demo associations so a graph's row context menu can offer to
     /// open its associated demo.
-    pub fn demos(mut self, demos: Option<&'a HashMap<gantz_ca::CommitAddr, String>>) -> Self {
+    pub fn demos(mut self, demos: Option<&'a HashMap<String, String>>) -> Self {
         self.demos = demos;
         self
     }
@@ -218,7 +218,7 @@ impl<'a> GraphSelect<'a> {
                         // Deletable iff the row offers an `×` (named, non-base).
                         let deletable = res.delete.is_some();
                         // The associated demo to offer, if any.
-                        let demo = demos.and_then(|d| d.get(ca)).cloned();
+                        let demo = demos.and_then(|d| d.get(name)).cloned();
                         res.row.context_menu(|ui| {
                             if ui.button("open").clicked() {
                                 response.replaced = Some(head.clone());

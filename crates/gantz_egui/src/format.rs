@@ -8,7 +8,7 @@
 //! existing `crate::format::{from_str, to_string}` call sites are unchanged.
 
 use crate::export::Export;
-use gantz_ca::{CaHash, CommitAddr, Registry, Timestamp};
+use gantz_ca::{CaHash, CommitAddr, Timestamp};
 use gantz_core::node::graph::Graph;
 use gantz_format::sexpr;
 use gantz_format::{Addr, Form, GraphLabels, Loaded};
@@ -28,7 +28,7 @@ where
 {
     let loaded = gantz_format::from_str::<N>(text, now)?;
     let mut views: HashMap<CommitAddr, egui_graph::View> = HashMap::new();
-    let mut demos: HashMap<CommitAddr, String> = HashMap::new();
+    let mut demos: HashMap<String, String> = HashMap::new();
     for form in &loaded.extra {
         match form.head.as_str() {
             "layout" => apply_layout(form, &loaded, &mut views),
@@ -64,13 +64,11 @@ where
         }
     }
 
-    // `(demo <name> ...)` per commit that has a demo.
+    // `(demo <name> ...)` per named graph that has a demo, in name order.
     let mut demos: Vec<_> = export.demos.iter().collect();
-    demos.sort_by_key(|(ca, _)| **ca);
-    for (commit_ca, demo) in demos {
-        if let Some(name) = name_for_commit(&export.registry, commit_ca) {
-            sections.push(format!("(demo {} {})", name, sexpr::quote(demo)));
-        }
+    demos.sort_by(|a, b| a.0.cmp(b.0));
+    for (name, demo) in demos {
+        sections.push(format!("(demo {} {})", name, sexpr::quote(demo)));
     }
 
     let mut result = sections.join("\n\n");
@@ -104,8 +102,8 @@ where
     }
 
     // `(demo <name> ...)` per named graph that has a demo, in name order.
-    for (name, commit_ca) in export.registry.names() {
-        if let Some(demo) = export.demos.get(commit_ca) {
+    for (name, _commit_ca) in export.registry.names() {
+        if let Some(demo) = export.demos.get(name) {
             sections.push(format!("(demo {} {})", name, sexpr::quote(demo)));
         }
     }
@@ -215,7 +213,7 @@ fn layout_text(labels: &GraphLabels, view: &egui_graph::View, bare_id: bool) -> 
 
 // -- demos -------------------------------------------------------------------
 
-fn apply_demo<N>(form: &Form, loaded: &Loaded<N>, demos: &mut HashMap<CommitAddr, String>) {
+fn apply_demo<N>(form: &Form, loaded: &Loaded<N>, demos: &mut HashMap<String, String>) {
     let src = &form.raw;
     let Ok(forms) = sexpr::read(src) else { return };
     let Some(args) = forms.first().and_then(sexpr::list_args) else {
@@ -228,8 +226,9 @@ fn apply_demo<N>(form: &Form, loaded: &Loaded<N>, demos: &mut HashMap<CommitAddr
     ) else {
         return;
     };
-    if let Some(&commit) = loaded.names.get(&name) {
-        demos.insert(commit, demo);
+    // Only retain demos for names this document's registry actually defines.
+    if loaded.names.contains_key(&name) {
+        demos.insert(name, demo);
     }
 }
 
@@ -240,13 +239,4 @@ fn addr_of(e: &sexpr::ExprKind) -> Option<Addr> {
     sexpr::as_string(e)
         .map(Addr::Concrete)
         .or_else(|| sexpr::as_symbol(e).map(Addr::Label))
-}
-
-/// The first registry name pointing at `commit`, if any.
-fn name_for_commit<N>(registry: &Registry<Graph<N>>, commit: &CommitAddr) -> Option<String> {
-    registry
-        .names()
-        .iter()
-        .find(|(_, ca)| *ca == commit)
-        .map(|(name, _)| name.clone())
 }

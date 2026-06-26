@@ -259,7 +259,7 @@ pub fn paste<N>(
     registry: &mut gantz_ca::Registry<Graph<N>>,
     editing: Option<&str>,
     all_views: &mut HashMap<CommitAddr, egui_graph::View>,
-    all_demos: &mut HashMap<CommitAddr, String>,
+    all_demos: &mut HashMap<String, String>,
     graph: &mut Graph<N>,
     head_view: &mut egui_graph::View,
     head_state: &mut OpenHeadState,
