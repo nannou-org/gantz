@@ -283,6 +283,9 @@ fn primitives() -> Primitives {
     register_primitive(&mut p, "number", || {
         Box::new(gantz_std::Number::default()) as Box<_>
     });
+    register_primitive(&mut p, "plot", || {
+        Box::new(gantz_egui::node::Plot::default()) as Box<_>
+    });
     p
 }
 
@@ -326,6 +329,8 @@ impl Node for gantz_std::Number {}
 impl Node for gantz_egui::node::Inspect {}
 #[typetag::serde]
 impl Node for gantz_egui::node::NamedRef {}
+#[typetag::serde]
+impl Node for gantz_egui::node::Plot {}
 
 #[typetag::serde]
 impl Node for Box<dyn Node> {}

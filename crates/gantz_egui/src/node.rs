@@ -10,8 +10,10 @@ pub use fn_named_ref::{FnNamedRef, FnNodeNames};
 pub use gantz_core::node::{Id, state};
 pub use inspect::Inspect;
 pub use named_ref::{NESTED_SEP, NameRegistry, NamedRef, missing_color, outdated_color};
+pub use plot::{Plot, PlotMode, PlotStyle};
 
 pub mod comment;
 pub mod fn_named_ref;
 pub mod inspect;
 pub mod named_ref;
+pub mod plot;

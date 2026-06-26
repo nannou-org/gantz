@@ -45,6 +45,8 @@ impl Node for gantz_egui::node::Comment {}
 impl Node for bevy_gantz_egui::node::FrameBang {}
 #[typetag::serde]
 impl Node for gantz_egui::node::Inspect {}
+#[typetag::serde]
+impl Node for gantz_egui::node::Plot {}
 
 impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
     fn from(named: gantz_egui::node::NamedRef) -> Self {
@@ -142,6 +144,28 @@ mod tests {
                 vec![
                     ("ref_", Datum::Str("0".repeat(64))),
                     ("name", Datum::Str("mul".into())),
+                ],
+            ),
+            node_datum(
+                "Plot",
+                vec![
+                    ("mode", Datum::Str("Signal".into())),
+                    ("style", Datum::Str("Line".into())),
+                    ("capacity", Datum::U64(128)),
+                    ("width", Datum::U64(160)),
+                    ("height", Datum::U64(90)),
+                    (
+                        "color",
+                        Datum::Seq(vec![
+                            Datum::U64(10),
+                            Datum::U64(20),
+                            Datum::U64(30),
+                            Datum::U64(255),
+                        ]),
+                    ),
+                    ("show_grid", Datum::Bool(false)),
+                    ("show_axes", Datum::Bool(true)),
+                    ("interactive", Datum::Bool(true)),
                 ],
             ),
         ];
