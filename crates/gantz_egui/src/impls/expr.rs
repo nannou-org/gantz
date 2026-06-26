@@ -66,7 +66,9 @@ impl<'a> egui::Widget for ExprEdit<'a> {
         );
         if response.changed() {
             if let Ok(new_expr) = gantz_core::node::expr(&state.code) {
-                *expr = new_expr;
+                // Preserve the user-set output count across text edits; only the
+                // source (and thus the `$var` inputs) should follow the edit.
+                *expr = new_expr.with_outputs(expr.outputs());
             }
         }
 
