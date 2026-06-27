@@ -1,7 +1,7 @@
 //! The "Settings" sidebar tab: globally-relevant configuration grouped into
 //! Panes / Style / Global subtabs.
 
-use super::gantz::{LayoutConfig, ViewToggles};
+use super::gantz::{LayoutConfig, SceneConfig, ViewToggles};
 
 /// Which settings subtab is selected. Persisted only within a session.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -31,6 +31,7 @@ pub fn settings(
     compile_config: Option<gantz_core::compile::Config>,
     validate_change_tracking: Option<bool>,
     layout_config: &mut LayoutConfig,
+    scene_config: &mut SceneConfig,
     ui: &mut egui::Ui,
 ) -> SettingsResponse {
     let id = ui.id().with("settings_subtab");
@@ -85,11 +86,17 @@ pub fn settings(
                 });
         }
         SettingsTab::Style => {
-            ui.weak("Style configuration coming soon.");
+            super::style_config(&mut scene_config.grid, ui);
         }
         SettingsTab::Global => {
-            let g =
-                super::global_config(compile_config, validate_change_tracking, layout_config, ui);
+            let g = super::global_config(
+                compile_config,
+                validate_change_tracking,
+                layout_config,
+                &mut scene_config.snap,
+                &mut scene_config.align,
+                ui,
+            );
             res.compile_config = g.compile_config;
             res.validate_change_tracking = g.validate_change_tracking;
             res.reset_all_demos = g.reset_all_demos;

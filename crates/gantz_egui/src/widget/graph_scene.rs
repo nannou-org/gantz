@@ -58,6 +58,9 @@ pub struct GraphScene<'a, N> {
     graph: &'a mut Graph<N>,
     id: egui::Id,
     layout_params: egui_graph::LayoutParams,
+    /// Global dot-grid, snapping and snap-align options, applied to the
+    /// underlying `egui_graph::Graph` builder.
+    scene_config: crate::widget::gantz::SceneConfig,
     immutable: bool,
     /// When set, the background context menu gains a "Panes" submenu of
     /// pane-visibility checkboxes.
@@ -77,6 +80,11 @@ pub struct GraphSceneState {
     /// One-shot request to center the view, consumed by [`GraphScene::show`].
     #[serde(default, skip)]
     pub pending_center_view: bool,
+    /// One-shot request to align the current selection, set by the node context
+    /// menu and consumed by [`GraphScene::show`] on the next pass. The feature
+    /// (`AlignBy`) chooses min-edge / centre / max-edge; orientation is inferred.
+    #[serde(default, skip)]
+    pub pending_align: Option<egui_graph::AlignBy>,
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -112,6 +120,7 @@ where
             graph,
             id: egui::Id::new("gantz-graph-scene"),
             layout_params: egui_graph::LayoutParams::new(egui::Direction::TopDown),
+            scene_config: Default::default(),
             immutable: false,
             view_toggles: None,
         }
@@ -131,6 +140,14 @@ where
     /// Default: [`egui_graph::LayoutParams::new`] with [`egui::Direction::TopDown`].
     pub fn layout_params(mut self, params: egui_graph::LayoutParams) -> Self {
         self.layout_params = params;
+        self
+    }
+
+    /// The global dot-grid, snapping and snap-align options to apply.
+    ///
+    /// Default: [`crate::widget::gantz::SceneConfig::default`].
+    pub fn scene_config(mut self, scene_config: crate::widget::gantz::SceneConfig) -> Self {
+        self.scene_config = scene_config;
         self
     }
 
@@ -189,6 +206,15 @@ where
                 whole,
             );
         }
+        // One-shot align of the current selection (set by the node context
+        // menu). Only the selected nodes move; orientation is inferred from
+        // their spread. Selection-only: needs at least two nodes.
+        if let Some(by) = std::mem::take(&mut state.pending_align) {
+            let target = &state.interaction.selection.nodes;
+            if target.len() > 1 {
+                apply_align(self.id, ui.ctx(), view, target, by);
+            }
+        }
         let mut node_responses = Vec::new();
         let mut responses: Vec<DynResponse> = Vec::new();
         // Set if a node or the scene makes a CA-affecting edit this pass.
@@ -200,10 +226,14 @@ where
             .iter()
             .map(|ix| egui_graph::NodeId::from_u64(ix.index() as u64))
             .collect();
-        let graph_response = egui_graph::Graph::from_id(self.id)
-            .center_view(do_center)
-            .selected_nodes(selected)
-            .immutable(self.immutable)
+        let graph_response = self
+            .scene_config
+            .apply(
+                egui_graph::Graph::from_id(self.id)
+                    .center_view(do_center)
+                    .selected_nodes(selected)
+                    .immutable(self.immutable),
+            )
             .show(view, ui, |ui, show| {
                 let immutable = self.immutable;
                 show.nodes(ui, |nctx, ui| {
@@ -465,6 +495,41 @@ fn bbox_centre(
     bb.map(|b| b.center())
 }
 
+/// Apply a one-shot align to `view`, moving `target`'s nodes onto a common line
+/// via [`egui_graph::align_nodes`]. The feature (`by`) selects the min-edge /
+/// centre / max-edge; the orientation (row vs column) is inferred from the
+/// selection's spread. Nodes outside `target` are left untouched. The result is
+/// written raw - rendering re-snaps every node to the grid.
+pub fn apply_align(
+    graph_id: egui::Id,
+    ctx: &egui::Context,
+    view: &mut egui_graph::View,
+    target: &HashSet<NodeIndex>,
+    by: egui_graph::AlignBy,
+) {
+    // Node sizes, consulted by `align_nodes` for `AlignBy::Center`/`Max` (a
+    // missing node is treated as zero-sized).
+    let sizes: HashMap<egui_graph::NodeId, egui::Vec2> =
+        egui_graph::with_graph_memory(ctx, graph_id, |gmem| {
+            let node_sizes = gmem.node_sizes();
+            target
+                .iter()
+                .map(|ix| {
+                    let id = egui_graph::NodeId::from_u64(ix.index() as u64);
+                    let size = node_sizes
+                        .get(&id)
+                        .copied()
+                        .unwrap_or_else(|| [200.0, 50.0].into());
+                    (id, size)
+                })
+                .collect()
+        });
+    let ids = target
+        .iter()
+        .map(|ix| egui_graph::NodeId::from_u64(ix.index() as u64));
+    egui_graph::align_nodes(&mut view.layout, ids, &sizes, by, None);
+}
+
 fn nodes<N>(
     registry: &dyn Registry,
     graph: &mut Graph<N>,
@@ -488,6 +553,7 @@ where
     let mut nodes_to_delete = Vec::new();
     let mut nodes_to_reset = Vec::new();
     let mut request_layout = false;
+    let mut request_align: Option<egui_graph::AlignBy> = None;
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node = &mut graph[n_id];
@@ -624,6 +690,36 @@ where
                     request_layout = true;
                     ui.close();
                 }
+                // Align the selection onto a common row or column (inferred
+                // from the spread). Selection-only, so >1 node.
+                if multi {
+                    ui.menu_button("align", |ui| {
+                        let mut item = |ui: &mut egui::Ui, label, hover, by| {
+                            if ui.button(label).on_hover_text(hover).clicked() {
+                                request_align = Some(by);
+                                ui.close();
+                            }
+                        };
+                        item(
+                            ui,
+                            "min edges",
+                            "align the left (column) or top (row) edges",
+                            egui_graph::AlignBy::Min,
+                        );
+                        item(
+                            ui,
+                            "centres",
+                            "align the node centres",
+                            egui_graph::AlignBy::Center,
+                        );
+                        item(
+                            ui,
+                            "max edges",
+                            "align the right (column) or bottom (row) edges",
+                            egui_graph::AlignBy::Max,
+                        );
+                    });
+                }
             }
             // Node-specific items (e.g. the log node's "open logs").
             let node_path = [n_ix];
@@ -657,9 +753,13 @@ where
         gantz_core::graph::register(&get_node, &*graph, &[], vm);
     }
 
-    // A node-menu "auto-layout" click is applied on the next pass by `show`.
+    // A node-menu "auto-layout"/"align" click is applied on the next pass by
+    // `show` (node sizes are then known).
     if request_layout {
         state.pending_auto_layout = true;
+    }
+    if let Some(by) = request_align {
+        state.pending_align = Some(by);
     }
 
     node_responses

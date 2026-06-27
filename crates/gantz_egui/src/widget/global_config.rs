@@ -1,10 +1,11 @@
 //! The "Global" sidebar tab: globally relevant configuration.
 //!
 //! Hosts the global compile config toggles (moved here from the per-head Graph
-//! Config pane), the global auto-layout parameters, and a button to reset all
-//! demo graphs to their initial state.
+//! Config pane), the global auto-layout parameters, the drag snapping /
+//! snap-align options, and a button to reset all demo graphs to their initial
+//! state.
 
-use super::gantz::LayoutConfig;
+use super::gantz::{AlignConfig, LayoutConfig, SnapConfig, SnapMode};
 
 /// Response from [`global_config`].
 #[derive(Default)]
@@ -22,12 +23,15 @@ pub struct GlobalConfigResponse {
 /// `compile_config` is the current global config; when `Some` the compile
 /// toggles are shown. `validate_change_tracking` is the current state of the
 /// change-tracking validation toggle; when `Some` the toggle is shown.
-/// `layout_config` holds the global auto-layout parameters (mutated in place).
-/// The config applies to all open heads.
+/// `layout_config` holds the global auto-layout parameters, `snap` the drag
+/// snapping mode and `align` the drag-time snap-align options (all mutated in
+/// place). The config applies to all open heads.
 pub fn global_config(
     compile_config: Option<gantz_core::compile::Config>,
     validate_change_tracking: Option<bool>,
     layout_config: &mut LayoutConfig,
+    snap: &mut SnapConfig,
+    align: &mut AlignConfig,
     ui: &mut egui::Ui,
 ) -> GlobalConfigResponse {
     let mut changed_config = None;
@@ -116,6 +120,47 @@ pub fn global_config(
              and minimising edge crossings. When off, edges anchor at node \
              centres (classic node-size-only layout).",
         );
+    ui.separator();
+
+    // Drag snapping. Point snaps to unit points (effectively free); Grid snaps
+    // to a fraction of the dot grid (the grid step is set in Style).
+    ui.label("Snap:");
+    ui.horizontal(|ui| {
+        ui.radio_value(&mut snap.mode, SnapMode::Point, "Point")
+            .on_hover_text("Snap to the nearest unit point - effectively free movement.");
+        ui.radio_value(&mut snap.mode, SnapMode::Grid, "Grid")
+            .on_hover_text("Snap to a fraction of the dot grid (set the grid step in Style).");
+    });
+    ui.add_enabled_ui(snap.mode == SnapMode::Grid, |ui| {
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::DragValue::new(&mut snap.grid_ratio)
+                    .speed(0.01)
+                    .range(0.0625..=8.0),
+            )
+            .on_hover_text(
+                "Snap step relative to the grid step: 1.0 full grid, 0.5 half, \
+                 0.25 quarter.",
+            );
+            ui.label("Grid ratio");
+        });
+    });
+    ui.separator();
+
+    // Drag-time snap-align: snap a dragged node to its neighbours' edges /
+    // centres and draw guides.
+    ui.label("Snap-align:");
+    ui.checkbox(&mut align.enabled, "Align to neighbours")
+        .on_hover_text(
+            "While dragging, align a node to its neighbours' edges or centres \
+             and draw guides. Hold Alt to suppress per drag.",
+        );
+    ui.add_enabled_ui(align.enabled, |ui| {
+        ui.checkbox(&mut align.edges, "Edges (sides)")
+            .on_hover_text("Align to neighbours' left/right/top/bottom edges.");
+        ui.checkbox(&mut align.centers, "Centres")
+            .on_hover_text("Align to neighbours' horizontal/vertical centres.");
+    });
     ui.separator();
 
     let reset_all_demos = ui

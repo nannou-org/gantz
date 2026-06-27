@@ -85,6 +85,11 @@ pub struct GantzState {
     /// flow stays per-head in [`OpenHeadState::layout_flow`]).
     #[serde(default)]
     pub layout_config: LayoutConfig,
+    /// Global interactive-scene parameters: dot grid, drag snapping, and
+    /// snap-align. Mirror the per-frame `egui_graph::Graph` builder options and
+    /// apply to every open head.
+    #[serde(default)]
+    pub scene_config: SceneConfig,
     /// Per-head redo stacks for undo/redo support.
     #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub redo_stacks: HashMap<gantz_ca::Head, Vec<gantz_ca::CommitAddr>>,
@@ -187,6 +192,140 @@ impl LayoutConfig {
             .node_gap(self.node_gap)
             .component_gap(self.component_gap)
             .socket_aware(self.socket_aware)
+    }
+}
+
+/// Global interactive-scene configuration: the dot grid, drag snapping and
+/// snap-align. Mirrors the per-frame snap/grid/align options on
+/// [`egui_graph::Graph`] and applies to every open head (like [`LayoutConfig`]).
+#[derive(Clone, Copy, Default, serde::Deserialize, serde::Serialize)]
+pub struct SceneConfig {
+    #[serde(default)]
+    pub grid: GridConfig,
+    #[serde(default)]
+    pub snap: SnapConfig,
+    #[serde(default)]
+    pub align: AlignConfig,
+}
+
+/// The dot grid drawn behind the graph (see [`egui_graph::Graph::dot_grid`]).
+#[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
+pub struct GridConfig {
+    /// Whether the dot grid is drawn.
+    #[serde(default = "default_grid_show")]
+    pub show: bool,
+    /// The base spacing of the dot grid, in graph-space units.
+    #[serde(default = "default_grid_step")]
+    pub step: f32,
+}
+
+fn default_grid_show() -> bool {
+    true
+}
+
+fn default_grid_step() -> f32 {
+    20.0
+}
+
+impl Default for GridConfig {
+    fn default() -> Self {
+        Self {
+            show: default_grid_show(),
+            step: default_grid_step(),
+        }
+    }
+}
+
+/// How a dragged node's position is snapped.
+#[derive(Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub enum SnapMode {
+    /// Snap to the nearest unit point (`snap_step = 1.0`); effectively free.
+    #[default]
+    Point,
+    /// Snap to a relative fraction of the dot grid (see [`SnapConfig::grid_ratio`]).
+    Grid,
+}
+
+/// Drag snapping configuration (see [`egui_graph::Graph::snap`]).
+#[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
+pub struct SnapConfig {
+    #[serde(default)]
+    pub mode: SnapMode,
+    /// In [`SnapMode::Grid`], the snap step relative to the grid step:
+    /// `snap_step = grid.step * grid_ratio`. `1.0` snaps to the full grid,
+    /// `0.5` to half, `0.25` to quarter, and so on.
+    #[serde(default = "default_grid_ratio")]
+    pub grid_ratio: f32,
+}
+
+fn default_grid_ratio() -> f32 {
+    1.0
+}
+
+impl Default for SnapConfig {
+    fn default() -> Self {
+        Self {
+            mode: SnapMode::default(),
+            grid_ratio: default_grid_ratio(),
+        }
+    }
+}
+
+/// Drag-time snap-align configuration (see [`egui_graph::Graph::align`]).
+#[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
+pub struct AlignConfig {
+    /// Whether a dragged node snap-aligns to its neighbours.
+    #[serde(default = "default_align_enabled")]
+    pub enabled: bool,
+    /// Align to neighbours' left/right/top/bottom edges.
+    #[serde(default = "default_align_edges")]
+    pub edges: bool,
+    /// Align to neighbours' horizontal/vertical centres.
+    #[serde(default = "default_align_centers")]
+    pub centers: bool,
+}
+
+fn default_align_enabled() -> bool {
+    true
+}
+
+fn default_align_edges() -> bool {
+    true
+}
+
+fn default_align_centers() -> bool {
+    false
+}
+
+impl Default for AlignConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_align_enabled(),
+            edges: default_align_edges(),
+            centers: default_align_centers(),
+        }
+    }
+}
+
+impl SceneConfig {
+    /// Apply the grid, snap and align options onto an [`egui_graph::Graph`]
+    /// builder. The snap step is derived from the mode: [`SnapMode::Point`]
+    /// snaps to unit points, [`SnapMode::Grid`] to a fraction of the grid.
+    pub fn apply(self, graph: egui_graph::Graph) -> egui_graph::Graph {
+        let snap_step = match self.snap.mode {
+            SnapMode::Point => 1.0,
+            SnapMode::Grid => self.grid.step * self.snap.grid_ratio,
+        };
+        graph
+            .dot_grid(self.grid.show)
+            .dot_grid_step(self.grid.step)
+            .snap(Some(egui_graph::Snap::Round))
+            .snap_step(snap_step)
+            .align(self.align.enabled)
+            .align_targets(egui_graph::AlignTargets {
+                edges: self.align.edges,
+                centers: self.align.centers,
+            })
     }
 }
 
@@ -609,6 +748,7 @@ impl GantzState {
             command_palette: widget::CommandPalette::default(),
             view_toggles: ViewToggles::default(),
             layout_config: LayoutConfig::default(),
+            scene_config: SceneConfig::default(),
             redo_stacks: HashMap::new(),
             sidebar_width: default_sidebar_width(),
             tray_height: default_tray_height(),
@@ -1157,6 +1297,7 @@ where
                         compile_config,
                         validate_change_tracking,
                         &mut state.layout_config,
+                        &mut state.scene_config,
                         ui,
                     )
                 });
@@ -1393,6 +1534,8 @@ where
 
         // Global layout params (Copy) combined with this head's flow.
         let layout_config = self.state.layout_config;
+        // Global grid/snap/align options (Copy), applied to every head.
+        let scene_config = self.state.scene_config;
         let head_state = self.state.open_heads.entry(pane_head.clone()).or_default();
         let layout_params = layout_config.to_params(head_state.layout_flow);
         // Disjoint borrow of a sibling field of `open_heads` for the graph
@@ -1412,6 +1555,7 @@ where
                 view_toggles,
                 data.view,
                 layout_params,
+                scene_config,
                 immutable,
                 &diagnostics,
                 data.vm,
@@ -2038,6 +2182,7 @@ fn graph_scene<N>(
     view_toggles: &mut ViewToggles,
     head_view: &mut egui_graph::View,
     layout_params: egui_graph::LayoutParams,
+    scene_config: SceneConfig,
     immutable: bool,
     diagnostics: &[gantz_core::Diagnostic],
     vm: &mut Engine,
@@ -2058,6 +2203,7 @@ where
     let response = GraphScene::new(registry, graph)
         .with_id(id)
         .layout_params(layout_params)
+        .scene_config(scene_config)
         .immutable(immutable)
         .view_toggles(view_toggles)
         .show(head_view, &mut head_state.scene, vm, ui);

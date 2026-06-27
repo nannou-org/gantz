@@ -2,7 +2,10 @@
 use time::{OffsetDateTime, UtcOffset, format_description};
 
 pub use command_palette::CommandPalette;
-pub use gantz::{Gantz, GantzState, LayoutConfig, update_graph_pane_head};
+pub use gantz::{
+    AlignConfig, Gantz, GantzState, GridConfig, LayoutConfig, SceneConfig, SnapConfig, SnapMode,
+    update_graph_pane_head,
+};
 pub use global_config::{GlobalConfigResponse, global_config};
 pub use graph_config::{GraphConfig, GraphConfigResponse};
 pub use graph_scene::{GraphScene, GraphSceneState};
@@ -18,6 +21,7 @@ pub use panes_config::{panes_config, reset_layout_button};
 pub use perf_view::{PerfCapture, PerfView};
 pub use settings::{SettingsResponse, settings};
 pub use steel_view::SteelView;
+pub use style_config::style_config;
 pub use tab::{Tab, TabResponse};
 
 pub mod command_palette;
@@ -37,6 +41,7 @@ pub mod panes_config;
 pub mod perf_view;
 pub mod settings;
 pub mod steel_view;
+pub mod style_config;
 pub mod tab;
 #[cfg(feature = "tracing")]
 pub mod trace_view;
