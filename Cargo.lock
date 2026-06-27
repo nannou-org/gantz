@@ -2682,9 +2682,9 @@ dependencies = [
 
 [[package]]
 name = "egui_graph"
-version = "0.16.0"
+version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c00486f08fe4c9996dc5e6013e7907449b20c298195017592c14555bb205ee33"
+checksum = "37e78cde82fcc5339f1665c14f40913fe7e33f01efba31e8ede5d726e3d60a1f"
 dependencies = [
  "egui",
  "serde",
