@@ -80,7 +80,9 @@ pub fn table(
     let push_eval = !node.push_eval(meta_ctx).is_empty();
     let pull_eval = !node.pull_eval(meta_ctx).is_empty();
     let is_stateful = node.stateful(meta_ctx);
-    let state_value = if is_stateful {
+    // A node may opt out of the default state row (e.g. to summarise a large
+    // buffer in its `inspector_ui` instead).
+    let state_value = if is_stateful && node.show_state() {
         Some(ctx.extract_value())
     } else {
         None

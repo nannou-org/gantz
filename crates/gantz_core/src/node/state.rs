@@ -119,7 +119,14 @@ where
 
     fn register(&self, ctx: node::RegCtx<'_, '_>) {
         let (get_node, path, vm) = ctx.into_parts();
-        S::register(vm);
+        // Register the state type + its fns only once. Steel's `register_value`/
+        // `register_fn` allocate a new global slot and shadow the previous
+        // binding rather than overwriting it, so re-running this on every
+        // recompile (the engine persists across them) would leak. `register_type`
+        // binds the predicate under `S::NAME`, so its presence means `S` is set up.
+        if vm.extract_value(S::NAME).is_err() {
+            S::register(vm);
+        }
         // Only initialize state if not already present.
         if extract_value(vm, path).ok().flatten().is_none() {
             let val = default_node_state_steel_val::<S>();

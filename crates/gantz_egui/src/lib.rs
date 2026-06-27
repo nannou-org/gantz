@@ -383,6 +383,16 @@ pub trait NodeUi {
     ) -> Option<SocketDoc> {
         None
     }
+
+    /// Whether the inspector's default table includes a row showing the node's
+    /// current VM state.
+    ///
+    /// Returns `true` by default. Override to `false` for nodes whose raw state
+    /// is large or unwieldy (e.g. a long buffer) and better summarised in
+    /// [`inspector_ui`](NodeUi::inspector_ui).
+    fn show_state(&self) -> bool {
+        true
+    }
 }
 
 /// A wrapper around a node's path and the VM providing easy access to the
@@ -594,6 +604,10 @@ where
     fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> ContextMenuResponse {
         (**self).context_menu(ctx, ui)
     }
+
+    fn show_state(&self) -> bool {
+        (**self).show_state()
+    }
 }
 
 macro_rules! impl_node_ui_for_ptr {
@@ -640,6 +654,10 @@ macro_rules! impl_node_ui_for_ptr {
 
             fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> ContextMenuResponse {
                 (**self).context_menu(ctx, ui)
+            }
+
+            fn show_state(&self) -> bool {
+                (**self).show_state()
             }
         }
     };

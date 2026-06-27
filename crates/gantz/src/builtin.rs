@@ -129,6 +129,9 @@ fn primitives() -> Primitives {
     register_primitive(&mut p, "outlet", || {
         Box::new(gantz_core::node::graph::Outlet::default()) as Box<_>
     });
+    register_primitive(&mut p, "plot", || {
+        Box::new(gantz_egui::node::Plot::default()) as Box<_>
+    });
     p
 }
 
