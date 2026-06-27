@@ -49,6 +49,22 @@ pub struct OpenHead;
 pub struct HeadRef(pub ca::Head);
 
 /// The working copy of the graph associated with this head.
+///
+/// # Invariant: commit before returning
+///
+/// Any system that mutates a head's `WorkingGraph` MUST commit it before the
+/// system returns - either via [`vm::commit_working_graph`](crate::vm::commit_working_graph)
+/// (in-place edits: the GUI pass and graph ops) or by replacing the working
+/// graph with a registry commit's graph and resetting
+/// [`CompiledInputs`](crate::vm::CompiledInputs) (head open/replace/branch-move
+/// and resync already do this). Consequently, *between* systems the working
+/// graph's content address always equals the head's committed graph CA
+/// (`registry.head_commit(head).graph`).
+///
+/// [`vm::sync`](crate::vm::sync) relies on this: it reads the committed CA
+/// directly to decide when to recompile and never re-hashes the working graph
+/// (see #159). [`vm::validate_committed`](crate::vm::validate_committed) is a
+/// default-off debug check that flags any violation of this invariant.
 #[derive(Component)]
 pub struct WorkingGraph<N>(pub gantz_core::node::graph::Graph<N>);
 

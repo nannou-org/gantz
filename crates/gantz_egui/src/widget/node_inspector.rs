@@ -1,4 +1,4 @@
-use crate::{NodeCtx, NodeUi};
+use crate::{InspectorRowsResponse, NodeCtx, NodeUi, response::DynResponse};
 use egui::scroll_area::ScrollAreaOutput;
 use egui_extras::{Column, TableBuilder};
 use gantz_core::node::{self, MetaCtx, Node};
@@ -15,6 +15,11 @@ pub struct NodeInspectorResponse {
     pub scroll_area_output: ScrollAreaOutput<()>,
     pub node_response: Option<egui::Response>,
     pub label_response: egui::Response,
+    /// Whether the inspector made a CA-affecting edit to the node this frame
+    /// (from its rows or its extra UI). See [`NodeUi`].
+    pub changed: bool,
+    /// Payloads emitted from the inspector UI, for the application to handle.
+    pub payloads: Vec<DynResponse>,
 }
 
 impl<'a, N> NodeInspector<'a, N>
@@ -35,15 +40,19 @@ where
             mut ctx,
             immutable,
         } = self;
-        let (scroll_area_output, label_response) = table(node, &mut ctx, immutable, ui);
+        let (scroll_area_output, label_response, rows) = table(node, &mut ctx, immutable, ui);
         if immutable {
             ui.disable();
         }
-        let node_response = node.inspector_ui(ctx, ui);
+        let extra = node.inspector_ui(ctx, ui);
+        let mut payloads = rows.payloads;
+        payloads.extend(extra.payloads);
         NodeInspectorResponse {
             scroll_area_output,
-            node_response,
+            node_response: extra.inner,
             label_response,
+            changed: rows.changed || extra.changed,
+            payloads,
         }
     }
 }
@@ -57,7 +66,7 @@ pub fn table(
     ctx: &mut NodeCtx,
     immutable: bool,
     ui: &mut egui::Ui,
-) -> (ScrollAreaOutput<()>, egui::Response) {
+) -> (ScrollAreaOutput<()>, egui::Response, InspectorRowsResponse) {
     // Extract info we need upfront before the closure borrows ctx.
     let registry = ctx.registry();
     let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
@@ -84,6 +93,7 @@ pub fn table(
     );
     ui.add_space(ui.spacing().item_spacing.y);
     let row_h = table_row_h(ui);
+    let mut rows_resp = InspectorRowsResponse::default();
     let scroll_area_output = TableBuilder::new(ui)
         .vscroll(false)
         .column(Column::auto().at_least(50.0).resizable(true))
@@ -147,9 +157,9 @@ pub fn table(
             if immutable {
                 body.ui_mut().disable();
             }
-            node.inspector_rows(ctx, &mut body);
+            rows_resp = node.inspector_rows(ctx, &mut body);
         });
-    (scroll_area_output, label_response)
+    (scroll_area_output, label_response, rows_resp)
 }
 
 /// Format the node's path string.
@@ -181,13 +191,15 @@ struct SocketDocEditState {
 /// (and trimming trailing whitespace) on every keystroke, and means the node -
 /// and thus the working graph - only changes on commit, so editing produces a
 /// single graph edit rather than one per keystroke. `id_salt` scopes the edit
-/// state to the node. Returns the combined field response.
+/// state to the node. Returns the combined field response together with whether
+/// a commit actually changed `ty`/`description` (so the caller can report the
+/// CA-affecting edit), `true` only on the flush frame that writes a new value.
 pub(crate) fn socket_doc_editor(
     ui: &mut egui::Ui,
     id_salt: impl std::hash::Hash,
     ty: &mut String,
     description: &mut String,
-) -> egui::Response {
+) -> (egui::Response, bool) {
     let id = egui::Id::new("socket-doc-editor").with(&id_salt);
     let mut st: SocketDocEditState = ui.memory(|m| m.data.get_temp(id)).unwrap_or_default();
 
@@ -229,8 +241,12 @@ pub(crate) fn socket_doc_editor(
 
     let resp = ty_resp.union(desc_resp);
 
+    let mut changed = false;
     if commit {
         let new = (st.ty.trim().to_string(), st.desc.trim().to_string());
+        // Only a commit that actually alters the stored fields is a CA-affecting
+        // edit; committing unchanged text (e.g. a bare focus loss) is not.
+        changed = new.0 != *ty || new.1 != *description;
         *ty = new.0.clone();
         *description = new.1.clone();
         // Keep the seed in sync with what we just wrote back so the trimmed
@@ -241,5 +257,5 @@ pub(crate) fn socket_doc_editor(
     }
 
     ui.memory_mut(|m| m.data.insert_temp(id, st));
-    resp
+    (resp, changed)
 }

@@ -24,7 +24,10 @@ pub mod widget;
 pub use egui_graph::SocketKind;
 pub use node::{FnNodeNames, NameRegistry};
 pub use reg::RegistryRef;
-pub use response::{DynResponse, ResponseData, Responses};
+pub use response::{
+    ContextMenuResponse, DynResponse, InspectorRowsResponse, InspectorUiResponse, NodeUiResponse,
+    ResponseData, Responses,
+};
 pub use widget::gantz::NodeTypeRegistry;
 pub use widget::graph_select::GraphRegistry;
 
@@ -267,6 +270,29 @@ pub struct HeadDataMut<'a, N> {
 }
 
 /// A trait providing an egui `Ui` implementation for gantz nodes.
+///
+/// # Reporting changes
+///
+/// The graph the node lives in is content-addressed: its identity (and thus
+/// the need to re-commit and recompile) is derived from a hash of every node's
+/// CA-relevant state. To let the application detect edits without re-hashing
+/// the whole graph every frame, each method returns a response with a
+/// `changed` flag.
+///
+/// **A node MUST mark its response [`changed`](NodeUiResponse::mark_changed)
+/// whenever it mutates state that contributes to its content address (its
+/// `CaHash`), at the moment that state is actually written.** For
+/// buffered/debounced edits (e.g. a text field flushed on focus loss) mark
+/// `changed` at the *flush*, not on the keystroke - the node weight only
+/// changes at the flush. Silent mutations (e.g. auto-syncing a reference to a
+/// newer commit) must mark `changed` too, even though no widget was touched.
+///
+/// State that does NOT affect the content address must NOT mark `changed`:
+/// `#[cahash(skip)]` fields, values written to VM runtime state via
+/// [`NodeCtx::update_value`], node layout/position, and evaluation triggers
+/// queued via [`push_eval`](NodeUiResponse::push_eval). A missed `changed`
+/// leaves the committed graph stale (a correctness bug); a spurious `changed`
+/// only costs a redundant hash, so when in doubt, mark it.
 pub trait NodeUi {
     /// The name used to present the node within the inspector.
     fn name(&self, _registry: &dyn Registry) -> &str;
@@ -276,34 +302,44 @@ pub trait NodeUi {
     /// The node's path into the state tree and the VM are provided to allow for
     /// access to the node's state. The egui_graph node context is provided to
     /// allow customizing the frame and other node display properties.
-    fn ui(
-        &mut self,
-        ctx: NodeCtx,
-        uictx: egui_graph::NodeCtx,
-    ) -> egui_graph::FramedResponse<egui::Response>;
+    ///
+    /// Returns a [`NodeUiResponse`] wrapping the framed egui response; mark it
+    /// [`changed`](NodeUiResponse::mark_changed) on CA-affecting edits and
+    /// [`emit`](NodeUiResponse::emit) any payloads (see the trait docs).
+    fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse;
 
     /// Optionally add additional rows to the node's inspector UI.
     ///
     /// By default, only the node's path and its current state within the VM are
     /// shown. Adding to the given `body` by providing an implementation of this
-    /// method will append extra rows.
-    fn inspector_rows(&mut self, _ctx: &mut NodeCtx, _body: &mut egui_extras::TableBody) {}
+    /// method will append extra rows. Mark the returned response
+    /// [`changed`](InspectorRowsResponse::mark_changed) on CA-affecting edits.
+    fn inspector_rows(
+        &mut self,
+        _ctx: &mut NodeCtx,
+        _body: &mut egui_extras::TableBody,
+    ) -> InspectorRowsResponse {
+        InspectorRowsResponse::default()
+    }
 
     /// Extra UI for the node to be presented within the node inspector
     /// following the default table.
     ///
     /// See [`NodeUi::inspector_rows`] for how to simply append rows to the
     /// table.
-    fn inspector_ui(&mut self, _ctx: NodeCtx, _ui: &mut egui::Ui) -> Option<egui::Response> {
-        None
+    fn inspector_ui(&mut self, _ctx: NodeCtx, _ui: &mut egui::Ui) -> InspectorUiResponse {
+        InspectorUiResponse::default()
     }
 
     /// Add node-specific items to the node's right-click context menu.
     ///
-    /// Called after the built-in items (copy, reset, delete, ...). Emit
-    /// responses for the application (or `Gantz::show`) to handle via
-    /// [`NodeCtx::response`].
-    fn context_menu(&mut self, _ctx: &mut NodeCtx, _ui: &mut egui::Ui) {}
+    /// Called after the built-in items (copy, reset, delete, ...). Mark the
+    /// returned response [`changed`](ContextMenuResponse::mark_changed) on
+    /// CA-affecting edits and [`emit`](ContextMenuResponse::emit) any payloads
+    /// for the application (or `Gantz::show`) to handle.
+    fn context_menu(&mut self, _ctx: &mut NodeCtx, _ui: &mut egui::Ui) -> ContextMenuResponse {
+        ContextMenuResponse::default()
+    }
 
     /// The layout direction of the node's inputs to outputs.
     fn flow(&self, _registry: &dyn Registry) -> egui::Direction {
@@ -351,13 +387,16 @@ pub trait NodeUi {
 
 /// A wrapper around a node's path and the VM providing easy access to the
 /// node's state.
+///
+/// Node UI methods report edits and emit payloads via their returned response
+/// types (see [`NodeUi`]); `NodeCtx` itself only provides read/write access to
+/// the node's surroundings (registry, path, VM state).
 pub struct NodeCtx<'a> {
     registry: &'a dyn Registry,
     path: &'a [node::Id],
     inlets: &'a [node::Id],
     outlets: &'a [node::Id],
     vm: &'a mut Engine,
-    responses: &'a mut Vec<DynResponse>,
 }
 
 /// How to position pasted nodes.
@@ -515,19 +554,19 @@ where
         (**self).description()
     }
 
-    fn ui(
-        &mut self,
-        ctx: NodeCtx,
-        uictx: egui_graph::NodeCtx,
-    ) -> egui_graph::FramedResponse<egui::Response> {
+    fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
         (**self).ui(ctx, uictx)
     }
 
-    fn inspector_rows(&mut self, ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(
+        &mut self,
+        ctx: &mut NodeCtx,
+        body: &mut egui_extras::TableBody,
+    ) -> InspectorRowsResponse {
         (**self).inspector_rows(ctx, body)
     }
 
-    fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> Option<egui::Response> {
+    fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> InspectorUiResponse {
         (**self).inspector_ui(ctx, ui)
     }
 
@@ -552,7 +591,7 @@ where
         (**self).socket_doc(registry, kind, ix)
     }
 
-    fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+    fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> ContextMenuResponse {
         (**self).context_menu(ctx, ui)
     }
 }
@@ -571,15 +610,15 @@ macro_rules! impl_node_ui_for_ptr {
                 (**self).description()
             }
 
-            fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> egui_graph::FramedResponse<egui::Response> {
+            fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
                 (**self).ui(ctx, uictx)
             }
 
-            fn inspector_rows(&mut self, ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
+            fn inspector_rows(&mut self, ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) -> InspectorRowsResponse {
                 (**self).inspector_rows(ctx, body)
             }
 
-            fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> Option<egui::Response> {
+            fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> InspectorUiResponse {
                 (**self).inspector_ui(ctx, ui)
             }
 
@@ -599,7 +638,7 @@ macro_rules! impl_node_ui_for_ptr {
                 (**self).socket_doc(registry, kind, ix)
             }
 
-            fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+            fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> ContextMenuResponse {
                 (**self).context_menu(ctx, ui)
             }
         }
@@ -615,7 +654,6 @@ impl<'a> NodeCtx<'a> {
         inlets: &'a [node::Id],
         outlets: &'a [node::Id],
         vm: &'a mut Engine,
-        responses: &'a mut Vec<DynResponse>,
     ) -> Self {
         Self {
             registry,
@@ -623,19 +661,7 @@ impl<'a> NodeCtx<'a> {
             inlets,
             outlets,
             vm,
-            responses,
         }
-    }
-
-    /// Emit a response payload for the application to handle after the GUI
-    /// pass.
-    ///
-    /// Payloads may be any of the builtin types (e.g. [`OpenHead`],
-    /// [`EvalEntry`]) or custom types defined alongside the node, allowing
-    /// independently-declared nodes to communicate with application-specific
-    /// handlers.
-    pub fn response<T: ResponseData>(&mut self, data: T) {
-        self.responses.push(DynResponse::new(data));
     }
 
     /// Provide access to the registry.
@@ -671,26 +697,6 @@ impl<'a> NodeCtx<'a> {
     /// Register the given value as the node's new state.
     pub fn update<T: IntoSteelVal>(&mut self, val: T) -> Result<(), SteelErr> {
         node::state::update(self.vm, self.path, val)
-    }
-
-    /// Queue a call to the generated push evaluation function for this node.
-    ///
-    /// This will only be successful if the underlying node's
-    /// [`gantz_core::Node::push_eval`] fn returned `Some` last time the graph
-    /// was compiled.
-    pub fn push_eval(&mut self, n_outputs: u8) {
-        let ep = gantz_core::compile::entrypoint::push(self.path.to_vec(), n_outputs);
-        self.response(EvalEntry(ep));
-    }
-
-    /// Queue a call to the generated pull evaluation function for this node.
-    ///
-    /// This will only be successful if the underlying node's
-    /// [`gantz_core::Node::pull_eval`] fn returned `Some` last time the graph
-    /// was compiled.
-    pub fn pull_eval(&mut self, n_inputs: u8) {
-        let ep = gantz_core::compile::entrypoint::pull(self.path.to_vec(), n_inputs);
-        self.response(EvalEntry(ep));
     }
 
     /// The IDs of the inlets within the current graph.

@@ -92,11 +92,21 @@ struct Inputs {
 
 /// The inputs of a head's last compile *attempt* (success or failure).
 ///
-/// `None` = never attempted. [`sync`] compares this against the current
-/// inputs to decide when to (re)compile - there is no dirty flag to set or
-/// forget.
+/// `None` = never attempted. [`sync`] compares this against the current inputs
+/// (the head's committed graph CA + config) to decide when to (re)compile -
+/// there is no dirty flag to set or forget.
 #[derive(Component, Default)]
 pub struct CompiledInputs(Option<Inputs>);
+
+/// When `true`, [`validate_committed`] hashes every open head's working graph
+/// each frame and warns if it differs from the head's committed graph CA - i.e.
+/// a system mutated the working graph without committing it, violating the
+/// [`WorkingGraph`](head::WorkingGraph) commit-before-return invariant.
+///
+/// Defaults to `false` (no extra hashing); enable at runtime to debug a
+/// suspected missing commit.
+#[derive(Default, Resource)]
+pub struct ValidateCommitted(pub bool);
 
 /// Event to trigger evaluation of an entrypoint.
 #[derive(Event)]
@@ -195,27 +205,67 @@ pub fn on_eval_entry(
 // Systems
 // ---------------------------------------------------------------------------
 
+/// Commit a head's working graph to the registry when it has diverged from the
+/// head's current commit, updating the head and emitting a
+/// [`head::CommittedEvent`]. Returns `true` if a new commit was made.
+///
+/// **Call this from any system that mutates a head's
+/// [`WorkingGraph`](head::WorkingGraph), before the system returns** - it is how
+/// the commit-before-return invariant (see `WorkingGraph`) is upheld, which in
+/// turn lets [`sync`] recompile from the committed address without re-hashing.
+/// This is the single place a working graph is content-addressed.
+pub fn commit_working_graph<N>(
+    registry: &mut Registry<N>,
+    cmds: &mut Commands,
+    entity: Entity,
+    head: &mut ca::Head,
+    graph: &Graph<N>,
+) -> bool
+where
+    N: Clone + ca::CaHash,
+{
+    let graph_ca = ca::graph_addr(graph);
+    let Some(head_commit) = registry.head_commit(head) else {
+        return false;
+    };
+    if head_commit.graph == graph_ca {
+        return false;
+    }
+    let old_head = head.clone();
+    let new_commit_ca = registry.commit_graph_to_head(
+        crate::reg::timestamp(),
+        graph_ca,
+        || crate::clone_graph(graph),
+        head,
+    );
+    log::debug!("Graph changed -> {}", new_commit_ca.display_short());
+    cmds.trigger(head::CommittedEvent {
+        entity,
+        old_head,
+        new_head: head.clone(),
+    });
+    true
+}
+
 /// Keep every open head's VM in sync with the inputs to compilation.
 ///
-/// The inputs are the working graph's content address and the
-/// [`CompileConfig`]; each head's [`CompiledInputs`] memoizes the inputs of
-/// its last compile attempt, and the VM is rebuilt whenever they differ -
-/// there is no dirty flag to set or forget. This single rule covers head
-/// open (and startup spawn), head replace/branch-move, graph edits, and
-/// config changes.
+/// The inputs are the head's *committed* graph content address and the
+/// [`CompileConfig`]; each head's [`CompiledInputs`] memoizes the inputs of its
+/// last compile attempt, and the VM is rebuilt whenever they differ. The
+/// committed CA is read straight from the registry - **no per-frame hashing**
+/// (#159): the [`WorkingGraph`](head::WorkingGraph) commit-before-return
+/// invariant guarantees the working graph already matches it, and every change
+/// is reflected either by a new commit (edits, via [`commit_working_graph`]) or
+/// by a reset `CompiledInputs` (head open/replace/branch-move/resync), so
+/// comparing committed CA + config is sufficient to drive recompiles.
 ///
-/// Whether the rebuild is a fresh `init` or an in-place `compile` is decided
-/// by VM presence in [`head::HeadVms`]: absent means a fresh init (head
+/// Whether the rebuild is a fresh `init` or an in-place `compile` is decided by
+/// VM presence in [`head::HeadVms`]: absent means a fresh init (head
 /// replace/branch-move remove the VM to discard the old graph's node state);
 /// present means an in-place compile, preserving node state (graph edits and
 /// config changes).
-///
-/// When the working graph's address has diverged from the head's commit, the
-/// graph is committed to the registry first and a [`head::CommittedEvent`]
-/// is emitted for UI state updates (handled by `GantzEguiPlugin` if present).
 pub fn sync<N>(
-    mut cmds: Commands,
-    mut registry: ResMut<Registry<N>>,
+    registry: Res<Registry<N>>,
     builtins: Res<BuiltinNodes<N>>,
     ep_fns: Res<EntrypointFns<N>>,
     config: Res<CompileConfig>,
@@ -225,38 +275,17 @@ pub fn sync<N>(
     N: 'static + Node + Clone + ca::CaHash + Send + Sync,
 {
     for mut data in heads_query.iter_mut() {
-        let graph: &Graph<N> = &*data.working_graph;
+        // The committed graph CA - the working graph already matches it (the
+        // `WorkingGraph` invariant), so there is nothing to hash here.
+        let Some(graph_ca) = registry.head_commit(&data.head_ref.0).map(|c| c.graph) else {
+            continue;
+        };
         let inputs = Inputs {
-            graph: ca::graph_addr(graph),
+            graph: graph_ca,
             config: config.0,
         };
         if data.compiled_inputs.0 == Some(inputs) {
             continue;
-        }
-
-        // Commit when the working copy has diverged from the head's commit.
-        let head: &mut ca::Head = &mut *data.head_ref;
-        if let Some(head_commit) = registry.head_commit(head) {
-            if head_commit.graph != inputs.graph {
-                let old_head = head.clone();
-                let old_commit_ca = registry.head_commit_ca(head).copied().unwrap();
-                let new_commit_ca = registry.commit_graph_to_head(
-                    crate::reg::timestamp(),
-                    inputs.graph,
-                    || crate::clone_graph(graph),
-                    head,
-                );
-                log::debug!(
-                    "Graph changed: {} -> {}",
-                    old_commit_ca.display_short(),
-                    new_commit_ca.display_short()
-                );
-                cmds.trigger(head::CommittedEvent {
-                    entity: data.entity,
-                    old_head,
-                    new_head: head.clone(),
-                });
-            }
         }
 
         // Rebuild the VM. On an in-place compile error the VM is kept (its
@@ -264,6 +293,7 @@ pub fn sync<N>(
         // module/diagnostics components; a failed init leaves no VM, so eval
         // systems (e.g. `drive_frame_bangs`, `on_eval_entry`) skip the head
         // rather than driving a stale graph.
+        let graph: &Graph<N> = &*data.working_graph;
         let get_node = |ca: &ca::ContentAddr| lookup_node(&registry, &**builtins, ca);
         let entrypoints = collect_entrypoints(&ep_fns, &get_node, graph);
         let result = match vms.get_mut(&data.entity) {
@@ -280,5 +310,38 @@ pub fn sync<N>(
         *data.module = module;
         *data.diagnostics = diagnostics;
         data.compiled_inputs.0 = Some(inputs);
+    }
+}
+
+/// Debug check for the [`WorkingGraph`](head::WorkingGraph) commit-before-return
+/// invariant.
+///
+/// When [`ValidateCommitted`] is enabled, hash every open head's working
+/// graph and warn if it differs from the head's committed graph CA - i.e. a
+/// system mutated the working graph without committing it. A no-op (no hashing)
+/// when disabled, which is the default.
+pub fn validate_committed<N>(
+    validate: Res<ValidateCommitted>,
+    registry: Res<Registry<N>>,
+    heads: Query<head::OpenHeadDataReadOnly<N>, With<head::OpenHead>>,
+) where
+    N: 'static + ca::CaHash + Send + Sync,
+{
+    if !validate.0 {
+        return;
+    }
+    for data in heads.iter() {
+        let working = ca::graph_addr(&data.working_graph.0);
+        let committed = registry.head_commit(&data.head_ref.0).map(|c| c.graph);
+        if committed != Some(working) {
+            log::warn!(
+                "WorkingGraph invariant violated: head {:?} working graph ({}) does \
+                 not match its committed graph ({:?}) - a system mutated it without \
+                 committing (see `commit_working_graph`)",
+                data.entity,
+                working.display_short(),
+                committed.map(|c| c.display_short().to_string()),
+            );
+        }
     }
 }

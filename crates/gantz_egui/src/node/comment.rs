@@ -1,7 +1,7 @@
 //! A Comment node for documenting patches.
 
 use crate::widget::node_inspector;
-use crate::{NodeCtx, NodeUi};
+use crate::{InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse};
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx};
 use serde::{Deserialize, Serialize};
@@ -26,11 +26,14 @@ fn text_hash(text: &str) -> u64 {
 }
 
 /// A transparent comment node for documenting graphs.
+///
+/// Both `text` and `size` are part of the content address: editing the note or
+/// resizing it are genuine edits that produce a new commit (and ride the export
+/// pipeline), so a resize is undoable just like a text edit.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
 #[cahash("gantz.comment")]
 pub struct Comment {
     text: String,
-    #[cahash(skip)]
     size: [u16; 2],
 }
 
@@ -77,11 +80,10 @@ impl NodeUi for Comment {
         Some("A free-floating text note")
     }
 
-    fn ui(
-        &mut self,
-        _ctx: NodeCtx,
-        uictx: egui_graph::NodeCtx,
-    ) -> egui_graph::FramedResponse<egui::Response> {
+    fn ui(&mut self, _ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
+        // Set when a CA-affecting edit settles this frame: a flushed text change
+        // or a settled resize (see the writes inside the closure below).
+        let mut changed = false;
         // Get interaction state
         let interaction = uictx.interaction();
         let style = uictx.style();
@@ -112,7 +114,7 @@ impl NodeUi for Comment {
         let resize_id = node_egui_id.with("resize");
         let min_resize = egui::Vec2::splat(style.interaction.interact_radius);
         let default_size = egui::vec2(self.size[0] as f32, self.size[1] as f32);
-        let response = uictx.framed_with(frame, |ui, _sockets| {
+        let framed = uictx.framed_with(frame, |ui, _sockets| {
             // `Resize` registers its corner interaction under this salt (egui
             // 0.34.x internal, see `containers/resize.rs`). Reading the previous
             // frame's response tells us whether the corner is being dragged.
@@ -193,6 +195,8 @@ impl NodeUi for Comment {
                     let should_flush = response.lost_focus() || timed_out || mouse_active;
 
                     if should_flush {
+                        // A flush that alters the stored text is a CA edit.
+                        changed |= self.text != state.text;
                         self.text = state.text.clone();
                         state.text_hash = text_hash(&self.text);
                     }
@@ -211,19 +215,32 @@ impl NodeUi for Comment {
                     // Persist the editing state.
                     ui.memory_mut(|m| m.data.insert_temp(text_id, state));
 
-                    // Record the fitted size: the dragged width and the content
-                    // height the box auto-fits to. `size` is skipped from the
-                    // cahash, so this only feeds serialization and the next load.
-                    self.size = [width as u16, ui.min_rect().height() as u16];
+                    // The fitted size: the dragged width and the content height
+                    // the box auto-fits to. `size` is part of the content
+                    // address, so only commit it once *settled* - never while
+                    // the corner is actively dragged (which would churn a new
+                    // commit every frame of the drag). On release the height
+                    // snaps back to fit, giving a single settled value.
+                    let new_size = [width as u16, ui.min_rect().height() as u16];
+                    if !resizing && self.size != new_size {
+                        self.size = new_size;
+                        changed = true;
+                    }
 
                     response
                 })
         });
 
-        response
+        let mut resp = NodeUiResponse::new(framed);
+        resp.set_changed(changed);
+        resp
     }
 
-    fn inspector_rows(&mut self, _ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(
+        &mut self,
+        _ctx: &mut NodeCtx,
+        body: &mut egui_extras::TableBody,
+    ) -> InspectorRowsResponse {
         let row_h = node_inspector::table_row_h(body.ui_mut());
         body.row(row_h, |mut row| {
             row.col(|ui| {
@@ -233,5 +250,47 @@ impl NodeUi for Comment {
                 ui.label(format!("{:?}", self.size));
             });
         });
+        InspectorRowsResponse::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Comment;
+    use gantz_ca::content_addr;
+
+    /// `size` is now part of the content address, so a resize is a genuine edit
+    /// (this is what lets the `changed` signal at a settled resize map to a real
+    /// commit). Identical fields still produce an identical address.
+    #[test]
+    fn size_is_part_of_content_address() {
+        let a = Comment {
+            text: "hi".into(),
+            size: [100, 40],
+        };
+        let b = Comment {
+            text: "hi".into(),
+            size: [200, 40],
+        };
+        let c = Comment {
+            text: "hi".into(),
+            size: [100, 40],
+        };
+        assert_ne!(content_addr(&a), content_addr(&b));
+        assert_eq!(content_addr(&a), content_addr(&c));
+    }
+
+    /// Text remains part of the content address.
+    #[test]
+    fn text_is_part_of_content_address() {
+        let a = Comment {
+            text: "hi".into(),
+            size: [100, 40],
+        };
+        let b = Comment {
+            text: "bye".into(),
+            size: [100, 40],
+        };
+        assert_ne!(content_addr(&a), content_addr(&b));
     }
 }

@@ -21,6 +21,11 @@ pub struct GraphSceneResponse {
     pub scene: egui::Response,
     /// Responses from each node, keyed by node index.
     pub nodes: Vec<(NodeIndex, NodeResponse)>,
+    /// Whether anything CA-affecting changed about the graph this frame: a node
+    /// reported a change (see [`NodeUi`]), or the scene itself edited the graph
+    /// structure (added/removed an edge, deleted a node). Lets the application
+    /// detect edits without re-hashing the whole graph each frame.
+    pub changed: bool,
     /// Dynamic payloads emitted within the scene (node UIs, context menus),
     /// to be handled by the application after the pass.
     pub responses: Vec<DynResponse>,
@@ -186,6 +191,8 @@ where
         }
         let mut node_responses = Vec::new();
         let mut responses: Vec<DynResponse> = Vec::new();
+        // Set if a node or the scene makes a CA-affecting edit this pass.
+        let mut changed = false;
         let selected: HashSet<egui_graph::NodeId> = state
             .interaction
             .selection
@@ -206,13 +213,14 @@ where
                         nctx,
                         state,
                         &mut responses,
+                        &mut changed,
                         vm,
                         immutable,
                         ui,
                     );
                 })
                 .edges(ui, |ectx, ui| {
-                    edges(self.graph, ectx, state, &mut responses, ui)
+                    edges(self.graph, ectx, state, &mut responses, &mut changed, ui)
                 });
             });
 
@@ -300,6 +308,7 @@ where
         GraphSceneResponse {
             scene: graph_response.response,
             nodes: node_responses,
+            changed,
             responses,
         }
     }
@@ -462,6 +471,7 @@ fn nodes<N>(
     nctx: &mut egui_graph::NodesCtx,
     state: &mut GraphSceneState,
     responses: &mut Vec<DynResponse>,
+    changed: &mut bool,
     vm: &mut Engine,
     immutable: bool,
     ui: &mut egui::Ui,
@@ -493,9 +503,11 @@ where
                 // A node at this (root) level has the single-element state path
                 // `[n_ix]`.
                 let node_path = [n_ix];
-                let node_ctx =
-                    crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, vm, responses);
-                node.ui(node_ctx, nui_ctx)
+                let node_ctx = crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, vm);
+                let r = node.ui(node_ctx, nui_ctx);
+                *changed |= r.changed;
+                responses.extend(r.payloads);
+                r.framed
             });
 
         // Attach on-hover docs to each socket. Each node describes its own
@@ -530,6 +542,7 @@ where
                             // Check that this edge doesn't already exist.
                             if !graph.edges(a).any(|e| e.target() == b && *e.weight() == w) {
                                 graph.add_edge(a, b, w);
+                                *changed = true;
                             }
                         }
                     }
@@ -614,9 +627,10 @@ where
             }
             // Node-specific items (e.g. the log node's "open logs").
             let node_path = [n_ix];
-            let mut node_ctx =
-                crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, vm, responses);
-            graph[n_id].context_menu(&mut node_ctx, ui);
+            let mut node_ctx = crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, vm);
+            let cm = graph[n_id].context_menu(&mut node_ctx, ui);
+            *changed |= cm.changed;
+            responses.extend(cm.payloads);
         });
 
         node_responses.push((n_id, response));
@@ -628,6 +642,7 @@ where
             let _ = gantz_core::node::state::remove_value(vm, &[n_id.index()]);
             graph.remove_node(n_id);
             state.interaction.selection.nodes.remove(&n_id);
+            *changed = true;
         }
     }
 
@@ -676,6 +691,7 @@ fn edges<N>(
     ectx: &mut egui_graph::EdgesCtx,
     state: &mut GraphSceneState,
     responses: &mut Vec<DynResponse>,
+    changed: &mut bool,
     ui: &mut egui::Ui,
 ) {
     // Track whether any edge has a context menu open this frame.
@@ -695,6 +711,7 @@ fn edges<N>(
         if response.deleted() {
             graph.remove_edge(e);
             state.interaction.selection.edges.remove(&e);
+            *changed = true;
         } else if response.changed() {
             if selected {
                 state.interaction.selection.edges.insert(e);

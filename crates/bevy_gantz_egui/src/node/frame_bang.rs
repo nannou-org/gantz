@@ -52,8 +52,10 @@ impl gantz_egui::NodeUi for FrameBang {
         &mut self,
         _ctx: gantz_egui::NodeCtx,
         uictx: egui_graph::NodeCtx,
-    ) -> egui_graph::FramedResponse<egui::Response> {
-        uictx.framed(|ui, _sockets| ui.add(egui::Label::new("frame!").selectable(false)))
+    ) -> gantz_egui::NodeUiResponse {
+        let framed =
+            uictx.framed(|ui, _sockets| ui.add(egui::Label::new("frame!").selectable(false)));
+        gantz_egui::NodeUiResponse::new(framed)
     }
 
     fn socket_doc(

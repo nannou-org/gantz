@@ -1,7 +1,10 @@
 //! `Fn<NamedRef>` type alias and NodeUi implementation.
 
 use super::{NameRegistry, NamedRef, missing_color, outdated_color};
-use crate::{NodeCtx, NodeUi, Registry, SocketDoc, SocketKind, widget::node_inspector};
+use crate::{
+    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind,
+    widget::node_inspector,
+};
 
 /// A function node wrapping a named reference.
 pub type FnNamedRef = gantz_core::node::Fn<NamedRef>;
@@ -18,11 +21,7 @@ impl NodeUi for FnNamedRef {
         "fn"
     }
 
-    fn ui(
-        &mut self,
-        ctx: NodeCtx,
-        uictx: egui_graph::NodeCtx,
-    ) -> egui_graph::FramedResponse<egui::Response> {
+    fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
         let registry = ctx.registry();
         let ref_ca = self.0.content_addr();
 
@@ -33,10 +32,13 @@ impl NodeUi for FnNamedRef {
         let current_ca = registry.name_ca(self.0.name());
         let is_outdated = !is_missing && current_ca.map(|ca| ca != ref_ca).unwrap_or(false);
 
-        // Auto-sync if enabled and outdated (skip if missing).
+        // Auto-sync if enabled and outdated (skip if missing). A silent
+        // mutation that changes the node's CA.
+        let mut changed = false;
         if self.0.sync && is_outdated {
             if let Some(ca) = current_ca {
                 self.0.set_ref(gantz_core::node::Ref::new(ca));
+                changed = true;
             }
         }
 
@@ -49,7 +51,7 @@ impl NodeUi for FnNamedRef {
                 .map(|ca| ca != ref_ca)
                 .unwrap_or(false);
 
-        uictx.framed(|ui, _sockets| {
+        let framed = uictx.framed(|ui, _sockets| {
             ui.horizontal(|ui| {
                 let fn_res = ui.add(egui::Label::new("λ").selectable(false));
                 let name_text = if is_missing {
@@ -63,10 +65,18 @@ impl NodeUi for FnNamedRef {
                 fn_res.union(name_res)
             })
             .inner
-        })
+        });
+        let mut resp = NodeUiResponse::new(framed);
+        resp.set_changed(changed);
+        resp
     }
 
-    fn inspector_rows(&mut self, ctx: &mut NodeCtx, body: &mut egui_extras::TableBody) {
+    fn inspector_rows(
+        &mut self,
+        ctx: &mut NodeCtx,
+        body: &mut egui_extras::TableBody,
+    ) -> InspectorRowsResponse {
+        let mut resp = InspectorRowsResponse::default();
         let row_h = node_inspector::table_row_h(body.ui_mut());
 
         // ComboBox to select which node to reference.
@@ -86,6 +96,7 @@ impl NodeUi for FnNamedRef {
                                 if let Some(ca) = registry.name_ca(name) {
                                     self.0 =
                                         NamedRef::new(name.clone(), gantz_core::node::Ref::new(ca));
+                                    resp.mark_changed();
                                 }
                             }
                         }
@@ -94,7 +105,10 @@ impl NodeUi for FnNamedRef {
         });
 
         // Delegate to NamedRef's inspector rows for CA and update button.
-        self.0.inspector_rows(ctx, body);
+        let inner = self.0.inspector_rows(ctx, body);
+        resp.set_changed(inner.changed);
+        resp.payloads.extend(inner.payloads);
+        resp
     }
 
     fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
