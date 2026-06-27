@@ -502,16 +502,18 @@ impl NodeUi for Plot {
             });
         });
 
-        // Min and max share a 2-row grid so their checkboxes/dialers stay aligned
-        // and don't shift as a dialer's value width changes.
-        body.row(row_h * 2.0, |mut row| {
+        // `mn` and `mx` are two columns of one grid row, so the `mx` controls
+        // stay put as the `mn` dialer's value width changes (the dialers have a
+        // fixed width).
+        body.row(row_h, |mut row| {
             row.col(|ui| {
                 ui.label("range");
             });
             row.col(|ui| {
                 egui::Grid::new("plot_range").num_columns(2).show(ui, |ui| {
-                    changed |= bound_row(ui, "mn", "minimum", &mut self.y_min);
-                    changed |= bound_row(ui, "mx", "maximum", &mut self.y_max);
+                    changed |= bound_col(ui, "mn", "minimum", &mut self.y_min);
+                    changed |= bound_col(ui, "mx", "maximum", &mut self.y_max);
+                    ui.end_row();
                 });
             });
         });
@@ -613,15 +615,16 @@ fn radio_option<T: Copy + PartialEq>(
     }
 }
 
-/// One grid row for an optional fixed bound: a `label` cell, then a cell with a
-/// tightly-spaced enabling checkbox + value dialer. `kind` names the bound for
-/// hover text. Returns whether the bound changed.
-fn bound_row(ui: &mut egui::Ui, label: &str, kind: &str, bound: &mut Option<F32>) -> bool {
+/// One grid column for an optional fixed bound: a `label`, a tightly-spaced
+/// enabling checkbox, and a fixed-width value dialer (so the next column doesn't
+/// shift as the value's text width changes). `kind` names the bound for hover
+/// text. Returns whether the bound changed.
+fn bound_col(ui: &mut egui::Ui, label: &str, kind: &str, bound: &mut Option<F32>) -> bool {
     let mut changed = false;
-    ui.label(label);
     ui.horizontal(|ui| {
         // Tighten the gap between the checkbox and its dialer.
         ui.spacing_mut().item_spacing.x *= 0.25;
+        ui.label(label);
         let mut on = bound.is_some();
         if ui
             .checkbox(&mut on, "")
@@ -632,8 +635,13 @@ fn bound_row(ui: &mut egui::Ui, label: &str, kind: &str, bound: &mut Option<F32>
             changed = true;
         }
         let mut v = bound.map(F32::get).unwrap_or(0.0);
-        if ui
-            .add_enabled(bound.is_some(), egui::DragValue::new(&mut v).speed(0.1))
+        let size = egui::vec2(44.0, ui.spacing().interact_size.y);
+        let resp = ui
+            .add_enabled_ui(bound.is_some(), |ui| {
+                ui.add_sized(size, egui::DragValue::new(&mut v).speed(0.1))
+            })
+            .inner;
+        if resp
             .on_hover_text(format!("the fixed {kind} value"))
             .changed()
         {
@@ -641,7 +649,6 @@ fn bound_row(ui: &mut egui::Ui, label: &str, kind: &str, bound: &mut Option<F32>
             changed = true;
         }
     });
-    ui.end_row();
     changed
 }
 
