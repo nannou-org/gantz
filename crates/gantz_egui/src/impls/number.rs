@@ -82,74 +82,72 @@ impl NodeUi for Number {
         let mut changed = false;
         let mut bounds_changed = false;
 
+        // Min and max share a `range` row. An inner grid with fixed-width
+        // dialers keeps the `max` group's position fixed regardless of the
+        // `min` value's width.
         body.row(row_h, |mut row| {
             row.col(|ui| {
-                ui.label("min");
+                ui.label("range").on_hover_text(
+                    "optional min/max bounds; every value is clamped into this range \
+                     (input-socket values included)",
+                );
             });
             row.col(|ui| {
-                let mut enabled = self.min().is_some();
-                if ui.checkbox(&mut enabled, "").changed() {
-                    self.set_min(enabled.then(|| self.min().unwrap_or(0.0)));
-                    changed = true;
-                    bounds_changed = true;
-                }
-                if let Some(mut m) = self.min() {
-                    if ui.add(egui::DragValue::new(&mut m).speed(0.1)).changed() {
-                        self.set_min(Some(m));
-                        changed = true;
-                        bounds_changed = true;
-                    }
-                }
+                egui::Grid::new(ui.id().with("range"))
+                    .num_columns(4)
+                    .spacing([6.0, 4.0])
+                    .show(ui, |ui| {
+                        let (new_min, min_changed) = bound_cells(ui, "mn", "minimum", self.min());
+                        if min_changed {
+                            self.set_min(new_min);
+                            changed = true;
+                            bounds_changed = true;
+                        }
+                        let (new_max, max_changed) = bound_cells(ui, "mx", "maximum", self.max());
+                        if max_changed {
+                            self.set_max(new_max);
+                            changed = true;
+                            bounds_changed = true;
+                        }
+                        ui.end_row();
+                    });
             });
         });
 
         body.row(row_h, |mut row| {
             row.col(|ui| {
-                ui.label("max");
+                ui.label("prec.")
+                    .on_hover_text("precision: decimal places the dialer shows (display only)");
             });
             row.col(|ui| {
-                let mut enabled = self.max().is_some();
-                if ui.checkbox(&mut enabled, "").changed() {
-                    self.set_max(enabled.then(|| self.max().unwrap_or(0.0)));
-                    changed = true;
-                    bounds_changed = true;
-                }
-                if let Some(mut m) = self.max() {
-                    if ui.add(egui::DragValue::new(&mut m).speed(0.1)).changed() {
-                        self.set_max(Some(m));
+                ui.horizontal(|ui| {
+                    let mut enabled = self.precision().is_some();
+                    if ui.checkbox(&mut enabled, "").changed() {
+                        self.set_precision(enabled.then(|| self.precision().unwrap_or(2)));
                         changed = true;
-                        bounds_changed = true;
                     }
-                }
-            });
-        });
-
-        body.row(row_h, |mut row| {
-            row.col(|ui| {
-                ui.label("precision");
-            });
-            row.col(|ui| {
-                let mut enabled = self.precision().is_some();
-                if ui.checkbox(&mut enabled, "").changed() {
-                    self.set_precision(enabled.then(|| self.precision().unwrap_or(2)));
-                    changed = true;
-                }
-                if let Some(p) = self.precision() {
-                    let mut n = p as i32;
+                    let mut n = self.precision().unwrap_or(2) as i32;
                     if ui
-                        .add(egui::DragValue::new(&mut n).range(0..=10).speed(0.1))
+                        .add_enabled(
+                            enabled,
+                            egui::DragValue::new(&mut n).range(0..=10).speed(0.1),
+                        )
                         .changed()
                     {
                         self.set_precision(Some(n.clamp(0, 10) as u8));
                         changed = true;
                     }
-                }
+                });
             });
         });
 
         body.row(row_h, |mut row| {
             row.col(|ui| {
-                ui.label("push-eval on edit");
+                ui.label("push").on_hover_text(
+                    "push-eval on edit: when enabled, editing the dialer fires a push \
+                     evaluation downstream. Values arriving via the input socket are \
+                     always passed through regardless.",
+                );
             });
             row.col(|ui| {
                 let mut push = self.push_eval_on_edit();
@@ -189,6 +187,50 @@ impl NodeUi for Number {
             }
         })
     }
+}
+
+/// Fixed dialer width (px) so a bound's position does not shift with its value.
+const BOUND_DIAL_W: f32 = 48.0;
+
+/// Render one bound as a `label` grid cell followed by a `<checkbox> <dialer>`
+/// grid cell. `hover` expands the abbreviated label.
+///
+/// The dialer is always shown but disabled while the checkbox is off, and is
+/// given a fixed width so the next grid column stays put. The checkbox and
+/// dialer are packed tightly. Returns the (possibly updated) bound and whether
+/// it changed this frame.
+fn bound_cells(
+    ui: &mut egui::Ui,
+    label: &str,
+    hover: &str,
+    value: Option<f64>,
+) -> (Option<f64>, bool) {
+    ui.label(label).on_hover_text(hover);
+    let mut value = value;
+    let changed = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x *= 0.25;
+            let mut changed = false;
+            let mut enabled = value.is_some();
+            if ui.checkbox(&mut enabled, "").changed() {
+                value = enabled.then(|| value.unwrap_or(0.0));
+                changed = true;
+            }
+            let mut v = value.unwrap_or(0.0);
+            let res = ui
+                .add_enabled_ui(enabled, |ui| {
+                    let size = [BOUND_DIAL_W, ui.spacing().interact_size.y];
+                    ui.add_sized(size, egui::DragValue::new(&mut v).speed(0.1))
+                })
+                .inner;
+            if res.changed() {
+                value = Some(v);
+                changed = true;
+            }
+            changed
+        })
+        .inner;
+    (value, changed)
 }
 
 /// Keep `max >= min` and re-clamp the stored value into the new bounds so the
