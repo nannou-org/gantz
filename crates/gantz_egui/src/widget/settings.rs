@@ -86,17 +86,24 @@ pub fn settings(
                 });
         }
         SettingsTab::Style => {
-            super::style_config(&mut scene_config.grid, ui);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| super::style_config(&mut scene_config.grid, ui));
         }
         SettingsTab::Global => {
-            let g = super::global_config(
-                compile_config,
-                validate_change_tracking,
-                layout_config,
-                &mut scene_config.snap,
-                &mut scene_config.align,
-                ui,
-            );
+            let g = egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    super::global_config(
+                        compile_config,
+                        validate_change_tracking,
+                        layout_config,
+                        &mut scene_config.snap,
+                        &mut scene_config.align,
+                        ui,
+                    )
+                })
+                .inner;
             res.compile_config = g.compile_config;
             res.validate_change_tracking = g.validate_change_tracking;
             res.reset_all_demos = g.reset_all_demos;
