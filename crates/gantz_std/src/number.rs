@@ -7,11 +7,15 @@ use std::hash::{Hash, Hasher};
 /// A number stored in state. Can be updated via the first input.
 ///
 /// Optional configuration:
-/// - `min`/`max` clamp every value (including input-socket values) and so are
-///   part of the content address.
+/// - `min`/`max` clamp every value (including input-socket values).
 /// - `precision` controls how many decimals the dialer shows/edits (display
-///   only) and `push_eval_on_edit` toggles whether editing fires downstream.
-///   Both are UI-only and deliberately excluded from the content address.
+///   only).
+/// - `push_eval_on_edit` toggles whether editing the dialer fires downstream.
+///
+/// Each field is folded into the content address only when non-default (see
+/// [`CaHash`]): a plain `number` keeps the original address, while any
+/// configured field becomes part of the node's identity so it persists and is
+/// undoable under the commit-on-change model.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Number {
     #[serde(default)]
@@ -107,10 +111,11 @@ impl Hash for Number {
 impl CaHash for Number {
     fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         hasher.update("gantz.number".as_bytes());
-        // Only the semantic bounds contribute to the content address. With no
-        // bounds this matches the old unit-struct hash byte-for-byte, so
-        // existing `number` nodes keep their address. `precision` and
-        // `push_eval_on_edit` are UI-only and intentionally excluded.
+        // Each config field is folded in only when non-default, so a plain
+        // `number` hashes to just the tag - byte-for-byte the old unit-struct
+        // address, keeping existing `number` nodes stable. Configuring any field
+        // gives the node a new address, which is how the commit-on-change model
+        // persists it (the working graph is only saved when it commits).
         if let Some(min) = self.min {
             hasher.update(b"min");
             CaHash::hash(&min.to_bits(), hasher);
@@ -118,6 +123,13 @@ impl CaHash for Number {
         if let Some(max) = self.max {
             hasher.update(b"max");
             CaHash::hash(&max.to_bits(), hasher);
+        }
+        if let Some(precision) = self.precision {
+            hasher.update(b"precision");
+            CaHash::hash(&precision, hasher);
+        }
+        if !self.push_eval_on_edit {
+            hasher.update(b"no-push-eval");
         }
     }
 }
