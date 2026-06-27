@@ -14,9 +14,10 @@
 //! value unchanged (like [`super::Inspect`]), so a value can be observed without
 //! breaking the chain it flows through.
 
+use crate::widget::node_inspector;
 use crate::{
-    ContextMenuResponse, InspectorUiResponse, NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc,
-    SocketKind,
+    ContextMenuResponse, InspectorRowsResponse, InspectorUiResponse, NodeCtx, NodeUi,
+    NodeUiResponse, Registry, SocketDoc, SocketKind,
 };
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
@@ -92,12 +93,12 @@ pub struct Plot {
     show_grid: bool,
     /// Whether to draw the axes.
     show_axes: bool,
-    /// Whether the embedded plot accepts drag/zoom/scroll. Off by default so the
-    /// node drags and right-clicks like any other (see [`NodeUi::ui`]).
+    /// When on, hovering shows a crosshair and the value beneath it. The plot
+    /// never pans or zooms regardless - the node drags and right-clicks as usual.
     interactive: bool,
-    /// Fraction of the data range padded on each side; `0` is off (the default),
-    /// letting data fill the frame cleanly.
-    margin: F32,
+    /// When on, the plot is inset within the node frame's regular margin; when
+    /// off the data fills the frame.
+    margin: bool,
     /// A fixed lower bound for the value axis when `Some`.
     y_min: Option<F32>,
     /// A fixed upper bound for the value axis when `Some`.
@@ -120,10 +121,10 @@ impl Default for Plot {
             width: Self::DEFAULT_SIZE[0],
             height: Self::DEFAULT_SIZE[1],
             color: None,
-            show_grid: true,
-            show_axes: true,
+            show_grid: false,
+            show_axes: false,
             interactive: false,
-            margin: F32(0.0),
+            margin: true,
             y_min: None,
             y_max: None,
         }
@@ -253,10 +254,14 @@ impl NodeUi for Plot {
         let style = uictx.style();
         let interaction = uictx.interaction();
 
-        // A minimal extreme-bg frame with square corners so data shows cleanly.
+        // A minimal extreme-bg frame, keeping the default rounded corners. The
+        // `margin` toggle controls whether the data is inset by the frame's
+        // regular margin or fills it.
         let mut frame = egui_graph::node::default_frame(style, interaction);
         frame.fill = style.visuals.extreme_bg_color;
-        frame.corner_radius = egui::CornerRadius::ZERO;
+        if !self.margin {
+            frame.inner_margin = egui::Margin::ZERO;
+        }
 
         let node_egui_id = uictx.egui_id();
         let resize_id = node_egui_id.with("resize");
@@ -304,34 +309,26 @@ impl NodeUi for Plot {
                     let color = resolve_color(self.color, ui);
                     let plot_style = self.style;
                     let interactive = self.interactive;
-                    let bounds =
-                        value_bounds(&ys, plot_style, self.margin.get(), self.y_min, self.y_max);
+                    let bounds = value_bounds(&ys, plot_style, self.y_min, self.y_max);
 
                     let mut plot = egui_plot::Plot::new(plot_id)
                         .width(avail.x)
                         .height(avail.y)
                         .show_background(false)
                         .show_axes(egui::Vec2b::new(self.show_axes, self.show_axes))
-                        .show_grid(egui::Vec2b::new(self.show_grid, self.show_grid));
-                    if interactive {
-                        // Free exploration: drag/zoom/scroll, native bounds.
-                        plot = plot
-                            .allow_drag(true)
-                            .allow_zoom(true)
-                            .allow_scroll(true)
-                            .allow_boxed_zoom(true)
-                            .set_margin_fraction(egui::Vec2::splat(self.margin.get()));
-                    } else {
-                        // Purely visual: no crosshair, and `Sense::hover` (no
-                        // click/drag) so the node frame underneath handles drags
-                        // and right-clicks like any other node.
-                        plot = plot
-                            .allow_drag(false)
-                            .allow_zoom(false)
-                            .allow_scroll(false)
-                            .allow_boxed_zoom(false)
-                            .sense(egui::Sense::hover())
-                            .cursor_color(egui::Color32::TRANSPARENT);
+                        .show_grid(egui::Vec2b::new(self.show_grid, self.show_grid))
+                        // Pan/zoom are always off. `Sense::hover` lets the node
+                        // frame beneath capture drags and right-clicks, so the
+                        // node moves and its context menu opens as usual.
+                        .allow_drag(false)
+                        .allow_zoom(false)
+                        .allow_scroll(false)
+                        .allow_boxed_zoom(false)
+                        .sense(egui::Sense::hover());
+                    if !interactive {
+                        // Purely visual: hide the crosshair (the value readout is
+                        // also suppressed via `allow_hover(false)` below).
+                        plot = plot.cursor_color(egui::Color32::TRANSPARENT);
                     }
 
                     plot.show(ui, |plot_ui| {
@@ -360,13 +357,11 @@ impl NodeUi for Plot {
                                 );
                             }
                         }
-                        // Drive the (non-interactive) view deterministically from
-                        // the data + config so live updates and min/max apply.
-                        if !interactive {
-                            let ([xlo, ylo], [xhi, yhi]) = bounds;
-                            plot_ui.set_plot_bounds_x(xlo..=xhi);
-                            plot_ui.set_plot_bounds_y(ylo..=yhi);
-                        }
+                        // Drive the view deterministically from the data + config
+                        // (the plot never pans), so live updates and min/max apply.
+                        let ([xlo, ylo], [xhi, yhi]) = bounds;
+                        plot_ui.set_plot_bounds_x(xlo..=xhi);
+                        plot_ui.set_plot_bounds_y(ylo..=yhi);
                     })
                     .response
                 })
@@ -377,91 +372,136 @@ impl NodeUi for Plot {
         resp
     }
 
-    fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> InspectorUiResponse {
+    fn inspector_rows(
+        &mut self,
+        _ctx: &mut NodeCtx,
+        body: &mut egui_extras::TableBody,
+    ) -> InspectorRowsResponse {
+        let row_h = node_inspector::table_row_h(body.ui_mut());
         let mut changed = false;
-        ui.separator();
 
-        // State summary: just the sample count (the raw buffer would be huge).
-        ui.horizontal(|ui| {
-            ui.label("data");
-            ui.label(format!("{} samples", series(&ctx).len()));
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("mode");
+            });
+            row.col(|ui| {
+                ui.horizontal(|ui| {
+                    changed |= radio_option(ui, &mut self.mode, PlotMode::Scope, "scope");
+                    changed |= radio_option(ui, &mut self.mode, PlotMode::Signal, "signal");
+                });
+            });
         });
 
-        ui.horizontal(|ui| {
-            ui.label("mode");
-            changed |= ui
-                .selectable_value(&mut self.mode, PlotMode::Scope, "scope")
-                .changed();
-            changed |= ui
-                .selectable_value(&mut self.mode, PlotMode::Signal, "signal")
-                .changed();
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("style");
+            });
+            row.col(|ui| {
+                ui.horizontal(|ui| {
+                    changed |= radio_option(ui, &mut self.style, PlotStyle::Bars, "bars");
+                    changed |= radio_option(ui, &mut self.style, PlotStyle::Line, "line");
+                });
+            });
         });
 
-        ui.horizontal(|ui| {
-            ui.label("style");
-            changed |= ui
-                .selectable_value(&mut self.style, PlotStyle::Bars, "bars")
-                .changed();
-            changed |= ui
-                .selectable_value(&mut self.style, PlotStyle::Line, "line")
-                .changed();
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("capacity");
+            });
+            row.col(|ui| {
+                let mut c = self.capacity as i32;
+                if ui
+                    .add(egui::DragValue::new(&mut c).range(1..=4096).speed(1.0))
+                    .on_hover_text("max samples retained in scope mode")
+                    .changed()
+                {
+                    self.capacity = c.clamp(1, 4096) as u32;
+                    changed = true;
+                }
+            });
         });
 
-        ui.horizontal(|ui| {
-            ui.label("capacity");
-            let mut c = self.capacity as i32;
-            if ui
-                .add(egui::DragValue::new(&mut c).range(1..=4096).speed(1.0))
-                .on_hover_text("max samples retained in scope mode")
-                .changed()
-            {
-                self.capacity = c.clamp(1, 4096) as u32;
-                changed = true;
-            }
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("margin");
+            });
+            row.col(|ui| {
+                if ui
+                    .checkbox(&mut self.margin, "")
+                    .on_hover_text("inset the data within the node frame's margin")
+                    .changed()
+                {
+                    changed = true;
+                }
+            });
         });
 
-        ui.horizontal(|ui| {
-            ui.label("margin");
-            let mut m = self.margin.get();
-            if ui
-                .add(egui::DragValue::new(&mut m).range(0.0..=1.0).speed(0.005))
-                .on_hover_text("fraction of the data range padded on each side")
-                .changed()
-            {
-                self.margin = F32(m.clamp(0.0, 1.0));
-                changed = true;
-            }
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("colour");
+            });
+            row.col(|ui| {
+                ui.horizontal(|ui| {
+                    let mut col = resolve_color(self.color, ui);
+                    if ui.color_edit_button_srgba(&mut col).changed() {
+                        self.color = Some([col.r(), col.g(), col.b(), col.a()]);
+                        changed = true;
+                    }
+                    if self.color.is_some() && ui.button("theme").clicked() {
+                        self.color = None;
+                        changed = true;
+                    }
+                });
+            });
         });
 
-        ui.horizontal(|ui| {
-            ui.label("colour");
-            let mut col = resolve_color(self.color, ui);
-            if ui.color_edit_button_srgba(&mut col).changed() {
-                self.color = Some([col.r(), col.g(), col.b(), col.a()]);
-                changed = true;
-            }
-            if self.color.is_some() && ui.button("theme").clicked() {
-                self.color = None;
-                changed = true;
-            }
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("range");
+            });
+            row.col(|ui| {
+                ui.horizontal(|ui| {
+                    changed |= bound_control(ui, "min", &mut self.y_min);
+                    changed |= bound_control(ui, "max", &mut self.y_max);
+                });
+            });
         });
 
-        // Optional fixed value bounds: an enabling checkbox + a dialer per line.
-        changed |= bound_row(ui, "min", &mut self.y_min);
-        changed |= bound_row(ui, "max", &mut self.y_max);
-
-        ui.horizontal(|ui| {
-            changed |= ui.checkbox(&mut self.show_grid, "grid").changed();
-            changed |= ui.checkbox(&mut self.show_axes, "axes").changed();
-            changed |= ui
-                .checkbox(&mut self.interactive, "interactive")
-                .on_hover_text("allow drag/zoom inside the node")
-                .changed();
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("display");
+            });
+            row.col(|ui| {
+                ui.horizontal(|ui| {
+                    changed |= ui.checkbox(&mut self.show_grid, "grid").changed();
+                    changed |= ui.checkbox(&mut self.show_axes, "axes").changed();
+                    changed |= ui
+                        .checkbox(&mut self.interactive, "interactive")
+                        .on_hover_text("show a crosshair and value readout on hover")
+                        .changed();
+                });
+            });
         });
 
-        let mut resp = InspectorUiResponse::default();
+        let mut resp = InspectorRowsResponse::default();
         resp.set_changed(changed);
         resp
+    }
+
+    fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> InspectorUiResponse {
+        // Summarise the (potentially long) history rather than dumping it.
+        ui.separator();
+        let inner = ui
+            .horizontal(|ui| {
+                ui.label("data");
+                ui.label(format!("{} samples", series(&ctx).len()));
+            })
+            .response;
+        InspectorUiResponse {
+            inner: Some(inner),
+            changed: false,
+            payloads: Vec::new(),
+        }
     }
 
     fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> ContextMenuResponse {
@@ -479,7 +519,7 @@ impl NodeUi for Plot {
 
     fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         Some(match kind {
-            SocketKind::Input => SocketDoc::ty("number | list").with_description(
+            SocketKind::Input => SocketDoc::ty("number or list").with_description(
                 "scope: a number (or list) appended to the history; signal: the value to plot",
             ),
             SocketKind::Output => {
@@ -494,39 +534,59 @@ impl NodeUi for Plot {
     }
 }
 
-/// An enabling checkbox plus a value dialer for an optional fixed bound. Returns
-/// whether the bound changed.
-fn bound_row(ui: &mut egui::Ui, label: &str, bound: &mut Option<F32>) -> bool {
+/// Render `text` as a label-styled radio option: dim when unselected, strong
+/// when selected (no fill, like the app's tabs). Returns whether it was just
+/// selected.
+fn radio_option<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    current: &mut T,
+    value: T,
+    text: &str,
+) -> bool {
+    let strong = ui.visuals().strong_text_color();
+    let mut selected = *current == value;
+    let resp = ui.add(crate::widget::LabelToggle::new(text, &mut selected).selected_color(strong));
+    // Clicking an already-selected option is a no-op (it stays selected).
+    if resp.changed() && selected {
+        *current = value;
+        true
+    } else {
+        false
+    }
+}
+
+/// A label, an enabling checkbox, and a value dialer for an optional fixed
+/// bound. Returns whether the bound changed.
+fn bound_control(ui: &mut egui::Ui, label: &str, bound: &mut Option<F32>) -> bool {
     let mut changed = false;
-    ui.horizontal(|ui| {
-        let mut on = bound.is_some();
-        if ui.checkbox(&mut on, "").changed() {
-            *bound = on.then(|| bound.unwrap_or(F32(0.0)));
-            changed = true;
-        }
-        ui.label(label);
-        let mut v = bound.map(F32::get).unwrap_or(0.0);
-        let resp = ui.add_enabled(bound.is_some(), egui::DragValue::new(&mut v).speed(0.1));
-        if resp.changed() {
-            *bound = Some(F32(v));
-            changed = true;
-        }
-    });
+    ui.label(label);
+    let mut on = bound.is_some();
+    if ui.checkbox(&mut on, "").changed() {
+        *bound = on.then(|| bound.unwrap_or(F32(0.0)));
+        changed = true;
+    }
+    let mut v = bound.map(F32::get).unwrap_or(0.0);
+    if ui
+        .add_enabled(bound.is_some(), egui::DragValue::new(&mut v).speed(0.1))
+        .changed()
+    {
+        *bound = Some(F32(v));
+        changed = true;
+    }
     changed
 }
 
-/// Compute `([x_min, y_min], [x_max, y_max])` for the non-interactive view from
-/// the data, a margin fraction, and optional fixed value bounds. Bars include
-/// the baseline `0` and span integer x; lines span sample indices.
+/// Compute `([x_min, y_min], [x_max, y_max])` for the view from the data and
+/// optional fixed value bounds. Bars include the baseline `0` and span integer
+/// x; lines span sample indices. The plot itself adds no margin.
 fn value_bounds(
     ys: &[f64],
     style: PlotStyle,
-    margin: f32,
     y_min: Option<F32>,
     y_max: Option<F32>,
 ) -> ([f64; 2], [f64; 2]) {
     let n = ys.len() as f64;
-    let (mut xlo, mut xhi) = match style {
+    let (xlo, xhi) = match style {
         PlotStyle::Bars => (-0.5, (n - 0.5).max(0.5)),
         PlotStyle::Line => (0.0, (n - 1.0).max(1.0)),
     };
@@ -551,16 +611,7 @@ fn value_bounds(
         yhi += 1.0;
     }
 
-    // Pad each axis by the margin fraction of its range.
-    let margin = margin as f64;
-    let mx = (xhi - xlo) * margin;
-    let my = (yhi - ylo) * margin;
-    xlo -= mx;
-    xhi += mx;
-    ylo -= my;
-    yhi += my;
-
-    // Fixed overrides are exact (applied after the margin).
+    // Fixed overrides are exact.
     if let Some(v) = y_min {
         ylo = v.get() as f64;
     }
