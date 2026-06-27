@@ -16,8 +16,8 @@
 
 use crate::widget::node_inspector;
 use crate::{
-    ContextMenuResponse, InspectorRowsResponse, InspectorUiResponse, NodeCtx, NodeUi,
-    NodeUiResponse, Registry, SocketDoc, SocketKind,
+    ContextMenuResponse, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry,
+    SocketDoc, SocketKind,
 };
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
@@ -386,11 +386,23 @@ impl NodeUi for Plot {
 
     fn inspector_rows(
         &mut self,
-        _ctx: &mut NodeCtx,
+        ctx: &mut NodeCtx,
         body: &mut egui_extras::TableBody,
     ) -> InspectorRowsResponse {
         let row_h = node_inspector::table_row_h(body.ui_mut());
         let mut changed = false;
+
+        // A summarised replacement for the (suppressed) default state row - the
+        // raw history would be a huge list.
+        let n_samples = series(ctx).len();
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("state");
+            });
+            row.col(|ui| {
+                ui.label(format!("{n_samples} samples"));
+            });
+        });
 
         body.row(row_h, |mut row| {
             row.col(|ui| {
@@ -502,17 +514,17 @@ impl NodeUi for Plot {
             });
         });
 
-        // `mn` and `mx` are two columns of one grid row, so the `mx` controls
-        // stay put as the `mn` dialer's value width changes (the dialers have a
-        // fixed width).
+        // Min and max are two columns of one grid row (hover text says which is
+        // which), so the max controls stay put as the min dialer's value width
+        // changes (the dialers have a fixed width).
         body.row(row_h, |mut row| {
             row.col(|ui| {
                 ui.label("range");
             });
             row.col(|ui| {
                 egui::Grid::new("plot_range").num_columns(2).show(ui, |ui| {
-                    changed |= bound_col(ui, "mn", "minimum", &mut self.y_min);
-                    changed |= bound_col(ui, "mx", "maximum", &mut self.y_max);
+                    changed |= bound_col(ui, "minimum", &mut self.y_min);
+                    changed |= bound_col(ui, "maximum", &mut self.y_max);
                     ui.end_row();
                 });
             });
@@ -543,22 +555,6 @@ impl NodeUi for Plot {
         let mut resp = InspectorRowsResponse::default();
         resp.set_changed(changed);
         resp
-    }
-
-    fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> InspectorUiResponse {
-        // Summarise the (potentially long) history rather than dumping it.
-        ui.separator();
-        let inner = ui
-            .horizontal(|ui| {
-                ui.label("data");
-                ui.label(format!("{} samples", series(&ctx).len()));
-            })
-            .response;
-        InspectorUiResponse {
-            inner: Some(inner),
-            changed: false,
-            payloads: Vec::new(),
-        }
     }
 
     fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> ContextMenuResponse {
@@ -615,16 +611,15 @@ fn radio_option<T: Copy + PartialEq>(
     }
 }
 
-/// One grid column for an optional fixed bound: a `label`, a tightly-spaced
-/// enabling checkbox, and a fixed-width value dialer (so the next column doesn't
-/// shift as the value's text width changes). `kind` names the bound for hover
-/// text. Returns whether the bound changed.
-fn bound_col(ui: &mut egui::Ui, label: &str, kind: &str, bound: &mut Option<F32>) -> bool {
+/// One grid column for an optional fixed bound: a tightly-spaced enabling
+/// checkbox and a fixed-width value dialer (so the next column doesn't shift as
+/// the value's text width changes). `kind` names the bound for hover text.
+/// Returns whether the bound changed.
+fn bound_col(ui: &mut egui::Ui, kind: &str, bound: &mut Option<F32>) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         // Tighten the gap between the checkbox and its dialer.
         ui.spacing_mut().item_spacing.x *= 0.25;
-        ui.label(label);
         let mut on = bound.is_some();
         if ui
             .checkbox(&mut on, "")
