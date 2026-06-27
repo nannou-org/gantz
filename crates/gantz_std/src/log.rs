@@ -66,11 +66,17 @@ impl gantz_core::Node for Log {
         fn trace(path: SteelVal, val: SteelVal) {
             log_val(log::Level::Trace, &path, &val);
         }
-        ctx.vm().register_fn("log/error", error);
-        ctx.vm().register_fn("log/warn", warn);
-        ctx.vm().register_fn("log/info", info);
-        ctx.vm().register_fn("log/debug", debug);
-        ctx.vm().register_fn("log/trace", trace);
+        // Register the helpers only if absent. Steel's `register_fn` allocates a
+        // new global slot and shadows the previous binding rather than
+        // overwriting it, so re-registering on every recompile (the engine
+        // persists across them) would leak the old closures.
+        if ctx.vm().extract_value("log/info").is_err() {
+            ctx.vm().register_fn("log/error", error);
+            ctx.vm().register_fn("log/warn", warn);
+            ctx.vm().register_fn("log/info", info);
+            ctx.vm().register_fn("log/debug", debug);
+            ctx.vm().register_fn("log/trace", trace);
+        }
     }
 }
 
