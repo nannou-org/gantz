@@ -232,9 +232,15 @@ impl gantz_core::Node for Plot {
         let path = ctx.path();
         node::state::init_value_if_absent(ctx.vm(), path, || SteelVal::ListV(Default::default()))
             .unwrap();
-        // Stateless and idempotent: re-registering the same name is a harmless
-        // overwrite shared across all plot nodes.
-        ctx.vm().register_fn("plot-push", plot_push);
+        // Register the shared `plot-push` helper, but only if absent. Steel's
+        // `register_fn` allocates a *new* global slot and shadows the previous
+        // binding rather than overwriting it, so re-registering on every
+        // recompile (the engine persists across them) would leak the old
+        // closure - a slow memory leak as the plot is edited. One binding is
+        // shared by every plot node.
+        if ctx.vm().extract_value("plot-push").is_err() {
+            ctx.vm().register_fn("plot-push", plot_push);
+        }
     }
 }
 
@@ -819,5 +825,25 @@ mod tests {
         // Stored as a lone number; `series` reads it as a single sample.
         let state = node::state::extract_value(&vm, &[p]).unwrap().unwrap();
         assert!(matches!(state, SteelVal::IntV(7)));
+    }
+
+    // Registering the graph again on the same engine (as a recompile does) must
+    // keep `plot-push` working - the registration guard must not skip the first
+    // registration, and must not break on the second. (The guard also prevents a
+    // leaked global binding per recompile.)
+    #[test]
+    fn re_registration_keeps_plot_push_working() {
+        let src = gantz_core::node::expr("5").unwrap().with_push_eval();
+        let plot = Plot {
+            mode: PlotMode::Scope,
+            capacity: 3,
+            ..Default::default()
+        };
+        let (g, s, p) = graph_with(Box::new(src) as Box<dyn Node>, plot);
+        let mut vm = vm_for(&g);
+        // A second registration pass over the same engine.
+        gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+        fire(&mut vm, &g, s, 5);
+        assert_eq!(list_of(&vm, p), vec![5.0, 5.0, 5.0]);
     }
 }
