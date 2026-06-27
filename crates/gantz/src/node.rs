@@ -166,6 +166,9 @@ mod tests {
                     ("show_grid", Datum::Bool(false)),
                     ("show_axes", Datum::Bool(true)),
                     ("interactive", Datum::Bool(true)),
+                    ("margin", Datum::F64(0.25)),
+                    ("y_min", Datum::F64(1.5)),
+                    ("y_max", Datum::Null),
                 ],
             ),
         ];
