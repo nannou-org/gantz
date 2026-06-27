@@ -61,6 +61,49 @@ pub fn table_row_h(ui: &egui::Ui) -> f32 {
     ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().item_spacing.y
 }
 
+/// Render an optional numeric bound as a tight `<checkbox> <dialer>` group,
+/// suitable as one column of a `range` grid row.
+///
+/// The dialer is always shown but disabled while the checkbox is off, and has a
+/// fixed width so a following column stays put as the value's width changes.
+/// `kind` names the bound for the hover text (e.g. `"minimum"`). Returns whether
+/// `bound` changed this frame.
+pub fn bound_col<T: egui::emath::Numeric>(
+    ui: &mut egui::Ui,
+    kind: &str,
+    bound: &mut Option<T>,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        // Tighten the gap between the checkbox and its dialer.
+        ui.spacing_mut().item_spacing.x *= 0.25;
+        let mut on = bound.is_some();
+        if ui
+            .checkbox(&mut on, "")
+            .on_hover_text(format!("clamp the {kind} value"))
+            .changed()
+        {
+            *bound = on.then(|| bound.unwrap_or(T::from_f64(0.0)));
+            changed = true;
+        }
+        let mut v = bound.unwrap_or(T::from_f64(0.0));
+        let size = egui::vec2(44.0, ui.spacing().interact_size.y);
+        let resp = ui
+            .add_enabled_ui(bound.is_some(), |ui| {
+                ui.add_sized(size, egui::DragValue::new(&mut v).speed(0.1))
+            })
+            .inner;
+        if resp
+            .on_hover_text(format!("the fixed {kind} value"))
+            .changed()
+        {
+            *bound = Some(v);
+            changed = true;
+        }
+    });
+    changed
+}
+
 pub fn table(
     node: &mut (impl Node + NodeUi),
     ctx: &mut NodeCtx,

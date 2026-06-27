@@ -82,30 +82,27 @@ impl NodeUi for Number {
         let mut changed = false;
         let mut bounds_changed = false;
 
-        // Min and max share a `range` row. An inner grid with fixed-width
-        // dialers keeps the `max` group's position fixed regardless of the
-        // `min` value's width.
+        // Min and max are two columns of one `range` row (hover text says which
+        // is which), sharing the inspector's `bound_col` helper with the plot
+        // node. Fixed-width dialers keep the max column put as the min value's
+        // width changes.
         body.row(row_h, |mut row| {
             row.col(|ui| {
-                ui.label("range").on_hover_text(
-                    "optional min/max bounds; every value is clamped into this range \
-                     (input-socket values included)",
-                );
+                ui.label("range");
             });
             row.col(|ui| {
-                egui::Grid::new(ui.id().with("range"))
-                    .num_columns(4)
-                    .spacing([6.0, 4.0])
+                egui::Grid::new("number_range")
+                    .num_columns(2)
                     .show(ui, |ui| {
-                        let (new_min, min_changed) = bound_cells(ui, "mn", "minimum", self.min());
-                        if min_changed {
-                            self.set_min(new_min);
+                        let mut min = self.min();
+                        if crate::widget::node_inspector::bound_col(ui, "minimum", &mut min) {
+                            self.set_min(min);
                             changed = true;
                             bounds_changed = true;
                         }
-                        let (new_max, max_changed) = bound_cells(ui, "mx", "maximum", self.max());
-                        if max_changed {
-                            self.set_max(new_max);
+                        let mut max = self.max();
+                        if crate::widget::node_inspector::bound_col(ui, "maximum", &mut max) {
+                            self.set_max(max);
                             changed = true;
                             bounds_changed = true;
                         }
@@ -187,50 +184,6 @@ impl NodeUi for Number {
             }
         })
     }
-}
-
-/// Fixed dialer width (px) so a bound's position does not shift with its value.
-const BOUND_DIAL_W: f32 = 48.0;
-
-/// Render one bound as a `label` grid cell followed by a `<checkbox> <dialer>`
-/// grid cell. `hover` expands the abbreviated label.
-///
-/// The dialer is always shown but disabled while the checkbox is off, and is
-/// given a fixed width so the next grid column stays put. The checkbox and
-/// dialer are packed tightly. Returns the (possibly updated) bound and whether
-/// it changed this frame.
-fn bound_cells(
-    ui: &mut egui::Ui,
-    label: &str,
-    hover: &str,
-    value: Option<f64>,
-) -> (Option<f64>, bool) {
-    ui.label(label).on_hover_text(hover);
-    let mut value = value;
-    let changed = ui
-        .horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x *= 0.25;
-            let mut changed = false;
-            let mut enabled = value.is_some();
-            if ui.checkbox(&mut enabled, "").changed() {
-                value = enabled.then(|| value.unwrap_or(0.0));
-                changed = true;
-            }
-            let mut v = value.unwrap_or(0.0);
-            let res = ui
-                .add_enabled_ui(enabled, |ui| {
-                    let size = [BOUND_DIAL_W, ui.spacing().interact_size.y];
-                    ui.add_sized(size, egui::DragValue::new(&mut v).speed(0.1))
-                })
-                .inner;
-            if res.changed() {
-                value = Some(v);
-                changed = true;
-            }
-            changed
-        })
-        .inner;
-    (value, changed)
 }
 
 /// Keep `max >= min` and re-clamp the stored value into the new bounds so the
