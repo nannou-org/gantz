@@ -167,7 +167,13 @@ pub(crate) fn collect_unique_vars(tts: TokenStream) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut vars = Vec::new();
     for token in tts {
-        let src = token.source();
+        // steel 0.8's `TokenStream` yields `Result`s; read the `source` field
+        // (present on both the clean and the lex-error token) so we still see
+        // every token's text.
+        let src = match &token {
+            Ok(t) => t.source,
+            Err(e) => e.source,
+        };
         if src.starts_with("$") {
             let var_name = src.to_string();
             if seen.insert(var_name.clone()) {
@@ -205,7 +211,12 @@ pub(crate) fn interpolate_tokens(
         .collect();
 
     let tokens = tts.map(|token| {
-        let src = token.source();
+        // See `collect_unique_vars`: 0.8's `TokenStream` yields `Result`s, so
+        // reconstruct from the `source` field of every token.
+        let src = match &token {
+            Ok(t) => t.source,
+            Err(e) => e.source,
+        };
         if src.starts_with("$?") {
             let index = var_to_index.get(src).unwrap();
             match inputs.get(*index).and_then(|o| o.as_ref()) {

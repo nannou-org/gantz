@@ -62,13 +62,15 @@ pub fn as_keyword(e: &ExprKind) -> Option<String> {
 
 /// The source span of a datum.
 pub fn span(e: &ExprKind) -> Option<Span> {
-    e.span()
-        .map(|s| Span::new(s.start as usize, s.end as usize))
+    // steel 0.8's `ExprKind::span` returns a plain `Span`; every datum we read
+    // comes from real source text, so it is always present.
+    let s = e.span();
+    Some(Span::new(s.start as usize, s.end as usize))
 }
 
 /// The verbatim source slice a datum covers within `src`.
 pub fn span_src<'a>(e: &ExprKind, src: &'a str) -> Option<&'a str> {
-    let s = e.span()?;
+    let s = e.span();
     src.get(s.start as usize..s.end as usize)
 }
 
