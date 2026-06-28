@@ -60,9 +60,6 @@ pub struct GraphBody {
 pub struct NodeDecl {
     /// File-local label, referenced by connections and layout.
     pub name: String,
-    /// Explicit node index, overriding the sequential default (reserved for
-    /// reproducing `StableGraph` holes); `None` means "previous index + 1".
-    pub index: Option<usize>,
     /// The node specification.
     pub spec: NodeSpec,
 }
