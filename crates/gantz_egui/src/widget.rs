@@ -1,6 +1,7 @@
 //! A collection of useful widgets for gantz.
 use time::{OffsetDateTime, UtcOffset, format_description};
 
+pub use checkbox_enabled::CheckboxEnabled;
 pub use command_palette::CommandPalette;
 pub use gantz::{
     AlignConfig, Gantz, GantzState, GridConfig, LayoutConfig, SceneConfig, SnapConfig, SnapMode,
@@ -24,6 +25,7 @@ pub use steel_view::SteelView;
 pub use style_config::style_config;
 pub use tab::{Tab, TabResponse};
 
+pub mod checkbox_enabled;
 pub mod command_palette;
 pub mod gantz;
 pub mod global_config;

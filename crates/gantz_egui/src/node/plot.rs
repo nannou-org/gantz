@@ -529,8 +529,16 @@ impl NodeUi for Plot {
             });
             row.col(|ui| {
                 egui::Grid::new("plot_range").num_columns(2).show(ui, |ui| {
-                    changed |= bound_col(ui, "minimum", &mut self.y_min);
-                    changed |= bound_col(ui, "maximum", &mut self.y_max);
+                    let mut y_min = self.y_min.map(F32::get);
+                    if node_inspector::bound_col(ui, "minimum", &mut y_min) {
+                        self.y_min = y_min.map(F32);
+                        changed = true;
+                    }
+                    let mut y_max = self.y_max.map(F32::get);
+                    if node_inspector::bound_col(ui, "maximum", &mut y_max) {
+                        self.y_max = y_max.map(F32);
+                        changed = true;
+                    }
                     ui.end_row();
                 });
             });
@@ -615,42 +623,6 @@ fn radio_option<T: Copy + PartialEq>(
     } else {
         false
     }
-}
-
-/// One grid column for an optional fixed bound: a tightly-spaced enabling
-/// checkbox and a fixed-width value dialer (so the next column doesn't shift as
-/// the value's text width changes). `kind` names the bound for hover text.
-/// Returns whether the bound changed.
-fn bound_col(ui: &mut egui::Ui, kind: &str, bound: &mut Option<F32>) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        // Tighten the gap between the checkbox and its dialer.
-        ui.spacing_mut().item_spacing.x *= 0.25;
-        let mut on = bound.is_some();
-        if ui
-            .checkbox(&mut on, "")
-            .on_hover_text(format!("clamp the {kind} value"))
-            .changed()
-        {
-            *bound = on.then(|| bound.unwrap_or(F32(0.0)));
-            changed = true;
-        }
-        let mut v = bound.map(F32::get).unwrap_or(0.0);
-        let size = egui::vec2(44.0, ui.spacing().interact_size.y);
-        let resp = ui
-            .add_enabled_ui(bound.is_some(), |ui| {
-                ui.add_sized(size, egui::DragValue::new(&mut v).speed(0.1))
-            })
-            .inner;
-        if resp
-            .on_hover_text(format!("the fixed {kind} value"))
-            .changed()
-        {
-            *bound = Some(F32(v));
-            changed = true;
-        }
-    });
-    changed
 }
 
 /// Compute `([x_min, y_min], [x_max, y_max])` for the view from the data and

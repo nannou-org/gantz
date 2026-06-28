@@ -61,6 +61,34 @@ pub fn table_row_h(ui: &egui::Ui) -> f32 {
     ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().item_spacing.y
 }
 
+/// The fixed width (px) for the optional-numeric dialers in `range`/`prec.`
+/// inspector rows, so a following column stays put as a value's width changes.
+pub const DIAL_W: f32 = 44.0;
+
+/// Render an optional numeric bound as a tight `<checkbox> <dialer>` group
+/// (a [`CheckboxEnabled`](crate::widget::CheckboxEnabled) dialer), suitable as
+/// one column of a `range` grid row. The dialer is always shown but disabled
+/// while the checkbox is off. `kind` names the bound for the hover text (e.g.
+/// `"minimum"`). Returns whether `bound` changed this frame.
+pub fn bound_col<T: egui::emath::Numeric>(
+    ui: &mut egui::Ui,
+    kind: &str,
+    bound: &mut Option<T>,
+) -> bool {
+    let mut on = bound.is_some();
+    let mut v = bound.unwrap_or(T::from_f64(0.0));
+    let dialer = egui::DragValue::new(&mut v).speed(0.1);
+    let resp = ui
+        .add(crate::widget::CheckboxEnabled::new(&mut on, dialer).width(DIAL_W))
+        .on_hover_text(format!("clamp the {kind} value"));
+    if resp.changed() {
+        // `on == false` -> None; a just-toggled-on bound takes the default `v`.
+        *bound = on.then_some(v);
+        return true;
+    }
+    false
+}
+
 pub fn table(
     node: &mut (impl Node + NodeUi),
     ctx: &mut NodeCtx,
