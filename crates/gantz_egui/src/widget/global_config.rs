@@ -5,7 +5,7 @@
 //! snap-align options, and a button to reset all demo graphs to their initial
 //! state.
 
-use super::gantz::{AlignConfig, LayoutConfig, SnapConfig, SnapMode};
+use super::gantz::{AlignConfig, LayoutConfig, SnapConfig, SnapMode, request_clear_egui_memory};
 
 /// Response from [`global_config`].
 #[derive(Default)]
@@ -161,6 +161,23 @@ pub fn global_config(
         ui.checkbox(&mut align.centers, "Centres")
             .on_hover_text("Align to neighbours' horizontal/vertical centres.");
     });
+    ui.separator();
+
+    // Maintenance: a recovery tool to drop egui's persisted UI memory if it
+    // accumulates stale state (e.g. tile-layout snapshots from old builds),
+    // without touching the graph registry.
+    ui.label("Maintenance:");
+    if ui
+        .button("Clear egui memory")
+        .on_hover_text(
+            "Discard egui's persisted UI memory (panel layout, widget state) on \
+             the next frame. Recovers from accumulated or stale egui state \
+             without touching your graphs. The UI layout resets to default.",
+        )
+        .clicked()
+    {
+        request_clear_egui_memory(ui.ctx());
+    }
     ui.separator();
 
     let reset_all_demos = ui
