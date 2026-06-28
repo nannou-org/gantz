@@ -337,6 +337,30 @@ fn test_collect_unique_vars() {
     assert_eq!(vars, vec!["$a", "$?b", "$?c"]);
 }
 
+// A parse or lex error must surface as an `Err`, never be silently accepted.
+// `emit_ast` is the parse gate in both `Expr::new` and `Expr::expr`, so the
+// token reconstruction in `collect_unique_vars`/`interpolate_tokens` - which
+// just copies each token's source, including steel 0.8's fallible `Err` tokens
+// - cannot swallow an error: `emit_ast` re-lexes the result and propagates it.
+#[test]
+fn invalid_expr_source_is_rejected() {
+    // Construction gate (`Expr::new` -> `emit_ast(&src)?`).
+    assert!(Expr::new("(+ $a").is_err(), "unbalanced paren");
+    assert!(
+        Expr::new("\"unterminated").is_err(),
+        "lex error: unterminated string"
+    );
+    assert!(Expr::new("").is_err(), "no expression");
+
+    // Compile gate (`Expr::expr` -> `emit_ast(&new_src)?`). A malformed source
+    // can reach `expr` via deserialization, which doesn't re-validate, so
+    // compilation itself must error rather than emit broken Steel.
+    let bad: Expr = serde_json::from_str(r#"{"src":"(+ 1","outputs":1}"#).unwrap();
+    let outputs = node::Conns::try_from([true]).unwrap();
+    let ctx = node::ExprCtx::new(&|_| None, &[], &[None], &outputs);
+    assert!(bad.expr(ctx).is_err(), "malformed src must fail to compile");
+}
+
 // A no-op node lookup for constructing a `MetaCtx` in tests.
 #[cfg(test)]
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
