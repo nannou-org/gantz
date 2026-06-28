@@ -111,11 +111,7 @@ fn parse_node_decl(
         )
     })?;
     let spec = parse_node_spec(&args[1], src, sugar)?;
-    Ok(NodeDecl {
-        name,
-        index: None,
-        spec,
-    })
+    Ok(NodeDecl { name, spec })
 }
 
 // -- node specs --------------------------------------------------------------

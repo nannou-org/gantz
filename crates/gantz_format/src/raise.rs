@@ -158,11 +158,7 @@ where
         let (spec, keyword) = node_spec_from_datum(value, sugar, pin)?;
         let label = format!("{keyword}{}", ix.index());
         labels.insert(ix.index(), label.clone());
-        nodes.push(NodeDecl {
-            name: label,
-            index: None,
-            spec,
-        });
+        nodes.push(NodeDecl { name: label, spec });
     }
 
     let mut conns = Vec::new();
