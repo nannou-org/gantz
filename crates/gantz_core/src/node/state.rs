@@ -253,6 +253,20 @@ pub fn remove_value(vm: &mut Engine, node_path: &[usize]) -> Result<(), SteelErr
     Ok(())
 }
 
+/// Move the state value at `from` to `to`, clearing `from`.
+///
+/// The moved value carries any nested subtree with it, so this rekeys a whole
+/// node's state in one step. A no-op if there is no value at `from`. Used to
+/// migrate the swapped node after a plain `petgraph::Graph` swap-remove keeps
+/// node indices contiguous (see [`crate::node::graph::Graph`]).
+pub fn move_value(vm: &mut Engine, from: &[usize], to: &[usize]) -> Result<(), SteelErr> {
+    if let Some(val) = extract_value(vm, from)? {
+        update_value(vm, to, val)?;
+        remove_value(vm, from)?;
+    }
+    Ok(())
+}
+
 /// Extract the value for the node with the given ID.
 pub fn extract_value(vm: &Engine, node_path: &[usize]) -> Result<Option<SteelVal>, SteelErr> {
     let SteelVal::HashMapV(root_state) = vm.extract_value(ROOT_STATE)? else {
