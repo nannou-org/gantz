@@ -904,6 +904,7 @@ dependencies = [
 name = "bevy_gantz_egui"
 version = "0.3.1"
 dependencies = [
+ "base64",
  "bevy_app",
  "bevy_ecs",
  "bevy_egui",
@@ -911,6 +912,7 @@ dependencies = [
  "bevy_log",
  "bevy_tasks",
  "bevy_time",
+ "bincode",
  "egui_graph",
  "gantz_base",
  "gantz_ca",

@@ -5,11 +5,13 @@
 //! by `bevy_gantz::storage`.
 
 use crate::{GraphView, GuiState, Views};
+use base64::Engine as _;
 use bevy_ecs::prelude::Resource;
 use bevy_egui::egui;
 use bevy_gantz::clone_graph;
 use bevy_gantz::reg::Registry;
 use bevy_gantz::storage::{Load, Save, load, save};
+use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::node::graph::Graph;
 use serde::de::DeserializeOwned;
@@ -24,8 +26,9 @@ mod key {
     pub const VIEW_ADDRS: &str = "view-addrs";
     /// The key at which the gantz GUI state is stored.
     pub const GUI_STATE: &str = "gui-state";
-    /// The key at which egui memory (widget states) is saved/loaded.
-    pub const EGUI_MEMORY: &str = "egui-memory-ron";
+    /// The key at which egui memory (widget states) is saved/loaded. Versioned
+    /// for the RON -> bincode switch; the old `egui-memory-ron` blob is ignored.
+    pub const EGUI_MEMORY: &str = "egui-memory-bin";
 
     /// The key for a particular commit's view.
     pub fn view(ca: gantz_ca::CommitAddr) -> String {
@@ -91,9 +94,9 @@ pub fn save_views_incremental(
 
 /// Load all graph views from storage.
 ///
-/// Reads the per-commit view keys via the [`VIEW_ADDRS`](key::VIEW_ADDRS) index,
-/// falling back to the legacy single-key blob for stores written before views
-/// were split per commit.
+/// Reads the per-commit view keys via the `view-addrs` index, falling back to
+/// the legacy single-key blob for stores written before views were split per
+/// commit.
 pub fn load_views(storage: &impl Load) -> Views {
     if let Some(addrs) = load::<Vec<ca::CommitAddr>>(storage, key::VIEW_ADDRS) {
         return Views(
@@ -161,13 +164,37 @@ where
 }
 
 /// Save the egui Memory to storage.
+///
+/// Serialized with bincode rather than RON: egui memory is large and
+/// RON-encoding it - escaping the nested per-entry RON strings egui stores -
+/// dominated the persist cost. The compact binary is base64-encoded to fit the
+/// string-keyed store. (egui only re-serializes entries touched this session, so
+/// the inner cost is bounded; the win is removing the outer RON encoding.)
 pub fn save_egui_memory(storage: &mut impl Save, ctx: &egui::Context) {
-    ctx.memory(|m| save(storage, key::EGUI_MEMORY, m));
+    let bytes = match ctx.memory(|m| bincode::serialize(m)) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            log::error!("Failed to serialize egui memory: {e}");
+            return;
+        }
+    };
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    match storage.set_string(key::EGUI_MEMORY, &encoded) {
+        Ok(()) => log::debug!("Persisted {}", key::EGUI_MEMORY),
+        Err(e) => log::error!("Failed to persist egui memory: {e}"),
+    }
 }
 
-/// Load the egui Memory from storage.
+/// Load the egui Memory from storage (see [`save_egui_memory`]).
 pub fn load_egui_memory(storage: &impl Load, ctx: &egui::Context) {
-    if let Some(memory) = load::<egui::Memory>(storage, key::EGUI_MEMORY) {
+    let Some(encoded) = storage.get_string(key::EGUI_MEMORY).ok().flatten() else {
+        return;
+    };
+    let memory = base64::engine::general_purpose::STANDARD
+        .decode(encoded.as_bytes())
+        .ok()
+        .and_then(|bytes| bincode::deserialize::<egui::Memory>(&bytes).ok());
+    if let Some(memory) = memory {
         ctx.memory_mut(|m| {
             // Preserve the live zoom factor rather than restoring the persisted
             // one. egui's `zoom_factor` is the display-driven scale here (set by
@@ -322,5 +349,16 @@ mod tests {
         let loaded = load_views(&store);
         assert_eq!(loaded.len(), 2);
         assert_eq!(loaded.get(&commit_addr(2)), Some(&view(20.0)));
+    }
+
+    /// `egui::Memory` must survive a bincode round-trip - the format used by
+    /// `save_egui_memory`/`load_egui_memory`. Guards against a serde pattern
+    /// bincode can't handle creeping into egui's `Memory` on an egui bump.
+    #[test]
+    fn egui_memory_round_trips_through_bincode() {
+        let mem = egui::Memory::default();
+        let bytes = bincode::serialize(&mem).expect("serialize egui::Memory");
+        let _decoded: egui::Memory =
+            bincode::deserialize(&bytes).expect("deserialize egui::Memory");
     }
 }

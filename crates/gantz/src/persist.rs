@@ -37,7 +37,7 @@ pub struct PersistPlugin;
 
 impl Plugin for PersistPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(DebouncedInputPlugin::<PersistEguiMemory>::new(0.6))
+        app.add_plugins(DebouncedInputPlugin::<PersistEguiMemory>::new(0.3))
             // Spawn the background writer once the store is populated. No ordering
             // vs the load systems is needed: the worker only locks the store when
             // draining a batch, which can't happen until the first `Update`.
