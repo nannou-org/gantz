@@ -83,9 +83,15 @@ fn setup_window(storage: Res<Pkv>, mut windows: Query<&mut Window, With<PrimaryW
 
 fn setup_resources(storage: Res<Pkv>, mut cmds: Commands) {
     let registry: Registry<Box<dyn node::Node>> = bevy_gantz::storage::load_registry(&*storage);
+    // Seed the persist tracker from the disk-loaded registry: everything loaded
+    // is, by definition, already on disk. Done before `base::load` merges base
+    // graphs (so they're written on first persist) and before `prune_unused`
+    // (so prunes are detected on the first incremental save).
+    let persisted = bevy_gantz::storage::PersistedRegistry::from_registry(&registry);
     let views = bevy_gantz_egui::storage::load_views(&*storage);
     let gui_state = bevy_gantz_egui::storage::load_gui_state(&*storage);
     cmds.insert_resource(registry);
+    cmds.insert_resource(persisted);
     cmds.insert_resource(views);
     cmds.insert_resource(gui_state);
 }
@@ -138,6 +144,7 @@ fn load_egui_memory(mut ctxs: EguiContexts, mut storage: ResMut<Pkv>, mut loaded
 
 fn persist_resources(
     registry: Res<Registry<Box<dyn node::Node>>>,
+    mut persisted: ResMut<bevy_gantz::storage::PersistedRegistry>,
     views: Res<Views>,
     gui_state: Res<GuiState>,
     mut storage: ResMut<Pkv>,
@@ -147,8 +154,13 @@ fn persist_resources(
     heads_query: Query<OpenHeadDataReadOnly<Box<dyn node::Node>>, With<OpenHead>>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
 ) {
-    // Save registry (graphs, commits, names).
-    bevy_gantz::storage::save_registry(&mut *storage, &registry);
+    // Incrementally save the registry (only newly-seen graphs/commits and any
+    // changed name maps). `persist_resources` runs only on debounced events, so
+    // `is_changed()` here means "changed since the last persist" - a cheap guard
+    // for the idle case; the per-blob dedup is what removes the spike.
+    if registry.is_changed() {
+        bevy_gantz::storage::save_registry_incremental(&mut *storage, &registry, &mut persisted);
+    }
     // Save all open heads in tab order.
     let heads: Vec<_> = tab_order
         .iter()
