@@ -29,6 +29,31 @@ pub trait Save {
     fn set_string(&mut self, key: &str, value: &str) -> Result<(), Self::Err>;
 }
 
+/// A [`Save`] that buffers writes instead of committing them.
+///
+/// Lets a caller build a batch on the main thread - serializing in place via the
+/// usual `save_*` functions - then hand the collected `(key, value)` pairs to a
+/// background writer. Never fails.
+#[derive(Default)]
+pub struct BatchWriter {
+    pub writes: Vec<(String, String)>,
+}
+
+impl BatchWriter {
+    /// Take the collected writes, leaving the buffer empty.
+    pub fn take(&mut self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.writes)
+    }
+}
+
+impl Save for BatchWriter {
+    type Err = std::convert::Infallible;
+    fn set_string(&mut self, key: &str, value: &str) -> Result<(), Self::Err> {
+        self.writes.push((key.to_string(), value.to_string()));
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Generic helpers
 // ---------------------------------------------------------------------------
@@ -426,5 +451,34 @@ mod tests {
         assert_eq!(loaded.graphs().len(), reg.graphs().len());
         assert_eq!(loaded.commits().len(), reg.commits().len());
         assert_eq!(loaded.names(), reg.names());
+    }
+
+    #[test]
+    fn batch_writer_collects_pairs_and_take_empties() {
+        // Building a batch via the usual `save_*` path collects the same writes
+        // a direct store would, as ordered (key, ron) pairs.
+        let reg = registry(&[(1, 11)], &[("alpha", 11)]);
+        let mut persisted = PersistedRegistry::default();
+        let mut batch = BatchWriter::default();
+        save_registry_incremental(&mut batch, &reg, &mut persisted);
+
+        let keys: Vec<&str> = batch.writes.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&key::graph(graph_addr(1)).as_str()));
+        assert!(keys.contains(&key::commit(commit_addr(11)).as_str()));
+        assert!(keys.contains(&key::GRAPH_ADDRS));
+        assert!(keys.contains(&key::COMMIT_ADDRS));
+        assert!(keys.contains(&key::NAMES));
+        // Values are the RON the direct `save` path would have written.
+        let (_, names_ron) = batch
+            .writes
+            .iter()
+            .find(|(k, _)| k == key::NAMES)
+            .expect("names written");
+        assert_eq!(names_ron, &ron::to_string(reg.names()).unwrap());
+
+        // `take` hands off the buffer and leaves it empty.
+        let taken = batch.take();
+        assert!(!taken.is_empty());
+        assert!(batch.writes.is_empty());
     }
 }
