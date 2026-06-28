@@ -150,7 +150,7 @@ pub fn steel_err_span(
     };
     steel_err_spans(err)
         .find(in_module)
-        .map(|span| span.range())
+        .map(|span| span.usize_range())
 }
 
 /// The first span attached to a steel error, *without* verifying which
@@ -160,7 +160,7 @@ pub fn steel_err_span(
 /// returned by [`compile`] itself, whose spans can only index the module
 /// just run.
 pub fn steel_err_raw_span(err: &SteelErr) -> Option<std::ops::Range<usize>> {
-    steel_err_spans(err).next().map(|span| span.range())
+    steel_err_spans(err).next().map(|span| span.usize_range())
 }
 
 /// The full path of the node best attributed to a steel error (see

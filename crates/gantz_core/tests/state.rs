@@ -233,6 +233,87 @@ fn test_graph_with_counters() {
     assert_eq!([a, b, c], [Counter(1), Counter(2), Counter(3)]);
 }
 
+// Manual regression check for #266: a stateful node must not leak memory per
+// evaluation. Drives one over a *single* persistent `Engine`, sampling RSS, and
+// asserts it stays bounded once warmed up.
+//
+// The leak was a steel 0.7.0 bug: the mutated+captured `graph-state` local
+// (threaded by `compile::emit`) was heap-boxed via an `ALLOC` path whose box
+// is never reclaimed, so every evaluation leaked ~0.8 KB and RSS climbed
+// unbounded (1e6 pushes: 21 -> 718 MB). steel >=0.8 compiles that local to a
+// GC-managed box the collector reclaims, so RSS plateaus (~65 MB, flat).
+//
+// `#[ignore]`d, so it is opt-in rather than part of the default suite, for two
+// reasons: the only available signal is process RSS (`/proc/self/statm`), which
+// is Linux-only and would conflate this graph's footprint with whatever else
+// the shared test process is doing; and it drives ~1e6 VM calls. steel exposes
+// no public per-engine heap/allocation count to measure instead. Run with:
+//   cargo test -p gantz_core --test state -- --ignored --nocapture leak
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore]
+fn stateful_eval_does_not_leak() {
+    fn rss_bytes() -> usize {
+        let statm = std::fs::read_to_string("/proc/self/statm").unwrap();
+        let resident: usize = statm.split_whitespace().nth(1).unwrap().parse().unwrap();
+        resident * 4096
+    }
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let counter = g.add_node(Box::new(node_counter()) as Box<_>);
+    g.add_edge(push, counter, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for f in module {
+        vm.run(format!("{f}")).unwrap();
+    }
+
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    let fn_name = entry_fn_name(&ep.id());
+
+    // Measure RSS growth over the run *after* a warmup, so the no-leak heap's
+    // initial ramp (~100k pushes) isn't counted. A fixed leak adds ~0.8 KB per
+    // push - tens of MB over the window - so growth beyond `MAX_GROWTH` (well
+    // above any allocator noise) means the leak is back.
+    const PUSHES: usize = 1_000_000;
+    const SAMPLE: usize = 100_000;
+    const WARMUP: usize = 2 * SAMPLE;
+    const MAX_GROWTH: usize = 100 * 1024 * 1024;
+
+    let mut warmup_rss = 0;
+    let mut last_rss = 0;
+    for i in 0..PUSHES {
+        vm.call_function_by_name_with_args(&fn_name, vec![])
+            .unwrap();
+        if i % SAMPLE == 0 {
+            let rss = rss_bytes();
+            eprintln!("push {i:>9}: RSS {:>6} MB", rss / (1024 * 1024));
+            if i == WARMUP {
+                warmup_rss = rss;
+            }
+            last_rss = rss;
+        }
+    }
+    let growth = last_rss.saturating_sub(warmup_rss);
+    eprintln!(
+        "RSS grew {} MB ({} bytes/push) after warmup",
+        growth / (1024 * 1024),
+        growth / (PUSHES - WARMUP),
+    );
+    assert!(
+        growth < MAX_GROWTH,
+        "RSS grew {} MB after warmup - stateful-node leak (#266) is back",
+        growth / (1024 * 1024),
+    );
+}
+
 // Two `Ref`s to the *same* nested graph commit, at different positions in the
 // parent, must keep independent runtime state. State is keyed by the ref's
 // positional path (`graph-fn-{path}` + a per-path state slot), not by the
