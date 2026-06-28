@@ -217,6 +217,9 @@ where
         }
         let mut node_responses = Vec::new();
         let mut responses: Vec<DynResponse> = Vec::new();
+        // Deferred node deletes, applied after the scene releases its `view`
+        // borrow (removal must migrate index-keyed state + layout).
+        let mut to_delete: Vec<NodeIndex> = Vec::new();
         // Set if a node or the scene makes a CA-affecting edit this pass.
         let mut changed = false;
         let selected: HashSet<egui_graph::NodeId> = state
@@ -245,6 +248,7 @@ where
                         &mut responses,
                         &mut changed,
                         vm,
+                        &mut to_delete,
                         immutable,
                         ui,
                     );
@@ -260,6 +264,19 @@ where
                 .into_iter()
                 .map(|id| NodeIndex::new(id.value() as usize))
                 .collect();
+        }
+
+        // Apply deferred deletes now the scene no longer borrows `view`. Removal
+        // swap-removes nodes, so this migrates the swapped node's state, layout
+        // and selection (see `crate::ops::remove_nodes`).
+        if crate::ops::remove_nodes(
+            self.graph,
+            vm,
+            &mut view.layout,
+            &mut state.interaction.selection,
+            to_delete,
+        ) {
+            changed = true;
         }
 
         // Track the latest pointer position over the scene (in graph space) so a
@@ -538,6 +555,7 @@ fn nodes<N>(
     responses: &mut Vec<DynResponse>,
     changed: &mut bool,
     vm: &mut Engine,
+    nodes_to_delete: &mut Vec<NodeIndex>,
     immutable: bool,
     ui: &mut egui::Ui,
 ) -> Vec<(NodeIndex, NodeResponse)>
@@ -550,7 +568,6 @@ where
     let node_ids: Vec<_> = graph.node_identifiers().collect();
     let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
     let mut node_responses = Vec::with_capacity(node_ids.len());
-    let mut nodes_to_delete = Vec::new();
     let mut nodes_to_reset = Vec::new();
     let mut request_layout = false;
     let mut request_align: Option<egui_graph::AlignBy> = None;
@@ -666,7 +683,7 @@ where
             if !immutable {
                 let stateful = target
                     .iter()
-                    .any(|&n| graph.contains_node(n) && graph[n].stateful(meta_ctx));
+                    .any(|&n| graph.node_weight(n).is_some_and(|w| w.stateful(meta_ctx)));
                 let reset_btn = ui.add_enabled(stateful, egui::Button::new("reset"));
                 if reset_btn
                     .on_hover_text("reset the node to its default state")
@@ -732,21 +749,16 @@ where
         node_responses.push((n_id, response));
     }
 
-    // Unified delete: both keyboard and context menu deletes go through here.
-    for n_id in nodes_to_delete {
-        if graph.contains_node(n_id) {
-            let _ = gantz_core::node::state::remove_value(vm, &[n_id.index()]);
-            graph.remove_node(n_id);
-            state.interaction.selection.nodes.remove(&n_id);
-            *changed = true;
-        }
-    }
+    // Deletes (keyboard + context menu) are collected into `nodes_to_delete` and
+    // applied by the caller via `ops::remove_nodes` once the scene's borrow on
+    // the view (and thus its layout) is released - removal must migrate the
+    // swapped node's index-keyed state and layout.
 
     // Reset state by removing it, then re-registering the graph.
     // Registration is idempotent and re-initialises any missing state.
     if !nodes_to_reset.is_empty() {
         for n_id in nodes_to_reset {
-            if graph.contains_node(n_id) {
+            if graph.node_weight(n_id).is_some() {
                 let _ = gantz_core::node::state::remove_value(vm, &[n_id.index()]);
             }
         }
@@ -796,6 +808,9 @@ fn edges<N>(
 ) {
     // Track whether any edge has a context menu open this frame.
     let mut any_context_menu_open = false;
+    // Deferred edge deletes: the loop snapshots edge indices, but `remove_edge`
+    // swap-removes, so deleting mid-loop would invalidate a later snapshot index.
+    let mut to_delete: Vec<EdgeIndex> = Vec::new();
 
     // Instantiate all edges.
     for e in graph.edge_indices().collect::<Vec<_>>() {
@@ -809,9 +824,7 @@ fn edges<N>(
             egui_graph::edge::Edge::new((a, output), (b, input), &mut selected).show(ectx, ui);
 
         if response.deleted() {
-            graph.remove_edge(e);
-            state.interaction.selection.edges.remove(&e);
-            *changed = true;
+            to_delete.push(e);
         } else if response.changed() {
             if selected {
                 state.interaction.selection.edges.insert(e);
@@ -840,6 +853,29 @@ fn edges<N>(
                 ui.close();
             }
         });
+    }
+
+    // Apply deferred edge deletes. `remove_edge` swap-removes (the former-last
+    // edge adopts the removed index), so go descending and remap the swapped
+    // edge in the selection.
+    if !to_delete.is_empty() {
+        to_delete.sort_unstable_by_key(|e| std::cmp::Reverse(e.index()));
+        to_delete.dedup();
+        for e in to_delete {
+            if graph.edge_weight(e).is_none() {
+                continue;
+            }
+            let last = graph.edge_count() - 1;
+            state.interaction.selection.edges.remove(&e);
+            graph.remove_edge(e);
+            if e.index() != last {
+                let last_e = EdgeIndex::new(last);
+                if state.interaction.selection.edges.remove(&last_e) {
+                    state.interaction.selection.edges.insert(e);
+                }
+            }
+            *changed = true;
+        }
     }
 
     // Clear the stored position if no context menu is open (user dismissed it).

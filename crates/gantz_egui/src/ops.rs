@@ -123,8 +123,7 @@ where
     graph[node_ix].register(reg_ctx);
 
     // Position the new node under the pointer, falling back to the center of the
-    // current view. `insert` (not `entry`) so a reused stable-graph index can't
-    // inherit a removed node's stale position.
+    // current view.
     let pos = pos.unwrap_or_else(|| view.scene_rect.center());
     let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
     view.layout.insert(egui_id, pos);
@@ -179,8 +178,7 @@ where
     let node_ix = graph.add_node(N::from(named_ref));
 
     // Position the new node under the pointer, falling back to the center of the
-    // current view. `insert` (not `entry`) so a reused stable-graph index can't
-    // inherit a removed node's stale position.
+    // current view.
     let pos = pos.unwrap_or_else(|| view.scene_rect.center());
     let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
     view.layout.insert(egui_id, pos);
@@ -192,6 +190,60 @@ where
     sel.nodes.insert(node_ix);
 
     Some(node_ix)
+}
+
+/// Remove `nodes` from `graph`, migrating the per-node state, layout and
+/// selection that are keyed by node index.
+///
+/// `petgraph::Graph::remove_node` swap-removes: the former-last node adopts the
+/// removed index, so exactly one surviving node changes index per removal.
+/// Targets are processed highest-index first, so a swap only ever pulls a
+/// surviving node down into an already-freed higher slot and never invalidates a
+/// pending target. The swapped node's state, layout entry and selection are then
+/// moved to its new index. Edge selection is cleared because removing a node
+/// drops its incident edges with compounded edge swaps. Returns whether any node
+/// was removed.
+///
+/// Run this before the next recompile (`vm::sync`): the regenerated code reads
+/// state by the new index, so the migration must already be in place.
+pub fn remove_nodes<N>(
+    graph: &mut Graph<N>,
+    vm: &mut Engine,
+    layout: &mut egui_graph::Layout,
+    selection: &mut crate::widget::graph_scene::Selection,
+    nodes: impl IntoIterator<Item = NodeIndex>,
+) -> bool {
+    let node_id = |ix: usize| egui_graph::NodeId::from_u64(ix as u64);
+    let mut targets: Vec<NodeIndex> = nodes.into_iter().collect();
+    targets.sort_unstable_by_key(|n| std::cmp::Reverse(n.index()));
+    targets.dedup();
+    let mut removed_any = false;
+    for t in targets {
+        if graph.node_weight(t).is_none() {
+            continue;
+        }
+        let last = graph.node_count() - 1;
+        // Drop the removed node's index-keyed data.
+        let _ = node::state::remove_value(vm, &[t.index()]);
+        layout.remove(&node_id(t.index()));
+        selection.nodes.remove(&t);
+        graph.remove_node(t);
+        // Migrate the node that swapped into `t` (the former `last`), if any.
+        if t.index() != last {
+            let _ = node::state::move_value(vm, &[last], &[t.index()]);
+            if let Some(pos) = layout.remove(&node_id(last)) {
+                layout.insert(node_id(t.index()), pos);
+            }
+            if selection.nodes.remove(&NodeIndex::new(last)) {
+                selection.nodes.insert(t);
+            }
+        }
+        removed_any = true;
+    }
+    if removed_any {
+        selection.edges.clear();
+    }
+    removed_any
 }
 
 /// Insert an Inspect node on the given edge, splicing it between the
@@ -375,4 +427,57 @@ pub fn commit_layout<G>(
         || unreachable!("layout commit reuses an existing graph"),
         head,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::widget::graph_scene::Selection;
+    use gantz_core::node::graph::NodeIx;
+
+    // Deleting a node swap-removes the former-last node into its slot; the
+    // swapped node's layout entry and selection must follow it to the new index.
+    #[test]
+    fn remove_nodes_migrates_layout_and_selection() {
+        let node_id = |i: usize| egui_graph::NodeId::from_u64(i as u64);
+
+        // Five nodes 0..5 (weights 10..15) each with a distinct layout x.
+        let mut graph: Graph<u32> = Graph::default();
+        for w in 10u32..15 {
+            graph.add_node(w);
+        }
+        let mut layout = egui_graph::Layout::default();
+        for i in 0..5 {
+            layout.insert(node_id(i), egui::pos2(i as f32, 0.0));
+        }
+        let mut selection = Selection::default();
+        selection.nodes.insert(NodeIx::new(4)); // select the (to-be-swapped) last
+
+        let mut vm = Engine::new_base();
+
+        // Delete index 1: node 4 (weight 14) swap-removes into slot 1.
+        let removed = remove_nodes(
+            &mut graph,
+            &mut vm,
+            &mut layout,
+            &mut selection,
+            [NodeIx::new(1)],
+        );
+        assert!(removed);
+
+        // The swapped node now sits at index 1.
+        assert_eq!(graph.node_count(), 4);
+        assert_eq!(graph[NodeIx::new(1)], 14);
+
+        // Layout followed the swap; the deleted and old-last slots are gone.
+        assert_eq!(layout.len(), 4);
+        assert_eq!(layout.get(&node_id(1)).copied(), Some(egui::pos2(4.0, 0.0)));
+        assert!(!layout.contains_key(&node_id(4)));
+
+        // Selection followed the swap: node 4 -> node 1.
+        assert_eq!(
+            selection.nodes.iter().copied().collect::<Vec<_>>(),
+            vec![NodeIx::new(1)],
+        );
+    }
 }
