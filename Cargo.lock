@@ -3188,6 +3188,7 @@ dependencies = [
 name = "gantz"
 version = "0.2.2"
 dependencies = [
+ "async-channel",
  "bevy",
  "bevy_egui",
  "bevy_gantz",

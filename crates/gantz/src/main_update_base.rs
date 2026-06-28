@@ -35,7 +35,7 @@ fn main() {
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::<DebouncedInputEvent>::new(0.25))
-        .insert_resource(Pkv(PkvStore::new("nannou-org", "gantz-update-base")))
+        .insert_resource(Pkv::new(PkvStore::new("nannou-org", "gantz-update-base")))
         .insert_resource(bevy_gantz_egui::base::ExportPath(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../gantz_base/base.gantz"
