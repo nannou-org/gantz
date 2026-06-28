@@ -127,6 +127,16 @@ impl PersistedRegistry {
             descriptions: registry.descriptions().clone(),
         }
     }
+
+    /// The number of graph blobs known to be on disk.
+    pub fn graphs_len(&self) -> usize {
+        self.graphs.len()
+    }
+
+    /// The number of commit blobs known to be on disk.
+    pub fn commits_len(&self) -> usize {
+        self.commits.len()
+    }
 }
 
 /// Incrementally persist the registry, writing only what `persisted` doesn't yet

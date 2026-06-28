@@ -154,6 +154,7 @@ fn persist_resources(
     heads_query: Query<OpenHeadDataReadOnly<Box<dyn node::Node>>, With<OpenHead>>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
 ) {
+    let start = web_time::Instant::now();
     // Incrementally save the registry (only newly-seen graphs/commits and any
     // changed name maps). `persist_resources` runs only on debounced events, so
     // `is_changed()` here means "changed since the last persist" - a cheap guard
@@ -192,6 +193,13 @@ fn persist_resources(
     if let Ok(window) = primary_window.single() {
         window::save(&mut *storage, window);
     }
+
+    bevy::log::debug!(
+        "persist_resources took {:?} ({} graphs, {} commits on disk)",
+        start.elapsed(),
+        persisted.graphs_len(),
+        persisted.commits_len(),
+    );
 }
 
 #[cfg(test)]
