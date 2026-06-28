@@ -117,24 +117,21 @@ impl NodeUi for Number {
                     .on_hover_text("precision: decimal places the dialer shows (display only)");
             });
             row.col(|ui| {
-                ui.horizontal(|ui| {
-                    let mut enabled = self.precision().is_some();
-                    if ui.checkbox(&mut enabled, "").changed() {
-                        self.set_precision(enabled.then(|| self.precision().unwrap_or(2)));
-                        changed = true;
-                    }
-                    let mut n = self.precision().unwrap_or(2) as i32;
-                    if ui
-                        .add_enabled(
-                            enabled,
-                            egui::DragValue::new(&mut n).range(0..=10).speed(0.1),
-                        )
-                        .changed()
-                    {
-                        self.set_precision(Some(n.clamp(0, 10) as u8));
-                        changed = true;
-                    }
-                });
+                // Same checkbox+dialer widget as the `range` bounds, so the rows
+                // look consistent.
+                let mut on = self.precision().is_some();
+                let mut n = self.precision().unwrap_or(2) as i32;
+                let dialer = egui::DragValue::new(&mut n).range(0..=10).speed(0.1);
+                let resp = ui
+                    .add(
+                        crate::widget::CheckboxEnabled::new(&mut on, dialer)
+                            .width(crate::widget::node_inspector::DIAL_W),
+                    )
+                    .on_hover_text("precision: decimal places the dialer shows (display only)");
+                if resp.changed() {
+                    self.set_precision(on.then(|| n.clamp(0, 10) as u8));
+                    changed = true;
+                }
             });
         });
 
