@@ -355,6 +355,46 @@ struct GraphPane(gantz_ca::Head);
 /// The egui ID used to store the inner graph tree.
 const GRAPH_TREE_ID: &str = "gantz-graph-tiles-tree";
 
+/// Load a tile tree from egui's persisted memory.
+///
+/// The tree is stored as a RON `String` rather than the typed `Tree<_>`: a
+/// `String`'s `TypeId` is stable across recompiles, whereas `Tree<Pane>`'s
+/// changes whenever this crate is rebuilt. Storing the typed value would leave a
+/// stale copy behind in egui's per-type persisted map on every dev build (egui
+/// never evicts entries of a type the running build no longer uses), bloating
+/// the persisted memory without bound.
+fn load_tree<P: serde::de::DeserializeOwned>(
+    ctx: &egui::Context,
+    id: egui::Id,
+) -> Option<egui_tiles::Tree<P>> {
+    let ron = ctx.memory_mut(|m| m.data.get_persisted::<String>(id))?;
+    ron::from_str(&ron).ok()
+}
+
+/// Persist a tile tree to egui memory as a RON `String` (see [`load_tree`]).
+fn store_tree<P: serde::Serialize>(ctx: &egui::Context, id: egui::Id, tree: &egui_tiles::Tree<P>) {
+    if let Ok(ron) = ron::to_string(tree) {
+        ctx.memory_mut(|m| m.data.insert_persisted(id, ron));
+    }
+}
+
+/// egui temp-memory flag id for a pending "clear egui memory" request.
+fn clear_egui_memory_id() -> egui::Id {
+    egui::Id::new("gantz-clear-egui-memory-request")
+}
+
+/// Request that egui's persisted memory be cleared at the start of the next
+/// `Gantz::show`.
+///
+/// A recovery tool (exposed in Global settings) for when egui's persisted memory
+/// accumulates stale state: it discards the UI memory (panel layout, widget
+/// state) but leaves the graph registry and other app storage untouched.
+/// Deferring to the next frame keeps the clear deterministic - it runs before
+/// any persisted UI state is loaded, rather than racing this frame's widgets.
+pub fn request_clear_egui_memory(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(clear_egui_memory_id(), true));
+}
+
 /// Update the head stored in a graph pane when a commit CA changes.
 ///
 /// This should be called after `commit_graph_to_head` modifies a head's commit CA.
@@ -368,24 +408,23 @@ pub fn update_graph_pane_head(
         return;
     }
     let graph_tree_id = egui::Id::new(GRAPH_TREE_ID);
-    ctx.memory_mut(|m| {
-        let Some(tree) = m
-            .data
-            .get_persisted_mut_or_default::<Option<egui_tiles::Tree<GraphPane>>>(graph_tree_id)
-            .as_mut()
-        else {
-            return;
-        };
-        // Find and update the pane with the old head.
-        for (_, tile) in tree.tiles.iter_mut() {
-            if let egui_tiles::Tile::Pane(GraphPane(head)) = tile {
-                if head == old_head {
-                    *head = new_head.clone();
-                    break;
-                }
+    let Some(mut tree) = load_tree::<GraphPane>(ctx, graph_tree_id) else {
+        return;
+    };
+    // Find and update the pane with the old head.
+    let mut changed = false;
+    for (_, tile) in tree.tiles.iter_mut() {
+        if let egui_tiles::Tile::Pane(GraphPane(head)) = tile {
+            if head == old_head {
+                *head = new_head.clone();
+                changed = true;
+                break;
             }
         }
-    });
+    }
+    if changed {
+        store_tree(ctx, graph_tree_id, &tree);
+    }
 }
 
 /// The context passed to the `egui_tiles::Tree` widget.
@@ -637,19 +676,24 @@ impl<'a> Gantz<'a> {
         Access: HeadAccess,
         Access::Node: Node + NodeUi,
     {
+        // Honour a pending "clear egui memory" request (from Global settings)
+        // before loading any persisted UI state this frame.
+        if ui
+            .ctx()
+            .data(|d| d.get_temp::<bool>(clear_egui_memory_id()))
+            .unwrap_or(false)
+        {
+            ui.ctx().memory_mut(|m| m.data.clear());
+        }
+
         // The persisted outer tree. The version suffix invalidates any tree
         // persisted before the sidebar overhaul (which lacks the new panes and
         // tab containers), forcing a rebuild via `create_tree`.
         let tree_id = egui::Id::new("gantz-tiles-tree-storage-v3");
 
-        // Retrieve the tree of persistent storage, or load the default.
-        let mut tree: egui_tiles::Tree<Pane> = ui
-            .memory_mut(|m| {
-                m.data
-                    .get_persisted_mut_or_default::<Option<egui_tiles::Tree<Pane>>>(tree_id)
-                    .take()
-            })
-            .unwrap_or_else(create_tree);
+        // Retrieve the tree from persistent storage, or load the default.
+        let mut tree: egui_tiles::Tree<Pane> =
+            load_tree(ui.ctx(), tree_id).unwrap_or_else(create_tree);
 
         // Check the `view_toggles` match the pane visibility.
         set_tile_visibility(&mut tree, &state.view_toggles);
@@ -727,7 +771,7 @@ impl<'a> Gantz<'a> {
         }
 
         // Persist the tree.
-        ui.memory_mut(|m| m.data.insert_persisted(tree_id, Some(tree)));
+        store_tree(ui.ctx(), tree_id, &tree);
 
         response
     }
@@ -987,15 +1031,8 @@ where
 
                 // Retrieve the inner graph tree from persistent storage, or create empty.
                 let graph_tree_id = egui::Id::new(GRAPH_TREE_ID);
-                let mut graph_tree: egui_tiles::Tree<GraphPane> = ui
-                    .memory_mut(|m| {
-                        m.data
-                            .get_persisted_mut_or_default::<Option<egui_tiles::Tree<GraphPane>>>(
-                                graph_tree_id,
-                            )
-                            .take()
-                    })
-                    .unwrap_or_else(create_empty_graph_tree);
+                let mut graph_tree: egui_tiles::Tree<GraphPane> =
+                    load_tree(ui.ctx(), graph_tree_id).unwrap_or_else(create_empty_graph_tree);
 
                 // Sync the graph tree panes with the heads list.
                 sync_graph_panes(&mut graph_tree, access.heads());
@@ -1025,7 +1062,7 @@ where
                 graph_tree.ui(&mut graph_behaviour, ui);
 
                 // Persist the inner tree.
-                ui.memory_mut(|m| m.data.insert_persisted(graph_tree_id, Some(graph_tree)));
+                store_tree(ui.ctx(), graph_tree_id, &graph_tree);
 
                 // Show the command palette once (not per-pane), operating on the focused head.
                 if let Some(fh) = access.heads().get(*focused_head).cloned() {

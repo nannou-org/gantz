@@ -6,15 +6,36 @@
 use bevy::prelude::Resource;
 use bevy_gantz::storage::{Load, Save};
 use bevy_pkv::PkvStore;
+use std::sync::{Arc, Mutex};
 
-/// A [`Resource`] wrapping [`PkvStore`] that implements [`Load`] and [`Save`].
-#[derive(Resource)]
-pub struct Pkv(pub PkvStore);
+/// A [`Resource`] wrapping a shared [`PkvStore`] that implements [`Load`] and
+/// [`Save`].
+///
+/// `Arc<Mutex<_>>` lets a background persistence worker share the single store
+/// handle with the main thread - redb permits only one handle per database file,
+/// so sharing, rather than a second handle, is required.
+///
+/// Despite the `Mutex`, there is no lock contention during the steady-state
+/// render loop. The main thread only ever *reads* the store, and every read
+/// happens during startup and the first-frame egui-memory load - before any
+/// debounced persist can fire (a persist needs prior input). From then on the
+/// worker is the sole accessor: the persist systems hand their writes to it over
+/// a channel rather than locking the store themselves. So the worker's fsync'd
+/// writes, however long they take, never block a frame.
+#[derive(Resource, Clone)]
+pub struct Pkv(pub Arc<Mutex<PkvStore>>);
+
+impl Pkv {
+    /// Wrap a store for sharing between the main thread and the worker.
+    pub fn new(store: PkvStore) -> Self {
+        Self(Arc::new(Mutex::new(store)))
+    }
+}
 
 impl Load for Pkv {
     type Err = bevy_pkv::GetError;
     fn get_string(&self, key: &str) -> Result<Option<String>, Self::Err> {
-        match self.0.get::<String>(key) {
+        match self.0.lock().unwrap().get::<String>(key) {
             Ok(v) => Ok(Some(v)),
             Err(bevy_pkv::GetError::NotFound) => Ok(None),
             Err(e) => Err(e),
@@ -25,6 +46,6 @@ impl Load for Pkv {
 impl Save for Pkv {
     type Err = bevy_pkv::SetError;
     fn set_string(&mut self, key: &str, value: &str) -> Result<(), Self::Err> {
-        self.0.set_string(key, value)
+        self.0.lock().unwrap().set_string(key, value)
     }
 }

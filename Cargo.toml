@@ -10,6 +10,9 @@ license = "Apache-2.0"
 repository = "https://github.com/nannou-org/gantz"
 
 [workspace.dependencies]
+async-channel = "2.5"
+base64 = "0.22"
+bincode = "1"
 bevy = { version = "0.19", default-features = false, features = [
     "bevy_asset",
     "bevy_camera",
