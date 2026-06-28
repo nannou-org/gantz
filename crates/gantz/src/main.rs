@@ -85,10 +85,13 @@ fn setup_resources(storage: Res<Pkv>, mut cmds: Commands) {
     // (so prunes are detected on the first incremental save).
     let persisted = bevy_gantz::storage::PersistedRegistry::from_registry(&registry);
     let views = bevy_gantz_egui::storage::load_views(&*storage);
+    // Seed the view tracker likewise: the loaded views are all on disk.
+    let persisted_views = bevy_gantz_egui::storage::PersistedViews::from_views(&views);
     let gui_state = bevy_gantz_egui::storage::load_gui_state(&*storage);
     cmds.insert_resource(registry);
     cmds.insert_resource(persisted);
     cmds.insert_resource(views);
+    cmds.insert_resource(persisted_views);
     cmds.insert_resource(gui_state);
 }
 

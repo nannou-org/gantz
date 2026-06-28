@@ -145,16 +145,18 @@ fn setup_persister(pkv: Res<Pkv>, mut cmds: Commands) {
     cmds.insert_resource(spawn_persister(pkv.clone()));
 }
 
-/// Serialize the full persisted app state into a `(key, value)` batch.
+/// Collect the registry/heads/views/gui/window into a `(key, value)` batch to
+/// persist.
 ///
 /// Registry writes dedup against `persisted` (pass a fresh
 /// [`PersistedRegistry`](bevy_gantz::storage::PersistedRegistry) to force a
 /// complete write); everything else is written each call.
 #[allow(clippy::too_many_arguments)]
-fn build_state_batch(
+fn collect_batch_to_persist(
     registry: &Registry<BoxNode>,
     persisted: &mut bevy_gantz::storage::PersistedRegistry,
     views: &Views,
+    persisted_views: &mut bevy_gantz_egui::storage::PersistedViews,
     gui_state: &GuiState,
     tab_order: &HeadTabOrder,
     focused: &FocusedHead,
@@ -181,8 +183,15 @@ fn build_state_batch(
             bevy_gantz::storage::save_focused_head(&mut batch, &**data.head_ref);
         }
     }
-    // Views (kept current by `persist_camera_and_seed` and `settle_layout`).
-    bevy_gantz_egui::storage::save_views(&mut batch, views);
+    // Views (kept current by `persist_camera_and_seed` and `settle_layout`):
+    // write only the per-commit views that changed, for commits that still exist.
+    let valid_commits: std::collections::HashSet<_> = registry.commits().keys().copied().collect();
+    bevy_gantz_egui::storage::save_views_incremental(
+        &mut batch,
+        views,
+        &valid_commits,
+        persisted_views,
+    );
     // GUI state.
     bevy_gantz_egui::storage::save_gui_state(&mut batch, gui_state);
     // Native window size (no-op on web).
@@ -196,6 +205,7 @@ fn persist_resources(
     registry: Res<Registry<BoxNode>>,
     mut persisted: ResMut<bevy_gantz::storage::PersistedRegistry>,
     views: Res<Views>,
+    mut persisted_views: ResMut<bevy_gantz_egui::storage::PersistedViews>,
     gui_state: Res<GuiState>,
     mut persister: ResMut<Persister>,
     tab_order: Res<HeadTabOrder>,
@@ -205,10 +215,11 @@ fn persist_resources(
 ) {
     let start = web_time::Instant::now();
     let window = primary_window.single().ok();
-    let batch = build_state_batch(
+    let batch = collect_batch_to_persist(
         &registry,
         &mut persisted,
         &views,
+        &mut persisted_views,
         &gui_state,
         &tab_order,
         &focused,
@@ -251,10 +262,10 @@ fn persist_egui_memory(mut persister: ResMut<Persister>, mut ctxs: EguiContexts)
 
 /// On exit, write the full current state and drain the worker before quitting.
 ///
-/// A fresh tracker forces a complete registry write as a backstop for any blob
-/// optimistically tracked as persisted but not yet drained by the worker; FIFO
-/// + `shutdown` guarantee it lands last. egui memory is left to the worker's
-/// normal drain (best-effort widget state).
+/// Fresh trackers force a complete registry + views write as a backstop for any
+/// blob optimistically tracked as persisted but not yet drained by the worker;
+/// FIFO + `shutdown` guarantee it lands last. egui memory is left to the
+/// worker's normal drain (best-effort widget state).
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::too_many_arguments)]
 fn flush_on_exit(
@@ -272,11 +283,13 @@ fn flush_on_exit(
         return;
     }
     let mut full = bevy_gantz::storage::PersistedRegistry::default();
+    let mut full_views = bevy_gantz_egui::storage::PersistedViews::default();
     let window = primary_window.single().ok();
-    let batch = build_state_batch(
+    let batch = collect_batch_to_persist(
         &registry,
         &mut full,
         &views,
+        &mut full_views,
         &gui_state,
         &tab_order,
         &focused,
