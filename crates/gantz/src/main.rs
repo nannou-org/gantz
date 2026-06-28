@@ -6,7 +6,7 @@ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use bevy_gantz::{
     BuiltinNodes, FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead, OpenHeadDataReadOnly,
     Registry, WorkingGraph,
-    debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
+    debounced_input::{DebouncedEvent, DebouncedInputEvent, DebouncedInputPlugin},
     reg, timestamp,
 };
 use bevy_gantz_egui::{GantzEguiPlugin, GuiState, HeadGuiState, TraceCapture, Views};
@@ -31,7 +31,10 @@ fn main() {
         )))
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window::plugin()))
         .add_plugins(EguiPlugin::default())
-        .add_plugins(DebouncedInputPlugin::new(0.25))
+        .add_plugins(DebouncedInputPlugin::<DebouncedInputEvent>::new(0.25))
+        // A separate, slower debounce for egui memory so it doesn't persist on
+        // the same frame as the registry/views.
+        .add_plugins(DebouncedInputPlugin::<PersistEguiMemory>::new(0.6))
         .insert_resource(Pkv(PkvStore::new("nannou-org", "gantz")))
         .add_systems(
             Startup,
@@ -56,6 +59,10 @@ fn main() {
                 // (and its seeded view) is saved in the same pass.
                 .after(bevy_gantz_egui::settle_layout::<Box<dyn node::Node>>)
                 .run_if(on_message::<DebouncedInputEvent>),
+        )
+        .add_systems(
+            Update,
+            persist_egui_memory.run_if(on_message::<PersistEguiMemory>),
         )
         .run();
 }
@@ -148,7 +155,6 @@ fn persist_resources(
     views: Res<Views>,
     gui_state: Res<GuiState>,
     mut storage: ResMut<Pkv>,
-    mut ctxs: EguiContexts,
     tab_order: Res<HeadTabOrder>,
     focused: Res<FocusedHead>,
     heads_query: Query<OpenHeadDataReadOnly<Box<dyn node::Node>>, With<OpenHead>>,
@@ -185,21 +191,38 @@ fn persist_resources(
     bevy_gantz_egui::storage::save_views(&mut *storage, &*views);
     // Save the gantz GUI state.
     bevy_gantz_egui::storage::save_gui_state(&mut *storage, &gui_state);
-    // Save egui memory (widget states).
-    if let Ok(ctx) = ctxs.ctx_mut() {
-        bevy_gantz_egui::storage::save_egui_memory(&mut *storage, ctx);
-    }
     // Save the native window size (no-op on web).
     if let Ok(window) = primary_window.single() {
         window::save(&mut *storage, window);
     }
 
     bevy::log::debug!(
-        "persist_resources took {:?} ({} graphs, {} commits on disk)",
+        "persisted state ({:?}, {} graphs, {} commits on disk)",
         start.elapsed(),
         persisted.graphs_len(),
         persisted.commits_len(),
     );
+}
+
+/// Debounced event driving egui-memory persistence, on a slower cadence than
+/// the registry/views persist so the two don't fsync on the same frame.
+#[derive(Message)]
+struct PersistEguiMemory;
+
+impl DebouncedEvent for PersistEguiMemory {
+    fn debounced(_triggered_by_focus_loss: bool) -> Self {
+        Self
+    }
+}
+
+/// Persist egui memory (widget state) on the slower debounce, so it doesn't
+/// fsync on the same frame as the registry/views persist.
+fn persist_egui_memory(mut storage: ResMut<Pkv>, mut ctxs: EguiContexts) {
+    let start = web_time::Instant::now();
+    if let Ok(ctx) = ctxs.ctx_mut() {
+        bevy_gantz_egui::storage::save_egui_memory(&mut *storage, ctx);
+    }
+    bevy::log::debug!("persisted egui memory ({:?})", start.elapsed());
 }
 
 #[cfg(test)]
