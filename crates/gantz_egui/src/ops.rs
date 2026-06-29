@@ -64,9 +64,9 @@ pub fn branch_node<N>(
 /// responsibility.
 pub fn copy_nodes<N>(
     registry: &gantz_ca::Registry<Graph<N>>,
-    all_views: &HashMap<CommitAddr, egui_graph::View>,
+    all_views: &HashMap<CommitAddr, crate::SceneView>,
     graph: &Graph<N>,
-    head_view: &egui_graph::View,
+    head_view: &crate::SceneView,
     selection: &HashSet<NodeIndex>,
 ) -> Option<String>
 where
@@ -95,7 +95,7 @@ pub fn create_node<N>(
     get_node: GetNode,
     new_node: impl FnOnce(&str) -> Option<N>,
     graph: &mut Graph<N>,
-    view: &mut egui_graph::View,
+    view: &mut crate::SceneView,
     head_state: &mut OpenHeadState,
     vm: &mut Engine,
     cmd: CreateNode,
@@ -124,7 +124,7 @@ where
 
     // Position the new node under the pointer, falling back to the center of the
     // current view.
-    let pos = pos.unwrap_or_else(|| view.scene_rect.center());
+    let pos = pos.unwrap_or_else(|| view.camera.center);
     let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
     view.layout.insert(egui_id, pos);
 
@@ -147,7 +147,7 @@ pub fn create_nested_graph<N>(
     registry: &mut gantz_ca::Registry<Graph<N>>,
     timestamp: std::time::Duration,
     graph: &mut Graph<N>,
-    view: &mut egui_graph::View,
+    view: &mut crate::SceneView,
     head_state: &mut OpenHeadState,
     pos: Option<egui::Pos2>,
     parent: &str,
@@ -179,7 +179,7 @@ where
 
     // Position the new node under the pointer, falling back to the center of the
     // current view.
-    let pos = pos.unwrap_or_else(|| view.scene_rect.center());
+    let pos = pos.unwrap_or_else(|| view.camera.center);
     let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
     view.layout.insert(egui_id, pos);
 
@@ -252,7 +252,7 @@ pub fn inspect_edge<N>(
     get_node: GetNode,
     new_inspect: impl FnOnce() -> Option<N>,
     graph: &mut Graph<N>,
-    view: &mut egui_graph::View,
+    view: &mut crate::SceneView,
     vm: &mut Engine,
     cmd: InspectEdge,
 ) where
@@ -310,10 +310,10 @@ pub fn inspect_edge<N>(
 pub fn paste<N>(
     registry: &mut gantz_ca::Registry<Graph<N>>,
     editing: Option<&str>,
-    all_views: &mut HashMap<CommitAddr, egui_graph::View>,
+    all_views: &mut HashMap<CommitAddr, crate::SceneView>,
     all_demos: &mut HashMap<String, String>,
     graph: &mut Graph<N>,
-    head_view: &mut egui_graph::View,
+    head_view: &mut crate::SceneView,
     head_state: &mut OpenHeadState,
     text: &str,
     pos: &PastePos,
@@ -401,8 +401,8 @@ pub fn redo(
 /// [`gantz_ca::GraphAddr`]: the registry dedups the graph (the `graph` closure
 /// passed to [`gantz_ca::Registry::commit_graph_to_head`] is never called) and
 /// the VM does not need to recompile. Only `layout` (node positions) is
-/// compared; `scene_rect` (camera) is excluded, so camera pan/zoom never
-/// produces a layout commit.
+/// compared; the `camera` is excluded, so camera pan/zoom never produces a
+/// layout commit.
 ///
 /// Returns the new commit address when a layout commit was created, else `None`
 /// (no baseline view yet - i.e. the head commit's layout has not been seeded -
@@ -410,10 +410,10 @@ pub fn redo(
 /// and migrating GUI state stay with the caller.
 pub fn commit_layout<G>(
     registry: &mut gantz_ca::Registry<G>,
-    views: &HashMap<CommitAddr, egui_graph::View>,
+    views: &HashMap<CommitAddr, crate::SceneView>,
     timestamp: gantz_ca::Timestamp,
     head: &mut gantz_ca::Head,
-    live: &egui_graph::View,
+    live: &crate::SceneView,
 ) -> Option<CommitAddr> {
     let head_commit_ca = *registry.head_commit_ca(head)?;
     let baseline = views.get(&head_commit_ca)?;

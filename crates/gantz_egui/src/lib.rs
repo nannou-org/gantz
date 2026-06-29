@@ -18,6 +18,7 @@ pub mod ops;
 pub mod reg;
 pub mod response;
 pub mod sync;
+pub mod view;
 pub mod widget;
 
 // Re-export traits that make up the Registry supertrait.
@@ -28,6 +29,7 @@ pub use response::{
     ContextMenuResponse, DynResponse, InspectorRowsResponse, InspectorUiResponse, NodeUiResponse,
     ResponseData, Responses,
 };
+pub use view::{Camera, SceneView};
 pub use widget::gantz::NodeTypeRegistry;
 pub use widget::graph_select::GraphRegistry;
 
@@ -265,7 +267,7 @@ pub struct HeadDataMut<'a, N> {
     /// View state (node layout + camera) for this head's graph. Nested graphs
     /// are separate named heads with their own view, so one view per head
     /// suffices (no path-keyed map).
-    pub view: &'a mut egui_graph::View,
+    pub view: &'a mut crate::SceneView,
     pub vm: &'a mut Engine,
 }
 

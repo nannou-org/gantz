@@ -41,7 +41,7 @@ mod key {
 ///
 /// Seed it from the disk-loaded views via [`PersistedViews::from_views`].
 #[derive(Resource, Default)]
-pub struct PersistedViews(HashMap<ca::CommitAddr, egui_graph::View>);
+pub struct PersistedViews(HashMap<ca::CommitAddr, gantz_egui::SceneView>);
 
 impl PersistedViews {
     /// Snapshot the views known to be on disk.
@@ -108,7 +108,8 @@ pub fn load_views(storage: &impl Load) -> Views {
     }
     // Legacy: a single whole-map blob.
     Views(
-        load::<HashMap<ca::CommitAddr, egui_graph::View>>(storage, key::VIEWS).unwrap_or_default(),
+        load::<HashMap<ca::CommitAddr, gantz_egui::SceneView>>(storage, key::VIEWS)
+            .unwrap_or_default(),
     )
 }
 
@@ -249,9 +250,12 @@ mod tests {
     }
 
     /// A view distinguishable by `n` (so changing it is detectable).
-    fn view(n: f32) -> egui_graph::View {
-        egui_graph::View {
-            scene_rect: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(n, n)),
+    fn view(n: f32) -> gantz_egui::SceneView {
+        gantz_egui::SceneView {
+            camera: gantz_egui::Camera {
+                center: egui::pos2(n, n),
+                zoom: 1.0,
+            },
             layout: Default::default(),
         }
     }

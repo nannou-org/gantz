@@ -175,11 +175,19 @@ where
     /// Returns a response containing both the scene response and all node responses.
     pub fn show(
         self,
-        view: &mut egui_graph::View,
+        scene_view: &mut crate::SceneView,
         state: &mut GraphSceneState,
         vm: &mut Engine,
         ui: &mut egui::Ui,
     ) -> GraphSceneResponse {
+        // Materialise the viewport-dependent `egui_graph::View` from the
+        // viewport-independent camera. The viewport must match the size
+        // `egui_graph` reads (`available_rect_before_wrap`) so the fit
+        // reproduces the camera's zoom exactly. The camera is recovered after
+        // the pass (see `restore_egui` below).
+        let viewport = ui.available_rect_before_wrap().size();
+        let mut egui_view = scene_view.take_egui(viewport);
+        let view = &mut egui_view;
         // Consume one-shot layout/center requests (set by buttons and context
         // menus). A request raised during this pass (e.g. by a context menu)
         // is applied on the next pass.
@@ -299,6 +307,7 @@ where
         let view_toggles = self.view_toggles;
         let mut reset_layout = false;
         let mut request_layout = false;
+        let mut request_center = false;
         if !immutable || view_toggles.is_some() {
             let layer_id = graph_response.response.layer_id;
             graph_response.response.context_menu(|ui| {
@@ -332,6 +341,14 @@ where
                         request_layout = true;
                         ui.close();
                     }
+                    if ui
+                        .button("center-view")
+                        .on_hover_text("frame the whole graph in the view")
+                        .clicked()
+                    {
+                        request_center = true;
+                        ui.close();
+                    }
                 }
                 if let Some(view) = view_toggles {
                     ui.menu_button("panes", |ui| {
@@ -348,9 +365,17 @@ where
         if request_layout {
             state.pending_auto_layout = true;
         }
+        if request_center {
+            state.pending_center_view = true;
+        }
         if reset_layout {
             responses.push(DynResponse::new(ResetTilesLayout));
         }
+
+        // Recover the viewport-independent camera (centre + zoom) from the
+        // `egui_graph` view (which `egui` may have panned/zoomed this pass) and
+        // write back the possibly-relaid-out node layout.
+        scene_view.restore_egui(egui_view, viewport);
 
         GraphSceneResponse {
             scene: graph_response.response,
@@ -845,6 +870,7 @@ fn edges<N>(
                 state.interaction.edge_context_menu_pos = Some(response.closest_point());
             }
         }
+        let mut delete_edge = false;
         response.context_menu(|ui| {
             if ui.button("inspect").clicked() {
                 if let Some(pos) = state.interaction.edge_context_menu_pos.take() {
@@ -852,7 +878,19 @@ fn edges<N>(
                 }
                 ui.close();
             }
+            if ui.button("delete").clicked() {
+                delete_edge = true;
+                ui.close();
+            }
         });
+        // Apply the deletion after the closure releases its borrows. Same effect
+        // as the keyboard `deleted()` path above; `changed` propagates to the
+        // head's commit so it persists and joins the undo/redo chain.
+        if delete_edge {
+            graph.remove_edge(e);
+            state.interaction.selection.edges.remove(&e);
+            *changed = true;
+        }
     }
 
     // Apply deferred edge deletes. `remove_edge` swap-removes (the former-last

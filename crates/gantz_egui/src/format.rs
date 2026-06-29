@@ -27,7 +27,7 @@ where
     N: Serialize + DeserializeOwned + CaHash + 'static,
 {
     let loaded = gantz_format::from_str::<N>(text, now)?;
-    let mut views: HashMap<CommitAddr, egui_graph::View> = HashMap::new();
+    let mut views: HashMap<CommitAddr, crate::SceneView> = HashMap::new();
     let mut demos: HashMap<String, String> = HashMap::new();
     for form in &loaded.extra {
         match form.head.as_str() {
@@ -118,7 +118,7 @@ where
 fn apply_layout<N>(
     form: &Form,
     loaded: &Loaded<N>,
-    views: &mut HashMap<CommitAddr, egui_graph::View>,
+    views: &mut HashMap<CommitAddr, crate::SceneView>,
 ) {
     let src = &form.raw;
     let Ok(forms) = sexpr::read(src) else { return };
@@ -137,7 +137,7 @@ fn apply_layout<N>(
     };
 
     let mut layout = egui_graph::Layout::default();
-    let mut scene = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(0.0, 0.0));
+    let mut camera = crate::Camera::default();
     for entry in &args[2..] {
         let Some(eargs) = sexpr::list_args(entry) else {
             continue;
@@ -145,13 +145,31 @@ fn apply_layout<N>(
         let Some(head_sym) = eargs.first().and_then(sexpr::as_symbol) else {
             continue;
         };
-        if head_sym == "scene" {
+        if head_sym == "camera" {
+            let f: Vec<f32> = eargs[1..]
+                .iter()
+                .filter_map(|n| sexpr::as_f32(n, src))
+                .collect();
+            if f.len() == 3 {
+                camera = crate::Camera {
+                    center: egui::pos2(f[0], f[1]),
+                    zoom: f[2],
+                };
+            }
+        } else if head_sym == "scene" {
+            // Legacy: a visible-region rect (pre-camera format). Recover the
+            // centre at the default zoom; the exact zoom can't be reconstructed
+            // without the viewport the rect was captured against.
             let f: Vec<f32> = eargs[1..]
                 .iter()
                 .filter_map(|n| sexpr::as_f32(n, src))
                 .collect();
             if f.len() == 4 {
-                scene = egui::Rect::from_min_max(egui::pos2(f[0], f[1]), egui::pos2(f[2], f[3]));
+                let rect = egui::Rect::from_min_max(egui::pos2(f[0], f[1]), egui::pos2(f[2], f[3]));
+                camera = crate::Camera {
+                    center: rect.center(),
+                    zoom: 1.0,
+                };
             }
         } else if let (Some(x), Some(y)) = (
             eargs.get(1).and_then(|n| sexpr::as_f32(n, src)),
@@ -163,10 +181,7 @@ fn apply_layout<N>(
         }
     }
 
-    let view = egui_graph::View {
-        scene_rect: scene,
-        layout,
-    };
+    let view = crate::SceneView { camera, layout };
     views.insert(head, view);
 }
 
@@ -174,7 +189,7 @@ fn apply_layout<N>(
 /// the graph itself is `(graph <name> ...)`); otherwise it is quoted (the
 /// address-based format, `(graph "<hex>" ...)`). The id must round-trip to the
 /// same `Addr` kind as the graph, or the layout fails to resolve on load.
-fn layout_text(labels: &GraphLabels, view: &egui_graph::View, bare_id: bool) -> String {
+fn layout_text(labels: &GraphLabels, view: &crate::SceneView, bare_id: bool) -> String {
     let mut positions: Vec<(String, f32, f32)> = view
         .layout
         .iter()
@@ -200,13 +215,12 @@ fn layout_text(labels: &GraphLabels, view: &egui_graph::View, bare_id: bool) -> 
             sexpr::num(y)
         ));
     }
-    let r = view.scene_rect;
+    let c = view.camera;
     s.push_str(&format!(
-        "\n  (scene {} {} {} {}))",
-        sexpr::num(r.min.x),
-        sexpr::num(r.min.y),
-        sexpr::num(r.max.x),
-        sexpr::num(r.max.y),
+        "\n  (camera {} {} {}))",
+        sexpr::num(c.center.x),
+        sexpr::num(c.center.y),
+        sexpr::num(c.zoom),
     ));
     s
 }

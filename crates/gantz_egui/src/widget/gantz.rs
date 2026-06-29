@@ -317,6 +317,11 @@ impl SceneConfig {
             SnapMode::Grid => self.grid.step * self.snap.grid_ratio,
         };
         graph
+            // gantz owns zoom persistence (the camera stores centre + zoom, and
+            // the scene rect is rebuilt from it each frame against the live
+            // viewport). Use `MaintainView` so `egui_graph` does not *also*
+            // rescale the rect on resize and double-adjust the zoom.
+            .resize_behavior(egui_graph::ResizeBehavior::MaintainView)
             .dot_grid(self.grid.show)
             .dot_grid_step(self.grid.step)
             .snap(Some(egui_graph::Snap::Round))
@@ -2217,7 +2222,7 @@ fn graph_scene<N>(
     head: &gantz_ca::Head,
     head_state: &mut OpenHeadState,
     view_toggles: &mut ViewToggles,
-    head_view: &mut egui_graph::View,
+    head_view: &mut crate::SceneView,
     layout_params: egui_graph::LayoutParams,
     scene_config: SceneConfig,
     immutable: bool,
@@ -2231,10 +2236,22 @@ where
     // A head shows exactly its root graph (nested graphs are separate heads).
     let id = egui::Id::new(head);
 
-    // Seed the node layout the first time this graph is shown.
+    // Seed the node layout the first time this graph is shown, and centre the
+    // camera on it at zoom 1. Without an explicit camera the scene would fall
+    // back to egui's fit-to-bounds, zooming out to frame every node; a freshly
+    // opened graph should instead sit at its natural 1:1 zoom.
     if head_view.layout.is_empty() {
         head_view.layout =
             widget::graph_scene::layout(registry, graph, id, &layout_params, ui.ctx(), None);
+        let mut bounds: Option<egui::Rect> = None;
+        for &pos in head_view.layout.values() {
+            let r = egui::Rect::from_min_size(pos, egui::Vec2::ZERO);
+            bounds = Some(bounds.map_or(r, |b| b.union(r)));
+        }
+        head_view.camera = crate::Camera {
+            center: bounds.map_or(egui::Pos2::ZERO, |b| b.center()),
+            zoom: 1.0,
+        };
     }
 
     let response = GraphScene::new(registry, graph)

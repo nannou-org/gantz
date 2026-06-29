@@ -66,7 +66,53 @@ pub(crate) fn format_local_datetime(system_time: std::time::SystemTime) -> Strin
         .unwrap_or_else(|_| "<invalid-timestamp>".to_string())
 }
 
+/// Group consecutive slice elements considered equal by `eq` into runs,
+/// returned as `(index_of_first, count)` pairs in order.
+///
+/// Used by the log/trace views to collapse runs of repeated entries (equal but
+/// for their timestamp) into a single row carrying an occurrence count.
+pub(crate) fn group_runs<T>(items: &[T], eq: impl Fn(&T, &T) -> bool) -> Vec<(usize, usize)> {
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        if let Some((first, count)) = runs.last_mut() {
+            if eq(&items[*first], item) {
+                *count += 1;
+                continue;
+            }
+        }
+        runs.push((i, 1));
+    }
+    runs
+}
+
 /// Simple shorthand for viewing steel code without highlights.
 pub fn steel_view(ui: &mut egui::Ui, code: &str) {
     SteelView::new(code).show(ui);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::group_runs;
+
+    #[test]
+    fn group_runs_collapses_consecutive_equal_items() {
+        // The trailing `a` is a *separate* run from the leading ones - only
+        // consecutive equals collapse.
+        let items = ['a', 'a', 'a', 'b', 'a', 'a'];
+        let runs = group_runs(&items, |x, y| x == y);
+        assert_eq!(runs, vec![(0, 3), (3, 1), (4, 2)]);
+    }
+
+    #[test]
+    fn group_runs_empty_is_empty() {
+        let items: [char; 0] = [];
+        assert!(group_runs(&items, |x, y| x == y).is_empty());
+    }
+
+    #[test]
+    fn group_runs_all_distinct() {
+        let items = [1, 2, 3];
+        let runs = group_runs(&items, |x, y| x == y);
+        assert_eq!(runs, vec![(0, 1), (1, 1), (2, 1)]);
+    }
 }

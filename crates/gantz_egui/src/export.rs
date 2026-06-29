@@ -1,7 +1,7 @@
 //! Export/import representation for sharing node sets between gantz instances.
 //!
 //! The [`Export`] type bundles a [`gantz_ca::Registry`] subset with optional
-//! [`egui_graph::View`] layout data. Serialization uses the `.gantz` S-expression text
+//! [`crate::SceneView`] layout data. Serialization uses the `.gantz` S-expression text
 //! format (see [`crate::format`]) under the `.gantz` file extension.
 
 use gantz_ca::{CaHash, CommitAddr, registry::MergeResult};
@@ -43,7 +43,7 @@ impl std::error::Error for ParseExportError {
 pub struct Export<G> {
     pub registry: gantz_ca::Registry<G>,
     #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
-    pub views: HashMap<CommitAddr, egui_graph::View>,
+    pub views: HashMap<CommitAddr, crate::SceneView>,
     /// Maps a graph *name* to its associated demo graph name (a `demo-*` name).
     ///
     /// Keyed by name (rather than commit) so the association survives an edit:
@@ -56,7 +56,7 @@ pub struct Export<G> {
 /// present in the registry.
 pub fn export_with<G>(
     registry: gantz_ca::Registry<G>,
-    all_views: &HashMap<CommitAddr, egui_graph::View>,
+    all_views: &HashMap<CommitAddr, crate::SceneView>,
     all_demos: &HashMap<String, String>,
 ) -> Export<G>
 where
@@ -140,7 +140,7 @@ where
 pub fn export_heads_sexpr<N>(
     get_node: GetNode,
     registry: &gantz_ca::Registry<Graph<N>>,
-    all_views: &HashMap<CommitAddr, egui_graph::View>,
+    all_views: &HashMap<CommitAddr, crate::SceneView>,
     all_demos: &HashMap<String, String>,
     heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
 ) -> Result<String, crate::format::FormatError>
@@ -159,7 +159,7 @@ where
 pub fn export_heads_sexpr_named<N>(
     get_node: GetNode,
     registry: &gantz_ca::Registry<Graph<N>>,
-    all_views: &HashMap<CommitAddr, egui_graph::View>,
+    all_views: &HashMap<CommitAddr, crate::SceneView>,
     all_demos: &HashMap<String, String>,
     heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
 ) -> Result<String, crate::format::FormatError>
@@ -177,7 +177,7 @@ where
 /// known commits are kept.
 pub fn merge_with<G>(
     registry: &mut gantz_ca::Registry<G>,
-    views: &mut HashMap<CommitAddr, egui_graph::View>,
+    views: &mut HashMap<CommitAddr, crate::SceneView>,
     demos: &mut HashMap<String, String>,
     export: Export<G>,
 ) -> MergeResult {
@@ -273,7 +273,7 @@ pub struct Copied<N> {
 /// Build a [`Copied`] payload from the selected nodes in a graph.
 pub fn copy<N>(
     registry: &gantz_ca::Registry<Graph<N>>,
-    all_views: &HashMap<CommitAddr, egui_graph::View>,
+    all_views: &HashMap<CommitAddr, crate::SceneView>,
     graph: &Graph<N>,
     selected: &HashSet<node::graph::NodeIx>,
     layout: &egui_graph::Layout,
@@ -336,7 +336,7 @@ where
 /// target graph.
 pub fn paste<N>(
     registry: &mut gantz_ca::Registry<Graph<N>>,
-    views: &mut HashMap<CommitAddr, egui_graph::View>,
+    views: &mut HashMap<CommitAddr, crate::SceneView>,
     demos: &mut HashMap<String, String>,
     target_graph: &mut Graph<N>,
     target_layout: &mut egui_graph::Layout,
@@ -382,12 +382,13 @@ where
     ));
     registry.insert_name(CLIPBOARD_NAME.to_string(), commit_ca);
 
-    // Carry the positions as the clipboard graph's layout view.
+    // Carry the positions as the clipboard graph's layout view. The camera is
+    // irrelevant for a clipboard payload, so use the default.
     let mut views = copied.export.views.clone();
     views.insert(
         commit_ca,
-        egui_graph::View {
-            scene_rect: egui::Rect::ZERO,
+        crate::SceneView {
+            camera: crate::Camera::default(),
             layout: copied.positions.clone(),
         },
     );
@@ -506,8 +507,8 @@ mod tests {
             BTreeMap::new(),
         );
         let mut all_views = HashMap::new();
-        all_views.insert(ca, egui_graph::View::default());
-        all_views.insert(cb, egui_graph::View::default()); // cb not in registry
+        all_views.insert(ca, crate::SceneView::default());
+        all_views.insert(cb, crate::SceneView::default()); // cb not in registry
         let export = export_with(registry, &all_views, &HashMap::new());
         assert!(export.views.contains_key(&ca));
         assert!(!export.views.contains_key(&cb));
@@ -546,7 +547,7 @@ mod tests {
             HashMap::from([(ca, commit.clone())]),
             BTreeMap::new(),
         );
-        let mut existing_view = egui_graph::View::default();
+        let mut existing_view = crate::SceneView::default();
         existing_view
             .layout
             .insert(egui_graph::NodeId(0), Default::default());
@@ -558,7 +559,7 @@ mod tests {
                 HashMap::from([(ca, commit)]),
                 BTreeMap::new(),
             ),
-            views: HashMap::from([(ca, egui_graph::View::default())]),
+            views: HashMap::from([(ca, crate::SceneView::default())]),
             demos: HashMap::new(),
         };
         merge_with(&mut registry, &mut views, &mut demos, export);

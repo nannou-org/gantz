@@ -162,6 +162,12 @@ impl TraceView {
 
         entries.reverse();
 
+        // Collapse runs of consecutive entries that differ only by their
+        // timestamp into a single row, carrying an occurrence count.
+        let runs = crate::widget::group_runs(&entries, |a, b| {
+            a.level == b.level && a.message == b.message && a.target == b.target
+        });
+
         // Create table
         TableBuilder::new(ui)
             .striped(true)
@@ -186,10 +192,11 @@ impl TraceView {
             })
             .body(|mut body| {
                 let row_h = 18.0;
-                let n_rows = entries.len();
+                let n_rows = runs.len();
                 let text_color = body.ui_mut().style().visuals.text_color();
                 body.rows(row_h, n_rows, |mut row| {
-                    let entry = &entries[row.index()];
+                    let (idx, count) = runs[row.index()];
+                    let entry = &entries[idx];
                     let freshness = entry.freshness();
                     let fresh = freshness > 0.0;
                     let text_color = if fresh {
@@ -220,7 +227,16 @@ impl TraceView {
                     });
 
                     row.col(|ui| {
-                        ui.colored_label(text_color, &entry.message);
+                        ui.horizontal(|ui| {
+                            if count > 1 {
+                                ui.colored_label(
+                                    text_color.gamma_multiply(0.7),
+                                    format!("×{count}"),
+                                )
+                                .on_hover_text("occurrences collapsed (repeated log)");
+                            }
+                            ui.colored_label(text_color, &entry.message);
+                        });
                     });
 
                     if fresh {
