@@ -845,6 +845,7 @@ fn edges<N>(
                 state.interaction.edge_context_menu_pos = Some(response.closest_point());
             }
         }
+        let mut delete_edge = false;
         response.context_menu(|ui| {
             if ui.button("inspect").clicked() {
                 if let Some(pos) = state.interaction.edge_context_menu_pos.take() {
@@ -852,7 +853,19 @@ fn edges<N>(
                 }
                 ui.close();
             }
+            if ui.button("delete").clicked() {
+                delete_edge = true;
+                ui.close();
+            }
         });
+        // Apply the deletion after the closure releases its borrows. Same effect
+        // as the keyboard `deleted()` path above; `changed` propagates to the
+        // head's commit so it persists and joins the undo/redo chain.
+        if delete_edge {
+            graph.remove_edge(e);
+            state.interaction.selection.edges.remove(&e);
+            *changed = true;
+        }
     }
 
     // Apply deferred edge deletes. `remove_edge` swap-removes (the former-last
