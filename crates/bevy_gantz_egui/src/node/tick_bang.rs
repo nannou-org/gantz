@@ -14,6 +14,7 @@ use bevy_time::prelude::*;
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::visit;
+use gantz_egui::widget::node_inspector::radio_option;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use steel::SteelVal;
@@ -24,6 +25,9 @@ const DEFAULT_DURATION: f64 = 1.0;
 /// The smallest tick duration the inspector allows, in seconds.
 const MIN_DURATION: f64 = 0.001;
 
+/// The smallest tick rate the inspector allows, in Hz.
+const MIN_RATE: f64 = 0.001;
+
 /// The most ticks a single `tick!` node may fire in one update.
 ///
 /// Caps fixed-timestep catch-up so a long stall (e.g. the window was hidden or
@@ -31,67 +35,125 @@ const MIN_DURATION: f64 = 0.001;
 /// evaluations - any backlog beyond this many ticks is discarded.
 const MAX_CATCHUP_TICKS: f64 = 64.0;
 
-fn default_duration() -> f64 {
-    DEFAULT_DURATION
-}
-
 // ---------------------------------------------------------------------------
 // TickBang node
 // ---------------------------------------------------------------------------
 
-/// A self-driven node that fires once per `duration` seconds.
+/// How a [`TickBang`]'s tick interval is specified.
 ///
-/// Outputs the tick duration in seconds as `f64` on each tick. The driver fires
-/// it once for every whole `duration` elapsed since the last update, so the
+/// Stored in the user's chosen unit so it round-trips exactly - deriving Hz
+/// from a stored duration (or vice versa) would accumulate float error across
+/// edits.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum Interval {
+    /// A duration in seconds between ticks.
+    Duration(f64),
+    /// A rate in Hz (ticks per second).
+    Rate(f64),
+}
+
+impl Interval {
+    /// The effective tick duration in seconds.
+    pub fn duration(self) -> f64 {
+        match self {
+            Interval::Duration(secs) => secs,
+            Interval::Rate(hz) => 1.0 / hz,
+        }
+    }
+
+    /// Whether the interval is specified as a rate (Hz) rather than a duration.
+    pub fn is_rate(self) -> bool {
+        matches!(self, Interval::Rate(_))
+    }
+}
+
+impl Default for Interval {
+    fn default() -> Self {
+        Interval::Duration(DEFAULT_DURATION)
+    }
+}
+
+impl PartialEq for Interval {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Interval::Duration(a), Interval::Duration(b)) => a.to_bits() == b.to_bits(),
+            (Interval::Rate(a), Interval::Rate(b)) => a.to_bits() == b.to_bits(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Interval {}
+
+impl Hash for Interval {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Fully qualified to disambiguate from `gantz_ca::CaHash::hash`.
+        match self {
+            Interval::Duration(secs) => {
+                Hash::hash(&0u8, state);
+                Hash::hash(&secs.to_bits(), state);
+            }
+            Interval::Rate(hz) => {
+                Hash::hash(&1u8, state);
+                Hash::hash(&hz.to_bits(), state);
+            }
+        }
+    }
+}
+
+/// A self-driven node that fires once per configurable tick interval.
+///
+/// The interval is set either as a duration (seconds) or a rate (Hz). Outputs
+/// the effective tick duration in seconds as `f64` on each tick. The driver
+/// fires it once for every whole interval elapsed since the last update, so the
 /// tick *count* stays correct even when updates are slower than the tick rate.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TickBang {
-    #[serde(default = "default_duration")]
-    duration: f64,
+    #[serde(default)]
+    interval: Interval,
 }
 
 impl TickBang {
-    /// The tick interval in seconds.
-    pub fn duration(&self) -> f64 {
-        self.duration
+    /// How the tick interval is specified (a duration in seconds or rate in Hz).
+    pub fn interval(&self) -> Interval {
+        self.interval
     }
 
-    /// Set the tick interval in seconds (content-address affecting).
-    pub fn set_duration(&mut self, duration: f64) {
-        self.duration = duration;
+    /// Set how the tick interval is specified (content-address affecting).
+    pub fn set_interval(&mut self, interval: Interval) {
+        self.interval = interval;
+    }
+
+    /// The effective tick duration in seconds.
+    pub fn duration(&self) -> f64 {
+        self.interval.duration()
     }
 }
 
 impl Default for TickBang {
     fn default() -> Self {
         TickBang {
-            duration: DEFAULT_DURATION,
+            interval: Interval::default(),
         }
-    }
-}
-
-impl PartialEq for TickBang {
-    fn eq(&self, other: &Self) -> bool {
-        self.duration.to_bits() == other.duration.to_bits()
-    }
-}
-
-impl Eq for TickBang {}
-
-impl Hash for TickBang {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        // Fully qualified to disambiguate from `gantz_ca::CaHash::hash`.
-        Hash::hash(&self.duration.to_bits(), state);
     }
 }
 
 impl CaHash for TickBang {
     fn hash(&self, hasher: &mut gantz_ca::Hasher) {
         hasher.update("gantz.tick!".as_bytes());
-        // The duration is part of the node's identity: editing it gives the
-        // node a new address, which is how the commit-on-change model persists
-        // it (the working graph is only saved when it commits).
-        CaHash::hash(&self.duration.to_bits(), hasher);
+        // The interval - and the unit it's specified in - is part of the node's
+        // identity: editing it gives the node a new address, which is how the
+        // commit-on-change model persists it (only committed graphs are saved).
+        match self.interval {
+            Interval::Duration(secs) => {
+                hasher.update(b"duration");
+                CaHash::hash(&secs.to_bits(), hasher);
+            }
+            Interval::Rate(hz) => {
+                hasher.update(b"rate");
+                CaHash::hash(&hz.to_bits(), hasher);
+            }
+        }
     }
 }
 
@@ -110,7 +172,7 @@ impl gantz_core::Node for TickBang {
         // `drive_tick_bangs`; eval reads `state` and writes it back untouched.
         // `{:?}` formats the float with a guaranteed `.`/exponent so Steel
         // parses it as a number rather than an integer.
-        node::parse_expr(&format!("(begin {:?})", self.duration))
+        node::parse_expr(&format!("(begin {:?})", self.duration()))
     }
 
     fn register(&self, mut ctx: RegCtx<'_, '_>) {
@@ -126,10 +188,11 @@ impl gantz_egui::NodeUi for TickBang {
 
     fn description(&self) -> Option<&'static str> {
         Some(
-            "Self-driven clock that fires once per configurable tick duration. \
-             Fires once for every whole duration elapsed since the last update, so \
-             the tick count stays correct even when the app updates slower than the \
-             tick rate. Outputs the tick duration in seconds.",
+            "Self-driven clock that fires once per configurable tick interval, set \
+             as a duration (seconds) or a rate (Hz). Fires once for every whole \
+             interval elapsed since the last update, so the tick count stays \
+             correct even when the app updates slower than the tick rate. Outputs \
+             the tick duration in seconds.",
         )
     }
 
@@ -150,25 +213,74 @@ impl gantz_egui::NodeUi for TickBang {
     ) -> gantz_egui::InspectorRowsResponse {
         let row_h = gantz_egui::widget::node_inspector::table_row_h(body.ui_mut());
         let mut changed = false;
+
+        // Mode row: specify the interval as a duration (seconds) or rate (Hz).
         body.row(row_h, |mut row| {
             row.col(|ui| {
-                ui.label("dur.")
-                    .on_hover_text("tick duration: seconds between ticks");
+                ui.label("mode").on_hover_text(
+                    "specify the tick interval as a duration (seconds) or a rate (Hz)",
+                );
             });
             row.col(|ui| {
-                let mut dur = self.duration();
-                let resp = ui.add(
-                    egui::DragValue::new(&mut dur)
-                        .speed(0.01)
-                        .range(MIN_DURATION..=f64::INFINITY)
-                        .suffix(" s"),
-                );
-                if resp.changed() {
-                    self.set_duration(dur.max(MIN_DURATION));
+                let mut rate = self.interval.is_rate();
+                let mut switched = false;
+                ui.horizontal(|ui| {
+                    switched |= radio_option(ui, &mut rate, false, "dur.", "seconds between ticks");
+                    switched |= radio_option(ui, &mut rate, true, "rate", "ticks per second (Hz)");
+                });
+                if switched {
+                    // Toggle units while preserving the effective tick duration.
+                    let dur = self.duration();
+                    self.interval = if rate {
+                        Interval::Rate(1.0 / dur)
+                    } else {
+                        Interval::Duration(dur)
+                    };
                     changed = true;
                 }
             });
         });
+
+        // Value row: the duration (seconds) or rate (Hz), in the chosen unit.
+        body.row(row_h, |mut row| {
+            let is_rate = self.interval.is_rate();
+            row.col(|ui| {
+                if is_rate {
+                    ui.label("rate").on_hover_text("ticks per second (Hz)");
+                } else {
+                    ui.label("dur.").on_hover_text("seconds between ticks");
+                }
+            });
+            row.col(|ui| match &mut self.interval {
+                Interval::Duration(secs) => {
+                    let mut v = *secs;
+                    let resp = ui.add(
+                        egui::DragValue::new(&mut v)
+                            .speed(0.01)
+                            .range(MIN_DURATION..=f64::INFINITY)
+                            .suffix(" s"),
+                    );
+                    if resp.changed() {
+                        *secs = v.max(MIN_DURATION);
+                        changed = true;
+                    }
+                }
+                Interval::Rate(hz) => {
+                    let mut v = *hz;
+                    let resp = ui.add(
+                        egui::DragValue::new(&mut v)
+                            .speed(0.1)
+                            .range(MIN_RATE..=f64::INFINITY)
+                            .suffix(" Hz"),
+                    );
+                    if resp.changed() {
+                        *hz = v.max(MIN_RATE);
+                        changed = true;
+                    }
+                }
+            });
+        });
+
         let mut resp = gantz_egui::InspectorRowsResponse::default();
         if changed {
             resp.mark_changed();
@@ -265,7 +377,7 @@ where
 ///
 /// For each open head and each `tick!` node, advances the node's time
 /// accumulator by the update delta time and triggers one push evaluation for
-/// every whole tick duration elapsed (capped by [`MAX_CATCHUP_TICKS`]).
+/// every whole tick duration elapsed (capped by `MAX_CATCHUP_TICKS`).
 pub fn drive_tick_bangs<N>(
     time: Res<Time>,
     registry: Res<crate::Registry<N>>,

@@ -363,25 +363,55 @@ fn write_comment(node: &Datum) -> String {
     format!("(comment {} {w} {h})", quote(text))
 }
 
-/// Write a `Number` as a bare `number` when all config is default, else as
-/// `(number #:min m #:max m #:precision n #:no-push-eval)` with only the
-/// non-default fields.
+/// Read `(tick-bang [#:duration secs | #:rate hz])` into a `TickBang`'s
+/// `interval` enum field. `#:duration` and `#:rate` are mutually exclusive;
+/// neither given yields the default duration.
 fn tick_bang_spec(args: &[ExprKind], src: &str) -> Result<Datum, FormatError> {
-    let mut fields = Vec::new();
-    if let Some(duration) = keyword_f64(args, "duration", src)? {
-        fields.push(("duration", Datum::F64(duration)));
-    }
+    let duration = keyword_f64(args, "duration", src)?;
+    let rate = keyword_f64(args, "rate", src)?;
+    let fields = match (duration, rate) {
+        (Some(_), Some(_)) => {
+            return Err(FormatError::new(ErrorKind::Malformed(
+                "tick-bang: specify #:duration or #:rate, not both".into(),
+            )));
+        }
+        (Some(secs), None) => vec![("interval", tick_interval_datum("Duration", secs))],
+        (None, Some(hz)) => vec![("interval", tick_interval_datum("Rate", hz))],
+        (None, None) => vec![],
+    };
     Ok(node_datum("TickBang", fields))
 }
 
+/// The `interval` field datum for a `TickBang` `Interval` enum variant
+/// (externally tagged, e.g. `(("Rate" hz))`).
+fn tick_interval_datum(variant: &str, value: f64) -> Datum {
+    Datum::Map(vec![(variant.to_string(), Datum::F64(value))])
+}
+
+/// Write a `TickBang` as a bare `tick-bang` for the default duration, else as
+/// `(tick-bang #:duration secs)` or `(tick-bang #:rate hz)` per its unit.
 fn write_tick_bang(node: &Datum) -> String {
-    // Omit the default duration so a plain `tick!` writes as the bare keyword.
-    match node.get("duration").and_then(Datum::as_f64) {
-        Some(duration) if duration != 1.0 => format!("(tick-bang #:duration {duration})"),
+    match tick_interval(node) {
+        Some(("Rate", hz)) => format!("(tick-bang #:rate {hz})"),
+        Some(("Duration", secs)) if secs != 1.0 => format!("(tick-bang #:duration {secs})"),
         _ => "tick-bang".to_string(),
     }
 }
 
+/// Read a `TickBang`'s `interval` field as `(variant, value)`.
+fn tick_interval(node: &Datum) -> Option<(&str, f64)> {
+    match node.get("interval")? {
+        Datum::Map(entries) => {
+            let (variant, value) = entries.first()?;
+            Some((variant.as_str(), value.as_f64()?))
+        }
+        _ => None,
+    }
+}
+
+/// Write a `Number` as a bare `number` when all config is default, else as
+/// `(number #:min m #:max m #:precision n #:no-push-eval)` with only the
+/// non-default fields.
 fn write_number(node: &Datum) -> String {
     let min = node.get("min").and_then(Datum::as_f64);
     let max = node.get("max").and_then(Datum::as_f64);
@@ -692,16 +722,28 @@ mod tests {
             Some("tick-bang")
         );
 
-        // A custom duration round-trips via the `#:duration` keyword.
+        // A custom duration round-trips via the `#:duration` keyword (seconds).
         let d = read_spec(&s, "(tick-bang #:duration 0.5)").expect("duration");
-        assert_eq!(d.get("duration").and_then(Datum::as_f64), Some(0.5));
         assert_eq!(
             s.write_spec("TickBang", &d).as_deref(),
             Some("(tick-bang #:duration 0.5)"),
         );
 
+        // A rate round-trips via the `#:rate` keyword (Hz), stored exactly.
+        let r = read_spec(&s, "(tick-bang #:rate 60)").expect("rate");
+        assert_eq!(
+            s.write_spec("TickBang", &r).as_deref(),
+            Some("(tick-bang #:rate 60)"),
+        );
+
         // An explicit default duration also writes as the bare keyword.
         let one = read_spec(&s, "(tick-bang #:duration 1)").expect("default duration");
         assert_eq!(s.write_spec("TickBang", &one).as_deref(), Some("tick-bang"));
+
+        // `#:duration` and `#:rate` are mutually exclusive.
+        let text = "(tick-bang #:duration 0.5 #:rate 60)";
+        let exprs = sexpr::read(text).expect("read");
+        let args = sexpr::list_args(&exprs[0]).expect("list");
+        assert!(s.read_spec("tick-bang", &args[1..], text).is_err());
     }
 }

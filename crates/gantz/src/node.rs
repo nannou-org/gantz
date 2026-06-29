@@ -129,7 +129,20 @@ mod tests {
             node_datum("Bang", vec![]),
             node_datum("Inspect", vec![]),
             node_datum("UpdateBang", vec![]),
-            node_datum("TickBang", vec![("duration", Datum::F64(0.5))]),
+            node_datum(
+                "TickBang",
+                vec![(
+                    "interval",
+                    Datum::Map(vec![("Duration".to_string(), Datum::F64(0.5))]),
+                )],
+            ),
+            node_datum(
+                "TickBang",
+                vec![(
+                    "interval",
+                    Datum::Map(vec![("Rate".to_string(), Datum::F64(60.0))]),
+                )],
+            ),
             node_datum("Number", vec![]),
             node_datum("Expr", vec![("src", Datum::Str("(* $l $r)".into()))]),
             node_datum(
@@ -383,7 +396,7 @@ mod tests {
 
         let text = "\
 (graph g
-  (t (tick-bang #:duration 0.5))
+  (t (tick-bang #:rate 2))
   (l (log warn))
   (-> t (l 0)))";
         let export: gantz_egui::export::Export<G> =

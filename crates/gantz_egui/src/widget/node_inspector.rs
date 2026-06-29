@@ -89,6 +89,31 @@ pub fn bound_col<T: egui::emath::Numeric>(
     false
 }
 
+/// Render `text` as a label-styled radio option for a mode/style row: dim when
+/// unselected, strong when selected (no fill, like the app's tabs). Lay several
+/// out in a `ui.horizontal` to form a selector. Returns whether it was just
+/// selected.
+pub fn radio_option<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    current: &mut T,
+    value: T,
+    text: &str,
+    hover: &str,
+) -> bool {
+    let strong = ui.visuals().strong_text_color();
+    let mut selected = *current == value;
+    let resp = ui
+        .add(crate::widget::LabelToggle::new(text, &mut selected).selected_color(strong))
+        .on_hover_text(hover);
+    // Clicking an already-selected option is a no-op (it stays selected).
+    if resp.changed() && selected {
+        *current = value;
+        true
+    } else {
+        false
+    }
+}
+
 pub fn table(
     node: &mut (impl Node + NodeUi),
     ctx: &mut NodeCtx,
