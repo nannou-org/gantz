@@ -233,6 +233,100 @@ fn test_graph_with_counters() {
     assert_eq!([a, b, c], [Counter(1), Counter(2), Counter(3)]);
 }
 
+// `move_value` rekeys a top-level node, carrying its whole nested subtree along.
+#[test]
+fn move_value_moves_nested_subtree() {
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+
+    // Node 5 is a nested graph whose child 3 holds counter state.
+    node::state::update(&mut vm, &[5, 3], Counter(7)).unwrap();
+    assert_eq!(
+        node::state::extract::<Counter>(&vm, &[5, 3]).unwrap(),
+        Some(Counter(7)),
+    );
+
+    // Move node 5 -> 2; its child state must follow under the new key.
+    node::state::move_value(&mut vm, &[5], &[2]).unwrap();
+    assert_eq!(
+        node::state::extract::<Counter>(&vm, &[2, 3]).unwrap(),
+        Some(Counter(7)),
+    );
+    assert!(node::state::extract_value(&vm, &[5]).unwrap().is_none());
+
+    // Moving from an empty slot is a no-op.
+    node::state::move_value(&mut vm, &[9], &[1]).unwrap();
+    assert!(node::state::extract_value(&vm, &[1]).unwrap().is_none());
+}
+
+// A plain `petgraph::Graph` swap-removes: the former-last node adopts the removed
+// index. The GUI removal migration (`remove_value` for the deleted node, then
+// `move_value` for the swapped node) must carry the swapped stateful node's
+// accumulated state to its new index, so the recompiled code - which reads state
+// by the new index - still finds it.
+#[test]
+fn swap_remove_migrates_stateful_node_state() {
+    use gantz_core::node::graph::Graph;
+
+    // 0: standalone push (stateless), 1: push_b, 2: counter_b driven by push_b.
+    let mut g: Graph<Box<dyn DebugNode>> = Graph::default();
+    let p_a = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let p_b = g.add_node(Box::new(node_push()) as Box<_>);
+    let c_b = g.add_node(Box::new(node_counter()) as Box<_>);
+    g.add_edge(p_b, c_b, Edge::from((0, 0)));
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+
+    // (Re)compile + register + load the eval fns for the current graph shape.
+    let load = |g: &Graph<Box<dyn DebugNode>>, vm: &mut Engine| {
+        gantz_core::graph::register(&no_lookup, g, &[], vm);
+        let eps = push_pull_entrypoints(&no_lookup, g);
+        let module = gantz_core::compile::module(&no_lookup, g, &eps, &Default::default()).unwrap();
+        for f in module {
+            vm.run(format!("{f}")).unwrap();
+        }
+    };
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let push = |g: &Graph<Box<dyn DebugNode>>, vm: &mut Engine, n: usize| {
+        let ep = entrypoint::push(vec![n], g[node::graph::NodeIx::new(n)].n_outputs(ctx) as u8);
+        vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+            .unwrap();
+    };
+
+    // Push b twice -> counter_b (index 2) == 2.
+    load(&g, &mut vm);
+    push(&g, &mut vm, p_b.index());
+    push(&g, &mut vm, p_b.index());
+    assert_eq!(
+        node::state::extract::<Counter>(&vm, &[c_b.index()]).unwrap(),
+        Some(Counter(2)),
+    );
+
+    // Delete p_a (index 0). Swap-remove moves counter_b (last) into index 0.
+    let last = g.node_count() - 1;
+    assert_ne!(p_a.index(), last);
+    node::state::remove_value(&mut vm, &[p_a.index()]).unwrap();
+    g.remove_node(p_a);
+    node::state::move_value(&mut vm, &[last], &[p_a.index()]).unwrap();
+
+    // counter_b is now at index 0, p_b stayed at index 1. Recompile + re-register.
+    let c_b = node::graph::NodeIx::new(0);
+    let p_b = node::graph::NodeIx::new(1);
+    load(&g, &mut vm);
+
+    // The migrated state survived the move; pushing b once more -> 3.
+    assert_eq!(
+        node::state::extract::<Counter>(&vm, &[c_b.index()]).unwrap(),
+        Some(Counter(2)),
+    );
+    push(&g, &mut vm, p_b.index());
+    assert_eq!(
+        node::state::extract::<Counter>(&vm, &[c_b.index()]).unwrap(),
+        Some(Counter(3)),
+    );
+}
+
 // Manual regression check for #266: a stateful node must not leak memory per
 // evaluation. Drives one over a *single* persistent `Engine`, sampling RSS, and
 // asserts it stays bounded once warmed up.

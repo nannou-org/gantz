@@ -20,7 +20,12 @@ use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 
 /// The graph type used to represent a nested graph.
-pub type Graph<N> = petgraph::stable_graph::StableGraph<N, Edge, Directed, Index>;
+///
+/// A plain (non-stable) `petgraph::Graph`: node indices stay contiguous (`0..n`)
+/// because `remove_node` swap-removes (the former-last node adopts the removed
+/// index). Callers that key persistent data by node index must migrate the
+/// swapped node on removal - see `gantz_core::node::state::move_value`.
+pub type Graph<N> = petgraph::graph::Graph<N, Edge, Directed, Index>;
 
 /// The type used for indexing into the graph.
 pub type Index = usize;

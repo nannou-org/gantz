@@ -17,7 +17,7 @@ use crate::model::{
 use crate::sugar::Sugar;
 use gantz_ca::{ContentAddr, GraphAddr, Registry};
 use gantz_core::node::graph::Graph;
-use petgraph::visit::{EdgeRef, IntoEdgeReferences};
+use petgraph::visit::EdgeRef;
 use serde::Serialize;
 use std::collections::HashMap;
 
