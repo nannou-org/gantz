@@ -1,2 +1,2 @@
-pub mod frame_bang;
-pub use frame_bang::{FrameBang, ToFrameBang};
+pub mod update_bang;
+pub use update_bang::{ToUpdateBang, UpdateBang};

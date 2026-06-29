@@ -1,9 +1,13 @@
-//! A node that triggers push evaluation every frame, outputting delta time.
+//! A node that triggers push evaluation every update, outputting delta time.
 //!
-//! All `FrameBang` nodes in a graph are combined into a single multi-source
+//! All `UpdateBang` nodes in a graph are combined into a single multi-source
 //! entrypoint via [`entrypoints()`]. Evaluation is driven by the
-//! [`drive_frame_bangs`] Bevy system rather than from the node's `ui()` method,
+//! [`drive_update_bangs`] Bevy system rather than from the node's `ui()` method,
 //! so it continues even when the graph tab is not visible.
+//!
+//! Note this bangs once per *update*, not once per rendered frame. Under
+//! presentation modes like Mailbox, updates can occur more frequently than
+//! frames are presented.
 
 use bevy_ecs::prelude::*;
 use bevy_egui::egui;
@@ -15,16 +19,19 @@ use serde::{Deserialize, Serialize};
 use steel::SteelVal;
 
 // ---------------------------------------------------------------------------
-// FrameBang node
+// UpdateBang node
 // ---------------------------------------------------------------------------
 
-/// A node that drives continuous evaluation every frame.
-/// Outputs the frame's delta time in seconds as `f64`.
+/// A node that drives continuous evaluation every update.
+///
+/// Outputs the update's delta time in seconds as `f64`. This fires once per
+/// *update*, which may be more frequent than rendered frames under presentation
+/// modes like Mailbox.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
-#[cahash("gantz.frame!")]
-pub struct FrameBang;
+#[cahash("gantz.update!")]
+pub struct UpdateBang;
 
-impl gantz_core::Node for FrameBang {
+impl gantz_core::Node for UpdateBang {
     fn n_outputs(&self, _ctx: MetaCtx) -> usize {
         1
     }
@@ -43,9 +50,17 @@ impl gantz_core::Node for FrameBang {
     }
 }
 
-impl gantz_egui::NodeUi for FrameBang {
+impl gantz_egui::NodeUi for UpdateBang {
     fn name(&self, _: &dyn gantz_egui::Registry) -> &str {
-        "frame!"
+        "update!"
+    }
+
+    fn description(&self) -> Option<&'static str> {
+        Some(
+            "Drives continuous evaluation, banging once per update with the update \
+             delta time in seconds. Updates can fire more frequently than rendered \
+             frames under presentation modes like Mailbox.",
+        )
     }
 
     fn ui(
@@ -54,7 +69,7 @@ impl gantz_egui::NodeUi for FrameBang {
         uictx: egui_graph::NodeCtx,
     ) -> gantz_egui::NodeUiResponse {
         let framed =
-            uictx.framed(|ui, _sockets| ui.add(egui::Label::new("frame!").selectable(false)));
+            uictx.framed(|ui, _sockets| ui.add(egui::Label::new("update!").selectable(false)));
         gantz_egui::NodeUiResponse::new(framed)
     }
 
@@ -67,7 +82,7 @@ impl gantz_egui::NodeUi for FrameBang {
         match kind {
             gantz_egui::SocketKind::Output => Some(
                 gantz_egui::SocketDoc::ty("number")
-                    .with_description("frame delta time in seconds; emitted every frame"),
+                    .with_description("update delta time in seconds; emitted every update"),
             ),
             gantz_egui::SocketKind::Input => None,
         }
@@ -75,35 +90,35 @@ impl gantz_egui::NodeUi for FrameBang {
 }
 
 // ---------------------------------------------------------------------------
-// ToFrameBang trait
+// ToUpdateBang trait
 // ---------------------------------------------------------------------------
 
-/// Trait for types that may contain a [`FrameBang`] node.
+/// Trait for types that may contain an [`UpdateBang`] node.
 ///
 /// Implement this for your top-level node wrapper so that the
-/// [`drive_frame_bangs`] system can discover `frame!` nodes.
-pub trait ToFrameBang {
-    fn to_frame_bang(&self) -> Option<&FrameBang>;
+/// [`drive_update_bangs`] system can discover `update!` nodes.
+pub trait ToUpdateBang {
+    fn to_update_bang(&self) -> Option<&UpdateBang>;
 }
 
-impl ToFrameBang for FrameBang {
-    fn to_frame_bang(&self) -> Option<&FrameBang> {
+impl ToUpdateBang for UpdateBang {
+    fn to_update_bang(&self) -> Option<&UpdateBang> {
         Some(self)
     }
 }
 
 // ---------------------------------------------------------------------------
-// FrameBangCollector
+// UpdateBangCollector
 // ---------------------------------------------------------------------------
 
-/// Collects paths to all [`FrameBang`] nodes found during graph traversal.
-struct FrameBangCollector {
+/// Collects paths to all [`UpdateBang`] nodes found during graph traversal.
+struct UpdateBangCollector {
     pub paths: Vec<Vec<usize>>,
 }
 
-impl<N: ToFrameBang> visit::TypedVisitor<N> for FrameBangCollector {
+impl<N: ToUpdateBang> visit::TypedVisitor<N> for UpdateBangCollector {
     fn visit_pre(&mut self, ctx: visit::Ctx<'_, '_>, node: &N) {
-        if node.to_frame_bang().is_some() {
+        if node.to_update_bang().is_some() {
             self.paths.push(ctx.path().to_vec());
         }
     }
@@ -113,18 +128,18 @@ impl<N: ToFrameBang> visit::TypedVisitor<N> for FrameBangCollector {
 // Entrypoints
 // ---------------------------------------------------------------------------
 
-/// Collect all `FrameBang` nodes in the graph and return a single multi-source
+/// Collect all `UpdateBang` nodes in the graph and return a single multi-source
 /// entrypoint covering all of them.
 ///
-/// Returns an empty vec if no `FrameBang` nodes are found.
+/// Returns an empty vec if no `UpdateBang` nodes are found.
 pub fn entrypoints<N>(
     get_node: node::GetNode<'_>,
     graph: &gantz_core::node::graph::Graph<N>,
 ) -> Vec<gantz_core::compile::Entrypoint>
 where
-    N: gantz_core::Node + ToFrameBang,
+    N: gantz_core::Node + ToUpdateBang,
 {
-    let mut collector = FrameBangCollector { paths: vec![] };
+    let mut collector = UpdateBangCollector { paths: vec![] };
     gantz_core::graph::visit_typed(get_node, graph, &[], &mut collector);
     if collector.paths.is_empty() {
         return vec![];
@@ -140,12 +155,12 @@ where
 // Bevy system
 // ---------------------------------------------------------------------------
 
-/// Drives `frame!` nodes every frame, independent of GUI visibility.
+/// Drives `update!` nodes every update, independent of GUI visibility.
 ///
-/// For each open head, traverses the working graph to find all `FrameBang`
-/// nodes, updates their state to the current frame delta time, and triggers
+/// For each open head, traverses the working graph to find all `UpdateBang`
+/// nodes, updates their state to the current update delta time, and triggers
 /// a single push evaluation for all of them.
-pub fn drive_frame_bangs<N>(
+pub fn drive_update_bangs<N>(
     time: Res<Time>,
     registry: Res<crate::Registry<N>>,
     builtins: Res<bevy_gantz::BuiltinNodes<N>>,
@@ -154,7 +169,7 @@ pub fn drive_frame_bangs<N>(
     heads: Query<(Entity, &bevy_gantz::head::WorkingGraph<N>), With<bevy_gantz::head::OpenHead>>,
     mut cmds: Commands,
 ) where
-    N: gantz_core::Node + ToFrameBang + Send + Sync,
+    N: gantz_core::Node + ToUpdateBang + Send + Sync,
 {
     let dt = time.delta_secs_f64();
 
@@ -162,25 +177,25 @@ pub fn drive_frame_bangs<N>(
         let node_reg = crate::registry_ref(&registry, &builtins, &demos);
         let get_node = |ca: &gantz_ca::ContentAddr| node_reg.node(ca);
 
-        // Collect all FrameBang paths.
-        let mut collector = FrameBangCollector { paths: vec![] };
+        // Collect all UpdateBang paths.
+        let mut collector = UpdateBangCollector { paths: vec![] };
         gantz_core::graph::visit_typed(&get_node, &**wg, &[], &mut collector);
 
         if collector.paths.is_empty() {
             continue;
         }
 
-        // Update state for each FrameBang.
+        // Update state for each UpdateBang.
         let Some(vm) = vms.get_mut(&entity) else {
             continue;
         };
         for path in &collector.paths {
             if let Err(e) = node::state::update_value(vm, path, SteelVal::NumV(dt)) {
-                bevy_log::error!("frame! state update failed: {e}");
+                bevy_log::error!("update! state update failed: {e}");
             }
         }
 
-        // Trigger a single eval for all FrameBangs combined.
+        // Trigger a single eval for all UpdateBangs combined.
         let sources = collector
             .paths
             .into_iter()

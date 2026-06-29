@@ -114,7 +114,7 @@ const KEYWORD_TAG: &[(&str, &str)] = &[
     ("id", "Identity"),
     ("bang", "Bang"),
     ("inspect", "Inspect"),
-    ("frame-bang", "FrameBang"),
+    ("update-bang", "UpdateBang"),
     ("number", "Number"),
     ("log", "Log"),
     ("expr", "Expr"),

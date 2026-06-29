@@ -42,7 +42,7 @@ impl Node for gantz_egui::node::NamedRef {}
 #[typetag::serde]
 impl Node for gantz_egui::node::Comment {}
 #[typetag::serde]
-impl Node for bevy_gantz_egui::node::FrameBang {}
+impl Node for bevy_gantz_egui::node::UpdateBang {}
 #[typetag::serde]
 impl Node for gantz_egui::node::Inspect {}
 #[typetag::serde]
@@ -68,8 +68,8 @@ impl gantz_egui::sync::AsNamedRef for Box<dyn Node> {
     }
 }
 
-impl bevy_gantz_egui::node::ToFrameBang for Box<dyn Node> {
-    fn to_frame_bang(&self) -> Option<&bevy_gantz_egui::node::FrameBang> {
+impl bevy_gantz_egui::node::ToUpdateBang for Box<dyn Node> {
+    fn to_update_bang(&self) -> Option<&bevy_gantz_egui::node::UpdateBang> {
         let any: &dyn std::any::Any = &**self;
         any.downcast_ref()
     }
@@ -119,7 +119,7 @@ mod tests {
             node_datum("Identity", vec![]),
             node_datum("Bang", vec![]),
             node_datum("Inspect", vec![]),
-            node_datum("FrameBang", vec![]),
+            node_datum("UpdateBang", vec![]),
             node_datum("Number", vec![]),
             node_datum("Expr", vec![("src", Datum::Str("(* $l $r)".into()))]),
             node_datum(
