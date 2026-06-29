@@ -1,5 +1,5 @@
 use crate::{
-    CopyNodes, InspectEdge, NodeUi, OpenCommandPalette, OpenHead, OpenNodeView, Paste, PastePos,
+    CopyNodes, InspectEdge, NodeUi, OpenHead, OpenNodePalette, OpenNodeView, Paste, PastePos,
     Registry, ResetTilesLayout, SocketDoc, response::DynResponse,
 };
 use egui::emath::GuiRounding;
@@ -293,7 +293,7 @@ where
         }
 
         // Track the latest pointer position over the scene (in graph space) so a
-        // node added via the command palette lands under the pointer. While the
+        // node added via the node palette lands under the pointer. While the
         // palette window covers the scene, `contains_pointer` is false, so this
         // retains the pre-open position.
         if graph_response.response.contains_pointer() {
@@ -323,7 +323,7 @@ where
                     // positioning.
                     let menu_screen_pos = ui.min_rect().left_top();
                     if ui.button("add node").clicked() {
-                        responses.push(DynResponse::new(OpenCommandPalette));
+                        responses.push(DynResponse::new(OpenNodePalette));
                         ui.close();
                     }
                     if ui.button("paste").clicked() {

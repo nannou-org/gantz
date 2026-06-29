@@ -2,7 +2,6 @@
 use time::{OffsetDateTime, UtcOffset, format_description};
 
 pub use checkbox_enabled::CheckboxEnabled;
-pub use command_palette::CommandPalette;
 pub use gantz::{
     AlignConfig, Gantz, GantzState, GridConfig, LayoutConfig, SceneConfig, SnapConfig, SnapMode,
     update_graph_pane_head,
@@ -19,6 +18,7 @@ pub use label_button::LabelButton;
 pub use label_toggle::LabelToggle;
 pub use log_view::LogView;
 pub use node_inspector::NodeInspector;
+pub use node_palette::NodePalette;
 pub use panes_config::{panes_config, reset_layout_button};
 pub use perf_view::{PerfCapture, PerfView};
 pub use settings::{SettingsResponse, settings};
@@ -27,7 +27,6 @@ pub use style_config::style_config;
 pub use tab::{Tab, TabResponse};
 
 pub mod checkbox_enabled;
-pub mod command_palette;
 pub mod gantz;
 pub mod global_config;
 pub mod graph_config;
@@ -41,6 +40,7 @@ pub mod label_button;
 pub mod label_toggle;
 pub mod log_view;
 pub mod node_inspector;
+pub mod node_palette;
 pub mod panes_config;
 pub mod perf_view;
 pub mod settings;

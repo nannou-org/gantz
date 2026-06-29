@@ -1,6 +1,6 @@
 use crate::{
     Action, CopyNodes, CreateNestedGraph, CreateNode, CutNodes, DuplicateNodes, ExportAllNamed,
-    ExportHead, HeadAccess, Keymap, NodeCtx, NodeUi, OpenCommandPalette, OpenLogs, OpenNodeView,
+    ExportHead, HeadAccess, Keymap, NodeCtx, NodeUi, OpenLogs, OpenNodePalette, OpenNodeView,
     Paste, Redo, Registry, ReplaceHead, ResetTilesLayout, Undo, export,
     response::{DynResponse, Responses},
     widget::{self, GraphScene, GraphSceneState, graph_scene},
@@ -28,7 +28,7 @@ pub enum FileDropTarget {
 
 /// The reserved node-type name that creates a new nested graph.
 ///
-/// Selecting this entry in the command palette emits a
+/// Selecting this entry in the node palette emits a
 /// [`CreateNestedGraph`] rather than a [`CreateNode`], so a nested graph is
 /// created like any other node but routed through the registry-aware op.
 pub const NESTED_GRAPH_TYPE: &str = "graph";
@@ -41,7 +41,7 @@ pub trait NodeTypeRegistry {
     /// The unique name of each node available.
     fn node_types(&self) -> Vec<&str>;
 
-    /// The formatted keyboard shortcut for the command palette.
+    /// The formatted keyboard shortcut for the node palette.
     fn command_formatted_kb_shortcut(
         &self,
         _ctx: &egui::Context,
@@ -80,7 +80,8 @@ pub struct GantzState {
     #[serde(serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub open_heads: OpenHeadStates,
     pub view_toggles: ViewToggles,
-    pub command_palette: widget::CommandPalette,
+    #[serde(default, alias = "command_palette")]
+    pub node_palette: widget::NodePalette,
     /// Global auto-layout parameters (the non-flow `egui_graph` layout params;
     /// flow stays per-head in [`OpenHeadState::layout_flow`]).
     #[serde(default)]
@@ -815,10 +816,10 @@ impl<'a> Gantz<'a> {
         response.file_drops = collect_gantz_file_drops(ui.ctx());
 
         // Apply payloads that only affect the widget's own state, so
-        // applications never see them: command palette toggling and resetting
+        // applications never see them: node palette toggling and resetting
         // the tile layout to its default arrangement.
-        for _ in response.responses.take::<OpenCommandPalette>() {
-            state.command_palette.toggle();
+        for _ in response.responses.take::<OpenNodePalette>() {
+            state.node_palette.toggle();
         }
         for _ in response.responses.take::<ResetTilesLayout>() {
             tree = create_tree();
@@ -866,7 +867,7 @@ impl GantzState {
     pub fn from_open_heads(open_heads: OpenHeadStates) -> Self {
         Self {
             open_heads,
-            command_palette: widget::CommandPalette::default(),
+            node_palette: widget::NodePalette::default(),
             view_toggles: ViewToggles::default(),
             layout_config: LayoutConfig::default(),
             scene_config: SceneConfig::default(),
@@ -1153,7 +1154,7 @@ where
                 // Persist the inner tree.
                 store_tree(ui.ctx(), graph_tree_id, &graph_tree);
 
-                // Show the command palette once (not per-pane), operating on the focused head.
+                // Show the node palette once (not per-pane), operating on the focused head.
                 if let Some(fh) = access.heads().get(*focused_head).cloned() {
                     let focused_immutable = head_immutable(&fh, gantz.base_immutable, base_names);
 
@@ -1221,7 +1222,7 @@ where
                         }
                     }
 
-                    // Skip command palette when immutable.
+                    // Skip node palette when immutable.
                     if !focused_immutable {
                         let editing = match &fh {
                             gantz_ca::Head::Branch(name) => Some(name.as_str()),
@@ -1231,10 +1232,10 @@ where
                         // (graph coords) recorded this frame; new nodes are placed
                         // here. `Copy`, so no borrow is held across the call.
                         let pointer_pos = head_state.scene.interaction.last_pointer_pos;
-                        let created = command_palette(
+                        let created = node_palette(
                             gantz.env,
                             editing,
-                            &mut state.command_palette,
+                            &mut state.node_palette,
                             &state.keymap,
                             ui,
                         );
@@ -1820,7 +1821,7 @@ fn node_view_title(pane: &NodeViewPane) -> String {
     s
 }
 
-impl widget::command_palette::Command for NodeTyCmd<'_> {
+impl widget::node_palette::Command for NodeTyCmd<'_> {
     fn text(&self) -> &str {
         self.name
     }
@@ -2573,7 +2574,7 @@ fn name_breadcrumb(
     responses
 }
 
-/// A node-creation choice made in the command palette.
+/// A node-creation choice made in the node palette.
 enum PaletteChoice {
     /// Create an ordinary node of the given type.
     Node(CreateNode),
@@ -2585,19 +2586,19 @@ enum PaletteChoice {
 ///
 /// `editing` is the focused head's name (when it is a branch), used to hide node
 /// types whose reference would cycle back to the graph being edited.
-fn command_palette(
+fn node_palette(
     env: &dyn Registry,
     editing: Option<&str>,
-    cmd_palette: &mut widget::CommandPalette,
+    node_palette: &mut widget::NodePalette,
     keymap: &Keymap,
     ui: &mut egui::Ui,
 ) -> Option<PaletteChoice> {
-    // Toggle command palette visibility via its keymap binding.
-    if !ui.ctx().egui_wants_keyboard_input() && keymap.consume(ui, Action::ToggleCommandPalette) {
-        cmd_palette.toggle();
+    // Toggle node palette visibility via its keymap binding.
+    if !ui.ctx().egui_wants_keyboard_input() && keymap.consume(ui, Action::ToggleNodePalette) {
+        node_palette.toggle();
     }
 
-    // Map the node types to commands for the command palette, dropping any type
+    // Map the node types to commands for the node palette, dropping any type
     // whose reference would form a cycle back to the editing graph. The reserved
     // nested-graph entry always mints a fresh child, so it is never cyclic.
     let types: Vec<&str> = env
@@ -2611,7 +2612,7 @@ fn command_palette(
     // `NESTED_GRAPH_TYPE` routes to the registry-aware nested-graph op. The
     // palette is centered over the graph scene (this `ui`'s rect).
     let scene_rect = ui.max_rect();
-    cmd_palette.show(ui.ctx(), scene_rect, cmds).map(|cmd| {
+    node_palette.show(ui.ctx(), scene_rect, cmds).map(|cmd| {
         // The placement position is filled in by the caller, which has access to
         // the focused head's last pointer position.
         if cmd.name == NESTED_GRAPH_TYPE {

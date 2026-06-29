@@ -52,7 +52,7 @@ pub use widget::graph_select::GraphRegistry;
 ///   Required by [`node::FnNamedRef`]'s UI dropdown.
 ///
 /// - [`NodeTypeRegistry`] (`widget/gantz.rs`) — enumerates all creatable node
-///   types. Required by the command palette for node creation.
+///   types. Required by the node palette for node creation.
 ///
 /// - [`GraphRegistry`] (`widget/graph_select.rs`) — provides access to commits
 ///   and branch names. Required by the graph selector and history view.
@@ -70,7 +70,7 @@ pub trait Registry: NameRegistry + FnNodeNames + NodeTypeRegistry + GraphRegistr
     /// Whether referencing the graph named `target` from the graph named
     /// `editing` would create a reference cycle (see [`cycle::would_cycle`]).
     ///
-    /// Used by the command palette to hide node types that would form a cycle.
+    /// Used by the node palette to hide node types that would form a cycle.
     /// The default is conservative (never a cycle); the standard [`RegistryRef`]
     /// implementation walks the registry.
     fn would_ref_cycle(&self, target: &str, editing: &str) -> bool {
@@ -103,7 +103,7 @@ pub trait Registry: NameRegistry + FnNodeNames + NodeTypeRegistry + GraphRegistr
     /// Display-ready documentation for the creatable node type named `name`.
     ///
     /// Combines the node's description with its derived input/output
-    /// [`SocketDoc`]s. Shown beside the highlighted entry in the command palette
+    /// [`SocketDoc`]s. Shown beside the highlighted entry in the node palette
     /// and as hover documentation in the "Graphs" select widget. The standard
     /// [`RegistryRef`] impl introspects a builtin instance or resolves a named
     /// graph; the default returns just the name.
@@ -125,7 +125,7 @@ pub trait Registry: NameRegistry + FnNodeNames + NodeTypeRegistry + GraphRegistr
     }
 
     /// A concise description of the creatable node type `name`, for inline
-    /// display in the command palette. Lighter than [`command_info`](Self::command_info)
+    /// display in the node palette. Lighter than [`command_info`](Self::command_info)
     /// (it derives no input/output docs); the default has none.
     fn node_description(&self, name: &str) -> Option<Cow<'static, str>> {
         let _ = name;
@@ -171,7 +171,7 @@ impl SocketDoc {
 ///
 /// Built by [`Registry::command_info`] from a node's [`description`] and its
 /// derived per-socket [`SocketDoc`]s, and rendered by [`node_info_ui`] in the
-/// command palette and the "Graphs" select hover.
+/// node palette and the "Graphs" select hover.
 ///
 /// [`description`]: NodeUi::description
 #[derive(Clone, Debug, Default)]
@@ -189,7 +189,7 @@ pub struct CommandInfo {
 /// Render a [`CommandInfo`] as a name heading, description, and labelled
 /// input/output lists.
 ///
-/// Used both for the command palette's side panel and as the body of the
+/// Used both for the node palette's side panel and as the body of the
 /// per-item / graph-select hover tooltips. Callers that render inside a tooltip
 /// should set a max width first (see the tooltip-width note in `socket_hover`).
 pub fn node_info_ui(info: &CommandInfo, ui: &mut egui::Ui) {
@@ -392,7 +392,7 @@ pub trait NodeUi {
 
     /// A concise, free-form description of what the node does.
     ///
-    /// Shown alongside the node's inputs/outputs in the command palette and as
+    /// Shown alongside the node's inputs/outputs in the node palette and as
     /// hover documentation in the "Graphs" select widget. Builtins hardcode a
     /// short string; nodes that reference a named graph resolve the graph's
     /// stored description via [`Registry::command_info`].
@@ -491,7 +491,7 @@ pub fn resolve_paste_offset(pos: &PastePos, copied_positions: &egui_graph::Layou
 //
 // Typed payloads emitted from within the widget tree via the dynamic
 // [`response::Responses`] channel and returned from `Gantz::show`. With the
-// exception of [`OpenCommandPalette`] (which `Gantz::show` handles itself),
+// exception of [`OpenNodePalette`] (which `Gantz::show` handles itself),
 // applications drain and handle these after the GUI pass.
 // Unhandled payloads should be reported via [`response::Responses::type_names`].
 // ----------------------------------------------------------------------------
@@ -562,11 +562,11 @@ pub struct InspectEdge {
     pub pos: egui::Pos2,
 }
 
-/// Open the command palette for node creation.
+/// Open the node palette for node creation.
 ///
 /// Handled by `Gantz::show` itself - applications never see this payload.
 #[derive(Clone, Copy, Debug)]
-pub struct OpenCommandPalette;
+pub struct OpenNodePalette;
 
 /// Reset the top-level tile layout to its default arrangement.
 ///

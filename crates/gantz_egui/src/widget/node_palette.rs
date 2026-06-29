@@ -1,4 +1,4 @@
-//! A generic command palette widget adapted from rerun's command palette.
+//! A generic node palette widget adapted from rerun's command palette.
 
 use egui::{Align2, Key, NumExt as _};
 use std::borrow::Cow;
@@ -22,7 +22,7 @@ pub trait Command: Copy + Sized {
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
-pub struct CommandPalette {
+pub struct NodePalette {
     visible: bool,
     query: String,
     /// The highlighted entry, or `None` when nothing is highlighted (the
@@ -30,7 +30,7 @@ pub struct CommandPalette {
     selected_alternative: Option<usize>,
 }
 
-impl CommandPalette {
+impl NodePalette {
     pub fn new() -> Self {
         Self::default()
     }
@@ -39,7 +39,7 @@ impl CommandPalette {
         self.visible ^= true;
     }
 
-    /// Show the command palette, if it is visible.
+    /// Show the node palette, if it is visible.
     ///
     /// `area` is the rect the palette is centered over (e.g. the graph scene).
     #[must_use = "Returns the command that was selected"]
@@ -67,7 +67,7 @@ impl CommandPalette {
         let width = 400.0.at_most(area.width());
         let max_height = 320.0.at_most(area.height());
 
-        let window_response = egui::Window::new("Command Palette")
+        let window_response = egui::Window::new("Node Palette")
             .fixed_pos(area.center() - 0.5 * max_height * egui::Vec2::Y)
             .fixed_size([width, max_height])
             .pivot(egui::Align2::CENTER_TOP)
