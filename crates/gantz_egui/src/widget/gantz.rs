@@ -1,7 +1,7 @@
 use crate::{
-    CopyNodes, CreateNestedGraph, CreateNode, ExportAllNamed, ExportHead, HeadAccess, NodeCtx,
-    NodeUi, OpenCommandPalette, OpenLogs, Paste, Redo, Registry, ReplaceHead, ResetTilesLayout,
-    Undo, export,
+    Action, CopyNodes, CreateNestedGraph, CreateNode, CutNodes, DuplicateNodes, ExportAllNamed,
+    ExportHead, HeadAccess, Keymap, NodeCtx, NodeUi, OpenCommandPalette, OpenLogs, Paste, Redo,
+    Registry, ReplaceHead, ResetTilesLayout, Undo, export,
     response::{DynResponse, Responses},
     widget::{self, GraphScene, GraphSceneState, graph_scene},
 };
@@ -90,6 +90,10 @@ pub struct GantzState {
     /// apply to every open head.
     #[serde(default)]
     pub scene_config: SceneConfig,
+    /// The command keyboard shortcuts. The single source of truth for editor
+    /// command bindings (see [`crate::keybind`]); edited in Settings -> Keybinds.
+    #[serde(default)]
+    pub keymap: Keymap,
     /// Per-head redo stacks for undo/redo support.
     #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub redo_stacks: HashMap<gantz_ca::Head, Vec<gantz_ca::CommitAddr>>,
@@ -798,6 +802,7 @@ impl GantzState {
             view_toggles: ViewToggles::default(),
             layout_config: LayoutConfig::default(),
             scene_config: SceneConfig::default(),
+            keymap: Keymap::default(),
             redo_stacks: HashMap::new(),
             sidebar_width: default_sidebar_width(),
             tray_height: default_tray_height(),
@@ -1075,17 +1080,18 @@ where
 
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
 
-                    // Copy/paste/undo/redo keyboard shortcuts.
+                    // Command keyboard shortcuts, sourced from the keymap.
                     if !ui.ctx().egui_wants_keyboard_input() {
+                        let keymap = &state.keymap;
                         // Copy is always allowed.
-                        if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::C)) {
+                        if keymap.consume(ui, Action::Copy) {
                             let nodes = head_state.scene.interaction.selection.nodes.clone();
                             gantz_response
                                 .responses
                                 .push(Some(fh.clone()), CopyNodes(nodes));
                         }
-                        // New graph: Cmd/Ctrl+N.
-                        if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::N)) {
+                        // New graph.
+                        if keymap.consume(ui, Action::NewGraph) {
                             let gs = gantz_response
                                 .graph_select
                                 .get_or_insert_with(Default::default);
@@ -1093,40 +1099,45 @@ where
                         }
                         // Paste, undo, redo are gated by immutable.
                         if !focused_immutable {
-                            // Detect paste: Event::Paste (eframe/web) or Ctrl+V
-                            // key press (bevy_egui desktop, which sends Event::Text
-                            // instead of Event::Paste).
+                            // Detect paste: an `Event::Paste` (eframe/web) or the
+                            // Paste shortcut (bevy_egui desktop sends `Event::Text`
+                            // instead of `Event::Paste`).
                             let paste_text = ui.input(|i| {
                                 i.events.iter().find_map(|e| match e {
                                     egui::Event::Paste(s) => Some(s.clone()),
                                     _ => None,
                                 })
                             });
-                            let ctrl_v = paste_text.is_some()
-                                || ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::V));
-                            if ctrl_v {
+                            if paste_text.is_some() || keymap.consume(ui, Action::Paste) {
                                 let paste = Paste {
                                     text: paste_text,
                                     pos: crate::PastePos::Offset(egui::vec2(20.0, 20.0)),
                                 };
                                 gantz_response.responses.push(Some(fh.clone()), paste);
                             }
-                            // Undo: Cmd/Ctrl+Z (without Shift).
-                            if ui.input(|i| {
-                                i.modifiers.command
-                                    && !i.modifiers.shift
-                                    && i.key_pressed(egui::Key::Z)
-                            }) {
+                            // Redo before Undo: `consume_shortcut` matches
+                            // modifiers logically, so `Cmd+Z` also matches a
+                            // `Cmd+Shift+Z` event - check (and consume) the more
+                            // specific binding first.
+                            if keymap.consume(ui, Action::Redo) {
+                                gantz_response.responses.push(Some(fh.clone()), Redo);
+                            }
+                            if keymap.consume(ui, Action::Undo) {
                                 gantz_response.responses.push(Some(fh.clone()), Undo);
                             }
-                            // Redo: Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y.
-                            if ui.input(|i| {
-                                (i.modifiers.command
-                                    && i.modifiers.shift
-                                    && i.key_pressed(egui::Key::Z))
-                                    || (i.modifiers.command && i.key_pressed(egui::Key::Y))
-                            }) {
-                                gantz_response.responses.push(Some(fh.clone()), Redo);
+                            // Cut: copy the selection, then remove it.
+                            if keymap.consume(ui, Action::Cut) {
+                                let nodes = head_state.scene.interaction.selection.nodes.clone();
+                                gantz_response
+                                    .responses
+                                    .push(Some(fh.clone()), CutNodes(nodes));
+                            }
+                            // Duplicate the selection in place.
+                            if keymap.consume(ui, Action::Duplicate) {
+                                let nodes = head_state.scene.interaction.selection.nodes.clone();
+                                gantz_response
+                                    .responses
+                                    .push(Some(fh.clone()), DuplicateNodes(nodes));
                             }
                         }
                     }
@@ -1141,8 +1152,13 @@ where
                         // (graph coords) recorded this frame; new nodes are placed
                         // here. `Copy`, so no borrow is held across the call.
                         let pointer_pos = head_state.scene.interaction.last_pointer_pos;
-                        let created =
-                            command_palette(gantz.env, editing, &mut state.command_palette, ui);
+                        let created = command_palette(
+                            gantz.env,
+                            editing,
+                            &mut state.command_palette,
+                            &state.keymap,
+                            ui,
+                        );
                         match created {
                             Some(PaletteChoice::Node(mut create)) => {
                                 create.pos = pointer_pos;
@@ -1340,6 +1356,7 @@ where
                         validate_change_tracking,
                         &mut state.layout_config,
                         &mut state.scene_config,
+                        &mut state.keymap,
                         ui,
                     )
                 });
@@ -1583,6 +1600,8 @@ where
         // Disjoint borrow of a sibling field of `open_heads` for the graph
         // scene's "Panes" context submenu.
         let view_toggles = &mut self.state.view_toggles;
+        // Disjoint borrow for the scene-level Select-all shortcut.
+        let keymap = &self.state.keymap;
 
         // We'll use this for positioning the fixed path labels window.
         let rect = ui.available_rect_before_wrap();
@@ -1599,6 +1618,7 @@ where
                 layout_params,
                 scene_config,
                 immutable,
+                keymap,
                 &diagnostics,
                 data.vm,
                 ui,
@@ -2226,6 +2246,7 @@ fn graph_scene<N>(
     layout_params: egui_graph::LayoutParams,
     scene_config: SceneConfig,
     immutable: bool,
+    keymap: &Keymap,
     diagnostics: &[gantz_core::Diagnostic],
     vm: &mut Engine,
     ui: &mut egui::Ui,
@@ -2235,6 +2256,14 @@ where
 {
     // A head shows exactly its root graph (nested graphs are separate heads).
     let id = egui::Id::new(head);
+
+    // Select-all: replace the selection with every node. Handled here (not the
+    // outer command block) because this is where the graph is in scope. Gated
+    // like other command shortcuts so it does not fire while typing.
+    if !ui.ctx().egui_wants_keyboard_input() && keymap.consume(ui, Action::SelectAll) {
+        head_state.scene.interaction.selection.nodes = graph.node_indices().collect();
+        head_state.scene.interaction.selection.edges.clear();
+    }
 
     // Seed the node layout the first time this graph is shown, and centre the
     // camera on it at zoom 1. Without an explicit camera the scene would fall
@@ -2350,13 +2379,12 @@ fn command_palette(
     env: &dyn Registry,
     editing: Option<&str>,
     cmd_palette: &mut widget::CommandPalette,
+    keymap: &Keymap,
     ui: &mut egui::Ui,
 ) -> Option<PaletteChoice> {
-    // If space is pressed, toggle command palette visibility.
-    if !ui.ctx().egui_wants_keyboard_input() {
-        if ui.ctx().input(|i| i.key_pressed(egui::Key::Space)) {
-            cmd_palette.toggle();
-        }
+    // Toggle command palette visibility via its keymap binding.
+    if !ui.ctx().egui_wants_keyboard_input() && keymap.consume(ui, Action::ToggleCommandPalette) {
+        cmd_palette.toggle();
     }
 
     // Map the node types to commands for the command palette, dropping any type

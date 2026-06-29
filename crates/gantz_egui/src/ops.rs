@@ -246,6 +246,35 @@ pub fn remove_nodes<N>(
     removed_any
 }
 
+/// Cut: serialize `nodes` to a `.gantz` clipboard payload, then remove them.
+///
+/// Returns the payload for the caller to write to the clipboard. Returns `None`
+/// - removing nothing - when the selection is empty or serialization fails, so
+/// a failed copy never loses nodes. Like [`remove_nodes`], run this before the
+/// next recompile.
+pub fn cut_nodes<N>(
+    registry: &gantz_ca::Registry<Graph<N>>,
+    all_views: &HashMap<CommitAddr, crate::SceneView>,
+    graph: &mut Graph<N>,
+    vm: &mut Engine,
+    head_view: &mut crate::SceneView,
+    selection: &mut crate::widget::graph_scene::Selection,
+    nodes: &HashSet<NodeIndex>,
+) -> Option<String>
+where
+    N: gantz_core::Node + Clone + Serialize + DeserializeOwned + CaHash + 'static,
+{
+    let text = copy_nodes(registry, all_views, graph, head_view, nodes)?;
+    remove_nodes(
+        graph,
+        vm,
+        &mut head_view.layout,
+        selection,
+        nodes.iter().copied(),
+    );
+    Some(text)
+}
+
 /// Insert an Inspect node on the given edge, splicing it between the
 /// endpoints and positioning it at `cmd.pos`.
 pub fn inspect_edge<N>(
@@ -365,6 +394,41 @@ where
     head_state.scene.interaction.selection.nodes = new_indices.into_iter().collect();
     head_state.scene.interaction.selection.edges.clear();
     true
+}
+
+/// Duplicate `nodes` in place: serialize them, then [`paste`] at a small offset
+/// (no clipboard involved). The selection becomes the new nodes.
+///
+/// Returns `true` if anything was duplicated. Like [`paste`], the caller
+/// re-registers the root graph with the VM afterwards so the new nodes get
+/// their state initialized.
+pub fn duplicate_nodes<N>(
+    registry: &mut gantz_ca::Registry<Graph<N>>,
+    editing: Option<&str>,
+    all_views: &mut HashMap<CommitAddr, crate::SceneView>,
+    all_demos: &mut HashMap<String, String>,
+    graph: &mut Graph<N>,
+    head_view: &mut crate::SceneView,
+    head_state: &mut OpenHeadState,
+    nodes: &HashSet<NodeIndex>,
+) -> bool
+where
+    N: gantz_core::Node + Clone + Serialize + DeserializeOwned + CaHash + AsNamedRef + 'static,
+{
+    let Some(text) = copy_nodes(registry, all_views, graph, head_view, nodes) else {
+        return false;
+    };
+    paste(
+        registry,
+        editing,
+        all_views,
+        all_demos,
+        graph,
+        head_view,
+        head_state,
+        &text,
+        &PastePos::Offset(egui::vec2(20.0, 20.0)),
+    )
 }
 
 /// Undo: push the head's current commit onto its redo stack and return the

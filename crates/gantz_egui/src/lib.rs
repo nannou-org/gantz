@@ -13,6 +13,7 @@ pub mod cycle;
 pub mod export;
 pub mod format;
 mod impls;
+pub mod keybind;
 pub mod node;
 pub mod ops;
 pub mod reg;
@@ -23,6 +24,7 @@ pub mod widget;
 
 // Re-export traits that make up the Registry supertrait.
 pub use egui_graph::SocketKind;
+pub use keybind::{Action, Keymap};
 pub use node::{FnNodeNames, NameRegistry};
 pub use reg::RegistryRef;
 pub use response::{
@@ -462,6 +464,14 @@ pub struct BranchNode {
 /// Copy the given nodes to the clipboard.
 #[derive(Clone, Debug)]
 pub struct CopyNodes(pub std::collections::HashSet<widget::graph_scene::NodeIndex>);
+
+/// Copy the given nodes to the clipboard, then remove them from the graph.
+#[derive(Clone, Debug)]
+pub struct CutNodes(pub std::collections::HashSet<widget::graph_scene::NodeIndex>);
+
+/// Duplicate the given nodes in place (copy, then paste at a small offset).
+#[derive(Clone, Debug)]
+pub struct DuplicateNodes(pub std::collections::HashSet<widget::graph_scene::NodeIndex>);
 
 /// Create a new node of the given type in the emitting head's graph.
 #[derive(Clone, Debug)]
