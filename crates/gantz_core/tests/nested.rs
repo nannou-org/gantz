@@ -761,7 +761,7 @@ fn test_graph_nested_push_through_outlet_deep() {
 }
 
 // Test that `push_pull_entrypoints` discovers push eval nodes inside nested
-// graphs. This mirrors the real-world scenario of a FrameBang node inside a
+// graphs. This mirrors the real-world scenario of a UpdateBang node inside a
 // nested graph placed in a top-level graph via NamedRef.
 //
 // INNER GRAPH:
@@ -844,7 +844,7 @@ fn test_push_pull_entrypoints_discovers_nested_push() {
 // propagate through their outlets to the parent graph.
 //
 // This mirrors the scenario of two NamedRef "deltams" nodes in a top-level
-// graph, where both contain a FrameBang and are combined into a single
+// graph, where both contain a UpdateBang and are combined into a single
 // multi-source entrypoint.
 //
 // INNER GRAPH (shared by both):
@@ -919,8 +919,8 @@ fn test_graph_nested_multi_source_outlet_propagation() {
 // a direct push source at the root and a nested push source inside a graph
 // node that propagates through an outlet.
 //
-// This mirrors the scenario of a top-level FrameBang + a NamedRef "deltams"
-// (which contains its own FrameBang inside) combined into one entrypoint.
+// This mirrors the scenario of a top-level UpdateBang + a NamedRef "deltams"
+// (which contains its own UpdateBang inside) combined into one entrypoint.
 //
 // INNER GRAPH:
 //    push_inner -> int(10) -> outlet

@@ -15,6 +15,7 @@
 //! breaking the chain it flows through.
 
 use crate::widget::node_inspector;
+use crate::widget::node_inspector::radio_option;
 use crate::{
     ContextMenuResponse, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry,
     SocketDoc, SocketKind,
@@ -597,30 +598,6 @@ impl NodeUi for Plot {
 
     fn show_state(&self) -> bool {
         // The raw history is a long list; the inspector summarises it instead.
-        false
-    }
-}
-
-/// Render `text` as a label-styled radio option: dim when unselected, strong
-/// when selected (no fill, like the app's tabs). Returns whether it was just
-/// selected.
-fn radio_option<T: Copy + PartialEq>(
-    ui: &mut egui::Ui,
-    current: &mut T,
-    value: T,
-    text: &str,
-    hover: &str,
-) -> bool {
-    let strong = ui.visuals().strong_text_color();
-    let mut selected = *current == value;
-    let resp = ui
-        .add(crate::widget::LabelToggle::new(text, &mut selected).selected_color(strong))
-        .on_hover_text(hover);
-    // Clicking an already-selected option is a no-op (it stays selected).
-    if resp.changed() && selected {
-        *current = value;
-        true
-    } else {
         false
     }
 }

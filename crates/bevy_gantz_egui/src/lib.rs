@@ -81,7 +81,8 @@ where
         + gantz_egui::sync::AsNamedRefMut
         + gantz_egui::sync::AsNamedRef
         + gantz_egui::NodeUi
-        + node::ToFrameBang
+        + node::ToUpdateBang
+        + node::ToTickBang
         + serde::Serialize
         + serde::de::DeserializeOwned
         + Send
@@ -89,12 +90,18 @@ where
         + 'static,
 {
     fn build(&self, app: &mut App) {
-        // Register frame_bang entrypoint provider.
+        // Register update_bang + tick_bang entrypoint providers.
         app.world_mut()
             .resource_mut::<bevy_gantz::EntrypointFns<N>>()
             .0
             .push(Box::new(|get_node, graph| {
-                node::frame_bang::entrypoints(get_node, graph)
+                node::update_bang::entrypoints(get_node, graph)
+            }));
+        app.world_mut()
+            .resource_mut::<bevy_gantz::EntrypointFns<N>>()
+            .0
+            .push(Box::new(|get_node, graph| {
+                node::tick_bang::entrypoints(get_node, graph)
             }));
 
         // Builtin GUI response payload dispatchers. Head-scoped payloads
@@ -147,13 +154,14 @@ where
             .add_observer(on_export_all_named::<N>)
             .add_observer(on_import_file::<N>)
             .add_observer(on_reset_base_graph::<N>)
-            // Systems. `drive_frame_bangs` evaluates head VMs, so it must not
+            // Systems. `drive_update_bangs` evaluates head VMs, so it must not
             // observe the gap between a head pointing at a new graph and
             // `vm::sync` (re)initializing its VM.
             .add_systems(
                 Update,
                 (
-                    node::frame_bang::drive_frame_bangs::<N>.after(bevy_gantz::VmSet),
+                    node::update_bang::drive_update_bangs::<N>.after(bevy_gantz::VmSet),
+                    node::tick_bang::drive_tick_bangs::<N>.after(bevy_gantz::VmSet),
                     persist_camera_and_seed::<N>,
                     // On layout settle, fork a layout-only commit. Runs after
                     // `VmSet` (so a graph edit commits first and its baseline is

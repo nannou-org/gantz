@@ -291,7 +291,7 @@ pub fn sync<N>(
         // Rebuild the VM. On an in-place compile error the VM is kept (its
         // previous module remains evaluable) and the error surfaces via the
         // module/diagnostics components; a failed init leaves no VM, so eval
-        // systems (e.g. `drive_frame_bangs`, `on_eval_entry`) skip the head
+        // systems (e.g. `drive_update_bangs`, `on_eval_entry`) skip the head
         // rather than driving a stale graph.
         let graph: &Graph<N> = &*data.working_graph;
         let get_node = |ca: &ca::ContentAddr| lookup_node(&registry, &**builtins, ca);
