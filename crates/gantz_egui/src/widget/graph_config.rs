@@ -86,127 +86,184 @@ impl<'a> GraphConfig<'a> {
     }
 
     pub fn show(self, ui: &mut egui::Ui) -> GraphConfigResponse {
-        // Name editing TextEdit with per-head temp state.
-        let edit_id = egui::Id::new("graph_config_name_edit").with(self.head);
-        let mut name = ui
-            .memory_mut(|m| m.data.get_temp::<String>(edit_id))
-            .unwrap_or_else(|| head_name(self.head));
-        let name_res = head_name_edit(self.head, &mut name, self.names, ui);
-        ui.memory_mut(|m| m.data.insert_temp(edit_id, name));
-        let new_branch = name_res.new_branch;
-
         let is_named = matches!(self.head, gantz_ca::Head::Branch(_));
         let is_demo =
             matches!(&self.head, gantz_ca::Head::Branch(name) if name.starts_with("demo-"));
 
-        // Description editor (per-head temp state), for named graphs. The edit
-        // is committed when the field loses focus to avoid a commit per keypress.
-        let mut description_changed = None;
-        if is_named {
-            let desc_id = egui::Id::new("graph_config_desc_edit").with(self.head);
+        // Per-head temp state for the name editor.
+        let edit_id = egui::Id::new("graph_config_name_edit").with(self.head);
+        let mut name = ui
+            .memory_mut(|m| m.data.get_temp::<String>(edit_id))
+            .unwrap_or_else(|| head_name(self.head));
+
+        // Per-head temp state for the description editor (named graphs only).
+        // The edit is committed on focus loss to avoid a commit per keypress.
+        let desc_id = egui::Id::new("graph_config_desc_edit").with(self.head);
+        let mut desc = is_named.then(|| {
             let current = self.current_description.unwrap_or("");
-            let mut desc = ui
-                .memory_mut(|m| m.data.get_temp::<String>(desc_id))
-                .unwrap_or_else(|| current.to_string());
-            let resp = ui.add_enabled(
-                !self.immutable,
-                egui::TextEdit::multiline(&mut desc)
-                    .hint_text("Description")
-                    .desired_rows(2)
-                    .desired_width(f32::INFINITY),
-            );
-            if resp.lost_focus() && desc != current {
-                description_changed = Some(desc.clone());
-            }
+            ui.memory_mut(|m| m.data.get_temp::<String>(desc_id))
+                .unwrap_or_else(|| current.to_string())
+        });
+
+        // Outputs collected from within the grid.
+        let mut new_branch = None;
+        let mut description_changed = None;
+        let mut demo_changed = None;
+        let mut reset_base_graph = false;
+        let mut export = false;
+
+        // Reserve room for the label column so the value column's text fields
+        // don't expand to fill the entire pane.
+        let control_w = (ui.available_width() - 64.0).max(64.0);
+
+        egui::Grid::new(egui::Id::new("graph_config_grid").with(self.head))
+            .num_columns(2)
+            .spacing([8.0, 6.0])
+            .striped(true)
+            .show(ui, |ui| {
+                // name
+                ui.label("name");
+                new_branch = ui
+                    .scope(|ui| {
+                        ui.set_max_width(control_w);
+                        head_name_edit(self.head, &mut name, self.names, ui)
+                    })
+                    .inner
+                    .new_branch;
+                ui.end_row();
+
+                // desc.
+                if let Some(desc) = desc.as_mut() {
+                    ui.label("desc.");
+                    let current = self.current_description.unwrap_or("");
+                    // Multiline + word-wrap; the grid row auto-fits its height
+                    // to the (wrapped) text, growing from a single row.
+                    let resp = ui.add_enabled(
+                        !self.immutable,
+                        egui::TextEdit::multiline(desc)
+                            .hint_text("Description")
+                            .desired_rows(1)
+                            .desired_width(control_w),
+                    );
+                    if resp.lost_focus() && desc.as_str() != current {
+                        description_changed = Some(desc.clone());
+                    }
+                    ui.end_row();
+                }
+
+                // demo (named, non-demo graphs only)
+                if is_named && !is_demo && !self.demo_names.is_empty() {
+                    ui.label("demo");
+                    ui.add_enabled_ui(!self.immutable, |ui| {
+                        let selected_text = self.current_demo.unwrap_or("none");
+                        egui::ComboBox::from_id_salt("demo_graph_select")
+                            .selected_text(selected_text)
+                            .show_ui(ui, |ui| {
+                                if ui
+                                    .selectable_label(self.current_demo.is_none(), "none")
+                                    .clicked()
+                                {
+                                    demo_changed = Some(None);
+                                }
+                                for &demo_name in self.demo_names {
+                                    if ui
+                                        .selectable_label(
+                                            self.current_demo == Some(demo_name),
+                                            demo_name,
+                                        )
+                                        .clicked()
+                                    {
+                                        demo_changed = Some(Some(demo_name.to_string()));
+                                    }
+                                }
+                            });
+                    });
+                    ui.end_row();
+                }
+
+                // reset (base demo graphs only)
+                if self.is_base && is_demo {
+                    ui.label("reset");
+                    if ui
+                        .button("Reset")
+                        .on_hover_text("reset demo to initial state")
+                        .clicked()
+                    {
+                        reset_base_graph = true;
+                    }
+                    ui.end_row();
+                }
+
+                // base note
+                if self.is_base {
+                    ui.label("");
+                    ui.label(
+                        egui::RichText::new("\"base\" node, included with gantz")
+                            .italics()
+                            .weak(),
+                    );
+                    ui.end_row();
+                }
+
+                // layout - center-view and auto-layout side by side. Both are
+                // one-shot: they apply once when clicked (consumed by the graph
+                // scene next pass), so hand-arranged nodes are never disturbed.
+                ui.label("layout");
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("center view")
+                        .on_hover_text("center the view over the graph")
+                        .clicked()
+                    {
+                        self.head_state.scene.pending_center_view = true;
+                    }
+                    ui.add_enabled_ui(!self.immutable, |ui| {
+                        if ui
+                            .button("auto-layout")
+                            .on_hover_text(
+                                "lay out the selection, or the whole graph when nothing is selected",
+                            )
+                            .clicked()
+                        {
+                            self.head_state.scene.pending_auto_layout = true;
+                        }
+                    });
+                });
+                ui.end_row();
+
+                // flow
+                ui.label("flow");
+                ui.add_enabled_ui(!self.immutable, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.radio_value(
+                            &mut self.head_state.layout_flow,
+                            egui::Direction::LeftToRight,
+                            "Right",
+                        );
+                        ui.radio_value(
+                            &mut self.head_state.layout_flow,
+                            egui::Direction::TopDown,
+                            "Down",
+                        );
+                    });
+                });
+                ui.end_row();
+
+                // export
+                ui.label("export");
+                export = ui
+                    .button("export")
+                    .on_hover_text("export this graph and its dependencies to a .gantz file")
+                    .clicked();
+                ui.end_row();
+            });
+
+        // Persist the per-head editor buffers.
+        ui.memory_mut(|m| m.data.insert_temp(edit_id, name));
+        if let Some(desc) = desc {
             ui.memory_mut(|m| m.data.insert_temp(desc_id, desc));
         }
 
-        // Demo graph selector (only for named, non-demo graphs).
-        let mut demo_changed = None;
-        if is_named && !is_demo && !self.demo_names.is_empty() {
-            ui.add_enabled_ui(!self.immutable, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Demo:");
-                    let selected_text = self.current_demo.unwrap_or("none");
-                    egui::ComboBox::from_id_salt("demo_graph_select")
-                        .selected_text(selected_text)
-                        .show_ui(ui, |ui| {
-                            if ui
-                                .selectable_label(self.current_demo.is_none(), "none")
-                                .clicked()
-                            {
-                                demo_changed = Some(None);
-                            }
-                            for &demo_name in self.demo_names {
-                                if ui
-                                    .selectable_label(
-                                        self.current_demo == Some(demo_name),
-                                        demo_name,
-                                    )
-                                    .clicked()
-                                {
-                                    demo_changed = Some(Some(demo_name.to_string()));
-                                }
-                            }
-                        });
-                });
-            });
-        }
-
-        // Reset button for demo base graphs.
-        let mut reset_base_graph = false;
-        if self.is_base && is_demo {
-            if ui
-                .button("Reset")
-                .on_hover_text("reset demo to initial state")
-                .clicked()
-            {
-                reset_base_graph = true;
-            }
-        }
-
-        if self.is_base {
-            ui.label(
-                egui::RichText::new("\"base\" node, included with gantz")
-                    .italics()
-                    .weak(),
-            );
-        }
-
-        // Layout actions. Auto-layout and center-view are one-shot: they apply
-        // once when clicked (consumed by the graph scene on the next pass), so
-        // arranging nodes by hand is never disturbed.
-        if ui
-            .button("center view")
-            .on_hover_text("center the view over the graph")
-            .clicked()
-        {
-            self.head_state.scene.pending_center_view = true;
-        }
-        ui.add_enabled_ui(!self.immutable, |ui| {
-            if ui
-                .button("auto-layout")
-                .on_hover_text("lay out the selection, or the whole graph when nothing is selected")
-                .clicked()
-            {
-                self.head_state.scene.pending_auto_layout = true;
-            }
-            ui.horizontal(|ui| {
-                ui.label("Flow:");
-                ui.radio_value(
-                    &mut self.head_state.layout_flow,
-                    egui::Direction::LeftToRight,
-                    "Right",
-                );
-                ui.radio_value(
-                    &mut self.head_state.layout_flow,
-                    egui::Direction::TopDown,
-                    "Down",
-                );
-            });
-        });
-
-        let export = ui.button("Export").clicked();
         GraphConfigResponse {
             new_branch,
             export,
