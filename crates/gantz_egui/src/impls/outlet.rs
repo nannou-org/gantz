@@ -1,6 +1,6 @@
 use crate::{
-    InspectorRowsResponse, InspectorUiResponse, NodeCtx, NodeUi, NodeUiResponse, Registry,
-    SocketDoc, SocketKind, widget::node_inspector,
+    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind,
+    widget::node_inspector,
 };
 use gantz_core::node;
 
@@ -38,15 +38,9 @@ impl NodeUi for gantz_core::node::graph::Outlet {
                 ui.label(format!("{ix}"));
             });
         });
-        InspectorRowsResponse::default()
-    }
-
-    fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> InspectorUiResponse {
-        ui.separator();
-        let (resp, changed) =
-            node_inspector::socket_doc_editor(ui, ctx.path(), &mut self.ty, &mut self.description);
-        InspectorUiResponse {
-            inner: Some(resp),
+        let changed =
+            node_inspector::socket_doc_rows(body, ctx.path(), &mut self.ty, &mut self.description);
+        InspectorRowsResponse {
             changed,
             payloads: Vec::new(),
         }

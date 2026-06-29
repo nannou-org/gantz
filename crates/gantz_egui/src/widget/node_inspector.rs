@@ -225,7 +225,7 @@ pub fn path_string(path: &[node::Id]) -> String {
         .join(" ")
 }
 
-/// Working state for the [`socket_doc_editor`], persisted in egui memory so
+/// Working state for the [`socket_doc_rows`] editor, persisted in egui memory so
 /// in-progress text isn't clobbered by re-seeding every frame.
 #[derive(Clone, Default)]
 struct SocketDocEditState {
@@ -237,26 +237,31 @@ struct SocketDocEditState {
     seeded: (String, String),
 }
 
-/// A small editor for an inlet/outlet marker's stored `ty`/`description`
-/// fields (a type label and a longer note).
+/// Append `type` and `desc.` editor rows for an inlet/outlet marker's stored
+/// `ty`/`description` fields (a type label and a note) to the inspector table
+/// `body`.
 ///
-/// Edits are buffered in egui memory and written back into `ty`/`description`
-/// (trimmed) only when a field loses focus or the user presses Enter in the
-/// description (Ctrl/Cmd+Enter inserts a newline). Buffering avoids re-seeding
-/// (and trimming trailing whitespace) on every keystroke, and means the node -
-/// and thus the working graph - only changes on commit, so editing produces a
-/// single graph edit rather than one per keystroke. `id_salt` scopes the edit
-/// state to the node. Returns the combined field response together with whether
-/// a commit actually changed `ty`/`description` (so the caller can report the
-/// CA-affecting edit), `true` only on the flush frame that writes a new value.
-pub(crate) fn socket_doc_editor(
-    ui: &mut egui::Ui,
+/// `type` is a short single-line field; `desc.` is multiline and word-wraps,
+/// with its row sized to fit the wrapped text. Edits are buffered in egui memory
+/// and written back into `ty`/`description` (trimmed) only on commit (focus loss,
+/// or Enter - in the description, Cmd/Ctrl+Enter inserts a newline). Buffering
+/// avoids re-seeding (and trimming trailing whitespace) on every keystroke, and
+/// means the node - and thus the working graph - only changes on commit, so
+/// editing produces a single graph edit rather than one per keystroke. `id_salt`
+/// scopes the edit state to the node. Returns whether a commit actually changed
+/// `ty`/`description` (so the caller can report the CA-affecting edit), `true`
+/// only on the flush frame that writes a new value.
+pub(crate) fn socket_doc_rows(
+    body: &mut egui_extras::TableBody,
     id_salt: impl std::hash::Hash,
     ty: &mut String,
     description: &mut String,
-) -> (egui::Response, bool) {
+) -> bool {
     let id = egui::Id::new("socket-doc-editor").with(&id_salt);
-    let mut st: SocketDocEditState = ui.memory(|m| m.data.get_temp(id)).unwrap_or_default();
+    let mut st: SocketDocEditState = body
+        .ui_mut()
+        .memory(|m| m.data.get_temp(id))
+        .unwrap_or_default();
 
     // Re-seed the buffer only when the stored fields changed externally (never
     // mid-edit, since our own edits aren't written back until committed).
@@ -267,34 +272,66 @@ pub(crate) fn socket_doc_editor(
         st.seeded = cur;
     }
 
-    let ty_resp = ui.add(
-        egui::TextEdit::singleline(&mut st.ty)
-            .id(id.with("ty"))
-            .hint_text("type")
-            .desired_width(f32::INFINITY),
-    );
-    // Plain Enter commits; Ctrl/Cmd+Enter inserts a newline.
-    let desc_resp = ui.add(
-        egui::TextEdit::multiline(&mut st.desc)
-            .id(id.with("desc"))
-            .hint_text("description")
-            .desired_rows(2)
-            .desired_width(f32::INFINITY)
-            .return_key(egui::KeyboardShortcut::new(
-                egui::Modifiers::COMMAND,
-                egui::Key::Enter,
-            )),
-    );
+    // `type` is a short single-line label at the default row height.
+    let row_h = table_row_h(body.ui_mut());
+    let mut ty_resp = None;
+    body.row(row_h, |mut row| {
+        row.col(|ui| {
+            ui.label("type");
+        });
+        row.col(|ui| {
+            ty_resp = Some(
+                ui.add(
+                    egui::TextEdit::singleline(&mut st.ty)
+                        .id(id.with("ty"))
+                        .hint_text("type")
+                        .desired_width(f32::INFINITY),
+                ),
+            );
+        });
+    });
+
+    // `desc.` is multiline and word-wraps; the value column is the table's
+    // remainder, so estimate its width conservatively to wrap within the cell
+    // and size the row to the wrapped text.
+    let wrap_w = (body.ui_mut().available_width() - 64.0).max(64.0);
+    let desc_h = doc_field_height(body.ui_mut(), &st.desc, wrap_w);
+    let mut desc_resp = None;
+    body.row(desc_h, |mut row| {
+        row.col(|ui| {
+            ui.label("desc.");
+        });
+        row.col(|ui| {
+            // Plain Enter commits: the return key is Cmd/Ctrl+Enter, so a bare
+            // Enter surrenders focus instead of inserting a newline.
+            desc_resp = Some(
+                ui.add(
+                    egui::TextEdit::multiline(&mut st.desc)
+                        .id(id.with("desc"))
+                        .hint_text("description")
+                        .desired_rows(1)
+                        .desired_width(wrap_w)
+                        .return_key(egui::KeyboardShortcut::new(
+                            egui::Modifiers::COMMAND,
+                            egui::Key::Enter,
+                        )),
+                ),
+            );
+        });
+    });
+
+    let ty_resp = ty_resp.expect("value column always rendered");
+    let desc_resp = desc_resp.expect("value column always rendered");
+    // The single-line `type` commits on Enter via focus loss. For the multiline
+    // `desc.`, a plain Enter surrenders focus (see the field above) to commit.
     let desc_enter = desc_resp.has_focus()
-        && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.any());
-    // Drop focus on commit so the description behaves like the single-line type
-    // field (whose default return-key handling already surrenders focus).
+        && body
+            .ui_mut()
+            .input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.any());
     if desc_enter {
         desc_resp.surrender_focus();
     }
     let commit = ty_resp.lost_focus() || desc_resp.lost_focus() || desc_enter;
-
-    let resp = ty_resp.union(desc_resp);
 
     let mut changed = false;
     if commit {
@@ -311,6 +348,21 @@ pub(crate) fn socket_doc_editor(
         st.seeded = new;
     }
 
-    ui.memory_mut(|m| m.data.insert_temp(id, st));
-    (resp, changed)
+    body.ui_mut().memory_mut(|m| m.data.insert_temp(id, st));
+    changed
+}
+
+/// A table-row height that fits `text` wrapped at `wrap_width` (at least one
+/// line), including the multiline `TextEdit`'s vertical margin.
+fn doc_field_height(ui: &egui::Ui, text: &str, wrap_width: f32) -> f32 {
+    let font_id = egui::TextStyle::Body.resolve(ui.style());
+    let line_h = ui.text_style_height(&egui::TextStyle::Body);
+    let color = ui.visuals().text_color();
+    // Lay out a touch narrower than the field so the measured line count is
+    // never below the field's (which would clip); the small extra height is
+    // harmless.
+    let galley = ui
+        .painter()
+        .layout(text.to_owned(), font_id, color, (wrap_width - 8.0).max(1.0));
+    galley.size().y.max(line_h) + 10.0
 }
