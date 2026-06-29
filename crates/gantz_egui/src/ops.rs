@@ -70,7 +70,13 @@ pub fn copy_nodes<N>(
     selection: &HashSet<NodeIndex>,
 ) -> Option<String>
 where
-    N: gantz_core::Node + Clone + Serialize + DeserializeOwned + CaHash + 'static,
+    N: gantz_core::Node
+        + Clone
+        + Serialize
+        + DeserializeOwned
+        + CaHash
+        + gantz_format::NodeSugar
+        + 'static,
 {
     if selection.is_empty() {
         return None;
@@ -306,7 +312,13 @@ pub fn cut_nodes<N>(
     nodes: &HashSet<NodeIndex>,
 ) -> Option<String>
 where
-    N: gantz_core::Node + Clone + Serialize + DeserializeOwned + CaHash + 'static,
+    N: gantz_core::Node
+        + Clone
+        + Serialize
+        + DeserializeOwned
+        + CaHash
+        + gantz_format::NodeSugar
+        + 'static,
 {
     let text = copy_nodes(registry, all_views, graph, head_view, nodes)?;
     remove_nodes(
@@ -392,7 +404,13 @@ pub fn paste<N>(
     pos: &PastePos,
 ) -> bool
 where
-    N: Clone + Serialize + DeserializeOwned + CaHash + AsNamedRef + 'static,
+    N: Clone
+        + Serialize
+        + DeserializeOwned
+        + CaHash
+        + AsNamedRef
+        + gantz_format::NodeSugar
+        + 'static,
 {
     let copied: export::Copied<N> = match export::copied_from_str(text) {
         Ok(c) => c,
@@ -457,7 +475,14 @@ pub fn duplicate_nodes<N>(
     nodes: &HashSet<NodeIndex>,
 ) -> bool
 where
-    N: gantz_core::Node + Clone + Serialize + DeserializeOwned + CaHash + AsNamedRef + 'static,
+    N: gantz_core::Node
+        + Clone
+        + Serialize
+        + DeserializeOwned
+        + CaHash
+        + AsNamedRef
+        + gantz_format::NodeSugar
+        + 'static,
 {
     let Some(text) = copy_nodes(registry, all_views, graph, head_view, nodes) else {
         return false;
