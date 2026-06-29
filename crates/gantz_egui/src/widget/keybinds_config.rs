@@ -41,10 +41,6 @@ pub fn keybinds_config(keymap: &mut Keymap, ui: &mut egui::Ui) {
 
     let conflicts = keymap.conflicts();
 
-    ui.label("Command shortcuts:");
-    ui.weak("Right-click a command or binding to reset it to its default.");
-    ui.add_space(4.0);
-
     egui::Grid::new(ui.id().with("keybinds_grid"))
         .num_columns(2)
         .spacing([16.0, 6.0])
@@ -79,7 +75,7 @@ pub fn keybinds_config(keymap: &mut Keymap, ui: &mut egui::Ui) {
                         }
                         let chip = ui
                             .button(text)
-                            .on_hover_text("Click to remove; right-click to reset");
+                            .on_hover_text("Click to remove. Right-click to reset.");
                         if chip.clicked() {
                             keymap.remove(action, shortcut);
                         }

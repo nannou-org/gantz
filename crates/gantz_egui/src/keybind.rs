@@ -30,7 +30,7 @@ pub enum Action {
     Copy,
     /// Paste nodes from the clipboard into the focused graph.
     Paste,
-    /// Open the dialog to create a new graph.
+    /// Open a new graph in a new tab.
     NewGraph,
     /// Undo the last change to the focused graph.
     Undo,
@@ -78,7 +78,7 @@ const CMD_SHIFT: Modifiers = Modifiers {
 // inline in a `match` arm is not const-promoted when returned).
 const COPY: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::C)];
 const PASTE: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::V)];
-const NEW_GRAPH: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::N)];
+const NEW_GRAPH: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::T)];
 const UNDO: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::Z)];
 const REDO: &[KeyboardShortcut] = &[
     KeyboardShortcut::new(CMD_SHIFT, Key::Z),
@@ -124,7 +124,7 @@ impl Action {
         match self {
             Action::Copy => "Copy the selected nodes to the clipboard.",
             Action::Paste => "Paste nodes from the clipboard into the focused graph.",
-            Action::NewGraph => "Open the dialog to create a new graph.",
+            Action::NewGraph => "Open a new graph in a new tab.",
             Action::Undo => "Undo the last change to the focused graph.",
             Action::Redo => "Redo the last undone change to the focused graph.",
             Action::ToggleCommandPalette => "Show or hide the command palette for creating nodes.",
