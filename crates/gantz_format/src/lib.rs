@@ -111,3 +111,71 @@ where
 {
     raise::raise_named(registry, sugar)
 }
+
+#[cfg(test)]
+mod tests {
+    //! `NodeSugar` and `Sugar` are both entirely optional for a downstream
+    //! node-set type. The `_with` entry points carry no `NodeSugar` bound, and a
+    //! node whose tag no sugar recognises simply round-trips through the generic
+    //! `(node "Tag" ...)` form. This guards that property.
+
+    use super::*;
+    use gantz_ca::{CaHash, Hasher};
+    use serde::{Deserialize, Serialize};
+
+    // A self-contained node-set with one node type that implements neither
+    // `NodeSugar` nor any `Sugar` - it carries no first-class keyword at all.
+    #[typetag::serde(tag = "type")]
+    trait Widget: CaHash {}
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    struct Knob {
+        value: i64,
+    }
+
+    impl CaHash for Knob {
+        fn hash(&self, hasher: &mut Hasher) {
+            self.value.hash(hasher);
+        }
+    }
+
+    #[typetag::serde]
+    impl Widget for Knob {}
+
+    // `Box<dyn Widget>` is the node-set type `N`: typetag supplies its
+    // Serialize/Deserialize, and `gantz_ca`'s blanket `CaHash for Box<T>` covers
+    // the rest. It implements no `NodeSugar`.
+
+    #[test]
+    fn the_with_variants_need_no_node_sugar() {
+        // A graph with one node written in the generic form. `Knob` is unknown to
+        // every sugar, so it must round-trip via `(node "Knob" ...)`.
+        let text = "(graph g (k (node \"Knob\" (value 7))))";
+
+        // Both `_with` calls compile and run even though `Box<dyn Widget>`
+        // implements neither `NodeSugar` nor `Sugar`. (The convenience
+        // `from_str`/`to_string` would instead require a `NodeSugar` impl.)
+        let loaded = from_str_with::<Box<dyn Widget>>(text, std::time::Duration::ZERO, &CoreSugar)
+            .expect("parse without NodeSugar");
+        let dumped = to_string_with(&loaded.registry, &CoreSugar).expect("write without NodeSugar");
+
+        // The node survived the round-trip through the generic form.
+        assert!(
+            dumped.text.contains("(node \"Knob\""),
+            "expected generic node form, got:\n{}",
+            dumped.text,
+        );
+        assert!(dumped.text.contains("(value 7)"));
+
+        // And the reparse is stable.
+        let reloaded =
+            from_str_with::<Box<dyn Widget>>(&dumped.text, std::time::Duration::ZERO, &CoreSugar)
+                .expect("reparse");
+        assert_eq!(
+            to_string_with(&reloaded.registry, &CoreSugar)
+                .expect("rewrite")
+                .text,
+            dumped.text,
+        );
+    }
+}
