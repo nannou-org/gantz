@@ -112,7 +112,7 @@ impl Action {
             Action::NewGraph => "New graph",
             Action::Undo => "Undo",
             Action::Redo => "Redo",
-            Action::ToggleCommandPalette => "Toggle command palette",
+            Action::ToggleCommandPalette => "Node palette",
             Action::SelectAll => "Select all",
             Action::Cut => "Cut",
             Action::Duplicate => "Duplicate",

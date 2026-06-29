@@ -42,56 +42,76 @@ pub fn keybinds_config(keymap: &mut Keymap, ui: &mut egui::Ui) {
     let conflicts = keymap.conflicts();
 
     ui.label("Command shortcuts:");
+    ui.weak("Right-click a command or binding to reset it to its default.");
     ui.add_space(4.0);
 
-    for &action in Action::ALL {
-        ui.horizontal(|ui| {
-            ui.label(action.label()).on_hover_text(action.description());
+    egui::Grid::new(ui.id().with("keybinds_grid"))
+        .num_columns(2)
+        .spacing([16.0, 6.0])
+        .striped(true)
+        .show(ui, |ui| {
+            for &action in Action::ALL {
+                // Right-clicking the command name or any of its bindings offers
+                // a reset; collected here and applied after the row is built.
+                let mut reset = false;
 
-            // Existing bindings as chips; click one to remove it. Cloned so the
-            // map can be mutated while iterating.
-            let bindings = keymap.bindings(action).to_vec();
-            if bindings.is_empty() && capturing != Some(action) {
-                ui.weak("(unbound)");
-            }
-            for shortcut in bindings {
-                let mut text = egui::RichText::new(ui.ctx().format_shortcut(&shortcut));
-                if conflicts.contains_key(&shortcut) {
-                    text = text.color(ui.visuals().error_fg_color);
-                }
-                if ui
-                    .button(text)
-                    .on_hover_text("Remove this binding")
-                    .clicked()
-                {
-                    keymap.remove(action, shortcut);
-                }
-            }
+                // Column 1: command name.
+                ui.add(egui::Label::new(action.label()).sense(egui::Sense::click()))
+                    .on_hover_text(action.description())
+                    .context_menu(|ui| {
+                        if ui.button("reset to default").clicked() {
+                            reset = true;
+                            ui.close();
+                        }
+                    });
 
-            // Capture a new binding for this action.
-            let capturing_this = capturing == Some(action);
-            let label = if capturing_this { "press keys…" } else { "+" };
-            if ui
-                .selectable_label(capturing_this, label)
-                .on_hover_text("Add a binding (Esc to cancel)")
-                .clicked()
-            {
-                capturing = if capturing_this { None } else { Some(action) };
-            }
+                // Column 2: the bindings, then an "add" capture button.
+                ui.horizontal(|ui| {
+                    // Cloned so the map can be mutated while iterating.
+                    let bindings = keymap.bindings(action).to_vec();
+                    if bindings.is_empty() && capturing != Some(action) {
+                        ui.weak("(unbound)");
+                    }
+                    for shortcut in bindings {
+                        let mut text = egui::RichText::new(ui.ctx().format_shortcut(&shortcut));
+                        if conflicts.contains_key(&shortcut) {
+                            text = text.color(ui.visuals().error_fg_color);
+                        }
+                        let chip = ui
+                            .button(text)
+                            .on_hover_text("Click to remove; right-click to reset");
+                        if chip.clicked() {
+                            keymap.remove(action, shortcut);
+                        }
+                        chip.context_menu(|ui| {
+                            if ui.button("reset to default").clicked() {
+                                reset = true;
+                                ui.close();
+                            }
+                        });
+                    }
 
-            // Reset this action to its default, enabled only when customised.
-            if ui
-                .add_enabled(keymap.is_overridden(action), egui::Button::new("default"))
-                .on_hover_text("Reset to the default binding")
-                .clicked()
-            {
-                keymap.reset(action);
-                if capturing == Some(action) {
-                    capturing = None;
+                    // Capture a new binding for this action.
+                    let capturing_this = capturing == Some(action);
+                    let label = if capturing_this { "press keys…" } else { "+" };
+                    if ui
+                        .selectable_label(capturing_this, label)
+                        .on_hover_text("Add a binding (Esc to cancel)")
+                        .clicked()
+                    {
+                        capturing = if capturing_this { None } else { Some(action) };
+                    }
+                });
+
+                if reset {
+                    keymap.reset(action);
+                    if capturing == Some(action) {
+                        capturing = None;
+                    }
                 }
+                ui.end_row();
             }
         });
-    }
 
     ui.add_space(8.0);
     ui.separator();
