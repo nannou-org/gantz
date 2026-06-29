@@ -36,7 +36,13 @@ pub fn load<N>(
     mut views: ResMut<crate::Views>,
     mut demos: ResMut<crate::Demos>,
 ) where
-    N: 'static + serde::Serialize + serde::de::DeserializeOwned + gantz_ca::CaHash + Send + Sync,
+    N: 'static
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + gantz_ca::CaHash
+        + gantz_format::NodeSugar
+        + Send
+        + Sync,
 {
     let export: gantz_egui::export::Export<Graph<N>> =
         match gantz_egui::export::parse_export_at(BYTES, BASE_TIMESTAMP) {
@@ -76,6 +82,7 @@ pub fn export_to_file<N>(
         + serde::de::DeserializeOwned
         + gantz_core::Node
         + Clone
+        + gantz_format::NodeSugar
         + Send
         + Sync,
 {
@@ -107,6 +114,7 @@ where
         + serde::de::DeserializeOwned
         + gantz_core::Node
         + Clone
+        + gantz_format::NodeSugar
         + Send
         + Sync,
 {
