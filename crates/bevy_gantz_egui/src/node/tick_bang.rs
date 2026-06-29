@@ -15,6 +15,7 @@ use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::visit;
 use gantz_egui::widget::node_inspector::radio_option;
+use gantz_format::{Datum, FormatError, SugarArgs, node_datum};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use steel::SteelVal;
@@ -70,6 +71,58 @@ impl Interval {
 impl Default for Interval {
     fn default() -> Self {
         Interval::Duration(DEFAULT_DURATION)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `.gantz` keyword sugar
+// ---------------------------------------------------------------------------
+
+/// Read a `(tick-bang [#:duration secs | #:rate hz])` form into a [`TickBang`]'s
+/// `interval` enum field. `#:duration` and `#:rate` are mutually exclusive;
+/// neither given yields the default duration. Dispatched by
+/// [`crate::sugar::BevySugar`].
+pub(crate) fn read_sugar(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
+    let duration = args.keyword_f64("duration")?;
+    let rate = args.keyword_f64("rate")?;
+    let fields = match (duration, rate) {
+        (Some(_), Some(_)) => {
+            return Err(FormatError::malformed(
+                "tick-bang: specify #:duration or #:rate, not both",
+            ));
+        }
+        (Some(secs), None) => vec![("interval", interval_datum("Duration", secs))],
+        (None, Some(hz)) => vec![("interval", interval_datum("Rate", hz))],
+        (None, None) => vec![],
+    };
+    Ok(node_datum("TickBang", fields))
+}
+
+/// Write a [`TickBang`] as a bare `tick-bang` for the default duration, else as
+/// `(tick-bang #:duration secs)` or `(tick-bang #:rate hz)` per its unit.
+pub(crate) fn write_sugar(node: &Datum) -> String {
+    match interval_of(node) {
+        Some(("Rate", hz)) => format!("(tick-bang #:rate {hz})"),
+        Some(("Duration", secs)) if secs != DEFAULT_DURATION => {
+            format!("(tick-bang #:duration {secs})")
+        }
+        _ => "tick-bang".to_string(),
+    }
+}
+
+/// The externally-tagged `interval` enum datum for a variant (e.g. `(("Rate" hz))`).
+fn interval_datum(variant: &str, value: f64) -> Datum {
+    Datum::Map(vec![(variant.to_string(), Datum::F64(value))])
+}
+
+/// Read a [`TickBang`]'s `interval` field back as `(variant, value)`.
+fn interval_of(node: &Datum) -> Option<(&str, f64)> {
+    match node.get("interval")? {
+        Datum::Map(entries) => {
+            let (variant, value) = entries.first()?;
+            Some((variant.as_str(), value.as_f64()?))
+        }
+        _ => None,
     }
 }
 

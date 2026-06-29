@@ -78,6 +78,13 @@ impl FormatError {
         }
     }
 
+    /// Construct an [`ErrorKind::Malformed`] error (wrong shape or arity) with no
+    /// source location - the constructor an out-of-crate [`Sugar`](crate::Sugar)
+    /// uses to report a malformed form.
+    pub fn malformed(msg: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Malformed(msg.into()))
+    }
+
     /// Construct a [`ErrorKind::NodeDeserialize`] error for node `tag`.
     pub(crate) fn node_deserialize(tag: impl Into<String>, msg: impl Into<String>) -> Self {
         Self::new(ErrorKind::NodeDeserialize {

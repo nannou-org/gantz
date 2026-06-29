@@ -89,7 +89,7 @@ where
 /// [`parse_export_at`] to stamp them with a fixed timestamp instead.
 pub fn parse_export<N>(bytes: &[u8]) -> Result<Export<Graph<N>>, ParseExportError>
 where
-    N: Serialize + DeserializeOwned + CaHash + 'static,
+    N: Serialize + DeserializeOwned + CaHash + gantz_format::NodeSugar + 'static,
 {
     parse_export_at(bytes, now())
 }
@@ -108,7 +108,7 @@ pub fn parse_export_at<N>(
     now: gantz_ca::Timestamp,
 ) -> Result<Export<Graph<N>>, ParseExportError>
 where
-    N: Serialize + DeserializeOwned + CaHash + 'static,
+    N: Serialize + DeserializeOwned + CaHash + gantz_format::NodeSugar + 'static,
 {
     let text = std::str::from_utf8(bytes).map_err(ParseExportError::Utf8)?;
     crate::format::from_str(text, now).map_err(ParseExportError::Format)
@@ -145,7 +145,7 @@ pub fn export_heads_sexpr<N>(
     heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
 ) -> Result<String, crate::format::FormatError>
 where
-    N: Serialize + DeserializeOwned + gantz_core::Node + Clone,
+    N: Serialize + DeserializeOwned + gantz_core::Node + Clone + gantz_format::NodeSugar,
 {
     let export_registry = gantz_core::reg::export_heads(get_node, registry, heads);
     let export = export_with(export_registry, all_views, all_demos);
@@ -164,7 +164,7 @@ pub fn export_heads_sexpr_named<N>(
     heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
 ) -> Result<String, crate::format::FormatError>
 where
-    N: Serialize + DeserializeOwned + gantz_core::Node + Clone,
+    N: Serialize + DeserializeOwned + gantz_core::Node + Clone + gantz_format::NodeSugar,
 {
     let export_registry = gantz_core::reg::export_heads(get_node, registry, heads);
     let export = export_with(export_registry, all_views, all_demos);
@@ -369,7 +369,7 @@ where
 /// this.
 pub fn copied_to_string<N>(copied: &Copied<N>) -> Result<String, crate::format::FormatError>
 where
-    N: Serialize + DeserializeOwned + CaHash + Clone + 'static,
+    N: Serialize + DeserializeOwned + CaHash + Clone + gantz_format::NodeSugar + 'static,
 {
     // Add the subgraph to the dependency registry as a fresh root commit named
     // `CLIPBOARD_NAME`. A fixed timestamp keeps the payload deterministic.
@@ -407,7 +407,7 @@ where
 /// dependencies.
 pub fn copied_from_str<N>(text: &str) -> Result<Copied<N>, ParseCopiedError>
 where
-    N: Serialize + DeserializeOwned + CaHash + Clone + 'static,
+    N: Serialize + DeserializeOwned + CaHash + Clone + gantz_format::NodeSugar + 'static,
 {
     let mut export = crate::format::from_str::<N>(text, now()).map_err(ParseCopiedError::Format)?;
 

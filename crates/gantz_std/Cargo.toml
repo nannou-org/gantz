@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 gantz_ca.workspace = true
 gantz_core.workspace = true
+gantz_format.workspace = true
 log.workspace = true
 serde.workspace = true
 steel-core.workspace = true

@@ -3,7 +3,9 @@
 pub use bang::Bang;
 pub use log::Log;
 pub use number::Number;
+pub use sugar::StdSugar;
 
 pub mod bang;
 pub mod log;
 pub mod number;
+pub mod sugar;

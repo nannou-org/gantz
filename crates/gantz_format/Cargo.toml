@@ -15,3 +15,6 @@ log.workspace = true
 petgraph.workspace = true
 serde.workspace = true
 steel-core.workspace = true
+
+[dev-dependencies]
+typetag.workspace = true

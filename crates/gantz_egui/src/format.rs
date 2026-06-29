@@ -24,7 +24,7 @@ pub use gantz_format::FormatError;
 /// explicitly (hand-authored graphs).
 pub fn from_str<N>(text: &str, now: Timestamp) -> Result<Export<Graph<N>>, FormatError>
 where
-    N: Serialize + DeserializeOwned + CaHash + 'static,
+    N: Serialize + DeserializeOwned + CaHash + gantz_format::NodeSugar + 'static,
 {
     let loaded = gantz_format::from_str::<N>(text, now)?;
     let mut views: HashMap<CommitAddr, crate::SceneView> = HashMap::new();
@@ -46,7 +46,7 @@ where
 /// Serialize an [`Export`] to a `.gantz` document.
 pub fn to_string<N>(export: &Export<Graph<N>>) -> Result<String, FormatError>
 where
-    N: Serialize + DeserializeOwned,
+    N: Serialize + DeserializeOwned + gantz_format::NodeSugar,
 {
     let dumped = gantz_format::to_string::<N>(&export.registry)?;
     // Each top-level block is a section; they are joined with a blank line.
@@ -83,7 +83,7 @@ where
 /// suited to a hand-editable, git-friendly base file.
 pub fn to_string_named<N>(export: &Export<Graph<N>>) -> Result<String, FormatError>
 where
-    N: Serialize + DeserializeOwned,
+    N: Serialize + DeserializeOwned + gantz_format::NodeSugar,
 {
     let dumped = gantz_format::to_string_named::<N>(&export.registry)?;
     let mut sections = vec![dumped.text.trim_end().to_string()];

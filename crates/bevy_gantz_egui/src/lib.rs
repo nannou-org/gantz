@@ -28,6 +28,9 @@ use std::ops::{Deref, DerefMut};
 pub mod base;
 pub mod node;
 pub mod storage;
+pub mod sugar;
+
+pub use sugar::BevySugar;
 
 // ----------------------------------------------------------------------------
 // Plugin
@@ -85,6 +88,7 @@ where
         + node::ToTickBang
         + serde::Serialize
         + serde::de::DeserializeOwned
+        + gantz_format::NodeSugar
         + Send
         + Sync
         + 'static,
@@ -937,6 +941,7 @@ pub fn on_copy_nodes<N>(
         + serde::Serialize
         + serde::de::DeserializeOwned
         + ca::CaHash
+        + gantz_format::NodeSugar
         + Send
         + Sync,
 {
@@ -984,6 +989,7 @@ pub fn on_paste<N>(
         + serde::de::DeserializeOwned
         + ca::CaHash
         + gantz_egui::sync::AsNamedRef
+        + gantz_format::NodeSugar
         + Send
         + Sync,
 {
@@ -1055,6 +1061,7 @@ pub fn on_cut_nodes<N>(
         + serde::Serialize
         + serde::de::DeserializeOwned
         + ca::CaHash
+        + gantz_format::NodeSugar
         + Send
         + Sync,
 {
@@ -1116,6 +1123,7 @@ pub fn on_duplicate_nodes<N>(
         + serde::de::DeserializeOwned
         + ca::CaHash
         + gantz_egui::sync::AsNamedRef
+        + gantz_format::NodeSugar
         + Send
         + Sync,
 {
@@ -1211,7 +1219,14 @@ pub fn on_export_head<N>(
     demos: Res<Demos>,
     heads: Query<&head::HeadRef, With<head::OpenHead>>,
 ) where
-    N: 'static + serde::Serialize + serde::de::DeserializeOwned + Node + Clone + Send + Sync,
+    N: 'static
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + Node
+        + Clone
+        + gantz_format::NodeSugar
+        + Send
+        + Sync,
 {
     let event = trigger.event();
     let Ok(head_ref) = heads.get(event.head) else {
@@ -1268,7 +1283,14 @@ pub fn on_export_all_named<N>(
     views: Res<Views>,
     demos: Res<Demos>,
 ) where
-    N: 'static + serde::Serialize + serde::de::DeserializeOwned + Node + Clone + Send + Sync,
+    N: 'static
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + Node
+        + Clone
+        + gantz_format::NodeSugar
+        + Send
+        + Sync,
 {
     let node_reg = registry_ref(&registry, &builtins, &demos);
     let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
@@ -1333,6 +1355,7 @@ pub fn on_import_file<N>(
         + ca::CaHash
         + Node
         + Clone
+        + gantz_format::NodeSugar
         + Send
         + Sync,
 {
@@ -1369,7 +1392,14 @@ pub fn on_import_file<N>(
 /// Reset a base graph to its original state by re-merging from the base export.
 pub fn on_reset_base_graph<N>(trigger: On<ResetBaseGraphEvent>, mut registry: ResMut<Registry<N>>)
 where
-    N: 'static + Clone + serde::Serialize + serde::de::DeserializeOwned + ca::CaHash + Send + Sync,
+    N: 'static
+        + Clone
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + ca::CaHash
+        + gantz_format::NodeSugar
+        + Send
+        + Sync,
 {
     let name = &trigger.event().0;
     let export: gantz_egui::export::Export<Graph<N>> = match gantz_egui::export::parse_export_at::<N>(

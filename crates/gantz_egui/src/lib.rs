@@ -18,6 +18,7 @@ pub mod node;
 pub mod ops;
 pub mod reg;
 pub mod response;
+pub mod sugar;
 pub mod sync;
 pub mod view;
 pub mod widget;
@@ -31,6 +32,7 @@ pub use response::{
     ContextMenuResponse, DynResponse, InspectorRowsResponse, InspectorUiResponse, NodeUiResponse,
     NodeViewResponse, ResponseData, Responses,
 };
+pub use sugar::EguiSugar;
 pub use view::{Camera, SceneView};
 pub use widget::gantz::NodeTypeRegistry;
 pub use widget::graph_select::GraphRegistry;
