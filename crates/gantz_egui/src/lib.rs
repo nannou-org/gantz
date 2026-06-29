@@ -339,15 +339,14 @@ pub trait NodeUi {
     /// "open view" action, for monitoring it in a fixed location.
     ///
     /// Unlike [`ui`](NodeUi::ui), this receives a plain [`egui::Ui`] filling the
-    /// pane (no graph frame or sockets). The default renders the node name and
-    /// its current VM state value, so every node is viewable with something
+    /// pane (no graph frame or sockets). The default renders the node's current
+    /// VM state value (its debug repr), so every node is viewable with something
     /// useful; "viewer" nodes (e.g. [`Plot`](crate::node::Plot)) override it to
     /// render their full visualisation. Mark the returned response
     /// [`changed`](NodeViewResponse::mark_changed) on CA-affecting edits and
     /// [`emit`](NodeViewResponse::emit) any payloads.
     fn view_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
-        let name = self.name(ctx.registry()).to_string();
-        default_view_ui(&name, &ctx, ui)
+        default_view_ui(&ctx, ui)
     }
 
     /// Add node-specific items to the node's right-click context menu.
@@ -414,20 +413,22 @@ pub trait NodeUi {
     }
 }
 
-/// The default [`NodeUi::view_ui`] body: the node `name` as a heading followed by
-/// the node's current VM state value. Used by any node that doesn't override
-/// `view_ui` with a richer visualisation.
-fn default_view_ui(name: &str, ctx: &NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
+/// The default [`NodeUi::view_ui`] body: the node's current VM state value (its
+/// debug repr), matching what [`Inspect`](crate::node::Inspect) shows in-graph.
+/// No type label - the tab title already names the node. Used by any node that
+/// doesn't override `view_ui` with a richer visualisation.
+fn default_view_ui(ctx: &NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
     let mut resp = NodeViewResponse::default();
-    egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
-        ui.heading(name);
-        let text = match ctx.extract_value() {
-            Ok(Some(val)) => format!("{val:?}"),
-            Ok(None) => "∅".to_string(),
-            Err(_) => "ERR".to_string(),
-        };
-        resp.inner = Some(ui.add(egui::Label::new(text).selectable(true)));
-    });
+    let text = match ctx.extract_value() {
+        Ok(Some(val)) => format!("{val:?}"),
+        Ok(None) => "∅".to_string(),
+        Err(_) => "ERR".to_string(),
+    };
+    let inner = egui::ScrollArea::both()
+        .auto_shrink(false)
+        .show(ui, |ui| ui.add(egui::Label::new(text).selectable(true)))
+        .inner;
+    resp.inner = Some(inner);
     resp
 }
 

@@ -1034,6 +1034,13 @@ where
         egui_tiles::SimplificationOptions::OFF
     }
 
+    fn min_size(&self) -> f32 {
+        // No pane (split) may shrink below this, so a thin pane - e.g. a freshly
+        // placed node view - stays visible and grabbable rather than collapsing
+        // to a sliver. (egui_tiles' default is 32.)
+        64.0
+    }
+
     fn pane_ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -1365,12 +1372,16 @@ where
             Pane::NodeView(view) => {
                 // A detached node view: render the node's `view_ui` against its
                 // head's live graph + VM (a mirror sharing state with the
-                // in-graph node). Renders a placeholder when its head is closed.
-                if !access.heads().iter().any(|h| h == &view.head) {
-                    ui.centered_and_justified(|ui| {
-                        ui.weak("node's graph is not open");
-                    });
-                } else {
+                // in-graph node). Wrapped in `pane_ui` so the background and
+                // margin match the other panes; a placeholder shows when the
+                // head is closed.
+                pane_ui(ui, |ui| {
+                    if !access.heads().iter().any(|h| h == &view.head) {
+                        ui.centered_and_justified(|ui| {
+                            ui.weak("node's graph is not open");
+                        });
+                        return;
+                    }
                     let env = gantz.env;
                     let head = view.head.clone();
                     let path = view.path.clone();
@@ -1407,7 +1418,7 @@ where
                             });
                         }
                     }
-                }
+                });
             }
             Pane::Steel => {
                 // Use the focused head's compiled module, highlighting the
@@ -1782,15 +1793,15 @@ where
 }
 
 /// The tab title for a node-view pane: `<head>:<path>` with the final path
-/// segment rendered as `<ty_name><index>`, echoing gantz_format's node labels
-/// (e.g. `main:add3`). Intermediate segments, if any, are shown as raw indices.
+/// segment rendered as `<index>-<ty_name>` (e.g. `main:3-plot`, or for a nested
+/// path `main:2:5-plot`). Intermediate segments are shown as raw indices.
 fn node_view_title(pane: &NodeViewPane) -> String {
     use std::fmt::Write;
     let mut s = format!("{}", pane.head);
     let last = pane.path.len().saturating_sub(1);
     for (i, seg) in pane.path.iter().enumerate() {
         if i == last {
-            let _ = write!(s, ":{}{}", pane.ty_name, seg);
+            let _ = write!(s, ":{seg}-{}", pane.ty_name);
         } else {
             let _ = write!(s, ":{seg}");
         }
