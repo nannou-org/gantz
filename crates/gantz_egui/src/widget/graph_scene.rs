@@ -1,6 +1,6 @@
 use crate::{
-    CopyNodes, InspectEdge, NodeUi, OpenCommandPalette, OpenHead, Paste, PastePos, Registry,
-    ResetTilesLayout, SocketDoc, response::DynResponse,
+    CopyNodes, InspectEdge, NodeUi, OpenCommandPalette, OpenHead, OpenNodeView, Paste, PastePos,
+    Registry, ResetTilesLayout, SocketDoc, response::DynResponse,
 };
 use egui::emath::GuiRounding;
 use egui_graph::{self, SocketKind, node::EdgeEvent};
@@ -29,6 +29,9 @@ pub struct GraphSceneResponse {
     /// Dynamic payloads emitted within the scene (node UIs, context menus),
     /// to be handled by the application after the pass.
     pub responses: Vec<DynResponse>,
+    /// The index changes from any node deletions this frame, so callers can
+    /// migrate their own index-keyed data (e.g. detached node views).
+    pub reindex: crate::ops::Reindex,
 }
 
 /// An alias for the node response type returned from gantz nodes.
@@ -276,14 +279,16 @@ where
 
         // Apply deferred deletes now the scene no longer borrows `view`. Removal
         // swap-removes nodes, so this migrates the swapped node's state, layout
-        // and selection (see `crate::ops::remove_nodes`).
-        if crate::ops::remove_nodes(
+        // and selection (see `crate::ops::remove_nodes`). The returned reindex is
+        // surfaced so callers can migrate their own index-keyed data too.
+        let reindex = crate::ops::remove_nodes(
             self.graph,
             vm,
             &mut view.layout,
             &mut state.interaction.selection,
             to_delete,
-        ) {
+        );
+        if !reindex.is_empty() {
             changed = true;
         }
 
@@ -382,6 +387,7 @@ where
             nodes: node_responses,
             changed,
             responses,
+            reindex,
         }
     }
 }
@@ -704,6 +710,21 @@ where
                     responses.push(DynResponse::new(OpenHead(head)));
                     ui.close();
                 }
+            }
+            // "open view": detach the right-clicked node's UI into a tile in the
+            // Node Views pane (a live mirror, sharing VM state). Always available,
+            // even for immutable graphs - it only observes the node.
+            if ui
+                .button("open view")
+                .on_hover_text("open this node's view in the Node Views pane")
+                .clicked()
+            {
+                let ty_name = graph[n_id].name(registry).to_string();
+                responses.push(DynResponse::new(OpenNodeView {
+                    path: vec![n_ix],
+                    ty_name,
+                }));
+                ui.close();
             }
             if !immutable {
                 let stateful = target

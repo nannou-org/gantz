@@ -1,7 +1,7 @@
 use crate::{
     Action, CopyNodes, CreateNestedGraph, CreateNode, CutNodes, DuplicateNodes, ExportAllNamed,
-    ExportHead, HeadAccess, Keymap, NodeCtx, NodeUi, OpenCommandPalette, OpenLogs, Paste, Redo,
-    Registry, ReplaceHead, ResetTilesLayout, Undo, export,
+    ExportHead, HeadAccess, Keymap, NodeCtx, NodeUi, OpenCommandPalette, OpenLogs, OpenNodeView,
+    Paste, Redo, Registry, ReplaceHead, ResetTilesLayout, Undo, export,
     response::{DynResponse, Responses},
     widget::{self, GraphScene, GraphSceneState, graph_scene},
 };
@@ -349,6 +349,9 @@ pub enum Pane {
     History,
     Logs,
     NodeInspector,
+    /// Contains the inner node-views tree: nodes detached from a graph via the
+    /// "open view" action, each rendered via [`NodeUi::view_ui`] for monitoring.
+    NodeViews,
     /// Globally relevant configuration grouped into Panes / Style / Global
     /// subtabs (pane visibility, style, compile options, reset all demos).
     Settings,
@@ -361,8 +364,23 @@ pub enum Pane {
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 struct GraphPane(gantz_ca::Head);
 
+/// A pane within the inner node-views tree: one detached node view, identified
+/// by its `head` and `path` within that head's graph. `ty_name` is the node's
+/// type name ([`NodeUi::name`]), cached at open-time so the tab title is stable
+/// even while the head is closed (the node type never changes; only its index
+/// does, and that is migrated in [`migrate_node_view_paths`]).
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+struct NodeViewPane {
+    head: gantz_ca::Head,
+    path: Vec<node::Id>,
+    ty_name: String,
+}
+
 /// The egui ID used to store the inner graph tree.
 const GRAPH_TREE_ID: &str = "gantz-graph-tiles-tree";
+
+/// The egui ID used to store the inner node-views tree.
+const NODE_VIEWS_TREE_ID: &str = "gantz-node-views-tiles-tree";
 
 /// Load a tile tree from egui's persisted memory.
 ///
@@ -434,6 +452,45 @@ pub fn update_graph_pane_head(
     if changed {
         store_tree(ctx, graph_tree_id, &tree);
     }
+}
+
+/// Migrate the persisted node-view panes for `head` after a node removal
+/// reindexed its graph, mirroring the state/layout/selection migration in
+/// [`crate::ops::remove_nodes`]: a pane whose node was removed is dropped; a pane
+/// whose node was swapped to a new index has its path rewritten. This keeps a
+/// detached view pointing at the same node across deletions, with no staleness
+/// guard.
+fn migrate_node_view_paths(
+    ctx: &egui::Context,
+    head: &gantz_ca::Head,
+    reindex: &crate::ops::Reindex,
+) {
+    if reindex.is_empty() {
+        return;
+    }
+    let tree_id = egui::Id::new(NODE_VIEWS_TREE_ID);
+    let Some(mut tree) = load_tree::<NodeViewPane>(ctx, tree_id) else {
+        return;
+    };
+    let mut to_remove = Vec::new();
+    for (id, tile) in tree.tiles.iter_mut() {
+        let egui_tiles::Tile::Pane(pane) = tile else {
+            continue;
+        };
+        if pane.head != *head {
+            continue;
+        }
+        // Root-level node views have a single-element path.
+        let [ix] = pane.path[..] else { continue };
+        match reindex.apply_to_index(ix) {
+            Some(new_ix) => pane.path = vec![new_ix],
+            None => to_remove.push(*id),
+        }
+    }
+    for id in to_remove {
+        tree.tiles.remove(id);
+    }
+    store_tree(ctx, tree_id, &tree);
 }
 
 /// The context passed to the `egui_tiles::Tree` widget.
@@ -511,6 +568,7 @@ pub struct ViewToggles {
     pub settings: bool,
     pub logs: bool,
     pub node_inspector: bool,
+    pub node_views: bool,
     pub perf_gui: bool,
     pub perf_vm: bool,
     pub steel: bool,
@@ -530,6 +588,7 @@ impl Default for ViewToggles {
             settings: true,
             logs: false,
             node_inspector: true,
+            node_views: false,
             perf_gui: false,
             perf_vm: false,
             steel: false,
@@ -696,9 +755,9 @@ impl<'a> Gantz<'a> {
         }
 
         // The persisted outer tree. The version suffix invalidates any tree
-        // persisted before the sidebar overhaul (which lacks the new panes and
-        // tab containers), forcing a rebuild via `create_tree`.
-        let tree_id = egui::Id::new("gantz-tiles-tree-storage-v3");
+        // persisted before a layout change that adds/moves panes (here, the
+        // Node Views tray pane), forcing a rebuild via `create_tree`.
+        let tree_id = egui::Id::new("gantz-tiles-tree-storage-v4");
 
         // Retrieve the tree from persistent storage, or load the default.
         let mut tree: egui_tiles::Tree<Pane> =
@@ -778,6 +837,17 @@ impl<'a> Gantz<'a> {
         for _ in response.responses.take::<OpenLogs>() {
             state.view_toggles.logs = true;
         }
+        // "open view": add (or focus) a tile in the inner node-views tree and
+        // reveal the Node Views pane. The node's head is the payload's head tag.
+        for (head, view) in response.responses.take::<OpenNodeView>() {
+            let Some(head) = head else { continue };
+            let views_id = egui::Id::new(NODE_VIEWS_TREE_ID);
+            let mut views_tree: egui_tiles::Tree<NodeViewPane> =
+                load_tree(ui.ctx(), views_id).unwrap_or_else(create_empty_node_views_tree);
+            add_node_view_pane(&mut views_tree, head, view.path, view.ty_name);
+            store_tree(ui.ctx(), views_id, &views_tree);
+            state.view_toggles.node_views = true;
+        }
 
         // Persist the tree.
         store_tree(ui.ctx(), tree_id, &tree);
@@ -853,6 +923,7 @@ where
                 Some(head) => format!("Node Inspector - {head}").into(),
                 None => "Node Inspector".into(),
             },
+            Pane::NodeViews => "Node Views".into(),
             Pane::Steel => match self.access.heads().get(self.focused_head) {
                 Some(head) => format!("Steel - {head}").into(),
                 None => "Steel".into(),
@@ -1283,6 +1354,21 @@ where
                     }
                 }
             }
+            Pane::NodeViews => {
+                // The inner node-views tree (detached node views), persisted and
+                // rendered like the inner graph tree under the graph scene.
+                let tree_id = egui::Id::new(NODE_VIEWS_TREE_ID);
+                let mut views_tree: egui_tiles::Tree<NodeViewPane> =
+                    load_tree(ui.ctx(), tree_id).unwrap_or_else(create_empty_node_views_tree);
+                let mut views_behaviour = NodeViewsTreeBehaviour {
+                    env: gantz.env,
+                    access: *access,
+                    changed_heads: &mut gantz_response.changed_heads,
+                    responses: &mut gantz_response.responses,
+                };
+                views_tree.ui(&mut views_behaviour, ui);
+                store_tree(ui.ctx(), tree_id, &views_tree);
+            }
             Pane::Steel => {
                 // Use the focused head's compiled module, highlighting the
                 // selected nodes' emitted fns/call sites and any diagnostic
@@ -1634,6 +1720,9 @@ where
             if response.changed {
                 self.changed_heads.push(pane_head.clone());
             }
+            // Migrate any detached node-view paths past this frame's deletions so
+            // they keep pointing at the same nodes (or drop if removed).
+            migrate_node_view_paths(ui.ctx(), pane_head, &response.reindex);
             // Tag the scene's emissions with this head.
             self.responses.extend(Some(&*pane_head), response.responses);
         }
@@ -1642,6 +1731,125 @@ where
         let crumbs = name_breadcrumb(rect, pane_head, ui);
         self.responses.extend(Some(&*pane_head), crumbs);
 
+        egui_tiles::UiResponse::None
+    }
+}
+
+/// The tab title for a node-view pane: `<head>:<path>` with the final path
+/// segment rendered as `<ty_name><index>`, echoing gantz_format's node labels
+/// (e.g. `main:add3`). Intermediate segments, if any, are shown as raw indices.
+fn node_view_title(pane: &NodeViewPane) -> String {
+    use std::fmt::Write;
+    let mut s = format!("{}", pane.head);
+    let last = pane.path.len().saturating_sub(1);
+    for (i, seg) in pane.path.iter().enumerate() {
+        if i == last {
+            let _ = write!(s, ":{}{}", pane.ty_name, seg);
+        } else {
+            let _ = write!(s, ":{seg}");
+        }
+    }
+    s
+}
+
+/// Behaviour for the inner node-views tree: each pane is one detached node view,
+/// rendered via [`NodeUi::view_ui`] against its head's live graph + VM state.
+struct NodeViewsTreeBehaviour<'a, Access>
+where
+    Access: HeadAccess,
+    Access::Node: Node + NodeUi,
+{
+    env: &'a dyn Registry,
+    access: &'a mut Access,
+    /// Heads whose graph had a CA-affecting edit this frame.
+    changed_heads: &'a mut Vec<gantz_ca::Head>,
+    /// Dynamic payloads emitted from within the node views.
+    responses: &'a mut Responses,
+}
+
+impl<'a, Access> egui_tiles::Behavior<NodeViewPane> for NodeViewsTreeBehaviour<'a, Access>
+where
+    Access: HeadAccess,
+    Access::Node: Node + NodeUi,
+{
+    fn tab_title_for_pane(&mut self, pane: &NodeViewPane) -> egui::WidgetText {
+        node_view_title(pane).into()
+    }
+
+    fn is_tab_closable(
+        &self,
+        _tiles: &egui_tiles::Tiles<NodeViewPane>,
+        _tile_id: egui_tiles::TileId,
+    ) -> bool {
+        true
+    }
+
+    fn on_tab_close(
+        &mut self,
+        _tiles: &mut egui_tiles::Tiles<NodeViewPane>,
+        _tile_id: egui_tiles::TileId,
+    ) -> bool {
+        // These tiles are user-created, so closing removes them entirely (unlike
+        // the outer toggled panes).
+        true
+    }
+
+    fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
+        egui_tiles::SimplificationOptions {
+            all_panes_must_have_tabs: true,
+            ..Default::default()
+        }
+    }
+
+    fn pane_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        _tile_id: egui_tiles::TileId,
+        pane: &mut NodeViewPane,
+    ) -> egui_tiles::UiResponse {
+        // The head must be open to render a live view.
+        if !self.access.heads().iter().any(|h| *h == pane.head) {
+            ui.centered_and_justified(|ui| {
+                ui.weak("node's graph is not open");
+            });
+            return egui_tiles::UiResponse::None;
+        }
+        let env = self.env;
+        let head = &pane.head;
+        let path = &pane.path;
+        // Scope child widget ids by (head, path) so multiple views - and the
+        // in-graph node - never share ids.
+        let result = ui
+            .push_id((head, path), |ui| {
+                self.access.with_head_mut(head, |data| {
+                    let &[n_ix] = path.as_slice() else {
+                        return None;
+                    };
+                    let (inlets, outlets) = crate::inlet_outlet_ids(env, data.graph);
+                    let node = data
+                        .graph
+                        .node_weight_mut(graph_scene::NodeIndex::new(n_ix))?;
+                    let ctx = NodeCtx::new(env, path, &inlets, &outlets, data.vm);
+                    let r = node.view_ui(ctx, ui);
+                    Some((r.changed, r.payloads))
+                })
+            })
+            .inner;
+        match result {
+            Some(Some((changed, payloads))) => {
+                if changed {
+                    self.changed_heads.push(head.clone());
+                }
+                self.responses.extend(Some(head), payloads);
+            }
+            _ => {
+                // Head open but the node is missing at `path` (e.g. removed this
+                // frame, before migration). Migration drops such panes shortly.
+                ui.centered_and_justified(|ui| {
+                    ui.weak("node not found");
+                });
+            }
+        }
         egui_tiles::UiResponse::None
     }
 }
@@ -1708,6 +1916,7 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
     let history = tiles.insert_pane(Pane::History);
     let logs = tiles.insert_pane(Pane::Logs);
     let node_inspector = tiles.insert_pane(Pane::NodeInspector);
+    let node_views = tiles.insert_pane(Pane::NodeViews);
     let settings = tiles.insert_pane(Pane::Settings);
     let steel = tiles.insert_pane(Pane::Steel);
     let vm_perf = tiles.insert_pane(Pane::VmPerf);
@@ -1728,8 +1937,9 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
         shares,
     });
 
-    // Logs and steel code in bottom "tray".
-    let tray = tiles.insert_horizontal_tile(vec![logs, steel]);
+    // Logs, steel code and detached node views in the bottom "tray". All three
+    // default to hidden; the tray appears when any is toggled on.
+    let tray = tiles.insert_horizontal_tile(vec![logs, steel, node_views]);
 
     // The right column with main area (graph scene above logs and steel code).
     let right_column = tiles.insert_container(egui_tiles::Linear::new_binary(
@@ -1753,6 +1963,45 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
 /// Create an empty graph tree. Panes will be added by `sync_graph_panes`.
 fn create_empty_graph_tree() -> egui_tiles::Tree<GraphPane> {
     egui_tiles::Tree::empty("graph-tiles")
+}
+
+/// Create an empty node-views tree. Panes are added by the "open view" action
+/// (see [`add_node_view_pane`]) and removed on tab-close or node deletion.
+fn create_empty_node_views_tree() -> egui_tiles::Tree<NodeViewPane> {
+    egui_tiles::Tree::empty("node-views-tiles")
+}
+
+/// Insert a node-view pane for `(head, path)` into the node-views `tree`, or
+/// activate the existing one (deduped by head + path). `ty_name` is the node's
+/// type name used for the tab title. Mirrors the insertion in
+/// [`sync_graph_panes`].
+fn add_node_view_pane(
+    tree: &mut egui_tiles::Tree<NodeViewPane>,
+    head: gantz_ca::Head,
+    path: Vec<node::Id>,
+    ty_name: String,
+) {
+    // Dedupe: if a view for this (head, path) already exists, just focus it.
+    let existing = tree.tiles.iter().find_map(|(id, tile)| match tile {
+        egui_tiles::Tile::Pane(p) if p.head == head && p.path == path => Some(*id),
+        _ => None,
+    });
+    if let Some(id) = existing {
+        tree.make_active(|tile_id, _| tile_id == id);
+        return;
+    }
+    let pane_id = tree.tiles.insert_pane(NodeViewPane {
+        head,
+        path,
+        ty_name,
+    });
+    match tree.root() {
+        Some(root) => tree.move_tile_to_container(pane_id, root, usize::MAX, true),
+        None => {
+            let root = tree.tiles.insert_tab_tile(vec![pane_id]);
+            tree.root = Some(root);
+        }
+    }
 }
 
 /// Sync the graph tree panes with the current heads.
@@ -2033,6 +2282,7 @@ fn set_pane_visible(view: &mut ViewToggles, pane: &Pane, visible: bool) {
         Pane::Settings => view.settings = visible,
         Pane::GraphConfig => view.graph_config = visible,
         Pane::NodeInspector => view.node_inspector = visible,
+        Pane::NodeViews => view.node_views = visible,
         Pane::VmPerf => view.perf_vm = visible,
         Pane::GuiPerf => view.perf_gui = visible,
         Pane::Logs => view.logs = visible,
@@ -2062,6 +2312,8 @@ fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
                 Pane::VmPerf => tree.set_visible(id, open && view.perf_vm),
                 Pane::Logs => tree.set_visible(id, view.logs),
                 Pane::Steel => tree.set_visible(id, view.steel),
+                // Tray-style: independent of the sidebar, like Logs/Steel.
+                Pane::NodeViews => tree.set_visible(id, view.node_views),
             }
         }
     }
