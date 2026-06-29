@@ -44,6 +44,8 @@ impl Node for gantz_egui::node::Comment {}
 #[typetag::serde]
 impl Node for bevy_gantz_egui::node::UpdateBang {}
 #[typetag::serde]
+impl Node for bevy_gantz_egui::node::TickBang {}
+#[typetag::serde]
 impl Node for gantz_egui::node::Inspect {}
 #[typetag::serde]
 impl Node for gantz_egui::node::Plot {}
@@ -70,6 +72,13 @@ impl gantz_egui::sync::AsNamedRef for Box<dyn Node> {
 
 impl bevy_gantz_egui::node::ToUpdateBang for Box<dyn Node> {
     fn to_update_bang(&self) -> Option<&bevy_gantz_egui::node::UpdateBang> {
+        let any: &dyn std::any::Any = &**self;
+        any.downcast_ref()
+    }
+}
+
+impl bevy_gantz_egui::node::ToTickBang for Box<dyn Node> {
+    fn to_tick_bang(&self) -> Option<&bevy_gantz_egui::node::TickBang> {
         let any: &dyn std::any::Any = &**self;
         any.downcast_ref()
     }
@@ -120,6 +129,7 @@ mod tests {
             node_datum("Bang", vec![]),
             node_datum("Inspect", vec![]),
             node_datum("UpdateBang", vec![]),
+            node_datum("TickBang", vec![("duration", Datum::F64(0.5))]),
             node_datum("Number", vec![]),
             node_datum("Expr", vec![("src", Datum::Str("(* $l $r)".into()))]),
             node_datum(
@@ -359,6 +369,53 @@ mod tests {
         let out = gantz_egui::format::to_string(&export).expect("to_string");
         steel::parser::parser::Parser::parse(&out)
             .unwrap_or_else(|e| panic!("output is not valid Steel: {e}\n--- output ---\n{out}"));
+    }
+
+    /// A `tick!` node compiles to valid, runnable Steel. `base.gantz` doesn't use
+    /// `tick!`, so this is the only coverage of its constant-duration expr, its
+    /// stateful accumulator slot, and the per-node push entrypoint registered by
+    /// `tick_bang::entrypoints` (which `push_pull_entrypoints` does NOT discover,
+    /// since `tick!` is driven externally rather than via `Node::push_eval`).
+    #[test]
+    fn tick_node_compiles() {
+        use std::time::Duration;
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let text = "\
+(graph g
+  (t (tick-bang #:duration 0.5))
+  (l (log warn))
+  (-> t (l 0)))";
+        let export: gantz_egui::export::Export<G> =
+            gantz_egui::format::from_str(text, Duration::from_secs(0)).expect("from_str");
+        let head = gantz_ca::Head::Branch("g".into());
+        let graph = export.registry.head_graph(&head).expect("g graph");
+
+        let builtins = crate::builtin::Builtins::new();
+        let reg_ref = gantz_egui::RegistryRef::new(&export.registry, &builtins, &export.demos);
+        let get_node = |ca: &gantz_ca::ContentAddr| reg_ref.node(ca);
+
+        let entrypoints = bevy_gantz_egui::node::tick_bang::entrypoints(&get_node, graph);
+        assert_eq!(
+            entrypoints.len(),
+            1,
+            "tick! must register exactly one push entrypoint",
+        );
+
+        for config in [
+            gantz_core::compile::Config::default(),
+            gantz_core::compile::Config {
+                validate_ir: true,
+                emit_all_node_fns: true,
+            },
+        ] {
+            gantz_core::vm::init(&get_node, graph, &entrypoints, &config).unwrap_or_else(|e| {
+                panic!(
+                    "tick! graph failed to compile:\n{}",
+                    gantz_core::vm::error_chain(&e),
+                )
+            });
+        }
     }
 
     /// Importing a commit whose parent is not present in the file records that

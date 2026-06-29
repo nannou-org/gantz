@@ -82,6 +82,7 @@ where
         + gantz_egui::sync::AsNamedRef
         + gantz_egui::NodeUi
         + node::ToUpdateBang
+        + node::ToTickBang
         + serde::Serialize
         + serde::de::DeserializeOwned
         + Send
@@ -89,12 +90,18 @@ where
         + 'static,
 {
     fn build(&self, app: &mut App) {
-        // Register update_bang entrypoint provider.
+        // Register update_bang + tick_bang entrypoint providers.
         app.world_mut()
             .resource_mut::<bevy_gantz::EntrypointFns<N>>()
             .0
             .push(Box::new(|get_node, graph| {
                 node::update_bang::entrypoints(get_node, graph)
+            }));
+        app.world_mut()
+            .resource_mut::<bevy_gantz::EntrypointFns<N>>()
+            .0
+            .push(Box::new(|get_node, graph| {
+                node::tick_bang::entrypoints(get_node, graph)
             }));
 
         // Builtin GUI response payload dispatchers. Head-scoped payloads
@@ -154,6 +161,7 @@ where
                 Update,
                 (
                     node::update_bang::drive_update_bangs::<N>.after(bevy_gantz::VmSet),
+                    node::tick_bang::drive_tick_bangs::<N>.after(bevy_gantz::VmSet),
                     persist_camera_and_seed::<N>,
                     // On layout settle, fork a layout-only commit. Runs after
                     // `VmSet` (so a graph edit commits first and its baseline is

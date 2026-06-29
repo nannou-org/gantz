@@ -115,6 +115,7 @@ const KEYWORD_TAG: &[(&str, &str)] = &[
     ("bang", "Bang"),
     ("inspect", "Inspect"),
     ("update-bang", "UpdateBang"),
+    ("tick-bang", "TickBang"),
     ("number", "Number"),
     ("log", "Log"),
     ("expr", "Expr"),
@@ -153,6 +154,7 @@ impl Sugar for DefaultSugar {
             "comment" => comment_spec(args, src)?,
             "number" => number_spec(args, src)?,
             "log" => log_spec(args, src)?,
+            "tick-bang" => tick_bang_spec(args, src)?,
             _ => return Ok(None),
         };
         Ok(Some(datum))
@@ -177,6 +179,7 @@ impl Sugar for DefaultSugar {
             "Comment" => Some(write_comment(node)),
             "Number" => Some(write_number(node)),
             "Log" => Some(write_log(node)),
+            "TickBang" => Some(write_tick_bang(node)),
             other => keyword_for_tag(other).map(str::to_string),
         }
     }
@@ -363,6 +366,22 @@ fn write_comment(node: &Datum) -> String {
 /// Write a `Number` as a bare `number` when all config is default, else as
 /// `(number #:min m #:max m #:precision n #:no-push-eval)` with only the
 /// non-default fields.
+fn tick_bang_spec(args: &[ExprKind], src: &str) -> Result<Datum, FormatError> {
+    let mut fields = Vec::new();
+    if let Some(duration) = keyword_f64(args, "duration", src)? {
+        fields.push(("duration", Datum::F64(duration)));
+    }
+    Ok(node_datum("TickBang", fields))
+}
+
+fn write_tick_bang(node: &Datum) -> String {
+    // Omit the default duration so a plain `tick!` writes as the bare keyword.
+    match node.get("duration").and_then(Datum::as_f64) {
+        Some(duration) if duration != 1.0 => format!("(tick-bang #:duration {duration})"),
+        _ => "tick-bang".to_string(),
+    }
+}
+
 fn write_number(node: &Datum) -> String {
     let min = node.get("min").and_then(Datum::as_f64);
     let max = node.get("max").and_then(Datum::as_f64);
@@ -660,5 +679,29 @@ mod tests {
             s.write_spec("Number", &all).as_deref(),
             Some("(number #:min -1.5 #:max 1.5 #:precision 3 #:no-push-eval)"),
         );
+    }
+
+    #[test]
+    fn tick_bang_config_round_trips() {
+        let s = DefaultSugar;
+
+        // A bare (default-duration) tick! stays bare, read as keyword or spec.
+        let bare = s.read_bare("tick-bang").expect("bare tick-bang");
+        assert_eq!(
+            s.write_spec("TickBang", &bare).as_deref(),
+            Some("tick-bang")
+        );
+
+        // A custom duration round-trips via the `#:duration` keyword.
+        let d = read_spec(&s, "(tick-bang #:duration 0.5)").expect("duration");
+        assert_eq!(d.get("duration").and_then(Datum::as_f64), Some(0.5));
+        assert_eq!(
+            s.write_spec("TickBang", &d).as_deref(),
+            Some("(tick-bang #:duration 0.5)"),
+        );
+
+        // An explicit default duration also writes as the bare keyword.
+        let one = read_spec(&s, "(tick-bang #:duration 1)").expect("default duration");
+        assert_eq!(s.write_spec("TickBang", &one).as_deref(), Some("tick-bang"));
     }
 }

@@ -99,6 +99,9 @@ fn primitives() -> Primitives {
     register_primitive(&mut p, "update!", || {
         Box::new(bevy_gantz_egui::node::UpdateBang) as Box<_>
     });
+    register_primitive(&mut p, "tick!", || {
+        Box::new(bevy_gantz_egui::node::TickBang::default()) as Box<_>
+    });
     register_primitive(&mut p, "expr", || {
         Box::new(gantz_core::node::Expr::new("()").unwrap()) as Box<_>
     });

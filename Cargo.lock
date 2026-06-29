@@ -913,6 +913,7 @@ dependencies = [
  "bevy_tasks",
  "bevy_time",
  "bincode",
+ "egui_extras",
  "egui_graph",
  "gantz_base",
  "gantz_ca",
