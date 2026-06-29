@@ -111,6 +111,8 @@ where
         // `WorkingGraph` invariant), so no dispatch-side handling is needed.
         app.register_head_response::<gantz_egui::BranchNode>()
             .register_head_response::<gantz_egui::CopyNodes>()
+            .register_head_response::<gantz_egui::CutNodes>()
+            .register_head_response::<gantz_egui::DuplicateNodes>()
             .register_head_response::<gantz_egui::CreateNode>()
             .register_head_response::<gantz_egui::CreateNestedGraph>()
             .register_head_response::<gantz_egui::InspectEdge>()
@@ -147,6 +149,8 @@ where
             .add_observer(on_branch_node::<N>)
             .add_observer(on_inspect_edge::<N>)
             .add_observer(on_copy_nodes::<N>)
+            .add_observer(on_cut_nodes::<N>)
+            .add_observer(on_duplicate_nodes::<N>)
             .add_observer(on_paste::<N>)
             .add_observer(on_undo::<N>)
             .add_observer(on_redo)
@@ -1016,6 +1020,133 @@ pub fn on_paste<N>(
     // initialized with the correct nested hashmap structure. Idempotent
     // for existing nodes.
     if pasted {
+        if let Some(vm) = vms.get_mut(&event.head) {
+            let node_reg = registry_ref(&registry, &builtins, &demos);
+            let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+            gantz_core::graph::register(&get_node, &**wg, &[], vm);
+        }
+    }
+
+    // Uphold the `WorkingGraph` invariant: commit the in-place edit.
+    bevy_gantz::commit_working_graph(&mut registry, &mut cmds, event.head, &mut head_ref.0, &wg.0);
+}
+
+/// Handle cut payloads: copy the selection to the clipboard, then remove it.
+pub fn on_cut_nodes<N>(
+    trigger: On<ForHead<gantz_egui::CutNodes>>,
+    mut registry: ResMut<Registry<N>>,
+    views: Res<Views>,
+    mut gui_state: ResMut<GuiState>,
+    mut vms: NonSendMut<head::HeadVms>,
+    mut clipboard: ResMut<bevy_egui::EguiClipboard>,
+    mut cmds: Commands,
+    mut heads: Query<
+        (
+            &mut head::HeadRef,
+            &mut head::WorkingGraph<N>,
+            &mut GraphView,
+        ),
+        With<head::OpenHead>,
+    >,
+) where
+    N: 'static
+        + Node
+        + Clone
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + ca::CaHash
+        + Send
+        + Sync,
+{
+    let event = trigger.event();
+    let Ok((mut head_ref, mut wg, mut gv)) = heads.get_mut(event.head) else {
+        log::error!("CutNodes: head not found for entity {:?}", event.head);
+        return;
+    };
+    let Some(head_state) = gui_state.open_heads.get_mut(&**head_ref) else {
+        log::error!("CutNodes: GUI state not found for head");
+        return;
+    };
+    let Some(vm) = vms.get_mut(&event.head) else {
+        log::error!("CutNodes: VM not found for head");
+        return;
+    };
+
+    let text = gantz_egui::ops::cut_nodes(
+        &registry,
+        &views,
+        &mut wg,
+        vm,
+        &mut gv,
+        &mut head_state.scene.interaction.selection,
+        &event.data.0,
+    );
+    if let Some(text) = text {
+        clipboard.set_text(&text);
+    }
+
+    // Uphold the `WorkingGraph` invariant: commit the in-place edit (a no-op
+    // when nothing was cut).
+    bevy_gantz::commit_working_graph(&mut registry, &mut cmds, event.head, &mut head_ref.0, &wg.0);
+}
+
+/// Handle duplicate payloads: copy the selection, then paste it at an offset.
+pub fn on_duplicate_nodes<N>(
+    trigger: On<ForHead<gantz_egui::DuplicateNodes>>,
+    mut registry: ResMut<Registry<N>>,
+    builtins: Res<BuiltinNodes<N>>,
+    mut gui_state: ResMut<GuiState>,
+    mut views: ResMut<Views>,
+    mut demos: ResMut<Demos>,
+    mut vms: NonSendMut<head::HeadVms>,
+    mut cmds: Commands,
+    mut heads: Query<
+        (
+            &mut head::HeadRef,
+            &mut head::WorkingGraph<N>,
+            &mut GraphView,
+        ),
+        With<head::OpenHead>,
+    >,
+) where
+    N: 'static
+        + Node
+        + Clone
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + ca::CaHash
+        + gantz_egui::sync::AsNamedRef
+        + Send
+        + Sync,
+{
+    let event = trigger.event();
+    let Ok((mut head_ref, mut wg, mut gv)) = heads.get_mut(event.head) else {
+        log::error!("DuplicateNodes: head not found for entity {:?}", event.head);
+        return;
+    };
+    let editing = match &**head_ref {
+        ca::Head::Branch(name) => Some(name.clone()),
+        ca::Head::Commit(_) => None,
+    };
+    let Some(head_state) = gui_state.open_heads.get_mut(&**head_ref) else {
+        log::error!("DuplicateNodes: GUI state not found for head");
+        return;
+    };
+
+    let duplicated = gantz_egui::ops::duplicate_nodes(
+        &mut registry,
+        editing.as_deref(),
+        &mut views,
+        &mut demos,
+        &mut wg,
+        &mut gv,
+        head_state,
+        &event.data.0,
+    );
+
+    // Re-register the full root graph so the new nodes get their state
+    // initialized. Idempotent for existing nodes.
+    if duplicated {
         if let Some(vm) = vms.get_mut(&event.head) {
             let node_reg = registry_ref(&registry, &builtins, &demos);
             let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);

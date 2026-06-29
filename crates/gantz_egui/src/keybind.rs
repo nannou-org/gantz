@@ -38,6 +38,12 @@ pub enum Action {
     Redo,
     /// Show or hide the command palette.
     ToggleCommandPalette,
+    /// Select every node in the focused graph.
+    SelectAll,
+    /// Copy the selected nodes to the clipboard, then remove them.
+    Cut,
+    /// Duplicate the selected nodes in place.
+    Duplicate,
 }
 
 /// The keymap: action -> bindings, holding only user overrides (see module
@@ -80,6 +86,9 @@ const REDO: &[KeyboardShortcut] = &[
 ];
 const TOGGLE_COMMAND_PALETTE: &[KeyboardShortcut] =
     &[KeyboardShortcut::new(Modifiers::NONE, Key::Space)];
+const SELECT_ALL: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::A)];
+const CUT: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::X)];
+const DUPLICATE: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::D)];
 
 impl Action {
     /// Every action, in the order the keybinds panel lists them.
@@ -90,6 +99,9 @@ impl Action {
         Action::Undo,
         Action::Redo,
         Action::ToggleCommandPalette,
+        Action::SelectAll,
+        Action::Cut,
+        Action::Duplicate,
     ];
 
     /// A short human-readable name for the panel.
@@ -101,6 +113,9 @@ impl Action {
             Action::Undo => "Undo",
             Action::Redo => "Redo",
             Action::ToggleCommandPalette => "Toggle command palette",
+            Action::SelectAll => "Select all",
+            Action::Cut => "Cut",
+            Action::Duplicate => "Duplicate",
         }
     }
 
@@ -113,6 +128,9 @@ impl Action {
             Action::Undo => "Undo the last change to the focused graph.",
             Action::Redo => "Redo the last undone change to the focused graph.",
             Action::ToggleCommandPalette => "Show or hide the command palette for creating nodes.",
+            Action::SelectAll => "Select every node in the focused graph.",
+            Action::Cut => "Copy the selected nodes to the clipboard, then remove them.",
+            Action::Duplicate => "Duplicate the selected nodes in place.",
         }
     }
 
@@ -130,6 +148,9 @@ impl Action {
             // before Undo (see [`Keymap::consume`]).
             Action::Redo => REDO,
             Action::ToggleCommandPalette => TOGGLE_COMMAND_PALETTE,
+            Action::SelectAll => SELECT_ALL,
+            Action::Cut => CUT,
+            Action::Duplicate => DUPLICATE,
         }
     }
 }

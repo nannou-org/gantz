@@ -1189,6 +1189,56 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         }
     }
 
+    for (head, gantz_egui::CutNodes(nodes)) in responses.take() {
+        let Some((head, ix)) = tagged_head(state, head) else {
+            continue;
+        };
+        let head_state = state.gantz.open_heads.entry(head).or_default();
+        let (_, graph, gv) = &mut state.heads[ix];
+        let vm = &mut state.vms[ix];
+        let text = gantz_egui::ops::cut_nodes(
+            &state.env.registry,
+            &HashMap::new(),
+            graph,
+            vm,
+            gv,
+            &mut head_state.scene.interaction.selection,
+            &nodes,
+        );
+        if let Some(text) = text {
+            ctx.copy_text(text);
+        }
+    }
+
+    for (head, gantz_egui::DuplicateNodes(nodes)) in responses.take() {
+        let Some((head, ix)) = tagged_head(state, head) else {
+            continue;
+        };
+        let editing = match &head {
+            gantz_ca::Head::Branch(name) => Some(name.clone()),
+            gantz_ca::Head::Commit(_) => None,
+        };
+        let head_state = state.gantz.open_heads.entry(head).or_default();
+        let (_, graph, gv) = &mut state.heads[ix];
+        let duplicated = gantz_egui::ops::duplicate_nodes(
+            &mut state.env.registry,
+            editing.as_deref(),
+            &mut HashMap::new(),
+            &mut HashMap::new(),
+            graph,
+            gv,
+            head_state,
+            &nodes,
+        );
+        // Re-register the full root graph so the new nodes get their state
+        // initialized. Idempotent for existing nodes.
+        if duplicated {
+            let vm = &mut state.vms[ix];
+            let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
+            gantz_core::graph::register(&get_node, &*graph, &[], vm);
+        }
+    }
+
     for (head, gantz_egui::Undo) in responses.take() {
         let Some((head, _)) = tagged_head(state, head) else {
             continue;

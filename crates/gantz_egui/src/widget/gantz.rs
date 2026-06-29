@@ -1,7 +1,7 @@
 use crate::{
-    Action, CopyNodes, CreateNestedGraph, CreateNode, ExportAllNamed, ExportHead, HeadAccess,
-    Keymap, NodeCtx, NodeUi, OpenCommandPalette, OpenLogs, Paste, Redo, Registry, ReplaceHead,
-    ResetTilesLayout, Undo, export,
+    Action, CopyNodes, CreateNestedGraph, CreateNode, CutNodes, DuplicateNodes, ExportAllNamed,
+    ExportHead, HeadAccess, Keymap, NodeCtx, NodeUi, OpenCommandPalette, OpenLogs, Paste, Redo,
+    Registry, ReplaceHead, ResetTilesLayout, Undo, export,
     response::{DynResponse, Responses},
     widget::{self, GraphScene, GraphSceneState, graph_scene},
 };
@@ -1125,6 +1125,20 @@ where
                             if keymap.consume(ui, Action::Undo) {
                                 gantz_response.responses.push(Some(fh.clone()), Undo);
                             }
+                            // Cut: copy the selection, then remove it.
+                            if keymap.consume(ui, Action::Cut) {
+                                let nodes = head_state.scene.interaction.selection.nodes.clone();
+                                gantz_response
+                                    .responses
+                                    .push(Some(fh.clone()), CutNodes(nodes));
+                            }
+                            // Duplicate the selection in place.
+                            if keymap.consume(ui, Action::Duplicate) {
+                                let nodes = head_state.scene.interaction.selection.nodes.clone();
+                                gantz_response
+                                    .responses
+                                    .push(Some(fh.clone()), DuplicateNodes(nodes));
+                            }
                         }
                     }
 
@@ -1586,6 +1600,8 @@ where
         // Disjoint borrow of a sibling field of `open_heads` for the graph
         // scene's "Panes" context submenu.
         let view_toggles = &mut self.state.view_toggles;
+        // Disjoint borrow for the scene-level Select-all shortcut.
+        let keymap = &self.state.keymap;
 
         // We'll use this for positioning the fixed path labels window.
         let rect = ui.available_rect_before_wrap();
@@ -1602,6 +1618,7 @@ where
                 layout_params,
                 scene_config,
                 immutable,
+                keymap,
                 &diagnostics,
                 data.vm,
                 ui,
@@ -2229,6 +2246,7 @@ fn graph_scene<N>(
     layout_params: egui_graph::LayoutParams,
     scene_config: SceneConfig,
     immutable: bool,
+    keymap: &Keymap,
     diagnostics: &[gantz_core::Diagnostic],
     vm: &mut Engine,
     ui: &mut egui::Ui,
@@ -2238,6 +2256,14 @@ where
 {
     // A head shows exactly its root graph (nested graphs are separate heads).
     let id = egui::Id::new(head);
+
+    // Select-all: replace the selection with every node. Handled here (not the
+    // outer command block) because this is where the graph is in scope. Gated
+    // like other command shortcuts so it does not fire while typing.
+    if !ui.ctx().egui_wants_keyboard_input() && keymap.consume(ui, Action::SelectAll) {
+        head_state.scene.interaction.selection.nodes = graph.node_indices().collect();
+        head_state.scene.interaction.selection.edges.clear();
+    }
 
     // Seed the node layout the first time this graph is shown, and centre the
     // camera on it at zoom 1. Without an explicit camera the scene would fall
