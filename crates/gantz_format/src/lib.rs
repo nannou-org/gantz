@@ -13,10 +13,12 @@
 //! context returned by [`from_str`]/[`to_string`].
 //!
 //! Node keywords (`expr`, `inlet`, ...) are pluggable [`Sugar`]: [`from_str`]
-//! and [`to_string`] use [`DefaultSugar`] (gantz's built-ins); the `_with`
-//! variants accept any `&dyn Sugar` so other node sets can supply their own
-//! first-class keywords while still falling back to the generic `(node ...)`
-//! form. Any node type that is `Serialize + DeserializeOwned + CaHash` works.
+//! and [`to_string`] read the node set's composite via [`NodeSugar`]
+//! (`N::sugar()`), so each crate owns the sugar for its own nodes ([`CoreSugar`]
+//! covers `gantz_core`'s). The `_with` variants accept any `&dyn Sugar`
+//! explicitly (compose with [`Sugars`]), still falling back to the generic
+//! `(node ...)` form. Any node type that is `Serialize + DeserializeOwned +
+//! CaHash` works.
 
 mod datum;
 mod error;
@@ -29,32 +31,32 @@ mod writer;
 
 pub mod sexpr;
 
-pub use datum::{Datum, DatumError, datum_from_expr, datum_text, from_datum, to_datum};
+pub use datum::{Datum, DatumError, datum_from_expr, datum_text, from_datum, node_datum, to_datum};
 pub use error::{ErrorKind, FormatError, Span};
 pub use lower::Loaded;
 pub use model::{Addr, Document, Form};
 pub use raise::{Dumped, GraphLabels};
-pub use sugar::{DefaultSugar, Sugar, Sugars};
+pub use sugar::{CoreSugar, NodeSugar, Sugar, SugarArgs, Sugars};
 
 use gantz_ca::{CaHash, Registry, Timestamp};
 use gantz_core::node::graph::Graph;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-/// Parse a `.gantz` document (with gantz's built-in node keywords) into its
-/// [`Loaded`] registry, resolution context and preserved extra forms.
+/// Parse a `.gantz` document (using the node set's composite [`NodeSugar`]) into
+/// its [`Loaded`] registry, resolution context and preserved extra forms.
 ///
 /// `now` provides the timestamp for any graph the `(commits ...)` table does not
 /// describe (hand-authored graphs with no commit entry).
 pub fn from_str<N>(text: &str, now: Timestamp) -> Result<Loaded<N>, FormatError>
 where
-    N: Serialize + DeserializeOwned + CaHash + 'static,
+    N: Serialize + DeserializeOwned + CaHash + NodeSugar + 'static,
 {
-    from_str_with(text, now, &DefaultSugar)
+    from_str_with(text, now, &N::sugar())
 }
 
 /// Parse a `.gantz` document using a custom keyword [`Sugar`] (compose with
-/// [`DefaultSugar`] via [`Sugars`] to keep the built-ins).
+/// [`CoreSugar`] via [`Sugars`] to keep `gantz_core`'s built-ins).
 pub fn from_str_with<N>(
     text: &str,
     now: Timestamp,
@@ -72,9 +74,9 @@ where
 /// to emit its own forms.
 pub fn to_string<N>(registry: &Registry<Graph<N>>) -> Result<Dumped, FormatError>
 where
-    N: Serialize + DeserializeOwned,
+    N: Serialize + DeserializeOwned + NodeSugar,
 {
-    to_string_with(registry, &DefaultSugar)
+    to_string_with(registry, &N::sugar())
 }
 
 /// Serialize a registry to `.gantz` text using a custom keyword [`Sugar`].
@@ -94,9 +96,9 @@ where
 /// such as the baked-in base.
 pub fn to_string_named<N>(registry: &Registry<Graph<N>>) -> Result<Dumped, FormatError>
 where
-    N: Serialize + DeserializeOwned,
+    N: Serialize + DeserializeOwned + NodeSugar,
 {
-    to_string_named_with(registry, &DefaultSugar)
+    to_string_named_with(registry, &N::sugar())
 }
 
 /// As [`to_string_named`], with a custom keyword [`Sugar`].

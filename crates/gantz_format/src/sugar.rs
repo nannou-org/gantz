@@ -4,17 +4,140 @@
 //! over the universal generic form `(node "Tag" (field datum)...)`. The format
 //! *core* reserves `ref`/`fn-ref` (references), `graph` (inline nesting) and
 //! `node` (the generic fallback) - those need format or `gantz_core` context and
-//! are never pluggable. Everything else is provided by a [`Sugar`]:
-//! [`DefaultSugar`] carries gantz's built-in node set, and other node sets can
-//! implement `Sugar` and compose via [`Sugars`].
+//! are never pluggable. Everything else is provided by a [`Sugar`]: [`CoreSugar`]
+//! carries `gantz_core`'s own node set, and each downstream crate implements
+//! `Sugar` for its nodes and composes them via [`Sugars`].
 //!
-//! A `Sugar` only ever deals in tag *strings* and serde [`Datum`]s, so it adds
-//! no dependency on the concrete node crates.
+//! A `Sugar` only ever deals in tag *strings* and serde [`Datum`]s (read through
+//! [`SugarArgs`] and built with [`node_datum`]), so it adds no dependency on the
+//! concrete node crates and never sees the raw s-expression AST.
+//!
+//! Which sugars an application uses is a static property of its node-type
+//! universe: [`NodeSugar`] ties a top-level node type to its composite, and the
+//! convenience entry points read it via `N::sugar()`.
 
-use crate::datum::Datum;
+use crate::datum::{Datum, node_datum};
 use crate::error::{ErrorKind, FormatError};
 use crate::sexpr::{self, as_keyword, as_string, as_symbol, err_at, quote, span_src};
 use steel::parser::ast::ExprKind;
+
+/// The arguments of a list-headed sugar form `(<head> <args>...)`, with helpers
+/// to read keyword and positional values without touching the raw s-expression
+/// AST. Constructed by the format and handed to [`Sugar::read_spec`].
+#[derive(Clone, Copy)]
+pub struct SugarArgs<'a> {
+    args: &'a [ExprKind],
+    src: &'a str,
+}
+
+impl<'a> SugarArgs<'a> {
+    /// Wrap a slice of argument datums and the source they were read from.
+    ///
+    /// The format builds this for [`Sugar::read_spec`]; it is also exposed so a
+    /// `Sugar` can be unit-tested in isolation (read args with [`crate::sexpr`]).
+    pub fn new(args: &'a [ExprKind], src: &'a str) -> Self {
+        SugarArgs { args, src }
+    }
+
+    /// The number of arguments.
+    pub fn count(&self) -> usize {
+        self.args.len()
+    }
+
+    /// Find a `#:<key>` keyword and return the following integer value.
+    pub fn keyword_int(&self, key: &str) -> Result<Option<i64>, FormatError> {
+        match self.keyword_at(key) {
+            Some((i, kw)) => Ok(Some(
+                self.args
+                    .get(i + 1)
+                    .map(|v| parse_int(v, self.src))
+                    .transpose()?
+                    .ok_or_else(|| {
+                        err_at(
+                            kw,
+                            self.src,
+                            ErrorKind::Malformed(format!("#:{key} requires an integer")),
+                        )
+                    })?,
+            )),
+            None => Ok(None),
+        }
+    }
+
+    /// Find a `#:<key>` keyword and return the following float value.
+    pub fn keyword_f64(&self, key: &str) -> Result<Option<f64>, FormatError> {
+        match self.keyword_at(key) {
+            Some((i, kw)) => Ok(Some(
+                self.args
+                    .get(i + 1)
+                    .map(|v| parse_f64(v, self.src))
+                    .transpose()?
+                    .ok_or_else(|| {
+                        err_at(
+                            kw,
+                            self.src,
+                            ErrorKind::Malformed(format!("#:{key} requires a number")),
+                        )
+                    })?,
+            )),
+            None => Ok(None),
+        }
+    }
+
+    /// Whether a bare `#:<key>` flag keyword is present.
+    pub fn has_flag(&self, key: &str) -> bool {
+        self.args
+            .iter()
+            .any(|a| as_keyword(a).as_deref() == Some(key))
+    }
+
+    /// The `n`-th positional argument as a string literal.
+    pub fn str_at(&self, n: usize) -> Option<String> {
+        self.args.get(n).and_then(as_string)
+    }
+
+    /// The `n`-th positional argument as a symbol (e.g. a log level).
+    pub fn symbol_at(&self, n: usize) -> Option<String> {
+        self.args.get(n).and_then(as_symbol)
+    }
+
+    /// The `n`-th positional argument as an integer.
+    pub fn int_at(&self, n: usize) -> Result<Option<i64>, FormatError> {
+        self.args.get(n).map(|e| parse_int(e, self.src)).transpose()
+    }
+
+    /// The `n`-th positional argument as a float.
+    pub fn f64_at(&self, n: usize) -> Result<Option<f64>, FormatError> {
+        self.args.get(n).map(|e| parse_f64(e, self.src)).transpose()
+    }
+
+    /// The verbatim source slice of the `n`-th argument.
+    ///
+    /// The load-bearing primitive for code-carrying forms (`expr`/`branch`):
+    /// embedded Steel is captured byte-for-byte so node `src` strings - and the
+    /// content addresses that hash them - are preserved exactly.
+    pub fn verbatim_at(&self, n: usize) -> Option<&'a str> {
+        self.args.get(n).and_then(|e| span_src(e, self.src))
+    }
+
+    /// A malformed-form error located at the `n`-th argument (unlocated if the
+    /// argument is absent).
+    pub fn malformed_at(&self, n: usize, msg: impl Into<String>) -> FormatError {
+        match self.args.get(n) {
+            Some(e) => err_at(e, self.src, ErrorKind::Malformed(msg.into())),
+            None => FormatError::malformed(msg),
+        }
+    }
+
+    /// The index and keyword datum of the first `#:<key>` argument, if present.
+    fn keyword_at(&self, key: &str) -> Option<(usize, &'a ExprKind)> {
+        self.args
+            .iter()
+            .enumerate()
+            .find(|(_, a)| as_keyword(a).as_deref() == Some(key))
+            .map(|(i, a)| (i, a))
+    }
+}
 
 /// A set of keyword sugars layered over the generic `(node "Tag" ...)` form.
 ///
@@ -25,12 +148,7 @@ use steel::parser::ast::ExprKind;
 pub trait Sugar {
     /// Read a list-headed sugar form `(<head> <args>...)` into a node datum.
     /// `Ok(None)` means this sugar does not recognise `head` (try the next).
-    fn read_spec(
-        &self,
-        head: &str,
-        args: &[ExprKind],
-        src: &str,
-    ) -> Result<Option<Datum>, FormatError>;
+    fn read_spec(&self, head: &str, args: SugarArgs<'_>) -> Result<Option<Datum>, FormatError>;
 
     /// Read a bare keyword (a unit node, e.g. `inlet`) into a node datum.
     fn read_bare(&self, keyword: &str) -> Option<Datum>;
@@ -46,13 +164,8 @@ pub trait Sugar {
 
 /// Treat a reference to a sugar as a sugar, so `&S`/`&dyn Sugar` compose freely.
 impl<S: Sugar + ?Sized> Sugar for &S {
-    fn read_spec(
-        &self,
-        head: &str,
-        args: &[ExprKind],
-        src: &str,
-    ) -> Result<Option<Datum>, FormatError> {
-        (**self).read_spec(head, args, src)
+    fn read_spec(&self, head: &str, args: SugarArgs<'_>) -> Result<Option<Datum>, FormatError> {
+        (**self).read_spec(head, args)
     }
 
     fn read_bare(&self, keyword: &str) -> Option<Datum> {
@@ -73,14 +186,9 @@ impl<S: Sugar + ?Sized> Sugar for &S {
 pub struct Sugars<'a>(pub Vec<&'a dyn Sugar>);
 
 impl Sugar for Sugars<'_> {
-    fn read_spec(
-        &self,
-        head: &str,
-        args: &[ExprKind],
-        src: &str,
-    ) -> Result<Option<Datum>, FormatError> {
+    fn read_spec(&self, head: &str, args: SugarArgs<'_>) -> Result<Option<Datum>, FormatError> {
         for sugar in &self.0 {
-            if let Some(datum) = sugar.read_spec(head, args, src)? {
+            if let Some(datum) = sugar.read_spec(head, args)? {
                 return Ok(Some(datum));
             }
         }
@@ -100,27 +208,34 @@ impl Sugar for Sugars<'_> {
     }
 }
 
-/// The keyword sugars for gantz's built-in node set.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DefaultSugar;
+/// The composite keyword sugar for a node-type universe.
+///
+/// Implemented once on an application's top-level `Box<dyn Node>` to select which
+/// [`Sugar`]s its node set uses; the convenience entry points
+/// ([`from_str`](crate::from_str)/[`to_string`](crate::to_string)) read it via
+/// `N::sugar()`. Use the `_with` variants to pass a sugar explicitly instead.
+pub trait NodeSugar {
+    /// The composed sugar for this node set.
+    fn sugar() -> Sugars<'static>;
+}
 
-/// Sugar keyword -> typetag tag, for the built-ins that lower to a plain serde
-/// object with no extra arguments. Order is the canonical display order.
+/// The keyword sugars for `gantz_core`'s built-in node set: `inlet`, `outlet`,
+/// `apply`, `delay`, `id`, `expr` and `branch`. Downstream crates provide a
+/// [`Sugar`] for their own nodes and compose via [`Sugars`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CoreSugar;
+
+/// Sugar keyword -> typetag tag, for the `gantz_core` builtins that lower to a
+/// plain serde object with no extra arguments. Order is the canonical display
+/// order.
 const KEYWORD_TAG: &[(&str, &str)] = &[
     ("inlet", "Inlet"),
     ("outlet", "Outlet"),
     ("apply", "Apply"),
     ("delay", "Delay"),
     ("id", "Identity"),
-    ("bang", "Bang"),
-    ("inspect", "Inspect"),
-    ("update-bang", "UpdateBang"),
-    ("tick-bang", "TickBang"),
-    ("number", "Number"),
-    ("log", "Log"),
     ("expr", "Expr"),
     ("branch", "Branch"),
-    ("comment", "Comment"),
 ];
 
 /// The typetag tag for a sugar keyword.
@@ -139,35 +254,20 @@ fn keyword_for_tag(tag: &str) -> Option<&'static str> {
         .map(|&(kw, _)| kw)
 }
 
-impl Sugar for DefaultSugar {
-    fn read_spec(
-        &self,
-        head: &str,
-        args: &[ExprKind],
-        src: &str,
-    ) -> Result<Option<Datum>, FormatError> {
+impl Sugar for CoreSugar {
+    fn read_spec(&self, head: &str, args: SugarArgs<'_>) -> Result<Option<Datum>, FormatError> {
         let datum = match head {
             "inlet" => inlet_outlet_spec("Inlet", args),
             "outlet" => inlet_outlet_spec("Outlet", args),
-            "expr" => expr_spec(args, src)?,
-            "branch" => branch_spec(args, src)?,
-            "comment" => comment_spec(args, src)?,
-            "number" => number_spec(args, src)?,
-            "log" => log_spec(args, src)?,
-            "tick-bang" => tick_bang_spec(args, src)?,
+            "expr" => expr_spec(args)?,
+            "branch" => branch_spec(args)?,
             _ => return Ok(None),
         };
         Ok(Some(datum))
     }
 
     fn read_bare(&self, keyword: &str) -> Option<Datum> {
-        match keyword {
-            "log" => Some(node_datum(
-                "Log",
-                vec![("level", Datum::Str("INFO".into()))],
-            )),
-            _ => tag_for_keyword(keyword).map(|tag| node_datum(tag, vec![])),
-        }
+        tag_for_keyword(keyword).map(|tag| node_datum(tag, vec![]))
     }
 
     fn write_spec(&self, tag: &str, node: &Datum) -> Option<String> {
@@ -176,10 +276,6 @@ impl Sugar for DefaultSugar {
             "Outlet" => Some(write_inlet_outlet("outlet", node)),
             "Expr" => Some(write_expr(node)),
             "Branch" => Some(write_branch(node)),
-            "Comment" => Some(write_comment(node)),
-            "Number" => Some(write_number(node)),
-            "Log" => Some(write_log(node)),
-            "TickBang" => Some(write_tick_bang(node)),
             other => keyword_for_tag(other).map(str::to_string),
         }
     }
@@ -191,125 +287,51 @@ impl Sugar for DefaultSugar {
 
 // -- built-in reading --------------------------------------------------------
 
-/// Build a node datum from a typetag tag and ordered fields - an `&str`-keyed
-/// convenience over [`Datum::tagged`].
-fn node_datum(tag: &str, fields: Vec<(&str, Datum)>) -> Datum {
-    Datum::tagged(
-        tag,
-        fields
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect(),
-    )
-}
-
 /// Read an `(inlet [ty [description]])` / `(outlet ...)` form: two optional
 /// string args carrying the socket's hover-doc type label and description.
 /// Empty strings are omitted so they serialize as the struct's defaults.
-fn inlet_outlet_spec(tag: &str, args: &[ExprKind]) -> Datum {
+fn inlet_outlet_spec(tag: &str, args: SugarArgs<'_>) -> Datum {
     let mut fields = Vec::new();
-    if let Some(ty) = args.first().and_then(as_string).filter(|s| !s.is_empty()) {
+    if let Some(ty) = args.str_at(0).filter(|s| !s.is_empty()) {
         fields.push(("ty", Datum::Str(ty)));
     }
-    if let Some(desc) = args.get(1).and_then(as_string).filter(|s| !s.is_empty()) {
+    if let Some(desc) = args.str_at(1).filter(|s| !s.is_empty()) {
         fields.push(("description", Datum::Str(desc)));
     }
     node_datum(tag, fields)
 }
 
-fn expr_spec(args: &[ExprKind], src: &str) -> Result<Datum, FormatError> {
-    let code = args
-        .first()
-        .ok_or_else(|| FormatError::new(ErrorKind::Malformed("expr requires code".into())))?;
-    let code_src = span_src(code, src).ok_or_else(|| {
-        err_at(
-            code,
-            src,
-            ErrorKind::Malformed("could not slice expr code".into()),
-        )
+fn expr_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
+    let code = args.verbatim_at(0).ok_or_else(|| match args.count() {
+        0 => FormatError::malformed("expr requires code"),
+        _ => args.malformed_at(0, "could not slice expr code"),
     })?;
-    let mut fields = vec![("src", Datum::Str(code_src.to_string()))];
-    if let Some(out) = keyword_int(&args[1..], "out", src)? {
+    let mut fields = vec![("src", Datum::Str(code.to_string()))];
+    if let Some(out) = args.keyword_int("out")? {
         fields.push(("outputs", Datum::U64(out.max(0) as u64)));
     }
     Ok(node_datum("Expr", fields))
 }
 
-fn branch_spec(args: &[ExprKind], src: &str) -> Result<Datum, FormatError> {
-    let code = args
-        .first()
-        .ok_or_else(|| FormatError::new(ErrorKind::Malformed("branch requires code".into())))?;
-    let code_src = span_src(code, src).ok_or_else(|| {
-        err_at(
-            code,
-            src,
-            ErrorKind::Malformed("could not slice branch code".into()),
-        )
+fn branch_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
+    let code = args.verbatim_at(0).ok_or_else(|| match args.count() {
+        0 => FormatError::malformed("branch requires code"),
+        _ => args.malformed_at(0, "could not slice branch code"),
     })?;
-    let masks: Vec<Datum> = args[1..]
-        .iter()
-        .map(|m| {
-            as_string(m).map(Datum::Str).ok_or_else(|| {
-                err_at(
-                    m,
-                    src,
-                    ErrorKind::Malformed("branch mask must be a string".into()),
-                )
-            })
-        })
-        .collect::<Result<_, _>>()?;
+    let mut masks = Vec::with_capacity(args.count().saturating_sub(1));
+    for n in 1..args.count() {
+        let mask = args
+            .str_at(n)
+            .ok_or_else(|| args.malformed_at(n, "branch mask must be a string"))?;
+        masks.push(Datum::Str(mask));
+    }
     Ok(node_datum(
         "Branch",
         vec![
-            ("src", Datum::Str(code_src.to_string())),
+            ("src", Datum::Str(code.to_string())),
             ("branches", Datum::Seq(masks)),
         ],
     ))
-}
-
-fn comment_spec(args: &[ExprKind], src: &str) -> Result<Datum, FormatError> {
-    let text = args
-        .first()
-        .and_then(as_string)
-        .ok_or_else(|| FormatError::new(ErrorKind::Malformed("comment requires text".into())))?;
-    let [w, h] = match (args.get(1), args.get(2)) {
-        (Some(w), Some(h)) => [int_at(w, src)?.max(0) as u64, int_at(h, src)?.max(0) as u64],
-        _ => [100, 40],
-    };
-    Ok(node_datum(
-        "Comment",
-        vec![
-            ("text", Datum::Str(text)),
-            ("size", Datum::Seq(vec![Datum::U64(w), Datum::U64(h)])),
-        ],
-    ))
-}
-
-/// Read a `(number [#:min m] [#:max m] [#:precision n] [#:no-push-eval])` form.
-/// Only the non-default fields are emitted, so a bare `number` stays bare.
-fn number_spec(args: &[ExprKind], src: &str) -> Result<Datum, FormatError> {
-    let mut fields = Vec::new();
-    if let Some(min) = keyword_f64(args, "min", src)? {
-        fields.push(("min", Datum::F64(min)));
-    }
-    if let Some(max) = keyword_f64(args, "max", src)? {
-        fields.push(("max", Datum::F64(max)));
-    }
-    if let Some(precision) = keyword_int(args, "precision", src)? {
-        fields.push(("precision", Datum::U64(precision.max(0) as u64)));
-    }
-    if has_flag(args, "no-push-eval") {
-        fields.push(("push_eval_on_edit", Datum::Bool(false)));
-    }
-    Ok(node_datum("Number", fields))
-}
-
-fn log_spec(args: &[ExprKind], src: &str) -> Result<Datum, FormatError> {
-    let level = match args.first().and_then(as_symbol) {
-        Some(s) => log_level(&s, &args[0], src)?,
-        None => "INFO".to_string(),
-    };
-    Ok(node_datum("Log", vec![("level", Datum::Str(level))]))
 }
 
 // -- built-in writing --------------------------------------------------------
@@ -353,174 +375,16 @@ fn write_inlet_outlet(keyword: &str, node: &Datum) -> String {
     }
 }
 
-fn write_comment(node: &Datum) -> String {
-    let text = node.get("text").and_then(Datum::as_str).unwrap_or("");
-    let (w, h) = node
-        .get("size")
-        .and_then(Datum::as_seq)
-        .and_then(|a| Some((a.first()?.as_i64()?, a.get(1)?.as_i64()?)))
-        .unwrap_or((100, 40));
-    format!("(comment {} {w} {h})", quote(text))
-}
-
-/// Read `(tick-bang [#:duration secs | #:rate hz])` into a `TickBang`'s
-/// `interval` enum field. `#:duration` and `#:rate` are mutually exclusive;
-/// neither given yields the default duration.
-fn tick_bang_spec(args: &[ExprKind], src: &str) -> Result<Datum, FormatError> {
-    let duration = keyword_f64(args, "duration", src)?;
-    let rate = keyword_f64(args, "rate", src)?;
-    let fields = match (duration, rate) {
-        (Some(_), Some(_)) => {
-            return Err(FormatError::new(ErrorKind::Malformed(
-                "tick-bang: specify #:duration or #:rate, not both".into(),
-            )));
-        }
-        (Some(secs), None) => vec![("interval", tick_interval_datum("Duration", secs))],
-        (None, Some(hz)) => vec![("interval", tick_interval_datum("Rate", hz))],
-        (None, None) => vec![],
-    };
-    Ok(node_datum("TickBang", fields))
-}
-
-/// The `interval` field datum for a `TickBang` `Interval` enum variant
-/// (externally tagged, e.g. `(("Rate" hz))`).
-fn tick_interval_datum(variant: &str, value: f64) -> Datum {
-    Datum::Map(vec![(variant.to_string(), Datum::F64(value))])
-}
-
-/// Write a `TickBang` as a bare `tick-bang` for the default duration, else as
-/// `(tick-bang #:duration secs)` or `(tick-bang #:rate hz)` per its unit.
-fn write_tick_bang(node: &Datum) -> String {
-    match tick_interval(node) {
-        Some(("Rate", hz)) => format!("(tick-bang #:rate {hz})"),
-        Some(("Duration", secs)) if secs != 1.0 => format!("(tick-bang #:duration {secs})"),
-        _ => "tick-bang".to_string(),
-    }
-}
-
-/// Read a `TickBang`'s `interval` field as `(variant, value)`.
-fn tick_interval(node: &Datum) -> Option<(&str, f64)> {
-    match node.get("interval")? {
-        Datum::Map(entries) => {
-            let (variant, value) = entries.first()?;
-            Some((variant.as_str(), value.as_f64()?))
-        }
-        _ => None,
-    }
-}
-
-/// Write a `Number` as a bare `number` when all config is default, else as
-/// `(number #:min m #:max m #:precision n #:no-push-eval)` with only the
-/// non-default fields.
-fn write_number(node: &Datum) -> String {
-    let min = node.get("min").and_then(Datum::as_f64);
-    let max = node.get("max").and_then(Datum::as_f64);
-    let precision = node.get("precision").and_then(Datum::as_i64);
-    let push = node
-        .get("push_eval_on_edit")
-        .and_then(Datum::as_bool)
-        .unwrap_or(true);
-    if min.is_none() && max.is_none() && precision.is_none() && push {
-        return "number".to_string();
-    }
-    let mut parts = Vec::new();
-    if let Some(min) = min {
-        parts.push(format!("#:min {min}"));
-    }
-    if let Some(max) = max {
-        parts.push(format!("#:max {max}"));
-    }
-    if let Some(precision) = precision {
-        parts.push(format!("#:precision {precision}"));
-    }
-    if !push {
-        parts.push("#:no-push-eval".to_string());
-    }
-    format!("(number {})", parts.join(" "))
-}
-
-fn write_log(node: &Datum) -> String {
-    match node.get("level").and_then(Datum::as_str) {
-        Some(level) if !level.eq_ignore_ascii_case("info") => {
-            format!("(log {})", level.to_ascii_lowercase())
-        }
-        _ => "(log)".to_string(),
-    }
-}
-
 // -- helpers -----------------------------------------------------------------
 
-fn int_at(e: &ExprKind, src: &str) -> Result<i64, FormatError> {
+fn parse_int(e: &ExprKind, src: &str) -> Result<i64, FormatError> {
     sexpr::as_i64(e, src)
         .ok_or_else(|| err_at(e, src, ErrorKind::Malformed("expected an integer".into())))
 }
 
-/// Find a `#:<key>` keyword in `args` and return the following integer value.
-fn keyword_int(args: &[ExprKind], key: &str, src: &str) -> Result<Option<i64>, FormatError> {
-    for (i, a) in args.iter().enumerate() {
-        if as_keyword(a).as_deref() == Some(key) {
-            let val = args
-                .get(i + 1)
-                .map(|v| int_at(v, src))
-                .transpose()?
-                .ok_or_else(|| {
-                    err_at(
-                        a,
-                        src,
-                        ErrorKind::Malformed(format!("#:{key} requires an integer")),
-                    )
-                })?;
-            return Ok(Some(val));
-        }
-    }
-    Ok(None)
-}
-
-fn float_at(e: &ExprKind, src: &str) -> Result<f64, FormatError> {
+fn parse_f64(e: &ExprKind, src: &str) -> Result<f64, FormatError> {
     sexpr::as_f64(e, src)
         .ok_or_else(|| err_at(e, src, ErrorKind::Malformed("expected a number".into())))
-}
-
-/// Find a `#:<key>` keyword in `args` and return the following float value.
-fn keyword_f64(args: &[ExprKind], key: &str, src: &str) -> Result<Option<f64>, FormatError> {
-    for (i, a) in args.iter().enumerate() {
-        if as_keyword(a).as_deref() == Some(key) {
-            let val = args
-                .get(i + 1)
-                .map(|v| float_at(v, src))
-                .transpose()?
-                .ok_or_else(|| {
-                    err_at(
-                        a,
-                        src,
-                        ErrorKind::Malformed(format!("#:{key} requires a number")),
-                    )
-                })?;
-            return Ok(Some(val));
-        }
-    }
-    Ok(None)
-}
-
-/// Whether a bare `#:<key>` flag keyword is present in `args`.
-fn has_flag(args: &[ExprKind], key: &str) -> bool {
-    args.iter().any(|a| as_keyword(a).as_deref() == Some(key))
-}
-
-/// Map a log-level symbol to the `log::Level` serde representation.
-fn log_level(sym: &str, e: &ExprKind, src: &str) -> Result<String, FormatError> {
-    match sym.to_ascii_lowercase().as_str() {
-        "error" => Ok("ERROR".into()),
-        "warn" => Ok("WARN".into()),
-        "info" => Ok("INFO".into()),
-        "debug" => Ok("DEBUG".into()),
-        "trace" => Ok("TRACE".into()),
-        other => Err(err_at(
-            e,
-            src,
-            ErrorKind::Malformed(format!("unknown log level `{other}`")),
-        )),
-    }
 }
 
 #[cfg(test)]
@@ -531,19 +395,11 @@ mod tests {
     struct GainSugar;
 
     impl Sugar for GainSugar {
-        fn read_spec(
-            &self,
-            head: &str,
-            args: &[ExprKind],
-            src: &str,
-        ) -> Result<Option<Datum>, FormatError> {
+        fn read_spec(&self, head: &str, args: SugarArgs<'_>) -> Result<Option<Datum>, FormatError> {
             if head != "gain" {
                 return Ok(None);
             }
-            let db = args
-                .first()
-                .and_then(|e| sexpr::as_i64(e, src))
-                .unwrap_or(0);
+            let db = args.int_at(0)?.unwrap_or(0);
             Ok(Some(node_datum("Gain", vec![("db", Datum::I64(db))])))
         }
 
@@ -575,7 +431,9 @@ mod tests {
         let exprs = sexpr::read(text).expect("read");
         let args = sexpr::list_args(&exprs[0]).expect("list");
         let head = sexpr::as_symbol(&args[0]).expect("head");
-        sugar.read_spec(&head, &args[1..], text).expect("read_spec")
+        sugar
+            .read_spec(&head, SugarArgs::new(&args[1..], text))
+            .expect("read_spec")
     }
 
     #[test]
@@ -594,14 +452,14 @@ mod tests {
 
     #[test]
     fn sugars_compose_first_hit_wins() {
-        let (gain, default) = (GainSugar, DefaultSugar);
-        let sugars = Sugars(vec![&gain, &default]);
+        let (gain, core) = (GainSugar, CoreSugar);
+        let sugars = Sugars(vec![&gain, &core]);
 
         // The custom keyword is handled by GainSugar.
         let g = read_spec(&sugars, "(gain 3)").expect("gain recognised");
         assert_eq!(g.get("db").and_then(Datum::as_i64), Some(3));
 
-        // A built-in keyword still resolves through the composed DefaultSugar.
+        // A built-in keyword still resolves through the composed CoreSugar.
         let e = read_spec(&sugars, "(expr (+ 1 2))").expect("expr recognised");
         assert_eq!(e.get("type").and_then(Datum::as_str), Some("Expr"));
 
@@ -616,7 +474,11 @@ mod tests {
         // None (so the reader would reject the keyword) and writes return None
         // (so the writer emits the generic `(node ...)` form).
         let s = GainSugar;
-        assert!(s.read_spec("expr", &[], "").expect("ok").is_none());
+        assert!(
+            s.read_spec("expr", SugarArgs::new(&[], ""))
+                .expect("ok")
+                .is_none()
+        );
         assert!(s.read_bare("inlet").is_none());
         assert!(
             s.write_spec("Inlet", &node_datum("Inlet", vec![]))
@@ -627,7 +489,7 @@ mod tests {
 
     #[test]
     fn inlet_outlet_docs_round_trip() {
-        let s = DefaultSugar;
+        let s = CoreSugar;
 
         // Both type and description.
         let d = read_spec(&s, r#"(inlet "number" "left operand")"#).expect("recognised");
@@ -659,91 +521,5 @@ mod tests {
         // A bare (undocumented) inlet still writes as the bare keyword.
         let bare = s.read_bare("inlet").expect("bare inlet");
         assert_eq!(s.write_spec("Inlet", &bare).as_deref(), Some("inlet"));
-    }
-
-    #[test]
-    fn number_config_round_trips() {
-        let s = DefaultSugar;
-
-        // A bare (default) number stays bare, whether read as a keyword or spec.
-        let bare = s.read_bare("number").expect("bare number");
-        assert_eq!(s.write_spec("Number", &bare).as_deref(), Some("number"));
-        let empty = read_spec(&s, "(number)").expect("empty spec");
-        assert_eq!(s.write_spec("Number", &empty).as_deref(), Some("number"));
-
-        // Min/max bounds.
-        let mm = read_spec(&s, "(number #:min 0 #:max 100)").expect("min/max");
-        assert_eq!(mm.get("min").and_then(Datum::as_f64), Some(0.0));
-        assert_eq!(mm.get("max").and_then(Datum::as_f64), Some(100.0));
-        assert_eq!(
-            s.write_spec("Number", &mm).as_deref(),
-            Some("(number #:min 0 #:max 100)"),
-        );
-
-        // Display precision.
-        let p = read_spec(&s, "(number #:precision 2)").expect("precision");
-        assert_eq!(p.get("precision").and_then(Datum::as_i64), Some(2));
-        assert_eq!(
-            s.write_spec("Number", &p).as_deref(),
-            Some("(number #:precision 2)"),
-        );
-
-        // Disabled push-eval.
-        let np = read_spec(&s, "(number #:no-push-eval)").expect("no push-eval");
-        assert_eq!(
-            np.get("push_eval_on_edit").and_then(Datum::as_bool),
-            Some(false)
-        );
-        assert_eq!(
-            s.write_spec("Number", &np).as_deref(),
-            Some("(number #:no-push-eval)"),
-        );
-
-        // Everything at once round-trips in canonical order.
-        let all = read_spec(
-            &s,
-            "(number #:min -1.5 #:max 1.5 #:precision 3 #:no-push-eval)",
-        )
-        .expect("all");
-        assert_eq!(
-            s.write_spec("Number", &all).as_deref(),
-            Some("(number #:min -1.5 #:max 1.5 #:precision 3 #:no-push-eval)"),
-        );
-    }
-
-    #[test]
-    fn tick_bang_config_round_trips() {
-        let s = DefaultSugar;
-
-        // A bare (default-duration) tick! stays bare, read as keyword or spec.
-        let bare = s.read_bare("tick-bang").expect("bare tick-bang");
-        assert_eq!(
-            s.write_spec("TickBang", &bare).as_deref(),
-            Some("tick-bang")
-        );
-
-        // A custom duration round-trips via the `#:duration` keyword (seconds).
-        let d = read_spec(&s, "(tick-bang #:duration 0.5)").expect("duration");
-        assert_eq!(
-            s.write_spec("TickBang", &d).as_deref(),
-            Some("(tick-bang #:duration 0.5)"),
-        );
-
-        // A rate round-trips via the `#:rate` keyword (Hz), stored exactly.
-        let r = read_spec(&s, "(tick-bang #:rate 60)").expect("rate");
-        assert_eq!(
-            s.write_spec("TickBang", &r).as_deref(),
-            Some("(tick-bang #:rate 60)"),
-        );
-
-        // An explicit default duration also writes as the bare keyword.
-        let one = read_spec(&s, "(tick-bang #:duration 1)").expect("default duration");
-        assert_eq!(s.write_spec("TickBang", &one).as_deref(), Some("tick-bang"));
-
-        // `#:duration` and `#:rate` are mutually exclusive.
-        let text = "(tick-bang #:duration 0.5 #:rate 60)";
-        let exprs = sexpr::read(text).expect("read");
-        let args = sexpr::list_args(&exprs[0]).expect("list");
-        assert!(s.read_spec("tick-bang", &args[1..], text).is_err());
     }
 }

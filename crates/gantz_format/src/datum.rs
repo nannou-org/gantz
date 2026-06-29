@@ -81,7 +81,9 @@ where
 impl Datum {
     /// Build a node datum: a `type` field (the typetag tag) prepended to
     /// `fields`. The single canonical way the format constructs a tagged map.
-    pub(crate) fn tagged(tag: &str, fields: Vec<(String, Datum)>) -> Datum {
+    /// Out-of-crate [`Sugar`](crate::Sugar) impls usually want the `&str`-keyed
+    /// [`node_datum`] convenience instead.
+    pub fn tagged(tag: &str, fields: Vec<(String, Datum)>) -> Datum {
         let mut entries = Vec::with_capacity(fields.len() + 1);
         entries.push(("type".to_string(), Datum::Str(tag.to_string())));
         entries.extend(fields);
@@ -89,7 +91,7 @@ impl Datum {
     }
 
     /// The value of the map entry `key`, if this is a map containing it.
-    pub(crate) fn get(&self, key: &str) -> Option<&Datum> {
+    pub fn get(&self, key: &str) -> Option<&Datum> {
         match self {
             Datum::Map(entries) => entries
                 .iter()
@@ -100,7 +102,7 @@ impl Datum {
     }
 
     /// The contents of a string datum.
-    pub(crate) fn as_str(&self) -> Option<&str> {
+    pub fn as_str(&self) -> Option<&str> {
         match self {
             Datum::Str(s) => Some(s),
             _ => None,
@@ -108,7 +110,7 @@ impl Datum {
     }
 
     /// The value of a boolean datum.
-    pub(crate) fn as_bool(&self) -> Option<bool> {
+    pub fn as_bool(&self) -> Option<bool> {
         match self {
             Datum::Bool(b) => Some(*b),
             _ => None,
@@ -116,7 +118,7 @@ impl Datum {
     }
 
     /// The value of an integer datum (signed or unsigned, if it fits in `i64`).
-    pub(crate) fn as_i64(&self) -> Option<i64> {
+    pub fn as_i64(&self) -> Option<i64> {
         match self {
             Datum::I64(n) => Some(*n),
             Datum::U64(n) => i64::try_from(*n).ok(),
@@ -125,7 +127,7 @@ impl Datum {
     }
 
     /// The value of a float datum, coercing integer datums to `f64`.
-    pub(crate) fn as_f64(&self) -> Option<f64> {
+    pub fn as_f64(&self) -> Option<f64> {
         match self {
             Datum::F64(n) => Some(*n),
             Datum::I64(n) => Some(*n as f64),
@@ -135,12 +137,25 @@ impl Datum {
     }
 
     /// The elements of a sequence datum.
-    pub(crate) fn as_seq(&self) -> Option<&[Datum]> {
+    pub fn as_seq(&self) -> Option<&[Datum]> {
         match self {
             Datum::Seq(items) => Some(items),
             _ => None,
         }
     }
+}
+
+/// Build a node datum from a typetag tag and ordered `&str`-keyed fields - the
+/// ergonomic builder a [`Sugar`](crate::Sugar) uses to construct the value its
+/// `read_spec` returns, without depending on `Datum`'s internal map shape.
+pub fn node_datum(tag: &str, fields: Vec<(&str, Datum)>) -> Datum {
+    Datum::tagged(
+        tag,
+        fields
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
+    )
 }
 
 // -- error -------------------------------------------------------------------

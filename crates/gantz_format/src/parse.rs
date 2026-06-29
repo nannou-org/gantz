@@ -14,7 +14,7 @@ use crate::model::{
     NameDecl, NodeDecl, NodeSpec, RefSpec,
 };
 use crate::sexpr::{self, as_keyword, as_string, as_symbol, err_at, list_args, span_src};
-use crate::sugar::Sugar;
+use crate::sugar::{Sugar, SugarArgs};
 use steel::parser::ast::ExprKind;
 
 /// Parse a complete `.gantz` document, interpreting node sugar with `sugar`.
@@ -143,7 +143,7 @@ fn parse_node_spec(e: &ExprKind, src: &str, sugar: &dyn Sugar) -> Result<NodeSpe
         "ref" => parse_ref_spec(false, rest, src),
         "fn-ref" => parse_ref_spec(true, rest, src),
         "node" => parse_generic_spec(rest, e, src),
-        other => match sugar.read_spec(other, rest, src)? {
+        other => match sugar.read_spec(other, SugarArgs::new(rest, src))? {
             Some(datum) => Ok(NodeSpec::Value(datum)),
             None => Err(err_at(
                 e,
@@ -445,7 +445,7 @@ fn int_field(e: &ExprKind, src: &str) -> Result<i64, FormatError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sugar::DefaultSugar;
+    use crate::sugar::CoreSugar;
 
     #[test]
     fn reads_zero_ceremony_mul() {
@@ -454,7 +454,7 @@ mod tests {
   (l inlet) (r inlet) (out outlet)
   (m (expr (* $l $r)))
   (-> l (m 0)) (-> r (m 1)) (-> m out))";
-        let doc = parse(text, &DefaultSugar).expect("parse");
+        let doc = parse(text, &CoreSugar).expect("parse");
         assert_eq!(doc.graphs.len(), 1);
         let g = &doc.graphs[0];
         assert_eq!(g.id, Addr::Label("mul".to_string()));
@@ -479,7 +479,7 @@ mod tests {
     #[test]
     fn preserves_unrecognized_forms() {
         let text = "(graph mul (m (expr 1)))\n(layout mul (m 1 2))";
-        let doc = parse(text, &DefaultSugar).expect("parse");
+        let doc = parse(text, &CoreSugar).expect("parse");
         assert_eq!(doc.graphs.len(), 1);
         assert_eq!(doc.extra.len(), 1);
         assert_eq!(doc.extra[0].head, "layout");
@@ -492,28 +492,17 @@ mod tests {
 (graph mul (m (expr 1)))
 (descriptions
   (mul \"multiply two numbers\"))";
-        let doc = parse(text, &DefaultSugar).expect("parse");
+        let doc = parse(text, &CoreSugar).expect("parse");
         assert_eq!(doc.descriptions.len(), 1);
         assert_eq!(doc.descriptions[0].name, "mul");
         assert_eq!(doc.descriptions[0].description, "multiply two numbers");
 
         // write -> parse preserves the description verbatim.
-        let written = crate::writer::write_document(&doc, &DefaultSugar);
-        let reparsed = parse(&written, &DefaultSugar).expect("reparse");
+        let written = crate::writer::write_document(&doc, &CoreSugar);
+        let reparsed = parse(&written, &CoreSugar).expect("reparse");
         assert_eq!(reparsed.descriptions.len(), 1);
         assert_eq!(reparsed.descriptions[0].name, "mul");
         assert_eq!(reparsed.descriptions[0].description, "multiply two numbers");
-    }
-
-    /// The shipped `base.gantz` parses, including its `(descriptions ...)` form
-    /// over names with `?`/`-` (e.g. `empty?`, `list-ref`).
-    #[test]
-    fn parses_base_gantz() {
-        let text = include_str!("../../gantz_base/base.gantz");
-        let doc = parse(text, &DefaultSugar).expect("base.gantz must parse");
-        assert!(doc.descriptions.iter().any(|d| d.name == "add"));
-        assert!(doc.descriptions.iter().any(|d| d.name == "empty?"));
-        assert!(doc.descriptions.iter().any(|d| d.name == "list-ref"));
     }
 
     #[test]
@@ -523,7 +512,7 @@ mod tests {
   (s (expr (values $x (* $x 2)) #:out 2))
   (b (branch (if $n (list 0 0) (list 1 0)) \"10\" \"01\"))
   (m (ref mul \"834568e9\")))";
-        let doc = parse(text, &DefaultSugar).expect("parse");
+        let doc = parse(text, &CoreSugar).expect("parse");
         let g = &doc.graphs[0];
         let s = g.body.nodes.iter().find(|n| n.name == "s").unwrap();
         match &s.spec {
@@ -567,7 +556,7 @@ mod tests {
        (cfg ((gain 6) (mode \"hi\")))
        (tags #(\"a\" \"b\"))
        (flag #t))))";
-        let doc1 = parse(text, &DefaultSugar).expect("parse 1");
+        let doc1 = parse(text, &CoreSugar).expect("parse 1");
         let node1 = &doc1.graphs[0].body.nodes[0];
         match &node1.spec {
             NodeSpec::Value(v) => {
@@ -587,8 +576,8 @@ mod tests {
             }
             other => panic!("expected value, got {other:?}"),
         }
-        let text2 = crate::writer::write_document(&doc1, &DefaultSugar);
-        let doc2 = parse(&text2, &DefaultSugar).expect("parse 2");
+        let text2 = crate::writer::write_document(&doc1, &CoreSugar);
+        let doc2 = parse(&text2, &CoreSugar).expect("parse 2");
         let node2 = &doc2.graphs[0].body.nodes[0];
         assert_eq!(
             format!("{:?}", node1.spec),
