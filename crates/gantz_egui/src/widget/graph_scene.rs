@@ -307,6 +307,7 @@ where
         let view_toggles = self.view_toggles;
         let mut reset_layout = false;
         let mut request_layout = false;
+        let mut request_center = false;
         if !immutable || view_toggles.is_some() {
             let layer_id = graph_response.response.layer_id;
             graph_response.response.context_menu(|ui| {
@@ -340,6 +341,14 @@ where
                         request_layout = true;
                         ui.close();
                     }
+                    if ui
+                        .button("center-view")
+                        .on_hover_text("frame the whole graph in the view")
+                        .clicked()
+                    {
+                        request_center = true;
+                        ui.close();
+                    }
                 }
                 if let Some(view) = view_toggles {
                     ui.menu_button("panes", |ui| {
@@ -355,6 +364,9 @@ where
         }
         if request_layout {
             state.pending_auto_layout = true;
+        }
+        if request_center {
+            state.pending_center_view = true;
         }
         if reset_layout {
             responses.push(DynResponse::new(ResetTilesLayout));
