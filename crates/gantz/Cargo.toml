@@ -23,15 +23,13 @@ gantz_base.workspace = true
 gantz_ca.workspace = true
 gantz_core.workspace = true
 gantz_egui.workspace = true
+gantz_format.workspace = true
 gantz_std.workspace = true
 petgraph.workspace = true
 serde.workspace = true
 steel-core.workspace = true
 typetag.workspace = true
 web-time.workspace = true
-
-[dev-dependencies]
-gantz_format.workspace = true
 
 [[bin]]
 name = "gantz"

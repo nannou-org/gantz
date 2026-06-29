@@ -87,6 +87,19 @@ impl bevy_gantz_egui::node::ToTickBang for Box<dyn Node> {
 #[typetag::serde]
 impl Node for Box<dyn Node> {}
 
+/// The composite `.gantz` keyword sugar for this app's full node set: the
+/// `gantz_core`, `gantz_std`, `gantz_egui` and `bevy_gantz_egui` node sugars.
+impl gantz_format::NodeSugar for Box<dyn Node> {
+    fn sugar() -> gantz_format::Sugars<'static> {
+        gantz_format::Sugars(vec![
+            &gantz_format::CoreSugar,
+            &gantz_std::StdSugar,
+            &gantz_egui::EguiSugar,
+            &bevy_gantz_egui::BevySugar,
+        ])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Node;

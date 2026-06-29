@@ -335,6 +335,18 @@ impl Node for gantz_egui::node::Plot {}
 #[typetag::serde]
 impl Node for Box<dyn Node> {}
 
+/// The composite `.gantz` keyword sugar for the demo's node set: the
+/// `gantz_core`, `gantz_std` and `gantz_egui` node sugars (no bevy nodes here).
+impl gantz_format::NodeSugar for Box<dyn Node> {
+    fn sugar() -> gantz_format::Sugars<'static> {
+        gantz_format::Sugars(vec![
+            &gantz_format::CoreSugar,
+            &gantz_std::StdSugar,
+            &gantz_egui::EguiSugar,
+        ])
+    }
+}
+
 // Required by `gantz_egui::ops::branch_node` to replace branched nodes.
 impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
     fn from(named: gantz_egui::node::NamedRef) -> Self {

@@ -919,6 +919,7 @@ dependencies = [
  "gantz_ca",
  "gantz_core",
  "gantz_egui",
+ "gantz_format",
  "rfd",
  "serde",
  "steel-core",
@@ -3304,6 +3305,7 @@ version = "0.3.0"
 dependencies = [
  "gantz_ca",
  "gantz_core",
+ "gantz_format",
  "log",
  "petgraph",
  "serde",
