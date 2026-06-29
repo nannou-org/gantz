@@ -1352,8 +1352,10 @@ where
                     let immutable = head_immutable(&fh, gantz.base_immutable, base_names);
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
                     let result = access.with_head_mut(&fh, |data| {
-                        node_inspector(gantz.env, data.graph, data.vm, head_state, immutable, ui)
-                            .inner
+                        node_inspector(
+                            gantz.env, data.graph, data.vm, head_state, &fh, immutable, ui,
+                        )
+                        .inner
                     });
                     if let Some((changed, payloads)) = result {
                         if changed {
@@ -2671,6 +2673,7 @@ fn node_inspector<N>(
     root: &mut gantz_core::node::graph::Graph<N>,
     vm: &mut Engine,
     head_state: &mut OpenHeadState,
+    head: &gantz_ca::Head,
     immutable: bool,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<(bool, Vec<DynResponse>)>
@@ -2687,12 +2690,15 @@ where
                 let ids: Vec<_> = graph.node_references().map(|n_ref| n_ref.id()).collect();
                 // Collect the inlets and outlets.
                 let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
+                // The rect of the first selected node, used to scroll to it.
+                let mut selected_rect: Option<egui::Rect> = None;
                 for id in ids {
                     let mut frame = egui::Frame::group(ui.style());
-                    if head_state.scene.interaction.selection.nodes.contains(&id) {
+                    let is_selected = head_state.scene.interaction.selection.nodes.contains(&id);
+                    if is_selected {
                         frame.stroke.color = ui.visuals().selection.stroke.color;
                     }
-                    frame.show(ui, |ui| {
+                    let frame_resp = frame.show(ui, |ui| {
                         let Some(node) = graph.node_weight_mut(id) else {
                             return;
                         };
@@ -2714,6 +2720,30 @@ where
                             }
                         }
                     });
+                    if is_selected && selected_rect.is_none() {
+                        selected_rect = Some(frame_resp.response.rect);
+                    }
+                }
+
+                // Scroll to the first selected node when the selection changes,
+                // mirroring the Steel view's scroll-to-span on selection.
+                let state_id = egui::Id::new("node_inspector_selection");
+                let mut selected: Vec<node::Id> = head_state
+                    .scene
+                    .interaction
+                    .selection
+                    .nodes
+                    .iter()
+                    .map(|n| n.index())
+                    .collect();
+                selected.sort_unstable();
+                let current = egui::Id::new(("inspector_sel", head, &selected));
+                let prev: Option<egui::Id> = ui.ctx().data(|d| d.get_temp(state_id));
+                if prev != Some(current) {
+                    ui.ctx().data_mut(|d| d.insert_temp(state_id, current));
+                    if let Some(rect) = selected_rect {
+                        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                    }
                 }
             });
         (changed, responses)
