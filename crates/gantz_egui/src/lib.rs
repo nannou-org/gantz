@@ -13,6 +13,7 @@ pub mod cycle;
 pub mod export;
 pub mod format;
 mod impls;
+pub mod keybind;
 pub mod node;
 pub mod ops;
 pub mod reg;
@@ -23,6 +24,7 @@ pub mod widget;
 
 // Re-export traits that make up the Registry supertrait.
 pub use egui_graph::SocketKind;
+pub use keybind::{Action, Keymap};
 pub use node::{FnNodeNames, NameRegistry};
 pub use reg::RegistryRef;
 pub use response::{

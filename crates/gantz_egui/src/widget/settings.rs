@@ -1,7 +1,8 @@
 //! The "Settings" sidebar tab: globally-relevant configuration grouped into
-//! Panes / Style / Global subtabs.
+//! Global / Style / Keybinds / Panes subtabs.
 
 use super::gantz::{LayoutConfig, SceneConfig, ViewToggles};
+use crate::Keymap;
 
 /// Which settings subtab is selected. Persisted only within a session.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -9,6 +10,7 @@ enum SettingsTab {
     #[default]
     Global,
     Style,
+    Keybinds,
     Panes,
 }
 
@@ -25,13 +27,15 @@ pub struct SettingsResponse {
     pub reset_layout: bool,
 }
 
-/// Render the Settings pane: a subtab selector over Panes / Style / Global.
+/// Render the Settings pane: a subtab selector over Global / Style / Keybinds /
+/// Panes.
 pub fn settings(
     view: &mut ViewToggles,
     compile_config: Option<gantz_core::compile::Config>,
     validate_change_tracking: Option<bool>,
     layout_config: &mut LayoutConfig,
     scene_config: &mut SceneConfig,
+    keymap: &mut Keymap,
     ui: &mut egui::Ui,
 ) -> SettingsResponse {
     let id = ui.id().with("settings_subtab");
@@ -61,6 +65,7 @@ pub fn settings(
         };
         tab_label(ui, SettingsTab::Global, "Global");
         tab_label(ui, SettingsTab::Style, "Style");
+        tab_label(ui, SettingsTab::Keybinds, "Keybinds");
         tab_label(ui, SettingsTab::Panes, "Panes");
     });
     ui.separator();
@@ -89,6 +94,11 @@ pub fn settings(
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| super::style_config(&mut scene_config.grid, ui));
+        }
+        SettingsTab::Keybinds => {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| super::keybinds_config(keymap, ui));
         }
         SettingsTab::Global => {
             let g = egui::ScrollArea::vertical()
