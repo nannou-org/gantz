@@ -1,11 +1,15 @@
 use crate::{
-    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind,
+    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, NodeViewResponse, Registry, SocketDoc,
+    SocketKind,
 };
 
 /// A widget used to allow for editing and parsing a steel expression.
 pub struct ExprEdit<'a> {
     expr: &'a mut gantz_core::node::Expr,
     pub id: egui::Id,
+    /// When `true`, the editor fills the available width/height (for the
+    /// detached view) instead of sizing to its widest line.
+    fill: bool,
 }
 
 #[derive(Clone, Default)]
@@ -16,7 +20,7 @@ struct ExprEditState {
 
 impl<'a> egui::Widget for ExprEdit<'a> {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let Self { expr, id } = self;
+        let Self { expr, id, fill } = self;
         let code_id = id.with("code");
 
         // Retrieve the working state.
@@ -52,8 +56,17 @@ impl<'a> egui::Widget for ExprEdit<'a> {
         // matching `desired_width` and `margin`.
         let font_id = egui::FontSelection::from(egui::TextStyle::Monospace).resolve(ui.style());
         let margin = egui::Margin::symmetric(4, 2);
-        let desired_width =
-            super::code_edit_desired_width(ui, &theme, &state.code, language, margin);
+        // Fill the pane (detached view) or size to the widest line (in-graph).
+        let (desired_width, desired_rows) = if fill {
+            let row_h = ui.text_style_height(&egui::TextStyle::Monospace);
+            let rows = ((ui.available_height() / row_h).floor() as usize).max(1);
+            (ui.available_width(), rows)
+        } else {
+            (
+                super::code_edit_desired_width(ui, &theme, &state.code, language, margin),
+                1,
+            )
+        };
 
         let response = ui.add(
             egui::TextEdit::multiline(&mut state.code)
@@ -61,7 +74,7 @@ impl<'a> egui::Widget for ExprEdit<'a> {
                 .code_editor()
                 .font(font_id)
                 .margin(margin)
-                .desired_rows(1)
+                .desired_rows(desired_rows)
                 .desired_width(desired_width)
                 .hint_text("(+ $l $r)")
                 .layouter(&mut layouter),
@@ -100,6 +113,19 @@ impl NodeUi for gantz_core::node::Expr {
             ui.add(ExprEdit::new(self, id))
         });
         let mut resp = NodeUiResponse::new(framed);
+        resp.set_changed(expr_hash(self) != before);
+        resp
+    }
+
+    fn view_ui(&mut self, _ctx: NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
+        // The same code editor as the in-graph node, but filling the pane (the
+        // pane keeps its margin). A distinct id (the pane scopes `ui.id`) keeps
+        // its WIP edit state separate from the in-graph editor.
+        let before = expr_hash(self);
+        let id = ui.id().with("expr-view");
+        let res = ui.add(ExprEdit::new(self, id).fill(true));
+        let mut resp = NodeViewResponse::default();
+        resp.inner = Some(res);
         resp.set_changed(expr_hash(self) != before);
         resp
     }
@@ -159,7 +185,18 @@ impl NodeUi for gantz_core::node::Expr {
 impl<'a> ExprEdit<'a> {
     /// Create a new Steel code editing widget.
     pub fn new(expr: &'a mut gantz_core::node::Expr, id: egui::Id) -> Self {
-        Self { expr, id }
+        Self {
+            expr,
+            id,
+            fill: false,
+        }
+    }
+
+    /// Fill the available width/height (for the detached view) rather than
+    /// sizing to the widest line.
+    pub fn fill(mut self, fill: bool) -> Self {
+        self.fill = fill;
+        self
     }
 }
 

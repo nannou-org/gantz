@@ -193,6 +193,20 @@ pub struct InspectorUiResponse {
     pub payloads: Vec<DynResponse>,
 }
 
+/// The response from [`NodeUi::view_ui`][crate::NodeUi::view_ui].
+///
+/// Mirrors [`InspectorUiResponse`]'s shape today, but is a distinct type so the
+/// detached node view and the inspector can diverge as each grows.
+#[derive(Debug, Default)]
+pub struct NodeViewResponse {
+    /// The egui response for the node's view, if any.
+    pub inner: Option<egui::Response>,
+    /// Whether the node mutated CA-affecting state this frame.
+    pub changed: bool,
+    /// Payloads emitted by the node for the application to handle.
+    pub payloads: Vec<DynResponse>,
+}
+
 /// The response from [`NodeUi::context_menu`][crate::NodeUi::context_menu].
 #[derive(Debug, Default)]
 pub struct ContextMenuResponse {
@@ -252,6 +266,7 @@ impl_node_response_emit!(
     NodeUiResponse,
     InspectorRowsResponse,
     InspectorUiResponse,
+    NodeViewResponse,
     ContextMenuResponse,
 );
 

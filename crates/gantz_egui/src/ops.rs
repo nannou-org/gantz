@@ -192,6 +192,43 @@ where
     Some(node_ix)
 }
 
+/// A single node removal recorded by [`remove_nodes`]: the node at `removed`
+/// was deleted, and (when `Some`) the node that was at `moved_from` was
+/// swapped down into the `removed` slot.
+#[derive(Clone, Copy, Debug)]
+pub struct RemoveOp {
+    pub removed: usize,
+    pub moved_from: Option<usize>,
+}
+
+/// The ordered index changes performed by a [`remove_nodes`] call, for callers
+/// that key persistent data by node index and must migrate it the same way (e.g.
+/// detached node views - see `migrate_node_view_paths`).
+#[derive(Clone, Debug, Default)]
+pub struct Reindex(pub Vec<RemoveOp>);
+
+impl Reindex {
+    /// Whether any node was removed.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Replay the removals onto a single node index, returning its new index, or
+    /// `None` if that node was the one removed. Mirrors how `remove_nodes`
+    /// migrates state/layout/selection, so index-keyed data stays consistent.
+    pub fn apply_to_index(&self, mut ix: usize) -> Option<usize> {
+        for op in &self.0 {
+            if ix == op.removed {
+                return None;
+            }
+            if op.moved_from == Some(ix) {
+                ix = op.removed;
+            }
+        }
+        Some(ix)
+    }
+}
+
 /// Remove `nodes` from `graph`, migrating the per-node state, layout and
 /// selection that are keyed by node index.
 ///
@@ -201,8 +238,11 @@ where
 /// surviving node down into an already-freed higher slot and never invalidates a
 /// pending target. The swapped node's state, layout entry and selection are then
 /// moved to its new index. Edge selection is cleared because removing a node
-/// drops its incident edges with compounded edge swaps. Returns whether any node
-/// was removed.
+/// drops its incident edges with compounded edge swaps.
+///
+/// Returns the ordered [`Reindex`] describing each removal/swap, so other
+/// index-keyed data can be migrated the same way (any future reindexing edit
+/// must do likewise).
 ///
 /// Run this before the next recompile (`vm::sync`): the regenerated code reads
 /// state by the new index, so the migration must already be in place.
@@ -212,12 +252,12 @@ pub fn remove_nodes<N>(
     layout: &mut egui_graph::Layout,
     selection: &mut crate::widget::graph_scene::Selection,
     nodes: impl IntoIterator<Item = NodeIndex>,
-) -> bool {
+) -> Reindex {
     let node_id = |ix: usize| egui_graph::NodeId::from_u64(ix as u64);
     let mut targets: Vec<NodeIndex> = nodes.into_iter().collect();
     targets.sort_unstable_by_key(|n| std::cmp::Reverse(n.index()));
     targets.dedup();
-    let mut removed_any = false;
+    let mut ops = Vec::new();
     for t in targets {
         if graph.node_weight(t).is_none() {
             continue;
@@ -229,7 +269,8 @@ pub fn remove_nodes<N>(
         selection.nodes.remove(&t);
         graph.remove_node(t);
         // Migrate the node that swapped into `t` (the former `last`), if any.
-        if t.index() != last {
+        let moved_from = (t.index() != last).then_some(last);
+        if let Some(last) = moved_from {
             let _ = node::state::move_value(vm, &[last], &[t.index()]);
             if let Some(pos) = layout.remove(&node_id(last)) {
                 layout.insert(node_id(t.index()), pos);
@@ -238,12 +279,15 @@ pub fn remove_nodes<N>(
                 selection.nodes.insert(t);
             }
         }
-        removed_any = true;
+        ops.push(RemoveOp {
+            removed: t.index(),
+            moved_from,
+        });
     }
-    if removed_any {
+    if !ops.is_empty() {
         selection.edges.clear();
     }
-    removed_any
+    Reindex(ops)
 }
 
 /// Cut: serialize `nodes` to a `.gantz` clipboard payload, then remove them.
@@ -520,14 +564,18 @@ mod tests {
         let mut vm = Engine::new_base();
 
         // Delete index 1: node 4 (weight 14) swap-removes into slot 1.
-        let removed = remove_nodes(
+        let reindex = remove_nodes(
             &mut graph,
             &mut vm,
             &mut layout,
             &mut selection,
             [NodeIx::new(1)],
         );
-        assert!(removed);
+        assert!(!reindex.is_empty());
+        // The reindex maps the swapped node (old index 4) down to 1, and reports
+        // the deleted index 1 as gone.
+        assert_eq!(reindex.apply_to_index(4), Some(1));
+        assert_eq!(reindex.apply_to_index(1), None);
 
         // The swapped node now sits at index 1.
         assert_eq!(graph.node_count(), 4);

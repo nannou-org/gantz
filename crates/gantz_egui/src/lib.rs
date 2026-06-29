@@ -29,7 +29,7 @@ pub use node::{FnNodeNames, NameRegistry};
 pub use reg::RegistryRef;
 pub use response::{
     ContextMenuResponse, DynResponse, InspectorRowsResponse, InspectorUiResponse, NodeUiResponse,
-    ResponseData, Responses,
+    NodeViewResponse, ResponseData, Responses,
 };
 pub use view::{Camera, SceneView};
 pub use widget::gantz::NodeTypeRegistry;
@@ -335,6 +335,30 @@ pub trait NodeUi {
         InspectorUiResponse::default()
     }
 
+    /// The node's UI when detached from the graph into its own pane via the
+    /// "open view" action, for monitoring it in a fixed location.
+    ///
+    /// Unlike [`ui`](NodeUi::ui), this receives a plain [`egui::Ui`] filling the
+    /// pane (no graph frame or sockets). The default renders the node's current
+    /// VM state value (its debug repr), so every node is viewable with something
+    /// useful; "viewer" nodes (e.g. [`Plot`](crate::node::Plot)) override it to
+    /// render their full visualisation. Mark the returned response
+    /// [`changed`](NodeViewResponse::mark_changed) on CA-affecting edits and
+    /// [`emit`](NodeViewResponse::emit) any payloads.
+    fn view_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
+        default_view_ui(&ctx, ui)
+    }
+
+    /// Whether the node's [`view_ui`](NodeUi::view_ui) should render without the
+    /// usual pane margin, filling the pane edge-to-edge.
+    ///
+    /// Returns `false` by default (the view is inset like the other panes).
+    /// Visualisations that should fill the pane - e.g. [`Plot`](crate::node::Plot)
+    /// - override this to `true`.
+    fn view_no_margin(&self) -> bool {
+        false
+    }
+
     /// Add node-specific items to the node's right-click context menu.
     ///
     /// Called after the built-in items (copy, reset, delete, ...). Mark the
@@ -397,6 +421,25 @@ pub trait NodeUi {
     fn show_state(&self) -> bool {
         true
     }
+}
+
+/// The default [`NodeUi::view_ui`] body: the node's current VM state value (its
+/// debug repr), matching what [`Inspect`](crate::node::Inspect) shows in-graph.
+/// No type label - the tab title already names the node. Used by any node that
+/// doesn't override `view_ui` with a richer visualisation.
+fn default_view_ui(ctx: &NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
+    let mut resp = NodeViewResponse::default();
+    let text = match ctx.extract_value() {
+        Ok(Some(val)) => format!("{val:?}"),
+        Ok(None) => "∅".to_string(),
+        Err(_) => "ERR".to_string(),
+    };
+    let inner = egui::ScrollArea::both()
+        .auto_shrink(false)
+        .show(ui, |ui| ui.add(egui::Label::new(text).selectable(true)))
+        .inner;
+    resp.inner = Some(inner);
+    resp
 }
 
 /// A wrapper around a node's path and the VM providing easy access to the
@@ -535,6 +578,21 @@ pub struct ResetTilesLayout;
 #[derive(Clone, Copy, Debug)]
 pub struct OpenLogs;
 
+/// Open the given node's view ([`NodeUi::view_ui`]) as a tile in the Node Views
+/// pane, for monitoring it in a fixed location. The node is identified by its
+/// `path` within the emitting head's graph (the head is taken from the payload's
+/// head tag).
+///
+/// Handled by `Gantz::show` itself - applications never see this payload.
+#[derive(Clone, Debug)]
+pub struct OpenNodeView {
+    /// Path to the node within its head's graph (last element = node index).
+    pub path: Vec<node::Id>,
+    /// The node's type name ([`NodeUi::name`]), captured at emit time for the
+    /// view tile's title (the registry is in scope there, not at the drain).
+    pub ty_name: String,
+}
+
 /// Open a head (named or commit) as a new tab.
 #[derive(Clone, Debug)]
 pub struct OpenHead(pub gantz_ca::Head);
@@ -592,6 +650,14 @@ where
         (**self).inspector_ui(ctx, ui)
     }
 
+    fn view_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
+        (**self).view_ui(ctx, ui)
+    }
+
+    fn view_no_margin(&self) -> bool {
+        (**self).view_no_margin()
+    }
+
     fn flow(&self, registry: &dyn Registry) -> egui::Direction {
         (**self).flow(registry)
     }
@@ -646,6 +712,14 @@ macro_rules! impl_node_ui_for_ptr {
 
             fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> InspectorUiResponse {
                 (**self).inspector_ui(ctx, ui)
+            }
+
+            fn view_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
+                (**self).view_ui(ctx, ui)
+            }
+
+            fn view_no_margin(&self) -> bool {
+                (**self).view_no_margin()
             }
 
             fn flow(&self, registry: &dyn Registry) -> egui::Direction {

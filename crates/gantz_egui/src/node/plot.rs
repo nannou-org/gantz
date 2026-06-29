@@ -17,8 +17,8 @@
 use crate::widget::node_inspector;
 use crate::widget::node_inspector::radio_option;
 use crate::{
-    ContextMenuResponse, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry,
-    SocketDoc, SocketKind,
+    ContextMenuResponse, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, NodeViewResponse,
+    Registry, SocketDoc, SocketKind,
 };
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
@@ -245,6 +245,87 @@ impl gantz_core::Node for Plot {
     }
 }
 
+impl Plot {
+    /// Render the plot itself (axes, grid, series and bounds) filling `size`,
+    /// returning the plot's response. Shared by the in-graph node body
+    /// ([`NodeUi::ui`]) and the detached view ([`NodeUi::view_ui`]).
+    fn plot_body(
+        &self,
+        ys: &[f64],
+        plot_id: egui::Id,
+        size: egui::Vec2,
+        ui: &mut egui::Ui,
+    ) -> egui::Response {
+        let color = resolve_color(self.color, ui);
+        let plot_style = self.style;
+        let interactive = self.interactive;
+        let bounds = value_bounds(ys, plot_style, self.y_min, self.y_max);
+
+        let mut plot = egui_plot::Plot::new(plot_id)
+            .width(size.x)
+            .height(size.y)
+            .show_background(false)
+            .show_axes(egui::Vec2b::new(self.show_axes, self.show_axes))
+            .show_grid(egui::Vec2b::new(self.show_grid, self.show_grid))
+            // Pan/zoom are always off. `Sense::hover` lets the node frame beneath
+            // capture drags and right-clicks, so the node moves and its context
+            // menu opens as usual.
+            .allow_drag(false)
+            .allow_zoom(false)
+            .allow_scroll(false)
+            .allow_boxed_zoom(false)
+            .sense(egui::Sense::hover());
+        if !interactive {
+            // Purely visual: hide the crosshair (the value readout is also
+            // suppressed via `allow_hover(false)` below).
+            plot = plot.cursor_color(egui::Color32::TRANSPARENT);
+        }
+
+        let plot_resp = plot
+            .show(ui, |plot_ui| {
+                match plot_style {
+                    PlotStyle::Bars => {
+                        let bars = ys
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &y)| {
+                                egui_plot::Bar::new(i as f64, y)
+                                    .width(1.0)
+                                    .fill(color)
+                                    .stroke(egui::Stroke::NONE)
+                            })
+                            .collect();
+                        plot_ui
+                            .bar_chart(egui_plot::BarChart::new("", bars).allow_hover(interactive));
+                    }
+                    PlotStyle::Line => {
+                        let points = egui_plot::PlotPoints::from_ys_f64(ys);
+                        plot_ui.line(
+                            egui_plot::Line::new("", points)
+                                .color(color)
+                                .allow_hover(interactive),
+                        );
+                    }
+                }
+                // Drive the view deterministically from the data + config (the
+                // plot never pans), so live updates and min/max apply.
+                let ([xlo, ylo], [xhi, yhi]) = bounds;
+                plot_ui.set_plot_bounds_x(xlo..=xhi);
+                plot_ui.set_plot_bounds_y(ylo..=yhi);
+            })
+            .response;
+
+        // egui_plot sets a crosshair *mouse cursor* on hover; when not
+        // interactive, restore the default arrow so the plot reads as a static
+        // node. (The resize corner sets its own cursor after this, so it is
+        // unaffected.)
+        if !interactive && plot_resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+        }
+        plot_resp
+    }
+}
+
 impl NodeUi for Plot {
     fn name(&self, _: &dyn Registry) -> &str {
         "plot"
@@ -314,81 +395,33 @@ impl NodeUi for Plot {
                         changed = true;
                     }
 
-                    let color = resolve_color(self.color, ui);
-                    let plot_style = self.style;
-                    let interactive = self.interactive;
-                    let bounds = value_bounds(&ys, plot_style, self.y_min, self.y_max);
-
-                    let mut plot = egui_plot::Plot::new(plot_id)
-                        .width(avail.x)
-                        .height(avail.y)
-                        .show_background(false)
-                        .show_axes(egui::Vec2b::new(self.show_axes, self.show_axes))
-                        .show_grid(egui::Vec2b::new(self.show_grid, self.show_grid))
-                        // Pan/zoom are always off. `Sense::hover` lets the node
-                        // frame beneath capture drags and right-clicks, so the
-                        // node moves and its context menu opens as usual.
-                        .allow_drag(false)
-                        .allow_zoom(false)
-                        .allow_scroll(false)
-                        .allow_boxed_zoom(false)
-                        .sense(egui::Sense::hover());
-                    if !interactive {
-                        // Purely visual: hide the crosshair (the value readout is
-                        // also suppressed via `allow_hover(false)` below).
-                        plot = plot.cursor_color(egui::Color32::TRANSPARENT);
-                    }
-
-                    let plot_resp = plot
-                        .show(ui, |plot_ui| {
-                            match plot_style {
-                                PlotStyle::Bars => {
-                                    let bars = ys
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(i, &y)| {
-                                            egui_plot::Bar::new(i as f64, y)
-                                                .width(1.0)
-                                                .fill(color)
-                                                .stroke(egui::Stroke::NONE)
-                                        })
-                                        .collect();
-                                    plot_ui.bar_chart(
-                                        egui_plot::BarChart::new("", bars).allow_hover(interactive),
-                                    );
-                                }
-                                PlotStyle::Line => {
-                                    let points = egui_plot::PlotPoints::from_ys_f64(&ys);
-                                    plot_ui.line(
-                                        egui_plot::Line::new("", points)
-                                            .color(color)
-                                            .allow_hover(interactive),
-                                    );
-                                }
-                            }
-                            // Drive the view deterministically from the data +
-                            // config (the plot never pans), so live updates and
-                            // min/max apply.
-                            let ([xlo, ylo], [xhi, yhi]) = bounds;
-                            plot_ui.set_plot_bounds_x(xlo..=xhi);
-                            plot_ui.set_plot_bounds_y(ylo..=yhi);
-                        })
-                        .response;
-
-                    // egui_plot sets a crosshair *mouse cursor* on hover; when not
-                    // interactive, restore the default arrow so the plot reads as a
-                    // static node. (The resize corner sets its own cursor after
-                    // this, so it is unaffected.)
-                    if !interactive && plot_resp.hovered() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
-                    }
-                    plot_resp
+                    self.plot_body(&ys, plot_id, avail, ui)
                 })
         });
 
         let mut resp = NodeUiResponse::new(framed);
         resp.set_changed(changed);
         resp
+    }
+
+    fn view_no_margin(&self) -> bool {
+        // The plot fills its pane edge-to-edge, with no surrounding margin.
+        true
+    }
+
+    fn view_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
+        // The detached view fills the pane. Unlike the in-graph body it has no
+        // resize handle and never writes back the node's CA-affecting
+        // `width`/`height` (so `changed` stays false). The plot id is derived
+        // from `ui` (scoped per pane by the caller), keeping it distinct from
+        // the in-graph plot's id.
+        let plot_id = ui.id().with("plot-view");
+        let ys = series(&ctx);
+        let size = ui.available_size();
+        let resp = self.plot_body(&ys, plot_id, size, ui);
+        let mut out = NodeViewResponse::default();
+        out.inner = Some(resp);
+        out
     }
 
     fn inspector_rows(
