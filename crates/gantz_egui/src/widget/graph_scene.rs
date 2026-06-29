@@ -175,11 +175,19 @@ where
     /// Returns a response containing both the scene response and all node responses.
     pub fn show(
         self,
-        view: &mut egui_graph::View,
+        scene_view: &mut crate::SceneView,
         state: &mut GraphSceneState,
         vm: &mut Engine,
         ui: &mut egui::Ui,
     ) -> GraphSceneResponse {
+        // Materialise the viewport-dependent `egui_graph::View` from the
+        // viewport-independent camera. The viewport must match the size
+        // `egui_graph` reads (`available_rect_before_wrap`) so the fit
+        // reproduces the camera's zoom exactly. The camera is recovered after
+        // the pass (see `restore_egui` below).
+        let viewport = ui.available_rect_before_wrap().size();
+        let mut egui_view = scene_view.take_egui(viewport);
+        let view = &mut egui_view;
         // Consume one-shot layout/center requests (set by buttons and context
         // menus). A request raised during this pass (e.g. by a context menu)
         // is applied on the next pass.
@@ -351,6 +359,11 @@ where
         if reset_layout {
             responses.push(DynResponse::new(ResetTilesLayout));
         }
+
+        // Recover the viewport-independent camera (centre + zoom) from the
+        // `egui_graph` view (which `egui` may have panned/zoomed this pass) and
+        // write back the possibly-relaid-out node layout.
+        scene_view.restore_egui(egui_view, viewport);
 
         GraphSceneResponse {
             scene: graph_response.response,

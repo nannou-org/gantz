@@ -183,7 +183,7 @@ pub struct HeadGuiState(pub gantz_egui::widget::gantz::OpenHeadState);
 
 /// Views for a single head's graphs (keyed by subgraph path).
 #[derive(Component, Default, Clone)]
-pub struct GraphView(pub egui_graph::View);
+pub struct GraphView(pub gantz_egui::SceneView);
 
 // ----------------------------------------------------------------------------
 // Resources
@@ -207,7 +207,7 @@ pub struct GuiState(pub gantz_egui::widget::GantzState);
 
 /// Views (layout + camera) for all known commits.
 #[derive(Resource, Default)]
-pub struct Views(pub HashMap<ca::CommitAddr, egui_graph::View>);
+pub struct Views(pub HashMap<ca::CommitAddr, gantz_egui::SceneView>);
 
 /// Demo graph associations: maps a graph *name* to its associated `demo-*`
 /// graph name. Keyed by name (not commit) so the association survives edits,
@@ -465,7 +465,7 @@ impl DerefMut for GuiState {
 }
 
 impl Deref for Views {
-    type Target = HashMap<ca::CommitAddr, egui_graph::View>;
+    type Target = HashMap<ca::CommitAddr, gantz_egui::SceneView>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -491,7 +491,7 @@ impl DerefMut for Demos {
 }
 
 impl Deref for GraphView {
-    type Target = egui_graph::View;
+    type Target = gantz_egui::SceneView;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -575,12 +575,12 @@ pub fn on_head_changed<N: 'static + Send + Sync>(
         .and_then(|ca| views.get(ca).cloned())
         .unwrap_or_default();
 
-    // Camera (`scene_rect`) is excluded from undo: on a same-graph navigation
-    // (a layout undo/redo) keep the live camera rather than restoring the target
-    // commit's stored camera.
+    // Camera is excluded from undo: on a same-graph navigation (a layout
+    // undo/redo) keep the live camera rather than restoring the target commit's
+    // stored camera.
     if event.same_graph {
         if let Ok(current) = graph_views.get(event.entity) {
-            head_view.scene_rect = current.scene_rect;
+            head_view.camera = current.camera;
         }
     }
 
@@ -1273,8 +1273,8 @@ where
 /// stored `layout` (node positions) *frozen* as an undo baseline: it is written
 /// exactly once - when a commit first has a populated live layout - and is never
 /// overwritten in place. Node-position changes only ever produce a *new* commit
-/// (see [`settle_layout`]). The camera (`scene_rect`) is excluded from undo, so
-/// it tracks the live view in place every frame.
+/// (see [`settle_layout`]). The camera is excluded from undo, so it tracks the
+/// live view in place every frame.
 pub fn persist_camera_and_seed<N: 'static + Send + Sync>(
     registry: Res<Registry<N>>,
     mut views: ResMut<Views>,
@@ -1286,7 +1286,7 @@ pub fn persist_camera_and_seed<N: 'static + Send + Sync>(
         };
         match views.get_mut(&commit_addr) {
             // Layout frozen as the undo baseline; only the camera tracks live.
-            Some(view) => view.scene_rect = head_view.scene_rect,
+            Some(view) => view.camera = head_view.camera,
             // Seed the baseline once the scene has laid the graph out. Guarding
             // on a non-empty layout avoids capturing an empty pre-layout frame.
             None if !head_view.layout.is_empty() => {

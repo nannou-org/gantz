@@ -379,7 +379,7 @@ mod tests {
     }
 
     /// The Export-level format (gantz_egui over gantz_format) round-trips
-    /// `(layout ...)` view state: node positions and the scene rect survive
+    /// `(layout ...)` view state: node positions and the camera survive
     /// text -> Export -> text -> Export.
     #[test]
     fn layout_roundtrips() {
@@ -395,7 +395,7 @@ mod tests {
 
 (layout mul
   (m -10 20) (l 3.5 -4.5)
-  (scene -50 -50 100 100))";
+  (camera 25 -15 1.5))";
 
         let e1: gantz_egui::export::Export<G> =
             gantz_egui::format::from_str(text1, now).expect("from_str 1");
@@ -410,8 +410,8 @@ mod tests {
             view.layout.get(&egui_graph::NodeId(1)).map(|p| (p.x, p.y)),
             Some((3.5, -4.5))
         );
-        assert_eq!(view.scene_rect.min.x, -50.0);
-        assert_eq!(view.scene_rect.max.y, 100.0);
+        assert_eq!((view.camera.center.x, view.camera.center.y), (25.0, -15.0));
+        assert_eq!(view.camera.zoom, 1.5);
 
         let text2 = gantz_egui::format::to_string(&e1).expect("to_string");
         let e2: gantz_egui::export::Export<G> =
@@ -423,7 +423,34 @@ mod tests {
             view2.layout.get(&egui_graph::NodeId(0)).map(|p| (p.x, p.y)),
             Some((-10.0, 20.0))
         );
-        assert_eq!(view2.scene_rect, view.scene_rect);
+        assert_eq!(view2.camera, view.camera);
+    }
+
+    /// The legacy `(scene min-x min-y max-x max-y)` view form (pre-camera) still
+    /// parses: it maps to a camera centred on the rect at the default zoom.
+    #[test]
+    fn legacy_scene_form_parses_to_camera() {
+        use std::time::Duration;
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        let now = Duration::from_secs(5);
+        let text = "\
+(graph mul
+  (m (expr (* $l $r)))
+  (l inlet) (r inlet) (out outlet)
+  (-> l (m 0)) (-> r (m 1)) (-> m out))
+
+(layout mul
+  (m -10 20)
+  (scene -50 -50 100 100))";
+
+        let e: gantz_egui::export::Export<G> =
+            gantz_egui::format::from_str(text, now).expect("from_str");
+        let head = *e.registry.names().get("mul").expect("mul name");
+        let view = e.views.get(&head).expect("view");
+        // Centre of (-50,-50)..(100,100), default zoom.
+        assert_eq!((view.camera.center.x, view.camera.center.y), (25.0, 25.0));
+        assert_eq!(view.camera.zoom, 1.0);
     }
 
     /// A clipboard payload round-trips through the `.gantz` text format: the
