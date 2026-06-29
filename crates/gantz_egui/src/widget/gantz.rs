@@ -753,9 +753,9 @@ impl<'a> Gantz<'a> {
         }
 
         // The persisted outer tree. The version suffix invalidates any tree
-        // persisted before the sidebar overhaul (which lacks the new panes and
-        // tab containers), forcing a rebuild via `create_tree`.
-        let tree_id = egui::Id::new("gantz-tiles-tree-storage-v3");
+        // persisted before the latest default-layout change (v4: perf panes
+        // side by side at half height), forcing a rebuild via `create_tree`.
+        let tree_id = egui::Id::new("gantz-tiles-tree-storage-v4");
 
         // Retrieve the tree from persistent storage, or load the default.
         let mut tree: egui_tiles::Tree<Pane> =
@@ -1891,12 +1891,14 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
 
     // Sidebar tab containers (first child is the default-active tab).
     let graphs_history_settings = tiles.insert_tab_tile(vec![graphs, history, settings]);
-    let perf = tiles.insert_tab_tile(vec![vm_perf, gui_perf]);
+    // VM Perf and GUI Perf sit side by side rather than as tabs, so both plots
+    // are visible at once.
+    let perf = tiles.insert_horizontal_tile(vec![vm_perf, gui_perf]);
 
     // The left column (sidebar).
     let mut shares = egui_tiles::Shares::default();
     shares.set_share(graphs_history_settings, 0.30);
-    shares.set_share(perf, 0.10);
+    shares.set_share(perf, 0.05);
     shares.set_share(graph_config, 0.13);
     shares.set_share(node_inspector, 0.25);
     let left_column = tiles.insert_container(egui_tiles::Linear {
