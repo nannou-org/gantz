@@ -17,8 +17,17 @@ pub struct TraceView {
 // State that needs to persist between frames.
 #[derive(Clone)]
 struct TraceViewState {
-    target_filter: String,
+    /// Substring filter over each entry's message and target (space-separated
+    /// terms, all must match).
+    text_filter: String,
     auto_scroll: bool,
+    /// Whether the Time, Level and Target columns are shown. Target defaults
+    /// off as it's the least useful column for most entries.
+    show_time: bool,
+    /// Whether the Time column includes the date (vs time-of-day only).
+    show_date: bool,
+    show_level: bool,
+    show_target: bool,
 }
 
 #[derive(Clone)]
@@ -46,9 +55,13 @@ struct MessageVisitor {
 }
 
 impl TraceEntry {
-    fn format_timestamp(&self) -> String {
+    fn format_timestamp(&self, show_date: bool) -> String {
         let system_time = crate::system_time_from_web(self.timestamp).expect("failed to convert");
-        crate::widget::format_local_datetime(system_time)
+        if show_date {
+            crate::widget::format_local_datetime(system_time)
+        } else {
+            crate::widget::format_local_time(system_time)
+        }
     }
 
     fn freshness(&self) -> f32 {
@@ -113,31 +126,52 @@ impl TraceView {
         let mut state = ui
             .memory_mut(|mem| mem.data.get_temp::<TraceViewState>(state_id))
             .unwrap_or_else(|| TraceViewState {
-                target_filter: String::new(),
+                text_filter: String::new(),
                 auto_scroll: true,
+                show_time: true,
+                show_date: true,
+                show_level: true,
+                show_target: false,
             });
 
-        // Controls
+        // A text filter, with an options button on the right that opens a popup
+        // menu of view settings (level, auto-scroll, columns, clear).
         ui.horizontal(|ui| {
-            ui.label("Level:");
-            let level_label = egui::Label::new(format!("{}", self.level)).selectable(false);
-            #[allow(unused_variables)]
-            let level_response = ui.add(level_label);
-            #[cfg(not(target_arch = "wasm32"))]
-            level_response.on_hover_text("adjust with RUST_LOG env var at startup");
-
-            ui.separator();
-            ui.checkbox(&mut state.auto_scroll, "Auto-scroll");
-
-            ui.separator();
-            if ui.button("Clear").clicked() {
-                self.capture.clear();
-            }
-        });
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.label("Target:");
-            ui.text_edit_singleline(&mut state.target_filter);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let h = ui.spacing().interact_size.y;
+                let btn = ui
+                    .add_sized([h, h], egui::Button::new(crate::widget::OPTIONS_GLYPH))
+                    .on_hover_text("trace options");
+                egui::Popup::menu(&btn)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        // The level is fixed at startup by the `RUST_LOG` filter.
+                        #[allow(unused_variables)]
+                        let level_response = ui.label(format!("Level: {}", self.level));
+                        #[cfg(not(target_arch = "wasm32"))]
+                        level_response.on_hover_text("adjust with RUST_LOG env var at startup");
+                        ui.checkbox(&mut state.auto_scroll, "Auto-scroll");
+                        ui.separator();
+                        ui.label("Columns:");
+                        ui.checkbox(&mut state.show_time, "Time");
+                        ui.add_enabled(
+                            state.show_time,
+                            egui::Checkbox::new(&mut state.show_date, "Date"),
+                        )
+                        .on_hover_text("include the date in the Time column");
+                        ui.checkbox(&mut state.show_level, "Level");
+                        ui.checkbox(&mut state.show_target, "Target");
+                        ui.separator();
+                        if ui.button("Clear").clicked() {
+                            self.capture.clear();
+                        }
+                    });
+                // The filter fills the remaining width.
+                egui::TextEdit::singleline(&mut state.text_filter)
+                    .desired_width(ui.available_width())
+                    .hint_text("🔎 Filter")
+                    .show(ui);
+            });
         });
 
         ui.separator();
@@ -155,9 +189,12 @@ impl TraceView {
             LevelFilter::TRACE => true,
         });
 
-        if !state.target_filter.is_empty() {
-            let filter = state.target_filter.to_lowercase();
-            entries.retain(|entry| entry.target.to_lowercase().contains(&filter));
+        if !state.text_filter.is_empty() {
+            let filter = state.text_filter.to_lowercase();
+            entries.retain(|entry| {
+                let hay = format!("{} {}", entry.message, entry.target).to_lowercase();
+                filter.split_whitespace().all(|term| hay.contains(term))
+            });
         }
 
         entries.reverse();
@@ -168,24 +205,42 @@ impl TraceView {
             a.level == b.level && a.message == b.message && a.target == b.target
         });
 
-        // Create table
-        TableBuilder::new(ui)
-            .striped(true)
-            .resizable(true)
-            .column(Column::auto().at_least(80.0)) // Timestamp
-            .column(Column::auto().at_least(50.0)) // Level
-            .column(Column::auto().at_least(80.0)) // Target
+        // Create table. The Time/Level/Target columns are optional; Message is
+        // always the trailing remainder column.
+        let (show_time, show_date, show_level, show_target) = (
+            state.show_time,
+            state.show_date,
+            state.show_level,
+            state.show_target,
+        );
+        let mut table = TableBuilder::new(ui).striped(true).resizable(true);
+        if show_time {
+            table = table.column(Column::auto().at_least(80.0)); // Timestamp
+        }
+        if show_level {
+            table = table.column(Column::auto().at_least(50.0)); // Level
+        }
+        if show_target {
+            table = table.column(Column::auto().at_least(80.0)); // Target
+        }
+        table
             .column(Column::remainder().at_least(100.0)) // Message
             .header(20.0, |mut header| {
-                header.col(|ui| {
-                    ui.strong("Time");
-                });
-                header.col(|ui| {
-                    ui.strong("Level");
-                });
-                header.col(|ui| {
-                    ui.strong("Target");
-                });
+                if show_time {
+                    header.col(|ui| {
+                        ui.strong("Time");
+                    });
+                }
+                if show_level {
+                    header.col(|ui| {
+                        ui.strong("Level");
+                    });
+                }
+                if show_target {
+                    header.col(|ui| {
+                        ui.strong("Target");
+                    });
+                }
                 header.col(|ui| {
                     ui.strong("Message");
                 });
@@ -206,25 +261,31 @@ impl TraceView {
                         text_color
                     };
 
-                    row.col(|ui| {
-                        let text = entry.format_timestamp();
-                        ui.colored_label(text_color, text);
-                    });
+                    if show_time {
+                        row.col(|ui| {
+                            let text = entry.format_timestamp(show_date);
+                            ui.colored_label(text_color, text);
+                        });
+                    }
 
-                    row.col(|ui| {
-                        let (color, text) = match entry.level {
-                            Level::ERROR => (egui::Color32::from_rgb(255, 100, 100), "ERROR"),
-                            Level::WARN => (egui::Color32::from_rgb(255, 200, 100), "WARN"),
-                            Level::INFO => (egui::Color32::from_rgb(100, 200, 255), "INFO"),
-                            Level::DEBUG => (egui::Color32::GRAY, "DEBUG"),
-                            Level::TRACE => (egui::Color32::DARK_GRAY, "TRACE"),
-                        };
-                        ui.colored_label(color, text);
-                    });
+                    if show_level {
+                        row.col(|ui| {
+                            let (color, text) = match entry.level {
+                                Level::ERROR => (egui::Color32::from_rgb(255, 100, 100), "ERROR"),
+                                Level::WARN => (egui::Color32::from_rgb(255, 200, 100), "WARN"),
+                                Level::INFO => (egui::Color32::from_rgb(100, 200, 255), "INFO"),
+                                Level::DEBUG => (egui::Color32::GRAY, "DEBUG"),
+                                Level::TRACE => (egui::Color32::DARK_GRAY, "TRACE"),
+                            };
+                            ui.colored_label(color, text);
+                        });
+                    }
 
-                    row.col(|ui| {
-                        ui.colored_label(text_color, &entry.target);
-                    });
+                    if show_target {
+                        row.col(|ui| {
+                            ui.colored_label(text_color, &entry.target);
+                        });
+                    }
 
                     row.col(|ui| {
                         ui.horizontal(|ui| {
