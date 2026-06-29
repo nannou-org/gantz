@@ -1372,53 +1372,71 @@ where
             Pane::NodeView(view) => {
                 // A detached node view: render the node's `view_ui` against its
                 // head's live graph + VM (a mirror sharing state with the
-                // in-graph node). Wrapped in `pane_ui` so the background and
-                // margin match the other panes; a placeholder shows when the
+                // in-graph node). A `CentralPanel` gives it the same background
+                // as the other panes; full-bleed views (e.g. plot) drop the pane
+                // margin so they fill edge-to-edge. A placeholder shows when the
                 // head is closed.
-                pane_ui(ui, |ui| {
-                    if !access.heads().iter().any(|h| h == &view.head) {
-                        ui.centered_and_justified(|ui| {
-                            ui.weak("node's graph is not open");
-                        });
-                        return;
-                    }
-                    let env = gantz.env;
-                    let head = view.head.clone();
-                    let path = view.path.clone();
-                    // Scope child widget ids by (head, path) so views never share
-                    // ids with each other or the in-graph node.
-                    let result = ui
-                        .push_id((&head, &path), |ui| {
-                            access.with_head_mut(&head, |data| {
-                                let &[n_ix] = path.as_slice() else {
-                                    return None;
-                                };
-                                let (inlets, outlets) = crate::inlet_outlet_ids(env, data.graph);
-                                let node = data
-                                    .graph
-                                    .node_weight_mut(graph_scene::NodeIndex::new(n_ix))?;
-                                let ctx = NodeCtx::new(env, &path, &inlets, &outlets, data.vm);
-                                let r = node.view_ui(ctx, ui);
-                                Some((r.changed, r.payloads))
-                            })
-                        })
-                        .inner;
-                    match result {
-                        Some(Some((changed, payloads))) => {
-                            if changed {
-                                gantz_response.changed_heads.push(head.clone());
-                            }
-                            gantz_response.responses.extend(Some(&head), payloads);
-                        }
-                        _ => {
-                            // Head open but node missing at `path` (e.g. removed
-                            // this frame, before migration drops the view).
+                let head = view.head.clone();
+                let path = view.path.clone();
+                let full_bleed = access
+                    .with_head_mut(&head, |data| {
+                        let &[ix] = path.as_slice() else {
+                            return false;
+                        };
+                        data.graph
+                            .node_weight(graph_scene::NodeIndex::new(ix))
+                            .is_some_and(|n| n.view_full_bleed())
+                    })
+                    .unwrap_or(false);
+                let mut frame = egui::Frame::central_panel(ui.style());
+                if full_bleed {
+                    frame.inner_margin = egui::Margin::ZERO;
+                }
+                egui::CentralPanel::default()
+                    .frame(frame)
+                    .show_inside(ui, |ui| {
+                        if !access.heads().iter().any(|h| h == &head) {
                             ui.centered_and_justified(|ui| {
-                                ui.weak("node not found");
+                                ui.weak("node's graph is not open");
                             });
+                            return;
                         }
-                    }
-                });
+                        let env = gantz.env;
+                        // Scope child widget ids by (head, path) so views never share
+                        // ids with each other or the in-graph node.
+                        let result = ui
+                            .push_id((&head, &path), |ui| {
+                                access.with_head_mut(&head, |data| {
+                                    let &[n_ix] = path.as_slice() else {
+                                        return None;
+                                    };
+                                    let (inlets, outlets) =
+                                        crate::inlet_outlet_ids(env, data.graph);
+                                    let node = data
+                                        .graph
+                                        .node_weight_mut(graph_scene::NodeIndex::new(n_ix))?;
+                                    let ctx = NodeCtx::new(env, &path, &inlets, &outlets, data.vm);
+                                    let r = node.view_ui(ctx, ui);
+                                    Some((r.changed, r.payloads))
+                                })
+                            })
+                            .inner;
+                        match result {
+                            Some(Some((changed, payloads))) => {
+                                if changed {
+                                    gantz_response.changed_heads.push(head.clone());
+                                }
+                                gantz_response.responses.extend(Some(&head), payloads);
+                            }
+                            _ => {
+                                // Head open but node missing at `path` (e.g. removed
+                                // this frame, before migration drops the view).
+                                ui.centered_and_justified(|ui| {
+                                    ui.weak("node not found");
+                                });
+                            }
+                        }
+                    });
             }
             Pane::Steel => {
                 // Use the focused head's compiled module, highlighting the

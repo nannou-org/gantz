@@ -349,6 +349,16 @@ pub trait NodeUi {
         default_view_ui(&ctx, ui)
     }
 
+    /// Whether the node's [`view_ui`](NodeUi::view_ui) should fill its pane
+    /// edge-to-edge, i.e. without the usual pane margin.
+    ///
+    /// Returns `false` by default (the view is inset like the other panes).
+    /// Visualisations that should bleed to the pane edges - e.g.
+    /// [`Plot`](crate::node::Plot) - override this to `true`.
+    fn view_full_bleed(&self) -> bool {
+        false
+    }
+
     /// Add node-specific items to the node's right-click context menu.
     ///
     /// Called after the built-in items (copy, reset, delete, ...). Mark the
@@ -644,6 +654,10 @@ where
         (**self).view_ui(ctx, ui)
     }
 
+    fn view_full_bleed(&self) -> bool {
+        (**self).view_full_bleed()
+    }
+
     fn flow(&self, registry: &dyn Registry) -> egui::Direction {
         (**self).flow(registry)
     }
@@ -702,6 +716,10 @@ macro_rules! impl_node_ui_for_ptr {
 
             fn view_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
                 (**self).view_ui(ctx, ui)
+            }
+
+            fn view_full_bleed(&self) -> bool {
+                (**self).view_full_bleed()
             }
 
             fn flow(&self, registry: &dyn Registry) -> egui::Direction {

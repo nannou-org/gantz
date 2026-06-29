@@ -404,6 +404,11 @@ impl NodeUi for Plot {
         resp
     }
 
+    fn view_full_bleed(&self) -> bool {
+        // The plot fills its pane edge-to-edge, with no surrounding margin.
+        true
+    }
+
     fn view_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
         // The detached view fills the pane. Unlike the in-graph body it has no
         // resize handle and never writes back the node's CA-affecting
