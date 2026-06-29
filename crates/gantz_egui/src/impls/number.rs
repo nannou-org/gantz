@@ -1,6 +1,6 @@
 use crate::{
-    ContextMenuResponse, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry,
-    SocketDoc, SocketKind,
+    ContextMenuResponse, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, NodeViewResponse,
+    Registry, SocketDoc, SocketKind,
 };
 use gantz_std::number::Number;
 use steel::SteelVal;
@@ -20,50 +20,26 @@ impl NodeUi for Number {
         // only queue an evaluation (when enabled), never mark `changed`.
         let frame = egui_graph::node::default_frame(uictx.style(), uictx.interaction());
         let frame_fill = frame.fill;
-        let push = self.push_eval_on_edit();
-        let (min, max, precision) = (self.min(), self.max(), self.precision());
         let mut do_eval = false;
         let framed = uictx.framed_with(frame, |ui, _sockets| {
-            // When push-eval is disabled, flatten the dialer so it merges with
-            // the node frame - a cue that editing won't fire downstream.
-            if !push {
-                let widgets = &mut ui.visuals_mut().widgets;
-                widgets.inactive.weak_bg_fill = frame_fill;
-                widgets.inactive.bg_fill = frame_fill;
-            }
-            let mut val = ctx.extract_value().unwrap().unwrap();
-            let res = match val {
-                SteelVal::NumV(ref mut f) => {
-                    let mut dv = egui::DragValue::new(f);
-                    if min.is_some() || max.is_some() {
-                        dv = dv
-                            .range(min.unwrap_or(f64::NEG_INFINITY)..=max.unwrap_or(f64::INFINITY));
-                    }
-                    if let Some(p) = precision {
-                        dv = dv.max_decimals(p as usize);
-                    }
-                    ui.add(dv)
-                }
-                SteelVal::IntV(ref mut i) => {
-                    let mut dv = egui::DragValue::new(i);
-                    if min.is_some() || max.is_some() {
-                        let lo = min.map_or(isize::MIN, |m| m as isize);
-                        let hi = max.map_or(isize::MAX, |m| m as isize);
-                        dv = dv.range(lo..=hi);
-                    }
-                    ui.add(dv)
-                }
-                _ => ui.add(egui::Label::new("ERR")),
-            };
-            if res.changed() {
-                ctx.update_value(val).unwrap();
-                if push {
-                    do_eval = true;
-                }
-            }
+            let (res, eval) = dialer_ui(self, &mut ctx, frame_fill, ui);
+            do_eval = eval;
             res
         });
         let mut resp = NodeUiResponse::new(framed);
+        if do_eval {
+            resp.push_eval(ctx.path(), 1);
+        }
+        resp
+    }
+
+    fn view_ui(&mut self, mut ctx: NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
+        // The same dialer as the in-graph node; the pane provides the background
+        // and margin. Editing updates VM state and (when enabled) queues an eval.
+        let bg = ui.visuals().panel_fill;
+        let (res, do_eval) = dialer_ui(self, &mut ctx, bg, ui);
+        let mut resp = NodeViewResponse::default();
+        resp.inner = Some(res);
         if do_eval {
             resp.push_eval(ctx.path(), 1);
         }
@@ -181,6 +157,57 @@ impl NodeUi for Number {
             }
         })
     }
+}
+
+/// Render the value dialer (updating VM state on edit), shared by the in-graph
+/// node body and the detached view. `bg` is the surrounding fill used to
+/// "flatten" the dialer when push-eval is off - a cue that editing won't fire
+/// downstream. Returns the dialer's response and whether a push-eval should fire
+/// (an edit happened and push-eval is enabled).
+fn dialer_ui(
+    num: &Number,
+    ctx: &mut NodeCtx,
+    bg: egui::Color32,
+    ui: &mut egui::Ui,
+) -> (egui::Response, bool) {
+    let push = num.push_eval_on_edit();
+    if !push {
+        let widgets = &mut ui.visuals_mut().widgets;
+        widgets.inactive.weak_bg_fill = bg;
+        widgets.inactive.bg_fill = bg;
+    }
+    let (min, max, precision) = (num.min(), num.max(), num.precision());
+    let mut val = ctx.extract_value().unwrap().unwrap();
+    let res = match val {
+        SteelVal::NumV(ref mut f) => {
+            let mut dv = egui::DragValue::new(f);
+            if min.is_some() || max.is_some() {
+                dv = dv.range(min.unwrap_or(f64::NEG_INFINITY)..=max.unwrap_or(f64::INFINITY));
+            }
+            if let Some(p) = precision {
+                dv = dv.max_decimals(p as usize);
+            }
+            ui.add(dv)
+        }
+        SteelVal::IntV(ref mut i) => {
+            let mut dv = egui::DragValue::new(i);
+            if min.is_some() || max.is_some() {
+                let lo = min.map_or(isize::MIN, |m| m as isize);
+                let hi = max.map_or(isize::MAX, |m| m as isize);
+                dv = dv.range(lo..=hi);
+            }
+            ui.add(dv)
+        }
+        _ => ui.add(egui::Label::new("ERR")),
+    };
+    let mut do_eval = false;
+    if res.changed() {
+        ctx.update_value(val).unwrap();
+        if push {
+            do_eval = true;
+        }
+    }
+    (res, do_eval)
 }
 
 /// Keep `max >= min` and re-clamp the stored value into the new bounds so the

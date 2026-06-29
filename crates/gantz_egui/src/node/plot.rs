@@ -404,7 +404,7 @@ impl NodeUi for Plot {
         resp
     }
 
-    fn view_full_bleed(&self) -> bool {
+    fn view_no_margin(&self) -> bool {
         // The plot fills its pane edge-to-edge, with no surrounding margin.
         true
     }

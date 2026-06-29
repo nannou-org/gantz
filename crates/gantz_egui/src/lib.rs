@@ -349,13 +349,13 @@ pub trait NodeUi {
         default_view_ui(&ctx, ui)
     }
 
-    /// Whether the node's [`view_ui`](NodeUi::view_ui) should fill its pane
-    /// edge-to-edge, i.e. without the usual pane margin.
+    /// Whether the node's [`view_ui`](NodeUi::view_ui) should render without the
+    /// usual pane margin, filling the pane edge-to-edge.
     ///
     /// Returns `false` by default (the view is inset like the other panes).
-    /// Visualisations that should bleed to the pane edges - e.g.
-    /// [`Plot`](crate::node::Plot) - override this to `true`.
-    fn view_full_bleed(&self) -> bool {
+    /// Visualisations that should fill the pane - e.g. [`Plot`](crate::node::Plot)
+    /// - override this to `true`.
+    fn view_no_margin(&self) -> bool {
         false
     }
 
@@ -654,8 +654,8 @@ where
         (**self).view_ui(ctx, ui)
     }
 
-    fn view_full_bleed(&self) -> bool {
-        (**self).view_full_bleed()
+    fn view_no_margin(&self) -> bool {
+        (**self).view_no_margin()
     }
 
     fn flow(&self, registry: &dyn Registry) -> egui::Direction {
@@ -718,8 +718,8 @@ macro_rules! impl_node_ui_for_ptr {
                 (**self).view_ui(ctx, ui)
             }
 
-            fn view_full_bleed(&self) -> bool {
-                (**self).view_full_bleed()
+            fn view_no_margin(&self) -> bool {
+                (**self).view_no_margin()
             }
 
             fn flow(&self, registry: &dyn Registry) -> egui::Direction {

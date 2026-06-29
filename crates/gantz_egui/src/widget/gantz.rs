@@ -1034,13 +1034,6 @@ where
         egui_tiles::SimplificationOptions::OFF
     }
 
-    fn min_size(&self) -> f32 {
-        // No pane (split) may shrink below this, so a thin pane - e.g. a freshly
-        // placed node view - stays visible and grabbable rather than collapsing
-        // to a sliver. (egui_tiles' default is 32.)
-        64.0
-    }
-
     fn pane_ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -1373,23 +1366,23 @@ where
                 // A detached node view: render the node's `view_ui` against its
                 // head's live graph + VM (a mirror sharing state with the
                 // in-graph node). A `CentralPanel` gives it the same background
-                // as the other panes; full-bleed views (e.g. plot) drop the pane
+                // as the other panes; no-margin views (e.g. plot) drop the pane
                 // margin so they fill edge-to-edge. A placeholder shows when the
                 // head is closed.
                 let head = view.head.clone();
                 let path = view.path.clone();
-                let full_bleed = access
+                let no_margin = access
                     .with_head_mut(&head, |data| {
                         let &[ix] = path.as_slice() else {
                             return false;
                         };
                         data.graph
                             .node_weight(graph_scene::NodeIndex::new(ix))
-                            .is_some_and(|n| n.view_full_bleed())
+                            .is_some_and(|n| n.view_no_margin())
                     })
                     .unwrap_or(false);
                 let mut frame = egui::Frame::central_panel(ui.style());
-                if full_bleed {
+                if no_margin {
                     frame.inner_margin = egui::Margin::ZERO;
                 }
                 egui::CentralPanel::default()
