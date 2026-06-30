@@ -36,8 +36,9 @@ pub enum Action {
     Undo,
     /// Redo the last undone change to the focused graph.
     Redo,
-    /// Show or hide the command palette.
-    ToggleCommandPalette,
+    /// Show or hide the node palette.
+    #[serde(alias = "ToggleCommandPalette")]
+    ToggleNodePalette,
     /// Select every node in the focused graph.
     SelectAll,
     /// Copy the selected nodes to the clipboard, then remove them.
@@ -84,7 +85,7 @@ const REDO: &[KeyboardShortcut] = &[
     KeyboardShortcut::new(CMD_SHIFT, Key::Z),
     KeyboardShortcut::new(CMD, Key::Y),
 ];
-const TOGGLE_COMMAND_PALETTE: &[KeyboardShortcut] =
+const TOGGLE_NODE_PALETTE: &[KeyboardShortcut] =
     &[KeyboardShortcut::new(Modifiers::NONE, Key::Space)];
 const SELECT_ALL: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::A)];
 const CUT: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::X)];
@@ -98,7 +99,7 @@ impl Action {
         Action::NewGraph,
         Action::Undo,
         Action::Redo,
-        Action::ToggleCommandPalette,
+        Action::ToggleNodePalette,
         Action::SelectAll,
         Action::Cut,
         Action::Duplicate,
@@ -112,7 +113,7 @@ impl Action {
             Action::NewGraph => "New graph",
             Action::Undo => "Undo",
             Action::Redo => "Redo",
-            Action::ToggleCommandPalette => "Node palette",
+            Action::ToggleNodePalette => "Node palette",
             Action::SelectAll => "Select all",
             Action::Cut => "Cut",
             Action::Duplicate => "Duplicate",
@@ -127,7 +128,7 @@ impl Action {
             Action::NewGraph => "Open a new graph in a new tab.",
             Action::Undo => "Undo the last change to the focused graph.",
             Action::Redo => "Redo the last undone change to the focused graph.",
-            Action::ToggleCommandPalette => "Show or hide the command palette for creating nodes.",
+            Action::ToggleNodePalette => "Show or hide the node palette for creating nodes.",
             Action::SelectAll => "Select every node in the focused graph.",
             Action::Cut => "Copy the selected nodes to the clipboard, then remove them.",
             Action::Duplicate => "Duplicate the selected nodes in place.",
@@ -147,7 +148,7 @@ impl Action {
             // Two defaults; `Cmd+Shift+Z` is the more specific, so dispatch Redo
             // before Undo (see [`Keymap::consume`]).
             Action::Redo => REDO,
-            Action::ToggleCommandPalette => TOGGLE_COMMAND_PALETTE,
+            Action::ToggleNodePalette => TOGGLE_NODE_PALETTE,
             Action::SelectAll => SELECT_ALL,
             Action::Cut => CUT,
             Action::Duplicate => DUPLICATE,

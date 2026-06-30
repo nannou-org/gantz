@@ -2,7 +2,6 @@
 use time::{OffsetDateTime, UtcOffset, format_description};
 
 pub use checkbox_enabled::CheckboxEnabled;
-pub use command_palette::CommandPalette;
 pub use gantz::{
     AlignConfig, Gantz, GantzState, GridConfig, LayoutConfig, SceneConfig, SnapConfig, SnapMode,
     update_graph_pane_head,
@@ -19,6 +18,7 @@ pub use label_button::LabelButton;
 pub use label_toggle::LabelToggle;
 pub use log_view::LogView;
 pub use node_inspector::NodeInspector;
+pub use node_palette::NodePalette;
 pub use panes_config::{panes_config, reset_layout_button};
 pub use perf_view::{PerfCapture, PerfView};
 pub use settings::{SettingsResponse, settings};
@@ -27,7 +27,6 @@ pub use style_config::style_config;
 pub use tab::{Tab, TabResponse};
 
 pub mod checkbox_enabled;
-pub mod command_palette;
 pub mod gantz;
 pub mod global_config;
 pub mod graph_config;
@@ -41,6 +40,7 @@ pub mod label_button;
 pub mod label_toggle;
 pub mod log_view;
 pub mod node_inspector;
+pub mod node_palette;
 pub mod panes_config;
 pub mod perf_view;
 pub mod settings;
@@ -57,15 +57,28 @@ pub(crate) fn to_local_datetime(datetime: OffsetDateTime) -> OffsetDateTime {
         .unwrap_or(datetime)
 }
 
-/// Format a SystemTime as a local datetime string.
-pub(crate) fn format_local_datetime(system_time: std::time::SystemTime) -> String {
+/// The glyph for a widget's options/settings button (swap if it doesn't render).
+pub(crate) const OPTIONS_GLYPH: &str = "⛭";
+
+/// Format a SystemTime as a local string using the given `time` format
+/// description.
+fn format_local(system_time: std::time::SystemTime, desc: &str) -> String {
     let datetime = OffsetDateTime::from(system_time);
     let local_datetime = to_local_datetime(datetime);
-    let format = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
-        .expect("invalid format");
+    let format = format_description::parse(desc).expect("invalid format");
     local_datetime
         .format(&format)
         .unwrap_or_else(|_| "<invalid-timestamp>".to_string())
+}
+
+/// Format a SystemTime as a local `YYYY-MM-DD HH:MM:SS` datetime string.
+pub(crate) fn format_local_datetime(system_time: std::time::SystemTime) -> String {
+    format_local(system_time, "[year]-[month]-[day] [hour]:[minute]:[second]")
+}
+
+/// Format a SystemTime as a local `HH:MM:SS` time-of-day string (no date).
+pub(crate) fn format_local_time(system_time: std::time::SystemTime) -> String {
+    format_local(system_time, "[hour]:[minute]:[second]")
 }
 
 /// Group consecutive slice elements considered equal by `eq` into runs,

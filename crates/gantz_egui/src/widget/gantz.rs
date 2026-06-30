@@ -1,6 +1,6 @@
 use crate::{
     Action, CopyNodes, CreateNestedGraph, CreateNode, CutNodes, DuplicateNodes, ExportAllNamed,
-    ExportHead, HeadAccess, Keymap, NodeCtx, NodeUi, OpenCommandPalette, OpenLogs, OpenNodeView,
+    ExportHead, HeadAccess, Keymap, NodeCtx, NodeUi, OpenLogs, OpenNodePalette, OpenNodeView,
     Paste, Redo, Registry, ReplaceHead, ResetTilesLayout, Undo, export,
     response::{DynResponse, Responses},
     widget::{self, GraphScene, GraphSceneState, graph_scene},
@@ -28,7 +28,7 @@ pub enum FileDropTarget {
 
 /// The reserved node-type name that creates a new nested graph.
 ///
-/// Selecting this entry in the command palette emits a
+/// Selecting this entry in the node palette emits a
 /// [`CreateNestedGraph`] rather than a [`CreateNode`], so a nested graph is
 /// created like any other node but routed through the registry-aware op.
 pub const NESTED_GRAPH_TYPE: &str = "graph";
@@ -41,7 +41,7 @@ pub trait NodeTypeRegistry {
     /// The unique name of each node available.
     fn node_types(&self) -> Vec<&str>;
 
-    /// The formatted keyboard shortcut for the command palette.
+    /// The formatted keyboard shortcut for the node palette.
     fn command_formatted_kb_shortcut(
         &self,
         _ctx: &egui::Context,
@@ -80,7 +80,8 @@ pub struct GantzState {
     #[serde(serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub open_heads: OpenHeadStates,
     pub view_toggles: ViewToggles,
-    pub command_palette: widget::CommandPalette,
+    #[serde(default, alias = "command_palette")]
+    pub node_palette: widget::NodePalette,
     /// Global auto-layout parameters (the non-flow `egui_graph` layout params;
     /// flow stays per-head in [`OpenHeadState::layout_flow`]).
     #[serde(default)]
@@ -752,9 +753,9 @@ impl<'a> Gantz<'a> {
         }
 
         // The persisted outer tree. The version suffix invalidates any tree
-        // persisted before the sidebar overhaul (which lacks the new panes and
-        // tab containers), forcing a rebuild via `create_tree`.
-        let tree_id = egui::Id::new("gantz-tiles-tree-storage-v3");
+        // persisted before the latest default-layout change (v4: perf panes
+        // side by side at half height), forcing a rebuild via `create_tree`.
+        let tree_id = egui::Id::new("gantz-tiles-tree-storage-v4");
 
         // Retrieve the tree from persistent storage, or load the default.
         let mut tree: egui_tiles::Tree<Pane> =
@@ -815,10 +816,10 @@ impl<'a> Gantz<'a> {
         response.file_drops = collect_gantz_file_drops(ui.ctx());
 
         // Apply payloads that only affect the widget's own state, so
-        // applications never see them: command palette toggling and resetting
+        // applications never see them: node palette toggling and resetting
         // the tile layout to its default arrangement.
-        for _ in response.responses.take::<OpenCommandPalette>() {
-            state.command_palette.toggle();
+        for _ in response.responses.take::<OpenNodePalette>() {
+            state.node_palette.toggle();
         }
         for _ in response.responses.take::<ResetTilesLayout>() {
             tree = create_tree();
@@ -866,7 +867,7 @@ impl GantzState {
     pub fn from_open_heads(open_heads: OpenHeadStates) -> Self {
         Self {
             open_heads,
-            command_palette: widget::CommandPalette::default(),
+            node_palette: widget::NodePalette::default(),
             view_toggles: ViewToggles::default(),
             layout_config: LayoutConfig::default(),
             scene_config: SceneConfig::default(),
@@ -1153,7 +1154,7 @@ where
                 // Persist the inner tree.
                 store_tree(ui.ctx(), graph_tree_id, &graph_tree);
 
-                // Show the command palette once (not per-pane), operating on the focused head.
+                // Show the node palette once (not per-pane), operating on the focused head.
                 if let Some(fh) = access.heads().get(*focused_head).cloned() {
                     let focused_immutable = head_immutable(&fh, gantz.base_immutable, base_names);
 
@@ -1221,7 +1222,7 @@ where
                         }
                     }
 
-                    // Skip command palette when immutable.
+                    // Skip node palette when immutable.
                     if !focused_immutable {
                         let editing = match &fh {
                             gantz_ca::Head::Branch(name) => Some(name.as_str()),
@@ -1231,10 +1232,10 @@ where
                         // (graph coords) recorded this frame; new nodes are placed
                         // here. `Copy`, so no borrow is held across the call.
                         let pointer_pos = head_state.scene.interaction.last_pointer_pos;
-                        let created = command_palette(
+                        let created = node_palette(
                             gantz.env,
                             editing,
-                            &mut state.command_palette,
+                            &mut state.node_palette,
                             &state.keymap,
                             ui,
                         );
@@ -1351,8 +1352,10 @@ where
                     let immutable = head_immutable(&fh, gantz.base_immutable, base_names);
                     let head_state = state.open_heads.entry(fh.clone()).or_default();
                     let result = access.with_head_mut(&fh, |data| {
-                        node_inspector(gantz.env, data.graph, data.vm, head_state, immutable, ui)
-                            .inner
+                        node_inspector(
+                            gantz.env, data.graph, data.vm, head_state, &fh, immutable, ui,
+                        )
+                        .inner
                     });
                     if let Some((changed, payloads)) = result {
                         if changed {
@@ -1820,7 +1823,7 @@ fn node_view_title(pane: &NodeViewPane) -> String {
     s
 }
 
-impl widget::command_palette::Command for NodeTyCmd<'_> {
+impl widget::node_palette::Command for NodeTyCmd<'_> {
     fn text(&self) -> &str {
         self.name
     }
@@ -1888,12 +1891,14 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
 
     // Sidebar tab containers (first child is the default-active tab).
     let graphs_history_settings = tiles.insert_tab_tile(vec![graphs, history, settings]);
-    let perf = tiles.insert_tab_tile(vec![vm_perf, gui_perf]);
+    // VM Perf and GUI Perf sit side by side rather than as tabs, so both plots
+    // are visible at once.
+    let perf = tiles.insert_horizontal_tile(vec![vm_perf, gui_perf]);
 
     // The left column (sidebar).
     let mut shares = egui_tiles::Shares::default();
     shares.set_share(graphs_history_settings, 0.30);
-    shares.set_share(perf, 0.10);
+    shares.set_share(perf, 0.05);
     shares.set_share(graph_config, 0.13);
     shares.set_share(node_inspector, 0.25);
     let left_column = tiles.insert_container(egui_tiles::Linear {
@@ -2573,7 +2578,7 @@ fn name_breadcrumb(
     responses
 }
 
-/// A node-creation choice made in the command palette.
+/// A node-creation choice made in the node palette.
 enum PaletteChoice {
     /// Create an ordinary node of the given type.
     Node(CreateNode),
@@ -2585,19 +2590,19 @@ enum PaletteChoice {
 ///
 /// `editing` is the focused head's name (when it is a branch), used to hide node
 /// types whose reference would cycle back to the graph being edited.
-fn command_palette(
+fn node_palette(
     env: &dyn Registry,
     editing: Option<&str>,
-    cmd_palette: &mut widget::CommandPalette,
+    node_palette: &mut widget::NodePalette,
     keymap: &Keymap,
     ui: &mut egui::Ui,
 ) -> Option<PaletteChoice> {
-    // Toggle command palette visibility via its keymap binding.
-    if !ui.ctx().egui_wants_keyboard_input() && keymap.consume(ui, Action::ToggleCommandPalette) {
-        cmd_palette.toggle();
+    // Toggle node palette visibility via its keymap binding.
+    if !ui.ctx().egui_wants_keyboard_input() && keymap.consume(ui, Action::ToggleNodePalette) {
+        node_palette.toggle();
     }
 
-    // Map the node types to commands for the command palette, dropping any type
+    // Map the node types to commands for the node palette, dropping any type
     // whose reference would form a cycle back to the editing graph. The reserved
     // nested-graph entry always mints a fresh child, so it is never cyclic.
     let types: Vec<&str> = env
@@ -2611,7 +2616,7 @@ fn command_palette(
     // `NESTED_GRAPH_TYPE` routes to the registry-aware nested-graph op. The
     // palette is centered over the graph scene (this `ui`'s rect).
     let scene_rect = ui.max_rect();
-    cmd_palette.show(ui.ctx(), scene_rect, cmds).map(|cmd| {
+    node_palette.show(ui.ctx(), scene_rect, cmds).map(|cmd| {
         // The placement position is filled in by the caller, which has access to
         // the focused head's last pointer position.
         if cmd.name == NESTED_GRAPH_TYPE {
@@ -2670,6 +2675,7 @@ fn node_inspector<N>(
     root: &mut gantz_core::node::graph::Graph<N>,
     vm: &mut Engine,
     head_state: &mut OpenHeadState,
+    head: &gantz_ca::Head,
     immutable: bool,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<(bool, Vec<DynResponse>)>
@@ -2686,12 +2692,15 @@ where
                 let ids: Vec<_> = graph.node_references().map(|n_ref| n_ref.id()).collect();
                 // Collect the inlets and outlets.
                 let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
+                // The rect of the first selected node, used to scroll to it.
+                let mut selected_rect: Option<egui::Rect> = None;
                 for id in ids {
                     let mut frame = egui::Frame::group(ui.style());
-                    if head_state.scene.interaction.selection.nodes.contains(&id) {
+                    let is_selected = head_state.scene.interaction.selection.nodes.contains(&id);
+                    if is_selected {
                         frame.stroke.color = ui.visuals().selection.stroke.color;
                     }
-                    frame.show(ui, |ui| {
+                    let frame_resp = frame.show(ui, |ui| {
                         let Some(node) = graph.node_weight_mut(id) else {
                             return;
                         };
@@ -2713,6 +2722,30 @@ where
                             }
                         }
                     });
+                    if is_selected && selected_rect.is_none() {
+                        selected_rect = Some(frame_resp.response.rect);
+                    }
+                }
+
+                // Scroll to the first selected node when the selection changes,
+                // mirroring the Steel view's scroll-to-span on selection.
+                let state_id = egui::Id::new("node_inspector_selection");
+                let mut selected: Vec<node::Id> = head_state
+                    .scene
+                    .interaction
+                    .selection
+                    .nodes
+                    .iter()
+                    .map(|n| n.index())
+                    .collect();
+                selected.sort_unstable();
+                let current = egui::Id::new(("inspector_sel", head, &selected));
+                let prev: Option<egui::Id> = ui.ctx().data(|d| d.get_temp(state_id));
+                if prev != Some(current) {
+                    ui.ctx().data_mut(|d| d.insert_temp(state_id, current));
+                    if let Some(rect) = selected_rect {
+                        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                    }
                 }
             });
         (changed, responses)
