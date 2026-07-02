@@ -20,6 +20,11 @@
 //! `(node ...)` form. Any node type that is `Serialize + DeserializeOwned +
 //! CaHash` works.
 
+// The `NodeTag` derive emits `::gantz_format::` paths; alias ourselves so the
+// crate's own tests can use it too.
+#[cfg(test)]
+extern crate self as gantz_format;
+
 mod datum;
 mod error;
 mod lower;
@@ -34,6 +39,7 @@ pub mod sexpr;
 
 pub use datum::{Datum, DatumError, datum_from_expr, datum_text, from_datum, node_datum, to_datum};
 pub use error::{ErrorKind, FormatError, Span};
+pub use gantz_format_derive::NodeTag;
 pub use lower::Loaded;
 pub use model::{Addr, Document, Form};
 pub use raise::{Dumped, GraphLabels};
@@ -131,7 +137,7 @@ mod tests {
     // `NodeSugar` nor any `Sugar` - it carries no first-class keyword at all.
     trait Widget: std::any::Any + CaHash {}
 
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, NodeTag)]
     struct Knob {
         value: i64,
     }
@@ -140,10 +146,6 @@ mod tests {
         fn hash(&self, hasher: &mut Hasher) {
             self.value.hash(hasher);
         }
-    }
-
-    impl NodeTag for Knob {
-        const TAG: &'static str = "Knob";
     }
 
     impl Widget for Knob {}

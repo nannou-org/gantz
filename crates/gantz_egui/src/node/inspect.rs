@@ -3,16 +3,13 @@
 use crate::{NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind};
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
+use gantz_format::NodeTag;
 use serde::{Deserialize, Serialize};
 
 /// A node that displays the debug representation of values passing through.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash, NodeTag)]
 #[cahash("gantz.inspect")]
 pub struct Inspect;
-
-impl gantz_format::NodeTag for Inspect {
-    const TAG: &'static str = "Inspect";
-}
 
 impl gantz_core::Node for Inspect {
     fn n_inputs(&self, _ctx: MetaCtx) -> usize {

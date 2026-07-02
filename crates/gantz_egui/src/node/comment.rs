@@ -4,6 +4,7 @@ use crate::widget::node_inspector;
 use crate::{InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse};
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx};
+use gantz_format::NodeTag;
 use serde::{Deserialize, Serialize};
 
 /// Temporary editing state stored in egui memory to buffer text edits.
@@ -30,15 +31,11 @@ fn text_hash(text: &str) -> u64 {
 /// Both `text` and `size` are part of the content address: editing the note or
 /// resizing it are genuine edits that produce a new commit (and ride the export
 /// pipeline), so a resize is undoable just like a text edit.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash, NodeTag)]
 #[cahash("gantz.comment")]
 pub struct Comment {
     text: String,
     size: [u16; 2],
-}
-
-impl gantz_format::NodeTag for Comment {
-    const TAG: &'static str = "Comment";
 }
 
 impl Comment {

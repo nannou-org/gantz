@@ -16,7 +16,22 @@
 /// discriminator and its [`Sugar`](crate::Sugar) keyword) so that every
 /// application composing the node set agrees on the same wire format.
 /// `gantz_format` provides the impls for `gantz_core`'s nodes; downstream
-/// crates provide their own.
+/// crates provide their own, usually via the derive of the same name, which
+/// defaults the tag to the type's name and takes a `#[tag("...")]` override:
+///
+/// ```
+/// use gantz_format::NodeTag;
+///
+/// #[derive(NodeTag)]
+/// struct Gain;
+///
+/// #[derive(NodeTag)]
+/// #[tag("gain.custom")]
+/// struct CustomGain;
+///
+/// assert_eq!(Gain::TAG, "Gain");
+/// assert_eq!(CustomGain::TAG, "gain.custom");
+/// ```
 ///
 /// Tags are part of the wire format: changing one breaks the loading of
 /// existing `.gantz` exports and persisted registries that contain the node.
@@ -92,20 +107,18 @@ pub struct TaggedNode<'a, T: serde::Serialize> {
 ///
 /// The trait must have [`std::any::Any`] as a (transitive) supertrait, and
 /// the calling crate must depend on `serde`. Adding a node type to an
-/// application is: implement [`NodeTag`] beside the type, then add one line
-/// here - a round-trip gate test over the full node set is the recommended
-/// guard against forgetting the latter.
+/// application is: derive (or implement) [`NodeTag`] beside the type, then
+/// add one line here - a round-trip gate test over the full node set is the
+/// recommended guard against forgetting the latter.
 ///
 /// ```
+/// use gantz_format::NodeTag;
+///
 /// trait Node: std::any::Any {}
 ///
-/// #[derive(serde::Serialize, serde::Deserialize)]
+/// #[derive(serde::Serialize, serde::Deserialize, NodeTag)]
 /// struct Gain {
 ///     db: f64,
-/// }
-///
-/// impl gantz_format::NodeTag for Gain {
-///     const TAG: &'static str = "Gain";
 /// }
 ///
 /// impl Node for Gain {}
@@ -387,21 +400,23 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{Datum, from_datum, node_datum, to_datum};
+    use crate::{Datum, NodeTag, from_datum, node_datum, to_datum};
 
     /// The dispatch handles all three node struct shapes: unit, fields and
-    /// newtype (`Fn<N>` delegates to the wrapped node's fields).
-    #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    /// newtype (`Fn<N>` delegates to the wrapped node's fields). `Newtype`
+    /// also exercises the derive's `#[tag(..)]` override; the others take the
+    /// type-name default.
+    #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, NodeTag)]
     struct Unit;
 
-    #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, NodeTag)]
     struct Fields {
         a: i64,
         b: String,
     }
 
-    #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, NodeTag)]
+    #[tag("test.newtype")]
     struct Newtype(Fields);
 
     trait TestNode: std::any::Any {}
@@ -410,18 +425,6 @@ mod tests {
     impl TestNode for Fields {}
     impl TestNode for Newtype {}
     impl TestNode for Box<dyn TestNode> {}
-
-    impl NodeTag for Unit {
-        const TAG: &'static str = "Unit";
-    }
-
-    impl NodeTag for Fields {
-        const TAG: &'static str = "Fields";
-    }
-
-    impl NodeTag for Newtype {
-        const TAG: &'static str = "Newtype";
-    }
 
     impl_node_set_serde! {
         dyn TestNode {
@@ -437,7 +440,7 @@ mod tests {
         let cases = [
             node_datum("Unit", vec![]),
             node_datum("Fields", fields.clone()),
-            node_datum("Newtype", fields),
+            node_datum("test.newtype", fields),
         ];
         for datum in cases {
             let node: Box<dyn TestNode> = from_datum(datum.clone()).unwrap();

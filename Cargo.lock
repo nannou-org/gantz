@@ -3292,11 +3292,21 @@ version = "0.2.1"
 dependencies = [
  "gantz_ca",
  "gantz_core",
+ "gantz_format_derive",
  "log",
  "petgraph",
  "serde",
  "serde_json",
  "steel-core",
+]
+
+[[package]]
+name = "gantz_format_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

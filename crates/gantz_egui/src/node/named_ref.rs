@@ -6,6 +6,7 @@ use crate::{
 };
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, Node, RegCtx};
+use gantz_format::NodeTag;
 use serde::{Deserialize, Serialize};
 
 /// The warning color used for outdated references.
@@ -23,7 +24,7 @@ pub fn missing_color() -> egui::Color32 {
 /// Similar to [`gantz_core::node::Ref`], but also stores the human-readable
 /// name associated with the reference. This allows for detecting when the
 /// name's current commit differs from the stored reference.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash, NodeTag)]
 #[cahash("gantz.named-ref")]
 pub struct NamedRef {
     /// The underlying reference by content address.
@@ -37,10 +38,6 @@ pub struct NamedRef {
     /// than being silently dropped by the registry's content-addressed dedup).
     #[serde(default)]
     pub(crate) sync: bool,
-}
-
-impl gantz_format::NodeTag for NamedRef {
-    const TAG: &'static str = "NamedRef";
 }
 
 /// Trait for environments that can check if a name maps to a content address.

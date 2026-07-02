@@ -22,6 +22,7 @@ use crate::{
 };
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
+use gantz_format::NodeTag;
 use serde::{Deserialize, Serialize};
 use steel::SteelVal;
 use steel::steel_vm::register_fn::RegisterFn;
@@ -75,7 +76,7 @@ pub enum PlotStyle {
 /// Every field feeds the content address (no `#[cahash(skip)]`), so each
 /// inspector edit is a real, persisted, undoable change rather than transient
 /// view state.
-#[derive(Clone, Debug, Hash, Deserialize, Serialize, CaHash)]
+#[derive(Clone, Debug, Hash, Deserialize, Serialize, CaHash, NodeTag)]
 #[cahash("gantz.plot")]
 pub struct Plot {
     /// Scope (scalar history) or Signal (plot the value directly).
@@ -104,10 +105,6 @@ pub struct Plot {
     y_min: Option<F32>,
     /// A fixed upper bound for the value axis when `Some`.
     y_max: Option<F32>,
-}
-
-impl gantz_format::NodeTag for Plot {
-    const TAG: &'static str = "Plot";
 }
 
 impl Plot {

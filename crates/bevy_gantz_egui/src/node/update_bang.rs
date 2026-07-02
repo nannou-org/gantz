@@ -15,6 +15,7 @@ use bevy_time::prelude::*;
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::visit;
+use gantz_format::NodeTag;
 use serde::{Deserialize, Serialize};
 use steel::SteelVal;
 
@@ -27,13 +28,9 @@ use steel::SteelVal;
 /// Outputs the update's delta time in seconds as `f64`. This fires once per
 /// *update*, which may be more frequent than rendered frames under presentation
 /// modes like Mailbox.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash, NodeTag)]
 #[cahash("gantz.update!")]
 pub struct UpdateBang;
-
-impl gantz_format::NodeTag for UpdateBang {
-    const TAG: &'static str = "UpdateBang";
-}
 
 impl gantz_core::Node for UpdateBang {
     fn n_outputs(&self, _ctx: MetaCtx) -> usize {

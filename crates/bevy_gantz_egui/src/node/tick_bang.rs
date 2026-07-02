@@ -15,7 +15,7 @@ use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::visit;
 use gantz_egui::widget::node_inspector::radio_option;
-use gantz_format::{Datum, FormatError, SugarArgs, node_datum};
+use gantz_format::{Datum, FormatError, NodeTag, SugarArgs, node_datum};
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use steel::SteelVal;
@@ -160,14 +160,10 @@ impl Hash for Interval {
 /// the effective tick duration in seconds as `f64` on each tick. The driver
 /// fires it once for every whole interval elapsed since the last update, so the
 /// tick *count* stays correct even when updates are slower than the tick rate.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, NodeTag)]
 pub struct TickBang {
     #[serde(default)]
     interval: Interval,
-}
-
-impl gantz_format::NodeTag for TickBang {
-    const TAG: &'static str = "TickBang";
 }
 
 impl TickBang {
