@@ -24,33 +24,69 @@ use std::fmt;
 type Graph<N, E, Ix> = petgraph::graph::Graph<N, E, Directed, Ix>;
 
 /// One side of a merge.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize,
+)]
 pub enum Side {
+    #[default]
     Ours,
     Theirs,
 }
 
+/// How a merge resolves each class of conflict (see [`Conflict`]).
+///
+/// An edge added to a node absent from the merged graph is always dropped -
+/// that is a consequence of the node's absence, not a choice.
+#[derive(
+    Clone, Copy, Debug, Default, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize,
+)]
+pub struct Resolutions {
+    /// Which side's content is kept when both sides modified the same base
+    /// node with different results.
+    pub both_modified: Side,
+    /// Whether the edit or the delete wins when one side deleted a node the
+    /// other modified.
+    pub delete_modify: EditOrDelete,
+}
+
+/// Whether an edit or a delete wins a [`Conflict::DeleteModify`].
+#[derive(
+    Clone, Copy, Debug, Default, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize,
+)]
+pub enum EditOrDelete {
+    /// The modified node is kept (don't lose work).
+    #[default]
+    KeepEdit,
+    /// The node stays deleted.
+    KeepDelete,
+}
+
 /// A conflict encountered during a three-way merge.
 ///
-/// Conflicts are flagged, not fatal: each records the default resolution the
-/// merge applied so that the result remains usable and callers can decide
-/// whether to accept it.
+/// Conflicts are flagged, not fatal: each records the resolution the merge
+/// applied (per the caller's [`Resolutions`]) so that the result remains
+/// usable and callers can decide whether to accept it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Conflict<E> {
     /// Both sides modified the same base node with different results.
     ///
-    /// Applied resolution: ours' content is kept. `ours`/`theirs` are the
+    /// Applied resolution: `kept`'s content is kept. `ours`/`theirs` are the
     /// node's indices in the respective graphs.
     BothModified {
         base: usize,
         ours: usize,
         theirs: usize,
+        kept: Side,
     },
-    /// One side deleted the node, the other modified it.
+    /// One side deleted the node, the other (`modified`) modified it.
     ///
-    /// Applied resolution: the modified node is kept (an edit wins over a
-    /// delete).
-    DeleteModify { base: usize, modified: Side },
+    /// Applied resolution: the modified node is kept when `kept`, else it
+    /// stays deleted.
+    DeleteModify {
+        base: usize,
+        modified: Side,
+        kept: bool,
+    },
     /// `side` added an edge to a node the other side deleted (and which
     /// stayed deleted).
     ///
@@ -151,6 +187,7 @@ pub fn merge_commits<N, E, Ix>(
     reg: &Registry<Graph<N, E, Ix>>,
     ours: CommitAddr,
     theirs: CommitAddr,
+    resolutions: Resolutions,
 ) -> Result<MergeResolution<N, E, Ix>, MergeError>
 where
     N: Clone + CaHash,
@@ -180,7 +217,14 @@ where
         diff::matching(reg, base, theirs).unwrap_or_else(|| diff::match_nodes(base_g, theirs_g));
     let ours_diff = diff::diff(base_g, ours_g, &mo);
     let theirs_diff = diff::diff(base_g, theirs_g, &mt);
-    let outcome = merge_graphs(base_g, ours_g, theirs_g, &ours_diff, &theirs_diff);
+    let outcome = merge_graphs(
+        base_g,
+        ours_g,
+        theirs_g,
+        &ours_diff,
+        &theirs_diff,
+        resolutions,
+    );
     Ok(MergeResolution::Diverged {
         base,
         ours_diff,
@@ -197,11 +241,13 @@ where
 /// - present on both sides, modified by at most one: the modified side's
 ///   content is kept (change beats no-change).
 /// - modified by both to the same content: kept, no conflict.
-/// - modified by both to different content: ours' content is kept and
-///   [`Conflict::BothModified`] is flagged.
+/// - modified by both to different content:
+///   [`resolutions.both_modified`](Resolutions::both_modified)'s content is
+///   kept and [`Conflict::BothModified`] is flagged.
 /// - deleted by one side, untouched by the other: deleted.
-/// - deleted by one side, modified by the other: the modified node is kept
-///   and [`Conflict::DeleteModify`] is flagged.
+/// - deleted by one side, modified by the other: resolved per
+///   [`resolutions.delete_modify`](Resolutions::delete_modify) and
+///   [`Conflict::DeleteModify`] is flagged.
 ///
 /// Nodes added by a side are always included. Ours' surviving nodes come
 /// first in ours' order, then theirs-only nodes in ascending theirs order, so
@@ -223,6 +269,7 @@ pub fn merge_graphs<N, E, Ix>(
     theirs: &Graph<N, E, Ix>,
     ours_diff: &Diff<E>,
     theirs_diff: &Diff<E>,
+    resolutions: Resolutions,
 ) -> MergeOutcome<N, E, Ix>
 where
     N: Clone + CaHash,
@@ -231,6 +278,7 @@ where
 {
     let node_ix = |i: usize| NodeIndex::<Ix>::new(i);
     let mut conflicts = Vec::new();
+    let keep_edit = resolutions.delete_modify == EditOrDelete::KeepEdit;
 
     // Decide each base node's fate.
     let mut fates: BTreeMap<usize, Fate> = BTreeMap::new();
@@ -244,29 +292,44 @@ where
                 (_, false) => Fate::KeepOurs,
                 (false, true) => Fate::KeepTheirs,
                 (true, true) => {
+                    let kept = resolutions.both_modified;
                     if content_addr(&ours[node_ix(o)]) != content_addr(&theirs[node_ix(t)]) {
                         conflicts.push(Conflict::BothModified {
                             base: b,
                             ours: o,
                             theirs: t,
+                            kept,
                         });
                     }
-                    Fate::KeepOurs
+                    match kept {
+                        Side::Ours => Fate::KeepOurs,
+                        Side::Theirs => Fate::KeepTheirs,
+                    }
                 }
             },
             (Some(_), None) if mod_o => {
                 conflicts.push(Conflict::DeleteModify {
                     base: b,
                     modified: Side::Ours,
+                    kept: keep_edit,
                 });
-                Fate::KeepOurs
+                if keep_edit {
+                    Fate::KeepOurs
+                } else {
+                    Fate::Delete
+                }
             }
             (None, Some(_)) if mod_t => {
                 conflicts.push(Conflict::DeleteModify {
                     base: b,
                     modified: Side::Theirs,
+                    kept: keep_edit,
                 });
-                Fate::KeepTheirs
+                if keep_edit {
+                    Fate::KeepTheirs
+                } else {
+                    Fate::Delete
+                }
             }
             _ => Fate::Delete,
         };
@@ -446,7 +509,8 @@ mod tests {
             .collect()
     }
 
-    /// Merge two graphs that diverged from `base` by one commit each.
+    /// Merge two graphs that diverged from `base` by one commit each, using
+    /// the default [`Resolutions`].
     fn merge_two(
         base: &G,
         ours: &G,
@@ -457,11 +521,26 @@ mod tests {
         CommitAddr,
         MergeResolution<String, u32, usize>,
     ) {
+        merge_two_with(base, ours, theirs, Resolutions::default())
+    }
+
+    /// [`merge_two`] with explicit [`Resolutions`].
+    fn merge_two_with(
+        base: &G,
+        ours: &G,
+        theirs: &G,
+        resolutions: Resolutions,
+    ) -> (
+        Registry<G>,
+        CommitAddr,
+        CommitAddr,
+        MergeResolution<String, u32, usize>,
+    ) {
         let mut reg = Registry::<G>::default();
         let b = commit(&mut reg, 1, None, base);
         let o = commit(&mut reg, 2, Some(b), ours);
         let t = commit(&mut reg, 3, Some(b), theirs);
-        let res = merge_commits(&reg, o, t).unwrap();
+        let res = merge_commits(&reg, o, t, resolutions).unwrap();
         (reg, o, t, res)
     }
 
@@ -531,7 +610,31 @@ mod tests {
             vec![Conflict::BothModified {
                 base: 1,
                 ours: 1,
-                theirs: 1
+                theirs: 1,
+                kept: Side::Ours,
+            }],
+        );
+    }
+
+    #[test]
+    fn both_modified_resolves_to_theirs_when_asked() {
+        let base = graph(&["a", "b"], &[]);
+        let ours = graph(&["a", "b2"], &[]);
+        let theirs = graph(&["a", "b3"], &[]);
+        let resolutions = Resolutions {
+            both_modified: Side::Theirs,
+            ..Default::default()
+        };
+        let (_, _, _, res) = merge_two_with(&base, &ours, &theirs, resolutions);
+        let out = diverged(res);
+        assert_eq!(nodes(&out.graph), vec!["a", "b3"]);
+        assert_eq!(
+            out.conflicts,
+            vec![Conflict::BothModified {
+                base: 1,
+                ours: 1,
+                theirs: 1,
+                kept: Side::Theirs,
             }],
         );
     }
@@ -560,7 +663,8 @@ mod tests {
             out.conflicts,
             vec![Conflict::DeleteModify {
                 base: 1,
-                modified: Side::Theirs
+                modified: Side::Theirs,
+                kept: true,
             }],
         );
         assert_eq!(
@@ -570,6 +674,39 @@ mod tests {
                 ours: None,
                 theirs: Some(1)
             },
+        );
+    }
+
+    #[test]
+    fn delete_vs_modify_deletes_when_asked() {
+        let base = graph(&["a", "b"], &[]);
+        // Ours deletes ix 1; theirs modifies it *and* wires into it.
+        let ours = graph(&["a"], &[]);
+        let theirs = graph(&["a", "b2"], &[(0, 1, 0)]);
+        let resolutions = Resolutions {
+            delete_modify: EditOrDelete::KeepDelete,
+            ..Default::default()
+        };
+        let (_, _, _, res) = merge_two_with(&base, &ours, &theirs, resolutions);
+        let out = diverged(res);
+        // The delete wins; theirs' edge into the node dangles and drops.
+        assert_eq!(nodes(&out.graph), vec!["a"]);
+        assert!(edges(&out.graph).is_empty());
+        assert_eq!(
+            out.conflicts,
+            vec![
+                Conflict::DeleteModify {
+                    base: 1,
+                    modified: Side::Theirs,
+                    kept: false,
+                },
+                Conflict::EdgeToDeleted {
+                    side: Side::Theirs,
+                    src: 0,
+                    dst: 1,
+                    edge: 0,
+                },
+            ],
         );
     }
 
@@ -648,7 +785,7 @@ mod tests {
         let (_, o, t, res) = merge_two(&base, &ours, &theirs);
         let out = diverged(res);
         let (reg2, _, _, _) = merge_two(&base, &ours, &theirs);
-        let res2 = merge_commits(&reg2, o, t).unwrap();
+        let res2 = merge_commits(&reg2, o, t, Resolutions::default()).unwrap();
         let out2 = diverged(res2);
         assert_eq!(graph_addr(&out.graph), graph_addr(&out2.graph));
     }
@@ -660,17 +797,18 @@ mod tests {
         let g1 = graph(&["a", "b"], &[]);
         let root = commit(&mut reg, 1, None, &g0);
         let tip = commit(&mut reg, 2, Some(root), &g1);
+        let rs = Resolutions::default();
         assert!(matches!(
-            merge_commits(&reg, root, tip),
+            merge_commits(&reg, root, tip, rs),
             Ok(MergeResolution::FastForward)
         ));
         assert!(matches!(
-            merge_commits(&reg, tip, root),
+            merge_commits(&reg, tip, root, rs),
             Ok(MergeResolution::AlreadyUpToDate)
         ));
         let stray = commit(&mut reg, 3, None, &g1);
         assert!(matches!(
-            merge_commits(&reg, tip, stray),
+            merge_commits(&reg, tip, stray, rs),
             Err(MergeError::Unrelated)
         ));
     }
