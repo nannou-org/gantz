@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_format-v0.2.1...gantz_format-v0.3.0) - 2026-07-02
+
+### Added
+
+- *(gantz_format_derive)* derive macro for NodeTag
+- declare node wire tags at their definition sites
+- *(gantz_format)* deterministic node serde dispatch via NodeTag
+- *(gantz_format)* merge-parents clause; ancestry walks follow merge parents
+- *(gantz_format)* ergonomic, pluggable per-crate node sugar
+- *(node)* add Hz rate mode to tick!
+- *(node)* add self-driven tick! node
+- *(format)* round-trip number config in the .gantz sugar
+- add concise descriptions for all builtin and base nodes
+- *(format)* round-trip graph descriptions via a (descriptions ...) form
+
+### Other
+
+- move NodeTag into dedicated gantz_nodetag crates
+- drop typetag from the workspace
+- port remaining typetag usages to impl_node_set_serde!
+- *(gantz_format)* stream node fields typed after a leading tag
+- *(gantz_format)* prove NodeSugar/Sugar are optional for downstream types
+- *(node)* rename frame! to update!
+- represent graphs with plain petgraph::Graph, not StableGraph
+- *(format)* drop reserved NodeDecl.index field
+- *(deps)* update steel-core to 0.8.2
+
 ## [0.2.1](https://github.com/nannou-org/gantz/compare/gantz_format-v0.2.0...gantz_format-v0.2.1) - 2026-06-21
 
 ### Added

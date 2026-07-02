@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_ca-v0.2.1...gantz_ca-v0.3.0) - 2026-07-02
+
+### Added
+
+- *(gantz_ca)* last-edit-wins merge resolution
+- *(gantz_ca)* selectable merge conflict resolutions
+- *(gantz_ca)* three-way graph merge
+- *(gantz_ca)* node matching and structural graph diff
+- *(gantz_ca)* commit history utilities
+- *(gantz_ca)* add merge_parents to Commit for merge commits
+- *(gantz_ca)* impl CaHash for [T; N]; relax content_addr to ?Sized
+- *(ca)* add name-keyed graph descriptions to Registry
+
+### Fixed
+
+- *(ca)* content-address graphs by canonical node rank
+- *(named-ref)* include `sync` in the content address so toggles persist
+
 ## [0.2.1](https://github.com/nannou-org/gantz/compare/gantz_ca-v0.2.0...gantz_ca-v0.2.1) - 2026-06-15
 
 ### Added
