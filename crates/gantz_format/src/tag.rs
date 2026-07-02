@@ -9,8 +9,6 @@
 //! constructors the WASM linker can silently discard - see gantz#181),
 //! nothing here can be dropped at link time.
 
-use crate::Datum;
-
 /// A node type's wire tag: the value of the `"type"` entry in its serialized
 /// map form, e.g. `(node "Expr" ...)` in `.gantz` text.
 ///
@@ -53,6 +51,22 @@ impl NodeTag for gantz_core::node::graph::Inlet {
 
 impl NodeTag for gantz_core::node::graph::Outlet {
     const TAG: &'static str = "Outlet";
+}
+
+/// The wire tag for [`Fn<Self>`](gantz_core::node::Fn), for node types that
+/// appear fn-wrapped in a node set.
+///
+/// `Fn<N>` is foreign to `N`'s crate, so the orphan rule forbids implementing
+/// [`NodeTag`] for it there directly; this lets the wrapped type declare the
+/// wrapper's tag at its own definition site instead, and the blanket impl
+/// below lifts it.
+pub trait FnNodeTag {
+    /// The `"type"` tag identifying `Fn<Self>` on the wire.
+    const FN_TAG: &'static str;
+}
+
+impl<N: FnNodeTag> NodeTag for gantz_core::node::Fn<N> {
+    const TAG: &'static str = N::FN_TAG;
 }
 
 /// The tag-first map wrapper the generated `Serialize` uses: `flatten` forces
@@ -169,7 +183,7 @@ macro_rules! impl_node_set_serde {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{from_datum, node_datum, to_datum};
+    use crate::{Datum, from_datum, node_datum, to_datum};
 
     /// The dispatch handles all three node struct shapes: unit, fields and
     /// newtype (`Fn<N>` delegates to the wrapped node's fields).

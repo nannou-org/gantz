@@ -11,6 +11,10 @@ pub struct Log {
     pub level: log::Level,
 }
 
+impl gantz_format::NodeTag for Log {
+    const TAG: &'static str = "Log";
+}
+
 impl Default for Log {
     fn default() -> Self {
         Self {

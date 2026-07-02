@@ -19,6 +19,7 @@
 use crate::datum::{Datum, node_datum};
 use crate::error::{ErrorKind, FormatError};
 use crate::sexpr::{self, as_keyword, as_string, as_symbol, err_at, quote, span_src};
+use crate::tag::NodeTag;
 use steel::parser::ast::ExprKind;
 
 /// The arguments of a list-headed sugar form `(<head> <args>...)`, with helpers
@@ -225,20 +226,20 @@ pub trait NodeSugar {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CoreSugar;
 
-/// Sugar keyword -> typetag tag, for the `gantz_core` builtins that lower to a
+/// Sugar keyword -> node tag, for the `gantz_core` builtins that lower to a
 /// plain serde object with no extra arguments. Order is the canonical display
 /// order.
 const KEYWORD_TAG: &[(&str, &str)] = &[
-    ("inlet", "Inlet"),
-    ("outlet", "Outlet"),
-    ("apply", "Apply"),
-    ("delay", "Delay"),
-    ("id", "Identity"),
-    ("expr", "Expr"),
-    ("branch", "Branch"),
+    ("inlet", <gantz_core::node::graph::Inlet as NodeTag>::TAG),
+    ("outlet", <gantz_core::node::graph::Outlet as NodeTag>::TAG),
+    ("apply", <gantz_core::node::Apply as NodeTag>::TAG),
+    ("delay", <gantz_core::node::Delay as NodeTag>::TAG),
+    ("id", <gantz_core::node::Identity as NodeTag>::TAG),
+    ("expr", <gantz_core::node::Expr as NodeTag>::TAG),
+    ("branch", <gantz_core::node::Branch as NodeTag>::TAG),
 ];
 
-/// The typetag tag for a sugar keyword.
+/// The node tag for a sugar keyword.
 fn tag_for_keyword(kw: &str) -> Option<&'static str> {
     KEYWORD_TAG
         .iter()
@@ -246,7 +247,7 @@ fn tag_for_keyword(kw: &str) -> Option<&'static str> {
         .map(|&(_, tag)| tag)
 }
 
-/// The sugar keyword for a typetag tag, if one exists.
+/// The sugar keyword for a node tag, if one exists.
 fn keyword_for_tag(tag: &str) -> Option<&'static str> {
     KEYWORD_TAG
         .iter()

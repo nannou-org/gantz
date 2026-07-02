@@ -28,6 +28,10 @@ pub struct Number {
     push_eval_on_edit: bool,
 }
 
+impl gantz_format::NodeTag for Number {
+    const TAG: &'static str = "Number";
+}
+
 impl Number {
     /// The lower bound the value is clamped to, if any.
     pub fn min(&self) -> Option<f64> {

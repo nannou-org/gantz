@@ -106,6 +106,10 @@ pub struct Plot {
     y_max: Option<F32>,
 }
 
+impl gantz_format::NodeTag for Plot {
+    const TAG: &'static str = "Plot";
+}
+
 impl Plot {
     /// The default body size, `[width, height]`.
     pub const DEFAULT_SIZE: [u16; 2] = [120, 80];

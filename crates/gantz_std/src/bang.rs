@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 #[cahash("gantz.bang")]
 pub struct Bang;
 
+impl gantz_format::NodeTag for Bang {
+    const TAG: &'static str = "Bang";
+}
+
 impl gantz_core::Node for Bang {
     /// A single trigger input whose value is ignored.
     fn n_inputs(&self, _ctx: MetaCtx) -> usize {

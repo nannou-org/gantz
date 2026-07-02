@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 #[cahash("gantz.inspect")]
 pub struct Inspect;
 
+impl gantz_format::NodeTag for Inspect {
+    const TAG: &'static str = "Inspect";
+}
+
 impl gantz_core::Node for Inspect {
     fn n_inputs(&self, _ctx: MetaCtx) -> usize {
         1

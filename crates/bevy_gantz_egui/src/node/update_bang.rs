@@ -31,6 +31,10 @@ use steel::SteelVal;
 #[cahash("gantz.update!")]
 pub struct UpdateBang;
 
+impl gantz_format::NodeTag for UpdateBang {
+    const TAG: &'static str = "UpdateBang";
+}
+
 impl gantz_core::Node for UpdateBang {
     fn n_outputs(&self, _ctx: MetaCtx) -> usize {
         1

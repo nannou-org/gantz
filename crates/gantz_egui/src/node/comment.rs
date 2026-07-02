@@ -37,6 +37,10 @@ pub struct Comment {
     size: [u16; 2],
 }
 
+impl gantz_format::NodeTag for Comment {
+    const TAG: &'static str = "Comment";
+}
+
 impl Comment {
     /// The default size if none is loaded from state.
     pub const DEFAULT_SIZE: [u16; 2] = [100, 40];

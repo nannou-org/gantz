@@ -38,9 +38,9 @@ pub use lower::Loaded;
 pub use model::{Addr, Document, Form};
 pub use raise::{Dumped, GraphLabels};
 pub use sugar::{CoreSugar, NodeSugar, Sugar, SugarArgs, Sugars};
-pub use tag::NodeTag;
 #[doc(hidden)]
 pub use tag::TaggedNode;
+pub use tag::{FnNodeTag, NodeTag};
 
 use gantz_ca::{CaHash, Registry, Timestamp};
 use gantz_core::node::graph::Graph;

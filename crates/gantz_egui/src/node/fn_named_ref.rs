@@ -9,6 +9,12 @@ use crate::{
 /// A function node wrapping a named reference.
 pub type FnNamedRef = gantz_core::node::Fn<NamedRef>;
 
+// Declared on the wrapped type: the orphan rule forbids implementing
+// `NodeTag` for the foreign `Fn<NamedRef>` here directly.
+impl gantz_format::FnNodeTag for NamedRef {
+    const FN_TAG: &'static str = "FnNamedRef";
+}
+
 /// Trait for environments that can provide Fn-compatible node names.
 pub trait FnNodeNames: NameRegistry {
     /// Names of nodes that can be used with Fn.

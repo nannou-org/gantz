@@ -166,6 +166,10 @@ pub struct TickBang {
     interval: Interval,
 }
 
+impl gantz_format::NodeTag for TickBang {
+    const TAG: &'static str = "TickBang";
+}
+
 impl TickBang {
     /// How the tick interval is specified (a duration in seconds or rate in Hz).
     pub fn interval(&self) -> Interval {

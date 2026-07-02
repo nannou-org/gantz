@@ -39,6 +39,10 @@ pub struct NamedRef {
     pub(crate) sync: bool,
 }
 
+impl gantz_format::NodeTag for NamedRef {
+    const TAG: &'static str = "NamedRef";
+}
+
 /// Trait for environments that can check if a name maps to a content address.
 pub trait NameRegistry {
     /// Returns the current content address for the given name, if it exists.
