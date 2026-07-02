@@ -2,6 +2,7 @@
 
 use crate::node;
 use gantz_ca::CaHash;
+use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
 /// The name used for the identity node in the registry.
@@ -11,7 +12,7 @@ pub const IDENTITY_NAME: &str = "id";
 ///
 /// This is a fundamental building block in functional programming,
 /// often used as a default or no-op function.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash, NodeTag)]
 #[cahash("gantz.identity")]
 pub struct Identity;
 

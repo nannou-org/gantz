@@ -315,38 +315,43 @@ fn register_primitive(
 // ----------------------------------------------
 
 /// A top-level blanket trait providing trait object cloning, hashing, and serialization.
-#[typetag::serde(tag = "type")]
 trait Node: Any + DynClone + gantz_ca::CaHash + gantz_core::Node + gantz_egui::NodeUi {}
 
 dyn_clone::clone_trait_object!(Node);
 
-#[typetag::serde]
 impl Node for gantz_core::node::Branch {}
-#[typetag::serde]
 impl Node for gantz_core::node::Delay {}
-#[typetag::serde]
 impl Node for gantz_core::node::Expr {}
-#[typetag::serde]
 impl Node for gantz_core::node::graph::Inlet {}
-#[typetag::serde]
 impl Node for gantz_core::node::graph::Outlet {}
 
-#[typetag::serde]
 impl Node for gantz_std::Bang {}
-#[typetag::serde]
 impl Node for gantz_std::Log {}
-#[typetag::serde]
 impl Node for gantz_std::Number {}
 
-#[typetag::serde]
 impl Node for gantz_egui::node::Inspect {}
-#[typetag::serde]
 impl Node for gantz_egui::node::NamedRef {}
-#[typetag::serde]
 impl Node for gantz_egui::node::Plot {}
 
-#[typetag::serde]
 impl Node for Box<dyn Node> {}
+
+// `Box<dyn Node>`'s `Serialize`/`Deserialize`: compiled dispatch over the
+// demo's node set, keyed by each type's definition-site `NodeTag`.
+gantz_format::impl_node_set_serde! {
+    dyn Node {
+        gantz_core::node::Branch,
+        gantz_core::node::Delay,
+        gantz_core::node::Expr,
+        gantz_core::node::graph::Inlet,
+        gantz_core::node::graph::Outlet,
+        gantz_std::Bang,
+        gantz_std::Log,
+        gantz_std::Number,
+        gantz_egui::node::Inspect,
+        gantz_egui::node::NamedRef,
+        gantz_egui::node::Plot,
+    }
+}
 
 /// The composite `.gantz` keyword sugar for the demo's node set: the
 /// `gantz_core`, `gantz_std` and `gantz_egui` node sugars (no bevy nodes here).

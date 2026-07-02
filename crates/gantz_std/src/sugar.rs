@@ -5,18 +5,23 @@
 //! and `(log [level])`. Compose it with [`gantz_format::CoreSugar`] (and the
 //! other crates' sugars) via [`gantz_format::Sugars`].
 
+use crate::{Bang, Log, Number};
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
+use gantz_nodetag::NodeTag;
 
-/// Keyword sugar for [`Bang`](crate::Bang), [`Number`](crate::Number) and
-/// [`Log`](crate::Log).
+/// Keyword sugar for [`Bang`], [`Number`] and [`Log`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StdSugar;
 
-/// Sugar keyword -> typetag tag, for the std builtins that lower to a plain
+/// Sugar keyword -> node tag, for the std builtins that lower to a plain
 /// serde object with no extra arguments.
-const KEYWORD_TAG: &[(&str, &str)] = &[("bang", "Bang"), ("number", "Number"), ("log", "Log")];
+const KEYWORD_TAG: &[(&str, &str)] = &[
+    ("bang", Bang::TAG),
+    ("number", Number::TAG),
+    ("log", Log::TAG),
+];
 
-/// The typetag tag for a sugar keyword.
+/// The node tag for a sugar keyword.
 fn tag_for_keyword(kw: &str) -> Option<&'static str> {
     KEYWORD_TAG
         .iter()
@@ -24,7 +29,7 @@ fn tag_for_keyword(kw: &str) -> Option<&'static str> {
         .map(|&(_, tag)| tag)
 }
 
-/// The sugar keyword for a typetag tag, if one exists.
+/// The sugar keyword for a node tag, if one exists.
 fn keyword_for_tag(tag: &str) -> Option<&'static str> {
     KEYWORD_TAG
         .iter()

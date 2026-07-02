@@ -1,12 +1,13 @@
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::steel::{SteelVal, steel_vm::register_fn::RegisterFn};
+use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
 /// A simple node that logs whatever value is received at a given log level.
 ///
 /// The emitted expression passes the node's own path so the log entry's
 /// target identifies the emitting node (see [`log_target`]).
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag)]
 pub struct Log {
     pub level: log::Level,
 }

@@ -24,6 +24,7 @@ mod datum;
 mod error;
 mod lower;
 mod model;
+mod node_set;
 mod parse;
 mod raise;
 mod sugar;
@@ -35,8 +36,15 @@ pub use datum::{Datum, DatumError, datum_from_expr, datum_text, from_datum, node
 pub use error::{ErrorKind, FormatError, Span};
 pub use lower::Loaded;
 pub use model::{Addr, Document, Form};
+#[doc(hidden)]
+pub use node_set::{NodeFields, TaggedNode};
 pub use raise::{Dumped, GraphLabels};
 pub use sugar::{CoreSugar, NodeSugar, Sugar, SugarArgs, Sugars};
+
+/// Re-exported for [`impl_node_set_serde!`] expansions (`$crate::NodeTag`);
+/// depend on `gantz_nodetag` directly to implement or derive it.
+#[doc(hidden)]
+pub use gantz_nodetag::NodeTag;
 
 use gantz_ca::{CaHash, Registry, Timestamp};
 use gantz_core::node::graph::Graph;
@@ -121,14 +129,14 @@ mod tests {
 
     use super::*;
     use gantz_ca::{CaHash, Hasher};
+    use gantz_nodetag::NodeTag;
     use serde::{Deserialize, Serialize};
 
     // A self-contained node-set with one node type that implements neither
     // `NodeSugar` nor any `Sugar` - it carries no first-class keyword at all.
-    #[typetag::serde(tag = "type")]
-    trait Widget: CaHash {}
+    trait Widget: std::any::Any + CaHash {}
 
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, NodeTag)]
     struct Knob {
         value: i64,
     }
@@ -139,12 +147,16 @@ mod tests {
         }
     }
 
-    #[typetag::serde]
     impl Widget for Knob {}
 
-    // `Box<dyn Widget>` is the node-set type `N`: typetag supplies its
-    // Serialize/Deserialize, and `gantz_ca`'s blanket `CaHash for Box<T>` covers
-    // the rest. It implements no `NodeSugar`.
+    // `Box<dyn Widget>` is the node-set type `N`: `impl_node_set_serde!`
+    // supplies its Serialize/Deserialize, and `gantz_ca`'s blanket
+    // `CaHash for Box<T>` covers the rest. It implements no `NodeSugar`.
+    crate::impl_node_set_serde! {
+        dyn Widget {
+            Knob,
+        }
+    }
 
     #[test]
     fn the_with_variants_need_no_node_sugar() {

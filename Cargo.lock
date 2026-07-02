@@ -920,6 +920,7 @@ dependencies = [
  "gantz_core",
  "gantz_egui",
  "gantz_format",
+ "gantz_nodetag",
  "rfd",
  "serde",
  "steel-core",
@@ -3208,9 +3209,9 @@ dependencies = [
  "gantz_format",
  "gantz_std",
  "petgraph",
+ "ron 0.10.1",
  "serde",
  "steel-core",
- "typetag",
  "web-time",
 ]
 
@@ -3245,13 +3246,13 @@ version = "0.4.0"
 dependencies = [
  "env_logger",
  "gantz_ca",
+ "gantz_nodetag",
  "petgraph",
  "serde",
  "serde_json",
  "steel-core",
  "steel-derive",
  "thiserror 2.0.17",
- "typetag",
 ]
 
 [[package]]
@@ -3269,6 +3270,7 @@ dependencies = [
  "gantz_ca",
  "gantz_core",
  "gantz_format",
+ "gantz_nodetag",
  "gantz_std",
  "hex",
  "humantime",
@@ -3283,7 +3285,6 @@ dependencies = [
  "time",
  "tracing",
  "tracing-subscriber",
- "typetag",
  "web-time",
  "winit",
 ]
@@ -3294,11 +3295,28 @@ version = "0.2.1"
 dependencies = [
  "gantz_ca",
  "gantz_core",
+ "gantz_nodetag",
  "log",
  "petgraph",
  "serde",
+ "serde_json",
  "steel-core",
- "typetag",
+]
+
+[[package]]
+name = "gantz_nodetag"
+version = "0.1.0"
+dependencies = [
+ "gantz_nodetag_derive",
+]
+
+[[package]]
+name = "gantz_nodetag_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -3308,12 +3326,12 @@ dependencies = [
  "gantz_ca",
  "gantz_core",
  "gantz_format",
+ "gantz_nodetag",
  "log",
  "petgraph",
  "serde",
  "steel-core",
  "steel-derive",
- "typetag",
 ]
 
 [[package]]
@@ -6292,30 +6310,6 @@ name = "typenum"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
-
-[[package]]
-name = "typetag"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be2212c8a9b9bcfca32024de14998494cf9a5dfa59ea1b829de98bac374b86bf"
-dependencies = [
- "erased-serde",
- "inventory",
- "once_cell",
- "serde",
- "typetag-impl",
-]
-
-[[package]]
-name = "typetag-impl"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27a7a9b72ba121f6f1f6c3632b85604cac41aedb5ddc70accbebb6cac83de846"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
 
 [[package]]
 name = "typewit"

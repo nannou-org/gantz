@@ -1,0 +1,12 @@
+[package]
+name = "gantz_nodetag"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Wire tags identifying gantz node types across serialization formats"
+
+[dependencies]
+gantz_nodetag_derive.workspace = true

@@ -1,6 +1,7 @@
 use gantz_ca::CaHash;
 use gantz_core::node::{EvalConf, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::steel::SteelVal;
+use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
@@ -16,7 +17,7 @@ use std::hash::{Hash, Hasher};
 /// [`CaHash`]): a plain `number` keeps the original address, while any
 /// configured field becomes part of the node's identity so it persists and is
 /// undoable under the commit-on-change model.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, NodeTag)]
 pub struct Number {
     #[serde(default)]
     min: Option<f64>,

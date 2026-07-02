@@ -3,7 +3,6 @@ use dyn_hash::DynHash;
 use std::any::Any;
 
 /// A top-level blanket trait providing trait object cloning, hashing, and serialization.
-#[typetag::serde(tag = "type")]
 pub trait Node:
     Any + DynClone + DynHash + gantz_ca::CaHash + gantz_core::Node + gantz_egui::NodeUi + Send + Sync
 {
@@ -12,43 +11,52 @@ pub trait Node:
 dyn_clone::clone_trait_object!(Node);
 dyn_hash::hash_trait_object!(Node);
 
-#[typetag::serde]
 impl Node for gantz_core::node::Apply {}
-#[typetag::serde]
 impl Node for gantz_core::node::Branch {}
-#[typetag::serde]
 impl Node for gantz_core::node::Delay {}
-#[typetag::serde]
 impl Node for gantz_core::node::Expr {}
-#[typetag::serde]
 impl Node for gantz_core::node::Identity {}
-#[typetag::serde]
 impl Node for gantz_core::node::graph::Inlet {}
-#[typetag::serde]
 impl Node for gantz_core::node::graph::Outlet {}
 
-#[typetag::serde]
 impl Node for gantz_std::Bang {}
-#[typetag::serde]
 impl Node for gantz_std::Log {}
-#[typetag::serde]
 impl Node for gantz_std::Number {}
 
-#[typetag::serde]
 impl Node for gantz_egui::node::FnNamedRef {}
-#[typetag::serde]
 impl Node for gantz_egui::node::NamedRef {}
 
-#[typetag::serde]
 impl Node for gantz_egui::node::Comment {}
-#[typetag::serde]
 impl Node for bevy_gantz_egui::node::UpdateBang {}
-#[typetag::serde]
 impl Node for bevy_gantz_egui::node::TickBang {}
-#[typetag::serde]
 impl Node for gantz_egui::node::Inspect {}
-#[typetag::serde]
 impl Node for gantz_egui::node::Plot {}
+
+// `Box<dyn Node>`'s `Serialize`/`Deserialize`: compiled dispatch over the
+// full node set, keyed by each type's `gantz_nodetag::NodeTag`. Adding a
+// node type to the app is an `impl Node` above plus one line here (the
+// `node_set_roundtrips_through_datum` gate test enforces the latter).
+gantz_format::impl_node_set_serde! {
+    dyn Node {
+        gantz_core::node::Apply,
+        gantz_core::node::Branch,
+        gantz_core::node::Delay,
+        gantz_core::node::Expr,
+        gantz_core::node::Identity,
+        gantz_core::node::graph::Inlet,
+        gantz_core::node::graph::Outlet,
+        gantz_std::Bang,
+        gantz_std::Log,
+        gantz_std::Number,
+        gantz_egui::node::FnNamedRef,
+        gantz_egui::node::NamedRef,
+        gantz_egui::node::Comment,
+        bevy_gantz_egui::node::UpdateBang,
+        bevy_gantz_egui::node::TickBang,
+        gantz_egui::node::Inspect,
+        gantz_egui::node::Plot,
+    }
+}
 
 impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
     fn from(named: gantz_egui::node::NamedRef) -> Self {
@@ -84,7 +92,6 @@ impl bevy_gantz_egui::node::ToTickBang for Box<dyn Node> {
     }
 }
 
-#[typetag::serde]
 impl Node for Box<dyn Node> {}
 
 /// The composite `.gantz` keyword sugar for this app's full node set: the
@@ -105,12 +112,13 @@ mod tests {
     use super::Node;
 
     /// Gate test for the `.gantz` text format: confirm `Box<dyn Node>`
-    /// (typetag-dispatched) round-trips through the self-describing
-    /// `gantz_format::Datum` codec. The format bridges node specs to/from
-    /// typetag via this codec rather than hand-writing a parser per node type,
-    /// so the mechanism must hold for every registered node.
+    /// round-trips through the self-describing `gantz_format::Datum` codec.
+    /// The format bridges node specs to/from the node set's serde dispatch
+    /// (`impl_node_set_serde!`) via this codec rather than hand-writing a
+    /// parser per node type, so the mechanism must hold for every listed
+    /// node - a type missing from the macro's list fails here.
     #[test]
-    fn typetag_roundtrips_through_datum() {
+    fn node_set_roundtrips_through_datum() {
         use gantz_format::{Datum, from_datum, to_datum};
 
         fn node_datum(tag: &str, fields: Vec<(&str, Datum)>) -> Datum {
@@ -213,7 +221,7 @@ mod tests {
                 .unwrap_or_else(|e| panic!("from_datum failed for {value:?}: {e}"));
             let back = to_datum(&node).unwrap_or_else(|e| panic!("to_datum failed: {e}"));
             // The re-serialized form must itself round-trip identically, proving
-            // both directions of the typetag <-> Datum bridge are stable.
+            // both directions of the node-set <-> Datum bridge are stable.
             let node2: Box<dyn Node> = from_datum(back.clone())
                 .unwrap_or_else(|e| panic!("re-deserialize failed for {back:?}: {e}"));
             let back2 = to_datum(&node2).unwrap_or_else(|e| panic!("re-serialize failed: {e}"));
@@ -223,6 +231,80 @@ mod tests {
                 type_of(&value),
                 "type tag changed for {value:?}",
             );
+        }
+    }
+
+    /// Pins the exact node serde wire format in both the `Datum` codec (the
+    /// `.gantz` text format bridge) and RON (registry persistence): a map
+    /// carrying the `type` tag entry alongside the node's own fields.
+    ///
+    /// Exports and persisted registries produced by earlier builds must keep
+    /// loading, and vice versa, so these literals must never change. Covers
+    /// the three struct shapes: unit (`Bang`), fields (`Expr`) and newtype
+    /// (`FnNamedRef`, which flattens to its inner node's fields).
+    #[test]
+    fn node_serde_wire_format() {
+        use gantz_format::{Datum, from_datum, to_datum};
+
+        let bang: Box<dyn Node> = Box::new(gantz_std::Bang);
+        let expr: Box<dyn Node> = Box::new(gantz_core::node::Expr::new("(+ $a $b)").unwrap());
+        let fn_named_ref: Box<dyn Node> =
+            Box::new(gantz_core::node::Fn(gantz_egui::node::NamedRef::new(
+                "mul".to_string(),
+                gantz_core::node::Ref::new(gantz_ca::ContentAddr::from([0u8; 32])),
+            )));
+
+        // Note: the `Datum` codec sorts map entries by key; RON preserves
+        // the written order (tag first, then declaration-order fields).
+        fn datum(entries: Vec<(&str, Datum)>) -> Datum {
+            Datum::Map(
+                entries
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v))
+                    .collect(),
+            )
+        }
+        let zeros = "0".repeat(64);
+        let cases = [
+            (
+                bang,
+                datum(vec![("type", Datum::Str("Bang".into()))]),
+                r#"{"type":"Bang"}"#.to_string(),
+            ),
+            (
+                expr,
+                datum(vec![
+                    ("outputs", Datum::U64(1)),
+                    ("src", Datum::Str("(+ $a $b)".into())),
+                    ("type", Datum::Str("Expr".into())),
+                ]),
+                r#"{"type":"Expr","src":"(+ $a $b)","outputs":1}"#.to_string(),
+            ),
+            (
+                fn_named_ref,
+                datum(vec![
+                    ("name", Datum::Str("mul".into())),
+                    ("ref_", Datum::Str(zeros.clone())),
+                    ("sync", Datum::Bool(false)),
+                    ("type", Datum::Str("FnNamedRef".into())),
+                ]),
+                // RON preserves the `Ref(ContentAddr)` newtype nesting.
+                format!(
+                    r#"{{"type":"FnNamedRef","ref_":(("{zeros}")),"name":"mul","sync":false}}"#
+                ),
+            ),
+        ];
+
+        for (node, expected_datum, expected_ron) in cases {
+            let datum = to_datum(&node).unwrap();
+            assert_eq!(datum, expected_datum);
+            let ron = ron::to_string(&node).unwrap();
+            assert_eq!(ron, expected_ron);
+            // Both representations load back and re-serialize identically.
+            let from_datum: Box<dyn Node> = from_datum(datum).unwrap();
+            assert_eq!(to_datum(&from_datum).unwrap(), expected_datum);
+            let from_ron: Box<dyn Node> = ron::de::from_str(&ron).unwrap();
+            assert_eq!(to_datum(&from_ron).unwrap(), expected_datum);
         }
     }
 

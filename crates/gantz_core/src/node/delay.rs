@@ -2,6 +2,7 @@
 
 use crate::node::{self, Node};
 use gantz_ca::CaHash;
+use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
 /// A unit delay: outputs the value its input received on the *previous*
@@ -16,7 +17,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Before the first write the stored value is `'()`; downstream nodes guard
 /// accordingly (e.g. `(if (number? $x) $x 0)`).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, CaHash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, CaHash, NodeTag)]
 #[cahash("gantz.delay")]
 pub struct Delay;
 

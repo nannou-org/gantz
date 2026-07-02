@@ -6,12 +6,13 @@
 //! `serde` [`Serializer`]/[`Deserializer`] pair built directly on `Datum`
 //! (mirroring `serde_json`'s own `Value` codec), so every node's own
 //! `Serialize`/`Deserialize` runs unchanged and arbitrary serde types - not
-//! just `typetag` trait objects - are supported. [`datum_text`] and
+//! just erased node sets - are supported. [`datum_text`] and
 //! [`datum_from_expr`] map a `Datum` to and from Steel text.
 //!
 //! The deserializer is *self-describing*: [`Datum::deserialize_any`] dispatches
-//! each datum kind to the matching `visit_*`, which is what `typetag`'s content
-//! buffering and `#[serde(tag = ...)]` ride on.
+//! each datum kind to the matching `visit_*`, which is what tag-dispatched
+//! node-set serde ([`impl_node_set_serde!`](crate::impl_node_set_serde)) and
+//! `#[serde(tag = ...)]` derives ride on.
 //!
 //! The one deliberate divergence from `serde_json::Value` is that `char` and
 //! `bytes` keep dedicated variants ([`Datum::Char`]/[`Datum::Bytes`]) rather
@@ -79,7 +80,7 @@ where
 // -- constructors / accessors ------------------------------------------------
 
 impl Datum {
-    /// Build a node datum: a `type` field (the typetag tag) prepended to
+    /// Build a node datum: a `type` field (the node's wire tag) prepended to
     /// `fields`. The single canonical way the format constructs a tagged map.
     /// Out-of-crate [`Sugar`](crate::Sugar) impls usually want the `&str`-keyed
     /// [`node_datum`] convenience instead.
@@ -145,7 +146,7 @@ impl Datum {
     }
 }
 
-/// Build a node datum from a typetag tag and ordered `&str`-keyed fields - the
+/// Build a node datum from a node tag and ordered `&str`-keyed fields - the
 /// ergonomic builder a [`Sugar`](crate::Sugar) uses to construct the value its
 /// `read_spec` returns, without depending on `Datum`'s internal map shape.
 pub fn node_datum(tag: &str, fields: Vec<(&str, Datum)>) -> Datum {
@@ -744,6 +745,110 @@ impl ser::Serializer for MapKeySerializer {
 
 // -- deserializer ------------------------------------------------------------
 
+/// Transcode into a `Datum` from any self-describing format (mirroring
+/// `serde_json::Value`'s `Deserialize`): the input is buffered as a `Datum`,
+/// which can then re-drive a concrete type's `Deserialize` via [`from_datum`].
+/// [`impl_node_set_serde!`](crate::impl_node_set_serde) buffers node fields
+/// this way when they precede the `type` tag.
+impl<'de> Deserialize<'de> for Datum {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        struct DatumVisitor;
+
+        impl<'de> Visitor<'de> for DatumVisitor {
+            type Value = Datum;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("any valid datum")
+            }
+
+            fn visit_bool<E>(self, b: bool) -> Result<Datum, E> {
+                Ok(Datum::Bool(b))
+            }
+
+            fn visit_i64<E>(self, n: i64) -> Result<Datum, E> {
+                Ok(Datum::I64(n))
+            }
+
+            fn visit_u64<E>(self, n: u64) -> Result<Datum, E> {
+                Ok(Datum::U64(n))
+            }
+
+            fn visit_f64<E>(self, n: f64) -> Result<Datum, E> {
+                Ok(Datum::F64(n))
+            }
+
+            fn visit_char<E>(self, c: char) -> Result<Datum, E> {
+                Ok(Datum::Char(c))
+            }
+
+            fn visit_str<E>(self, s: &str) -> Result<Datum, E> {
+                Ok(Datum::Str(s.to_string()))
+            }
+
+            fn visit_string<E>(self, s: String) -> Result<Datum, E> {
+                Ok(Datum::Str(s))
+            }
+
+            fn visit_bytes<E>(self, b: &[u8]) -> Result<Datum, E> {
+                Ok(Datum::Bytes(b.to_vec()))
+            }
+
+            fn visit_byte_buf<E>(self, b: Vec<u8>) -> Result<Datum, E> {
+                Ok(Datum::Bytes(b))
+            }
+
+            fn visit_none<E>(self) -> Result<Datum, E> {
+                Ok(Datum::Null)
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Datum, D::Error>
+            where
+                D: de::Deserializer<'de>,
+            {
+                Deserialize::deserialize(deserializer)
+            }
+
+            fn visit_unit<E>(self) -> Result<Datum, E> {
+                Ok(Datum::Null)
+            }
+
+            fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Datum, D::Error>
+            where
+                D: de::Deserializer<'de>,
+            {
+                Deserialize::deserialize(deserializer)
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Datum, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(4096));
+                while let Some(item) = seq.next_element()? {
+                    items.push(item);
+                }
+                Ok(Datum::Seq(items))
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Datum, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut entries = Vec::with_capacity(map.size_hint().unwrap_or(0).min(4096));
+                while let Some(entry) = map.next_entry()? {
+                    entries.push(entry);
+                }
+                Ok(Datum::Map(entries))
+            }
+        }
+
+        deserializer.deserialize_any(DatumVisitor)
+    }
+}
+
 impl Datum {
     fn invalid_type<E>(&self, exp: &dyn Expected) -> E
     where
@@ -961,7 +1066,13 @@ impl<'de> de::Deserializer<'de> for Datum {
     where
         V: Visitor<'de>,
     {
-        self.deserialize_unit(visitor)
+        match self {
+            // A unit-struct node's datum is an empty map once its `type` tag
+            // is split off (mirrors `serde`'s own internally-tagged special
+            // case for newtype variants around unit structs).
+            Datum::Map(ref entries) if entries.is_empty() => visitor.visit_unit(),
+            _ => self.deserialize_unit(visitor),
+        }
     }
 
     fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, DatumError>

@@ -5,12 +5,29 @@ use crate::{
     visit,
 };
 use gantz_ca::CaHash;
+use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
 /// A node that emits a lambda function wrapping another node's expression.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
 #[cahash("gantz.fn")]
 pub struct Fn<N>(pub N);
+
+/// The wire tag for [`Fn<Self>`], for node types that appear fn-wrapped in a
+/// node set.
+///
+/// `Fn<N>` is foreign to `N`'s crate, so the orphan rule forbids implementing
+/// [`NodeTag`] for it there directly; this lets the wrapped type declare the
+/// wrapper's tag at its own definition site instead, and the blanket impl
+/// below lifts it.
+pub trait FnNodeTag {
+    /// The `"type"` tag identifying `Fn<Self>` on the wire.
+    const FN_TAG: &'static str;
+}
+
+impl<N: FnNodeTag> NodeTag for Fn<N> {
+    const TAG: &'static str = N::FN_TAG;
+}
 
 impl<N> Fn<N> {
     /// Create a new Fn node that wraps the node at the given address.

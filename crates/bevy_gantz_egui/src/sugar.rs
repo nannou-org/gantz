@@ -6,19 +6,22 @@
 //! [`gantz_format::CoreSugar`] (and the other crates' sugars) via
 //! [`gantz_format::Sugars`].
 
-use crate::node::tick_bang;
+use crate::node::{TickBang, UpdateBang, tick_bang};
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
+use gantz_nodetag::NodeTag;
 
-/// Keyword sugar for [`UpdateBang`](crate::node::UpdateBang) and
-/// [`TickBang`](crate::node::TickBang).
+/// Keyword sugar for [`UpdateBang`] and [`TickBang`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BevySugar;
 
-/// Sugar keyword -> typetag tag, for the bevy builtins that lower to a plain
+/// Sugar keyword -> node tag, for the bevy builtins that lower to a plain
 /// serde object with no extra arguments.
-const KEYWORD_TAG: &[(&str, &str)] = &[("update-bang", "UpdateBang"), ("tick-bang", "TickBang")];
+const KEYWORD_TAG: &[(&str, &str)] = &[
+    ("update-bang", UpdateBang::TAG),
+    ("tick-bang", TickBang::TAG),
+];
 
-/// The typetag tag for a sugar keyword.
+/// The node tag for a sugar keyword.
 fn tag_for_keyword(kw: &str) -> Option<&'static str> {
     KEYWORD_TAG
         .iter()
@@ -26,7 +29,7 @@ fn tag_for_keyword(kw: &str) -> Option<&'static str> {
         .map(|&(_, tag)| tag)
 }
 
-/// The sugar keyword for a typetag tag, if one exists.
+/// The sugar keyword for a node tag, if one exists.
 fn keyword_for_tag(tag: &str) -> Option<&'static str> {
     KEYWORD_TAG
         .iter()

@@ -12,11 +12,11 @@ repository.workspace = true
 gantz_ca.workspace = true
 gantz_core.workspace = true
 gantz_format.workspace = true
+gantz_nodetag.workspace = true
 log.workspace = true
 serde.workspace = true
 steel-core.workspace = true
 steel-derive.workspace = true
-typetag.workspace = true
 
 [dev-dependencies]
 petgraph.workspace = true
