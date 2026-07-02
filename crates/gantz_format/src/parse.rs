@@ -362,6 +362,7 @@ fn parse_commit_entry(
     let mut secs = 0u64;
     let mut nanos = 0u32;
     let mut parent = None;
+    let mut merge_parents = Vec::new();
     let mut graph = None;
     for field in &args[1..] {
         let fargs = list_args(field).ok_or_else(|| {
@@ -391,6 +392,12 @@ fn parse_commit_entry(
                     None => None,
                 };
             }
+            Some("merge-parents") => {
+                merge_parents = fargs[1..]
+                    .iter()
+                    .map(|e| parse_addr(e, src))
+                    .collect::<Result<_, _>>()?;
+            }
             Some("graph") => {
                 graph = fargs.get(1).map(|e| parse_addr(e, src)).transpose()?;
             }
@@ -415,6 +422,7 @@ fn parse_commit_entry(
         secs,
         nanos,
         parent,
+        merge_parents,
         graph,
     })
 }

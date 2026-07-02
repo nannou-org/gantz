@@ -146,6 +146,10 @@ fn commit_text(c: &CommitDecl) -> String {
     if let Some(addr) = &c.parent {
         s.push_str(&format!(" (parent {})", addr_text(addr)));
     }
+    if !c.merge_parents.is_empty() {
+        let addrs: Vec<String> = c.merge_parents.iter().map(addr_text).collect();
+        s.push_str(&format!(" (merge-parents {})", addrs.join(" ")));
+    }
     s.push_str(&format!(" (graph {}))", addr_text(&c.graph)));
     s
 }

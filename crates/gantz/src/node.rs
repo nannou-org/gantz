@@ -1061,15 +1061,8 @@ mod tests {
         let mut registry = startup.registry;
         let name = "demo-arithmetic";
         let &demo_commit = reparse.registry.names().get(name).expect("demo name");
-        let mut required = HashSet::new();
-        let mut ca = demo_commit;
-        loop {
-            required.insert(ca);
-            match reparse.registry.commits().get(&ca).and_then(|c| c.parent) {
-                Some(parent) => ca = parent,
-                None => break,
-            }
-        }
+        let required: HashSet<_> =
+            gantz_ca::ancestors(reparse.registry.commits(), demo_commit).collect();
         let mut subset = reparse.registry.export(&required);
         subset.insert_name(name.to_string(), demo_commit);
         registry.merge(subset);

@@ -47,7 +47,23 @@ where
     let mut doc = Document::default();
     let mut graphs = HashMap::new();
 
-    for (g_addr, graph) in registry.graphs() {
+    // Write commits ascending by (timestamp, addr) and graphs by the newest
+    // commit pointing at them. The registry maps are unordered, but document
+    // order matters on load: a commit's parents (incl. merge parents) resolve
+    // only against already-built commits, and the last commit declared per
+    // graph wins as its head (see `lower`). Time order keeps ancestry intact
+    // across a round-trip and the output stable.
+    let mut commits: Vec<_> = registry.commits().iter().collect();
+    commits.sort_by_key(|&(ca, c)| (c.timestamp, *ca));
+    let mut newest: HashMap<gantz_ca::GraphAddr, gantz_ca::Timestamp> = HashMap::new();
+    for &(_, c) in &commits {
+        // Ascending order, so a later entry is never older.
+        newest.insert(c.graph, c.timestamp);
+    }
+    let mut graph_entries: Vec<_> = registry.graphs().iter().collect();
+    graph_entries.sort_by_key(|&(ga, _)| (newest.get(ga).copied(), *ga));
+
+    for (g_addr, graph) in graph_entries {
         let (body, labels) = graph_to_body::<N>(graph, sugar, true)?;
         let id = short_hex(*g_addr);
         doc.graphs.push(GraphDef {
@@ -57,12 +73,17 @@ where
         graphs.insert(*g_addr, GraphLabels { id, labels });
     }
 
-    for (c_addr, commit) in registry.commits() {
+    for (c_addr, commit) in commits {
         doc.commits.push(CommitDecl {
             id: Addr::Concrete(short_hex(*c_addr)),
             secs: commit.timestamp.as_secs(),
             nanos: commit.timestamp.subsec_nanos(),
             parent: commit.parent.map(|p| Addr::Concrete(short_hex(p))),
+            merge_parents: commit
+                .merge_parents
+                .iter()
+                .map(|&p| Addr::Concrete(short_hex(p)))
+                .collect(),
             graph: Addr::Concrete(short_hex(commit.graph)),
         });
     }

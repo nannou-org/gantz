@@ -1506,17 +1506,11 @@ where
             return;
         }
     };
-    // Extract just the commits reachable from the target name.
+    // Extract just the commits reachable from the target name (all parents,
+    // so merge ancestry survives a reset).
     if let Some(&base_commit_ca) = export.registry.names().get(name) {
-        let mut required = std::collections::HashSet::new();
-        let mut ca = base_commit_ca;
-        loop {
-            required.insert(ca);
-            match export.registry.commits().get(&ca).and_then(|c| c.parent) {
-                Some(parent) => ca = parent,
-                None => break,
-            }
-        }
+        let required: std::collections::HashSet<_> =
+            ca::ancestors(export.registry.commits(), base_commit_ca).collect();
         let mut subset = export.registry.export(&required);
         subset.insert_name(name.clone(), base_commit_ca);
         registry.merge(subset);
