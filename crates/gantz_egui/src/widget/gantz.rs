@@ -53,6 +53,7 @@ pub struct Gantz<'a> {
     edge_styles: &'a [&'a dyn widget::EdgeStyle],
     base_sources: Option<BaseSourcesCtx<'a>>,
     pane_window_mode: PaneWindowMode,
+    collab: Option<&'a crate::collab::CollabUiState>,
 }
 
 /// Base-source authoring context for the graph config pane's "source"
@@ -113,6 +114,9 @@ pub struct GantzState {
     /// command bindings (see [`crate::keybind`]); edited in Settings -> Keybinds.
     #[serde(default)]
     pub keymap: Keymap,
+    /// User-editable collaboration configuration (Settings -> Collab).
+    #[serde(default)]
+    pub collab: crate::collab::CollabConfig,
     /// How graph merges resolve conflicts; edited via the merge row's "⛭"
     /// menu in the Graph Config pane.
     #[serde(default)]
@@ -783,7 +787,15 @@ impl<'a> Gantz<'a> {
             edge_styles: &[],
             base_sources: None,
             pane_window_mode: PaneWindowMode::default(),
+            collab: None,
         }
+    }
+
+    /// Provide the collaborative-session display state so the Graph Config
+    /// pane shows the collab row for shared (or shareable) graphs.
+    pub fn collab(mut self, collab: &'a crate::collab::CollabUiState) -> Self {
+        self.collab = Some(collab);
+        self
     }
 
     /// Choose whether the widget draws popped-out panes as `egui::Window`s
@@ -1146,6 +1158,7 @@ impl GantzState {
             layout_config: LayoutConfig::default(),
             scene_config: SceneConfig::default(),
             keymap: Keymap::default(),
+            collab: Default::default(),
             merge_resolutions: Default::default(),
             redo_stacks: HashMap::new(),
             sidebar_width: default_sidebar_width(),
@@ -1409,6 +1422,12 @@ where
                     _ => None,
                 };
 
+                // The head's session display, when a collab layer is wired.
+                let session = gantz.collab.map(|c| match &head {
+                    gantz_ca::Head::Branch(name) => c.sessions.get(name),
+                    _ => None,
+                });
+
                 let res = pane_ui(ui, |ui| {
                     let mut config = widget::GraphConfig::new(&head, head_state, &names)
                         .is_base(is_base)
@@ -1428,6 +1447,9 @@ where
                             .unwrap_or(ctx.default_source);
                         config = config.base_sources(ctx.sources, Some(current));
                     }
+                    if let Some(session) = session {
+                        config = config.collab(session);
+                    }
                     config.show(ui)
                 });
                 if res.inner.new_branch.is_some() {
@@ -1435,6 +1457,16 @@ where
                 }
                 if let Some(merge) = res.inner.merge {
                     gantz_response.responses.push(Some(head.clone()), merge);
+                }
+                if res.inner.share {
+                    gantz_response
+                        .responses
+                        .push(Some(head.clone()), crate::ShareHead { public: true });
+                }
+                if res.inner.stop_sharing {
+                    gantz_response
+                        .responses
+                        .push(Some(head.clone()), crate::StopSharing);
                 }
                 if let Some(demo_val) = res.inner.demo_changed {
                     gantz_response.demo_changed = Some((head.clone(), demo_val));

@@ -9,6 +9,7 @@ use steel::{
     steel_vm::engine::Engine,
 };
 
+pub mod collab;
 pub mod cycle;
 pub mod export;
 pub mod format;
@@ -549,6 +550,25 @@ pub struct MergeHead {
     /// [`gantz_ca::merge::Conflict`]). Hard blockers (e.g. reference cycles)
     /// still refuse the merge.
     pub auto_resolve: bool,
+}
+
+/// Share the emitting head's named graph as a live collaborative session.
+#[derive(Clone, Copy, Debug)]
+pub struct ShareHead {
+    /// Anyone holding the invite may join when `true`. (Restricted-session
+    /// allowlist editing is a follow-up; the protocol supports it.)
+    pub public: bool,
+}
+
+/// Stop sharing (and leave) the emitting head's collaborative session.
+#[derive(Clone, Copy, Debug)]
+pub struct StopSharing;
+
+/// Join a collaborative session from an invite ticket (app-level: the shared
+/// graph opens once the join completes).
+#[derive(Clone, Debug)]
+pub struct JoinSession {
+    pub ticket: String,
 }
 
 /// Redo a previously undone edit (move head forward).

@@ -270,6 +270,14 @@ pub struct GuiState(pub gantz_egui::widget::GantzState);
 #[derive(Clone, Copy, Resource)]
 pub struct NodeCodecRes(pub gantz_egui::node::NodeCodec);
 
+/// The collaborative-session display state threaded into the Gantz widget.
+///
+/// Absent unless a collab layer (e.g. `bevy_gantz_collab`) inserts and fills
+/// it, in which case the Graph Config pane renders its collab row. (The
+/// Settings > Collab subtab arrives separately, via [`SettingsTabs`].)
+#[derive(Resource, Default)]
+pub struct CollabUi(pub gantz_egui::collab::CollabUiState);
+
 /// Names of base nodes baked into the binary.
 ///
 /// When present, these names are displayed with a `[base]` prefix and
@@ -1809,6 +1817,7 @@ pub fn update(
         export_paths,
         base_sources,
         mut base_name_sources,
+        collab_ui,
     ): (
         Res<NodeCodecRes>,
         Res<BaseNames>,
@@ -1824,6 +1833,7 @@ pub fn update(
         Option<Res<base::ExportPaths>>,
         Res<base::BaseSources>,
         ResMut<base::BaseNameSources>,
+        Option<Res<CollabUi>>,
     ),
     dispatchers: Res<ResponseDispatchers>,
     mut cmds: Commands,
@@ -1923,6 +1933,9 @@ pub fn update(
                     name_sources: &base_name_sources.0,
                     default_source: paths.default_source,
                 });
+            }
+            if let Some(collab_ui) = collab_ui.as_ref() {
+                widget = widget.collab(&collab_ui.0);
             }
             widget.show(&mut *gui_state, focused_ix, &mut access, ui)
         })
@@ -2168,8 +2181,9 @@ pub(crate) fn handle_gantz_response(
 /// Downcast a dispatched payload to its concrete type.
 ///
 /// Dispatchers are keyed by the payload's `TypeId`, so the downcast cannot
-/// fail for a correctly registered dispatcher.
-fn downcast_payload<T: ResponseData>(payload: DynResponse) -> T {
+/// fail for a correctly registered dispatcher. Public so external plugins
+/// (e.g. `bevy_gantz_collab`) can write custom [`DispatchFn`]s.
+pub fn downcast_payload<T: ResponseData>(payload: DynResponse) -> T {
     payload
         .downcast::<T>()
         .expect("dispatcher registered for this payload type")
