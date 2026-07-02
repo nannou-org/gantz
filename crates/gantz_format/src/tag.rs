@@ -159,25 +159,230 @@ macro_rules! impl_node_set_serde {
             where
                 D: ::serde::Deserializer<'de>,
             {
-                // Buffer the self-describing input, then let the `type` tag
-                // select which concrete type's `Deserialize` the remaining
-                // fields drive.
-                let datum = <$crate::Datum as ::serde::Deserialize>::deserialize(deserializer)?;
-                let (tag, fields) = datum.split_tagged().map_err(::serde::de::Error::custom)?;
-                $(
-                    if tag == <$ty as $crate::NodeTag>::TAG {
-                        return $crate::from_datum::<$ty>(fields)
-                            .map(|node| {
-                                ::std::boxed::Box::new(node) as ::std::boxed::Box<dyn $trait_>
-                            })
-                            .map_err(::serde::de::Error::custom);
+                struct NodeSetVisitor;
+
+                impl<'de> ::serde::de::Visitor<'de> for NodeSetVisitor {
+                    type Value = ::std::boxed::Box<dyn $trait_>;
+
+                    fn expecting(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                        f.write_str(::std::concat!(
+                            "a `type`-tagged map for `dyn ",
+                            ::std::stringify!($trait_),
+                            "`",
+                        ))
                     }
-                )+
-                const EXPECTED: &[&str] = &[$(<$ty as $crate::NodeTag>::TAG),+];
-                ::std::result::Result::Err(::serde::de::Error::unknown_variant(&tag, EXPECTED))
+
+                    fn visit_map<A>(self, mut map: A) -> ::std::result::Result<Self::Value, A::Error>
+                    where
+                        A: ::serde::de::MapAccess<'de>,
+                    {
+                        const EXPECTED: &[&str] = &[$(<$ty as $crate::NodeTag>::TAG),+];
+                        // Any fields seen before the tag, buffered as datums.
+                        let mut entries: ::std::vec::Vec<(::std::string::String, $crate::Datum)> =
+                            ::std::vec::Vec::new();
+                        while let ::std::option::Option::Some(key) =
+                            map.next_key::<::std::string::String>()?
+                        {
+                            if key != "type" {
+                                entries.push((key, map.next_value()?));
+                                continue;
+                            }
+                            let tag: ::std::string::String = map.next_value()?;
+                            if entries.is_empty() {
+                                // The layout the format writes: the tag leads,
+                                // so the remaining fields stream (typed)
+                                // straight into the node's `Deserialize`.
+                                $(
+                                    if tag == <$ty as $crate::NodeTag>::TAG {
+                                        let node = <$ty as ::serde::Deserialize>::deserialize(
+                                            $crate::NodeFields::new(map),
+                                        )?;
+                                        return ::std::result::Result::Ok(::std::boxed::Box::new(
+                                            node,
+                                        )
+                                            as ::std::boxed::Box<dyn $trait_>);
+                                    }
+                                )+
+                            } else {
+                                // The tag arrived late: buffer the rest and
+                                // replay the whole map through the codec.
+                                while let ::std::option::Option::Some(entry) =
+                                    map.next_entry()?
+                                {
+                                    entries.push(entry);
+                                }
+                                $(
+                                    if tag == <$ty as $crate::NodeTag>::TAG {
+                                        return $crate::from_datum::<$ty>($crate::Datum::Map(
+                                            entries,
+                                        ))
+                                        .map(|node| {
+                                            ::std::boxed::Box::new(node)
+                                                as ::std::boxed::Box<dyn $trait_>
+                                        })
+                                        .map_err(::serde::de::Error::custom);
+                                    }
+                                )+
+                            }
+                            return ::std::result::Result::Err(
+                                ::serde::de::Error::unknown_variant(&tag, EXPECTED),
+                            );
+                        }
+                        ::std::result::Result::Err(::serde::de::Error::missing_field("type"))
+                    }
+                }
+
+                deserializer.deserialize_map(NodeSetVisitor)
             }
         }
     };
+}
+
+/// The deserializer for a node's fields once the leading `type` tag has been
+/// consumed: the remaining map entries stream directly into the concrete
+/// node's `Deserialize`, so the format's own typed handling (e.g. RON's
+/// newtype syntax) is preserved rather than flattened through a buffer.
+///
+/// Public for the macro expansion only; not part of the crate's API.
+#[doc(hidden)]
+pub struct NodeFields<A> {
+    map: StringKeys<A>,
+}
+
+impl<A> NodeFields<A> {
+    pub fn new(map: A) -> Self {
+        Self {
+            map: StringKeys { map },
+        }
+    }
+}
+
+impl<'de, A> serde::Deserializer<'de> for NodeFields<A>
+where
+    A: serde::de::MapAccess<'de>,
+{
+    type Error = A::Error;
+
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        visitor.visit_map(self.map)
+    }
+
+    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        visitor.visit_unit()
+    }
+
+    /// A unit-struct node has no fields beyond the tag.
+    fn deserialize_unit_struct<V>(
+        self,
+        _name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        visitor.visit_unit()
+    }
+
+    /// A newtype node (e.g. `Fn<N>`) shares its map with the wrapped node.
+    fn deserialize_newtype_struct<V>(
+        self,
+        _name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        visitor.visit_newtype_struct(self)
+    }
+
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option seq tuple tuple_struct map struct enum
+        identifier ignored_any
+    }
+}
+
+/// Presents map keys as plain strings however the key seed asks for them: a
+/// derived struct's field visitor requests `deserialize_identifier`, which
+/// some formats (e.g. RON) only honour in their native struct syntax, not
+/// inside the `{...}` map a tagged node is written as.
+struct StringKeys<A> {
+    map: A,
+}
+
+impl<'de, A> serde::de::MapAccess<'de> for StringKeys<A>
+where
+    A: serde::de::MapAccess<'de>,
+{
+    type Error = A::Error;
+
+    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
+    where
+        K: serde::de::DeserializeSeed<'de>,
+    {
+        self.map.next_key_seed(StringKeySeed { seed })
+    }
+
+    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::DeserializeSeed<'de>,
+    {
+        self.map.next_value_seed(seed)
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        self.map.size_hint()
+    }
+}
+
+struct StringKeySeed<K> {
+    seed: K,
+}
+
+impl<'de, K> serde::de::DeserializeSeed<'de> for StringKeySeed<K>
+where
+    K: serde::de::DeserializeSeed<'de>,
+{
+    type Value = K::Value;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        self.seed.deserialize(StringKeyDeserializer {
+            delegate: deserializer,
+        })
+    }
+}
+
+struct StringKeyDeserializer<D> {
+    delegate: D,
+}
+
+impl<'de, D> serde::Deserializer<'de> for StringKeyDeserializer<D>
+where
+    D: serde::Deserializer<'de>,
+{
+    type Error = D::Error;
+
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: serde::de::Visitor<'de>,
+    {
+        self.delegate.deserialize_str(visitor)
+    }
+
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option unit unit_struct newtype_struct seq tuple
+        tuple_struct map struct enum identifier ignored_any
+    }
 }
 
 #[cfg(test)]

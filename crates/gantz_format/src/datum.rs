@@ -90,28 +90,6 @@ impl Datum {
         Datum::Map(entries)
     }
 
-    /// The inverse of [`Datum::tagged`]: split a node datum into its `type`
-    /// tag and the map of remaining fields.
-    ///
-    /// This is how [`impl_node_set_serde!`](crate::impl_node_set_serde)
-    /// dispatches a buffered node datum to the tagged concrete type, whose
-    /// `Deserialize` is then driven by the remaining fields alone (the tag
-    /// entry is consumed, matching serde's internally-tagged enums).
-    pub fn split_tagged(self) -> Result<(String, Datum), DatumError> {
-        let mut entries = match self {
-            Datum::Map(entries) => entries,
-            other => return Err(other.invalid_type(&"a `type`-tagged map")),
-        };
-        let Some(ix) = entries.iter().position(|(k, _)| k == "type") else {
-            return Err(de::Error::missing_field("type"));
-        };
-        let tag = match entries.remove(ix).1 {
-            Datum::Str(tag) => tag,
-            other => return Err(other.invalid_type(&"a string `type` tag")),
-        };
-        Ok((tag, Datum::Map(entries)))
-    }
-
     /// The value of the map entry `key`, if this is a map containing it.
     pub fn get(&self, key: &str) -> Option<&Datum> {
         match self {
@@ -769,8 +747,8 @@ impl ser::Serializer for MapKeySerializer {
 /// Transcode into a `Datum` from any self-describing format (mirroring
 /// `serde_json::Value`'s `Deserialize`): the input is buffered as a `Datum`,
 /// which can then re-drive a concrete type's `Deserialize` via [`from_datum`].
-/// This is how [`impl_node_set_serde!`](crate::impl_node_set_serde) inspects a
-/// node's `type` tag before knowing its concrete type.
+/// [`impl_node_set_serde!`](crate::impl_node_set_serde) buffers node fields
+/// this way when they precede the `type` tag.
 impl<'de> Deserialize<'de> for Datum {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
