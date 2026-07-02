@@ -260,8 +260,9 @@ impl gantz_egui::Registry for Environment {
         &self,
         ours: &gantz_ca::Head,
         source: &str,
+        resolutions: gantz_ca::Resolutions,
     ) -> Option<gantz_egui::merge::MergePreview> {
-        gantz_egui::merge::merge_preview(&self.registry, ours, source)
+        gantz_egui::merge::merge_preview(&self.registry, ours, source, resolutions)
     }
 }
 
@@ -1267,6 +1268,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         head,
         gantz_egui::MergeHead {
             source,
+            resolutions,
             auto_resolve,
         },
     ) in responses.take()
@@ -1287,6 +1289,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
                 view,
                 &mut head_state.scene.interaction.selection,
                 &source,
+                resolutions,
                 auto_resolve,
             )
         };

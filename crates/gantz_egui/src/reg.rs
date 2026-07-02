@@ -264,8 +264,13 @@ where
         crate::merge::merge_candidates(self.ca_registry, ours)
     }
 
-    fn merge_preview(&self, ours: &ca::Head, source: &str) -> Option<crate::merge::MergePreview> {
-        crate::merge::merge_preview(self.ca_registry, ours, source)
+    fn merge_preview(
+        &self,
+        ours: &ca::Head,
+        source: &str,
+        resolutions: ca::Resolutions,
+    ) -> Option<crate::merge::MergePreview> {
+        crate::merge::merge_preview(self.ca_registry, ours, source, resolutions)
     }
 
     fn node_description(&self, name: &str) -> Option<Cow<'static, str>> {

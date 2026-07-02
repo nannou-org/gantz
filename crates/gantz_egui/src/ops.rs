@@ -562,8 +562,8 @@ pub enum MergeHeadOutcome {
 /// parents via [`gantz_ca::Registry::commit_merge_to_head`] - upholding the
 /// committed-working-graph invariant, so callers must not commit again.
 ///
-/// Conflicts refuse the merge unless `auto_resolve` accepts the default
-/// resolutions; hard blockers (a merged-in reference cycle) always refuse.
+/// Conflicts refuse the merge unless `auto_resolve` accepts the given
+/// `resolutions`; hard blockers (a merged-in reference cycle) always refuse.
 /// Fast-forwards mutate nothing - the caller navigates the head instead.
 #[allow(clippy::too_many_arguments)]
 pub fn merge_head<N>(
@@ -576,6 +576,7 @@ pub fn merge_head<N>(
     head_view: &mut crate::SceneView,
     selection: &mut crate::widget::graph_scene::Selection,
     source: &str,
+    resolutions: gantz_ca::Resolutions,
     auto_resolve: bool,
 ) -> MergeHeadOutcome
 where
@@ -590,7 +591,7 @@ where
         log::error!("MergeHead: unknown source branch '{source}'");
         return MergeHeadOutcome::Noop;
     };
-    let outcome = match gantz_ca::merge_commits(registry, ours_tip, theirs_tip) {
+    let outcome = match gantz_ca::merge_commits(registry, ours_tip, theirs_tip, resolutions) {
         Err(e) => {
             log::warn!("MergeHead: cannot merge '{source}': {e}");
             return MergeHeadOutcome::Noop;
@@ -603,7 +604,7 @@ where
     };
 
     // Refuse on hard blockers, and on conflicts unless the caller opted into
-    // the default resolutions.
+    // the selected resolutions.
     let blockers = crate::merge::merge_blockers(registry, head, &outcome.graph);
     if !blockers.is_empty() {
         return MergeHeadOutcome::Refused(blockers);
@@ -834,6 +835,7 @@ mod tests {
             view,
             selection,
             "beta",
+            gantz_ca::Resolutions::default(),
             auto_resolve,
         )
     }

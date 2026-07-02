@@ -95,6 +95,10 @@ pub struct GantzState {
     /// command bindings (see [`crate::keybind`]); edited in Settings -> Keybinds.
     #[serde(default)]
     pub keymap: Keymap,
+    /// How graph merges resolve conflicts; edited via the merge row's "⛭"
+    /// menu in the Graph Config pane.
+    #[serde(default)]
+    pub merge_resolutions: gantz_ca::merge::Resolutions,
     /// Per-head redo stacks for undo/redo support.
     #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub redo_stacks: HashMap<gantz_ca::Head, Vec<gantz_ca::CommitAddr>>,
@@ -872,6 +876,7 @@ impl GantzState {
             layout_config: LayoutConfig::default(),
             scene_config: SceneConfig::default(),
             keymap: Keymap::default(),
+            merge_resolutions: Default::default(),
             redo_stacks: HashMap::new(),
             sidebar_width: default_sidebar_width(),
             tray_height: default_tray_height(),
@@ -1052,6 +1057,7 @@ where
         match pane {
             Pane::GraphConfig => match access.heads().get(*focused_head).cloned() {
                 Some(head) => {
+                    let merge_resolutions = &mut state.merge_resolutions;
                     let head_state = state.open_heads.entry(head.clone()).or_default();
                     let names = gantz.env.names();
                     let is_base = match &head {
@@ -1088,7 +1094,7 @@ where
                             .demo_names(&demo_names_vec)
                             .current_demo(current_demo)
                             .current_description(current_description)
-                            .merge_env(gantz.env)
+                            .merge_env(gantz.env, merge_resolutions)
                             .show(ui)
                     });
                     if res.inner.new_branch.is_some() {

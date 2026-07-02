@@ -17,7 +17,10 @@ pub struct GraphConfig<'a> {
     demo_names: &'a [&'a str],
     current_demo: Option<&'a str>,
     current_description: Option<&'a str>,
-    env: Option<&'a dyn crate::Registry>,
+    env: Option<(
+        &'a dyn crate::Registry,
+        &'a mut gantz_ca::merge::Resolutions,
+    )>,
 }
 
 /// Response from the [`GraphConfig`] widget.
@@ -89,10 +92,15 @@ impl<'a> GraphConfig<'a> {
         self
     }
 
-    /// Registry access for the merge row's candidates and previews. Without
-    /// it, the merge row is hidden.
-    pub fn merge_env(mut self, env: &'a dyn crate::Registry) -> Self {
-        self.env = Some(env);
+    /// Registry access for the merge row's candidates and previews, plus the
+    /// conflict-resolution strategy its "⛭" menu edits. Without these, the
+    /// merge row is hidden.
+    pub fn merge_env(
+        mut self,
+        env: &'a dyn crate::Registry,
+        resolutions: &'a mut gantz_ca::merge::Resolutions,
+    ) -> Self {
+        self.env = Some((env, resolutions));
         self
     }
 
@@ -263,9 +271,16 @@ impl<'a> GraphConfig<'a> {
 
                 // merge (named, mutable, non-base graphs only)
                 if is_named && !self.immutable && !self.is_base {
-                    if let Some(env) = self.env {
+                    if let Some((env, resolutions)) = self.env {
                         ui.label("merge");
-                        merge = merge_select(env, self.head, ui);
+                        ui.horizontal(|ui| {
+                            merge = merge_select(env, self.head, *resolutions, ui);
+                            ui.menu_button("\u{26ED}", |ui| {
+                                resolutions_menu(resolutions, ui);
+                            })
+                            .response
+                            .on_hover_text("conflict resolution strategy");
+                        });
                         ui.end_row();
                     }
                 }
@@ -300,15 +315,18 @@ impl<'a> GraphConfig<'a> {
 /// a dry-run hover summary. Picking a candidate *is* the action (one-shot,
 /// like the layout buttons): a clean candidate merges on click; a conflicted
 /// one is disabled, its tooltip listing the conflicts, with a separate opt-in
-/// button applying the default resolutions. Hard-blocked candidates (e.g. a
-/// reference cycle) can only be inspected.
+/// button applying the selected [`Resolutions`]. Hard-blocked candidates
+/// (e.g. a reference cycle) can only be inspected.
 ///
 /// Candidates and previews are only computed while the popup is open, and each
-/// preview is cached keyed by the two branch tips - content addresses, so a
-/// cached preview can never go stale.
+/// preview is cached keyed by the two branch tips (content addresses) plus the
+/// resolution strategy, so a cached preview can never go stale.
+///
+/// [`Resolutions`]: gantz_ca::merge::Resolutions
 fn merge_select(
     env: &dyn crate::Registry,
     head: &gantz_ca::Head,
+    resolutions: gantz_ca::merge::Resolutions,
     ui: &mut egui::Ui,
 ) -> Option<crate::MergeHead> {
     let mut merge = None;
@@ -326,11 +344,12 @@ fn merge_select(
             };
             for candidate in candidates {
                 // Fetch (or compute and cache) the candidate's dry-run preview.
-                let preview_id = egui::Id::new("merge_preview").with((ours_tip, candidate.theirs));
+                let preview_id =
+                    egui::Id::new("merge_preview").with((ours_tip, candidate.theirs, resolutions));
                 let preview = ui
                     .memory_mut(|m| m.data.get_temp::<crate::merge::MergePreview>(preview_id))
                     .or_else(|| {
-                        let preview = env.merge_preview(head, &candidate.name);
+                        let preview = env.merge_preview(head, &candidate.name, resolutions);
                         if let Some(preview) = &preview {
                             ui.memory_mut(|m| m.data.insert_temp(preview_id, preview.clone()));
                         }
@@ -358,6 +377,7 @@ fn merge_select(
                     {
                         merge = Some(crate::MergeHead {
                             source: candidate.name.clone(),
+                            resolutions,
                             auto_resolve: false,
                         });
                     }
@@ -366,7 +386,7 @@ fn merge_select(
 
                 // Conflicted or blocked: not directly selectable. Conflicts
                 // (but not blockers) offer an explicit opt-in that applies the
-                // default resolutions.
+                // selected resolutions.
                 let preview = preview.expect("`!clean` requires a preview");
                 let warn = crate::node::named_ref::outdated_color();
                 ui.horizontal(|ui| {
@@ -389,13 +409,14 @@ fn merge_select(
                         && ui
                             .small_button("merge anyway")
                             .on_hover_text(
-                                "merge despite the conflicts, applying the default \
-                                 resolutions (this graph's version wins conflicting edits)",
+                                "merge despite the conflicts, applying the selected \
+                                 resolutions (see \u{26ED})",
                             )
                             .clicked()
                     {
                         merge = Some(crate::MergeHead {
                             source: candidate.name.clone(),
+                            resolutions,
                             auto_resolve: true,
                         });
                     }
@@ -403,4 +424,33 @@ fn merge_select(
             }
         });
     merge
+}
+
+/// The "⛭" menu beside the merge dropdown: how conflicts resolve when merging
+/// despite them. Edits the persisted, GUI-global strategy in place.
+fn resolutions_menu(resolutions: &mut gantz_ca::merge::Resolutions, ui: &mut egui::Ui) {
+    use gantz_ca::merge::{EditOrDelete, Side};
+    ui.label("when both sides modified a node");
+    ui.radio_value(
+        &mut resolutions.both_modified,
+        Side::Ours,
+        "keep this graph's version",
+    );
+    ui.radio_value(
+        &mut resolutions.both_modified,
+        Side::Theirs,
+        "keep the branch's version",
+    );
+    ui.separator();
+    ui.label("when a delete meets an edit");
+    ui.radio_value(
+        &mut resolutions.delete_modify,
+        EditOrDelete::KeepEdit,
+        "keep the edited node",
+    );
+    ui.radio_value(
+        &mut resolutions.delete_modify,
+        EditOrDelete::KeepDelete,
+        "keep the delete",
+    );
 }

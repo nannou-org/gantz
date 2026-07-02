@@ -91,13 +91,14 @@ pub fn merge_preview<N>(
     reg: &ca::Registry<Graph<N>>,
     ours: &ca::Head,
     source: &str,
+    resolutions: ca::Resolutions,
 ) -> Option<MergePreview>
 where
     N: Clone + ca::CaHash + AsNamedRef,
 {
     let ours_tip = *reg.head_commit_ca(ours)?;
     let theirs_tip = *reg.names().get(source)?;
-    match ca::merge_commits(reg, ours_tip, theirs_tip).ok()? {
+    match ca::merge_commits(reg, ours_tip, theirs_tip, resolutions).ok()? {
         ca::MergeResolution::Diverged {
             theirs_diff,
             outcome,
@@ -155,22 +156,27 @@ pub fn summary_text(s: &ca::DiffSummary) -> String {
 }
 
 /// Render merge conflicts for display, phrased from the current head's
-/// perspective ("here" = ours, "the branch" = theirs).
+/// perspective ("here" = ours, "the branch" = theirs). Each line names the
+/// resolution the merge applied (per the selected [`ca::Resolutions`]).
 pub fn conflict_strings(conflicts: &[ca::Conflict<gantz_core::Edge>]) -> Vec<String> {
     conflicts
         .iter()
         .map(|conflict| match conflict {
-            ca::Conflict::BothModified { ours, .. } => {
-                format!("node {ours}: modified on both sides (keeps this graph's version)")
+            ca::Conflict::BothModified { ours, kept, .. } => {
+                let kept = match kept {
+                    ca::Side::Ours => "keeps this graph's version",
+                    ca::Side::Theirs => "keeps the branch's version",
+                };
+                format!("node {ours}: modified on both sides ({kept})")
             }
-            ca::Conflict::DeleteModify {
-                modified: ca::Side::Ours,
-                ..
-            } => "a node modified here was deleted in the branch (kept)".to_string(),
-            ca::Conflict::DeleteModify {
-                modified: ca::Side::Theirs,
-                ..
-            } => "a node deleted here was modified in the branch (kept)".to_string(),
+            &ca::Conflict::DeleteModify { modified, kept, .. } => {
+                let what = match modified {
+                    ca::Side::Ours => "a node modified here was deleted in the branch",
+                    ca::Side::Theirs => "a node deleted here was modified in the branch",
+                };
+                let kept = if kept { "kept" } else { "stays deleted" };
+                format!("{what} ({kept})")
+            }
             ca::Conflict::EdgeToDeleted {
                 side: ca::Side::Ours,
                 src,

@@ -144,10 +144,16 @@ pub trait Registry: NameRegistry + FnNodeNames + NodeTypeRegistry + GraphRegistr
         vec![]
     }
 
-    /// Dry-run the merge of the branch named `source` into `ours` (see
-    /// [`merge::merge_preview`]), for hover previews in the merge row.
-    fn merge_preview(&self, ours: &gantz_ca::Head, source: &str) -> Option<merge::MergePreview> {
-        let _ = (ours, source);
+    /// Dry-run the merge of the branch named `source` into `ours` under the
+    /// given conflict resolutions (see [`merge::merge_preview`]), for hover
+    /// previews in the merge row.
+    fn merge_preview(
+        &self,
+        ours: &gantz_ca::Head,
+        source: &str,
+        resolutions: gantz_ca::Resolutions,
+    ) -> Option<merge::MergePreview> {
+        let _ = (ours, source, resolutions);
         None
     }
 }
@@ -641,7 +647,9 @@ pub struct Paste {
 pub struct MergeHead {
     /// The name of the branch to merge in.
     pub source: String,
-    /// Merge despite conflicts, applying the default resolutions (see
+    /// How conflicts resolve when the merge proceeds despite them.
+    pub resolutions: gantz_ca::Resolutions,
+    /// Merge despite conflicts, applying `resolutions` (see
     /// [`gantz_ca::merge::Conflict`]). Hard blockers (e.g. reference cycles)
     /// still refuse the merge.
     pub auto_resolve: bool,

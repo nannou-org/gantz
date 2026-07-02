@@ -1221,6 +1221,7 @@ pub fn on_merge_head<N>(
         &mut gv,
         &mut head_state.scene.interaction.selection,
         &event.data.source,
+        event.data.resolutions,
         event.data.auto_resolve,
     );
 
