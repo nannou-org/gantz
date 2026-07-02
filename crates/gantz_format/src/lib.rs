@@ -129,8 +129,7 @@ mod tests {
 
     // A self-contained node-set with one node type that implements neither
     // `NodeSugar` nor any `Sugar` - it carries no first-class keyword at all.
-    #[typetag::serde(tag = "type")]
-    trait Widget: CaHash {}
+    trait Widget: std::any::Any + CaHash {}
 
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     struct Knob {
@@ -143,12 +142,20 @@ mod tests {
         }
     }
 
-    #[typetag::serde]
+    impl NodeTag for Knob {
+        const TAG: &'static str = "Knob";
+    }
+
     impl Widget for Knob {}
 
-    // `Box<dyn Widget>` is the node-set type `N`: typetag supplies its
-    // Serialize/Deserialize, and `gantz_ca`'s blanket `CaHash for Box<T>` covers
-    // the rest. It implements no `NodeSugar`.
+    // `Box<dyn Widget>` is the node-set type `N`: `impl_node_set_serde!`
+    // supplies its Serialize/Deserialize, and `gantz_ca`'s blanket
+    // `CaHash for Box<T>` covers the rest. It implements no `NodeSugar`.
+    crate::impl_node_set_serde! {
+        dyn Widget {
+            Knob,
+        }
+    }
 
     #[test]
     fn the_with_variants_need_no_node_sugar() {

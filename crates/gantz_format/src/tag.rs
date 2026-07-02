@@ -480,4 +480,105 @@ mod tests {
         let msg = expect_err(from_datum(Datum::Map(vec![])));
         assert!(msg.contains("missing field `type`"), "{msg}");
     }
+
+    /// Core nodes as trait objects through a foreign self-describing format
+    /// (JSON, exercising the streamed `NodeFields` path outside the `Datum`
+    /// codec): wrapper nodes (`Push`/`Pull`) keep their eval behaviour
+    /// through the round-trip, and `Branch`'s validating manual
+    /// `Deserialize` composes. Ported from the typetag-based `gantz_core`
+    /// serde test.
+    mod core_nodes {
+        use crate::NodeTag;
+        use gantz_core::node::{
+            self, Branch, Conns, Expr, MetaCtx, Node, Pull, Push, WithPullEval, WithPushEval,
+        };
+
+        trait SerdeNode: Node {}
+
+        impl SerdeNode for Branch {}
+        impl SerdeNode for Expr {}
+        impl SerdeNode for Push<Expr> {}
+        impl SerdeNode for Pull<Expr> {}
+
+        // `Branch` and `Expr` carry crate-level `NodeTag`s; the test-local
+        // wrappers declare their own here.
+        impl NodeTag for Push<Expr> {
+            const TAG: &'static str = "Push";
+        }
+
+        impl NodeTag for Pull<Expr> {
+            const TAG: &'static str = "Pull";
+        }
+
+        crate::impl_node_set_serde! {
+            dyn SerdeNode {
+                Branch,
+                Expr,
+                Push<Expr>,
+                Pull<Expr>,
+            }
+        }
+
+        // A no-op node lookup function for tests that don't need it.
+        fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
+            None
+        }
+
+        #[test]
+        fn eval_wrappers_roundtrip_through_json() {
+            let expr = || node::expr("(+ $a $b)").unwrap();
+            let nodes: Vec<Box<dyn SerdeNode>> = vec![
+                Box::new(expr()),
+                Box::new(expr().with_push_eval()),
+                Box::new(expr().with_pull_eval()),
+            ];
+
+            let json = serde_json::to_string(&nodes).expect("serialize");
+            let nodes: Vec<Box<dyn SerdeNode>> = serde_json::from_str(&json).expect("deserialize");
+
+            let ctx = MetaCtx::new(&no_lookup);
+            assert_eq!(nodes.len(), 3);
+            for node in &nodes {
+                assert_eq!(node.n_inputs(ctx), 2);
+                assert_eq!(node.n_outputs(ctx), 1);
+            }
+            assert!(nodes[0].push_eval(ctx).is_empty());
+            assert!(nodes[0].pull_eval(ctx).is_empty());
+            assert!(!nodes[1].push_eval(ctx).is_empty());
+            assert!(nodes[1].pull_eval(ctx).is_empty());
+            assert!(nodes[2].push_eval(ctx).is_empty());
+            assert!(!nodes[2].pull_eval(ctx).is_empty());
+        }
+
+        #[test]
+        fn branch_roundtrips_through_json() {
+            let branch = Branch::new(
+                "(if (equal? 0 $x) (list 0 $x) (list 1 $x))",
+                vec![
+                    Conns::try_from([true, false]).unwrap(),
+                    Conns::try_from([false, true]).unwrap(),
+                ],
+            )
+            .unwrap();
+
+            let boxed: Box<dyn SerdeNode> = Box::new(branch);
+            let json = serde_json::to_string(&boxed).expect("serialize");
+            let node: Box<dyn SerdeNode> = serde_json::from_str(&json).expect("deserialize");
+
+            let ctx = MetaCtx::new(&no_lookup);
+            assert_eq!(node.n_inputs(ctx), 1);
+            assert_eq!(node.n_outputs(ctx), 2);
+
+            let branches = node.branches(ctx);
+            assert_eq!(branches.len(), 2);
+            assert_eq!(
+                branches[0],
+                node::EvalConf::Set(Conns::try_from([true, false]).unwrap()),
+            );
+            assert_eq!(
+                branches[1],
+                node::EvalConf::Set(Conns::try_from([false, true]).unwrap()),
+            );
+        }
+    }
 }
