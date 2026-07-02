@@ -226,6 +226,80 @@ mod tests {
         }
     }
 
+    /// Pins the exact node serde wire format in both the `Datum` codec (the
+    /// `.gantz` text format bridge) and RON (registry persistence): a map
+    /// carrying the `type` tag entry alongside the node's own fields.
+    ///
+    /// Exports and persisted registries produced by earlier builds must keep
+    /// loading, and vice versa, so these literals must never change. Covers
+    /// the three struct shapes: unit (`Bang`), fields (`Expr`) and newtype
+    /// (`FnNamedRef`, which flattens to its inner node's fields).
+    #[test]
+    fn node_serde_wire_format() {
+        use gantz_format::{Datum, from_datum, to_datum};
+
+        let bang: Box<dyn Node> = Box::new(gantz_std::Bang);
+        let expr: Box<dyn Node> = Box::new(gantz_core::node::Expr::new("(+ $a $b)").unwrap());
+        let fn_named_ref: Box<dyn Node> =
+            Box::new(gantz_core::node::Fn(gantz_egui::node::NamedRef::new(
+                "mul".to_string(),
+                gantz_core::node::Ref::new(gantz_ca::ContentAddr::from([0u8; 32])),
+            )));
+
+        // Note: the `Datum` codec sorts map entries by key; RON preserves
+        // the written order (tag first, then declaration-order fields).
+        fn datum(entries: Vec<(&str, Datum)>) -> Datum {
+            Datum::Map(
+                entries
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v))
+                    .collect(),
+            )
+        }
+        let zeros = "0".repeat(64);
+        let cases = [
+            (
+                bang,
+                datum(vec![("type", Datum::Str("Bang".into()))]),
+                r#"{"type":"Bang"}"#.to_string(),
+            ),
+            (
+                expr,
+                datum(vec![
+                    ("outputs", Datum::U64(1)),
+                    ("src", Datum::Str("(+ $a $b)".into())),
+                    ("type", Datum::Str("Expr".into())),
+                ]),
+                r#"{"type":"Expr","src":"(+ $a $b)","outputs":1}"#.to_string(),
+            ),
+            (
+                fn_named_ref,
+                datum(vec![
+                    ("name", Datum::Str("mul".into())),
+                    ("ref_", Datum::Str(zeros.clone())),
+                    ("sync", Datum::Bool(false)),
+                    ("type", Datum::Str("FnNamedRef".into())),
+                ]),
+                // RON preserves the `Ref(ContentAddr)` newtype nesting.
+                format!(
+                    r#"{{"type":"FnNamedRef","ref_":(("{zeros}")),"name":"mul","sync":false}}"#
+                ),
+            ),
+        ];
+
+        for (node, expected_datum, expected_ron) in cases {
+            let datum = to_datum(&node).unwrap();
+            assert_eq!(datum, expected_datum);
+            let ron = ron::to_string(&node).unwrap();
+            assert_eq!(ron, expected_ron);
+            // Both representations load back and re-serialize identically.
+            let from_datum: Box<dyn Node> = from_datum(datum).unwrap();
+            assert_eq!(to_datum(&from_datum).unwrap(), expected_datum);
+            let from_ron: Box<dyn Node> = ron::de::from_str(&ron).unwrap();
+            assert_eq!(to_datum(&from_ron).unwrap(), expected_datum);
+        }
+    }
+
     /// Lowering a hand-authored `mul` (declared in base.gantz's index order)
     /// must reproduce base.gantz's `mul` `GraphAddr`, proving verbatim `src`
     /// capture, declaration-order indexing, and the load path all agree with the
