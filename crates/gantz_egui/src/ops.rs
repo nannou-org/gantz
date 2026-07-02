@@ -573,6 +573,121 @@ pub fn carry_layout(
     }
     view
 }
+/// Session-safe undo: commit `target`'s *graph* forward onto `head` as a new
+/// commit, rather than navigating the head backwards (which a live session's
+/// convergence would immediately merge away). The revert propagates to peers
+/// like any other edit.
+///
+/// The graph already exists in the registry, so nothing is re-hashed or
+/// cloned. Returns `None` when the head or `target` is unresolvable, or when
+/// `target`'s graph equals the tip's (nothing to revert). Replacing the
+/// working graph and firing committed machinery stay with the caller.
+pub fn revert_head(
+    registry: &mut gantz_ca::Registry,
+    timestamp: gantz_ca::Timestamp,
+    head: &mut gantz_ca::Head,
+    target: CommitAddr,
+) -> Option<CommitAddr> {
+    let tip_ca = registry.head_commit_ca(head)?;
+    let tip_graph = registry.commits().get(&tip_ca)?.graph;
+    let target_graph = registry.commits().get(&target)?.graph;
+    if target_graph == tip_graph {
+        return None;
+    }
+    Some(registry.commit_graph_to_head(
+        timestamp,
+        target_graph,
+        || unreachable!("revert reuses an existing graph"),
+        head,
+    ))
+}
+
+/// The default [`revert_head`] target: the nearest first-parent ancestor
+/// whose graph differs from the tip's (layout-only ancestors are not
+/// meaningful reverts).
+pub fn revert_target(registry: &gantz_ca::Registry, head: &gantz_ca::Head) -> Option<CommitAddr> {
+    let tip_ca = registry.head_commit_ca(head)?;
+    let tip_graph = registry.commits().get(&tip_ca)?.graph;
+    gantz_ca::history::first_parent_chain(registry.commits(), tip_ca)
+        .skip(1)
+        .find(|ca| {
+            registry
+                .commits()
+                .get(ca)
+                .is_some_and(|c| c.graph != tip_graph)
+        })
+}
+
+/// Migrate a head's index-keyed VM state, layout and selection through a
+/// merge outcome's node provenance, seeding layout for merged-in nodes from
+/// the other side's persisted view (typically read from the registry's view
+/// section; falling back to placement near the view centre - positions are
+/// compatible because both sides share the base's coordinates).
+///
+/// `local_side` is the side the head's working graph played in the merge:
+/// [`gantz_ca::Side::Ours`] for a branch merge into the head
+/// ([`merge_head`]); sessions pass whichever side the local tip landed on
+/// after canonical orientation ([`sync_remote_tip`]). `other_view` is the
+/// opposite side's commit's stored view, if any.
+///
+/// Returns the mapping from pre-merge working-graph indices to merged
+/// indices (identity whenever the other side removed no nodes), for any
+/// remaining index-keyed data of the caller's.
+pub fn apply_merge_migration(
+    node_srcs: &[gantz_ca::merge::NodeSrc],
+    local_side: gantz_ca::merge::Side,
+    other_view: Option<&crate::SceneView>,
+    vm: &mut Engine,
+    head_view: &mut crate::SceneView,
+    selection: &mut crate::widget::graph_scene::Selection,
+) -> gantz_ca::Matching {
+    let node_id = |ix: usize| egui_graph::NodeId::from_u64(ix as u64);
+    // Where each pre-merge (local) node ended up, and where each node that
+    // exists only on the other side ended up.
+    let sides = |src: &gantz_ca::merge::NodeSrc| match local_side {
+        gantz_ca::merge::Side::Ours => (src.ours, src.theirs),
+        gantz_ca::merge::Side::Theirs => (src.theirs, src.ours),
+    };
+    let mut local_map = gantz_ca::Matching::new();
+    let mut other_only = Vec::new();
+    for (m, src) in node_srcs.iter().enumerate() {
+        match sides(src) {
+            (Some(l), _) => {
+                local_map.insert(l, m);
+            }
+            (None, Some(o)) => other_only.push((m, o)),
+            (None, None) => unreachable!("a merged node comes from somewhere"),
+        }
+    }
+
+    // Migrate the index-keyed VM state, layout and selection. When the other
+    // side removed no nodes the mapping is identity and this is a no-op.
+    if let Err(e) = node::state::remap_root(vm, &local_map) {
+        log::error!("merge migration: failed to remap node state: {e}");
+    }
+    let old_layout = std::mem::take(&mut head_view.layout);
+    for (&l, &m) in &local_map {
+        if let Some(pos) = old_layout.get(&node_id(l)) {
+            head_view.layout.insert(node_id(m), *pos);
+        }
+    }
+    selection.nodes = selection
+        .nodes
+        .iter()
+        .filter_map(|n| local_map.get(&n.index()).map(|&m| NodeIndex::new(m)))
+        .collect();
+    selection.edges.clear();
+
+    // Seed layout for merged-in nodes from the other side's persisted view.
+    for (i, &(m, o)) in other_only.iter().enumerate() {
+        let pos = other_view
+            .and_then(|v| v.layout.get(&node_id(o)).copied())
+            .unwrap_or_else(|| head_view.camera.center + egui::vec2(20.0, 20.0) * i as f32);
+        head_view.layout.insert(node_id(m), pos);
+    }
+    local_map
+}
+
 /// The result of a [`merge_head`] call.
 #[derive(Debug)]
 pub enum MergeHeadOutcome {
@@ -626,7 +741,6 @@ pub fn merge_head(
     resolutions: gantz_ca::Resolutions,
     auto_resolve: bool,
 ) -> MergeHeadOutcome {
-    let node_id = |ix: usize| egui_graph::NodeId::from_u64(ix as u64);
     let Some(ours_tip) = registry.head_commit_ca(head) else {
         log::error!("MergeHead: no commit for head {head}");
         return MergeHeadOutcome::Noop;
@@ -657,51 +771,19 @@ pub fn merge_head(
         return MergeHeadOutcome::Refused(crate::merge::conflict_strings(&outcome.conflicts));
     }
 
-    // Where each pre-merge (ours) node ended up, and where each source
-    // (theirs) node ended up. By the committed-working-graph invariant the
-    // working graph *is* ours' tip graph, so "ours" indices are the working
-    // graph's.
-    let mut ours_map = gantz_ca::Matching::new();
-    let mut theirs_only = Vec::new();
-    for (m, src) in outcome.node_srcs.iter().enumerate() {
-        match (src.ours, src.theirs) {
-            (Some(o), _) => {
-                ours_map.insert(o, m);
-            }
-            (None, Some(t)) => theirs_only.push((m, t)),
-            (None, None) => unreachable!("a merged node comes from somewhere"),
-        }
-    }
-
-    // Migrate the index-keyed VM state, layout and selection. When the source
-    // branch removed no nodes the mapping is identity and this is a no-op.
-    if let Err(e) = node::state::remap_root(vm, &ours_map) {
-        log::error!("MergeHead: failed to remap node state: {e}");
-    }
-    let old_layout = std::mem::take(&mut head_view.layout);
-    for (&o, &m) in &ours_map {
-        if let Some(pos) = old_layout.get(&node_id(o)) {
-            head_view.layout.insert(node_id(m), *pos);
-        }
-    }
-    selection.nodes = selection
-        .nodes
-        .iter()
-        .filter_map(|n| ours_map.get(&n.index()).map(|&m| NodeIndex::new(m)))
-        .collect();
-    selection.edges.clear();
-
-    // Seed layout for merged-in nodes from the source branch's persisted view
-    // (positions are compatible: both branches share the base's coordinates),
-    // falling back to placement near the view centre.
+    // Migrate the index-keyed VM state, layout and selection through the
+    // merged indices; the head's working graph plays the ours side (by the
+    // committed-working-graph invariant it *is* ours' tip graph). Layout for
+    // merged-in nodes seeds from the source branch's persisted view.
     let theirs_view = crate::section::view(registry, &theirs_tip);
-    for (i, &(m, t)) in theirs_only.iter().enumerate() {
-        let pos = theirs_view
-            .as_ref()
-            .and_then(|v| v.layout.get(&node_id(t)).copied())
-            .unwrap_or_else(|| head_view.camera.center + egui::vec2(20.0, 20.0) * i as f32);
-        head_view.layout.insert(node_id(m), pos);
-    }
+    let ours_map = apply_merge_migration(
+        &outcome.node_srcs,
+        gantz_ca::merge::Side::Ours,
+        theirs_view.as_ref(),
+        vm,
+        head_view,
+        selection,
+    );
 
     // Swap the merged data graph straight in as the working graph and commit
     // it with both parents, so the registry address matches the working
@@ -718,6 +800,124 @@ pub fn merge_head(
     MergeHeadOutcome::Merged {
         new_commit,
         mapping: ours_map,
+    }
+}
+
+/// The result of a [`sync_remote_tip`] call.
+#[derive(Debug)]
+pub enum SyncTipOutcome {
+    /// The local tip already contains the remote tip; nothing was mutated.
+    UpToDate,
+    /// No commit was minted: the caller navigates the head to this commit
+    /// (a fast-forward, or the deterministic winner of a same-graph "twin"
+    /// adoption - see [`gantz_ca::SyncStep::Adopt`]).
+    Moved(CommitAddr),
+    /// A canonical merge commit was minted and `head` advanced; the merged
+    /// graph was swapped into the working graph. As with
+    /// [`MergeHeadOutcome::Merged`], the caller re-registers the graph with
+    /// the VM and fires its committed/resync machinery. Session conflicts
+    /// are auto-resolved by the session's resolutions; `conflicts` carries
+    /// the count for surfacing.
+    Merged {
+        new_commit: CommitAddr,
+        mapping: gantz_ca::Matching,
+        conflicts: usize,
+    },
+    /// Hard blockers (a merged-in reference cycle) or missing registry
+    /// content refused the merge; nothing was mutated.
+    Blocked(Vec<String>),
+    /// The tips share no common ancestor: surfaced to the app (e.g. rename
+    /// the local graph aside), never resolved automatically.
+    Unrelated,
+}
+
+/// Bring `head` up to date with a `remote` tip received from a session peer,
+/// applying [`gantz_ca::plan_sync_step`]'s decision to the head's working
+/// `graph` in place.
+///
+/// The session analogue of [`merge_head`], driven by a commit address rather
+/// than a branch name. Diverged graphs merge in *canonical orientation* via
+/// [`gantz_ca::Registry::commit_merge_canonical`] (no timestamp parameter:
+/// it is derived from the tips), so every peer merging the same pair mints
+/// the identical commit. VM state, layout and selection migrate through the
+/// merged indices for whichever side the local tip played; conflicts are
+/// auto-resolved per `resolutions` (the fixed session policy) and surfaced
+/// as a count.
+///
+/// The remote tip's closure must already be in the registry (fetched and
+/// applied via [`gantz_ca::sync::Staged`]). On [`SyncTipOutcome::Merged`]
+/// the committed-working-graph invariant is upheld - callers must not commit
+/// again.
+#[allow(clippy::too_many_arguments)]
+pub fn sync_remote_tip(
+    registry: &mut gantz_ca::Registry,
+    head: &mut gantz_ca::Head,
+    graph: &mut DataGraph,
+    vm: &mut Engine,
+    head_view: &mut crate::SceneView,
+    selection: &mut crate::widget::graph_scene::Selection,
+    remote: CommitAddr,
+    resolutions: gantz_ca::Resolutions,
+) -> SyncTipOutcome {
+    let Some(local) = registry.head_commit_ca(head) else {
+        log::error!("sync_remote_tip: no commit for head {head}");
+        return SyncTipOutcome::UpToDate;
+    };
+    let (first, second) = match gantz_ca::plan_sync_step(registry.commits(), local, remote) {
+        gantz_ca::SyncStep::UpToDate => return SyncTipOutcome::UpToDate,
+        gantz_ca::SyncStep::FastForward(t) => return SyncTipOutcome::Moved(t),
+        gantz_ca::SyncStep::Adopt(t) if t == local => return SyncTipOutcome::UpToDate,
+        gantz_ca::SyncStep::Adopt(t) => return SyncTipOutcome::Moved(t),
+        gantz_ca::SyncStep::Unrelated => return SyncTipOutcome::Unrelated,
+        gantz_ca::SyncStep::Merge { first, second } => (first, second),
+    };
+    let outcome = match gantz_ca::merge_commits(registry, first, second, resolutions) {
+        // The plan and the merge read the same commits, so these arms are
+        // unreachable in practice; hold the plan's meaning if they change.
+        Ok(gantz_ca::MergeResolution::AlreadyUpToDate) => return SyncTipOutcome::UpToDate,
+        Ok(gantz_ca::MergeResolution::FastForward) => return SyncTipOutcome::Moved(remote),
+        Err(e) => {
+            log::warn!("sync_remote_tip: cannot merge remote tip: {e}");
+            return SyncTipOutcome::Blocked(vec![e.to_string()]);
+        }
+        Ok(gantz_ca::MergeResolution::Diverged { outcome, .. }) => outcome,
+    };
+
+    let blockers = crate::merge::merge_blockers(registry, head, &outcome.graph);
+    if !blockers.is_empty() {
+        return SyncTipOutcome::Blocked(blockers);
+    }
+
+    // Which side the local tip played after canonical orientation.
+    let (local_side, other_tip) = if first == local {
+        (gantz_ca::merge::Side::Ours, second)
+    } else {
+        (gantz_ca::merge::Side::Theirs, first)
+    };
+    let other_view = crate::section::view(registry, &other_tip);
+    let mapping = apply_merge_migration(
+        &outcome.node_srcs,
+        local_side,
+        other_view.as_ref(),
+        vm,
+        head_view,
+        selection,
+    );
+    let conflicts = outcome.conflicts.len();
+
+    // Swap in the merged graph and mint the canonical merge commit.
+    *graph = outcome.graph;
+    let new_commit = registry.commit_merge_canonical(
+        first,
+        second,
+        gantz_ca::graph_addr(&*graph),
+        || graph.clone(),
+        head,
+    );
+    SyncTipOutcome::Merged {
+        new_commit,
+        mapping,
+        conflicts,
     }
 }
 
@@ -1137,5 +1337,262 @@ mod tests {
         // Nothing mutated: navigation is the caller's job.
         assert_eq!(reg.head(&"alpha".parse().unwrap()), Some(base_ca));
         assert_eq!(graph.node_count(), 1);
+    }
+
+    /// The fixed session policy used by the `sync_remote_tip` tests.
+    fn session_resolutions() -> gantz_ca::Resolutions {
+        gantz_ca::Resolutions {
+            both_modified: gantz_ca::BothModified::KeepNewest,
+            delete_modify: Default::default(),
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn run_sync(
+        reg: &mut gantz_ca::Registry,
+        head: &mut gantz_ca::Head,
+        graph: &mut DataGraph,
+        vm: &mut Engine,
+        view: &mut crate::SceneView,
+        selection: &mut Selection,
+        remote: CommitAddr,
+    ) -> SyncTipOutcome {
+        sync_remote_tip(
+            reg,
+            head,
+            graph,
+            vm,
+            view,
+            selection,
+            remote,
+            session_resolutions(),
+        )
+    }
+
+    // Two peers of the same session merge the same diverged pair from
+    // opposite sides: each migrates its own side's indices, and both mint
+    // the *identical* canonical merge commit.
+    #[test]
+    fn sync_remote_tip_merges_canonically_from_either_side() {
+        // Peer 1: head on alpha (ours-canonical, older), remote = beta tip.
+        let (mut reg_1, mut head_1) = diverged_registry(&[1, 2], &[1, 20], &[1, 2, 3]);
+        let alpha_tip = reg_1.head_commit_ca(&head_1).unwrap();
+        let beta_tip = reg_1.head(&"beta".parse().unwrap()).unwrap();
+        let mut graph_1 = test_graph(&[1, 20]);
+        let mut vm_1 = Engine::new_base();
+        let mut view_1 = crate::SceneView::default();
+        let mut selection_1 = Selection::default();
+        let outcome_1 = run_sync(
+            &mut reg_1,
+            &mut head_1,
+            &mut graph_1,
+            &mut vm_1,
+            &mut view_1,
+            &mut selection_1,
+            beta_tip,
+        );
+        let SyncTipOutcome::Merged {
+            new_commit: commit_1,
+            conflicts: 0,
+            ..
+        } = outcome_1
+        else {
+            panic!("expected clean Merged, got {outcome_1:?}");
+        };
+        let weights: Vec<u32> = graph_1.node_weights().map(value).collect();
+        assert_eq!(weights, vec![1, 20, 3]);
+        // Canonical orientation: alpha (older) is the first parent even
+        // though it is also the local tip here.
+        let commit = &reg_1.commits()[&commit_1];
+        assert_eq!(commit.parent, Some(alpha_tip));
+        assert_eq!(commit.merge_parents, vec![beta_tip]);
+
+        // Peer 2: identical registry, but head on beta with alpha remote -
+        // the local tip plays the theirs side after canonicalization.
+        let (mut reg_2, _) = diverged_registry(&[1, 2], &[1, 20], &[1, 2, 3]);
+        let mut head_2 = gantz_ca::Head::Branch("beta".parse().unwrap());
+        let mut graph_2 = test_graph(&[1, 2, 3]);
+        let mut vm_2 = Engine::new_base();
+        vm_2.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+        node::state::update_value(&mut vm_2, &[2], SteelVal::IntV(7)).unwrap();
+        let mut view_2 = crate::SceneView::default();
+        view_2.layout.insert(node_id(2), egui::pos2(2.0, 0.0));
+        let mut selection_2 = Selection::default();
+        selection_2.nodes.insert(NodeIx::new(2));
+        let outcome_2 = run_sync(
+            &mut reg_2,
+            &mut head_2,
+            &mut graph_2,
+            &mut vm_2,
+            &mut view_2,
+            &mut selection_2,
+            alpha_tip,
+        );
+        let SyncTipOutcome::Merged {
+            new_commit: commit_2,
+            mapping,
+            ..
+        } = outcome_2
+        else {
+            panic!("expected Merged, got {outcome_2:?}");
+        };
+        // Identical merge commit and graph value on both peers.
+        assert_eq!(commit_1, commit_2);
+        let weights: Vec<u32> = graph_2.node_weights().map(value).collect();
+        assert_eq!(weights, vec![1, 20, 3]);
+        // Peer 2's local (theirs-side) indices happen to be preserved here;
+        // its state/layout/selection followed the mapping.
+        assert_eq!(mapping, gantz_ca::Matching::from([(0, 0), (1, 1), (2, 2)]));
+        let state = node::state::extract_value(&vm_2, &[2]).unwrap();
+        assert_eq!(state, Some(SteelVal::IntV(7)));
+        assert_eq!(view_2.layout.get(&node_id(2)), Some(&egui::pos2(2.0, 0.0)));
+        assert!(selection_2.nodes.contains(&NodeIx::new(2)));
+    }
+
+    // Twin commits (same graph, independent mints) adopt the deterministic
+    // winner instead of merging; the loser side moves, the winner side is
+    // already up to date.
+    #[test]
+    fn sync_remote_tip_adopts_newer_twin() {
+        let secs = |s| std::time::Duration::from_secs(s);
+        let mut reg = gantz_ca::Registry::default();
+        let g = test_graph(&[1]);
+        let base_ca = reg.commit_graph(secs(1), None, gantz_ca::graph_addr(&g), || g);
+        let g = test_graph(&[1, 2]);
+        let twin_a = reg.commit_graph(secs(2), Some(base_ca), gantz_ca::graph_addr(&g), || g);
+        let g = test_graph(&[1, 2]);
+        let twin_b = reg.commit_graph(secs(3), Some(base_ca), gantz_ca::graph_addr(&g), || g);
+        reg.set_head("alpha".parse().unwrap(), twin_a);
+        let mut head = gantz_ca::Head::Branch("alpha".parse().unwrap());
+        let mut graph = test_graph(&[1, 2]);
+        let mut vm = Engine::new_base();
+        let mut view = crate::SceneView::default();
+        let mut selection = Selection::default();
+
+        let outcome = run_sync(
+            &mut reg,
+            &mut head,
+            &mut graph,
+            &mut vm,
+            &mut view,
+            &mut selection,
+            twin_b,
+        );
+        let SyncTipOutcome::Moved(target) = outcome else {
+            panic!("expected Moved, got {outcome:?}");
+        };
+        assert_eq!(target, twin_b, "the newer twin wins");
+        // Navigation is the caller's job: nothing mutated yet.
+        assert_eq!(reg.head(&"alpha".parse().unwrap()), Some(twin_a));
+
+        // From the winner's side the same pair is already settled.
+        reg.set_head("alpha".parse().unwrap(), twin_b);
+        let outcome = run_sync(
+            &mut reg,
+            &mut head,
+            &mut graph,
+            &mut vm,
+            &mut view,
+            &mut selection,
+            twin_a,
+        );
+        assert!(matches!(outcome, SyncTipOutcome::UpToDate));
+    }
+
+    #[test]
+    fn sync_remote_tip_fast_forwards_and_reports_up_to_date() {
+        let secs = |s| std::time::Duration::from_secs(s);
+        let mut reg = gantz_ca::Registry::default();
+        let g = test_graph(&[1]);
+        let base_ca = reg.commit_graph(secs(1), None, gantz_ca::graph_addr(&g), || g);
+        let g = test_graph(&[1, 2]);
+        let child = reg.commit_graph(secs(2), Some(base_ca), gantz_ca::graph_addr(&g), || g);
+        reg.set_head("alpha".parse().unwrap(), base_ca);
+        let mut head = gantz_ca::Head::Branch("alpha".parse().unwrap());
+        let mut graph = test_graph(&[1]);
+        let mut vm = Engine::new_base();
+        let mut view = crate::SceneView::default();
+        let mut selection = Selection::default();
+
+        let outcome = run_sync(
+            &mut reg,
+            &mut head,
+            &mut graph,
+            &mut vm,
+            &mut view,
+            &mut selection,
+            child,
+        );
+        assert!(matches!(outcome, SyncTipOutcome::Moved(t) if t == child));
+
+        reg.set_head("alpha".parse().unwrap(), child);
+        let mut graph = test_graph(&[1, 2]);
+        let outcome = run_sync(
+            &mut reg,
+            &mut head,
+            &mut graph,
+            &mut vm,
+            &mut view,
+            &mut selection,
+            base_ca,
+        );
+        assert!(matches!(outcome, SyncTipOutcome::UpToDate));
+    }
+
+    #[test]
+    fn sync_remote_tip_surfaces_unrelated() {
+        let secs = |s| std::time::Duration::from_secs(s);
+        let mut reg = gantz_ca::Registry::default();
+        let g = test_graph(&[1]);
+        let local = reg.commit_graph(secs(1), None, gantz_ca::graph_addr(&g), || g);
+        let g = test_graph(&[9]);
+        let foreign = reg.commit_graph(secs(2), None, gantz_ca::graph_addr(&g), || g);
+        reg.set_head("alpha".parse().unwrap(), local);
+        let mut head = gantz_ca::Head::Branch("alpha".parse().unwrap());
+        let mut graph = test_graph(&[1]);
+        let mut vm = Engine::new_base();
+        let mut view = crate::SceneView::default();
+        let mut selection = Selection::default();
+
+        let outcome = run_sync(
+            &mut reg,
+            &mut head,
+            &mut graph,
+            &mut vm,
+            &mut view,
+            &mut selection,
+            foreign,
+        );
+        assert!(matches!(outcome, SyncTipOutcome::Unrelated));
+        assert_eq!(reg.head(&"alpha".parse().unwrap()), Some(local));
+    }
+
+    // Session undo: the previous graph is committed *forward*, skipping
+    // layout-only ancestors when picking the default target.
+    #[test]
+    fn revert_head_commits_previous_graph_forward() {
+        let secs = |s| std::time::Duration::from_secs(s);
+        let mut reg = gantz_ca::Registry::default();
+        let g1 = test_graph(&[1]);
+        let g1_ca = gantz_ca::graph_addr(&g1);
+        let c1 = reg.commit_graph(secs(1), None, g1_ca, || g1);
+        let g2 = test_graph(&[1, 2]);
+        let g2_ca = gantz_ca::graph_addr(&g2);
+        let c2 = reg.commit_graph(secs(2), Some(c1), g2_ca, || g2);
+        // A layout-only commit: same graph, new commit.
+        let c3 = reg.commit_graph(secs(3), Some(c2), g2_ca, || unreachable!("graph exists"));
+        reg.set_head("alpha".parse().unwrap(), c3);
+        let mut head = gantz_ca::Head::Branch("alpha".parse().unwrap());
+
+        // The default target skips the layout-only ancestor.
+        assert_eq!(revert_target(&reg, &head), Some(c1));
+        let reverted = revert_head(&mut reg, secs(4), &mut head, c1).unwrap();
+        let commit = &reg.commits()[&reverted];
+        // The revert is a new forward commit carrying the old graph.
+        assert_eq!(commit.parent, Some(c3));
+        assert_eq!(commit.graph, g1_ca);
+        assert_eq!(reg.head_commit_ca(&head), Some(reverted));
+        // Reverting to an equal graph is a no-op.
+        assert_eq!(revert_head(&mut reg, secs(5), &mut head, c1), None);
     }
 }
