@@ -20,33 +20,31 @@
 //! `(node ...)` form. Any node type that is `Serialize + DeserializeOwned +
 //! CaHash` works.
 
-// The `NodeTag` derive emits `::gantz_format::` paths; alias ourselves so the
-// crate's own tests can use it too.
-#[cfg(test)]
-extern crate self as gantz_format;
-
 mod datum;
 mod error;
 mod lower;
 mod model;
+mod node_set;
 mod parse;
 mod raise;
 mod sugar;
-mod tag;
 mod writer;
 
 pub mod sexpr;
 
 pub use datum::{Datum, DatumError, datum_from_expr, datum_text, from_datum, node_datum, to_datum};
 pub use error::{ErrorKind, FormatError, Span};
-pub use gantz_format_derive::NodeTag;
 pub use lower::Loaded;
 pub use model::{Addr, Document, Form};
+#[doc(hidden)]
+pub use node_set::{NodeFields, TaggedNode};
 pub use raise::{Dumped, GraphLabels};
 pub use sugar::{CoreSugar, NodeSugar, Sugar, SugarArgs, Sugars};
-pub use tag::{FnNodeTag, NodeTag};
+
+/// Re-exported for [`impl_node_set_serde!`] expansions (`$crate::NodeTag`);
+/// depend on `gantz_nodetag` directly to implement or derive it.
 #[doc(hidden)]
-pub use tag::{NodeFields, TaggedNode};
+pub use gantz_nodetag::NodeTag;
 
 use gantz_ca::{CaHash, Registry, Timestamp};
 use gantz_core::node::graph::Graph;
@@ -131,6 +129,7 @@ mod tests {
 
     use super::*;
     use gantz_ca::{CaHash, Hasher};
+    use gantz_nodetag::NodeTag;
     use serde::{Deserialize, Serialize};
 
     // A self-contained node-set with one node type that implements neither

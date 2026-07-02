@@ -1,6 +1,6 @@
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::steel::{SteelVal, steel_vm::register_fn::RegisterFn};
-use gantz_format::NodeTag;
+use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
 /// A simple node that logs whatever value is received at a given log level.

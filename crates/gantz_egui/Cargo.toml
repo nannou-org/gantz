@@ -22,6 +22,7 @@ egui_tiles.workspace = true
 gantz_ca.workspace = true
 gantz_core.workspace = true
 gantz_format.workspace = true
+gantz_nodetag.workspace = true
 gantz_std.workspace = true
 hex.workspace = true
 humantime.workspace = true

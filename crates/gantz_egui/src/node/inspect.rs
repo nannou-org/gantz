@@ -3,7 +3,7 @@
 use crate::{NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind};
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
-use gantz_format::NodeTag;
+use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
 /// A node that displays the debug representation of values passing through.

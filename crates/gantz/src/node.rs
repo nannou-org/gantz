@@ -33,7 +33,7 @@ impl Node for gantz_egui::node::Inspect {}
 impl Node for gantz_egui::node::Plot {}
 
 // `Box<dyn Node>`'s `Serialize`/`Deserialize`: compiled dispatch over the
-// full node set, keyed by each type's `gantz_format::NodeTag`. Adding a
+// full node set, keyed by each type's `gantz_nodetag::NodeTag`. Adding a
 // node type to the app is an `impl Node` above plus one line here (the
 // `node_set_roundtrips_through_datum` gate test enforces the latter).
 gantz_format::impl_node_set_serde! {

@@ -1,5 +1,6 @@
 use crate::node::{self, Node};
 use gantz_ca::CaHash;
+use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fmt, str::FromStr};
 use steel::{parser::lexer::TokenStream, steel_vm::engine::Engine};
@@ -37,7 +38,7 @@ use thiserror::Error;
 /// ```ignore
 /// (+ $a (if (Some? $?b) (Some->value $?b) 0))
 /// ```
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, CaHash)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, CaHash, NodeTag)]
 #[cahash("gantz.expr")]
 pub struct Expr {
     src: String,

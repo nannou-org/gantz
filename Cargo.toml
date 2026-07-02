@@ -59,7 +59,8 @@ gantz_ca_derive = { version = "0.2.0", path = "crates/gantz_ca_derive" }
 gantz_core = { version = "0.4.0", path = "crates/gantz_core" }
 gantz_egui = { version = "0.4.0", path = "crates/gantz_egui" }
 gantz_format = { version = "0.2.1", path = "crates/gantz_format" }
-gantz_format_derive = { version = "0.1.0", path = "crates/gantz_format_derive" }
+gantz_nodetag = { version = "0.1.0", path = "crates/gantz_nodetag" }
+gantz_nodetag_derive = { version = "0.1.0", path = "crates/gantz_nodetag_derive" }
 gantz_std = { version = "0.3.0", path = "crates/gantz_std" }
 hex = "0.4"
 humantime = "2.3"

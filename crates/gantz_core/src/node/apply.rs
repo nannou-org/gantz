@@ -2,6 +2,7 @@
 
 use crate::node;
 use gantz_ca::CaHash;
+use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
 /// A node that applies a function to arguments.
@@ -10,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// with the arguments received on the second input.
 ///
 /// The node is stateless and evaluates immediately when a function is received.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash, NodeTag)]
 #[cahash("gantz.apply")]
 pub struct Apply;
 

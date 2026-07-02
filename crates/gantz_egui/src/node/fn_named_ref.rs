@@ -11,7 +11,7 @@ pub type FnNamedRef = gantz_core::node::Fn<NamedRef>;
 
 // Declared on the wrapped type: the orphan rule forbids implementing
 // `NodeTag` for the foreign `Fn<NamedRef>` here directly.
-impl gantz_format::FnNodeTag for NamedRef {
+impl gantz_core::node::FnNodeTag for NamedRef {
     const FN_TAG: &'static str = "FnNamedRef";
 }
 

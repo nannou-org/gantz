@@ -4,7 +4,7 @@ use crate::widget::node_inspector;
 use crate::{InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse};
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx};
-use gantz_format::NodeTag;
+use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
 /// Temporary editing state stored in egui memory to buffer text edits.

@@ -6,7 +6,8 @@
 //! other crates' sugars) via [`gantz_format::Sugars`].
 
 use crate::{Bang, Log, Number};
-use gantz_format::{Datum, FormatError, NodeTag, Sugar, SugarArgs, node_datum};
+use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
+use gantz_nodetag::NodeTag;
 
 /// Keyword sugar for [`Bang`], [`Number`] and [`Log`].
 #[derive(Clone, Copy, Debug, Default)]

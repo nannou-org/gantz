@@ -1,12 +1,12 @@
 [package]
-name = "gantz_format_derive"
+name = "gantz_nodetag_derive"
 version = "0.1.0"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Derive macro for the gantz_format NodeTag trait"
+description = "Derive macro for the gantz_nodetag NodeTag trait"
 
 [lib]
 proc-macro = true

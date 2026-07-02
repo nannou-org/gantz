@@ -920,6 +920,7 @@ dependencies = [
  "gantz_core",
  "gantz_egui",
  "gantz_format",
+ "gantz_nodetag",
  "rfd",
  "serde",
  "steel-core",
@@ -3245,6 +3246,7 @@ version = "0.4.0"
 dependencies = [
  "env_logger",
  "gantz_ca",
+ "gantz_nodetag",
  "petgraph",
  "serde",
  "serde_json",
@@ -3268,6 +3270,7 @@ dependencies = [
  "gantz_ca",
  "gantz_core",
  "gantz_format",
+ "gantz_nodetag",
  "gantz_std",
  "hex",
  "humantime",
@@ -3292,7 +3295,7 @@ version = "0.2.1"
 dependencies = [
  "gantz_ca",
  "gantz_core",
- "gantz_format_derive",
+ "gantz_nodetag",
  "log",
  "petgraph",
  "serde",
@@ -3301,7 +3304,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "gantz_format_derive"
+name = "gantz_nodetag"
+version = "0.1.0"
+dependencies = [
+ "gantz_nodetag_derive",
+]
+
+[[package]]
+name = "gantz_nodetag_derive"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
@@ -3316,6 +3326,7 @@ dependencies = [
  "gantz_ca",
  "gantz_core",
  "gantz_format",
+ "gantz_nodetag",
  "log",
  "petgraph",
  "serde",

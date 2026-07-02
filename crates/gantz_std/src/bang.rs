@@ -1,6 +1,6 @@
 use gantz_ca::CaHash;
 use gantz_core::node::{EvalConf, ExprCtx, ExprResult, MetaCtx};
-use gantz_format::NodeTag;
+use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
 /// A simple node for pushing evaluation through the graph.

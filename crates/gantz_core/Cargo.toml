@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 gantz_ca.workspace = true
+gantz_nodetag.workspace = true
 petgraph.workspace = true
 serde.workspace = true
 steel-core.workspace = true

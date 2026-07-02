@@ -6,7 +6,8 @@
 
 use crate::node::{Comment, Inspect};
 use gantz_format::sexpr::quote;
-use gantz_format::{Datum, FormatError, NodeTag, Sugar, SugarArgs, node_datum};
+use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
+use gantz_nodetag::NodeTag;
 
 /// Keyword sugar for [`Comment`] and [`Inspect`].
 #[derive(Clone, Copy, Debug, Default)]

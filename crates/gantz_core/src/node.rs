@@ -8,7 +8,7 @@ pub use branch::{Branch, BranchNewError};
 pub use conns::Conns;
 pub use delay::Delay;
 pub use expr::{Expr, ExprNewError};
-pub use fn_::Fn;
+pub use fn_::{Fn, FnNodeTag};
 use gantz_ca::CaHash;
 pub use id::{IDENTITY_NAME, Identity};
 pub use pull::{Pull, WithPullEval};

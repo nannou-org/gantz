@@ -7,7 +7,8 @@
 //! [`gantz_format::Sugars`].
 
 use crate::node::{TickBang, UpdateBang, tick_bang};
-use gantz_format::{Datum, FormatError, NodeTag, Sugar, SugarArgs, node_datum};
+use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
+use gantz_nodetag::NodeTag;
 
 /// Keyword sugar for [`UpdateBang`] and [`TickBang`].
 #[derive(Clone, Copy, Debug, Default)]

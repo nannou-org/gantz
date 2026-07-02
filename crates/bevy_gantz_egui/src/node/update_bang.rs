@@ -15,7 +15,7 @@ use bevy_time::prelude::*;
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::visit;
-use gantz_format::NodeTag;
+use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 use steel::SteelVal;
 

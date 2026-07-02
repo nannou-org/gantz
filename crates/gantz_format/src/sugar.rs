@@ -19,7 +19,7 @@
 use crate::datum::{Datum, node_datum};
 use crate::error::{ErrorKind, FormatError};
 use crate::sexpr::{self, as_keyword, as_string, as_symbol, err_at, quote, span_src};
-use crate::tag::NodeTag;
+use gantz_nodetag::NodeTag;
 use steel::parser::ast::ExprKind;
 
 /// The arguments of a list-headed sugar form `(<head> <args>...)`, with helpers

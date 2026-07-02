@@ -22,7 +22,7 @@ use crate::{
 };
 use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
-use gantz_format::NodeTag;
+use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 use steel::SteelVal;
 use steel::steel_vm::register_fn::RegisterFn;

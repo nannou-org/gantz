@@ -1,7 +1,7 @@
 //! Derive macro for the `NodeTag` trait.
 //!
 //! ```ignore
-//! use gantz_format::NodeTag;
+//! use gantz_nodetag::NodeTag;
 //!
 //! // The wire tag defaults to the type's name: "Bang".
 //! #[derive(NodeTag)]
@@ -21,7 +21,7 @@ use syn::{DeriveInput, LitStr, parse_macro_input};
 
 /// Derive macro for `NodeTag`.
 ///
-/// Implements `gantz_format::NodeTag` with the type's name as its wire tag
+/// Implements `gantz_nodetag::NodeTag` with the type's name as its wire tag
 /// (the `"type"` entry of the node's serialized map form).
 ///
 /// # Attributes
@@ -41,7 +41,7 @@ use syn::{DeriveInput, LitStr, parse_macro_input};
 /// Generates:
 ///
 /// ```ignore
-/// impl ::gantz_format::NodeTag for Custom {
+/// impl ::gantz_nodetag::NodeTag for Custom {
 ///     const TAG: &'static str = "my.custom-tag";
 /// }
 /// ```
@@ -73,7 +73,7 @@ fn derive_node_tag(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream>
     let tag = tag.unwrap_or_else(|| name.to_string());
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     Ok(quote! {
-        impl #impl_generics ::gantz_format::NodeTag for #name #ty_generics #where_clause {
+        impl #impl_generics ::gantz_nodetag::NodeTag for #name #ty_generics #where_clause {
             const TAG: &'static str = #tag;
         }
     })

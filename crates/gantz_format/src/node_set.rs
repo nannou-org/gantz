@@ -1,88 +1,14 @@
 //! Deterministic serde dispatch for `Box<dyn Node>`-style node sets.
 //!
 //! Each node type declares its wire tag - the `"type"` entry of its
-//! serialized map - at its own definition site via [`NodeTag`], and an
-//! application composes its node set with [`impl_node_set_serde!`], which
-//! generates `Serialize`/`Deserialize` for the erased `Box<dyn Trait>` as a
-//! compiled match over the listed types. There is no runtime registry: unlike
-//! `typetag`'s `inventory`-based registration (whose life-before-main
-//! constructors the WASM linker can silently discard - see gantz#181),
-//! nothing here can be dropped at link time.
-
-/// A node type's wire tag: the value of the `"type"` entry in its serialized
-/// map form, e.g. `(node "Expr" ...)` in `.gantz` text.
-///
-/// Declared alongside the node type itself (like its `#[cahash(...)]`
-/// discriminator and its [`Sugar`](crate::Sugar) keyword) so that every
-/// application composing the node set agrees on the same wire format.
-/// `gantz_format` provides the impls for `gantz_core`'s nodes; downstream
-/// crates provide their own, usually via the derive of the same name, which
-/// defaults the tag to the type's name and takes a `#[tag("...")]` override:
-///
-/// ```
-/// use gantz_format::NodeTag;
-///
-/// #[derive(NodeTag)]
-/// struct Gain;
-///
-/// #[derive(NodeTag)]
-/// #[tag("gain.custom")]
-/// struct CustomGain;
-///
-/// assert_eq!(Gain::TAG, "Gain");
-/// assert_eq!(CustomGain::TAG, "gain.custom");
-/// ```
-///
-/// Tags are part of the wire format: changing one breaks the loading of
-/// existing `.gantz` exports and persisted registries that contain the node.
-pub trait NodeTag {
-    /// The `"type"` tag identifying this node type on the wire.
-    const TAG: &'static str;
-}
-
-impl NodeTag for gantz_core::node::Apply {
-    const TAG: &'static str = "Apply";
-}
-
-impl NodeTag for gantz_core::node::Branch {
-    const TAG: &'static str = "Branch";
-}
-
-impl NodeTag for gantz_core::node::Delay {
-    const TAG: &'static str = "Delay";
-}
-
-impl NodeTag for gantz_core::node::Expr {
-    const TAG: &'static str = "Expr";
-}
-
-impl NodeTag for gantz_core::node::Identity {
-    const TAG: &'static str = "Identity";
-}
-
-impl NodeTag for gantz_core::node::graph::Inlet {
-    const TAG: &'static str = "Inlet";
-}
-
-impl NodeTag for gantz_core::node::graph::Outlet {
-    const TAG: &'static str = "Outlet";
-}
-
-/// The wire tag for [`Fn<Self>`](gantz_core::node::Fn), for node types that
-/// appear fn-wrapped in a node set.
-///
-/// `Fn<N>` is foreign to `N`'s crate, so the orphan rule forbids implementing
-/// [`NodeTag`] for it there directly; this lets the wrapped type declare the
-/// wrapper's tag at its own definition site instead, and the blanket impl
-/// below lifts it.
-pub trait FnNodeTag {
-    /// The `"type"` tag identifying `Fn<Self>` on the wire.
-    const FN_TAG: &'static str;
-}
-
-impl<N: FnNodeTag> NodeTag for gantz_core::node::Fn<N> {
-    const TAG: &'static str = N::FN_TAG;
-}
+//! serialized map - at its own definition site via [`gantz_nodetag::NodeTag`]
+//! (usually derived), and an application composes its node set with
+//! [`impl_node_set_serde!`], which generates `Serialize`/`Deserialize` for
+//! the erased `Box<dyn Trait>` as a compiled match over the listed types.
+//! There is no runtime registry: unlike `typetag`'s `inventory`-based
+//! registration (whose life-before-main constructors the WASM linker can
+//! silently discard - see gantz#181), nothing here can be dropped at link
+//! time.
 
 /// The tag-first map wrapper the generated `Serialize` uses: `flatten` forces
 /// `serialize_map`, reproducing the exact wire shape `typetag` produced (a
@@ -98,7 +24,7 @@ pub struct TaggedNode<'a, T: serde::Serialize> {
 }
 
 /// Implement `Serialize`/`Deserialize` for a node set's `Box<dyn Trait>` by
-/// dispatching on each listed type's [`NodeTag`].
+/// dispatching on each listed type's [`NodeTag`](gantz_nodetag::NodeTag).
 ///
 /// The serialized form is a map carrying the node's `TAG` under a `"type"`
 /// entry alongside the node's own fields (`typetag`-compatible, but with no
@@ -107,12 +33,12 @@ pub struct TaggedNode<'a, T: serde::Serialize> {
 ///
 /// The trait must have [`std::any::Any`] as a (transitive) supertrait, and
 /// the calling crate must depend on `serde`. Adding a node type to an
-/// application is: derive (or implement) [`NodeTag`] beside the type, then
-/// add one line here - a round-trip gate test over the full node set is the
-/// recommended guard against forgetting the latter.
+/// application is: derive (or implement) [`NodeTag`](gantz_nodetag::NodeTag)
+/// beside the type, then add one line here - a round-trip gate test over the
+/// full node set is the recommended guard against forgetting the latter.
 ///
 /// ```
-/// use gantz_format::NodeTag;
+/// use gantz_nodetag::NodeTag;
 ///
 /// trait Node: std::any::Any {}
 ///
@@ -400,7 +326,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{Datum, NodeTag, from_datum, node_datum, to_datum};
+    use crate::{Datum, from_datum, node_datum, to_datum};
+    use gantz_nodetag::NodeTag;
 
     /// The dispatch handles all three node struct shapes: unit, fields and
     /// newtype (`Fn<N>` delegates to the wrapped node's fields). `Newtype`
@@ -484,14 +411,12 @@ mod tests {
         assert!(msg.contains("missing field `type`"), "{msg}");
     }
 
-    /// Core nodes as trait objects through a foreign self-describing format
-    /// (JSON, exercising the streamed `NodeFields` path outside the `Datum`
-    /// codec): wrapper nodes (`Push`/`Pull`) keep their eval behaviour
-    /// through the round-trip, and `Branch`'s validating manual
-    /// `Deserialize` composes. Ported from the typetag-based `gantz_core`
-    /// serde test.
+    /// Core nodes through a foreign self-describing format (JSON, exercising
+    /// the streamed `NodeFields` path outside the `Datum` codec): `Branch`'s
+    /// validating manual `Deserialize` composes as a trait object, and the
+    /// `Push`/`Pull` eval wrappers keep their behaviour through typed
+    /// round-trips. Ported from the typetag-based `gantz_core` serde test.
     mod core_nodes {
-        use crate::NodeTag;
         use gantz_core::node::{
             self, Branch, Conns, Expr, MetaCtx, Node, Pull, Push, WithPullEval, WithPushEval,
         };
@@ -500,25 +425,11 @@ mod tests {
 
         impl SerdeNode for Branch {}
         impl SerdeNode for Expr {}
-        impl SerdeNode for Push<Expr> {}
-        impl SerdeNode for Pull<Expr> {}
-
-        // `Branch` and `Expr` carry crate-level `NodeTag`s; the test-local
-        // wrappers declare their own here.
-        impl NodeTag for Push<Expr> {
-            const TAG: &'static str = "Push";
-        }
-
-        impl NodeTag for Pull<Expr> {
-            const TAG: &'static str = "Pull";
-        }
 
         crate::impl_node_set_serde! {
             dyn SerdeNode {
                 Branch,
                 Expr,
-                Push<Expr>,
-                Pull<Expr>,
             }
         }
 
@@ -530,27 +441,29 @@ mod tests {
         #[test]
         fn eval_wrappers_roundtrip_through_json() {
             let expr = || node::expr("(+ $a $b)").unwrap();
-            let nodes: Vec<Box<dyn SerdeNode>> = vec![
-                Box::new(expr()),
-                Box::new(expr().with_push_eval()),
-                Box::new(expr().with_pull_eval()),
-            ];
-
-            let json = serde_json::to_string(&nodes).expect("serialize");
-            let nodes: Vec<Box<dyn SerdeNode>> = serde_json::from_str(&json).expect("deserialize");
-
             let ctx = MetaCtx::new(&no_lookup);
-            assert_eq!(nodes.len(), 3);
-            for node in &nodes {
-                assert_eq!(node.n_inputs(ctx), 2);
-                assert_eq!(node.n_outputs(ctx), 1);
-            }
-            assert!(nodes[0].push_eval(ctx).is_empty());
-            assert!(nodes[0].pull_eval(ctx).is_empty());
-            assert!(!nodes[1].push_eval(ctx).is_empty());
-            assert!(nodes[1].pull_eval(ctx).is_empty());
-            assert!(nodes[2].push_eval(ctx).is_empty());
-            assert!(!nodes[2].pull_eval(ctx).is_empty());
+
+            // The plain expr through the erased node set.
+            let boxed: Box<dyn SerdeNode> = Box::new(expr());
+            let json = serde_json::to_string(&boxed).expect("serialize");
+            let node: Box<dyn SerdeNode> = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(node.n_inputs(ctx), 2);
+            assert_eq!(node.n_outputs(ctx), 1);
+            assert!(node.push_eval(ctx).is_empty());
+            assert!(node.pull_eval(ctx).is_empty());
+
+            // The eval wrappers, typed: only `gantz_core` could tag the
+            // foreign `Push<Expr>`/`Pull<Expr>` (orphan rule) and no
+            // production node set registers them, so the erased dimension is
+            // covered by `Fn<NamedRef>` in the app's gate test instead.
+            let json = serde_json::to_string(&expr().with_push_eval()).expect("serialize");
+            let push: Push<Expr> = serde_json::from_str(&json).expect("deserialize");
+            assert!(!push.push_eval(ctx).is_empty());
+            assert!(push.pull_eval(ctx).is_empty());
+            let json = serde_json::to_string(&expr().with_pull_eval()).expect("serialize");
+            let pull: Pull<Expr> = serde_json::from_str(&json).expect("deserialize");
+            assert!(pull.push_eval(ctx).is_empty());
+            assert!(!pull.pull_eval(ctx).is_empty());
         }
 
         #[test]
