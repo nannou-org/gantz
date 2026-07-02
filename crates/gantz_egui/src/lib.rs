@@ -14,6 +14,7 @@ pub mod export;
 pub mod format;
 mod impls;
 pub mod keybind;
+pub mod merge;
 pub mod node;
 pub mod ops;
 pub mod reg;
@@ -129,6 +130,30 @@ pub trait Registry: NameRegistry + FnNodeNames + NodeTypeRegistry + GraphRegistr
     /// (it derives no input/output docs); the default has none.
     fn node_description(&self, name: &str) -> Option<Cow<'static, str>> {
         let _ = name;
+        None
+    }
+
+    /// The named graphs that can be merged into `ours` (see
+    /// [`merge::merge_candidates`]).
+    ///
+    /// Drives the graph config pane's merge row. The default has none (hiding
+    /// the row's candidates); the standard [`RegistryRef`] impl queries the
+    /// content-addressed registry.
+    fn merge_candidates(&self, ours: &gantz_ca::Head) -> Vec<merge::MergeCandidate> {
+        let _ = ours;
+        vec![]
+    }
+
+    /// Dry-run the merge of the branch named `source` into `ours` under the
+    /// given conflict resolutions (see [`merge::merge_preview`]), for hover
+    /// previews in the merge row.
+    fn merge_preview(
+        &self,
+        ours: &gantz_ca::Head,
+        source: &str,
+        resolutions: gantz_ca::Resolutions,
+    ) -> Option<merge::MergePreview> {
+        let _ = (ours, source, resolutions);
         None
     }
 }
@@ -614,6 +639,20 @@ pub struct ReplaceHead(pub gantz_ca::Head);
 pub struct Paste {
     pub text: Option<String>,
     pub pos: PastePos,
+}
+
+/// Merge the named source branch into the emitting head (see
+/// [`ops::merge_head`]).
+#[derive(Clone, Debug)]
+pub struct MergeHead {
+    /// The name of the branch to merge in.
+    pub source: String,
+    /// How conflicts resolve when the merge proceeds despite them.
+    pub resolutions: gantz_ca::Resolutions,
+    /// Merge despite conflicts, applying `resolutions` (see
+    /// [`gantz_ca::merge::Conflict`]). Hard blockers (e.g. reference cycles)
+    /// still refuse the merge.
+    pub auto_resolve: bool,
 }
 
 /// Redo a previously undone edit (move head forward).

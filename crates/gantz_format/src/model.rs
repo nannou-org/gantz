@@ -127,6 +127,10 @@ pub struct CommitDecl {
     pub nanos: u32,
     /// The parent commit, or `None` for a root commit.
     pub parent: Option<Addr>,
+    /// Extra parents, present only on merge commits (the merged-in tips).
+    /// Written as a `(merge-parents ...)` clause only when non-empty, so
+    /// ordinary commits serialize exactly as before.
+    pub merge_parents: Vec<Addr>,
     /// The id of the graph this commit points at.
     pub graph: Addr,
 }

@@ -14,3 +14,6 @@ gantz_ca_derive.workspace = true
 hex.workspace = true
 petgraph.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+ron.workspace = true

@@ -162,8 +162,9 @@ impl<N: 'static + Node + Send + Sync> FnNodeNames for RegistryRef<'_, N> {
     }
 }
 
-impl<N: 'static + Node + crate::NodeUi + crate::sync::AsNamedRef + Send + Sync> Registry
-    for RegistryRef<'_, N>
+impl<N> Registry for RegistryRef<'_, N>
+where
+    N: 'static + Node + crate::NodeUi + crate::sync::AsNamedRef + Clone + ca::CaHash + Send + Sync,
 {
     fn node(&self, ca: &ca::ContentAddr) -> Option<&dyn Node> {
         RegistryRef::node(self, ca)
@@ -257,6 +258,19 @@ impl<N: 'static + Node + crate::NodeUi + crate::sync::AsNamedRef + Send + Sync> 
 
     fn graph_description(&self, name: &str) -> Option<&str> {
         self.ca_registry.description(name)
+    }
+
+    fn merge_candidates(&self, ours: &ca::Head) -> Vec<crate::merge::MergeCandidate> {
+        crate::merge::merge_candidates(self.ca_registry, ours)
+    }
+
+    fn merge_preview(
+        &self,
+        ours: &ca::Head,
+        source: &str,
+        resolutions: ca::Resolutions,
+    ) -> Option<crate::merge::MergePreview> {
+        crate::merge::merge_preview(self.ca_registry, ours, source, resolutions)
     }
 
     fn node_description(&self, name: &str) -> Option<Cow<'static, str>> {

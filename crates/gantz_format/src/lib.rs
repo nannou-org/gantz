@@ -178,4 +178,44 @@ mod tests {
             dumped.text,
         );
     }
+
+    /// Merge commits round-trip their extra parents via the additive
+    /// `(merge-parents ...)` clause; ordinary commits are written without it.
+    #[test]
+    fn merge_parents_round_trip() {
+        let text = "\
+            (graph g1 (k (node \"Knob\" (value 1))))\n\
+            (graph g2 (k (node \"Knob\" (value 2))))\n\
+            (graph g3 (k (node \"Knob\" (value 3))))\n\
+            (commits\n\
+              (c1 (time 1 0) (graph g1))\n\
+              (c2 (time 2 0) (graph g2))\n\
+              (c3 (time 3 0) (parent c1) (merge-parents c2) (graph g3)))";
+        let loaded = from_str_with::<Box<dyn Widget>>(text, std::time::Duration::ZERO, &CoreSugar)
+            .expect("parse merge commit");
+        let merge = loaded
+            .registry
+            .commits()
+            .values()
+            .find(|c| !c.merge_parents.is_empty())
+            .expect("merge commit survives the parse");
+        assert!(merge.parent.is_some());
+        assert_eq!(merge.merge_parents.len(), 1);
+        assert_ne!(merge.parent, Some(merge.merge_parents[0]));
+
+        // The merge parent survives a write + reparse; non-merge commits carry
+        // no `merge-parents` clause.
+        let dumped = to_string_with(&loaded.registry, &CoreSugar).expect("write merge commit");
+        assert_eq!(dumped.text.matches("(merge-parents").count(), 1);
+        let reloaded =
+            from_str_with::<Box<dyn Widget>>(&dumped.text, std::time::Duration::ZERO, &CoreSugar)
+                .expect("reparse");
+        let re_merge = reloaded
+            .registry
+            .commits()
+            .values()
+            .find(|c| !c.merge_parents.is_empty())
+            .expect("merge commit survives the round-trip");
+        assert_eq!(re_merge.merge_parents.len(), 1);
+    }
 }

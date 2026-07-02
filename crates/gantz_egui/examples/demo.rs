@@ -251,6 +251,19 @@ impl gantz_egui::Registry for Environment {
             .and_then(|n| n.description())
             .map(Cow::Borrowed)
     }
+
+    fn merge_candidates(&self, ours: &gantz_ca::Head) -> Vec<gantz_egui::merge::MergeCandidate> {
+        gantz_egui::merge::merge_candidates(&self.registry, ours)
+    }
+
+    fn merge_preview(
+        &self,
+        ours: &gantz_ca::Head,
+        source: &str,
+        resolutions: gantz_ca::Resolutions,
+    ) -> Option<gantz_egui::merge::MergePreview> {
+        gantz_egui::merge::merge_preview(&self.registry, ours, source, resolutions)
+    }
 }
 
 /// The set of all known node types accessible to gantz.
@@ -1248,6 +1261,59 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             let vm = &mut state.vms[ix];
             let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
             gantz_core::graph::register(&get_node, &*graph, &[], vm);
+        }
+    }
+
+    for (
+        head,
+        gantz_egui::MergeHead {
+            source,
+            resolutions,
+            auto_resolve,
+        },
+    ) in responses.take()
+    {
+        let Some((head, ix)) = tagged_head(state, head) else {
+            continue;
+        };
+        let outcome = {
+            let head_state = state.gantz.open_heads.entry(head.clone()).or_default();
+            let (h, graph, view) = &mut state.heads[ix];
+            gantz_egui::ops::merge_head(
+                &mut state.env.registry,
+                &HashMap::new(),
+                timestamp(),
+                h,
+                graph,
+                &mut state.vms[ix],
+                view,
+                &mut head_state.scene.interaction.selection,
+                &source,
+                resolutions,
+                auto_resolve,
+            )
+        };
+        match outcome {
+            gantz_egui::ops::MergeHeadOutcome::FastForward(target) => {
+                navigate_head(ctx, state, &head, target);
+            }
+            gantz_egui::ops::MergeHeadOutcome::Merged { .. } => {
+                // The op already committed (with both parents), so the commit
+                // loop sees a clean graph; do its bookkeeping here: clear the
+                // redo stack, recompile (this also re-registers, initializing
+                // merged-in nodes' state), and bring referrers up to date.
+                state.gantz.migrate_head(&head, &head, true);
+                recompile_heads(state);
+                resync_and_refresh(state);
+            }
+            gantz_egui::ops::MergeHeadOutcome::Refused(reasons) => {
+                // Defensive: the UI disables conflicted/blocked candidates.
+                log::warn!(
+                    "MergeHead: refused to merge '{source}': {}",
+                    reasons.join("; ")
+                );
+            }
+            gantz_egui::ops::MergeHeadOutcome::Noop => (),
         }
     }
 

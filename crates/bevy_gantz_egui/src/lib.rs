@@ -120,6 +120,7 @@ where
             .register_head_response::<gantz_egui::CreateNode>()
             .register_head_response::<gantz_egui::CreateNestedGraph>()
             .register_head_response::<gantz_egui::InspectEdge>()
+            .register_head_response::<gantz_egui::MergeHead>()
             .register_head_response::<gantz_egui::Paste>()
             .register_head_response::<gantz_egui::Redo>()
             .register_head_response::<gantz_egui::Undo>()
@@ -155,6 +156,7 @@ where
             .add_observer(on_copy_nodes::<N>)
             .add_observer(on_cut_nodes::<N>)
             .add_observer(on_duplicate_nodes::<N>)
+            .add_observer(on_merge_head::<N>)
             .add_observer(on_paste::<N>)
             .add_observer(on_undo::<N>)
             .add_observer(on_redo)
@@ -1166,6 +1168,99 @@ pub fn on_duplicate_nodes<N>(
     bevy_gantz::commit_working_graph(&mut registry, &mut cmds, event.head, &mut head_ref.0, &wg.0);
 }
 
+/// Handle merge payloads: merge the named source branch into the head.
+///
+/// A fast-forward navigates the head to the source's tip (reloading the
+/// working graph, VM and views); a true merge is applied to the working graph
+/// and committed with two parents by [`gantz_egui::ops::merge_head`] itself,
+/// so this triggers [`head::CommittedEvent`] directly rather than calling
+/// `commit_working_graph` (which would see the already-committed graph and
+/// skip the event).
+pub fn on_merge_head<N>(
+    trigger: On<ForHead<gantz_egui::MergeHead>>,
+    mut registry: ResMut<Registry<N>>,
+    builtins: Res<BuiltinNodes<N>>,
+    views: Res<Views>,
+    demos: Res<Demos>,
+    mut gui_state: ResMut<GuiState>,
+    mut vms: NonSendMut<head::HeadVms>,
+    mut cmds: Commands,
+    mut heads: Query<
+        (
+            &mut head::HeadRef,
+            &mut head::WorkingGraph<N>,
+            &mut GraphView,
+        ),
+        With<head::OpenHead>,
+    >,
+) where
+    N: 'static + Node + Clone + ca::CaHash + gantz_egui::sync::AsNamedRef + Send + Sync,
+{
+    let event = trigger.event();
+    let Ok((mut head_ref, mut wg, mut gv)) = heads.get_mut(event.head) else {
+        log::error!("MergeHead: head not found for entity {:?}", event.head);
+        return;
+    };
+    let Some(head_state) = gui_state.open_heads.get_mut(&**head_ref) else {
+        log::error!("MergeHead: GUI state not found for head");
+        return;
+    };
+    let Some(vm) = vms.get_mut(&event.head) else {
+        log::error!("MergeHead: VM not found for head");
+        return;
+    };
+
+    let old_head = head_ref.0.clone();
+    let outcome = gantz_egui::ops::merge_head(
+        &mut registry,
+        &views,
+        bevy_gantz::reg::timestamp(),
+        &mut head_ref.0,
+        &mut wg,
+        vm,
+        &mut gv,
+        &mut head_state.scene.interaction.selection,
+        &event.data.source,
+        event.data.resolutions,
+        event.data.auto_resolve,
+    );
+
+    match outcome {
+        gantz_egui::ops::MergeHeadOutcome::FastForward(target) => {
+            navigate_head(&mut cmds, event.head, &old_head, target);
+        }
+        gantz_egui::ops::MergeHeadOutcome::Merged { new_commit, .. } => {
+            log::debug!(
+                "Merged '{}' -> {}",
+                event.data.source,
+                new_commit.display_short()
+            );
+            // Re-register the root graph so merged-in nodes get their state
+            // initialized. Idempotent for existing nodes.
+            let node_reg = registry_ref(&registry, &builtins, &demos);
+            let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+            gantz_core::graph::register(&get_node, &**wg, &[], vm);
+            // The op already committed (with both parents), so fire the
+            // committed machinery (GUI-state migration, redo-stack clear,
+            // NamedRef resync, `vm::sync` recompile) directly.
+            cmds.trigger(head::CommittedEvent {
+                entity: event.head,
+                old_head,
+                new_head: head_ref.0.clone(),
+            });
+        }
+        gantz_egui::ops::MergeHeadOutcome::Refused(reasons) => {
+            // Defensive: the UI disables conflicted/blocked candidates.
+            log::warn!(
+                "MergeHead: refused to merge '{}': {}",
+                event.data.source,
+                reasons.join("; ")
+            );
+        }
+        gantz_egui::ops::MergeHeadOutcome::Noop => (),
+    }
+}
+
 /// Handle undo payloads: move the head back to its parent commit.
 pub fn on_undo<N>(
     trigger: On<ForHead<gantz_egui::Undo>>,
@@ -1412,17 +1507,11 @@ where
             return;
         }
     };
-    // Extract just the commits reachable from the target name.
+    // Extract just the commits reachable from the target name (all parents,
+    // so merge ancestry survives a reset).
     if let Some(&base_commit_ca) = export.registry.names().get(name) {
-        let mut required = std::collections::HashSet::new();
-        let mut ca = base_commit_ca;
-        loop {
-            required.insert(ca);
-            match export.registry.commits().get(&ca).and_then(|c| c.parent) {
-                Some(parent) => ca = parent,
-                None => break,
-            }
-        }
+        let required: std::collections::HashSet<_> =
+            ca::ancestors(export.registry.commits(), base_commit_ca).collect();
         let mut subset = export.registry.export(&required);
         subset.insert_name(name.clone(), base_commit_ca);
         registry.merge(subset);

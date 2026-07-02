@@ -267,6 +267,46 @@ pub fn move_value(vm: &mut Engine, from: &[usize], to: &[usize]) -> Result<(), S
     Ok(())
 }
 
+/// Re-key the root graph's per-node state through `mapping` (old node index to
+/// new node index) in a single pass.
+///
+/// Each moved value carries its nested subtree with it. State for indices
+/// absent from the mapping is dropped. Unlike repeated [`move_value`] calls,
+/// an arbitrary permutation cannot collide with itself here. Used when a whole
+/// graph is rebuilt with a known node correspondence (e.g. merging a diverged
+/// branch). A no-op if `ROOT_STATE` hasn't been initialized.
+pub fn remap_root(
+    vm: &mut Engine,
+    mapping: &std::collections::BTreeMap<usize, usize>,
+) -> Result<(), SteelErr> {
+    let root_val = match vm.extract_value(ROOT_STATE) {
+        Ok(val) => val,
+        // No root state initialized yet, nothing to remap.
+        Err(_) => return Ok(()),
+    };
+    let SteelVal::HashMapV(root_state) = root_val else {
+        return Err(SteelErr::new(
+            ErrorKind::Generic,
+            "`ROOT_STATE` was not a hashmap".to_string(),
+        ));
+    };
+    let mut remapped = steel::HashMap::new();
+    for (key, val) in root_state.iter() {
+        let &SteelVal::IntV(old) = key else {
+            // Non-index keys shouldn't exist at the root; keep them as-is.
+            remapped = remapped.update(key.clone(), val.clone());
+            continue;
+        };
+        let old: usize = old.try_into().expect("node index out of range");
+        if let Some(&new) = mapping.get(&old) {
+            let new = new.try_into().expect("node index out of range");
+            remapped = remapped.update(SteelVal::IntV(new), val.clone());
+        }
+    }
+    vm.update_value(ROOT_STATE, SteelVal::HashMapV(Gc::new(remapped).into()));
+    Ok(())
+}
+
 /// Extract the value for the node with the given ID.
 pub fn extract_value(vm: &Engine, node_path: &[usize]) -> Result<Option<SteelVal>, SteelErr> {
     let SteelVal::HashMapV(root_state) = vm.extract_value(ROOT_STATE)? else {

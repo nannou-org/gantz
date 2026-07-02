@@ -167,6 +167,28 @@ impl<G> Registry<G> {
         commit_graph_to_head(self, timestamp, graph_ca, graph, head)
     }
 
+    /// Commit the graph at the given address as a merge of `theirs` into the
+    /// current head commit, and update `head` to the new merge commit.
+    ///
+    /// The head's current commit becomes the first parent, `theirs` the merge
+    /// parent.
+    ///
+    /// Only calls `graph` if no graph exists within the registry for the given
+    /// address.
+    ///
+    /// NOTE: Assumes `graph_ca` is a correct address for the graph resulting
+    /// from `graph()`.
+    pub fn commit_merge_to_head(
+        &mut self,
+        timestamp: Timestamp,
+        graph_ca: GraphAddr,
+        graph: impl FnOnce() -> G,
+        theirs: CommitAddr,
+        head: &mut Head,
+    ) -> CommitAddr {
+        commit_merge_to_head(self, timestamp, graph_ca, graph, theirs, head)
+    }
+
     /// Insert the given name mapping into the registry.
     ///
     /// Returns the previous mapping if one exists.
@@ -177,10 +199,11 @@ impl<G> Registry<G> {
     /// Insert a commit, computing its address from the commit's contents.
     ///
     /// A commit must not reference a parent that is not in the registry, so a
-    /// parent that is absent is cleared to `None` *before* the address is
-    /// computed. Because the parent is part of the hashed content, the returned
-    /// address reflects the cleared parent: to preserve a chain's addresses,
-    /// insert its commits oldest-first so each parent is already present.
+    /// parent that is absent is cleared to `None` (and absent merge parents
+    /// are dropped) *before* the address is computed. Because parents are part
+    /// of the hashed content, the returned address reflects the cleared
+    /// parents: to preserve a chain's addresses, insert its commits
+    /// oldest-first so each parent is already present.
     ///
     /// Returns the computed [`CommitAddr`], which always matches the stored
     /// commit.
@@ -190,6 +213,9 @@ impl<G> Registry<G> {
                 commit.parent = None;
             }
         }
+        commit
+            .merge_parents
+            .retain(|p| self.commits.contains_key(p));
         let ca = commit_addr(&commit);
         self.commits.insert(ca, commit);
         ca
@@ -388,28 +414,55 @@ fn commit_graph_to_head<G>(
 ) -> CommitAddr {
     let parent_ca = *head_commit_ca(&reg.names, head).unwrap();
     let commit_ca = commit_graph(reg, timestamp, Some(parent_ca), graph_ca, graph);
+    point_head_at(reg, head, commit_ca);
+    commit_ca
+}
+
+/// Commit the given graph to the given head as a merge of `theirs` into the
+/// head's current commit.
+///
+/// If the graph doesn't exist, calls `graph()` to retrieve the graph for the
+/// registry.
+fn commit_merge_to_head<G>(
+    reg: &mut Registry<G>,
+    timestamp: Timestamp,
+    graph_ca: GraphAddr,
+    graph: impl FnOnce() -> G,
+    theirs: CommitAddr,
+    head: &mut Head,
+) -> CommitAddr {
+    let ours = *head_commit_ca(&reg.names, head).unwrap();
+    reg.graphs.entry(graph_ca).or_insert_with(graph);
+    let commit = Commit::new_merge(timestamp, ours, theirs, graph_ca);
+    let commit_ca = commit_addr(&commit);
+    reg.commits.insert(commit_ca, commit);
+    point_head_at(reg, head, commit_ca);
+    commit_ca
+}
+
+/// Point the head at the given commit: a branch head updates the name mapping,
+/// a detached head is reassigned directly.
+fn point_head_at<G>(reg: &mut Registry<G>, head: &mut Head, commit_ca: CommitAddr) {
     match *head {
         Head::Commit(ref mut ca) => *ca = commit_ca,
         Head::Branch(ref name) => {
             reg.names.insert(name.to_string(), commit_ca);
         }
     }
-    commit_ca
 }
 
 /// For all `parent` commits that are invalid (i.e. don't point to an existing
-/// commit), set them to `None`.
+/// commit), set them to `None`. Invalid merge parents are dropped likewise.
 fn detach_invalid_parents(commits: &mut Commits) {
-    let mut has_invalid_parent = HashSet::new();
-    for (&ca, commit) in commits.iter() {
-        if let Some(parent_ca) = commit.parent {
-            if !commits.contains_key(&parent_ca) {
-                has_invalid_parent.insert(ca);
-            }
+    let present: HashSet<CommitAddr> = commits.keys().copied().collect();
+    for commit in commits.values_mut() {
+        if commit
+            .parent
+            .is_some_and(|parent_ca| !present.contains(&parent_ca))
+        {
+            commit.parent = None;
         }
-    }
-    for ca in has_invalid_parent {
-        commits.get_mut(&ca).unwrap().parent = None;
+        commit.merge_parents.retain(|p| present.contains(p));
     }
 }
 
@@ -615,5 +668,73 @@ mod tests {
             graph_addr(2),
         ));
         assert_eq!(reg.commits()[&child].parent, Some(root));
+    }
+
+    #[test]
+    fn add_commit_drops_absent_merge_parents() {
+        let mut reg: Registry<String> =
+            Registry::new(HashMap::new(), HashMap::new(), BTreeMap::new());
+        let root = reg.add_commit(Commit::new(Duration::from_secs(1), None, graph_addr(1)));
+        let absent = commit_addr_raw(99);
+        let merge = reg.add_commit(Commit::new_merge(
+            Duration::from_secs(2),
+            root,
+            absent,
+            graph_addr(2),
+        ));
+        assert!(reg.commits()[&merge].merge_parents.is_empty());
+        // Its address is that of the equivalent non-merge commit.
+        let ordinary = Commit::new(Duration::from_secs(2), Some(root), graph_addr(2));
+        assert_eq!(merge, crate::commit_addr(&ordinary));
+    }
+
+    #[test]
+    fn commit_merge_to_head_mints_two_parent_commit_and_advances_head() {
+        let mut reg: Registry<String> = Registry::default();
+        let ours = reg.commit_graph_to_name(
+            Duration::from_secs(1),
+            graph_addr(1),
+            || "ours".to_string(),
+            "alpha",
+        );
+        let theirs = reg.commit_graph(Duration::from_secs(2), None, graph_addr(2), || {
+            "theirs".to_string()
+        });
+        let mut head = Head::Branch("alpha".to_string());
+        let merge = reg.commit_merge_to_head(
+            Duration::from_secs(3),
+            graph_addr(3),
+            || "merged".to_string(),
+            theirs,
+            &mut head,
+        );
+        let commit = &reg.commits()[&merge];
+        assert_eq!(commit.parent, Some(ours));
+        assert_eq!(commit.merge_parents, vec![theirs]);
+        assert_eq!(reg.names().get("alpha"), Some(&merge));
+        assert_eq!(reg.head_commit_ca(&head), Some(&merge));
+    }
+
+    #[test]
+    fn prune_unreachable_detaches_pruned_merge_parents() {
+        let mut reg: Registry<String> = Registry::default();
+        let ours = reg.commit_graph(Duration::from_secs(1), None, graph_addr(1), || {
+            "ours".to_string()
+        });
+        let theirs = reg.commit_graph(Duration::from_secs(2), None, graph_addr(2), || {
+            "theirs".to_string()
+        });
+        let mut head = Head::Commit(ours);
+        let merge = reg.commit_merge_to_head(
+            Duration::from_secs(3),
+            graph_addr(3),
+            || "merged".to_string(),
+            theirs,
+            &mut head,
+        );
+        // Prune theirs' side of history.
+        reg.prune_unreachable(&[ours, merge].into_iter().collect());
+        assert_eq!(reg.commits()[&merge].parent, Some(ours));
+        assert!(reg.commits()[&merge].merge_parents.is_empty());
     }
 }

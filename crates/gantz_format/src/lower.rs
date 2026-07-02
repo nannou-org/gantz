@@ -269,7 +269,15 @@ fn build_commit<N>(
 ) -> CommitAddr {
     let parent = resolve_parent(&decl.parent, commit_ids, known);
     let timestamp = Duration::new(decl.secs, decl.nanos);
-    let commit_ca = registry.add_commit(Commit::new(timestamp, parent, g_addr));
+    let mut commit = Commit::new(timestamp, parent, g_addr);
+    // Merge parents resolve like the first parent; an absent one is dropped
+    // (`resolve_parent` re-roots, which for an *extra* parent means dropping).
+    commit.merge_parents = decl
+        .merge_parents
+        .iter()
+        .filter_map(|addr| resolve_parent(&Some(addr.clone()), commit_ids, known))
+        .collect();
+    let commit_ca = registry.add_commit(commit);
     // A declared id may not match the recomputed address - e.g. the format
     // keeps only the head commit per graph, so a dropped parent re-roots the
     // commit and changes its hash. This is routine (refs recover by name in
