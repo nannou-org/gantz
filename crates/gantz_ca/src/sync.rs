@@ -225,6 +225,22 @@ impl Staged {
         &self.grandfathered
     }
 
+    /// The staged graphs, e.g. for computing wants beyond commit ancestry
+    /// (node-referenced commits).
+    pub fn graphs(&self) -> impl Iterator<Item = (&GraphAddr, &DataGraph)> {
+        self.graphs.iter()
+    }
+
+    /// The staged commits under their claimed addresses.
+    pub fn commits(&self) -> impl Iterator<Item = (&CommitAddr, &Commit)> {
+        self.commits.iter().map(|(ca, s)| (ca, &s.commit))
+    }
+
+    /// The staged blobs under their section and claimed address.
+    pub fn blobs(&self) -> impl Iterator<Item = &(SectionId, ContentAddr)> {
+        self.blobs.keys()
+    }
+
     /// Stage a graph, verifying it against the claimed address (see
     /// [`verify_graph`]).
     ///

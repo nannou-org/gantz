@@ -154,6 +154,8 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(on_cut_nodes)
             .add_observer(on_duplicate_nodes)
             .add_observer(on_merge_head)
+            .add_observer(on_sync_remote_tip)
+            .add_observer(on_resync_refs)
             .add_observer(on_paste)
             .add_observer(on_undo)
             .add_observer(on_redo)
@@ -1321,6 +1323,135 @@ pub fn on_merge_head(
         }
         gantz_egui::ops::MergeHeadOutcome::Noop => (),
     }
+}
+
+/// Bring an open head up to date with a remote session tip (see
+/// [`gantz_egui::ops::sync_remote_tip`]).
+///
+/// Triggered as `ForHead<SyncRemoteTip>` by the collaborative-session layer
+/// once the remote tip's closure has been fetched, validated and applied to
+/// the registry. Not a GUI payload: nothing emits it from widgets.
+#[derive(Clone, Copy, Debug)]
+pub struct SyncRemoteTip {
+    /// The remote tip to converge with.
+    pub remote: ca::CommitAddr,
+    /// The session's fixed conflict-resolution policy.
+    pub resolutions: ca::merge::Resolutions,
+}
+
+/// Handle [`SyncRemoteTip`]: the session analogue of [`on_merge_head`].
+pub fn on_sync_remote_tip(
+    trigger: On<ForHead<SyncRemoteTip>>,
+    mut registry: ResMut<Registry>,
+    mut cache: ResMut<GraphCache>,
+    builtins: Res<BuiltinNodes>,
+    codec: Res<NodeCodecRes>,
+    mut gui_state: ResMut<GuiState>,
+    mut vms: NonSendMut<head::HeadVms>,
+    mut cmds: Commands,
+    mut heads: Query<
+        (&mut head::HeadRef, &mut head::WorkingGraph, &mut GraphView),
+        With<head::OpenHead>,
+    >,
+) {
+    let event = trigger.event();
+    let Ok((mut head_ref, mut wg, mut gv)) = heads.get_mut(event.head) else {
+        log::error!("SyncRemoteTip: head not found for entity {:?}", event.head);
+        return;
+    };
+    let Some(head_state) = gui_state.open_heads.get_mut(&**head_ref) else {
+        log::error!("SyncRemoteTip: GUI state not found for head");
+        return;
+    };
+    let Some(vm) = vms.get_mut(&event.head) else {
+        log::error!("SyncRemoteTip: VM not found for head");
+        return;
+    };
+
+    let old_head = head_ref.0.clone();
+    let outcome = gantz_egui::ops::sync_remote_tip(
+        &mut registry,
+        &mut head_ref.0,
+        &mut wg,
+        vm,
+        &mut gv,
+        &mut head_state.scene.interaction.selection,
+        event.data.remote,
+        event.data.resolutions,
+    );
+    // The sync may have minted a merge commit and graph.
+    refresh_cache(&registry, &mut cache, &codec.0);
+
+    match outcome {
+        gantz_egui::ops::SyncTipOutcome::UpToDate => (),
+        gantz_egui::ops::SyncTipOutcome::Moved(target) => {
+            navigate_head(&mut cmds, event.head, &old_head, target);
+        }
+        gantz_egui::ops::SyncTipOutcome::Merged {
+            new_commit,
+            conflicts,
+            ..
+        } => {
+            if conflicts > 0 {
+                log::info!("session merge auto-resolved {conflicts} conflict(s)");
+            }
+            log::debug!("session merge -> {}", new_commit.display_short());
+            // Re-register the root graph so merged-in nodes get their state
+            // initialized, then fire the committed machinery (GUI-state
+            // migration, redo-stack clear, NamedRef resync, recompile).
+            let node_reg = env(&registry, &cache, &builtins, &codec);
+            let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+            match codec.0.reify_graph(&wg.0) {
+                Ok(g) => gantz_core::graph::register(&get_node, &g, &[], vm),
+                Err(e) => {
+                    log::error!("SyncRemoteTip: cannot re-register the merged graph: {e}")
+                }
+            }
+            cmds.trigger(head::CommittedEvent {
+                entity: event.head,
+                old_head,
+                new_head: head_ref.0.clone(),
+            });
+        }
+        gantz_egui::ops::SyncTipOutcome::Blocked(reasons) => {
+            log::warn!("session sync blocked: {}", reasons.join("; "));
+        }
+        gantz_egui::ops::SyncTipOutcome::Unrelated => {
+            log::warn!("session sync: remote tip shares no history with the local graph");
+        }
+    }
+}
+
+/// Request a reference resync outside the usual committed flow: bring
+/// sync-enabled `NamedRef`s up to date and refresh open heads whose commits
+/// moved. Triggered by the collaborative-session layer after it moves scoped
+/// names that no open head points at (fast-forwards/adoptions of nested or
+/// referenced graphs).
+#[derive(Debug, Default, Event)]
+pub struct ResyncRefsEvent;
+
+/// Handle [`ResyncRefsEvent`]: the same pass as [`on_head_committed_resync`].
+pub fn on_resync_refs(
+    _trigger: On<ResyncRefsEvent>,
+    mut registry: ResMut<Registry>,
+    mut cache: ResMut<GraphCache>,
+    codec: Res<NodeCodecRes>,
+    mut heads: Query<head::OpenHeadData, With<head::OpenHead>>,
+) {
+    let moves = gantz_egui::sync::resync(&mut registry, bevy_gantz::reg::timestamp());
+    refresh_cache(&registry, &mut cache, &codec.0);
+    refresh_moved_heads(&moves, &mut registry, &mut heads);
+}
+
+/// Refresh open heads pointing at names the collaborative-session layer has
+/// just moved (fast-forward/adoption without a local commit): reload the
+/// working graph and clear the compile memo, exactly as a resync move does.
+pub fn refresh_named_heads(
+    moves: &[gantz_egui::sync::Moved],
+    registry: &mut Registry,
+    heads: &mut Query<head::OpenHeadData, With<head::OpenHead>>,
+) {
+    refresh_moved_heads(moves, registry, heads)
 }
 
 /// Handle undo payloads: move the head back to its parent commit.

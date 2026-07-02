@@ -1010,6 +1010,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_gantz_collab"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_gantz",
+ "bevy_gantz_egui",
+ "bevy_log",
+ "gantz_ca",
+ "gantz_collab",
+ "gantz_core",
+ "gantz_egui",
+ "ron 0.10.1",
+ "serde",
+]
+
+[[package]]
 name = "bevy_gantz_egui"
 version = "0.4.0"
 dependencies = [
