@@ -18,6 +18,10 @@ pub use hash::{CaHash, Hasher};
 #[doc(inline)]
 pub use history::{MergeAnalysis, analyze, ancestors, first_parent_chain, merge_base};
 #[doc(inline)]
+pub use merge::{
+    Conflict, MergeError, MergeOutcome, MergeResolution, NodeSrc, Side, merge_commits,
+};
+#[doc(inline)]
 pub use registry::Registry;
 
 mod ca;
@@ -26,5 +30,6 @@ pub mod diff;
 mod graph;
 mod hash;
 pub mod history;
+pub mod merge;
 pub mod registry;
 pub mod serde_sorted;
