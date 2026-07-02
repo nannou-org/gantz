@@ -56,6 +56,8 @@ pub struct CollabSessions {
     pub sessions: HashMap<SessionId, SessionState>,
     /// Set on any local commit; consumed by [`announce_sessions`].
     pub dirty: bool,
+    /// The endpoint's home relay(s) and their connection state.
+    pub relays: Vec<(String, bool)>,
 }
 
 /// One session's local (non-persisted) runtime state.
@@ -232,6 +234,7 @@ fn sync_collab_settings(
     tabs.0.push(Box::new(gantz_egui::widget::CollabSettingsTab {
         config: gui_state.0.collab.clone(),
         peer_id: ui.0.peer_id.clone(),
+        relays: ui.0.relays.clone(),
     }));
 }
 
@@ -289,6 +292,7 @@ pub fn update_collab_ui(
             .map(|b| format!("{b:02x}"))
             .collect::<String>()
     });
+    state.relays = sessions.relays.clone();
     // Recompute cheaply each frame: session counts are tiny.
     state.sessions.clear();
     for session_state in sessions.sessions.values() {
@@ -357,11 +361,26 @@ pub fn session_resolutions() -> ca::merge::Resolutions {
     }
 }
 
-/// The runtime handle, spawning it on first use.
-fn ensure_runtime<'a>(runtime: &'a mut CollabRuntime, identity: &Identity) -> &'a Handle {
-    runtime
-        .0
-        .get_or_insert_with(|| gantz_collab::spawn(identity.clone(), Default::default()))
+/// The runtime handle, spawning it on first use with the user's collab
+/// configuration (a later config change applies when the app restarts).
+fn ensure_runtime<'a>(
+    runtime: &'a mut CollabRuntime,
+    identity: &Identity,
+    config: &gantz_egui::collab::CollabConfig,
+) -> &'a Handle {
+    runtime.0.get_or_insert_with(|| {
+        let infra = match config.custom_relay.as_deref() {
+            // A custom relay means self-hosted infrastructure: nothing n0.
+            // Peers reach each other via invite-ticket addresses and the
+            // relay itself, so no address-lookup service is required.
+            Some(url) => gantz_collab::Infra::Custom {
+                relays: vec![url.to_string()],
+                pkarr: None,
+            },
+            None => gantz_collab::Infra::N0,
+        };
+        gantz_collab::spawn(identity.clone(), gantz_collab::RuntimeConfig { infra })
+    })
 }
 
 /// Handle [`ShareSessionEvent`]: mint a session for the head's branch, fill
@@ -372,6 +391,7 @@ pub fn on_share_session(
     identity: Option<Res<CollabIdentity>>,
     mut sessions: ResMut<CollabSessions>,
     registry: Res<Registry>,
+    gui_state: Res<bevy_gantz_egui::GuiState>,
     heads: Query<&head::HeadRef, With<head::OpenHead>>,
     mut cmds: Commands,
 ) {
@@ -399,7 +419,7 @@ pub fn on_share_session(
     let scope = gantz_egui::sync::session_scope(&registry, branch);
     let mut state = SessionState::new(session.clone());
 
-    let handle = ensure_runtime(&mut runtime, &identity.0);
+    let handle = ensure_runtime(&mut runtime, &identity.0, &gui_state.0.collab);
     let _ = handle.cmds.try_send(Command::Register(SessionEntry {
         session,
         store: SessionRegistry::default(),
@@ -421,6 +441,7 @@ pub fn on_join_session(
     identity: Option<Res<CollabIdentity>>,
     mut sessions: ResMut<CollabSessions>,
     mut registry: ResMut<Registry>,
+    gui_state: Res<bevy_gantz_egui::GuiState>,
     mut cmds: Commands,
 ) {
     let event = trigger.event();
@@ -451,7 +472,7 @@ pub fn on_join_session(
         role: Role::Guest,
     };
     let id = session.id;
-    let handle = ensure_runtime(&mut runtime, &identity.0);
+    let handle = ensure_runtime(&mut runtime, &identity.0, &gui_state.0.collab);
     let _ = handle.cmds.try_send(Command::Register(SessionEntry {
         session: session.clone(),
         store: SessionRegistry::default(),
@@ -633,6 +654,9 @@ pub fn poll_collab_events(
                     state.conn = ConnState::Live;
                     state.error = None;
                 }
+            }
+            CollabEvent::RelayStatus { relays } => {
+                sessions.relays = relays;
             }
             CollabEvent::PeerDown { session, peer } => {
                 if let Some(state) = sessions.sessions.get_mut(&session) {

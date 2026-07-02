@@ -2,7 +2,7 @@
 use time::{OffsetDateTime, UtcOffset, format_description};
 
 pub use checkbox_enabled::CheckboxEnabled;
-pub use collab_config::{CollabConfigResponse, CollabSettingsTab, collab_config};
+pub use collab_config::{CollabConfigResponse, CollabSettings, CollabSettingsTab, collab_config};
 pub use edge_style::{EdgeStyle, EdgeStyleCtx, EdgeStyling};
 pub use ext_pane::{ExtPane, ExtPaneCtx, ExtPaneEntry};
 pub use gantz::{

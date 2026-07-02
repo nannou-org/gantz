@@ -13,6 +13,11 @@ pub struct CollabConfig {
     /// The username shared with session peers (empty = anonymous).
     #[serde(default)]
     pub username: String,
+    /// A custom relay server URL routing this peer's traffic. `None` uses
+    /// iroh's default (n0's public relays). Applied when the collab runtime
+    /// starts, i.e. a change takes effect on app restart.
+    #[serde(default)]
+    pub custom_relay: Option<String>,
 }
 
 /// Everything the widgets need to render collaboration state.
@@ -22,6 +27,9 @@ pub struct CollabUiState {
     pub peer_id: Option<String>,
     /// Active sessions, keyed by the shared graph's name.
     pub sessions: HashMap<gantz_ca::Name, SessionDisplay>,
+    /// The endpoint's home relay(s) and their connection state (empty until
+    /// the runtime starts).
+    pub relays: Vec<(String, bool)>,
 }
 
 /// One session's displayable state.

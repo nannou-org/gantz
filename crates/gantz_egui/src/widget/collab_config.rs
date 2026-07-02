@@ -1,14 +1,27 @@
-//! The "Settings > Collab" subtab: identity, username and joining sessions.
+//! The "Settings > Collab" subtab: identity, username, relay and joining
+//! sessions.
 
 use crate::Responses;
-use crate::collab::CollabConfig;
+use crate::collab::{CollabConfig, SessionConn};
 
-/// The Collab settings subtab: identity, username and joining sessions.
+/// The inputs for [`collab_config`].
+pub struct CollabSettings<'a> {
+    /// The user-editable, persisted configuration.
+    pub config: &'a mut CollabConfig,
+    /// This user's public identity, once generated.
+    pub peer_id: Option<&'a str>,
+    /// The endpoint's home relay(s) and their connection state (empty until
+    /// the collab runtime starts).
+    pub relays: &'a [(String, bool)],
+}
+
+/// The Collab settings subtab: identity, username, relay and joining
+/// sessions.
 ///
 /// Holds a per-frame snapshot of the persisted [`CollabConfig`] plus the
-/// user's displayable identity. Edits apply to the snapshot in place, and
-/// the full updated [`CollabConfig`] is emitted as a payload for the collab
-/// layer to apply; a submitted invite ticket is emitted as a
+/// user's displayable identity and relay status. Edits apply to the snapshot
+/// in place, and the full updated [`CollabConfig`] is emitted as a payload
+/// for the collab layer to apply; a submitted invite ticket is emitted as a
 /// [`JoinSession`][crate::JoinSession] payload.
 #[derive(Clone, Debug, Default)]
 pub struct CollabSettingsTab {
@@ -16,6 +29,8 @@ pub struct CollabSettingsTab {
     pub config: CollabConfig,
     /// This user's public identity, as a displayable string, once minted.
     pub peer_id: Option<String>,
+    /// The endpoint's home relay(s) and their connection state.
+    pub relays: Vec<(String, bool)>,
 }
 
 /// Response from [`collab_config`].
@@ -36,7 +51,12 @@ impl crate::widget::SettingsTab for CollabSettingsTab {
         let res = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                collab_config(&mut self.config, self.peer_id.as_deref(), ui)
+                let settings = CollabSettings {
+                    config: &mut self.config,
+                    peer_id: self.peer_id.as_deref(),
+                    relays: &self.relays,
+                };
+                collab_config(settings, ui)
             })
             .inner;
         if let Some(ticket) = res.join_ticket {
@@ -50,12 +70,14 @@ impl crate::widget::SettingsTab for CollabSettingsTab {
 }
 
 /// Render the collab configuration: the user's identity, their shared
-/// username, and a field for joining a session from an invite ticket.
-pub fn collab_config(
-    config: &mut CollabConfig,
-    peer_id: Option<&str>,
-    ui: &mut egui::Ui,
-) -> CollabConfigResponse {
+/// username, the relay configuration/status, and a field for joining a
+/// session from an invite ticket.
+pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> CollabConfigResponse {
+    let CollabSettings {
+        config,
+        peer_id,
+        relays,
+    } = settings;
     let mut res = CollabConfigResponse::default();
     let control_w = (ui.available_width() - 64.0).max(64.0);
     egui::Grid::new("collab_config_grid")
@@ -94,6 +116,59 @@ pub fn collab_config(
                     .desired_width(control_w),
             );
             ui.end_row();
+
+            // The relay server assisting (and, for browser peers, carrying)
+            // connections. Empty = iroh's default n0 public relays.
+            ui.label("relay");
+            let relay_id = ui.id().with("collab_relay");
+            let mut relay = ui
+                .data(|d| d.get_temp::<String>(relay_id))
+                .unwrap_or_else(|| config.custom_relay.clone().unwrap_or_default());
+            ui.horizontal(|ui| {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut relay)
+                        .hint_text("n0 public relays (default)")
+                        .desired_width((control_w - 48.0).max(48.0)),
+                );
+                resp.on_hover_text(
+                    "a custom relay server URL (e.g. a self-hosted iroh-relay). \
+                     Replaces n0's public infrastructure entirely: peers \
+                     connect via invite tickets and the relay, with no \
+                     third-party address lookup. Applies when the app \
+                     restarts",
+                );
+                if ui
+                    .button("reset")
+                    .on_hover_text("use the default (n0 public) relays")
+                    .clicked()
+                {
+                    relay.clear();
+                }
+                let trimmed = relay.trim();
+                config.custom_relay = (!trimmed.is_empty()).then(|| trimmed.to_string());
+            });
+            ui.data_mut(|d| d.insert_temp(relay_id, relay));
+            ui.end_row();
+
+            // Live relay status, once the collab runtime is up: who this
+            // peer is routed through.
+            if !relays.is_empty() {
+                ui.label("");
+                ui.vertical(|ui| {
+                    for (url, connected) in relays {
+                        ui.horizontal(|ui| {
+                            let (color, label) = if *connected {
+                                (SessionConn::Live.color(), "connected")
+                            } else {
+                                (SessionConn::Degraded.color(), "disconnected")
+                            };
+                            super::status_dot(ui, color).on_hover_text(label);
+                            ui.label(egui::RichText::new(url).weak());
+                        });
+                    }
+                });
+                ui.end_row();
+            }
 
             // Join a session from a pasted invite ticket.
             ui.label("join");

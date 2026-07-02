@@ -36,7 +36,7 @@ use gantz_ca::{
     MergePolicy, Name, SectionId, Value,
 };
 use iroh::{
-    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode,
+    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, Watcher,
     address_lookup::{PkarrPublisher, PkarrResolver},
     endpoint::{Connection, presets},
     protocol::{AcceptError, Router},
@@ -195,6 +195,8 @@ pub enum Event {
     PeerUp { session: SessionId, peer: PeerId },
     /// A gossip neighbour was dropped.
     PeerDown { session: SessionId, peer: PeerId },
+    /// The endpoint's home relay(s) changed: `(url, connected)` per relay.
+    RelayStatus { relays: Vec<(String, bool)> },
     /// A recoverable failure the application may surface.
     Error {
         session: Option<SessionId>,
@@ -357,6 +359,22 @@ async fn drive(
             return;
         }
     };
+    // Surface the home relay(s) and their connection state to the app.
+    {
+        let evt_tx = evt_tx.clone();
+        let mut statuses = endpoint.home_relay_status().stream();
+        n0_future::task::spawn(async move {
+            while let Some(statuses) = statuses.next().await {
+                let relays = statuses
+                    .iter()
+                    .map(|s| (s.url().to_string(), s.is_connected()))
+                    .collect();
+                if evt_tx.send(Event::RelayStatus { relays }).await.is_err() {
+                    break;
+                }
+            }
+        });
+    }
     let gossip = Gossip::builder().spawn(endpoint.clone());
     let router = Router::builder(endpoint.clone())
         .accept(iroh_gossip::ALPN, gossip.clone())
