@@ -14,11 +14,14 @@ pub use graph::{
 #[doc(inline)]
 pub use hash::{CaHash, Hasher};
 #[doc(inline)]
+pub use history::{MergeAnalysis, analyze, ancestors, first_parent_chain, merge_base};
+#[doc(inline)]
 pub use registry::Registry;
 
 mod ca;
 mod commit;
 mod graph;
 mod hash;
+pub mod history;
 pub mod registry;
 pub mod serde_sorted;
