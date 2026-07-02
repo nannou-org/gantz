@@ -85,6 +85,10 @@ pub struct SessionState {
     pub served_graphs: HashSet<ca::GraphAddr>,
     /// Blobs already mirrored into the served store.
     pub served_blobs: HashSet<(ca::SectionId, ca::ContentAddr)>,
+    /// Section entries already mirrored into the served store. Entries are
+    /// recorded only once actually sent, so metadata seeded *after* its
+    /// subject (e.g. a commit's view baseline) is caught by a later pass.
+    pub served_sections: HashSet<(ca::SectionId, ca::Key)>,
     /// The served `name -> tip` map as last mirrored.
     pub served_heads: HashMap<ca::Name, ca::CommitAddr>,
 }
@@ -139,6 +143,7 @@ impl SessionState {
             served_commits: HashSet::new(),
             served_graphs: HashSet::new(),
             served_blobs: HashSet::new(),
+            served_sections: HashSet::new(),
             served_heads: HashMap::new(),
         }
     }
@@ -173,6 +178,7 @@ impl Plugin for CollabPlugin {
             .add_observer(on_leave_session)
             .add_observer(on_committed_mark_dirty)
             .add_observer(on_changed_mark_dirty)
+            .add_observer(on_layout_committed_mark_dirty)
             .add_systems(
                 Update,
                 (
@@ -483,6 +489,15 @@ pub fn on_changed_mark_dirty(
     sessions.dirty = true;
 }
 
+/// Settled node-moves commit layout-only changes without the committed
+/// machinery; sessions still announce them so peers follow node positions.
+pub fn on_layout_committed_mark_dirty(
+    _trigger: On<bevy_gantz_egui::LayoutCommittedEvent>,
+    mut sessions: ResMut<CollabSessions>,
+) {
+    sessions.dirty = true;
+}
+
 /// Keep `SessionRef` components attached to open heads whose branch is a
 /// session's shared graph (covers heads opened after the join).
 pub fn attach_session_refs(
@@ -513,6 +528,7 @@ pub fn poll_collab_events(
     mut sessions: ResMut<CollabSessions>,
     mut registry: ResMut<Registry>,
     open: Query<(Entity, &head::HeadRef), With<head::OpenHead>>,
+    graph_views: Query<&bevy_gantz_egui::GraphView, With<head::OpenHead>>,
     mut cmds: Commands,
 ) {
     let Some(handle) = runtime.0.as_ref() else {
@@ -536,6 +552,7 @@ pub fn poll_collab_events(
                     &mut sessions,
                     &mut registry,
                     &open,
+                    &graph_views,
                     &mut cmds,
                     session,
                     heads,
@@ -575,6 +592,7 @@ pub fn poll_collab_events(
                     &mut sessions,
                     &mut registry,
                     &open,
+                    &graph_views,
                     &mut cmds,
                     session,
                     objects,
@@ -656,7 +674,9 @@ pub fn announce_sessions(
 /// Mirror the scoped closure of `scope` into the session's served store via
 /// [`Command::Update`]: one reachability walk from the scoped tips
 /// ([`ca::closure_from`]) surfaces every required commit, graph (nested
-/// references included) and content-referenced blob.
+/// references included) and content-referenced blob. In-scope metadata
+/// section entries (e.g. commits' stored views, so peers place synced nodes
+/// where their author put them) ride along.
 ///
 /// The runtime owns the store, so `state`'s served-content shadows keep the
 /// update incremental without reading it back. Inserts are content-addressed
@@ -708,6 +728,38 @@ fn serve_scope(
             blobs.push((section.clone(), store.liveness, addr, bytes.clone()));
         }
     }
+    // In-scope metadata: section entries keyed by scoped names or content in
+    // the closure. The `heads` section travels as the head list; arbitrary
+    // address-keyed entries have no scoping rule and stay local.
+    let mut sections = Vec::new();
+    for (id, section) in registry.sections() {
+        if id.as_str() == ca::HEADS_ID {
+            continue;
+        }
+        for (key, value) in &section.entries {
+            let in_scope = match key {
+                ca::Key::Commit(ca) => live.commits.contains(ca),
+                ca::Key::Name(name) => scope.contains(name),
+                ca::Key::Graph(ga) => live.graphs.contains(ga),
+                ca::Key::Addr(_) => false,
+            };
+            if !in_scope {
+                continue;
+            }
+            let entry = (id.clone(), key.clone());
+            if state.served_sections.contains(&entry) {
+                continue;
+            }
+            state.served_sections.insert(entry);
+            sections.push((
+                id.clone(),
+                section.policy,
+                section.liveness,
+                key.clone(),
+                value.clone(),
+            ));
+        }
+    }
     let mut heads = Vec::new();
     for name in scope {
         let Some(tip) = registry.head(name) else {
@@ -717,7 +769,12 @@ fn serve_scope(
             heads.push((name.clone(), tip));
         }
     }
-    if heads.is_empty() && commits.is_empty() && graphs.is_empty() && blobs.is_empty() {
+    if heads.is_empty()
+        && commits.is_empty()
+        && graphs.is_empty()
+        && blobs.is_empty()
+        && sections.is_empty()
+    {
         return;
     }
     let _ = handle.cmds.try_send(Command::Update {
@@ -725,7 +782,7 @@ fn serve_scope(
         heads,
         commits,
         graphs,
-        sections: Vec::new(),
+        sections,
         blobs,
     });
 }
@@ -738,6 +795,7 @@ fn apply_join_snapshot(
     sessions: &mut CollabSessions,
     registry: &mut Registry,
     open: &Query<(Entity, &head::HeadRef), With<head::OpenHead>>,
+    graph_views: &Query<&bevy_gantz_egui::GraphView, With<head::OpenHead>>,
     cmds: &mut Commands,
     session: SessionId,
     heads: Vec<(ca::Name, ca::CommitAddr)>,
@@ -803,7 +861,9 @@ fn apply_join_snapshot(
         applied.blobs.len(),
         applied.truncated,
     );
-    apply_sections(registry, sections);
+    // Adopt the host's node layouts (before opening the head, so the shared
+    // graph opens with its nodes where the host placed them).
+    apply_sections(registry, sections, local_camera(state, open, graph_views));
 
     // Reconcile each snapshot head with any local state.
     let resolutions = state.session.resolutions;
@@ -855,6 +915,10 @@ fn apply_join_snapshot(
 /// Apply received section entries to the local registry per their stamped
 /// merge policy. Advisory metadata: no addresses to verify, and a decode
 /// failure upstream simply skips the entry.
+///
+/// Adopted view entries have their camera replaced with `local_camera` (the
+/// session head's live camera) when given: peers' layouts are welcome, but
+/// adopting a view must never yank the local viewport to a peer's.
 fn apply_sections(
     registry: &mut Registry,
     sections: Vec<(
@@ -864,14 +928,43 @@ fn apply_sections(
         ca::Key,
         ca::Value,
     )>,
+    local_camera: Option<gantz_egui::Camera>,
 ) {
-    for (id, policy, liveness, key, value) in sections {
+    use gantz_ca::SectionDecl;
+    for (id, policy, liveness, key, mut value) in sections {
         let keep_existing = matches!(policy, ca::MergePolicy::KeepExisting);
         if keep_existing && registry.section_entry(&id, &key).is_some() {
             continue;
         }
+        if id == gantz_egui::section::VIEWS_ID {
+            if let (Some(camera), Some(mut view)) =
+                (local_camera, gantz_egui::section::Views::decode(&value))
+            {
+                view.camera = camera;
+                match gantz_egui::section::Views::encode(&view) {
+                    Ok(encoded) => value = encoded,
+                    Err(e) => {
+                        log::warn!("failed to re-encode an adopted view: {e}");
+                        continue;
+                    }
+                }
+            }
+        }
         registry.set_section_value(id, policy, liveness, key, value);
     }
+}
+
+/// The live camera of the session's open branch head, if any.
+fn local_camera(
+    state: &SessionState,
+    open: &Query<(Entity, &head::HeadRef), With<head::OpenHead>>,
+    graph_views: &Query<&bevy_gantz_egui::GraphView, With<head::OpenHead>>,
+) -> Option<gantz_egui::Camera> {
+    let branch_head = ca::Head::Branch(state.branch_name());
+    open.iter()
+        .find(|(_, hr)| hr.0 == branch_head)
+        .and_then(|(entity, _)| graph_views.get(entity).ok())
+        .map(|gv| gv.0.camera)
 }
 
 /// Begin (or refresh) fetching an announced tip's closure.
@@ -924,11 +1017,13 @@ fn start_fetch(
 
 /// Feed fetched objects into every pending tip of the session, applying and
 /// converging those whose closure completed.
+#[allow(clippy::too_many_arguments)]
 fn feed_objects(
     handle: &Handle,
     sessions: &mut CollabSessions,
     registry: &mut Registry,
     open: &Query<(Entity, &head::HeadRef), With<head::OpenHead>>,
+    graph_views: &Query<&bevy_gantz_egui::GraphView, With<head::OpenHead>>,
     cmds: &mut Commands,
     session: SessionId,
     objects: Objects,
@@ -969,7 +1064,10 @@ fn feed_objects(
             },
         }
     }
-    apply_sections(registry, sections);
+    // Adopt the peer's layouts for incoming commits before any of them can
+    // be navigated to or merged (merged-in nodes seed their positions from
+    // the other tip's view).
+    apply_sections(registry, sections, local_camera(state, open, graph_views));
     let names: Vec<ca::Name> = state.pending.keys().cloned().collect();
     for name in names {
         let Some(mut pending) = state.pending.remove(&name) else {

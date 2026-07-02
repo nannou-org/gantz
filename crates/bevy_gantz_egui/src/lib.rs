@@ -1740,9 +1740,10 @@ pub fn settle_layout(
     mut registry: ResMut<Registry>,
     mut gui_state: ResMut<GuiState>,
     mut ctxs: EguiContexts,
-    mut heads: Query<(&mut head::HeadRef, &GraphView), With<head::OpenHead>>,
+    mut heads: Query<(Entity, &mut head::HeadRef, &GraphView), With<head::OpenHead>>,
+    mut cmds: Commands,
 ) {
-    for (mut head_ref, head_view) in heads.iter_mut() {
+    for (entity, mut head_ref, head_view) in heads.iter_mut() {
         let old_head = (**head_ref).clone();
         let Some(new_commit) = gantz_egui::ops::commit_layout(
             &mut registry,
@@ -1761,7 +1762,21 @@ pub fn settle_layout(
         if let Ok(ctx) = ctxs.ctx_mut() {
             gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
         }
+        // Deliberately not a `CommittedEvent` (no resync cascade), but layers
+        // that mirror commits elsewhere (e.g. collab sessions syncing node
+        // positions) still need to hear about it.
+        cmds.trigger(LayoutCommittedEvent { entity, new_commit });
     }
+}
+
+/// Emitted after a settled node-move produced a layout-only commit (same
+/// graph, new commit). Unlike [`head::CommittedEvent`] this triggers no
+/// resync/recompile machinery - it exists for layers that follow the commit
+/// chain (e.g. collaborative sessions syncing node positions).
+#[derive(Debug, Event)]
+pub struct LayoutCommittedEvent {
+    pub entity: Entity,
+    pub new_commit: ca::CommitAddr,
 }
 
 /// Poll the in-flight import file dialog task.
