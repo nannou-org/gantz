@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.3.1...bevy_gantz_egui-v0.4.0) - 2026-07-02
+
+### Added
+
+- *(gantz_format_derive)* derive macro for NodeTag
+- declare node wire tags at their definition sites
+- *(gantz_egui)* conflict resolution strategy selector on the merge row
+- *(gantz_format)* merge-parents clause; ancestry walks follow merge parents
+- *(bevy_gantz_egui)* merge observer and demo arm
+- *(bevy_gantz_egui)* own its node sugar via BevySugar
+- *(gantz_egui)* add Select all, Cut and Duplicate command shortcuts
+- *(node)* add Hz rate mode to tick!
+- *(node)* add self-driven tick! node
+- *(egui)* persist graph camera as centre + zoom, not a rect
+- *(bevy_gantz)* drive recompiles from committed CA; commit at edit sites ([#159](https://github.com/nannou-org/gantz/pull/159))
+- *(bevy_gantz)* persist and apply graph descriptions
+- *(palette)* place new nodes under the pointer and select them
+- *(layout-undo)* record settled layout changes in undo history
+
+### Fixed
+
+- *(demo)* key demo associations by graph name instead of commit
+
+### Other
+
+- move NodeTag into dedicated gantz_nodetag crates
+- drop typetag from the workspace
+- *(node)* rename frame! to update!
+- *(persist)* serialize egui memory with bincode, not RON
+- *(persist)* persist views incrementally, one key per commit
+- house NodeUi response types in response.rs; rename ValidateCommitted
+- *(gantz_egui)* NodeUi methods return changed-aware responses
+
 ## [0.3.1](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.3.0...bevy_gantz_egui-v0.3.1) - 2026-06-21
 
 ### Added

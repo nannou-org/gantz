@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.4.0...gantz_egui-v0.5.0) - 2026-07-02
+
+### Added
+
+- *(gantz_format_derive)* derive macro for NodeTag
+- declare node wire tags at their definition sites
+- *(gantz_ca)* last-edit-wins merge resolution
+- *(gantz_egui)* conflict resolution strategy selector on the merge row
+- *(bevy_gantz_egui)* merge observer and demo arm
+- *(gantz_egui)* merge row in the graph config pane
+- *(gantz_egui)* merge candidates, previews and the merge_head op
+- *(gantz_egui)* scroll the node inspector to the selected node
+- *(gantz_egui)* log/trace view filter, options popup, column toggles
+- *(gantz)* compose the per-crate node sugars via NodeSugar
+- *(gantz_egui)* own its node sugar via EguiSugar
+- *(gantz_egui)* node views for number/expr/branch; rename + revert ([#271](https://github.com/nannou-org/gantz/pull/271))
+- *(gantz_egui)* full-bleed node views; plot fills its pane ([#271](https://github.com/nannou-org/gantz/pull/271))
+- *(gantz_egui)* open a node's UI in a pane to monitor it (#271, part 2)
+- *(gantz_egui)* add Select all, Cut and Duplicate command shortcuts
+- *(gantz_egui)* add keymap + Settings -> Keybinds panel
+- *(node)* add Hz rate mode to tick!
+- *(egui)* collapse repeated log/trace entries with an occurrence count
+- *(egui)* add center-view to the graph scene context menu
+- *(egui)* persist graph camera as centre + zoom, not a rect
+- *(egui)* add delete button to edge context menu
+- *(number)* dialer UI for bounds, precision and push-eval toggle
+- *(egui)* make Settings subtabs vertically scrollable
+- *(egui)* expose egui_graph 0.16 snap, grid and align options
+- *(plot)* state row in table, drop range labels
+- *(plot)* lay min/max out as two columns on one range row
+- *(plot)* square corners on no-margin, tidy range row, hover text
+- *(plot)* refine inspector, frame and interaction per review
+- *(plot)* refine plot node per review feedback
+- *(plot)* add a configurable plot node to gantz_egui
+- *(bevy_gantz)* drive recompiles from committed CA; commit at edit sites ([#159](https://github.com/nannou-org/gantz/pull/159))
+- *(named-ref)* add sync/fork to the node context menu when outdated
+- *(gantz_egui)* center the command palette over the graph scene
+- add concise descriptions for all builtin and base nodes
+- *(gantz_egui)* show node info in the command palette and graphs hover
+- *(layout)* one-shot auto-layout & center-view with selection support
+- *(palette)* place new nodes under the pointer and select them
+- *(ops)* add commit_layout for layout-only commits
+- *(comment)* auto-fit comment height to text content
+- *(bang)* add a trigger input
+- *(expr)* always expose at least one (trigger) input
+
+### Fixed
+
+- *(gantz_egui)* polish node-view panes per review ([#271](https://github.com/nannou-org/gantz/pull/271))
+- *(plot)* stop leaking a Steel binding per recompile
+- *(demo)* key demo associations by graph name instead of commit
+- *(expr)* preserve outputs count when editing expression text
+- *(gantz_egui)* don't pre-highlight a palette entry on open
+- *(gantz_egui)* forward NodeUi::description through pointer/ref impls
+- *(comment)* thin selection border with a wide invisible drag band
+- *(named-ref)* include `sync` in the content address so toggles persist
+
+### Other
+
+- move NodeTag into dedicated gantz_nodetag crates
+- drop typetag from the workspace
+- port remaining typetag usages to impl_node_set_serde!
+- *(gantz_egui)* side-by-side perf tiles at half height
+- *(gantz_egui)* inlet/outlet socket editor as inspector rows
+- *(gantz_egui)* grid layout for the Graph Config pane
+- *(gantz_egui)* rename CommandPalette to NodePalette
+- *(gantz_egui)* make node views first-class top-level tiles ([#271](https://github.com/nannou-org/gantz/pull/271))
+- *(gantz_egui)* tidy keybinds panel; rebind New graph to Cmd/Ctrl+T
+- *(gantz_egui)* grid layout + context-menu reset for keybinds panel
+- represent graphs with plain petgraph::Graph, not StableGraph
+- *(egui)* store tile trees under a stable key + add Clear egui memory
+- *(widget)* add CheckboxEnabled, use it for range + precision
+- *(inspector)* share bound_col for number + plot range rows
+- *(number)* terse, hover-documented inspector layout
+- house NodeUi response types in response.rs; rename ValidateCommitted
+- *(gantz_egui)* NodeUi methods return changed-aware responses
+- *(gantz_egui)* show palette descriptions inline instead of a side panel
+
 ## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.3.0...gantz_egui-v0.4.0) - 2026-06-21
 
 ### Added

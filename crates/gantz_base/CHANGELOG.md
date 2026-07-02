@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3](https://github.com/nannou-org/gantz/compare/gantz_base-v0.2.2...gantz_base-v0.2.3) - 2026-07-02
+
+### Added
+
+- add concise descriptions for all builtin and base nodes
+
+### Fixed
+
+- *(named-ref)* include `sync` in the content address so toggles persist
+
+### Other
+
+- Clean-up all current base.gantz demos
+- Simplify demo-predicate base gantz file
+
 ## [0.2.2](https://github.com/nannou-org/gantz/compare/gantz_base-v0.2.1...gantz_base-v0.2.2) - 2026-06-21
 
 ### Added

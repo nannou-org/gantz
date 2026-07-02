@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/nannou-org/gantz/compare/gantz_core-v0.4.0...gantz_core-v0.4.1) - 2026-07-02
+
+### Added
+
+- *(gantz_egui)* merge candidates, previews and the merge_head op
+- *(core)* add state::move_value to rekey a node's state subtree
+- *(expr)* always expose at least one (trigger) input
+
+### Fixed
+
+- *(state,log)* register VM helpers once to stop per-recompile leak
+
+### Other
+
+- move NodeTag into dedicated gantz_nodetag crates
+- drop typetag from the workspace
+- port remaining typetag usages to impl_node_set_serde!
+- *(node)* rename frame! to update!
+- represent graphs with plain petgraph::Graph, not StableGraph
+- *(expr)* assert parse/lex errors propagate as Err
+- *(deps)* update steel-core to 0.8.2
+
 ## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.3.0...gantz_core-v0.4.0) - 2026-06-21
 
 ### Added
