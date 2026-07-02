@@ -11,8 +11,8 @@
 //! surface the conflicts, or accept the defaults.
 
 use crate::{
-    CaHash, CommitAddr, Diff, GraphAddr, Matching, MergeAnalysis, Registry, content_addr, diff,
-    history,
+    CaHash, CommitAddr, Diff, GraphAddr, Matching, MergeAnalysis, Registry, Timestamp,
+    content_addr, diff, history,
 };
 use petgraph::{
     Directed,
@@ -41,12 +41,35 @@ pub enum Side {
     Clone, Copy, Debug, Default, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize,
 )]
 pub struct Resolutions {
-    /// Which side's content is kept when both sides modified the same base
-    /// node with different results.
-    pub both_modified: Side,
+    /// Which content is kept when both sides modified the same base node with
+    /// different results.
+    pub both_modified: BothModified,
     /// Whether the edit or the delete wins when one side deleted a node the
     /// other modified.
     pub delete_modify: EditOrDelete,
+}
+
+/// Which content wins a [`Conflict::BothModified`].
+#[derive(
+    Clone, Copy, Debug, Default, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize,
+)]
+pub enum BothModified {
+    /// Ours' content is kept.
+    #[default]
+    #[serde(alias = "Ours")]
+    KeepOurs,
+    /// Theirs' content is kept.
+    #[serde(alias = "Theirs")]
+    KeepTheirs,
+    /// Last edit wins, per node: the side whose last content-changing commit
+    /// for that node is newer keeps its version (see [`EditTimes`]).
+    ///
+    /// Unlike the sided options this resolution is *symmetric*: merging A
+    /// into B picks the same content as merging B into A, so two peers
+    /// resolving the same conflict independently converge (the basis for a
+    /// shared-session "last edit wins" mode). Exact time ties break to the
+    /// greater content address - arbitrary, but side-independent.
+    KeepNewest,
 }
 
 /// Whether an edit or a delete wins a [`Conflict::DeleteModify`].
@@ -59,6 +82,25 @@ pub enum EditOrDelete {
     KeepEdit,
     /// The node stays deleted.
     KeepDelete,
+}
+
+/// Per-node last-edit timestamps consulted by [`BothModified::KeepNewest`].
+///
+/// [`merge_commits`] fills this from each side's commit chain (see
+/// [`diff::matching_with_times`]); a node without an entry falls back to its
+/// side's tip timestamp. The `Default` (empty, zero tips) makes every
+/// comparison a tie, so `KeepNewest` degrades to the content-address
+/// tie-break.
+#[derive(Clone, Debug, Default)]
+pub struct EditTimes {
+    /// Base node index -> the last time ours' chain changed the node.
+    pub ours: BTreeMap<usize, Timestamp>,
+    /// Base node index -> the last time theirs' chain changed the node.
+    pub theirs: BTreeMap<usize, Timestamp>,
+    /// Ours' tip commit timestamp (the fallback edit time).
+    pub ours_tip: Timestamp,
+    /// Theirs' tip commit timestamp (the fallback edit time).
+    pub theirs_tip: Timestamp,
 }
 
 /// A conflict encountered during a three-way merge.
@@ -210,13 +252,22 @@ where
     let base_g = graph_of(base)?;
     let ours_g = graph_of(ours)?;
     let theirs_g = graph_of(theirs)?;
-    // Endpoints are verified above, so `matching` cannot fail; degrade to
-    // direct matching rather than panicking should that ever change.
-    let mo = diff::matching(reg, base, ours).unwrap_or_else(|| diff::match_nodes(base_g, ours_g));
-    let mt =
-        diff::matching(reg, base, theirs).unwrap_or_else(|| diff::match_nodes(base_g, theirs_g));
+    // Endpoints are verified above, so `matching_with_times` cannot fail;
+    // degrade to direct matching rather than panicking should that ever
+    // change.
+    let (mo, ours_times) = diff::matching_with_times(reg, base, ours)
+        .unwrap_or_else(|| (diff::match_nodes(base_g, ours_g), Default::default()));
+    let (mt, theirs_times) = diff::matching_with_times(reg, base, theirs)
+        .unwrap_or_else(|| (diff::match_nodes(base_g, theirs_g), Default::default()));
     let ours_diff = diff::diff(base_g, ours_g, &mo);
     let theirs_diff = diff::diff(base_g, theirs_g, &mt);
+    let tip_time = |ca: CommitAddr| commits.get(&ca).map(|c| c.timestamp).unwrap_or_default();
+    let edit_times = EditTimes {
+        ours: ours_times,
+        theirs: theirs_times,
+        ours_tip: tip_time(ours),
+        theirs_tip: tip_time(theirs),
+    };
     let outcome = merge_graphs(
         base_g,
         ours_g,
@@ -224,6 +275,7 @@ where
         &ours_diff,
         &theirs_diff,
         resolutions,
+        &edit_times,
     );
     Ok(MergeResolution::Diverged {
         base,
@@ -270,6 +322,7 @@ pub fn merge_graphs<N, E, Ix>(
     ours_diff: &Diff<E>,
     theirs_diff: &Diff<E>,
     resolutions: Resolutions,
+    edit_times: &EditTimes,
 ) -> MergeOutcome<N, E, Ix>
 where
     N: Clone + CaHash,
@@ -292,8 +345,35 @@ where
                 (_, false) => Fate::KeepOurs,
                 (false, true) => Fate::KeepTheirs,
                 (true, true) => {
-                    let kept = resolutions.both_modified;
-                    if content_addr(&ours[node_ix(o)]) != content_addr(&theirs[node_ix(t)]) {
+                    let o_ca = content_addr(&ours[node_ix(o)]);
+                    let t_ca = content_addr(&theirs[node_ix(t)]);
+                    let kept = match resolutions.both_modified {
+                        BothModified::KeepOurs => Side::Ours,
+                        BothModified::KeepTheirs => Side::Theirs,
+                        // Per-node last edit wins. Both orderings of the same
+                        // merge compare identical values (the time maps swap
+                        // sides but keep their entries, and the tie-break is
+                        // on content), so independent peers converge.
+                        BothModified::KeepNewest => {
+                            let ot = edit_times
+                                .ours
+                                .get(&b)
+                                .copied()
+                                .unwrap_or(edit_times.ours_tip);
+                            let tt = edit_times
+                                .theirs
+                                .get(&b)
+                                .copied()
+                                .unwrap_or(edit_times.theirs_tip);
+                            match (tt.cmp(&ot), t_ca > o_ca) {
+                                (std::cmp::Ordering::Greater, _) => Side::Theirs,
+                                (std::cmp::Ordering::Less, _) => Side::Ours,
+                                (std::cmp::Ordering::Equal, true) => Side::Theirs,
+                                (std::cmp::Ordering::Equal, false) => Side::Ours,
+                            }
+                        }
+                    };
+                    if o_ca != t_ca {
                         conflicts.push(Conflict::BothModified {
                             base: b,
                             ours: o,
@@ -622,7 +702,7 @@ mod tests {
         let ours = graph(&["a", "b2"], &[]);
         let theirs = graph(&["a", "b3"], &[]);
         let resolutions = Resolutions {
-            both_modified: Side::Theirs,
+            both_modified: BothModified::KeepTheirs,
             ..Default::default()
         };
         let (_, _, _, res) = merge_two_with(&base, &ours, &theirs, resolutions);
@@ -637,6 +717,55 @@ mod tests {
                 kept: Side::Theirs,
             }],
         );
+    }
+
+    /// Per-node last edit wins: ours edited node 0 at t=2 then node 1 at
+    /// t=5 (a newer *tip*), while theirs edited node 0 at t=3. Node 0's
+    /// conflict resolves to theirs - the side whose last edit to *that node*
+    /// is newer - even though ours' tip is newer overall.
+    #[test]
+    fn keep_newest_resolves_per_node_not_per_tip() {
+        let resolutions = Resolutions {
+            both_modified: BothModified::KeepNewest,
+            ..Default::default()
+        };
+        let mut reg = Registry::<G>::default();
+        let base = commit(&mut reg, 1, None, &graph(&["x", "y"], &[]));
+        let o1 = commit(&mut reg, 2, Some(base), &graph(&["x2", "y"], &[]));
+        let ours = commit(&mut reg, 5, Some(o1), &graph(&["x2", "y2"], &[]));
+        let theirs = commit(&mut reg, 3, Some(base), &graph(&["x3", "y"], &[]));
+        let out = diverged(merge_commits(&reg, ours, theirs, resolutions).unwrap());
+        assert_eq!(nodes(&out.graph), vec!["x3", "y2"]);
+        assert_eq!(
+            out.conflicts,
+            vec![Conflict::BothModified {
+                base: 0,
+                ours: 0,
+                theirs: 0,
+                kept: Side::Theirs,
+            }],
+        );
+    }
+
+    /// `KeepNewest` is symmetric: merging in either direction keeps the same
+    /// content, including on exact time ties (content-address tie-break), so
+    /// independent peers converge on the same merged graph.
+    #[test]
+    fn keep_newest_is_symmetric() {
+        let resolutions = Resolutions {
+            both_modified: BothModified::KeepNewest,
+            ..Default::default()
+        };
+        let mut reg = Registry::<G>::default();
+        let base = commit(&mut reg, 1, None, &graph(&["x"], &[]));
+        // Both sides edit the node at the same timestamp.
+        let a = commit(&mut reg, 2, Some(base), &graph(&["x-a"], &[]));
+        let b = commit(&mut reg, 2, Some(base), &graph(&["x-b"], &[]));
+        let ab = diverged(merge_commits(&reg, a, b, resolutions).unwrap());
+        let ba = diverged(merge_commits(&reg, b, a, resolutions).unwrap());
+        assert_eq!(graph_addr(&ab.graph), graph_addr(&ba.graph));
+        assert_eq!(ab.conflicts.len(), 1);
+        assert_eq!(ba.conflicts.len(), 1);
     }
 
     #[test]

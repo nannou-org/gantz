@@ -20,7 +20,7 @@
 //!   the results tracks a node's identity through content edits, so an edit
 //!   diffs as a *modification* rather than a remove + add.
 
-use crate::{CaHash, CommitAddr, Registry, content_addr, history, node_addrs};
+use crate::{CaHash, CommitAddr, Registry, Timestamp, content_addr, history};
 use petgraph::{Directed, graph::IndexType};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -89,6 +89,34 @@ impl<E> Diff<E> {
     }
 }
 
+/// The content address of every node, indexed by node index (contiguous for
+/// a plain `petgraph::Graph`).
+fn node_cas<N, E, Ix>(g: &Graph<N, E, Ix>) -> Vec<crate::ContentAddr>
+where
+    N: CaHash,
+    Ix: IndexType,
+{
+    g.node_weights().map(crate::content_addr).collect()
+}
+
+/// The [`match_nodes`] grouping over precomputed node content addresses.
+fn match_cas(a: &[crate::ContentAddr], b: &[crate::ContentAddr]) -> Matching {
+    let mut groups: BTreeMap<crate::ContentAddr, (Vec<usize>, Vec<usize>)> = BTreeMap::new();
+    for (ix, ca) in a.iter().enumerate() {
+        groups.entry(*ca).or_default().0.push(ix);
+    }
+    for (ix, ca) in b.iter().enumerate() {
+        groups.entry(*ca).or_default().1.push(ix);
+    }
+    // Indices are pushed in ascending order, so the per-group zips pair by
+    // canonical rank without sorting.
+    let mut matching = Matching::new();
+    for (a_ixs, b_ixs) in groups.into_values() {
+        matching.extend(a_ixs.into_iter().zip(b_ixs));
+    }
+    matching
+}
+
 /// Directly match nodes between two graphs by content.
 ///
 /// Nodes are grouped by content address and paired within each group in
@@ -99,37 +127,21 @@ where
     N: CaHash,
     Ix: IndexType,
 {
-    let mut groups: BTreeMap<crate::ContentAddr, (Vec<usize>, Vec<usize>)> = BTreeMap::new();
-    for (id, ca) in node_addrs(a) {
-        groups.entry(ca).or_default().0.push(id.index());
-    }
-    for (id, ca) in node_addrs(b) {
-        groups.entry(ca).or_default().1.push(id.index());
-    }
-    let mut matching = Matching::new();
-    for (mut a_ixs, mut b_ixs) in groups.into_values() {
-        a_ixs.sort_unstable();
-        b_ixs.sort_unstable();
-        matching.extend(a_ixs.into_iter().zip(b_ixs));
-    }
-    matching
+    match_cas(&node_cas(a), &node_cas(b))
 }
 
-/// Match nodes between two *consecutive* commits' graphs.
+/// Match nodes between two *consecutive* commits' graphs (by their node
+/// content addresses).
 ///
-/// [`match_nodes`] pairs everything whose content is unchanged; the leftover
+/// [`match_cas`] pairs everything whose content is unchanged; the leftover
 /// nodes on both sides are then paired when they share an index. A single
 /// edit step justifies this: an in-place content edit preserves the node's
 /// index, while a swap-removal never leaves an equal-index leftover pair.
-fn match_step<N, E, Ix>(prev: &Graph<N, E, Ix>, next: &Graph<N, E, Ix>) -> Matching
-where
-    N: CaHash,
-    Ix: IndexType,
-{
-    let mut matching = match_nodes(prev, next);
+fn match_step_cas(prev: &[crate::ContentAddr], next: &[crate::ContentAddr]) -> Matching {
+    let mut matching = match_cas(prev, next);
     let matched_next: HashSet<usize> = matching.values().copied().collect();
-    for ix in 0..prev.node_count() {
-        if !matching.contains_key(&ix) && ix < next.node_count() && !matched_next.contains(&ix) {
+    for ix in 0..prev.len() {
+        if !matching.contains_key(&ix) && ix < next.len() && !matched_next.contains(&ix) {
             matching.insert(ix, ix);
         }
     }
@@ -153,20 +165,45 @@ where
     N: CaHash,
     Ix: IndexType,
 {
+    matching_with_times(reg, base, tip).map(|(matching, _)| matching)
+}
+
+/// [`matching`], also returning each tracked node's *last-edit time*: for
+/// every base node still present at the tip, the timestamp of the last commit
+/// along the chain that changed its content (no entry = content untouched).
+///
+/// Feeds per-node "last edit wins" conflict resolution (see
+/// [`crate::merge::BothModified::KeepNewest`]). The direct-matching fallback
+/// has no chain to read times from, so it returns them empty; callers fall
+/// back to the tips' own timestamps.
+pub fn matching_with_times<N, E, Ix>(
+    reg: &Registry<Graph<N, E, Ix>>,
+    base: CommitAddr,
+    tip: CommitAddr,
+) -> Option<(Matching, BTreeMap<usize, Timestamp>)>
+where
+    N: CaHash,
+    Ix: IndexType,
+{
     let commits = reg.commits();
     let graphs = reg.graphs();
     let base_graph = graphs.get(&commits.get(&base)?.graph)?;
     let tip_graph = graphs.get(&commits.get(&tip)?.graph)?;
     let identity = |g: &Graph<N, E, Ix>| (0..g.node_count()).map(|ix| (ix, ix)).collect();
+    let direct = || (match_nodes(base_graph, tip_graph), BTreeMap::new());
 
     let Some(chain) = history::first_parent_chain_to(commits, tip, base) else {
-        return Some(match_nodes(base_graph, tip_graph));
+        return Some(direct());
     };
 
-    // Walk the chain oldest-first, composing the per-step matchings.
+    // Walk the chain oldest-first, composing the per-step matchings and
+    // stamping tracked nodes whose content changed at a step. Each step's
+    // node addresses are computed once and carried into the next iteration.
     let mut matching: Matching = identity(base_graph);
+    let mut times: BTreeMap<usize, Timestamp> = BTreeMap::new();
     let mut steps = chain.iter().rev();
     let mut prev = steps.next()?;
+    let mut prev_cas: Option<Vec<crate::ContentAddr>> = None;
     for next in steps {
         // Same graph (e.g. a layout-only commit): identity step.
         if prev.graph == next.graph {
@@ -175,16 +212,25 @@ where
         }
         let (Some(pg), Some(ng)) = (graphs.get(&prev.graph), graphs.get(&next.graph)) else {
             // An intermediate graph is unavailable: fall back to direct.
-            return Some(match_nodes(base_graph, tip_graph));
+            return Some(direct());
         };
-        let step = match_step(pg, ng);
+        let pc = prev_cas.take().unwrap_or_else(|| node_cas(pg));
+        let nc = node_cas(ng);
+        let step = match_step_cas(&pc, &nc);
         matching = matching
             .into_iter()
-            .filter_map(|(b, cur)| step.get(&cur).map(|&n| (b, n)))
+            .filter_map(|(b, cur)| {
+                let &n = step.get(&cur)?;
+                if pc[cur] != nc[n] {
+                    times.insert(b, next.timestamp);
+                }
+                Some((b, n))
+            })
             .collect();
+        prev_cas = Some(nc);
         prev = next;
     }
-    Some(matching)
+    Some((matching, times))
 }
 
 /// The structural diff of `other` relative to `base` under the given node
@@ -289,6 +335,11 @@ mod tests {
         })
     }
 
+    /// [`match_step_cas`] over whole graphs, for test brevity.
+    fn match_step(prev: &G, next: &G) -> Matching {
+        match_step_cas(&node_cas(prev), &node_cas(next))
+    }
+
     #[test]
     fn match_nodes_pairs_duplicate_content_by_rank() {
         // [A, B, A] with B removed via swap-remove -> [A, A].
@@ -345,6 +396,23 @@ mod tests {
         );
         // Through the removal: base ix 0 is gone, ix 1 tracked at ix 1.
         assert_eq!(matching(&reg, base, c3).unwrap(), Matching::from([(1, 1)]));
+    }
+
+    #[test]
+    fn matching_with_times_stamps_the_last_content_change() {
+        let mut reg = Registry::<G>::default();
+        let g0 = graph(&["a", "b"], &[]);
+        let g1 = graph(&["a", "b2"], &[]); // edit ix 1 @ t=2
+        let g2 = graph(&["a", "b2", "c"], &[]); // add ix 2 @ t=3
+        let g3 = graph(&["a", "b3", "c"], &[]); // edit ix 1 again @ t=4
+        let base = commit(&mut reg, 1, None, &g0);
+        let c1 = commit(&mut reg, 2, Some(base), &g1);
+        let c2 = commit(&mut reg, 3, Some(c1), &g2);
+        let c3 = commit(&mut reg, 4, Some(c2), &g3);
+        let (m, times) = matching_with_times(&reg, base, c3).unwrap();
+        assert_eq!(m, Matching::from([(0, 0), (1, 1)]));
+        // Node 1's last content change was the t=4 commit; node 0 untouched.
+        assert_eq!(times, BTreeMap::from([(1, Timestamp::from_secs(4))]),);
     }
 
     #[test]

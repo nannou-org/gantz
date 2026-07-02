@@ -19,8 +19,8 @@ pub use hash::{CaHash, Hasher};
 pub use history::{MergeAnalysis, analyze, ancestors, first_parent_chain, merge_base};
 #[doc(inline)]
 pub use merge::{
-    Conflict, EditOrDelete, MergeError, MergeOutcome, MergeResolution, NodeSrc, Resolutions, Side,
-    merge_commits,
+    BothModified, Conflict, EditOrDelete, MergeError, MergeOutcome, MergeResolution, NodeSrc,
+    Resolutions, Side, merge_commits,
 };
 #[doc(inline)]
 pub use registry::Registry;

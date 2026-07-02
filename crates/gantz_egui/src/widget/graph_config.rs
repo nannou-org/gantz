@@ -429,17 +429,26 @@ fn merge_select(
 /// The "⛭" menu beside the merge dropdown: how conflicts resolve when merging
 /// despite them. Edits the persisted, GUI-global strategy in place.
 fn resolutions_menu(resolutions: &mut gantz_ca::merge::Resolutions, ui: &mut egui::Ui) {
-    use gantz_ca::merge::{EditOrDelete, Side};
+    use gantz_ca::merge::{BothModified, EditOrDelete};
     ui.label("when both sides modified a node");
     ui.radio_value(
         &mut resolutions.both_modified,
-        Side::Ours,
+        BothModified::KeepOurs,
         "keep this graph's version",
     );
     ui.radio_value(
         &mut resolutions.both_modified,
-        Side::Theirs,
+        BothModified::KeepTheirs,
         "keep the branch's version",
+    );
+    ui.radio_value(
+        &mut resolutions.both_modified,
+        BothModified::KeepNewest,
+        "keep the most recent edit",
+    )
+    .on_hover_text(
+        "per node: whichever side edited the node last wins \
+         (ties resolve deterministically)",
     );
     ui.separator();
     ui.label("when a delete meets an edit");
