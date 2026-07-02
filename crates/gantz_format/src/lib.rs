@@ -27,6 +27,7 @@ mod model;
 mod parse;
 mod raise;
 mod sugar;
+mod tag;
 mod writer;
 
 pub mod sexpr;
@@ -37,6 +38,9 @@ pub use lower::Loaded;
 pub use model::{Addr, Document, Form};
 pub use raise::{Dumped, GraphLabels};
 pub use sugar::{CoreSugar, NodeSugar, Sugar, SugarArgs, Sugars};
+pub use tag::NodeTag;
+#[doc(hidden)]
+pub use tag::TaggedNode;
 
 use gantz_ca::{CaHash, Registry, Timestamp};
 use gantz_core::node::graph::Graph;
