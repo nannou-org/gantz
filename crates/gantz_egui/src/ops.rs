@@ -848,6 +848,11 @@ pub enum SyncTipOutcome {
 /// applied via [`gantz_ca::sync::Staged`]). On [`SyncTipOutcome::Merged`]
 /// the committed-working-graph invariant is upheld - callers must not commit
 /// again.
+///
+/// `adopt_unrelated` adopts a remote tip that shares no local history
+/// instead of surfacing [`SyncTipOutcome::Unrelated`]: the join flow's
+/// placeholder head (an empty graph minted so the session's tab opens
+/// immediately) is deliberately unrelated to the session content it awaits.
 #[allow(clippy::too_many_arguments)]
 pub fn sync_remote_tip(
     registry: &mut gantz_ca::Registry,
@@ -858,6 +863,7 @@ pub fn sync_remote_tip(
     selection: &mut crate::widget::graph_scene::Selection,
     remote: CommitAddr,
     resolutions: gantz_ca::Resolutions,
+    adopt_unrelated: bool,
 ) -> SyncTipOutcome {
     let Some(local) = registry.head_commit_ca(head) else {
         log::error!("sync_remote_tip: no commit for head {head}");
@@ -868,6 +874,9 @@ pub fn sync_remote_tip(
         gantz_ca::SyncStep::FastForward(t) => return SyncTipOutcome::Moved(t),
         gantz_ca::SyncStep::Adopt(t) if t == local => return SyncTipOutcome::UpToDate,
         gantz_ca::SyncStep::Adopt(t) => return SyncTipOutcome::Moved(t),
+        gantz_ca::SyncStep::Unrelated if adopt_unrelated => {
+            return SyncTipOutcome::Moved(remote);
+        }
         gantz_ca::SyncStep::Unrelated => return SyncTipOutcome::Unrelated,
         gantz_ca::SyncStep::Merge { first, second } => (first, second),
     };
@@ -1366,7 +1375,39 @@ mod tests {
             selection,
             remote,
             session_resolutions(),
+            false,
         )
+    }
+
+    // The join flow's placeholder head adopts an unrelated remote tip
+    // instead of surfacing it.
+    #[test]
+    fn sync_remote_tip_adopts_unrelated_when_asked() {
+        let secs = |s| std::time::Duration::from_secs(s);
+        let mut reg = gantz_ca::Registry::default();
+        let g = test_graph(&[]);
+        let placeholder = reg.commit_graph(secs(1), None, gantz_ca::graph_addr(&g), || g);
+        let g = test_graph(&[9]);
+        let foreign = reg.commit_graph(secs(2), None, gantz_ca::graph_addr(&g), || g);
+        reg.set_head("alpha".parse().unwrap(), placeholder);
+        let mut head = gantz_ca::Head::Branch("alpha".parse().unwrap());
+        let mut graph = test_graph(&[]);
+        let mut vm = Engine::new_base();
+        let mut view = crate::SceneView::default();
+        let mut selection = Selection::default();
+        let outcome = sync_remote_tip(
+            &mut reg,
+            &mut head,
+            &mut graph,
+            &mut vm,
+            &mut view,
+            &mut selection,
+            foreign,
+            session_resolutions(),
+            true,
+        );
+        // Navigation is the caller's job: the outcome names the target.
+        assert!(matches!(outcome, SyncTipOutcome::Moved(t) if t == foreign));
     }
 
     // Two peers of the same session merge the same diverged pair from

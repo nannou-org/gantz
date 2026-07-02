@@ -1345,6 +1345,9 @@ pub struct SyncRemoteTip {
     pub remote: ca::CommitAddr,
     /// The session's fixed conflict-resolution policy.
     pub resolutions: ca::merge::Resolutions,
+    /// Adopt an unrelated remote tip instead of surfacing it: set when the
+    /// head currently points at the join flow's placeholder graph.
+    pub adopt_unrelated: bool,
 }
 
 /// Handle [`SyncRemoteTip`]: the session analogue of [`on_merge_head`].
@@ -1386,6 +1389,7 @@ pub fn on_sync_remote_tip(
         &mut head_state.scene.interaction.selection,
         event.data.remote,
         event.data.resolutions,
+        event.data.adopt_unrelated,
     );
     // The sync may have minted a merge commit and graph.
     refresh_cache(&registry, &mut cache, &codec.0);

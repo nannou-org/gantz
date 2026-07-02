@@ -2322,7 +2322,57 @@ where
         let crumbs = name_breadcrumb(rect, pane_head, ui);
         self.responses.extend(Some(&*pane_head), crumbs);
 
+        // A collab-session overlay: while a join is still connecting (or has
+        // failed) the pane's graph is only a placeholder - dim the scene and
+        // say what is happening.
+        if let (Some(collab), gantz_ca::Head::Branch(name)) = (self.collab, &*pane_head) {
+            if let Some(display) = collab.sessions.get(name) {
+                paint_session_overlay(rect, display, ui);
+            }
+        }
+
         egui_tiles::UiResponse::None
+    }
+}
+
+/// Dim a joining session's scene with its connection progress, or the error
+/// when the join failed. Live sessions (and mid-session degrades, which leave
+/// the graph fully usable) paint nothing.
+fn paint_session_overlay(rect: egui::Rect, display: &crate::collab::SessionDisplay, ui: &egui::Ui) {
+    use crate::collab::SessionConn;
+    let (heading, detail, color) = match (display.conn, &display.error) {
+        (SessionConn::Connecting, None) => {
+            // Animated ellipsis while we wait.
+            let dots = 1 + (ui.input(|i| i.time) * 2.0) as usize % 3;
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(250));
+            let heading = format!("Connecting to session{}", ".".repeat(dots));
+            (heading, None, ui.visuals().strong_text_color())
+        }
+        (SessionConn::Connecting | SessionConn::Degraded, Some(error)) => (
+            "Session connection failed".to_string(),
+            Some(error.clone()),
+            SessionConn::Degraded.color(),
+        ),
+        _ => return,
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(120));
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        heading,
+        egui::FontId::proportional(20.0),
+        color,
+    );
+    if let Some(detail) = detail {
+        painter.text(
+            rect.center() + egui::vec2(0.0, 28.0),
+            egui::Align2::CENTER_CENTER,
+            detail,
+            egui::FontId::proportional(14.0),
+            ui.visuals().weak_text_color(),
+        );
     }
 }
 

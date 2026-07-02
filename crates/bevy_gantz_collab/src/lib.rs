@@ -78,6 +78,12 @@ pub struct SessionState {
     /// Auto-resolved conflicts accumulated since the session started, for
     /// surfacing in the GUI.
     pub conflicts: usize,
+    /// The most recent session error (e.g. a failed join), cleared once the
+    /// session progresses.
+    pub error: Option<String>,
+    /// The empty-graph commit minted at join time so the session's tab
+    /// opens immediately; the snapshot adopts over it.
+    pub placeholder: Option<ca::CommitAddr>,
     /// Commits already mirrored into the runtime-owned served store, so
     /// [`serve_scope`]'s updates stay incremental without reading it back.
     pub served_commits: HashSet<ca::CommitAddr>,
@@ -140,6 +146,8 @@ impl SessionState {
             seq: 0,
             pending: HashMap::new(),
             conflicts: 0,
+            error: None,
+            placeholder: None,
             served_commits: HashSet::new(),
             served_graphs: HashSet::new(),
             served_blobs: HashSet::new(),
@@ -301,6 +309,7 @@ pub fn update_collab_ui(
                 .collect(),
             ticket: session_state.ticket.clone(),
             conflicts: session_state.conflicts,
+            error: session_state.error.clone(),
         };
         state.sessions.insert(session_state.branch_name(), display);
     }
@@ -411,6 +420,8 @@ pub fn on_join_session(
     mut runtime: ResMut<CollabRuntime>,
     identity: Option<Res<CollabIdentity>>,
     mut sessions: ResMut<CollabSessions>,
+    mut registry: ResMut<Registry>,
+    mut cmds: Commands,
 ) {
     let event = trigger.event();
     let Some(identity) = identity else {
@@ -445,7 +456,25 @@ pub fn on_join_session(
         session: session.clone(),
         store: SessionRegistry::default(),
     }));
-    sessions.sessions.insert(id, SessionState::new(session));
+    let mut state = SessionState::new(session);
+
+    // Open the session's tab immediately: when the name is unknown locally,
+    // mint an empty placeholder graph for it (recorded so the snapshot
+    // adopts over it rather than renaming it aside); an existing local graph
+    // opens as-is and reconciles when the snapshot lands. Either way the
+    // scene shows the connecting overlay until then.
+    let branch: ca::Name = ticket.name.parse().expect("names parse infallibly");
+    if registry.head(&branch).is_none() {
+        let graph = ca::DataGraph::default();
+        let graph_ca = ca::graph_addr(&graph);
+        let placeholder =
+            registry.commit_graph(bevy_gantz::reg::timestamp(), None, graph_ca, || graph);
+        registry.set_head(branch.clone(), placeholder);
+        state.placeholder = Some(placeholder);
+    }
+    sessions.sessions.insert(id, state);
+    cmds.trigger(head::OpenEvent(ca::Head::Branch(branch)));
+
     if handle.cmds.try_send(Command::Join(ticket)).is_err() {
         log::error!("JoinSession: collab runtime is gone");
     }
@@ -602,6 +631,7 @@ pub fn poll_collab_events(
                 if let Some(state) = sessions.sessions.get_mut(&session) {
                     state.peers.entry(peer).or_insert(None);
                     state.conn = ConnState::Live;
+                    state.error = None;
                 }
             }
             CollabEvent::PeerDown { session, peer } => {
@@ -618,6 +648,7 @@ pub fn poll_collab_events(
                     if state.conn == ConnState::Connecting {
                         state.conn = ConnState::Degraded;
                     }
+                    state.error = Some(message);
                 }
             }
         }
@@ -876,6 +907,11 @@ fn apply_join_snapshot(
             Some(local) if local == tip => {
                 state.last_announced.insert(name, tip);
             }
+            // The placeholder minted at join time: adopt over it (the
+            // resolve path recognises it and navigates the open head).
+            Some(local) if state.placeholder == Some(local) => {
+                resolve_tip(state, registry, open, cmds, &name, tip, resolutions);
+            }
             Some(local) => match ca::plan_sync_step(registry.commits(), local, tip) {
                 ca::SyncStep::Unrelated => {
                     // The session owns the name: rename the local graph
@@ -899,6 +935,7 @@ fn apply_join_snapshot(
         }
     }
     state.conn = ConnState::Live;
+    state.error = None;
 
     // Serve the adopted closure onward and open the shared graph.
     let branch = state.branch_name();
@@ -1195,6 +1232,10 @@ fn resolve_tip(
         cmds.trigger(bevy_gantz_egui::ResyncRefsEvent);
         return;
     };
+    // The join flow's placeholder (an empty graph minted so the session's
+    // tab opens immediately) is deliberately unrelated to the session
+    // content it awaits: adopt over it rather than surfacing `Unrelated`.
+    let adopt_unrelated = state.placeholder == Some(local);
     let plan = ca::plan_sync_step(registry.commits(), local, tip);
     let open_entity = open
         .iter()
@@ -1203,8 +1244,31 @@ fn resolve_tip(
     match (open_entity, plan) {
         (_, ca::SyncStep::UpToDate) => (),
         (_, ca::SyncStep::Adopt(t)) if t == local => (),
-        (_, ca::SyncStep::Unrelated) => {
-            log::warn!("session: remote tip for '{name}' shares no local history; ignoring");
+        (open_entity, ca::SyncStep::Unrelated) => {
+            if !adopt_unrelated {
+                log::warn!("session: remote tip for '{name}' shares no local history; ignoring");
+                return;
+            }
+            state.placeholder = None;
+            state.last_announced.insert(name.clone(), tip);
+            match open_entity {
+                // The observer navigates the open head onto the adopted tip
+                // (which moves the name).
+                Some(entity) => {
+                    cmds.trigger(ForHead {
+                        head: entity,
+                        data: SyncRemoteTip {
+                            remote: tip,
+                            resolutions,
+                            adopt_unrelated: true,
+                        },
+                    });
+                }
+                None => {
+                    registry.set_head(name.clone(), tip);
+                    cmds.trigger(bevy_gantz_egui::ResyncRefsEvent);
+                }
+            }
         }
         (Some(entity), plan) => {
             // Adoptions of received tips are not re-announced.
@@ -1216,6 +1280,7 @@ fn resolve_tip(
                 data: SyncRemoteTip {
                     remote: tip,
                     resolutions,
+                    adopt_unrelated: false,
                 },
             });
         }

@@ -37,6 +37,9 @@ pub struct SessionDisplay {
     pub ticket: Option<String>,
     /// Conflicts auto-resolved by the session policy so far.
     pub conflicts: usize,
+    /// The most recent session error (e.g. a failed join), cleared once the
+    /// session progresses.
+    pub error: Option<String>,
 }
 
 /// A session's connection lifecycle.
