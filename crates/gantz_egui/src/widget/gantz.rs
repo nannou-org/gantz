@@ -1088,10 +1088,14 @@ where
                             .demo_names(&demo_names_vec)
                             .current_demo(current_demo)
                             .current_description(current_description)
+                            .merge_env(gantz.env)
                             .show(ui)
                     });
                     if res.inner.new_branch.is_some() {
                         gantz_response.new_branch = res.inner.new_branch;
+                    }
+                    if let Some(merge) = res.inner.merge {
+                        gantz_response.responses.push(Some(head.clone()), merge);
                     }
                     if let Some(demo_val) = res.inner.demo_changed {
                         gantz_response.demo_changed = Some((head.clone(), demo_val));

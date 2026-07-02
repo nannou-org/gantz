@@ -17,6 +17,7 @@ pub struct GraphConfig<'a> {
     demo_names: &'a [&'a str],
     current_demo: Option<&'a str>,
     current_description: Option<&'a str>,
+    env: Option<&'a dyn crate::Registry>,
 }
 
 /// Response from the [`GraphConfig`] widget.
@@ -32,6 +33,8 @@ pub struct GraphConfigResponse {
     /// The graph's description was edited (committed on focus loss). An empty
     /// string clears the description.
     pub description_changed: Option<String>,
+    /// A merge candidate was chosen from the merge row.
+    pub merge: Option<crate::MergeHead>,
 }
 
 impl<'a> GraphConfig<'a> {
@@ -49,6 +52,7 @@ impl<'a> GraphConfig<'a> {
             demo_names: &[],
             current_demo: None,
             current_description: None,
+            env: None,
         }
     }
 
@@ -85,6 +89,13 @@ impl<'a> GraphConfig<'a> {
         self
     }
 
+    /// Registry access for the merge row's candidates and previews. Without
+    /// it, the merge row is hidden.
+    pub fn merge_env(mut self, env: &'a dyn crate::Registry) -> Self {
+        self.env = Some(env);
+        self
+    }
+
     pub fn show(self, ui: &mut egui::Ui) -> GraphConfigResponse {
         let is_named = matches!(self.head, gantz_ca::Head::Branch(_));
         let is_demo =
@@ -111,6 +122,7 @@ impl<'a> GraphConfig<'a> {
         let mut demo_changed = None;
         let mut reset_base_graph = false;
         let mut export = false;
+        let mut merge = None;
 
         // Reserve room for the label column so the value column's text fields
         // don't expand to fill the entire pane.
@@ -249,6 +261,15 @@ impl<'a> GraphConfig<'a> {
                 });
                 ui.end_row();
 
+                // merge (named, mutable, non-base graphs only)
+                if is_named && !self.immutable && !self.is_base {
+                    if let Some(env) = self.env {
+                        ui.label("merge");
+                        merge = merge_select(env, self.head, ui);
+                        ui.end_row();
+                    }
+                }
+
                 // export
                 ui.label("export");
                 export = ui
@@ -270,6 +291,116 @@ impl<'a> GraphConfig<'a> {
             demo_changed,
             reset_base_graph,
             description_changed,
+            merge,
         }
     }
+}
+
+/// The merge row's branch selector: a dropdown of merge candidates, each with
+/// a dry-run hover summary. Picking a candidate *is* the action (one-shot,
+/// like the layout buttons): a clean candidate merges on click; a conflicted
+/// one is disabled, its tooltip listing the conflicts, with a separate opt-in
+/// button applying the default resolutions. Hard-blocked candidates (e.g. a
+/// reference cycle) can only be inspected.
+///
+/// Candidates and previews are only computed while the popup is open, and each
+/// preview is cached keyed by the two branch tips - content addresses, so a
+/// cached preview can never go stale.
+fn merge_select(
+    env: &dyn crate::Registry,
+    head: &gantz_ca::Head,
+    ui: &mut egui::Ui,
+) -> Option<crate::MergeHead> {
+    let mut merge = None;
+    egui::ComboBox::from_id_salt("merge_select")
+        .selected_text("select branch\u{2026}")
+        .show_ui(ui, |ui| {
+            let candidates = env.merge_candidates(head);
+            if candidates.is_empty() {
+                ui.weak("no mergeable graphs");
+                return;
+            }
+            let ours_tip = match head {
+                gantz_ca::Head::Branch(name) => env.names().get(name).copied(),
+                gantz_ca::Head::Commit(ca) => Some(*ca),
+            };
+            for candidate in candidates {
+                // Fetch (or compute and cache) the candidate's dry-run preview.
+                let preview_id = egui::Id::new("merge_preview").with((ours_tip, candidate.theirs));
+                let preview = ui
+                    .memory_mut(|m| m.data.get_temp::<crate::merge::MergePreview>(preview_id))
+                    .or_else(|| {
+                        let preview = env.merge_preview(head, &candidate.name);
+                        if let Some(preview) = &preview {
+                            ui.memory_mut(|m| m.data.insert_temp(preview_id, preview.clone()));
+                        }
+                        preview
+                    });
+
+                let mut summary = preview
+                    .as_ref()
+                    .map(|p| crate::merge::summary_text(&p.summary))
+                    .unwrap_or_default();
+                if candidate.fast_forward {
+                    summary =
+                        format!("fast-forward: moves this graph to the branch tip\n{summary}");
+                }
+                let clean = preview.as_ref().is_none_or(|p| p.is_clean());
+                if clean {
+                    let mut text = candidate.name.clone();
+                    if candidate.fast_forward {
+                        text.push_str(" (fast-forward)");
+                    }
+                    if ui
+                        .selectable_label(false, text)
+                        .on_hover_text(summary)
+                        .clicked()
+                    {
+                        merge = Some(crate::MergeHead {
+                            source: candidate.name.clone(),
+                            auto_resolve: false,
+                        });
+                    }
+                    continue;
+                }
+
+                // Conflicted or blocked: not directly selectable. Conflicts
+                // (but not blockers) offer an explicit opt-in that applies the
+                // default resolutions.
+                let preview = preview.expect("`!clean` requires a preview");
+                let warn = crate::node::named_ref::outdated_color();
+                ui.horizontal(|ui| {
+                    let text = egui::RichText::new(format!("{} !", candidate.name)).color(warn);
+                    ui.add_enabled(false, egui::Button::selectable(false, text))
+                        .on_disabled_hover_ui(|ui| {
+                            ui.set_max_width(320.0);
+                            ui.label(summary);
+                            for conflict in &preview.conflicts {
+                                ui.colored_label(warn, format!("! {conflict}"));
+                            }
+                            for blocker in &preview.blockers {
+                                ui.colored_label(
+                                    crate::node::named_ref::missing_color(),
+                                    format!("\u{2715} {blocker}"),
+                                );
+                            }
+                        });
+                    if preview.blockers.is_empty()
+                        && ui
+                            .small_button("merge anyway")
+                            .on_hover_text(
+                                "merge despite the conflicts, applying the default \
+                                 resolutions (this graph's version wins conflicting edits)",
+                            )
+                            .clicked()
+                    {
+                        merge = Some(crate::MergeHead {
+                            source: candidate.name.clone(),
+                            auto_resolve: true,
+                        });
+                    }
+                });
+            }
+        });
+    merge
 }

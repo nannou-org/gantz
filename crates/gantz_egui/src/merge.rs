@@ -123,6 +123,37 @@ where
     }
 }
 
+/// Render a [`ca::DiffSummary`] as a compact one-line change summary, e.g.
+/// `"+2 nodes  -1 node  ~1 modified  +3/-1 edges"`.
+pub fn summary_text(s: &ca::DiffSummary) -> String {
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    let mut parts = Vec::new();
+    if s.nodes_added > 0 {
+        parts.push(format!("+{} node{}", s.nodes_added, plural(s.nodes_added)));
+    }
+    if s.nodes_removed > 0 {
+        parts.push(format!(
+            "-{} node{}",
+            s.nodes_removed,
+            plural(s.nodes_removed)
+        ));
+    }
+    if s.nodes_modified > 0 {
+        parts.push(format!("~{} modified", s.nodes_modified));
+    }
+    match (s.edges_added, s.edges_removed) {
+        (0, 0) => (),
+        (a, 0) => parts.push(format!("+{a} edge{}", plural(a))),
+        (0, r) => parts.push(format!("-{r} edge{}", plural(r))),
+        (a, r) => parts.push(format!("+{a}/-{r} edges")),
+    }
+    if parts.is_empty() {
+        "no structural changes".to_string()
+    } else {
+        parts.join("  ")
+    }
+}
+
 /// Render merge conflicts for display, phrased from the current head's
 /// perspective ("here" = ours, "the branch" = theirs).
 pub fn conflict_strings(conflicts: &[ca::Conflict<gantz_core::Edge>]) -> Vec<String> {
