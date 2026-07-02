@@ -361,8 +361,7 @@ impl<'a> GraphConfig<'a> {
                             }
                             Some(display) => {
                                 let conn = display.conn;
-                                let peers = ui
-                                    .colored_label(conn.color(), "\u{25CF}")
+                                let peers = super::status_dot(ui, conn.color())
                                     .on_hover_text(conn.label());
                                 let n = display.peers.len();
                                 let label = format!(

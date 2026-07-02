@@ -1539,6 +1539,7 @@ where
                     .unwrap_or(cfg!(debug_assertions)),
                 ext_panes: &ext_panes,
                 edge_styles: gantz.edge_styles,
+                collab: gantz.collab,
             };
             graph_tree.ui(&mut graph_behaviour, ui);
 
@@ -2056,6 +2057,9 @@ where
     ext_panes: &'a [widget::ExtPaneEntry],
     /// Domain edge stylers for the graph scenes (see [`widget::EdgeStyle`]).
     edge_styles: &'a [&'a dyn widget::EdgeStyle],
+    /// Collaborative-session display state, when a collab layer is wired:
+    /// drives the per-tab session dot and the connecting/error overlay.
+    collab: Option<&'a crate::collab::CollabUiState>,
 }
 
 impl<'a, Access> egui_tiles::Behavior<GraphPane> for GraphTreeBehaviour<'a, Access>
@@ -2178,17 +2182,25 @@ where
             // Render the tab using our custom widget.
             // Append a filled circle if this head is focused.
             let mut title = self.tab_title_for_tile(tiles, tile_id).text().to_string();
+            let mut session = None;
             if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
                 let heads = self.access.heads();
                 if crate::head_is_focused(heads, *self.focused_head, head) {
                     title.push_str(" ⚫");
                 }
+                // The head's collab session, when shared.
+                if let (Some(collab), gantz_ca::Head::Branch(name)) = (self.collab, head) {
+                    session = collab.sessions.get(name);
+                }
             }
-            let res = widget::Tab::new(title, id)
+            let mut tab = widget::Tab::new(title, id)
                 .active(state.active)
                 .closable(state.closable)
-                .hint("double-click to rename")
-                .show(ui);
+                .hint("double-click to rename");
+            if let Some(display) = session {
+                tab = tab.status_dot(display.conn.color(), display.hover_text());
+            }
+            let res = tab.show(ui);
 
             // Handle double-click to enter edit mode.
             if res.tab.double_clicked() {

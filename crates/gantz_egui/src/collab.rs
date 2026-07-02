@@ -60,6 +60,23 @@ pub struct PeerDisplay {
     pub name: Option<String>,
 }
 
+impl SessionDisplay {
+    /// A hover summary: the connection state and connected peers.
+    pub fn hover_text(&self) -> String {
+        let mut text = format!("shared session: {}", self.conn.label());
+        if self.peers.is_empty() {
+            text.push_str("\nno peers connected");
+        }
+        for peer in &self.peers {
+            match &peer.name {
+                Some(name) => text.push_str(&format!("\n{name} ({})", peer.id)),
+                None => text.push_str(&format!("\n{}", peer.id)),
+            }
+        }
+        text
+    }
+}
+
 impl SessionConn {
     /// The indicator glyph colour for this state.
     pub fn color(&self) -> egui::Color32 {
