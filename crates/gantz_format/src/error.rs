@@ -46,7 +46,7 @@ pub enum ErrorKind {
     BadAddr(String),
     /// References between names formed a cycle.
     CycleInRefs(Vec<String>),
-    /// A node failed to deserialize through the typetag bridge.
+    /// A node failed to deserialize through the node set's serde dispatch.
     NodeDeserialize {
         /// The node's `"type"` tag, if known.
         tag: String,

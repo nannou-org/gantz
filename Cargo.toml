@@ -76,7 +76,6 @@ thiserror = "2"
 time = { version = "0.3", features = ["local-offset", "wasm-bindgen"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
-typetag = "0.2"
 web-sys = "0.3"
 web-time = "1"
 

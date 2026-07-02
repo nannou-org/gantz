@@ -8,8 +8,7 @@ use crate::node::{Comment, Inspect};
 use gantz_format::sexpr::quote;
 use gantz_format::{Datum, FormatError, NodeTag, Sugar, SugarArgs, node_datum};
 
-/// Keyword sugar for [`Comment`](crate::node::Comment) and
-/// [`Inspect`](crate::node::Inspect).
+/// Keyword sugar for [`Comment`] and [`Inspect`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EguiSugar;
 

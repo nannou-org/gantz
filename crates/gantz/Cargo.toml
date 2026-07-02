@@ -28,7 +28,6 @@ gantz_std.workspace = true
 petgraph.workspace = true
 serde.workspace = true
 steel-core.workspace = true
-typetag.workspace = true
 web-time.workspace = true
 
 [dev-dependencies]

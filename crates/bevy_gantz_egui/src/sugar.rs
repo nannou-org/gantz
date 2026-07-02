@@ -9,8 +9,7 @@
 use crate::node::{TickBang, UpdateBang, tick_bang};
 use gantz_format::{Datum, FormatError, NodeTag, Sugar, SugarArgs, node_datum};
 
-/// Keyword sugar for [`UpdateBang`](crate::node::UpdateBang) and
-/// [`TickBang`](crate::node::TickBang).
+/// Keyword sugar for [`UpdateBang`] and [`TickBang`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BevySugar;
 

@@ -44,7 +44,6 @@ rfd.workspace = true
 # The demo example persists session state (registry, heads) as RON; the library
 # itself no longer depends on RON.
 ron.workspace = true
-typetag.workspace = true
 # FIXME: temporarily disabled, see #122.
 # Workaround for https://github.com/emilk/egui/issues/7106
 # wgpu = { version = "27", features = ["vulkan"] }

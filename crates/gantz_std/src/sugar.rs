@@ -8,8 +8,7 @@
 use crate::{Bang, Log, Number};
 use gantz_format::{Datum, FormatError, NodeTag, Sugar, SugarArgs, node_datum};
 
-/// Keyword sugar for [`Bang`](crate::Bang), [`Number`](crate::Number) and
-/// [`Log`](crate::Log).
+/// Keyword sugar for [`Bang`], [`Number`] and [`Log`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StdSugar;
 

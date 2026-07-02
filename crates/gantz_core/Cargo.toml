@@ -19,4 +19,3 @@ thiserror.workspace = true
 env_logger.workspace = true
 serde_json.workspace = true
 steel-derive.workspace = true
-typetag.workspace = true

@@ -6,12 +6,13 @@
 //! `serde` [`Serializer`]/[`Deserializer`] pair built directly on `Datum`
 //! (mirroring `serde_json`'s own `Value` codec), so every node's own
 //! `Serialize`/`Deserialize` runs unchanged and arbitrary serde types - not
-//! just `typetag` trait objects - are supported. [`datum_text`] and
+//! just erased node sets - are supported. [`datum_text`] and
 //! [`datum_from_expr`] map a `Datum` to and from Steel text.
 //!
 //! The deserializer is *self-describing*: [`Datum::deserialize_any`] dispatches
-//! each datum kind to the matching `visit_*`, which is what `typetag`'s content
-//! buffering and `#[serde(tag = ...)]` ride on.
+//! each datum kind to the matching `visit_*`, which is what tag-dispatched
+//! node-set serde ([`impl_node_set_serde!`](crate::impl_node_set_serde)) and
+//! `#[serde(tag = ...)]` derives ride on.
 //!
 //! The one deliberate divergence from `serde_json::Value` is that `char` and
 //! `bytes` keep dedicated variants ([`Datum::Char`]/[`Datum::Bytes`]) rather
@@ -145,7 +146,7 @@ impl Datum {
     }
 }
 
-/// Build a node datum from a typetag tag and ordered `&str`-keyed fields - the
+/// Build a node datum from a node tag and ordered `&str`-keyed fields - the
 /// ergonomic builder a [`Sugar`](crate::Sugar) uses to construct the value its
 /// `read_spec` returns, without depending on `Datum`'s internal map shape.
 pub fn node_datum(tag: &str, fields: Vec<(&str, Datum)>) -> Datum {

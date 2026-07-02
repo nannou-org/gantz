@@ -17,4 +17,4 @@ serde.workspace = true
 steel-core.workspace = true
 
 [dev-dependencies]
-typetag.workspace = true
+serde_json.workspace = true
