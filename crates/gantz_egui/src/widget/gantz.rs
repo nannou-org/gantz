@@ -124,6 +124,11 @@ pub struct GantzState {
     /// Per-head redo stacks for undo/redo support.
     #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub redo_stacks: HashMap<gantz_ca::Head, Vec<gantz_ca::CommitAddr>>,
+    /// Per-head stepping state for session (revert-commit) undo/redo (see
+    /// [`crate::ops::session_undo`]). Lives and migrates beside
+    /// [`Self::redo_stacks`].
+    #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
+    pub undo_cursors: HashMap<gantz_ca::Head, crate::ops::RevertCursor>,
     /// The sidebar's pixel width, maintained across window resizes (fixed, not
     /// proportional). Updated when the user drags the divider.
     #[serde(default = "default_sidebar_width")]
@@ -1161,6 +1166,7 @@ impl GantzState {
             collab: Default::default(),
             merge_resolutions: Default::default(),
             redo_stacks: HashMap::new(),
+            undo_cursors: HashMap::new(),
             sidebar_width: default_sidebar_width(),
             tray_height: default_tray_height(),
             windowed_geometry: HashMap::new(),
@@ -1179,8 +1185,15 @@ impl GantzState {
         if clear_redo {
             self.redo_stacks.remove(old);
             self.redo_stacks.remove(new);
-        } else if let Some(stack) = self.redo_stacks.remove(old) {
-            self.redo_stacks.insert(new.clone(), stack);
+            self.undo_cursors.remove(old);
+            self.undo_cursors.remove(new);
+        } else {
+            if let Some(stack) = self.redo_stacks.remove(old) {
+                self.redo_stacks.insert(new.clone(), stack);
+            }
+            if let Some(cursor) = self.undo_cursors.remove(old) {
+                self.undo_cursors.insert(new.clone(), cursor);
+            }
         }
     }
 }
