@@ -1024,6 +1024,7 @@ dependencies = [
  "gantz_egui",
  "ron 0.10.1",
  "serde",
+ "steel-core",
  "web-time",
 ]
 

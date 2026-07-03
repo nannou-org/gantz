@@ -180,6 +180,7 @@ impl Plugin for CollabPlugin {
             .init_resource::<CollabSessions>()
             .init_resource::<bevy_gantz_egui::CollabUi>()
             .init_resource::<action::ActionOutbox>()
+            .init_resource::<action::ActionInbox>()
             .init_resource::<action::ActionLog>()
             .register_head_response::<gantz_egui::ShareHead>()
             .register_head_response::<gantz_egui::StopSharing>()
@@ -201,7 +202,12 @@ impl Plugin for CollabPlugin {
             .add_systems(
                 Update,
                 (
-                    (poll_collab_events, attach_session_refs).before(bevy_gantz::VmSet),
+                    (
+                        poll_collab_events,
+                        action::apply_remote_actions.after(poll_collab_events),
+                        attach_session_refs,
+                    )
+                        .before(bevy_gantz::VmSet),
                     (
                         // The announce runs after the view persistence passes
                         // so a commit minted this frame has its view seeded
@@ -597,6 +603,7 @@ pub fn poll_collab_events(
     runtime: Res<CollabRuntime>,
     mut sessions: ResMut<CollabSessions>,
     mut registry: ResMut<Registry>,
+    mut inbox: ResMut<action::ActionInbox>,
     open: Query<(Entity, &head::HeadRef), With<head::OpenHead>>,
     graph_views: Query<&bevy_gantz_egui::GraphView, With<head::OpenHead>>,
     mut cmds: Commands,
@@ -653,9 +660,27 @@ pub fn poll_collab_events(
                 // Anti-entropy digests: heads pulls are a follow-up; gossip
                 // re-announcement covers transient losses meanwhile.
                 GossipMsg::Digest { .. } => {}
-                // Ephemeral actions: received into the session inbox by the
-                // action layer (wired in a follow-up commit).
-                GossipMsg::Action { .. } => {}
+                // Ephemeral actions: queue for [`action::apply_remote_actions`]
+                // (which runs after this system, before `VmSet`).
+                GossipMsg::Action {
+                    origin,
+                    seq,
+                    timestamp,
+                    name,
+                    graph,
+                    data,
+                } => {
+                    inbox.receive(action::InboundAction {
+                        session,
+                        origin,
+                        seq,
+                        timestamp,
+                        name,
+                        graph,
+                        data,
+                        received: web_time::Instant::now(),
+                    });
+                }
             },
             CollabEvent::Objects {
                 session, objects, ..

@@ -41,6 +41,13 @@ use web_time::Instant;
 /// flushes when the window elapses, so the final value always ships.
 const RATE_LIMIT: Duration = Duration::from_millis(50);
 
+/// How long a received action waits for its graph anchor (a tip likely still
+/// in flight) before it is dropped.
+const RETRY_DEADLINE: Duration = Duration::from_secs(1);
+
+/// The received-action queue bound; a backstop, not a working limit.
+const INBOX_CAP: usize = 1024;
+
 /// The action-history ring-buffer capacity.
 const LOG_CAP: usize = 256;
 
@@ -88,6 +95,48 @@ pub struct ActionOutbox {
     evals: Vec<(SessionId, ca::Name, Vec<Source>)>,
     /// Per-session action sequence counters.
     seq: HashMap<SessionId, u64>,
+}
+
+/// A received action awaiting application (or its graph anchor).
+#[derive(Clone, Debug)]
+pub struct InboundAction {
+    pub session: SessionId,
+    pub origin: PeerId,
+    /// Per-origin sequence number. Carried for debugging/future use: values
+    /// converge via last-write-wins and evals apply per delivery
+    /// (iroh-gossip dedups a broadcast, so duplicates are effectively
+    /// absent), so no seq-based stale-drop is needed.
+    pub seq: u64,
+    /// Sender wall-clock milliseconds since the epoch.
+    pub timestamp: u64,
+    pub name: ca::Name,
+    /// The graph the action's node paths are meaningful for.
+    pub graph: ca::GraphAddr,
+    /// The still-encoded [`Action`].
+    pub data: Vec<u8>,
+    /// When this peer received it, for the retry deadline.
+    pub received: Instant,
+}
+
+/// Inbound ephemeral actions and the value-convergence bookkeeping.
+#[derive(Default, Resource)]
+pub struct ActionInbox {
+    queue: Vec<InboundAction>,
+    /// Last-write-wins: the newest applied `(timestamp, origin)` per node
+    /// path, so reordered or concurrent value writes converge on the newest
+    /// (ties broken by origin id).
+    last_applied: HashMap<PathKey, (u64, PeerId)>,
+}
+
+impl ActionInbox {
+    /// Queue a received action for application (bounded backstop).
+    pub(crate) fn receive(&mut self, inbound: InboundAction) {
+        if self.queue.len() >= INBOX_CAP {
+            log::warn!("session action inbox full; dropping oldest");
+            self.queue.remove(0);
+        }
+        self.queue.push(inbound);
+    }
 }
 
 /// One entry in the session activity history.
@@ -410,6 +459,173 @@ fn send(
         peer: None,
         name,
         summary,
+    });
+    true
+}
+
+// ----------------------------------------------------------------------------
+// Remote application
+// ----------------------------------------------------------------------------
+
+/// Apply received actions to the matching open heads' VMs.
+///
+/// Runs after [`poll_collab_events`](crate::poll_collab_events) and before
+/// `VmSet`, so writes land before evaluation systems observe the frame. The
+/// apply path uses `gantz_core::node::state::update_value` and
+/// `EvalEntryEvent` directly - never a `NodeCtx`, never the payload bus - so
+/// nothing here can re-broadcast (the capture and apply channels are
+/// physically disjoint).
+///
+/// Each action applies only while the local tip holds the IDENTICAL graph it
+/// was issued against: anchor equality guarantees node-index identity, which
+/// is what makes bare index paths safe (`state::update_value` would happily
+/// create state at any path on a diverged graph). A mismatch is usually a
+/// tip in flight, so actions retry briefly before dropping; an action for a
+/// just-deleted node expires the same way (deletion moved the anchor).
+pub fn apply_remote_actions(
+    identity: Option<Res<CollabIdentity>>,
+    registry: Res<Registry>,
+    mut inbox: ResMut<ActionInbox>,
+    mut vms: NonSendMut<head::HeadVms>,
+    open: Query<(Entity, &head::HeadRef), With<head::OpenHead>>,
+    mut activity: ResMut<ActionLog>,
+    mut cmds: Commands,
+) {
+    if inbox.queue.is_empty() {
+        return;
+    }
+    let self_id = identity.as_ref().map(|i| i.0.peer_id());
+    let now = Instant::now();
+    let mut retry = Vec::new();
+    let queue = std::mem::take(&mut inbox.queue);
+    for inbound in queue {
+        // Gossip broadcasts don't self-deliver; guard anyway.
+        if Some(inbound.origin) == self_id {
+            continue;
+        }
+        let head = ca::Head::Branch(inbound.name.clone());
+        let anchor = registry.head_commit(&head).map(|c| c.graph);
+        if anchor != Some(inbound.graph) {
+            if now.duration_since(inbound.received) < RETRY_DEADLINE {
+                retry.push(inbound);
+            } else {
+                log::debug!(
+                    "dropping session action for '{}': graph anchor mismatch",
+                    inbound.name,
+                );
+            }
+            continue;
+        }
+        // An ephemeral action for a closed tab is meaningless: no VM runs it.
+        let Some(entity) = open
+            .iter()
+            .find(|(_, hr)| hr.0 == head)
+            .map(|(entity, _)| entity)
+        else {
+            continue;
+        };
+        let Some(vm) = vms.get_mut(&entity) else {
+            continue;
+        };
+        let action: Action = match proto::decode(&inbound.data) {
+            Ok(action) => action,
+            Err(e) => {
+                log::debug!("undecodable session action from {}: {e}", inbound.origin);
+                continue;
+            }
+        };
+        let node_count = registry.head_graph(&head).map(|g| g.node_count());
+        match action {
+            Action::SetState { path, value, eval } => {
+                // Last-write-wins per path: reordered/concurrent writes
+                // converge on the newest, origin id breaking ties.
+                let key = (inbound.session, inbound.name.clone(), path.clone());
+                let stamp = (inbound.timestamp, inbound.origin);
+                if inbox
+                    .last_applied
+                    .get(&key)
+                    .is_some_and(|&(ts, origin)| (ts, origin.0) >= (stamp.0, stamp.1.0))
+                {
+                    continue;
+                }
+                // Anchor equality already guarantees the path came from a
+                // real node of this exact graph; bound-check the root index
+                // as defense-in-depth against the lazy-map hazard.
+                if path
+                    .first()
+                    .zip(node_count)
+                    .is_none_or(|(&ix, count)| ix >= count)
+                {
+                    continue;
+                }
+                let summary = format!(
+                    "set {path:?} = {}{}",
+                    value_summary(&value),
+                    if eval.is_some() { " +eval" } else { "" },
+                );
+                if let Err(e) = gantz_core::node::state::update_value(vm, &path, value.into()) {
+                    log::warn!("failed to apply remote state write: {e}");
+                    continue;
+                }
+                inbox.last_applied.insert(key, stamp);
+                if let Some(src) = eval {
+                    trigger_guarded_eval(
+                        vm,
+                        entity,
+                        gantz_egui::action::entrypoint([src]),
+                        &mut cmds,
+                    );
+                }
+                activity.push(ActionLogEntry {
+                    timestamp: inbound.timestamp,
+                    session: inbound.session,
+                    peer: Some(inbound.origin),
+                    name: inbound.name,
+                    summary,
+                });
+            }
+            Action::Eval { sources } => {
+                let summary = format!("eval {}", sources_summary(&sources));
+                let ep = gantz_egui::action::entrypoint(sources);
+                if trigger_guarded_eval(vm, entity, ep, &mut cmds) {
+                    activity.push(ActionLogEntry {
+                        timestamp: inbound.timestamp,
+                        session: inbound.session,
+                        peer: Some(inbound.origin),
+                        name: inbound.name,
+                        summary,
+                    });
+                }
+            }
+            Action::Custom { tag, .. } => {
+                log::debug!("dropping custom session action '{tag}': no codec routed");
+            }
+        }
+    }
+    inbox.queue = retry;
+}
+
+/// Trigger an entrypoint evaluation iff its generated entry fn exists in the
+/// VM: a config-divergent peer (e.g. `emit_all_node_fns` differences) logs
+/// one debug line instead of pushing a spurious runtime diagnostic through
+/// the eval error path. Returns whether the eval was triggered.
+fn trigger_guarded_eval(
+    vm: &steel::steel_vm::engine::Engine,
+    head: Entity,
+    entrypoint: Entrypoint,
+    cmds: &mut Commands,
+) -> bool {
+    let fn_name = gantz_core::compile::entry_fn_name(&entrypoint.id());
+    if vm.extract_value(&fn_name).is_err() {
+        log::debug!("remote eval skipped: entry fn {fn_name} is not compiled locally");
+        return false;
+    }
+    // A remote push fires "now" on this peer's clock (matching local
+    // user-driven pushes).
+    cmds.trigger(EvalEntryEvent {
+        head,
+        entrypoint,
+        time: None,
     });
     true
 }
