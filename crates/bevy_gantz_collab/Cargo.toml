@@ -20,3 +20,4 @@ gantz_core.workspace = true
 gantz_egui.workspace = true
 ron.workspace = true
 serde.workspace = true
+web-time.workspace = true

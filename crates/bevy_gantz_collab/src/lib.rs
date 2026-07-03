@@ -31,6 +31,7 @@ use gantz_collab::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+pub mod action;
 pub mod storage;
 
 /// The plugin: registers the session resources, observers and systems.
@@ -178,9 +179,17 @@ impl Plugin for CollabPlugin {
         app.init_resource::<CollabRuntime>()
             .init_resource::<CollabSessions>()
             .init_resource::<bevy_gantz_egui::CollabUi>()
+            .init_resource::<action::ActionOutbox>()
+            .init_resource::<action::ActionLog>()
             .register_head_response::<gantz_egui::ShareHead>()
             .register_head_response::<gantz_egui::StopSharing>()
             .register_response_with::<gantz_egui::JoinSession>(dispatch_join_session)
+            // Capture overrides (last registration wins over the
+            // bevy_gantz_egui defaults; the app adds this plugin after it).
+            .register_response_with::<gantz_egui::StateWritten>(action::dispatch_state_written)
+            .register_response_with::<gantz_egui::EvalEntry>(action::dispatch_eval_entry)
+            .add_observer(action::on_capture_write)
+            .add_observer(action::on_capture_eval)
             .add_observer(on_share_head_payload)
             .add_observer(on_stop_sharing_payload)
             .add_observer(on_share_session)
@@ -198,6 +207,7 @@ impl Plugin for CollabPlugin {
                         // so a commit minted this frame has its view seeded
                         // before its tip can be served to peers.
                         announce_sessions.after(bevy_gantz_egui::ViewPersistSet),
+                        action::broadcast_actions,
                         broadcast_presence,
                         update_collab_ui,
                     )
