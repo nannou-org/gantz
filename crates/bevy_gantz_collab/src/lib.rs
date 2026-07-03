@@ -1319,14 +1319,29 @@ fn resolve_tip(
                     state.conflicts += outcome.conflicts.len();
                     let graph_ca = ca::graph_addr(&outcome.graph);
                     let mut branch_head = ca::Head::Branch(name.clone());
+                    // Seed the minted merge commit's view from the parent
+                    // tips' stored views before it can be announced: a
+                    // viewless tip on the wire auto-layouts on every
+                    // adopting peer. (An open head seeds from its live
+                    // layout instead - see `on_sync_remote_tip`.)
+                    let first_view = gantz_egui::section::view(registry, &first);
+                    let second_view = gantz_egui::section::view(registry, &second);
+                    let seeded = gantz_egui::ops::merged_view(
+                        &outcome.node_srcs,
+                        first_view.as_ref(),
+                        second_view.as_ref(),
+                    );
                     let graph = outcome.graph;
-                    registry.commit_merge_canonical(
+                    let minted = registry.commit_merge_canonical(
                         first,
                         second,
                         graph_ca,
                         || graph,
                         &mut branch_head,
                     );
+                    if !seeded.layout.is_empty() {
+                        gantz_egui::section::set_view(&mut registry.0, minted, &seeded);
+                    }
                     // A minted merge must be announced.
                     cmds.trigger(bevy_gantz_egui::ResyncRefsEvent);
                 }

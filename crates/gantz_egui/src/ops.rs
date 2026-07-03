@@ -618,6 +618,56 @@ pub fn revert_target(registry: &gantz_ca::Registry, head: &gantz_ca::Head) -> Op
         })
 }
 
+/// Build a view for a headlessly minted merge commit from the two parent
+/// tips' stored views: each merged node takes its position from the first
+/// (ours) tip's view where it survives there, falling back to the second
+/// (theirs) tip's view, then to a cascade from the camera centre - the same
+/// fallback as [`apply_merge_migration`]. The camera comes from whichever
+/// side has a view, preferring the first.
+///
+/// When neither side has a view (or no position carries over at all) the
+/// result is empty; callers must not store empty-layout views, as an
+/// adopting peer would destructively auto-layout them.
+pub fn merged_view(
+    node_srcs: &[gantz_ca::merge::NodeSrc],
+    first_view: Option<&crate::SceneView>,
+    second_view: Option<&crate::SceneView>,
+) -> crate::SceneView {
+    let node_id = |ix: usize| egui_graph::NodeId::from_u64(ix as u64);
+    let camera = first_view
+        .or(second_view)
+        .map(|v| v.camera)
+        .unwrap_or_default();
+    let mut view = crate::SceneView {
+        camera,
+        layout: Default::default(),
+    };
+    let mut missing = Vec::new();
+    for (m, src) in node_srcs.iter().enumerate() {
+        let pos = src
+            .ours
+            .and_then(|o| first_view.and_then(|v| v.layout.get(&node_id(o)).copied()))
+            .or_else(|| {
+                src.theirs
+                    .and_then(|t| second_view.and_then(|v| v.layout.get(&node_id(t)).copied()))
+            });
+        match pos {
+            Some(pos) => {
+                view.layout.insert(node_id(m), pos);
+            }
+            None => missing.push(m),
+        }
+    }
+    if view.layout.is_empty() {
+        return view;
+    }
+    for (i, m) in missing.into_iter().enumerate() {
+        let pos = view.camera.center + egui::vec2(20.0, 20.0) * i as f32;
+        view.layout.insert(node_id(m), pos);
+    }
+    view
+}
+
 /// Migrate a head's index-keyed VM state, layout and selection through a
 /// merge outcome's node provenance, seeding layout for merged-in nodes from
 /// the other side's persisted view (typically read from the registry's view
@@ -1120,6 +1170,61 @@ mod tests {
         live.layout.insert(node_id(5), egui::pos2(1.0, 1.0));
         let matching = gantz_ca::Matching::new();
         let view = carry_layout(&live, &matching, 3);
+        assert!(view.layout.is_empty());
+    }
+
+    // merged_view sources each merged node's position from the first tip's
+    // view where it survives there, falling back to the second tip's, then
+    // cascading from the camera centre; the camera prefers the first side.
+    #[test]
+    fn merged_view_sources_ours_then_theirs_then_cascade() {
+        let src = |ours: Option<usize>, theirs: Option<usize>| gantz_ca::merge::NodeSrc {
+            base: None,
+            ours,
+            theirs,
+        };
+        let mut first = crate::SceneView::default();
+        first.camera.center = egui::pos2(10.0, 10.0);
+        first.layout.insert(node_id(0), egui::pos2(1.0, 0.0));
+        let mut second = crate::SceneView::default();
+        second.layout.insert(node_id(0), egui::pos2(2.0, 0.0));
+        second.layout.insert(node_id(1), egui::pos2(3.0, 0.0));
+
+        // Merged node 0 exists on both sides (ours wins); node 1 is
+        // theirs-only; node 2 has no stored position anywhere.
+        let srcs = [
+            src(Some(0), Some(0)),
+            src(None, Some(1)),
+            src(Some(9), None),
+        ];
+        let view = merged_view(&srcs, Some(&first), Some(&second));
+
+        assert_eq!(view.camera, first.camera);
+        assert_eq!(
+            view.layout.get(&node_id(0)).copied(),
+            Some(egui::pos2(1.0, 0.0))
+        );
+        assert_eq!(
+            view.layout.get(&node_id(1)).copied(),
+            Some(egui::pos2(3.0, 0.0))
+        );
+        // The positionless node cascades from the camera centre.
+        assert_eq!(
+            view.layout.get(&node_id(2)).copied(),
+            Some(egui::pos2(10.0, 10.0))
+        );
+    }
+
+    // Without a stored view on either side, merged_view yields an empty
+    // layout: callers must not store empty-layout views.
+    #[test]
+    fn merged_view_no_views_yields_empty() {
+        let srcs = [gantz_ca::merge::NodeSrc {
+            base: None,
+            ours: Some(0),
+            theirs: None,
+        }];
+        let view = merged_view(&srcs, None, None);
         assert!(view.layout.is_empty());
     }
 

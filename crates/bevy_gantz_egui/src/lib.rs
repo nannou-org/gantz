@@ -1303,6 +1303,12 @@ pub fn on_merge_head(
                 event.data.source,
                 new_commit.display_short()
             );
+            // Seed the minted merge commit's view from the migrated live
+            // layout so it exists before any same-frame session announce (a
+            // viewless tip on the wire auto-layouts on adopting peers).
+            if !gv.0.layout.is_empty() {
+                gantz_egui::section::set_view(&mut registry.0, new_commit, &gv.0);
+            }
             // Re-register the root graph so merged-in nodes get their state
             // initialized. Idempotent for existing nodes; registration
             // reifies the graph transiently.
@@ -1408,6 +1414,12 @@ pub fn on_sync_remote_tip(
                 log::info!("session merge auto-resolved {conflicts} conflict(s)");
             }
             log::debug!("session merge -> {}", new_commit.display_short());
+            // Seed the minted merge commit's view from the migrated live
+            // layout so it exists before any same-frame session announce (a
+            // viewless tip on the wire auto-layouts on adopting peers).
+            if !gv.0.layout.is_empty() {
+                gantz_egui::section::set_view(&mut registry.0, new_commit, &gv.0);
+            }
             // Re-register the root graph so merged-in nodes get their state
             // initialized, then fire the committed machinery (GUI-state
             // migration, redo-stack clear, NamedRef resync, recompile).
