@@ -434,7 +434,8 @@ pub fn on_share_session(
     serve_scope(handle, &mut state, &registry, &scope);
     state.last_announced = state.served_heads.clone();
     sessions.sessions.insert(id, state);
-    cmds.entity(event.head).insert(SessionRef(id));
+    cmds.entity(event.head)
+        .insert((SessionRef(id), bevy_gantz_egui::SessionHead));
     if handle.cmds.try_send(Command::Share(id)).is_err() {
         log::error!("ShareSession: collab runtime is gone");
     }
@@ -524,7 +525,8 @@ pub fn on_leave_session(
     }
     for (entity, session_ref) in &refs {
         if session_ref.0 == id {
-            cmds.entity(entity).remove::<SessionRef>();
+            cmds.entity(entity)
+                .remove::<(SessionRef, bevy_gantz_egui::SessionHead)>();
         }
     }
 }
@@ -574,7 +576,8 @@ pub fn attach_session_refs(
             .iter()
             .find(|(_, s)| s.branch_name() == *name)
         {
-            cmds.entity(entity).insert(SessionRef(*id));
+            cmds.entity(entity)
+                .insert((SessionRef(*id), bevy_gantz_egui::SessionHead));
         }
     }
 }

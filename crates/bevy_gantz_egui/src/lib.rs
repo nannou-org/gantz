@@ -251,6 +251,16 @@ pub struct GraphView(pub gantz_egui::SceneView);
 #[derive(Component, Default)]
 pub struct HeadNodeInstances(pub gantz_egui::node::NodeInstances);
 
+/// Marker: this open head participates in a live collaborative session.
+///
+/// Maintained by the session layer (inserted alongside its own session
+/// bookkeeping, removed on leave). While present, the undo/redo handlers
+/// mint forward revert commits (see [`gantz_egui::ops::session_undo`])
+/// instead of navigating backwards - peers plan an ancestor tip as
+/// up-to-date and drop it, so plain navigation undo never syncs.
+#[derive(Component)]
+pub struct SessionHead;
+
 // ----------------------------------------------------------------------------
 // Resources
 // ----------------------------------------------------------------------------
@@ -727,6 +737,7 @@ pub fn on_head_closed(trigger: On<head::ClosedEvent>, mut gui_state: ResMut<GuiS
     let head = &trigger.event().head;
     gui_state.open_heads.remove(head);
     gui_state.redo_stacks.remove(head);
+    gui_state.undo_cursors.remove(head);
 }
 
 /// Migrate GUI state for branch creation.
@@ -1414,6 +1425,12 @@ pub fn on_sync_remote_tip(
     match outcome {
         gantz_egui::ops::SyncTipOutcome::UpToDate => (),
         gantz_egui::ops::SyncTipOutcome::Moved(target) => {
+            // A remote edit invalidates local redo just like a local one (the
+            // Merged arm clears via CommittedEvent); a stale session-redo
+            // would otherwise mint a whole-graph revert clobbering the
+            // peers' newer work.
+            gui_state.redo_stacks.remove(&old_head);
+            gui_state.undo_cursors.remove(&old_head);
             navigate_head(&mut cmds, event.head, &old_head, target);
         }
         gantz_egui::ops::SyncTipOutcome::Merged {
@@ -1490,40 +1507,76 @@ pub fn refresh_named_heads(
 }
 
 /// Handle undo payloads: move the head back to its parent commit.
+///
+/// A session head (see [`SessionHead`]) instead mints a forward revert
+/// commit so the undo propagates to peers like any other edit.
 pub fn on_undo(
     trigger: On<ForHead<gantz_egui::Undo>>,
-    registry: Res<Registry>,
+    mut registry: ResMut<Registry>,
     mut gui_state: ResMut<GuiState>,
-    heads: Query<&head::HeadRef, With<head::OpenHead>>,
+    heads: Query<(&head::HeadRef, Has<SessionHead>), With<head::OpenHead>>,
+    graph_views: Query<&GraphView>,
     mut cmds: Commands,
 ) {
     let entity = trigger.event().head;
-    let Ok(head_ref) = heads.get(entity) else {
+    let Ok((head_ref, in_session)) = heads.get(entity) else {
         log::error!("Undo: head not found for entity {entity:?}");
         return;
     };
     let head = (**head_ref).clone();
-    let parent = gantz_egui::ops::undo(&registry, &mut gui_state.redo_stacks, &head);
-    if let Some(parent) = parent {
-        navigate_head(&mut cmds, entity, &head, parent);
+    let gui = &mut gui_state.0;
+    let target = if in_session {
+        let live_camera = graph_views.get(entity).ok().map(|gv| gv.0.camera);
+        gantz_egui::ops::session_undo(
+            &mut registry.0,
+            &mut gui.redo_stacks,
+            &mut gui.undo_cursors,
+            bevy_gantz::reg::timestamp(),
+            &head,
+            live_camera,
+        )
+    } else {
+        gantz_egui::ops::undo(&registry.0, &mut gui.redo_stacks, &head)
+    };
+    if let Some(target) = target {
+        navigate_head(&mut cmds, entity, &head, target);
     }
 }
 
 /// Handle redo payloads: move the head forward to a previously undone commit.
+///
+/// A session head (see [`SessionHead`]) instead mints a forward revert
+/// commit restoring the undone position, mirroring [`on_undo`].
 pub fn on_redo(
     trigger: On<ForHead<gantz_egui::Redo>>,
+    mut registry: ResMut<Registry>,
     mut gui_state: ResMut<GuiState>,
-    heads: Query<&head::HeadRef, With<head::OpenHead>>,
+    heads: Query<(&head::HeadRef, Has<SessionHead>), With<head::OpenHead>>,
+    graph_views: Query<&GraphView>,
     mut cmds: Commands,
 ) {
     let entity = trigger.event().head;
-    let Ok(head_ref) = heads.get(entity) else {
+    let Ok((head_ref, in_session)) = heads.get(entity) else {
         log::error!("Redo: head not found for entity {entity:?}");
         return;
     };
     let head = (**head_ref).clone();
-    if let Some(redo_ca) = gantz_egui::ops::redo(&mut gui_state.redo_stacks, &head) {
-        navigate_head(&mut cmds, entity, &head, redo_ca);
+    let gui = &mut gui_state.0;
+    let target = if in_session {
+        let live_camera = graph_views.get(entity).ok().map(|gv| gv.0.camera);
+        gantz_egui::ops::session_redo(
+            &mut registry.0,
+            &mut gui.redo_stacks,
+            &mut gui.undo_cursors,
+            bevy_gantz::reg::timestamp(),
+            &head,
+            live_camera,
+        )
+    } else {
+        gantz_egui::ops::redo(&mut gui.redo_stacks, &head)
+    };
+    if let Some(target) = target {
+        navigate_head(&mut cmds, entity, &head, target);
     }
 }
 
