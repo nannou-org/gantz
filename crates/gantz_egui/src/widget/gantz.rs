@@ -1818,6 +1818,8 @@ where
                         return;
                     }
                     let env = gantz.env;
+                    // VM-state writes recorded by the node's `NodeCtx`.
+                    let mut writes = Vec::new();
                     // Scope child widget ids by (head, path) so views never share
                     // ids with each other or the in-graph node.
                     let result = ui
@@ -1835,7 +1837,15 @@ where
                                 // completes within its site); erase back iff
                                 // changed, updating the witness.
                                 let mut entry = data.instances.take(codec, n_ix, weight).ok()?;
-                                let ctx = NodeCtx::new(env, &path, &inlets, &outlets, &[], data.vm);
+                                let ctx = NodeCtx::new(
+                                    env,
+                                    &path,
+                                    &inlets,
+                                    &outlets,
+                                    &[],
+                                    data.vm,
+                                    &mut writes,
+                                );
                                 let r = entry.inst.node.view_ui(ctx, ui);
                                 if r.changed {
                                     match entry.inst.erase() {
@@ -1862,6 +1872,12 @@ where
                                 gantz_response.changed_heads.push(head.clone());
                             }
                             gantz_response.responses.extend(Some(&head), payloads);
+                            gantz_response.responses.extend(
+                                Some(&head),
+                                writes
+                                    .drain(..)
+                                    .map(|w| DynResponse::new(crate::StateWritten(w))),
+                            );
                         }
                         _ => {
                             // Head open but node missing at `path` (e.g. removed
@@ -1983,12 +1999,20 @@ where
                             &[ix] => n_outs.get(&ix).copied(),
                             _ => None,
                         };
-                        let mut node_ctx = NodeCtx::new(env, &[], &inlets, &outlets, &[], data.vm);
+                        let mut writes = Vec::new();
+                        let mut node_ctx =
+                            NodeCtx::new(env, &[], &inlets, &outlets, &[], data.vm, &mut writes);
                         let root_id = egui::Id::new(("gantz-gui-debug", &head));
                         let r = crate::ui_tree::UiTree::new(root_id)
                             .n_outputs(&resolver)
                             .show(&decoded.root, &mut node_ctx, ui);
-                        r.payloads
+                        let mut payloads = r.payloads;
+                        payloads.extend(
+                            writes
+                                .drain(..)
+                                .map(|w| crate::DynResponse::new(crate::StateWritten(w))),
+                        );
+                        payloads
                     });
                     if let Some(payloads) = payloads {
                         gantz_response.responses.extend(Some(&head), payloads);
@@ -3556,6 +3580,9 @@ fn node_inspector<'a>(
                 let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
                 // The rect of the first selected node, used to scroll to it.
                 let mut selected_rect: Option<egui::Rect> = None;
+                // VM-state writes recorded by each node's `NodeCtx` (drained
+                // per node into `StateWritten` payloads).
+                let mut writes = Vec::new();
                 for id in ids {
                     let mut frame = egui::Frame::group(ui.style());
                     let is_selected = head_state.scene.interaction.selection.nodes.contains(&id);
@@ -3576,8 +3603,15 @@ fn node_inspector<'a>(
                             return;
                         };
                         let path = [ix];
-                        let ctx =
-                            NodeCtx::new(registry, &path[..], &inlets, &outlets, ref_ext_uis, vm);
+                        let ctx = NodeCtx::new(
+                            registry,
+                            &path[..],
+                            &inlets,
+                            &outlets,
+                            ref_ext_uis,
+                            vm,
+                            &mut writes,
+                        );
                         let resp = widget::NodeInspector::new(&mut entry.inst.node, ctx, immutable)
                             .show(ui);
                         if resp.changed {
@@ -3609,6 +3643,11 @@ fn node_inspector<'a>(
                             }
                         }
                     });
+                    responses.extend(
+                        writes
+                            .drain(..)
+                            .map(|w| DynResponse::new(crate::StateWritten(w))),
+                    );
                     if is_selected && selected_rect.is_none() {
                         selected_rect = Some(frame_resp.response.rect);
                     }

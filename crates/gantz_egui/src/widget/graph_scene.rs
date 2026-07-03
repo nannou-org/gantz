@@ -681,6 +681,9 @@ fn nodes(
     let mut nodes_to_reset = Vec::new();
     let mut request_layout = false;
     let mut request_align: Option<egui_graph::AlignBy> = None;
+    // VM-state writes recorded by each node's `NodeCtx` (drained per node
+    // into `StateWritten` payloads).
+    let mut writes = Vec::new();
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node_id = egui_graph::NodeId::from_u64(n_ix as u64);
@@ -714,8 +717,15 @@ fn nodes(
                     // A node at this (root) level has the single-element state
                     // path `[n_ix]`.
                     let node_path = [n_ix];
-                    let node_ctx =
-                        crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, &[], vm);
+                    let node_ctx = crate::NodeCtx::new(
+                        registry,
+                        &node_path,
+                        &inlets,
+                        &outlets,
+                        &[],
+                        vm,
+                        &mut writes,
+                    );
                     let r = entry.inst.node.ui(node_ctx, nui_ctx);
                     node_changed |= r.changed;
                     responses.extend(r.payloads);
@@ -906,8 +916,15 @@ fn nodes(
             // Node-specific items (e.g. the log node's "open logs").
             if let Some(entry) = instance.as_mut() {
                 let node_path = [n_ix];
-                let mut node_ctx =
-                    crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, &[], vm);
+                let mut node_ctx = crate::NodeCtx::new(
+                    registry,
+                    &node_path,
+                    &inlets,
+                    &outlets,
+                    &[],
+                    vm,
+                    &mut writes,
+                );
                 let cm = entry.inst.node.context_menu(&mut node_ctx, ui);
                 node_changed |= cm.changed;
                 responses.extend(cm.payloads);
@@ -961,6 +978,11 @@ fn nodes(
             }
         }
 
+        responses.extend(
+            writes
+                .drain(..)
+                .map(|w| DynResponse::new(crate::StateWritten(w))),
+        );
         node_responses.push((n_id, response));
     }
 

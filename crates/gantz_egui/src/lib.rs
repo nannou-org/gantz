@@ -9,6 +9,7 @@ use steel::{
     steel_vm::engine::Engine,
 };
 
+pub mod action;
 pub mod collab;
 pub mod cycle;
 pub mod export;
@@ -40,6 +41,7 @@ pub use gantz_format;
 #[doc(hidden)]
 pub use gantz_nodetag;
 
+pub use action::StateWritten;
 pub use egui_graph::SocketKind;
 pub use keybind::{Action, Keymap};
 pub use node::builtins;
@@ -371,6 +373,14 @@ fn default_view_ui(ctx: &NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
 /// Node UI methods report edits and emit payloads via their returned response
 /// types (see [`NodeUi`]); `NodeCtx` itself only provides read/write access to
 /// the node's surroundings (registry, path, VM state).
+///
+/// State writes via [`update_value`](Self::update_value) /
+/// [`update`](Self::update) are additionally recorded into the caller's
+/// write sink as [`action::StateWrite`]s, surfacing per-head as
+/// [`StateWritten`] payloads (how live interactions reach collaborative
+/// sessions - all nodes get this for free). Use
+/// [`update_value_local`](Self::update_value_local) for writes that must
+/// stay local.
 pub struct NodeCtx<'a> {
     env: &'a Env<'a>,
     path: &'a [node::Id],
@@ -378,6 +388,7 @@ pub struct NodeCtx<'a> {
     outlets: &'a [node::Id],
     ref_ext_uis: &'a [&'a dyn node::RefExtUi],
     vm: &'a mut Engine,
+    writes: &'a mut Vec<action::StateWrite>,
 }
 
 /// How to position pasted nodes.
@@ -650,6 +661,7 @@ impl<'a> NodeCtx<'a> {
         outlets: &'a [node::Id],
         ref_ext_uis: &'a [&'a dyn node::RefExtUi],
         vm: &'a mut Engine,
+        writes: &'a mut Vec<action::StateWrite>,
     ) -> Self {
         Self {
             env,
@@ -658,6 +670,7 @@ impl<'a> NodeCtx<'a> {
             outlets,
             ref_ext_uis,
             vm,
+            writes,
         }
     }
 
@@ -691,13 +704,44 @@ impl<'a> NodeCtx<'a> {
     }
 
     /// Register the given value as the node's new state.
+    ///
+    /// The write is recorded as an [`action::StateWrite`] (surfaced per-head
+    /// as a [`StateWritten`] payload) so live interactions can reach
+    /// collaborative sessions; values with no wire representation (closures
+    /// etc.) are written but not recorded. Use
+    /// [`update_value_local`](Self::update_value_local) for writes that must
+    /// stay local.
     pub fn update_value(&mut self, val: SteelVal) -> Result<(), SteelErr> {
-        node::state::update_value(self.vm, self.path, val)
+        let recorded = action::Value::try_from(&val).ok();
+        node::state::update_value(self.vm, self.path, val)?;
+        match recorded {
+            Some(value) => self.writes.push(action::StateWrite {
+                path: self.path.to_vec(),
+                value,
+            }),
+            None => log::debug!(
+                "state write at {:?} not recorded: no wire-encodable representation",
+                self.path
+            ),
+        }
+        Ok(())
     }
 
     /// Register the given value as the node's new state.
+    ///
+    /// See [`update_value`](Self::update_value) - the write is recorded for
+    /// session sync.
     pub fn update<T: IntoSteelVal>(&mut self, val: T) -> Result<(), SteelErr> {
-        node::state::update(self.vm, self.path, val)
+        let val = val.into_steelval()?;
+        self.update_value(val)
+    }
+
+    /// Register the given value as the node's new state WITHOUT recording it
+    /// for session sync: the local-only counterpart of
+    /// [`update_value`](Self::update_value), for per-peer scratch state
+    /// (accumulators, local caches) that must never replicate.
+    pub fn update_value_local(&mut self, val: SteelVal) -> Result<(), SteelErr> {
+        node::state::update_value(self.vm, self.path, val)
     }
 
     /// Extract the state of the node at `path`, which need not be this
@@ -715,9 +759,21 @@ impl<'a> NodeCtx<'a> {
     /// Exists for the UI tree interpreter, whose widgets bind to node state
     /// at resolved paths. Like [`update_value`][Self::update_value], this
     /// writes VM runtime state only and must never mark a response
-    /// `changed`.
+    /// `changed`; the write is likewise recorded for session sync under the
+    /// given path.
     pub fn update_value_at(&mut self, path: &[node::Id], val: SteelVal) -> Result<(), SteelErr> {
-        node::state::update_value(self.vm, path, val)
+        let recorded = action::Value::try_from(&val).ok();
+        node::state::update_value(self.vm, path, val)?;
+        match recorded {
+            Some(value) => self.writes.push(action::StateWrite {
+                path: path.to_vec(),
+                value,
+            }),
+            None => log::debug!(
+                "state write at {path:?} not recorded: no wire-encodable representation"
+            ),
+        }
+        Ok(())
     }
 
     /// The IDs of the inlets within the current graph.

@@ -126,6 +126,7 @@ impl Plugin for GantzEguiPlugin {
             .register_head_response::<gantz_egui::Redo>()
             .register_head_response::<gantz_egui::Undo>()
             .register_response_with::<gantz_egui::EvalEntry>(dispatch_eval_entry)
+            .register_response_with::<gantz_egui::StateWritten>(dispatch_state_written)
             .register_response_with::<gantz_egui::OpenHead>(dispatch_open_head)
             .register_response_with::<gantz_egui::ReplaceHead>(dispatch_replace_head)
             .register_response_with::<gantz_egui::ExportHead>(dispatch_export_head)
@@ -2315,6 +2316,12 @@ fn dispatch_eval_entry(entity: Option<Entity>, payload: DynResponse, cmds: &mut 
         time: None,
     });
 }
+
+/// Drop a [`gantz_egui::StateWritten`] payload: recorded VM-state writes
+/// exist for the collaborative-session layer, which overrides this
+/// registration (last registration wins) to broadcast them; without it they
+/// are local-only by design, not unhandled.
+fn dispatch_state_written(_: Option<Entity>, _payload: DynResponse, _cmds: &mut Commands) {}
 
 /// Dispatch a [`gantz_egui::OpenHead`] payload as a [`head::OpenEvent`].
 fn dispatch_open_head(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
