@@ -193,7 +193,14 @@ impl Plugin for CollabPlugin {
                 Update,
                 (
                     (poll_collab_events, attach_session_refs).before(bevy_gantz::VmSet),
-                    (announce_sessions, broadcast_presence, update_collab_ui)
+                    (
+                        // The announce runs after the view persistence passes
+                        // so a commit minted this frame has its view seeded
+                        // before its tip can be served to peers.
+                        announce_sessions.after(bevy_gantz_egui::ViewPersistSet),
+                        broadcast_presence,
+                        update_collab_ui,
+                    )
                         .after(bevy_gantz::VmSet),
                 ),
             );

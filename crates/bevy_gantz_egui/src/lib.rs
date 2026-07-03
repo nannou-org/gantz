@@ -74,6 +74,16 @@ impl GantzEguiPlugin {
     }
 }
 
+/// The system set containing the per-frame view persistence passes
+/// ([`persist_camera_and_seed`] and [`settle_layout`]) in the `Update`
+/// schedule.
+///
+/// Layers that publish commit views beyond the process (e.g. the
+/// collaborative-session announce) should run `.after(ViewPersistSet)` so a
+/// commit rendered this frame has its view seeded before it can be served.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
+pub struct ViewPersistSet;
+
 impl Plugin for GantzEguiPlugin {
     fn build(&self, app: &mut App) {
         // Register the push/pull, update_bang and tick_bang entrypoint
@@ -179,12 +189,13 @@ impl Plugin for GantzEguiPlugin {
                     node::tick_bang::drive_tick_bangs
                         .after(bevy_gantz::VmSet)
                         .in_set(bevy_gantz::EntrypointSet),
-                    persist_camera_and_seed,
+                    persist_camera_and_seed.in_set(ViewPersistSet),
                     // On layout settle, fork a layout-only commit. Runs after
                     // `VmSet` (so a graph edit commits first and its baseline is
                     // already seeded - no spurious layout commit) and after the
                     // camera/seed pass (so the head's baseline exists).
                     settle_layout
+                        .in_set(ViewPersistSet)
                         .after(bevy_gantz::VmSet)
                         .after(persist_camera_and_seed)
                         .run_if(on_message::<bevy_gantz::debounced_input::DebouncedInputEvent>),
