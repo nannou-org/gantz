@@ -643,6 +643,9 @@ pub fn poll_collab_events(
                 // Anti-entropy digests: heads pulls are a follow-up; gossip
                 // re-announcement covers transient losses meanwhile.
                 GossipMsg::Digest { .. } => {}
+                // Ephemeral actions: received into the session inbox by the
+                // action layer (wired in a follow-up commit).
+                GossipMsg::Action { .. } => {}
             },
             CollabEvent::Objects {
                 session, objects, ..

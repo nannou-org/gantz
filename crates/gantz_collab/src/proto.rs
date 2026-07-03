@@ -58,7 +58,38 @@ pub enum GossipMsg {
         origin: PeerId,
         name: Option<String>,
     },
+    /// An ephemeral node-interaction action (a live widget gesture or an
+    /// eval trigger), application-encoded. Fire-and-forget: never persisted,
+    /// no convergence obligation - the commit plane is unaffected when these
+    /// drop. Appended after the existing variants so their postcard
+    /// discriminants are unchanged.
+    Action {
+        origin: PeerId,
+        /// Per-origin sequence number, for stale-drop only.
+        seq: u64,
+        /// Sender wall-clock milliseconds since the epoch: the cross-origin
+        /// last-write-wins tiebreak for value-shaped actions, and history
+        /// display.
+        timestamp: u64,
+        /// The scoped name (branch) the action's head was on.
+        name: Name,
+        /// The graph address the action was issued against. Node-index
+        /// paths are only meaningful relative to a specific graph:
+        /// receivers apply an action only while their tip holds the
+        /// identical graph, and drop it otherwise.
+        graph: GraphAddr,
+        /// The application-encoded action (opaque here, like graph blobs -
+        /// an undecodable or unknown action drops alone without poisoning
+        /// the envelope).
+        data: Vec<u8>,
+    },
 }
+
+/// The size cap for [`GossipMsg::Action`]'s application-encoded `data`.
+///
+/// Keeps the whole message comfortably inside iroh-gossip's 4 KiB limit;
+/// senders drop (with a warning) rather than truncate an oversized action.
+pub const MAX_ACTION_DATA: usize = 2048;
 
 /// A kind-tagged reference to one content-addressed object.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -317,6 +348,51 @@ mod tests {
             panic!("wrong variant");
         };
         assert_eq!(want.refs.len(), 4);
+    }
+
+    #[test]
+    fn action_round_trips_and_leaves_other_variants_stable() {
+        let ga = GraphAddr::from(gantz_ca::ContentAddr::from([4; 32]));
+        let msg = GossipMsg::Action {
+            origin: PeerId([9; 32]),
+            seq: 3,
+            timestamp: 1_000_000,
+            name: name("main"),
+            graph: ga,
+            data: vec![1, 2, 3],
+        };
+        let decoded: GossipMsg = decode(&encode(&msg)).unwrap();
+        let GossipMsg::Action {
+            origin,
+            seq,
+            timestamp,
+            name,
+            graph,
+            data,
+        } = decoded
+        else {
+            panic!("wrong variant");
+        };
+        assert_eq!(origin, PeerId([9; 32]));
+        assert_eq!(seq, 3);
+        assert_eq!(timestamp, 1_000_000);
+        assert_eq!(name, "main".parse::<Name>().unwrap());
+        assert_eq!(graph, ga);
+        assert_eq!(data, vec![1, 2, 3]);
+
+        // The new trailing variant must not shift the existing postcard
+        // discriminants: a pre-action Tips encoding still starts with tag 0.
+        let tips = GossipMsg::Tips {
+            origin: PeerId([1; 32]),
+            seq: 0,
+            changed: vec![],
+        };
+        assert_eq!(encode(&tips)[0], 0);
+        let presence = GossipMsg::Presence {
+            origin: PeerId([1; 32]),
+            name: None,
+        };
+        assert_eq!(encode(&presence)[0], 2);
     }
 
     #[test]
