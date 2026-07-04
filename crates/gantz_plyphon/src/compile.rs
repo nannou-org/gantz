@@ -107,8 +107,13 @@ pub struct Derived {
 /// dead units whose params the driver would drive and whose presence would force
 /// spurious respawns (they'd land in [`structural_sig`]).
 ///
-/// Phase-1 limitations: a single edge per DSP input (no summing), acyclic graphs
-/// only (no feedback), and flat concrete nodes (no nested graphs / refs).
+/// Nested graphs are supported via a pre-derivation pass: [`flatten`](crate::flatten)
+/// resolves graph refs and splices their nodes into a single flat graph (each
+/// carrying its original nested path via [`ToNodeDsp::node_path`]) before
+/// derivation runs.
+///
+/// Phase-1 limitations: a single edge per DSP input (no summing) and acyclic
+/// graphs only (no feedback).
 pub fn derive_synthdef<N>(
     graph: &Graph<N>,
     out_channels: usize,
@@ -146,7 +151,7 @@ where
                     .unwrap_or_else(|| Signal::silent(1))
             })
             .collect();
-        let outs = dsp.ugens(&[n.index()], &inputs, &mut builder);
+        let outs = dsp.ugens(&graph[n].node_path(n.index()), &inputs, &mut builder);
         debug_assert_eq!(
             outs.len(),
             dsp.n_dsp_outputs(),
@@ -477,7 +482,7 @@ where
                                         channels,
                                     ));
                                     bus_reads.push(BusBinding {
-                                        node_path: vec![bus.index()],
+                                        node_path: graph[bus].node_path(bus.index()),
                                         channels,
                                         unit: unit as usize,
                                     });
@@ -497,7 +502,7 @@ where
                     None => Signal::silent(1),
                 })
                 .collect();
-            let outs = dsp.ugens(&[n.index()], &inputs, &mut builder);
+            let outs = dsp.ugens(&graph[n].node_path(n.index()), &inputs, &mut builder);
             debug_assert_eq!(
                 outs.len(),
                 dsp.n_dsp_outputs(),
@@ -516,7 +521,7 @@ where
                 .and_then(|o| o.get(port))
                 .cloned()
                 .unwrap_or_else(|| Signal::silent(1));
-            let fade = builder.push_fade_gain(&[b.index()]);
+            let fade = builder.push_fade_gain(&graph[b].node_path(b.index()));
             let mut out_inputs = vec![InputRef::Constant(0.0)];
             for ch in sig.channels() {
                 let ch = builder.ensure_audio(ch);
@@ -534,7 +539,7 @@ where
             }
             let unit = builder.push_unit(UnitSpec::new("Out", Rate::Audio, out_inputs, 0));
             bus_writes.push(BusBinding {
-                node_path: vec![b.index()],
+                node_path: graph[b].node_path(b.index()),
                 channels: sig.width(),
                 unit: unit as usize,
             });
@@ -544,7 +549,7 @@ where
         // A stable region identity: its sink and boundary roles + node paths.
         let mut h = DefaultHasher::new();
         for s in &region_sinks {
-            (0u8, s.index()).hash(&mut h);
+            (0u8, graph[*s].node_path(s.index())).hash(&mut h);
         }
         for w in &bus_writes {
             (1u8, &w.node_path).hash(&mut h);

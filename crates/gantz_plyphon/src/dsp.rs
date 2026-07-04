@@ -183,6 +183,19 @@ pub trait NodeDsp {
 pub trait ToNodeDsp {
     /// This value as a [`NodeDsp`], if it is one.
     fn to_node_dsp(&self) -> Option<&dyn NodeDsp>;
+
+    /// The node's path, used to name control [`Param`]s, key driver bindings
+    /// (see [`ParamBinding::node_path`]) and hash region keys. `ix` is the
+    /// node's index within the graph being derived.
+    ///
+    /// Defaults to `[ix]`, correct for a flat graph. The flattening pass
+    /// (see [`flatten`](crate::flatten)) overrides this on its
+    /// [`Flat`](crate::flatten::Flat) wrapper to return the node's original
+    /// path within the nested structure, so params keep bridging to the
+    /// node's VM state and identities stay stable across re-derives.
+    fn node_path(&self, ix: usize) -> Vec<usize> {
+        vec![ix]
+    }
 }
 
 /// Records which dsp node a synthdef [`Param`] came from, so the audio driver can
