@@ -107,7 +107,7 @@ pub struct Derived {
 /// dead units whose params the driver would drive and whose presence would force
 /// spurious respawns (they'd land in [`structural_sig`]).
 ///
-/// Nested graphs are supported via a pre-derivation pass: [`flatten`](crate::flatten)
+/// Nested graphs are supported via a pre-derivation pass: [`flatten`](crate::flatten())
 /// resolves graph refs and splices their nodes into a single flat graph (each
 /// carrying its original nested path via [`ToNodeDsp::node_path`]) before
 /// derivation runs.

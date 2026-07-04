@@ -189,7 +189,7 @@ pub trait ToNodeDsp {
     /// node's index within the graph being derived.
     ///
     /// Defaults to `[ix]`, correct for a flat graph. The flattening pass
-    /// (see [`flatten`](crate::flatten)) overrides this on its
+    /// (see [`flatten`](crate::flatten())) overrides this on its
     /// [`Flat`](crate::flatten::Flat) wrapper to return the node's original
     /// path within the nested structure, so params keep bridging to the
     /// node's VM state and identities stay stable across re-derives.
