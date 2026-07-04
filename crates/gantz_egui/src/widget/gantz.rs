@@ -533,6 +533,9 @@ where
     focused_head: usize,
     base_names: &'a gantz_ca::registry::Names,
     gantz_response: &'a mut GantzResponse,
+    /// Panes detached into windows. The tab context menu pushes to this when a
+    /// pane is popped out.
+    windowed: &'a mut Vec<Pane>,
 }
 
 /// Response from the top-level gantz widget.
@@ -807,6 +810,9 @@ impl<'a> Gantz<'a> {
         let mut tree: egui_tiles::Tree<Pane> =
             load_tree(ui.ctx(), tree_id).unwrap_or_else(create_tree);
 
+        // The set of panes popped out into windows, persisted alongside the tree.
+        let mut windowed: Vec<Pane> = load_ron(ui.ctx(), windowed_panes_id()).unwrap_or_default();
+
         // Check the `view_toggles` match the pane visibility.
         set_tile_visibility(&mut tree, &state.view_toggles);
 
@@ -845,10 +851,11 @@ impl<'a> Gantz<'a> {
         let mut behaviour = TreeBehaviour {
             gantz: &mut self,
             state: &mut *state,
-            access,
+            access: &mut *access,
             focused_head,
             base_names,
             gantz_response: &mut response,
+            windowed: &mut windowed,
         };
         tree.ui(&mut behaviour, ui);
 
@@ -888,16 +895,65 @@ impl<'a> Gantz<'a> {
         // during traversal, since the live top-level tree wasn't reachable then).
         for (head, reindex) in &response.node_view_reindexes {
             migrate_node_view_paths(&mut tree, head, reindex);
+            migrate_windowed_node_views(&mut windowed, head, reindex);
         }
         // "open view": add (or focus) a node-view tile in the top-level tree.
         // The node's head is the payload's head tag.
         for (head, view) in response.responses.take::<OpenNodeView>() {
             let Some(head) = head else { continue };
+            // Skip if this view is already popped out into a window.
+            let windowed_already = windowed.iter().any(
+                |p| matches!(p, Pane::NodeView(np) if np.head == head && np.path == view.path),
+            );
+            if windowed_already {
+                continue;
+            }
             add_node_view_pane(&mut tree, head, view.path, view.ty_name);
         }
 
-        // Persist the tree.
+        // Reconcile the windowed set: a singleton whose toggle was turned back
+        // on (e.g. via Settings -> Panes) re-docks, so drop it here. Node views
+        // stay windowed until their window is closed.
+        windowed
+            .retain(|p| matches!(p, Pane::NodeView(_)) || !pane_is_visible(&state.view_toggles, p));
+
+        // Render each windowed pane as a floating `egui::Window` (the web /
+        // fallback backend). Closing a window returns the pane to the tile tree.
+        let mut redock: Vec<Pane> = Vec::new();
+        for pane in &mut windowed {
+            let title = pane_title(&self, &*access, focused_head, pane);
+            let mut open = true;
+            egui::Window::new(title)
+                .id(egui::Id::new(("gantz-windowed-pane", pane_key(pane))))
+                .open(&mut open)
+                .show(ui.ctx(), |ui| {
+                    // Namespace child ids so a windowed pane never collides with
+                    // its (briefly still-visible) docked instance.
+                    ui.push_id(("gantz-windowed", pane_key(pane)), |ui| {
+                        let mut cx = PaneCtx {
+                            gantz: &mut self,
+                            state: &mut *state,
+                            access: &mut *access,
+                            focused_head,
+                            base_names,
+                            response: &mut response,
+                        };
+                        render_pane(&mut cx, ui, pane);
+                    });
+                });
+            if !open {
+                redock.push(pane.clone());
+            }
+        }
+        for pane in redock {
+            let key = pane_key(&pane);
+            windowed.retain(|p| pane_key(p) != key);
+            redock_pane(&mut state.view_toggles, &mut tree, pane);
+        }
+
+        // Persist the tree and the windowed set.
         store_tree(ui.ctx(), tree_id, &tree);
+        store_ron(ui.ctx(), windowed_panes_id(), &windowed);
 
         response
     }
@@ -960,14 +1016,29 @@ where
         tile_id: egui_tiles::TileId,
         button_response: egui::Response,
     ) -> egui::Response {
-        // Right-click a (hideable) tab to hide its pane.
+        // Right-click a tab for pane actions: hide (hideable panes) and/or pop
+        // out into a window (any pane but the graph scene).
         let pane = match tiles.get(tile_id) {
-            Some(egui_tiles::Tile::Pane(pane)) if pane_is_hideable(pane) => pane.clone(),
+            Some(egui_tiles::Tile::Pane(pane))
+                if pane_is_hideable(pane) || pane_is_poppable(pane) =>
+            {
+                pane.clone()
+            }
             _ => return button_response,
         };
         button_response.context_menu(|ui| {
-            if ui.button("hide").clicked() {
+            if pane_is_hideable(&pane) && ui.button("hide").clicked() {
                 set_pane_visible(&mut self.state.view_toggles, &pane, false);
+                ui.close();
+            }
+            if pane_is_poppable(&pane) && ui.button("pop out to window").clicked() {
+                detach_pane(
+                    &mut self.state.view_toggles,
+                    self.windowed,
+                    tiles,
+                    tile_id,
+                    &pane,
+                );
                 ui.close();
             }
         });
@@ -2350,6 +2421,131 @@ fn set_pane_visible(view: &mut ViewToggles, pane: &Pane, visible: bool) {
     }
 }
 
+/// Whether a pane's visibility toggle is currently on. Panes without a toggle
+/// (the graph scene and node views) are always considered visible.
+fn pane_is_visible(view: &ViewToggles, pane: &Pane) -> bool {
+    match pane {
+        Pane::Graphs => view.graphs,
+        Pane::History => view.history,
+        Pane::Settings => view.settings,
+        Pane::GraphConfig => view.graph_config,
+        Pane::NodeInspector => view.node_inspector,
+        Pane::VmPerf => view.perf_vm,
+        Pane::GuiPerf => view.perf_gui,
+        Pane::Logs => view.logs,
+        Pane::Steel => view.steel,
+        Pane::GraphScene | Pane::NodeView(_) => true,
+    }
+}
+
+/// Whether a pane may be popped out into a window. Every pane but the graph
+/// scene (which hosts the inner graph tile tree) qualifies.
+fn pane_is_poppable(pane: &Pane) -> bool {
+    !matches!(pane, Pane::GraphScene)
+}
+
+/// A stable identity for a pane, used to key its window and to dedupe the
+/// windowed set. Singletons key on their variant; a node view keys on its
+/// `(head, path)` - the same identity [`add_node_view_pane`] dedupes on.
+fn pane_key(pane: &Pane) -> String {
+    match pane {
+        Pane::GraphConfig => "graph-config".to_string(),
+        Pane::GraphScene => "graph-scene".to_string(),
+        Pane::Graphs => "graphs".to_string(),
+        Pane::GuiPerf => "gui-perf".to_string(),
+        Pane::History => "history".to_string(),
+        Pane::Logs => "logs".to_string(),
+        Pane::NodeInspector => "node-inspector".to_string(),
+        Pane::Settings => "settings".to_string(),
+        Pane::Steel => "steel".to_string(),
+        Pane::VmPerf => "vm-perf".to_string(),
+        Pane::NodeView(p) => {
+            use std::fmt::Write;
+            let mut s = format!("node-view:{}", p.head);
+            for seg in &p.path {
+                let _ = write!(s, ":{seg}");
+            }
+            s
+        }
+    }
+}
+
+/// egui-memory id under which the set of windowed (popped-out) panes persists,
+/// stored as a RON `String` alongside the tile tree (see [`load_ron`]).
+fn windowed_panes_id() -> egui::Id {
+    egui::Id::new("gantz-windowed-panes-storage-v1")
+}
+
+/// Add `pane` to the windowed set unless one with the same identity is already
+/// there.
+fn push_windowed(windowed: &mut Vec<Pane>, pane: Pane) {
+    let key = pane_key(&pane);
+    if windowed.iter().all(|p| pane_key(p) != key) {
+        windowed.push(pane);
+    }
+}
+
+/// Pop a pane out of the tile tree into a window.
+///
+/// Node views are real tiles, so the tile is removed; singletons stay in the
+/// tree but hidden (their window shows them instead). Either way the pane joins
+/// the windowed set.
+fn detach_pane(
+    view: &mut ViewToggles,
+    windowed: &mut Vec<Pane>,
+    tiles: &mut egui_tiles::Tiles<Pane>,
+    tile_id: egui_tiles::TileId,
+    pane: &Pane,
+) {
+    match pane {
+        Pane::NodeView(_) => {
+            tiles.remove(tile_id);
+        }
+        _ => set_pane_visible(view, pane, false),
+    }
+    push_windowed(windowed, pane.clone());
+}
+
+/// Return a windowed pane to the tile tree: a node view re-enters as a tray
+/// tile, a singleton just becomes visible again (its tile stayed in the tree).
+fn redock_pane(view: &mut ViewToggles, tree: &mut egui_tiles::Tree<Pane>, pane: Pane) {
+    match pane {
+        Pane::NodeView(p) => add_node_view_pane(tree, p.head, p.path, p.ty_name),
+        pane => set_pane_visible(view, &pane, true),
+    }
+}
+
+/// Migrate windowed [`Pane::NodeView`] entries for `head` after a node removal,
+/// mirroring [`migrate_node_view_paths`] for the windowed set: a view of a
+/// removed node is dropped; a view of a swapped node has its path rewritten.
+fn migrate_windowed_node_views(
+    windowed: &mut Vec<Pane>,
+    head: &gantz_ca::Head,
+    reindex: &crate::ops::Reindex,
+) {
+    if reindex.is_empty() {
+        return;
+    }
+    windowed.retain_mut(|pane| {
+        let Pane::NodeView(p) = pane else {
+            return true;
+        };
+        if p.head != *head {
+            return true;
+        }
+        let [ix] = p.path[..] else {
+            return true;
+        };
+        match reindex.apply_to_index(ix) {
+            Some(new_ix) => {
+                p.path = vec![new_ix];
+                true
+            }
+            None => false,
+        }
+    });
+}
+
 /// Ensure the view toggles match the pane visibility.
 fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
     let ids: Vec<_> = tree.tiles.tile_ids().collect();
@@ -2942,5 +3138,87 @@ mod tests {
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
         capture_fixed_sizes(&tree, &mut state, area);
         assert!((state.sidebar_width - 240.0).abs() < 0.01);
+    }
+
+    fn node_view(head: &str, path: &[node::Id]) -> Pane {
+        Pane::NodeView(NodeViewPane {
+            head: gantz_ca::Head::Branch(head.to_string()),
+            path: path.to_vec(),
+            ty_name: "plot".to_string(),
+        })
+    }
+
+    /// Pane identity keys are stable per pane and independent of a node view's
+    /// `ty_name` (two views of the same node are the same identity).
+    #[test]
+    fn pane_key_identity() {
+        assert_eq!(pane_key(&Pane::Logs), "logs");
+        assert_ne!(pane_key(&Pane::Logs), pane_key(&Pane::Steel));
+
+        let plot = node_view("main", &[3]);
+        let same_node_number = Pane::NodeView(NodeViewPane {
+            head: gantz_ca::Head::Branch("main".to_string()),
+            path: vec![3],
+            ty_name: "number".to_string(),
+        });
+        assert_eq!(pane_key(&plot), pane_key(&same_node_number));
+        assert_ne!(pane_key(&plot), pane_key(&node_view("main", &[4])));
+        assert_ne!(pane_key(&plot), pane_key(&node_view("other", &[3])));
+    }
+
+    /// `push_windowed` dedupes by pane identity, so a repeated pop-out (or a
+    /// same-node view with a different `ty_name`) does not add a second entry.
+    #[test]
+    fn push_windowed_dedupes() {
+        let mut windowed = Vec::new();
+        push_windowed(&mut windowed, Pane::Logs);
+        push_windowed(&mut windowed, Pane::Logs);
+        push_windowed(&mut windowed, node_view("main", &[3]));
+        push_windowed(
+            &mut windowed,
+            Pane::NodeView(NodeViewPane {
+                head: gantz_ca::Head::Branch("main".to_string()),
+                path: vec![3],
+                ty_name: "number".to_string(),
+            }),
+        );
+        assert_eq!(windowed.len(), 2);
+    }
+
+    /// After a node removal, a windowed view of the removed node is dropped and a
+    /// view of a swapped node has its path rewritten; other heads and non-view
+    /// panes are untouched.
+    #[test]
+    fn migrate_windowed_node_views_drops_and_rewrites() {
+        let head = gantz_ca::Head::Branch("main".to_string());
+        let mut windowed = vec![
+            node_view("main", &[1]),  // removed node -> dropped
+            node_view("main", &[3]),  // swapped 3 -> 1
+            node_view("main", &[2]),  // unaffected
+            node_view("other", &[1]), // different head -> untouched
+            Pane::Logs,               // non-view -> untouched
+        ];
+        // Node 1 removed; the node that was at index 3 swapped down into slot 1.
+        let reindex = crate::ops::Reindex(vec![crate::ops::RemoveOp {
+            removed: 1,
+            moved_from: Some(3),
+        }]);
+        migrate_windowed_node_views(&mut windowed, &head, &reindex);
+
+        let main_paths: Vec<Vec<node::Id>> = windowed
+            .iter()
+            .filter_map(|p| match p {
+                Pane::NodeView(nv) if nv.head == head => Some(nv.path.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(main_paths, vec![vec![1], vec![2]]);
+        assert!(windowed.iter().any(|p| matches!(p, Pane::Logs)));
+        assert!(
+            windowed
+                .iter()
+                .any(|p| matches!(p, Pane::NodeView(nv) if matches!(&nv.head, gantz_ca::Head::Branch(n) if n == "other")))
+        );
+        assert_eq!(windowed.len(), 4);
     }
 }
