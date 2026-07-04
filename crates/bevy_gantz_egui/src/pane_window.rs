@@ -26,7 +26,7 @@ use crate::{
 use bevy_app::prelude::*;
 use bevy_camera::{Camera2d, RenderTarget};
 use bevy_ecs::prelude::*;
-use bevy_egui::{EguiContext, EguiContexts, EguiMultipassSchedule, egui};
+use bevy_egui::{EguiContext, EguiContexts, EguiMultipassSchedule, EguiPreUpdateSet, egui};
 use bevy_window::{Window, WindowCloseRequested, WindowRef};
 use gantz_ca as ca;
 use gantz_core::Node;
@@ -86,16 +86,21 @@ impl<N: PaneNode> Plugin for PaneWindowPlugin<N> {
     fn build(&self, app: &mut App) {
         app.init_resource::<WindowedPanesRequested>()
             .insert_resource(HostNativePaneWindows)
+            // Spawn / despawn pop-out windows in `PreUpdate` before bevy_egui
+            // initialises contexts, so a newly-spawned single-pass context gets
+            // its full first-frame lifecycle (screen rect -> input/scale ->
+            // `begin_pass`, which builds its fonts) before it is drawn in
+            // `Update` and tessellated in `PostUpdate`. Spawning it in `Update`
+            // would miss `begin_pass` yet still be tessellated the same frame -
+            // "No fonts loaded".
+            .add_systems(
+                PreUpdate,
+                reconcile_windowed_panes.before(EguiPreUpdateSet::InitContexts),
+            )
             .add_systems(
                 Update,
                 (
-                    // Render existing windows before reconciling, so a window
-                    // spawned this frame is first drawn next frame - after its
-                    // `begin_pass` - never into a not-yet-begun pass.
-                    render_windowed_panes::<N>
-                        .after(bevy_gantz::VmSet)
-                        .before(reconcile_windowed_panes),
-                    reconcile_windowed_panes,
+                    render_windowed_panes::<N>.after(bevy_gantz::VmSet),
                     on_window_close_redock,
                 ),
             );
