@@ -30,7 +30,7 @@ use gantz_ca as ca;
 use gantz_core::node::graph::Graph;
 use gantz_plyphon::{
     AddAction, Backend, Embedded, GainRef, ROOT_GROUP_ID, RegionDerived, ToNodeDsp,
-    derive_synthdefs, structural_sig,
+    derive_synthdefs, flatten::AsNamedRef, flatten_from_registry, structural_sig,
 };
 use plyphon::{Controller, InputRef, Nrt, Options, StreamConsumer, World, engine};
 // `std::time::Instant` panics ("time not implemented") on `wasm32-unknown-unknown`;
@@ -125,7 +125,7 @@ impl<N> PlyphonPlugin<N> {
 
 impl<N> Plugin for PlyphonPlugin<N>
 where
-    N: 'static + ToNodeDsp + Send + Sync,
+    N: 'static + ToNodeDsp + gantz_core::Node + AsNamedRef + Clone + Send + Sync,
 {
     fn build(&self, app: &mut App) {
         // The shared monotonic epoch (set by `GantzPlugin`, added before this) is
@@ -433,7 +433,7 @@ fn drive_synths<N>(
     mut vms: NonSendMut<HeadVms>,
     heads: Query<(Entity, &HeadRef, &WorkingGraph<N>), With<OpenHead>>,
 ) where
-    N: 'static + ToNodeDsp + Send + Sync,
+    N: 'static + ToNodeDsp + gantz_core::Node + AsNamedRef + Clone + Send + Sync,
 {
     let Some(dsp) = dsp else {
         return;
@@ -468,17 +468,31 @@ fn drive_synths<N>(
             continue;
         };
 
-        // Structural sync: only when the committed graph changed.
+        // Structural sync: only when the committed graph changed. Flattening
+        // first splices any nested graphs (resolved through the registry) into
+        // one flat graph whose nodes carry their original nested paths. On a
+        // flatten error (a ref cycle or an unresolvable ref, both forbidden
+        // upstream): keep the previous synths, parking the head at this graph
+        // address so the error logs once per commit rather than every frame.
         if state.heads.get(&entity).map(|h| h.graph) != Some(graph_ca) {
-            structural_sync(
-                &mut dsp.controller,
-                state,
-                entity,
-                graph_ca,
-                &wg.0,
-                out_channels,
-                sample_rate,
-            );
+            match flatten_from_registry(&wg.0, &registry) {
+                Ok(flat) => structural_sync(
+                    &mut dsp.controller,
+                    state,
+                    entity,
+                    graph_ca,
+                    &flat,
+                    out_channels,
+                    sample_rate,
+                ),
+                Err(e) => {
+                    log::error!(
+                        "bevy_gantz_plyphon: flattening nested graphs failed ({e:?}), \
+                         keeping the previous synths"
+                    );
+                    park_head(state, entity, graph_ca);
+                }
+            }
         }
 
         // Param sync: drain each param's queued control updates and schedule
@@ -603,6 +617,24 @@ fn expire_fades(fading: &mut Vec<FadingSynth>, now: Instant) -> Vec<FadingSynth>
 /// channels and fade defaults are all placeholders at that point - so a
 /// re-derive of the same graph never spuriously respawns.
 ///
+/// Park `entity` at `graph_ca` without touching its running synths, so an
+/// unactionable commit (a flatten or derive error) is not retried (and its
+/// error not re-logged) every frame.
+fn park_head(state: &mut HeadSynths, entity: Entity, graph_ca: ca::GraphAddr) {
+    match state.heads.get_mut(&entity) {
+        Some(head) => head.graph = graph_ca,
+        None => {
+            state.heads.insert(
+                entity,
+                HeadRegions {
+                    graph: graph_ca,
+                    regions: Vec::new(),
+                },
+            );
+        }
+    }
+}
+
 /// A replacement spawns *silent* (fade defaults patched to `0.0`. Defaults seed
 /// both the control wire and the lag state) and ramps its fades to unity once
 /// up, while the old synth's fades ramp to zero ahead of a deferred free - the
@@ -655,18 +687,7 @@ fn structural_sync<N>(
             log::error!(
                 "bevy_gantz_plyphon: `~bus` cycle between regions, keeping the previous synths"
             );
-            match state.heads.get_mut(&entity) {
-                Some(head) => head.graph = graph_ca,
-                None => {
-                    state.heads.insert(
-                        entity,
-                        HeadRegions {
-                            graph: graph_ca,
-                            regions: Vec::new(),
-                        },
-                    );
-                }
-            }
+            park_head(state, entity, graph_ca);
             return;
         }
     };

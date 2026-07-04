@@ -27,6 +27,7 @@ use gantz_core::Node as GantzNode;
 use gantz_core::edge::Edge;
 use gantz_core::node::graph::Graph;
 use gantz_core::node::{ExprCtx, ExprResult, MetaCtx, RegCtx, parse_expr};
+use gantz_plyphon::flatten::{AsNamedRef, NamedRef};
 use gantz_plyphon::{DspBuilder, NodeDsp, Signal, ToNodeDsp};
 use plyphon::synthdef::{InputRef, UnitSpec};
 use plyphon::{
@@ -190,6 +191,13 @@ impl ToNodeDsp for N {
             N::Saw(n) => Some(n),
             N::Out(n) => n.to_node_dsp(),
         }
+    }
+}
+
+impl AsNamedRef for N {
+    fn as_named_ref(&self) -> Option<&NamedRef> {
+        // No nested-graph refs in this node set: nothing to flatten.
+        None
     }
 }
 

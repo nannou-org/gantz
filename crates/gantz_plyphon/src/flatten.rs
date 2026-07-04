@@ -43,6 +43,7 @@ use gantz_core::node::{GetNode, MetaCtx};
 
 use crate::dsp::{NodeDsp, ToNodeDsp};
 
+pub use gantz_egui::node::NamedRef;
 pub use gantz_egui::sync::AsNamedRef;
 
 /// A node spliced out of a nested structure into a flat graph, carrying its
