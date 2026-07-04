@@ -25,12 +25,14 @@ pub use dsp::{
     DspBuilder, FADE_LAG, GainRef, NodeDsp, NodeRate, ParamBinding, ScopeOutBinding, Signal,
     ToNodeDsp,
 };
+pub use flatten::{Flat, FlattenError, flatten, flatten_from_registry};
 pub use node::{Bus, Lag, Out, Pack, ScopeOut, SinOsc, Unpack};
 pub use sugar::PlyphonSugar;
 
 pub mod backend;
 pub mod compile;
 pub mod dsp;
+pub mod flatten;
 pub mod monitor;
 pub mod node;
 pub mod param;

@@ -477,6 +477,74 @@ mod tests {
         );
     }
 
+    /// A nested graph of DSP nodes sounds through the flattening pass: the
+    /// child's `~lag` splices into the parent's synthdef carrying its nested
+    /// path, and that path reaches the node's live param state in the VM -
+    /// exactly the contract the audio driver's param sync relies on. Guards
+    /// the whole nested-DSP pipeline (registry ref resolution, flattening,
+    /// derivation, VM state bridge) end to end with the app's real node type.
+    #[test]
+    fn nested_dsp_graph_flattens_derives_and_bridges_state() {
+        use gantz_egui::sync::AsNamedRef;
+        use gantz_plyphon::ToNodeDsp;
+        use std::time::Duration;
+        type G = gantz_core::node::graph::Graph<Box<dyn Node>>;
+
+        // child `env:1`: inlet -> ~lag -> outlet, nested into
+        // parent `env`: ~sinosc -> ref -> ~out.
+        let text = "\
+(graph env:1
+  (i inlet) (l ~lag) (o outlet)
+  (-> i (l 0)) (-> l o))
+
+(graph env
+  (s ~sinosc) (sub (ref env:1)) (out ~out)
+  (-> s (sub 0)) (-> sub (out 0)))";
+        let export: gantz_egui::export::Export<G> =
+            gantz_egui::format::from_str(text, Duration::from_secs(0)).expect("from_str");
+        let parent_head = gantz_ca::Head::Branch("env".into());
+        let child_head = gantz_ca::Head::Branch("env:1".into());
+        let parent = export.registry.head_graph(&parent_head).expect("env graph");
+        let child = export
+            .registry
+            .head_graph(&child_head)
+            .expect("env:1 graph");
+
+        // The indices the flattened path must carry: the ref within the parent,
+        // the lag within the child (its only dsp node).
+        let ref_ix = parent
+            .node_indices()
+            .find(|&n| parent[n].as_named_ref().is_some())
+            .expect("ref node")
+            .index();
+        let lag_ix = child
+            .node_indices()
+            .find(|&n| child[n].to_node_dsp().is_some())
+            .expect("lag node")
+            .index();
+
+        let flat = gantz_plyphon::flatten_from_registry(parent, &export.registry).expect("flatten");
+        let derived = gantz_plyphon::derive_synthdef(&flat, 1, "test").expect("derive");
+        let binding = derived
+            .params
+            .iter()
+            .find(|b| b.node_path == [ref_ix, lag_ix])
+            .expect("a param binding keyed by the lag's nested path");
+
+        // The binding's path reaches the nested lag's live param state in a VM
+        // compiled from the same (un-flattened) graph.
+        let builtins = crate::builtin::Builtins::new();
+        let reg_ref = gantz_egui::RegistryRef::new(&export.registry, &builtins, &export.demos);
+        let get_node = |ca: &gantz_ca::ContentAddr| reg_ref.node(ca);
+        let config = gantz_core::compile::Config::default();
+        let (mut vm, _compiled) =
+            gantz_core::vm::init(&get_node, parent, &[], &config).expect("vm init");
+        let (value, pending) = gantz_plyphon::param::drain_param(&mut vm, &binding.node_path)
+            .expect("nested lag param state");
+        assert_eq!(value, f64::from(gantz_plyphon::Lag::DEFAULT_DUR));
+        assert!(pending.is_empty());
+    }
+
     /// `~unpack`'s placeholder expr honours the multi-output contract for any
     /// `count`: a single value for one output, a list of values otherwise. A
     /// wrong shape (e.g. `(list 0)` for count 1) fails `vm::init`'s compile.
