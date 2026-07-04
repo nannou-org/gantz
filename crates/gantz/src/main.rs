@@ -16,8 +16,6 @@ use storage::Pkv;
 
 mod builtin;
 mod node;
-#[cfg(not(target_arch = "wasm32"))]
-mod pane_window;
 mod persist;
 mod storage;
 mod window;
@@ -68,7 +66,9 @@ fn main() {
     // Native OS windows for popped-out panes. On web the widget keeps drawing
     // popped-out panes as in-canvas `egui::Window`s.
     #[cfg(not(target_arch = "wasm32"))]
-    app.add_plugins(pane_window::PaneWindowPlugin::<Box<dyn node::Node>>::default());
+    app.add_plugins(bevy_gantz_egui::pane_window::PaneWindowPlugin::<
+        Box<dyn node::Node>,
+    >::default());
 
     app.run();
 }

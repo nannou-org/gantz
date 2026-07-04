@@ -27,6 +27,8 @@ use std::ops::{Deref, DerefMut};
 
 pub mod base;
 pub mod node;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod pane_window;
 pub mod storage;
 pub mod sugar;
 
@@ -1677,7 +1679,7 @@ pub fn update<N>(
         base_immutable,
         mut compile_config,
         mut change_validation,
-        dsp_config,
+        mut dsp_config,
         dsp_status,
         mut requested,
         host_native,
@@ -1788,6 +1790,66 @@ where
     // to match (see `pane_window::reconcile_windowed_panes`).
     requested.0 = std::mem::take(&mut response.windowed_panes);
 
+    // Apply every outcome of the GUI pass. Shared with each native pop-out
+    // window's render pass (see `pane_window::render_windowed_panes`) so a pane
+    // behaves identically whether docked or windowed. `access` is no longer
+    // used past `show`, freeing `heads_query` for the handler.
+    handle_gantz_response::<N>(
+        &mut response,
+        &tab_order,
+        &mut focused,
+        &mut heads_query,
+        &mut registry,
+        &mut demos,
+        &base_names,
+        &mut compile_config,
+        &mut change_validation,
+        dsp_config.as_deref_mut(),
+        import_task.as_deref(),
+        &head_to_entity,
+        &dispatchers,
+        &mut cmds,
+    );
+
+    // Record GUI frame time.
+    perf_gui.0.record(gui_start.elapsed());
+
+    Ok(())
+}
+
+/// Apply every outcome of a `Gantz` GUI pass to the app.
+///
+/// Shared by the primary [`update`] pass and each native pop-out window's render
+/// pass ([`pane_window::render_windowed_panes`]) so a pane behaves identically
+/// whether docked or windowed. Handles focus, graph open/close/replace/new,
+/// branch, file drops, demo/description edits, resets, compile config, change-
+/// tracking, DSP, import, in-place head commits, and dynamic payload dispatch.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn handle_gantz_response<N>(
+    response: &mut gantz_egui::widget::gantz::GantzResponse,
+    tab_order: &head::HeadTabOrder,
+    focused: &mut head::FocusedHead,
+    heads_query: &mut Query<OpenHeadViews<N>, With<head::OpenHead>>,
+    registry: &mut Registry<N>,
+    demos: &mut Demos,
+    base_names: &BaseNames,
+    compile_config: &mut CompileConfig,
+    change_validation: &mut bevy_gantz::ValidateCommitted,
+    dsp_config: Option<&mut DspConfig>,
+    import_task: Option<&ImportTask>,
+    head_to_entity: &HashMap<ca::Head, Entity>,
+    dispatchers: &ResponseDispatchers,
+    cmds: &mut Commands,
+) where
+    N: 'static
+        + Node
+        + Clone
+        + gantz_ca::CaHash
+        + gantz_egui::NodeUi
+        + gantz_egui::sync::AsNamedRef
+        + Send
+        + Sync,
+{
     // Update focused head from the widget's response.
     if let Some(&entity) = tab_order.get(response.focused_head) {
         **focused = Some(entity);
@@ -1796,7 +1858,7 @@ where
     // The given graph name was removed.
     if let Some(name) = response.graph_name_removed() {
         // Update any open heads that reference this name.
-        for mut data in access.iter_mut() {
+        for mut data in heads_query.iter_mut() {
             if let ca::Head::Branch(head_name) = &**data.core.head_ref {
                 if *head_name == name {
                     let commit_ca = *registry.head_commit_ca(&*data.core.head_ref).unwrap();
@@ -1901,7 +1963,7 @@ where
     }
 
     // Apply Settings -> DSP changes to the dsp config resource.
-    if let Some(mut cfg) = dsp_config {
+    if let Some(cfg) = dsp_config {
         if let Some(lead_ms) = response.dsp_sched_lead_ms {
             cfg.sched_lead = std::time::Duration::from_secs_f32(lead_ms / 1000.0);
         }
@@ -1923,54 +1985,10 @@ where
         cmds.insert_resource(ImportTask(task));
     }
 
-    // Commit heads the GUI edited in place this pass (upholding the
-    // `WorkingGraph` invariant) and dispatch the dynamic response payloads.
-    // Shared with each native pop-out window's render pass (see
-    // `pane_window::render_windowed_pane`) so a pane's edits apply identically
-    // wherever the pane is shown.
-    apply_pane_response::<N>(
-        &mut response,
-        &head_to_entity,
-        &mut heads_query,
-        &mut registry,
-        &dispatchers,
-        &mut cmds,
-    );
-
-    // Record GUI frame time.
-    perf_gui.0.record(gui_start.elapsed());
-
-    Ok(())
-}
-
-/// Commit heads the GUI edited in place this pass (node UI / inspector edits)
-/// and dispatch the dynamic response payloads it emitted.
-///
-/// Shared by the primary [`update`] pass and each native pop-out window's render
-/// pass (in the `gantz` binary). Note it applies only the per-pane outcomes
-/// (in-place edits + payloads), not the whole-widget outcomes (focus, graph
-/// open/close, config) that only the primary pass produces.
-pub fn apply_pane_response<N>(
-    response: &mut gantz_egui::widget::gantz::GantzResponse,
-    head_to_entity: &HashMap<ca::Head, Entity>,
-    heads_query: &mut Query<OpenHeadViews<N>, With<head::OpenHead>>,
-    registry: &mut Registry<N>,
-    dispatchers: &ResponseDispatchers,
-    cmds: &mut Commands,
-) where
-    N: 'static
-        + Node
-        + Clone
-        + gantz_ca::CaHash
-        + gantz_egui::NodeUi
-        + gantz_egui::sync::AsNamedRef
-        + Send
-        + Sync,
-{
-    // Commit each head whose graph the GUI edited in place this pass before
-    // returning, so `vm::sync` recompiles it from the committed address without
-    // re-hashing every open graph (#159). Graph ops applied via response
-    // observers commit themselves.
+    // Commit each head whose graph the GUI edited in place this pass, so
+    // `vm::sync` recompiles it from the committed address without re-hashing
+    // every open graph (#159). Graph ops applied via response observers commit
+    // themselves.
     for head in &response.changed_heads {
         let Some(&entity) = head_to_entity.get(head) else {
             continue;
