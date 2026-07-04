@@ -27,7 +27,7 @@ use bevy_app::prelude::*;
 use bevy_camera::{Camera2d, RenderTarget};
 use bevy_ecs::prelude::*;
 use bevy_egui::{EguiContext, EguiContexts, EguiMultipassSchedule, EguiPreUpdateSet, egui};
-use bevy_window::{Window, WindowCloseRequested, WindowRef};
+use bevy_window::{PresentMode, PrimaryWindow, Window, WindowCloseRequested, WindowRef};
 use gantz_ca as ca;
 use gantz_core::Node;
 use gantz_egui::widget::Pane;
@@ -115,6 +115,7 @@ fn reconcile_windowed_panes(
     mut cmds: Commands,
     requested: Res<WindowedPanesRequested>,
     popouts: Query<(Entity, &PopoutView)>,
+    primary_window: Query<&Window, With<PrimaryWindow>>,
 ) {
     // Despawn windows whose pane is no longer requested.
     for (camera, view) in &popouts {
@@ -123,6 +124,14 @@ fn reconcile_windowed_panes(
             cmds.entity(view.window).try_despawn();
         }
     }
+    // Inherit the primary window's present mode so a pop-out doesn't stall the
+    // shared render thread with a different (blocking) surface-acquire cadence -
+    // e.g. the app's `AutoNoVsync` primary paired with a default `Fifo` pop-out
+    // judders on Wayland. Match the frame-latency queue depth for the same reason.
+    let (present_mode, desired_maximum_frame_latency) = primary_window
+        .single()
+        .map(|w| (w.present_mode, w.desired_maximum_frame_latency))
+        .unwrap_or((PresentMode::AutoNoVsync, None));
     // Spawn a window for each newly-requested pane.
     for wp in &requested.0 {
         if popouts.iter().any(|(_, v)| v.pane == wp.pane) {
@@ -132,6 +141,8 @@ fn reconcile_windowed_panes(
             .spawn((
                 Window {
                     title: wp.title.clone(),
+                    present_mode,
+                    desired_maximum_frame_latency,
                     ..Default::default()
                 },
                 PopoutWindow,
