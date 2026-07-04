@@ -63,6 +63,20 @@ pub struct Gantz<'a> {
     compile_config: Option<gantz_core::compile::Config>,
     validate_change_tracking: Option<bool>,
     dsp: Option<widget::DspPanel>,
+    pane_window_mode: PaneWindowMode,
+}
+
+/// Selects who draws the windows that popped-out panes live in.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PaneWindowMode {
+    /// The widget draws each windowed pane as a floating `egui::Window`. Used on
+    /// web, in the eframe demo, and as the native fallback. The default.
+    #[default]
+    EguiWindow,
+    /// The host owns real OS windows and renders each windowed pane itself (via
+    /// [`Gantz::render_windowed_pane`]); the widget only reports the windowed set
+    /// via [`GantzResponse::windowed_panes`].
+    HostNative,
 }
 
 enum LogSource {
@@ -580,11 +594,27 @@ pub struct GantzResponse {
     /// Dynamic payloads emitted from within the widget tree, tagged with the
     /// emitting head. See [`crate::response`] for the handling contract.
     pub responses: Responses,
+    /// Panes currently popped out into windows, reported every frame. Populated
+    /// in both [`PaneWindowMode`]s; under [`PaneWindowMode::HostNative`] a host
+    /// diffs this to create / title / destroy its OS windows and renders each
+    /// via [`Gantz::render_windowed_pane`].
+    pub windowed_panes: Vec<WindowedPane>,
     /// Per-head node index remappings from this frame's deletions, collected
     /// during traversal and applied to the top-level tree's [`Pane::NodeView`]
     /// paths by `Gantz::show` after layout. Internal scratch - drained before
     /// the response is returned, so applications can ignore it.
     pub(crate) node_view_reindexes: Vec<(gantz_ca::Head, crate::ops::Reindex)>,
+}
+
+/// A pane currently popped out into a window, reported via
+/// [`GantzResponse::windowed_panes`].
+#[derive(Clone, Debug)]
+pub struct WindowedPane {
+    /// The pane's identity and payload; pass back to
+    /// [`Gantz::render_windowed_pane`] to draw it into the host's window.
+    pub pane: Pane,
+    /// The pane's display title (the same text as its tab).
+    pub title: String,
 }
 
 /// State for editing a tab name via double-click.
@@ -641,6 +671,29 @@ struct NodeTyCmd<'a> {
 }
 
 impl GantzResponse {
+    /// An empty response for the given focused head.
+    fn new(focused_head: usize) -> Self {
+        GantzResponse {
+            focused_head,
+            graph_select: None,
+            closed_heads: Vec::new(),
+            new_branch: None,
+            file_drops: Vec::new(),
+            demo_changed: None,
+            description_changed: None,
+            reset_base_graph: None,
+            reset_all_demos: false,
+            compile_config: None,
+            validate_change_tracking: None,
+            dsp_sched_lead_ms: None,
+            dsp_enabled: None,
+            changed_heads: Vec::new(),
+            responses: Responses::default(),
+            windowed_panes: Vec::new(),
+            node_view_reindexes: Vec::new(),
+        }
+    }
+
     /// Indicates the new graph button was clicked.
     pub fn new_graph(&self) -> bool {
         self.graph_select
@@ -699,7 +752,15 @@ impl<'a> Gantz<'a> {
             compile_config: None,
             validate_change_tracking: None,
             dsp: None,
+            pane_window_mode: PaneWindowMode::default(),
         }
+    }
+
+    /// Choose whether the widget draws popped-out panes as `egui::Window`s
+    /// (the default) or leaves them to the host as native OS windows.
+    pub fn pane_window_mode(mut self, mode: PaneWindowMode) -> Self {
+        self.pane_window_mode = mode;
+        self
     }
 
     /// Provide demo graph associations for the config dropdown.
@@ -827,24 +888,7 @@ impl<'a> Gantz<'a> {
 
         // Initialise the response.
         // We'll collect it during traversal of the tree of tiles.
-        let mut response = GantzResponse {
-            focused_head,
-            graph_select: None,
-            closed_heads: Vec::new(),
-            new_branch: None,
-            file_drops: Vec::new(),
-            demo_changed: None,
-            description_changed: None,
-            reset_base_graph: None,
-            reset_all_demos: false,
-            compile_config: None,
-            validate_change_tracking: None,
-            dsp_sched_lead_ms: None,
-            dsp_enabled: None,
-            changed_heads: Vec::new(),
-            responses: Responses::default(),
-            node_view_reindexes: Vec::new(),
-        };
+        let mut response = GantzResponse::new(focused_head);
 
         // The context for traversing the tree of tiles.
         let base_names = self.base_names;
@@ -917,44 +961,103 @@ impl<'a> Gantz<'a> {
         windowed
             .retain(|p| matches!(p, Pane::NodeView(_)) || !pane_is_visible(&state.view_toggles, p));
 
-        // Render each windowed pane as a floating `egui::Window` (the web /
-        // fallback backend). Closing a window returns the pane to the tile tree.
-        let mut redock: Vec<Pane> = Vec::new();
-        for pane in &mut windowed {
-            let title = pane_title(&self, &*access, focused_head, pane);
-            let mut open = true;
-            egui::Window::new(title)
-                .id(egui::Id::new(("gantz-windowed-pane", pane_key(pane))))
-                .open(&mut open)
-                .show(ui.ctx(), |ui| {
-                    // Namespace child ids so a windowed pane never collides with
-                    // its (briefly still-visible) docked instance.
-                    ui.push_id(("gantz-windowed", pane_key(pane)), |ui| {
-                        let mut cx = PaneCtx {
-                            gantz: &mut self,
-                            state: &mut *state,
-                            access: &mut *access,
-                            focused_head,
-                            base_names,
-                            response: &mut response,
-                        };
-                        render_pane(&mut cx, ui, pane);
+        // Redock / close intents queued by a native host between frames (its
+        // OS-window buttons call `redock_windowed_pane` / `close_windowed_pane`).
+        let mut redock: Vec<Pane> = drain_pending(ui.ctx(), pending_redock_id());
+        let close: Vec<Pane> = drain_pending(ui.ctx(), pending_close_id());
+
+        // In the egui-window backend, draw each windowed pane as a floating
+        // `egui::Window`; its title-bar close returns the pane to the tile tree.
+        // Under `HostNative` the host draws them as OS windows instead.
+        if self.pane_window_mode == PaneWindowMode::EguiWindow {
+            for pane in &mut windowed {
+                let title = pane_title(&self, &*access, focused_head, pane);
+                let mut open = true;
+                egui::Window::new(title)
+                    .id(egui::Id::new(("gantz-windowed-pane", pane_key(pane))))
+                    .open(&mut open)
+                    .show(ui.ctx(), |ui| {
+                        // Namespace child ids so a windowed pane never collides
+                        // with its (briefly still-visible) docked instance.
+                        ui.push_id(("gantz-windowed", pane_key(pane)), |ui| {
+                            let mut cx = PaneCtx {
+                                gantz: &mut self,
+                                state: &mut *state,
+                                access: &mut *access,
+                                focused_head,
+                                base_names,
+                                response: &mut response,
+                            };
+                            render_pane(&mut cx, ui, pane);
+                        });
                     });
-                });
-            if !open {
-                redock.push(pane.clone());
+                if !open {
+                    redock.push(pane.clone());
+                }
             }
         }
+
+        // Apply redocks (return to the tree) and closes (destroy node views;
+        // singletons have no destroy, so re-dock them).
         for pane in redock {
             let key = pane_key(&pane);
             windowed.retain(|p| pane_key(p) != key);
             redock_pane(&mut state.view_toggles, &mut tree, pane);
         }
+        for pane in close {
+            let key = pane_key(&pane);
+            windowed.retain(|p| pane_key(p) != key);
+            if !matches!(pane, Pane::NodeView(_)) {
+                redock_pane(&mut state.view_toggles, &mut tree, pane);
+            }
+        }
+
+        // Report the final windowed set so a native host can match its OS windows.
+        response.windowed_panes = windowed
+            .iter()
+            .map(|pane| WindowedPane {
+                pane: pane.clone(),
+                title: pane_title(&self, &*access, focused_head, pane),
+            })
+            .collect();
 
         // Persist the tree and the windowed set.
         store_tree(ui.ctx(), tree_id, &tree);
         store_ron(ui.ctx(), windowed_panes_id(), &windowed);
 
+        response
+    }
+
+    /// Render a single popped-out pane into `ui` - typically a native host's
+    /// OS-window egui context under [`PaneWindowMode::HostNative`].
+    ///
+    /// Mirrors [`Self::show`]'s per-pane rendering. The returned [`GantzResponse`]
+    /// carries this pane's `changed_heads` and payloads; apply it exactly as you
+    /// apply `show`'s response.
+    pub fn render_windowed_pane<'s, Access>(
+        mut self,
+        state: &'s mut GantzState,
+        focused_head: usize,
+        access: &'s mut Access,
+        pane: &mut Pane,
+        ui: &mut egui::Ui,
+    ) -> GantzResponse
+    where
+        's: 'a,
+        Access: HeadAccess,
+        Access::Node: Node + NodeUi,
+    {
+        let mut response = GantzResponse::new(focused_head);
+        let base_names = self.base_names;
+        let mut cx = PaneCtx {
+            gantz: &mut self,
+            state,
+            access,
+            focused_head,
+            base_names,
+            response: &mut response,
+        };
+        render_pane(&mut cx, ui, pane);
         response
     }
 }
@@ -2474,6 +2577,50 @@ fn pane_key(pane: &Pane) -> String {
 /// stored as a RON `String` alongside the tile tree (see [`load_ron`]).
 fn windowed_panes_id() -> egui::Id {
     egui::Id::new("gantz-windowed-panes-storage-v1")
+}
+
+/// egui-memory id for panes a host has requested be re-docked before the next
+/// `Gantz::show` (see [`redock_windowed_pane`]).
+fn pending_redock_id() -> egui::Id {
+    egui::Id::new("gantz-pending-redock")
+}
+
+/// egui-memory id for node views a host has requested be closed before the next
+/// `Gantz::show` (see [`close_windowed_pane`]).
+fn pending_close_id() -> egui::Id {
+    egui::Id::new("gantz-pending-close")
+}
+
+/// Load and clear a pending-pane list stored in egui memory.
+fn drain_pending(ctx: &egui::Context, id: egui::Id) -> Vec<Pane> {
+    let pending: Vec<Pane> = load_ron(ctx, id).unwrap_or_default();
+    if !pending.is_empty() {
+        store_ron(ctx, id, &Vec::<Pane>::new());
+    }
+    pending
+}
+
+/// Append a pane to a pending-intent list in egui memory.
+fn enqueue_pending(ctx: &egui::Context, id: egui::Id, pane: &Pane) {
+    let mut pending: Vec<Pane> = load_ron(ctx, id).unwrap_or_default();
+    pending.push(pane.clone());
+    store_ron(ctx, id, &pending);
+}
+
+/// Request that a popped-out pane return to the tile tree, from outside a
+/// [`Gantz::show`] call (e.g. a native host's OS-window close button).
+///
+/// The request is queued in egui memory and applied on the next `show`, so it
+/// works from any egui context. A no-op if the pane isn't windowed.
+pub fn redock_windowed_pane(ctx: &egui::Context, pane: &Pane) {
+    enqueue_pending(ctx, pending_redock_id(), pane);
+}
+
+/// Request that a popped-out node view be closed (destroyed) rather than
+/// re-docked. Queued and applied like [`redock_windowed_pane`]. Singletons have
+/// no destructive close, so they are re-docked instead.
+pub fn close_windowed_pane(ctx: &egui::Context, pane: &Pane) {
+    enqueue_pending(ctx, pending_close_id(), pane);
 }
 
 /// Add `pane` to the windowed set unless one with the same identity is already
