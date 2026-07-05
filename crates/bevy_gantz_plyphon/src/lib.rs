@@ -656,7 +656,10 @@ fn structural_sync<N>(
 {
     let now = Instant::now();
     let prefix = format!("gantz-head-{}", entity.index());
-    let derived = match derive_synthdefs(graph, out_channels, &prefix) {
+    let derive_start = Instant::now();
+    let derived_result = derive_synthdefs(graph, out_channels, &prefix);
+    log::debug!("Derived synthdef ({:?})", derive_start.elapsed());
+    let derived = match derived_result {
         Ok(regions) => regions,
         // No dsp sink to root any synthdef at: fade every region out. Freeing
         // the defs now is safe - a fading synth holds its own compiled copy.
