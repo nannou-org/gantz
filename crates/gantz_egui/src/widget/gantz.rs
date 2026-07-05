@@ -2563,8 +2563,8 @@ fn pane_is_poppable(pane: &Pane) -> bool {
 
 /// A stable identity for a pane, used to key its window and to dedupe the
 /// windowed set. Singletons key on their variant; a node view keys on its
-/// `(head, path)` - the same identity [`add_node_view_pane`] dedupes on. Public
-/// so a native host can key a pop-out window's persisted geometry
+/// `(head, path)` - the same identity `add_node_view_pane` dedupes on. Public so
+/// a native host can key a pop-out window's persisted geometry
 /// ([`GantzState::windowed_geometry`]) by the same identity.
 pub fn pane_key(pane: &Pane) -> String {
     match pane {

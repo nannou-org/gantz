@@ -4,14 +4,14 @@
 //! display / projection-mapping). A pop-out window is a Bevy [`Window`] + a
 //! camera carrying an [`EguiContext`] but **no** `EguiMultipassSchedule`, i.e. a
 //! *single-pass* secondary context: bevy_egui auto-begins/ends its egui pass each
-//! frame, so [`render_windowed_panes`] - one ordinary `Update` system - draws
+//! frame, so `render_windowed_panes` - one ordinary `Update` system - draws
 //! into an unbounded number of them. There is no fixed window pool.
 //!
 //! Each frame the widget reports its windowed set via [`WindowedPanesRequested`]
-//! (mirrored by [`update`][crate::update]); [`reconcile_windowed_panes`] diffs it
+//! (mirrored by [`update`][crate::update]); `reconcile_windowed_panes` diffs it
 //! against the live pop-out entities, spawning / despawning windows to match.
 //! Closing a window re-docks its pane. A windowed pane is rendered with the exact
-//! same widget inputs and response handling ([`handle_gantz_response`]) as a
+//! same widget inputs and response handling (`handle_gantz_response`) as a
 //! docked one, so behaviour is identical either way.
 //!
 //! Native only - on web the widget draws popped-out panes as in-canvas
