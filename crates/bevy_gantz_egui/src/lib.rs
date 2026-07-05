@@ -27,6 +27,8 @@ use std::ops::{Deref, DerefMut};
 
 pub mod base;
 pub mod node;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod pane_window;
 pub mod storage;
 pub mod sugar;
 
@@ -138,6 +140,7 @@ where
             .init_resource::<PerfGui>()
             .init_resource::<Views>()
             .init_resource::<Demos>()
+            .init_resource::<WindowedPanesRequested>()
             // GUI state observers
             .add_observer(on_head_opened::<N>)
             .add_observer(on_head_changed::<N>)
@@ -249,6 +252,20 @@ pub struct BaseNames(pub gantz_ca::registry::Names);
 /// Inserted by [`GantzEguiPlugin`] based on its `base_immutable` setting.
 #[derive(Resource)]
 pub struct BaseImmutable(pub bool);
+
+/// The panes the widget currently has popped out into windows, mirrored from
+/// [`GantzResponse::windowed_panes`][gantz_egui::widget::gantz::GantzResponse]
+/// each frame by [`update`]. A native host (the `gantz` binary) reads this to
+/// create / destroy its OS windows. Present on all targets (only read natively).
+#[derive(Resource, Default)]
+pub struct WindowedPanesRequested(pub Vec<gantz_egui::widget::WindowedPane>);
+
+/// Marker a native host inserts to signal that it owns the pop-out windows, so
+/// [`update`] builds the widget in
+/// [`PaneWindowMode::HostNative`][gantz_egui::widget::PaneWindowMode] and stops
+/// drawing `egui::Window`s itself.
+#[derive(Resource)]
+pub struct HostNativePaneWindows;
 
 /// In-flight import file dialog task.
 #[derive(Resource)]
@@ -1662,8 +1679,10 @@ pub fn update<N>(
         base_immutable,
         mut compile_config,
         mut change_validation,
-        dsp_config,
+        mut dsp_config,
         dsp_status,
+        mut requested,
+        host_native,
     ): (
         Res<BaseNames>,
         Res<BaseImmutable>,
@@ -1671,6 +1690,8 @@ pub fn update<N>(
         ResMut<bevy_gantz::ValidateCommitted>,
         Option<ResMut<DspConfig>>,
         Option<Res<DspStatus>>,
+        ResMut<WindowedPanesRequested>,
+        Option<Res<HostNativePaneWindows>>,
     ),
     mut demos: ResMut<Demos>,
     dispatchers: Res<ResponseDispatchers>,
@@ -1740,6 +1761,13 @@ where
         _ => None,
     };
 
+    // A native host owns the pop-out windows when `HostNativePaneWindows` is
+    // present; otherwise the widget draws them itself as `egui::Window`s.
+    let pane_window_mode = match host_native {
+        Some(_) => gantz_egui::widget::PaneWindowMode::HostNative,
+        None => gantz_egui::widget::PaneWindowMode::EguiWindow,
+    };
+
     let mut response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show_inside(&mut panel_ui, |ui| {
@@ -1749,7 +1777,8 @@ where
                 .compile_config(current_compile_config)
                 .validate_change_tracking(current_validate_change_tracking)
                 .trace_capture(trace_capture.0.clone(), level)
-                .perf_captures(&mut perf_vm.0, &mut perf_gui.0);
+                .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
+                .pane_window_mode(pane_window_mode);
             if let Some(panel) = dsp_panel {
                 widget = widget.dsp(panel);
             }
@@ -1757,6 +1786,70 @@ where
         })
         .inner;
 
+    // Mirror the windowed set so a native host can create / destroy OS windows
+    // to match (see `pane_window::reconcile_windowed_panes`).
+    requested.0 = std::mem::take(&mut response.windowed_panes);
+
+    // Apply every outcome of the GUI pass. Shared with each native pop-out
+    // window's render pass (see `pane_window::render_windowed_panes`) so a pane
+    // behaves identically whether docked or windowed. `access` is no longer
+    // used past `show`, freeing `heads_query` for the handler.
+    handle_gantz_response::<N>(
+        &mut response,
+        &tab_order,
+        &mut focused,
+        &mut heads_query,
+        &mut registry,
+        &mut demos,
+        &base_names,
+        &mut compile_config,
+        &mut change_validation,
+        dsp_config.as_deref_mut(),
+        import_task.as_deref(),
+        &head_to_entity,
+        &dispatchers,
+        &mut cmds,
+    );
+
+    // Record GUI frame time.
+    perf_gui.0.record(gui_start.elapsed());
+
+    Ok(())
+}
+
+/// Apply every outcome of a `Gantz` GUI pass to the app.
+///
+/// Shared by the primary [`update`] pass and each native pop-out window's render
+/// pass ([`pane_window::render_windowed_panes`]) so a pane behaves identically
+/// whether docked or windowed. Handles focus, graph open/close/replace/new,
+/// branch, file drops, demo/description edits, resets, compile config, change-
+/// tracking, DSP, import, in-place head commits, and dynamic payload dispatch.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn handle_gantz_response<N>(
+    response: &mut gantz_egui::widget::gantz::GantzResponse,
+    tab_order: &head::HeadTabOrder,
+    focused: &mut head::FocusedHead,
+    heads_query: &mut Query<OpenHeadViews<N>, With<head::OpenHead>>,
+    registry: &mut Registry<N>,
+    demos: &mut Demos,
+    base_names: &BaseNames,
+    compile_config: &mut CompileConfig,
+    change_validation: &mut bevy_gantz::ValidateCommitted,
+    dsp_config: Option<&mut DspConfig>,
+    import_task: Option<&ImportTask>,
+    head_to_entity: &HashMap<ca::Head, Entity>,
+    dispatchers: &ResponseDispatchers,
+    cmds: &mut Commands,
+) where
+    N: 'static
+        + Node
+        + Clone
+        + gantz_ca::CaHash
+        + gantz_egui::NodeUi
+        + gantz_egui::sync::AsNamedRef
+        + Send
+        + Sync,
+{
     // Update focused head from the widget's response.
     if let Some(&entity) = tab_order.get(response.focused_head) {
         **focused = Some(entity);
@@ -1765,7 +1858,7 @@ where
     // The given graph name was removed.
     if let Some(name) = response.graph_name_removed() {
         // Update any open heads that reference this name.
-        for mut data in access.iter_mut() {
+        for mut data in heads_query.iter_mut() {
             if let ca::Head::Branch(head_name) = &**data.core.head_ref {
                 if *head_name == name {
                     let commit_ca = *registry.head_commit_ca(&*data.core.head_ref).unwrap();
@@ -1870,7 +1963,7 @@ where
     }
 
     // Apply Settings -> DSP changes to the dsp config resource.
-    if let Some(mut cfg) = dsp_config {
+    if let Some(cfg) = dsp_config {
         if let Some(lead_ms) = response.dsp_sched_lead_ms {
             cfg.sched_lead = std::time::Duration::from_secs_f32(lead_ms / 1000.0);
         }
@@ -1892,11 +1985,10 @@ where
         cmds.insert_resource(ImportTask(task));
     }
 
-    // Commit each head whose graph the GUI edited in place this pass (node UI
-    // edits + structural scene edits) before returning, upholding the
-    // `WorkingGraph` invariant so `vm::sync` recompiles it from the committed
-    // address without re-hashing every open graph (#159). Graph ops applied via
-    // response observers commit themselves.
+    // Commit each head whose graph the GUI edited in place this pass, so
+    // `vm::sync` recompiles it from the committed address without re-hashing
+    // every open graph (#159). Graph ops applied via response observers commit
+    // themselves.
     for head in &response.changed_heads {
         let Some(&entity) = head_to_entity.get(head) else {
             continue;
@@ -1905,8 +1997,8 @@ where
             continue;
         };
         bevy_gantz::commit_working_graph(
-            &mut registry,
-            &mut cmds,
+            registry,
+            cmds,
             entity,
             &mut data.core.head_ref.0,
             &data.core.working_graph.0,
@@ -1920,15 +2012,10 @@ where
         log::debug!("{payload:?}");
         let entity = head.and_then(|h| head_to_entity.get(&h).copied());
         match dispatchers.0.get(&payload.type_id()) {
-            Some(dispatch) => dispatch(entity, payload, &mut cmds),
+            Some(dispatch) => dispatch(entity, payload, cmds),
             None => log::warn!("unhandled response payload: {}", payload.type_name()),
         }
     }
-
-    // Record GUI frame time.
-    perf_gui.0.record(gui_start.elapsed());
-
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------

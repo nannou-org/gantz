@@ -33,6 +33,7 @@ bevy = { version = "0.19", default-features = false, features = [
     "webgl2",
 ] }
 bevy_app = "0.19"
+bevy_camera = "0.19"
 bevy_ecs = "0.19"
 bevy_log = "0.19"
 bevy_tasks = "0.19"

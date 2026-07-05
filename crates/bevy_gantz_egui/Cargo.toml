@@ -30,3 +30,10 @@ rfd.workspace = true
 serde.workspace = true
 steel-core.workspace = true
 web-time.workspace = true
+
+# Native pop-out windows (see `pane_window`): real OS windows for popped-out
+# panes. Web draws them as in-canvas `egui::Window`s instead, so these are only
+# needed off `wasm32`.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bevy_camera.workspace = true
+bevy_window.workspace = true

@@ -605,10 +605,10 @@ pub struct ResetTilesLayout;
 #[derive(Clone, Copy, Debug)]
 pub struct OpenLogs;
 
-/// Open the given node's view ([`NodeUi::view_ui`]) as a tile in the Node Views
-/// pane, for monitoring it in a fixed location. The node is identified by its
-/// `path` within the emitting head's graph (the head is taken from the payload's
-/// head tag).
+/// Open the given node's view ([`NodeUi::view_ui`]) as its own top-level tile
+/// (a `Pane::NodeView`), for monitoring it in a fixed location. The node is
+/// identified by its `path` within the emitting head's graph (the head is taken
+/// from the payload's head tag).
 ///
 /// Handled by `Gantz::show` itself - applications never see this payload.
 #[derive(Clone, Debug)]

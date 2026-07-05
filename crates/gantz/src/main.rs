@@ -27,7 +27,8 @@ fn main() {
     if bevy_gantz_plyphon::on_worklet_thread() {
         return;
     }
-    App::new()
+    let mut app = App::new();
+    app
         // Core gantz plugin (provides FocusedHead, HeadTabOrder, HeadVms, Registry, Views)
         .add_plugins(GantzPlugin::<Box<dyn node::Node>>::default())
         // Egui plugin (provides GuiState, TraceCapture, PerfVm, PerfGui, GUI systems)
@@ -60,8 +61,16 @@ fn main() {
                     .after(setup_open),
             ),
         )
-        .add_systems(EguiPrimaryContextPass, load_egui_memory)
-        .run();
+        .add_systems(EguiPrimaryContextPass, load_egui_memory);
+
+    // Native OS windows for popped-out panes. On web the widget keeps drawing
+    // popped-out panes as in-canvas `egui::Window`s.
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_plugins(bevy_gantz_egui::pane_window::PaneWindowPlugin::<
+        Box<dyn node::Node>,
+    >::default());
+
+    app.run();
 }
 
 fn log_plugin() -> bevy::log::LogPlugin {
