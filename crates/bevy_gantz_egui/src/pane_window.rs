@@ -102,6 +102,7 @@ impl<N: PaneNode> Plugin for PaneWindowPlugin<N> {
                 (
                     render_windowed_panes::<N>.after(bevy_gantz::VmSet),
                     on_window_close_redock,
+                    track_popout_geometry,
                 ),
             );
     }
@@ -116,6 +117,7 @@ fn reconcile_windowed_panes(
     requested: Res<WindowedPanesRequested>,
     popouts: Query<(Entity, &PopoutView)>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
+    gui_state: Res<GuiState>,
 ) {
     // Despawn windows whose pane is no longer requested.
     for (camera, view) in &popouts {
@@ -137,17 +139,22 @@ fn reconcile_windowed_panes(
         if popouts.iter().any(|(_, v)| v.pane == wp.pane) {
             continue;
         }
-        let window = cmds
-            .spawn((
-                Window {
-                    title: wp.title.clone(),
-                    present_mode,
-                    desired_maximum_frame_latency,
-                    ..Default::default()
-                },
-                PopoutWindow,
-            ))
-            .id();
+        let mut window = Window {
+            title: wp.title.clone(),
+            present_mode,
+            desired_maximum_frame_latency,
+            ..Default::default()
+        };
+        // Restore this pane's last window size (tracked in `GantzState` and
+        // persisted with the rest of the GUI state), so it reopens as it was.
+        if let Some(geom) = gui_state
+            .0
+            .windowed_geometry
+            .get(&gantz_egui::widget::pane_key(&wp.pane))
+        {
+            window.resolution.set(geom.width, geom.height);
+        }
+        let window = cmds.spawn((window, PopoutWindow)).id();
         cmds.spawn((
             Camera2d,
             RenderTarget::Window(WindowRef::Entity(window)),
@@ -320,6 +327,27 @@ fn on_window_close_redock(
                 }
                 cmds.entity(camera).try_despawn();
             }
+        }
+    }
+}
+
+/// Record each pop-out window's current size into `GantzState` (keyed by
+/// [`pane_key`][gantz_egui::widget::pane_key]) when it changes, so it is
+/// persisted with the rest of the GUI state and restored next session by
+/// [`reconcile_windowed_panes`]. `Changed<Window>` keeps this to actual resizes.
+fn track_popout_geometry(
+    mut gui_state: ResMut<GuiState>,
+    changed: Query<(&Window, &PopoutView), Changed<Window>>,
+) {
+    for (window, view) in &changed {
+        let width = window.resolution.width();
+        let height = window.resolution.height();
+        // Skip before the surface is realized, when the size is still ~zero.
+        if width >= 1.0 && height >= 1.0 {
+            gui_state.0.windowed_geometry.insert(
+                gantz_egui::widget::pane_key(&view.pane),
+                gantz_egui::widget::PaneWindowGeometry { width, height },
+            );
         }
     }
 }

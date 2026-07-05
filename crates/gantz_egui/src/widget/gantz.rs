@@ -124,6 +124,19 @@ pub struct GantzState {
     /// The bottom tray's pixel height, maintained across window resizes.
     #[serde(default = "default_tray_height")]
     pub tray_height: f32,
+    /// Last-seen size of each pane popped out into its own OS window, keyed by
+    /// [`pane_key`], so a native host can restore it across sessions. Only the
+    /// native window backend populates this (web `egui::Window`s persist their
+    /// own geometry in egui memory).
+    #[serde(default)]
+    pub windowed_geometry: HashMap<String, PaneWindowGeometry>,
+}
+
+/// The persisted geometry of a pane's pop-out window, in logical pixels.
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
+pub struct PaneWindowGeometry {
+    pub width: f32,
+    pub height: f32,
 }
 
 /// The default fixed sidebar width, in points.
@@ -1083,6 +1096,7 @@ impl GantzState {
             redo_stacks: HashMap::new(),
             sidebar_width: default_sidebar_width(),
             tray_height: default_tray_height(),
+            windowed_geometry: HashMap::new(),
         }
     }
 
@@ -2549,8 +2563,10 @@ fn pane_is_poppable(pane: &Pane) -> bool {
 
 /// A stable identity for a pane, used to key its window and to dedupe the
 /// windowed set. Singletons key on their variant; a node view keys on its
-/// `(head, path)` - the same identity [`add_node_view_pane`] dedupes on.
-fn pane_key(pane: &Pane) -> String {
+/// `(head, path)` - the same identity [`add_node_view_pane`] dedupes on. Public
+/// so a native host can key a pop-out window's persisted geometry
+/// ([`GantzState::windowed_geometry`]) by the same identity.
+pub fn pane_key(pane: &Pane) -> String {
     match pane {
         Pane::GraphConfig => "graph-config".to_string(),
         Pane::GraphScene => "graph-scene".to_string(),

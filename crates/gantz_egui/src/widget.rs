@@ -4,9 +4,9 @@ use time::{OffsetDateTime, UtcOffset, format_description};
 pub use checkbox_enabled::CheckboxEnabled;
 pub use dsp_settings::{DspPanel, DspSettingsResponse, dsp_settings};
 pub use gantz::{
-    AlignConfig, Gantz, GantzState, GridConfig, LayoutConfig, NodeViewPane, Pane, PaneWindowMode,
-    SceneConfig, SnapConfig, SnapMode, WindowedPane, close_windowed_pane, redock_windowed_pane,
-    update_graph_pane_head,
+    AlignConfig, Gantz, GantzState, GridConfig, LayoutConfig, NodeViewPane, Pane,
+    PaneWindowGeometry, PaneWindowMode, SceneConfig, SnapConfig, SnapMode, WindowedPane,
+    close_windowed_pane, pane_key, redock_windowed_pane, update_graph_pane_head,
 };
 pub use global_config::{GlobalConfigResponse, global_config};
 pub use graph_config::{GraphConfig, GraphConfigResponse};
