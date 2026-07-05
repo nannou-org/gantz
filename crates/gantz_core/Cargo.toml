@@ -11,10 +11,12 @@ repository.workspace = true
 [dependencies]
 gantz_ca.workspace = true
 gantz_nodetag.workspace = true
+log.workspace = true
 petgraph.workspace = true
 serde.workspace = true
 steel-core.workspace = true
 thiserror.workspace = true
+web-time.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true

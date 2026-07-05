@@ -106,11 +106,18 @@ where
         + Copy,
     G::NodeWeight: Node,
 {
+    let module_start = web_time::Instant::now();
     let exprs = crate::compile::module(get_node, graph, entrypoints, config)?;
+    log::debug!("Generated steel module ({:?})", module_start.elapsed());
+
     let src = fmt_module(&exprs);
     let map = SourceMap::parse(&src);
     let compiled = Compiled { exprs, src, map };
-    match vm.run(compiled.src.clone()) {
+
+    let run_start = web_time::Instant::now();
+    let result = vm.run(compiled.src.clone());
+    log::debug!("Compiled steel ({:?})", run_start.elapsed());
+    match result {
         Ok(_) => Ok(compiled),
         Err(err) => Err(CompileError::Eval {
             err,

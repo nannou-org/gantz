@@ -3342,12 +3342,14 @@ dependencies = [
  "env_logger",
  "gantz_ca",
  "gantz_nodetag",
+ "log",
  "petgraph",
  "serde",
  "serde_json",
  "steel-core",
  "steel-derive",
  "thiserror 2.0.17",
+ "web-time",
 ]
 
 [[package]]
