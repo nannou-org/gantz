@@ -32,6 +32,7 @@ pub mod pane_window;
 pub mod storage;
 pub mod sugar;
 
+pub use node::builtins;
 pub use sugar::BevySugar;
 
 // ----------------------------------------------------------------------------
