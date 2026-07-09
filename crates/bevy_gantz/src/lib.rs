@@ -23,7 +23,6 @@
 
 pub mod builtin;
 pub mod debounced_input;
-pub mod dsp;
 pub mod head;
 pub mod reg;
 pub mod storage;
@@ -32,7 +31,6 @@ pub mod vm;
 use bevy_app::{App, Plugin, Update};
 use bevy_ecs::prelude::{IntoScheduleConfigs, Resource, SystemSet};
 pub use builtin::{BuiltinNodes, Builtins};
-pub use dsp::{DspConfig, DspStatus};
 use gantz_core::Node;
 pub use head::{
     FocusedHead, HeadRef, HeadTabOrder, HeadVms, OpenHead, OpenHeadData, OpenHeadDataReadOnly,

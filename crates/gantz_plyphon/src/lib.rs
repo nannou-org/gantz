@@ -22,20 +22,24 @@ pub use compile::{
     BusBinding, DeriveError, Derived, RegionDerived, derive_synthdef, derive_synthdefs,
     structural_sig,
 };
+pub use config::{Config, Status};
 pub use dsp::{
     DspBuilder, FADE_LAG, GainRef, NodeDsp, NodeRate, ParamBinding, ScopeOutBinding, Signal,
     ToNodeDsp, node_dsp_of,
 };
 pub use flatten::{Flat, FlattenError, flatten, flatten_from_registry};
 pub use node::{Bus, Lag, Out, Pack, ScopeOut, SinOsc, Unpack};
+pub use settings::DspSettingsTab;
 pub use sugar::PlyphonSugar;
 
 pub mod backend;
 pub mod builtin;
 pub mod compile;
+pub mod config;
 pub mod dsp;
 pub mod flatten;
 pub mod monitor;
 pub mod node;
 pub mod param;
+pub mod settings;
 pub mod sugar;

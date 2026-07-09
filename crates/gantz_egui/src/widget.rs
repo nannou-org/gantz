@@ -2,7 +2,6 @@
 use time::{OffsetDateTime, UtcOffset, format_description};
 
 pub use checkbox_enabled::CheckboxEnabled;
-pub use dsp_settings::{DspPanel, DspSettingsResponse, dsp_settings};
 pub use gantz::{
     AlignConfig, Gantz, GantzState, GridConfig, LayoutConfig, NodeViewPane, Pane,
     PaneWindowGeometry, PaneWindowMode, SceneConfig, SnapConfig, SnapMode, WindowedPane,
@@ -23,13 +22,12 @@ pub use node_inspector::NodeInspector;
 pub use node_palette::NodePalette;
 pub use panes_config::{panes_config, reset_layout_button};
 pub use perf_view::{PerfCapture, PerfView};
-pub use settings::{SettingsResponse, settings};
+pub use settings::{SettingsResponse, SettingsTab, settings};
 pub use steel_view::SteelView;
 pub use style_config::style_config;
 pub use tab::{Tab, TabResponse};
 
 pub mod checkbox_enabled;
-pub mod dsp_settings;
 pub mod gantz;
 pub mod global_config;
 pub mod graph_config;

@@ -13,7 +13,7 @@ use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
 use bevy_gantz::head;
 use bevy_gantz::reg::Registry;
 use bevy_gantz::vm::EvalEntryEvent;
-use bevy_gantz::{BuiltinNodes, CompileConfig, DspConfig, DspStatus, EvalEntryComplete};
+use bevy_gantz::{BuiltinNodes, CompileConfig, EvalEntryComplete};
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::Node;
@@ -142,6 +142,7 @@ where
             .init_resource::<Views>()
             .init_resource::<Demos>()
             .init_resource::<WindowedPanesRequested>()
+            .init_resource::<SettingsTabs>()
             // GUI state observers
             .add_observer(on_head_opened::<N>)
             .add_observer(on_head_changed::<N>)
@@ -192,8 +193,15 @@ where
                     poll_import_task,
                 ),
             )
+            .add_systems(First, clear_settings_tabs)
             .add_systems(EguiPrimaryContextPass, update::<N>);
     }
+}
+
+/// Empty [`SettingsTabs`] so domain providers refill it with fresh snapshots
+/// each frame (see the resource docs for the schedule contract).
+fn clear_settings_tabs(mut tabs: ResMut<SettingsTabs>) {
+    tabs.0.clear();
 }
 
 // ----------------------------------------------------------------------------
@@ -271,6 +279,18 @@ pub struct HostNativePaneWindows;
 /// In-flight import file dialog task.
 #[derive(Resource)]
 pub struct ImportTask(bevy_tasks::Task<Option<Vec<u8>>>);
+
+/// Settings subtabs contributed by domains (see
+/// [`SettingsTab`][gantz_egui::widget::SettingsTab]).
+///
+/// Cleared each frame in `First`, refilled by domain provider systems in
+/// `PreUpdate` (guaranteeing the tabs exist before both GUI render paths),
+/// and consumed by [`update`] and the native pop-out window render pass
+/// (`pane_window::render_windowed_panes`). A provider typically pushes a
+/// fresh snapshot of its domain's config and status, and applies the change
+/// payloads its tab emitted on the previous frame.
+#[derive(Default, Resource)]
+pub struct SettingsTabs(pub Vec<Box<dyn gantz_egui::widget::SettingsTab + Send + Sync>>);
 
 // ----------------------------------------------------------------------------
 // Events
@@ -1680,8 +1700,7 @@ pub fn update<N>(
         base_immutable,
         mut compile_config,
         mut change_validation,
-        mut dsp_config,
-        dsp_status,
+        mut settings_tabs,
         mut requested,
         host_native,
     ): (
@@ -1689,8 +1708,7 @@ pub fn update<N>(
         Res<BaseImmutable>,
         ResMut<CompileConfig>,
         ResMut<bevy_gantz::ValidateCommitted>,
-        Option<ResMut<DspConfig>>,
-        Option<Res<DspStatus>>,
+        ResMut<SettingsTabs>,
         ResMut<WindowedPanesRequested>,
         Option<Res<HostNativePaneWindows>>,
     ),
@@ -1748,20 +1766,6 @@ where
     );
     panel_ui.set_clip_rect(ctx.content_rect());
 
-    // The Settings -> DSP panel: present only when a dsp runtime supplied both
-    // its config and status resources (so the demo / a no-dsp app omits the tab).
-    let dsp_panel = match (&dsp_config, &dsp_status) {
-        (Some(cfg), Some(status)) => Some(gantz_egui::widget::DspPanel {
-            present: status.present,
-            device: status.device.clone(),
-            sample_rate: status.sample_rate,
-            channels: status.channels,
-            sched_lead_ms: cfg.sched_lead.as_secs_f32() * 1000.0,
-            enabled: cfg.enabled,
-        }),
-        _ => None,
-    };
-
     // A native host owns the pop-out windows when `HostNativePaneWindows` is
     // present; otherwise the widget draws them itself as `egui::Window`s.
     let pane_window_mode = match host_native {
@@ -1772,17 +1776,22 @@ where
     let mut response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show_inside(&mut panel_ui, |ui| {
-            let mut widget = gantz_egui::widget::Gantz::new(&node_reg, &base_names.0)
+            // Built inside the closure: `&mut dyn` slices are invariant, so
+            // building the view list outside would escape its lifetime.
+            let mut tabs: Vec<&mut dyn gantz_egui::widget::SettingsTab> = settings_tabs
+                .0
+                .iter_mut()
+                .map(|t| &mut **t as &mut dyn gantz_egui::widget::SettingsTab)
+                .collect();
+            let widget = gantz_egui::widget::Gantz::new(&node_reg, &base_names.0)
                 .base_immutable(base_immutable.0)
                 .demos(&demos.0)
                 .compile_config(current_compile_config)
                 .validate_change_tracking(current_validate_change_tracking)
                 .trace_capture(trace_capture.0.clone(), level)
                 .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
-                .pane_window_mode(pane_window_mode);
-            if let Some(panel) = dsp_panel {
-                widget = widget.dsp(panel);
-            }
+                .pane_window_mode(pane_window_mode)
+                .settings_tabs(&mut tabs);
             widget.show(&mut *gui_state, focused_ix, &mut access, ui)
         })
         .inner;
@@ -1805,7 +1814,6 @@ where
         &base_names,
         &mut compile_config,
         &mut change_validation,
-        dsp_config.as_deref_mut(),
         import_task.as_deref(),
         &head_to_entity,
         &dispatchers,
@@ -1824,7 +1832,7 @@ where
 /// pass ([`pane_window::render_windowed_panes`]) so a pane behaves identically
 /// whether docked or windowed. Handles focus, graph open/close/replace/new,
 /// branch, file drops, demo/description edits, resets, compile config, change-
-/// tracking, DSP, import, in-place head commits, and dynamic payload dispatch.
+/// tracking, import, in-place head commits, and dynamic payload dispatch.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_gantz_response<N>(
     response: &mut gantz_egui::widget::gantz::GantzResponse,
@@ -1836,7 +1844,6 @@ pub(crate) fn handle_gantz_response<N>(
     base_names: &BaseNames,
     compile_config: &mut CompileConfig,
     change_validation: &mut bevy_gantz::ValidateCommitted,
-    dsp_config: Option<&mut DspConfig>,
     import_task: Option<&ImportTask>,
     head_to_entity: &HashMap<ca::Head, Entity>,
     dispatchers: &ResponseDispatchers,
@@ -1961,16 +1968,6 @@ pub(crate) fn handle_gantz_response<N>(
     // Toggle change-tracking validation (a debugging aid; see `vm::sync`).
     if let Some(enabled) = response.validate_change_tracking {
         change_validation.0 = enabled;
-    }
-
-    // Apply Settings -> DSP changes to the dsp config resource.
-    if let Some(cfg) = dsp_config {
-        if let Some(lead_ms) = response.dsp_sched_lead_ms {
-            cfg.sched_lead = std::time::Duration::from_secs_f32(lead_ms / 1000.0);
-        }
-        if let Some(enabled) = response.dsp_enabled {
-            cfg.enabled = enabled;
-        }
     }
 
     // Handle import button - open a file dialog (only if none already in flight).

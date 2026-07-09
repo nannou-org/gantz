@@ -62,7 +62,7 @@ pub struct Gantz<'a> {
     base_immutable: bool,
     compile_config: Option<gantz_core::compile::Config>,
     validate_change_tracking: Option<bool>,
-    dsp: Option<widget::DspPanel>,
+    settings_tabs: &'a mut [&'a mut dyn widget::SettingsTab],
     pane_window_mode: PaneWindowMode,
 }
 
@@ -595,10 +595,6 @@ pub struct GantzResponse {
     pub compile_config: Option<gantz_core::compile::Config>,
     /// The change-tracking validation toggle was changed (its new value).
     pub validate_change_tracking: Option<bool>,
-    /// The scheduling lead (ms) was changed in the Settings -> DSP subtab.
-    pub dsp_sched_lead_ms: Option<f32>,
-    /// The DSP enable/mute toggle was changed in the Settings -> DSP subtab.
-    pub dsp_enabled: Option<bool>,
     /// Heads whose graph had a CA-affecting edit this frame (from a node UI, an
     /// inspector edit, or a structural scene edit). Lets the application
     /// commit/recompile only the changed heads instead of re-hashing every open
@@ -698,8 +694,6 @@ impl GantzResponse {
             reset_all_demos: false,
             compile_config: None,
             validate_change_tracking: None,
-            dsp_sched_lead_ms: None,
-            dsp_enabled: None,
             changed_heads: Vec::new(),
             responses: Responses::default(),
             windowed_panes: Vec::new(),
@@ -764,7 +758,7 @@ impl<'a> Gantz<'a> {
             base_immutable: true,
             compile_config: None,
             validate_change_tracking: None,
-            dsp: None,
+            settings_tabs: &mut [],
             pane_window_mode: PaneWindowMode::default(),
         }
     }
@@ -798,11 +792,12 @@ impl<'a> Gantz<'a> {
         self
     }
 
-    /// Provide the dsp status + live settings so the Settings -> DSP subtab
-    /// appears. Changes are reported via [`GantzResponse::dsp_sched_lead_ms`] and
-    /// [`GantzResponse::dsp_enabled`].
-    pub fn dsp(mut self, panel: widget::DspPanel) -> Self {
-        self.dsp = Some(panel);
+    /// Provide extension settings subtabs (see
+    /// [`SettingsTab`][widget::SettingsTab]). One subtab appears per entry,
+    /// and any payloads a tab emits are reported via
+    /// [`GantzResponse::responses`].
+    pub fn settings_tabs(mut self, tabs: &'a mut [&'a mut dyn widget::SettingsTab]) -> Self {
+        self.settings_tabs = tabs;
         self
     }
 
@@ -1741,7 +1736,7 @@ where
         Pane::Settings => {
             let compile_config = gantz.compile_config;
             let validate_change_tracking = gantz.validate_change_tracking;
-            let dsp = gantz.dsp.clone();
+            let ext_tabs = &mut *gantz.settings_tabs;
             let res = pane_ui(ui, |ui| {
                 widget::settings(
                     &mut state.view_toggles,
@@ -1750,7 +1745,7 @@ where
                     &mut state.layout_config,
                     &mut state.scene_config,
                     &mut state.keymap,
-                    dsp,
+                    ext_tabs,
                     ui,
                 )
             });
@@ -1760,18 +1755,16 @@ where
             if let Some(v) = res.inner.validate_change_tracking {
                 gantz_response.validate_change_tracking = Some(v);
             }
-            if let Some(v) = res.inner.dsp_sched_lead_ms {
-                gantz_response.dsp_sched_lead_ms = Some(v);
-            }
-            if let Some(v) = res.inner.dsp_enabled {
-                gantz_response.dsp_enabled = Some(v);
-            }
             if res.inner.reset_all_demos {
                 gantz_response.reset_all_demos = true;
             }
             if res.inner.reset_layout {
                 gantz_response.responses.push(None, ResetTilesLayout);
             }
+            let mut ext_responses = res.inner.responses;
+            gantz_response
+                .responses
+                .extend(None, ext_responses.drain().map(|(_, d)| d));
         }
     }
 }
