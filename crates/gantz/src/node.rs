@@ -11,39 +11,22 @@ pub trait Node:
 dyn_clone::clone_trait_object!(Node);
 dyn_hash::hash_trait_object!(Node);
 
-impl Node for gantz_core::node::Apply {}
-impl Node for gantz_core::node::Branch {}
-impl Node for gantz_core::node::Delay {}
-impl Node for gantz_core::node::Expr {}
-impl Node for gantz_core::node::Identity {}
-impl Node for gantz_core::node::graph::Inlet {}
-impl Node for gantz_core::node::graph::Outlet {}
-
-impl Node for gantz_std::Bang {}
-impl Node for gantz_std::Log {}
-impl Node for gantz_std::Number {}
-
-impl Node for gantz_egui::node::FnNamedRef {}
-impl Node for gantz_egui::node::NamedRef {}
-
-impl Node for gantz_egui::node::Comment {}
-impl Node for bevy_gantz_egui::node::UpdateBang {}
-impl Node for bevy_gantz_egui::node::TickBang {}
-impl Node for gantz_egui::node::Inspect {}
-impl Node for gantz_egui::node::Plot {}
-
-impl Node for gantz_plyphon::SinOsc {}
-impl Node for gantz_plyphon::Out {}
-impl Node for gantz_plyphon::Lag {}
-impl Node for gantz_plyphon::ScopeOut {}
-impl Node for gantz_plyphon::Pack {}
-impl Node for gantz_plyphon::Unpack {}
-impl Node for gantz_plyphon::Bus {}
+impl<T> Node for T where
+    T: Any
+        + DynClone
+        + DynHash
+        + gantz_ca::CaHash
+        + gantz_core::Node
+        + gantz_egui::NodeUi
+        + Send
+        + Sync
+{
+}
 
 // `Box<dyn Node>`'s `Serialize`/`Deserialize`: compiled dispatch over the
-// full node set, keyed by each type's `gantz_nodetag::NodeTag`. Adding a
-// node type to the app is an `impl Node` above plus one line here (the
-// `node_set_roundtrips_through_datum` gate test enforces the latter).
+// full node set, keyed by each type's `gantz_nodetag::NodeTag`. This list is
+// the app's wire-format manifest: adding a node type to the app is one line
+// here (the `node_set_roundtrips_through_datum` gate test enforces it).
 gantz_format::impl_node_set_serde! {
     dyn Node {
         gantz_core::node::Apply,
@@ -79,6 +62,13 @@ impl From<gantz_egui::node::NamedRef> for Box<dyn Node> {
     }
 }
 
+// Lets domain crates provide `Builtin` ctor lists generic over this node set.
+impl<T: Node> gantz_core::FromNode<T> for Box<dyn Node> {
+    fn from_node(node: T) -> Self {
+        Box::new(node)
+    }
+}
+
 // Lets the reference-resync / rename machinery find `NamedRef`s within an
 // erased node by downcasting.
 impl gantz_egui::sync::AsNamedRefMut for Box<dyn Node> {
@@ -108,36 +98,12 @@ impl bevy_gantz_egui::node::ToTickBang for Box<dyn Node> {
 }
 
 // Lets the synthdef compiler and dsp driver find DSP nodes within an erased
-// node by downcasting to each known `NodeDsp` type (mirrors `ToTickBang`).
+// node by delegating to the domain's downcast probe (mirrors `ToTickBang`).
 impl gantz_plyphon::ToNodeDsp for Box<dyn Node> {
     fn to_node_dsp(&self) -> Option<&dyn gantz_plyphon::NodeDsp> {
-        let any: &dyn Any = &**self;
-        if let Some(n) = any.downcast_ref::<gantz_plyphon::SinOsc>() {
-            return Some(n);
-        }
-        if let Some(n) = any.downcast_ref::<gantz_plyphon::Out>() {
-            return Some(n);
-        }
-        if let Some(n) = any.downcast_ref::<gantz_plyphon::Lag>() {
-            return Some(n);
-        }
-        if let Some(n) = any.downcast_ref::<gantz_plyphon::ScopeOut>() {
-            return Some(n);
-        }
-        if let Some(n) = any.downcast_ref::<gantz_plyphon::Pack>() {
-            return Some(n);
-        }
-        if let Some(n) = any.downcast_ref::<gantz_plyphon::Unpack>() {
-            return Some(n);
-        }
-        if let Some(n) = any.downcast_ref::<gantz_plyphon::Bus>() {
-            return Some(n);
-        }
-        None
+        gantz_plyphon::node_dsp_of((&**self) as &dyn Any)
     }
 }
-
-impl Node for Box<dyn Node> {}
 
 /// The composite `.gantz` keyword sugar for this app's full node set: the
 /// `gantz_core`, `gantz_std`, `gantz_egui` and `bevy_gantz_egui` node sugars.
@@ -151,6 +117,18 @@ impl gantz_format::NodeSugar for Box<dyn Node> {
             &gantz_plyphon::PlyphonSugar,
         ])
     }
+}
+
+/// The app's full builtin node set: every domain's builtin specs composed.
+pub fn builtins() -> gantz_core::BuiltinSet<Box<dyn Node>> {
+    gantz_core::BuiltinSet::from_specs(
+        gantz_core::node::builtins()
+            .into_iter()
+            .chain(gantz_std::builtins())
+            .chain(gantz_egui::builtins())
+            .chain(bevy_gantz_egui::builtins())
+            .chain(gantz_plyphon::builtins()),
+    )
 }
 
 #[cfg(test)]
@@ -173,6 +151,40 @@ mod tests {
             .expect("push entrypoint");
         vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
             .expect("push entrypoint");
+    }
+
+    /// Gate test for the app's builtin palette: the set composed from the
+    /// per-domain `builtins()` lists must match the full expected name set.
+    /// A builtin dropped from (or added to) any domain list fails here.
+    #[test]
+    fn builtins_match_expected_name_set() {
+        let expected = vec![
+            "apply",
+            "bang",
+            "branch",
+            "comment",
+            "delay",
+            "expr",
+            "fn",
+            "id",
+            "inlet",
+            "inspect",
+            "log",
+            "number",
+            "outlet",
+            "plot",
+            "tick!",
+            "update!",
+            "~bus",
+            "~lag",
+            "~out",
+            "~pack",
+            "~scopeout",
+            "~sinosc",
+            "~unpack",
+        ];
+        let builtins = super::builtins();
+        assert_eq!(gantz_core::Builtins::names(&builtins), expected);
     }
 
     /// Read an `inspect` node's stored value as a list of `f64`s.
@@ -533,7 +545,7 @@ mod tests {
 
         // The binding's path reaches the nested lag's live param state in a VM
         // compiled from the same (un-flattened) graph.
-        let builtins = crate::builtin::Builtins::new();
+        let builtins = super::builtins();
         let reg_ref = gantz_egui::RegistryRef::new(&export.registry, &builtins, &export.demos);
         let get_node = |ca: &gantz_ca::ContentAddr| reg_ref.node(ca);
         let config = gantz_core::compile::Config::default();
@@ -948,7 +960,7 @@ mod tests {
         let head = gantz_ca::Head::Branch("g".into());
         let graph = export.registry.head_graph(&head).expect("g graph");
 
-        let builtins = crate::builtin::Builtins::new();
+        let builtins = super::builtins();
         let reg_ref = gantz_egui::RegistryRef::new(&export.registry, &builtins, &export.demos);
         let get_node = |ca: &gantz_ca::ContentAddr| reg_ref.node(ca);
 
@@ -1385,7 +1397,7 @@ mod tests {
 
         let base: gantz_egui::export::Export<G> =
             gantz_egui::export::parse_export(gantz_base::BYTES).expect("parse base");
-        let builtins = crate::builtin::Builtins::new();
+        let builtins = super::builtins();
         let reg_ref = gantz_egui::RegistryRef::new(&base.registry, &builtins, &base.demos);
         let get_node = |ca: &gantz_ca::ContentAddr| reg_ref.node(ca);
         let configs = [
@@ -1479,7 +1491,7 @@ mod tests {
         );
 
         // Resolution: a `ref add` exposes `add`'s socket docs.
-        let builtins = crate::builtin::Builtins::new();
+        let builtins = super::builtins();
         let reg_ref = gantz_egui::RegistryRef::new(&base.registry, &builtins, &base.demos);
         let add = gantz_ca::ContentAddr::from(*base.registry.names().get("add").expect("add"));
         let doc = |kind, ix| reg_ref.socket_doc(&add, kind, ix);
@@ -1512,7 +1524,7 @@ mod tests {
 
         let base: gantz_egui::export::Export<G> =
             gantz_egui::export::parse_export(gantz_base::BYTES).expect("parse base");
-        let builtins = crate::builtin::Builtins::new();
+        let builtins = super::builtins();
         let reg_ref = gantz_egui::RegistryRef::new(&base.registry, &builtins, &base.demos);
         let get_node = |ca: &gantz_ca::ContentAddr| reg_ref.node(ca);
         let config = gantz_core::compile::Config::default();
@@ -1599,7 +1611,7 @@ mod tests {
         registry.merge(subset);
 
         // Reopen: the reset demo must still compile, i.e. every `ref` resolves.
-        let builtins = crate::builtin::Builtins::new();
+        let builtins = super::builtins();
         let reg_ref = gantz_egui::RegistryRef::new(&registry, &builtins, &startup.demos);
         let get_node = |ca: &gantz_ca::ContentAddr| reg_ref.node(ca);
         let head = gantz_ca::Head::Branch(name.to_string());

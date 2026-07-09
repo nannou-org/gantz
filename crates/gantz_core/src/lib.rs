@@ -1,4 +1,4 @@
-pub use builtin::Builtins;
+pub use builtin::{Builtin, BuiltinSet, Builtins, FromNode};
 pub use diagnostic::Diagnostic;
 pub use edge::Edge;
 pub use node::Node;

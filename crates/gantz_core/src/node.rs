@@ -539,3 +539,26 @@ pub fn visit_typed<V: visit::TypedVisitor<N>, N: Node>(
 pub fn register(ctx: visit::Ctx<'_, '_>, node: &dyn Node, vm: &mut Engine) {
     visit(ctx, node, &mut visit::Register(vm));
 }
+
+/// Builtin specs for the core node set.
+pub fn builtins<N>() -> Vec<crate::builtin::Builtin<N>>
+where
+    N: crate::builtin::FromNode<Apply>
+        + crate::builtin::FromNode<Branch>
+        + crate::builtin::FromNode<Delay>
+        + crate::builtin::FromNode<Expr>
+        + crate::builtin::FromNode<Identity>
+        + crate::builtin::FromNode<graph::Inlet>
+        + crate::builtin::FromNode<graph::Outlet>,
+{
+    use crate::builtin::Builtin;
+    vec![
+        Builtin::new("apply", || N::from_node(Apply::default())),
+        Builtin::new("branch", || N::from_node(Branch::default())),
+        Builtin::new("delay", || N::from_node(Delay::default())),
+        Builtin::new("expr", || N::from_node(Expr::new("()").unwrap())),
+        Builtin::new(IDENTITY_NAME, || N::from_node(Identity)),
+        Builtin::new("inlet", || N::from_node(graph::Inlet::default())),
+        Builtin::new("outlet", || N::from_node(graph::Outlet::default())),
+    ]
+}

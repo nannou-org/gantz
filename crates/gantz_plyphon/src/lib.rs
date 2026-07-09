@@ -17,19 +17,21 @@
 //! channel-routing pair - gets its own descriptive name instead.
 
 pub use backend::{AddAction, Backend, BackendError, Embedded, ROOT_GROUP_ID};
+pub use builtin::builtins;
 pub use compile::{
     BusBinding, DeriveError, Derived, RegionDerived, derive_synthdef, derive_synthdefs,
     structural_sig,
 };
 pub use dsp::{
     DspBuilder, FADE_LAG, GainRef, NodeDsp, NodeRate, ParamBinding, ScopeOutBinding, Signal,
-    ToNodeDsp,
+    ToNodeDsp, node_dsp_of,
 };
 pub use flatten::{Flat, FlattenError, flatten, flatten_from_registry};
 pub use node::{Bus, Lag, Out, Pack, ScopeOut, SinOsc, Unpack};
 pub use sugar::PlyphonSugar;
 
 pub mod backend;
+pub mod builtin;
 pub mod compile;
 pub mod dsp;
 pub mod flatten;

@@ -11,10 +11,8 @@ use bevy_gantz::{
 };
 use bevy_gantz_egui::{GantzEguiPlugin, HeadGuiState, TraceCapture, Views};
 use bevy_pkv::PkvStore;
-use builtin::Builtins;
 use storage::Pkv;
 
-mod builtin;
 mod node;
 mod persist;
 mod storage;
@@ -35,9 +33,9 @@ fn main() {
         .add_plugins(GantzEguiPlugin::<Box<dyn node::Node>>::default())
         // DSP plugin: cpal output stream + plyphon synth driver for DSP graphs.
         .add_plugins(bevy_gantz_plyphon::PlyphonPlugin::<Box<dyn node::Node>>::default())
-        // App-specific builtins
+        // The full builtin node set composed from every domain's builtins.
         .insert_resource(BuiltinNodes::<Box<dyn node::Node>>(Box::new(
-            Builtins::new(),
+            node::builtins(),
         )))
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window::plugin()))
         .add_plugins(EguiPlugin::default())
