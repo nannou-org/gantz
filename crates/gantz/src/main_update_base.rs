@@ -18,10 +18,8 @@ use bevy_gantz::{
 };
 use bevy_gantz_egui::{GantzEguiPlugin, GuiState, HeadGuiState, TraceCapture, Views};
 use bevy_pkv::PkvStore;
-use builtin::Builtins;
 use storage::Pkv;
 
-mod builtin;
 mod node;
 mod storage;
 
@@ -30,7 +28,7 @@ fn main() {
         .add_plugins(GantzPlugin::<Box<dyn node::Node>>::default())
         .add_plugins(GantzEguiPlugin::<Box<dyn node::Node>>::default().base_immutable(false))
         .insert_resource(BuiltinNodes::<Box<dyn node::Node>>(Box::new(
-            Builtins::new(),
+            node::builtins(),
         )))
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
