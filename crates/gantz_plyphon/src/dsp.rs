@@ -386,3 +386,45 @@ impl DspBuilder {
         (def, self.bindings, self.monitors, self.gains)
     }
 }
+
+/// Find the [`NodeDsp`] within a type-erased node, trying each of this crate's
+/// DSP node types.
+///
+/// Node-set types (e.g. an app's `Box<dyn Node>`) can implement [`ToNodeDsp`]
+/// by delegating to this fn. Sets composing additional DSP node types chain
+/// their own downcasts via `.or_else(..)`.
+pub fn node_dsp_of(any: &dyn std::any::Any) -> Option<&dyn NodeDsp> {
+    fn probe<T: NodeDsp + 'static>(any: &dyn std::any::Any) -> Option<&dyn NodeDsp> {
+        any.downcast_ref::<T>().map(|n| n as &dyn NodeDsp)
+    }
+    probe::<crate::SinOsc>(any)
+        .or_else(|| probe::<crate::Out>(any))
+        .or_else(|| probe::<crate::Lag>(any))
+        .or_else(|| probe::<crate::ScopeOut>(any))
+        .or_else(|| probe::<crate::Pack>(any))
+        .or_else(|| probe::<crate::Unpack>(any))
+        .or_else(|| probe::<crate::Bus>(any))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::node_dsp_of;
+
+    /// Every DSP node type in this crate must be found by [`node_dsp_of`], so
+    /// a probe arm forgotten when adding a node fails here rather than in
+    /// downstream node sets.
+    #[test]
+    fn node_dsp_of_covers_all_dsp_nodes() {
+        fn check<T: super::NodeDsp + Default + 'static>() {
+            let node = T::default();
+            assert!(node_dsp_of(&node).is_some());
+        }
+        check::<crate::SinOsc>();
+        check::<crate::Out>();
+        check::<crate::Lag>();
+        check::<crate::ScopeOut>();
+        check::<crate::Pack>();
+        check::<crate::Unpack>();
+        check::<crate::Bus>();
+    }
+}
