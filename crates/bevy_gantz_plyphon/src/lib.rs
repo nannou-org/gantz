@@ -20,7 +20,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use bevy_app::{App, Plugin, Update};
+use bevy_app::{App, Plugin, PreUpdate, Update};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::NonSendMut;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -48,7 +48,24 @@ pub use plyphon;
 type UnitRegistrar = Box<dyn Fn(&mut plyphon::UnitRegistry) + Send + Sync>;
 
 use bevy_gantz::head::{HeadRef, HeadVms, OpenHead, WorkingGraph};
-use bevy_gantz::{DspConfig, DspStatus, EntrypointSet, EvalEpoch, Registry, VmSet};
+use bevy_gantz::{EntrypointSet, EvalEpoch, Registry, VmSet};
+use bevy_gantz_egui::{RegisterResponseExt, SettingsTabs};
+use gantz_plyphon::{Config, DspSettingsTab, Status};
+
+/// Editable DSP settings: the domain's [`Config`] as a bevy resource.
+/// Runtime-only - not persisted, so it resets to the defaults each session.
+#[derive(Clone, Debug, Default, Resource)]
+pub struct DspConfig(pub Config);
+
+/// Read-only DSP status: the domain's [`Status`] as a bevy resource, written
+/// at startup for the Settings -> DSP tab to display.
+#[derive(Clone, Debug, Default, Resource)]
+pub struct DspStatus(pub Status);
+
+/// A settings change emitted by the DSP settings tab (the full updated
+/// [`Config`]), buffered for the settings-sync system to apply next frame.
+#[derive(Message)]
+pub struct DspSettingsChanged(pub Config);
 
 /// OSC/NTP fixed-point units per second (OSC time is 32.32 fixed point: 2^32).
 const OSC_UNITS_PER_SEC: f64 = 4_294_967_296.0;
@@ -137,7 +154,7 @@ where
         let mut head_synths = HeadSynths::default();
         let status = match build_dsp_engine(epoch, &self.unit_registrars) {
             Some(engine) => {
-                let status = DspStatus {
+                let status = Status {
                     present: true,
                     device: Some(engine.device.clone()),
                     sample_rate: engine.sample_rate,
@@ -150,10 +167,18 @@ where
             }
             None => {
                 log::warn!("bevy_gantz_plyphon: no DSP output device; `~out` nodes will be silent");
-                DspStatus::default()
+                Status::default()
             }
         };
-        app.insert_resource(status);
+        app.insert_resource(DspStatus(status));
+        // The Settings -> DSP tab: the tab's emitted `Config` payloads dispatch
+        // into a buffered message, applied (and re-snapshotted into the tab)
+        // by `sync_dsp_settings`. `init_resource::<SettingsTabs>` is idempotent
+        // and keeps the provider valid without the egui plugin.
+        app.init_resource::<SettingsTabs>()
+            .add_message::<DspSettingsChanged>()
+            .register_response_with::<Config>(dispatch_dsp_settings)
+            .add_systems(PreUpdate, sync_dsp_settings);
         // `.after(EntrypointSet)`: run once the `tick!`/`update!` drivers' triggered
         // evaluations have flushed, so the control values they queue are visible to
         // the param drain below in the same frame. `HeadSynths` is a NonSend resource:
@@ -409,6 +434,37 @@ struct ScopeSlot {
     consumer: StreamConsumer,
 }
 
+/// Dispatch a [`Config`] payload emitted by the DSP settings tab as a
+/// buffered [`DspSettingsChanged`] message (registered via
+/// [`RegisterResponseExt::register_response_with`]).
+fn dispatch_dsp_settings(
+    _entity: Option<Entity>,
+    payload: gantz_egui::DynResponse,
+    cmds: &mut Commands,
+) {
+    if let Ok(config) = payload.downcast::<Config>() {
+        cmds.write_message(DspSettingsChanged(config));
+    }
+}
+
+/// Apply any pending settings change, then provide this frame's DSP settings
+/// tab: a fresh snapshot of the applied [`Config`] + [`Status`] (see
+/// [`SettingsTabs`] for the First/PreUpdate schedule contract).
+fn sync_dsp_settings(
+    mut msgs: MessageReader<DspSettingsChanged>,
+    mut config: ResMut<DspConfig>,
+    status: Res<DspStatus>,
+    mut tabs: ResMut<SettingsTabs>,
+) {
+    if let Some(msg) = msgs.read().last() {
+        config.0 = msg.0.clone();
+    }
+    tabs.0.push(Box::new(DspSettingsTab {
+        config: config.0.clone(),
+        status: status.0.clone(),
+    }));
+}
+
 /// Keep each open head's synth in sync, `.after(VmSet)` and `.after(EntrypointSet)`.
 /// Two passes per head:
 ///
@@ -442,8 +498,8 @@ fn drive_synths<N>(
     let state = state.into_inner();
 
     // Apply the enable/mute toggle by pausing/playing the output stream on change.
-    if *enabled_applied != Some(dsp_config.enabled) {
-        let result = if dsp_config.enabled {
+    if *enabled_applied != Some(dsp_config.0.enabled) {
+        let result = if dsp_config.0.enabled {
             dsp.stream.play()
         } else {
             dsp.stream.pause()
@@ -451,7 +507,7 @@ fn drive_synths<N>(
         if let Err(e) = result {
             log::error!("bevy_gantz_plyphon: audio stream play/pause failed: {e}");
         }
-        *enabled_applied = Some(dsp_config.enabled);
+        *enabled_applied = Some(dsp_config.0.enabled);
     }
 
     // Tick NRT cleanup off the audio thread (drops freed synths, surfaces events).
@@ -523,7 +579,7 @@ fn drive_synths<N>(
                     // Timestamped automation: schedule each update at its own time
                     // plus the lead, preserving the inter-tick spacing.
                     for (t, v) in pending {
-                        let when = osc(t + dsp_config.sched_lead.as_secs_f64());
+                        let when = osc(t + dsp_config.0.sched_lead.as_secs_f64());
                         if let Err(e) = backend.set_control_at(node_id, slot.index, v as f32, when)
                         {
                             log::error!("bevy_gantz_plyphon: set_control_at failed: {e:?}");

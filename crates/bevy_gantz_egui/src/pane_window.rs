@@ -18,10 +18,10 @@
 //! `egui::Window`s instead.
 
 use crate::{
-    BaseImmutable, BaseNames, BuiltinNodes, CompileConfig, Demos, DspConfig, DspStatus, GuiState,
-    HeadAccess, HostNativePaneWindows, ImportTask, OpenHeadViews, PerfGui, PerfVm, Registry,
-    ResponseDispatchers, TraceCapture, WindowedPanesRequested, handle_gantz_response, head,
-    registry_ref,
+    BaseImmutable, BaseNames, BuiltinNodes, CompileConfig, Demos, GuiState, HeadAccess,
+    HostNativePaneWindows, ImportTask, OpenHeadViews, PerfGui, PerfVm, Registry,
+    ResponseDispatchers, SettingsTabs, TraceCapture, WindowedPanesRequested, handle_gantz_response,
+    head, registry_ref,
 };
 use bevy_app::prelude::*;
 use bevy_camera::{Camera2d, RenderTarget};
@@ -191,8 +191,7 @@ fn render_windowed_panes<N: PaneNode>(
         base_immutable,
         mut compile_config,
         mut change_validation,
-        mut dsp_config,
-        dsp_status,
+        mut settings_tabs,
         mut demos,
         dispatchers,
     ): (
@@ -200,8 +199,7 @@ fn render_windowed_panes<N: PaneNode>(
         Res<BaseImmutable>,
         ResMut<CompileConfig>,
         ResMut<bevy_gantz::ValidateCommitted>,
-        Option<ResMut<DspConfig>>,
-        Option<Res<DspStatus>>,
+        ResMut<SettingsTabs>,
         ResMut<Demos>,
         Res<ResponseDispatchers>,
     ),
@@ -233,37 +231,28 @@ fn render_windowed_panes<N: PaneNode>(
 
     let level = bevy_log::tracing_subscriber::filter::LevelFilter::current();
 
-    // The Settings -> DSP panel, present only when a dsp runtime supplied both
-    // its config and status (mirrors `update`).
-    let dsp_panel = match (dsp_config.as_deref(), dsp_status.as_deref()) {
-        (Some(cfg), Some(status)) => Some(gantz_egui::widget::DspPanel {
-            present: status.present,
-            device: status.device.clone(),
-            sample_rate: status.sample_rate,
-            channels: status.channels,
-            sched_lead_ms: cfg.sched_lead.as_secs_f32() * 1000.0,
-            enabled: cfg.enabled,
-        }),
-        _ => None,
-    };
-
     for (ctx, mut pane) in targets {
         // Render the pane into a `CentralPanel` filling the window, using the
         // regular pane frame. Scoped so the registry / query borrows release
-        // before `handle_gantz_response`.
+        // before `handle_gantz_response`. The settings-tab view list is
+        // rebuilt per window: each iteration's borrow of the boxes ends with
+        // it (mirrors `update`, where it is built inside the panel closure).
         let mut response = {
             let node_reg = registry_ref(&registry, &builtins, &demos);
             let mut access = HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
-            let mut widget = gantz_egui::widget::Gantz::new(&node_reg, &base_names.0)
+            let mut tabs: Vec<&mut dyn gantz_egui::widget::SettingsTab> = settings_tabs
+                .0
+                .iter_mut()
+                .map(|t| &mut **t as &mut dyn gantz_egui::widget::SettingsTab)
+                .collect();
+            let widget = gantz_egui::widget::Gantz::new(&node_reg, &base_names.0)
                 .base_immutable(base_immutable.0)
                 .demos(&demos.0)
                 .compile_config(compile_config.0)
                 .validate_change_tracking(change_validation.0)
                 .trace_capture(trace_capture.0.clone(), level)
-                .perf_captures(&mut perf_vm.0, &mut perf_gui.0);
-            if let Some(panel) = dsp_panel.clone() {
-                widget = widget.dsp(panel);
-            }
+                .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
+                .settings_tabs(&mut tabs);
 
             // A background `Ui` spanning the window (as `update` builds for the
             // primary context).
@@ -300,7 +289,6 @@ fn render_windowed_panes<N: PaneNode>(
             &base_names,
             &mut compile_config,
             &mut change_validation,
-            dsp_config.as_deref_mut(),
             import_task.as_deref(),
             &head_to_entity,
             &dispatchers,

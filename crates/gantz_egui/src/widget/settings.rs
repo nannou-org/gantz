@@ -2,7 +2,6 @@
 //! Global / Style / Keybinds / Panes subtabs, plus any application-supplied
 //! extension subtabs (see [`SettingsTab`]).
 
-use super::DspPanel;
 use super::gantz::{LayoutConfig, SceneConfig, ViewToggles};
 use crate::{Keymap, Responses};
 
@@ -31,7 +30,6 @@ enum SubTab {
     Style,
     Keybinds,
     Panes,
-    Dsp,
     /// An extension subtab, identified by its title.
     Ext(String),
 }
@@ -47,10 +45,6 @@ pub struct SettingsResponse {
     pub reset_all_demos: bool,
     /// The "reset all" layout button was clicked (Panes subtab).
     pub reset_layout: bool,
-    /// The scheduling lead (ms) was changed (DSP subtab).
-    pub dsp_sched_lead_ms: Option<f32>,
-    /// The DSP enable/mute toggle was changed (DSP subtab).
-    pub dsp_enabled: Option<bool>,
     /// Payloads emitted by extension subtabs.
     pub responses: Responses,
 }
@@ -64,7 +58,6 @@ pub fn settings(
     layout_config: &mut LayoutConfig,
     scene_config: &mut SceneConfig,
     keymap: &mut Keymap,
-    dsp: Option<DspPanel>,
     ext_tabs: &mut [&mut dyn SettingsTab],
     ui: &mut egui::Ui,
 ) -> SettingsResponse {
@@ -102,10 +95,6 @@ pub fn settings(
         tab_label(ui, SubTab::Style, "Style");
         tab_label(ui, SubTab::Keybinds, "Keybinds");
         tab_label(ui, SubTab::Panes, "Panes");
-        // The DSP tab only exists when the app supplies dsp state (not the demo).
-        if dsp.is_some() {
-            tab_label(ui, SubTab::Dsp, "DSP");
-        }
         // Extension subtabs only exist while the app supplies them.
         for t in ext_tabs.iter() {
             let title = t.title();
@@ -161,16 +150,6 @@ pub fn settings(
             res.compile_config = g.compile_config;
             res.validate_change_tracking = g.validate_change_tracking;
             res.reset_all_demos = g.reset_all_demos;
-        }
-        SubTab::Dsp => {
-            if let Some(panel) = &dsp {
-                let a = egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| super::dsp_settings(panel, ui))
-                    .inner;
-                res.dsp_sched_lead_ms = a.sched_lead_ms;
-                res.dsp_enabled = a.enabled;
-            }
         }
         SubTab::Ext(ref name) => {
             if let Some(t) = ext_tabs.iter_mut().find(|t| t.title() == name) {

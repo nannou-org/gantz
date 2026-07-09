@@ -14,12 +14,14 @@ bevy_ecs.workspace = true
 cpal.workspace = true
 gantz_ca.workspace = true
 gantz_core.workspace = true
+gantz_egui.workspace = true
 gantz_plyphon.workspace = true
 log.workspace = true
 plyphon.workspace = true
 web-time.workspace = true
 
 bevy_gantz.workspace = true
+bevy_gantz_egui.workspace = true
 
 # Web-only: cpal's wasm backend. Without the `audioworklet` feature this is the default
 # Web Audio (ScriptProcessor) host; with it, cpal's AudioWorklet host is selected instead.
