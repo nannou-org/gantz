@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.3.1...bevy_gantz_egui-v0.4.0) - 2026-07-09
+
+### Added
+
+- *(std,egui,bevy)* export per-domain builtins() lists
+- persist pop-out window size across sessions
+- *(gantz)* pop panes out into native OS windows (#271, part 1)
+- Settings -> Audio tab (status + scheduling lead + mute)
+- *(bevy_gantz)* stamp entrypoint firing time into %args
+- *(gantz_format_derive)* derive macro for NodeTag
+- declare node wire tags at their definition sites
+- *(gantz_egui)* conflict resolution strategy selector on the merge row
+- *(gantz_format)* merge-parents clause; ancestry walks follow merge parents
+- *(bevy_gantz_egui)* merge observer and demo arm
+- *(bevy_gantz_egui)* own its node sugar via BevySugar
+- *(gantz_egui)* add Select all, Cut and Duplicate command shortcuts
+- *(node)* add Hz rate mode to tick!
+- *(node)* add self-driven tick! node
+- *(egui)* persist graph camera as centre + zoom, not a rect
+- *(bevy_gantz)* drive recompiles from committed CA; commit at edit sites ([#159](https://github.com/nannou-org/gantz/pull/159))
+- *(bevy_gantz)* persist and apply graph descriptions
+- *(palette)* place new nodes under the pointer and select them
+- *(layout-undo)* record settled layout changes in undo history
+
+### Fixed
+
+- *(bevy_gantz_egui)* pop-out windows inherit primary present mode
+- *(bevy_gantz_egui)* spawn pop-out contexts in PreUpdate to load fonts
+- *(docs)* Various grammatical cleanup in comments
+- *(demo)* key demo associations by graph name instead of commit
+
+### Other
+
+- *(bevy)* move DSP settings onto the domain seam
+- fix private intra-doc links so `cargo doc` passes
+- native pop-out windows as unbounded single-pass egui contexts
+- *(dsp)* rename the Audio* abstraction to Dsp*
+- *(license)* multi-license the repo; require explicit per-crate license
+- move NodeTag into dedicated gantz_nodetag crates
+- drop typetag from the workspace
+- *(node)* rename frame! to update!
+- *(persist)* serialize egui memory with bincode, not RON
+- *(persist)* persist views incrementally, one key per commit
+- house NodeUi response types in response.rs; rename ValidateCommitted
+- *(gantz_egui)* NodeUi methods return changed-aware responses
+
 ## [0.3.1](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.3.0...bevy_gantz_egui-v0.3.1) - 2026-06-21
 
 ### Added

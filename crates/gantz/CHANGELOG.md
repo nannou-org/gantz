@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3](https://github.com/nannou-org/gantz/compare/gantz-v0.2.2...gantz-v0.2.3) - 2026-07-09
+
+### Added
+
+- *(core)* add composable builtin specs
+- *(gantz)* pop panes out into native OS windows (#271, part 1)
+- *(web)* AudioWorklet audio for the gantz website
+- *(gantz_plyphon)* ~bus synthdef boundaries with per-region synths
+- *(gantz_plyphon)* per-ugen rate (ar/kr) on ~sinosc and ~lag
+- *(bevy_gantz_plyphon)* crossfade synth replacement instead of a hard cut
+- *(gantz_plyphon)* ~pack/~unpack channel-routing nodes
+- *(gantz_plyphon)* multichannel signals as channel-group edges
+- *(gantz_plyphon)* ~scopeout branches gating + configurable channels
+- *(gantz_plyphon)* add the ~tap DSP->control monitor node
+- *(gantz_plyphon)* DSP->control monitor return-path infra
+- *(gantz_plyphon)* summarise DSP node state as queued-update count
+- *(gantz_plyphon)* .gantz keyword sugar for ~sine/~out/~lag
+- *(gantz_plyphon)* queue timestamped control updates in param state
+- *(gantz_plyphon)* DSP control inputs + a ~lag node
+- *(gantz_plyphon)* DSP param values as node state + combined inspector row
+- *(gantz)* wire the DSP crates into the app
+- *(gantz_format)* merge-parents clause; ancestry walks follow merge parents
+- *(gantz)* compose the per-crate node sugars via NodeSugar
+- *(node)* add Hz rate mode to tick!
+- *(node)* add self-driven tick! node
+- *(egui)* persist graph camera as centre + zoom, not a rect
+- *(persist)* log persist duration and on-disk counts
+- *(plot)* refine inspector, frame and interaction per review
+- *(plot)* refine plot node per review feedback
+- *(plot)* add a configurable plot node to gantz_egui
+
+### Fixed
+
+- *(named-ref)* include `sync` in the content address so toggles persist
+
+### Other
+
+- *(gantz)* compose domain builtins, delete builtin.rs
+- native pop-out windows as unbounded single-pass egui contexts
+- *(gantz)* nested DSP graph derives and bridges VM state
+- *(dsp)* rename the Audio* abstraction to Dsp*
+- *(web)* drop the legacy web build, promote AudioWorklet to canonical
+- *(gantz_plyphon)* name dsp nodes after their ugens
+- *(gantz)* guard DSP nodes' serde round-trip + Steel-inertness
+- *(license)* multi-license the repo; require explicit per-crate license
+- move NodeTag into dedicated gantz_nodetag crates
+- drop typetag from the workspace
+- *(gantz)* replace typetag with impl_node_set_serde! ([#181](https://github.com/nannou-org/gantz/pull/181))
+- *(gantz)* pin the node serde wire format (Datum + RON)
+- *(node)* rename frame! to update!
+- *(persist)* serialize egui memory with bincode, not RON
+- *(persist)* persist views incrementally, one key per commit
+- *(gantz)* extract persistence into a persist module
+- *(persist)* write to storage on a background worker
+- *(persist)* stagger egui memory onto a separate debounce
+- *(persist)* persist registry incrementally
+- *(gantz)* order debounced persistence after settle_layout
+
 ## [0.2.2](https://github.com/nannou-org/gantz/compare/gantz-v0.2.1...gantz-v0.2.2) - 2026-06-21
 
 ### Added

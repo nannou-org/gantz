@@ -904,7 +904,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_gantz"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
@@ -924,7 +924,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_gantz_egui"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "base64",
  "bevy_app",
@@ -953,7 +953,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_gantz_plyphon"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bevy",
  "bevy_app",
@@ -3288,7 +3288,7 @@ dependencies = [
 
 [[package]]
 name = "gantz"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "async-channel",
  "bevy",
@@ -3316,11 +3316,11 @@ dependencies = [
 
 [[package]]
 name = "gantz_base"
-version = "0.2.2"
+version = "0.2.3"
 
 [[package]]
 name = "gantz_ca"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "gantz_ca_derive",
@@ -3332,7 +3332,7 @@ dependencies = [
 
 [[package]]
 name = "gantz_ca_derive"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3341,7 +3341,7 @@ dependencies = [
 
 [[package]]
 name = "gantz_core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "env_logger",
  "gantz_ca",
@@ -3358,7 +3358,7 @@ dependencies = [
 
 [[package]]
 name = "gantz_egui"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "blake3",
  "dyn-clone",
@@ -3392,7 +3392,7 @@ dependencies = [
 
 [[package]]
 name = "gantz_format"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "gantz_ca",
  "gantz_core",
@@ -3406,14 +3406,14 @@ dependencies = [
 
 [[package]]
 name = "gantz_nodetag"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gantz_nodetag_derive",
 ]
 
 [[package]]
 name = "gantz_nodetag_derive"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3422,7 +3422,7 @@ dependencies = [
 
 [[package]]
 name = "gantz_plyphon"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "egui",
  "egui_extras",
@@ -3441,7 +3441,7 @@ dependencies = [
 
 [[package]]
 name = "gantz_std"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "gantz_ca",
  "gantz_core",

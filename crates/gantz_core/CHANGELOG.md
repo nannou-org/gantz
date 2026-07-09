@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/nannou-org/gantz/compare/gantz_core-v0.4.0...gantz_core-v0.4.1) - 2026-07-09
+
+### Added
+
+- *(core)* add composable builtin specs
+- *(compile)* debug-log each compile step with its duration
+- *(gantz_core)* %args entrypoint input map with a time key
+- *(gantz_egui)* merge candidates, previews and the merge_head op
+- *(core)* add state::move_value to rekey a node's state subtree
+- *(expr)* always expose at least one (trigger) input
+
+### Fixed
+
+- *(docs)* Various grammatical cleanup in comments
+- *(gantz_core)* don't panic ordering a pull over a subset of inputs
+- *(state,log)* register VM helpers once to stop per-recompile leak
+
+### Other
+
+- *(gantz_core)* fix broken intra-doc links failing the doc gate
+- *(gantz_plyphon)* reuse gantz_core pull-eval order for synthdef ordering
+- *(license)* multi-license the repo; require explicit per-crate license
+- move NodeTag into dedicated gantz_nodetag crates
+- drop typetag from the workspace
+- port remaining typetag usages to impl_node_set_serde!
+- *(node)* rename frame! to update!
+- represent graphs with plain petgraph::Graph, not StableGraph
+- *(expr)* assert parse/lex errors propagate as Err
+- *(deps)* update steel-core to 0.8.2
+
 ## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.3.0...gantz_core-v0.4.0) - 2026-06-21
 
 ### Added
