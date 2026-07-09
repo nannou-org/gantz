@@ -1,19 +1,39 @@
 //! The "Settings" sidebar tab: globally-relevant configuration grouped into
-//! Global / Style / Keybinds / Panes subtabs.
+//! Global / Style / Keybinds / Panes subtabs, plus any application-supplied
+//! extension subtabs (see [`SettingsTab`]).
 
 use super::DspPanel;
 use super::gantz::{LayoutConfig, SceneConfig, ViewToggles};
-use crate::Keymap;
+use crate::{Keymap, Responses};
+
+/// An application-supplied settings subtab.
+///
+/// Domains contribute their own settings UI by supplying implementations to
+/// the [`Gantz`][super::Gantz] widget via
+/// [`Gantz::settings_tabs`][super::Gantz::settings_tabs]. A tab typically
+/// holds a per-frame snapshot of the domain's config and status, edits the
+/// snapshot in place, and reports changes by pushing a typed payload into the
+/// returned [`Responses`] for the host to apply.
+pub trait SettingsTab {
+    /// The subtab's label. Also identifies the selected subtab, so it should
+    /// be unique among the supplied tabs and stable across frames.
+    fn title(&self) -> &str;
+
+    /// Render the subtab's contents, returning any change payloads.
+    fn ui(&mut self, ui: &mut egui::Ui) -> Responses;
+}
 
 /// Which settings subtab is selected. Persisted only within a session.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum SettingsTab {
+#[derive(Clone, Default, PartialEq, Eq)]
+enum SubTab {
     #[default]
     Global,
     Style,
     Keybinds,
     Panes,
     Dsp,
+    /// An extension subtab, identified by its title.
+    Ext(String),
 }
 
 /// Response from [`settings`].
@@ -31,10 +51,12 @@ pub struct SettingsResponse {
     pub dsp_sched_lead_ms: Option<f32>,
     /// The DSP enable/mute toggle was changed (DSP subtab).
     pub dsp_enabled: Option<bool>,
+    /// Payloads emitted by extension subtabs.
+    pub responses: Responses,
 }
 
 /// Render the Settings pane: a subtab selector over Global / Style / Keybinds /
-/// Panes.
+/// Panes and any supplied extension subtabs.
 pub fn settings(
     view: &mut ViewToggles,
     compile_config: Option<gantz_core::compile::Config>,
@@ -43,17 +65,23 @@ pub fn settings(
     scene_config: &mut SceneConfig,
     keymap: &mut Keymap,
     dsp: Option<DspPanel>,
+    ext_tabs: &mut [&mut dyn SettingsTab],
     ui: &mut egui::Ui,
 ) -> SettingsResponse {
     let id = ui.id().with("settings_subtab");
-    let mut tab = ui
-        .data(|d| d.get_temp::<SettingsTab>(id))
-        .unwrap_or_default();
+    let mut tab = ui.data(|d| d.get_temp::<SubTab>(id)).unwrap_or_default();
+
+    // A previously selected extension subtab may no longer be supplied.
+    if let SubTab::Ext(ref name) = tab {
+        if !ext_tabs.iter().any(|t| t.title() == name) {
+            tab = SubTab::Global;
+        }
+    }
 
     // Subtab selector rendered like the shared tab widget: plain labels (no
     // box), the active tab in the strong text colour and the rest dim.
     ui.horizontal(|ui| {
-        let mut tab_label = |ui: &mut egui::Ui, this: SettingsTab, label: &str| {
+        let mut tab_label = |ui: &mut egui::Ui, this: SubTab, label: &str| {
             let color = if tab == this {
                 ui.visuals().strong_text_color()
             } else {
@@ -70,20 +98,25 @@ pub fn settings(
                 tab = this;
             }
         };
-        tab_label(ui, SettingsTab::Global, "Global");
-        tab_label(ui, SettingsTab::Style, "Style");
-        tab_label(ui, SettingsTab::Keybinds, "Keybinds");
-        tab_label(ui, SettingsTab::Panes, "Panes");
+        tab_label(ui, SubTab::Global, "Global");
+        tab_label(ui, SubTab::Style, "Style");
+        tab_label(ui, SubTab::Keybinds, "Keybinds");
+        tab_label(ui, SubTab::Panes, "Panes");
         // The DSP tab only exists when the app supplies dsp state (not the demo).
         if dsp.is_some() {
-            tab_label(ui, SettingsTab::Dsp, "DSP");
+            tab_label(ui, SubTab::Dsp, "DSP");
+        }
+        // Extension subtabs only exist while the app supplies them.
+        for t in ext_tabs.iter() {
+            let title = t.title();
+            tab_label(ui, SubTab::Ext(title.to_string()), title);
         }
     });
     ui.separator();
 
     let mut res = SettingsResponse::default();
     match tab {
-        SettingsTab::Panes => {
+        SubTab::Panes => {
             // Pin "reset all" to the bottom; the toggles scroll above it.
             // `Frame::NONE` keeps the inner margin matching the other subtabs,
             // which render directly in the pane's central panel.
@@ -101,17 +134,17 @@ pub fn settings(
                         .show(ui, |ui| super::panes_config(view, ui));
                 });
         }
-        SettingsTab::Style => {
+        SubTab::Style => {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| super::style_config(&mut scene_config.grid, ui));
         }
-        SettingsTab::Keybinds => {
+        SubTab::Keybinds => {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| super::keybinds_config(keymap, ui));
         }
-        SettingsTab::Global => {
+        SubTab::Global => {
             let g = egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -129,7 +162,7 @@ pub fn settings(
             res.validate_change_tracking = g.validate_change_tracking;
             res.reset_all_demos = g.reset_all_demos;
         }
-        SettingsTab::Dsp => {
+        SubTab::Dsp => {
             if let Some(panel) = &dsp {
                 let a = egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
@@ -137,6 +170,14 @@ pub fn settings(
                     .inner;
                 res.dsp_sched_lead_ms = a.sched_lead_ms;
                 res.dsp_enabled = a.enabled;
+            }
+        }
+        SubTab::Ext(ref name) => {
+            if let Some(t) = ext_tabs.iter_mut().find(|t| t.title() == name) {
+                res.responses = egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| t.ui(ui))
+                    .inner;
             }
         }
     }

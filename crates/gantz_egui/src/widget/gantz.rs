@@ -63,6 +63,7 @@ pub struct Gantz<'a> {
     compile_config: Option<gantz_core::compile::Config>,
     validate_change_tracking: Option<bool>,
     dsp: Option<widget::DspPanel>,
+    settings_tabs: &'a mut [&'a mut dyn widget::SettingsTab],
     pane_window_mode: PaneWindowMode,
 }
 
@@ -765,6 +766,7 @@ impl<'a> Gantz<'a> {
             compile_config: None,
             validate_change_tracking: None,
             dsp: None,
+            settings_tabs: &mut [],
             pane_window_mode: PaneWindowMode::default(),
         }
     }
@@ -803,6 +805,15 @@ impl<'a> Gantz<'a> {
     /// [`GantzResponse::dsp_enabled`].
     pub fn dsp(mut self, panel: widget::DspPanel) -> Self {
         self.dsp = Some(panel);
+        self
+    }
+
+    /// Provide extension settings subtabs (see
+    /// [`SettingsTab`][widget::SettingsTab]). One subtab appears per entry,
+    /// and any payloads a tab emits are reported via
+    /// [`GantzResponse::responses`].
+    pub fn settings_tabs(mut self, tabs: &'a mut [&'a mut dyn widget::SettingsTab]) -> Self {
+        self.settings_tabs = tabs;
         self
     }
 
@@ -1742,6 +1753,7 @@ where
             let compile_config = gantz.compile_config;
             let validate_change_tracking = gantz.validate_change_tracking;
             let dsp = gantz.dsp.clone();
+            let ext_tabs = &mut *gantz.settings_tabs;
             let res = pane_ui(ui, |ui| {
                 widget::settings(
                     &mut state.view_toggles,
@@ -1751,6 +1763,7 @@ where
                     &mut state.scene_config,
                     &mut state.keymap,
                     dsp,
+                    ext_tabs,
                     ui,
                 )
             });
@@ -1772,6 +1785,10 @@ where
             if res.inner.reset_layout {
                 gantz_response.responses.push(None, ResetTilesLayout);
             }
+            let mut ext_responses = res.inner.responses;
+            gantz_response
+                .responses
+                .extend(None, ext_responses.drain().map(|(_, d)| d));
         }
     }
 }
