@@ -16,6 +16,18 @@ use gantz_core::node::{self, GetNode};
 use std::collections::{HashMap, HashSet};
 use steel::steel_vm::engine::Engine;
 
+/// The egui-graph layout id for the node at graph index `ix`.
+fn node_id(ix: usize) -> egui_graph::NodeId {
+    egui_graph::NodeId::from_u64(ix as u64)
+}
+
+/// The fallback position for the `i`th node a view migration could not map:
+/// cascade down-right from the camera `center` so unplaced nodes stay
+/// visible without overlapping.
+fn cascade_pos(center: egui::Pos2, i: usize) -> egui::Pos2 {
+    center + egui::vec2(20.0, 20.0) * i as f32
+}
+
 /// Branch a named node: commit the graph at the given (graph) content address
 /// under a new name, and replace the node at `path` with a [`NamedRef`]
 /// referencing it. `path`'s last element is the node's index within the
@@ -162,7 +174,7 @@ pub fn create_node(
     // Position the new node under the pointer, falling back to the center of the
     // current view.
     let pos = pos.unwrap_or_else(|| view.camera.center);
-    let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
+    let egui_id = node_id(node_ix.index());
     view.layout.insert(egui_id, pos);
 
     // Make the new node the sole selection (clearing the previous one).
@@ -220,7 +232,7 @@ pub fn create_nested_graph(
     // Position the new node under the pointer, falling back to the center of the
     // current view.
     let pos = pos.unwrap_or_else(|| view.camera.center);
-    let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
+    let egui_id = node_id(node_ix.index());
     view.layout.insert(egui_id, pos);
 
     // Make the new node the sole selection (clearing the previous one).
@@ -294,7 +306,6 @@ pub fn remove_nodes(
     instances: &mut crate::node::NodeInstances,
     nodes: impl IntoIterator<Item = NodeIndex>,
 ) -> Reindex {
-    let node_id = |ix: usize| egui_graph::NodeId::from_u64(ix as u64);
     let mut targets: Vec<NodeIndex> = nodes.into_iter().collect();
     targets.sort_unstable_by_key(|n| std::cmp::Reverse(n.index()));
     targets.dedup();
@@ -419,7 +430,7 @@ pub fn inspect_edge(
     );
 
     // Position the new node at the click position.
-    let node_id = egui_graph::NodeId::from_u64(inspect_id.index() as u64);
+    let node_id = node_id(inspect_id.index());
     view.layout.insert(node_id, pos);
 }
 
@@ -551,7 +562,6 @@ pub fn carry_layout(
     matching: &gantz_ca::Matching,
     new_node_count: usize,
 ) -> crate::SceneView {
-    let node_id = |ix: usize| egui_graph::NodeId::from_u64(ix as u64);
     let mut view = crate::SceneView {
         camera: live.camera,
         layout: Default::default(),
@@ -568,7 +578,7 @@ pub fn carry_layout(
         .filter(|&ix| !view.layout.contains_key(&node_id(ix)))
         .collect();
     for (i, ix) in unmapped.into_iter().enumerate() {
-        let pos = view.camera.center + egui::vec2(20.0, 20.0) * i as f32;
+        let pos = cascade_pos(view.camera.center, i);
         view.layout.insert(node_id(ix), pos);
     }
     view
@@ -587,7 +597,7 @@ pub fn carry_layout(
 /// cloned. Returns `None` when `tip` or `target` is missing from the
 /// registry. Moving the head, views and the working-graph refresh stay with
 /// the caller (see [`session_undo`] / [`session_redo`]).
-pub fn revert_commit(
+pub(crate) fn revert_commit(
     registry: &mut gantz_ca::Registry,
     timestamp: gantz_ca::Timestamp,
     tip: CommitAddr,
@@ -619,7 +629,7 @@ pub struct RevertCursor {
     pub target: CommitAddr,
 }
 
-/// Session undo: mint a forward revert commit (see [`revert_commit`])
+/// Session undo: mint a forward revert commit (see `revert_commit`)
 /// stepping one commit back through the head's original history, copy the
 /// restored commit's stored view to the minted commit (substituting the live
 /// camera), and record the stepping state.
@@ -700,7 +710,7 @@ fn copy_view(
 /// tips' stored views: each merged node takes its position from the first
 /// (ours) tip's view where it survives there, falling back to the second
 /// (theirs) tip's view, then to a cascade from the camera centre - the same
-/// fallback as [`apply_merge_migration`]. The camera comes from whichever
+/// fallback as `apply_merge_migration`. The camera comes from whichever
 /// side has a view, preferring the first.
 ///
 /// When neither side has a view (or no position carries over at all) the
@@ -711,7 +721,6 @@ pub fn merged_view(
     first_view: Option<&crate::SceneView>,
     second_view: Option<&crate::SceneView>,
 ) -> crate::SceneView {
-    let node_id = |ix: usize| egui_graph::NodeId::from_u64(ix as u64);
     let camera = first_view
         .or(second_view)
         .map(|v| v.camera)
@@ -740,7 +749,7 @@ pub fn merged_view(
         return view;
     }
     for (i, m) in missing.into_iter().enumerate() {
-        let pos = view.camera.center + egui::vec2(20.0, 20.0) * i as f32;
+        let pos = cascade_pos(view.camera.center, i);
         view.layout.insert(node_id(m), pos);
     }
     view
@@ -761,7 +770,7 @@ pub fn merged_view(
 /// Returns the mapping from pre-merge working-graph indices to merged
 /// indices (identity whenever the other side removed no nodes), for any
 /// remaining index-keyed data of the caller's.
-pub fn apply_merge_migration(
+pub(crate) fn apply_merge_migration(
     node_srcs: &[gantz_ca::merge::NodeSrc],
     local_side: gantz_ca::merge::Side,
     other_view: Option<&crate::SceneView>,
@@ -769,7 +778,6 @@ pub fn apply_merge_migration(
     head_view: &mut crate::SceneView,
     selection: &mut crate::widget::graph_scene::Selection,
 ) -> gantz_ca::Matching {
-    let node_id = |ix: usize| egui_graph::NodeId::from_u64(ix as u64);
     // Where each pre-merge (local) node ended up, and where each node that
     // exists only on the other side ended up.
     let sides = |src: &gantz_ca::merge::NodeSrc| match local_side {
@@ -810,7 +818,7 @@ pub fn apply_merge_migration(
     for (i, &(m, o)) in other_only.iter().enumerate() {
         let pos = other_view
             .and_then(|v| v.layout.get(&node_id(o)).copied())
-            .unwrap_or_else(|| head_view.camera.center + egui::vec2(20.0, 20.0) * i as f32);
+            .unwrap_or_else(|| cascade_pos(head_view.camera.center, i));
         head_view.layout.insert(node_id(m), pos);
     }
     local_map
@@ -1126,8 +1134,6 @@ mod tests {
     // swapped node's layout entry and selection must follow it to the new index.
     #[test]
     fn remove_nodes_migrates_layout_and_selection() {
-        let node_id = |i: usize| egui_graph::NodeId::from_u64(i as u64);
-
         // Five nodes 0..5 (weights 10..15) each with a distinct layout x.
         let mut graph = DataGraph::default();
         for w in 10u32..15 {
@@ -1324,10 +1330,6 @@ mod tests {
         let ga = gantz_ca::graph_addr(graph);
         let dg = graph.clone();
         reg.commit_graph(std::time::Duration::from_secs(secs), parent, ga, || dg)
-    }
-
-    fn node_id(ix: usize) -> egui_graph::NodeId {
-        egui_graph::NodeId::from_u64(ix as u64)
     }
 
     /// A registry where the branch `alpha` (returned as the head) and the

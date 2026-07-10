@@ -1182,19 +1182,25 @@ impl GantzState {
         if let Some(state) = self.open_heads.remove(old) {
             self.open_heads.insert(new.clone(), state);
         }
-        if clear_redo {
-            self.redo_stacks.remove(old);
-            self.redo_stacks.remove(new);
-            self.undo_cursors.remove(old);
-            self.undo_cursors.remove(new);
-        } else {
-            if let Some(stack) = self.redo_stacks.remove(old) {
-                self.redo_stacks.insert(new.clone(), stack);
-            }
-            if let Some(cursor) = self.undo_cursors.remove(old) {
-                self.undo_cursors.insert(new.clone(), cursor);
-            }
-        }
+        migrate_or_clear(&mut self.redo_stacks, old, new, clear_redo);
+        migrate_or_clear(&mut self.undo_cursors, old, new, clear_redo);
+    }
+}
+
+/// Migrate one per-head map entry across a head-identity change: cleared for
+/// both keys when `clear` (a new edit invalidates it), otherwise moved to
+/// the new key.
+fn migrate_or_clear<V>(
+    map: &mut HashMap<gantz_ca::Head, V>,
+    old: &gantz_ca::Head,
+    new: &gantz_ca::Head,
+    clear: bool,
+) {
+    if clear {
+        map.remove(old);
+        map.remove(new);
+    } else if let Some(v) = map.remove(old) {
+        map.insert(new.clone(), v);
     }
 }
 
@@ -1872,12 +1878,9 @@ where
                                 gantz_response.changed_heads.push(head.clone());
                             }
                             gantz_response.responses.extend(Some(&head), payloads);
-                            gantz_response.responses.extend(
-                                Some(&head),
-                                writes
-                                    .drain(..)
-                                    .map(|w| DynResponse::new(crate::StateWritten(w))),
-                            );
+                            gantz_response
+                                .responses
+                                .extend(Some(&head), crate::action::state_written(&mut writes));
                         }
                         _ => {
                             // Head open but node missing at `path` (e.g. removed
@@ -3643,11 +3646,7 @@ fn node_inspector<'a>(
                             }
                         }
                     });
-                    responses.extend(
-                        writes
-                            .drain(..)
-                            .map(|w| DynResponse::new(crate::StateWritten(w))),
-                    );
+                    responses.extend(crate::action::state_written(&mut writes));
                     if is_selected && selected_rect.is_none() {
                         selected_rect = Some(frame_resp.response.rect);
                     }

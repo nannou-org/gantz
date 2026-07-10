@@ -81,6 +81,11 @@ pub enum Kind {
 /// `Int` and `Num` are distinct on purpose: nodes branch on the steel
 /// variant (e.g. the `number` dialer renders integer vs float dialers), so a
 /// lossy `serde_json`-style int-to-float bridge would corrupt behaviour.
+///
+/// `gantz_core::Datum` is deliberately not reused here: its `Deserialize` is
+/// data-model style (`deserialize_any`), which a non-self-describing wire
+/// format like the action envelope's postcard cannot drive. This plain
+/// derived enum round-trips postcard directly.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     Unit,
@@ -108,6 +113,16 @@ pub struct StateWrite {
 /// layer broadcasts it to peers as an [`Action::SetState`].
 #[derive(Clone, Debug)]
 pub struct StateWritten(pub StateWrite);
+
+/// Drain recorded writes as head-taggable [`StateWritten`] payloads (the
+/// shared tail of every `NodeCtx` capture site).
+pub(crate) fn state_written(
+    writes: &mut Vec<StateWrite>,
+) -> impl Iterator<Item = crate::DynResponse> + '_ {
+    writes
+        .drain(..)
+        .map(|w| crate::DynResponse::new(StateWritten(w)))
+}
 
 /// The error returned when a [`SteelVal`] has no [`Value`] representation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -978,11 +978,7 @@ fn nodes(
             }
         }
 
-        responses.extend(
-            writes
-                .drain(..)
-                .map(|w| DynResponse::new(crate::StateWritten(w))),
-        );
+        responses.extend(crate::action::state_written(&mut writes));
         node_responses.push((n_id, response));
     }
 
