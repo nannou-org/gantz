@@ -1387,9 +1387,7 @@ fn resolve_tip(
                         || graph,
                         &mut branch_head,
                     );
-                    if !seeded.layout.is_empty() {
-                        gantz_egui::section::set_view(&mut registry.0, minted, &seeded);
-                    }
+                    bevy_gantz_egui::seed_view(registry, minted, seeded);
                     // A minted merge must be announced.
                     cmds.trigger(bevy_gantz_egui::ResyncRefsEvent);
                 }

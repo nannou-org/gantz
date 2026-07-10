@@ -1272,6 +1272,44 @@ pub fn on_duplicate_nodes(
 /// so this triggers [`head::CommittedEvent`] directly rather than calling
 /// `commit_working_graph` (which would see the already-committed graph and
 /// skip the event).
+/// Seed `commit`'s stored view, ignoring empty layouts: an empty layout
+/// reads as "never laid out" to the scene (which then destructively
+/// auto-layouts), so it must never become a commit's baseline.
+pub fn seed_view(registry: &mut Registry, commit: ca::CommitAddr, view: gantz_egui::SceneView) {
+    if !view.layout.is_empty() {
+        gantz_egui::section::set_view(&mut registry.0, commit, &view);
+    }
+}
+
+/// Finish a locally-minted merge commit (a local merge or session
+/// convergence, whose op has already committed with both parents): seed the
+/// minted commit's view from the migrated live layout so it exists before
+/// any same-frame session announce (a viewless tip auto-layouts on adopting
+/// peers), re-register the root graph so merged-in nodes get their state
+/// initialized (idempotent for existing nodes), then fire the committed
+/// machinery (GUI-state migration, redo-stack clear, NamedRef resync,
+/// `vm::sync` recompile).
+#[allow(clippy::too_many_arguments)] // A cohesive tail over ECS-owned data.
+fn finish_merge_commit(
+    new_commit: ca::CommitAddr,
+    committed: head::CommittedEvent,
+    graph: &ca::DataGraph,
+    live_view: &gantz_egui::SceneView,
+    registry: &mut Registry,
+    (cache, builtins, codec): (&GraphCache, &BuiltinNodes, &NodeCodecRes),
+    vm: &mut steel::steel_vm::engine::Engine,
+    cmds: &mut Commands,
+) {
+    seed_view(registry, new_commit, live_view.clone());
+    let node_reg = env(registry, cache, builtins, codec);
+    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+    match codec.0.reify_graph(graph) {
+        Ok(g) => gantz_core::graph::register(&get_node, &g, &[], vm),
+        Err(e) => log::error!("merge finish: cannot re-register the merged graph: {e}"),
+    }
+    cmds.trigger(committed);
+}
+
 pub fn on_merge_head(
     trigger: On<ForHead<gantz_egui::MergeHead>>,
     mut registry: ResMut<Registry>,
@@ -1326,29 +1364,21 @@ pub fn on_merge_head(
                 event.data.source,
                 new_commit.display_short()
             );
-            // Seed the minted merge commit's view from the migrated live
-            // layout so it exists before any same-frame session announce (a
-            // viewless tip on the wire auto-layouts on adopting peers).
-            if !gv.0.layout.is_empty() {
-                gantz_egui::section::set_view(&mut registry.0, new_commit, &gv.0);
-            }
-            // Re-register the root graph so merged-in nodes get their state
-            // initialized. Idempotent for existing nodes; registration
-            // reifies the graph transiently.
-            let node_reg = env(&registry, &cache, &builtins, &codec);
-            let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
-            match codec.0.reify_graph(&wg.0) {
-                Ok(g) => gantz_core::graph::register(&get_node, &g, &[], vm),
-                Err(e) => log::error!("MergeHead: cannot re-register the merged graph: {e}"),
-            }
-            // The op already committed (with both parents), so fire the
-            // committed machinery (GUI-state migration, redo-stack clear,
-            // NamedRef resync, `vm::sync` recompile) directly.
-            cmds.trigger(head::CommittedEvent {
+            let committed = head::CommittedEvent {
                 entity: event.head,
                 old_head,
                 new_head: head_ref.0.clone(),
-            });
+            };
+            finish_merge_commit(
+                new_commit,
+                committed,
+                &wg.0,
+                &gv.0,
+                &mut registry,
+                (&cache, &builtins, &codec),
+                vm,
+                &mut cmds,
+            );
         }
         gantz_egui::ops::MergeHeadOutcome::Refused(reasons) => {
             // Defensive: the UI disables conflicted/blocked candidates.
@@ -1443,28 +1473,21 @@ pub fn on_sync_remote_tip(
                 log::info!("session merge auto-resolved {conflicts} conflict(s)");
             }
             log::debug!("session merge -> {}", new_commit.display_short());
-            // Seed the minted merge commit's view from the migrated live
-            // layout so it exists before any same-frame session announce (a
-            // viewless tip on the wire auto-layouts on adopting peers).
-            if !gv.0.layout.is_empty() {
-                gantz_egui::section::set_view(&mut registry.0, new_commit, &gv.0);
-            }
-            // Re-register the root graph so merged-in nodes get their state
-            // initialized, then fire the committed machinery (GUI-state
-            // migration, redo-stack clear, NamedRef resync, recompile).
-            let node_reg = env(&registry, &cache, &builtins, &codec);
-            let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
-            match codec.0.reify_graph(&wg.0) {
-                Ok(g) => gantz_core::graph::register(&get_node, &g, &[], vm),
-                Err(e) => {
-                    log::error!("SyncRemoteTip: cannot re-register the merged graph: {e}")
-                }
-            }
-            cmds.trigger(head::CommittedEvent {
+            let committed = head::CommittedEvent {
                 entity: event.head,
                 old_head,
                 new_head: head_ref.0.clone(),
-            });
+            };
+            finish_merge_commit(
+                new_commit,
+                committed,
+                &wg.0,
+                &gv.0,
+                &mut registry,
+                (&cache, &builtins, &codec),
+                vm,
+                &mut cmds,
+            );
         }
         gantz_egui::ops::SyncTipOutcome::Blocked(reasons) => {
             log::warn!("session sync blocked: {}", reasons.join("; "));
