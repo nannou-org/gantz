@@ -196,9 +196,9 @@ impl Plugin for CollabPlugin {
             .add_observer(on_share_session)
             .add_observer(on_join_session)
             .add_observer(on_leave_session)
-            .add_observer(on_committed_mark_dirty)
-            .add_observer(on_changed_mark_dirty)
-            .add_observer(on_layout_committed_mark_dirty)
+            .add_observer(mark_dirty::<head::CommittedEvent>)
+            .add_observer(mark_dirty::<head::ChangedEvent>)
+            .add_observer(mark_dirty::<bevy_gantz_egui::LayoutCommittedEvent>)
             .add_systems(
                 Update,
                 (
@@ -547,29 +547,13 @@ pub fn on_leave_session(
     }
 }
 
-/// Any local commit may move scoped tips: mark the sessions dirty so
-/// [`announce_sessions`] re-checks them.
-pub fn on_committed_mark_dirty(
-    _trigger: On<head::CommittedEvent>,
-    mut sessions: ResMut<CollabSessions>,
-) {
-    sessions.dirty = true;
-}
-
-/// Head navigation (e.g. history-pane moves) also moves branch tips.
-pub fn on_changed_mark_dirty(
-    _trigger: On<head::ChangedEvent>,
-    mut sessions: ResMut<CollabSessions>,
-) {
-    sessions.dirty = true;
-}
-
-/// Settled node-moves commit layout-only changes without the committed
-/// machinery; sessions still announce them so peers follow node positions.
-pub fn on_layout_committed_mark_dirty(
-    _trigger: On<bevy_gantz_egui::LayoutCommittedEvent>,
-    mut sessions: ResMut<CollabSessions>,
-) {
+/// Mark the sessions dirty on `E` so [`announce_sessions`] re-checks their
+/// scoped tips. Registered once per tip-moving event: local commits
+/// (`head::CommittedEvent`), head navigation (`head::ChangedEvent` - e.g.
+/// history-pane moves), and settled node-moves' layout-only commits
+/// (`LayoutCommittedEvent` - no committed machinery, but peers still follow
+/// node positions).
+pub fn mark_dirty<E: Event>(_trigger: On<E>, mut sessions: ResMut<CollabSessions>) {
     sessions.dirty = true;
 }
 
@@ -598,15 +582,26 @@ pub fn attach_session_refs(
     }
 }
 
+/// The world access threaded through the fetch/converge call graph
+/// ([`apply_join_snapshot`], [`start_fetch`], [`feed_objects`],
+/// [`resolve_tip`]): the registry the fetched closures apply to, the open
+/// heads (to converge heads pointing at moved names), the live graph views
+/// (to substitute the local camera when adopting stored views), and
+/// commands for the follow-up triggers.
+#[derive(bevy_ecs::system::SystemParam)]
+struct SyncCtx<'w, 's> {
+    registry: ResMut<'w, Registry>,
+    open: Query<'w, 's, (Entity, &'static head::HeadRef), With<head::OpenHead>>,
+    graph_views: Query<'w, 's, &'static bevy_gantz_egui::GraphView, With<head::OpenHead>>,
+    cmds: Commands<'w, 's>,
+}
+
 /// Drain the runtime's events: fetch, validate, apply and converge.
-pub fn poll_collab_events(
+pub(crate) fn poll_collab_events(
     runtime: Res<CollabRuntime>,
     mut sessions: ResMut<CollabSessions>,
-    mut registry: ResMut<Registry>,
     mut inbox: ResMut<action::ActionInbox>,
-    open: Query<(Entity, &head::HeadRef), With<head::OpenHead>>,
-    graph_views: Query<&bevy_gantz_egui::GraphView, With<head::OpenHead>>,
-    mut cmds: Commands,
+    mut ctx: SyncCtx,
 ) {
     let Some(handle) = runtime.0.as_ref() else {
         return;
@@ -624,32 +619,12 @@ pub fn poll_collab_events(
                 heads,
                 objects,
             } => {
-                apply_join_snapshot(
-                    handle,
-                    &mut sessions,
-                    &mut registry,
-                    &open,
-                    &graph_views,
-                    &mut cmds,
-                    session,
-                    heads,
-                    objects,
-                );
+                apply_join_snapshot(handle, &mut sessions, &mut ctx, session, heads, objects);
             }
             CollabEvent::Gossip { session, from, msg } => match msg {
                 GossipMsg::Tips { changed, .. } => {
                     for (name, tip, _graph) in changed {
-                        start_fetch(
-                            handle,
-                            &mut sessions,
-                            &mut registry,
-                            &open,
-                            &mut cmds,
-                            session,
-                            from,
-                            name,
-                            tip,
-                        );
+                        start_fetch(handle, &mut sessions, &mut ctx, session, from, name, tip);
                     }
                 }
                 GossipMsg::Presence { origin, name } => {
@@ -685,16 +660,7 @@ pub fn poll_collab_events(
             CollabEvent::Objects {
                 session, objects, ..
             } => {
-                feed_objects(
-                    handle,
-                    &mut sessions,
-                    &mut registry,
-                    &open,
-                    &graph_views,
-                    &mut cmds,
-                    session,
-                    objects,
-                );
+                feed_objects(handle, &mut sessions, &mut ctx, session, objects);
             }
             CollabEvent::PeerUp { session, peer } => {
                 if let Some(state) = sessions.sessions.get_mut(&session) {
@@ -896,10 +862,7 @@ fn serve_scope(
 fn apply_join_snapshot(
     handle: &Handle,
     sessions: &mut CollabSessions,
-    registry: &mut Registry,
-    open: &Query<(Entity, &head::HeadRef), With<head::OpenHead>>,
-    graph_views: &Query<&bevy_gantz_egui::GraphView, With<head::OpenHead>>,
-    cmds: &mut Commands,
+    ctx: &mut SyncCtx<'_, '_>,
     session: SessionId,
     heads: Vec<(ca::Name, ca::CommitAddr)>,
     objects: Objects,
@@ -950,7 +913,7 @@ fn apply_join_snapshot(
             },
         }
     }
-    let applied = match staged.apply(registry) {
+    let applied = match staged.apply(&mut ctx.registry) {
         Ok(applied) => applied,
         Err(e) => {
             log::error!("join: snapshot failed to apply: {e}");
@@ -966,14 +929,15 @@ fn apply_join_snapshot(
     );
     // Adopt the host's node layouts (before opening the head, so the shared
     // graph opens with its nodes where the host placed them).
-    apply_sections(registry, sections, local_camera(state, open, graph_views));
+    let camera = local_camera(state, &ctx.open, &ctx.graph_views);
+    apply_sections(&mut ctx.registry, sections, camera);
 
     // Reconcile each snapshot head with any local state.
     let resolutions = state.session.resolutions;
     for (name, tip) in heads {
-        match registry.head(&name) {
+        match ctx.registry.head(&name) {
             None => {
-                registry.set_head(name.clone(), tip);
+                ctx.registry.set_head(name.clone(), tip);
                 state.last_announced.insert(name, tip);
             }
             Some(local) if local == tip => {
@@ -982,9 +946,9 @@ fn apply_join_snapshot(
             // The placeholder minted at join time: adopt over it (the
             // resolve path recognises it and navigates the open head).
             Some(local) if state.placeholder == Some(local) => {
-                resolve_tip(state, registry, open, cmds, &name, tip, resolutions);
+                resolve_tip(state, ctx, &name, tip, resolutions);
             }
-            Some(local) => match ca::plan_sync_step(registry.commits(), local, tip) {
+            Some(local) => match ca::plan_sync_step(ctx.registry.commits(), local, tip) {
                 ca::SyncStep::Unrelated => {
                     // The session owns the name: rename the local graph
                     // aside rather than losing it or deadlocking the join.
@@ -995,13 +959,13 @@ fn apply_join_snapshot(
                         "join: local '{name}' is unrelated to the session's; \
                          renamed aside as '{aside}'"
                     );
-                    registry.set_head(aside, local);
-                    registry.set_head(name.clone(), tip);
+                    ctx.registry.set_head(aside, local);
+                    ctx.registry.set_head(name.clone(), tip);
                     state.last_announced.insert(name, tip);
                 }
                 _ => {
                     // Behind/ahead/diverged: the live convergence path.
-                    resolve_tip(state, registry, open, cmds, &name, tip, resolutions);
+                    resolve_tip(state, ctx, &name, tip, resolutions);
                 }
             },
         }
@@ -1011,14 +975,14 @@ fn apply_join_snapshot(
 
     // Serve the adopted closure onward and open the shared graph.
     let branch = state.branch_name();
-    let scope = gantz_egui::sync::session_scope(registry, &branch);
-    serve_scope(handle, state, registry, &scope);
+    let scope = gantz_egui::sync::session_scope(&ctx.registry, &branch);
+    serve_scope(handle, state, &ctx.registry, &scope);
     let branch_head = ca::Head::Branch(branch);
-    let already_open = open.iter().any(|(_, hr)| hr.0 == branch_head);
+    let already_open = ctx.open.iter().any(|(_, hr)| hr.0 == branch_head);
     if !already_open {
-        cmds.trigger(head::OpenEvent(branch_head));
+        ctx.cmds.trigger(head::OpenEvent(branch_head));
     }
-    cmds.trigger(bevy_gantz_egui::ResyncRefsEvent);
+    ctx.cmds.trigger(bevy_gantz_egui::ResyncRefsEvent);
 }
 
 /// Apply received section entries to the local registry per their stamped
@@ -1081,9 +1045,7 @@ fn local_camera(
 fn start_fetch(
     handle: &Handle,
     sessions: &mut CollabSessions,
-    registry: &mut Registry,
-    open: &Query<(Entity, &head::HeadRef), With<head::OpenHead>>,
-    cmds: &mut Commands,
+    ctx: &mut SyncCtx<'_, '_>,
     session: SessionId,
     from: PeerId,
     name: ca::Name,
@@ -1093,9 +1055,9 @@ fn start_fetch(
         return;
     };
     // Already known and contained: drop silently.
-    if registry.commits().contains_key(&tip) {
-        if let Some(local) = registry.head(&name) {
-            if ca::plan_sync_step(registry.commits(), local, tip) == ca::SyncStep::UpToDate {
+    if ctx.registry.commits().contains_key(&tip) {
+        if let Some(local) = ctx.registry.head(&name) {
+            if ca::plan_sync_step(ctx.registry.commits(), local, tip) == ca::SyncStep::UpToDate {
                 return;
             }
         }
@@ -1109,10 +1071,10 @@ fn start_fetch(
         staged: ca::sync::Staged::new(),
         last_want: None,
     };
-    let want = compute_want(registry, &mut pending);
+    let want = compute_want(&ctx.registry, &mut pending);
     if want.is_empty() {
         let resolutions = state.session.resolutions;
-        resolve_tip(state, registry, open, cmds, &name, tip, resolutions);
+        resolve_tip(state, ctx, &name, tip, resolutions);
         return;
     }
     pending.last_want = Some(want.refs.clone());
@@ -1126,14 +1088,10 @@ fn start_fetch(
 
 /// Feed fetched objects into every pending tip of the session, applying and
 /// converging those whose closure completed.
-#[allow(clippy::too_many_arguments)]
 fn feed_objects(
     handle: &Handle,
     sessions: &mut CollabSessions,
-    registry: &mut Registry,
-    open: &Query<(Entity, &head::HeadRef), With<head::OpenHead>>,
-    graph_views: &Query<&bevy_gantz_egui::GraphView, With<head::OpenHead>>,
-    cmds: &mut Commands,
+    ctx: &mut SyncCtx<'_, '_>,
     session: SessionId,
     objects: Objects,
 ) {
@@ -1176,7 +1134,8 @@ fn feed_objects(
     // Adopt the peer's layouts for incoming commits before any of them can
     // be navigated to or merged (merged-in nodes seed their positions from
     // the other tip's view).
-    apply_sections(registry, sections, local_camera(state, open, graph_views));
+    let camera = local_camera(state, &ctx.open, &ctx.graph_views);
+    apply_sections(&mut ctx.registry, sections, camera);
     let names: Vec<ca::Name> = state.pending.keys().cloned().collect();
     for name in names {
         let Some(mut pending) = state.pending.remove(&name) else {
@@ -1213,12 +1172,12 @@ fn feed_objects(
         if poisoned {
             continue;
         }
-        let want = compute_want(registry, &mut pending);
+        let want = compute_want(&ctx.registry, &mut pending);
         if want.is_empty() {
             let tip = pending.tip;
-            match pending.staged.apply(registry) {
+            match pending.staged.apply(&mut ctx.registry) {
                 Ok(_) => {
-                    resolve_tip(state, registry, open, cmds, &name, tip, resolutions);
+                    resolve_tip(state, ctx, &name, tip, resolutions);
                 }
                 Err(e) => log::warn!("fetch: closure for '{name}' failed to apply: {e}"),
             }
@@ -1290,13 +1249,17 @@ fn compute_want(registry: &ca::Registry, pending: &mut PendingTip) -> Want {
 /// background names move headlessly, followed by a reference resync.
 fn resolve_tip(
     state: &mut SessionState,
-    registry: &mut Registry,
-    open: &Query<(Entity, &head::HeadRef), With<head::OpenHead>>,
-    cmds: &mut Commands,
+    ctx: &mut SyncCtx<'_, '_>,
     name: &ca::Name,
     tip: ca::CommitAddr,
     resolutions: ca::merge::Resolutions,
 ) {
+    let SyncCtx {
+        registry,
+        open,
+        cmds,
+        ..
+    } = ctx;
     let Some(local) = registry.head(name) else {
         // A name born on the remote side: adopt it.
         registry.set_head(name.clone(), tip);

@@ -469,7 +469,7 @@ fn send(
 
 /// Apply received actions to the matching open heads' VMs.
 ///
-/// Runs after [`poll_collab_events`](crate::poll_collab_events) and before
+/// Runs after `poll_collab_events` and before
 /// `VmSet`, so writes land before evaluation systems observe the frame. The
 /// apply path uses `gantz_core::node::state::update_value` and
 /// `EvalEntryEvent` directly - never a `NodeCtx`, never the payload bus - so
