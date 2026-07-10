@@ -6,6 +6,7 @@
   binaryen,
   lld,
   miniserve,
+  llvmPackages,
   mkShell,
   rustToolchainWasmNightly,
   trunk,
@@ -23,5 +24,5 @@ mkShell (
       miniserve
     ];
   }
-  // (import ./pkgs/wasm-threads-env.nix)
+  // (import ./pkgs/wasm-threads-env.nix { inherit llvmPackages; })
 )

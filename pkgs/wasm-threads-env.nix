@@ -11,6 +11,7 @@
 #
 # Shared by `pkgs/gantz-website.nix` and the `gantz-web` dev shell so the flags can't drift
 # between the Nix build and local `trunk serve`.
+{ llvmPackages }:
 {
   RUSTFLAGS = builtins.concatStringsSep " " [
     # SIMD128 vectorizes the per-sample DSP loops (broad browser support alongside threads).
@@ -25,4 +26,13 @@
     "-C link-arg=--export=__tls_base"
   ];
   CARGO_UNSTABLE_BUILD_STD = "std,panic_abort";
+
+  # `ring` (iroh's crypto, behind the collab sessions' end-to-end
+  # encryption) compiles its C sources to wasm; that needs a clang that can
+  # target wasm32 - the *unwrapped* one, as the nix cc wrapper pins the host
+  # target. Without it the build still "succeeds" but leaves the
+  # `ring_core_*` symbols as dangling `env` imports, and the browser fails
+  # to instantiate the module (the splash hangs at 0%).
+  CC_wasm32_unknown_unknown = "${llvmPackages.clang-unwrapped}/bin/clang";
+  AR_wasm32_unknown_unknown = "${llvmPackages.llvm}/bin/llvm-ar";
 }

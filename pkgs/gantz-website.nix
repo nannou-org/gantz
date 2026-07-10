@@ -11,6 +11,7 @@
   binaryen,
   lib,
   lld,
+  llvmPackages,
   runCommand,
   rustPlatform,
   rustToolchainWasmNightly,
@@ -95,5 +96,5 @@ stdenv.mkDerivation (
     dontInstall = true;
     dontFixup = true;
   }
-  // (import ./wasm-threads-env.nix)
+  // (import ./wasm-threads-env.nix { inherit llvmPackages; })
 )
