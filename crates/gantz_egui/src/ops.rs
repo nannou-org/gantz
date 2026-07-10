@@ -696,22 +696,6 @@ fn copy_view(
     crate::section::set_view(registry, dst, &view);
 }
 
-/// The default target for an explicit "revert" affordance (see
-/// [`revert_commit`]): the nearest first-parent ancestor whose graph differs
-/// from the tip's (layout-only ancestors are not meaningful reverts).
-pub fn revert_target(registry: &gantz_ca::Registry, head: &gantz_ca::Head) -> Option<CommitAddr> {
-    let tip_ca = registry.head_commit_ca(head)?;
-    let tip_graph = registry.commits().get(&tip_ca)?.graph;
-    gantz_ca::history::first_parent_chain(registry.commits(), tip_ca)
-        .skip(1)
-        .find(|ca| {
-            registry
-                .commits()
-                .get(ca)
-                .is_some_and(|c| c.graph != tip_graph)
-        })
-}
-
 /// Build a view for a headlessly minted merge commit from the two parent
 /// tips' stored views: each merged node takes its position from the first
 /// (ours) tip's view where it survives there, falling back to the second
@@ -1807,8 +1791,7 @@ mod tests {
         assert_eq!(reg.head(&"alpha".parse().unwrap()), Some(local));
     }
 
-    // Session undo: the previous graph is committed *forward*, skipping
-    // layout-only ancestors when picking the default explicit-revert target.
+    // Session undo: the previous graph is committed *forward*.
     #[test]
     fn revert_commit_mints_previous_graph_forward() {
         let secs = |s| std::time::Duration::from_secs(s);
@@ -1822,10 +1805,7 @@ mod tests {
         // A layout-only commit: same graph, new commit.
         let c3 = reg.commit_graph(secs(3), Some(c2), g2_ca, || unreachable!("graph exists"));
         reg.set_head("alpha".parse().unwrap(), c3);
-        let head = gantz_ca::Head::Branch("alpha".parse().unwrap());
 
-        // The default explicit-revert target skips the layout-only ancestor.
-        assert_eq!(revert_target(&reg, &head), Some(c1));
         let reverted = revert_commit(&mut reg, secs(4), c3, c1).unwrap();
         let commit = &reg.commits()[&reverted];
         // The revert is a new forward commit carrying the old graph; no head

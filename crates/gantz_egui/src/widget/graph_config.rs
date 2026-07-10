@@ -361,7 +361,7 @@ impl<'a> GraphConfig<'a> {
                             }
                             Some(display) => {
                                 let conn = display.conn;
-                                let peers = super::status_dot(ui, conn.color())
+                                super::status_dot(ui, conn.color())
                                     .on_hover_text(conn.label());
                                 let n = display.peers.len();
                                 let label = format!(
@@ -376,11 +376,10 @@ impl<'a> GraphConfig<'a> {
                                         None => p.id.clone(),
                                     })
                                     .collect();
-                                let mut resp = ui.label(label);
+                                let resp = ui.label(label);
                                 if !names.is_empty() {
-                                    resp = resp.on_hover_text(names.join("\n"));
+                                    resp.on_hover_text(names.join("\n"));
                                 }
-                                let _ = (peers, resp);
                                 if let Some(ticket) = &display.ticket {
                                     if ui
                                         .button("copy invite")

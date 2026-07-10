@@ -1480,7 +1480,7 @@ pub fn on_sync_remote_tip(
 /// moved. Triggered by the collaborative-session layer after it moves scoped
 /// names that no open head points at (fast-forwards/adoptions of nested or
 /// referenced graphs).
-#[derive(Debug, Default, Event)]
+#[derive(Debug, Event)]
 pub struct ResyncRefsEvent;
 
 /// Handle [`ResyncRefsEvent`]: the same pass as [`on_head_committed_resync`].
@@ -1494,17 +1494,6 @@ pub fn on_resync_refs(
     let moves = gantz_egui::sync::resync(&mut registry, bevy_gantz::reg::timestamp());
     refresh_cache(&registry, &mut cache, &codec.0);
     refresh_moved_heads(&moves, &mut registry, &mut heads);
-}
-
-/// Refresh open heads pointing at names the collaborative-session layer has
-/// just moved (fast-forward/adoption without a local commit): reload the
-/// working graph and clear the compile memo, exactly as a resync move does.
-pub fn refresh_named_heads(
-    moves: &[gantz_egui::sync::Moved],
-    registry: &mut Registry,
-    heads: &mut Query<head::OpenHeadData, With<head::OpenHead>>,
-) {
-    refresh_moved_heads(moves, registry, heads)
 }
 
 /// Handle undo payloads: move the head back to its parent commit.
