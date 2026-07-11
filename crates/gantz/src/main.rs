@@ -32,8 +32,6 @@ fn main() {
         .add_plugins(GantzEguiPlugin::default())
         // DSP plugin: cpal output stream + plyphon synth driver for DSP graphs.
         .add_plugins(bevy_gantz_plyphon::PlyphonPlugin::default())
-        // P2P collaborative sessions (share/join via the collab UI).
-        .add_plugins(bevy_gantz_collab::CollabPlugin)
         // The full builtin node set composed from every domain's builtins,
         // reified once through the node codec. A builtin failing to reify is
         // a node-set composition error, so fail loudly at startup.
@@ -58,7 +56,6 @@ fn main() {
             (
                 setup_camera,
                 setup_window,
-                setup_collab_identity,
                 setup_resources,
                 bevy_gantz_egui::base::load
                     .after(setup_resources)
@@ -70,6 +67,13 @@ fn main() {
             ),
         )
         .add_systems(EguiPrimaryContextPass, load_egui_memory);
+
+    // P2P collaborative sessions (share/join via the collab UI). Added after
+    // `GantzEguiPlugin` - the collab plugin's payload-dispatcher overrides
+    // rely on last-registration-wins.
+    #[cfg(feature = "collab")]
+    app.add_plugins(bevy_gantz_collab::CollabPlugin)
+        .add_systems(Startup, setup_collab_identity);
 
     // Native OS windows for popped-out panes. On web the widget keeps drawing
     // popped-out panes as in-canvas `egui::Window`s.
@@ -135,6 +139,7 @@ fn setup_resources(storage: Res<Pkv>, mut cmds: Commands) {
 }
 
 /// Load (or generate and persist) the user's collaborative identity.
+#[cfg(feature = "collab")]
 fn setup_collab_identity(mut storage: ResMut<Pkv>, mut cmds: Commands) {
     let identity = match bevy_gantz_collab::storage::load_identity(&*storage) {
         Some(identity) => identity,
