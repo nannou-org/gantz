@@ -31,13 +31,23 @@
 //! Push evaluations name the compiled entry fn from the bound node's output
 //! count, so callers provide a resolver via [`UiTree::n_outputs`].
 //!
+//! ## Embeds
+//!
+//! A `ref-gui` element embeds a referenced graph instance's own GUI. The
+//! walker resolves the chain of ref ids entered so far to the leaf graph's
+//! body marker via the [`UiTree::ref_gui`] resolver, reads the marker's
+//! stored tree from VM state, decodes it, and renders it inside a group
+//! frame. The ref id becomes an implicit scope for the subtree, so the
+//! embedded tree's binds resolve inside the referenced instance.
+//!
 //! ## Errors
 //!
 //! [`gantz_ui::decode()`] is total: every node of the tree is renderable and
 //! [`Element::Error`] is the only inline-error case, drawn as an error chip
 //! in place while siblings render normally. Decode warnings never reach the
-//! walker. Callers that decode (rather than construct) trees surface them
-//! themselves.
+//! walker for the tree it is handed. Callers that decode (rather than
+//! construct) trees surface them themselves; warnings from embedded marker
+//! trees are dropped (inspect the referenced graph to see them).
 
 use crate::{NodeCtx, node, response::DynResponse};
 use gantz_ui::{Align, BindPath, Button, Dialer, Element, Key, Matrix, Rgba, Toggle};
@@ -68,14 +78,28 @@ pub struct UiTree<'a> {
     root_id: egui::Id,
     instance_prefix: &'a [node::Id],
     n_outputs: Option<&'a dyn Fn(&[node::Id]) -> Option<usize>>,
+    ref_gui: Option<&'a dyn Fn(&[node::Id]) -> Option<node::Id>>,
 }
+
+/// The maximum depth of nested `ref-gui` embeds rendered before falling back
+/// to an inert chip.
+///
+/// Registry cycle-prevention makes truly cyclic references impossible; this
+/// bounds the walk's cost on corrupt data.
+const MAX_REF_GUI_DEPTH: usize = 8;
 
 /// Walker state threaded through one tree traversal.
 struct Walk<'a> {
     instance_prefix: &'a [node::Id],
     /// Accumulated `(scope id ...)` prefixes enclosing the current element.
     scopes: Vec<node::Id>,
+    /// The chain of `ref-gui` ids entered so far, render root outward.
+    ///
+    /// Kept apart from `scopes` (which extend binding paths regardless of
+    /// origin): the chain is what the resolver folds over the registry.
+    ref_chain: Vec<node::Id>,
     n_outputs: Option<&'a dyn Fn(&[node::Id]) -> Option<usize>>,
+    ref_gui: Option<&'a dyn Fn(&[node::Id]) -> Option<node::Id>>,
     resp: UiTreeResponse,
 }
 
@@ -86,6 +110,7 @@ impl<'a> UiTree<'a> {
             root_id,
             instance_prefix: &[],
             n_outputs: None,
+            ref_gui: None,
         }
     }
 
@@ -108,12 +133,28 @@ impl<'a> UiTree<'a> {
         self
     }
 
+    /// Resolve an embedded reference GUI (`ref-gui`) to its body marker.
+    ///
+    /// The argument is the chain of ref ids entered so far (render root
+    /// outward, including the element being resolved); the return is the
+    /// body marker's node id within the leaf referenced graph (see
+    /// [`crate::reg::resolve_ref_chain`]). The walker reads the marker's
+    /// stored tree at the resolved instance path, decodes it, and renders it
+    /// inside a group frame under an implicit scope. Without a resolver (or
+    /// when it returns `None`) embeds render as an inert chip.
+    pub fn ref_gui(mut self, f: &'a dyn Fn(&[node::Id]) -> Option<node::Id>) -> Self {
+        self.ref_gui = Some(f);
+        self
+    }
+
     /// Render the tree, resolving bindings via `ctx`.
     pub fn show(self, tree: &Element, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> UiTreeResponse {
         let mut walk = Walk {
             instance_prefix: self.instance_prefix,
             scopes: Vec::new(),
+            ref_chain: Vec::new(),
             n_outputs: self.n_outputs,
+            ref_gui: self.ref_gui,
             resp: UiTreeResponse::default(),
         };
         walk.element(tree, self.root_id, ctx, ui);
@@ -233,11 +274,7 @@ impl Walk<'_> {
                 self.merge(r);
             }
             Element::Plot(plot) => self.plot(plot, id, ctx, ui),
-            Element::RefGui(ref_gui) => {
-                let r = weak_chip(ui, &format!("ref-gui {}", ref_gui.id))
-                    .on_hover_text("embedded reference GUIs resolve in a future version");
-                self.merge(r);
-            }
+            Element::RefGui(ref_gui) => self.ref_gui_elem(ref_gui, id, ctx, ui),
             Element::Error(err) => {
                 let color = ui.visuals().error_fg_color;
                 let r = egui::Frame::group(ui.style())
@@ -497,6 +534,62 @@ impl Walk<'_> {
         );
         let r = plot::plot_body(&params, &channels, id, size, ui);
         self.merge(r);
+    }
+
+    /// Render an embedded reference GUI: resolve the accumulated ref chain
+    /// to the leaf graph's body marker, read and decode the marker's stored
+    /// tree, and render it inside a group frame under an implicit scope.
+    fn ref_gui_elem(
+        &mut self,
+        rg: &gantz_ui::RefGui,
+        id: egui::Id,
+        ctx: &mut NodeCtx,
+        ui: &mut egui::Ui,
+    ) {
+        let chip = |walk: &mut Self, ui: &mut egui::Ui, why: &str| {
+            let r = weak_chip(ui, &format!("ref-gui {}", rg.id)).on_hover_text(why);
+            walk.merge(r);
+        };
+        if self.ref_chain.len() >= MAX_REF_GUI_DEPTH {
+            chip(self, ui, "embed depth limit reached");
+            return;
+        }
+        let Some(resolver) = self.ref_gui else {
+            chip(self, ui, "embedded reference GUIs need a resolver");
+            return;
+        };
+        self.ref_chain.push(rg.id);
+        let decoded = match resolver(&self.ref_chain) {
+            None => Err("unresolvable reference or no body marker"),
+            Some(marker_id) => {
+                // Resolved before the implicit scope push below: the marker
+                // lives inside the instance at `rg.id`.
+                let path = self.resolve(&BindPath(vec![rg.id, marker_id]));
+                match ctx.extract_value_at(&path) {
+                    Ok(Some(val)) if !matches!(val, SteelVal::Void) => Ok(
+                        gantz_ui::codec::steel::decode(&val, &gantz_ui::Limits::default()),
+                    ),
+                    Ok(_) => Err("the referenced GUI has no state yet"),
+                    Err(_) => Err("failed to read the referenced GUI's state"),
+                }
+            }
+        };
+        match decoded {
+            Err(why) => chip(self, ui, why),
+            Ok(decoded) => {
+                // The ref id becomes an implicit scope: the embedded tree's
+                // binds resolve inside the referenced instance. The id salt
+                // is distinct from the scope arm's so a sibling
+                // `(scope <id> ...)` can never collide.
+                self.scopes.push(rg.id);
+                let child = id.with(("ref-gui", rg.id));
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    self.element(&decoded.root, child, ctx, ui);
+                });
+                self.scopes.pop();
+            }
+        }
+        self.ref_chain.pop();
     }
 
     /// Write an edited value to its bound state, then queue a push
@@ -761,6 +854,99 @@ mod tests {
         let rows = matrix_rows(&new).unwrap();
         assert_eq!(rows[0], vec![SteelVal::IntV(0), SteelVal::IntV(9)]);
         assert_eq!(rows[1], vec![SteelVal::IntV(2), SteelVal::IntV(3)]);
+    }
+
+    /// A test VM with an initialised state tree and empty environment,
+    /// running `f` with a walker-ready `NodeCtx` inside a test `Ui`.
+    fn run_with_ctx(
+        state: Vec<(Vec<node::Id>, SteelVal)>,
+        f: impl FnMut(&mut NodeCtx, &mut egui::Ui),
+    ) {
+        let registry = gantz_ca::Registry::default();
+        let graphs = gantz_core::data::ReifiedGraphs::new();
+        let builtins = gantz_core::Builtins::default();
+        let instances = crate::node::UiBuiltins::default();
+        let codec = crate::test_node::codec();
+        let env = crate::Env {
+            registry: &registry,
+            builtins: &builtins,
+            codec: &codec,
+            graphs: &graphs,
+            instances: &instances,
+        };
+        let mut vm = gantz_core::steel::steel_vm::engine::Engine::new_base();
+        vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
+        for (path, val) in state {
+            gantz_core::node::state::update_value(&mut vm, &path, val).unwrap();
+        }
+        let mut f = f;
+        egui::__run_test_ui(|ui| {
+            let mut writes = Vec::new();
+            let mut ctx = crate::NodeCtx::new(&env, &[][..], &[], &[], &[], &mut vm, &mut writes);
+            f(&mut ctx, ui);
+        });
+    }
+
+    /// The encoded marker tree for an embed containing another embed.
+    fn ref_gui_elem(id: node::Id) -> SteelVal {
+        let elem = Element::RefGui(gantz_ui::RefGui { id, key: None });
+        gantz_ui::codec::steel::encode(&elem)
+    }
+
+    #[test]
+    fn ref_gui_without_resolver_renders_chip() {
+        let tree = Element::RefGui(gantz_ui::RefGui { id: 3, key: None });
+        run_with_ctx(vec![], |ctx, ui| {
+            let r = UiTree::new(egui::Id::new("t")).show(&tree, ctx, ui);
+            assert!(r.inner.is_some(), "the fallback chip must render");
+            assert!(r.payloads.is_empty());
+        });
+    }
+
+    /// Each nested embed extends the chain handed to the resolver: the
+    /// walker resolves `[3]` for the root embed, then `[3, 5]` for the embed
+    /// inside its marker tree.
+    #[test]
+    fn ref_gui_resolver_receives_full_chain() {
+        let tree = Element::RefGui(gantz_ui::RefGui { id: 3, key: None });
+        let leaf = gantz_ui::codec::steel::encode(&Element::Sep(gantz_ui::Sep { key: None }));
+        let state = vec![(vec![3, 9], ref_gui_elem(5)), (vec![3, 5, 9], leaf)];
+        let calls = std::cell::RefCell::new(Vec::new());
+        let resolver = |chain: &[node::Id]| {
+            calls.borrow_mut().push(chain.to_vec());
+            Some(9)
+        };
+        run_with_ctx(state, |ctx, ui| {
+            UiTree::new(egui::Id::new("t"))
+                .ref_gui(&resolver)
+                .show(&tree, ctx, ui);
+        });
+        assert_eq!(calls.into_inner(), vec![vec![3], vec![3, 5]]);
+    }
+
+    /// Self-referential marker trees stop resolving at the depth limit.
+    #[test]
+    fn ref_gui_depth_guard_stops_at_limit() {
+        let tree = Element::RefGui(gantz_ui::RefGui { id: 3, key: None });
+        // The marker at every depth embeds `(ref-gui 3)` again.
+        let state = (1..=MAX_REF_GUI_DEPTH + 1)
+            .map(|depth| {
+                let mut path = vec![3; depth];
+                path.push(9);
+                (path, ref_gui_elem(3))
+            })
+            .collect();
+        let calls = std::cell::Cell::new(0);
+        let resolver = |_: &[node::Id]| {
+            calls.set(calls.get() + 1);
+            Some(9)
+        };
+        run_with_ctx(state, |ctx, ui| {
+            UiTree::new(egui::Id::new("t"))
+                .ref_gui(&resolver)
+                .show(&tree, ctx, ui);
+        });
+        assert_eq!(calls.get(), MAX_REF_GUI_DEPTH);
     }
 
     #[test]

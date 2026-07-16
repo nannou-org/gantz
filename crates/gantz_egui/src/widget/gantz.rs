@@ -2022,10 +2022,25 @@ where
                 egui::ScrollArea::both().show(ui, |ui| {
                     let payloads = access.with_head_mut(&head, |data| {
                         let (inlets, outlets) = crate::inlet_outlet_ids(env, data.graph);
+                        // The focused head's committed graph address:
+                        // resolver hops into instances go through the
+                        // registry (instances always resolve committed
+                        // children).
+                        let head_ca: Option<gantz_ca::ContentAddr> = env
+                            .registry
+                            .head_commit(&head)
+                            .map(|commit| commit.graph.into());
                         let n_outs = super::gui_debug::node_output_counts(env, codec, data.graph);
-                        let resolver = move |p: &[node::Id]| match p {
-                            &[ix] => n_outs.get(&ix).copied(),
-                            _ => None,
+                        let resolver = |p: &[node::Id]| -> Option<usize> {
+                            match p {
+                                // Top-level nodes read the working graph.
+                                [ix] => n_outs.get(ix).copied(),
+                                _ => crate::reg::n_outputs_at(env, head_ca.as_ref()?, p),
+                            }
+                        };
+                        let ref_gui = |chain: &[node::Id]| -> Option<node::Id> {
+                            let (_, marker) = crate::reg::resolve_ref_chain(env, head_ca?, chain)?;
+                            Some(marker)
                         };
                         let mut writes = Vec::new();
                         let mut node_ctx =
@@ -2033,6 +2048,7 @@ where
                         let root_id = egui::Id::new(("gantz-gui-debug", &head));
                         let r = crate::ui_tree::UiTree::new(root_id)
                             .n_outputs(&resolver)
+                            .ref_gui(&ref_gui)
                             .show(&decoded.root, &mut node_ctx, ui);
                         let mut payloads = r.payloads;
                         payloads.extend(
