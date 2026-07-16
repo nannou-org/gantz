@@ -220,6 +220,128 @@ mod tests {
         assert_eq!(names, expected);
     }
 
+    /// Build the marker-lookup test registry: `child` declares body + view
+    /// `gui` markers, `parent` references `child`.
+    fn gui_marker_registry() -> DataReg {
+        use std::time::Duration;
+        let text = "\
+(graph child
+  (n number) (b gui) (v (gui view))
+  (-> n (b 0)))
+
+(graph parent
+  (c (ref child)))";
+        gantz_egui::format::from_str(text, Duration::from_secs(0), &super::codec())
+            .expect("from_str")
+    }
+
+    /// The graph address a ref to the named graph pins.
+    fn named_ca(reg: &DataReg, n: &str) -> gantz_ca::ContentAddr {
+        gantz_egui::reg::head_graph_addr(reg, &name(n))
+            .expect("named graph")
+            .into()
+    }
+
+    /// `Env::gui_markers` reads a referenced graph's markers (with their
+    /// roles) from its stored node data.
+    #[test]
+    fn gui_markers_resolve_roles() {
+        use gantz_egui::node::{Gui, GuiRole};
+        let registry = gui_marker_registry();
+        let reified = reify_all(&registry);
+        let builtins = builtins_with_instances();
+        let codec = super::codec();
+        let reg = env(&registry, &reified, &builtins, &codec);
+        let child = named_ca(&registry, "child");
+        let markers = reg.gui_markers(&child);
+        assert_eq!(
+            markers,
+            vec![
+                (1, Gui::default()),
+                (
+                    2,
+                    Gui {
+                        role: GuiRole::View,
+                        ..Default::default()
+                    }
+                ),
+            ],
+        );
+        assert!(reg.gui_markers(&named_ca(&registry, "parent")).is_empty());
+    }
+
+    /// `Env::node_at` resolves a nested relative path through reference
+    /// hops, and `reg::n_outputs_at` reports the terminal node's output
+    /// count.
+    #[test]
+    fn node_at_resolves_through_refs() {
+        let registry = gui_marker_registry();
+        let reified = reify_all(&registry);
+        let builtins = builtins_with_instances();
+        let codec = super::codec();
+        let reg = env(&registry, &reified, &builtins, &codec);
+        let parent = named_ca(&registry, "parent");
+        // The ref itself, then the number inside the referenced child.
+        assert!(reg.node_at(&parent, &[0]).is_some());
+        assert!(reg.node_at(&parent, &[0, 0]).is_some());
+        assert!(reg.node_at(&parent, &[0, 9]).is_none());
+        assert_eq!(
+            gantz_egui::reg::n_outputs_at(&reg, &parent, &[0, 0]),
+            Some(1)
+        );
+        // A terminal ref segment resolves transparently: the child graph has
+        // no outlets, so the ref node reports 0 outputs.
+        assert_eq!(gantz_egui::reg::n_outputs_at(&reg, &parent, &[0]), Some(0));
+    }
+
+    /// `Env::ref_target` hops exactly one reference stand-in; non-ref nodes
+    /// and `Fn` nodes (a function value, not a stand-in) never resolve.
+    #[test]
+    fn ref_target_resolves_named_ref() {
+        let registry = gui_marker_registry();
+        let reified = reify_all(&registry);
+        let builtins = builtins_with_instances();
+        let codec = super::codec();
+        let reg = env(&registry, &reified, &builtins, &codec);
+        let parent = named_ca(&registry, "parent");
+        let child = named_ca(&registry, "child");
+        assert_eq!(reg.ref_target(&parent, 0), Some(child));
+        // The number in the child is not a ref.
+        assert_eq!(reg.ref_target(&child, 0), None);
+        // An `Fn`-wrapped ref erases under its own tag, which the data
+        // walk's reference rule deliberately does not match - even though
+        // the ref is still carried structurally for reachability.
+        let named =
+            gantz_egui::node::NamedRef::new(name("child"), gantz_core::node::Ref::new(child));
+        let nd = erased(&gantz_core::node::Fn(named));
+        assert!(gantz_egui::node::gui::ref_target_of(&nd).is_none());
+        assert_eq!(nd.refs, vec![child]);
+    }
+
+    /// `reg::resolve_ref_chain` folds ref hops (possibly none) and finds the
+    /// leaf graph's body marker.
+    #[test]
+    fn resolve_ref_chain_finds_leaf_body_marker() {
+        let registry = gui_marker_registry();
+        let reified = reify_all(&registry);
+        let builtins = builtins_with_instances();
+        let codec = super::codec();
+        let reg = env(&registry, &reified, &builtins, &codec);
+        let parent = named_ca(&registry, "parent");
+        let child = named_ca(&registry, "child");
+        assert_eq!(
+            gantz_egui::reg::resolve_ref_chain(&reg, parent, &[0]),
+            Some((child, 1)),
+        );
+        // An empty chain resolves the start graph's own body marker.
+        assert_eq!(
+            gantz_egui::reg::resolve_ref_chain(&reg, child, &[]),
+            Some((child, 1)),
+        );
+        // A graph without a body marker resolves nothing.
+        assert_eq!(gantz_egui::reg::resolve_ref_chain(&reg, parent, &[]), None);
+    }
+
     /// Gate test for the builtin data <-> typed instance seam: every composed
     /// builtin's stored `NodeData` reifies through the app codec and
     /// re-erases to the identical `NodeData` (same canonical form, same

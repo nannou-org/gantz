@@ -115,6 +115,87 @@ impl GuiDisplay {
     }
 }
 
+/// The `gui` markers among a graph's stored nodes, in index order.
+///
+/// A pure data walk: a marker is a node whose tag is [`Gui`]'s, with its
+/// role/display read via the type's own serde (no codec, no reification).
+/// Call sites resolve a duplicate role as first-in-index-order.
+pub fn markers(g: &gantz_ca::DataGraph) -> Vec<(node::Id, Gui)> {
+    use petgraph::visit::{IntoNodeReferences, NodeRef};
+    g.node_references()
+        .filter_map(|n| {
+            let nd: &gantz_ca::NodeData = n.weight();
+            (nd.tag == Gui::TAG)
+                .then(|| gantz_core::data::reify_node_concrete::<Gui>(nd).ok())
+                .flatten()
+                .map(|gui| (n.id().index(), gui))
+        })
+        .collect()
+}
+
+/// The graph address a stored node pins, if it is a reference *stand-in* (a
+/// `NamedRef` or bare `Ref`).
+///
+/// `Fn`-wrapped refs deliberately do not match: a function value references
+/// a graph without standing in for it. This mirrors the typed `AsRefNode`
+/// rule as a pure data check, the same tag rule the plyphon DSP-graph walk
+/// uses.
+pub fn ref_target_of(nd: &gantz_ca::NodeData) -> Option<gantz_ca::ContentAddr> {
+    let is_ref = nd.tag == crate::node::NamedRef::TAG || nd.tag == gantz_core::node::Ref::TAG;
+    is_ref.then(|| nd.refs.first().copied()).flatten()
+}
+
+/// The path and input count of every `gui` marker in the graph tree rooted
+/// at `g`, recursing through reference stand-ins via the registry.
+///
+/// Backs the hosts' eager marker refresh: each `(path, n_inputs)` names the
+/// singleton pull entrypoint compiled for that marker instance. A pure data
+/// walk over stored graphs - no codec and no reified cache involved.
+pub fn marker_paths(
+    reg: &gantz_ca::Registry,
+    g: &gantz_ca::DataGraph,
+) -> Vec<(Vec<node::Id>, usize)> {
+    let mut out = Vec::new();
+    let mut path = Vec::new();
+    let mut descent = Vec::new();
+    collect_marker_paths(reg, g, &mut path, &mut descent, &mut out);
+    out
+}
+
+/// The recursive body of [`marker_paths`]. `descent` guards against cyclic
+/// reference data (the registry prevents true cycles; corrupt data must not
+/// hang the walk).
+fn collect_marker_paths(
+    reg: &gantz_ca::Registry,
+    g: &gantz_ca::DataGraph,
+    path: &mut Vec<node::Id>,
+    descent: &mut Vec<gantz_ca::GraphAddr>,
+    out: &mut Vec<(Vec<node::Id>, usize)>,
+) {
+    use petgraph::visit::{IntoNodeReferences, NodeRef};
+    for n in g.node_references() {
+        let nd: &gantz_ca::NodeData = n.weight();
+        path.push(n.id().index());
+        if nd.tag == Gui::TAG {
+            if let Ok(gui) = gantz_core::data::reify_node_concrete::<Gui>(nd) {
+                let get_node = |_: &gantz_ca::ContentAddr| None;
+                let n_inputs = gantz_core::Node::n_inputs(&gui, MetaCtx::new(&get_node));
+                out.push((path.clone(), n_inputs));
+            }
+        } else if let Some(target) = ref_target_of(nd) {
+            let ga = gantz_ca::GraphAddr::from(target);
+            if !descent.contains(&ga) {
+                if let Some(child) = reg.graph(&ga) {
+                    descent.push(ga);
+                    collect_marker_paths(reg, child, path, descent, out);
+                    descent.pop();
+                }
+            }
+        }
+        path.pop();
+    }
+}
+
 impl gantz_core::Node for Gui {
     fn n_inputs(&self, _ctx: MetaCtx) -> usize {
         1
