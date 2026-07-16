@@ -351,8 +351,10 @@ pub trait NodeUi: gantz_core::Node + Send + Sync {
 /// The default [`NodeUi::view_ui`] body: the node's current VM state value (its
 /// debug repr), matching what [`Inspect`](crate::node::Inspect) shows in-graph.
 /// No type label - the tab title already names the node. Used by any node that
-/// doesn't override `view_ui` with a richer visualisation.
-fn default_view_ui(ctx: &NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
+/// doesn't override `view_ui` with a richer visualisation, and as the final
+/// fallback for nodes whose richer view can be absent (e.g. `NamedRef` when
+/// the referenced graph declares no markers).
+pub(crate) fn default_view_ui(ctx: &NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
     let mut resp = NodeViewResponse::default();
     let text = match ctx.extract_value() {
         Ok(Some(val)) => format!("{val:?}"),
