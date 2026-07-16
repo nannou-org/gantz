@@ -496,10 +496,14 @@ impl eframe::App for App {
         // propagate the edits to referrers (e.g. nested graph -> parent).
         if !committed_ixs.is_empty() {
             self.state.env.ensure_reified();
-            for ix in committed_ixs {
+            for &ix in &committed_ixs {
                 recompile_head(&mut self.state, ix);
             }
             resync_and_refresh(&mut self.state);
+            // Freshly compiled modules leave gui marker state stale; re-pull.
+            for ix in committed_ixs {
+                refresh_gui_markers(&mut self.state, ix);
+            }
         }
 
         // Process any pending response payloads generated from the UI.
@@ -863,6 +867,14 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
                 diags.push(gantz_core::diagnostic::from_eval_error(&e, vm, compiled));
             }
             log::error!("{e}");
+        }
+        // A push-kind evaluation may have changed state feeding gui markers.
+        if ep
+            .0
+            .iter()
+            .any(|s| s.kind == gantz_core::compile::EvalKind::Push)
+        {
+            refresh_gui_markers(state, ix);
         }
     }
 
@@ -1554,6 +1566,31 @@ fn resync_and_refresh(state: &mut State) {
 fn recompile_heads(state: &mut State) {
     for ix in 0..state.heads.len() {
         recompile_head(state, ix);
+    }
+    for ix in 0..state.heads.len() {
+        refresh_gui_markers(state, ix);
+    }
+}
+
+/// Re-pull every `gui` marker of the head at `ix`, refreshing the stored
+/// trees the GUI renders (the synchronous analogue of `bevy_gantz_egui`'s
+/// eager marker refresh). Called after push-kind evaluations and after
+/// (re)compiles.
+///
+/// Discovery is the shared pure data walk over the head's working graph
+/// (`gantz_egui::node::gui::marker_paths`).
+fn refresh_gui_markers(state: &mut State, ix: usize) {
+    let (_, graph, _) = &state.heads[ix];
+    let markers = gantz_egui::node::gui::marker_paths(&state.env.registry, graph);
+    for (path, n_inputs) in markers {
+        // The compiled module holds a singleton pull entrypoint per marker
+        // instance (built from the node's actual input count).
+        let n = n_inputs.min(u8::MAX as usize) as u8;
+        let ep = gantz_core::compile::entrypoint::pull(path, n);
+        let fn_name = gantz_core::compile::entry_fn_name(&ep.id());
+        if let Err(e) = state.vms[ix].call_function_by_name_with_args(&fn_name, vec![]) {
+            log::error!("gui marker refresh failed: {e}");
+        }
     }
 }
 
