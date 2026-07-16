@@ -41,6 +41,7 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             bevy_gantz_egui::node::TickBang,
             bevy_gantz_egui::node::Await,
             bevy_gantz_egui::node::Sleep,
+            gantz_egui::node::Gui,
             gantz_egui::node::Inspect,
             gantz_egui::node::Plot,
             gantz_plyphon::UnitNode,
@@ -193,6 +194,7 @@ mod tests {
             "delay",
             "expr",
             "fn",
+            "gui",
             "id",
             "inlet",
             "inspect",
@@ -260,6 +262,14 @@ mod tests {
             node_datum("Identity", vec![]),
             node_datum("Bang", vec![]),
             node_datum("Inspect", vec![]),
+            node_datum("Gui", vec![]),
+            node_datum(
+                "Gui",
+                vec![
+                    ("role", Datum::Str("view".into())),
+                    ("display", Datum::Str("compact".into())),
+                ],
+            ),
             node_datum("UpdateBang", vec![]),
             node_datum("Await", vec![]),
             node_datum("Sleep", vec![]),
@@ -549,6 +559,10 @@ mod tests {
             (
                 "FnNamedRef",
                 "71b52c706fd6459c6cced0cfd3a58035c5e0a10d1862881a37672bd1a8f9366b",
+            ),
+            (
+                "Gui",
+                "ea863254205bfa4a6266b6fcb8120c8531ae6fc987b89f3b1ddf4186624a0114",
             ),
             (
                 "Identity",
