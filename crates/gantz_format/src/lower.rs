@@ -13,14 +13,25 @@ use crate::model::{
     Addr, CommitDecl, Document, Form, GraphBody, GraphDef, NameDecl, NodeDecl, NodeSpec, RefSpec,
     SectionKey,
 };
-use gantz_ca::{Commit, CommitAddr, ContentAddr, GraphAddr, Key, Registry, Timestamp};
+use gantz_ca::{
+    Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Key, NodeData, Registry, Timestamp,
+};
 use gantz_core::edge::Edge;
-use gantz_core::node::graph::{Graph, NodeIx};
 use gantz_core::node::{Input, Output};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
+
+/// The node-normalization seam threaded through
+/// [`from_str_normalized`](crate::from_str_normalized): turns one parsed
+/// node's `"type"`-tagged [`Datum`] into its canonical stored [`NodeData`]
+/// (fields validated, refs/blobs columns recomputed).
+///
+/// The node-set entry points ([`from_str`](crate::from_str) and friends)
+/// supply the node set's serde round-trip; richer layers (e.g. a GUI's
+/// value-level codec) supply their own.
+pub type Normalize<'a> = dyn Fn(Datum) -> Result<NodeData, FormatError> + 'a;
 
 /// The result of lowering a [`Document`]: the registry plus the resolution
 /// context and preserved extra forms an extender needs.
@@ -84,10 +95,22 @@ pub fn lower_seeded<N>(
 ) -> Result<Loaded, FormatError>
 where
     // Nodes are deserialized through the node set's serde, then erased back
-    // to data for storage (`Serialize` + `Node` are `gantz_core::data::erase`'s
-    // requirements). Registry addresses are always computed on the erased form.
+    // to data for storage (`Serialize` + `Node` are
+    // `gantz_core::data::erase_node`'s requirements). Registry addresses are
+    // always computed on the erased form.
     N: Serialize + DeserializeOwned + gantz_core::Node,
 {
+    lower_normalized(doc, now, seed, &serde_normalize::<N>)
+}
+
+/// [`lower_seeded`] with an explicit node-normalization seam in place of a
+/// node-set type parameter (see [`Normalize`]).
+pub fn lower_normalized(
+    doc: Document,
+    now: Timestamp,
+    seed: &BTreeMap<String, GraphAddr>,
+    normalize: &Normalize,
+) -> Result<Loaded, FormatError> {
     let Document {
         graphs,
         commits,
@@ -138,11 +161,7 @@ where
             known: &known_graphs,
             seed,
         };
-        let (graph, index_map) = build_graph::<N>(&def.body, &resolve)?;
-        // Erase the typed graph for storage: registry graph addresses are
-        // always computed on the erased form.
-        let data_graph = gantz_core::data::erase(&graph)
-            .map_err(|e| FormatError::node_deserialize("?", e.to_string()))?;
+        let (data_graph, index_map) = build_graph(&def.body, &resolve, normalize)?;
         let g_addr = registry.add_graph(data_graph);
         known_graphs.push(g_addr);
         index.insert(id.clone(), index_map);
@@ -221,16 +240,14 @@ fn lower_section_key(key: SectionKey) -> Option<Key> {
 
 // -- graph construction ------------------------------------------------------
 
-fn build_graph<N>(
+fn build_graph(
     body: &GraphBody,
     resolve: &Resolve,
-) -> Result<(Graph<N>, HashMap<String, usize>), FormatError>
-where
-    N: DeserializeOwned,
-{
-    let mut graph: Graph<N> = Graph::default();
+    normalize: &Normalize,
+) -> Result<(DataGraph, HashMap<String, usize>), FormatError> {
+    let mut graph = DataGraph::default();
     let mut index: HashMap<String, usize> = HashMap::new();
-    let mut node_ix: HashMap<String, NodeIx> = HashMap::new();
+    let mut node_ix = HashMap::new();
 
     for decl in &body.nodes {
         if index.contains_key(&decl.name) {
@@ -238,7 +255,7 @@ where
                 decl.name.clone(),
             )));
         }
-        let node = build_node::<N>(decl, resolve)?;
+        let node = build_node(decl, resolve, normalize)?;
         let ix = graph.add_node(node);
         index.insert(decl.name.clone(), ix.index());
         node_ix.insert(decl.name.clone(), ix);
@@ -261,29 +278,36 @@ where
     Ok((graph, index))
 }
 
-fn build_node<N>(decl: &NodeDecl, resolve: &Resolve) -> Result<N, FormatError>
-where
-    N: DeserializeOwned,
-{
+fn build_node(
+    decl: &NodeDecl,
+    resolve: &Resolve,
+    normalize: &Normalize,
+) -> Result<NodeData, FormatError> {
     match &decl.spec {
-        NodeSpec::Value(v) => node_from_datum::<N>(v.clone()),
+        NodeSpec::Value(v) => normalize(v.clone()),
         NodeSpec::Ref(refspec) => {
             let v = resolve_ref_value(refspec, resolve)?;
-            node_from_datum::<N>(v)
+            normalize(v)
         }
     }
 }
 
-fn node_from_datum<N>(datum: Datum) -> Result<N, FormatError>
+/// The node-set-serde [`Normalize`] implementation backing [`lower`] and
+/// [`lower_seeded`]: deserialize the tagged datum through `N`, then erase the
+/// node back to its canonical data form.
+fn serde_normalize<N>(datum: Datum) -> Result<NodeData, FormatError>
 where
-    N: DeserializeOwned,
+    N: Serialize + DeserializeOwned + gantz_core::Node,
 {
     let tag = datum
         .get("type")
         .and_then(Datum::as_str)
         .unwrap_or("?")
         .to_string();
-    from_datum::<N>(datum).map_err(|e| FormatError::node_deserialize(tag, e.to_string()))
+    let node: N =
+        from_datum(datum).map_err(|e| FormatError::node_deserialize(tag.clone(), e.to_string()))?;
+    gantz_core::data::erase_node(&node)
+        .map_err(|e| FormatError::node_deserialize(tag, e.to_string()))
 }
 
 fn resolve_ref_value(refspec: &RefSpec, resolve: &Resolve) -> Result<Datum, FormatError> {

@@ -32,9 +32,8 @@ use cpal::{FromSample, SizedSample};
 use gantz_ca as ca;
 use gantz_core::node::graph::Graph;
 use gantz_plyphon::{
-    AddAction, AsRefNode, Backend, BusKey, DefCache, Embedded, GainRef, ROOT_GROUP_ID,
-    ResolvedPart, ToNodeDsp, derive_template, flatten_from_registry, flatten_instance_children,
-    instantiate,
+    AddAction, Backend, BusKey, DefCache, Embedded, GainRef, ROOT_GROUP_ID, ResolvedPart,
+    ToNodeDsp, derive_template, flatten_from_registry, flatten_instance_children, instantiate,
 };
 use plyphon::{Controller, Nrt, Options, StreamConsumer, World, engine};
 // `std::time::Instant` panics ("time not implemented") on `wasm32-unknown-unknown`;
@@ -51,8 +50,9 @@ pub use plyphon;
 /// [`plyphon::UnitRegistry`] at startup (see [`PlyphonPlugin::with_units`]).
 type UnitRegistrar = Box<dyn Fn(&mut plyphon::UnitRegistry) + Send + Sync>;
 
-use bevy_gantz::head::{HeadRef, HeadVms, OpenHead, WorkingGraph};
-use bevy_gantz::{EntrypointSet, EvalEpoch, GraphCache, Registry, VmSet};
+use bevy_gantz::head::{HeadRef, HeadVms, OpenHead};
+use bevy_gantz::{EntrypointSet, EvalEpoch, Registry, VmSet};
+use bevy_gantz_egui::GraphCache;
 use bevy_gantz_egui::{EdgeStyles, ExtPanes, RefExtUis, RegisterResponseExt, SettingsTabs};
 use gantz_plyphon::{
     Config, DeriveStatus, DspEdgeStyle, DspPane, DspPaneHead, DspRefExtUi, DspSettingsTab,
@@ -141,7 +141,7 @@ fn osc(secs: f64) -> u64 {
 ///   `build`, before the schedule first ticks.
 /// - Contributions to shared collections go through
 ///   `get_resource_or_init` + push (see
-///   [`bevy_gantz::EntrypointFns`],
+///   [`bevy_gantz_egui::EntrypointFns`],
 ///   [`RegisterResponseExt::register_response_with`]) - never
 ///   `insert_resource`, which would clobber earlier contributions.
 /// - GUI surfaces are provided by per-frame systems in `PreUpdate`
@@ -151,21 +151,19 @@ fn osc(secs: f64) -> u64 {
 ///   so the plugin works with or without `GantzEguiPlugin`.
 /// - The domain's own extension points (here
 ///   [`with_units`](Self::with_units)) hang off the plugin itself.
-pub struct PlyphonPlugin<N> {
+pub struct PlyphonPlugin {
     unit_registrars: Vec<UnitRegistrar>,
-    _marker: std::marker::PhantomData<N>,
 }
 
-impl<N> Default for PlyphonPlugin<N> {
+impl Default for PlyphonPlugin {
     fn default() -> Self {
         Self {
             unit_registrars: Vec::new(),
-            _marker: std::marker::PhantomData,
         }
     }
 }
 
-impl<N> PlyphonPlugin<N> {
+impl PlyphonPlugin {
     /// A plugin with no custom units (equivalent to [`default`](Self::default)).
     pub fn new() -> Self {
         Self::default()
@@ -177,7 +175,7 @@ impl<N> PlyphonPlugin<N> {
     /// (or `register_demand`) once per unit. Chainable.
     ///
     /// ```ignore
-    /// PlyphonPlugin::<N>::new().with_units(|reg| {
+    /// PlyphonPlugin::new().with_units(|reg| {
     ///     reg.register("Saw", Box::new(SawCtor));
     /// })
     /// ```
@@ -190,10 +188,7 @@ impl<N> PlyphonPlugin<N> {
     }
 }
 
-impl<N> Plugin for PlyphonPlugin<N>
-where
-    N: 'static + ToNodeDsp + gantz_core::Node + AsRefNode + Clone + Send + Sync,
-{
+impl Plugin for PlyphonPlugin {
     fn build(&self, app: &mut App) {
         // DSP settings (the Settings -> DSP tab).
         app.init_resource::<DspConfig>();
@@ -215,7 +210,7 @@ where
                     sync_dsp_settings,
                     provide_dsp_pane,
                     provide_dsp_ref_ext,
-                    provide_dsp_edge_style::<N>,
+                    provide_dsp_edge_style,
                 ),
             );
         // The DSP domain's base graphs (see `bevy_gantz_egui::base`).
@@ -229,7 +224,7 @@ where
         // `.after(EntrypointSet)`: run once the `tick!`/`update!` drivers' triggered
         // evaluations have flushed, so the control values they queue are visible to
         // the param drain below in the same frame.
-        app.add_systems(Update, drive_synths::<N>.after(VmSet).after(EntrypointSet));
+        app.add_systems(Update, drive_synths.after(VmSet).after(EntrypointSet));
     }
 
     // Engine construction lives in `finish` rather than `build`: it reads the
@@ -703,26 +698,32 @@ fn provide_dsp_ref_ext(
 /// [`root_port_info`]), so it is computed here and handed to the UI -
 /// recomputed per head only when the registry, the head's working graph or
 /// its [`DspHead`] change.
-fn provide_dsp_edge_style<N>(
+fn provide_dsp_edge_style(
     registry: Res<Registry>,
-    reified: Res<GraphCache<N>>,
-    heads: Query<(&HeadRef, Ref<WorkingGraph<N>>, Option<Ref<DspHead>>), With<OpenHead>>,
+    reified: Res<GraphCache>,
+    heads: Query<(&HeadRef, Option<Ref<DspHead>>), With<OpenHead>>,
     mut cache: Local<HashMap<ca::Head, std::sync::Arc<RootPortInfo>>>,
     mut edge_styles: ResMut<EdgeStyles>,
-) where
-    N: 'static + ToNodeDsp + gantz_core::Node + AsRefNode + Send + Sync,
-{
+) {
     let mut styled: HashMap<ca::Head, std::sync::Arc<RootPortInfo>> = HashMap::new();
-    for (head_ref, wg, dsp) in heads.iter() {
+    for (head_ref, dsp) in heads.iter() {
         let head = head_ref.0.clone();
+        // The head's committed graph, read from the reified cache (the
+        // working graph equals it by the `WorkingGraph` invariant). An edit
+        // commits, so `registry.is_changed()` covers working-graph changes.
+        let Some(graph) = registry
+            .head_commit(&head)
+            .and_then(|c| reified.get(&c.graph))
+        else {
+            continue;
+        };
         let stale = registry.is_changed()
             || reified.is_changed()
-            || wg.is_changed()
             || dsp.as_ref().is_some_and(|d| d.is_changed())
             || !cache.contains_key(&head);
         if stale {
             let shapes = dsp.as_ref().map(|d| d.shapes.clone()).unwrap_or_default();
-            let info = root_port_info(&wg.0, &reified.0, &shapes);
+            let info = root_port_info(graph, &reified.0, &shapes);
             cache.insert(head.clone(), std::sync::Arc::new(info));
         }
         styled.insert(head.clone(), cache[&head].clone());
@@ -747,19 +748,17 @@ fn provide_dsp_edge_style<N>(
 ///   samples into the node's ring state (capped at the tap's `size`).
 ///
 /// Also tears down synths for closed heads.
-fn drive_synths<N>(
+fn drive_synths(
     registry: Res<Registry>,
-    reified: Res<GraphCache<N>>,
+    reified: Res<GraphCache>,
     dsp: Option<NonSendMut<DspEngine>>,
     dsp_config: Res<DspConfig>,
     mut enabled_applied: Local<Option<bool>>,
     state: NonSendMut<HeadSynths>,
     mut vms: NonSendMut<HeadVms>,
-    heads: Query<(Entity, &HeadRef, &WorkingGraph<N>), With<OpenHead>>,
+    heads: Query<(Entity, &HeadRef), With<OpenHead>>,
     mut cmds: Commands,
-) where
-    N: 'static + ToNodeDsp + gantz_core::Node + AsRefNode + Clone + Send + Sync,
-{
+) {
     let Some(dsp) = dsp else {
         return;
     };
@@ -790,9 +789,15 @@ fn drive_synths<N>(
     let sample_rate = dsp.sample_rate;
     let mut live: HashSet<Entity> = HashSet::new();
 
-    for (entity, head_ref, wg) in heads.iter() {
+    for (entity, head_ref) in heads.iter() {
         live.insert(entity);
         let Some(graph_ca) = registry.head_commit(&head_ref.0).map(|c| c.graph) else {
+            continue;
+        };
+        // The head's committed graph, read from the reified cache (the
+        // working graph equals it by the `WorkingGraph` invariant). A cache
+        // miss (e.g. an unknown-tag reify failure) keeps the previous synths.
+        let Some(graph) = reified.get(&graph_ca) else {
             continue;
         };
 
@@ -808,7 +813,7 @@ fn drive_synths<N>(
             .get(&entity)
             .is_none_or(|h| h.graph != graph_ca || h.retry);
         if stale {
-            let flat_children = flatten_from_registry(&wg.0, &reified).and_then(|flat| {
+            let flat_children = flatten_from_registry(graph, &reified).and_then(|flat| {
                 let children = flatten_instance_children(&flat, &reified)?;
                 Ok((flat, children))
             });
@@ -1931,7 +1936,7 @@ mod tests {
         g.add_edge(s, o, Edge::new(0.into(), 0.into()));
         let resolve =
             |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
-        let flat: Graph<Flat<TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
+        let flat: Graph<Flat<&TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
 
         let mut cache = DefCache::new();
         let template = derive_template(&flat, 1, &|_| None, &mut cache).expect("derive");
@@ -1997,7 +2002,7 @@ mod tests {
         g.add_edge(p, o, Edge::new(0.into(), 0.into()));
         let resolve =
             |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
-        let flat: Graph<Flat<TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
+        let flat: Graph<Flat<&TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
 
         let mut cache = DefCache::new();
         let template = derive_template(&flat, 1, &|_| None, &mut cache).expect("derive");
@@ -2045,13 +2050,13 @@ mod tests {
         use gantz_core::node::graph::Graph;
         use gantz_plyphon::flatten::{Flat, RefKind, flatten};
 
-        let flatten_no_refs = |g: &Graph<TestN>| -> Graph<Flat<TestN>> {
+        fn flatten_no_refs(g: &Graph<TestN>) -> Graph<Flat<&TestN>> {
             let resolve =
                 |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> {
                     None
                 };
             flatten(&|_| None, g, &resolve).expect("flatten")
-        };
+        }
 
         let (mut controller, _nrt, mut world) = plyphon::engine(plyphon::Options {
             sample_rate: 48_000.0,
@@ -2066,7 +2071,7 @@ mod tests {
         let s = g1.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
         let o = g1.add_node(TestN::Out(gantz_plyphon::Out::default()));
         g1.add_edge(s, o, Edge::new(0.into(), 0.into()));
-        let ca1 = gantz_ca::graph_addr(&g1);
+        let ca1 = graph_addr(&g1);
         let flat1 = flatten_no_refs(&g1);
         structural_sync(
             &mut controller,
@@ -2093,7 +2098,7 @@ mod tests {
         let _i = g2.add_node(TestN::Inlet);
         let _o2 = g2.add_node(TestN::Outlet);
         g2.add_edge(s, o, Edge::new(0.into(), 0.into()));
-        let ca2 = gantz_ca::graph_addr(&g2);
+        let ca2 = graph_addr(&g2);
         assert_ne!(ca1, ca2, "adding nodes changes the graph address");
         let flat2 = flatten_no_refs(&g2);
         structural_sync(
@@ -2127,13 +2132,13 @@ mod tests {
         use gantz_core::node::graph::Graph;
         use gantz_plyphon::flatten::{Flat, RefKind, flatten};
 
-        let flatten_no_refs = |g: &Graph<TestN>| -> Graph<Flat<TestN>> {
+        fn flatten_no_refs(g: &Graph<TestN>) -> Graph<Flat<&TestN>> {
             let resolve =
                 |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> {
                     None
                 };
             flatten(&|_| None, g, &resolve).expect("flatten")
-        };
+        }
 
         let (mut controller, _nrt, mut world) = plyphon::engine(plyphon::Options {
             sample_rate: 48_000.0,
@@ -2150,7 +2155,7 @@ mod tests {
         let o = g1.add_node(TestN::Out(gantz_plyphon::Out::default()));
         g1.add_edge(pk, up, Edge::new(0.into(), 0.into()));
         g1.add_edge(up, o, Edge::new(0.into(), 0.into()));
-        let ca1 = gantz_ca::graph_addr(&g1);
+        let ca1 = graph_addr(&g1);
         structural_sync(
             &mut controller,
             &mut state,
@@ -2177,7 +2182,7 @@ mod tests {
         let mut g2 = g1.clone();
         let s = g2.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
         g2.add_edge(s, pk, Edge::new(0.into(), 0.into()));
-        let ca2 = gantz_ca::graph_addr(&g2);
+        let ca2 = graph_addr(&g2);
         structural_sync(
             &mut controller,
             &mut state,
@@ -2215,29 +2220,43 @@ mod tests {
         Ref(gantz_ca::ContentAddr, usize, usize, bool),
     }
 
-    impl gantz_ca::CaHash for TestN {
-        fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-            match self {
-                TestN::SinOsc(s) => gantz_ca::CaHash::hash(s, hasher),
-                TestN::Out(o) => gantz_ca::CaHash::hash(o, hasher),
-                TestN::Pack(p) => gantz_ca::CaHash::hash(p, hasher),
-                TestN::Unpack(u) => gantz_ca::CaHash::hash(u, hasher),
-                TestN::PlayBuf(p) => gantz_ca::CaHash::hash(p, hasher),
+    /// The graph's erased (data-layer) address: the same scheme the registry
+    /// uses for graph identity, so structural edits change the address and
+    /// identical graphs share one.
+    fn graph_addr(g: &gantz_core::node::graph::Graph<TestN>) -> gantz_ca::GraphAddr {
+        use gantz_ca::{Datum, NodeData};
+        use gantz_core::data::erase_node_typed;
+        let dg: gantz_ca::DataGraph = g.map(
+            |_, n| match n {
+                TestN::SinOsc(s) => erase_node_typed(s).unwrap(),
+                TestN::Out(o) => erase_node_typed(o).unwrap(),
+                TestN::Pack(p) => erase_node_typed(p).unwrap(),
+                TestN::Unpack(u) => erase_node_typed(u).unwrap(),
+                TestN::PlayBuf(p) => erase_node_typed(p).unwrap(),
                 TestN::Inlet => {
-                    hasher.update(b"inlet");
+                    erase_node_typed(&gantz_core::node::graph::Inlet::default()).unwrap()
                 }
                 TestN::Outlet => {
-                    hasher.update(b"outlet");
+                    erase_node_typed(&gantz_core::node::graph::Outlet::default()).unwrap()
                 }
                 TestN::Ref(ca, n_in, n_out, inline) => {
-                    hasher.update(b"ref");
-                    hasher.update(&ca.0);
-                    hasher.update(&n_in.to_le_bytes());
-                    hasher.update(&n_out.to_le_bytes());
-                    hasher.update(&[u8::from(*inline)]);
+                    let mut nd = NodeData::new(
+                        "test.ref",
+                        Datum::Map(vec![
+                            ("addr".to_string(), Datum::Str(ca.to_string())),
+                            ("inline".to_string(), Datum::Bool(*inline)),
+                            ("n_in".to_string(), Datum::U64(*n_in as u64)),
+                            ("n_out".to_string(), Datum::U64(*n_out as u64)),
+                        ]),
+                    );
+                    nd.refs.push(*ca);
+                    nd.canonicalize();
+                    nd
                 }
-            }
-        }
+            },
+            |_, e| *e,
+        );
+        gantz_ca::graph_addr(&dg)
     }
 
     impl gantz_plyphon::ToNodeDsp for TestN {
@@ -2280,12 +2299,15 @@ mod tests {
     /// Flatten a head graph over `map`'s children (refs lower per their
     /// `inline` flag) and pre-flatten every child for the derivation resolver.
     #[allow(clippy::type_complexity)]
-    fn flatten_head(
-        g: &gantz_core::node::graph::Graph<TestN>,
-        map: &HashMap<gantz_ca::ContentAddr, gantz_core::node::graph::Graph<TestN>>,
+    fn flatten_head<'g>(
+        g: &'g gantz_core::node::graph::Graph<TestN>,
+        map: &'g HashMap<gantz_ca::ContentAddr, gantz_core::node::graph::Graph<TestN>>,
     ) -> (
-        gantz_core::node::graph::Graph<gantz_plyphon::Flat<TestN>>,
-        HashMap<gantz_ca::ContentAddr, gantz_core::node::graph::Graph<gantz_plyphon::Flat<TestN>>>,
+        gantz_core::node::graph::Graph<gantz_plyphon::Flat<&'g TestN>>,
+        HashMap<
+            gantz_ca::ContentAddr,
+            gantz_core::node::graph::Graph<gantz_plyphon::Flat<&'g TestN>>,
+        >,
     ) {
         use gantz_core::node::graph::Graph;
         use gantz_plyphon::flatten::{RefKind, flatten};
@@ -2368,7 +2390,7 @@ mod tests {
             &mut state,
             &Default::default(),
             entity,
-            gantz_ca::graph_addr(&g1),
+            graph_addr(&g1),
             &flat1,
             &children,
             1,
@@ -2389,7 +2411,7 @@ mod tests {
             &mut state,
             &Default::default(),
             entity,
-            gantz_ca::graph_addr(&g2),
+            graph_addr(&g2),
             &flat2,
             &children,
             1,
@@ -2451,7 +2473,7 @@ mod tests {
             &mut state,
             &Default::default(),
             entity,
-            gantz_ca::graph_addr(&g1),
+            graph_addr(&g1),
             &flat1,
             &children,
             1,
@@ -2471,7 +2493,7 @@ mod tests {
             &mut state,
             &Default::default(),
             entity,
-            gantz_ca::graph_addr(&g2),
+            graph_addr(&g2),
             &flat2,
             &children,
             1,
@@ -2531,7 +2553,7 @@ mod tests {
             &mut state,
             &Default::default(),
             entity,
-            gantz_ca::graph_addr(&g1),
+            graph_addr(&g1),
             &flat1,
             &children,
             1,
@@ -2553,7 +2575,7 @@ mod tests {
             &mut state,
             &Default::default(),
             entity,
-            gantz_ca::graph_addr(&g2),
+            graph_addr(&g2),
             &flat2,
             &children,
             1,
@@ -2590,7 +2612,7 @@ mod tests {
             &mut state,
             &Default::default(),
             entity,
-            gantz_ca::graph_addr(&g),
+            graph_addr(&g),
             &flat,
             &children,
             1,

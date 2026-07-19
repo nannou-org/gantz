@@ -4,12 +4,11 @@ use bevy::{
 };
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use bevy_gantz::{
-    BuiltinNodes, FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead, Registry,
-    WorkingGraph,
+    FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead, Registry, WorkingGraph,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
-    reg, timestamp,
+    timestamp,
 };
-use bevy_gantz_egui::{GantzEguiPlugin, HeadGuiState, TraceCapture};
+use bevy_gantz_egui::{BuiltinNodes, GantzEguiPlugin, HeadGuiState, TraceCapture};
 use bevy_pkv::PkvStore;
 use storage::Pkv;
 
@@ -28,15 +27,23 @@ fn main() {
     let mut app = App::new();
     app
         // Core gantz plugin (provides FocusedHead, HeadTabOrder, HeadVms, Registry, Views)
-        .add_plugins(GantzPlugin::<Box<dyn node::Node>>::default())
+        .add_plugins(GantzPlugin)
         // Egui plugin (provides GuiState, TraceCapture, PerfVm, PerfGui, GUI systems)
-        .add_plugins(GantzEguiPlugin::<Box<dyn node::Node>>::default())
+        .add_plugins(GantzEguiPlugin::default())
         // DSP plugin: cpal output stream + plyphon synth driver for DSP graphs.
-        .add_plugins(bevy_gantz_plyphon::PlyphonPlugin::<Box<dyn node::Node>>::default())
-        // The full builtin node set composed from every domain's builtins.
-        .insert_resource(BuiltinNodes::<Box<dyn node::Node>>(Box::new(
-            node::builtins(),
-        )))
+        .add_plugins(bevy_gantz_plyphon::PlyphonPlugin::default())
+        // The full builtin node set composed from every domain's builtins,
+        // reified once through the node codec. A builtin failing to reify is
+        // a node-set composition error, so fail loudly at startup.
+        .insert_resource({
+            let (builtins, errs) = BuiltinNodes::reify(node::builtins(), &node::codec());
+            assert!(errs.is_empty(), "builtins failed to reify: {errs:?}");
+            builtins
+        })
+        // The app's value-level node codec: THE node-set manifest, for the
+        // reify/erase seam and the `.gantz` parse/export paths (base load,
+        // import/export, clipboard).
+        .insert_resource(bevy_gantz_egui::NodeCodecRes(node::codec()))
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window::plugin()))
         .add_plugins(EguiPlugin::default())
         // Drives both layout settling and the registry/views persist.
@@ -50,11 +57,11 @@ fn main() {
                 setup_camera,
                 setup_window,
                 setup_resources,
-                bevy_gantz_egui::base::load::<Box<dyn node::Node>>
+                bevy_gantz_egui::base::load
                     .after(setup_resources)
                     .before(setup_open),
                 setup_open.after(setup_resources),
-                reg::prune_unused::<Box<dyn node::Node>>
+                bevy_gantz_egui::prune_unused
                     .after(setup_resources)
                     .after(setup_open),
             ),
@@ -64,9 +71,7 @@ fn main() {
     // Native OS windows for popped-out panes. On web the widget keeps drawing
     // popped-out panes as in-canvas `egui::Window`s.
     #[cfg(not(target_arch = "wasm32"))]
-    app.add_plugins(bevy_gantz_egui::pane_window::PaneWindowPlugin::<
-        Box<dyn node::Node>,
-    >::default());
+    app.add_plugins(bevy_gantz_egui::pane_window::PaneWindowPlugin);
 
     app.run();
 }
@@ -105,8 +110,8 @@ fn setup_resources(storage: Res<Pkv>, mut cmds: Commands) {
     let gui_state = bevy_gantz_egui::storage::load_gui_state(&*storage);
     // Reify the loaded registry's graphs so typed reads (head opens, node
     // lookups) are served from the first frame.
-    let mut cache = bevy_gantz::GraphCache::<Box<dyn node::Node>>::default();
-    bevy_gantz::refresh_cache(&registry, &mut cache);
+    let mut cache = bevy_gantz_egui::GraphCache::default();
+    bevy_gantz_egui::refresh_cache(&registry, &mut cache, &node::codec());
     cmds.insert_resource(registry);
     cmds.insert_resource(cache);
     cmds.insert_resource(persisted);
@@ -116,13 +121,11 @@ fn setup_resources(storage: Res<Pkv>, mut cmds: Commands) {
 fn setup_open(
     storage: Res<Pkv>,
     mut registry: ResMut<Registry>,
-    mut cache: ResMut<bevy_gantz::GraphCache<Box<dyn node::Node>>>,
     mut cmds: Commands,
     mut tab_order: ResMut<HeadTabOrder>,
     mut focused: ResMut<FocusedHead>,
 ) {
-    let loaded =
-        bevy_gantz_egui::storage::load_open(&*storage, &mut *registry, &mut *cache, timestamp());
+    let loaded = bevy_gantz_egui::storage::load_open(&*storage, &mut *registry, timestamp());
     let focused_head = bevy_gantz::storage::load_focused_head(&*storage);
 
     // Spawn entities for each open head. `OpenHead`'s required components
@@ -166,7 +169,7 @@ mod tests {
     #[test]
     fn base_gantz_deserializes() {
         let _registry: gantz_ca::Registry =
-            gantz_egui::export::parse_export::<Box<dyn super::node::Node>>(BASE_GANTZ)
+            gantz_egui::export::parse_export(BASE_GANTZ, &super::node::codec())
                 .expect("valid .gantz");
     }
 }

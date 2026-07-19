@@ -1,13 +1,11 @@
 use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
-use gantz_ca::CaHash;
 
 /// A wrapper around a `Node` that enables push evaluation across all outputs.
 ///
 /// The implementation of `Node` will match the inner node type `N`, but with a
 /// unique implementation of [`Node::push_eval`].
-#[derive(Clone, Debug, Deserialize, Serialize, CaHash)]
-#[cahash("gantz.push")]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Push<N> {
     node: N,
     conf: node::EvalConf,

@@ -4,11 +4,11 @@ use crate::egui::param::{param_row, param_state_row};
 use crate::node::Out;
 use crate::param::{param_state, param_value, with_value};
 use gantz_egui::{
-    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind,
+    Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
 };
 
 impl NodeUi for Out {
-    fn name(&self, _: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         "~out".into()
     }
 
@@ -58,7 +58,7 @@ impl NodeUi for Out {
         resp
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
         match (kind, ix) {
             (SocketKind::Input, 0) => Some(SocketDoc::ty("signal").with_description(
                 "signal to send to the audio output; mono fans across every \

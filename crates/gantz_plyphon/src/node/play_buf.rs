@@ -2,7 +2,7 @@
 
 use std::hash::{Hash, Hasher};
 
-use gantz_ca::{CaHash, ContentAddr};
+use gantz_ca::ContentAddr;
 use gantz_core::node::{ExprCtx, ExprResult, MetaCtx};
 use gantz_nodetag::NodeTag;
 use plyphon::Rate;
@@ -103,15 +103,6 @@ impl Hash for PlayBuf {
         Hash::hash(&self.asset, state);
         Hash::hash(&self.num_channels, state);
         Hash::hash(&self.sample_rate.to_bits(), state);
-    }
-}
-
-impl CaHash for PlayBuf {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update(b"gantz.plyphon.playbuf");
-        CaHash::hash(&self.asset, hasher);
-        hasher.update(&self.num_channels.to_le_bytes());
-        hasher.update(&self.sample_rate.to_bits().to_le_bytes());
     }
 }
 

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 /// A widget for viewing commit history.
 pub struct HistoryView<'a> {
     id: egui::Id,
-    registry: &'a dyn crate::Registry,
+    registry: &'a crate::Env<'a>,
     heads: &'a [gantz_ca::Head],
     focused_head: Option<usize>,
 }
@@ -29,7 +29,7 @@ pub enum HistoryMode {
 }
 
 impl<'a> HistoryView<'a> {
-    pub fn new(registry: &'a dyn crate::Registry, heads: &'a [gantz_ca::Head]) -> Self {
+    pub fn new(registry: &'a crate::Env<'a>, heads: &'a [gantz_ca::Head]) -> Self {
         let id = egui::Id::new("gantz-history-view");
         Self {
             registry,
@@ -88,7 +88,7 @@ impl<'a> HistoryView<'a> {
         });
 
         // Get commits based on mode.
-        let commits = commits_by_recency(self.registry.ca());
+        let commits = commits_by_recency(self.registry.registry);
         let commit_map: HashMap<_, _> = commits.iter().map(|(ca, c)| (*ca, *c)).collect();
 
         // Build set of commit addresses to show based on mode.
@@ -99,7 +99,7 @@ impl<'a> HistoryView<'a> {
                 // Get the focused head's commit address and walk parent chain.
                 let focused_ca = self.focused_head.and_then(|idx| {
                     self.heads.get(idx).and_then(|head| match head {
-                        gantz_ca::Head::Branch(name) => self.registry.ca().head(name),
+                        gantz_ca::Head::Branch(name) => self.registry.registry.head(name),
                         gantz_ca::Head::Commit(ca) => Some(*ca),
                     })
                 });

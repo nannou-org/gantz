@@ -42,7 +42,7 @@ pub use datum::{datum_from_expr, datum_text};
 pub use error::{ErrorKind, FormatError, Span};
 #[doc(inline)]
 pub use gantz_core::datum::{Datum, DatumError, from_datum, node_datum, to_datum};
-pub use lower::Loaded;
+pub use lower::{Loaded, Normalize};
 pub use model::{Addr, Document, Form};
 #[doc(hidden)]
 pub use node_set::{NodeFields, TaggedNode};
@@ -103,6 +103,23 @@ where
 {
     let doc = parse::parse(text, &N::sugar())?;
     lower::lower_seeded::<N>(doc, now, seed)
+}
+
+/// Parse a `.gantz` document with an explicit keyword [`Sugar`] and node
+/// [`Normalize`] seam in place of a node-set type parameter.
+///
+/// The node-set-free counterpart of [`from_str_seeded`], for callers whose
+/// node set is a value-level codec rather than a serde-dispatching type
+/// (pass an empty `seed` for the plain [`from_str`] behaviour).
+pub fn from_str_normalized(
+    text: &str,
+    now: Timestamp,
+    sugar: &dyn Sugar,
+    seed: &std::collections::BTreeMap<String, gantz_ca::GraphAddr>,
+    normalize: &Normalize,
+) -> Result<Loaded, FormatError> {
+    let doc = parse::parse(text, sugar)?;
+    lower::lower_normalized(doc, now, seed, normalize)
 }
 
 /// Serialize a registry to `.gantz` text (with gantz's built-in node keywords),

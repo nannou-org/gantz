@@ -1,4 +1,3 @@
-use gantz_ca::CaHash;
 use gantz_core::node::{EvalConf, ExprCtx, ExprResult, MetaCtx};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
@@ -8,8 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Exposes a single *trigger* input whose value is ignored: a push into it
 /// emits a bang (`'()`) downstream. This lets a bang be fired from upstream as
 /// well as from its button, normalising any value to a bang.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash, NodeTag)]
-#[cahash("gantz.bang")]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag)]
 pub struct Bang;
 
 impl gantz_core::Node for Bang {

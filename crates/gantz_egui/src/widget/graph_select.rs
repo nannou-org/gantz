@@ -10,7 +10,7 @@ const FILTER_GLYPH: &str = "⛭";
 /// A widget for selecting between, naming, and creating new graphs.
 pub struct GraphSelect<'a> {
     id: egui::Id,
-    registry: &'a dyn crate::Registry,
+    registry: &'a crate::Env<'a>,
     heads: &'a [gantz_ca::Head],
     focused_head: Option<usize>,
     base_names: &'a crate::reg::Names,
@@ -88,7 +88,7 @@ impl std::ops::BitOrAssign for GraphSelectResponse {
 
 impl<'a> GraphSelect<'a> {
     pub fn new(
-        registry: &'a dyn crate::Registry,
+        registry: &'a crate::Env<'a>,
         heads: &'a [gantz_ca::Head],
         base_names: &'a crate::reg::Names,
     ) -> Self {
@@ -147,7 +147,7 @@ impl<'a> GraphSelect<'a> {
             });
         });
 
-        let names = crate::reg::names(self.registry.ca());
+        let names = crate::reg::names(self.registry.registry);
         // Captured by `show_named` to surface each named graph's description and
         // input/output docs on hover.
         let registry = self.registry;
@@ -314,7 +314,7 @@ impl<'a> GraphSelect<'a> {
                     .collect();
 
                 // Show only unnamed commits that are currently open as heads.
-                for (ca, commit) in commits_by_recency(self.registry.ca())
+                for (ca, commit) in commits_by_recency(self.registry.registry)
                     .into_iter()
                     .filter(|(ca, _)| !visited.contains(ca) && open_head_cas.contains(ca))
                 {

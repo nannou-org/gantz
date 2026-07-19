@@ -2,7 +2,7 @@
 
 use super::{NamedRef, missing_color, outdated_color};
 use crate::{
-    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind,
+    Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
     widget::node_inspector,
 };
 
@@ -16,12 +16,12 @@ impl gantz_core::node::FnNodeTag for NamedRef {
 }
 
 impl NodeUi for FnNamedRef {
-    fn name(&self, _registry: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _registry: &Env<'_>) -> std::borrow::Cow<'_, str> {
         "fn".into()
     }
 
     fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
-        let registry = ctx.registry();
+        let registry = ctx.env();
         let name_str = self.0.name().to_string();
         let ref_ca = self.0.content_addr();
 
@@ -86,7 +86,7 @@ impl NodeUi for FnNamedRef {
                 ui.label("node");
             });
             row.col(|ui| {
-                let registry = ctx.registry();
+                let registry = ctx.env();
                 let salt = format!("λ-node-select-{:?}", ctx.path());
                 let names = registry.fn_node_names();
                 let current = self.0.name().to_string();
@@ -113,7 +113,7 @@ impl NodeUi for FnNamedRef {
         resp
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         Some(match kind {
             SocketKind::Input => SocketDoc::ty("bang")
                 .with_description("trigger to emit the named graph as a lambda"),

@@ -1,13 +1,11 @@
 use crate::{
-    CopyNodes, InspectEdge, NodeUi, OpenHead, OpenNodePalette, OpenNodeView, Paste, PastePos,
-    Registry, ResetTilesLayout, SocketDoc, response::DynResponse,
+    CopyNodes, Env, InspectEdge, NodeUi, OpenHead, OpenNodePalette, OpenNodeView, Paste, PastePos,
+    ResetTilesLayout, SocketDoc, node::NodeCodec, response::DynResponse,
 };
 use egui::emath::GuiRounding;
 use egui_graph::{self, SocketKind, node::EdgeEvent};
-use gantz_core::{
-    Edge, Node,
-    node::{self, graph::Graph},
-};
+use gantz_ca::{DataGraph, NodeData};
+use gantz_core::{Edge, Node, node};
 use petgraph::{
     self,
     visit::{EdgeRef, IntoNodeIdentifiers, NodeIndexable},
@@ -56,15 +54,27 @@ pub type NodeIndex = petgraph::graph::NodeIndex<usize>;
 
 /// A widget used for presenting a graph scene for viewing and manipulating a
 /// gantz graph.
-pub struct GraphScene<'a, N> {
-    registry: &'a dyn Registry,
-    graph: &'a mut Graph<N>,
+///
+/// Operates on the graph's stored data form: each node weight is reified to
+/// a typed [`crate::node::UiNodeInstance`] through the `codec` for the
+/// duration of its UI pass and erased back only when a response marks a
+/// CA-affecting change. Weights whose tag is unknown to the codec render as
+/// opaque placeholders whose data round-trips untouched.
+pub struct GraphScene<'a> {
+    registry: &'a Env<'a>,
+    codec: &'a NodeCodec,
+    graph: &'a mut DataGraph,
     id: egui::Id,
     layout_params: egui_graph::LayoutParams,
     /// Global dot-grid, snapping and snap-align options, applied to the
     /// underlying `egui_graph::Graph` builder.
     scene_config: crate::widget::gantz::SceneConfig,
     immutable: bool,
+    /// When set, nodes whose responses were all unchanged this pass are
+    /// erased anyway and their address compared against the stored weight,
+    /// making unmarked weight mutations (which would otherwise drop
+    /// silently) loud. See [`GraphScene::validate_change_tracking`].
+    validate: bool,
     /// When set, the background context menu gains a "Panes" submenu of
     /// pane-visibility checkboxes.
     view_toggles: Option<&'a mut crate::widget::gantz::ViewToggles>,
@@ -117,24 +127,35 @@ pub struct Selection {
     pub edges: HashSet<EdgeIndex>,
 }
 
-impl<'a, N> GraphScene<'a, N>
-where
-    N: Node + NodeUi,
-{
+impl<'a> GraphScene<'a> {
     /// Create a graph scene for the given graph (a head's root graph; nested
     /// graphs are separate heads).
-    pub fn new(registry: &'a dyn Registry, graph: &'a mut Graph<N>) -> Self {
+    pub fn new(registry: &'a Env<'a>, codec: &'a NodeCodec, graph: &'a mut DataGraph) -> Self {
         Self {
             registry,
+            codec,
             graph,
             id: egui::Id::new("gantz-graph-scene"),
             layout_params: egui_graph::LayoutParams::new(egui::Direction::TopDown),
             scene_config: Default::default(),
             immutable: false,
+            validate: false,
             view_toggles: None,
             ext_panes: &[],
             edge_styles: None,
         }
+    }
+
+    /// Enable the per-node change-tracking validator: nodes whose responses
+    /// were all unchanged are erased anyway and warn when their content
+    /// address differs from the stored weight's - i.e. a node mutated
+    /// CA-affecting state without marking its response changed (see
+    /// [`crate::NodeUi`]), an edit that now drops rather than committing.
+    ///
+    /// Default: `false` (no extra erasure).
+    pub fn validate_change_tracking(mut self, validate: bool) -> Self {
+        self.validate = validate;
+        self
     }
 
     /// Use the given ID for the graph scene.
@@ -238,6 +259,7 @@ where
             let whole = state.interaction.selection.nodes.is_empty();
             apply_auto_layout(
                 self.registry,
+                self.codec,
                 &*self.graph,
                 self.id,
                 &self.layout_params,
@@ -280,9 +302,11 @@ where
             )
             .show(view, ui, |ui, show| {
                 let immutable = self.immutable;
+                let validate = self.validate;
                 show.nodes(ui, |nctx, ui| {
                     node_responses = nodes(
                         self.registry,
+                        self.codec,
                         self.graph,
                         nctx,
                         state,
@@ -291,6 +315,7 @@ where
                         vm,
                         &mut to_delete,
                         immutable,
+                        validate,
                         ui,
                     );
                 })
@@ -445,24 +470,24 @@ impl Selection {
 /// only those nodes and the edges between them are laid out. The result's
 /// bounding box is centred on the origin (see [`apply_auto_layout`] for
 /// selection-relative placement).
-pub fn layout<N>(
-    registry: &dyn Registry,
-    graph: &Graph<N>,
+pub fn layout(
+    registry: &Env<'_>,
+    codec: &NodeCodec,
+    graph: &DataGraph,
     graph_id: egui::Id,
     params: &egui_graph::LayoutParams,
     ctx: &egui::Context,
     subset: Option<&HashSet<NodeIndex>>,
-) -> egui_graph::Layout
-where
-    N: Node,
-{
+) -> egui_graph::Layout {
     let included = |n: NodeIndex| subset.is_none_or(|s| s.contains(&n));
     if !graph.node_indices().any(included) {
         return Default::default();
     }
     // Describe each node's sockets (count + padding) and each edge's actual
     // source/destination socket so the (socket-aware) layout can order sockets
-    // and minimise edge crossings, matching how the nodes are rendered.
+    // and minimise edge crossings, matching how the nodes are rendered. Nodes
+    // reify transiently through the codec; an unknown tag falls back to the
+    // placeholder's edge-derived socket counts.
     let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
     let meta_ctx = gantz_core::node::MetaCtx::new(&get_node);
     let socket_padding = egui_graph::socket_padding(&ctx.global_style());
@@ -477,10 +502,13 @@ where
                     .get(&node_id)
                     .cloned()
                     .unwrap_or_else(|| [200.0, 50.0].into());
-                let node = &graph[n];
+                let (inputs, outputs) = match codec.reify_ui(&graph[n]) {
+                    Ok(inst) => (inst.node.n_inputs(meta_ctx), inst.node.n_outputs(meta_ctx)),
+                    Err(_) => placeholder_socket_counts(graph, n),
+                };
                 let layout_node = egui_graph::LayoutNode::new(size)
-                    .inputs(node.n_inputs(meta_ctx))
-                    .outputs(node.n_outputs(meta_ctx))
+                    .inputs(inputs)
+                    .outputs(outputs)
                     .socket_padding(socket_padding);
                 (node_id, layout_node)
             })
@@ -515,19 +543,18 @@ where
 /// match the centre of `target`'s current bounding box, so a selection lays out
 /// in place rather than snapping toward the origin. Nodes outside `target` are
 /// left untouched.
-pub fn apply_auto_layout<N>(
-    registry: &dyn Registry,
-    graph: &Graph<N>,
+pub fn apply_auto_layout(
+    registry: &Env<'_>,
+    codec: &NodeCodec,
+    graph: &DataGraph,
     graph_id: egui::Id,
     params: &egui_graph::LayoutParams,
     ctx: &egui::Context,
     view: &mut egui_graph::View,
     target: &HashSet<NodeIndex>,
     whole: bool,
-) where
-    N: Node,
-{
-    let new = layout(registry, graph, graph_id, params, ctx, Some(target));
+) {
+    let new = layout(registry, codec, graph, graph_id, params, ctx, Some(target));
     if whole {
         view.layout = new;
         return;
@@ -617,9 +644,10 @@ pub fn apply_align(
     egui_graph::align_nodes(&mut view.layout, ids, &sizes, by, None);
 }
 
-fn nodes<N>(
-    registry: &dyn Registry,
-    graph: &mut Graph<N>,
+fn nodes(
+    registry: &Env<'_>,
+    codec: &NodeCodec,
+    graph: &mut DataGraph,
     nctx: &mut egui_graph::NodesCtx,
     state: &mut GraphSceneState,
     responses: &mut Vec<DynResponse>,
@@ -627,11 +655,9 @@ fn nodes<N>(
     vm: &mut Engine,
     nodes_to_delete: &mut Vec<NodeIndex>,
     immutable: bool,
+    validate: bool,
     ui: &mut egui::Ui,
-) -> Vec<(NodeIndex, NodeResponse)>
-where
-    N: Node + NodeUi,
-{
+) -> Vec<(NodeIndex, NodeResponse)> {
     // Create meta context using registry for proper node lookup.
     let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
     let meta_ctx = gantz_core::node::MetaCtx::new(&get_node);
@@ -643,38 +669,58 @@ where
     let mut request_align: Option<egui_graph::AlignBy> = None;
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
-        let node = &mut graph[n_id];
-        let inputs = node.n_inputs(meta_ctx);
-        let outputs = node.n_outputs(meta_ctx);
         let node_id = egui_graph::NodeId::from_u64(n_ix as u64);
+        // Reify once at the top of the iteration. An unknown tag renders as
+        // an opaque placeholder whose weight round-trips untouched -
+        // selection, movement, deletion and edge edits still work.
+        let mut instance = codec.reify_ui(&graph[n_id]).ok();
+        let (inputs, outputs, flow) = match &instance {
+            Some(inst) => (
+                inst.node.n_inputs(meta_ctx),
+                inst.node.n_outputs(meta_ctx),
+                inst.node.flow(registry),
+            ),
+            None => {
+                let (inputs, outputs) = placeholder_socket_counts(graph, n_id);
+                (inputs, outputs, egui::Direction::TopDown)
+            }
+        };
+        // Whether any of this node's responses marked a CA-affecting change
+        // (its UI or its context menu) - the erase-back-into-the-weight signal.
+        let mut node_changed = false;
         let response = egui_graph::node::Node::from_id(node_id)
             .inputs(inputs)
             .outputs(outputs)
-            .flow(node.flow(registry))
+            .flow(flow)
             .max_width(f32::INFINITY)
-            .show(nctx, ui, |nui_ctx| {
-                // A node at this (root) level has the single-element state path
-                // `[n_ix]`.
-                let node_path = [n_ix];
-                let node_ctx =
-                    crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, &[], vm);
-                let r = node.ui(node_ctx, nui_ctx);
-                *changed |= r.changed;
-                responses.extend(r.payloads);
-                r.framed
+            .show(nctx, ui, |nui_ctx| match instance.as_mut() {
+                Some(inst) => {
+                    // A node at this (root) level has the single-element state
+                    // path `[n_ix]`.
+                    let node_path = [n_ix];
+                    let node_ctx =
+                        crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, &[], vm);
+                    let r = inst.node.ui(node_ctx, nui_ctx);
+                    node_changed |= r.changed;
+                    responses.extend(r.payloads);
+                    r.framed
+                }
+                None => placeholder_ui(&graph[n_id], nui_ctx),
             });
 
         // Attach on-hover docs to each socket. Each node describes its own
         // sockets (markers read their stored docs; references resolve the
         // referenced graph's marker docs via the registry).
-        for (ix, sock) in response.sockets().inputs() {
-            if let Some(doc) = node.socket_doc(registry, SocketKind::Input, ix) {
-                socket_hover(sock, &doc);
+        if let Some(inst) = &instance {
+            for (ix, sock) in response.sockets().inputs() {
+                if let Some(doc) = inst.node.socket_doc(registry, SocketKind::Input, ix) {
+                    socket_hover(sock, &doc);
+                }
             }
-        }
-        for (ix, sock) in response.sockets().outputs() {
-            if let Some(doc) = node.socket_doc(registry, SocketKind::Output, ix) {
-                socket_hover(sock, &doc);
+            for (ix, sock) in response.sockets().outputs() {
+                if let Some(doc) = inst.node.socket_doc(registry, SocketKind::Output, ix) {
+                    socket_hover(sock, &doc);
+                }
             }
         }
 
@@ -727,49 +773,58 @@ where
                 responses.push(DynResponse::new(CopyNodes(target.clone())));
                 ui.close();
             }
-            // Demo graph, if the node has one.
-            let demo_name = graph[n_id].demo_graph(registry);
-            let demo_btn = ui.add_enabled(demo_name.is_some(), egui::Button::new("demo"));
-            if let Some(name) = demo_name {
-                if demo_btn.on_hover_text(format!("opens {name}")).clicked() {
-                    responses.push(DynResponse::new(OpenHead(gantz_ca::Head::Branch(
-                        name.parse().expect("infallible"),
-                    ))));
-                    ui.close();
+            if let Some(inst) = &instance {
+                // Demo graph, if the node has one.
+                let demo_name = inst.node.demo_graph(registry);
+                let demo_btn = ui.add_enabled(demo_name.is_some(), egui::Button::new("demo"));
+                if let Some(name) = demo_name {
+                    if demo_btn.on_hover_text(format!("opens {name}")).clicked() {
+                        responses.push(DynResponse::new(OpenHead(gantz_ca::Head::Branch(
+                            name.parse().expect("infallible"),
+                        ))));
+                        ui.close();
+                    }
+                } else {
+                    demo_btn.on_disabled_hover_text("no associated demo");
                 }
-            } else {
-                demo_btn.on_disabled_hover_text("no associated demo");
-            }
-            // "open in new tab" for nodes that reference a named graph.
-            if let Some(head) = graph[n_id].nav_head(registry) {
+                // "open in new tab" for nodes that reference a named graph.
+                if let Some(head) = inst.node.nav_head(registry) {
+                    if ui
+                        .button("open tab")
+                        .on_hover_text("open the referenced graph in a new tab")
+                        .clicked()
+                    {
+                        responses.push(DynResponse::new(OpenHead(head)));
+                        ui.close();
+                    }
+                }
+                // "open view": detach the right-clicked node's UI into a tile in
+                // the Node Views pane (a live mirror, sharing VM state). Always
+                // available, even for immutable graphs - it only observes the
+                // node.
                 if ui
-                    .button("open tab")
-                    .on_hover_text("open the referenced graph in a new tab")
+                    .button("open view")
+                    .on_hover_text("open this node's view in the Node Views pane")
                     .clicked()
                 {
-                    responses.push(DynResponse::new(OpenHead(head)));
+                    let ty_name = inst.node.name(registry).to_string();
+                    responses.push(DynResponse::new(OpenNodeView {
+                        path: vec![n_ix],
+                        ty_name,
+                    }));
                     ui.close();
                 }
             }
-            // "open view": detach the right-clicked node's UI into a tile in the
-            // Node Views pane (a live mirror, sharing VM state). Always available,
-            // even for immutable graphs - it only observes the node.
-            if ui
-                .button("open view")
-                .on_hover_text("open this node's view in the Node Views pane")
-                .clicked()
-            {
-                let ty_name = graph[n_id].name(registry).to_string();
-                responses.push(DynResponse::new(OpenNodeView {
-                    path: vec![n_ix],
-                    ty_name,
-                }));
-                ui.close();
-            }
             if !immutable {
-                let stateful = target
-                    .iter()
-                    .any(|&n| graph.node_weight(n).is_some_and(|w| w.stateful(meta_ctx)));
+                // The reset target may include other selected nodes; reify
+                // each transiently to ask whether any is stateful.
+                let stateful = target.iter().any(|&n| {
+                    graph.node_weight(n).is_some_and(|w| {
+                        codec
+                            .reify_ui(w)
+                            .is_ok_and(|inst| inst.node.stateful(meta_ctx))
+                    })
+                });
                 let reset_btn = ui.add_enabled(stateful, egui::Button::new("reset"));
                 if reset_btn
                     .on_hover_text("reset the node to its default state")
@@ -825,13 +880,47 @@ where
                 }
             }
             // Node-specific items (e.g. the log node's "open logs").
-            let node_path = [n_ix];
-            let mut node_ctx =
-                crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, &[], vm);
-            let cm = graph[n_id].context_menu(&mut node_ctx, ui);
-            *changed |= cm.changed;
-            responses.extend(cm.payloads);
+            if let Some(inst) = instance.as_mut() {
+                let node_path = [n_ix];
+                let mut node_ctx =
+                    crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, &[], vm);
+                let cm = inst.node.context_menu(&mut node_ctx, ui);
+                node_changed |= cm.changed;
+                responses.extend(cm.payloads);
+            }
         });
+
+        // Erase the instance back into the weight iff a response marked a
+        // CA-affecting change (the commit signal - see `NodeUi`). Unchanged
+        // instances drop: non-CA state lives in VM/egui memory by contract.
+        if let Some(inst) = &instance {
+            if node_changed {
+                *changed = true;
+                match inst.erase() {
+                    Ok(node_data) => graph[n_id] = node_data,
+                    Err(e) => {
+                        log::error!("node {n_ix}: failed to erase edited node, edit dropped: {e}");
+                    }
+                }
+            } else if validate {
+                // Change-tracking validator: an unmarked weight mutation
+                // would silently drop with the instance - make it loud.
+                match inst.erase() {
+                    Ok(node_data) => {
+                        if node_data.content_addr() != graph[n_id].content_addr() {
+                            log::warn!(
+                                "node {n_ix} ({}): CA-affecting state changed without a \
+                                 `changed` response; the edit was dropped (see `NodeUi`)",
+                                graph[n_id].tag,
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("node {n_ix}: change-tracking validation failed to erase: {e}");
+                    }
+                }
+            }
+        }
 
         node_responses.push((n_id, response));
     }
@@ -843,13 +932,17 @@ where
 
     // Reset state by removing it, then re-registering the graph.
     // Registration is idempotent and re-initialises any missing state.
+    // Registration needs typed nodes, so the graph reifies transiently.
     if !nodes_to_reset.is_empty() {
         for n_id in nodes_to_reset {
             if graph.node_weight(n_id).is_some() {
                 let _ = gantz_core::node::state::remove_value(vm, &[n_id.index()]);
             }
         }
-        gantz_core::graph::register(&get_node, &*graph, &[], vm);
+        match codec.reify_graph(graph) {
+            Ok(g) => gantz_core::graph::register(&get_node, &g, &[], vm),
+            Err(e) => log::error!("cannot re-register graph after node reset: {e}"),
+        }
     }
 
     // A node-menu "auto-layout"/"align" click is applied on the next pass by
@@ -862,6 +955,54 @@ where
     }
 
     node_responses
+}
+
+/// The socket counts an opaque placeholder (unknown-tag) node presents:
+/// derived from its incident edges over the data graph, so every existing
+/// connection stays visible and editable. A node may have more sockets than
+/// its edges reach; those become visible again once the tag's domain is
+/// available.
+fn placeholder_socket_counts(graph: &DataGraph, n: NodeIndex) -> (usize, usize) {
+    let inputs = graph
+        .edges_directed(n, petgraph::Direction::Incoming)
+        .map(|e| e.weight().input.0 as usize + 1)
+        .max()
+        .unwrap_or(0);
+    let outputs = graph
+        .edges_directed(n, petgraph::Direction::Outgoing)
+        .map(|e| e.weight().output.0 as usize + 1)
+        .max()
+        .unwrap_or(0);
+    (inputs, outputs)
+}
+
+/// Render the opaque placeholder for a node whose tag is unknown to the
+/// codec: the tag as a title in the missing colour over a weak one-line
+/// datum readout. No `NodeUi` calls are involved and the weight round-trips
+/// untouched.
+fn placeholder_ui(
+    weight: &NodeData,
+    nui_ctx: egui_graph::NodeCtx,
+) -> egui_graph::FramedResponse<egui::Response> {
+    /// The most chars of the datum readout shown before eliding.
+    const MAX_READOUT: usize = 48;
+    nui_ctx.framed(|ui, _sockets| {
+        ui.vertical(|ui| {
+            ui.colored_label(crate::node::missing_color(), &weight.tag)
+                .on_hover_text(
+                    "this node's type is unknown to this application \
+                     (e.g. from a domain that is not compiled in); its data is \
+                     preserved untouched",
+                );
+            let readout = format!("{:?}", weight.data);
+            let mut line: String = readout.chars().take(MAX_READOUT).collect();
+            if line.len() < readout.len() {
+                line.push('…');
+            }
+            ui.weak(line);
+        })
+        .response
+    })
 }
 
 /// Show a socket's doc as a hover tooltip (type label in bold, description
@@ -885,8 +1026,8 @@ fn socket_hover(resp: &egui::Response, doc: &SocketDoc) {
     });
 }
 
-fn edges<N>(
-    graph: &mut Graph<N>,
+fn edges(
+    graph: &mut DataGraph,
     ectx: &mut egui_graph::EdgesCtx,
     state: &mut GraphSceneState,
     responses: &mut Vec<DynResponse>,

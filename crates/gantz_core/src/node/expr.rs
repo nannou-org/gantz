@@ -1,5 +1,4 @@
 use crate::node::{self, Node};
-use gantz_ca::CaHash;
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fmt, str::FromStr};
@@ -38,8 +37,7 @@ use thiserror::Error;
 /// ```ignore
 /// (+ $a (if (Some? $?b) (Some->value $?b) 0))
 /// ```
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, CaHash, NodeTag)]
-#[cahash("gantz.expr")]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, NodeTag)]
 pub struct Expr {
     src: String,
     #[serde(skip_serializing_if = "is_default_outputs")]
@@ -47,7 +45,6 @@ pub struct Expr {
     /// Unique `$` variable names in order of first appearance (cached).
     /// Skipped during serialization and recomputed on deserialization.
     #[serde(skip)]
-    #[cahash(skip)]
     vars: Vec<String>,
 }
 

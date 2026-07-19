@@ -3,11 +3,10 @@
 //! This module provides Bevy components and resources for managing open graph
 //! heads as entities rather than parallel `Vec`s.
 
-use crate::reg::{GraphCache, Registry};
+use crate::reg::Registry;
 use bevy_ecs::{prelude::*, query::QueryData};
 use bevy_log as log;
 use gantz_ca as ca;
-use serde::de::DeserializeOwned;
 use std::{
     collections::HashMap,
     ops::{Deref, DerefMut},
@@ -21,13 +20,13 @@ use steel::steel_vm::engine::Engine;
 /// QueryData for accessing open head components.
 ///
 /// Simplifies Query type signatures by bundling head-related components.
-/// Use with `Query<OpenHeadData<N>, With<OpenHead>>`.
+/// Use with `Query<OpenHeadData, With<OpenHead>>`.
 #[derive(QueryData)]
 #[query_data(mutable)]
-pub struct OpenHeadData<N: 'static + Send + Sync> {
+pub struct OpenHeadData {
     pub entity: Entity,
     pub head_ref: &'static mut HeadRef,
-    pub working_graph: &'static mut WorkingGraph<N>,
+    pub working_graph: &'static mut WorkingGraph,
     pub module: &'static mut Module,
     pub diagnostics: &'static mut Diagnostics,
     pub compiled_inputs: &'static mut crate::vm::CompiledInputs,
@@ -49,7 +48,12 @@ pub struct OpenHead;
 #[derive(Component, Clone)]
 pub struct HeadRef(pub ca::Head);
 
-/// The working copy of the graph associated with this head.
+/// The working copy of the graph associated with this head, in its stored
+/// data form ([`gantz_ca::DataGraph`]).
+///
+/// Typed nodes appear only transiently: the GUI reifies one node at a time
+/// through the app's codec, and compilation reads the reified cache at the
+/// committed address.
 ///
 /// # Invariant: commit before returning
 ///
@@ -62,12 +66,13 @@ pub struct HeadRef(pub ca::Head);
 /// graph's content address always equals the head's committed graph CA
 /// (`registry.head_commit(head).graph`).
 ///
-/// [`vm::sync`](crate::vm::sync) relies on this: it reads the committed CA
+/// The UI layer's VM synchronisation system (`bevy_gantz_egui::vm::sync`)
+/// relies on this: it reads the committed CA
 /// directly to decide when to recompile and never re-hashes the working graph
 /// (see #159). [`vm::validate_committed`](crate::vm::validate_committed) is a
 /// default-off debug check that flags any violation of this invariant.
 #[derive(Component)]
-pub struct WorkingGraph<N>(pub gantz_core::node::graph::Graph<N>);
+pub struct WorkingGraph(pub ca::DataGraph);
 
 /// The latest compile outcome for this head.
 ///
@@ -225,14 +230,14 @@ impl DerefMut for HeadRef {
     }
 }
 
-impl<N> Deref for WorkingGraph<N> {
-    type Target = gantz_core::node::graph::Graph<N>;
+impl Deref for WorkingGraph {
+    type Target = ca::DataGraph;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<N> DerefMut for WorkingGraph<N> {
+impl DerefMut for WorkingGraph {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -322,22 +327,12 @@ pub fn set_description(reg: &mut ca::Registry, name: ca::Name, description: Stri
     }
 }
 
-/// Resolve the head's committed graph as a typed working copy.
-///
-/// Ensures the graph (and its transitive references) is reified into the
-/// cache on the hard-error path: any failure to reify logs and returns
-/// `None`, so callers leave their state unchanged.
-fn head_working_graph<N: Clone + DeserializeOwned>(
-    registry: &Registry,
-    cache: &mut GraphCache<N>,
-    head: &ca::Head,
-) -> Option<gantz_core::node::graph::Graph<N>> {
+/// The head's committed graph cloned straight from the registry as a
+/// working copy. No reify is involved, so opens never fail on node content:
+/// `None` only when the head's commit or graph data is missing outright.
+fn head_working_graph(registry: &Registry, head: &ca::Head) -> Option<ca::DataGraph> {
     let addr = registry.head_commit(head)?.graph;
-    if let Err(e) = cache.ensure(registry, [addr.into()]) {
-        log::error!("failed to reify graph for head {head:?}: {e}");
-        return None;
-    }
-    cache.get(&addr).cloned()
+    registry.graph(&addr).cloned()
 }
 
 /// Check if the given head is the currently focused head.
@@ -356,17 +351,14 @@ pub fn is_focused(
 // ----------------------------------------------------------------------------
 
 /// Handle request to open a head as a new tab (or focus if already open).
-pub fn on_open<N>(
+pub fn on_open(
     trigger: On<OpenEvent>,
     mut cmds: Commands,
     registry: Res<Registry>,
-    mut cache: ResMut<GraphCache<N>>,
     mut tab_order: ResMut<HeadTabOrder>,
     mut focused: ResMut<FocusedHead>,
     heads: Query<(Entity, &HeadRef), With<OpenHead>>,
-) where
-    N: 'static + Clone + DeserializeOwned + Send + Sync,
-{
+) {
     let OpenEvent(new_head) = trigger.event();
 
     // If already open, just focus it.
@@ -375,9 +367,9 @@ pub fn on_open<N>(
         return;
     }
 
-    // Reify the head's graph from the registry.
-    let Some(graph) = head_working_graph(&registry, &mut cache, new_head) else {
-        log::error!("cannot open head: graph missing or failed to reify");
+    // Clone the head's graph data straight from the registry.
+    let Some(graph) = head_working_graph(&registry, new_head) else {
+        log::error!("cannot open head: graph data missing from the registry");
         return;
     };
 
@@ -399,17 +391,14 @@ pub fn on_open<N>(
 }
 
 /// Handle request to replace the focused head with a different head.
-pub fn on_replace<N>(
+pub fn on_replace(
     trigger: On<ReplaceEvent>,
     mut cmds: Commands,
     registry: Res<Registry>,
-    mut cache: ResMut<GraphCache<N>>,
     mut focused: ResMut<FocusedHead>,
     mut vms: NonSendMut<HeadVms>,
     heads: Query<(Entity, &HeadRef), With<OpenHead>>,
-) where
-    N: 'static + Clone + DeserializeOwned + Send + Sync,
-{
+) {
     let ReplaceEvent(new_head) = trigger.event();
 
     // If new head already open, just focus it.
@@ -423,9 +412,9 @@ pub fn on_replace<N>(
     };
     let old_head = heads.get(focused_entity).ok().map(|(_, h)| (**h).clone());
 
-    // Reify the new head's graph from the registry.
-    let Some(graph) = head_working_graph(&registry, &mut cache, new_head) else {
-        log::error!("cannot replace head: graph missing or failed to reify");
+    // Clone the new head's graph data straight from the registry.
+    let Some(graph) = head_working_graph(&registry, new_head) else {
+        log::error!("cannot replace head: graph data missing from the registry");
         return;
     };
 
@@ -565,15 +554,12 @@ pub fn on_branch_head(
 ///
 /// Atomically updates the registry, WorkingGraph, and emits ChangedEvent
 /// within the command flush to prevent inconsistent state between systems.
-pub fn on_move_branch<N>(
+pub fn on_move_branch(
     trigger: On<MoveBranchEvent>,
     mut cmds: Commands,
     mut registry: ResMut<Registry>,
-    mut cache: ResMut<GraphCache<N>>,
     mut vms: NonSendMut<HeadVms>,
-) where
-    N: 'static + Clone + DeserializeOwned + Send + Sync,
-{
+) {
     let event = trigger.event();
     let head = ca::Head::Branch(event.name.clone());
     // Capture the current commit before moving the branch pointer so we can
@@ -582,8 +568,8 @@ pub fn on_move_branch<N>(
     let old_ca = registry.head_commit_ca(&head);
     let old_graph = registry.head_commit(&head).map(|c| c.graph);
     let prev = registry.set_head(event.name.clone(), event.target);
-    let Some(graph) = head_working_graph(&registry, &mut cache, &head) else {
-        log::error!("MoveBranch: graph missing or failed to reify for target commit");
+    let Some(graph) = head_working_graph(&registry, &head) else {
+        log::error!("MoveBranch: graph data missing for target commit");
         // Leave state unchanged: restore the branch pointer.
         match prev {
             Some(ca) => {

@@ -4,11 +4,11 @@ use crate::egui::param::{param_row, param_state_row, rate_row};
 use crate::node::SinOsc;
 use crate::param::{param_state, param_value, with_value};
 use gantz_egui::{
-    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind,
+    Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
 };
 
 impl NodeUi for SinOsc {
-    fn name(&self, _: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         "~sinosc".into()
     }
 
@@ -66,7 +66,7 @@ impl NodeUi for SinOsc {
         resp
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
         match (kind, ix) {
             (SocketKind::Input, 0) => Some(SocketDoc::ty("signal | number").with_description(
                 "frequency (Hz): a connected signal drives it directly (audio-rate FM), \

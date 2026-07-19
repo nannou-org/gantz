@@ -6,7 +6,7 @@
 //! playground for the GUI vocabulary and a live harness: bindings resolve
 //! into the focused graph's node state, and pushes fire its entrypoints.
 
-use crate::{Registry, node};
+use crate::{Env, node};
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -130,16 +130,21 @@ fn evaluate(text_hash: u64, code: &str) -> Cache {
 
 /// The output count of every node in `g`, backing the interpreter's
 /// push-eval resolver (a push entry fn's identity covers the count).
-pub fn node_output_counts<N>(
-    registry: &dyn Registry,
-    g: &gantz_core::node::graph::Graph<N>,
-) -> HashMap<node::Id, usize>
-where
-    N: gantz_core::Node,
-{
+///
+/// Nodes reify transiently through the codec; a weight that fails to reify
+/// (an unknown tag) reports no count.
+pub fn node_output_counts(
+    registry: &Env<'_>,
+    codec: &node::NodeCodec,
+    g: &gantz_ca::DataGraph,
+) -> HashMap<node::Id, usize> {
+    use gantz_core::Node;
     let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
     let ctx = gantz_core::node::MetaCtx::new(&get_node);
     g.node_references()
-        .map(|n| (n.id().index(), n.weight().n_outputs(ctx)))
+        .filter_map(|n| {
+            let inst = codec.reify_ui(n.weight()).ok()?;
+            Some((n.id().index(), inst.node.n_outputs(ctx)))
+        })
         .collect()
 }

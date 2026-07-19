@@ -1,7 +1,7 @@
-use crate::{NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind};
+use crate::{Env, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind};
 
 impl NodeUi for gantz_core::node::Delay {
-    fn name(&self, _: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         "delay".into()
     }
 
@@ -15,7 +15,7 @@ impl NodeUi for gantz_core::node::Delay {
         NodeUiResponse::new(framed)
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         Some(match kind {
             SocketKind::Input => {
                 SocketDoc::ty("any").with_description("value stored for the next evaluation")

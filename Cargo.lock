@@ -1002,7 +1002,6 @@ dependencies = [
  "bevy_window",
  "gantz_ca",
  "gantz_core",
- "gantz_std",
  "ron 0.10.1",
  "serde",
  "steel-core",
@@ -1050,9 +1049,12 @@ dependencies = [
  "bevy_gantz_egui",
  "bytemuck",
  "cpal",
+ "egui_graph",
  "gantz_ca",
  "gantz_core",
  "gantz_egui",
+ "gantz_format",
+ "gantz_nodetag",
  "gantz_plyphon",
  "log",
  "plyphon",
@@ -3010,12 +3012,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
-name = "dyn-hash"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15401da73a9ed8c80e3b2d4dc05fe10e7b72d7243b9f614e516a44fa99986e88"
-
-[[package]]
 name = "ecolor"
 version = "0.34.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3773,18 +3769,15 @@ dependencies = [
  "bevy_gantz_egui",
  "bevy_gantz_plyphon",
  "bevy_pkv",
- "dyn-clone",
- "dyn-hash",
  "egui_graph",
  "gantz_base",
  "gantz_ca",
  "gantz_core",
  "gantz_egui",
  "gantz_format",
+ "gantz_nodetag",
  "gantz_plyphon",
  "gantz_std",
- "petgraph",
- "ron 0.10.1",
  "serde",
  "steel-core",
  "web-time",
@@ -3880,6 +3873,7 @@ dependencies = [
  "serde",
  "steel-core",
  "sublime_fuzzy",
+ "thiserror 2.0.17",
  "time",
  "tracing",
  "tracing-subscriber",

@@ -25,8 +25,8 @@ fn node_assert_eq() -> node::expr::Expr {
 }
 
 // Helper trait for debugging
-trait DebugNode: Debug + Node + gantz_ca::CaHash {}
-impl<T> DebugNode for T where T: Debug + Node + gantz_ca::CaHash {}
+trait DebugNode: Debug + Node {}
+impl<T> DebugNode for T where T: Debug + Node {}
 
 // Test that Fn can wrap the identity function and Apply can call it
 //
@@ -57,9 +57,12 @@ fn test_fn_apply_identity() {
     // Setup the node registry as a HashMap.
     let mut nodes: HashMap<gantz_ca::ContentAddr, Box<dyn DebugNode>> = HashMap::new();
 
-    // Just add the identity node.
+    // Just add the identity node, registered under its erased (data-layer)
+    // content address - the scheme all registry addresses use.
     let id = gantz_core::node::Identity;
-    let id_ca = gantz_ca::content_addr(&id);
+    let id_ca = gantz_core::data::erase_node_typed(&id)
+        .unwrap()
+        .content_addr();
     nodes.insert(id_ca, Box::new(id) as Box<dyn DebugNode>);
 
     // Create closure for node lookup.
@@ -149,11 +152,24 @@ fn test_fn_apply_identity() {
 #[test]
 fn test_fn_apply_graph() {
     // First, create the "double" graph: inlet -> add -> outlet
+    let inlet_node = graph::Inlet::default();
+    let add_node = node::expr("(+ $l $r)").unwrap();
+    let outlet_node = graph::Outlet::default();
+
+    // Its registry address is computed on the erased (data-layer) form.
+    let mut double_data = gantz_ca::DataGraph::default();
+    let d_inlet = double_data.add_node(gantz_core::data::erase_node_typed(&inlet_node).unwrap());
+    let d_add = double_data.add_node(gantz_core::data::erase_node_typed(&add_node).unwrap());
+    let d_outlet = double_data.add_node(gantz_core::data::erase_node_typed(&outlet_node).unwrap());
+    double_data.add_edge(d_inlet, d_add, Edge::from((0, 0)));
+    double_data.add_edge(d_inlet, d_add, Edge::from((0, 1)));
+    double_data.add_edge(d_add, d_outlet, Edge::from((0, 0)));
+
     let mut double_graph = graph::Graph::<Box<dyn DebugNode>>::default();
 
-    let inlet = double_graph.add_node(Box::new(graph::Inlet::default()) as Box<dyn DebugNode>);
-    let add = double_graph.add_node(Box::new(node::expr("(+ $l $r)").unwrap()) as Box<_>);
-    let outlet = double_graph.add_node(Box::new(graph::Outlet::default()) as Box<_>);
+    let inlet = double_graph.add_node(Box::new(inlet_node) as Box<dyn DebugNode>);
+    let add = double_graph.add_node(Box::new(add_node) as Box<_>);
+    let outlet = double_graph.add_node(Box::new(outlet_node) as Box<_>);
 
     // Connect inlet to both inputs of add.
     double_graph.add_edge(inlet, add, Edge::from((0, 0)));
@@ -164,7 +180,7 @@ fn test_fn_apply_graph() {
     // The nested "double" graph is referenced by content address. A bare
     // `Graph` implements `Node`, so the `get_node` lookup returns it directly
     // (no inline `GraphNode` wrapper).
-    let double_ca: gantz_ca::ContentAddr = gantz_ca::graph_addr(&double_graph).into();
+    let double_ca: gantz_ca::ContentAddr = gantz_ca::graph_addr(&double_data).into();
     let get_node = |ca: &gantz_ca::ContentAddr| -> Option<&dyn Node> {
         (*ca == double_ca).then_some(&double_graph as &dyn Node)
     };

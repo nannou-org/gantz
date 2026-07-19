@@ -135,7 +135,7 @@ pub fn table(
     ui: &mut egui::Ui,
 ) -> (ScrollAreaOutput<()>, egui::Response, InspectorRowsResponse) {
     // Extract info we need upfront before the closure borrows ctx.
-    let registry = ctx.registry();
+    let registry = ctx.env();
     let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
     let meta_ctx = MetaCtx::new(&get_node);
 

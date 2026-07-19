@@ -6,7 +6,7 @@ use dyn_clone::DynClone;
 use gantz_core::node::graph::Graph;
 use std::any::Any;
 
-pub trait TestNode: Any + DynClone + gantz_ca::CaHash + gantz_core::Node {}
+pub trait TestNode: Any + DynClone + gantz_core::Node {}
 
 pub type TestGraph = Graph<Box<dyn TestNode>>;
 
@@ -29,9 +29,14 @@ impl gantz_format::NodeSugar for Box<dyn TestNode> {
     }
 }
 
-impl crate::sync::AsNamedRef for Box<dyn TestNode> {
-    fn as_named_ref(&self) -> Option<&NamedRef> {
-        ((&**self) as &dyn Any).downcast_ref::<NamedRef>()
+/// The value-level codec for the test node set: the SAME manifest as the
+/// `impl_node_set_serde!` invocation above.
+pub fn codec() -> crate::node::NodeCodec {
+    crate::ui_node_codec! {
+        Box<dyn TestNode> {
+            gantz_core::node::Expr,
+            crate::node::NamedRef,
+        }
     }
 }
 

@@ -1,80 +1,17 @@
-//! VM utilities for initializing and compiling gantz graphs.
+//! VM utilities for evaluating and navigating gantz graphs.
 //!
 //! This module provides:
-//! - Convenience wrappers around `gantz_core::vm` (`init`, `compile`)
 //! - Evaluation events and observer (`EvalEntryEvent`, `on_eval_entry`)
-//! - The input-addressed VM synchronisation system ([`sync`])
+//! - The compile-input memo ([`CompiledInputs`]) driving the UI layer's
+//!   input-addressed VM synchronisation system (`bevy_gantz_egui::vm::sync`)
 
-use crate::BuiltinNodes;
 use crate::head;
-use crate::reg::{GraphCache, Registry, lookup_node};
+use crate::reg::Registry;
 use bevy_ecs::prelude::*;
 use bevy_log as log;
 use gantz_ca as ca;
-use gantz_core::data::erase_with_addr;
-use gantz_core::node::{self, GetNode, graph::Graph};
-use gantz_core::vm::{CompileError, Compiled};
-use gantz_core::{Node, compile as core_compile, diagnostic};
-use serde::{Serialize, de::DeserializeOwned};
+use gantz_core::{compile as core_compile, diagnostic};
 use std::time::Duration;
-use steel::steel_vm::engine::Engine;
-
-/// The component updates for one compile attempt: the module/error outcome
-/// and the extracted compile diagnostics.
-fn compile_components(result: Result<Compiled, CompileError>) -> (head::Module, head::Diagnostics) {
-    match result {
-        Ok(module) => (
-            head::Module {
-                compiled: Some(module),
-                error: None,
-            },
-            head::Diagnostics(vec![]),
-        ),
-        Err(e) => {
-            let error = gantz_core::vm::error_chain(&e);
-            log::error!("Failed to compile graph: {error}");
-            let diags = diagnostic::from_compile_error(&e);
-            let module = head::Module {
-                compiled: e.into_module(),
-                error: Some(error),
-            };
-            (module, head::Diagnostics(diags))
-        }
-    }
-}
-
-/// A function that produces entrypoints for a given graph.
-pub type EntrypointFn<N> = Box<
-    dyn for<'a> Fn(node::GetNode<'a>, &Graph<N>) -> Vec<core_compile::Entrypoint> + Send + Sync,
->;
-
-/// Resource holding all entrypoint provider functions.
-///
-/// Each provider is called during compilation to collect entrypoints.
-/// `GantzPlugin` registers `push_pull_entrypoints` by default.
-/// Downstream plugins (e.g. `GantzEguiPlugin`) push additional providers.
-///
-/// Contribute via `get_resource_or_init` + push (never `insert_resource`,
-/// which would clobber providers pushed by plugins built earlier) - the
-/// convention every shared provider collection follows so that plugin order
-/// does not matter.
-#[derive(Resource)]
-pub struct EntrypointFns<N: 'static>(pub Vec<EntrypointFn<N>>);
-
-impl<N: 'static> Default for EntrypointFns<N> {
-    fn default() -> Self {
-        Self(Vec::new())
-    }
-}
-
-/// Collect all entrypoints by calling each provider fn in the resource.
-fn collect_entrypoints<N: Node>(
-    ep_fns: &EntrypointFns<N>,
-    get_node: GetNode<'_>,
-    graph: &Graph<N>,
-) -> Vec<core_compile::Entrypoint> {
-    ep_fns.0.iter().flat_map(|f| f(get_node, graph)).collect()
-}
 
 /// Resource holding the [`core_compile::Config`] used whenever a head's graph
 /// is (re)compiled into its VM.
@@ -90,20 +27,20 @@ pub struct CompileConfig(pub core_compile::Config);
 
 /// The inputs that determine a head's compiled module.
 #[derive(Clone, Copy, PartialEq)]
-struct Inputs {
+pub struct Inputs {
     /// The content address of the head's working graph.
-    graph: ca::GraphAddr,
+    pub graph: ca::GraphAddr,
     /// The codegen configuration.
-    config: core_compile::Config,
+    pub config: core_compile::Config,
 }
 
 /// The inputs of a head's last compile *attempt* (success or failure).
 ///
-/// `None` = never attempted. [`sync`] compares this against the current inputs
-/// (the head's committed graph CA + config) to decide when to (re)compile -
-/// there is no dirty flag to set or forget.
+/// `None` = never attempted. The UI layer's `vm::sync` compares this against
+/// the current inputs (the head's committed graph CA + config) to decide when
+/// to (re)compile - there is no dirty flag to set or forget.
 #[derive(Component, Default)]
-pub struct CompiledInputs(Option<Inputs>);
+pub struct CompiledInputs(pub Option<Inputs>);
 
 /// When `true`, [`validate_committed`] hashes every open head's working graph
 /// each frame and warns if it differs from the head's committed graph CA - i.e.
@@ -147,35 +84,6 @@ pub struct EvalEntryComplete {
 // ---------------------------------------------------------------------------
 // Core VM utilities
 // ---------------------------------------------------------------------------
-
-/// Initialize a new VM with root state and register the given graph.
-///
-/// Returns the initialized VM and the compiled module.
-pub fn init<N>(
-    get_node: GetNode,
-    graph: &Graph<N>,
-    entrypoints: &[core_compile::Entrypoint],
-    config: &core_compile::Config,
-) -> Result<(Engine, Compiled), CompileError>
-where
-    N: Node,
-{
-    gantz_core::vm::init(get_node, graph, entrypoints, config)
-}
-
-/// Compile the graph into a Steel module and run it in the VM.
-pub fn compile<N>(
-    get_node: GetNode,
-    graph: &Graph<N>,
-    vm: &mut Engine,
-    entrypoints: &[core_compile::Entrypoint],
-    config: &core_compile::Config,
-) -> Result<Compiled, CompileError>
-where
-    N: Node,
-{
-    gantz_core::vm::compile(get_node, graph, vm, entrypoints, config)
-}
 
 /// The node-identity mapping for navigating a head from the `from` commit to
 /// the `to` commit: old node index -> new node index.
@@ -295,27 +203,18 @@ pub fn on_eval_entry(
 /// **Call this from any system that mutates a head's
 /// [`WorkingGraph`](head::WorkingGraph), before the system returns** - it is how
 /// the commit-before-return invariant (see `WorkingGraph`) is upheld, which in
-/// turn lets [`sync`] recompile from the committed address without re-hashing.
+/// turn lets `vm::sync` recompile from the committed address without re-hashing.
 /// This is the single place a working graph is content-addressed.
-pub fn commit_working_graph<N>(
+pub fn commit_working_graph(
     registry: &mut Registry,
     cmds: &mut Commands,
     entity: Entity,
     head: &mut ca::Head,
-    graph: &Graph<N>,
-) -> bool
-where
-    N: Serialize + Node,
-{
-    // Registry graph addresses are always computed on the erased form; the
-    // erased graph doubles as the commit content.
-    let (dg, graph_ca) = match erase_with_addr(graph) {
-        Ok(res) => res,
-        Err(e) => {
-            log::error!("failed to erase working graph for commit: {e}");
-            return false;
-        }
-    };
+    graph: &ca::DataGraph,
+) -> bool {
+    // The working graph IS the stored form, so its registry address is
+    // computed directly - no erase step.
+    let graph_ca = ca::graph_addr(graph);
     let Some(head_commit) = registry.head_commit(head) else {
         return false;
     };
@@ -323,6 +222,7 @@ where
         return false;
     }
     let old_head = head.clone();
+    let dg = graph.clone();
     let new_commit_ca =
         registry.commit_graph_to_head(crate::reg::timestamp(), graph_ca, || dg, head);
     log::debug!("Graph changed -> {}", new_commit_ca.display_short());
@@ -334,112 +234,35 @@ where
     true
 }
 
-/// Keep every open head's VM in sync with the inputs to compilation.
-///
-/// The inputs are the head's *committed* graph content address and the
-/// [`CompileConfig`]; each head's [`CompiledInputs`] memoizes the inputs of its
-/// last compile attempt, and the VM is rebuilt whenever they differ. The
-/// committed CA is read straight from the registry - **no per-frame hashing**
-/// (#159): the [`WorkingGraph`](head::WorkingGraph) commit-before-return
-/// invariant guarantees the working graph already matches it, and every change
-/// is reflected either by a new commit (edits, via [`commit_working_graph`]) or
-/// by a reset `CompiledInputs` (head open/replace/branch-move/resync), so
-/// comparing committed CA + config is sufficient to drive recompiles.
-///
-/// Whether the rebuild is a fresh `init` or an in-place `compile` is decided by
-/// VM presence in [`head::HeadVms`]: absent means a fresh init (head
-/// replace/branch-move remove the VM to discard the old graph's node state);
-/// present means an in-place compile, preserving node state (graph edits and
-/// config changes).
-pub fn sync<N>(
-    registry: Res<Registry>,
-    mut cache: ResMut<GraphCache<N>>,
-    builtins: Res<BuiltinNodes<N>>,
-    ep_fns: Res<EntrypointFns<N>>,
-    config: Res<CompileConfig>,
-    mut vms: NonSendMut<head::HeadVms>,
-    mut heads_query: Query<head::OpenHeadData<N>, With<head::OpenHead>>,
-) where
-    N: 'static + Node + Clone + DeserializeOwned + Send + Sync,
-{
-    for mut data in heads_query.iter_mut() {
-        // The committed graph CA - the working graph already matches it (the
-        // `WorkingGraph` invariant), so there is nothing to hash here.
-        let Some(graph_ca) = registry.head_commit(&data.head_ref.0).map(|c| c.graph) else {
-            continue;
-        };
-        let inputs = Inputs {
-            graph: graph_ca,
-            config: config.0,
-        };
-        if data.compiled_inputs.0 == Some(inputs) {
-            continue;
-        }
-
-        // The mutation-site refresh policy keeps the cache fresh, but ensure
-        // the committed graph's transitive references anyway (the working
-        // graph matches the committed one) so compilation never observes a
-        // stale miss. Failure to reify a referenced graph logs and skips the
-        // head this frame.
-        if let Err(e) = cache.ensure(&registry, [graph_ca.into()]) {
-            log::error!("cannot compile head: {e}");
-            continue;
-        }
-
-        // Rebuild the VM. On an in-place compile error the VM is kept (its
-        // previous module remains evaluable) and the error surfaces via the
-        // module/diagnostics components; a failed init leaves no VM, so eval
-        // systems (e.g. `drive_update_bangs`, `on_eval_entry`) skip the head
-        // rather than driving a stale graph.
-        let graph: &Graph<N> = &*data.working_graph;
-        let get_node = |ca: &ca::ContentAddr| lookup_node(&cache, &**builtins, ca);
-        let entrypoints = collect_entrypoints(&ep_fns, &get_node, graph);
-        let result = match vms.get_mut(&data.entity) {
-            None => init(&get_node, graph, &entrypoints, &config.0).map(|(vm, module)| {
-                vms.insert(data.entity, vm);
-                module
-            }),
-            Some(vm) => {
-                gantz_core::graph::register(&get_node, graph, &[], vm);
-                compile(&get_node, graph, vm, &entrypoints, &config.0)
-            }
-        };
-        let (module, diagnostics) = compile_components(result);
-        *data.module = module;
-        *data.diagnostics = diagnostics;
-        data.compiled_inputs.0 = Some(inputs);
-    }
-}
-
 /// Debug check for the [`WorkingGraph`](head::WorkingGraph) commit-before-return
 /// invariant.
 ///
 /// When [`ValidateCommitted`] is enabled, hash every open head's working
 /// graph and warn if it differs from the head's committed graph CA - i.e. a
-/// system mutated the working graph without committing it. A no-op (no hashing)
-/// when disabled, which is the default.
-pub fn validate_committed<N>(
+/// system mutated the working graph without committing it. Every weight is
+/// also checked for canonicality (address computation assumes it). A no-op
+/// (no hashing) when disabled, which is the default.
+pub fn validate_committed(
     validate: Res<ValidateCommitted>,
     registry: Res<Registry>,
-    heads: Query<head::OpenHeadDataReadOnly<N>, With<head::OpenHead>>,
-) where
-    N: 'static + Serialize + Node + Send + Sync,
-{
+    heads: Query<head::OpenHeadDataReadOnly, With<head::OpenHead>>,
+) {
     if !validate.0 {
         return;
     }
     for data in heads.iter() {
-        // Addresses are computed on the erased form, like the commit path.
-        let working = match erase_with_addr(&data.working_graph.0) {
-            Ok((_, addr)) => addr,
-            Err(e) => {
+        for (ix, weight) in data.working_graph.0.node_weights().enumerate() {
+            if !weight.is_canonical() {
                 log::warn!(
-                    "WorkingGraph invariant check: head {:?} working graph failed to erase: {e}",
+                    "WorkingGraph invariant check: head {:?} node {ix} ({}) is not \
+                     canonical - its address (and thus the commit comparison) is \
+                     unreliable",
                     data.entity,
+                    weight.tag,
                 );
-                continue;
             }
-        };
+        }
+        let working = ca::graph_addr(&data.working_graph.0);
         let committed = registry.head_commit(&data.head_ref.0).map(|c| c.graph);
         if committed != Some(working) {
             log::warn!(

@@ -18,7 +18,6 @@ bevy_time.workspace = true
 bevy_window.workspace = true
 gantz_ca.workspace = true
 gantz_core.workspace = true
-gantz_std.workspace = true
 ron.workspace = true
 serde.workspace = true
 steel-core.workspace = true

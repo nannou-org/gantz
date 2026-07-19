@@ -208,9 +208,9 @@ pub fn flatten<'g, N>(
     get_node: GetNode<'_>,
     graph: &'g Graph<N>,
     resolve: &Resolve<'g, N>,
-) -> Result<Graph<Flat<N>>, FlattenError>
+) -> Result<Graph<Flat<&'g N>>, FlattenError>
 where
-    N: gantz_core::Node + Clone,
+    N: gantz_core::Node,
 {
     let ctx = MetaCtx::new(get_node);
     let mut levels = Vec::new();
@@ -244,12 +244,12 @@ where
 pub fn flatten_from_registry<'g, N>(
     graph: &'g Graph<N>,
     reified: &'g gantz_core::data::ReifiedGraphs<N>,
-) -> Result<Graph<Flat<N>>, FlattenError>
+) -> Result<Graph<Flat<&'g N>>, FlattenError>
 where
-    N: gantz_core::Node + AsRefNode + ToNodeDsp + Clone,
+    N: gantz_core::Node + AsRefNode + ToNodeDsp,
 {
     let dsp_memo = std::cell::RefCell::new(HashMap::new());
-    let resolve = |n: &N| {
+    let resolve = move |n: &N| {
         n.as_ref_node().map(|r| {
             let ca = r.content_addr();
             let inline = r
@@ -276,12 +276,12 @@ where
 /// derivation's resolver can hand out `&Graph<Flat<N>>` per child content
 /// address. Walks [`Flat::Instance`] markers to a fixpoint: only children an
 /// instanced ref actually reaches are flattened.
-pub fn flatten_instance_children<N>(
-    flat: &Graph<Flat<N>>,
-    reified: &gantz_core::data::ReifiedGraphs<N>,
-) -> Result<HashMap<ContentAddr, Graph<Flat<N>>>, FlattenError>
+pub fn flatten_instance_children<'g, N>(
+    flat: &Graph<Flat<&N>>,
+    reified: &'g gantz_core::data::ReifiedGraphs<N>,
+) -> Result<HashMap<ContentAddr, Graph<Flat<&'g N>>>, FlattenError>
 where
-    N: gantz_core::Node + AsRefNode + ToNodeDsp + Clone,
+    N: gantz_core::Node + AsRefNode + ToNodeDsp,
 {
     fn marker_cas<N>(g: &Graph<Flat<N>>) -> Vec<ContentAddr> {
         g.node_indices()
@@ -291,7 +291,7 @@ where
             })
             .collect()
     }
-    let mut out: HashMap<ContentAddr, Graph<Flat<N>>> = HashMap::new();
+    let mut out: HashMap<ContentAddr, Graph<Flat<&'g N>>> = HashMap::new();
     let mut queue = marker_cas(flat);
     while let Some(ca) = queue.pop() {
         if out.contains_key(&ca) {
@@ -319,11 +319,11 @@ fn splice<'g, N>(
     parent: Option<(usize, NodeIx)>,
     prefix: Vec<usize>,
     levels: &mut Vec<Level<'g, N>>,
-    out: &mut Graph<Flat<N>>,
+    out: &mut Graph<Flat<&'g N>>,
     ca_stack: &mut Vec<ContentAddr>,
 ) -> Result<usize, FlattenError>
 where
-    N: gantz_core::Node + Clone,
+    N: gantz_core::Node,
 {
     let id = levels.len();
     levels.push(Level {
@@ -401,10 +401,7 @@ where
                 levels[id].kept.insert(ix, flat);
             }
         } else {
-            let flat = out.add_node(Flat::Node {
-                path: path(),
-                node: node.clone(),
-            });
+            let flat = out.add_node(Flat::Node { path: path(), node });
             levels[id].kept.insert(ix, flat);
         }
     }
@@ -419,7 +416,7 @@ where
 /// and edges in creation (age) order, so a kept input's flat edges keep their
 /// original relative age and the flat graph matches an equivalent
 /// hand-flattened one.
-fn bridge<N>(levels: &[Level<'_, N>], out: &mut Graph<Flat<N>>) {
+fn bridge<'g, N>(levels: &[Level<'g, N>], out: &mut Graph<Flat<&'g N>>) {
     for (id, level) in levels.iter().enumerate() {
         for e in level.graph.edge_references() {
             let Some(&flat_t) = level.kept.get(&e.target()) else {

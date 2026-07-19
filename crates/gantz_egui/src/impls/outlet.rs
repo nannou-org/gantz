@@ -1,11 +1,11 @@
 use crate::{
-    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind,
+    Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
     widget::node_inspector,
 };
 use gantz_core::node;
 
 impl NodeUi for gantz_core::node::graph::Outlet {
-    fn name(&self, _: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         "out".into()
     }
 
@@ -15,7 +15,7 @@ impl NodeUi for gantz_core::node::graph::Outlet {
 
     fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
         let framed = uictx.framed(|ui, _sockets| {
-            let name = self.name(ctx.registry());
+            let name = self.name(ctx.env());
             let ix = outlet_ix(ctx.path(), ctx.outlets());
             let text = format!("{}[{}]", name, ix);
             ui.add(egui::Label::new(text).selectable(false))
@@ -46,7 +46,7 @@ impl NodeUi for gantz_core::node::graph::Outlet {
         }
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         match kind {
             SocketKind::Input => Some(super::inlet::socket_doc(
                 &self.ty,

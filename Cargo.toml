@@ -48,7 +48,6 @@ bevy_window = "0.19"
 blake3 = "1"
 cpal = "0.18"
 dyn-clone = "1"
-dyn-hash = "0.2.2"
 eframe = { version = "0.34", default-features = false, features = [
     "default_fonts",
     "persistence",

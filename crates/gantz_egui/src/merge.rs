@@ -6,12 +6,9 @@
 //! ([`merge_preview`]). Both are pure reads, so the config pane can call them
 //! while rendering; the mutating op is [`crate::ops::merge_head`].
 
-use crate::sync::AsNamedRef;
+use crate::cycle::named_ref_of;
 use gantz_ca as ca;
 use gantz_ca::DataGraph;
-use gantz_core::data::ReifiedGraphs;
-use gantz_core::node::graph::Graph;
-use serde::de::DeserializeOwned;
 
 /// A named graph that can be merged into the current head.
 #[derive(Clone, Debug)]
@@ -89,16 +86,12 @@ pub fn merge_candidates(reg: &ca::Registry, ours: &ca::Head) -> Vec<MergeCandida
 ///
 /// Returns `None` when there is nothing to merge (unknown source, unrelated or
 /// already-up-to-date histories, or missing registry data).
-pub fn merge_preview<N>(
+pub fn merge_preview(
     reg: &ca::Registry,
-    reified: &ReifiedGraphs<N>,
     ours: &ca::Head,
     source: &str,
     resolutions: ca::Resolutions,
-) -> Option<MergePreview>
-where
-    N: DeserializeOwned + AsNamedRef,
-{
+) -> Option<MergePreview> {
     let ours_tip = reg.head_commit_ca(ours)?;
     let theirs_tip = reg.head(&source.parse().expect("infallible"))?;
     match ca::merge_commits(reg, ours_tip, theirs_tip, resolutions).ok()? {
@@ -109,7 +102,7 @@ where
         } => Some(MergePreview {
             summary: theirs_diff.summary(),
             conflicts: conflict_strings(&outcome.conflicts),
-            blockers: data_graph_blockers(reg, reified, ours, &outcome.graph),
+            blockers: merge_blockers(reg, ours, &outcome.graph),
         }),
         // A fast-forward brings in exactly theirs' changes since ours' tip.
         ca::MergeResolution::FastForward => {
@@ -120,28 +113,10 @@ where
             Some(MergePreview {
                 summary: diff.summary(),
                 conflicts: vec![],
-                blockers: data_graph_blockers(reg, reified, ours, theirs_g),
+                blockers: merge_blockers(reg, ours, theirs_g),
             })
         }
         ca::MergeResolution::AlreadyUpToDate => None,
-    }
-}
-
-/// [`merge_blockers`] over a merged graph still in its data form: reify it
-/// through the node set first. A graph that fails to decode is itself a
-/// blocker - its references cannot be checked.
-fn data_graph_blockers<N>(
-    reg: &ca::Registry,
-    reified: &ReifiedGraphs<N>,
-    ours: &ca::Head,
-    merged: &DataGraph,
-) -> Vec<String>
-where
-    N: DeserializeOwned + AsNamedRef,
-{
-    match gantz_core::data::reify::<N>(merged) {
-        Ok(graph) => merge_blockers(reg, reified, ours, &graph),
-        Err(e) => vec![format!("cannot decode the merged graph: {e}")],
     }
 }
 
@@ -220,23 +195,15 @@ pub fn conflict_strings(conflicts: &[ca::Conflict]) -> Vec<String> {
 /// Currently one class: a merged-in [`crate::node::NamedRef`] that would form
 /// a reference cycle back to the edited graph (mirroring the guard in
 /// [`crate::ops::paste`]; with sync enabled such a cycle recommits endlessly).
-pub fn merge_blockers<N>(
-    reg: &ca::Registry,
-    reified: &ReifiedGraphs<N>,
-    ours: &ca::Head,
-    merged: &Graph<N>,
-) -> Vec<String>
-where
-    N: AsNamedRef,
-{
+pub fn merge_blockers(reg: &ca::Registry, ours: &ca::Head, merged: &DataGraph) -> Vec<String> {
     let ca::Head::Branch(editing) = ours else {
         // A nameless (detached commit) head can't be a name-based cycle target.
         return vec![];
     };
     merged
         .node_weights()
-        .filter_map(|n| n.as_named_ref())
-        .filter(|nr| crate::cycle::would_cycle(reg, reified, nr.name(), editing))
+        .filter_map(named_ref_of)
+        .filter(|nr| crate::cycle::would_cycle(reg, nr.name(), editing))
         .map(|nr| format!("'{}' would create a reference cycle", nr.name()))
         .collect()
 }

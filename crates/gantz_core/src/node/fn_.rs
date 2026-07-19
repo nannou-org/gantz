@@ -4,13 +4,11 @@ use crate::{
     node::{self, Node},
     visit,
 };
-use gantz_ca::CaHash;
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
 /// A node that emits a lambda function wrapping another node's expression.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
-#[cahash("gantz.fn")]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct Fn<N>(pub N);
 
 /// The wire tag for [`Fn<Self>`], for node types that appear fn-wrapped in a

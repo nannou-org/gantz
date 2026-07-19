@@ -17,17 +17,15 @@ bevy_gantz.workspace = true
 bevy_gantz_egui.workspace = true
 bevy_gantz_plyphon.workspace = true
 bevy_pkv.workspace = true
-dyn-clone.workspace = true
-dyn-hash.workspace = true
 egui_graph.workspace = true
 gantz_base.workspace = true
 gantz_ca.workspace = true
 gantz_core.workspace = true
 gantz_egui.workspace = true
 gantz_format.workspace = true
+gantz_nodetag.workspace = true
 gantz_plyphon = { workspace = true, features = ["egui"] }
 gantz_std.workspace = true
-petgraph.workspace = true
 serde.workspace = true
 steel-core.workspace = true
 web-time.workspace = true
@@ -40,9 +38,6 @@ web-time.workspace = true
 # website build supplies the WASM-threads flags it needs (see `pkgs/gantz-website.nix`).
 default = ["audioworklet"]
 audioworklet = ["bevy_gantz_plyphon/audioworklet"]
-
-[dev-dependencies]
-ron.workspace = true
 
 [[bin]]
 name = "gantz"

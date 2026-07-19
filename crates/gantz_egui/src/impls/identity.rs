@@ -1,7 +1,7 @@
-use crate::{NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind};
+use crate::{Env, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind};
 
 impl NodeUi for gantz_core::node::Identity {
-    fn name(&self, _: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         gantz_core::node::IDENTITY_NAME.into()
     }
 
@@ -16,7 +16,7 @@ impl NodeUi for gantz_core::node::Identity {
         NodeUiResponse::new(framed)
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         Some(match kind {
             SocketKind::Input => SocketDoc::ty("any").with_description("input value"),
             SocketKind::Output => {

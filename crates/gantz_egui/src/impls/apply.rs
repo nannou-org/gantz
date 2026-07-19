@@ -1,7 +1,7 @@
-use crate::{NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind};
+use crate::{Env, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind};
 
 impl NodeUi for gantz_core::node::Apply {
-    fn name(&self, _: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         "apply".into()
     }
 
@@ -15,7 +15,7 @@ impl NodeUi for gantz_core::node::Apply {
         NodeUiResponse::new(framed)
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
         match (kind, ix) {
             (SocketKind::Input, 0) => Some(
                 SocketDoc::ty("function")

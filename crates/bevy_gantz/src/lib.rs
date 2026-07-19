@@ -21,7 +21,6 @@
 //! per-frame streams consumed by polling systems -
 //! [`debounced_input::DebouncedInputEvent`] is the one case.
 
-pub mod builtin;
 pub mod debounced_input;
 pub mod head;
 pub mod reg;
@@ -30,19 +29,18 @@ pub mod vm;
 
 use bevy_app::{App, Plugin, Update};
 use bevy_ecs::prelude::{IntoScheduleConfigs, Resource, SystemSet};
-pub use builtin::{BuiltinNodes, Builtins};
-use gantz_core::Node;
 pub use head::{
     FocusedHead, HeadRef, HeadTabOrder, HeadVms, OpenHead, OpenHeadData, OpenHeadDataReadOnly,
     WorkingGraph,
 };
-pub use reg::{GraphCache, Registry, lookup_node, refresh_cache, timestamp};
+pub use reg::{Registry, timestamp};
 pub use vm::{
-    CompileConfig, CompiledInputs, EntrypointFns, EvalEntryComplete, EvalEntryEvent,
-    ValidateCommitted, commit_working_graph,
+    CompileConfig, CompiledInputs, EvalEntryComplete, EvalEntryEvent, ValidateCommitted,
+    commit_working_graph,
 };
 
-/// The system set in which [`vm::sync`] runs (in the `Update` schedule).
+/// The system set in which the UI layer's VM synchronisation system
+/// (`bevy_gantz_egui::vm::sync`) runs (in the `Update` schedule).
 ///
 /// Systems that evaluate head VMs each frame should run `.after(VmSet)` so
 /// they never observe the gap between a head pointing at a new graph and its
@@ -79,101 +77,45 @@ impl EvalEpoch {
 
 /// Plugin providing core gantz functionality.
 ///
-/// Generic over `N`, the node type used in graphs.
-///
 /// This plugin:
 /// - Initializes core resources (Registry, HeadVms, etc.)
 /// - Registers event observers for head operations
 /// - Registers the eval event observer
-/// - Keeps head VMs in sync with their compile inputs via [`vm::sync`]
 ///
-/// Apps should also:
-/// - Insert a `BuiltinNodes<N>` resource with their builtin nodes
-/// - Add `GantzEguiPlugin` for egui integration (Views, GraphViews, etc.)
+/// Apps should also add `GantzEguiPlugin` for egui integration, which owns
+/// the typed side (the reified-graph cache, builtin instances and the
+/// input-addressed VM synchronisation system running in [`VmSet`]).
 ///
 /// # Assembly
 ///
 /// Plugin order does not matter: the gantz plugins contribute to shared
-/// collections via `get_resource_or_init` (see [`EntrypointFns`]) and
-/// perform cross-plugin resource reads in `Plugin::finish` (see
-/// `bevy_gantz_plyphon::PlyphonPlugin`, the reference domain plugin), so
-/// they may be added in any order relative to each other.
-pub struct GantzPlugin<N>(std::marker::PhantomData<N>);
+/// collections via `get_resource_or_init` (see
+/// `bevy_gantz_egui::EntrypointFns`) and perform cross-plugin resource reads
+/// in `Plugin::finish` (see `bevy_gantz_plyphon::PlyphonPlugin`, the
+/// reference domain plugin), so they may be added in any order relative to
+/// each other.
+#[derive(Default)]
+pub struct GantzPlugin;
 
-impl<N> Default for GantzPlugin<N> {
-    fn default() -> Self {
-        Self(std::marker::PhantomData)
-    }
-}
-
-impl<N> Plugin for GantzPlugin<N>
-where
-    N: 'static + Node + Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
-{
+impl Plugin for GantzPlugin {
     fn build(&self, app: &mut App) {
-        // Contributed via `get_resource_or_init` + push (never
-        // `insert_resource`) so providers pushed by plugins built earlier
-        // survive - plugin order must not matter.
-        app.world_mut()
-            .get_resource_or_init::<vm::EntrypointFns<N>>()
-            .0
-            .push(Box::new(|get_node, graph| {
-                gantz_core::compile::push_pull_entrypoints(get_node, graph)
-            }));
         app.init_resource::<FocusedHead>()
             .init_resource::<HeadTabOrder>()
             .init_resource::<Registry>()
-            .init_resource::<GraphCache<N>>()
             .init_resource::<vm::CompileConfig>()
             .init_resource::<vm::ValidateCommitted>()
             .insert_resource(EvalEpoch(web_time::Instant::now()))
             .init_non_send::<HeadVms>()
             // Register head event handlers.
-            .add_observer(head::on_open::<N>)
-            .add_observer(head::on_replace::<N>)
+            .add_observer(head::on_open)
+            .add_observer(head::on_replace)
             .add_observer(head::on_close)
             .add_observer(head::on_branch_head)
-            .add_observer(head::on_move_branch::<N>)
+            .add_observer(head::on_move_branch)
             // Register eval entry event handler.
             .add_observer(vm::on_eval_entry)
-            // Input-addressed VM synchronisation: (re)compiles whenever a head's
-            // compile inputs (committed graph content address + config) change.
-            .add_systems(Update, vm::sync::<N>.in_set(VmSet))
             // Debug check for the WorkingGraph commit-before-return invariant
             // (no-op unless `ValidateCommitted` is enabled).
-            .add_systems(Update, vm::validate_committed::<N>.after(VmSet));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(Clone, serde::Serialize, serde::Deserialize)]
-    struct TestNode;
-
-    impl gantz_core::Node for TestNode {
-        fn expr(&self, _ctx: gantz_core::node::ExprCtx<'_, '_>) -> gantz_core::node::ExprResult {
-            gantz_core::node::parse_expr("'()")
-        }
-    }
-
-    /// Providers pushed into `EntrypointFns` before `GantzPlugin` is added
-    /// must survive its build: plugins contribute to the shared collection,
-    /// they do not insert over it, so plugin order does not matter.
-    #[test]
-    fn entrypoint_fns_survive_plugin_order() {
-        let mut app = bevy_app::App::new();
-        app.world_mut()
-            .get_resource_or_init::<vm::EntrypointFns<TestNode>>()
-            .0
-            .push(Box::new(|_, _| Vec::new()));
-        app.add_plugins(GantzPlugin::<TestNode>::default());
-        let fns = app.world().resource::<vm::EntrypointFns<TestNode>>();
-        assert_eq!(
-            fns.0.len(),
-            2,
-            "both the pre-pushed provider and the plugin's seed must survive",
-        );
+            .add_systems(Update, vm::validate_committed.after(VmSet));
     }
 }

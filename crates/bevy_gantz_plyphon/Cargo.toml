@@ -43,5 +43,8 @@ audioworklet = ["cpal/audioworklet"]
 bevy.workspace = true
 # For deriving `Pod`/`Zeroable` on a custom unit's state.
 bytemuck = { version = "1", features = ["derive"] }
-# Node sets are serde-erased into the data registry.
+# The example's node codec: tags, serde and the (minimal) node UI frame.
+egui_graph.workspace = true
+gantz_format.workspace = true
+gantz_nodetag.workspace = true
 serde.workspace = true

@@ -8,12 +8,10 @@
 use crate::{GraphView, GuiState};
 use base64::Engine as _;
 use bevy_egui::egui;
-use bevy_gantz::reg::{GraphCache, Registry};
+use bevy_gantz::reg::Registry;
 use bevy_gantz::storage::{Load, Save, load, save};
 use bevy_log as log;
 use gantz_ca as ca;
-use gantz_core::node::graph::Graph;
-use serde::de::DeserializeOwned;
 use std::time::Duration;
 
 mod key {
@@ -38,40 +36,32 @@ pub fn load_gui_state(storage: &impl Load) -> GuiState {
 ///
 /// Returns a vector of (head, graph, view) tuples suitable for spawning
 /// entities, with each head's view read from the registry's view section.
-/// If no valid heads remain, creates a default empty graph head using the
-/// provided timestamp.
-pub fn load_open<N>(
+/// Working graphs are cloned straight from the registry's stored data, so
+/// opens never fail on node content; a head is dropped only when its commit
+/// or graph data is missing outright. If no valid heads remain, creates a
+/// default empty graph head using the provided timestamp.
+pub fn load_open(
     storage: &impl Load,
     registry: &mut Registry,
-    cache: &mut GraphCache<N>,
     ts: Duration,
-) -> Vec<(ca::Head, Graph<N>, GraphView)>
-where
-    N: 'static + Clone + DeserializeOwned,
-{
-    // Reify the head's committed graph via the cache. The hard path: any
-    // failure to reify logs and drops the head from the open set.
-    fn reify_head_graph<N: Clone + DeserializeOwned>(
-        registry: &Registry,
-        cache: &mut GraphCache<N>,
-        head: &ca::Head,
-    ) -> Option<Graph<N>> {
+) -> Vec<(ca::Head, ca::DataGraph, GraphView)> {
+    /// The head's committed graph data, if present.
+    fn head_graph(registry: &Registry, head: &ca::Head) -> Option<ca::DataGraph> {
         let addr = registry.head_commit(head)?.graph;
-        if let Err(e) = cache.ensure(registry, [addr.into()]) {
-            log::error!("failed to reify graph for head {head:?}: {e}");
-            return None;
+        let graph = registry.graph(&addr).cloned();
+        if graph.is_none() {
+            log::error!("graph data missing for head {head:?}");
         }
-        cache.get(&addr).cloned()
+        graph
     }
 
-    // Try to load all open heads from storage.
+    // Try to load all open heads from storage, dropping heads whose data is
+    // missing from the registry.
     let heads: Vec<_> = bevy_gantz::storage::load_open_heads(storage)
         .unwrap_or_default()
         .into_iter()
-        // Filter out heads that no longer exist in the registry (or whose
-        // graphs fail to reify).
         .filter_map(|head| {
-            let graph = reify_head_graph(registry, cache, &head)?;
+            let graph = head_graph(registry, &head)?;
             // Load the view for this head's commit, or create empty.
             let head_view = registry
                 .head_commit_ca(&head)
@@ -82,12 +72,10 @@ where
         })
         .collect();
 
-    // If no valid heads remain, create a default one (an empty graph, which
-    // always reifies).
+    // If no valid heads remain, create a default one (an empty graph).
     if heads.is_empty() {
         let head = registry.init_head(ts);
-        let graph = reify_head_graph(registry, cache, &head)
-            .expect("an empty graph always exists and reifies");
+        let graph = head_graph(registry, &head).expect("an empty graph always exists");
         let head_view = GraphView::default();
         vec![(head, graph, head_view)]
     } else {

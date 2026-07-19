@@ -2,7 +2,6 @@
 
 use std::hash::{Hash, Hasher};
 
-use gantz_ca::CaHash;
 use gantz_core::node::{ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_nodetag::NodeTag;
 use plyphon::Rate;
@@ -10,7 +9,7 @@ use plyphon::synthdef::{InputRef, UnitSpec};
 use serde::{Deserialize, Serialize};
 
 use crate::dsp::{DspBuilder, NodeDsp, Signal, ToNodeDsp, input_or_silent};
-use crate::param::{cahash_lag, control_input_expr, param_name, param_state, plyphon_param};
+use crate::param::{control_input_expr, param_name, param_state, plyphon_param};
 
 /// The audio output sink. Applies a master `gain` to its input signal and writes
 /// it to the output buses. A mono input is fanned across every device channel; a
@@ -66,13 +65,6 @@ impl Eq for Out {}
 impl Hash for Out {
     fn hash<H: Hasher>(&self, state: &mut H) {
         Hash::hash(&self.gain_lag.to_bits(), state);
-    }
-}
-
-impl CaHash for Out {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update(b"gantz.plyphon.out");
-        cahash_lag(hasher, self.gain_lag);
     }
 }
 

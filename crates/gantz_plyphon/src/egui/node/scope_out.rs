@@ -4,11 +4,11 @@ use crate::egui::param::value_row;
 use crate::node::ScopeOut;
 use gantz_core::steel::SteelVal;
 use gantz_egui::{
-    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind,
+    Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
 };
 
 impl NodeUi for ScopeOut {
-    fn name(&self, _: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         "~scopeout".into()
     }
 
@@ -79,7 +79,7 @@ impl NodeUi for ScopeOut {
         resp
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
         match (kind, ix) {
             (SocketKind::Input, 0) => Some(SocketDoc::ty("signal").with_description(
                 "signal to sample into per-channel ring buffers (any channel width)",

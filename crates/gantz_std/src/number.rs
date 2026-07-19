@@ -1,4 +1,3 @@
-use gantz_ca::CaHash;
 use gantz_core::node::{EvalConf, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::steel::SteelVal;
 use gantz_nodetag::NodeTag;
@@ -13,10 +12,10 @@ use std::hash::{Hash, Hasher};
 ///   only).
 /// - `push_eval_on_edit` toggles whether editing the dialer fires downstream.
 ///
-/// Each field is folded into the content address only when non-default (see
-/// [`CaHash`]): a plain `number` keeps the original address, while any
-/// configured field becomes part of the node's identity so it persists and is
-/// undoable under the commit-on-change model.
+/// Each field is serialized only when non-default, so a plain `number`
+/// keeps the original erased address, while any configured field becomes
+/// part of the node's identity so it persists and is undoable under the
+/// commit-on-change model.
 #[derive(Clone, Debug, Serialize, Deserialize, NodeTag)]
 pub struct Number {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -104,37 +103,10 @@ impl Eq for Number {}
 
 impl Hash for Number {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Fully qualified to disambiguate from `gantz_ca::CaHash::hash`.
         Hash::hash(&self.min.map(f64::to_bits), state);
         Hash::hash(&self.max.map(f64::to_bits), state);
         Hash::hash(&self.precision, state);
         Hash::hash(&self.push_eval_on_edit, state);
-    }
-}
-
-impl CaHash for Number {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update("gantz.number".as_bytes());
-        // Each config field is folded in only when non-default, so a plain
-        // `number` hashes to just the tag - byte-for-byte the old unit-struct
-        // address, keeping existing `number` nodes stable. Configuring any field
-        // gives the node a new address, which is how the commit-on-change model
-        // persists it (the working graph is only saved when it commits).
-        if let Some(min) = self.min {
-            hasher.update(b"min");
-            CaHash::hash(&min.to_bits(), hasher);
-        }
-        if let Some(max) = self.max {
-            hasher.update(b"max");
-            CaHash::hash(&max.to_bits(), hasher);
-        }
-        if let Some(precision) = self.precision {
-            hasher.update(b"precision");
-            CaHash::hash(&precision, hasher);
-        }
-        if !self.push_eval_on_edit {
-            hasher.update(b"no-push-eval");
-        }
     }
 }
 

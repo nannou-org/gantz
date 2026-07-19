@@ -5,6 +5,7 @@
 //! items for convenience.
 
 pub use comment::Comment;
+pub use dyn_node::{DynNode, NodeCodec, NormalizeNodeError, UiBuiltins, UiNodeInstance};
 pub use fn_named_ref::FnNamedRef;
 #[doc(inline)]
 pub use gantz_core::node::{Id, state};
@@ -14,6 +15,7 @@ pub use plot::{Plot, PlotMode, PlotStyle};
 pub use ref_ext::RefExtUi;
 
 pub mod comment;
+pub mod dyn_node;
 pub mod fn_named_ref;
 pub mod inspect;
 pub mod named_ref;
@@ -22,24 +24,19 @@ pub mod ref_ext;
 mod size_sync;
 
 /// Builtin specs for the egui node set.
-pub fn builtins<N>() -> Vec<gantz_core::Builtin<N>>
-where
-    N: gantz_core::FromNode<Comment>
-        + gantz_core::FromNode<FnNamedRef>
-        + gantz_core::FromNode<Inspect>
-        + gantz_core::FromNode<Plot>,
-{
+pub fn builtins() -> Vec<gantz_core::Builtin> {
     use gantz_core::Builtin;
-    // The `fn` builtin defaults to referring to the `identity` builtin.
-    let identity_ca = gantz_ca::content_addr(&gantz_core::node::Identity);
+    // The `fn` builtin defaults to referring to the `id` builtin, pinned at
+    // its ERASED content address (the same scheme all builtins index by).
+    let identity_ca = gantz_core::data::erase_node_typed(&gantz_core::node::Identity)
+        .expect("`id` must erase")
+        .content_addr();
+    let name = gantz_core::node::IDENTITY_NAME.parse().expect("infallible");
+    let named_ref = NamedRef::new(name, gantz_core::node::Ref::new(identity_ca));
     vec![
-        Builtin::new("comment", || N::from_node(Comment::default())),
-        Builtin::new("fn", move || {
-            let name = gantz_core::node::IDENTITY_NAME.parse().expect("infallible");
-            let named_ref = NamedRef::new(name, gantz_core::node::Ref::new(identity_ca));
-            N::from_node(gantz_core::node::Fn::new(named_ref))
-        }),
-        Builtin::new("inspect", || N::from_node(Inspect::default())),
-        Builtin::new("plot", || N::from_node(Plot::default())),
+        Builtin::new("comment", &Comment::default()),
+        Builtin::new("fn", &gantz_core::node::Fn::new(named_ref)),
+        Builtin::new("inspect", &Inspect::default()),
+        Builtin::new("plot", &Plot::default()),
     ]
 }

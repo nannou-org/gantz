@@ -6,37 +6,6 @@ use bevy::MinimalPlugins;
 use bevy::app::App;
 use bevy_gantz::GantzPlugin;
 use bevy_gantz_plyphon::{DspConfig, DspStatus, PlyphonPlugin};
-use gantz_core::node::{AsRefNode, Ref};
-use gantz_plyphon::{NodeDsp, ToNodeDsp};
-
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct TestNode;
-
-impl gantz_core::Node for TestNode {
-    fn expr(&self, _ctx: gantz_core::node::ExprCtx<'_, '_>) -> gantz_core::node::ExprResult {
-        gantz_core::node::parse_expr("'()")
-    }
-}
-
-impl ToNodeDsp for TestNode {
-    fn to_node_dsp(&self) -> Option<&dyn NodeDsp> {
-        None
-    }
-}
-
-impl AsRefNode for TestNode {
-    fn as_ref_node(&self) -> Option<&Ref> {
-        None
-    }
-}
-
-// Builtin content addresses keep the typed-CaHash scheme (see
-// `bevy_gantz::builtin`).
-impl gantz_ca::CaHash for TestNode {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update(b"test.node");
-    }
-}
 
 /// A headless app with the gantz plugins added in REVERSED order builds,
 /// finishes and ticks without panicking, with the DSP resources present.
@@ -45,12 +14,12 @@ fn plugin_order_is_insensitive() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
     // Deliberately reversed: the DSP runtime before the core plugin.
-    app.add_plugins(PlyphonPlugin::<TestNode>::new());
-    app.add_plugins(GantzPlugin::<TestNode>::default());
-    // The builtin set is the app's responsibility (see `GantzPlugin` docs).
-    app.insert_resource(bevy_gantz::BuiltinNodes::<TestNode>(Box::new(
-        gantz_core::BuiltinSet::from_specs([]),
-    )));
+    app.add_plugins(PlyphonPlugin::new());
+    app.add_plugins(GantzPlugin);
+    // The typed side (cache + builtin instances) is otherwise owned by
+    // `GantzEguiPlugin`, which this headless test does not add.
+    app.init_resource::<bevy_gantz_egui::GraphCache>();
+    app.init_resource::<bevy_gantz_egui::BuiltinNodes>();
     app.finish();
     app.cleanup();
     for _ in 0..3 {

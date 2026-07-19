@@ -9,7 +9,6 @@ pub use conns::Conns;
 pub use delay::Delay;
 pub use expr::{Expr, ExprNewError};
 pub use fn_::{Fn, FnNodeTag};
-use gantz_ca::CaHash;
 #[doc(inline)]
 pub use gantz_ca::{Input, Output};
 pub use id::{IDENTITY_NAME, Identity};
@@ -210,10 +209,7 @@ pub trait Node: std::any::Any {
 }
 
 /// A set of connections over which to push/pull evaluation.
-#[derive(
-    Clone, Debug, Default, Deserialize, Serialize, CaHash, Eq, Hash, Ord, PartialEq, PartialOrd,
-)]
-#[cahash("gantz.eval-conf")]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum EvalConf {
     /// Requires a fn for evaluation from all connections.
     #[default]
@@ -536,24 +532,15 @@ pub fn register(ctx: visit::Ctx<'_, '_>, node: &dyn Node, vm: &mut Engine) {
 }
 
 /// Builtin specs for the core node set.
-pub fn builtins<N>() -> Vec<crate::builtin::Builtin<N>>
-where
-    N: crate::builtin::FromNode<Apply>
-        + crate::builtin::FromNode<Branch>
-        + crate::builtin::FromNode<Delay>
-        + crate::builtin::FromNode<Expr>
-        + crate::builtin::FromNode<Identity>
-        + crate::builtin::FromNode<graph::Inlet>
-        + crate::builtin::FromNode<graph::Outlet>,
-{
+pub fn builtins() -> Vec<crate::builtin::Builtin> {
     use crate::builtin::Builtin;
     vec![
-        Builtin::new("apply", || N::from_node(Apply::default())),
-        Builtin::new("branch", || N::from_node(Branch::default())),
-        Builtin::new("delay", || N::from_node(Delay::default())),
-        Builtin::new("expr", || N::from_node(Expr::new("()").unwrap())),
-        Builtin::new(IDENTITY_NAME, || N::from_node(Identity)),
-        Builtin::new("inlet", || N::from_node(graph::Inlet::default())),
-        Builtin::new("outlet", || N::from_node(graph::Outlet::default())),
+        Builtin::new("apply", &Apply::default()),
+        Builtin::new("branch", &Branch::default()),
+        Builtin::new("delay", &Delay::default()),
+        Builtin::new("expr", &Expr::new("()").unwrap()),
+        Builtin::new(IDENTITY_NAME, &Identity),
+        Builtin::new("inlet", &graph::Inlet::default()),
+        Builtin::new("outlet", &graph::Outlet::default()),
     ]
 }

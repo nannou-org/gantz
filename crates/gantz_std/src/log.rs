@@ -81,12 +81,6 @@ impl gantz_core::Node for Log {
     }
 }
 
-impl gantz_ca::CaHash for Log {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        format!("gantz_std::Log::{:?}", self.level).hash(hasher);
-    }
-}
-
 /// The log target identifying the node at the given path, e.g. `gantz:0:3:2`.
 pub fn log_target(path: &[node::Id]) -> String {
     let path: Vec<String> = path.iter().map(ToString::to_string).collect();

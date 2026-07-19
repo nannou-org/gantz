@@ -1,6 +1,5 @@
 //! The `~sum` node: sum signals into their unity-gain mix.
 
-use gantz_ca::CaHash;
 use gantz_core::node::{ExprCtx, ExprResult, MetaCtx};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
@@ -40,13 +39,6 @@ impl Default for Sum {
         Sum {
             count: default_count(),
         }
-    }
-}
-
-impl CaHash for Sum {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update(b"gantz.plyphon.sum");
-        hasher.update(&self.count.to_le_bytes());
     }
 }
 

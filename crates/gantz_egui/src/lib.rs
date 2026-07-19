@@ -28,139 +28,27 @@ pub mod ui_tree;
 pub mod view;
 pub mod widget;
 
+// Re-exported for `ui_node_codec!` expansions (`$crate::...` paths); depend
+// on the crates directly to use them.
+#[doc(hidden)]
+pub use gantz_ca;
+#[doc(hidden)]
+pub use gantz_core;
+#[doc(hidden)]
+pub use gantz_format;
+#[doc(hidden)]
+pub use gantz_nodetag;
+
 pub use egui_graph::SocketKind;
 pub use keybind::{Action, Keymap};
 pub use node::builtins;
-pub use reg::RegistryRef;
+pub use reg::Env;
 pub use response::{
     ContextMenuResponse, DynResponse, InspectorRowsResponse, InspectorUiResponse, NodeUiResponse,
     NodeViewResponse, ResponseData, Responses,
 };
 pub use sugar::EguiSugar;
 pub use view::{Camera, SceneView};
-
-/// The registry trait required by the gantz_egui widgets and nodes.
-///
-/// The data side of the registry is concrete: [`ca`](Self::ca) exposes the
-/// content-addressed [`gantz_ca::Registry`] directly, and widgets read commits,
-/// heads and sections from it without trait indirection (see e.g.
-/// [`section::description`], [`merge::merge_candidates`] and
-/// [`widget::graph_select::commits_by_recency`]). The trait methods cover what
-/// remains genuinely implementation-dependent: resolving content addresses and
-/// names to typed nodes, and builtin-aware queries (creatable node types,
-/// docs, demo associations).
-///
-/// See [`reg::RegistryRef`] for the standard implementation combining a
-/// [`gantz_ca::Registry`] with [`gantz_core::Builtins`].
-pub trait Registry {
-    /// The underlying content-addressed data registry.
-    fn ca(&self) -> &gantz_ca::Registry;
-
-    /// Look up a node by content address.
-    ///
-    /// Used throughout for resolving graph references during compilation,
-    /// evaluation, and UI rendering.
-    fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&dyn gantz_core::Node>;
-
-    /// Returns the current content address for the given name, if it exists.
-    ///
-    /// Required by [`node::NamedRef`] to check whether a referenced graph
-    /// still exists and to display up-to-date status.
-    fn name_ca(&self, name: &str) -> Option<gantz_ca::ContentAddr>;
-
-    /// Returns true if a node with the given content address exists in the
-    /// environment.
-    fn node_exists(&self, ca: &gantz_ca::ContentAddr) -> bool;
-
-    /// Names of nodes that can be used with `Fn`.
-    /// Filters to: stateless, branchless, single-output nodes.
-    ///
-    /// Required by [`node::FnNamedRef`]'s UI dropdown.
-    fn fn_node_names(&self) -> Vec<String>;
-
-    /// The unique name of each node available.
-    ///
-    /// Provides the list of node type names available for creation via the
-    /// node palette. Actual node creation is handled via [`CreateNode`].
-    fn node_types(&self) -> Vec<&str>;
-
-    /// The formatted keyboard shortcut for the node palette.
-    fn command_formatted_kb_shortcut(
-        &self,
-        _ctx: &egui::Context,
-        _node_type: &str,
-    ) -> Option<String> {
-        None
-    }
-
-    /// Whether referencing the graph named `target` from the graph named
-    /// `editing` would create a reference cycle (see [`cycle::would_cycle`]).
-    ///
-    /// Used by the node palette to hide node types that would form a cycle.
-    /// The default is conservative (never a cycle); the standard [`RegistryRef`]
-    /// implementation walks the registry.
-    fn would_ref_cycle(&self, target: &str, editing: &str) -> bool {
-        let _ = (target, editing);
-        false
-    }
-
-    /// Get the demo graph name associated with the graph of the given name.
-    fn demo_graph(&self, name: &str) -> Option<String> {
-        let _ = name;
-        None
-    }
-
-    /// The [`SocketDoc`] for the given socket of the graph referenced by `ca`.
-    ///
-    /// Lets a referencing node (e.g. [`node::NamedRef`]) surface the referenced
-    /// graph's inlet/outlet docs. The standard impl resolves the referenced
-    /// graph and reads the relevant `Inlet`/`Outlet` marker's own doc, so docs
-    /// live on the nodes rather than in side-metadata.
-    fn socket_doc(
-        &self,
-        ca: &gantz_ca::ContentAddr,
-        kind: SocketKind,
-        ix: usize,
-    ) -> Option<SocketDoc> {
-        let _ = (ca, kind, ix);
-        None
-    }
-
-    /// Display-ready documentation for the creatable node type named `name`.
-    ///
-    /// Combines the node's description with its derived input/output
-    /// [`SocketDoc`]s. Shown beside the highlighted entry in the node palette
-    /// and as hover documentation in the "Graphs" select widget. The standard
-    /// [`RegistryRef`] impl introspects a builtin instance or resolves a named
-    /// graph; the default returns just the name.
-    fn command_info(&self, name: &str) -> CommandInfo {
-        CommandInfo {
-            name: name.to_string(),
-            ..Default::default()
-        }
-    }
-
-    /// A concise description of the creatable node type `name`, for inline
-    /// display in the node palette. Lighter than [`command_info`](Self::command_info)
-    /// (it derives no input/output docs); the default has none.
-    fn node_description(&self, name: &str) -> Option<Cow<'static, str>> {
-        let _ = name;
-        None
-    }
-
-    /// Dry-run the merge of the branch named `source` into `ours` under the
-    /// given conflict resolutions (see [`merge::merge_preview`]), for hover
-    /// previews in the merge row.
-    fn merge_preview(
-        &self,
-        ours: &gantz_ca::Head,
-        source: &str,
-        resolutions: gantz_ca::Resolutions,
-    ) -> Option<merge::MergePreview> {
-        let _ = (ours, source, resolutions);
-        None
-    }
-}
 
 /// On-hover documentation for a single node inlet or outlet.
 ///
@@ -198,7 +86,7 @@ impl SocketDoc {
 
 /// Display-ready documentation for a creatable node type.
 ///
-/// Built by [`Registry::command_info`] from a node's [`description`] and its
+/// Built by [`Env::command_info`] from a node's [`description`] and its
 /// derived per-socket [`SocketDoc`]s, and rendered by [`node_info_ui`] in the
 /// node palette and the "Graphs" select hover.
 ///
@@ -259,9 +147,6 @@ fn socket_doc_list(ui: &mut egui::Ui, heading: &str, docs: &[SocketDoc]) {
 /// parallel Vecs, etc.) allowing the widget to access head data without
 /// requiring a specific storage layout.
 pub trait HeadAccess {
-    /// The node type used in graphs.
-    type Node;
-
     /// Get the list of all head identifiers.
     fn heads(&self) -> &[gantz_ca::Head];
 
@@ -271,7 +156,7 @@ pub trait HeadAccess {
     fn with_head_mut<R>(
         &mut self,
         head: &gantz_ca::Head,
-        f: impl FnOnce(HeadDataMut<'_, Self::Node>) -> R,
+        f: impl FnOnce(HeadDataMut<'_>) -> R,
     ) -> Option<R>;
 
     /// The head's latest module artifact (source text + source map), for
@@ -295,8 +180,11 @@ pub trait HeadAccess {
 }
 
 /// Mutable access to a head's data, provided via [`HeadAccess::with_head_mut`].
-pub struct HeadDataMut<'a, N> {
-    pub graph: &'a mut gantz_core::node::graph::Graph<N>,
+pub struct HeadDataMut<'a> {
+    /// The head's working graph in its stored data form. Typed nodes appear
+    /// only transiently, reified per node through the app's
+    /// [`NodeCodec`](node::NodeCodec).
+    pub graph: &'a mut gantz_ca::DataGraph,
     /// View state (node layout + camera) for this head's graph. Nested graphs
     /// are separate named heads with their own view, so one view per head
     /// suffices (no path-keyed map).
@@ -305,6 +193,10 @@ pub struct HeadDataMut<'a, N> {
 }
 
 /// A trait providing an egui `Ui` implementation for gantz nodes.
+///
+/// [`gantz_core::Node`] is a supertrait: a UI node *is* a node, so a
+/// [`Box<dyn NodeUi>`](crate::node::DynNode) serves compilation and
+/// evaluation directly (no parallel node-set trait required).
 ///
 /// # Reporting changes
 ///
@@ -316,21 +208,21 @@ pub struct HeadDataMut<'a, N> {
 ///
 /// **A node MUST mark its response [`changed`](NodeUiResponse::mark_changed)
 /// whenever it mutates state that contributes to its content address (its
-/// `CaHash`), at the moment that state is actually written.** For
+/// erased, serialized form), at the moment that state is actually written.** For
 /// buffered/debounced edits (e.g. a text field flushed on focus loss) mark
 /// `changed` at the *flush*, not on the keystroke - the node weight only
 /// changes at the flush. Silent mutations (e.g. auto-syncing a reference to a
 /// newer commit) must mark `changed` too, even though no widget was touched.
 ///
 /// State that does NOT affect the content address must NOT mark `changed`:
-/// `#[cahash(skip)]` fields, values written to VM runtime state via
+/// `#[serde(skip)]` fields, values written to VM runtime state via
 /// [`NodeCtx::update_value`], node layout/position, and evaluation triggers
 /// queued via [`push_eval`](NodeUiResponse::push_eval). A missed `changed`
 /// leaves the committed graph stale (a correctness bug); a spurious `changed`
 /// only costs a redundant hash, so when in doubt, mark it.
-pub trait NodeUi {
+pub trait NodeUi: gantz_core::Node + Send + Sync {
     /// The name used to present the node within the inspector.
-    fn name(&self, _registry: &dyn Registry) -> Cow<'_, str>;
+    fn name(&self, _env: &Env<'_>) -> Cow<'_, str>;
 
     /// Instantiate the `Ui` for the given node.
     ///
@@ -401,12 +293,12 @@ pub trait NodeUi {
     }
 
     /// The layout direction of the node's inputs to outputs.
-    fn flow(&self, _registry: &dyn Registry) -> egui::Direction {
+    fn flow(&self, _env: &Env<'_>) -> egui::Direction {
         egui::Direction::TopDown
     }
 
     /// Look up the demo graph name associated with this node, if any.
-    fn demo_graph(&self, _registry: &dyn Registry) -> Option<String> {
+    fn demo_graph(&self, _env: &Env<'_>) -> Option<String> {
         None
     }
 
@@ -415,7 +307,7 @@ pub trait NodeUi {
     /// Returned for nodes that reference a named graph (e.g.
     /// [`NamedRef`](crate::node::NamedRef)): double-clicking enters it in place,
     /// and the scene offers an "open in new tab" context-menu action.
-    fn nav_head(&self, _registry: &dyn Registry) -> Option<gantz_ca::Head> {
+    fn nav_head(&self, _env: &Env<'_>) -> Option<gantz_ca::Head> {
         None
     }
 
@@ -424,7 +316,7 @@ pub trait NodeUi {
     /// Shown alongside the node's inputs/outputs in the node palette and as
     /// hover documentation in the "Graphs" select widget. Builtins hardcode a
     /// short string; nodes that reference a named graph resolve the graph's
-    /// stored description via [`Registry::command_info`].
+    /// stored description via [`Env::command_info`].
     fn description(&self) -> Option<&'static str> {
         None
     }
@@ -433,13 +325,8 @@ pub trait NodeUi {
     ///
     /// Shown as a tooltip when the user hovers the socket. `Inlet`/`Outlet`
     /// read their own stored docs; nodes that reference a graph resolve the
-    /// referenced graph's docs via [`Registry::socket_doc`].
-    fn socket_doc(
-        &self,
-        _registry: &dyn Registry,
-        _kind: SocketKind,
-        _ix: usize,
-    ) -> Option<SocketDoc> {
+    /// referenced graph's docs via [`Env::socket_doc`].
+    fn socket_doc(&self, _env: &Env<'_>, _kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         None
     }
 
@@ -480,7 +367,7 @@ fn default_view_ui(ctx: &NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
 /// types (see [`NodeUi`]); `NodeCtx` itself only provides read/write access to
 /// the node's surroundings (registry, path, VM state).
 pub struct NodeCtx<'a> {
-    registry: &'a dyn Registry,
+    env: &'a Env<'a>,
     path: &'a [node::Id],
     inlets: &'a [node::Id],
     outlets: &'a [node::Id],
@@ -668,80 +555,14 @@ pub struct Redo;
 #[derive(Clone, Copy, Debug)]
 pub struct Undo;
 
-impl<'a, N> NodeUi for &'a mut N
-where
-    N: ?Sized + NodeUi,
-{
-    fn name(&self, registry: &dyn Registry) -> Cow<'_, str> {
-        (**self).name(registry)
-    }
-
-    fn description(&self) -> Option<&'static str> {
-        (**self).description()
-    }
-
-    fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
-        (**self).ui(ctx, uictx)
-    }
-
-    fn inspector_rows(
-        &mut self,
-        ctx: &mut NodeCtx,
-        body: &mut egui_extras::TableBody,
-    ) -> InspectorRowsResponse {
-        (**self).inspector_rows(ctx, body)
-    }
-
-    fn inspector_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> InspectorUiResponse {
-        (**self).inspector_ui(ctx, ui)
-    }
-
-    fn view_ui(&mut self, ctx: NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
-        (**self).view_ui(ctx, ui)
-    }
-
-    fn view_no_margin(&self) -> bool {
-        (**self).view_no_margin()
-    }
-
-    fn flow(&self, registry: &dyn Registry) -> egui::Direction {
-        (**self).flow(registry)
-    }
-
-    fn demo_graph(&self, registry: &dyn Registry) -> Option<String> {
-        (**self).demo_graph(registry)
-    }
-
-    fn nav_head(&self, registry: &dyn Registry) -> Option<gantz_ca::Head> {
-        (**self).nav_head(registry)
-    }
-
-    fn socket_doc(
-        &self,
-        registry: &dyn Registry,
-        kind: SocketKind,
-        ix: usize,
-    ) -> Option<SocketDoc> {
-        (**self).socket_doc(registry, kind, ix)
-    }
-
-    fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> ContextMenuResponse {
-        (**self).context_menu(ctx, ui)
-    }
-
-    fn show_state(&self) -> bool {
-        (**self).show_state()
-    }
-}
-
 macro_rules! impl_node_ui_for_ptr {
     ($($Ty:ident)::*) => {
         impl<T> NodeUi for $($Ty)::*<T>
         where
             T: ?Sized + NodeUi,
         {
-            fn name(&self, registry: &dyn Registry) -> Cow<'_, str> {
-                (**self).name(registry)
+            fn name(&self, env: &Env<'_>) -> Cow<'_, str> {
+                (**self).name(env)
             }
 
             fn description(&self) -> Option<&'static str> {
@@ -768,20 +589,20 @@ macro_rules! impl_node_ui_for_ptr {
                 (**self).view_no_margin()
             }
 
-            fn flow(&self, registry: &dyn Registry) -> egui::Direction {
-                (**self).flow(registry)
+            fn flow(&self, env: &Env<'_>) -> egui::Direction {
+                (**self).flow(env)
             }
 
-            fn demo_graph(&self, registry: &dyn Registry) -> Option<String> {
-                (**self).demo_graph(registry)
+            fn demo_graph(&self, env: &Env<'_>) -> Option<String> {
+                (**self).demo_graph(env)
             }
 
-            fn nav_head(&self, registry: &dyn Registry) -> Option<gantz_ca::Head> {
-                (**self).nav_head(registry)
+            fn nav_head(&self, env: &Env<'_>) -> Option<gantz_ca::Head> {
+                (**self).nav_head(env)
             }
 
-            fn socket_doc(&self, registry: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
-                (**self).socket_doc(registry, kind, ix)
+            fn socket_doc(&self, env: &Env<'_>, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
+                (**self).socket_doc(env, kind, ix)
             }
 
             fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> ContextMenuResponse {
@@ -799,7 +620,7 @@ impl_node_ui_for_ptr!(Box);
 
 impl<'a> NodeCtx<'a> {
     pub fn new(
-        registry: &'a dyn Registry,
+        env: &'a Env<'a>,
         path: &'a [node::Id],
         inlets: &'a [node::Id],
         outlets: &'a [node::Id],
@@ -807,7 +628,7 @@ impl<'a> NodeCtx<'a> {
         vm: &'a mut Engine,
     ) -> Self {
         Self {
-            registry,
+            env,
             path,
             inlets,
             outlets,
@@ -816,9 +637,9 @@ impl<'a> NodeCtx<'a> {
         }
     }
 
-    /// Provide access to the registry.
-    pub fn registry(&self) -> &dyn Registry {
-        self.registry
+    /// Provide access to the node environment.
+    pub fn env(&self) -> &'a Env<'a> {
+        self.env
     }
 
     /// The node's full path into the state tree.
@@ -900,22 +721,25 @@ impl<'a> NodeCtx<'a> {
 }
 
 /// The IDs of the inlet and outlet nodes.
-pub(crate) fn inlet_outlet_ids<N>(
-    registry: &dyn Registry,
-    g: &gantz_core::node::graph::Graph<N>,
-) -> (Vec<node::Id>, Vec<node::Id>)
-where
-    N: gantz_core::Node,
-{
-    let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
+///
+/// Weights reify transiently through the codec; a weight that fails to
+/// reify (an unknown tag) contributes no inlet or outlet.
+pub(crate) fn inlet_outlet_ids(
+    env: &Env<'_>,
+    g: &gantz_ca::DataGraph,
+) -> (Vec<node::Id>, Vec<node::Id>) {
+    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
     let ctx = gantz_core::node::MetaCtx::new(&get_node);
     let mut inlets = vec![];
     let mut outlets = vec![];
     for n_ref in g.node_references() {
-        if n_ref.weight().inlet(ctx) {
+        let Ok(inst) = env.codec.reify_ui(n_ref.weight()) else {
+            continue;
+        };
+        if inst.node.inlet(ctx) {
             inlets.push(n_ref.id().index());
         }
-        if n_ref.weight().outlet(ctx) {
+        if inst.node.outlet(ctx) {
             outlets.push(n_ref.id().index());
         }
     }

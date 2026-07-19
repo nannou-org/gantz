@@ -2,14 +2,13 @@
 
 use std::hash::{Hash, Hasher};
 
-use gantz_ca::CaHash;
 use gantz_core::node::{ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_nodetag::NodeTag;
 use plyphon::synthdef::{InputRef, UnitSpec};
 use serde::{Deserialize, Serialize};
 
-use crate::dsp::{DspBuilder, NodeDsp, NodeRate, Signal, ToNodeDsp, cahash_rate};
-use crate::param::{cahash_lag, control_input_expr, param_name, param_state, plyphon_param};
+use crate::dsp::{DspBuilder, NodeDsp, NodeRate, Signal, ToNodeDsp};
+use crate::param::{control_input_expr, param_name, param_state, plyphon_param};
 
 /// A sine oscillator. Emits one `SinOsc` UGen per freq channel at the
 /// configured `rate` (audio by default; control rate for modulator duty).
@@ -71,14 +70,6 @@ impl Hash for SinOsc {
     fn hash<H: Hasher>(&self, state: &mut H) {
         Hash::hash(&self.freq_lag.to_bits(), state);
         Hash::hash(&self.rate, state);
-    }
-}
-
-impl CaHash for SinOsc {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update(b"gantz.plyphon.sinosc");
-        cahash_lag(hasher, self.freq_lag);
-        cahash_rate(hasher, self.rate);
     }
 }
 

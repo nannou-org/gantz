@@ -7,8 +7,8 @@
 //!
 //! 1. a custom plyphon [`Unit`] (`Saw`) + its [`UnitDef`] (`SawCtor`).
 //! 2. a custom gantz DSP node (`SawNode`) whose [`NodeDsp::ugens`] emits that unit.
-//! 3. a tiny node type `enum N` (no GUI/typetag machinery - a `match`-forwarding
-//!    [`gantz_core::Node`]/[`CaHash`]/[`ToNodeDsp`] is all the runtime needs).
+//! 3. a tiny node codec over the set (`SawNode` + the reused `~out`), through
+//!    which the runtime's reified-graph cache serves the graph.
 //! 4. a headless bevy app that registers the unit via
 //!    [`PlyphonPlugin::with_units`], builds the graph, and plays it.
 //!
@@ -19,14 +19,13 @@ use bevy::app::ScheduleRunnerPlugin;
 use bevy::prelude::*;
 use std::time::Duration;
 
-use bevy_gantz::{BuiltinNodes, GantzPlugin, Registry, head, timestamp};
+use bevy_gantz::{GantzPlugin, Registry, head, timestamp};
+use bevy_gantz_egui::{GraphCache, NodeCodecRes};
 use bevy_gantz_plyphon::PlyphonPlugin;
 use bytemuck::{Pod, Zeroable};
-use gantz_ca::{CaHash, ContentAddr, Hasher, Head};
+use gantz_ca::Head;
 use gantz_core::Node as GantzNode;
-use gantz_core::edge::Edge;
-use gantz_core::node::graph::Graph;
-use gantz_core::node::{AsRefNode, ExprCtx, ExprResult, MetaCtx, Ref, RegCtx, parse_expr};
+use gantz_core::node::{ExprCtx, ExprResult, MetaCtx, parse_expr};
 use gantz_plyphon::{DspBuilder, NodeDsp, Signal, ToNodeDsp};
 use plyphon::synthdef::{InputRef, UnitSpec};
 use plyphon::{
@@ -79,8 +78,9 @@ impl UnitDef for SawCtor {
 // ---------------------------------------------------------------------------
 
 /// A saw-oscillator DSP node. `gantz_core::Node` makes it a graph node (Steel-inert
-/// - audio is plyphon's job); `NodeDsp` emits its UGen graph.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+/// - audio is plyphon's job); `NodeDsp` emits its UGen graph; `NodeUi` gives the
+/// erased UI node its (minimal) rendering.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, gantz_nodetag::NodeTag)]
 struct SawNode {
     freq: f32,
 }
@@ -93,13 +93,6 @@ impl GantzNode for SawNode {
     fn expr(&self, _: ExprCtx<'_, '_>) -> ExprResult {
         // Steel-inert: a placeholder output for the (ignored) dsp edge.
         parse_expr("0")
-    }
-}
-
-impl CaHash for SawNode {
-    fn hash(&self, hasher: &mut Hasher) {
-        hasher.update(b"example.saw");
-        hasher.update(&self.freq.to_le_bytes());
     }
 }
 
@@ -131,102 +124,43 @@ impl ToNodeDsp for SawNode {
     }
 }
 
+impl gantz_egui::NodeUi for SawNode {
+    fn name(&self, _: &gantz_egui::Env<'_>) -> std::borrow::Cow<'_, str> {
+        std::borrow::Cow::Borrowed("~saw")
+    }
+
+    fn ui(
+        &mut self,
+        _ctx: gantz_egui::NodeCtx,
+        uictx: egui_graph::NodeCtx,
+    ) -> gantz_egui::NodeUiResponse {
+        let framed = uictx.framed(|ui, _sockets| ui.label("~saw"));
+        gantz_egui::NodeUiResponse::new(framed)
+    }
+}
+
 // ---------------------------------------------------------------------------
-// 3. The graph's node type: our source + the reused `~out` sink.
+// 3. The node codec: our source + the reused `~out` sink.
 // ---------------------------------------------------------------------------
 
-/// A minimal node type. The runtime needs `Clone + Node + ToNodeDsp` plus a
-/// `type`-tagged serde (the registry stores graphs as erased data), so a
-/// `match`-forwarding enum with adjacent tagging suffices - no GUI machinery.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "type", content = "c")]
-enum N {
-    Saw(SawNode),
-    Out(gantz_plyphon::Out),
-}
+/// The example's `.gantz` sugar carrier (unused here beyond the codec's
+/// requirement - this example never parses or exports text).
+struct NodeSet;
 
-impl GantzNode for N {
-    fn n_inputs(&self, ctx: MetaCtx) -> usize {
-        match self {
-            N::Saw(n) => n.n_inputs(ctx),
-            N::Out(n) => n.n_inputs(ctx),
-        }
-    }
-
-    fn n_outputs(&self, ctx: MetaCtx) -> usize {
-        match self {
-            N::Saw(n) => n.n_outputs(ctx),
-            N::Out(n) => n.n_outputs(ctx),
-        }
-    }
-
-    fn stateful(&self, ctx: MetaCtx) -> bool {
-        match self {
-            N::Saw(n) => n.stateful(ctx),
-            N::Out(n) => n.stateful(ctx),
-        }
-    }
-
-    fn register(&self, ctx: RegCtx<'_, '_>) {
-        match self {
-            N::Saw(n) => n.register(ctx),
-            N::Out(n) => n.register(ctx),
-        }
-    }
-
-    fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
-        match self {
-            N::Saw(n) => n.expr(ctx),
-            N::Out(n) => n.expr(ctx),
-        }
+impl gantz_format::NodeSugar for NodeSet {
+    fn sugar() -> gantz_format::Sugars<'static> {
+        gantz_format::Sugars(vec![&gantz_format::CoreSugar])
     }
 }
 
-impl CaHash for N {
-    fn hash(&self, hasher: &mut Hasher) {
-        match self {
-            N::Saw(n) => n.hash(hasher),
-            N::Out(n) => n.hash(hasher),
+/// The value-level codec over the example's node set: the seam through which
+/// the runtime's reified-graph cache serves the stored graph as typed nodes.
+fn codec() -> gantz_egui::node::NodeCodec {
+    gantz_egui::ui_node_codec! {
+        NodeSet {
+            SawNode,
+            gantz_plyphon::Out,
         }
-    }
-}
-
-impl ToNodeDsp for N {
-    fn to_node_dsp(&self) -> Option<&dyn NodeDsp> {
-        match self {
-            N::Saw(n) => Some(n),
-            N::Out(n) => n.to_node_dsp(),
-        }
-    }
-}
-
-impl AsRefNode for N {
-    fn as_ref_node(&self) -> Option<&Ref> {
-        // No nested-graph refs in this node set: nothing to flatten.
-        None
-    }
-}
-
-/// An empty builtin set: this example builds its graph in code, so no palette
-/// constructors are needed - but `vm::sync` expects the resource to exist.
-struct NoBuiltins;
-
-impl gantz_core::Builtins for NoBuiltins {
-    type Node = N;
-    fn names(&self) -> Vec<&str> {
-        vec![]
-    }
-    fn create(&self, _name: &str) -> Option<N> {
-        None
-    }
-    fn instance(&self, _ca: &ContentAddr) -> Option<&N> {
-        None
-    }
-    fn name(&self, _ca: &ContentAddr) -> Option<&str> {
-        None
-    }
-    fn content_addr(&self, _name: &str) -> Option<ContentAddr> {
-        None
     }
 }
 
@@ -242,28 +176,34 @@ fn main() {
                 1.0 / 60.0,
             ))),
         )
-        .add_plugins(GantzPlugin::<N>::default())
+        .add_plugins(GantzPlugin)
         // Register the custom `Saw` unit into the embedded engine at startup.
-        .add_plugins(PlyphonPlugin::<N>::new().with_units(|reg| {
+        .add_plugins(PlyphonPlugin::new().with_units(|reg| {
             reg.register("Saw", Box::new(SawCtor));
         }))
-        .insert_resource(BuiltinNodes::<N>(Box::new(NoBuiltins)))
+        // The typed side the DSP driver reads. This example builds its graph
+        // in code and fills the cache itself in `setup` (no `GantzEguiPlugin`).
+        .insert_resource(NodeCodecRes(codec()))
+        .init_resource::<GraphCache>()
         .add_systems(Startup, setup)
         .run();
 }
 
 /// Build `~saw -> ~out`, commit it, and open it as a head. `drive_synths` derives a
 /// synthdef from the `~out` root and spawns it. The cpal stream then plays the saw.
-fn setup(mut registry: ResMut<Registry>, mut cmds: Commands) {
-    let mut g = Graph::<N>::default();
-    let saw = g.add_node(N::Saw(SawNode { freq: 220.0 }));
-    let out = g.add_node(N::Out(gantz_plyphon::Out::default()));
-    g.add_edge(saw, out, Edge::new(0.into(), 0.into()));
-
+fn setup(mut registry: ResMut<Registry>, mut cache: ResMut<GraphCache>, mut cmds: Commands) {
     // The registry stores graphs as erased data (the graph address is always
-    // computed on the erased form). Opening the head reifies it back.
-    let (dg, graph_ca) = gantz_core::data::erase_with_addr(&g).expect("erase");
+    // computed on the erased form).
+    let mut dg = gantz_ca::DataGraph::default();
+    let saw = dg.add_node(gantz_core::data::erase_node_typed(&SawNode { freq: 220.0 }).unwrap());
+    let out =
+        dg.add_node(gantz_core::data::erase_node_typed(&gantz_plyphon::Out::default()).unwrap());
+    dg.add_edge(saw, out, gantz_ca::Edge::from((0, 0)));
+
+    let graph_ca = gantz_ca::graph_addr(&dg);
     let commit = registry.commit_graph(timestamp(), None, graph_ca, move || dg);
+    // Reify the committed graph through the codec so the DSP driver can read it.
+    bevy_gantz_egui::refresh_cache(&registry, &mut cache, &codec());
     cmds.trigger(head::OpenEvent(Head::Commit(commit)));
 
     println!("Playing a custom `Saw` UGen at 220 Hz through bevy_gantz_plyphon. Ctrl-C to stop.");

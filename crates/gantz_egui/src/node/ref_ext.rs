@@ -62,9 +62,17 @@ mod tests {
     #[test]
     fn named_ref_inspector_merges_ext_ui_responses() {
         let registry = gantz_ca::Registry::default();
-        let reified = gantz_core::data::ReifiedGraphs::<NamedRef>::new();
-        let builtins = gantz_core::BuiltinSet::<NamedRef>::from_specs([]);
-        let reg_ref = crate::RegistryRef::new(&registry, &reified, &builtins);
+        let graphs = gantz_core::data::ReifiedGraphs::new();
+        let builtins = gantz_core::Builtins::default();
+        let instances = crate::node::UiBuiltins::default();
+        let codec = crate::test_node::codec();
+        let env = crate::Env {
+            registry: &registry,
+            builtins: &builtins,
+            codec: &codec,
+            graphs: &graphs,
+            instances: &instances,
+        };
         let mut vm = gantz_core::steel::steel_vm::engine::Engine::new_base();
         let mut named = NamedRef::new(
             "x".parse().unwrap(),
@@ -78,8 +86,7 @@ mod tests {
                 .column(egui_extras::Column::auto())
                 .column(egui_extras::Column::remainder())
                 .body(|mut body| {
-                    let mut ctx =
-                        crate::NodeCtx::new(&reg_ref, &[0][..], &[], &[], &exts[..], &mut vm);
+                    let mut ctx = crate::NodeCtx::new(&env, &[0][..], &[], &[], &exts[..], &mut vm);
                     merged = named.inspector_rows(&mut ctx, &mut body);
                 });
         });

@@ -1,12 +1,12 @@
 use crate::{
-    ContextMenuResponse, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, NodeViewResponse,
-    Registry, SocketDoc, SocketKind, node, ui_tree::UiTree,
+    ContextMenuResponse, Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse,
+    NodeViewResponse, SocketDoc, SocketKind, node, ui_tree::UiTree,
 };
 use gantz_std::number::Number;
 use steel::SteelVal;
 
 impl NodeUi for Number {
-    fn name(&self, _: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         "number".into()
     }
 
@@ -153,7 +153,7 @@ impl NodeUi for Number {
         resp
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         Some(match kind {
             SocketKind::Input => SocketDoc::ty("number")
                 .with_description("new value to store; if unconnected the stored value is reused"),

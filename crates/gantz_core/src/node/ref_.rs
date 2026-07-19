@@ -200,24 +200,6 @@ impl AsRefNode for Ref {
     }
 }
 
-impl gantz_ca::CaHash for Ref {
-    /// Reproduces the previously-derived byte stream exactly (discriminator
-    /// tag then the address), folding `ext` only when non-empty so ext-free
-    /// references keep their address.
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update("gantz.ref".as_bytes());
-        gantz_ca::CaHash::hash(&self.addr, hasher);
-        if !self.ext.is_empty() {
-            hasher.update(b"ext");
-            for (k, v) in &self.ext {
-                hasher.update(&(k.len() as u64).to_be_bytes());
-                hasher.update(k.as_bytes());
-                gantz_ca::CaHash::hash(v, hasher);
-            }
-        }
-    }
-}
-
 impl Node for Ref {
     fn n_inputs(&self, ctx: node::MetaCtx) -> usize {
         ctx.node(&self.addr).map(|n| n.n_inputs(ctx)).unwrap_or(0)
@@ -309,43 +291,6 @@ mod tests {
         alpha: u32,
     }
 
-    /// The ext-free address must never change: it is the address every
-    /// existing graph's references already hash to.
-    #[test]
-    fn ext_free_content_addr_is_pinned() {
-        assert_eq!(
-            gantz_ca::content_addr(&test_ref()).to_string(),
-            "0f0d9b48ea1b758612ee71930395098005e9ae7b37560c48d4763dbfa950f421",
-            "ext-free Ref CA changed - this breaks every existing graph address",
-        );
-    }
-
-    /// Ext participates in the address, and removing it restores the
-    /// ext-free address exactly.
-    #[test]
-    fn ext_affects_content_addr() {
-        let plain = test_ref();
-        let mut extended = test_ref();
-        extended
-            .set_ext(
-                "test.ext",
-                &TestExt {
-                    zeta: true,
-                    alpha: 3,
-                },
-            )
-            .unwrap();
-        assert_ne!(
-            gantz_ca::content_addr(&plain),
-            gantz_ca::content_addr(&extended)
-        );
-        extended.remove_ext("test.ext");
-        assert_eq!(
-            gantz_ca::content_addr(&plain),
-            gantz_ca::content_addr(&extended)
-        );
-    }
-
     /// Both wire shapes round-trip through the Datum codec: ext-free stays
     /// the bare address string, ext-carrying takes the map form. The stored
     /// canonical form survives (struct field order does not leak).
@@ -376,10 +321,6 @@ mod tests {
         );
         let rt: Ref = datum::from_datum(d).unwrap();
         assert_eq!(rt, extended);
-        assert_eq!(
-            gantz_ca::content_addr(&rt),
-            gantz_ca::content_addr(&extended)
-        );
         // The stored datum is canonical despite TestExt's declaration order.
         assert_eq!(
             extended.ext("test.ext"),
@@ -398,7 +339,7 @@ mod tests {
     }
 
     /// serde_json coverage for the second self-describing format: both
-    /// shapes round-trip with identical addresses.
+    /// shapes round-trip exactly.
     #[test]
     fn ref_roundtrips_through_json() {
         let mut extended = test_ref();
@@ -415,7 +356,6 @@ mod tests {
             let json = serde_json::to_string(&r).unwrap();
             let rt: Ref = serde_json::from_str(&json).unwrap();
             assert_eq!(rt, r);
-            assert_eq!(gantz_ca::content_addr(&rt), gantz_ca::content_addr(&r));
         }
     }
 }

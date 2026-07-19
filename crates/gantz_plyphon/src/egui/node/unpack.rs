@@ -3,11 +3,11 @@
 use crate::egui::param::value_row;
 use crate::node::Unpack;
 use gantz_egui::{
-    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind,
+    Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
 };
 
 impl NodeUi for Unpack {
-    fn name(&self, _: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         "~unpack".into()
     }
 
@@ -37,7 +37,7 @@ impl NodeUi for Unpack {
         resp
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
         match kind {
             SocketKind::Input => Some(
                 SocketDoc::ty("signal")

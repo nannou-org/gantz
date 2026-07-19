@@ -1,6 +1,5 @@
 //! The `~bus` node: a synthdef boundary on a signal wire.
 
-use gantz_ca::CaHash;
 use gantz_core::node::{ExprCtx, ExprResult, MetaCtx};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
@@ -25,12 +24,6 @@ use crate::dsp::{DspBuilder, NodeDsp, Signal, ToNodeDsp, input_or_silent};
 /// `In` per source, summing after the reads.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, Hash, NodeTag)]
 pub struct Bus {}
-
-impl CaHash for Bus {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update(b"gantz.plyphon.bus");
-    }
-}
 
 impl gantz_core::Node for Bus {
     fn n_inputs(&self, _ctx: MetaCtx) -> usize {

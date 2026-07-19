@@ -12,9 +12,9 @@
 use bevy_ecs::prelude::*;
 use bevy_egui::egui;
 use bevy_time::prelude::*;
-use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::visit;
+use gantz_egui::node::DynNode;
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 use steel::SteelVal;
@@ -28,8 +28,7 @@ use steel::SteelVal;
 /// Outputs the update's delta time in seconds as `f64`. This fires once per
 /// *update*, which may be more frequent than rendered frames under presentation
 /// modes like Mailbox.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash, NodeTag)]
-#[cahash("gantz.update!")]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag)]
 pub struct UpdateBang;
 
 impl gantz_core::Node for UpdateBang {
@@ -52,7 +51,7 @@ impl gantz_core::Node for UpdateBang {
 }
 
 impl gantz_egui::NodeUi for UpdateBang {
-    fn name(&self, _: &dyn gantz_egui::Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &gantz_egui::Env<'_>) -> std::borrow::Cow<'_, str> {
         std::borrow::Cow::Borrowed("update!")
     }
 
@@ -76,7 +75,7 @@ impl gantz_egui::NodeUi for UpdateBang {
 
     fn socket_doc(
         &self,
-        _: &dyn gantz_egui::Registry,
+        _: &gantz_egui::Env<'_>,
         kind: gantz_egui::SocketKind,
         _ix: usize,
     ) -> Option<gantz_egui::SocketDoc> {
@@ -91,35 +90,22 @@ impl gantz_egui::NodeUi for UpdateBang {
 }
 
 // ---------------------------------------------------------------------------
-// ToUpdateBang trait
-// ---------------------------------------------------------------------------
-
-/// Trait for types that may contain an [`UpdateBang`] node.
-///
-/// Implement this for your top-level node wrapper so that the
-/// [`drive_update_bangs`] system can discover `update!` nodes.
-pub trait ToUpdateBang {
-    fn to_update_bang(&self) -> Option<&UpdateBang>;
-}
-
-impl ToUpdateBang for UpdateBang {
-    fn to_update_bang(&self) -> Option<&UpdateBang> {
-        Some(self)
-    }
-}
-
-// ---------------------------------------------------------------------------
 // UpdateBangCollector
 // ---------------------------------------------------------------------------
 
-/// Collects paths to all [`UpdateBang`] nodes found during graph traversal.
+/// Collects paths to all [`UpdateBang`] nodes found during graph traversal,
+/// discovered by [`Any`](std::any::Any) downcast within the erased UI node.
 struct UpdateBangCollector {
     pub paths: Vec<Vec<usize>>,
 }
 
-impl<N: ToUpdateBang> visit::TypedVisitor<N> for UpdateBangCollector {
-    fn visit_pre(&mut self, ctx: visit::Ctx<'_, '_>, node: &N) {
-        if node.to_update_bang().is_some() {
+impl visit::TypedVisitor<DynNode> for UpdateBangCollector {
+    fn visit_pre(&mut self, ctx: visit::Ctx<'_, '_>, node: &DynNode) {
+        let n: &dyn gantz_core::Node = &**node;
+        if (n as &dyn std::any::Any)
+            .downcast_ref::<UpdateBang>()
+            .is_some()
+        {
             self.paths.push(ctx.path().to_vec());
         }
     }
@@ -133,13 +119,10 @@ impl<N: ToUpdateBang> visit::TypedVisitor<N> for UpdateBangCollector {
 /// entrypoint covering all of them.
 ///
 /// Returns an empty vec if no `UpdateBang` nodes are found.
-pub fn entrypoints<N>(
+pub fn entrypoints(
     get_node: node::GetNode<'_>,
-    graph: &gantz_core::node::graph::Graph<N>,
-) -> Vec<gantz_core::compile::Entrypoint>
-where
-    N: gantz_core::Node + ToUpdateBang,
-{
+    graph: &gantz_core::node::graph::Graph<DynNode>,
+) -> Vec<gantz_core::compile::Entrypoint> {
     let mut collector = UpdateBangCollector { paths: vec![] };
     gantz_core::graph::visit_typed(get_node, graph, &[], &mut collector);
     if collector.paths.is_empty() {
@@ -158,29 +141,35 @@ where
 
 /// Drives `update!` nodes every update, independent of GUI visibility.
 ///
-/// For each open head, traverses the working graph to find all `UpdateBang`
-/// nodes, updates their state to the current update delta time, and triggers
-/// a single push evaluation for all of them.
-pub fn drive_update_bangs<N>(
+/// For each open head, traverses the head's committed graph - read from the
+/// reified cache, which the working graph equals by the `WorkingGraph`
+/// invariant - to find all `UpdateBang` nodes, updates their state to the
+/// current update delta time, and triggers a single push evaluation for all
+/// of them.
+pub fn drive_update_bangs(
     time: Res<Time>,
     registry: Res<crate::Registry>,
-    cache: Res<bevy_gantz::GraphCache<N>>,
-    builtins: Res<bevy_gantz::BuiltinNodes<N>>,
+    cache: Res<crate::GraphCache>,
+    builtins: Res<crate::BuiltinNodes>,
     mut vms: NonSendMut<bevy_gantz::head::HeadVms>,
-    heads: Query<(Entity, &bevy_gantz::head::WorkingGraph<N>), With<bevy_gantz::head::OpenHead>>,
+    heads: Query<(Entity, &bevy_gantz::head::HeadRef), With<bevy_gantz::head::OpenHead>>,
     mut cmds: Commands,
-) where
-    N: gantz_core::Node + ToUpdateBang + Send + Sync,
-{
+) {
     let dt = time.delta_secs_f64();
 
-    for (entity, wg) in heads.iter() {
-        let node_reg = crate::registry_ref(&registry, &cache, &builtins);
-        let get_node = |ca: &gantz_ca::ContentAddr| node_reg.node(ca);
+    for (entity, head_ref) in heads.iter() {
+        let Some(graph_ca) = registry.head_commit(&head_ref.0).map(|c| c.graph) else {
+            continue;
+        };
+        let Some(graph) = cache.get(&graph_ca) else {
+            continue;
+        };
+        let get_node =
+            |ca: &gantz_ca::ContentAddr| crate::lookup_node(&cache, &builtins.instances, ca);
 
         // Collect all UpdateBang paths.
         let mut collector = UpdateBangCollector { paths: vec![] };
-        gantz_core::graph::visit_typed(&get_node, &**wg, &[], &mut collector);
+        gantz_core::graph::visit_typed(&get_node, graph, &[], &mut collector);
 
         if collector.paths.is_empty() {
             continue;

@@ -1,13 +1,11 @@
 use super::{Deserialize, Serialize};
 use crate::node::{self, Node};
-use gantz_ca::CaHash;
 
 /// A wrapper around a `Node` that enables pull evaluation across all inputs.
 ///
 /// The implementation of `Node` will match the inner node type `N`, but with a
 /// unique implementation of [`Node::pull_eval`].
-#[derive(Clone, Debug, Deserialize, Serialize, CaHash)]
-#[cahash("gantz.pull")]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Pull<N> {
     node: N,
     conf: node::EvalConf,

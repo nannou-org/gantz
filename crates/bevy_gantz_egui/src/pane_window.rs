@@ -19,9 +19,9 @@
 
 use crate::{
     BaseImmutable, BaseNames, BuiltinNodes, CompileConfig, EdgeStyles, ExtPanes, GraphCache,
-    GuiState, HeadAccess, HostNativePaneWindows, ImportTask, OpenHeadViews, PerfGui, PerfVm,
-    RefExtUis, Registry, ResponseDispatchers, SettingsTabs, TraceCapture, WindowedPanesRequested,
-    handle_gantz_response, head, registry_ref,
+    GuiState, HeadAccess, HostNativePaneWindows, ImportTask, NodeCodecRes, OpenHeadViews, PerfGui,
+    PerfVm, RefExtUis, Registry, ResponseDispatchers, SettingsTabs, TraceCapture,
+    WindowedPanesRequested, env, handle_gantz_response, head,
 };
 use bevy_app::prelude::*;
 use bevy_camera::{Camera2d, RenderTarget};
@@ -29,10 +29,8 @@ use bevy_ecs::prelude::*;
 use bevy_egui::{EguiContext, EguiContexts, EguiMultipassSchedule, EguiPreUpdateSet, egui};
 use bevy_window::{PresentMode, PrimaryWindow, Window, WindowCloseRequested, WindowRef};
 use gantz_ca as ca;
-use gantz_core::Node;
 use gantz_egui::widget::Pane;
 use std::collections::HashMap;
-use std::marker::PhantomData;
 
 /// Marker on a pop-out `Window` entity.
 #[derive(Component)]
@@ -45,46 +43,14 @@ struct PopoutView {
     window: Entity,
 }
 
-/// The `N: Node` bounds shared by the render system and the plugin (same as
-/// [`crate::update`]).
-trait PaneNode:
-    'static
-    + Node
-    + Clone
-    + serde::Serialize
-    + serde::de::DeserializeOwned
-    + gantz_egui::NodeUi
-    + gantz_egui::sync::AsNamedRef
-    + Send
-    + Sync
-{
-}
-impl<N> PaneNode for N where
-    N: 'static
-        + Node
-        + Clone
-        + serde::Serialize
-        + serde::de::DeserializeOwned
-        + gantz_egui::NodeUi
-        + gantz_egui::sync::AsNamedRef
-        + Send
-        + Sync
-{
-}
-
 /// Registers native pop-out windows: the reconciler, the shared render system,
 /// and the close handler. Opt-in (the app adds it); presence of the inserted
 /// [`HostNativePaneWindows`] makes [`crate::update`] stop drawing `egui::Window`s
 /// and leave the windows to this plugin.
-pub struct PaneWindowPlugin<N>(PhantomData<fn() -> N>);
+#[derive(Default)]
+pub struct PaneWindowPlugin;
 
-impl<N> Default for PaneWindowPlugin<N> {
-    fn default() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<N: PaneNode> Plugin for PaneWindowPlugin<N> {
+impl Plugin for PaneWindowPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WindowedPanesRequested>()
             .insert_resource(HostNativePaneWindows)
@@ -102,7 +68,7 @@ impl<N: PaneNode> Plugin for PaneWindowPlugin<N> {
             .add_systems(
                 Update,
                 (
-                    render_windowed_panes::<N>.after(bevy_gantz::VmSet),
+                    render_windowed_panes.after(bevy_gantz::VmSet),
                     on_window_close_redock,
                     track_popout_geometry,
                 ),
@@ -175,19 +141,20 @@ fn reconcile_windowed_panes(
 /// response handling as [`crate::update`], so a windowed pane behaves exactly
 /// like a docked one.
 #[allow(clippy::too_many_arguments)]
-fn render_windowed_panes<N: PaneNode>(
+fn render_windowed_panes(
     mut popouts: Query<(&mut EguiContext, &PopoutView), Without<EguiMultipassSchedule>>,
     trace_capture: Res<TraceCapture>,
     mut perf_vm: ResMut<PerfVm>,
     mut perf_gui: ResMut<PerfGui>,
     mut registry: ResMut<Registry>,
-    mut cache: ResMut<GraphCache<N>>,
-    builtins: Res<BuiltinNodes<N>>,
+    mut cache: ResMut<GraphCache>,
+    builtins: Res<BuiltinNodes>,
+    codec: Res<NodeCodecRes>,
     mut gui_state: ResMut<GuiState>,
     mut vms: NonSendMut<head::HeadVms>,
     tab_order: Res<head::HeadTabOrder>,
     mut focused: ResMut<head::FocusedHead>,
-    mut heads_query: Query<OpenHeadViews<N>, With<head::OpenHead>>,
+    mut heads_query: Query<OpenHeadViews, With<head::OpenHead>>,
     import_task: Option<Res<ImportTask>>,
     (
         base_names,
@@ -254,7 +221,7 @@ fn render_windowed_panes<N: PaneNode>(
         // rebuilt per window: each iteration's borrow of the boxes ends with
         // it (mirrors `update`, where it is built inside the panel closure).
         let mut response = {
-            let node_reg = registry_ref(&registry, &cache, &builtins);
+            let node_reg = env(&registry, &cache, &builtins, &codec);
             let mut access = HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
             let mut tabs: Vec<&mut dyn gantz_egui::widget::SettingsTab> = settings_tabs
                 .0
@@ -320,13 +287,14 @@ fn render_windowed_panes<N: PaneNode>(
                 .inner
         };
 
-        handle_gantz_response::<N>(
+        handle_gantz_response(
             &mut response,
             &tab_order,
             &mut focused,
             &mut heads_query,
             &mut registry,
             &mut cache,
+            &codec,
             &base_names,
             &mut compile_config,
             &mut change_validation,

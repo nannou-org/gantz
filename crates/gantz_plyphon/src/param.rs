@@ -83,18 +83,6 @@ pub fn param_name(path: &[usize], param: &str) -> String {
     format!("{prefix}/{param}")
 }
 
-/// Fold a param's smoothing `lag` into a content-address hasher, but only when
-/// non-zero - so an unsmoothed param leaves a node's address unchanged.
-///
-/// The lag is structural (it bakes a `LagControl` coefficient into the synthdef),
-/// so unlike the param *value* (which lives in node state) it is part of identity.
-pub fn cahash_lag(hasher: &mut gantz_ca::Hasher, lag: f32) {
-    if lag != 0.0 {
-        hasher.update(b"lag");
-        hasher.update(&lag.to_le_bytes());
-    }
-}
-
 /// The structured VM state of a DSP param: a hashmap `{ value, pending }`.
 ///
 /// `value` is the current scalar (seeded with `default`). `pending` starts as an

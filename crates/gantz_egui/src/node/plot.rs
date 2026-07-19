@@ -27,10 +27,9 @@ use crate::ui_tree::plot::{is_container, resolve_color, split_channels};
 use crate::widget::node_inspector;
 use crate::widget::node_inspector::radio_option;
 use crate::{
-    ContextMenuResponse, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, NodeViewResponse,
-    Registry, SocketDoc, SocketKind,
+    ContextMenuResponse, Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse,
+    NodeViewResponse, SocketDoc, SocketKind,
 };
-use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
@@ -38,10 +37,8 @@ use steel::gc::Gc;
 use steel::steel_vm::register_fn::RegisterFn;
 use steel::{SteelVal, Vector};
 
-/// An `f32` that participates in content addressing and `Hash` via its bit
-/// pattern, letting float-valued config keep [`Plot`]'s derives (the `CaHash`
-/// derive needs every field to be `CaHash`, and the app's `dyn Node` needs
-/// `Hash` - neither is implemented for `f32`).
+/// An `f32` that participates in `Hash` via its bit pattern, letting
+/// float-valued config keep [`Plot`]'s `Hash` derive (`f32` is not `Hash`).
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct F32(pub f32);
@@ -58,14 +55,8 @@ impl std::hash::Hash for F32 {
     }
 }
 
-impl CaHash for F32 {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        CaHash::hash(&self.0.to_bits(), hasher);
-    }
-}
-
 /// How the plot interprets and accumulates its input.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub enum PlotMode {
     /// Accumulate a bounded scrolling history (numbers appended, lists extend).
     Scope,
@@ -74,7 +65,7 @@ pub enum PlotMode {
 }
 
 /// How the series is drawn.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub enum PlotStyle {
     /// Contiguous bars (the default).
     Bars,
@@ -84,11 +75,10 @@ pub enum PlotStyle {
 
 /// A node that plots the numeric values it receives.
 ///
-/// Every field feeds the content address (no `#[cahash(skip)]`), so each
+/// Every field feeds the content address (none are `#[serde(skip)]`), so each
 /// inspector edit is a real, persisted, undoable change rather than transient
 /// view state.
-#[derive(Clone, Debug, Hash, Deserialize, Serialize, CaHash, NodeTag)]
-#[cahash("gantz.plot")]
+#[derive(Clone, Debug, Hash, Deserialize, Serialize, NodeTag)]
 pub struct Plot {
     /// Scope (scalar history) or Signal (plot the value directly).
     mode: PlotMode,
@@ -335,7 +325,7 @@ impl Plot {
 }
 
 impl NodeUi for Plot {
-    fn name(&self, _: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         "plot".into()
     }
 
@@ -655,7 +645,7 @@ impl NodeUi for Plot {
         ContextMenuResponse::default()
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         Some(match kind {
             SocketKind::Input => SocketDoc::ty("number or list").with_description(
                 "scope: a number (or list) appended to the history; signal: the value to plot",

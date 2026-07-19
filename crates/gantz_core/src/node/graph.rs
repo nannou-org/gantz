@@ -10,7 +10,6 @@ use crate::{
     node::{self, Node},
     visit,
 };
-use gantz_ca::CaHash;
 use gantz_nodetag::NodeTag;
 use petgraph::{
     Directed,
@@ -42,8 +41,7 @@ pub type EdgeIx = EdgeIndex<Index>;
 /// `ty` and `description` are optional, GUI-facing documentation for the inlet
 /// (a short "type" label and a longer note). They are plain data stored with
 /// the node; the GUI layer interprets and presents them.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, CaHash, NodeTag)]
-#[cahash("gantz.inlet")]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, NodeTag)]
 pub struct Inlet {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub ty: String,
@@ -56,8 +54,7 @@ pub struct Inlet {
 /// Outlet values are passed through directly as the node's output.
 ///
 /// See [`Inlet`] regarding `ty`/`description`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, CaHash, NodeTag)]
-#[cahash("gantz.outlet")]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, NodeTag)]
 pub struct Outlet {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub ty: String,

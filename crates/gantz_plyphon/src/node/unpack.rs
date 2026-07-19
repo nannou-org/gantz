@@ -1,6 +1,5 @@
 //! The `~unpack` node: split a channel group into mono outputs.
 
-use gantz_ca::CaHash;
 use gantz_core::node::{ExprCtx, ExprResult, MetaCtx};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
@@ -45,13 +44,6 @@ impl Default for Unpack {
         Unpack {
             count: default_count(),
         }
-    }
-}
-
-impl CaHash for Unpack {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update(b"gantz.plyphon.unpack");
-        hasher.update(&self.count.to_le_bytes());
     }
 }
 

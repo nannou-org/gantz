@@ -1,4 +1,4 @@
-pub use builtin::{Builtin, BuiltinSet, Builtins, FromNode};
+pub use builtin::{Builtin, Builtins};
 pub use diagnostic::Diagnostic;
 pub use edge::Edge;
 pub use gantz_ca::datum;

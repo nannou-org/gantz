@@ -1,5 +1,5 @@
 use crate::{
-    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, NodeViewResponse, Registry, SocketDoc,
+    Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, NodeViewResponse, SocketDoc,
     SocketKind,
 };
 
@@ -95,7 +95,7 @@ impl<'a> egui::Widget for BranchEdit<'a> {
 }
 
 impl NodeUi for gantz_core::node::Branch {
-    fn name(&self, _: &dyn crate::Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &crate::Env<'_>) -> std::borrow::Cow<'_, str> {
         "branch".into()
     }
 
@@ -222,7 +222,7 @@ impl NodeUi for gantz_core::node::Branch {
         resp
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
         match kind {
             SocketKind::Input => {
                 let var = self.vars().get(ix)?;

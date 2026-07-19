@@ -6,15 +6,13 @@
 //! thin adapters around identical behaviour. Frontend-specific effects
 //! (clipboard access, file dialogs, head navigation) stay with the caller.
 
-use crate::sync::AsNamedRef;
+use crate::cycle::named_ref_of;
+use crate::node::NodeCodec;
 use crate::widget::gantz::OpenHeadState;
 use crate::widget::graph_scene::NodeIndex;
 use crate::{CreateNode, InspectEdge, PastePos, export, node::NamedRef};
-use gantz_ca::{CommitAddr, GraphAddr, Name};
-use gantz_core::data::ReifiedGraphs;
-use gantz_core::node::{self, GetNode, graph::Graph};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, NodeData};
+use gantz_core::node::{self, GetNode};
 use std::collections::{HashMap, HashSet};
 use steel::steel_vm::engine::Engine;
 
@@ -25,16 +23,14 @@ use steel::steel_vm::engine::Engine;
 ///
 /// The newest existing commit pointing at the graph (if any) becomes the new
 /// commit's parent, preserving the fork point's history.
-pub fn branch_node<N>(
+pub fn branch_node(
     registry: &mut gantz_ca::Registry,
     timestamp: std::time::Duration,
-    graph: &mut Graph<N>,
+    graph: &mut DataGraph,
     new_name: String,
     ca: gantz_ca::ContentAddr,
     path: &[node::Id],
-) where
-    N: From<NamedRef> + AsNamedRef,
-{
+) {
     let graph_addr = GraphAddr::from(ca);
     if registry.graph(&graph_addr).is_none() {
         log::error!("BranchNode: graph not found for {graph_addr:?}");
@@ -56,13 +52,20 @@ pub fn branch_node<N>(
     // Carry the old reference's ext data over: the forked content is
     // identical, so domain flags still apply. `sync` deliberately resets - a
     // fork pins.
-    let new_ref = match graph.node_weight(node_id).and_then(N::as_named_ref) {
+    let new_ref = match graph.node_weight(node_id).and_then(named_ref_of) {
         Some(old) => old.ref_().retarget(graph_addr.into()),
         None => node::Ref::new(graph_addr.into()),
     };
     let named_ref = NamedRef::new(name, new_ref);
+    let node_data = match gantz_core::data::erase_node_typed(&named_ref) {
+        Ok(node_data) => node_data,
+        Err(e) => {
+            log::error!("BranchNode: failed to erase the new `NamedRef`: {e}");
+            return;
+        }
+    };
     if let Some(node) = graph.node_weight_mut(node_id) {
-        *node = N::from(named_ref);
+        *node = node_data;
     } else {
         log::error!("BranchNode: node not found at index {node_ix}");
     }
@@ -87,20 +90,18 @@ fn newest_commit_for_graph(
 /// Returns `None` when the selection is empty or serialization fails (logging
 /// the cause). Writing the resulting string to the clipboard is the caller's
 /// responsibility.
-pub fn copy_nodes<N>(
+pub fn copy_nodes(
     registry: &gantz_ca::Registry,
-    graph: &Graph<N>,
+    graph: &DataGraph,
     head_view: &crate::SceneView,
     selection: &HashSet<NodeIndex>,
-) -> Option<String>
-where
-    N: gantz_core::Node + Clone + Serialize + DeserializeOwned + gantz_format::NodeSugar,
-{
+    codec: &NodeCodec,
+) -> Option<String> {
     if selection.is_empty() {
         return None;
     }
     let copied = export::copy(registry, graph, selection, &head_view.layout);
-    match export::copied_to_string(&copied) {
+    match export::copied_to_string(&copied, codec) {
         Ok(text) => Some(text),
         Err(e) => {
             log::error!("CopyNodes: failed to serialize: {e}");
@@ -112,23 +113,24 @@ where
 /// Create a node of the given type in `graph`, register it with the VM, and
 /// ensure it has a layout entry.
 ///
+/// `new_node` produces the node's stored data form (see e.g.
+/// [`crate::Env::create_node`]); the fresh node reifies once through
+/// the `codec` for its VM registration step.
+///
 /// Returns the index of the new node.
 #[allow(clippy::too_many_arguments)]
-pub fn create_node<N>(
+pub fn create_node(
     registry: &gantz_ca::Registry,
-    reified: &ReifiedGraphs<N>,
     editing: Option<&str>,
+    codec: &NodeCodec,
     get_node: GetNode,
-    new_node: impl FnOnce(&str) -> Option<N>,
-    graph: &mut Graph<N>,
+    new_node: impl FnOnce(&str) -> Option<NodeData>,
+    graph: &mut DataGraph,
     view: &mut crate::SceneView,
     head_state: &mut OpenHeadState,
     vm: &mut Engine,
     cmd: CreateNode,
-) -> Option<NodeIndex>
-where
-    N: gantz_core::Node + crate::sync::AsNamedRef,
-{
+) -> Option<NodeIndex> {
     let CreateNode { node_type, pos } = cmd;
     // Refuse references that would form a cycle back to the editing graph; with
     // sync on such a cycle recommits endlessly (see `crate::cycle`). A nameless
@@ -136,7 +138,7 @@ where
     if editing.is_some_and(|editing| {
         let target: Name = node_type.parse().expect("infallible");
         let editing: Name = editing.parse().expect("infallible");
-        crate::cycle::would_cycle(registry, reified, &target, &editing)
+        crate::cycle::would_cycle(registry, &target, &editing)
     }) {
         log::warn!("CreateNode: '{node_type}' would create a reference cycle; skipping");
         return None;
@@ -147,10 +149,15 @@ where
     };
     let node_ix = graph.add_node(node);
 
-    // Register the new node with the VM.
-    let node_path = [node_ix.index()];
-    let reg_ctx = node::RegCtx::new(get_node, &node_path, vm);
-    graph[node_ix].register(reg_ctx);
+    // Register the new node with the VM (its one transient typed appearance).
+    match codec.reify_ui(&graph[node_ix]) {
+        Ok(inst) => {
+            let node_path = [node_ix.index()];
+            let reg_ctx = node::RegCtx::new(get_node, &node_path, vm);
+            inst.node.register(reg_ctx);
+        }
+        Err(e) => log::error!("CreateNode: cannot register '{node_type}' with the VM: {e}"),
+    }
 
     // Position the new node under the pointer, falling back to the center of the
     // current view.
@@ -173,18 +180,15 @@ where
 ///
 /// `parent` is the emitting head's name; the new graph is named with the first
 /// free `<parent>:<n>` leaf. Returns the index of the new node.
-pub fn create_nested_graph<N>(
+pub fn create_nested_graph(
     registry: &mut gantz_ca::Registry,
     timestamp: std::time::Duration,
-    graph: &mut Graph<N>,
+    graph: &mut DataGraph,
     view: &mut crate::SceneView,
     head_state: &mut OpenHeadState,
     pos: Option<egui::Pos2>,
     parent: &Name,
-) -> Option<NodeIndex>
-where
-    N: gantz_core::Node + From<NamedRef> + Serialize,
-{
+) -> Option<NodeIndex> {
     // Pick the first free `<parent>:<n>` leaf name.
     let mut n = 1u32;
     let name = loop {
@@ -195,16 +199,23 @@ where
         n += 1;
     };
 
-    // Commit a fresh empty graph (erased) under the chosen name.
-    let (nested_graph, graph_ca) = gantz_core::data::erase_with_addr(&Graph::<N>::default())
-        .expect("an empty graph always erases");
+    // Commit a fresh empty graph under the chosen name.
+    let nested_graph = DataGraph::default();
+    let graph_ca = gantz_ca::graph_addr(&nested_graph);
     registry.commit_graph_to_name(timestamp, graph_ca, || nested_graph, &name);
 
     // Insert a synced reference to the new nested graph. The referenced graph is
     // empty, so the node has no state to register here; the next `vm::sync`
     // recompile re-registers the whole working graph.
     let named_ref = NamedRef::with_sync(name, node::Ref::new(graph_ca.into()));
-    let node_ix = graph.add_node(N::from(named_ref));
+    let node_data = match gantz_core::data::erase_node_typed(&named_ref) {
+        Ok(node_data) => node_data,
+        Err(e) => {
+            log::error!("CreateNestedGraph: failed to erase the new `NamedRef`: {e}");
+            return None;
+        }
+    };
+    let node_ix = graph.add_node(node_data);
 
     // Position the new node under the pointer, falling back to the center of the
     // current view.
@@ -275,8 +286,8 @@ impl Reindex {
 ///
 /// Run this before the next recompile (`vm::sync`): the regenerated code reads
 /// state by the new index, so the migration must already be in place.
-pub fn remove_nodes<N>(
-    graph: &mut Graph<N>,
+pub fn remove_nodes(
+    graph: &mut DataGraph,
     vm: &mut Engine,
     layout: &mut egui_graph::Layout,
     selection: &mut crate::widget::graph_scene::Selection,
@@ -325,18 +336,16 @@ pub fn remove_nodes<N>(
 /// - removing nothing - when the selection is empty or serialization fails, so
 /// a failed copy never loses nodes. Like [`remove_nodes`], run this before the
 /// next recompile.
-pub fn cut_nodes<N>(
+pub fn cut_nodes(
     registry: &gantz_ca::Registry,
-    graph: &mut Graph<N>,
+    graph: &mut DataGraph,
     vm: &mut Engine,
     head_view: &mut crate::SceneView,
     selection: &mut crate::widget::graph_scene::Selection,
     nodes: &HashSet<NodeIndex>,
-) -> Option<String>
-where
-    N: gantz_core::Node + Clone + Serialize + DeserializeOwned + gantz_format::NodeSugar,
-{
-    let text = copy_nodes(registry, graph, head_view, nodes)?;
+    codec: &NodeCodec,
+) -> Option<String> {
+    let text = copy_nodes(registry, graph, head_view, nodes, codec)?;
     remove_nodes(
         graph,
         vm,
@@ -349,16 +358,18 @@ where
 
 /// Insert an Inspect node on the given edge, splicing it between the
 /// endpoints and positioning it at `cmd.pos`.
-pub fn inspect_edge<N>(
+///
+/// `new_inspect` produces the node's stored data form; the fresh node
+/// reifies once through the `codec` for its VM registration step.
+pub fn inspect_edge(
+    codec: &NodeCodec,
     get_node: GetNode,
-    new_inspect: impl FnOnce() -> Option<N>,
-    graph: &mut Graph<N>,
+    new_inspect: impl FnOnce() -> Option<NodeData>,
+    graph: &mut DataGraph,
     view: &mut crate::SceneView,
     vm: &mut Engine,
     cmd: InspectEdge,
-) where
-    N: gantz_core::Node,
-{
+) {
     let InspectEdge { edge, pos } = cmd;
 
     // Get edge endpoints and weight.
@@ -378,10 +389,15 @@ pub fn inspect_edge<N>(
     };
     let inspect_id = graph.add_node(inspect_node);
 
-    // Register the new node with the VM.
-    let node_path = [inspect_id.index()];
-    let reg_ctx = node::RegCtx::new(get_node, &node_path, vm);
-    graph[inspect_id].register(reg_ctx);
+    // Register the new node with the VM (its one transient typed appearance).
+    match codec.reify_ui(&graph[inspect_id]) {
+        Ok(inst) => {
+            let node_path = [inspect_id.index()];
+            let reg_ctx = node::RegCtx::new(get_node, &node_path, vm);
+            inst.node.register(reg_ctx);
+        }
+        Err(e) => log::error!("InspectEdge: cannot register the inspect node with the VM: {e}"),
+    }
 
     // Add edge: src -> inspect (using original output, input 0).
     graph.add_edge(
@@ -409,25 +425,17 @@ pub fn inspect_edge<N>(
 /// re-registering the root graph with the VM afterwards so pasted nodes get
 /// their state initialized.
 #[allow(clippy::too_many_arguments)]
-pub fn paste<N>(
+pub fn paste(
     registry: &mut gantz_ca::Registry,
-    reified: &ReifiedGraphs<N>,
     editing: Option<&str>,
-    graph: &mut Graph<N>,
+    graph: &mut DataGraph,
     head_view: &mut crate::SceneView,
     head_state: &mut OpenHeadState,
     text: &str,
     pos: &PastePos,
-) -> bool
-where
-    N: gantz_core::Node
-        + Clone
-        + Serialize
-        + DeserializeOwned
-        + AsNamedRef
-        + gantz_format::NodeSugar,
-{
-    let copied: export::Copied<N> = match export::copied_from_str(text) {
+    codec: &NodeCodec,
+) -> bool {
+    let copied: export::Copied = match export::copied_from_str(text, codec) {
         Ok(c) => c,
         Err(e) => {
             log::debug!("Clipboard does not contain a valid gantz payload: {e}");
@@ -445,8 +453,8 @@ where
         if let Some(named) = copied
             .graph
             .node_weights()
-            .filter_map(|n| n.as_named_ref())
-            .find(|nr| crate::cycle::would_cycle(registry, reified, nr.name(), &editing))
+            .filter_map(named_ref_of)
+            .find(|nr| crate::cycle::would_cycle(registry, nr.name(), &editing))
         {
             log::warn!(
                 "Paste: '{}' would create a reference cycle in '{editing}'; skipping paste",
@@ -472,35 +480,27 @@ where
 /// Returns `true` if anything was duplicated. Like [`paste`], the caller
 /// re-registers the root graph with the VM afterwards so the new nodes get
 /// their state initialized.
-pub fn duplicate_nodes<N>(
+pub fn duplicate_nodes(
     registry: &mut gantz_ca::Registry,
-    reified: &ReifiedGraphs<N>,
     editing: Option<&str>,
-    graph: &mut Graph<N>,
+    graph: &mut DataGraph,
     head_view: &mut crate::SceneView,
     head_state: &mut OpenHeadState,
     nodes: &HashSet<NodeIndex>,
-) -> bool
-where
-    N: gantz_core::Node
-        + Clone
-        + Serialize
-        + DeserializeOwned
-        + AsNamedRef
-        + gantz_format::NodeSugar,
-{
-    let Some(text) = copy_nodes(registry, graph, head_view, nodes) else {
+    codec: &NodeCodec,
+) -> bool {
+    let Some(text) = copy_nodes(registry, graph, head_view, nodes, codec) else {
         return false;
     };
     paste(
         registry,
-        reified,
         editing,
         graph,
         head_view,
         head_state,
         &text,
         &PastePos::Offset(egui::vec2(20.0, 20.0)),
+        codec,
     )
 }
 
@@ -609,22 +609,18 @@ pub enum MergeHeadOutcome {
 /// `resolutions`; hard blockers (a merged-in reference cycle) always refuse.
 /// Fast-forwards mutate nothing - the caller navigates the head instead.
 #[allow(clippy::too_many_arguments)]
-pub fn merge_head<N>(
+pub fn merge_head(
     registry: &mut gantz_ca::Registry,
-    reified: &ReifiedGraphs<N>,
     timestamp: gantz_ca::Timestamp,
     head: &mut gantz_ca::Head,
-    graph: &mut Graph<N>,
+    graph: &mut DataGraph,
     vm: &mut Engine,
     head_view: &mut crate::SceneView,
     selection: &mut crate::widget::graph_scene::Selection,
     source: &str,
     resolutions: gantz_ca::Resolutions,
     auto_resolve: bool,
-) -> MergeHeadOutcome
-where
-    N: DeserializeOwned + AsNamedRef,
-{
+) -> MergeHeadOutcome {
     let node_id = |ix: usize| egui_graph::NodeId::from_u64(ix as u64);
     let Some(ours_tip) = registry.head_commit_ca(head) else {
         log::error!("MergeHead: no commit for head {head}");
@@ -646,20 +642,9 @@ where
         Ok(gantz_ca::MergeResolution::Diverged { outcome, .. }) => outcome,
     };
 
-    // The merge runs over the stored data graphs; the working graph is typed,
-    // so the merged result must reify through the node set before it can be
-    // swapped in. A failure mutates nothing.
-    let merged_graph: Graph<N> = match gantz_core::data::reify(&outcome.graph) {
-        Ok(g) => g,
-        Err(e) => {
-            log::error!("MergeHead: cannot decode the merged graph: {e}");
-            return MergeHeadOutcome::Noop;
-        }
-    };
-
     // Refuse on hard blockers, and on conflicts unless the caller opted into
     // the selected resolutions.
-    let blockers = crate::merge::merge_blockers(registry, reified, head, &merged_graph);
+    let blockers = crate::merge::merge_blockers(registry, head, &outcome.graph);
     if !blockers.is_empty() {
         return MergeHeadOutcome::Refused(blockers);
     }
@@ -713,11 +698,11 @@ where
         head_view.layout.insert(node_id(m), pos);
     }
 
-    // Swap in the merged graph and commit its (already-erased) data form with
-    // both parents. The merged data graph is exactly what the working graph
-    // erases back to, so the registry address matches the working content.
-    *graph = merged_graph;
+    // Swap the merged data graph straight in as the working graph and commit
+    // it with both parents, so the registry address matches the working
+    // content by construction.
     let merged_data = outcome.graph;
+    *graph = merged_data.clone();
     let new_commit = registry.commit_merge_to_head(
         timestamp,
         gantz_ca::graph_addr(&merged_data),
@@ -770,9 +755,30 @@ pub fn commit_layout(
 mod tests {
     use super::*;
     use crate::widget::graph_scene::Selection;
+    use gantz_ca::Datum;
     use gantz_core::ROOT_STATE;
     use gantz_core::node::graph::NodeIx;
     use steel::SteelVal;
+
+    /// A minimal erased node distinguished by its payload value.
+    fn nd(v: u32) -> NodeData {
+        let mut n = NodeData {
+            tag: "Num".to_string(),
+            data: Datum::Map(vec![("v".to_string(), Datum::I64(v as i64))]),
+            refs: vec![],
+            blobs: vec![],
+        };
+        n.canonicalize();
+        n
+    }
+
+    /// The payload value a [`nd`]-built node carries.
+    fn value(n: &NodeData) -> u32 {
+        match n.data.get("v") {
+            Some(&Datum::I64(v)) => v as u32,
+            _ => panic!("not an `nd`-built node: {n:?}"),
+        }
+    }
 
     // Deleting a node swap-removes the former-last node into its slot; the
     // swapped node's layout entry and selection must follow it to the new index.
@@ -781,9 +787,9 @@ mod tests {
         let node_id = |i: usize| egui_graph::NodeId::from_u64(i as u64);
 
         // Five nodes 0..5 (weights 10..15) each with a distinct layout x.
-        let mut graph: Graph<u32> = Graph::default();
+        let mut graph = DataGraph::default();
         for w in 10u32..15 {
-            graph.add_node(w);
+            graph.add_node(nd(w));
         }
         let mut layout = egui_graph::Layout::default();
         for i in 0..5 {
@@ -810,7 +816,7 @@ mod tests {
 
         // The swapped node now sits at index 1.
         assert_eq!(graph.node_count(), 4);
-        assert_eq!(graph[NodeIx::new(1)], 14);
+        assert_eq!(value(&graph[NodeIx::new(1)]), 14);
 
         // Layout followed the swap; the deleted and old-last slots are gone.
         assert_eq!(layout.len(), 4);
@@ -877,50 +883,23 @@ mod tests {
         assert!(view.layout.is_empty());
     }
 
-    /// A minimal node type satisfying [`merge_head`]'s bounds: an internally
-    /// tagged enum serializes to the `"type"`-tagged map shape node-set serde
-    /// produces, so it erases/reifies through `gantz_core::data`.
-    #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-    #[serde(tag = "type")]
-    enum TestNode {
-        Num { v: u32 },
-    }
-
-    impl TestNode {
-        fn value(&self) -> u32 {
-            let TestNode::Num { v } = self;
-            *v
-        }
-    }
-
-    impl gantz_core::Node for TestNode {
-        fn expr(&self, _: node::ExprCtx) -> gantz_core::node::ExprResult {
-            unimplemented!("not compiled in these tests")
-        }
-    }
-
-    impl AsNamedRef for TestNode {
-        fn as_named_ref(&self) -> Option<&NamedRef> {
-            None
-        }
-    }
-
-    fn test_graph(nodes: &[u32]) -> Graph<TestNode> {
-        let mut g = Graph::default();
+    fn test_graph(nodes: &[u32]) -> DataGraph {
+        let mut g = DataGraph::default();
         for &n in nodes {
-            g.add_node(TestNode::Num { v: n });
+            g.add_node(nd(n));
         }
         g
     }
 
-    /// Commit the erased form of `graph`, returning the new commit address.
+    /// Commit `graph`, returning the new commit address.
     fn commit_test_graph(
         reg: &mut gantz_ca::Registry,
         secs: u64,
         parent: Option<CommitAddr>,
-        graph: &Graph<TestNode>,
+        graph: &DataGraph,
     ) -> CommitAddr {
-        let (dg, ga) = gantz_core::data::erase_with_addr(graph).unwrap();
+        let ga = gantz_ca::graph_addr(graph);
+        let dg = graph.clone();
         reg.commit_graph(std::time::Duration::from_secs(secs), parent, ga, || dg)
     }
 
@@ -948,7 +927,7 @@ mod tests {
     fn run_merge(
         reg: &mut gantz_ca::Registry,
         head: &mut gantz_ca::Head,
-        graph: &mut Graph<TestNode>,
+        graph: &mut DataGraph,
         vm: &mut Engine,
         view: &mut crate::SceneView,
         selection: &mut Selection,
@@ -956,7 +935,6 @@ mod tests {
     ) -> MergeHeadOutcome {
         merge_head(
             reg,
-            &ReifiedGraphs::new(),
             std::time::Duration::from_secs(9),
             head,
             graph,
@@ -998,7 +976,7 @@ mod tests {
         };
 
         // The merged graph keeps ours' nodes in place and appends theirs' add.
-        let weights: Vec<u32> = graph.node_weights().map(|n| n.value()).collect();
+        let weights: Vec<u32> = graph.node_weights().map(value).collect();
         assert_eq!(weights, vec![1, 20, 3]);
         // Ours' layout and selection are untouched; the merged-in node has a
         // (fallback) layout entry.
@@ -1042,7 +1020,7 @@ mod tests {
 
         // Node 2 (ours ix 1) survives at merged ix 0.
         assert_eq!(mapping, gantz_ca::Matching::from([(1, 0)]));
-        let weights: Vec<u32> = graph.node_weights().map(|n| n.value()).collect();
+        let weights: Vec<u32> = graph.node_weights().map(value).collect();
         assert_eq!(weights, vec![2]);
         // Its state, layout and selection followed.
         let state = node::state::extract_value(&vm, &[0]).unwrap();
@@ -1081,10 +1059,7 @@ mod tests {
         assert!(!reasons.is_empty());
         // Nothing moved.
         assert_eq!(reg.head_commit_ca(&head), Some(ours_tip));
-        assert_eq!(
-            graph.node_weights().map(|n| n.value()).collect::<Vec<_>>(),
-            [1, 20]
-        );
+        assert_eq!(graph.node_weights().map(value).collect::<Vec<_>>(), [1, 20]);
 
         // Opting in applies the default resolution (ours wins).
         let outcome = run_merge(
@@ -1097,10 +1072,7 @@ mod tests {
             true,
         );
         assert!(matches!(outcome, MergeHeadOutcome::Merged { .. }));
-        assert_eq!(
-            graph.node_weights().map(|n| n.value()).collect::<Vec<_>>(),
-            [1, 20]
-        );
+        assert_eq!(graph.node_weights().map(value).collect::<Vec<_>>(), [1, 20]);
         assert_ne!(reg.head_commit_ca(&head), Some(ours_tip));
     }
 

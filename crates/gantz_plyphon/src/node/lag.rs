@@ -1,12 +1,11 @@
 //! The `~lag` node: a one-pole smoother over a configurable duration.
 
-use gantz_ca::CaHash;
 use gantz_core::node::{ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_nodetag::NodeTag;
 use plyphon::synthdef::{InputRef, UnitSpec};
 use serde::{Deserialize, Serialize};
 
-use crate::dsp::{DspBuilder, NodeDsp, NodeRate, Signal, ToNodeDsp, cahash_rate, input_or_silent};
+use crate::dsp::{DspBuilder, NodeDsp, NodeRate, Signal, ToNodeDsp, input_or_silent};
 use crate::param::{param_name, param_state, plyphon_param};
 
 /// A one-pole lag (smoother). Emits a `Lag` UGen per input channel at the
@@ -36,13 +35,6 @@ impl Lag {
     /// Set the ugen rate (content-address affecting; structural).
     pub fn set_rate(&mut self, rate: NodeRate) {
         self.rate = rate;
-    }
-}
-
-impl CaHash for Lag {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update(b"gantz.plyphon.lag");
-        cahash_rate(hasher, self.rate);
     }
 }
 

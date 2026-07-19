@@ -1,144 +1,106 @@
-//! Builtin node provider trait and composable builtin specs.
+//! Builtin nodes as plain data: composable specs and the composed palette.
+//!
+//! Builtins are nodes that are always available and not stored in the
+//! registry. They typically include primitive operations like arithmetic,
+//! control flow, etc. Each domain crate exports its builtin node set as a
+//! plain `fn builtins() -> Vec<Builtin>`; applications compose the domain
+//! lists into a [`Builtins`].
 
-use gantz_ca::ContentAddr;
+use crate::data;
+use gantz_ca::{ContentAddr, NodeData};
 use std::collections::{BTreeMap, HashMap};
 
-/// Trait for providing builtin (hard-coded) nodes.
-///
-/// Builtins are nodes that are always available and not stored in the registry.
-/// They typically include primitive operations like arithmetic, control flow, etc.
-///
-/// This trait is object-safe when used as `dyn Builtins<Node = N>`.
-pub trait Builtins: Send + Sync {
-    /// The node type produced by this builtins provider.
-    type Node: 'static + Send + Sync;
-
-    /// Get all builtin node names.
-    fn names(&self) -> Vec<&str>;
-
-    /// Create a new instance of a builtin node by name.
-    fn create(&self, name: &str) -> Option<Self::Node>;
-
-    /// Get a builtin node instance by content address.
-    fn instance(&self, ca: &ContentAddr) -> Option<&Self::Node>;
-
-    /// Get the name of a builtin by content address.
-    fn name(&self, ca: &ContentAddr) -> Option<&str>;
-
-    /// Get content address by name.
-    fn content_addr(&self, name: &str) -> Option<ContentAddr>;
-
-    /// Get the name of the demo graph associated with a builtin, if any.
-    fn demo_graph(&self, name: &str) -> Option<&str> {
-        let _ = name;
-        None
-    }
-}
-
-/// A node-set type that can absorb a node of type `T`.
-///
-/// Node-set types (e.g. an app's `Box<dyn Node>`) implement this once via a
-/// blanket impl, allowing domain crates to provide [`Builtin`] spec lists
-/// generic over any compatible node set.
-pub trait FromNode<T> {
-    /// Convert a node of type `T` into the node-set type.
-    fn from_node(node: T) -> Self;
-}
-
-/// One palette entry: a builtin node's name and constructor.
-///
-/// Domain crates export their builtin node set as a plain
-/// `fn builtins<N>() -> Vec<Builtin<N>>` where `N` is bound by [`FromNode`]
-/// for each of the domain's node types. Apps compose the domain lists into a
-/// [`BuiltinSet`].
-pub struct Builtin<N> {
+/// One palette entry: a builtin node's name and its erased data form.
+#[derive(Clone, Debug)]
+pub struct Builtin {
     /// The unique name identifying the builtin (e.g. `"expr"`).
     pub name: &'static str,
-    /// Constructs a fresh default instance of the node.
-    pub new: Box<dyn Fn() -> N + Send + Sync>,
-    /// The name of the demo graph associated with this builtin, if any.
-    pub demo_graph: Option<&'static str>,
+    /// The builtin's default instance, erased to its canonical data form.
+    pub node: NodeData,
 }
 
-/// A generic [`Builtins`] implementation over a composed list of [`Builtin`]
-/// specs.
-pub struct BuiltinSet<N> {
-    /// Builtin specs keyed by name.
-    builtins: BTreeMap<&'static str, Builtin<N>>,
-    /// Instantiated builtin nodes keyed by their content address.
-    instances: HashMap<ContentAddr, N>,
-    /// Mapping from content addresses to names.
-    names: HashMap<ContentAddr, &'static str>,
+/// A composed builtin palette: name <-> erased node data, as plain data.
+///
+/// The erased [`NodeData`] content address is a builtin's one network-wide
+/// address - the same scheme registry graphs use.
+#[derive(Clone, Debug, Default)]
+pub struct Builtins {
+    /// Erased builtin nodes keyed by name.
+    by_name: BTreeMap<&'static str, NodeData>,
+    /// Erased content address by name.
+    addr_by_name: BTreeMap<&'static str, ContentAddr>,
+    /// The reverse index: name by erased content address.
+    name_by_addr: HashMap<ContentAddr, &'static str>,
 }
 
-impl<N> Builtin<N> {
-    /// A new builtin spec with no demo graph association.
-    pub fn new(name: &'static str, new: impl Fn() -> N + Send + Sync + 'static) -> Self {
-        Self {
-            name,
-            new: Box::new(new),
-            demo_graph: None,
-        }
+impl Builtin {
+    /// A new builtin spec: erase the given default instance under its
+    /// declared [`NodeTag`](gantz_nodetag::NodeTag).
+    ///
+    /// Panics if erasure fails - a builtin that cannot erase is a node-set
+    /// composition error, caught at startup or in tests.
+    pub fn new<T>(name: &'static str, node: &T) -> Self
+    where
+        T: gantz_nodetag::NodeTag + serde::Serialize + crate::Node,
+    {
+        let node = data::erase_node_typed(node)
+            .unwrap_or_else(|e| panic!("builtin `{name}` failed to erase: {e}"));
+        Self { name, node }
     }
 }
 
-impl<N> BuiltinSet<N>
-where
-    N: gantz_ca::CaHash + Send + Sync + 'static,
-{
-    /// Compose a set from the given specs.
+impl Builtins {
+    /// Compose a palette from the given specs.
     ///
-    /// Instantiates each builtin once to index it by content address.
-    ///
-    /// Panics on duplicate names, as duplicates indicate a composition error.
-    pub fn from_specs(specs: impl IntoIterator<Item = Builtin<N>>) -> Self {
-        let mut builtins = BTreeMap::new();
-        let mut instances = HashMap::new();
-        let mut names = HashMap::new();
+    /// Panics on duplicate names AND duplicate addresses (two names erasing
+    /// to identical [`NodeData`] would shadow each other in the reverse
+    /// index) - both indicate a composition error.
+    pub fn from_specs(specs: impl IntoIterator<Item = Builtin>) -> Self {
+        let mut by_name = BTreeMap::new();
+        let mut addr_by_name = BTreeMap::new();
+        let mut name_by_addr = HashMap::new();
         for spec in specs {
-            let node = (spec.new)();
-            let ca = gantz_ca::content_addr(&node);
-            instances.insert(ca, node);
-            names.insert(ca, spec.name);
-            if let Some(prev) = builtins.insert(spec.name, spec) {
-                panic!("duplicate builtin name: {:?}", prev.name);
+            let addr = spec.node.content_addr();
+            if let Some(prev) = name_by_addr.insert(addr, spec.name) {
+                panic!(
+                    "builtins `{prev}` and `{}` share the content address {addr}",
+                    spec.name,
+                );
+            }
+            addr_by_name.insert(spec.name, addr);
+            if by_name.insert(spec.name, spec.node).is_some() {
+                panic!("duplicate builtin name: `{}`", spec.name);
             }
         }
         Self {
-            builtins,
-            instances,
-            names,
+            by_name,
+            addr_by_name,
+            name_by_addr,
         }
     }
-}
 
-impl<N: 'static + Send + Sync> Builtins for BuiltinSet<N> {
-    type Node = N;
-
-    fn names(&self) -> Vec<&str> {
-        self.builtins.keys().copied().collect()
+    /// All builtin names, in name order.
+    pub fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.by_name.keys().copied()
     }
 
-    fn create(&self, name: &str) -> Option<Self::Node> {
-        self.builtins.get(name).map(|b| (b.new)())
+    /// The erased node data of the builtin with the given name.
+    pub fn node_data(&self, name: &str) -> Option<&NodeData> {
+        self.by_name.get(name)
     }
 
-    fn instance(&self, ca: &ContentAddr) -> Option<&Self::Node> {
-        self.instances.get(ca)
+    /// The erased node data of the builtin with the given content address.
+    pub fn get(&self, ca: &ContentAddr) -> Option<&NodeData> {
+        self.name(ca).and_then(|name| self.by_name.get(name))
     }
 
-    fn name(&self, ca: &ContentAddr) -> Option<&str> {
-        self.names.get(ca).copied()
+    /// The name of the builtin with the given content address.
+    pub fn name(&self, ca: &ContentAddr) -> Option<&'static str> {
+        self.name_by_addr.get(ca).copied()
     }
 
-    fn content_addr(&self, name: &str) -> Option<ContentAddr> {
-        self.names
-            .iter()
-            .find(|(_, n)| **n == name)
-            .map(|(ca, _)| *ca)
-    }
-
-    fn demo_graph(&self, name: &str) -> Option<&str> {
-        self.builtins.get(name).and_then(|b| b.demo_graph)
+    /// The content address of the builtin with the given name.
+    pub fn content_addr(&self, name: &str) -> Option<ContentAddr> {
+        self.addr_by_name.get(name).copied()
     }
 }

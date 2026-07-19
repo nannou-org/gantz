@@ -1,10 +1,10 @@
 use crate::{
-    ContextMenuResponse, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, OpenLogs,
-    Registry, SocketDoc, SocketKind,
+    ContextMenuResponse, Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, OpenLogs,
+    SocketDoc, SocketKind,
 };
 
 impl NodeUi for gantz_std::log::Log {
-    fn name(&self, _: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         match self.level {
             log::Level::Error => "error",
             log::Level::Warn => "warn",
@@ -57,7 +57,7 @@ impl NodeUi for gantz_std::log::Log {
         resp
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         match kind {
             SocketKind::Input => {
                 Some(SocketDoc::ty("any").with_description("value logged at this node's level"))

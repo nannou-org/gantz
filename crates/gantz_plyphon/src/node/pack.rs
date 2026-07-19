@@ -1,6 +1,5 @@
 //! The `~pack` node: concatenate signals into one channel group.
 
-use gantz_ca::CaHash;
 use gantz_core::node::{ExprCtx, ExprResult, MetaCtx};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
@@ -42,13 +41,6 @@ impl Default for Pack {
         Pack {
             count: default_count(),
         }
-    }
-}
-
-impl CaHash for Pack {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update(b"gantz.plyphon.pack");
-        hasher.update(&self.count.to_le_bytes());
     }
 }
 

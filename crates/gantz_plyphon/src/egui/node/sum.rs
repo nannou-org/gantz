@@ -3,11 +3,11 @@
 use crate::egui::param::value_row;
 use crate::node::Sum;
 use gantz_egui::{
-    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind,
+    Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
 };
 
 impl NodeUi for Sum {
-    fn name(&self, _: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         "~sum".into()
     }
 
@@ -37,7 +37,7 @@ impl NodeUi for Sum {
         resp
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
         match kind {
             SocketKind::Input => Some(SocketDoc::ty("signal").with_description(format!(
                 "signal {ix} to sum (any channel width; silence when unconnected)"

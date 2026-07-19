@@ -87,27 +87,30 @@ fn resolver<'g>(
     }
 }
 
-fn flatten_with(graph: &Graph<N>, map: &HashMap<ContentAddr, Graph<N>>) -> Graph<Flat<N>> {
+fn flatten_with<'g>(
+    graph: &'g Graph<N>,
+    map: &'g HashMap<ContentAddr, Graph<N>>,
+) -> Graph<Flat<&'g N>> {
     try_flatten(graph, map).expect("flatten")
 }
 
 fn try_flatten<'g>(
     graph: &'g Graph<N>,
     map: &'g HashMap<ContentAddr, Graph<N>>,
-) -> Result<Graph<Flat<N>>, FlattenError> {
+) -> Result<Graph<Flat<&'g N>>, FlattenError> {
     let resolve = resolver(map);
     flatten(&|_| None, graph, &resolve)
 }
 
 /// The flat node with the given original path.
-fn at<'a>(flat: &'a Graph<Flat<N>>, path: &[usize]) -> NodeIx {
+fn at<'a>(flat: &'a Graph<Flat<&N>>, path: &[usize]) -> NodeIx {
     flat.node_indices()
         .find(|&n| flat[n].path() == path)
         .unwrap_or_else(|| panic!("no flat node at path {path:?}"))
 }
 
 /// The `(source path, output, input)` of every edge into the node at `path`.
-fn edges_into(flat: &Graph<Flat<N>>, path: &[usize]) -> Vec<(Vec<usize>, u16, u16)> {
+fn edges_into(flat: &Graph<Flat<&N>>, path: &[usize]) -> Vec<(Vec<usize>, u16, u16)> {
     let n = at(flat, path);
     let mut edges: Vec<_> = flat
         .edges_directed(n, Direction::Incoming)
@@ -151,7 +154,8 @@ fn flat_graph_flattens_to_identity() {
     g.add_edge(s, o, Edge::new(0.into(), 0.into()));
     g.add_edge(other, o, Edge::new(0.into(), 1.into()));
 
-    let flat = flatten_with(&g, &HashMap::new());
+    let map = HashMap::new();
+    let flat = flatten_with(&g, &map);
     assert_eq!(flat.node_count(), 3);
     assert_eq!(flat.edge_count(), 2);
     for n in flat.node_indices() {
@@ -558,7 +562,7 @@ fn render(world: &mut World, frames: usize) -> Vec<f32> {
 }
 
 /// The flat vertex at `path`.
-fn flat_kind<'a>(flat: &'a Graph<Flat<N>>, path: &[usize]) -> &'a Flat<N> {
+fn flat_kind<'a>(flat: &'a Graph<Flat<&'a N>>, path: &[usize]) -> &'a Flat<&'a N> {
     &flat[at(flat, path)]
 }
 
@@ -663,7 +667,8 @@ fn root_boundaries_kept_as_markers() {
     g.add_edge(l, o0, Edge::new(0.into(), 0.into()));
     let _ = i1;
 
-    let flat = flatten_with(&g, &HashMap::new());
+    let map = HashMap::new();
+    let flat = flatten_with(&g, &map);
     assert_eq!(flat.node_count(), 4, "lag + three root boundary markers");
     assert!(
         matches!(flat_kind(&flat, &[0]), Flat::Inlet { index: 0, .. }),

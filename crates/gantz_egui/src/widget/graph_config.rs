@@ -19,10 +19,7 @@ pub struct GraphConfig<'a> {
     base_sources: &'a [&'a str],
     current_base_source: Option<&'a str>,
     current_description: Option<&'a str>,
-    env: Option<(
-        &'a dyn crate::Registry,
-        &'a mut gantz_ca::merge::Resolutions,
-    )>,
+    env: Option<(&'a crate::Env<'a>, &'a mut gantz_ca::merge::Resolutions)>,
 }
 
 /// Response from the [`GraphConfig`] widget.
@@ -115,7 +112,7 @@ impl<'a> GraphConfig<'a> {
     /// merge row is hidden.
     pub fn merge_env(
         mut self,
-        env: &'a dyn crate::Registry,
+        env: &'a crate::Env<'a>,
         resolutions: &'a mut gantz_ca::merge::Resolutions,
     ) -> Self {
         self.env = Some((env, resolutions));
@@ -372,7 +369,7 @@ impl<'a> GraphConfig<'a> {
 ///
 /// [`Resolutions`]: gantz_ca::merge::Resolutions
 fn merge_select(
-    env: &dyn crate::Registry,
+    env: &crate::Env<'_>,
     head: &gantz_ca::Head,
     resolutions: gantz_ca::merge::Resolutions,
     ui: &mut egui::Ui,
@@ -381,13 +378,13 @@ fn merge_select(
     egui::ComboBox::from_id_salt("merge_select")
         .selected_text("select branch\u{2026}")
         .show_ui(ui, |ui| {
-            let candidates = crate::merge::merge_candidates(env.ca(), head);
+            let candidates = crate::merge::merge_candidates(env.registry, head);
             if candidates.is_empty() {
                 ui.weak("no mergeable graphs");
                 return;
             }
             let ours_tip = match head {
-                gantz_ca::Head::Branch(name) => env.ca().head(name),
+                gantz_ca::Head::Branch(name) => env.registry.head(name),
                 gantz_ca::Head::Commit(ca) => Some(*ca),
             };
             for candidate in candidates {

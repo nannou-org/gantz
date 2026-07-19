@@ -19,3 +19,12 @@ pub mod pane;
 pub mod param;
 pub mod ref_ext;
 pub mod settings;
+
+// Lets the synthdef compiler and dsp driver find DSP nodes within the erased
+// UI node by delegating to this crate's downcast probe.
+impl crate::ToNodeDsp for gantz_egui::node::DynNode {
+    fn to_node_dsp(&self) -> Option<&dyn crate::NodeDsp> {
+        let node: &dyn gantz_core::Node = &**self;
+        crate::node_dsp_of(node as &dyn std::any::Any)
+    }
+}

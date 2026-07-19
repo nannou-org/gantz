@@ -4,11 +4,11 @@ use crate::egui::param::{param_state_row, rate_row, value_row};
 use crate::node::Lag;
 use crate::param::{param_state, param_value, with_value};
 use gantz_egui::{
-    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind,
+    Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
 };
 
 impl NodeUi for Lag {
-    fn name(&self, _: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         "~lag".into()
     }
 
@@ -59,7 +59,7 @@ impl NodeUi for Lag {
         resp
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         match kind {
             SocketKind::Input => Some(SocketDoc::ty("signal").with_description("signal to smooth")),
             SocketKind::Output => Some(SocketDoc::ty("signal").with_description("smoothed signal")),

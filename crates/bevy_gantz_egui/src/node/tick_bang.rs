@@ -11,9 +11,9 @@
 use bevy_ecs::prelude::*;
 use bevy_egui::egui;
 use bevy_time::prelude::*;
-use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::visit;
+use gantz_egui::node::DynNode;
 use gantz_egui::widget::node_inspector::radio_option;
 use gantz_format::{Datum, FormatError, SugarArgs, node_datum};
 use gantz_nodetag::NodeTag;
@@ -141,7 +141,6 @@ impl Eq for Interval {}
 
 impl Hash for Interval {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Fully qualified to disambiguate from `gantz_ca::CaHash::hash`.
         match self {
             Interval::Duration(secs) => {
                 Hash::hash(&0u8, state);
@@ -196,25 +195,6 @@ impl Default for TickBang {
     }
 }
 
-impl CaHash for TickBang {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update("gantz.tick!".as_bytes());
-        // The interval - and the unit it's specified in - is part of the node's
-        // identity: editing it gives the node a new address, which is how the
-        // commit-on-change model persists it (only committed graphs are saved).
-        match self.interval {
-            Interval::Duration(secs) => {
-                hasher.update(b"duration");
-                CaHash::hash(&secs.to_bits(), hasher);
-            }
-            Interval::Rate(hz) => {
-                hasher.update(b"rate");
-                CaHash::hash(&hz.to_bits(), hasher);
-            }
-        }
-    }
-}
-
 impl gantz_core::Node for TickBang {
     fn n_outputs(&self, _ctx: MetaCtx) -> usize {
         1
@@ -240,7 +220,7 @@ impl gantz_core::Node for TickBang {
 }
 
 impl gantz_egui::NodeUi for TickBang {
-    fn name(&self, _: &dyn gantz_egui::Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &gantz_egui::Env<'_>) -> std::borrow::Cow<'_, str> {
         std::borrow::Cow::Borrowed("tick!")
     }
 
@@ -348,7 +328,7 @@ impl gantz_egui::NodeUi for TickBang {
 
     fn socket_doc(
         &self,
-        _: &dyn gantz_egui::Registry,
+        _: &gantz_egui::Env<'_>,
         kind: gantz_egui::SocketKind,
         _ix: usize,
     ) -> Option<gantz_egui::SocketDoc> {
@@ -363,36 +343,20 @@ impl gantz_egui::NodeUi for TickBang {
 }
 
 // ---------------------------------------------------------------------------
-// ToTickBang trait
-// ---------------------------------------------------------------------------
-
-/// Trait for types that may contain a [`TickBang`] node.
-///
-/// Implement this for your top-level node wrapper so that the
-/// [`drive_tick_bangs`] system can discover `tick!` nodes.
-pub trait ToTickBang {
-    fn to_tick_bang(&self) -> Option<&TickBang>;
-}
-
-impl ToTickBang for TickBang {
-    fn to_tick_bang(&self) -> Option<&TickBang> {
-        Some(self)
-    }
-}
-
-// ---------------------------------------------------------------------------
 // TickBangCollector
 // ---------------------------------------------------------------------------
 
 /// Collects the path and configured duration of every [`TickBang`] node found
-/// during graph traversal.
+/// during graph traversal, discovered by [`Any`](std::any::Any) downcast
+/// within the erased UI node.
 struct TickBangCollector {
     pub ticks: Vec<(Vec<usize>, f64)>,
 }
 
-impl<N: ToTickBang> visit::TypedVisitor<N> for TickBangCollector {
-    fn visit_pre(&mut self, ctx: visit::Ctx<'_, '_>, node: &N) {
-        if let Some(tick) = node.to_tick_bang() {
+impl visit::TypedVisitor<DynNode> for TickBangCollector {
+    fn visit_pre(&mut self, ctx: visit::Ctx<'_, '_>, node: &DynNode) {
+        let n: &dyn gantz_core::Node = &**node;
+        if let Some(tick) = (n as &dyn std::any::Any).downcast_ref::<TickBang>() {
             self.ticks.push((ctx.path().to_vec(), tick.duration()));
         }
     }
@@ -408,13 +372,10 @@ impl<N: ToTickBang> visit::TypedVisitor<N> for TickBangCollector {
 /// single multi-source entrypoint - `tick!` nodes fire independently (each on
 /// its own duration), so each gets its own single-source entrypoint that the
 /// [`drive_tick_bangs`] driver can trigger the right number of times.
-pub fn entrypoints<N>(
+pub fn entrypoints(
     get_node: node::GetNode<'_>,
-    graph: &gantz_core::node::graph::Graph<N>,
-) -> Vec<gantz_core::compile::Entrypoint>
-where
-    N: gantz_core::Node + ToTickBang,
-{
+    graph: &gantz_core::node::graph::Graph<DynNode>,
+) -> Vec<gantz_core::compile::Entrypoint> {
     let mut collector = TickBangCollector { ticks: vec![] };
     gantz_core::graph::visit_typed(get_node, graph, &[], &mut collector);
     collector
@@ -436,29 +397,35 @@ where
 /// For each open head and each `tick!` node, advances the node's time
 /// accumulator by the update delta time and triggers one push evaluation for
 /// every whole tick duration elapsed (capped by `MAX_CATCHUP_TICKS`).
-pub fn drive_tick_bangs<N>(
+pub fn drive_tick_bangs(
     time: Res<Time>,
     epoch: Res<bevy_gantz::EvalEpoch>,
     registry: Res<crate::Registry>,
-    cache: Res<bevy_gantz::GraphCache<N>>,
-    builtins: Res<bevy_gantz::BuiltinNodes<N>>,
+    cache: Res<crate::GraphCache>,
+    builtins: Res<crate::BuiltinNodes>,
     mut vms: NonSendMut<bevy_gantz::head::HeadVms>,
-    heads: Query<(Entity, &bevy_gantz::head::WorkingGraph<N>), With<bevy_gantz::head::OpenHead>>,
+    heads: Query<(Entity, &bevy_gantz::head::HeadRef), With<bevy_gantz::head::OpenHead>>,
     mut cmds: Commands,
-) where
-    N: gantz_core::Node + ToTickBang + Send + Sync,
-{
+) {
     let dt = time.delta_secs_f64();
     // The frame's monotonic "now"; each tick's exact firing time is derived from it.
     let now = epoch.now_secs();
 
-    for (entity, wg) in heads.iter() {
-        let node_reg = crate::registry_ref(&registry, &cache, &builtins);
-        let get_node = |ca: &gantz_ca::ContentAddr| node_reg.node(ca);
+    for (entity, head_ref) in heads.iter() {
+        // The head's committed graph, read from the reified cache (the
+        // working graph equals it by the `WorkingGraph` invariant).
+        let Some(graph_ca) = registry.head_commit(&head_ref.0).map(|c| c.graph) else {
+            continue;
+        };
+        let Some(graph) = cache.get(&graph_ca) else {
+            continue;
+        };
+        let get_node =
+            |ca: &gantz_ca::ContentAddr| crate::lookup_node(&cache, &builtins.instances, ca);
 
         // Collect all TickBang paths + durations.
         let mut collector = TickBangCollector { ticks: vec![] };
-        gantz_core::graph::visit_typed(&get_node, &**wg, &[], &mut collector);
+        gantz_core::graph::visit_typed(&get_node, graph, &[], &mut collector);
 
         if collector.ticks.is_empty() {
             continue;

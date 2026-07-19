@@ -7,11 +7,10 @@
 //! [`gantz_format::from_str`]/[`gantz_format::to_string`], and applies those
 //! forms back into the registry's sections on parse.
 
-use gantz_ca::{GraphAddr, Name, Registry, Timestamp};
+use crate::node::NodeCodec;
+use gantz_ca::{Datum, GraphAddr, Name, NodeData, Registry, Timestamp};
 use gantz_format::sexpr;
 use gantz_format::{Addr, Form, GraphLabels, Loaded};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 pub use gantz_format::FormatError;
 
@@ -24,31 +23,47 @@ const CLAIMED: &[&str] = &[
     crate::section::DEMOS_ID,
 ];
 
+/// The [`gantz_format::Normalize`] implementation backed by a [`NodeCodec`]:
+/// split the parsed datum's `"type"` tag out and round-trip the fields
+/// through the codec's typed node ([`NodeCodec::normalize`]), recomputing the
+/// canonical form and the refs/blobs columns.
+fn normalize_datum(codec: &NodeCodec, datum: Datum) -> Result<NodeData, FormatError> {
+    let Datum::Map(mut entries) = datum else {
+        return Err(FormatError::malformed("node datum is not a map"));
+    };
+    let Some(ix) = entries.iter().position(|(k, _)| k == "type") else {
+        return Err(FormatError::malformed("node datum has no `type` tag"));
+    };
+    let (_, tag) = entries.remove(ix);
+    let Datum::Str(tag) = tag else {
+        return Err(FormatError::malformed("node `type` tag is not a string"));
+    };
+    codec
+        .normalize(&NodeData::new(tag.clone(), Datum::Map(entries)))
+        .map_err(|e| FormatError::node_deserialize(tag, e.to_string()))
+}
+
 /// Parse a `.gantz` document into a registry, applying the GUI-layer friendly
 /// forms (`descriptions`, `layout`, `demo`) into its sections.
 ///
 /// `now` provides the timestamp for any graph the document does not commit
 /// explicitly (hand-authored graphs).
-pub fn from_str<N>(text: &str, now: Timestamp) -> Result<Registry, FormatError>
-where
-    N: Serialize + DeserializeOwned + gantz_core::Node + gantz_format::NodeSugar,
-{
-    let loaded = gantz_format::from_str::<N>(text, now)?;
-    Ok(registry_from_loaded(loaded))
+pub fn from_str(text: &str, now: Timestamp, codec: &NodeCodec) -> Result<Registry, FormatError> {
+    from_str_seeded(text, now, &std::collections::BTreeMap::new(), codec)
 }
 
 /// [`from_str`], resolving names the document does not define through `seed`
 /// (externally-known name -> head graph associations). See
 /// [`gantz_format::from_str_seeded`].
-pub fn from_str_seeded<N>(
+pub fn from_str_seeded(
     text: &str,
     now: Timestamp,
     seed: &std::collections::BTreeMap<String, GraphAddr>,
-) -> Result<Registry, FormatError>
-where
-    N: Serialize + DeserializeOwned + gantz_core::Node + gantz_format::NodeSugar,
-{
-    let loaded = gantz_format::from_str_seeded::<N>(text, now, seed)?;
+    codec: &NodeCodec,
+) -> Result<Registry, FormatError> {
+    let loaded = gantz_format::from_str_normalized(text, now, &codec.sugars(), seed, &|datum| {
+        normalize_datum(codec, datum)
+    })?;
     Ok(registry_from_loaded(loaded))
 }
 
@@ -67,13 +82,10 @@ fn registry_from_loaded(mut loaded: Loaded) -> Registry {
     loaded.registry
 }
 
-/// Serialize a registry to a `.gantz` document, with `N` selecting the node
-/// set's keyword [`gantz_format::Sugar`] for the graph forms.
-pub fn to_string<N>(registry: &Registry) -> Result<String, FormatError>
-where
-    N: gantz_format::NodeSugar,
-{
-    let dumped = gantz_format::to_string::<N>(registry, CLAIMED)?;
+/// Serialize a registry to a `.gantz` document, with the codec supplying the
+/// node set's keyword [`gantz_format::Sugar`] for the graph forms.
+pub fn to_string(registry: &Registry, codec: &NodeCodec) -> Result<String, FormatError> {
+    let dumped = gantz_format::to_string_with(registry, &codec.sugars(), CLAIMED)?;
     // Each top-level block is a section; they are joined with a blank line.
     let mut sections = vec![dumped.text.trim_end().to_string()];
 
@@ -105,11 +117,8 @@ where
 /// tables, references by name. The `(layout ...)` and `(demo ...)` forms are
 /// emitted in graph-name order so the output is stable across address changes -
 /// suited to a hand-editable, git-friendly base file.
-pub fn to_string_named<N>(registry: &Registry) -> Result<String, FormatError>
-where
-    N: gantz_format::NodeSugar,
-{
-    let dumped = gantz_format::to_string_named::<N>(registry, CLAIMED)?;
+pub fn to_string_named(registry: &Registry, codec: &NodeCodec) -> Result<String, FormatError> {
+    let dumped = gantz_format::to_string_named_with(registry, &codec.sugars(), CLAIMED)?;
     let mut sections = vec![dumped.text.trim_end().to_string()];
 
     // `(descriptions ...)`, in name order.
@@ -320,7 +329,7 @@ fn addr_of(e: &sexpr::ExprKind) -> Option<Addr> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_node::{TestGraph, TestNode, commit_named, expr, named_ref};
+    use crate::test_node::{TestGraph, codec, commit_named, expr, named_ref};
     use gantz_ca::CommitAddr;
     use std::time::Duration;
 
@@ -382,14 +391,13 @@ mod tests {
     #[test]
     fn sections_round_trip_through_text() {
         let (reg, root_ca) = test_registry();
-        let text = to_string::<Box<dyn TestNode>>(&reg).unwrap();
+        let text = to_string(&reg, &codec()).unwrap();
         // Claimed sections must not also appear as generic forms.
         assert!(!text.contains("(section"));
         assert!(text.contains("(descriptions"));
         assert!(text.contains("(layout"));
         assert!(text.contains("(demo root"));
-        let parsed: Registry =
-            from_str::<Box<dyn TestNode>>(&text, Duration::from_secs(9)).unwrap();
+        let parsed: Registry = from_str(&text, Duration::from_secs(9), &codec()).unwrap();
         // The commits table preserves the head commit exactly.
         assert_eq!(parsed.head(&name("root")), Some(root_ca));
         assert_sections_survive(&parsed);
@@ -400,10 +408,9 @@ mod tests {
     #[test]
     fn sections_round_trip_through_named_text() {
         let (reg, _root_ca) = test_registry();
-        let text = to_string_named::<Box<dyn TestNode>>(&reg).unwrap();
+        let text = to_string_named(&reg, &codec()).unwrap();
         assert!(!text.contains("(section"));
-        let parsed: Registry =
-            from_str::<Box<dyn TestNode>>(&text, Duration::from_secs(9)).unwrap();
+        let parsed: Registry = from_str(&text, Duration::from_secs(9), &codec()).unwrap();
         assert_sections_survive(&parsed);
     }
 
@@ -414,7 +421,7 @@ mod tests {
         let mut g = TestGraph::default();
         g.add_node(expr("(+ 1 1)"));
         commit_named(&mut reg, Duration::from_secs(1), &g, &name("only"));
-        let text = to_string::<Box<dyn TestNode>>(&reg).unwrap();
+        let text = to_string(&reg, &codec()).unwrap();
         assert!(!text.contains("(descriptions"));
         assert!(!text.contains("(layout"));
         assert!(!text.contains("(demo"));

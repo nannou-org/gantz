@@ -219,7 +219,8 @@ fn default_lowering_instances_dsp_refs_and_splices_the_rest() {
     head.add_node(N::Ref(inline_ref));
     head.add_node(ref_node(wire_ca));
 
-    let flat = gantz_plyphon::flatten_from_registry(&head, &reify_all(&registry)).expect("flatten");
+    let reified = reify_all(&registry);
+    let flat = gantz_plyphon::flatten_from_registry(&head, &reified).expect("flatten");
     let markers: Vec<_> = flat
         .node_indices()
         .filter(|&n| matches!(flat[n], Flat::Instance { .. }))

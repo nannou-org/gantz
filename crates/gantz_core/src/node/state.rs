@@ -3,7 +3,6 @@ use crate::{
     ROOT_STATE,
     node::{self, Node},
 };
-use gantz_ca::CaHash;
 use steel::{
     SteelErr, SteelVal,
     gc::Gc,
@@ -13,13 +12,11 @@ use steel::{
 };
 
 /// A wrapper around a **Node** that adds some persistent state.
-#[derive(Clone, Debug, Deserialize, Serialize, CaHash)]
-#[cahash("gantz.state")]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct State<N, S> {
     /// The node being wrapped with state.
     pub node: N,
     /// The type of state used by the node.
-    #[cahash(skip)]
     pub state: core::marker::PhantomData<S>,
 }
 

@@ -2,12 +2,12 @@
 
 use crate::node::PlayBuf;
 use gantz_egui::{
-    InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind,
+    Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
 };
 use std::borrow::Cow;
 
 impl NodeUi for PlayBuf {
-    fn name(&self, _: &dyn Registry) -> Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> Cow<'_, str> {
         Cow::Borrowed("~playbuf")
     }
 
@@ -31,7 +31,7 @@ impl NodeUi for PlayBuf {
         InspectorRowsResponse::default()
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         match kind {
             SocketKind::Input => None,
             SocketKind::Output => Some(

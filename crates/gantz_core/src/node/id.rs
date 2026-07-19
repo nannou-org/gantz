@@ -1,7 +1,6 @@
 //! A node representing the identity function - returns its input unchanged.
 
 use crate::node;
-use gantz_ca::CaHash;
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
@@ -12,8 +11,7 @@ pub const IDENTITY_NAME: &str = "id";
 ///
 /// This is a fundamental building block in functional programming,
 /// often used as a default or no-op function.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash, NodeTag)]
-#[cahash("gantz.identity")]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag)]
 pub struct Identity;
 
 impl node::Node for Identity {

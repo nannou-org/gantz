@@ -144,7 +144,12 @@ fn lag_change_changes_structural_sig() {
 
 #[test]
 fn lag_is_part_of_node_identity() {
-    use gantz_ca::content_addr;
+    // Node identity is the erased (data-layer) content address.
+    let content_addr = |n: &SinOsc| {
+        gantz_core::data::erase_node_typed(n)
+            .unwrap()
+            .content_addr()
+    };
     assert_eq!(
         content_addr(&SinOsc::default()),
         content_addr(&SinOsc::default()),
@@ -1409,7 +1414,15 @@ fn kr_into_scopeout_needs_no_lift() {
 
 #[test]
 fn rate_is_part_of_node_identity() {
-    use gantz_ca::content_addr;
+    // Node identity is the erased (data-layer) content address.
+    fn content_addr<T>(n: &T) -> gantz_ca::ContentAddr
+    where
+        T: gantz_nodetag::NodeTag + serde::Serialize + gantz_core::Node,
+    {
+        gantz_core::data::erase_node_typed(n)
+            .unwrap()
+            .content_addr()
+    }
     // The default (audio) rate leaves existing addresses unchanged; kr changes
     // them. Same for ~lag.
     assert_eq!(

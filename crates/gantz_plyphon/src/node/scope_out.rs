@@ -1,7 +1,6 @@
 //! The `~scopeout` node: monitor a dsp signal into per-channel ring buffers, read
 //! out on a trigger.
 
-use gantz_ca::CaHash;
 use gantz_core::node::{Conns, EvalConf, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::steel::SteelVal;
 use gantz_nodetag::NodeTag;
@@ -50,13 +49,6 @@ impl Default for ScopeOut {
         ScopeOut {
             size: default_size(),
         }
-    }
-}
-
-impl CaHash for ScopeOut {
-    fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-        hasher.update(b"gantz.plyphon.scopeout");
-        hasher.update(&self.size.to_le_bytes());
     }
 }
 

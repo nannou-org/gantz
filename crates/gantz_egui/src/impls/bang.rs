@@ -1,9 +1,7 @@
-use crate::{
-    NodeCtx, NodeUi, NodeUiResponse, Registry, SocketDoc, SocketKind, node, ui_tree::UiTree,
-};
+use crate::{Env, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind, node, ui_tree::UiTree};
 
 impl NodeUi for gantz_std::Bang {
-    fn name(&self, _: &dyn Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         "!".into()
     }
 
@@ -31,7 +29,7 @@ impl NodeUi for gantz_std::Bang {
         resp
     }
 
-    fn socket_doc(&self, _: &dyn Registry, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
+    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         match kind {
             SocketKind::Output => Some(
                 SocketDoc::ty("bang")

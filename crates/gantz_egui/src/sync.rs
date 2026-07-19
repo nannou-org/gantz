@@ -6,33 +6,17 @@
 //! recommitting any graph whose references changed. This is the headless
 //! counterpart of the inspector's render-time auto-sync, and the mechanism by
 //! which editing a nested graph propagates up to its parents.
+//!
+//! The whole cascade operates on the registry's stored [`DataGraph`]s
+//! directly: each `NamedRef` weight is rewritten in place via a tag-gated
+//! monomorphic round-trip (`with_named_ref_mut`), so no node-set type
+//! parameter is involved.
 
 use crate::node::NamedRef;
-use gantz_ca::{CommitAddr, GraphAddr, Name, Registry};
-use gantz_core::node::graph::Graph;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, NodeData, Registry};
+use gantz_nodetag::NodeTag;
 use std::collections::HashMap;
 use std::time::Duration;
-
-/// Access the [`NamedRef`] within a frontend's node type, if any.
-///
-/// Implemented by frontends (typically a downcast) so the otherwise node-type-
-/// agnostic [`resync`] / rename machinery can find and update references. This
-/// is the references-only analogue of the removed `ToGraphMut`.
-pub trait AsNamedRefMut {
-    /// A mutable reference to the inner [`NamedRef`], if this node is one.
-    fn as_named_ref_mut(&mut self) -> Option<&mut NamedRef>;
-}
-
-/// Access the [`NamedRef`] within a frontend's node type, if any.
-///
-/// The read-only companion to [`AsNamedRefMut`], used by the reference-cycle
-/// check (`crate::cycle`) to walk a graph's named references without mutating.
-pub trait AsNamedRef {
-    /// A shared reference to the inner [`NamedRef`], if this node is one.
-    fn as_named_ref(&self) -> Option<&NamedRef>;
-}
 
 /// A named graph whose commit moved during [`resync`] or a rename cascade.
 #[derive(Clone, Debug)]
@@ -45,76 +29,82 @@ pub struct Moved {
     pub new_commit: CommitAddr,
 }
 
-/// Reify the stored graph at `source_commit` through the node set, logging
-/// (and skipping, via `None`) graphs that fail to decode.
-fn reify_commit_graph<N>(registry: &Registry, source_commit: &CommitAddr) -> Option<Graph<N>>
-where
-    N: DeserializeOwned,
-{
-    let data_graph = registry.commit_graph_ref(source_commit)?;
-    match gantz_core::data::reify(data_graph) {
-        Ok(g) => Some(g),
+/// Run `f` over the [`NamedRef`] stored in `weight`, writing the rewritten
+/// node back when `f` reports a change. Returns whether `weight` changed.
+///
+/// Tag-gated: only a weight whose tag is exactly `NamedRef`'s matches (never
+/// `Fn`/`FnNamedRef`, which reference a graph without standing in for it).
+/// The round-trip is monomorphic - [`reify_node_concrete`], mutate,
+/// [`erase_node_typed`] - so the refs column is recomputed for free. Codec
+/// failures are logged and reported as unchanged.
+///
+/// [`reify_node_concrete`]: gantz_core::data::reify_node_concrete
+/// [`erase_node_typed`]: gantz_core::data::erase_node_typed
+pub(crate) fn with_named_ref_mut(
+    weight: &mut NodeData,
+    f: impl FnOnce(&mut NamedRef) -> bool,
+) -> bool {
+    if weight.tag != <NamedRef as NodeTag>::TAG {
+        return false;
+    }
+    let mut named_ref = match gantz_core::data::reify_node_concrete::<NamedRef>(weight) {
+        Ok(named_ref) => named_ref,
         Err(e) => {
-            log::error!("failed to reify graph at commit {source_commit}: {e}");
-            None
+            log::error!("failed to decode a stored `NamedRef`: {e}");
+            return false;
+        }
+    };
+    if !f(&mut named_ref) {
+        return false;
+    }
+    match gantz_core::data::erase_node_typed(&named_ref) {
+        Ok(node_data) => {
+            *weight = node_data;
+            true
+        }
+        Err(e) => {
+            log::error!("failed to erase a rewritten `NamedRef`: {e}");
+            false
         }
     }
 }
 
-/// Apply `mutate` to every inner [`NamedRef`] of `graph`, returning whether
+/// Apply `mutate` to every [`NamedRef`] weight of `graph`, returning whether
 /// any reference changed.
-fn rewrite_refs<N>(graph: &mut Graph<N>, mut mutate: impl FnMut(&mut NamedRef) -> bool) -> bool
-where
-    N: AsNamedRefMut,
-{
+fn rewrite_refs(graph: &mut DataGraph, mut mutate: impl FnMut(&mut NamedRef) -> bool) -> bool {
     let mut changed = false;
     for weight in graph.node_weights_mut() {
-        if let Some(named_ref) = weight.as_named_ref_mut() {
-            changed |= mutate(named_ref);
-        }
+        changed |= with_named_ref_mut(weight, &mut mutate);
     }
     changed
 }
 
-/// Erase a rewritten graph and commit it under `name`, returning the new
-/// commit. Logs (and skips, via `None`) graphs that fail to erase.
-fn commit_erased<N>(
+/// Commit a rewritten data graph under `name`, returning the new commit.
+fn commit_data_graph(
     registry: &mut Registry,
     timestamp: Duration,
     name: &Name,
-    graph: &Graph<N>,
-) -> Option<CommitAddr>
-where
-    N: Serialize + gantz_core::Node,
-{
-    let (data_graph, graph_ca) = match gantz_core::data::erase_with_addr(graph) {
-        Ok(pair) => pair,
-        Err(e) => {
-            log::error!("failed to erase rewritten graph for `{name}`: {e}");
-            return None;
-        }
-    };
-    Some(registry.commit_graph_to_name(timestamp, graph_ca, || data_graph, name))
+    graph: DataGraph,
+) -> CommitAddr {
+    let graph_ca = gantz_ca::graph_addr(&graph);
+    registry.commit_graph_to_name(timestamp, graph_ca, || graph, name)
 }
 
 /// Rewrite the references in the graph at `source_commit` via `mutate`, and -
 /// when something changed - commit the result under `name`. Returns the
 /// resulting [`Moved`], or `None` when nothing changed.
-fn commit_rewritten<N>(
+fn commit_rewritten(
     registry: &mut Registry,
     timestamp: Duration,
     name: &Name,
     source_commit: CommitAddr,
     mutate: impl FnMut(&mut NamedRef) -> bool,
-) -> Option<Moved>
-where
-    N: Serialize + DeserializeOwned + gantz_core::Node + AsNamedRefMut,
-{
-    let mut g: Graph<N> = reify_commit_graph(registry, &source_commit)?;
+) -> Option<Moved> {
+    let mut g = registry.commit_graph_ref(&source_commit)?.clone();
     if !rewrite_refs(&mut g, mutate) {
         return None;
     }
-    let new_commit = commit_erased(registry, timestamp, name, &g)?;
+    let new_commit = commit_data_graph(registry, timestamp, name, g);
     Some(Moved {
         name: name.clone(),
         old_commit: source_commit,
@@ -157,15 +147,12 @@ fn renamed(descendant: &Name, old: &Name, new: &Name) -> Name {
 ///
 /// Children are copied deepest-first so a parent's references resolve to its
 /// already-copied children.
-pub fn fork_nested<N>(
+pub fn fork_nested(
     registry: &mut Registry,
     timestamp: Duration,
     old: &Name,
     new: &Name,
-) -> Vec<Moved>
-where
-    N: Serialize + DeserializeOwned + gantz_core::Node + AsNamedRefMut,
-{
+) -> Vec<Moved> {
     let mut descendants: Vec<Name> = registry
         .heads()
         .filter(|(n, _)| n.starts_with(old) && *n != old)
@@ -184,13 +171,11 @@ where
         let Some(commit) = registry.head(d) else {
             continue;
         };
-        let Some(mut g) = reify_commit_graph::<N>(registry, &commit) else {
+        let Some(mut g) = registry.commit_graph_ref(&commit).cloned() else {
             continue;
         };
         rewrite_refs(&mut g, |nr| remap_ref(nr, &remap));
-        let Some(new_commit) = commit_erased(registry, timestamp, &d_new, &g) else {
-            continue;
-        };
+        let new_commit = commit_data_graph(registry, timestamp, &d_new, g);
         let graph_ca = registry
             .commits()
             .get(&new_commit)
@@ -206,7 +191,7 @@ where
 
     // Repoint the already-created `new` root's references to its own children.
     if let Some(root_commit) = registry.head(new) {
-        moves.extend(commit_rewritten::<N>(
+        moves.extend(commit_rewritten(
             registry,
             timestamp,
             new,
@@ -229,10 +214,7 @@ where
 /// non-nesting reference shape. The loop cannot run forever even for a
 /// (degenerate) mutually-referencing registry - it simply stops once no graph
 /// changes.
-pub fn resync<N>(registry: &mut Registry, timestamp: Duration) -> Vec<Moved>
-where
-    N: Serialize + DeserializeOwned + gantz_core::Node + AsNamedRefMut,
-{
+pub fn resync(registry: &mut Registry, timestamp: Duration) -> Vec<Moved> {
     // Deepest names first: a child is updated before the parent that refs it.
     let mut order: Vec<Name> = registry.heads().map(|(n, _)| n.clone()).collect();
     order.sort_by(|a, b| b.depth().cmp(&a.depth()).then_with(|| a.cmp(b)));
@@ -261,7 +243,7 @@ where
                     .get(m)
                     .map(|&(_, graph)| gantz_ca::ContentAddr::from(graph))
             };
-            if let Some(moved) = commit_rewritten::<N>(registry, timestamp, name, commit_ca, |nr| {
+            if let Some(moved) = commit_rewritten(registry, timestamp, name, commit_ca, |nr| {
                 nr.resync(&resolve)
             }) {
                 let graph = registry
@@ -291,15 +273,12 @@ where
 /// independent instance with its own state - and they are all repointed.
 /// Returns the parent's move (if it changed) so an open parent head can be
 /// refreshed. A no-op (empty) when `old_nested` is not a nested name.
-pub fn promote_nested<N>(
+pub fn promote_nested(
     registry: &mut Registry,
     timestamp: Duration,
     old_nested: &Name,
     new_name: &Name,
-) -> Vec<Moved>
-where
-    N: Serialize + DeserializeOwned + gantz_core::Node + AsNamedRefMut,
-{
+) -> Vec<Moved> {
     // The parent referencing the nested graph: the name with the last leaf
     // stripped (`A:1` -> `A`, `A:1:2` -> `A:1`).
     let Some(parent) = old_nested.parent() else {
@@ -314,7 +293,7 @@ where
 
     // Repoint every parent reference (each a distinct instance) to the new name.
     let mut moves = Vec::new();
-    moves.extend(commit_rewritten::<N>(
+    moves.extend(commit_rewritten(
         registry,
         timestamp,
         &parent,

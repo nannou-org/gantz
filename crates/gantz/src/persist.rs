@@ -25,9 +25,6 @@ use bevy_gantz_egui::GuiState;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::tasks::{IoTaskPool, Task, block_on};
 
-/// The app's node type, as stored in the registry and head entities.
-type BoxNode = Box<dyn crate::node::Node>;
-
 /// Registers off-thread, debounced persistence of the app's state.
 ///
 /// Expects the [`Pkv`] resource and a `DebouncedInputPlugin<DebouncedInputEvent>`
@@ -157,7 +154,7 @@ fn collect_batch_to_persist(
     gui_state: &GuiState,
     tab_order: &HeadTabOrder,
     focused: &FocusedHead,
-    heads_query: &Query<OpenHeadDataReadOnly<BoxNode>, With<OpenHead>>,
+    heads_query: &Query<OpenHeadDataReadOnly, With<OpenHead>>,
     window: Option<&Window>,
 ) -> Vec<(String, String)> {
     let mut batch = bevy_gantz::storage::BatchWriter::default();
@@ -196,7 +193,7 @@ fn persist_resources(
     mut persister: ResMut<Persister>,
     tab_order: Res<HeadTabOrder>,
     focused: Res<FocusedHead>,
-    heads_query: Query<OpenHeadDataReadOnly<BoxNode>, With<OpenHead>>,
+    heads_query: Query<OpenHeadDataReadOnly, With<OpenHead>>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
 ) {
     let start = web_time::Instant::now();
@@ -258,7 +255,7 @@ fn flush_on_exit(
     mut persister: ResMut<Persister>,
     tab_order: Res<HeadTabOrder>,
     focused: Res<FocusedHead>,
-    heads_query: Query<OpenHeadDataReadOnly<BoxNode>, With<OpenHead>>,
+    heads_query: Query<OpenHeadDataReadOnly, With<OpenHead>>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
 ) {
     if exit.read().next().is_none() {

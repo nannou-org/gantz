@@ -91,10 +91,10 @@ fn lag_child() -> Graph<N> {
 }
 
 /// Flatten with every ref lowering as an instance marker.
-fn flatten_with(
-    graph: &Graph<N>,
-    map: &HashMap<gantz_ca::ContentAddr, Graph<N>>,
-) -> Graph<Flat<N>> {
+fn flatten_with<'g>(
+    graph: &'g Graph<N>,
+    map: &'g HashMap<gantz_ca::ContentAddr, Graph<N>>,
+) -> Graph<Flat<&'g N>> {
     let resolve = |n: &N| match n {
         N::Ref(c, _, _) => Some((*c, RefKind::Instance, map.get(c))),
         _ => None,
@@ -104,9 +104,9 @@ fn flatten_with(
 
 /// Pre-flatten every child in `map` so `derive_template`'s `resolve` can
 /// return `&Graph<Flat<N>>`.
-fn flat_children(
-    map: &HashMap<gantz_ca::ContentAddr, Graph<N>>,
-) -> HashMap<gantz_ca::ContentAddr, Graph<Flat<N>>> {
+fn flat_children<'g>(
+    map: &'g HashMap<gantz_ca::ContentAddr, Graph<N>>,
+) -> HashMap<gantz_ca::ContentAddr, Graph<Flat<&'g N>>> {
     map.iter()
         .map(|(c, child)| (*c, flatten_with(child, map)))
         .collect()

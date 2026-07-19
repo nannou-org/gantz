@@ -3,7 +3,6 @@
 use super::size_sync::{self, fitted_size};
 use crate::widget::node_inspector;
 use crate::{InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse};
-use gantz_ca::CaHash;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
@@ -32,8 +31,7 @@ fn text_hash(text: &str) -> u64 {
 /// Both `text` and `size` are part of the content address: editing the note or
 /// resizing it are genuine edits that produce a new commit (and ride the export
 /// pipeline), so a resize is undoable just like a text edit.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, CaHash, NodeTag)]
-#[cahash("gantz.comment")]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag)]
 pub struct Comment {
     text: String,
     size: [u16; 2],
@@ -74,7 +72,7 @@ impl gantz_core::Node for Comment {
 }
 
 impl NodeUi for Comment {
-    fn name(&self, _registry: &dyn crate::Registry) -> std::borrow::Cow<'_, str> {
+    fn name(&self, _registry: &crate::Env<'_>) -> std::borrow::Cow<'_, str> {
         "comment".into()
     }
 
@@ -275,7 +273,13 @@ impl NodeUi for Comment {
 #[cfg(test)]
 mod tests {
     use super::Comment;
-    use gantz_ca::content_addr;
+
+    /// The node's erased (data-layer) content address.
+    fn content_addr(c: &Comment) -> gantz_ca::ContentAddr {
+        gantz_core::data::erase_node_typed(c)
+            .unwrap()
+            .content_addr()
+    }
 
     /// `size` is now part of the content address, so a resize is a genuine edit
     /// (this is what lets the `changed` signal at a settled resize map to a real

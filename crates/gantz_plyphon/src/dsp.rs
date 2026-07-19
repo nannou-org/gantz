@@ -42,15 +42,6 @@ impl NodeRate {
     }
 }
 
-/// Fold a node's ugen `rate` into a content-address hasher, but only when
-/// non-default (audio) - so existing audio-rate nodes keep their addresses.
-pub fn cahash_rate(hasher: &mut gantz_ca::Hasher, rate: NodeRate) {
-    if rate != NodeRate::Audio {
-        hasher.update(b"rate");
-        hasher.update(rate.token().as_bytes());
-    }
-}
-
 /// A channel group: the mono wires a single dsp port carries.
 ///
 /// A gantz signal edge is a channel-*group* wire (like SC's array signals, Max's
@@ -213,13 +204,13 @@ pub trait NodeDsp {
 }
 
 /// A downcast hook so the synthdef compiler and the audio driver can find
-/// [`NodeDsp`] nodes inside an erased node type (e.g. `Box<dyn Node>`).
+/// [`NodeDsp`] nodes inside an erased node type (e.g. the erased UI node,
+/// `gantz_egui::node::DynNode`).
 ///
-/// Implemented per concrete DSP node type (returning `Some(self)`). The
-/// application implements it for its boxed node enum by trying each known DSP
-/// node type - mirroring `ToTickBang` in `bevy_gantz_egui`. (A blanket
-/// `impl<T: NodeDsp>` is deliberately avoided so the application's
-/// `impl ToNodeDsp for Box<dyn Node>` does not collide with it.)
+/// Implemented per concrete DSP node type (returning `Some(self)`), and for
+/// the erased UI node by trying each known DSP node type via [`node_dsp_of`]
+/// (see the `egui` module). (A blanket `impl<T: NodeDsp>` is deliberately
+/// avoided so the erased-node impl does not collide with it.)
 pub trait ToNodeDsp {
     /// This value as a [`NodeDsp`], if it is one.
     fn to_node_dsp(&self) -> Option<&dyn NodeDsp>;
@@ -235,6 +226,18 @@ pub trait ToNodeDsp {
     /// node's VM state and identities stay stable across re-derives.
     fn node_path(&self, ix: usize) -> Vec<usize> {
         vec![ix]
+    }
+}
+
+// References probe through to the referent, letting borrowed graphs (e.g. the
+// flattening pass's `Flat<&N>` weights) derive without cloning nodes.
+impl<T: ToNodeDsp + ?Sized> ToNodeDsp for &T {
+    fn to_node_dsp(&self) -> Option<&dyn NodeDsp> {
+        (**self).to_node_dsp()
+    }
+
+    fn node_path(&self, ix: usize) -> Vec<usize> {
+        (**self).node_path(ix)
     }
 }
 

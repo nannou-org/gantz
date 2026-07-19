@@ -85,8 +85,10 @@ impl FormatError {
         Self::new(ErrorKind::Malformed(msg.into()))
     }
 
-    /// Construct a [`ErrorKind::NodeDeserialize`] error for node `tag`.
-    pub(crate) fn node_deserialize(tag: impl Into<String>, msg: impl Into<String>) -> Self {
+    /// Construct a [`ErrorKind::NodeDeserialize`] error for node `tag` - the
+    /// constructor an out-of-crate [`Normalize`](crate::Normalize)
+    /// implementation uses to report a node that failed its codec.
+    pub fn node_deserialize(tag: impl Into<String>, msg: impl Into<String>) -> Self {
         Self::new(ErrorKind::NodeDeserialize {
             tag: tag.into(),
             msg: msg.into(),

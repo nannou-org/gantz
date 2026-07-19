@@ -1,5 +1,4 @@
 use crate::node::{self, Conns, Node};
-use gantz_ca::CaHash;
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -15,15 +14,13 @@ use thiserror::Error;
 /// Each branch is a [`Conns`] bitmask specifying which outputs are active when
 /// that branch is selected. The number of outputs is inferred from the `Conns`
 /// length (all branches must have the same length).
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, CaHash, NodeTag)]
-#[cahash("gantz.branch")]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, NodeTag)]
 pub struct Branch {
     src: String,
     branches: Vec<Conns>,
     /// Unique `$` variable names in order of first appearance (cached).
     /// Skipped during serialization and recomputed on deserialization.
     #[serde(skip)]
-    #[cahash(skip)]
     vars: Vec<String>,
 }
 
