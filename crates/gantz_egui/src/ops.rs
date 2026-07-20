@@ -269,8 +269,8 @@ impl Reindex {
     }
 }
 
-/// Remove `nodes` from `graph`, migrating the per-node state, layout and
-/// selection that are keyed by node index.
+/// Remove `nodes` from `graph`, migrating the per-node state, layout,
+/// selection and cached instances that are keyed by node index.
 ///
 /// `petgraph::Graph::remove_node` swap-removes: the former-last node adopts the
 /// removed index, so exactly one surviving node changes index per removal.
@@ -291,6 +291,7 @@ pub fn remove_nodes(
     vm: &mut Engine,
     layout: &mut egui_graph::Layout,
     selection: &mut crate::widget::graph_scene::Selection,
+    instances: &mut crate::node::NodeInstances,
     nodes: impl IntoIterator<Item = NodeIndex>,
 ) -> Reindex {
     let node_id = |ix: usize| egui_graph::NodeId::from_u64(ix as u64);
@@ -327,7 +328,9 @@ pub fn remove_nodes(
     if !ops.is_empty() {
         selection.edges.clear();
     }
-    Reindex(ops)
+    let reindex = Reindex(ops);
+    instances.apply_reindex(&reindex);
+    reindex
 }
 
 /// Cut: serialize `nodes` to a `.gantz` clipboard payload, then remove them.
@@ -342,6 +345,7 @@ pub fn cut_nodes(
     vm: &mut Engine,
     head_view: &mut crate::SceneView,
     selection: &mut crate::widget::graph_scene::Selection,
+    instances: &mut crate::node::NodeInstances,
     nodes: &HashSet<NodeIndex>,
     codec: &NodeCodec,
 ) -> Option<String> {
@@ -351,6 +355,7 @@ pub fn cut_nodes(
         vm,
         &mut head_view.layout,
         selection,
+        instances,
         nodes.iter().copied(),
     );
     Some(text)
@@ -800,12 +805,31 @@ mod tests {
 
         let mut vm = Engine::new_base();
 
+        // Seed a cache entry per node so the instance migration is exercised
+        // too. The entries' weights are stand-ins (the `nd` weights aren't in
+        // the test codec's manifest); `apply_reindex` migrates by key alone.
+        let codec = crate::test_node::codec();
+        let mut instances = crate::node::NodeInstances::default();
+        let datas: Vec<_> = (0..5)
+            .map(|i| {
+                gantz_core::data::erase_node_typed(
+                    &gantz_core::node::Expr::new(format!("(+ $l {i})")).unwrap(),
+                )
+                .unwrap()
+            })
+            .collect();
+        for (i, d) in datas.iter().enumerate() {
+            let entry = instances.take(&codec, i, d).unwrap();
+            instances.put(i, entry);
+        }
+
         // Delete index 1: node 4 (weight 14) swap-removes into slot 1.
         let reindex = remove_nodes(
             &mut graph,
             &mut vm,
             &mut layout,
             &mut selection,
+            &mut instances,
             [NodeIx::new(1)],
         );
         assert!(!reindex.is_empty());
@@ -828,6 +852,13 @@ mod tests {
             selection.nodes.iter().copied().collect::<Vec<_>>(),
             vec![NodeIx::new(1)],
         );
+
+        // Cached instances followed the swap: node 4's entry now lives at
+        // index 1, the deleted and old-last slots are gone.
+        assert_eq!(instances.len(), 4);
+        assert!(instances.peek(1, &datas[4]).is_some());
+        assert!(instances.peek(1, &datas[1]).is_none());
+        assert!(instances.peek(4, &datas[4]).is_none());
     }
 
     // carry_layout maps live positions through the navigation matching, keeps

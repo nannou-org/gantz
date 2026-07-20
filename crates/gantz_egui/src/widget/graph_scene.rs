@@ -1,6 +1,8 @@
 use crate::{
     CopyNodes, Env, InspectEdge, NodeUi, OpenHead, OpenNodePalette, OpenNodeView, Paste, PastePos,
-    ResetTilesLayout, SocketDoc, node::NodeCodec, response::DynResponse,
+    ResetTilesLayout, SocketDoc,
+    node::{NodeCodec, NodeInstances},
+    response::DynResponse,
 };
 use egui::emath::GuiRounding;
 use egui_graph::{self, SocketKind, node::EdgeEvent};
@@ -56,14 +58,17 @@ pub type NodeIndex = petgraph::graph::NodeIndex<usize>;
 /// gantz graph.
 ///
 /// Operates on the graph's stored data form: each node weight is reified to
-/// a typed [`crate::node::UiNodeInstance`] through the `codec` for the
+/// a typed [`crate::node::NodeUiInstance`] through the `codec` for the
 /// duration of its UI pass and erased back only when a response marks a
-/// CA-affecting change. Weights whose tag is unknown to the codec render as
-/// opaque placeholders whose data round-trips untouched.
+/// CA-affecting change. Instances are retained between passes in the head's
+/// [`NodeInstances`] cache, so a steady-state pass pays an equality check
+/// per node rather than a reify. Weights whose tag is unknown to the codec
+/// render as opaque placeholders whose data round-trips untouched.
 pub struct GraphScene<'a> {
     registry: &'a Env<'a>,
     codec: &'a NodeCodec,
     graph: &'a mut DataGraph,
+    instances: &'a mut NodeInstances,
     id: egui::Id,
     layout_params: egui_graph::LayoutParams,
     /// Global dot-grid, snapping and snap-align options, applied to the
@@ -129,12 +134,18 @@ pub struct Selection {
 
 impl<'a> GraphScene<'a> {
     /// Create a graph scene for the given graph (a head's root graph; nested
-    /// graphs are separate heads).
-    pub fn new(registry: &'a Env<'a>, codec: &'a NodeCodec, graph: &'a mut DataGraph) -> Self {
+    /// graphs are separate heads) and its cache of reified node instances.
+    pub fn new(
+        registry: &'a Env<'a>,
+        codec: &'a NodeCodec,
+        graph: &'a mut DataGraph,
+        instances: &'a mut NodeInstances,
+    ) -> Self {
         Self {
             registry,
             codec,
             graph,
+            instances,
             id: egui::Id::new("gantz-graph-scene"),
             layout_params: egui_graph::LayoutParams::new(egui::Direction::TopDown),
             scene_config: Default::default(),
@@ -308,6 +319,7 @@ impl<'a> GraphScene<'a> {
                         self.registry,
                         self.codec,
                         self.graph,
+                        self.instances,
                         nctx,
                         state,
                         &mut responses,
@@ -349,6 +361,7 @@ impl<'a> GraphScene<'a> {
             vm,
             &mut view.layout,
             &mut state.interaction.selection,
+            self.instances,
             to_delete,
         );
         if !reindex.is_empty() {
@@ -648,6 +661,7 @@ fn nodes(
     registry: &Env<'_>,
     codec: &NodeCodec,
     graph: &mut DataGraph,
+    instances: &mut NodeInstances,
     nctx: &mut egui_graph::NodesCtx,
     state: &mut GraphSceneState,
     responses: &mut Vec<DynResponse>,
@@ -670,15 +684,17 @@ fn nodes(
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node_id = egui_graph::NodeId::from_u64(n_ix as u64);
-        // Reify once at the top of the iteration. An unknown tag renders as
-        // an opaque placeholder whose weight round-trips untouched -
-        // selection, movement, deletion and edge edits still work.
-        let mut instance = codec.reify_ui(&graph[n_id]).ok();
+        // Take the node's cached instance (or reify fresh when the stored
+        // weight differs from the cache entry's witness) for the duration of
+        // the iteration. An unknown tag renders as an opaque placeholder
+        // whose weight round-trips untouched - selection, movement, deletion
+        // and edge edits still work.
+        let mut instance = instances.take(codec, n_ix, &graph[n_id]).ok();
         let (inputs, outputs, flow) = match &instance {
-            Some(inst) => (
-                inst.node.n_inputs(meta_ctx),
-                inst.node.n_outputs(meta_ctx),
-                inst.node.flow(registry),
+            Some(entry) => (
+                entry.inst.node.n_inputs(meta_ctx),
+                entry.inst.node.n_outputs(meta_ctx),
+                entry.inst.node.flow(registry),
             ),
             None => {
                 let (inputs, outputs) = placeholder_socket_counts(graph, n_id);
@@ -694,13 +710,13 @@ fn nodes(
             .flow(flow)
             .max_width(f32::INFINITY)
             .show(nctx, ui, |nui_ctx| match instance.as_mut() {
-                Some(inst) => {
+                Some(entry) => {
                     // A node at this (root) level has the single-element state
                     // path `[n_ix]`.
                     let node_path = [n_ix];
                     let node_ctx =
                         crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, &[], vm);
-                    let r = inst.node.ui(node_ctx, nui_ctx);
+                    let r = entry.inst.node.ui(node_ctx, nui_ctx);
                     node_changed |= r.changed;
                     responses.extend(r.payloads);
                     r.framed
@@ -711,14 +727,14 @@ fn nodes(
         // Attach on-hover docs to each socket. Each node describes its own
         // sockets (markers read their stored docs; references resolve the
         // referenced graph's marker docs via the registry).
-        if let Some(inst) = &instance {
+        if let Some(entry) = &instance {
             for (ix, sock) in response.sockets().inputs() {
-                if let Some(doc) = inst.node.socket_doc(registry, SocketKind::Input, ix) {
+                if let Some(doc) = entry.inst.node.socket_doc(registry, SocketKind::Input, ix) {
                     socket_hover(sock, &doc);
                 }
             }
             for (ix, sock) in response.sockets().outputs() {
-                if let Some(doc) = inst.node.socket_doc(registry, SocketKind::Output, ix) {
+                if let Some(doc) = entry.inst.node.socket_doc(registry, SocketKind::Output, ix) {
                     socket_hover(sock, &doc);
                 }
             }
@@ -758,7 +774,10 @@ fn nodes(
             }
         }
 
-        // Node context menu.
+        // Node context menu. Reborrowed shared so the stateful probe below
+        // can peek other nodes' cached instances (the mutable uses - take
+        // above, put below - sit outside this borrow).
+        let instances_ref: &NodeInstances = instances;
         response.context_menu(|ui| {
             let selected = &state.interaction.selection.nodes;
             let target: HashSet<NodeIndex> = if selected.contains(&n_id) {
@@ -773,9 +792,9 @@ fn nodes(
                 responses.push(DynResponse::new(CopyNodes(target.clone())));
                 ui.close();
             }
-            if let Some(inst) = &instance {
+            if let Some(entry) = &instance {
                 // Demo graph, if the node has one.
-                let demo_name = inst.node.demo_graph(registry);
+                let demo_name = entry.inst.node.demo_graph(registry);
                 let demo_btn = ui.add_enabled(demo_name.is_some(), egui::Button::new("demo"));
                 if let Some(name) = demo_name {
                     if demo_btn.on_hover_text(format!("opens {name}")).clicked() {
@@ -788,7 +807,7 @@ fn nodes(
                     demo_btn.on_disabled_hover_text("no associated demo");
                 }
                 // "open in new tab" for nodes that reference a named graph.
-                if let Some(head) = inst.node.nav_head(registry) {
+                if let Some(head) = entry.inst.node.nav_head(registry) {
                     if ui
                         .button("open tab")
                         .on_hover_text("open the referenced graph in a new tab")
@@ -807,7 +826,7 @@ fn nodes(
                     .on_hover_text("open this node's view in the Node Views pane")
                     .clicked()
                 {
-                    let ty_name = inst.node.name(registry).to_string();
+                    let ty_name = entry.inst.node.name(registry).to_string();
                     responses.push(DynResponse::new(OpenNodeView {
                         path: vec![n_ix],
                         ty_name,
@@ -816,14 +835,19 @@ fn nodes(
                 }
             }
             if !immutable {
-                // The reset target may include other selected nodes; reify
-                // each transiently to ask whether any is stateful.
+                // The reset target may include other selected nodes; peek
+                // each one's cached instance to ask whether any is stateful,
+                // reifying transiently on a miss (e.g. this node's own entry,
+                // taken out for the duration of the iteration).
                 let stateful = target.iter().any(|&n| {
-                    graph.node_weight(n).is_some_and(|w| {
-                        codec
-                            .reify_ui(w)
-                            .is_ok_and(|inst| inst.node.stateful(meta_ctx))
-                    })
+                    graph
+                        .node_weight(n)
+                        .is_some_and(|w| match instances_ref.peek(n.index(), w) {
+                            Some(inst) => inst.node.stateful(meta_ctx),
+                            None => codec
+                                .reify_ui(w)
+                                .is_ok_and(|inst| inst.node.stateful(meta_ctx)),
+                        })
                 });
                 let reset_btn = ui.add_enabled(stateful, egui::Button::new("reset"));
                 if reset_btn
@@ -880,32 +904,43 @@ fn nodes(
                 }
             }
             // Node-specific items (e.g. the log node's "open logs").
-            if let Some(inst) = instance.as_mut() {
+            if let Some(entry) = instance.as_mut() {
                 let node_path = [n_ix];
                 let mut node_ctx =
                     crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, &[], vm);
-                let cm = inst.node.context_menu(&mut node_ctx, ui);
+                let cm = entry.inst.node.context_menu(&mut node_ctx, ui);
                 node_changed |= cm.changed;
                 responses.extend(cm.payloads);
             }
         });
 
-        // Erase the instance back into the weight iff a response marked a
-        // CA-affecting change (the commit signal - see `NodeUi`). Unchanged
-        // instances drop: non-CA state lives in VM/egui memory by contract.
-        if let Some(inst) = &instance {
+        // Return the instance to the cache, erasing it back into the weight
+        // iff a response marked a CA-affecting change (the commit signal -
+        // see `NodeUi`). The entry's witness is updated in the same breath,
+        // so the cache hits exactly while the stored weight is untouched.
+        // Non-CA state lives in VM/egui memory by contract.
+        if let Some(mut entry) = instance {
             if node_changed {
                 *changed = true;
-                match inst.erase() {
-                    Ok(node_data) => graph[n_id] = node_data,
+                match entry.inst.erase() {
+                    Ok(node_data) => {
+                        entry.src = node_data.clone();
+                        graph[n_id] = node_data;
+                        instances.put(n_ix, entry);
+                    }
                     Err(e) => {
+                        // Dropping the entry restores the uncached semantics:
+                        // the edit is lost and the next pass reifies from the
+                        // unchanged stored weight.
                         log::error!("node {n_ix}: failed to erase edited node, edit dropped: {e}");
                     }
                 }
             } else if validate {
                 // Change-tracking validator: an unmarked weight mutation
-                // would silently drop with the instance - make it loud.
-                match inst.erase() {
+                // would otherwise persist invisibly in the cached instance -
+                // make it loud, and evict so the mutation drops exactly as
+                // it would uncached.
+                match entry.inst.erase() {
                     Ok(node_data) => {
                         if node_data.content_addr() != graph[n_id].content_addr() {
                             log::warn!(
@@ -913,12 +948,16 @@ fn nodes(
                                  `changed` response; the edit was dropped (see `NodeUi`)",
                                 graph[n_id].tag,
                             );
+                        } else {
+                            instances.put(n_ix, entry);
                         }
                     }
                     Err(e) => {
                         log::warn!("node {n_ix}: change-tracking validation failed to erase: {e}");
                     }
                 }
+            } else {
+                instances.put(n_ix, entry);
             }
         }
 

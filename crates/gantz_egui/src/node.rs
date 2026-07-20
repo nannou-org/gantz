@@ -5,11 +5,12 @@
 //! items for convenience.
 
 pub use comment::Comment;
-pub use dyn_node::{DynNode, NodeCodec, NormalizeNodeError, UiBuiltins, UiNodeInstance};
+pub use dyn_node::{DynNode, NodeCodec, NodeUiInstance, NormalizeNodeError, UiBuiltins};
 pub use fn_named_ref::FnNamedRef;
 #[doc(inline)]
 pub use gantz_core::node::{Id, state};
 pub use inspect::Inspect;
+pub use instance_cache::{InstanceEntry, NodeInstances};
 pub use named_ref::{NamedRef, missing_color, outdated_color};
 pub use plot::{Plot, PlotMode, PlotStyle};
 pub use ref_ext::RefExtUi;
@@ -18,6 +19,7 @@ pub mod comment;
 pub mod dyn_node;
 pub mod fn_named_ref;
 pub mod inspect;
+pub mod instance_cache;
 pub mod named_ref;
 pub mod plot;
 pub mod ref_ext;

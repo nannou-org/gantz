@@ -224,6 +224,14 @@ pub struct HeadGuiState(pub gantz_egui::widget::gantz::OpenHeadState);
 #[derive(Component, Default, Clone)]
 pub struct GraphView(pub gantz_egui::SceneView);
 
+/// Per-head cache of reified node instances for the working graph.
+///
+/// Reset wholesale on head navigation (`on_head_changed`) - not required for
+/// correctness (each entry's witness check self-heals) but bounds memory when
+/// the graph is replaced outright.
+#[derive(Component, Default)]
+pub struct HeadNodeInstances(pub gantz_egui::node::NodeInstances);
+
 // ----------------------------------------------------------------------------
 // Resources
 // ----------------------------------------------------------------------------
@@ -431,6 +439,7 @@ impl RegisterResponseExt for App {
 pub struct OpenHeadViews {
     pub core: head::OpenHeadData,
     pub view: &'static mut GraphView,
+    pub instances: &'static mut HeadNodeInstances,
 }
 
 // ----------------------------------------------------------------------------
@@ -502,6 +511,7 @@ impl gantz_egui::HeadAccess for HeadAccess<'_, '_, '_> {
             graph: &mut *data.core.working_graph,
             view: &mut *data.view,
             vm,
+            instances: &mut data.instances.0,
         }))
     }
 
@@ -604,7 +614,8 @@ pub fn on_head_opened(
 
     cmds.entity(event.entity)
         .insert(HeadGuiState::default())
-        .insert(GraphView(head_view));
+        .insert(GraphView(head_view))
+        .insert(HeadNodeInstances::default());
 }
 
 /// Migrate GUI state for changed head and reset components.
@@ -671,7 +682,8 @@ pub fn on_head_changed(
 
     cmds.entity(event.entity)
         .insert(HeadGuiState::default())
-        .insert(GraphView(head_view));
+        .insert(GraphView(head_view))
+        .insert(HeadNodeInstances::default());
 }
 
 /// Remove GUI state for closed head.
@@ -1102,12 +1114,17 @@ pub fn on_cut_nodes(
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
     mut cmds: Commands,
     mut heads: Query<
-        (&mut head::HeadRef, &mut head::WorkingGraph, &mut GraphView),
+        (
+            &mut head::HeadRef,
+            &mut head::WorkingGraph,
+            &mut GraphView,
+            &mut HeadNodeInstances,
+        ),
         With<head::OpenHead>,
     >,
 ) {
     let event = trigger.event();
-    let Ok((mut head_ref, mut wg, mut gv)) = heads.get_mut(event.head) else {
+    let Ok((mut head_ref, mut wg, mut gv, mut instances)) = heads.get_mut(event.head) else {
         log::error!("CutNodes: head not found for entity {:?}", event.head);
         return;
     };
@@ -1126,6 +1143,7 @@ pub fn on_cut_nodes(
         vm,
         &mut gv,
         &mut head_state.scene.interaction.selection,
+        &mut instances.0,
         &event.data.0,
         &codec.0,
     );

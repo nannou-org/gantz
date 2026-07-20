@@ -31,7 +31,7 @@ pub type DynNode = Box<dyn NodeUi>;
 /// knows its concrete type, so it captures an eraser that downcasts and runs
 /// [`erase_node_typed`](gantz_core::data::erase_node_typed) - no trait-object
 /// serde involved.
-pub struct UiNodeInstance {
+pub struct NodeUiInstance {
     /// The reified node.
     pub node: DynNode,
     erase: fn(&dyn Any) -> Result<NodeData, EraseNodeError>,
@@ -44,7 +44,7 @@ pub struct UiNodeInstance {
 /// a `const`. Build one with [`ui_node_codec!`](crate::ui_node_codec).
 #[derive(Clone, Copy)]
 pub struct NodeCodec {
-    reify: fn(&NodeData) -> Result<UiNodeInstance, ReifyNodeError>,
+    reify: fn(&NodeData) -> Result<NodeUiInstance, ReifyNodeError>,
     sugars: fn() -> gantz_format::Sugars<'static>,
 }
 
@@ -85,7 +85,7 @@ impl gantz_core::node::AsRefNode for DynNode {
     }
 }
 
-impl UiNodeInstance {
+impl NodeUiInstance {
     /// Pair a reified node with its concrete type's eraser.
     ///
     /// `erase` receives the node upcast to `&dyn Any` and must downcast to
@@ -135,14 +135,14 @@ impl NodeCodec {
     /// source. See [`ui_node_codec!`](crate::ui_node_codec) for the standard
     /// construction.
     pub const fn new(
-        reify: fn(&NodeData) -> Result<UiNodeInstance, ReifyNodeError>,
+        reify: fn(&NodeData) -> Result<NodeUiInstance, ReifyNodeError>,
         sugars: fn() -> gantz_format::Sugars<'static>,
     ) -> Self {
         Self { reify, sugars }
     }
 
-    /// Reify one stored node to a typed [`UiNodeInstance`].
-    pub fn reify_ui(&self, node_data: &NodeData) -> Result<UiNodeInstance, ReifyNodeError> {
+    /// Reify one stored node to a typed [`NodeUiInstance`].
+    pub fn reify_ui(&self, node_data: &NodeData) -> Result<NodeUiInstance, ReifyNodeError> {
         (self.reify)(node_data)
     }
 
@@ -214,13 +214,13 @@ macro_rules! ui_node_codec {
         fn reify(
             node_data: &$crate::gantz_ca::NodeData,
         ) -> ::std::result::Result<
-            $crate::node::UiNodeInstance,
+            $crate::node::NodeUiInstance,
             $crate::gantz_core::data::ReifyNodeError,
         > {
             $(
                 if node_data.tag == <$ty as $crate::gantz_nodetag::NodeTag>::TAG {
                     return $crate::gantz_core::data::reify_node_concrete::<$ty>(node_data)
-                        .map(|node| $crate::node::UiNodeInstance::new(
+                        .map(|node| $crate::node::NodeUiInstance::new(
                             ::std::boxed::Box::new(node),
                             |any: &dyn ::std::any::Any| {
                                 let node = any

@@ -804,6 +804,10 @@ impl<'a> Gantz<'a> {
     /// Provide the current change-tracking validation state so the Settings >
     /// Global pane shows its toggle. A change is reported via
     /// [`GantzResponse::validate_change_tracking`].
+    ///
+    /// When not provided, validation defaults on in debug builds (the node
+    /// instance cache would otherwise mask a missed `changed` flag) and off
+    /// in release.
     pub fn validate_change_tracking(mut self, enabled: bool) -> Self {
         self.validate_change_tracking = Some(enabled);
         self
@@ -1494,7 +1498,13 @@ where
                 reindexes: &mut gantz_response.node_view_reindexes,
                 base_names,
                 base_immutable: gantz.base_immutable,
-                validate_change_tracking: gantz.validate_change_tracking.unwrap_or(false),
+                // With the instance cache, an unmarked weight mutation
+                // persists in the cached instance instead of visibly
+                // reverting next pass, so debug builds default the validator
+                // on to keep the contract violation loud.
+                validate_change_tracking: gantz
+                    .validate_change_tracking
+                    .unwrap_or(cfg!(debug_assertions)),
                 ext_panes: &ext_panes,
                 edge_styles: gantz.edge_styles,
             };
@@ -1705,6 +1715,7 @@ where
                         gantz.env,
                         codec,
                         data.graph,
+                        data.instances,
                         data.vm,
                         head_state,
                         &fh,
@@ -1739,8 +1750,12 @@ where
                     };
                     data.graph
                         .node_weight(graph_scene::NodeIndex::new(ix))
-                        .and_then(|w| codec.reify_ui(w).ok())
-                        .is_some_and(|inst| inst.node.view_no_margin())
+                        .is_some_and(|w| match data.instances.peek(ix, w) {
+                            Some(inst) => inst.node.view_no_margin(),
+                            None => codec
+                                .reify_ui(w)
+                                .is_ok_and(|inst| inst.node.view_no_margin()),
+                        })
                 })
                 .unwrap_or(false);
             let mut frame = egui::Frame::central_panel(ui.style());
@@ -1768,18 +1783,28 @@ where
                                 let (inlets, outlets) = crate::inlet_outlet_ids(env, data.graph);
                                 let n_id = graph_scene::NodeIndex::new(n_ix);
                                 let weight = data.graph.node_weight(n_id)?;
-                                // Reify the one node; erase back iff changed.
-                                let mut inst = codec.reify_ui(weight).ok()?;
+                                // Take the one node's cached instance (see
+                                // `graph_scene::nodes` - panes render
+                                // sequentially, so each take/put pair
+                                // completes within its site); erase back iff
+                                // changed, updating the witness.
+                                let mut entry = data.instances.take(codec, n_ix, weight).ok()?;
                                 let ctx = NodeCtx::new(env, &path, &inlets, &outlets, &[], data.vm);
-                                let r = inst.node.view_ui(ctx, ui);
+                                let r = entry.inst.node.view_ui(ctx, ui);
                                 if r.changed {
-                                    match inst.erase() {
-                                        Ok(node_data) => data.graph[n_id] = node_data,
+                                    match entry.inst.erase() {
+                                        Ok(node_data) => {
+                                            entry.src = node_data.clone();
+                                            data.graph[n_id] = node_data;
+                                            data.instances.put(n_ix, entry);
+                                        }
                                         Err(e) => log::error!(
                                             "node view {n_ix}: failed to erase edited node, \
                                              edit dropped: {e}"
                                         ),
                                     }
+                                } else {
+                                    data.instances.put(n_ix, entry);
                                 }
                                 Some((r.changed, r.payloads))
                             })
@@ -2212,6 +2237,7 @@ where
                 self.env,
                 self.codec,
                 data.graph,
+                data.instances,
                 pane_head,
                 head_state,
                 view_toggles,
@@ -3178,6 +3204,7 @@ fn graph_scene(
     registry: &Env<'_>,
     codec: &NodeCodec,
     graph: &mut gantz_ca::DataGraph,
+    instances: &mut crate::node::NodeInstances,
     head: &gantz_ca::Head,
     head_state: &mut OpenHeadState,
     view_toggles: &mut ViewToggles,
@@ -3222,7 +3249,7 @@ fn graph_scene(
         };
     }
 
-    let response = GraphScene::new(registry, codec, graph)
+    let response = GraphScene::new(registry, codec, graph, instances)
         .with_id(id)
         .layout_params(layout_params)
         .scene_config(scene_config)
@@ -3402,6 +3429,7 @@ fn node_inspector<'a>(
     registry: &'a Env<'a>,
     codec: &NodeCodec,
     root: &mut gantz_ca::DataGraph,
+    instances: &mut crate::node::NodeInstances,
     vm: &mut Engine,
     head_state: &mut OpenHeadState,
     head: &gantz_ca::Head,
@@ -3431,27 +3459,35 @@ fn node_inspector<'a>(
                         let Some(weight) = graph.node_weight(id) else {
                             return;
                         };
-                        // Reify the one node; erase back below iff changed. An
-                        // unknown tag shows a weak placeholder row.
-                        let Ok(mut inst) = codec.reify_ui(weight) else {
+                        let ix = id.index();
+                        // Take the node's cached instance (see
+                        // `graph_scene::nodes`); erase back below iff changed,
+                        // updating the witness. An unknown tag shows a weak
+                        // placeholder row.
+                        let Ok(mut entry) = instances.take(codec, ix, weight) else {
                             ui.weak(format!("{} (unknown node type)", weight.tag));
                             return;
                         };
-                        let ix = id.index();
                         let path = [ix];
                         let ctx =
                             NodeCtx::new(registry, &path[..], &inlets, &outlets, ref_ext_uis, vm);
-                        let resp =
-                            widget::NodeInspector::new(&mut inst.node, ctx, immutable).show(ui);
+                        let resp = widget::NodeInspector::new(&mut entry.inst.node, ctx, immutable)
+                            .show(ui);
                         if resp.changed {
                             changed = true;
-                            match inst.erase() {
-                                Ok(node_data) => graph[id] = node_data,
+                            match entry.inst.erase() {
+                                Ok(node_data) => {
+                                    entry.src = node_data.clone();
+                                    graph[id] = node_data;
+                                    instances.put(ix, entry);
+                                }
                                 Err(e) => log::error!(
                                     "inspector: failed to erase edited node {ix}, \
                                      edit dropped: {e}"
                                 ),
                             }
+                        } else {
+                            instances.put(ix, entry);
                         }
                         responses.extend(resp.payloads);
                         if resp.label_response.clicked() {
