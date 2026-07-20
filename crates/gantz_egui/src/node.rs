@@ -5,8 +5,9 @@
 //! items for convenience.
 
 pub use comment::Comment;
-pub use dyn_node::{DynNode, NodeCodec, NormalizeNodeError, UiBuiltins, NodeUiInstance};
+pub use dyn_node::{DynNode, NodeCodec, NodeUiInstance, NormalizeNodeError, UiBuiltins};
 pub use fn_named_ref::FnNamedRef;
+pub use instance_cache::{InstanceEntry, NodeInstances};
 #[doc(inline)]
 pub use gantz_core::node::{Id, state};
 pub use inspect::Inspect;
@@ -18,6 +19,7 @@ pub mod comment;
 pub mod dyn_node;
 pub mod fn_named_ref;
 pub mod inspect;
+pub mod instance_cache;
 pub mod named_ref;
 pub mod plot;
 pub mod ref_ext;
