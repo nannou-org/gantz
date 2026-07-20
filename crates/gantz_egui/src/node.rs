@@ -5,7 +5,7 @@
 //! items for convenience.
 
 pub use comment::Comment;
-pub use dyn_node::{DynNode, NodeCodec, NormalizeNodeError, UiBuiltins, UiNodeInstance};
+pub use dyn_node::{DynNode, NodeCodec, NormalizeNodeError, UiBuiltins, NodeUiInstance};
 pub use fn_named_ref::FnNamedRef;
 #[doc(inline)]
 pub use gantz_core::node::{Id, state};

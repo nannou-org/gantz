@@ -56,7 +56,7 @@ pub type NodeIndex = petgraph::graph::NodeIndex<usize>;
 /// gantz graph.
 ///
 /// Operates on the graph's stored data form: each node weight is reified to
-/// a typed [`crate::node::UiNodeInstance`] through the `codec` for the
+/// a typed [`crate::node::NodeUiInstance`] through the `codec` for the
 /// duration of its UI pass and erased back only when a response marks a
 /// CA-affecting change. Weights whose tag is unknown to the codec render as
 /// opaque placeholders whose data round-trips untouched.
