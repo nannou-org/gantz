@@ -7,10 +7,10 @@
 pub use comment::Comment;
 pub use dyn_node::{DynNode, NodeCodec, NodeUiInstance, NormalizeNodeError, UiBuiltins};
 pub use fn_named_ref::FnNamedRef;
-pub use instance_cache::{InstanceEntry, NodeInstances};
 #[doc(inline)]
 pub use gantz_core::node::{Id, state};
 pub use inspect::Inspect;
+pub use instance_cache::{InstanceEntry, NodeInstances};
 pub use named_ref::{NamedRef, missing_color, outdated_color};
 pub use plot::{Plot, PlotMode, PlotStyle};
 pub use ref_ext::RefExtUi;

@@ -840,14 +840,14 @@ fn nodes(
                 // reifying transiently on a miss (e.g. this node's own entry,
                 // taken out for the duration of the iteration).
                 let stateful = target.iter().any(|&n| {
-                    graph.node_weight(n).is_some_and(|w| {
-                        match instances_ref.peek(n.index(), w) {
+                    graph
+                        .node_weight(n)
+                        .is_some_and(|w| match instances_ref.peek(n.index(), w) {
                             Some(inst) => inst.node.stateful(meta_ctx),
                             None => codec
                                 .reify_ui(w)
                                 .is_ok_and(|inst| inst.node.stateful(meta_ctx)),
-                        }
-                    })
+                        })
                 });
                 let reset_btn = ui.add_enabled(stateful, egui::Button::new("reset"));
                 if reset_btn

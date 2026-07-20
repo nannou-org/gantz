@@ -804,6 +804,10 @@ impl<'a> Gantz<'a> {
     /// Provide the current change-tracking validation state so the Settings >
     /// Global pane shows its toggle. A change is reported via
     /// [`GantzResponse::validate_change_tracking`].
+    ///
+    /// When not provided, validation defaults on in debug builds (the node
+    /// instance cache would otherwise mask a missed `changed` flag) and off
+    /// in release.
     pub fn validate_change_tracking(mut self, enabled: bool) -> Self {
         self.validate_change_tracking = Some(enabled);
         self
@@ -3467,9 +3471,8 @@ fn node_inspector<'a>(
                         let path = [ix];
                         let ctx =
                             NodeCtx::new(registry, &path[..], &inlets, &outlets, ref_ext_uis, vm);
-                        let resp =
-                            widget::NodeInspector::new(&mut entry.inst.node, ctx, immutable)
-                                .show(ui);
+                        let resp = widget::NodeInspector::new(&mut entry.inst.node, ctx, immutable)
+                            .show(ui);
                         if resp.changed {
                             changed = true;
                             match entry.inst.erase() {
