@@ -31,7 +31,10 @@ use crate::{
     store::{self, SessionEntry, Shared},
     ticket::SessionTicket,
 };
-use gantz_ca::{Commit, CommitAddr, DataGraph, GraphAddr, Name};
+use gantz_ca::{
+    BlobLiveness, Bytes, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Key, Liveness,
+    MergePolicy, Name, SectionId, Value,
+};
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode,
     address_lookup::{PkarrPublisher, PkarrResolver},
@@ -125,15 +128,18 @@ pub enum Command {
     /// served content (a filled store for a host, an empty one for a guest).
     Register(SessionEntry),
     /// Merge served content into a registered session's store:
-    /// content-addressed commit/graph inserts (idempotent) and per-name head
-    /// upserts. Graphs are verified against their claimed addresses (see
-    /// [`store::merge`]); a failed verification drops the whole update with
-    /// a warning. Unknown sessions are ignored with a warning.
+    /// content-addressed commit/graph/blob inserts (idempotent), per-name
+    /// head upserts and section entries applied per the section's merge
+    /// policy. Graphs and blobs are verified against their claimed addresses
+    /// (see [`store::merge`]); a failed verification drops the whole update
+    /// with a warning. Unknown sessions are ignored with a warning.
     Update {
         session: SessionId,
         heads: Vec<(Name, CommitAddr)>,
         commits: Vec<(CommitAddr, Commit)>,
         graphs: Vec<(GraphAddr, DataGraph)>,
+        sections: Vec<(SectionId, MergePolicy, Liveness, Key, Value)>,
+        blobs: Vec<(SectionId, BlobLiveness, ContentAddr, Bytes)>,
     },
     /// Start serving and gossiping a session. The session must already be
     /// [`Register`](Command::Register)ed. Emits [`Event::TicketReady`].
@@ -384,13 +390,17 @@ async fn drive(
                 heads,
                 commits,
                 graphs,
+                sections,
+                blobs,
             } => {
                 let mut state = shared.lock();
                 let Some(entry) = state.sessions.get_mut(&session) else {
                     log::warn!("collab: update for an unregistered session");
                     continue;
                 };
-                if let Err(e) = store::merge(&mut entry.store, heads, commits, graphs) {
+                let result =
+                    store::merge(&mut entry.store, heads, commits, graphs, sections, blobs);
+                if let Err(e) = result {
                     log::warn!("collab: update rejected: {e}");
                 }
             }

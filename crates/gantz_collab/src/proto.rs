@@ -2,12 +2,13 @@
 //!
 //! Everything here is plain serde encoded with [postcard] (compact,
 //! non-self-describing; `gantz_ca` addresses serialize as raw bytes and
-//! names as strings). Graphs are the exception: erased node data
-//! ([`DataGraph`]) is self-describing, so graphs travel inside [`Objects`]
-//! as RON blobs ([`encode_graph`]/[`decode_graph`]) - the same encoding as
-//! the persisted registry (`bevy_gantz::storage`), so wire and persistence
-//! cannot drift. A received graph only applies if its decoded content
-//! re-verifies against the announced address (see
+//! names as strings). Graphs and section values are the exception: erased
+//! node data ([`DataGraph`]) and section [`Value`]s are self-describing, so
+//! they travel inside [`Objects`] as RON blobs
+//! ([`encode_graph`]/[`decode_graph`], [`encode_value`]/[`decode_value`]) -
+//! the same encoding as the persisted registry (`bevy_gantz::storage`), so
+//! wire and persistence cannot drift. A received graph only applies if its
+//! decoded content re-verifies against the announced address (see
 //! [`gantz_ca::verify_graph`]). The human-facing `.gantz` text format is
 //! deliberately not used here: it is a name-resolving projection for
 //! import/export (its round-trip re-seeds names and re-roots commits),
@@ -18,7 +19,8 @@
 
 use crate::session::{PeerId, SessionId};
 use gantz_ca::{
-    BlobLiveness, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Name, SectionId,
+    BlobLiveness, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Key, Liveness,
+    MergePolicy, Name, SectionId, Value,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -68,6 +70,11 @@ pub enum ObjectRef {
         section: SectionId,
         addr: ContentAddr,
     },
+    /// A metadata section entry (e.g. a stored scene view).
+    Section {
+        id: SectionId,
+        key: Key,
+    },
 }
 
 /// A fetched object under its claimed reference.
@@ -83,6 +90,19 @@ pub enum Object {
         liveness: BlobLiveness,
         addr: ContentAddr,
         bytes: Vec<u8>,
+    },
+    /// A metadata section entry. The section's stamped semantics ride along
+    /// (the same pattern as [`Object::Blob`]'s `liveness`) so a receiver
+    /// without the owning domain compiled in still stamps the section
+    /// correctly. The value is a RON blob (see [`encode_value`]): section
+    /// values can hold [`gantz_ca::Datum`]s, which only self-describing
+    /// formats can decode.
+    Section {
+        id: SectionId,
+        policy: MergePolicy,
+        liveness: Liveness,
+        key: Key,
+        value: Vec<u8>,
     },
 }
 
@@ -208,6 +228,24 @@ pub fn decode_graph(bytes: &[u8]) -> Result<DataGraph, ron::de::SpannedError> {
     ron::de::from_bytes(bytes)
 }
 
+/// Encode a section value as its wire blob: RON of the [`Value`], the same
+/// self-describing encoding as the persisted registry. Self-description is
+/// required: [`Value::Datum`] cannot ride a non-self-describing format like
+/// postcard.
+pub fn encode_value(value: &Value) -> Vec<u8> {
+    // RON serialization of plain data cannot fail short of allocation
+    // failure.
+    ron::to_string(value).unwrap_or_default().into_bytes()
+}
+
+/// Decode a section value wire blob (see [`encode_value`]).
+///
+/// Section entries are advisory metadata with no content address to verify
+/// against: receivers skip entries that fail to decode.
+pub fn decode_value(bytes: &[u8]) -> Result<Value, ron::de::SpannedError> {
+    ron::de::from_bytes(bytes)
+}
+
 /// The digest of a `name -> tip` head map, for [`GossipMsg::Digest`]
 /// anti-entropy: blake3 over the `(name, tip)` pairs in iteration order.
 ///
@@ -267,6 +305,10 @@ mod tests {
                         section: "dsp.buffer".to_string(),
                         addr: gantz_ca::ContentAddr::from([5; 32]),
                     },
+                    ObjectRef::Section {
+                        id: "egui.view".to_string(),
+                        key: Key::Commit(ca),
+                    },
                 ],
             },
         };
@@ -274,7 +316,7 @@ mod tests {
         let SyncRequest::Want { want, .. } = decoded else {
             panic!("wrong variant");
         };
-        assert_eq!(want.refs.len(), 3);
+        assert_eq!(want.refs.len(), 4);
     }
 
     #[test]
@@ -295,10 +337,31 @@ mod tests {
                     addr: gantz_ca::blob_addr(b"pcm"),
                     bytes: b"pcm".to_vec(),
                 },
+                Object::Section {
+                    id: "egui.view".to_string(),
+                    policy: MergePolicy::KeepExisting,
+                    liveness: Liveness::WithCommit,
+                    key: Key::Commit(ca),
+                    value: encode_value(&Value::Datum(gantz_ca::Datum::Bool(true))),
+                },
             ],
         };
         let decoded: Objects = decode(&encode(&objects)).unwrap();
         assert_eq!(decoded, objects);
+    }
+
+    /// Regression: a `Value::Datum` cannot decode from a non-self-describing
+    /// format (`Datum` deserializes via `deserialize_any`), so section
+    /// values must travel as RON blobs inside the postcard envelope.
+    #[test]
+    fn section_values_round_trip_as_ron_not_postcard() {
+        let value = Value::Datum(gantz_ca::Datum::Map(vec![(
+            "zoom".to_string(),
+            gantz_ca::Datum::F64(1.5),
+        )]));
+        assert_eq!(decode_value(&encode_value(&value)).unwrap(), value);
+        let postcard_err: Result<Value, _> = decode(&encode(&value));
+        assert!(postcard_err.is_err());
     }
 
     #[test]
