@@ -190,6 +190,10 @@ pub struct HeadDataMut<'a> {
     /// suffices (no path-keyed map).
     pub view: &'a mut crate::SceneView,
     pub vm: &'a mut Engine,
+    /// The head's cache of reified node instances, so steady-state passes
+    /// pay an equality check per node rather than a reify (see
+    /// [`node::NodeInstances`]).
+    pub instances: &'a mut node::NodeInstances,
 }
 
 /// A trait providing an egui `Ui` implementation for gantz nodes.

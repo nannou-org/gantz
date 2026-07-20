@@ -183,6 +183,7 @@ struct DemoHeadAccess<'a> {
     compile_errors: &'a [Option<String>],
     diagnostics: &'a [Vec<gantz_core::Diagnostic>],
     vms: &'a mut Vec<Engine>,
+    instances: &'a mut Vec<gantz_egui::node::NodeInstances>,
 }
 
 impl<'a> DemoHeadAccess<'a> {
@@ -192,6 +193,7 @@ impl<'a> DemoHeadAccess<'a> {
         compile_errors: &'a [Option<String>],
         diagnostics: &'a [Vec<gantz_core::Diagnostic>],
         vms: &'a mut Vec<Engine>,
+        instances: &'a mut Vec<gantz_egui::node::NodeInstances>,
     ) -> Self {
         let head_keys: Vec<_> = data.iter().map(|(h, _, _)| h.clone()).collect();
         let head_to_ix: HashMap<_, _> = head_keys
@@ -207,6 +209,7 @@ impl<'a> DemoHeadAccess<'a> {
             compile_errors,
             diagnostics,
             vms,
+            instances,
         }
     }
 }
@@ -224,7 +227,13 @@ impl<'a> HeadAccess for DemoHeadAccess<'a> {
         let ix = *self.head_to_ix.get(head)?;
         let (_, graph, view) = &mut self.data[ix];
         let vm = &mut self.vms[ix];
-        Some(f(HeadDataMut { graph, view, vm }))
+        let instances = &mut self.instances[ix];
+        Some(f(HeadDataMut {
+            graph,
+            view,
+            vm,
+            instances,
+        }))
     }
 
     fn module(&self, head: &gantz_ca::Head) -> Option<&gantz_core::vm::Compiled> {
@@ -287,6 +296,8 @@ struct State {
     diagnostics: Vec<Vec<gantz_core::Diagnostic>>,
     /// Per-head VMs, indexed to match `heads`.
     vms: Vec<Engine>,
+    /// Per-head reified node instance caches, indexed to match `heads`.
+    instances: Vec<gantz_egui::node::NodeInstances>,
     /// Index of the currently focused head.
     focused_head: usize,
     /// The compile config used for all heads (session-only, not persisted).
@@ -420,6 +431,7 @@ impl App {
             modules.push(module);
             diagnostics.push(diags);
         }
+        let instances = heads.iter().map(|_| Default::default()).collect();
 
         // GUI setup.
         let ctx = &cc.egui_ctx;
@@ -434,6 +446,7 @@ impl App {
             modules,
             diagnostics,
             vms,
+            instances,
             focused_head: 0,
             compile_config,
         };
@@ -1199,6 +1212,7 @@ fn gui(ui: &mut egui::Ui, state: &mut State) -> gantz_egui::Responses {
                 &state.compile_errors,
                 &state.diagnostics,
                 &mut state.vms,
+                &mut state.instances,
             );
 
             let no_base_names = Default::default();
@@ -1360,6 +1374,7 @@ fn open_head(state: &mut State, new_head: gantz_ca::Head) {
     state.compile_errors.push(error);
     state.modules.push(module);
     state.diagnostics.push(diags);
+    state.instances.push(Default::default());
 
     // Initialize GUI state for the new head.
     state.gantz.open_heads.entry(new_head).or_default();
@@ -1382,8 +1397,10 @@ fn replace_head(ctx: &egui::Context, state: &mut State, new_head: gantz_ca::Head
     let new_graph = state.env.head_data_graph(&new_head).unwrap();
     let view = gantz_egui::SceneView::default();
 
-    // Replace at the focused index.
+    // Replace at the focused index. The graph is replaced wholesale, so
+    // drop the cached instances to bound memory.
     state.heads[ix] = (new_head.clone(), new_graph, view);
+    state.instances[ix].clear();
 
     // Reinitialize the VM from the reified cache at the committed address.
     let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
@@ -1437,6 +1454,7 @@ fn refresh_branch_head(state: &mut State) {
     let (ref head, ref mut graph, ref mut view) = state.heads[ix];
     *graph = state.env.head_data_graph(head).unwrap();
     *view = gantz_egui::SceneView::default();
+    state.instances[ix].clear();
     let get_node = |ca: &gantz_ca::ContentAddr| state.env.node(ca);
     let typed = state.env.head_graph(head).unwrap();
     let eps = push_pull_entrypoints(&get_node, typed);
@@ -1532,6 +1550,7 @@ fn close_head(state: &mut State, head: &gantz_ca::Head) {
     if let Some(ix) = state.heads.iter().position(|(h, _, _)| h == head) {
         state.heads.remove(ix);
         state.vms.remove(ix);
+        state.instances.remove(ix);
         state.compile_errors.remove(ix);
         state.modules.remove(ix);
         state.diagnostics.remove(ix);
