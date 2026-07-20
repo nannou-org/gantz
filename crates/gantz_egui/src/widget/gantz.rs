@@ -1494,7 +1494,13 @@ where
                 reindexes: &mut gantz_response.node_view_reindexes,
                 base_names,
                 base_immutable: gantz.base_immutable,
-                validate_change_tracking: gantz.validate_change_tracking.unwrap_or(false),
+                // With the instance cache, an unmarked weight mutation
+                // persists in the cached instance instead of visibly
+                // reverting next pass, so debug builds default the validator
+                // on to keep the contract violation loud.
+                validate_change_tracking: gantz
+                    .validate_change_tracking
+                    .unwrap_or(cfg!(debug_assertions)),
                 ext_panes: &ext_panes,
                 edge_styles: gantz.edge_styles,
             };
@@ -2212,6 +2218,7 @@ where
                 self.env,
                 self.codec,
                 data.graph,
+                data.instances,
                 pane_head,
                 head_state,
                 view_toggles,
@@ -3178,6 +3185,7 @@ fn graph_scene(
     registry: &Env<'_>,
     codec: &NodeCodec,
     graph: &mut gantz_ca::DataGraph,
+    instances: &mut crate::node::NodeInstances,
     head: &gantz_ca::Head,
     head_state: &mut OpenHeadState,
     view_toggles: &mut ViewToggles,
@@ -3222,7 +3230,7 @@ fn graph_scene(
         };
     }
 
-    let response = GraphScene::new(registry, codec, graph)
+    let response = GraphScene::new(registry, codec, graph, instances)
         .with_id(id)
         .layout_params(layout_params)
         .scene_config(scene_config)

@@ -45,12 +45,20 @@ pub struct CompiledInputs(pub Option<Inputs>);
 /// When `true`, [`validate_committed`] hashes every open head's working graph
 /// each frame and warns if it differs from the head's committed graph CA - i.e.
 /// a system mutated the working graph without committing it, violating the
-/// [`WorkingGraph`](head::WorkingGraph) commit-before-return invariant.
+/// [`WorkingGraph`](head::WorkingGraph) commit-before-return invariant. The UI
+/// layer also feeds this flag to its per-node change-tracking validator.
 ///
-/// Defaults to `false` (no extra hashing); enable at runtime to debug a
-/// suspected missing commit.
-#[derive(Default, Resource)]
+/// Defaults to `true` in debug builds (the UI's node-instance cache would
+/// otherwise mask a missed `changed` flag rather than visibly dropping the
+/// edit) and `false` in release (no extra hashing). Toggleable at runtime.
+#[derive(Resource)]
 pub struct ValidateCommitted(pub bool);
+
+impl Default for ValidateCommitted {
+    fn default() -> Self {
+        Self(cfg!(debug_assertions))
+    }
+}
 
 /// Event to trigger evaluation of an entrypoint.
 #[derive(Event)]
