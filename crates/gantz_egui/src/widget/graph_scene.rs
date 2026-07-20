@@ -361,6 +361,7 @@ impl<'a> GraphScene<'a> {
             vm,
             &mut view.layout,
             &mut state.interaction.selection,
+            self.instances,
             to_delete,
         );
         if !reindex.is_empty() {

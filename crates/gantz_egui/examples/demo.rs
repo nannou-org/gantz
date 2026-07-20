@@ -1018,6 +1018,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             vm,
             gv,
             &mut head_state.scene.interaction.selection,
+            &mut state.instances[ix],
             &nodes,
             &codec(),
         );

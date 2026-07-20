@@ -1114,12 +1114,17 @@ pub fn on_cut_nodes(
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
     mut cmds: Commands,
     mut heads: Query<
-        (&mut head::HeadRef, &mut head::WorkingGraph, &mut GraphView),
+        (
+            &mut head::HeadRef,
+            &mut head::WorkingGraph,
+            &mut GraphView,
+            &mut HeadNodeInstances,
+        ),
         With<head::OpenHead>,
     >,
 ) {
     let event = trigger.event();
-    let Ok((mut head_ref, mut wg, mut gv)) = heads.get_mut(event.head) else {
+    let Ok((mut head_ref, mut wg, mut gv, mut instances)) = heads.get_mut(event.head) else {
         log::error!("CutNodes: head not found for entity {:?}", event.head);
         return;
     };
@@ -1138,6 +1143,7 @@ pub fn on_cut_nodes(
         vm,
         &mut gv,
         &mut head_state.scene.interaction.selection,
+        &mut instances.0,
         &event.data.0,
         &codec.0,
     );
