@@ -274,11 +274,17 @@ pub fn on_capture_write(
     let Some((session, name)) = session_name(ev.head, &heads) else {
         return;
     };
-    // A newer write RESETS any fused eval (a write without push-eval must
-    // not re-fire a stale one)...
-    let mut eval = None;
-    // ...unless this pass already queued a standalone push-eval for the same
-    // node, in which case it belongs to this write: fuse it back in.
+    let key = (session, name.clone(), ev.write.path.clone());
+    // An eval already fused into the (unshipped) pending this write replaces
+    // belongs to the same rate-limit window and coalesces with the newest
+    // value exactly like the value itself does - payload order within a
+    // frame is not guaranteed, so the frame's own eval may have fused before
+    // this write arrived. Nothing carries across flushes (shipping removes
+    // the slot), so a write without a push-eval can never re-fire an
+    // already-shipped eval.
+    let mut eval = outbox.pending.get(&key).and_then(|p| p.eval.clone());
+    // A standalone push-eval already queued for the same node likewise
+    // belongs to this write: fuse it back in.
     if let Some(ix) = outbox.evals.iter().position(|(s, n, sources)| {
         *s == session
             && *n == name
@@ -288,7 +294,6 @@ pub fn on_capture_write(
         let (_, _, mut sources) = outbox.evals.remove(ix);
         eval = sources.pop();
     }
-    let key = (session, name, ev.write.path.clone());
     outbox.pending.insert(
         key,
         PendingWrite {
@@ -648,4 +653,73 @@ pub(crate) fn value_summary(value: &Value) -> String {
 pub(crate) fn sources_summary(sources: &[Source]) -> String {
     let paths: Vec<String> = sources.iter().map(|s| format!("{:?}", s.path)).collect();
     paths.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gantz_core::compile::entrypoint::{Entrypoint, EvalKind, EvalSource};
+
+    // Regression: during a drag, rate limiting can hold an unshipped pending
+    // value while the next frame's payloads arrive eval-first (payload order
+    // within a frame is not guaranteed). The eval fuses into the held
+    // pending; the frame's write then replaces the slot and must keep the
+    // fused eval - otherwise the flushed `SetState` ships without one, and
+    // the remote peer updates the value but never re-evaluates downstream.
+    #[test]
+    fn write_replacing_a_fused_pending_keeps_the_eval() {
+        let mut world = World::new();
+        world.init_resource::<ActionOutbox>();
+        world.add_observer(on_capture_write);
+        world.add_observer(on_capture_eval);
+        let session = SessionId::generate();
+        let name: ca::Name = "jam".parse().unwrap();
+        let head = world
+            .spawn((
+                head::HeadRef(ca::Head::Branch(name.clone())),
+                SessionRef(session),
+            ))
+            .id();
+        let path = vec![0usize];
+        let source = EvalSource {
+            path: path.clone(),
+            kind: EvalKind::Push,
+            conns: gantz_core::node::Conns::empty(),
+        };
+        let entrypoint = Entrypoint([source].into_iter().collect());
+        let write = |v: f64| gantz_egui::action::StateWrite {
+            path: path.clone(),
+            value: Value::Num(v),
+        };
+
+        // Frame 1: write + eval -> fused pending, held by the rate limit.
+        world.trigger(CaptureWrite {
+            head,
+            write: write(1.0),
+        });
+        world.trigger(CaptureEval {
+            head,
+            entrypoint: entrypoint.clone(),
+        });
+        // Frame 2, hazardous order: the eval fuses into the held pending,
+        // then the newer write replaces it.
+        world.trigger(CaptureEval {
+            head,
+            entrypoint: entrypoint.clone(),
+        });
+        world.trigger(CaptureWrite {
+            head,
+            write: write(2.0),
+        });
+
+        let outbox = world.resource::<ActionOutbox>();
+        let key = (session, name, path);
+        let pending = outbox.pending.get(&key).expect("a pending write");
+        assert_eq!(pending.value, Value::Num(2.0));
+        assert!(
+            pending.eval.is_some(),
+            "the fused eval must survive the newer write"
+        );
+        assert!(outbox.evals.is_empty(), "no standalone eval may leak");
+    }
 }
