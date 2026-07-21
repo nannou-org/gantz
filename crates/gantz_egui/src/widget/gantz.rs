@@ -2375,28 +2375,42 @@ where
     }
 }
 
-/// Dim a joining session's scene with its connection progress, or the error
-/// when the join failed. Live sessions (and mid-session degrades, which leave
-/// the graph fully usable) paint nothing.
+/// Dim a joining session's still-empty scene with its sync progress, or the
+/// error when the join failed. Painted only while the join placeholder is
+/// shown (`awaiting_snapshot`); once the snapshot arrives - or for a host,
+/// which never shows a placeholder - the graph renders unobscured.
 fn paint_session_overlay(rect: egui::Rect, display: &crate::collab::SessionDisplay, ui: &egui::Ui) {
     use crate::collab::SessionConn;
-    let (heading, detail, color) = match (display.conn, &display.error) {
-        (SessionConn::Connecting, None) => {
-            // Animated ellipsis while we wait.
-            let dots = 1 + (ui.input(|i| i.time) * 2.0) as usize % 3;
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(250));
-            let heading = format!("Connecting to session{}", ".".repeat(dots));
-            (heading, None, ui.visuals().strong_text_color())
-        }
-        (SessionConn::Connecting | SessionConn::Degraded, Some(error)) => (
-            "Session connection failed".to_string(),
+    // Only ever cover the empty placeholder scene. Once the graph has loaded a
+    // mid-session error surfaces through the tab's status dot, not a full-scene
+    // overlay that would obscure a usable graph.
+    if !display.awaiting_snapshot {
+        return;
+    }
+    let (heading, detail, color) = if let Some(error) = &display.error {
+        (
+            "Failed to connect".to_string(),
             Some(error.clone()),
             SessionConn::Degraded.color(),
-        ),
-        _ => return,
+        )
+    } else {
+        // Animated ellipsis while we wait.
+        let dots = 1 + (ui.input(|i| i.time) * 2.0) as usize % 3;
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(250));
+        let heading = format!("Connecting{}", ".".repeat(dots));
+        (
+            heading,
+            Some(display.sync_status()),
+            ui.visuals().strong_text_color(),
+        )
     };
-    let painter = ui.painter();
+    // egui_graph draws the scene in a sublayer with an opaque background,
+    // composited directly above this pane's own layer, so a `ui.painter()`
+    // overlay would be hidden beneath it. Paint on a foreground layer instead.
+    let layer = egui::LayerId::new(egui::Order::Foreground, ui.id().with("session_overlay"));
+    let mut painter = ui.ctx().layer_painter(layer);
+    painter.set_clip_rect(rect);
     painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(120));
     painter.text(
         rect.center(),

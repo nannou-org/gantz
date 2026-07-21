@@ -116,6 +116,7 @@ pub fn update_collab_ui(
                 ConnState::Live => gantz_egui::collab::SessionConn::Live,
                 ConnState::Degraded => gantz_egui::collab::SessionConn::Degraded,
             },
+            awaiting_snapshot: session_state.placeholder.is_some(),
             peers: session_state
                 .peers
                 .iter()

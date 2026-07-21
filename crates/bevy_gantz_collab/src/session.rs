@@ -143,10 +143,10 @@ pub fn on_join_session(
     let mut state = SessionState::new(session);
 
     // Open the session's tab immediately: when the name is unknown locally,
-    // mint an empty placeholder graph for it (recorded so the snapshot
-    // adopts over it rather than renaming it aside); an existing local graph
-    // opens as-is and reconciles when the snapshot lands. Either way the
-    // scene shows the connecting overlay until then.
+    // mint an empty placeholder graph for it (recorded so the snapshot adopts
+    // over it rather than renaming it aside) - the empty scene shows the
+    // connecting overlay until then. An existing local graph opens as-is and
+    // reconciles when the snapshot lands, with no placeholder or overlay.
     let branch: ca::Name = ticket.name.parse().expect("names parse infallibly");
     if registry.head(&branch).is_none() {
         let graph = ca::DataGraph::default();

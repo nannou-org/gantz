@@ -39,6 +39,12 @@ pub struct SessionDisplay {
     pub is_host: bool,
     /// The connection lifecycle.
     pub conn: SessionConn,
+    /// Whether the join is still showing its empty placeholder graph, i.e. the
+    /// initial snapshot has not yet arrived. Drives the connecting overlay,
+    /// which outlives `conn` reaching [`SessionConn::Live`] (a peer connects
+    /// before the graph finishes syncing). Always false for a host, which
+    /// never shows a placeholder.
+    pub awaiting_snapshot: bool,
     /// Connected collaborators.
     pub peers: Vec<PeerDisplay>,
     /// The invite string, once minted.
@@ -72,6 +78,16 @@ pub struct PeerDisplay {
 }
 
 impl SessionDisplay {
+    /// A short line describing what a still-connecting join is waiting on, for
+    /// the scene overlay.
+    pub fn sync_status(&self) -> String {
+        match self.peers.len() {
+            0 => "waiting for a peer to connect".to_string(),
+            1 => "receiving graph from 1 peer".to_string(),
+            n => format!("receiving graph from {n} peers"),
+        }
+    }
+
     /// A hover summary: the connection state and connected peers.
     pub fn hover_text(&self) -> String {
         let mut text = format!("shared session: {}", self.conn.label());
