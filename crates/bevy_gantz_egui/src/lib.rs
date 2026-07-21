@@ -221,7 +221,13 @@ fn clear_ui_providers(
 pub struct HeadGuiState(pub gantz_egui::widget::gantz::OpenHeadState);
 
 /// Views for a single head's graphs (keyed by subgraph path).
+///
+/// Requires the rest of the per-head GUI state so every spawn path (including
+/// app-side session restore, which bypasses the [`on_head_opened`] observer)
+/// gets the full trio: the `OpenHeadViews` query silently skips entities
+/// missing any of them.
 #[derive(Component, Default, Clone)]
+#[require(HeadGuiState, HeadNodeInstances)]
 pub struct GraphView(pub gantz_egui::SceneView);
 
 /// Per-head cache of reified node instances for the working graph.
@@ -473,10 +479,19 @@ impl<'q, 'w, 's> HeadAccess<'q, 'w, 's> {
         let mut head_to_entity = HashMap::new();
 
         for &entity in tab_order.iter() {
-            if let Ok(data) = query.get(entity) {
-                let head: ca::Head = (**data.core.head_ref).clone();
-                heads.push(head.clone());
-                head_to_entity.insert(head, entity);
+            match query.get(entity) {
+                Ok(data) => {
+                    let head: ca::Head = (**data.core.head_ref).clone();
+                    heads.push(head.clone());
+                    head_to_entity.insert(head, entity);
+                }
+                // A tab-order entity outside the query means a spawn path
+                // missed one of the per-head GUI components. Dropping it here
+                // would hide the head from the UI (no tab, blank panes) while
+                // its VM keeps running - make it loud instead.
+                Err(e) => {
+                    log::error!("open head {entity} missing from the views query: {e}");
+                }
             }
         }
 

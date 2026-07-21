@@ -8,7 +8,7 @@ use bevy_gantz::{
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
     timestamp,
 };
-use bevy_gantz_egui::{BuiltinNodes, GantzEguiPlugin, HeadGuiState, TraceCapture};
+use bevy_gantz_egui::{BuiltinNodes, GantzEguiPlugin, TraceCapture};
 use bevy_pkv::PkvStore;
 use storage::Pkv;
 
@@ -129,18 +129,12 @@ fn setup_open(
     let focused_head = bevy_gantz::storage::load_focused_head(&*storage);
 
     // Spawn entities for each open head. `OpenHead`'s required components
-    // cover the compile outcome; `vm::sync` initializes the VMs on the first
-    // `Update`.
+    // cover the compile outcome, `GraphView`'s the rest of the per-head GUI
+    // state. `vm::sync` initializes the VMs on the first `Update`.
     for (head, graph, head_view) in loaded {
         let is_focused = focused_head.as_ref() == Some(&head);
         let entity = cmds
-            .spawn((
-                OpenHead,
-                HeadRef(head),
-                WorkingGraph(graph),
-                head_view,
-                HeadGuiState::default(),
-            ))
+            .spawn((OpenHead, HeadRef(head), WorkingGraph(graph), head_view))
             .id();
 
         tab_order.push(entity);
