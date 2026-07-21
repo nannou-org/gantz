@@ -13,8 +13,13 @@ use crate::widget::graph_scene::NodeIndex;
 use crate::{CreateNode, InspectEdge, PastePos, export, node::NamedRef};
 use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, NodeData};
 use gantz_core::node::{self, GetNode};
+pub use session::{RevertCursor, redo, session_redo, session_undo, undo};
 use std::collections::HashSet;
 use steel::steel_vm::engine::Engine;
+pub use sync::{MergeHeadOutcome, SyncTipOutcome, merge_head, sync_remote_tip};
+
+mod session;
+mod sync;
 
 /// The egui-graph layout id for the node at graph index `ix`.
 fn node_id(ix: usize) -> egui_graph::NodeId {
@@ -641,12 +646,6 @@ pub fn commit_layout(
         head,
     ))
 }
-
-mod session;
-mod sync;
-
-pub use session::{RevertCursor, redo, session_redo, session_undo, undo};
-pub use sync::{MergeHeadOutcome, SyncTipOutcome, merge_head, sync_remote_tip};
 
 #[cfg(test)]
 pub(crate) mod test_util {

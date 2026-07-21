@@ -22,10 +22,24 @@ use bevy_ecs::prelude::*;
 use bevy_gantz::head;
 use gantz_ca as ca;
 use gantz_collab::{Access, ConnState, Handle, Identity, ObjectRef, PeerId, Session, SessionId};
+pub use session::{
+    attach_session_refs, mark_dirty, on_join_session, on_leave_session, on_share_session,
+    session_resolutions,
+};
 use std::collections::{BTreeMap, HashMap, HashSet};
+pub use sync::announce_sessions;
+pub(crate) use sync::poll_collab_events;
+pub use ui::{CollabSettingsChanged, broadcast_presence, update_collab_ui};
+use ui::{
+    dispatch_collab_settings, dispatch_join_session, on_share_head_payload,
+    on_stop_sharing_payload, sync_collab_settings,
+};
 
 pub mod action;
+mod session;
 pub mod storage;
+mod sync;
+mod ui;
 
 /// The plugin: registers the session resources, observers and systems.
 ///
@@ -211,19 +225,3 @@ impl Plugin for CollabPlugin {
             );
     }
 }
-
-mod session;
-mod sync;
-mod ui;
-
-pub use session::{
-    attach_session_refs, mark_dirty, on_join_session, on_leave_session, on_share_session,
-    session_resolutions,
-};
-pub use sync::announce_sessions;
-pub(crate) use sync::poll_collab_events;
-pub use ui::{CollabSettingsChanged, broadcast_presence, update_collab_ui};
-use ui::{
-    dispatch_collab_settings, dispatch_join_session, on_share_head_payload,
-    on_stop_sharing_payload, sync_collab_settings,
-};
