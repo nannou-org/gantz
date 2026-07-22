@@ -33,13 +33,21 @@ use steel::SteelVal;
 /// and evaluation triggers, plus a reserved extension variant.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Action {
-    /// A live VM-state write, optionally fused with the push-eval it
-    /// triggered in the same frame (fused so "set then evaluate" stays
+    /// A batch of live VM-state writes to one node, optionally fused with
+    /// the push-eval they triggered (fused so "set then evaluate" stays
     /// atomic on the remote side - an eval arriving before its value would
     /// fire on stale state).
+    ///
+    /// `values` is every value written within one send window, oldest
+    /// first. Receivers apply them in order and, when `eval` is present,
+    /// fire the push-eval after EACH value: rate-limited transports batch
+    /// steps rather than dropping them, so accumulative downstream state
+    /// (e.g. a scope plot sampling per evaluation) stays in step with the
+    /// emitting peer. A window that recorded no push-eval ships
+    /// `eval: None` and fires nothing.
     SetState {
         path: Vec<node::Id>,
-        value: Value,
+        values: Vec<Value>,
         eval: Option<Source>,
     },
     /// A push/pull evaluation with no accompanying state write (e.g. a

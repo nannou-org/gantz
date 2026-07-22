@@ -15,10 +15,13 @@
 //! captured; everything else stays local.
 //!
 //! The outbox fuses a state write with the push-eval it triggered in the
-//! same frame (atomic set-then-evaluate remotely), keeps only the latest
-//! value per node path (a drag coalesces), and rate-limits value sends per
-//! path - the final drag value always ships on the trailing edge. Evals
-//! bypass the limit: every click ships.
+//! same frame (atomic set-then-evaluate remotely) and rate-limits value
+//! sends per node path. Rate limiting BATCHES, it never drops: every value
+//! written within a window ships (oldest first) and replays step-by-step
+//! on peers, so accumulative downstream state (e.g. a scope plot sampling
+//! per evaluation) stays in step with the emitting peer, and the final
+//! drag value always ships on the trailing edge. Evals bypass the limit:
+//! every click ships.
 
 use crate::{CollabIdentity, CollabRuntime, CollabSessions, SessionRef};
 use bevy_ecs::prelude::*;
@@ -37,13 +40,21 @@ use std::time::Duration;
 use web_time::Instant;
 
 /// The minimum interval between value sends for one node path: a 60 Hz drag
-/// becomes ~20 msg/s. The pending slot keeps the newest value meanwhile and
-/// flushes when the window elapses, so the final value always ships.
+/// becomes ~20 msg/s. The pending slot batches the window's values
+/// meanwhile and flushes when the window elapses, so every step (and thus
+/// the final value) always ships.
 const RATE_LIMIT: Duration = Duration::from_millis(50);
 
 /// How long a received action waits for its graph anchor (a tip likely still
 /// in flight) before it is dropped.
 const RETRY_DEADLINE: Duration = Duration::from_secs(1);
+
+/// The most values one pending slot batches; beyond it the OLDEST drops
+/// (degrading gracefully to coalescing). A backstop for pathological frame
+/// hitches - a 60 Hz drag batches 3-4 values per window - that also keeps
+/// the encoded action far below [`proto::MAX_ACTION_DATA`] for the value
+/// shapes interactive nodes write.
+const MAX_BATCHED_WRITES: usize = 64;
 
 /// The received-action queue bound; a backstop, not a working limit.
 const INBOX_CAP: usize = 1024;
@@ -76,18 +87,20 @@ pub struct CaptureEval {
 /// The key addressing one node's pending value within a session.
 type PathKey = (SessionId, ca::Name, Vec<node::Id>);
 
-/// A fused, not-yet-sent state write.
+/// The fused, not-yet-sent state writes of one node's send window.
+#[derive(Default)]
 struct PendingWrite {
-    value: Value,
-    /// The push-eval fused with this write, when the node triggered one in
-    /// the same frame.
+    /// Every value written this window, oldest first (bounded by
+    /// [`MAX_BATCHED_WRITES`]).
+    values: Vec<Value>,
+    /// The push-eval fused with these writes, when the node triggered one.
     eval: Option<Source>,
 }
 
-/// Outbound ephemeral actions: per-path fusion, coalescing and rate state.
+/// Outbound ephemeral actions: per-path fusion, batching and rate state.
 #[derive(Default, Resource)]
 pub struct ActionOutbox {
-    /// The newest unsent value per node path (latest wins during a drag).
+    /// The unsent values per node path, oldest first.
     pending: HashMap<PathKey, PendingWrite>,
     /// When each path last shipped, for rate limiting.
     last_sent: HashMap<PathKey, Instant>,
@@ -274,17 +287,10 @@ pub fn on_capture_write(
     let Some((session, name)) = session_name(ev.head, &heads) else {
         return;
     };
-    let key = (session, name.clone(), ev.write.path.clone());
-    // An eval already fused into the (unshipped) pending this write replaces
-    // belongs to the same rate-limit window and coalesces with the newest
-    // value exactly like the value itself does - payload order within a
-    // frame is not guaranteed, so the frame's own eval may have fused before
-    // this write arrived. Nothing carries across flushes (shipping removes
-    // the slot), so a write without a push-eval can never re-fire an
-    // already-shipped eval.
-    let mut eval = outbox.pending.get(&key).and_then(|p| p.eval.clone());
-    // A standalone push-eval already queued for the same node likewise
-    // belongs to this write: fuse it back in.
+    // A standalone push-eval already queued for the same node belongs to
+    // this write: fuse it back in (payload order within a frame is not
+    // guaranteed - the eval may have been captured first).
+    let mut rescued = None;
     if let Some(ix) = outbox.evals.iter().position(|(s, n, sources)| {
         *s == session
             && *n == name
@@ -292,15 +298,23 @@ pub fn on_capture_write(
                 && src.kind == gantz_egui::action::Kind::Push)
     }) {
         let (_, _, mut sources) = outbox.evals.remove(ix);
-        eval = sources.pop();
+        rescued = sources.pop();
     }
-    outbox.pending.insert(
-        key,
-        PendingWrite {
-            value: ev.write.value.clone(),
-            eval,
-        },
-    );
+    // The slot updates in place: the window's earlier values stay batched
+    // (rate limiting must never drop a step) and an eval fused earlier in
+    // the window is retained. Nothing carries across flushes (shipping
+    // removes the slot), so a window without a push-eval can never re-fire
+    // an already-shipped eval.
+    let key = (session, name, ev.write.path.clone());
+    let pending = outbox.pending.entry(key).or_default();
+    pending.values.push(ev.write.value.clone());
+    if pending.values.len() > MAX_BATCHED_WRITES {
+        log::debug!("session write batch full; dropping the oldest value");
+        pending.values.remove(0);
+    }
+    if rescued.is_some() {
+        pending.eval = rescued;
+    }
 }
 
 /// Record a captured evaluation into the outbox: fused into the pending
@@ -381,7 +395,7 @@ pub fn broadcast_actions(
         );
     }
 
-    // Pending values ship when their window allows.
+    // Pending value batches ship when their window allows.
     let now = Instant::now();
     let due: Vec<PathKey> = outbox
         .pending
@@ -395,7 +409,10 @@ pub fn broadcast_actions(
         .cloned()
         .collect();
     for key in due {
-        let Some(PendingWrite { value, eval }) = outbox.pending.remove(&key) else {
+        let Some(PendingWrite { mut values, eval }) = outbox.pending.remove(&key) else {
+            continue;
+        };
+        let Some(last) = values.last().cloned() else {
             continue;
         };
         let (session, name, path) = key.clone();
@@ -403,11 +420,30 @@ pub fn broadcast_actions(
             continue;
         };
         let summary = format!(
-            "set {path:?} = {}{}",
-            value_summary(&value),
+            "set {path:?} = {}{}{}",
+            value_summary(&last),
+            match values.len() {
+                1 => String::new(),
+                n => format!(" (x{n})"),
+            },
             if eval.is_some() { " +eval" } else { "" },
         );
-        let action = Action::SetState { path, value, eval };
+        let mut action = Action::SetState {
+            path: path.clone(),
+            values: std::mem::take(&mut values),
+            eval: eval.clone(),
+        };
+        if !send_fits(&action) {
+            // Degrade to the newest value alone rather than losing the
+            // window outright (large `Str`/`List` values can overflow the
+            // envelope even uncoalesced; that final drop keeps its warning).
+            log::debug!("session write batch oversized; coalescing to the newest value");
+            action = Action::SetState {
+                path,
+                values: vec![last],
+                eval,
+            };
+        }
         if send(
             handle,
             &mut outbox,
@@ -422,6 +458,11 @@ pub fn broadcast_actions(
             outbox.last_sent.insert(key, now);
         }
     }
+}
+
+/// Whether the encoded action fits the gossip envelope's size cap.
+fn send_fits(action: &Action) -> bool {
+    proto::encode(action).len() <= proto::MAX_ACTION_DATA
 }
 
 /// Encode and broadcast one action; returns whether it shipped.
@@ -541,9 +582,13 @@ pub fn apply_remote_actions(
         };
         let node_count = registry.head_graph(&head).map(|g| g.node_count());
         match action {
-            Action::SetState { path, value, eval } => {
-                // Last-write-wins per path: reordered/concurrent writes
-                // converge on the newest, origin id breaking ties.
+            Action::SetState { path, values, eval } => {
+                let Some(last) = values.last() else {
+                    continue;
+                };
+                // Last-write-wins per path on the batch's stamp:
+                // reordered/concurrent batches converge on the newest,
+                // origin id breaking ties.
                 let key = (inbound.session, inbound.name.clone(), path.clone());
                 let stamp = (inbound.timestamp, inbound.origin);
                 if inbox
@@ -564,23 +609,47 @@ pub fn apply_remote_actions(
                     continue;
                 }
                 let summary = format!(
-                    "set {path:?} = {}{}",
-                    value_summary(&value),
+                    "set {path:?} = {}{}{}",
+                    value_summary(last),
+                    match values.len() {
+                        1 => String::new(),
+                        n => format!(" (x{n})"),
+                    },
                     if eval.is_some() { " +eval" } else { "" },
                 );
-                if let Err(e) = gantz_core::node::state::update_value(vm, &path, value.into()) {
-                    log::warn!("failed to apply remote state write: {e}");
-                    continue;
+                let entrypoint = eval
+                    .map(|src| gantz_egui::action::entrypoint([src]))
+                    .filter(|ep| entry_fn_exists(vm, ep));
+                // Replay the batch through the command queue: writes as
+                // queued world closures, evals as triggers. FIFO command
+                // application interleaves them w1,e1,w2,e2,... so each eval
+                // observes its own step's value - a direct write here would
+                // land before ANY deferred eval fired, collapsing every
+                // step onto the final value.
+                for value in values {
+                    let path = path.clone();
+                    cmds.queue(move |world: &mut World| {
+                        let mut vms = world.non_send_mut::<head::HeadVms>();
+                        let Some(vm) = vms.0.get_mut(&entity) else {
+                            return;
+                        };
+                        if let Err(e) =
+                            gantz_core::node::state::update_value(vm, &path, value.into())
+                        {
+                            log::warn!("failed to apply remote state write: {e}");
+                        }
+                    });
+                    if let Some(ep) = &entrypoint {
+                        // A remote push fires "now" on this peer's clock
+                        // (matching local user-driven pushes).
+                        cmds.trigger(EvalEntryEvent {
+                            head: entity,
+                            entrypoint: ep.clone(),
+                            time: None,
+                        });
+                    }
                 }
                 inbox.last_applied.insert(key, stamp);
-                if let Some(src) = eval {
-                    trigger_guarded_eval(
-                        vm,
-                        entity,
-                        gantz_egui::action::entrypoint([src]),
-                        &mut cmds,
-                    );
-                }
                 activity.push(ActionLogEntry {
                     timestamp: inbound.timestamp,
                     session: inbound.session,
@@ -610,19 +679,29 @@ pub fn apply_remote_actions(
     inbox.queue = retry;
 }
 
-/// Trigger an entrypoint evaluation iff its generated entry fn exists in the
-/// VM: a config-divergent peer (e.g. `emit_all_node_fns` differences) logs
-/// one debug line instead of pushing a spurious runtime diagnostic through
-/// the eval error path. Returns whether the eval was triggered.
+/// Whether the entrypoint's generated entry fn exists in the VM: a
+/// config-divergent peer (e.g. `emit_all_node_fns` differences) logs one
+/// debug line instead of pushing a spurious runtime diagnostic through the
+/// eval error path.
+fn entry_fn_exists(vm: &steel::steel_vm::engine::Engine, entrypoint: &Entrypoint) -> bool {
+    let fn_name = gantz_core::compile::entry_fn_name(&entrypoint.id());
+    let exists = vm.extract_value(&fn_name).is_ok();
+    if !exists {
+        log::debug!("remote eval skipped: entry fn {fn_name} is not compiled locally");
+    }
+    exists
+}
+
+/// Trigger an entrypoint evaluation iff its generated entry fn exists in
+/// the VM (see [`entry_fn_exists`]). Returns whether the eval was
+/// triggered.
 fn trigger_guarded_eval(
     vm: &steel::steel_vm::engine::Engine,
     head: Entity,
     entrypoint: Entrypoint,
     cmds: &mut Commands,
 ) -> bool {
-    let fn_name = gantz_core::compile::entry_fn_name(&entrypoint.id());
-    if vm.extract_value(&fn_name).is_err() {
-        log::debug!("remote eval skipped: entry fn {fn_name} is not compiled locally");
+    if !entry_fn_exists(vm, &entrypoint) {
         return false;
     }
     // A remote push fires "now" on this peer's clock (matching local
@@ -660,14 +739,9 @@ mod tests {
     use super::*;
     use gantz_core::compile::entrypoint::{Entrypoint, EvalKind, EvalSource};
 
-    // Regression: during a drag, rate limiting can hold an unshipped pending
-    // value while the next frame's payloads arrive eval-first (payload order
-    // within a frame is not guaranteed). The eval fuses into the held
-    // pending; the frame's write then replaces the slot and must keep the
-    // fused eval - otherwise the flushed `SetState` ships without one, and
-    // the remote peer updates the value but never re-evaluates downstream.
-    #[test]
-    fn write_replacing_a_fused_pending_keeps_the_eval() {
+    /// A capture world with one open session head; returns the world, the
+    /// head entity and the outbox key parts.
+    fn capture_world() -> (World, Entity, SessionId, ca::Name) {
         let mut world = World::new();
         world.init_resource::<ActionOutbox>();
         world.add_observer(on_capture_write);
@@ -680,46 +754,93 @@ mod tests {
                 SessionRef(session),
             ))
             .id();
-        let path = vec![0usize];
+        (world, head, session, name)
+    }
+
+    fn push_entrypoint(path: &[node::Id]) -> Entrypoint {
         let source = EvalSource {
-            path: path.clone(),
+            path: path.to_vec(),
             kind: EvalKind::Push,
             conns: gantz_core::node::Conns::empty(),
         };
-        let entrypoint = Entrypoint([source].into_iter().collect());
-        let write = |v: f64| gantz_egui::action::StateWrite {
-            path: path.clone(),
+        Entrypoint([source].into_iter().collect())
+    }
+
+    fn write(path: &[node::Id], v: f64) -> gantz_egui::action::StateWrite {
+        gantz_egui::action::StateWrite {
+            path: path.to_vec(),
             value: Value::Num(v),
-        };
+        }
+    }
+
+    // Regression: during a drag, rate limiting can hold an unshipped pending
+    // while the next frame's payloads arrive eval-first (payload order
+    // within a frame is not guaranteed). The eval fuses into the held
+    // pending; the frame's write must keep both the fused eval and the
+    // earlier values - otherwise the flushed `SetState` ships without the
+    // eval (the remote value updates but downstream never re-evaluates) or
+    // with steps missing (accumulative downstream state drifts).
+    #[test]
+    fn writes_batch_and_keep_the_fused_eval_in_either_order() {
+        let (mut world, head, session, name) = capture_world();
+        let path = vec![0usize];
+        let entrypoint = push_entrypoint(&path);
 
         // Frame 1: write + eval -> fused pending, held by the rate limit.
         world.trigger(CaptureWrite {
             head,
-            write: write(1.0),
+            write: write(&path, 1.0),
         });
         world.trigger(CaptureEval {
             head,
             entrypoint: entrypoint.clone(),
         });
-        // Frame 2, hazardous order: the eval fuses into the held pending,
-        // then the newer write replaces it.
+        // Frame 2, hazardous order: the eval fuses into the held pending
+        // before the frame's own write lands.
         world.trigger(CaptureEval {
             head,
             entrypoint: entrypoint.clone(),
         });
         world.trigger(CaptureWrite {
             head,
-            write: write(2.0),
+            write: write(&path, 2.0),
         });
 
         let outbox = world.resource::<ActionOutbox>();
         let key = (session, name, path);
         let pending = outbox.pending.get(&key).expect("a pending write");
-        assert_eq!(pending.value, Value::Num(2.0));
+        assert_eq!(
+            pending.values,
+            vec![Value::Num(1.0), Value::Num(2.0)],
+            "every step of the window must ship, oldest first"
+        );
         assert!(
             pending.eval.is_some(),
             "the fused eval must survive the newer write"
         );
         assert!(outbox.evals.is_empty(), "no standalone eval may leak");
+    }
+
+    // The batch bound degrades gracefully to coalescing: the OLDEST value
+    // drops, so the final value always ships.
+    #[test]
+    fn batch_cap_drops_the_oldest_value() {
+        let (mut world, head, session, name) = capture_world();
+        let path = vec![0usize];
+        for i in 0..(MAX_BATCHED_WRITES + 2) {
+            world.trigger(CaptureWrite {
+                head,
+                write: write(&path, i as f64),
+            });
+        }
+        let outbox = world.resource::<ActionOutbox>();
+        let key = (session, name, path);
+        let pending = outbox.pending.get(&key).expect("a pending write");
+        assert_eq!(pending.values.len(), MAX_BATCHED_WRITES);
+        assert_eq!(pending.values.first(), Some(&Value::Num(2.0)));
+        assert_eq!(
+            pending.values.last(),
+            Some(&Value::Num((MAX_BATCHED_WRITES + 1) as f64))
+        );
     }
 }
