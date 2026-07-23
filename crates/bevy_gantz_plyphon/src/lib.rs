@@ -1983,6 +1983,85 @@ mod tests {
         );
     }
 
+    /// End-to-end for the descriptor-table nodes: a `~saw -> ~lpf -> ~out`
+    /// chain spawns through `spawn_part` and sounds, and the filter's *keyed*
+    /// cutoff binding drives the running synth via `set_control` - slamming
+    /// the cutoff down collapses the saw's energy. Guards the whole
+    /// `UnitNode` pipeline (derive, keyed `ParamSlot`s, live control) with an
+    /// offline engine.
+    #[test]
+    fn unit_chain_sounds_and_keyed_param_controls_it() {
+        use gantz_core::edge::Edge;
+        use gantz_core::node::graph::Graph;
+        use gantz_plyphon::flatten::{Flat, RefKind, flatten};
+
+        let mut g = Graph::<TestN>::default();
+        let s = g.add_node(unit("Saw"));
+        let f = g.add_node(unit("LPF"));
+        let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
+        g.add_edge(s, f, Edge::new(0.into(), 0.into()));
+        g.add_edge(f, o, Edge::new(0.into(), 0.into()));
+        let resolve =
+            |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
+        let flat: Graph<Flat<&TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
+
+        let mut cache = DefCache::new();
+        let template = derive_template(&flat, 1, &|_| None, &mut cache).expect("derive");
+        let part = instantiate(&template, &cache).into_iter().next().unwrap();
+        let wiring = wiring_hash(&part);
+
+        let (mut controller, _nrt, mut world) = plyphon::engine(plyphon::Options {
+            sample_rate: 48_000.0,
+            output_channels: 1,
+            ..plyphon::Options::default()
+        });
+        let mut state = HeadSynths::default();
+        let assets = BufferBlobs::default();
+        let entity = entities(1)[0];
+        let synth = spawn_part(
+            &mut controller,
+            &mut state,
+            &assets,
+            entity,
+            part,
+            wiring,
+            48_000.0,
+            None,
+        )
+        .expect("spawn_part");
+
+        // The filter's cutoff arrives as a *keyed* slot at the LPF's path.
+        let cutoff = synth
+            .params
+            .iter()
+            .find(|p| p.node_path == vec![1] && p.key.as_deref() == Some("freq"))
+            .expect("the LPF's keyed freq slot");
+
+        // Open (the 440 Hz default): the saw sounds.
+        let render = |world: &mut plyphon::World| {
+            let mut out = vec![0.0f32; 48_000 / 2];
+            for block in out.chunks_mut(64) {
+                world.fill(block, 1);
+            }
+            (out.iter().map(|v| v * v).sum::<f32>() / out.len() as f32).sqrt()
+        };
+        let open = render(&mut world);
+        assert!(open > 0.05, "saw -> lpf -> out must sound: rms={open}");
+
+        // Slam the cutoff to 20 Hz via the keyed slot: the 220 Hz saw all but
+        // vanishes behind the 2nd-order low-pass.
+        let mut backend = Embedded::new(&mut controller);
+        backend
+            .set_control(synth.node_id, cutoff.index, 20.0)
+            .expect("set_control");
+        let _settle = render(&mut world);
+        let closed = render(&mut world);
+        assert!(
+            closed < open * 0.2,
+            "closing the keyed cutoff must collapse the output: open={open}, closed={closed}",
+        );
+    }
+
     /// End-to-end: a `~playbuf -> ~out` graph plays a content-addressed asset.
     /// Exercises the whole chain - node -> derive -> `BufferBinding` -> resident
     /// install -> `PlayBuf` reads the buffer -> `Out` - and confirms it sounds.
@@ -2218,7 +2297,7 @@ mod tests {
     /// address, arity and `inline` flag.
     #[derive(Clone)]
     enum TestN {
-        SinOsc(gantz_plyphon::UnitNode),
+        Unit(gantz_plyphon::UnitNode),
         Out(gantz_plyphon::Out),
         Pack(gantz_plyphon::Pack),
         Unpack(gantz_plyphon::Unpack),
@@ -2228,9 +2307,14 @@ mod tests {
         Ref(gantz_ca::ContentAddr, usize, usize, bool),
     }
 
+    /// A test node wrapping the named plyphon unit (a descriptor-table row).
+    fn unit(name: &str) -> TestN {
+        TestN::Unit(gantz_plyphon::UnitNode::from_unit(name).expect("table row"))
+    }
+
     /// A `~sinosc` test node (the `UnitNode` wrapping plyphon's `SinOsc`).
     fn sinosc() -> TestN {
-        TestN::SinOsc(gantz_plyphon::UnitNode::from_unit("SinOsc").expect("SinOsc row"))
+        unit("SinOsc")
     }
 
     /// The graph's erased (data-layer) address: the same scheme the registry
@@ -2241,7 +2325,7 @@ mod tests {
         use gantz_core::data::erase_node_typed;
         let dg: gantz_ca::DataGraph = g.map(
             |_, n| match n {
-                TestN::SinOsc(s) => erase_node_typed(s).unwrap(),
+                TestN::Unit(s) => erase_node_typed(s).unwrap(),
                 TestN::Out(o) => erase_node_typed(o).unwrap(),
                 TestN::Pack(p) => erase_node_typed(p).unwrap(),
                 TestN::Unpack(u) => erase_node_typed(u).unwrap(),
@@ -2275,7 +2359,7 @@ mod tests {
     impl gantz_plyphon::ToNodeDsp for TestN {
         fn to_node_dsp(&self) -> Option<&dyn gantz_plyphon::NodeDsp> {
             match self {
-                TestN::SinOsc(s) => Some(s),
+                TestN::Unit(s) => Some(s),
                 TestN::Out(o) => Some(o),
                 TestN::Pack(p) => Some(p),
                 TestN::Unpack(u) => Some(u),
