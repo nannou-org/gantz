@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// User-editable collaboration configuration, persisted with the GUI state.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct CollabConfig {
     /// The username shared with session peers (empty = anonymous).
     #[serde(default)]
@@ -18,6 +18,28 @@ pub struct CollabConfig {
     /// starts, i.e. a change takes effect on app restart.
     #[serde(default)]
     pub custom_relay: Option<String>,
+    /// The minimum interval in milliseconds between live-action sends per
+    /// node path (0 = every frame). Values written faster than this batch
+    /// into one message and replay in order on peers (see the
+    /// `bevy_gantz_collab::action` module docs).
+    #[serde(default = "default_action_rate_ms")]
+    pub action_rate_ms: u64,
+}
+
+impl Default for CollabConfig {
+    fn default() -> Self {
+        Self {
+            username: String::new(),
+            custom_relay: None,
+            action_rate_ms: default_action_rate_ms(),
+        }
+    }
+}
+
+/// The [`CollabConfig::action_rate_ms`] default: 50ms keeps a 60 Hz drag at
+/// ~20 msg/s while batching every intermediate value.
+fn default_action_rate_ms() -> u64 {
+    50
 }
 
 /// Everything the widgets need to render collaboration state.

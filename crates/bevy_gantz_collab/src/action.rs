@@ -39,11 +39,11 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 use web_time::Instant;
 
-/// The minimum interval between value sends for one node path: a 60 Hz drag
-/// becomes ~20 msg/s. The pending slot batches the window's values
-/// meanwhile and flushes when the window elapses, so every step (and thus
-/// the final value) always ships.
-const RATE_LIMIT: Duration = Duration::from_millis(50);
+// The minimum interval between value sends for one node path is the
+// user-configurable `CollabConfig::action_rate_ms` (default 50ms: a 60 Hz
+// drag becomes ~20 msg/s). The pending slot batches the window's values
+// meanwhile and flushes when the window elapses, so every step (and thus
+// the final value) always ships regardless of the window length.
 
 /// How long a received action waits for its graph anchor (a tip likely still
 /// in flight) before it is dropped.
@@ -352,6 +352,7 @@ pub fn broadcast_actions(
     identity: Option<Res<CollabIdentity>>,
     sessions: Res<CollabSessions>,
     registry: Res<Registry>,
+    gui_state: Res<bevy_gantz_egui::GuiState>,
     mut outbox: ResMut<ActionOutbox>,
     mut activity: ResMut<ActionLog>,
 ) {
@@ -395,7 +396,10 @@ pub fn broadcast_actions(
         );
     }
 
-    // Pending value batches ship when their window allows.
+    // Pending value batches ship when their window allows (the window is
+    // the user-configurable send rate; batching means no step is lost
+    // however long it is).
+    let rate = Duration::from_millis(gui_state.0.collab.action_rate_ms);
     let now = Instant::now();
     let due: Vec<PathKey> = outbox
         .pending
@@ -404,7 +408,7 @@ pub fn broadcast_actions(
             outbox
                 .last_sent
                 .get(*key)
-                .is_none_or(|&at| now.duration_since(at) >= RATE_LIMIT)
+                .is_none_or(|&at| now.duration_since(at) >= rate)
         })
         .cloned()
         .collect();

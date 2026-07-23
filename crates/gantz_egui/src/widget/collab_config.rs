@@ -117,6 +117,21 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> CollabConfi
             );
             ui.end_row();
 
+            // The per-node-path send window for live actions.
+            ui.label("action rate");
+            ui.add(
+                egui::DragValue::new(&mut config.action_rate_ms)
+                    .speed(1)
+                    .range(0..=1000)
+                    .suffix(" ms"),
+            )
+            .on_hover_text(
+                "minimum interval between live-action sends per node \
+                 (drags, bangs); values written faster batch into one \
+                 message and replay in order on peers. 0 sends every frame",
+            );
+            ui.end_row();
+
             // The relay server assisting (and, for browser peers, carrying)
             // connections. Empty = iroh's default n0 public relays.
             ui.label("relay");
