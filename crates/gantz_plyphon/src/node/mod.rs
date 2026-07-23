@@ -7,23 +7,19 @@
 //! marks them as dsp nodes.
 
 pub use bus::Bus;
-pub use lag::Lag;
 pub use out::Out;
 pub use pack::Pack;
 pub use play_buf::PlayBuf;
 pub use scope_out::ScopeOut;
-pub use sin_osc::SinOsc;
 pub use sum::Sum;
 pub use unit::{InvalidUnitNode, UnitNode};
 pub use unpack::Unpack;
 
 pub mod bus;
-pub mod lag;
 pub mod out;
 pub mod pack;
 pub mod play_buf;
 pub mod scope_out;
-pub mod sin_osc;
 pub mod sum;
 pub mod unit;
 pub mod unpack;

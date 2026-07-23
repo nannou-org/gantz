@@ -552,9 +552,8 @@ pub fn node_dsp_of(any: &dyn std::any::Any) -> Option<&dyn NodeDsp> {
     fn probe<T: NodeDsp + 'static>(any: &dyn std::any::Any) -> Option<&dyn NodeDsp> {
         any.downcast_ref::<T>().map(|n| n as &dyn NodeDsp)
     }
-    probe::<crate::SinOsc>(any)
+    probe::<crate::UnitNode>(any)
         .or_else(|| probe::<crate::Out>(any))
-        .or_else(|| probe::<crate::Lag>(any))
         .or_else(|| probe::<crate::ScopeOut>(any))
         .or_else(|| probe::<crate::Pack>(any))
         .or_else(|| probe::<crate::Sum>(any))
@@ -702,15 +701,17 @@ mod tests {
             let node = T::default();
             assert!(node_dsp_of(&node).is_some());
         }
-        check::<crate::SinOsc>();
         check::<crate::Out>();
-        check::<crate::Lag>();
         check::<crate::ScopeOut>();
         check::<crate::Pack>();
         check::<crate::Sum>();
         check::<crate::Unpack>();
         check::<crate::Bus>();
         check::<crate::PlayBuf>();
+        // `UnitNode` has no `Default`; every table row probes through the one
+        // type.
+        let unit = crate::UnitNode::from_unit("SinOsc").expect("SinOsc row");
+        assert!(node_dsp_of(&unit).is_some());
     }
 
     /// A unit-backed mono wire at `rate` to feed the summing helpers.

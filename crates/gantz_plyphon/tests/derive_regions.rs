@@ -4,7 +4,7 @@
 use gantz_core::edge::Edge;
 use gantz_core::node::graph::Graph;
 use gantz_plyphon::{
-    Bus, DeriveError, Lag, NodeDsp, Out, Pack, ScopeOut, SinOsc, ToNodeDsp, derive_synthdef,
+    Bus, DeriveError, NodeDsp, Out, Pack, ScopeOut, ToNodeDsp, UnitNode, derive_synthdef,
     derive_synthdefs, structural_sig,
 };
 use plyphon::synthdef::InputRef;
@@ -14,8 +14,7 @@ const SR: f32 = 48_000.0;
 
 /// A minimal erased node enum, standing in for the app's `Box<dyn Node>`.
 enum N {
-    SinOsc(SinOsc),
-    Lag(Lag),
+    Unit(UnitNode),
     Out(Out),
     ScopeOut(ScopeOut),
     Pack(Pack),
@@ -26,8 +25,7 @@ enum N {
 impl ToNodeDsp for N {
     fn to_node_dsp(&self) -> Option<&dyn NodeDsp> {
         match self {
-            N::SinOsc(s) => Some(s),
-            N::Lag(l) => Some(l),
+            N::Unit(u) => Some(u),
             N::Out(o) => Some(o),
             N::ScopeOut(t) => Some(t),
             N::Pack(p) => Some(p),
@@ -37,13 +35,23 @@ impl ToNodeDsp for N {
     }
 }
 
+/// A default `~sinosc` node.
+fn sinosc() -> N {
+    N::Unit(UnitNode::from_unit("SinOsc").expect("SinOsc row"))
+}
+
+/// A default `~lag` node.
+fn lag() -> N {
+    N::Unit(UnitNode::from_unit("Lag").expect("Lag row"))
+}
+
 #[test]
 fn sine_bus_out_splits_two_regions() {
     // `~sinosc -> ~bus -> ~out`: two regions in writer-first order. The writer
     // ends in a fade-gained `Out` to a placeholder bus; the reader begins with
     // an `In` of the inferred width.
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let b = g.add_node(N::Bus(Bus::default()));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, b, Edge::new(0.into(), 0.into()));
@@ -99,8 +107,8 @@ fn width_flows_across_the_boundary() {
     // 2 sines -> ~pack(2) -> ~bus -> ~out: the writer's bus `Out` carries both
     // channels (each fade-gained) and the reader's `In` is 2 wide.
     let mut g = Graph::<N>::default();
-    let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+    let s0 = g.add_node(sinosc());
+    let s1 = g.add_node(sinosc());
     let pk = g.add_node(N::Pack(Pack::default()));
     let b = g.add_node(N::Bus(Bus::default()));
     let o = g.add_node(N::Out(Out::default()));
@@ -129,7 +137,7 @@ fn same_region_bus_is_a_wire() {
     // A `~bus` whose two sides share a region (an uncut path also connects
     // them): one region, no bus units - the def equals the bus-less graph's.
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let b = g.add_node(N::Bus(Bus::default()));
     let pk = g.add_node(N::Pack(Pack::default()));
     let o = g.add_node(N::Out(Out::default()));
@@ -145,7 +153,7 @@ fn same_region_bus_is_a_wire() {
 
     // The same graph without the bus derives the identical unit list.
     let mut g2 = Graph::<N>::default();
-    let s2 = g2.add_node(N::SinOsc(SinOsc::default()));
+    let s2 = g2.add_node(sinosc());
     let pk2 = g2.add_node(N::Pack(Pack::default()));
     let o2 = g2.add_node(N::Out(Out::default()));
     g2.add_edge(s2, pk2, Edge::new(0.into(), 0.into()));
@@ -163,7 +171,7 @@ fn bus_chain_aliases_upstream() {
     // `~bus -> ~bus` aliases rather than relaying: still two regions, and the
     // reader reads the *upstream* bus's path.
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let b1 = g.add_node(N::Bus(Bus::default()));
     let b2 = g.add_node(N::Bus(Bus::default()));
     let o = g.add_node(N::Out(Out::default()));
@@ -206,7 +214,7 @@ fn bus_into_scopeout_only() {
     // `~sinosc -> ~bus -> ~scopeout`: the monitor roots the reader region; its
     // binding lands in the reader's `Derived`.
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let b = g.add_node(N::Bus(Bus::default()));
     let t = g.add_node(N::ScopeOut(ScopeOut::default()));
     g.add_edge(s, b, Edge::new(0.into(), 0.into()));
@@ -232,7 +240,7 @@ fn two_buses_between_the_same_regions() {
     // Two `~bus`es from one writer region into one reader region: still two
     // regions, with two write/read pairs.
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let b0 = g.add_node(N::Bus(Bus::default()));
     let b1 = g.add_node(N::Bus(Bus::default()));
     let pk = g.add_node(N::Pack(Pack::default()));
@@ -256,9 +264,9 @@ fn fm_across_a_bus_boundary() {
     // wire and bakes no freq fallback param (the writer's own freq param is
     // unaffected).
     let mut g = Graph::<N>::default();
-    let m = g.add_node(N::SinOsc(SinOsc::default()));
+    let m = g.add_node(sinosc());
     let b = g.add_node(N::Bus(Bus::default()));
-    let c = g.add_node(N::SinOsc(SinOsc::default()));
+    let c = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(m, b, Edge::new(0.into(), 0.into()));
     g.add_edge(b, c, Edge::new(0.into(), 0.into()));
@@ -301,8 +309,8 @@ fn bus_cycle_is_rejected() {
     // exists, so derivation reports the cycle (deliberate feedback is a planned
     // InFeedback follow-up).
     let mut g = Graph::<N>::default();
-    let l0 = g.add_node(N::Lag(Lag::default()));
-    let l1 = g.add_node(N::Lag(Lag::default()));
+    let l0 = g.add_node(lag());
+    let l1 = g.add_node(lag());
     let b0 = g.add_node(N::Bus(Bus::default()));
     let b1 = g.add_node(N::Bus(Bus::default()));
     let o = g.add_node(N::Out(Out::default()));
@@ -324,8 +332,8 @@ fn no_boundary_graph_matches_single_def() {
     // `derive_synthdef`'s exactly (modulo the key-suffixed name), and the key is
     // stable across unrelated (non-dsp) additions.
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
-    let l = g.add_node(N::Lag(Lag::default()));
+    let s = g.add_node(sinosc());
+    let l = g.add_node(lag());
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, l, Edge::new(0.into(), 0.into()));
     g.add_edge(l, o, Edge::new(0.into(), 0.into()));
@@ -355,7 +363,7 @@ fn bus_index_param_is_unlagged_and_sig_stable() {
     // `set_control`. The driver never mutates the def, so `structural_sig` is
     // computed on the final def and is stable across re-derives.
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let b = g.add_node(N::Bus(Bus::default()));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, b, Edge::new(0.into(), 0.into()));
@@ -389,7 +397,7 @@ fn split_regions_play_through_the_engine() {
     // `In` reads only channels written EARLIER in the node tree this block (the ordering
     // requirement the driver's topo placement exists for).
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let b = g.add_node(N::Bus(Bus::default()));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, b, Edge::new(0.into(), 0.into()));
@@ -517,8 +525,8 @@ fn multi_fed_bus_sums_at_the_reader() {
     // Each sine writes its own implicit endpoint bus, and the reader emits
     // one `In` per endpoint and sums them after the reads.
     let mut g = Graph::<N>::default();
-    let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+    let s0 = g.add_node(sinosc());
+    let s1 = g.add_node(sinosc());
     let b = g.add_node(N::Bus(Bus::default()));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s0, b, Edge::new(0.into(), 0.into()));
@@ -563,14 +571,14 @@ fn single_fed_bus_keeps_its_classic_shape_and_key() {
     // existing patches neither respawn nor resound differently.
     let build = |extra_edge: bool| {
         let mut g = Graph::<N>::default();
-        let s = g.add_node(N::SinOsc(SinOsc::default()));
+        let s = g.add_node(sinosc());
         let b = g.add_node(N::Bus(Bus::default()));
         let o = g.add_node(N::Out(Out::default()));
         g.add_edge(s, b, Edge::new(0.into(), 0.into()));
         g.add_edge(b, o, Edge::new(0.into(), 0.into()));
         if extra_edge {
             // A second summand flips the boundary out of the classic case.
-            let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+            let s1 = g.add_node(sinosc());
             g.add_edge(s1, b, Edge::new(0.into(), 0.into()));
         }
         (g, b)

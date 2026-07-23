@@ -5,9 +5,9 @@
 use gantz_core::edge::Edge;
 use gantz_core::node::graph::Graph;
 use gantz_plyphon::{
-    Backend, DeriveError, Derived, DspBuilder, Embedded, Finished, Lag, NodeDsp, NodeRate, Out,
-    Pack, PortShape, ScopeOut, Signal, SinOsc, Sum, ToNodeDsp, UNITS, UnitNode, Unpack,
-    derive_synthdef, structural_sig,
+    Backend, DeriveError, Derived, DspBuilder, Embedded, Finished, NodeDsp, NodeRate, Out, Pack,
+    PortShape, ScopeOut, Signal, Sum, ToNodeDsp, UNITS, UnitNode, Unpack, derive_synthdef,
+    structural_sig,
 };
 use plyphon::synthdef::{InputRef, SynthDef, UnitSpec};
 use plyphon::{AddAction, Options, ROOT_GROUP_ID, Rate, World, engine};
@@ -17,8 +17,6 @@ const SR: f32 = 48_000.0;
 /// A minimal erased node enum, standing in for the app's `Box<dyn Node>`.
 /// `Other` is a non-DSP node (a stand-in for any control-rate node).
 enum N {
-    SinOsc(SinOsc),
-    Lag(Lag),
     Out(Out),
     ScopeOut(ScopeOut),
     Pack(Pack),
@@ -31,8 +29,6 @@ enum N {
 impl ToNodeDsp for N {
     fn to_node_dsp(&self) -> Option<&dyn NodeDsp> {
         match self {
-            N::SinOsc(s) => Some(s),
-            N::Lag(l) => Some(l),
             N::Out(o) => Some(o),
             N::ScopeOut(t) => Some(t),
             N::Pack(p) => Some(p),
@@ -44,10 +40,30 @@ impl ToNodeDsp for N {
     }
 }
 
+/// A default `~sinosc` [`UnitNode`] (for mutation before wrapping).
+fn sinosc_unit() -> UnitNode {
+    UnitNode::from_unit("SinOsc").expect("SinOsc row")
+}
+
+/// A default `~lag` [`UnitNode`] (for mutation before wrapping).
+fn lag_unit() -> UnitNode {
+    UnitNode::from_unit("Lag").expect("Lag row")
+}
+
+/// A default `~sinosc` node.
+fn sinosc() -> N {
+    N::Unit(sinosc_unit())
+}
+
+/// A default `~lag` node.
+fn lag() -> N {
+    N::Unit(lag_unit())
+}
+
 /// Build a `~sinosc -> ~out` graph (default params).
 fn sine_to_out() -> Graph<N> {
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, o, Edge::new(0.into(), 0.into()));
     g
@@ -66,7 +82,7 @@ fn derives_expected_units() {
     // and is applied via set_control), plus the out's driver-owned fade (2).
     assert_eq!(def.params.len(), 3);
     assert!(def.params[0].name.ends_with("/freq"));
-    assert_eq!(def.params[0].default, SinOsc::DEFAULT_FREQ);
+    assert_eq!(def.params[0].default, 220.0);
     assert_eq!(def.params[0].lag, None, "freq is unsmoothed by default");
     assert!(def.params[1].name.ends_with("/gain"));
     assert_eq!(def.params[1].default, Out::DEFAULT_GAIN);
@@ -131,9 +147,9 @@ fn lag_change_changes_structural_sig() {
     let base = derive_synthdef(&g, 1, "t").expect("derive").def;
 
     let mut g2 = Graph::<N>::default();
-    let mut lagged_sine = SinOsc::default();
-    lagged_sine.set_freq_lag(0.5);
-    let s = g2.add_node(N::SinOsc(lagged_sine));
+    let mut lagged_sine = sinosc_unit();
+    lagged_sine.set_lag("freq", 0.5);
+    let s = g2.add_node(N::Unit(lagged_sine));
     let o = g2.add_node(N::Out(Out::default()));
     g2.add_edge(s, o, Edge::new(0.into(), 0.into()));
     let lagged = derive_synthdef(&g2, 1, "t").expect("derive").def;
@@ -148,20 +164,20 @@ fn lag_change_changes_structural_sig() {
 #[test]
 fn lag_is_part_of_node_identity() {
     // Node identity is the erased (data-layer) content address.
-    let content_addr = |n: &SinOsc| {
+    let content_addr = |n: &UnitNode| {
         gantz_core::data::erase_node_typed(n)
             .unwrap()
             .content_addr()
     };
     assert_eq!(
-        content_addr(&SinOsc::default()),
-        content_addr(&SinOsc::default()),
+        content_addr(&sinosc_unit()),
+        content_addr(&sinosc_unit()),
         "identical nodes share a content address",
     );
-    let mut lagged = SinOsc::default();
-    lagged.set_freq_lag(0.5);
+    let mut lagged = sinosc_unit();
+    lagged.set_lag("freq", 0.5);
     assert_ne!(
-        content_addr(&SinOsc::default()),
+        content_addr(&sinosc_unit()),
         content_addr(&lagged),
         "the freq lag is part of the node's content address",
     );
@@ -181,8 +197,8 @@ fn lag_node_wired_into_chain() {
     // `~sinosc -> ~lag -> ~out`: the Lag UGen sits between the SinOsc and the gain
     // mul, smoothing the signal, with its own `dur` control param.
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
-    let l = g.add_node(N::Lag(Lag::default()));
+    let s = g.add_node(sinosc());
+    let l = g.add_node(lag());
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, l, Edge::new(0.into(), 0.into()));
     g.add_edge(l, o, Edge::new(0.into(), 0.into()));
@@ -211,7 +227,7 @@ fn lag_node_wired_into_chain() {
         .iter()
         .find(|p| p.name.ends_with("/dur"))
         .expect("dur param");
-    assert_eq!(dur.default, Lag::DEFAULT_DUR);
+    assert_eq!(dur.default, 0.1);
 }
 
 #[test]
@@ -221,7 +237,7 @@ fn control_edge_on_root_does_not_panic() {
     // seeded over only the dsp inputs, so the control edge falls outside the eval
     // conns and is simply ignored. Regression for the `eval_neighbors` unwrap.
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
     let ctrl = g.add_node(N::Other);
     g.add_edge(s, o, Edge::new(0.into(), 0.into())); // audio -> ~out input 0
@@ -246,8 +262,8 @@ fn dsp_wire_into_freq_drives_fm() {
     // baked - the wire wins, and an undriven param would land in the def (and
     // `structural_sig`) with nothing draining its state.
     let mut g = Graph::<N>::default();
-    let l = g.add_node(N::Lag(Lag::default()));
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let l = g.add_node(lag());
+    let s = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(l, s, Edge::new(0.into(), 0.into())); // ~lag -> sinosc freq (dsp)
     g.add_edge(s, o, Edge::new(0.into(), 0.into())); // sinosc -> ~out (dsp)
@@ -285,11 +301,11 @@ fn kr_modulator_fm_keeps_its_own_freq_param() {
     // `~sinosc(kr) -> ~sinosc.freq -> ~out` (vibrato duty): the modulator's own
     // freq input is unconnected so it keeps its fallback param, while the
     // carrier's freq is the kr wire (no param).
-    let mut modulator = SinOsc::default();
+    let mut modulator = sinosc_unit();
     modulator.set_rate(NodeRate::Control);
     let mut g = Graph::<N>::default();
-    let m = g.add_node(N::SinOsc(modulator));
-    let c = g.add_node(N::SinOsc(SinOsc::default()));
+    let m = g.add_node(N::Unit(modulator));
+    let c = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(m, c, Edge::new(0.into(), 0.into()));
     g.add_edge(c, o, Edge::new(0.into(), 0.into()));
@@ -334,7 +350,7 @@ fn multichannel_freq_expands_an_osc_per_channel() {
     // channel and its output group is 2 wide.
     let mut g = Graph::<N>::default();
     let pk = g.add_node(N::Pack(Pack::default()));
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(pk, s, Edge::new(0.into(), 0.into()));
     g.add_edge(s, o, Edge::new(0.into(), 0.into()));
@@ -363,8 +379,8 @@ fn freq_wire_changes_structural_sig() {
     // and the driver respawns (crossfaded).
     let def = |fm: bool| {
         let mut g = Graph::<N>::default();
-        let m = g.add_node(N::SinOsc(SinOsc::default()));
-        let s = g.add_node(N::SinOsc(SinOsc::default()));
+        let m = g.add_node(sinosc());
+        let s = g.add_node(sinosc());
         let o = g.add_node(N::Out(Out::default()));
         if fm {
             g.add_edge(m, s, Edge::new(0.into(), 0.into()));
@@ -388,9 +404,9 @@ fn dangling_unpack_port_into_freq_keeps_the_param() {
     let mut unpack = Unpack::default();
     unpack.set_count(1);
     let mut g = Graph::<N>::default();
-    let src = g.add_node(N::SinOsc(SinOsc::default()));
+    let src = g.add_node(sinosc());
     let up = g.add_node(N::Unpack(unpack));
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(src, up, Edge::new(0.into(), 0.into()));
     g.add_edge(up, s, Edge::new(1.into(), 0.into())); // stale: output 1 of 1
@@ -427,7 +443,7 @@ fn scopeout_output_into_freq_keeps_the_param() {
     // absent from the def, growing `pending` unboundedly.
     let mut g = Graph::<N>::default();
     let t = g.add_node(N::ScopeOut(ScopeOut::default()));
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(t, s, Edge::new(1.into(), 0.into())); // scope channel count -> freq
     g.add_edge(s, o, Edge::new(0.into(), 0.into()));
@@ -472,8 +488,8 @@ fn port_shapes_record_width_and_rate() {
 
     // Two oscs packed into one group: the pack's port is 2 wide.
     let mut g = Graph::<N>::default();
-    let a = g.add_node(N::SinOsc(SinOsc::default()));
-    let b = g.add_node(N::SinOsc(SinOsc::default()));
+    let a = g.add_node(sinosc());
+    let b = g.add_node(sinosc());
     let pk = g.add_node(N::Pack(Pack::default()));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(a, pk, Edge::new(0.into(), 0.into()));
@@ -484,9 +500,9 @@ fn port_shapes_record_width_and_rate() {
 
     // A control-rate osc's port stays kr even though `~out` lifts it via K2A.
     let mut g = Graph::<N>::default();
-    let mut sine = SinOsc::default();
+    let mut sine = sinosc_unit();
     sine.set_rate(NodeRate::Control);
-    let s = g.add_node(N::SinOsc(sine));
+    let s = g.add_node(N::Unit(sine));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, o, Edge::new(0.into(), 0.into()));
     let derived = derive_synthdef(&g, 1, "t").expect("derive");
@@ -522,7 +538,7 @@ fn scopeout_joins_output_in_one_def() {
     // sine's chain, so one synthdef carries SinOsc, Out and a ScopeOut, with a single
     // monitor binding at the tap's node path - and the shared SinOsc is emitted once.
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
     let t = g.add_node(N::ScopeOut(ScopeOut::default()));
     g.add_edge(s, o, Edge::new(0.into(), 0.into())); // sine -> ~out (audio)
@@ -604,7 +620,7 @@ fn lag_smooths_each_channel() {
     // single `dur` param (params broadcast across the group); width in = width out.
     let mut b = DspBuilder::new(1);
     let sig = stereo(InputRef::Constant(0.25), InputRef::Constant(0.5));
-    let outs = Lag::default().ugens(&[0], &[Some(sig)], &mut b);
+    let outs = lag_unit().ugens(&[0], &[Some(sig)], &mut b);
     assert_eq!(outs.len(), 1, "one dsp output port");
     assert_eq!(outs[0].width(), 2, "width flows through");
 
@@ -694,8 +710,8 @@ fn pack_widens_a_scopeout_tap() {
     // groups into one 2-wide edge, so the tap infers 2 channels - and neither
     // routing node emits any units.
     let mut g = Graph::<N>::default();
-    let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+    let s0 = g.add_node(sinosc());
+    let s1 = g.add_node(sinosc());
     let pk = g.add_node(N::Pack(Pack::default()));
     let t = g.add_node(N::ScopeOut(ScopeOut::default()));
     g.add_edge(s0, pk, Edge::new(0.into(), 0.into()));
@@ -723,8 +739,8 @@ fn pack_to_out_writes_two_device_channels() {
     // Two sines -> `~pack`(2) -> `~out` on a 2-channel device: channel i -> bus i,
     // each through its own gain multiply sharing the one gain param (no mono fan).
     let mut g = Graph::<N>::default();
-    let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+    let s0 = g.add_node(sinosc());
+    let s1 = g.add_node(sinosc());
     let pk = g.add_node(N::Pack(Pack::default()));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s0, pk, Edge::new(0.into(), 0.into()));
@@ -771,8 +787,8 @@ fn pack_unpack_routes_a_channel() {
     // freq param's node-path binding). The unreached sine0 chain still derives
     // (it was pulled), but the out's gain mul must read sine1.
     let mut g = Graph::<N>::default();
-    let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+    let s0 = g.add_node(sinosc());
+    let s1 = g.add_node(sinosc());
     let pk = g.add_node(N::Pack(Pack::default()));
     let up = g.add_node(N::Unpack(Unpack::default()));
     let o = g.add_node(N::Out(Out::default()));
@@ -822,7 +838,7 @@ fn pack_count_changes_structural_sig() {
         let mut pack = Pack::default();
         pack.set_count(count);
         let mut g = Graph::<N>::default();
-        let s = g.add_node(N::SinOsc(SinOsc::default()));
+        let s = g.add_node(sinosc());
         let pk = g.add_node(N::Pack(pack));
         let t = g.add_node(N::ScopeOut(ScopeOut::default()));
         g.add_edge(s, pk, Edge::new(0.into(), 0.into()));
@@ -845,7 +861,7 @@ fn unpack_stale_output_edge_derives_silently() {
     let mut unpack = Unpack::default();
     unpack.set_count(1);
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let up = g.add_node(N::Unpack(unpack));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, up, Edge::new(0.into(), 0.into()));
@@ -869,7 +885,7 @@ fn scopeout_without_output_still_derives() {
     // A monitor-only graph (`~sinosc -> ~scopeout`, no `~out`) derives a silent synthdef:
     // a `~scopeout` is a sink in its own right, so there is something to root at.
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let t = g.add_node(N::ScopeOut(ScopeOut::default()));
     g.add_edge(s, t, Edge::new(0.into(), 0.into()));
 
@@ -893,7 +909,7 @@ fn scopeout_streams_every_sample() {
     // full-rate 220 Hz signal - the stream the driver appends into the tap's ring.
     const BLOCK: usize = 64;
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let t = g.add_node(N::ScopeOut(ScopeOut::default()));
     g.add_edge(s, t, Edge::new(0.into(), 0.into()));
 
@@ -1038,8 +1054,8 @@ fn audio_rate_fm_renders_through_the_wire() {
     // *param* default must NOT sound - the wire wins). Proves the audio-rate
     // freq path end to end through the real engine.
     let mut g = Graph::<N>::default();
-    let m = g.add_node(N::SinOsc(SinOsc::default()));
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let m = g.add_node(sinosc());
+    let s = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(m, s, Edge::new(0.into(), 0.into()));
     g.add_edge(s, o, Edge::new(0.into(), 0.into()));
@@ -1084,8 +1100,8 @@ fn stereo_pack_plays_per_channel_tones() {
     // end to end through the real engine.
     const BLOCK: usize = 64;
     let mut g = Graph::<N>::default();
-    let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+    let s0 = g.add_node(sinosc());
+    let s1 = g.add_node(sinosc());
     let pk = g.add_node(N::Pack(Pack::default()));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s0, pk, Edge::new(0.into(), 0.into()));
@@ -1372,9 +1388,9 @@ fn kr_sinosc_lifts_via_k2a_at_out() {
     let ar = derive_synthdef(&sine_to_out(), 1, "t").expect("derive").def;
 
     let mut g = Graph::<N>::default();
-    let mut sine = SinOsc::default();
+    let mut sine = sinosc_unit();
     sine.set_rate(NodeRate::Control);
-    let s = g.add_node(N::SinOsc(sine));
+    let s = g.add_node(N::Unit(sine));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, o, Edge::new(0.into(), 0.into()));
     let kr = derive_synthdef(&g, 1, "t").expect("derive").def;
@@ -1405,9 +1421,9 @@ fn kr_sinosc_lifts_via_k2a_at_out() {
 fn kr_into_scopeout_needs_no_lift() {
     // `~scopeout` broadcasts control-rate inputs natively - no `K2A`.
     let mut g = Graph::<N>::default();
-    let mut sine = SinOsc::default();
+    let mut sine = sinosc_unit();
     sine.set_rate(NodeRate::Control);
-    let s = g.add_node(N::SinOsc(sine));
+    let s = g.add_node(N::Unit(sine));
     let t = g.add_node(N::ScopeOut(ScopeOut::default()));
     g.add_edge(s, t, Edge::new(0.into(), 0.into()));
     let def = derive_synthdef(&g, 1, "t").expect("derive").def;
@@ -1429,19 +1445,19 @@ fn rate_is_part_of_node_identity() {
     // The default (audio) rate leaves existing addresses unchanged; kr changes
     // them. Same for ~lag.
     assert_eq!(
-        content_addr(&SinOsc::default()),
+        content_addr(&sinosc_unit()),
         content_addr(&{
-            let mut s = SinOsc::default();
+            let mut s = sinosc_unit();
             s.set_rate(NodeRate::Audio);
             s
         }),
     );
-    let mut kr_sine = SinOsc::default();
+    let mut kr_sine = sinosc_unit();
     kr_sine.set_rate(NodeRate::Control);
-    assert_ne!(content_addr(&SinOsc::default()), content_addr(&kr_sine));
-    let mut kr_lag = Lag::default();
+    assert_ne!(content_addr(&sinosc_unit()), content_addr(&kr_sine));
+    let mut kr_lag = lag_unit();
     kr_lag.set_rate(NodeRate::Control);
-    assert_ne!(content_addr(&Lag::default()), content_addr(&kr_lag));
+    assert_ne!(content_addr(&lag_unit()), content_addr(&kr_lag));
 }
 
 #[test]
@@ -1449,9 +1465,9 @@ fn kr_source_reaches_output() {
     // End to end through the real engine: a kr sine lifted via K2A still lands
     // on the output bus with its (block-held, ramped) 220 Hz content dominant.
     let mut g = Graph::<N>::default();
-    let mut sine = SinOsc::default();
+    let mut sine = sinosc_unit();
     sine.set_rate(NodeRate::Control);
-    let s = g.add_node(N::SinOsc(sine));
+    let s = g.add_node(N::Unit(sine));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, o, Edge::new(0.into(), 0.into()));
     let derived = derive_synthdef(&g, 1, "t").expect("derive");
@@ -1520,8 +1536,8 @@ fn two_edges_into_one_input_sum() {
     // via a single audio-rate add, and both sines land in the def (neither
     // edge is dropped).
     let mut g = Graph::<N>::default();
-    let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+    let s0 = g.add_node(sinosc());
+    let s1 = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s0, o, Edge::new(0.into(), 0.into()));
     g.add_edge(s1, o, Edge::new(0.into(), 0.into()));
@@ -1544,7 +1560,7 @@ fn summands_tile_sum3_and_sum4() {
         let mut g = Graph::<N>::default();
         let o = g.add_node(N::Out(Out::default()));
         for _ in 0..n {
-            let s = g.add_node(N::SinOsc(SinOsc::default()));
+            let s = g.add_node(sinosc());
             g.add_edge(s, o, Edge::new(0.into(), 0.into()));
         }
         let def = derive_synthdef(&g, 1, "t").expect("derive").def;
@@ -1560,8 +1576,8 @@ fn summand_order_is_canonical() {
     // content def name) is independent of edge insertion order.
     let build = |flip: bool| {
         let mut g = Graph::<N>::default();
-        let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-        let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+        let s0 = g.add_node(sinosc());
+        let s1 = g.add_node(sinosc());
         let o = g.add_node(N::Out(Out::default()));
         let (a, b) = if flip { (s1, s0) } else { (s0, s1) };
         g.add_edge(a, o, Edge::new(0.into(), 0.into()));
@@ -1577,9 +1593,9 @@ fn mono_broadcasts_across_a_summed_stereo() {
     // device: the sum is stereo (one add per channel) and the mono summand
     // feeds BOTH adds (broadcast, not left-only).
     let mut g = Graph::<N>::default();
-    let m = g.add_node(N::SinOsc(SinOsc::default()));
-    let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+    let m = g.add_node(sinosc());
+    let s0 = g.add_node(sinosc());
+    let s1 = g.add_node(sinosc());
     let pk = g.add_node(N::Pack(Pack::default()));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s0, pk, Edge::new(0.into(), 0.into()));
@@ -1611,7 +1627,7 @@ fn narrower_summand_pads_with_silence() {
     let p3 = g.add_node(N::Pack(wide));
     let o = g.add_node(N::Out(Out::default()));
     for i in 0..5 {
-        let s = g.add_node(N::SinOsc(SinOsc::default()));
+        let s = g.add_node(sinosc());
         let (pk, input) = if i < 2 { (p2, i) } else { (p3, i - 2) };
         g.add_edge(s, pk, Edge::new(0.into(), (input as u16).into()));
     }
@@ -1630,9 +1646,9 @@ fn summed_rate_is_audio_iff_any_summand_is() {
         let mut g = Graph::<N>::default();
         let o = g.add_node(N::Out(Out::default()));
         for rate in rates {
-            let mut sine = SinOsc::default();
+            let mut sine = sinosc_unit();
             sine.set_rate(rate);
-            let s = g.add_node(N::SinOsc(sine));
+            let s = g.add_node(N::Unit(sine));
             g.add_edge(s, o, Edge::new(0.into(), 0.into()));
         }
         derive_synthdef(&g, 1, "t").expect("derive").def
@@ -1649,8 +1665,8 @@ fn summed_sines_are_both_audible() {
     // the rendered audio carries BOTH tones - the end-to-end proof that no
     // edge is dropped.
     let mut g = Graph::<N>::default();
-    let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+    let s0 = g.add_node(sinosc());
+    let s1 = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s0, o, Edge::new(0.into(), 0.into()));
     g.add_edge(s1, o, Edge::new(0.into(), 0.into()));
@@ -1703,9 +1719,9 @@ fn sum_node_mixes_mono_and_stereo() {
     // stereo unity-gain mix (one add per channel, the mono input broadcast),
     // exactly the implicit-summing width policy as an explicit node.
     let mut g = Graph::<N>::default();
-    let m = g.add_node(N::SinOsc(SinOsc::default()));
-    let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+    let m = g.add_node(sinosc());
+    let s0 = g.add_node(sinosc());
+    let s1 = g.add_node(sinosc());
     let pk = g.add_node(N::Pack(Pack::default()));
     let sm = g.add_node(N::Sum(Sum::default()));
     let o = g.add_node(N::Out(Out::default()));
@@ -1730,7 +1746,7 @@ fn sum_node_with_single_input_is_unit_free() {
     // A count-1 (or singly-fed) `~sum` passes its input through with no
     // units, so it derives identically to a plain wire.
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let mut sum = Sum::default();
     sum.set_count(1);
     let sm = g.add_node(N::Sum(sum));

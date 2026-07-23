@@ -1939,7 +1939,7 @@ mod tests {
         use gantz_plyphon::flatten::{Flat, RefKind, flatten};
 
         let mut g = Graph::<TestN>::default();
-        let s = g.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
+        let s = g.add_node(sinosc());
         let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
         g.add_edge(s, o, Edge::new(0.into(), 0.into()));
         let resolve =
@@ -2076,7 +2076,7 @@ mod tests {
 
         // Frame 1: `~sinosc -> ~out`.
         let mut g1 = Graph::<TestN>::default();
-        let s = g1.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
+        let s = g1.add_node(sinosc());
         let o = g1.add_node(TestN::Out(gantz_plyphon::Out::default()));
         g1.add_edge(s, o, Edge::new(0.into(), 0.into()));
         let ca1 = graph_addr(&g1);
@@ -2101,7 +2101,7 @@ mod tests {
 
         // Frame 2: add unconnected `inlet`/`outlet` (different graph address).
         let mut g2 = Graph::<TestN>::default();
-        let s = g2.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
+        let s = g2.add_node(sinosc());
         let o = g2.add_node(TestN::Out(gantz_plyphon::Out::default()));
         let _i = g2.add_node(TestN::Inlet);
         let _o2 = g2.add_node(TestN::Outlet);
@@ -2188,7 +2188,7 @@ mod tests {
         // Frame 2: connect `~sinosc -> ~pack` (same `~out` path -> stable key,
         // same name, but the def CHANGED: now carries a SinOsc). Must re-install.
         let mut g2 = g1.clone();
-        let s = g2.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
+        let s = g2.add_node(sinosc());
         g2.add_edge(s, pk, Edge::new(0.into(), 0.into()));
         let ca2 = graph_addr(&g2);
         structural_sync(
@@ -2218,7 +2218,7 @@ mod tests {
     /// address, arity and `inline` flag.
     #[derive(Clone)]
     enum TestN {
-        SinOsc(gantz_plyphon::SinOsc),
+        SinOsc(gantz_plyphon::UnitNode),
         Out(gantz_plyphon::Out),
         Pack(gantz_plyphon::Pack),
         Unpack(gantz_plyphon::Unpack),
@@ -2226,6 +2226,11 @@ mod tests {
         Inlet,
         Outlet,
         Ref(gantz_ca::ContentAddr, usize, usize, bool),
+    }
+
+    /// A `~sinosc` test node (the `UnitNode` wrapping plyphon's `SinOsc`).
+    fn sinosc() -> TestN {
+        TestN::SinOsc(gantz_plyphon::UnitNode::from_unit("SinOsc").expect("SinOsc row"))
     }
 
     /// The graph's erased (data-layer) address: the same scheme the registry
@@ -2363,7 +2368,7 @@ mod tests {
     fn sine_out_child() -> gantz_core::node::graph::Graph<TestN> {
         use gantz_core::edge::Edge;
         let mut g = gantz_core::node::graph::Graph::<TestN>::default();
-        let s = g.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
+        let s = g.add_node(sinosc());
         let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
         g.add_edge(s, o, Edge::new(0.into(), 0.into()));
         g
@@ -2453,7 +2458,7 @@ mod tests {
         // The edited child: structurally different (an extra `~pack` stage).
         let ca2 = gantz_ca::ContentAddr([2u8; 32]);
         let mut child2 = Graph::<TestN>::default();
-        let s = child2.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
+        let s = child2.add_node(sinosc());
         let pk = child2.add_node(TestN::Pack(gantz_plyphon::Pack::default()));
         let o = child2.add_node(TestN::Out(gantz_plyphon::Out::default()));
         child2.add_edge(s, pk, Edge::new(0.into(), 0.into()));
@@ -2463,7 +2468,7 @@ mod tests {
         // Head: its own region (sin -> out) + two instances of the child.
         let head = |ca: gantz_ca::ContentAddr| {
             let mut g = Graph::<TestN>::default();
-            let s = g.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
+            let s = g.add_node(sinosc());
             let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
             g.add_edge(s, o, Edge::new(0.into(), 0.into()));
             g.add_node(TestN::Ref(ca, 0, 0, false));

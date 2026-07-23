@@ -10,11 +10,13 @@
 //!
 //! # Naming convention
 //!
-//! A DSP node's keyword and type mirror the underlying plyphon UGen it emits:
-//! `~sinosc`/[`SinOsc`] -> `SinOsc`, `~scopeout`/[`ScopeOut`] -> `ScopeOut`,
-//! `~out`/[`Out`] -> `Out`, `~lag`/[`Lag`] -> `Lag`. A node that composes *several*
-//! UGens into one gantz node - or emits none, like the `~pack`/`~unpack`
-//! channel-routing pair - gets its own descriptive name instead.
+//! A DSP node's keyword mirrors the underlying plyphon UGen it emits:
+//! `~sinosc` -> `SinOsc`, `~lpf` -> `LPF`, `~scopeout`/[`ScopeOut`] ->
+//! `ScopeOut`, `~out`/[`Out`] -> `Out`. Plain unit wrappers are all the one
+//! [`UnitNode`] type driven by the [`units`] descriptor table. A node that
+//! composes *several* UGens into one gantz node - or emits none, like the
+//! `~pack`/`~unpack` channel-routing pair - gets its own bespoke type and
+//! descriptive name instead.
 
 pub use asset::{
     AudioAsset, AudioBuffers, BUFFER_SECTION, DecodeError, add_audio_asset, audio_asset,
@@ -39,9 +41,7 @@ pub use instance::{
     BusKey, DefCache, GraphTemplate, InstancePart, Part, ResolvedBus, ResolvedPart, TemplateBus,
     TemplateRegion, VariantKey, derive_template, instantiate,
 };
-pub use node::{
-    Bus, InvalidUnitNode, Lag, Out, Pack, PlayBuf, ScopeOut, SinOsc, Sum, UnitNode, Unpack,
-};
+pub use node::{Bus, InvalidUnitNode, Out, Pack, PlayBuf, ScopeOut, Sum, UnitNode, Unpack};
 pub use port_info::{RootPortInfo, root_port_info};
 pub use ref_ext::{DSP_REF_EXT_KEY, DspRefExt, dsp_graphs, is_dsp_graph};
 pub use sugar::PlyphonSugar;

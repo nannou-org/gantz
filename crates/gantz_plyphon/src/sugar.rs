@@ -1,32 +1,32 @@
 //! `.gantz` keyword sugar for the DSP node set.
 //!
 //! [`PlyphonSugar`] provides the human-friendly keywords for this crate's nodes:
-//! bare `~sinosc`/`~out`/`~lag`/`~scopeout`/`~pack`/`~unpack`, with optional
-//! `(~sinosc #:freq-lag s [#:rate ar|kr])`, `(~lag #:rate ar|kr)`,
+//! bare `~out`/`~scopeout`/`~pack`/`~sum`/`~unpack`/`~bus`, with optional
 //! `(~out #:gain-lag s)`, `(~scopeout #:size n)` and `(~pack #:count n)`/
-//! `(~sum #:count n)`/
-//! `(~unpack #:count n)` forms carrying the structural smoothing lag / ugen
-//! rate / ring length / socket count. Every descriptor-table keyword (see
-//! [`crate::units`]) reads/writes the same way: bare `~lpf`, or
-//! `(~combc #:delay-lag s #:maxdelay v #:rate kr)` carrying the structural
-//! per-param lags, init-only values and rate. Param *values* live in VM state
-//! (not the node weight), so they are not serialized and never appear here.
-//! Compose it with [`gantz_format::CoreSugar`] (and the other crates' sugars)
-//! via [`gantz_format::Sugars`].
+//! `(~sum #:count n)`/`(~unpack #:count n)` forms carrying the structural
+//! smoothing lag / ring length / socket count. Every descriptor-table keyword
+//! (see [`crate::units`]) reads/writes the same way: bare `~sinosc`/`~lpf`,
+//! or `(~combc #:delay-lag s #:maxdelay v #:rate kr)` carrying the structural
+//! per-param lags, init-only values and ugen rate. Param *values* live in VM
+//! state (not the node weight), so they are not serialized and never appear
+//! here. Compose it with [`gantz_format::CoreSugar`] (and the other crates'
+//! sugars) via [`gantz_format::Sugars`].
 
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
 
-/// Keyword sugar for the plyphon DSP nodes ([`SinOsc`](crate::SinOsc),
-/// [`Out`](crate::Out), [`Lag`](crate::Lag), [`ScopeOut`](crate::ScopeOut),
-/// [`Pack`](crate::Pack), [`Sum`](crate::Sum), [`Unpack`](crate::Unpack)).
+/// Keyword sugar for the plyphon DSP nodes: the bespoke set
+/// ([`Out`](crate::Out), [`ScopeOut`](crate::ScopeOut), [`Pack`](crate::Pack),
+/// [`Sum`](crate::Sum), [`Unpack`](crate::Unpack), [`Bus`](crate::Bus),
+/// `PlayBuf`) plus every [`UnitNode`](crate::UnitNode) descriptor-table
+/// keyword.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlyphonSugar;
 
-/// Sugar keyword -> typetag tag.
+/// Sugar keyword -> typetag tag, for the bespoke nodes (the descriptor-table
+/// keywords all map to the `"Unit"` tag and resolve through
+/// [`crate::units::unit_desc_by_keyword`]).
 const KEYWORD_TAG: &[(&str, &str)] = &[
-    ("~sinosc", "SinOsc"),
     ("~out", "Out"),
-    ("~lag", "Lag"),
     ("~scopeout", "ScopeOut"),
     ("~pack", "Pack"),
     ("~sum", "Sum"),
@@ -53,9 +53,7 @@ fn keyword_for_tag(tag: &str) -> Option<&'static str> {
 impl Sugar for PlyphonSugar {
     fn read_spec(&self, head: &str, args: SugarArgs<'_>) -> Result<Option<Datum>, FormatError> {
         let datum = match head {
-            "~sinosc" => lag_spec("SinOsc", "freq_lag", "freq-lag", args)?,
             "~out" => lag_spec("Out", "gain_lag", "gain-lag", args)?,
-            "~lag" => rate_spec("Lag", args)?,
             "~scopeout" => size_spec(args)?,
             "~pack" => count_spec("Pack", args)?,
             "~sum" => count_spec("Sum", args)?,
@@ -80,13 +78,6 @@ impl Sugar for PlyphonSugar {
 
     fn write_spec(&self, tag: &str, node: &Datum) -> Option<String> {
         match tag {
-            "SinOsc" => Some(write_lag(
-                "~sinosc",
-                "freq_lag",
-                "freq-lag",
-                crate::SinOsc::DEFAULT_FREQ_LAG,
-                node,
-            )),
             "Out" => Some(write_lag(
                 "~out",
                 "gain_lag",
@@ -94,7 +85,6 @@ impl Sugar for PlyphonSugar {
                 crate::Out::DEFAULT_GAIN_LAG,
                 node,
             )),
-            "Lag" => Some(write_form("~lag", rate_part(node).into_iter().collect())),
             "ScopeOut" => Some(write_size(node)),
             "Pack" => Some(write_count("~pack", crate::Pack::DEFAULT_COUNT, node)),
             "Sum" => Some(write_count("~sum", crate::Sum::DEFAULT_COUNT, node)),
@@ -197,13 +187,6 @@ fn lag_spec(
     if let Some(lag) = args.keyword_f64(keyword)? {
         fields.push((field, Datum::F64(lag)));
     }
-    push_rate(&mut fields, &args)?;
-    Ok(node_datum(tag, fields))
-}
-
-/// Read a `(<head> [#:rate ar|kr])` form into a node datum tagged `tag`.
-fn rate_spec(tag: &str, args: SugarArgs<'_>) -> Result<Datum, FormatError> {
-    let mut fields = Vec::new();
     push_rate(&mut fields, &args)?;
     Ok(node_datum(tag, fields))
 }
@@ -316,17 +299,25 @@ mod tests {
     #[test]
     fn sine_round_trips() {
         let s = PlyphonSugar;
-        // A default `~sinosc` stays bare, read as a bare keyword or an empty spec.
+        // A default `~sinosc` stays bare, read as a bare keyword or an empty
+        // spec (a table keyword: a `Unit` datum carrying the unit name).
         let bare = s.read_bare("~sinosc").expect("bare");
-        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("SinOsc"));
-        assert_eq!(s.write_spec("SinOsc", &bare).as_deref(), Some("~sinosc"));
+        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("Unit"));
+        assert_eq!(bare.get("unit").and_then(Datum::as_str), Some("SinOsc"));
+        assert_eq!(s.write_spec("Unit", &bare).as_deref(), Some("~sinosc"));
         let empty = read_spec("(~sinosc)").expect("empty");
-        assert_eq!(s.write_spec("SinOsc", &empty).as_deref(), Some("~sinosc"));
-        // A non-default freq lag round-trips.
+        assert_eq!(s.write_spec("Unit", &empty).as_deref(), Some("~sinosc"));
+        // A non-default freq lag round-trips (as a `lags` map entry).
         let lagged = read_spec("(~sinosc #:freq-lag 0.5)").expect("lagged");
-        assert_eq!(lagged.get("freq_lag").and_then(Datum::as_f64), Some(0.5));
         assert_eq!(
-            s.write_spec("SinOsc", &lagged).as_deref(),
+            lagged
+                .get("lags")
+                .and_then(|l| l.get("freq"))
+                .and_then(Datum::as_f64),
+            Some(0.5),
+        );
+        assert_eq!(
+            s.write_spec("Unit", &lagged).as_deref(),
             Some("(~sinosc #:freq-lag 0.5)"),
         );
     }
@@ -358,11 +349,12 @@ mod tests {
     fn lag_round_trips() {
         let s = PlyphonSugar;
         let bare = s.read_bare("~lag").expect("bare");
-        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("Lag"));
-        assert_eq!(s.write_spec("Lag", &bare).as_deref(), Some("~lag"));
+        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("Unit"));
+        assert_eq!(bare.get("unit").and_then(Datum::as_str), Some("Lag"));
+        assert_eq!(s.write_spec("Unit", &bare).as_deref(), Some("~lag"));
         let spec = read_spec("(~lag)").expect("spec");
-        assert_eq!(spec.get("type").and_then(Datum::as_str), Some("Lag"));
-        assert_eq!(s.write_spec("Lag", &spec).as_deref(), Some("~lag"));
+        assert_eq!(spec.get("unit").and_then(Datum::as_str), Some("Lag"));
+        assert_eq!(s.write_spec("Unit", &spec).as_deref(), Some("~lag"));
     }
 
     #[test]
@@ -404,26 +396,26 @@ mod tests {
         // `~sinosc`: bare stays bare (ar is the default, and an explicit `ar`
         // writes bare); `kr` round-trips, alone or combined with a lag.
         let bare = read_spec("(~sinosc #:rate ar)").expect("ar");
-        assert_eq!(s.write_spec("SinOsc", &bare).as_deref(), Some("~sinosc"));
+        assert_eq!(s.write_spec("Unit", &bare).as_deref(), Some("~sinosc"));
         let kr = read_spec("(~sinosc #:rate kr)").expect("kr");
         assert_eq!(kr.get("rate").and_then(Datum::as_str), Some("kr"));
         assert_eq!(
-            s.write_spec("SinOsc", &kr).as_deref(),
+            s.write_spec("Unit", &kr).as_deref(),
             Some("(~sinosc #:rate kr)"),
         );
         let both = read_spec("(~sinosc #:freq-lag 0.5 #:rate kr)").expect("both");
         assert_eq!(
-            s.write_spec("SinOsc", &both).as_deref(),
+            s.write_spec("Unit", &both).as_deref(),
             Some("(~sinosc #:freq-lag 0.5 #:rate kr)"),
         );
-        // `~lag` gains the same form.
+        // `~lag` takes the same form.
         let lag_kr = read_spec("(~lag #:rate kr)").expect("lag kr");
         assert_eq!(
-            s.write_spec("Lag", &lag_kr).as_deref(),
+            s.write_spec("Unit", &lag_kr).as_deref(),
             Some("(~lag #:rate kr)"),
         );
         assert_eq!(
-            s.write_spec("Lag", &s.read_bare("~lag").expect("bare"))
+            s.write_spec("Unit", &s.read_bare("~lag").expect("bare"))
                 .as_deref(),
             Some("~lag"),
         );

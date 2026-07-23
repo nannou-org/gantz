@@ -6,7 +6,7 @@ use gantz_ca::ContentAddr;
 use gantz_core::data::ReifiedGraphs;
 use gantz_core::node::graph::Graph;
 use gantz_core::node::{AsRefNode, ExprCtx, ExprResult, MetaCtx, Ref, parse_expr};
-use gantz_plyphon::{NodeDsp, SinOsc, ToNodeDsp, dsp_graphs, is_dsp_graph};
+use gantz_plyphon::{NodeDsp, ToNodeDsp, UnitNode, dsp_graphs, is_dsp_graph};
 
 /// A minimal node standing in for the app's node set: one DSP node, the
 /// reference node, boundary nodes and a non-DSP stand-in. Adjacent tagging
@@ -15,7 +15,7 @@ use gantz_plyphon::{NodeDsp, SinOsc, ToNodeDsp, dsp_graphs, is_dsp_graph};
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", content = "c")]
 enum N {
-    SinOsc(SinOsc),
+    Unit(UnitNode),
     Ref(Ref),
     Inlet,
     Outlet,
@@ -25,7 +25,7 @@ enum N {
 impl ToNodeDsp for N {
     fn to_node_dsp(&self) -> Option<&dyn NodeDsp> {
         match self {
-            N::SinOsc(s) => Some(s),
+            N::Unit(u) => Some(u),
             N::Ref(_) | N::Inlet | N::Outlet | N::Other => None,
         }
     }
@@ -90,6 +90,10 @@ fn ref_node(ca: ContentAddr) -> N {
     N::Ref(Ref::new(ca))
 }
 
+fn sinosc() -> N {
+    N::Unit(UnitNode::from_unit("SinOsc").expect("SinOsc row"))
+}
+
 /// `dsp_graphs` finds directly-DSP graphs and graphs that only reach DSP
 /// transitively through references - a pure walk over the stored data, no
 /// typed cache - and excludes non-DSP graphs and references to missing
@@ -100,7 +104,7 @@ fn dsp_graphs_discovers_direct_and_transitive() {
 
     // A graph containing a DSP node directly.
     let mut dsp: Graph<N> = Graph::default();
-    dsp.add_node(N::SinOsc(SinOsc::default()));
+    dsp.add_node(sinosc());
     let dsp_ca = commit(&mut registry, "dsp", dsp);
 
     // A wrapper that only references the DSP graph.
@@ -144,7 +148,7 @@ fn named_ref_tagged_data_nodes_are_followed() {
     let mut registry = gantz_ca::Registry::default();
 
     let mut dsp: Graph<N> = Graph::default();
-    dsp.add_node(N::SinOsc(SinOsc::default()));
+    dsp.add_node(sinosc());
     let dsp_ca = commit(&mut registry, "dsp", dsp);
 
     // The wire shape `NamedRef` serde produces: a `ref_` field carrying the
@@ -199,7 +203,7 @@ fn default_lowering_instances_dsp_refs_and_splices_the_rest() {
 
     // A DSP-bearing child.
     let mut dsp: Graph<N> = Graph::default();
-    dsp.add_node(N::SinOsc(SinOsc::default()));
+    dsp.add_node(sinosc());
     let dsp_ca = commit(&mut registry, "dsp", dsp);
 
     // A pure wire child: bridges signals but contains no DSP.
@@ -237,9 +241,9 @@ fn default_lowering_instances_dsp_refs_and_splices_the_rest() {
             matches!(
                 &flat[n],
                 Flat::Node {
-                    node: N::SinOsc(_),
+                    node: N::Unit(u),
                     ..
-                }
+                } if u.unit() == "SinOsc"
             )
         })
         .count();

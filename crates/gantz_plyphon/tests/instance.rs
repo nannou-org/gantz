@@ -9,13 +9,12 @@ use gantz_plyphon::flatten::{Flat, RefKind, flatten};
 use gantz_plyphon::instance::{
     BusKey, DefCache, GraphTemplate, Part, ResolvedPart, derive_template, instantiate,
 };
-use gantz_plyphon::{DeriveError, Lag, NodeDsp, Out, Pack, SinOsc, ToNodeDsp};
+use gantz_plyphon::{DeriveError, NodeDsp, Out, Pack, ToNodeDsp, UnitNode};
 
 /// A minimal erased node enum, standing in for the app's `Box<dyn Node>`.
 #[derive(Clone)]
 enum N {
-    SinOsc(SinOsc),
-    Lag(Lag),
+    Unit(UnitNode),
     Out(Out),
     Pack(Pack),
     Inlet,
@@ -28,8 +27,7 @@ enum N {
 impl ToNodeDsp for N {
     fn to_node_dsp(&self) -> Option<&dyn NodeDsp> {
         match self {
-            N::SinOsc(s) => Some(s),
-            N::Lag(l) => Some(l),
+            N::Unit(u) => Some(u),
             N::Out(o) => Some(o),
             N::Pack(p) => Some(p),
             N::Inlet | N::Outlet | N::Ref(..) => None,
@@ -69,11 +67,21 @@ fn ca(byte: u8) -> gantz_ca::ContentAddr {
     gantz_ca::ContentAddr([byte; 32])
 }
 
+/// A default `~sinosc` node.
+fn sinosc() -> N {
+    N::Unit(UnitNode::from_unit("SinOsc").expect("SinOsc row"))
+}
+
+/// A default `~lag` node.
+fn lag() -> N {
+    N::Unit(UnitNode::from_unit("Lag").expect("Lag row"))
+}
+
 /// A child graph that produces a 220 Hz sine through its own `~out` (no
 /// inlets/outlets): a complete, self-contained subgraph.
 fn sine_out_child() -> Graph<N> {
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, o, Edge::new(0.into(), 0.into()));
     g
@@ -83,7 +91,7 @@ fn sine_out_child() -> Graph<N> {
 fn lag_child() -> Graph<N> {
     let mut g = Graph::<N>::default();
     let i = g.add_node(N::Inlet);
-    let l = g.add_node(N::Lag(Lag::default()));
+    let l = g.add_node(lag());
     let o = g.add_node(N::Outlet);
     g.add_edge(i, l, Edge::new(0.into(), 0.into()));
     g.add_edge(l, o, Edge::new(0.into(), 0.into()));
@@ -150,7 +158,7 @@ fn no_instances_delegates_to_derive_synthdefs() {
     // A plain graph (no markers) derives via the region path: one region per
     // `~out` sink, no cached variants, content-hashed def name.
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, o, Edge::new(0.into(), 0.into()));
 
@@ -218,7 +226,7 @@ fn staging_diamond_derives_two_stages() {
     // an implicit `Src` bus - no `BusCycle`.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
-    let src = g.add_node(N::SinOsc(SinOsc::default()));
+    let src = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(1), 1, 1));
     let mix = g.add_node(N::Pack(Pack::default()));
     let out = g.add_node(N::Out(Out::default()));
@@ -269,8 +277,8 @@ fn width_flows_through_an_instance() {
     // 2 and the downstream reader's `In` sees width 2.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
-    let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+    let s0 = g.add_node(sinosc());
+    let s1 = g.add_node(sinosc());
     let pack = g.add_node(N::Pack(Pack::default()));
     let r = g.add_node(N::Ref(ca(1), 1, 1));
     let out = g.add_node(N::Out(Out::default()));
@@ -319,7 +327,7 @@ fn unconnected_inlet_bakes_silence() {
     let map = HashMap::from([(ca(1), child)]);
 
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(1), 2, 1));
     let out = g.add_node(N::Out(Out::default()));
     g.add_edge(s, r, Edge::new(0.into(), 0.into()));
@@ -354,7 +362,7 @@ fn instance_inlet_drives_hybrid_freq() {
     // cache.
     let mut child = Graph::<N>::default();
     let i = child.add_node(N::Inlet);
-    let s = child.add_node(N::SinOsc(SinOsc::default()));
+    let s = child.add_node(sinosc());
     let o = child.add_node(N::Out(Out::default()));
     child.add_edge(i, s, Edge::new(0.into(), 0.into()));
     child.add_edge(s, o, Edge::new(0.into(), 0.into()));
@@ -362,7 +370,7 @@ fn instance_inlet_drives_hybrid_freq() {
 
     // Fed: a parent modulator wired into the instance's inlet.
     let mut g = Graph::<N>::default();
-    let m = g.add_node(N::SinOsc(SinOsc::default()));
+    let m = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(1), 1, 0));
     g.add_edge(m, r, Edge::new(0.into(), 0.into()));
     let (template, cache) = derive(&g, &map).expect("derive");
@@ -420,8 +428,8 @@ fn consumed_outlet_mask_keys_the_variant() {
     // A child with two outlets, only the second consumed: the variant records
     // `[false, true]` and the child def writes exactly one outlet bus.
     let mut child = Graph::<N>::default();
-    let s0 = child.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = child.add_node(N::Lag(Lag::default()));
+    let s0 = child.add_node(sinosc());
+    let s1 = child.add_node(lag());
     let o0 = child.add_node(N::Outlet);
     let o1 = child.add_node(N::Outlet);
     child.add_edge(s0, o0, Edge::new(0.into(), 0.into()));
@@ -459,7 +467,7 @@ fn def_names_are_stable_across_heads() {
 
     let mut g2 = Graph::<N>::default();
     // A different head: its own sine plus the same child instance.
-    let s = g2.add_node(N::SinOsc(SinOsc::default()));
+    let s = g2.add_node(sinosc());
     let o = g2.add_node(N::Out(Out::default()));
     g2.add_edge(s, o, Edge::new(0.into(), 0.into()));
     let _r = g2.add_node(N::Ref(ca(1), 0, 0));
@@ -485,7 +493,7 @@ fn bus_params_are_unlagged_and_named_by_key() {
     // `set_control` wiring relies on.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
-    let src = g.add_node(N::SinOsc(SinOsc::default()));
+    let src = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(1), 1, 1));
     let mix = g.add_node(N::Pack(Pack::default()));
     let out = g.add_node(N::Out(Out::default()));
@@ -541,7 +549,7 @@ fn bus_params_are_unlagged_and_named_by_key() {
 fn instance_ref_cycle_errors() {
     // A instances B instances A: no finite template exists.
     let mut a = Graph::<N>::default();
-    let s = a.add_node(N::SinOsc(SinOsc::default()));
+    let s = a.add_node(sinosc());
     let o = a.add_node(N::Out(Out::default()));
     a.add_edge(s, o, Edge::new(0.into(), 0.into()));
     a.add_node(N::Ref(ca(2), 0, 0));
@@ -565,7 +573,7 @@ fn recursive_instantiate_prefixes_paths() {
     // The resolved list carries B's region at the absolute prefix [I1, I2],
     // in global topo order, with absolute binding paths.
     let mut b = Graph::<N>::default();
-    let s = b.add_node(N::SinOsc(SinOsc::default()));
+    let s = b.add_node(sinosc());
     let o = b.add_node(N::Out(Out::default()));
     b.add_edge(s, o, Edge::new(0.into(), 0.into()));
 
@@ -621,7 +629,7 @@ fn instance_to_instance_shares_one_bus() {
     // I1's consumed outlet feeds I2's inlet: both sides resolve to ONE
     // absolute bus (the bus carrying I1's child outlet signal) - no relay.
     let mut producer = Graph::<N>::default();
-    let s = producer.add_node(N::SinOsc(SinOsc::default()));
+    let s = producer.add_node(sinosc());
     let o = producer.add_node(N::Outlet);
     producer.add_edge(s, o, Edge::new(0.into(), 0.into()));
 
@@ -667,8 +675,8 @@ fn instance_to_instance_shares_one_bus() {
 /// outlet).
 fn two_sines_outlet_child() -> Graph<N> {
     let mut g = Graph::<N>::default();
-    let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+    let s0 = g.add_node(sinosc());
+    let s1 = g.add_node(sinosc());
     let o = g.add_node(N::Outlet);
     g.add_edge(s0, o, Edge::new(0.into(), 0.into()));
     g.add_edge(s1, o, Edge::new(0.into(), 0.into()));
@@ -695,8 +703,8 @@ fn multi_fed_inlet_sums_inside_the_child() {
     // reads two interface `In`s summed where the inlet is consumed.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
-    let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+    let s0 = g.add_node(sinosc());
+    let s1 = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(1), 1, 1));
     let out = g.add_node(N::Out(Out::default()));
     g.add_edge(s0, r, Edge::new(0.into(), 0.into()));
@@ -752,8 +760,8 @@ fn instance_outlet_and_plain_node_sum_at_a_parent_input() {
     // sums them.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
-    let feed = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
+    let feed = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(1), 1, 1));
     let out = g.add_node(N::Out(Out::default()));
     g.add_edge(feed, r, Edge::new(0.into(), 0.into()));
