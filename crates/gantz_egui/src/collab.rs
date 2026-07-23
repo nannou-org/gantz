@@ -45,10 +45,12 @@ fn default_true() -> bool {
     true
 }
 
-/// The [`CollabConfig::action_rate_ms`] default: 50ms keeps a 60 Hz drag at
-/// ~20 msg/s while batching every intermediate value.
+/// The [`CollabConfig::action_rate_ms`] default: ~16ms sends roughly every
+/// frame at 60 Hz, keeping peer interaction smooth on fast (e.g. LAN)
+/// links. Raise it to cut the message rate on slow links - values batch
+/// either way, so no step is ever lost.
 fn default_action_rate_ms() -> u64 {
-    50
+    16
 }
 
 /// Everything the widgets need to render collaboration state.

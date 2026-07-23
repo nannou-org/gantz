@@ -40,8 +40,8 @@ use std::time::Duration;
 use web_time::Instant;
 
 // The minimum interval between value sends for one node path is the
-// user-configurable `CollabConfig::action_rate_ms` (default 50ms: a 60 Hz
-// drag becomes ~20 msg/s). The pending slot batches the window's values
+// user-configurable `CollabConfig::action_rate_ms` (default ~16ms: roughly
+// every frame at 60 Hz). The pending slot batches the window's values
 // meanwhile and flushes when the window elapses, so every step (and thus
 // the final value) always ships regardless of the window length.
 
@@ -51,8 +51,9 @@ const RETRY_DEADLINE: Duration = Duration::from_secs(1);
 
 /// The most values one pending slot batches; beyond it the OLDEST drops
 /// (degrading gracefully to coalescing). A backstop for pathological frame
-/// hitches - a 60 Hz drag batches 3-4 values per window - that also keeps
-/// the encoded action far below [`proto::MAX_ACTION_DATA`] for the value
+/// hitches - at the default rate a 60 Hz drag batches roughly one value
+/// per window, a few more at slower configured rates - that also keeps the
+/// encoded action far below [`proto::MAX_ACTION_DATA`] for the value
 /// shapes interactive nodes write.
 const MAX_BATCHED_WRITES: usize = 64;
 
