@@ -124,6 +124,12 @@ pub struct Interaction {
     /// under the pointer.
     #[serde(default, skip)]
     pub last_pointer_pos: Option<egui::Pos2>,
+    /// The pointer position over the scene THIS frame, in graph
+    /// coordinates - `None` whenever the pointer is elsewhere (unlike
+    /// [`last_pointer_pos`][Self::last_pointer_pos], which is retained).
+    /// Read by presence layers (e.g. collab peer cursors).
+    #[serde(default, skip)]
+    pub live_pointer: Option<egui::Pos2>,
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -371,14 +377,19 @@ impl<'a> GraphScene<'a> {
         // Track the latest pointer position over the scene (in graph space) so a
         // node added via the node palette lands under the pointer. While the
         // palette window covers the scene, `contains_pointer` is false, so this
-        // retains the pre-open position.
+        // retains the pre-open position. `live_pointer` is the un-retained
+        // counterpart (None whenever the pointer is off the scene), for
+        // presence broadcasts.
+        state.interaction.live_pointer = None;
         if graph_response.response.contains_pointer() {
             let layer_id = graph_response.response.layer_id;
             let ptr = ui
                 .ctx()
                 .input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos()));
             if let (Some(ptr), Some(t)) = (ptr, ui.ctx().layer_transform_from_global(layer_id)) {
-                state.interaction.last_pointer_pos = Some(t.mul_pos(ptr));
+                let pos = t.mul_pos(ptr);
+                state.interaction.last_pointer_pos = Some(pos);
+                state.interaction.live_pointer = Some(pos);
             }
         }
 

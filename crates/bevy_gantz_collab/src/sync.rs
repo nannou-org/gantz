@@ -93,6 +93,26 @@ pub(crate) fn poll_collab_events(
                         received: web_time::Instant::now(),
                     });
                 }
+                // Presence cursors: keep the newest per origin (gossip may
+                // reorder - stale sequence numbers drop), scoped to the
+                // session's shared branch.
+                GossipMsg::Pointer {
+                    origin,
+                    seq,
+                    name,
+                    pos,
+                } => {
+                    if let Some(state) = sessions.sessions.get_mut(&session) {
+                        if name == state.branch_name()
+                            && state.pointers.get(&origin).is_none_or(|p| p.seq < seq)
+                        {
+                            let at = web_time::Instant::now();
+                            state
+                                .pointers
+                                .insert(origin, crate::PeerPointer { pos, seq, at });
+                        }
+                    }
+                }
             },
             CollabEvent::Objects {
                 session, objects, ..
@@ -112,6 +132,7 @@ pub(crate) fn poll_collab_events(
             CollabEvent::PeerDown { session, peer } => {
                 if let Some(state) = sessions.sessions.get_mut(&session) {
                     state.peers.remove(&peer);
+                    state.pointers.remove(&peer);
                     if state.peers.is_empty() {
                         state.conn = ConnState::Degraded;
                     }

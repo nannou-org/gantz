@@ -1,5 +1,5 @@
 //! The GUI bridge: payload dispatchers, the Settings > Collab subtab
-//! provider, the per-frame display mirror and presence broadcasts.
+//! provider, the per-frame display mirror and presence/pointer broadcasts.
 
 use crate::{
     CollabIdentity, CollabRuntime, CollabSessions, JoinSessionEvent, LeaveSessionEvent, SessionRef,
@@ -8,7 +8,10 @@ use crate::{
 use bevy_ecs::prelude::*;
 use bevy_gantz_egui::ForHead;
 use bevy_log as log;
+use gantz_ca as ca;
 use gantz_collab::{Access, Command, ConnState, GossipMsg, Role};
+use std::collections::HashMap;
+use std::time::Duration;
 
 /// A pending configuration change emitted by the Settings > Collab subtab.
 #[derive(Message)]
@@ -128,6 +131,20 @@ pub fn update_collab_ui(
             ticket: session_state.ticket.clone(),
             conflicts: session_state.conflicts,
             error: session_state.error.clone(),
+            pointers: session_state
+                .pointers
+                .iter()
+                .filter(|(_, p)| p.at.elapsed() < POINTER_TTL)
+                .filter_map(|(peer, p)| {
+                    let pos = p.pos?;
+                    let label = session_state
+                        .peers
+                        .get(peer)
+                        .and_then(|name| name.clone())
+                        .unwrap_or_else(|| peer.to_string());
+                    Some(gantz_egui::collab::PointerDisplay::new(pos, label, &peer.0))
+                })
+                .collect(),
         };
         state.sessions.insert(session_state.branch_name(), display);
     }
@@ -164,4 +181,83 @@ pub fn broadcast_presence(
             .cmds
             .try_send(Command::Broadcast { session: *id, msg });
     }
+}
+
+/// How long a received pointer stays displayable without an update; the
+/// sender keepalive below refreshes well within it.
+pub(crate) const POINTER_TTL: Duration = Duration::from_secs(3);
+
+/// How often a resting (unmoved, still hovering) pointer re-announces, so
+/// receiver expiry never hides a live cursor.
+const POINTER_KEEPALIVE: Duration = Duration::from_secs(1);
+
+/// Per-branch pointer send bookkeeping (see [`broadcast_pointers`]).
+#[derive(Default)]
+pub(crate) struct PointerSendState {
+    seq: u64,
+    /// The last position sent per session branch, and when.
+    last: HashMap<ca::Name, (Option<(f32, f32)>, web_time::Instant)>,
+}
+
+/// Broadcast this peer's live pointer over each session's shared graph.
+///
+/// The position is read from the branch head's scene interaction state in
+/// graph-space coordinates (camera-independent). Movement coalesces to the
+/// newest position at the configured action rate; leaving the scene sends
+/// one final `pos: None` immediately; a keepalive re-announces a resting
+/// pointer so receiver expiry never hides it.
+pub(crate) fn broadcast_pointers(
+    runtime: Res<CollabRuntime>,
+    identity: Option<Res<CollabIdentity>>,
+    sessions: Res<CollabSessions>,
+    gui_state: Res<bevy_gantz_egui::GuiState>,
+    mut state: Local<PointerSendState>,
+) {
+    let (Some(handle), Some(identity)) = (runtime.0.as_ref(), identity) else {
+        return;
+    };
+    let origin = identity.0.peer_id();
+    let rate = Duration::from_millis(gui_state.0.collab.action_rate_ms);
+    let now = web_time::Instant::now();
+    for (id, session_state) in &sessions.sessions {
+        let name = session_state.branch_name();
+        let head = ca::Head::Branch(name.clone());
+        let pos = gui_state
+            .0
+            .open_heads
+            .get(&head)
+            .and_then(|s| s.scene.interaction.live_pointer)
+            .map(|p| (p.x, p.y));
+        let send = match state.last.get(&name).copied() {
+            // Never announced: only a live position is worth starting with.
+            None => pos.is_some(),
+            Some((prev, at)) => {
+                if pos != prev {
+                    // Leaving announces immediately; movement coalesces to
+                    // the newest position at the configured rate.
+                    pos.is_none() || now.duration_since(at) >= rate
+                } else {
+                    pos.is_some() && now.duration_since(at) >= POINTER_KEEPALIVE
+                }
+            }
+        };
+        if !send {
+            continue;
+        }
+        state.seq += 1;
+        let msg = GossipMsg::Pointer {
+            origin,
+            seq: state.seq,
+            name: name.clone(),
+            pos,
+        };
+        let _ = handle
+            .cmds
+            .try_send(Command::Broadcast { session: *id, msg });
+        state.last.insert(name, (pos, now));
+    }
+    // Drop bookkeeping for sessions that ended.
+    state
+        .last
+        .retain(|n, _| sessions.sessions.values().any(|s| s.branch_name() == *n));
 }

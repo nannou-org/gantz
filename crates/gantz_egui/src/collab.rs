@@ -24,6 +24,10 @@ pub struct CollabConfig {
     /// `bevy_gantz_collab::action` module docs).
     #[serde(default = "default_action_rate_ms")]
     pub action_rate_ms: u64,
+    /// Whether to show session peers' live pointers over shared graphs.
+    /// Display-side only: this peer's own pointer broadcasts regardless.
+    #[serde(default = "default_true")]
+    pub show_pointers: bool,
 }
 
 impl Default for CollabConfig {
@@ -32,8 +36,13 @@ impl Default for CollabConfig {
             username: String::new(),
             custom_relay: None,
             action_rate_ms: default_action_rate_ms(),
+            show_pointers: true,
         }
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// The [`CollabConfig::action_rate_ms`] default: 50ms keeps a 60 Hz drag at
@@ -76,6 +85,41 @@ pub struct SessionDisplay {
     /// The most recent session error (e.g. a failed join), cleared once the
     /// session progresses.
     pub error: Option<String>,
+    /// Peers' live pointer positions over this session's graph (presence
+    /// cursors), filled by the networking layer with expiry applied.
+    pub pointers: Vec<PointerDisplay>,
+}
+
+/// One peer's live pointer over a shared graph, ready to render.
+#[derive(Clone, Debug)]
+pub struct PointerDisplay {
+    /// The pointer position in graph-space coordinates (the scene maps them
+    /// through the head's camera).
+    pub pos: egui::Pos2,
+    /// The peer's username or short id.
+    pub label: String,
+    /// A stable per-peer colour (derived from the peer's identity).
+    pub color: egui::Color32,
+}
+
+impl PointerDisplay {
+    /// Build a display pointer from raw parts: a graph-space position, the
+    /// peer's label and their full identity bytes (for the stable colour) -
+    /// so networking layers need no egui types.
+    pub fn new(pos: (f32, f32), label: String, peer: &[u8; 32]) -> Self {
+        Self {
+            pos: egui::pos2(pos.0, pos.1),
+            label,
+            color: peer_color(peer),
+        }
+    }
+}
+
+/// A stable per-peer colour: a hue derived deterministically from the
+/// peer's identity bytes, so every viewer colours a given peer identically.
+pub fn peer_color(peer: &[u8; 32]) -> egui::Color32 {
+    let hue = u16::from_le_bytes([peer[0], peer[1]]) as f32 / u16::MAX as f32;
+    egui::ecolor::Hsva::new(hue, 0.75, 0.9, 1.0).into()
 }
 
 /// A session's connection lifecycle.

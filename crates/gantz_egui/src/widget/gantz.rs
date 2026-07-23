@@ -2328,8 +2328,11 @@ where
         let rect = ui.available_rect_before_wrap();
 
         // Get mutable access to this head's data and render the graph scene.
-        let graph_response = self.access.with_head_mut(pane_head, |data| {
-            graph_scene(
+        // The camera rides out for overlays that map graph-space positions
+        // (e.g. peer pointers) to the pane.
+        let (graph_response, camera) = match self.access.with_head_mut(pane_head, |data| {
+            let camera = data.view.camera;
+            let res = graph_scene(
                 self.env,
                 self.codec,
                 data.graph,
@@ -2348,10 +2351,14 @@ where
                 &diagnostics,
                 data.vm,
                 ui,
-            )
-        });
+            );
+            (res, camera)
+        }) {
+            Some((res, camera)) => (res, Some(camera)),
+            None => (None, None),
+        };
 
-        if let Some(Some(response)) = graph_response {
+        if let Some(response) = graph_response {
             // Focus this head when clicking on the graph or any of its nodes.
             if response.scene.clicked() || response.any_node_interacted() {
                 *self.focused_head = ix;
@@ -2376,14 +2383,61 @@ where
 
         // A collab-session overlay: while a join is still connecting (or has
         // failed) the pane's graph is only a placeholder - dim the scene and
-        // say what is happening.
+        // say what is happening. Peers' live pointers paint beneath it.
         if let (Some(collab), gantz_ca::Head::Branch(name)) = (self.collab, &*pane_head) {
             if let Some(display) = collab.sessions.get(name) {
+                if self.state.collab.show_pointers && !display.pointers.is_empty() {
+                    if let Some(camera) = camera {
+                        paint_peer_pointers(rect, camera, &display.pointers, ui);
+                        // Cursors move between this peer's frames.
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_millis(100));
+                    }
+                }
                 paint_session_overlay(rect, display, ui);
             }
         }
 
         egui_tiles::UiResponse::None
+    }
+}
+
+/// Paint session peers' live pointers (presence cursors) over the pane.
+///
+/// Positions arrive in graph-space coordinates; the head's camera maps them
+/// to screen space, so cursors land on the right nodes regardless of either
+/// peer's viewport. Painted on a foreground layer for the same reason as
+/// [`paint_session_overlay`]: the scene's sublayer background would hide a
+/// plain `ui.painter()` overlay.
+fn paint_peer_pointers(
+    rect: egui::Rect,
+    camera: crate::Camera,
+    pointers: &[crate::collab::PointerDisplay],
+    ui: &egui::Ui,
+) {
+    let layer = egui::LayerId::new(egui::Order::Foreground, ui.id().with("peer_pointers"));
+    let mut painter = ui.ctx().layer_painter(layer);
+    painter.set_clip_rect(rect);
+    for pointer in pointers {
+        let screen = rect.center() + (pointer.pos - camera.center) * camera.zoom;
+        // Skip cursors far outside the viewport (the clip rect would hide
+        // them anyway; this skips the label layout too).
+        if !rect.expand(24.0).contains(screen) {
+            continue;
+        }
+        painter.circle(
+            screen,
+            4.0,
+            pointer.color,
+            egui::Stroke::new(1.0, egui::Color32::from_black_alpha(160)),
+        );
+        painter.text(
+            screen + egui::vec2(8.0, 6.0),
+            egui::Align2::LEFT_TOP,
+            &pointer.label,
+            egui::FontId::proportional(11.0),
+            pointer.color,
+        );
     }
 }
 

@@ -119,6 +119,15 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) {
             );
             ui.end_row();
 
+            // Presence cursors.
+            ui.label("pointers");
+            ui.checkbox(&mut config.show_pointers, "show peer pointers")
+                .on_hover_text(
+                    "show session peers' live pointers over shared graphs; \
+                     your own pointer is shared regardless",
+                );
+            ui.end_row();
+
             // The relay server assisting (and, for browser peers, carrying)
             // connections. Empty = iroh's default n0 public relays.
             ui.label("relay");

@@ -83,6 +83,22 @@ pub enum GossipMsg {
         /// the envelope).
         data: Vec<u8>,
     },
+    /// An ephemeral pointer position over a shared graph (a presence
+    /// cursor). Fire-and-forget: receivers expire stale entries, and a lost
+    /// message is corrected by the next movement. Appended after the
+    /// existing variants so their postcard discriminants are unchanged.
+    Pointer {
+        origin: PeerId,
+        /// Per-origin sequence number, for stale-drop only: gossip may
+        /// reorder, and a cursor jumping backwards would be visible.
+        seq: u64,
+        /// The scoped name (branch) the pointer is over.
+        name: Name,
+        /// The pointer position in graph-space coordinates
+        /// (camera-independent, so every peer renders it correctly
+        /// regardless of viewport). `None` = the pointer left the scene.
+        pos: Option<(f32, f32)>,
+    },
 }
 
 /// The size cap for [`GossipMsg::Action`]'s application-encoded `data`.
@@ -393,6 +409,43 @@ mod tests {
             name: None,
         };
         assert_eq!(encode(&presence)[0], 2);
+    }
+
+    #[test]
+    fn pointer_round_trips_and_leaves_other_variants_stable() {
+        let msg = GossipMsg::Pointer {
+            origin: PeerId([7; 32]),
+            seq: 9,
+            name: name("main"),
+            pos: Some((1.5, -2.0)),
+        };
+        let decoded: GossipMsg = decode(&encode(&msg)).unwrap();
+        let GossipMsg::Pointer {
+            origin,
+            seq,
+            name: n,
+            pos,
+        } = decoded
+        else {
+            panic!("wrong variant");
+        };
+        assert_eq!(origin, PeerId([7; 32]));
+        assert_eq!(seq, 9);
+        assert_eq!(n, name("main"));
+        assert_eq!(pos, Some((1.5, -2.0)));
+
+        // Appended after `Action`, so its discriminant follows Action's and
+        // Action's own is unchanged.
+        let action = GossipMsg::Action {
+            origin: PeerId([1; 32]),
+            seq: 0,
+            timestamp: 0,
+            name: name("main"),
+            graph: GraphAddr::from(gantz_ca::ContentAddr::from([4; 32])),
+            data: vec![],
+        };
+        assert_eq!(encode(&action)[0], 3);
+        assert_eq!(encode(&msg)[0], 4);
     }
 
     #[test]

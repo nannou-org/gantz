@@ -107,6 +107,20 @@ pub struct SessionState {
     pub served_sections: HashSet<(ca::SectionId, ca::Key)>,
     /// The served `name -> tip` map as last mirrored.
     pub served_heads: HashMap<ca::Name, ca::CommitAddr>,
+    /// Peers' live pointers over the session's shared graph, keyed by
+    /// origin. Entries persist through `pos: None` so reordered stale
+    /// updates still drop by `seq`; freshness is filtered at display time.
+    pub pointers: HashMap<PeerId, PeerPointer>,
+}
+
+/// One peer's last-known pointer state (see `GossipMsg::Pointer`).
+pub struct PeerPointer {
+    /// Graph-space position; `None` = the pointer left the scene.
+    pub pos: Option<(f32, f32)>,
+    /// The origin's latest sequence number, for stale-drop.
+    pub seq: u64,
+    /// When the update arrived, for display-time expiry.
+    pub at: web_time::Instant,
 }
 
 /// An announced tip whose closure is still being fetched.
@@ -159,6 +173,7 @@ impl SessionState {
             served_blobs: HashSet::new(),
             served_sections: HashSet::new(),
             served_heads: HashMap::new(),
+            pointers: HashMap::new(),
         }
     }
 
@@ -218,6 +233,7 @@ impl Plugin for CollabPlugin {
                         announce_sessions.after(bevy_gantz_egui::ViewPersistSet),
                         action::broadcast_actions,
                         broadcast_presence,
+                        ui::broadcast_pointers,
                         update_collab_ui,
                     )
                         .after(bevy_gantz::VmSet),
