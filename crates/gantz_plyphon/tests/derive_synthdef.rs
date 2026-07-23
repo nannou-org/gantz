@@ -5,8 +5,9 @@
 use gantz_core::edge::Edge;
 use gantz_core::node::graph::Graph;
 use gantz_plyphon::{
-    Backend, DeriveError, DspBuilder, Embedded, Finished, Lag, NodeDsp, NodeRate, Out, Pack,
-    PortShape, ScopeOut, Signal, SinOsc, Sum, ToNodeDsp, Unpack, derive_synthdef, structural_sig,
+    Backend, DeriveError, Derived, DspBuilder, Embedded, Finished, Lag, NodeDsp, NodeRate, Out,
+    Pack, PortShape, ScopeOut, Signal, SinOsc, Sum, ToNodeDsp, UNITS, UnitNode, Unpack,
+    derive_synthdef, structural_sig,
 };
 use plyphon::synthdef::{InputRef, SynthDef, UnitSpec};
 use plyphon::{AddAction, Options, ROOT_GROUP_ID, Rate, World, engine};
@@ -23,6 +24,7 @@ enum N {
     Pack(Pack),
     Sum(Sum),
     Unpack(Unpack),
+    Unit(UnitNode),
     Other,
 }
 
@@ -36,6 +38,7 @@ impl ToNodeDsp for N {
             N::Pack(p) => Some(p),
             N::Sum(s) => Some(s),
             N::Unpack(u) => Some(u),
+            N::Unit(u) => Some(u),
             N::Other => None,
         }
     }
@@ -1745,4 +1748,273 @@ fn sum_node_with_single_input_is_unit_free() {
         names(&bare),
         "a pass-through ~sum leaves no trace in the def",
     );
+}
+
+// --- UnitNode (descriptor-table) tests ---
+
+/// Every descriptor row must derive AND build through the real engine, both
+/// unconnected (hybrids baked as control params) and with a signal wired into
+/// socket 0. `ensure_compiled` runs plyphon's `UnitDef::build` for every unit
+/// in the def, so an arity mistake or a wired required-constant input
+/// (`maxdelay`, a limiter's `dur`) fails here rather than at runtime.
+#[test]
+fn every_descriptor_row_derives_and_builds() {
+    let (mut controller, _nrt, _world) = engine(Options {
+        sample_rate: SR as f64,
+        output_channels: 2,
+        ..Options::default()
+    });
+    for desc in UNITS {
+        let name = format!("sweep-{}", desc.unit);
+        let mut g = Graph::<N>::default();
+        let n = g.add_node(N::Unit(UnitNode::from_desc(desc)));
+        let o = g.add_node(N::Out(Out::default()));
+        g.add_edge(n, o, Edge::new(0.into(), 0.into()));
+        let derived = derive_synthdef(&g, 2, &name)
+            .unwrap_or_else(|e| panic!("{}: derive failed: {e}", desc.unit));
+        controller.add_synthdef(derived.def);
+        controller
+            .ensure_compiled(&name)
+            .unwrap_or_else(|e| panic!("{}: def failed to build: {e:?}", desc.unit));
+
+        // The wired variant exercises the per-channel signal path.
+        if desc.n_sockets() > 0 {
+            let name = format!("sweep-wired-{}", desc.unit);
+            let mut g = Graph::<N>::default();
+            let s = g.add_node(N::Unit(UnitNode::from_unit("SinOsc").expect("SinOsc row")));
+            let n = g.add_node(N::Unit(UnitNode::from_desc(desc)));
+            let o = g.add_node(N::Out(Out::default()));
+            g.add_edge(s, n, Edge::new(0.into(), 0.into()));
+            g.add_edge(n, o, Edge::new(0.into(), 0.into()));
+            let derived = derive_synthdef(&g, 2, &name)
+                .unwrap_or_else(|e| panic!("{}: wired derive failed: {e}", desc.unit));
+            controller.add_synthdef(derived.def);
+            controller
+                .ensure_compiled(&name)
+                .unwrap_or_else(|e| panic!("{}: wired def failed to build: {e:?}", desc.unit));
+        }
+    }
+}
+
+/// An unconnected `UnitNode` bakes each hybrid as one *keyed* control param.
+#[test]
+fn unit_node_pushes_keyed_params() {
+    let mut g = Graph::<N>::default();
+    let p = g.add_node(N::Unit(UnitNode::from_unit("Pulse").expect("Pulse row")));
+    let o = g.add_node(N::Out(Out::default()));
+    g.add_edge(p, o, Edge::new(0.into(), 0.into()));
+    let derived = derive_synthdef(&g, 1, "t").expect("derive");
+
+    // One binding per hybrid (freq, width), keyed, in def-param order.
+    let keyed: Vec<_> = derived
+        .params
+        .iter()
+        .filter_map(|b| b.key.as_deref().map(|k| (k, b.index)))
+        .collect();
+    assert_eq!(keyed.len(), 2, "Pulse has two hybrid params");
+    for (key, index) in keyed {
+        let param = &derived.def.params[index];
+        assert_eq!(param.name, format!("0/{key}"));
+        let pulse = derived
+            .def
+            .units
+            .iter()
+            .find(|u| u.name == "Pulse")
+            .expect("Pulse unit");
+        assert!(
+            pulse
+                .inputs
+                .iter()
+                .any(|i| matches!(i, InputRef::Param(p) if *p as usize == index)),
+            "the Pulse unit must read its `{key}` param",
+        );
+    }
+}
+
+/// A signal wired into a hybrid socket replaces the param per channel (the
+/// generalisation of `~sinosc` FM).
+#[test]
+fn unit_hybrid_socket_takes_the_wire() {
+    let mut g = Graph::<N>::default();
+    let m = g.add_node(N::Unit(UnitNode::from_unit("SinOsc").expect("row")));
+    let f = g.add_node(N::Unit(UnitNode::from_unit("RLPF").expect("row")));
+    let o = g.add_node(N::Out(Out::default()));
+    // The modulator drives the filter's `freq` (socket 1), `in`/`rq` are left.
+    g.add_edge(m, f, Edge::new(0.into(), 1.into()));
+    g.add_edge(f, o, Edge::new(0.into(), 0.into()));
+    let derived = derive_synthdef(&g, 1, "t").expect("derive");
+
+    let rlpf = derived
+        .def
+        .units
+        .iter()
+        .find(|u| u.name == "RLPF")
+        .expect("RLPF unit");
+    // Inputs in plyphon order: in (unconnected -> silence), freq (wired ->
+    // unit output), rq (unconnected -> param).
+    assert!(
+        matches!(rlpf.inputs[0], InputRef::Constant(c) if c == 0.0),
+        "in is silent",
+    );
+    assert!(
+        matches!(rlpf.inputs[1], InputRef::Unit { .. }),
+        "freq must take the wire",
+    );
+    assert!(
+        matches!(rlpf.inputs[2], InputRef::Param(_)),
+        "rq falls back to its param",
+    );
+    // Only `rq` remains as a keyed binding for the filter node.
+    assert!(
+        derived
+            .params
+            .iter()
+            .any(|b| b.node_path == vec![1] && b.key.as_deref() == Some("rq")),
+        "rq must stay param-bound",
+    );
+    assert!(
+        !derived
+            .params
+            .iter()
+            .any(|b| b.node_path == vec![1] && b.key.as_deref() == Some("freq")),
+        "a wired hybrid must not also push its param",
+    );
+}
+
+/// Init-only values are baked into the def as constants: changing one changes
+/// the structural sig (respawn), as does a param smoothing lag.
+#[test]
+fn unit_init_and_lag_are_structural() {
+    let derive_with = |node: UnitNode| {
+        let mut g = Graph::<N>::default();
+        let n = g.add_node(N::Unit(node));
+        let o = g.add_node(N::Out(Out::default()));
+        g.add_edge(n, o, Edge::new(0.into(), 0.into()));
+        derive_synthdef(&g, 1, "t").expect("derive")
+    };
+    let base = UnitNode::from_unit("CombC").expect("CombC row");
+    let sig_base = structural_sig(&derive_with(base.clone()).def);
+
+    // The default `maxdelay` reaches the CombC unit as a constant.
+    let comb_inputs = |derived: &Derived| {
+        derived
+            .def
+            .units
+            .iter()
+            .find(|u| u.name == "CombC")
+            .expect("CombC unit")
+            .inputs
+            .clone()
+    };
+    let has_const = |inputs: &[InputRef], v: f32| {
+        inputs
+            .iter()
+            .any(|i| matches!(i, InputRef::Constant(c) if *c == v))
+    };
+    assert!(
+        has_const(&comb_inputs(&derive_with(base.clone())), 0.2),
+        "default maxdelay must be baked as a constant",
+    );
+
+    let mut resized = base.clone();
+    resized.set_init("maxdelay", 0.5);
+    let resized_derived = derive_with(resized);
+    assert!(has_const(&comb_inputs(&resized_derived), 0.5));
+    assert_ne!(
+        sig_base,
+        structural_sig(&resized_derived.def),
+        "resizing the delay line must respawn",
+    );
+
+    let mut lagged = base.clone();
+    lagged.set_lag("delay", 0.02);
+    assert_ne!(
+        sig_base,
+        structural_sig(&derive_with(lagged).def),
+        "a param smoothing lag bakes a LagControl and must respawn",
+    );
+}
+
+/// A multi-output unit's ports each carry the full channel group: mono-fed
+/// `Pan2` yields two mono ports from one unit; a stereo-fed one expands to
+/// two units with two stereo ports.
+#[test]
+fn unit_multi_out_expands_per_channel() {
+    // Mono: one Pan2, two mono ports.
+    let mut g = Graph::<N>::default();
+    let s = g.add_node(N::Unit(UnitNode::from_unit("SinOsc").expect("row")));
+    let p = g.add_node(N::Unit(UnitNode::from_unit("Pan2").expect("row")));
+    let o = g.add_node(N::Out(Out::default()));
+    g.add_edge(s, p, Edge::new(0.into(), 0.into()));
+    g.add_edge(p, o, Edge::new(0.into(), 0.into()));
+    let derived = derive_synthdef(&g, 1, "t").expect("derive");
+    let pan_count = |derived: &Derived| {
+        derived
+            .def
+            .units
+            .iter()
+            .filter(|u| u.name == "Pan2")
+            .count()
+    };
+    assert_eq!(pan_count(&derived), 1);
+    let shape = |derived: &Derived, port: usize| derived.shapes[&(vec![1usize], port)];
+    assert_eq!(shape(&derived, 0).width, 1, "left port is mono");
+    assert_eq!(shape(&derived, 1).width, 1, "right port is mono");
+
+    // Stereo: a 2-wide group fans out one Pan2 per channel; each port is
+    // 2 wide.
+    let mut g = Graph::<N>::default();
+    let a = g.add_node(N::Unit(UnitNode::from_unit("SinOsc").expect("row")));
+    let b = g.add_node(N::Unit(UnitNode::from_unit("SinOsc").expect("row")));
+    let pk = g.add_node(N::Pack(Pack::default()));
+    let p = g.add_node(N::Unit(UnitNode::from_unit("Pan2").expect("row")));
+    let o = g.add_node(N::Out(Out::default()));
+    g.add_edge(a, pk, Edge::new(0.into(), 0.into()));
+    g.add_edge(b, pk, Edge::new(0.into(), 1.into()));
+    g.add_edge(pk, p, Edge::new(0.into(), 0.into()));
+    g.add_edge(p, o, Edge::new(0.into(), 0.into()));
+    let derived = derive_synthdef(&g, 1, "t").expect("derive");
+    assert_eq!(pan_count(&derived), 2, "one Pan2 per input channel");
+    let shape = |derived: &Derived, port: usize| derived.shapes[&(vec![3usize], port)];
+    assert_eq!(shape(&derived, 0).width, 2, "left port carries the group");
+    assert_eq!(shape(&derived, 1).width, 2, "right port carries the group");
+}
+
+/// Unconnected hybrids broadcast one shared control param across the whole
+/// channel group (as `~lag`'s dur does).
+#[test]
+fn unit_params_broadcast_across_the_group() {
+    let mut g = Graph::<N>::default();
+    let a = g.add_node(N::Unit(UnitNode::from_unit("SinOsc").expect("row")));
+    let b = g.add_node(N::Unit(UnitNode::from_unit("SinOsc").expect("row")));
+    let pk = g.add_node(N::Pack(Pack::default()));
+    let f = g.add_node(N::Unit(UnitNode::from_unit("LPF").expect("row")));
+    let o = g.add_node(N::Out(Out::default()));
+    g.add_edge(a, pk, Edge::new(0.into(), 0.into()));
+    g.add_edge(b, pk, Edge::new(0.into(), 1.into()));
+    g.add_edge(pk, f, Edge::new(0.into(), 0.into()));
+    g.add_edge(f, o, Edge::new(0.into(), 0.into()));
+    let derived = derive_synthdef(&g, 1, "t").expect("derive");
+
+    let lpfs: Vec<_> = derived
+        .def
+        .units
+        .iter()
+        .filter(|u| u.name == "LPF")
+        .collect();
+    assert_eq!(lpfs.len(), 2, "one LPF per channel");
+    // The *filter's* freq binding (the sines push their own keyed freqs).
+    let freq_binding = derived
+        .params
+        .iter()
+        .find(|b| b.node_path == vec![3] && b.key.as_deref() == Some("freq"))
+        .expect("freq binding");
+    for lpf in &lpfs {
+        assert!(
+            lpf.inputs
+                .iter()
+                .any(|i| matches!(i, InputRef::Param(p) if *p as usize == freq_binding.index)),
+            "each channel's LPF must share the one freq param",
+        );
+    }
 }
