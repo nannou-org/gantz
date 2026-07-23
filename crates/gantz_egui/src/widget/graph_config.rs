@@ -20,6 +20,7 @@ pub struct GraphConfig<'a> {
     current_base_source: Option<&'a str>,
     current_description: Option<&'a str>,
     env: Option<(&'a crate::Env<'a>, &'a mut gantz_ca::merge::Resolutions)>,
+    collab: Option<Option<&'a crate::collab::SessionDisplay>>,
 }
 
 /// Response from the [`GraphConfig`] widget.
@@ -40,6 +41,10 @@ pub struct GraphConfigResponse {
     /// The graph's base source association changed (see
     /// [`base_sources`][GraphConfig::base_sources]).
     pub base_source_changed: Option<String>,
+    /// The "share" button was clicked in the collab row.
+    pub share: bool,
+    /// The "stop" (sharing) button was clicked in the collab row.
+    pub stop_sharing: bool,
 }
 
 impl<'a> GraphConfig<'a> {
@@ -60,6 +65,7 @@ impl<'a> GraphConfig<'a> {
             current_base_source: None,
             current_description: None,
             env: None,
+            collab: None,
         }
     }
 
@@ -119,6 +125,14 @@ impl<'a> GraphConfig<'a> {
         self
     }
 
+    /// The head's collaborative-session state: `None` when the graph is not
+    /// currently shared. Without this call (no networking layer wired), the
+    /// collab row is hidden.
+    pub fn collab(mut self, session: Option<&'a crate::collab::SessionDisplay>) -> Self {
+        self.collab = Some(session);
+        self
+    }
+
     pub fn show(self, ui: &mut egui::Ui) -> GraphConfigResponse {
         let is_named = matches!(self.head, gantz_ca::Head::Branch(_));
         let is_demo = matches!(
@@ -149,6 +163,8 @@ impl<'a> GraphConfig<'a> {
         let mut reset_base_graph = false;
         let mut export = false;
         let mut merge = None;
+        let mut share = false;
+        let mut stop_sharing = false;
 
         // Reserve room for the label column so the value column's text fields
         // don't expand to fill the entire pane.
@@ -329,6 +345,77 @@ impl<'a> GraphConfig<'a> {
                     }
                 }
 
+                // collab (named, mutable, non-base graphs only)
+                if is_named && !self.immutable && !self.is_base {
+                    if let Some(session) = self.collab {
+                        ui.label("collab");
+                        ui.horizontal(|ui| match session {
+                            None => {
+                                share = ui
+                                    .button("share")
+                                    .on_hover_text(
+                                        "share this graph as a live session; \
+                                         anyone with the invite can join and edit",
+                                    )
+                                    .clicked();
+                            }
+                            Some(display) => {
+                                let conn = display.conn;
+                                super::status_dot(ui, conn.color())
+                                    .on_hover_text(conn.label());
+                                let n = display.peers.len();
+                                let label = format!(
+                                    "{n} peer{}",
+                                    if n == 1 { "" } else { "s" }
+                                );
+                                let names: Vec<String> = display
+                                    .peers
+                                    .iter()
+                                    .map(|p| match &p.name {
+                                        Some(name) => format!("{name} ({})", p.id),
+                                        None => p.id.clone(),
+                                    })
+                                    .collect();
+                                let resp = ui.label(label);
+                                if !names.is_empty() {
+                                    resp.on_hover_text(names.join("\n"));
+                                }
+                                if let Some(ticket) = &display.ticket {
+                                    if ui
+                                        .button("copy invite")
+                                        .on_hover_text(
+                                            "copy the invite ticket; others join via \
+                                             the \u{1F310} join button in the Graphs pane",
+                                        )
+                                        .clicked()
+                                    {
+                                        ui.ctx().copy_text(ticket.clone());
+                                    }
+                                }
+                                stop_sharing = ui
+                                    .button("stop")
+                                    .on_hover_text("stop sharing and leave the session")
+                                    .clicked();
+                            }
+                        });
+                        ui.end_row();
+                        if let Some(display) = session {
+                            if display.conflicts > 0 {
+                                ui.label("");
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{} auto-resolved conflict(s)",
+                                        display.conflicts
+                                    ))
+                                    .italics()
+                                    .weak(),
+                                );
+                                ui.end_row();
+                            }
+                        }
+                    }
+                }
+
                 // export
                 ui.label("export");
                 export = ui
@@ -352,6 +439,8 @@ impl<'a> GraphConfig<'a> {
             description_changed,
             merge,
             base_source_changed,
+            share,
+            stop_sharing,
         }
     }
 }

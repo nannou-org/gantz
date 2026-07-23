@@ -1,0 +1,24 @@
+[package]
+name = "bevy_gantz_collab"
+version = "0.1.0"
+description = "Bevy integration of gantz's peer-to-peer collaborative sessions."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+
+[dependencies]
+bevy_app.workspace = true
+bevy_ecs.workspace = true
+bevy_log.workspace = true
+bevy_gantz.workspace = true
+bevy_gantz_egui.workspace = true
+gantz_ca.workspace = true
+gantz_collab.workspace = true
+gantz_core.workspace = true
+gantz_egui.workspace = true
+ron.workspace = true
+serde.workspace = true
+steel-core.workspace = true
+web-time.workspace = true

@@ -74,6 +74,16 @@ impl GantzEguiPlugin {
     }
 }
 
+/// The system set containing the per-frame view persistence passes
+/// ([`persist_camera_and_seed`] and [`settle_layout`]) in the `Update`
+/// schedule.
+///
+/// Layers that publish commit views beyond the process (e.g. the
+/// collaborative-session announce) should run `.after(ViewPersistSet)` so a
+/// commit rendered this frame has its view seeded before it can be served.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
+pub struct ViewPersistSet;
+
 impl Plugin for GantzEguiPlugin {
     fn build(&self, app: &mut App) {
         // Register the push/pull, update_bang and tick_bang entrypoint
@@ -116,6 +126,7 @@ impl Plugin for GantzEguiPlugin {
             .register_head_response::<gantz_egui::Redo>()
             .register_head_response::<gantz_egui::Undo>()
             .register_response_with::<gantz_egui::EvalEntry>(dispatch_eval_entry)
+            .register_response_with::<gantz_egui::StateWritten>(dispatch_state_written)
             .register_response_with::<gantz_egui::OpenHead>(dispatch_open_head)
             .register_response_with::<gantz_egui::ReplaceHead>(dispatch_replace_head)
             .register_response_with::<gantz_egui::ExportHead>(dispatch_export_head)
@@ -154,6 +165,8 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(on_cut_nodes)
             .add_observer(on_duplicate_nodes)
             .add_observer(on_merge_head)
+            .add_observer(on_sync_remote_tip)
+            .add_observer(on_resync_refs)
             .add_observer(on_paste)
             .add_observer(on_undo)
             .add_observer(on_redo)
@@ -177,12 +190,13 @@ impl Plugin for GantzEguiPlugin {
                     node::tick_bang::drive_tick_bangs
                         .after(bevy_gantz::VmSet)
                         .in_set(bevy_gantz::EntrypointSet),
-                    persist_camera_and_seed,
+                    persist_camera_and_seed.in_set(ViewPersistSet),
                     // On layout settle, fork a layout-only commit. Runs after
                     // `VmSet` (so a graph edit commits first and its baseline is
                     // already seeded - no spurious layout commit) and after the
                     // camera/seed pass (so the head's baseline exists).
                     settle_layout
+                        .in_set(ViewPersistSet)
                         .after(bevy_gantz::VmSet)
                         .after(persist_camera_and_seed)
                         .run_if(on_message::<bevy_gantz::debounced_input::DebouncedInputEvent>),
@@ -238,6 +252,16 @@ pub struct GraphView(pub gantz_egui::SceneView);
 #[derive(Component, Default)]
 pub struct HeadNodeInstances(pub gantz_egui::node::NodeInstances);
 
+/// Marker: this open head participates in a live collaborative session.
+///
+/// Maintained by the session layer (inserted alongside its own session
+/// bookkeeping, removed on leave). While present, the undo/redo handlers
+/// mint forward revert commits (see [`gantz_egui::ops::session_undo`])
+/// instead of navigating backwards - peers plan an ancestor tip as
+/// up-to-date and drop it, so plain navigation undo never syncs.
+#[derive(Component)]
+pub struct SessionHead;
+
 // ----------------------------------------------------------------------------
 // Resources
 // ----------------------------------------------------------------------------
@@ -267,6 +291,14 @@ pub struct GuiState(pub gantz_egui::widget::GantzState);
 /// import/export/base systems read it.
 #[derive(Clone, Copy, Resource)]
 pub struct NodeCodecRes(pub gantz_egui::node::NodeCodec);
+
+/// The collaborative-session display state threaded into the Gantz widget.
+///
+/// Absent unless a collab layer (e.g. `bevy_gantz_collab`) inserts and fills
+/// it, in which case the Graph Config pane renders its collab row. (The
+/// Settings > Collab subtab arrives separately, via [`SettingsTabs`].)
+#[derive(Resource, Default)]
+pub struct CollabUi(pub gantz_egui::collab::CollabUiState);
 
 /// Names of base nodes baked into the binary.
 ///
@@ -706,6 +738,7 @@ pub fn on_head_closed(trigger: On<head::ClosedEvent>, mut gui_state: ResMut<GuiS
     let head = &trigger.event().head;
     gui_state.open_heads.remove(head);
     gui_state.redo_stacks.remove(head);
+    gui_state.undo_cursors.remove(head);
 }
 
 /// Migrate GUI state for branch creation.
@@ -1239,6 +1272,44 @@ pub fn on_duplicate_nodes(
 /// so this triggers [`head::CommittedEvent`] directly rather than calling
 /// `commit_working_graph` (which would see the already-committed graph and
 /// skip the event).
+/// Seed `commit`'s stored view, ignoring empty layouts: an empty layout
+/// reads as "never laid out" to the scene (which then destructively
+/// auto-layouts), so it must never become a commit's baseline.
+pub fn seed_view(registry: &mut Registry, commit: ca::CommitAddr, view: gantz_egui::SceneView) {
+    if !view.layout.is_empty() {
+        gantz_egui::section::set_view(&mut registry.0, commit, &view);
+    }
+}
+
+/// Finish a locally-minted merge commit (a local merge or session
+/// convergence, whose op has already committed with both parents): seed the
+/// minted commit's view from the migrated live layout so it exists before
+/// any same-frame session announce (a viewless tip auto-layouts on adopting
+/// peers), re-register the root graph so merged-in nodes get their state
+/// initialized (idempotent for existing nodes), then fire the committed
+/// machinery (GUI-state migration, redo-stack clear, NamedRef resync,
+/// `vm::sync` recompile).
+#[allow(clippy::too_many_arguments)] // A cohesive tail over ECS-owned data.
+fn finish_merge_commit(
+    new_commit: ca::CommitAddr,
+    committed: head::CommittedEvent,
+    graph: &ca::DataGraph,
+    live_view: &gantz_egui::SceneView,
+    registry: &mut Registry,
+    (cache, builtins, codec): (&GraphCache, &BuiltinNodes, &NodeCodecRes),
+    vm: &mut steel::steel_vm::engine::Engine,
+    cmds: &mut Commands,
+) {
+    seed_view(registry, new_commit, live_view.clone());
+    let node_reg = env(registry, cache, builtins, codec);
+    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+    match codec.0.reify_graph(graph) {
+        Ok(g) => gantz_core::graph::register(&get_node, &g, &[], vm),
+        Err(e) => log::error!("merge finish: cannot re-register the merged graph: {e}"),
+    }
+    cmds.trigger(committed);
+}
+
 pub fn on_merge_head(
     trigger: On<ForHead<gantz_egui::MergeHead>>,
     mut registry: ResMut<Registry>,
@@ -1293,23 +1364,21 @@ pub fn on_merge_head(
                 event.data.source,
                 new_commit.display_short()
             );
-            // Re-register the root graph so merged-in nodes get their state
-            // initialized. Idempotent for existing nodes; registration
-            // reifies the graph transiently.
-            let node_reg = env(&registry, &cache, &builtins, &codec);
-            let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
-            match codec.0.reify_graph(&wg.0) {
-                Ok(g) => gantz_core::graph::register(&get_node, &g, &[], vm),
-                Err(e) => log::error!("MergeHead: cannot re-register the merged graph: {e}"),
-            }
-            // The op already committed (with both parents), so fire the
-            // committed machinery (GUI-state migration, redo-stack clear,
-            // NamedRef resync, `vm::sync` recompile) directly.
-            cmds.trigger(head::CommittedEvent {
+            let committed = head::CommittedEvent {
                 entity: event.head,
                 old_head,
                 new_head: head_ref.0.clone(),
-            });
+            };
+            finish_merge_commit(
+                new_commit,
+                committed,
+                &wg.0,
+                &gv.0,
+                &mut registry,
+                (&cache, &builtins, &codec),
+                vm,
+                &mut cmds,
+            );
         }
         gantz_egui::ops::MergeHeadOutcome::Refused(reasons) => {
             // Defensive: the UI disables conflicted/blocked candidates.
@@ -1323,41 +1392,204 @@ pub fn on_merge_head(
     }
 }
 
+/// Bring an open head up to date with a remote session tip (see
+/// [`gantz_egui::ops::sync_remote_tip`]).
+///
+/// Triggered as `ForHead<SyncRemoteTip>` by the collaborative-session layer
+/// once the remote tip's closure has been fetched, validated and applied to
+/// the registry. Not a GUI payload: nothing emits it from widgets.
+#[derive(Clone, Copy, Debug)]
+pub struct SyncRemoteTip {
+    /// The remote tip to converge with.
+    pub remote: ca::CommitAddr,
+    /// The session's fixed conflict-resolution policy.
+    pub resolutions: ca::merge::Resolutions,
+    /// Adopt an unrelated remote tip instead of surfacing it: set when the
+    /// head currently points at the join flow's placeholder graph.
+    pub adopt_unrelated: bool,
+}
+
+/// Handle [`SyncRemoteTip`]: the session analogue of [`on_merge_head`].
+pub fn on_sync_remote_tip(
+    trigger: On<ForHead<SyncRemoteTip>>,
+    mut registry: ResMut<Registry>,
+    mut cache: ResMut<GraphCache>,
+    builtins: Res<BuiltinNodes>,
+    codec: Res<NodeCodecRes>,
+    mut gui_state: ResMut<GuiState>,
+    mut vms: NonSendMut<head::HeadVms>,
+    mut cmds: Commands,
+    mut heads: Query<
+        (&mut head::HeadRef, &mut head::WorkingGraph, &mut GraphView),
+        With<head::OpenHead>,
+    >,
+) {
+    let event = trigger.event();
+    let Ok((mut head_ref, mut wg, mut gv)) = heads.get_mut(event.head) else {
+        log::error!("SyncRemoteTip: head not found for entity {:?}", event.head);
+        return;
+    };
+    let Some(head_state) = gui_state.open_heads.get_mut(&**head_ref) else {
+        log::error!("SyncRemoteTip: GUI state not found for head");
+        return;
+    };
+    let Some(vm) = vms.get_mut(&event.head) else {
+        log::error!("SyncRemoteTip: VM not found for head");
+        return;
+    };
+
+    let old_head = head_ref.0.clone();
+    let outcome = gantz_egui::ops::sync_remote_tip(
+        &mut registry,
+        &mut head_ref.0,
+        &mut wg,
+        vm,
+        &mut gv,
+        &mut head_state.scene.interaction.selection,
+        event.data.remote,
+        event.data.resolutions,
+        event.data.adopt_unrelated,
+    );
+    // The sync may have minted a merge commit and graph.
+    refresh_cache(&registry, &mut cache, &codec.0);
+
+    match outcome {
+        gantz_egui::ops::SyncTipOutcome::UpToDate => (),
+        gantz_egui::ops::SyncTipOutcome::Moved(target) => {
+            // A remote edit invalidates local redo just like a local one (the
+            // Merged arm clears via CommittedEvent); a stale session-redo
+            // would otherwise mint a whole-graph revert clobbering the
+            // peers' newer work.
+            gui_state.redo_stacks.remove(&old_head);
+            gui_state.undo_cursors.remove(&old_head);
+            navigate_head(&mut cmds, event.head, &old_head, target);
+        }
+        gantz_egui::ops::SyncTipOutcome::Merged {
+            new_commit,
+            conflicts,
+            ..
+        } => {
+            if conflicts > 0 {
+                log::info!("session merge auto-resolved {conflicts} conflict(s)");
+            }
+            log::debug!("session merge -> {}", new_commit.display_short());
+            let committed = head::CommittedEvent {
+                entity: event.head,
+                old_head,
+                new_head: head_ref.0.clone(),
+            };
+            finish_merge_commit(
+                new_commit,
+                committed,
+                &wg.0,
+                &gv.0,
+                &mut registry,
+                (&cache, &builtins, &codec),
+                vm,
+                &mut cmds,
+            );
+        }
+        gantz_egui::ops::SyncTipOutcome::Blocked(reasons) => {
+            log::warn!("session sync blocked: {}", reasons.join("; "));
+        }
+        gantz_egui::ops::SyncTipOutcome::Unrelated => {
+            log::warn!("session sync: remote tip shares no history with the local graph");
+        }
+    }
+}
+
+/// Request a reference resync outside the usual committed flow: bring
+/// sync-enabled `NamedRef`s up to date and refresh open heads whose commits
+/// moved. Triggered by the collaborative-session layer after it moves scoped
+/// names that no open head points at (fast-forwards/adoptions of nested or
+/// referenced graphs).
+#[derive(Debug, Event)]
+pub struct ResyncRefsEvent;
+
+/// Handle [`ResyncRefsEvent`]: the same pass as [`on_head_committed_resync`].
+pub fn on_resync_refs(
+    _trigger: On<ResyncRefsEvent>,
+    mut registry: ResMut<Registry>,
+    mut cache: ResMut<GraphCache>,
+    codec: Res<NodeCodecRes>,
+    mut heads: Query<head::OpenHeadData, With<head::OpenHead>>,
+) {
+    let moves = gantz_egui::sync::resync(&mut registry, bevy_gantz::reg::timestamp());
+    refresh_cache(&registry, &mut cache, &codec.0);
+    refresh_moved_heads(&moves, &mut registry, &mut heads);
+}
+
 /// Handle undo payloads: move the head back to its parent commit.
+///
+/// A session head (see [`SessionHead`]) instead mints a forward revert
+/// commit so the undo propagates to peers like any other edit.
 pub fn on_undo(
     trigger: On<ForHead<gantz_egui::Undo>>,
-    registry: Res<Registry>,
+    mut registry: ResMut<Registry>,
     mut gui_state: ResMut<GuiState>,
-    heads: Query<&head::HeadRef, With<head::OpenHead>>,
+    heads: Query<(&head::HeadRef, Has<SessionHead>), With<head::OpenHead>>,
+    graph_views: Query<&GraphView>,
     mut cmds: Commands,
 ) {
     let entity = trigger.event().head;
-    let Ok(head_ref) = heads.get(entity) else {
+    let Ok((head_ref, in_session)) = heads.get(entity) else {
         log::error!("Undo: head not found for entity {entity:?}");
         return;
     };
     let head = (**head_ref).clone();
-    let parent = gantz_egui::ops::undo(&registry, &mut gui_state.redo_stacks, &head);
-    if let Some(parent) = parent {
-        navigate_head(&mut cmds, entity, &head, parent);
+    let gui = &mut gui_state.0;
+    let target = if in_session {
+        let live_camera = graph_views.get(entity).ok().map(|gv| gv.0.camera);
+        gantz_egui::ops::session_undo(
+            &mut registry.0,
+            &mut gui.redo_stacks,
+            &mut gui.undo_cursors,
+            bevy_gantz::reg::timestamp(),
+            &head,
+            live_camera,
+        )
+    } else {
+        gantz_egui::ops::undo(&registry.0, &mut gui.redo_stacks, &head)
+    };
+    if let Some(target) = target {
+        navigate_head(&mut cmds, entity, &head, target);
     }
 }
 
 /// Handle redo payloads: move the head forward to a previously undone commit.
+///
+/// A session head (see [`SessionHead`]) instead mints a forward revert
+/// commit restoring the undone position, mirroring [`on_undo`].
 pub fn on_redo(
     trigger: On<ForHead<gantz_egui::Redo>>,
+    mut registry: ResMut<Registry>,
     mut gui_state: ResMut<GuiState>,
-    heads: Query<&head::HeadRef, With<head::OpenHead>>,
+    heads: Query<(&head::HeadRef, Has<SessionHead>), With<head::OpenHead>>,
+    graph_views: Query<&GraphView>,
     mut cmds: Commands,
 ) {
     let entity = trigger.event().head;
-    let Ok(head_ref) = heads.get(entity) else {
+    let Ok((head_ref, in_session)) = heads.get(entity) else {
         log::error!("Redo: head not found for entity {entity:?}");
         return;
     };
     let head = (**head_ref).clone();
-    if let Some(redo_ca) = gantz_egui::ops::redo(&mut gui_state.redo_stacks, &head) {
-        navigate_head(&mut cmds, entity, &head, redo_ca);
+    let gui = &mut gui_state.0;
+    let target = if in_session {
+        let live_camera = graph_views.get(entity).ok().map(|gv| gv.0.camera);
+        gantz_egui::ops::session_redo(
+            &mut registry.0,
+            &mut gui.redo_stacks,
+            &mut gui.undo_cursors,
+            bevy_gantz::reg::timestamp(),
+            &head,
+            live_camera,
+        )
+    } else {
+        gantz_egui::ops::redo(&mut gui.redo_stacks, &head)
+    };
+    if let Some(target) = target {
+        navigate_head(&mut cmds, entity, &head, target);
     }
 }
 
@@ -1601,9 +1833,10 @@ pub fn settle_layout(
     mut registry: ResMut<Registry>,
     mut gui_state: ResMut<GuiState>,
     mut ctxs: EguiContexts,
-    mut heads: Query<(&mut head::HeadRef, &GraphView), With<head::OpenHead>>,
+    mut heads: Query<(Entity, &mut head::HeadRef, &GraphView), With<head::OpenHead>>,
+    mut cmds: Commands,
 ) {
-    for (mut head_ref, head_view) in heads.iter_mut() {
+    for (entity, mut head_ref, head_view) in heads.iter_mut() {
         let old_head = (**head_ref).clone();
         let Some(new_commit) = gantz_egui::ops::commit_layout(
             &mut registry,
@@ -1622,7 +1855,21 @@ pub fn settle_layout(
         if let Ok(ctx) = ctxs.ctx_mut() {
             gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
         }
+        // Deliberately not a `CommittedEvent` (no resync cascade), but layers
+        // that mirror commits elsewhere (e.g. collab sessions syncing node
+        // positions) still need to hear about it.
+        cmds.trigger(LayoutCommittedEvent { entity, new_commit });
     }
+}
+
+/// Emitted after a settled node-move produced a layout-only commit (same
+/// graph, new commit). Unlike [`head::CommittedEvent`] this triggers no
+/// resync/recompile machinery - it exists for layers that follow the commit
+/// chain (e.g. collaborative sessions syncing node positions).
+#[derive(Debug, Event)]
+pub struct LayoutCommittedEvent {
+    pub entity: Entity,
+    pub new_commit: ca::CommitAddr,
 }
 
 /// Poll the in-flight import file dialog task.
@@ -1678,6 +1925,8 @@ pub fn update(
         export_paths,
         base_sources,
         mut base_name_sources,
+        collab_ui,
+        clipboard,
     ): (
         Res<NodeCodecRes>,
         Res<BaseNames>,
@@ -1693,6 +1942,8 @@ pub fn update(
         Option<Res<base::ExportPaths>>,
         Res<base::BaseSources>,
         ResMut<base::BaseNameSources>,
+        Option<Res<CollabUi>>,
+        Option<ResMut<bevy_egui::EguiClipboard>>,
     ),
     dispatchers: Res<ResponseDispatchers>,
     mut cmds: Commands,
@@ -1747,6 +1998,16 @@ pub fn update(
     // The base source names, for the graph config pane's source dropdown.
     let source_names: Vec<&str> = base_sources.0.iter().map(|s| s.name).collect();
 
+    // Clipboard reader for widget paste affordances. `RefCell`: the widget
+    // takes a shared `Fn` while `EguiClipboard::get_text` needs `&mut`.
+    let clipboard = clipboard.map(std::cell::RefCell::new);
+    let read_clipboard = || {
+        clipboard
+            .as_ref()
+            .and_then(|c| c.borrow_mut().get_text())
+            .filter(|t| !t.is_empty())
+    };
+
     let mut response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show_inside(&mut panel_ui, |ui| {
@@ -1793,6 +2054,10 @@ pub fn update(
                     default_source: paths.default_source,
                 });
             }
+            if let Some(collab_ui) = collab_ui.as_ref() {
+                widget = widget.collab(&collab_ui.0);
+            }
+            widget = widget.clipboard(&read_clipboard);
             widget.show(&mut *gui_state, focused_ix, &mut access, ui)
         })
         .inner;
@@ -2037,8 +2302,9 @@ pub(crate) fn handle_gantz_response(
 /// Downcast a dispatched payload to its concrete type.
 ///
 /// Dispatchers are keyed by the payload's `TypeId`, so the downcast cannot
-/// fail for a correctly registered dispatcher.
-fn downcast_payload<T: ResponseData>(payload: DynResponse) -> T {
+/// fail for a correctly registered dispatcher. Public so external plugins
+/// (e.g. `bevy_gantz_collab`) can write custom [`DispatchFn`]s.
+pub fn downcast_payload<T: ResponseData>(payload: DynResponse) -> T {
     payload
         .downcast::<T>()
         .expect("dispatcher registered for this payload type")
@@ -2075,6 +2341,12 @@ fn dispatch_eval_entry(entity: Option<Entity>, payload: DynResponse, cmds: &mut 
         time: None,
     });
 }
+
+/// Drop a [`gantz_egui::StateWritten`] payload: recorded VM-state writes
+/// exist for the collaborative-session layer, which overrides this
+/// registration (last registration wins) to broadcast them; without it they
+/// are local-only by design, not unhandled.
+fn dispatch_state_written(_: Option<Entity>, _payload: DynResponse, _cmds: &mut Commands) {}
 
 /// Dispatch a [`gantz_egui::OpenHead`] payload as a [`head::OpenEvent`].
 fn dispatch_open_head(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {

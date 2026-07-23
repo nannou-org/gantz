@@ -124,6 +124,12 @@ pub struct Interaction {
     /// under the pointer.
     #[serde(default, skip)]
     pub last_pointer_pos: Option<egui::Pos2>,
+    /// The pointer position over the scene THIS frame, in graph
+    /// coordinates - `None` whenever the pointer is elsewhere (unlike
+    /// [`last_pointer_pos`][Self::last_pointer_pos], which is retained).
+    /// Read by presence layers (e.g. collab peer cursors).
+    #[serde(default, skip)]
+    pub live_pointer: Option<egui::Pos2>,
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -371,14 +377,19 @@ impl<'a> GraphScene<'a> {
         // Track the latest pointer position over the scene (in graph space) so a
         // node added via the node palette lands under the pointer. While the
         // palette window covers the scene, `contains_pointer` is false, so this
-        // retains the pre-open position.
+        // retains the pre-open position. `live_pointer` is the un-retained
+        // counterpart (None whenever the pointer is off the scene), for
+        // presence broadcasts.
+        state.interaction.live_pointer = None;
         if graph_response.response.contains_pointer() {
             let layer_id = graph_response.response.layer_id;
             let ptr = ui
                 .ctx()
                 .input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos()));
             if let (Some(ptr), Some(t)) = (ptr, ui.ctx().layer_transform_from_global(layer_id)) {
-                state.interaction.last_pointer_pos = Some(t.mul_pos(ptr));
+                let pos = t.mul_pos(ptr);
+                state.interaction.last_pointer_pos = Some(pos);
+                state.interaction.live_pointer = Some(pos);
             }
         }
 
@@ -681,6 +692,9 @@ fn nodes(
     let mut nodes_to_reset = Vec::new();
     let mut request_layout = false;
     let mut request_align: Option<egui_graph::AlignBy> = None;
+    // VM-state writes recorded by each node's `NodeCtx` (drained per node
+    // into `StateWritten` payloads).
+    let mut writes = Vec::new();
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node_id = egui_graph::NodeId::from_u64(n_ix as u64);
@@ -714,8 +728,15 @@ fn nodes(
                     // A node at this (root) level has the single-element state
                     // path `[n_ix]`.
                     let node_path = [n_ix];
-                    let node_ctx =
-                        crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, &[], vm);
+                    let node_ctx = crate::NodeCtx::new(
+                        registry,
+                        &node_path,
+                        &inlets,
+                        &outlets,
+                        &[],
+                        vm,
+                        &mut writes,
+                    );
                     let r = entry.inst.node.ui(node_ctx, nui_ctx);
                     node_changed |= r.changed;
                     responses.extend(r.payloads);
@@ -906,8 +927,15 @@ fn nodes(
             // Node-specific items (e.g. the log node's "open logs").
             if let Some(entry) = instance.as_mut() {
                 let node_path = [n_ix];
-                let mut node_ctx =
-                    crate::NodeCtx::new(registry, &node_path, &inlets, &outlets, &[], vm);
+                let mut node_ctx = crate::NodeCtx::new(
+                    registry,
+                    &node_path,
+                    &inlets,
+                    &outlets,
+                    &[],
+                    vm,
+                    &mut writes,
+                );
                 let cm = entry.inst.node.context_menu(&mut node_ctx, ui);
                 node_changed |= cm.changed;
                 responses.extend(cm.payloads);
@@ -961,6 +989,7 @@ fn nodes(
             }
         }
 
+        responses.extend(crate::action::state_written(&mut writes));
         node_responses.push((n_id, response));
     }
 

@@ -2,12 +2,13 @@
 //!
 //! Everything here is plain serde encoded with [postcard] (compact,
 //! non-self-describing; `gantz_ca` addresses serialize as raw bytes and
-//! names as strings). Graphs are the exception: erased node data
-//! ([`DataGraph`]) is self-describing, so graphs travel inside [`Objects`]
-//! as RON blobs ([`encode_graph`]/[`decode_graph`]) - the same encoding as
-//! the persisted registry (`bevy_gantz::storage`), so wire and persistence
-//! cannot drift. A received graph only applies if its decoded content
-//! re-verifies against the announced address (see
+//! names as strings). Graphs and section values are the exception: erased
+//! node data ([`DataGraph`]) and section [`Value`]s are self-describing, so
+//! they travel inside [`Objects`] as RON blobs
+//! ([`encode_graph`]/[`decode_graph`], [`encode_value`]/[`decode_value`]) -
+//! the same encoding as the persisted registry (`bevy_gantz::storage`), so
+//! wire and persistence cannot drift. A received graph only applies if its
+//! decoded content re-verifies against the announced address (see
 //! [`gantz_ca::verify_graph`]). The human-facing `.gantz` text format is
 //! deliberately not used here: it is a name-resolving projection for
 //! import/export (its round-trip re-seeds names and re-roots commits),
@@ -18,7 +19,8 @@
 
 use crate::session::{PeerId, SessionId};
 use gantz_ca::{
-    BlobLiveness, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Name, SectionId,
+    BlobLiveness, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Key, Liveness,
+    MergePolicy, Name, SectionId, Value,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -56,7 +58,54 @@ pub enum GossipMsg {
         origin: PeerId,
         name: Option<String>,
     },
+    /// An ephemeral node-interaction action (a live widget gesture or an
+    /// eval trigger), application-encoded. Fire-and-forget: never persisted,
+    /// no convergence obligation - the commit plane is unaffected when these
+    /// drop. Appended after the existing variants so their postcard
+    /// discriminants are unchanged.
+    Action {
+        origin: PeerId,
+        /// Per-origin sequence number, for stale-drop only.
+        seq: u64,
+        /// Sender wall-clock milliseconds since the epoch: the cross-origin
+        /// last-write-wins tiebreak for value-shaped actions, and history
+        /// display.
+        timestamp: u64,
+        /// The scoped name (branch) the action's head was on.
+        name: Name,
+        /// The graph address the action was issued against. Node-index
+        /// paths are only meaningful relative to a specific graph:
+        /// receivers apply an action only while their tip holds the
+        /// identical graph, and drop it otherwise.
+        graph: GraphAddr,
+        /// The application-encoded action (opaque here, like graph blobs -
+        /// an undecodable or unknown action drops alone without poisoning
+        /// the envelope).
+        data: Vec<u8>,
+    },
+    /// An ephemeral pointer position over a shared graph (a presence
+    /// cursor). Fire-and-forget: receivers expire stale entries, and a lost
+    /// message is corrected by the next movement. Appended after the
+    /// existing variants so their postcard discriminants are unchanged.
+    Pointer {
+        origin: PeerId,
+        /// Per-origin sequence number, for stale-drop only: gossip may
+        /// reorder, and a cursor jumping backwards would be visible.
+        seq: u64,
+        /// The scoped name (branch) the pointer is over.
+        name: Name,
+        /// The pointer position in graph-space coordinates
+        /// (camera-independent, so every peer renders it correctly
+        /// regardless of viewport). `None` = the pointer left the scene.
+        pos: Option<(f32, f32)>,
+    },
 }
+
+/// The size cap for [`GossipMsg::Action`]'s application-encoded `data`.
+///
+/// Keeps the whole message comfortably inside iroh-gossip's 4 KiB limit;
+/// senders drop (with a warning) rather than truncate an oversized action.
+pub const MAX_ACTION_DATA: usize = 2048;
 
 /// A kind-tagged reference to one content-addressed object.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -67,6 +116,11 @@ pub enum ObjectRef {
     Blob {
         section: SectionId,
         addr: ContentAddr,
+    },
+    /// A metadata section entry (e.g. a stored scene view).
+    Section {
+        id: SectionId,
+        key: Key,
     },
 }
 
@@ -83,6 +137,19 @@ pub enum Object {
         liveness: BlobLiveness,
         addr: ContentAddr,
         bytes: Vec<u8>,
+    },
+    /// A metadata section entry. The section's stamped semantics ride along
+    /// (the same pattern as [`Object::Blob`]'s `liveness`) so a receiver
+    /// without the owning domain compiled in still stamps the section
+    /// correctly. The value is a RON blob (see [`encode_value`]): section
+    /// values can hold [`gantz_ca::Datum`]s, which only self-describing
+    /// formats can decode.
+    Section {
+        id: SectionId,
+        policy: MergePolicy,
+        liveness: Liveness,
+        key: Key,
+        value: Vec<u8>,
     },
 }
 
@@ -208,6 +275,24 @@ pub fn decode_graph(bytes: &[u8]) -> Result<DataGraph, ron::de::SpannedError> {
     ron::de::from_bytes(bytes)
 }
 
+/// Encode a section value as its wire blob: RON of the [`Value`], the same
+/// self-describing encoding as the persisted registry. Self-description is
+/// required: [`Value::Datum`] cannot ride a non-self-describing format like
+/// postcard.
+pub fn encode_value(value: &Value) -> Vec<u8> {
+    // RON serialization of plain data cannot fail short of allocation
+    // failure.
+    ron::to_string(value).unwrap_or_default().into_bytes()
+}
+
+/// Decode a section value wire blob (see [`encode_value`]).
+///
+/// Section entries are advisory metadata with no content address to verify
+/// against: receivers skip entries that fail to decode.
+pub fn decode_value(bytes: &[u8]) -> Result<Value, ron::de::SpannedError> {
+    ron::de::from_bytes(bytes)
+}
+
 /// The digest of a `name -> tip` head map, for [`GossipMsg::Digest`]
 /// anti-entropy: blake3 over the `(name, tip)` pairs in iteration order.
 ///
@@ -267,6 +352,10 @@ mod tests {
                         section: "dsp.buffer".to_string(),
                         addr: gantz_ca::ContentAddr::from([5; 32]),
                     },
+                    ObjectRef::Section {
+                        id: "egui.view".to_string(),
+                        key: Key::Commit(ca),
+                    },
                 ],
             },
         };
@@ -274,7 +363,89 @@ mod tests {
         let SyncRequest::Want { want, .. } = decoded else {
             panic!("wrong variant");
         };
-        assert_eq!(want.refs.len(), 3);
+        assert_eq!(want.refs.len(), 4);
+    }
+
+    #[test]
+    fn action_round_trips_and_leaves_other_variants_stable() {
+        let ga = GraphAddr::from(gantz_ca::ContentAddr::from([4; 32]));
+        let msg = GossipMsg::Action {
+            origin: PeerId([9; 32]),
+            seq: 3,
+            timestamp: 1_000_000,
+            name: name("main"),
+            graph: ga,
+            data: vec![1, 2, 3],
+        };
+        let decoded: GossipMsg = decode(&encode(&msg)).unwrap();
+        let GossipMsg::Action {
+            origin,
+            seq,
+            timestamp,
+            name,
+            graph,
+            data,
+        } = decoded
+        else {
+            panic!("wrong variant");
+        };
+        assert_eq!(origin, PeerId([9; 32]));
+        assert_eq!(seq, 3);
+        assert_eq!(timestamp, 1_000_000);
+        assert_eq!(name, "main".parse::<Name>().unwrap());
+        assert_eq!(graph, ga);
+        assert_eq!(data, vec![1, 2, 3]);
+
+        // The new trailing variant must not shift the existing postcard
+        // discriminants: a pre-action Tips encoding still starts with tag 0.
+        let tips = GossipMsg::Tips {
+            origin: PeerId([1; 32]),
+            seq: 0,
+            changed: vec![],
+        };
+        assert_eq!(encode(&tips)[0], 0);
+        let presence = GossipMsg::Presence {
+            origin: PeerId([1; 32]),
+            name: None,
+        };
+        assert_eq!(encode(&presence)[0], 2);
+    }
+
+    #[test]
+    fn pointer_round_trips_and_leaves_other_variants_stable() {
+        let msg = GossipMsg::Pointer {
+            origin: PeerId([7; 32]),
+            seq: 9,
+            name: name("main"),
+            pos: Some((1.5, -2.0)),
+        };
+        let decoded: GossipMsg = decode(&encode(&msg)).unwrap();
+        let GossipMsg::Pointer {
+            origin,
+            seq,
+            name: n,
+            pos,
+        } = decoded
+        else {
+            panic!("wrong variant");
+        };
+        assert_eq!(origin, PeerId([7; 32]));
+        assert_eq!(seq, 9);
+        assert_eq!(n, name("main"));
+        assert_eq!(pos, Some((1.5, -2.0)));
+
+        // Appended after `Action`, so its discriminant follows Action's and
+        // Action's own is unchanged.
+        let action = GossipMsg::Action {
+            origin: PeerId([1; 32]),
+            seq: 0,
+            timestamp: 0,
+            name: name("main"),
+            graph: GraphAddr::from(gantz_ca::ContentAddr::from([4; 32])),
+            data: vec![],
+        };
+        assert_eq!(encode(&action)[0], 3);
+        assert_eq!(encode(&msg)[0], 4);
     }
 
     #[test]
@@ -295,10 +466,31 @@ mod tests {
                     addr: gantz_ca::blob_addr(b"pcm"),
                     bytes: b"pcm".to_vec(),
                 },
+                Object::Section {
+                    id: "egui.view".to_string(),
+                    policy: MergePolicy::KeepExisting,
+                    liveness: Liveness::WithCommit,
+                    key: Key::Commit(ca),
+                    value: encode_value(&Value::Datum(gantz_ca::Datum::Bool(true))),
+                },
             ],
         };
         let decoded: Objects = decode(&encode(&objects)).unwrap();
         assert_eq!(decoded, objects);
+    }
+
+    /// Regression: a `Value::Datum` cannot decode from a non-self-describing
+    /// format (`Datum` deserializes via `deserialize_any`), so section
+    /// values must travel as RON blobs inside the postcard envelope.
+    #[test]
+    fn section_values_round_trip_as_ron_not_postcard() {
+        let value = Value::Datum(gantz_ca::Datum::Map(vec![(
+            "zoom".to_string(),
+            gantz_ca::Datum::F64(1.5),
+        )]));
+        assert_eq!(decode_value(&encode_value(&value)).unwrap(), value);
+        let postcard_err: Result<Value, _> = decode(&encode(&value));
+        assert!(postcard_err.is_err());
     }
 
     #[test]

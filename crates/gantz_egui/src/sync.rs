@@ -15,7 +15,7 @@
 use crate::node::NamedRef;
 use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, NodeData, Registry};
 use gantz_nodetag::NodeTag;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::time::Duration;
 
 /// A named graph whose commit moved during [`resync`] or a rename cascade.
@@ -65,6 +65,21 @@ pub(crate) fn with_named_ref_mut(
         Err(e) => {
             log::error!("failed to erase a rewritten `NamedRef`: {e}");
             false
+        }
+    }
+}
+
+/// The [`NamedRef`] stored in `weight`, if it is one. Tag-gated like
+/// [`with_named_ref_mut`]; codec failures are logged and read as `None`.
+fn named_ref_of(weight: &NodeData) -> Option<NamedRef> {
+    if weight.tag != <NamedRef as NodeTag>::TAG {
+        return None;
+    }
+    match gantz_core::data::reify_node_concrete::<NamedRef>(weight) {
+        Ok(named_ref) => Some(named_ref),
+        Err(e) => {
+            log::error!("failed to decode a stored `NamedRef`: {e}");
+            None
         }
     }
 }
@@ -263,6 +278,43 @@ pub fn resync(registry: &mut Registry, timestamp: Duration) -> Vec<Moved> {
     moves
 }
 
+/// The names a session sharing `root` must sync: `root` plus, transitively,
+/// every name referenced by a *sync-enabled* [`NamedRef`] in a scoped name's
+/// current graph.
+///
+/// Nested names (`parent:child`) force sync on, so a scoped graph's nested
+/// children are always captured. Pinned (sync-off) references are excluded:
+/// the referenced content travels with the referring graph's commit closure,
+/// and a peer's differing tip for the referenced *name* cannot affect
+/// session content. A scoped name that does not resolve locally stays in the
+/// scope (a peer may hold it) but contributes no further references.
+///
+/// Session sync must move names only through this scope - a blind
+/// [`Registry::merge`] of received names would clobber unrelated local ones.
+pub fn session_scope(registry: &Registry, root: &Name) -> BTreeSet<Name> {
+    let mut scope = BTreeSet::new();
+    let mut queue: VecDeque<Name> = VecDeque::from([root.clone()]);
+    while let Some(name) = queue.pop_front() {
+        if !scope.insert(name.clone()) {
+            continue;
+        }
+        let graph = registry
+            .head(&name)
+            .and_then(|ca| registry.commit_graph_ref(&ca));
+        let Some(graph) = graph else {
+            continue;
+        };
+        for weight in graph.node_weights() {
+            if let Some(named_ref) = named_ref_of(weight) {
+                if named_ref.sync && !scope.contains(named_ref.name()) {
+                    queue.push_back(named_ref.name().clone());
+                }
+            }
+        }
+    }
+    scope
+}
+
 /// Promote a nested graph that was renamed to a (root) name: repoint its
 /// parent's references from the old nested name to `new_name`, then drop the
 /// now-orphaned nested name and its descendants.
@@ -320,4 +372,76 @@ pub fn promote_nested(
     }
 
     moves
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gantz_ca::{ContentAddr, Datum};
+    use std::time::Duration;
+
+    /// An erased [`NamedRef`] node weight (scope walking reads the erased
+    /// registry graphs directly).
+    fn ref_node(name: &str, sync: bool) -> NodeData {
+        let ref_ = gantz_core::node::Ref::new(ContentAddr::from([0; 32]));
+        let name: Name = name.parse().unwrap();
+        let named_ref = if sync {
+            NamedRef::with_sync(name, ref_)
+        } else {
+            NamedRef::new(name, ref_)
+        };
+        gantz_core::data::erase_node_typed(&named_ref).unwrap()
+    }
+
+    /// Commit `graph` under `name` with a fabricated graph address (scope
+    /// walking never hashes node content).
+    fn add_named(registry: &mut Registry, name: &str, n: u8, graph: DataGraph) {
+        let graph_ca = gantz_ca::GraphAddr::from(ContentAddr::from([n; 32]));
+        let name: Name = name.parse().unwrap();
+        registry.commit_graph_to_name(Duration::from_secs(n as u64), graph_ca, || graph, &name);
+    }
+
+    fn scope_names(registry: &Registry, root: &str) -> BTreeSet<Name> {
+        session_scope(registry, &root.parse().unwrap())
+    }
+
+    fn names(names: impl IntoIterator<Item = &'static str>) -> BTreeSet<Name> {
+        names.into_iter().map(|n| n.parse().unwrap()).collect()
+    }
+
+    #[test]
+    fn session_scope_follows_sync_refs_transitively_and_skips_pinned() {
+        let mut registry = Registry::default();
+        // root -> sync ref to "dep" + pinned ref to "pin".
+        let mut root = DataGraph::default();
+        root.add_node(NodeData::new("test", Datum::Map(vec![])));
+        root.add_node(ref_node("dep", true));
+        root.add_node(ref_node("pin", false));
+        add_named(&mut registry, "root", 1, root);
+        // dep -> its (sync-forced) nested child, plus a ref to a name that
+        // does not resolve locally.
+        let mut dep = DataGraph::default();
+        dep.add_node(ref_node("dep:1", true));
+        dep.add_node(ref_node("elsewhere", true));
+        add_named(&mut registry, "dep", 2, dep);
+        add_named(&mut registry, "dep:1", 3, DataGraph::default());
+        add_named(&mut registry, "pin", 4, DataGraph::default());
+
+        let scope = scope_names(&registry, "root");
+        assert_eq!(scope, names(["root", "dep", "dep:1", "elsewhere"]));
+    }
+
+    #[test]
+    fn session_scope_handles_reference_cycles() {
+        let mut registry = Registry::default();
+        let mut a = DataGraph::default();
+        a.add_node(ref_node("b", true));
+        add_named(&mut registry, "a", 1, a);
+        let mut b = DataGraph::default();
+        b.add_node(ref_node("a", true));
+        add_named(&mut registry, "b", 2, b);
+
+        let scope = scope_names(&registry, "a");
+        assert_eq!(scope, names(["a", "b"]));
+    }
 }

@@ -4,7 +4,10 @@
 //! so it is ignored by default; run manually with
 //! `cargo test -p gantz_collab -- --ignored`.
 
-use gantz_ca::{Commit, DataGraph, Datum, Name, NodeData, commit_addr};
+use gantz_ca::{
+    BlobLiveness, Commit, DataGraph, Datum, Key, Liveness, MergePolicy, Name, NodeData, Value,
+    blob_addr, commit_addr,
+};
 use gantz_collab::{
     Access, Command, Event, Handle, Identity, Object, ObjectRef, PeerId, Role, Session,
     SessionEntry, SessionId, SessionRegistry, SessionTicket, Want, store,
@@ -41,6 +44,24 @@ fn share_join_and_fetch_between_two_runtimes() {
     let commit = Commit::new(Duration::from_secs(1), None, graph_ca);
     let tip = commit_addr(&commit);
     let jam: Name = "jam".parse().unwrap();
+    // A stored scene view for the tip and an audio-buffer blob, fed over the
+    // announce path (`Command::Update`) rather than the initial store.
+    let view = Value::Datum(Datum::Map(vec![("zoom".to_string(), Datum::F64(1.5))]));
+    let view_object = Object::Section {
+        id: "egui.view".to_string(),
+        policy: MergePolicy::KeepExisting,
+        liveness: Liveness::WithCommit,
+        key: Key::Commit(tip),
+        value: gantz_collab::proto::encode_value(&view),
+    };
+    let pcm = b"pcm".to_vec();
+    let pcm_addr = blob_addr(&pcm);
+    let pcm_object = Object::Blob {
+        section: "dsp.buffer".to_string(),
+        liveness: BlobLiveness::ContentReferenced,
+        addr: pcm_addr,
+        bytes: pcm.clone(),
+    };
 
     // The host runtime serves one session with a single-commit store.
     let host = gantz_collab::spawn(Identity::generate(), Default::default());
@@ -54,6 +75,8 @@ fn share_join_and_fetch_between_two_runtimes() {
         [(jam.clone(), tip)],
         [(tip, commit.clone())],
         [(graph_ca, graph.clone())],
+        [],
+        [],
     )
     .unwrap();
     host.cmds
@@ -67,6 +90,30 @@ fn share_join_and_fetch_between_two_runtimes() {
             },
             store: served,
         }))
+        .unwrap();
+    // Mid-session content: the view and blob arrive as an update, not as
+    // part of the registered store. Commands apply in send order, so both
+    // are served before the ticket below can exist.
+    host.cmds
+        .send_blocking(Command::Update {
+            session: session_id,
+            heads: vec![],
+            commits: vec![],
+            graphs: vec![],
+            sections: vec![(
+                "egui.view".to_string(),
+                MergePolicy::KeepExisting,
+                Liveness::WithCommit,
+                Key::Commit(tip),
+                view.clone(),
+            )],
+            blobs: vec![(
+                "dsp.buffer".to_string(),
+                BlobLiveness::ContentReferenced,
+                pcm_addr,
+                pcm.clone().into(),
+            )],
+        })
         .unwrap();
     host.cmds.send_blocking(Command::Share(session_id)).unwrap();
     let ticket = wait_for(&host, |e| match e {
@@ -103,22 +150,33 @@ fn share_join_and_fetch_between_two_runtimes() {
         _ => None,
     });
     assert_eq!(heads, vec![(jam.clone(), tip)]);
+    // Snapshot order: commits, graphs, blobs, then non-head section entries.
     assert_eq!(
         objects.objects,
         vec![
             Object::Commit(tip, commit.clone().into()),
             Object::Graph(graph_ca, graph_blob.clone()),
+            pcm_object.clone(),
+            view_object.clone(),
         ]
     );
 
-    // A targeted fetch over the request plane returns the same objects.
+    // A targeted fetch over the request plane returns the same objects; the
+    // wanted commit's stored view piggybacks on the commit.
     guest
         .cmds
         .send_blocking(Command::Fetch {
             session: session_id,
             from: host_peer,
             want: Want {
-                refs: vec![ObjectRef::Commit(tip), ObjectRef::Graph(graph_ca)],
+                refs: vec![
+                    ObjectRef::Commit(tip),
+                    ObjectRef::Graph(graph_ca),
+                    ObjectRef::Blob {
+                        section: "dsp.buffer".to_string(),
+                        addr: pcm_addr,
+                    },
+                ],
             },
         })
         .unwrap();
@@ -134,7 +192,9 @@ fn share_join_and_fetch_between_two_runtimes() {
         fetched.objects,
         vec![
             Object::Commit(tip, commit.into()),
+            view_object,
             Object::Graph(graph_ca, graph_blob),
+            pcm_object,
         ]
     );
 }

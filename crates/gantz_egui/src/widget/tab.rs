@@ -19,6 +19,8 @@ pub struct Tab {
     id: egui::Id,
     /// Optional hover hint for the tab (e.g. "double-click to rename").
     hint: Option<egui::WidgetText>,
+    /// Optional painted status dot after the title: colour + hover text.
+    status: Option<(egui::Color32, egui::WidgetText)>,
 }
 
 impl Tab {
@@ -29,7 +31,17 @@ impl Tab {
             closable: false,
             id,
             hint: None,
+            status: None,
         }
+    }
+
+    /// Show a small painted status dot after the title (e.g. a collab
+    /// session's connection state) with the given hover text. Painted, not a
+    /// glyph: circle glyphs are missing from egui's default fonts on some
+    /// platforms.
+    pub fn status_dot(mut self, color: egui::Color32, hover: impl Into<egui::WidgetText>) -> Self {
+        self.status = Some((color, hover.into()));
+        self
     }
 
     /// Set whether this tab is currently active (selected).
@@ -58,6 +70,7 @@ impl Tab {
             closable,
             id,
             hint,
+            status,
         } = self;
 
         let font_id = egui::TextStyle::Button.resolve(ui.style());
@@ -70,9 +83,14 @@ impl Tab {
         } else {
             0.0
         };
+        let dot_width = if status.is_some() {
+            ui.spacing().icon_width * 0.75
+        } else {
+            0.0
+        };
 
         let desired_size = egui::vec2(
-            galley.size().x + 2.0 * x_margin + close_btn_width,
+            galley.size().x + 2.0 * x_margin + dot_width + close_btn_width,
             ui.available_height(),
         );
 
@@ -97,17 +115,26 @@ impl Tab {
                 ui.visuals().weak_text_color()
             };
 
-            // Draw title text (leaving space for close button if closable).
-            let text_rect = if closable {
-                rect.shrink2(egui::vec2(x_margin, 0.0))
-                    .with_max_x(rect.right() - close_btn_width)
-            } else {
-                rect.shrink2(egui::vec2(x_margin, 0.0))
-            };
+            // Draw title text (leaving space for the dot/close areas).
+            let text_rect = rect
+                .shrink2(egui::vec2(x_margin, 0.0))
+                .with_max_x(rect.right() - close_btn_width - dot_width);
             let text_pos = egui::Align2::LEFT_CENTER
                 .align_size_within_rect(galley.size(), text_rect)
                 .min;
             ui.painter().galley(text_pos, galley, text_color);
+
+            // Draw the status dot between the title and the close button.
+            if let Some((color, hover)) = status {
+                let dot_rect = egui::Rect::from_min_max(
+                    egui::pos2(rect.right() - close_btn_width - dot_width, rect.top()),
+                    egui::pos2(rect.right() - close_btn_width, rect.bottom()),
+                );
+                ui.interact(dot_rect, id.with("status_dot"), egui::Sense::hover())
+                    .on_hover_text(hover);
+                let radius = (dot_rect.width() * 0.3).min(dot_rect.height() * 0.5);
+                ui.painter().circle_filled(dot_rect.center(), radius, color);
+            }
 
             // Draw close button if closable.
             if closable {

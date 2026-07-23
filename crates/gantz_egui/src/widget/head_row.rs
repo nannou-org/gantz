@@ -20,7 +20,9 @@ pub enum HeadRowType<'a> {
 
 /// Render a single head/commit row.
 ///
-/// Shows the name/timestamp, CA address, open/focused indicators.
+/// Shows the name/timestamp, CA address, open/focused indicators, and an
+/// optional status dot beside the name (colour + hover text - e.g. a live
+/// collaborative session's connection state, mirroring the graph tabs).
 /// Returns responses for click interaction.
 pub fn head_row(
     open_heads: &[gantz_ca::Head],
@@ -28,6 +30,7 @@ pub fn head_row(
     row_type: HeadRowType,
     row_ca: &gantz_ca::CommitAddr,
     focused_head: Option<usize>,
+    status: Option<(egui::Color32, egui::WidgetText)>,
     ui: &mut egui::Ui,
 ) -> HeadRowResponse {
     let w = ui.max_rect().width();
@@ -67,6 +70,9 @@ pub fn head_row(
                 };
                 let label = egui::Label::new(text).selectable(false);
                 res |= ui.add(label);
+                if let Some((color, hover)) = status {
+                    super::status_dot(ui, color).on_hover_text(hover);
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Show the address.
                     let row_ca_string = format!("{}", row_ca.display_short());

@@ -13,8 +13,25 @@ use crate::widget::graph_scene::NodeIndex;
 use crate::{CreateNode, InspectEdge, PastePos, export, node::NamedRef};
 use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, NodeData};
 use gantz_core::node::{self, GetNode};
-use std::collections::{HashMap, HashSet};
+pub use session::{RevertCursor, redo, session_redo, session_undo, undo};
+use std::collections::HashSet;
 use steel::steel_vm::engine::Engine;
+pub use sync::{MergeHeadOutcome, SyncTipOutcome, merge_head, sync_remote_tip};
+
+mod session;
+mod sync;
+
+/// The egui-graph layout id for the node at graph index `ix`.
+fn node_id(ix: usize) -> egui_graph::NodeId {
+    egui_graph::NodeId::from_u64(ix as u64)
+}
+
+/// The fallback position for the `i`th node a view migration could not map:
+/// cascade down-right from the camera `center` so unplaced nodes stay
+/// visible without overlapping.
+fn cascade_pos(center: egui::Pos2, i: usize) -> egui::Pos2 {
+    center + egui::vec2(20.0, 20.0) * i as f32
+}
 
 /// Branch a named node: commit the graph at the given (graph) content address
 /// under a new name, and replace the node at `path` with a [`NamedRef`]
@@ -162,7 +179,7 @@ pub fn create_node(
     // Position the new node under the pointer, falling back to the center of the
     // current view.
     let pos = pos.unwrap_or_else(|| view.camera.center);
-    let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
+    let egui_id = node_id(node_ix.index());
     view.layout.insert(egui_id, pos);
 
     // Make the new node the sole selection (clearing the previous one).
@@ -220,7 +237,7 @@ pub fn create_nested_graph(
     // Position the new node under the pointer, falling back to the center of the
     // current view.
     let pos = pos.unwrap_or_else(|| view.camera.center);
-    let egui_id = egui_graph::NodeId::from_u64(node_ix.index() as u64);
+    let egui_id = node_id(node_ix.index());
     view.layout.insert(egui_id, pos);
 
     // Make the new node the sole selection (clearing the previous one).
@@ -294,7 +311,6 @@ pub fn remove_nodes(
     instances: &mut crate::node::NodeInstances,
     nodes: impl IntoIterator<Item = NodeIndex>,
 ) -> Reindex {
-    let node_id = |ix: usize| egui_graph::NodeId::from_u64(ix as u64);
     let mut targets: Vec<NodeIndex> = nodes.into_iter().collect();
     targets.sort_unstable_by_key(|n| std::cmp::Reverse(n.index()));
     targets.dedup();
@@ -419,7 +435,7 @@ pub fn inspect_edge(
     );
 
     // Position the new node at the click position.
-    let node_id = egui_graph::NodeId::from_u64(inspect_id.index() as u64);
+    let node_id = node_id(inspect_id.index());
     view.layout.insert(node_id, pos);
 }
 
@@ -509,32 +525,6 @@ pub fn duplicate_nodes(
     )
 }
 
-/// Undo: push the head's current commit onto its redo stack and return the
-/// parent commit to navigate to.
-///
-/// Returns `None` when the head has no parent commit to return to.
-/// Navigation itself is frontend-specific and stays with the caller.
-pub fn undo(
-    registry: &gantz_ca::Registry,
-    redo_stacks: &mut HashMap<gantz_ca::Head, Vec<CommitAddr>>,
-    head: &gantz_ca::Head,
-) -> Option<CommitAddr> {
-    let commit_ca = registry.head_commit_ca(head)?;
-    let parent = registry.commits().get(&commit_ca)?.parent?;
-    redo_stacks.entry(head.clone()).or_default().push(commit_ca);
-    Some(parent)
-}
-
-/// Redo: pop the most recently undone commit from the head's redo stack.
-///
-/// Navigation itself is frontend-specific and stays with the caller.
-pub fn redo(
-    redo_stacks: &mut HashMap<gantz_ca::Head, Vec<CommitAddr>>,
-    head: &gantz_ca::Head,
-) -> Option<CommitAddr> {
-    redo_stacks.get_mut(head)?.pop()
-}
-
 /// Build a view for a navigation target commit that has no stored view by
 /// carrying the live view's node positions forward through the navigation
 /// node-identity `matching` (old index -> new index), keeping the live
@@ -551,7 +541,6 @@ pub fn carry_layout(
     matching: &gantz_ca::Matching,
     new_node_count: usize,
 ) -> crate::SceneView {
-    let node_id = |ix: usize| egui_graph::NodeId::from_u64(ix as u64);
     let mut view = crate::SceneView {
         camera: live.camera,
         layout: Default::default(),
@@ -568,157 +557,59 @@ pub fn carry_layout(
         .filter(|&ix| !view.layout.contains_key(&node_id(ix)))
         .collect();
     for (i, ix) in unmapped.into_iter().enumerate() {
-        let pos = view.camera.center + egui::vec2(20.0, 20.0) * i as f32;
+        let pos = cascade_pos(view.camera.center, i);
         view.layout.insert(node_id(ix), pos);
     }
     view
 }
-/// The result of a [`merge_head`] call.
-#[derive(Debug)]
-pub enum MergeHeadOutcome {
-    /// Ours had no changes since the merge base: nothing was mutated and no
-    /// commit was made. The caller navigates the head to this commit, which
-    /// reloads the working graph and views.
-    FastForward(CommitAddr),
-    /// The merge was applied to the working graph and committed with two
-    /// parents; `head` has been advanced. `mapping` records where each of the
-    /// pre-merge graph's nodes ended up (old index to new index; absent =
-    /// removed), for any remaining index-keyed data of the caller's. The
-    /// caller re-registers the graph with the VM (merged-in nodes need their
-    /// state initialized) and fires its committed/resync machinery.
-    Merged {
-        new_commit: CommitAddr,
-        mapping: gantz_ca::Matching,
-    },
-    /// Conflicts (without `auto_resolve`) or hard blockers refused the merge;
-    /// nothing was mutated. Carries the rendered reasons.
-    Refused(Vec<String>),
-    /// Nothing to do: unknown source, unrelated histories, or already up to
-    /// date.
-    Noop,
-}
 
-/// Merge the branch named `source` into `head`, applying the result to the
-/// head's working `graph` in place (see [`gantz_ca::merge_commits`]).
+/// Build a view for a headlessly minted merge commit from the two parent
+/// tips' stored views: each merged node takes its position from the first
+/// (ours) tip's view where it survives there, falling back to the second
+/// (theirs) tip's view, then to a cascade from the camera centre - the same
+/// fallback as `apply_merge_migration`. The camera comes from whichever
+/// side has a view, preferring the first.
 ///
-/// On a true merge this migrates the index-keyed VM state, layout and
-/// selection through the merged graph's node mapping (an identity mapping
-/// whenever the source branch removed no nodes), seeds layout for merged-in
-/// nodes from the source branch's persisted view in the registry's view
-/// section (falling back to placement near the view centre), and commits the
-/// result with two parents via
-/// [`gantz_ca::Registry::commit_merge_to_head`] - upholding the
-/// committed-working-graph invariant, so callers must not commit again.
-///
-/// Conflicts refuse the merge unless `auto_resolve` accepts the given
-/// `resolutions`; hard blockers (a merged-in reference cycle) always refuse.
-/// Fast-forwards mutate nothing - the caller navigates the head instead.
-#[allow(clippy::too_many_arguments)]
-pub fn merge_head(
-    registry: &mut gantz_ca::Registry,
-    timestamp: gantz_ca::Timestamp,
-    head: &mut gantz_ca::Head,
-    graph: &mut DataGraph,
-    vm: &mut Engine,
-    head_view: &mut crate::SceneView,
-    selection: &mut crate::widget::graph_scene::Selection,
-    source: &str,
-    resolutions: gantz_ca::Resolutions,
-    auto_resolve: bool,
-) -> MergeHeadOutcome {
-    let node_id = |ix: usize| egui_graph::NodeId::from_u64(ix as u64);
-    let Some(ours_tip) = registry.head_commit_ca(head) else {
-        log::error!("MergeHead: no commit for head {head}");
-        return MergeHeadOutcome::Noop;
+/// When neither side has a view (or no position carries over at all) the
+/// result is empty; callers must not store empty-layout views, as an
+/// adopting peer would destructively auto-layout them.
+pub fn merged_view(
+    node_srcs: &[gantz_ca::merge::NodeSrc],
+    first_view: Option<&crate::SceneView>,
+    second_view: Option<&crate::SceneView>,
+) -> crate::SceneView {
+    let camera = first_view
+        .or(second_view)
+        .map(|v| v.camera)
+        .unwrap_or_default();
+    let mut view = crate::SceneView {
+        camera,
+        layout: Default::default(),
     };
-    let Some(theirs_tip) = registry.head(&source.parse().expect("infallible")) else {
-        log::error!("MergeHead: unknown source branch '{source}'");
-        return MergeHeadOutcome::Noop;
-    };
-    let outcome = match gantz_ca::merge_commits(registry, ours_tip, theirs_tip, resolutions) {
-        Err(e) => {
-            log::warn!("MergeHead: cannot merge '{source}': {e}");
-            return MergeHeadOutcome::Noop;
-        }
-        Ok(gantz_ca::MergeResolution::AlreadyUpToDate) => return MergeHeadOutcome::Noop,
-        Ok(gantz_ca::MergeResolution::FastForward) => {
-            return MergeHeadOutcome::FastForward(theirs_tip);
-        }
-        Ok(gantz_ca::MergeResolution::Diverged { outcome, .. }) => outcome,
-    };
-
-    // Refuse on hard blockers, and on conflicts unless the caller opted into
-    // the selected resolutions.
-    let blockers = crate::merge::merge_blockers(registry, head, &outcome.graph);
-    if !blockers.is_empty() {
-        return MergeHeadOutcome::Refused(blockers);
-    }
-    if !outcome.conflicts.is_empty() && !auto_resolve {
-        return MergeHeadOutcome::Refused(crate::merge::conflict_strings(&outcome.conflicts));
-    }
-
-    // Where each pre-merge (ours) node ended up, and where each source
-    // (theirs) node ended up. By the committed-working-graph invariant the
-    // working graph *is* ours' tip graph, so "ours" indices are the working
-    // graph's.
-    let mut ours_map = gantz_ca::Matching::new();
-    let mut theirs_only = Vec::new();
-    for (m, src) in outcome.node_srcs.iter().enumerate() {
-        match (src.ours, src.theirs) {
-            (Some(o), _) => {
-                ours_map.insert(o, m);
+    let mut missing = Vec::new();
+    for (m, src) in node_srcs.iter().enumerate() {
+        let pos = src
+            .ours
+            .and_then(|o| first_view.and_then(|v| v.layout.get(&node_id(o)).copied()))
+            .or_else(|| {
+                src.theirs
+                    .and_then(|t| second_view.and_then(|v| v.layout.get(&node_id(t)).copied()))
+            });
+        match pos {
+            Some(pos) => {
+                view.layout.insert(node_id(m), pos);
             }
-            (None, Some(t)) => theirs_only.push((m, t)),
-            (None, None) => unreachable!("a merged node comes from somewhere"),
+            None => missing.push(m),
         }
     }
-
-    // Migrate the index-keyed VM state, layout and selection. When the source
-    // branch removed no nodes the mapping is identity and this is a no-op.
-    if let Err(e) = node::state::remap_root(vm, &ours_map) {
-        log::error!("MergeHead: failed to remap node state: {e}");
+    if view.layout.is_empty() {
+        return view;
     }
-    let old_layout = std::mem::take(&mut head_view.layout);
-    for (&o, &m) in &ours_map {
-        if let Some(pos) = old_layout.get(&node_id(o)) {
-            head_view.layout.insert(node_id(m), *pos);
-        }
+    for (i, m) in missing.into_iter().enumerate() {
+        let pos = cascade_pos(view.camera.center, i);
+        view.layout.insert(node_id(m), pos);
     }
-    selection.nodes = selection
-        .nodes
-        .iter()
-        .filter_map(|n| ours_map.get(&n.index()).map(|&m| NodeIndex::new(m)))
-        .collect();
-    selection.edges.clear();
-
-    // Seed layout for merged-in nodes from the source branch's persisted view
-    // (positions are compatible: both branches share the base's coordinates),
-    // falling back to placement near the view centre.
-    let theirs_view = crate::section::view(registry, &theirs_tip);
-    for (i, &(m, t)) in theirs_only.iter().enumerate() {
-        let pos = theirs_view
-            .as_ref()
-            .and_then(|v| v.layout.get(&node_id(t)).copied())
-            .unwrap_or_else(|| head_view.camera.center + egui::vec2(20.0, 20.0) * i as f32);
-        head_view.layout.insert(node_id(m), pos);
-    }
-
-    // Swap the merged data graph straight in as the working graph and commit
-    // it with both parents, so the registry address matches the working
-    // content by construction.
-    let merged_data = outcome.graph;
-    *graph = merged_data.clone();
-    let new_commit = registry.commit_merge_to_head(
-        timestamp,
-        gantz_ca::graph_addr(&merged_data),
-        || merged_data,
-        theirs_tip,
-        head,
-    );
-    MergeHeadOutcome::Merged {
-        new_commit,
-        mapping: ours_map,
-    }
+    view
 }
 
 /// Commit the current layout as a new commit on the head's *existing* graph
@@ -757,16 +648,12 @@ pub fn commit_layout(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod test_util {
     use super::*;
-    use crate::widget::graph_scene::Selection;
     use gantz_ca::Datum;
-    use gantz_core::ROOT_STATE;
-    use gantz_core::node::graph::NodeIx;
-    use steel::SteelVal;
 
     /// A minimal erased node distinguished by its payload value.
-    fn nd(v: u32) -> NodeData {
+    pub(crate) fn nd(v: u32) -> NodeData {
         let mut n = NodeData {
             tag: "Num".to_string(),
             data: Datum::Map(vec![("v".to_string(), Datum::I64(v as i64))]),
@@ -778,19 +665,61 @@ mod tests {
     }
 
     /// The payload value a [`nd`]-built node carries.
-    fn value(n: &NodeData) -> u32 {
+    pub(crate) fn value(n: &NodeData) -> u32 {
         match n.data.get("v") {
             Some(&Datum::I64(v)) => v as u32,
             _ => panic!("not an `nd`-built node: {n:?}"),
         }
     }
 
+    pub(crate) fn test_graph(nodes: &[u32]) -> DataGraph {
+        let mut g = DataGraph::default();
+        for &n in nodes {
+            g.add_node(nd(n));
+        }
+        g
+    }
+
+    /// Commit `graph`, returning the new commit address.
+    pub(crate) fn commit_test_graph(
+        reg: &mut gantz_ca::Registry,
+        secs: u64,
+        parent: Option<CommitAddr>,
+        graph: &DataGraph,
+    ) -> CommitAddr {
+        let ga = gantz_ca::graph_addr(graph);
+        let dg = graph.clone();
+        reg.commit_graph(std::time::Duration::from_secs(secs), parent, ga, || dg)
+    }
+
+    /// A registry where the branch `alpha` (returned as the head) and the
+    /// branch `beta` diverge from a shared base.
+    pub(crate) fn diverged_registry(
+        base: &[u32],
+        ours: &[u32],
+        theirs: &[u32],
+    ) -> (gantz_ca::Registry, gantz_ca::Head) {
+        let mut reg = gantz_ca::Registry::default();
+        let base_ca = commit_test_graph(&mut reg, 1, None, &test_graph(base));
+        let ours_ca = commit_test_graph(&mut reg, 2, Some(base_ca), &test_graph(ours));
+        let theirs_ca = commit_test_graph(&mut reg, 3, Some(base_ca), &test_graph(theirs));
+        reg.set_head("alpha".parse().unwrap(), ours_ca);
+        reg.set_head("beta".parse().unwrap(), theirs_ca);
+        (reg, gantz_ca::Head::Branch("alpha".parse().unwrap()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_util::*;
+    use super::*;
+    use crate::widget::graph_scene::Selection;
+    use gantz_core::node::graph::NodeIx;
+
     // Deleting a node swap-removes the former-last node into its slot; the
     // swapped node's layout entry and selection must follow it to the new index.
     #[test]
     fn remove_nodes_migrates_layout_and_selection() {
-        let node_id = |i: usize| egui_graph::NodeId::from_u64(i as u64);
-
         // Five nodes 0..5 (weights 10..15) each with a distinct layout x.
         let mut graph = DataGraph::default();
         for w in 10u32..15 {
@@ -914,228 +843,58 @@ mod tests {
         assert!(view.layout.is_empty());
     }
 
-    fn test_graph(nodes: &[u32]) -> DataGraph {
-        let mut g = DataGraph::default();
-        for &n in nodes {
-            g.add_node(nd(n));
-        }
-        g
-    }
-
-    /// Commit `graph`, returning the new commit address.
-    fn commit_test_graph(
-        reg: &mut gantz_ca::Registry,
-        secs: u64,
-        parent: Option<CommitAddr>,
-        graph: &DataGraph,
-    ) -> CommitAddr {
-        let ga = gantz_ca::graph_addr(graph);
-        let dg = graph.clone();
-        reg.commit_graph(std::time::Duration::from_secs(secs), parent, ga, || dg)
-    }
-
-    fn node_id(ix: usize) -> egui_graph::NodeId {
-        egui_graph::NodeId::from_u64(ix as u64)
-    }
-
-    /// A registry where the branch `alpha` (returned as the head) and the
-    /// branch `beta` diverge from a shared base.
-    fn diverged_registry(
-        base: &[u32],
-        ours: &[u32],
-        theirs: &[u32],
-    ) -> (gantz_ca::Registry, gantz_ca::Head) {
-        let mut reg = gantz_ca::Registry::default();
-        let base_ca = commit_test_graph(&mut reg, 1, None, &test_graph(base));
-        let ours_ca = commit_test_graph(&mut reg, 2, Some(base_ca), &test_graph(ours));
-        let theirs_ca = commit_test_graph(&mut reg, 3, Some(base_ca), &test_graph(theirs));
-        reg.set_head("alpha".parse().unwrap(), ours_ca);
-        reg.set_head("beta".parse().unwrap(), theirs_ca);
-        (reg, gantz_ca::Head::Branch("alpha".parse().unwrap()))
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn run_merge(
-        reg: &mut gantz_ca::Registry,
-        head: &mut gantz_ca::Head,
-        graph: &mut DataGraph,
-        vm: &mut Engine,
-        view: &mut crate::SceneView,
-        selection: &mut Selection,
-        auto_resolve: bool,
-    ) -> MergeHeadOutcome {
-        merge_head(
-            reg,
-            std::time::Duration::from_secs(9),
-            head,
-            graph,
-            vm,
-            view,
-            selection,
-            "beta",
-            gantz_ca::Resolutions::default(),
-            auto_resolve,
-        )
-    }
-
-    // Ours edited a node while theirs added one: the merge keeps ours' indices
-    // (identity mapping), applies theirs' addition, and commits two parents.
+    // merged_view sources each merged node's position from the first tip's
+    // view where it survives there, falling back to the second tip's, then
+    // cascading from the camera centre; the camera prefers the first side.
     #[test]
-    fn merge_head_applies_theirs_and_commits_two_parents() {
-        let (mut reg, mut head) = diverged_registry(&[1, 2], &[1, 20], &[1, 2, 3]);
-        let ours_tip = reg.head_commit_ca(&head).unwrap();
-        let theirs_tip = reg.head(&"beta".parse().unwrap()).unwrap();
-        let mut graph = test_graph(&[1, 20]);
-        let mut vm = Engine::new_base();
-        let mut view = crate::SceneView::default();
-        view.layout.insert(node_id(0), egui::pos2(0.0, 0.0));
-        view.layout.insert(node_id(1), egui::pos2(1.0, 0.0));
-        let mut selection = Selection::default();
-        selection.nodes.insert(NodeIx::new(1));
-
-        let outcome = run_merge(
-            &mut reg,
-            &mut head,
-            &mut graph,
-            &mut vm,
-            &mut view,
-            &mut selection,
-            false,
-        );
-        let MergeHeadOutcome::Merged { new_commit, .. } = outcome else {
-            panic!("expected Merged, got {outcome:?}");
+    fn merged_view_sources_ours_then_theirs_then_cascade() {
+        let src = |ours: Option<usize>, theirs: Option<usize>| gantz_ca::merge::NodeSrc {
+            base: None,
+            ours,
+            theirs,
         };
+        let mut first = crate::SceneView::default();
+        first.camera.center = egui::pos2(10.0, 10.0);
+        first.layout.insert(node_id(0), egui::pos2(1.0, 0.0));
+        let mut second = crate::SceneView::default();
+        second.layout.insert(node_id(0), egui::pos2(2.0, 0.0));
+        second.layout.insert(node_id(1), egui::pos2(3.0, 0.0));
 
-        // The merged graph keeps ours' nodes in place and appends theirs' add.
-        let weights: Vec<u32> = graph.node_weights().map(value).collect();
-        assert_eq!(weights, vec![1, 20, 3]);
-        // Ours' layout and selection are untouched; the merged-in node has a
-        // (fallback) layout entry.
-        assert_eq!(view.layout.get(&node_id(1)), Some(&egui::pos2(1.0, 0.0)));
-        assert!(view.layout.contains_key(&node_id(2)));
-        assert!(selection.nodes.contains(&NodeIx::new(1)));
-        // The commit joins both parents and the head advanced to it.
-        let commit = &reg.commits()[&new_commit];
-        assert_eq!(commit.parent, Some(ours_tip));
-        assert_eq!(commit.merge_parents, vec![theirs_tip]);
-        assert_eq!(reg.head_commit_ca(&head), Some(new_commit));
-    }
+        // Merged node 0 exists on both sides (ours wins); node 1 is
+        // theirs-only; node 2 has no stored position anywhere.
+        let srcs = [
+            src(Some(0), Some(0)),
+            src(None, Some(1)),
+            src(Some(9), None),
+        ];
+        let view = merged_view(&srcs, Some(&first), Some(&second));
 
-    // Theirs removed a node: ours' surviving state/layout/selection migrate
-    // through the returned mapping.
-    #[test]
-    fn merge_head_migrates_state_layout_selection_on_removal() {
-        let (mut reg, mut head) = diverged_registry(&[1, 2], &[1, 2], &[2]);
-        let mut graph = test_graph(&[1, 2]);
-        let mut vm = Engine::new_base();
-        vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-        node::state::update_value(&mut vm, &[1], SteelVal::IntV(42)).unwrap();
-        let mut view = crate::SceneView::default();
-        view.layout.insert(node_id(0), egui::pos2(0.0, 0.0));
-        view.layout.insert(node_id(1), egui::pos2(1.0, 0.0));
-        let mut selection = Selection::default();
-        selection.nodes.insert(NodeIx::new(1));
-
-        let outcome = run_merge(
-            &mut reg,
-            &mut head,
-            &mut graph,
-            &mut vm,
-            &mut view,
-            &mut selection,
-            false,
-        );
-        let MergeHeadOutcome::Merged { mapping, .. } = outcome else {
-            panic!("expected Merged, got {outcome:?}");
-        };
-
-        // Node 2 (ours ix 1) survives at merged ix 0.
-        assert_eq!(mapping, gantz_ca::Matching::from([(1, 0)]));
-        let weights: Vec<u32> = graph.node_weights().map(value).collect();
-        assert_eq!(weights, vec![2]);
-        // Its state, layout and selection followed.
-        let state = node::state::extract_value(&vm, &[0]).unwrap();
-        assert_eq!(state, Some(SteelVal::IntV(42)));
-        assert_eq!(view.layout.len(), 1);
-        assert_eq!(view.layout.get(&node_id(0)), Some(&egui::pos2(1.0, 0.0)));
+        assert_eq!(view.camera, first.camera);
         assert_eq!(
-            selection.nodes.iter().copied().collect::<Vec<_>>(),
-            vec![NodeIx::new(0)],
+            view.layout.get(&node_id(0)).copied(),
+            Some(egui::pos2(1.0, 0.0))
+        );
+        assert_eq!(
+            view.layout.get(&node_id(1)).copied(),
+            Some(egui::pos2(3.0, 0.0))
+        );
+        // The positionless node cascades from the camera centre.
+        assert_eq!(
+            view.layout.get(&node_id(2)).copied(),
+            Some(egui::pos2(10.0, 10.0))
         );
     }
 
-    // Conflicting edits refuse the merge (mutating nothing) unless the caller
-    // opts into the default resolutions.
+    // Without a stored view on either side, merged_view yields an empty
+    // layout: callers must not store empty-layout views.
     #[test]
-    fn merge_head_refuses_conflicts_unless_auto_resolve() {
-        let (mut reg, mut head) = diverged_registry(&[1, 2], &[1, 20], &[1, 30]);
-        let ours_tip = reg.head_commit_ca(&head).unwrap();
-        let mut graph = test_graph(&[1, 20]);
-        let mut vm = Engine::new_base();
-        let mut view = crate::SceneView::default();
-        let mut selection = Selection::default();
-
-        let outcome = run_merge(
-            &mut reg,
-            &mut head,
-            &mut graph,
-            &mut vm,
-            &mut view,
-            &mut selection,
-            false,
-        );
-        let MergeHeadOutcome::Refused(reasons) = outcome else {
-            panic!("expected Refused, got {outcome:?}");
-        };
-        assert!(!reasons.is_empty());
-        // Nothing moved.
-        assert_eq!(reg.head_commit_ca(&head), Some(ours_tip));
-        assert_eq!(graph.node_weights().map(value).collect::<Vec<_>>(), [1, 20]);
-
-        // Opting in applies the default resolution (ours wins).
-        let outcome = run_merge(
-            &mut reg,
-            &mut head,
-            &mut graph,
-            &mut vm,
-            &mut view,
-            &mut selection,
-            true,
-        );
-        assert!(matches!(outcome, MergeHeadOutcome::Merged { .. }));
-        assert_eq!(graph.node_weights().map(value).collect::<Vec<_>>(), [1, 20]);
-        assert_ne!(reg.head_commit_ca(&head), Some(ours_tip));
-    }
-
-    // A source branch that is strictly ahead fast-forwards without a commit.
-    #[test]
-    fn merge_head_fast_forwards() {
-        let mut reg = gantz_ca::Registry::default();
-        let base_ca = commit_test_graph(&mut reg, 1, None, &test_graph(&[1]));
-        let theirs_ca = commit_test_graph(&mut reg, 2, Some(base_ca), &test_graph(&[1, 2]));
-        reg.set_head("alpha".parse().unwrap(), base_ca);
-        reg.set_head("beta".parse().unwrap(), theirs_ca);
-        let mut head = gantz_ca::Head::Branch("alpha".parse().unwrap());
-        let mut graph = test_graph(&[1]);
-        let mut vm = Engine::new_base();
-        let mut view = crate::SceneView::default();
-        let mut selection = Selection::default();
-
-        let outcome = run_merge(
-            &mut reg,
-            &mut head,
-            &mut graph,
-            &mut vm,
-            &mut view,
-            &mut selection,
-            false,
-        );
-        let MergeHeadOutcome::FastForward(target) = outcome else {
-            panic!("expected FastForward, got {outcome:?}");
-        };
-        assert_eq!(target, theirs_ca);
-        // Nothing mutated: navigation is the caller's job.
-        assert_eq!(reg.head(&"alpha".parse().unwrap()), Some(base_ca));
-        assert_eq!(graph.node_count(), 1);
+    fn merged_view_no_views_yields_empty() {
+        let srcs = [gantz_ca::merge::NodeSrc {
+            base: None,
+            ours: Some(0),
+            theirs: None,
+        }];
+        let view = merged_view(&srcs, None, None);
+        assert!(view.layout.is_empty());
     }
 }

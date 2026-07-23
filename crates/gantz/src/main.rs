@@ -50,7 +50,7 @@ fn main() {
         .add_plugins(DebouncedInputPlugin::<DebouncedInputEvent>::new(0.25))
         // Off-thread, debounced persistence of registry/views/gui + egui memory.
         .add_plugins(persist::PersistPlugin)
-        .insert_resource(Pkv::new(PkvStore::new("nannou-org", "gantz")))
+        .insert_resource(Pkv::new(PkvStore::new("nannou-org", &store_name())))
         .add_systems(
             Startup,
             (
@@ -68,12 +68,32 @@ fn main() {
         )
         .add_systems(EguiPrimaryContextPass, load_egui_memory);
 
+    // P2P collaborative sessions (share/join via the collab UI). Added after
+    // `GantzEguiPlugin` - the collab plugin's payload-dispatcher overrides
+    // rely on last-registration-wins.
+    #[cfg(feature = "collab")]
+    app.add_plugins(bevy_gantz_collab::CollabPlugin)
+        .add_systems(Startup, setup_collab_identity);
+
     // Native OS windows for popped-out panes. On web the widget keeps drawing
     // popped-out panes as in-canvas `egui::Window`s.
     #[cfg(not(target_arch = "wasm32"))]
     app.add_plugins(bevy_gantz_egui::pane_window::PaneWindowPlugin);
 
     app.run();
+}
+
+/// The persistent store name: `GANTZ_STORE` overrides it so a second
+/// instance (e.g. a local collab peer during development) gets its own
+/// registry/GUI state instead of clashing over the store's lock.
+fn store_name() -> String {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Ok(name) = std::env::var("GANTZ_STORE") {
+        if !name.is_empty() {
+            return name;
+        }
+    }
+    "gantz".to_string()
 }
 
 fn log_plugin() -> bevy::log::LogPlugin {
@@ -116,6 +136,20 @@ fn setup_resources(storage: Res<Pkv>, mut cmds: Commands) {
     cmds.insert_resource(cache);
     cmds.insert_resource(persisted);
     cmds.insert_resource(gui_state);
+}
+
+/// Load (or generate and persist) the user's collaborative identity.
+#[cfg(feature = "collab")]
+fn setup_collab_identity(mut storage: ResMut<Pkv>, mut cmds: Commands) {
+    let identity = match bevy_gantz_collab::storage::load_identity(&*storage) {
+        Some(identity) => identity,
+        None => {
+            let identity = gantz_collab::Identity::generate();
+            bevy_gantz_collab::storage::save_identity(&mut *storage, &identity);
+            identity
+        }
+    };
+    cmds.insert_resource(bevy_gantz_collab::CollabIdentity(identity));
 }
 
 fn setup_open(

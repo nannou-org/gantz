@@ -92,6 +92,20 @@ impl Peer {
         ca
     }
 
+    /// Session undo: mint a forward revert commit (parent = tip, graph =
+    /// `target`'s) and return the new tip for announcement - the sim
+    /// analogue of `gantz_egui`'s `revert_commit` op.
+    fn revert(&mut self, now: Duration, target: CommitAddr) -> CommitAddr {
+        let ts = monotonic_timestamp(now, self.newest_seen);
+        let graph_ca = self.reg.commits()[&target].graph;
+        let ca = self.reg.commit_graph(ts, Some(self.tip), graph_ca, || {
+            unreachable!("revert target's graph exists")
+        });
+        self.newest_seen = self.newest_seen.max(ts);
+        self.tip = ca;
+        ca
+    }
+
     /// Receive an announced tip: fetch its closure from the sender via the
     /// strict `Staged` path, then apply the planned sync step. Returns the
     /// new tip when this peer *minted* a commit (which must be announced);
@@ -542,4 +556,72 @@ fn unrelated_announcements_are_surfaced_not_applied() {
     assert_eq!(minted, None);
     assert_eq!(a.tip, a_tip);
     assert_eq!(a.unrelated, 1);
+}
+
+#[test]
+fn revert_commits_converge() {
+    // A commits two edits and everyone converges; A then session-undoes the
+    // second by minting a forward revert commit. Peers converge on the
+    // revert WITHOUT any subsequent edit (backward navigation would present
+    // an ancestor tip and be dropped as up-to-date), and its graph equals
+    // the pre-edit state.
+    let (mut peers, mut net) = peers_with_base(2, &["base"]);
+    let e1 = peers[0].edit(Duration::from_secs(10), |g| {
+        g.add_node(node("a"));
+    });
+    announce(&mut peers, &mut net, 0);
+    peers[0].edit(Duration::from_secs(20), |g| {
+        g.add_node(node("b"));
+    });
+    announce(&mut peers, &mut net, 0);
+    run(&mut peers, &mut net, 7);
+    assert_converged(&peers);
+
+    peers[0].revert(Duration::from_secs(30), e1);
+    announce(&mut peers, &mut net, 0);
+    run(&mut peers, &mut net, 7);
+    let tip = assert_converged(&peers);
+    assert_eq!(node_set(&peers[0]), ["a", "base"]);
+    // The revert is an ordinary forward commit: peers fast-forward, no merge.
+    assert_eq!(peers[0].minted_merges + peers[1].minted_merges, 0);
+    assert_eq!(
+        peers[0].reg.commits()[&tip].graph,
+        peers[0].reg.commits()[&e1].graph,
+    );
+}
+
+#[test]
+fn concurrent_revert_and_edit_converge() {
+    // A session-undoes an edit while B concurrently adds a node: an ordinary
+    // diverged pair. Every delivery order converges on one identical merge
+    // commit; the revert acts as a removal of the undone addition, and B's
+    // concurrent addition survives.
+    for seed in [1, 42, 1234, 987654321] {
+        let (mut peers, mut net) = peers_with_base(2, &["base"]);
+        let e1 = peers[0].edit(Duration::from_secs(10), |g| {
+            g.add_node(node("a"));
+        });
+        announce(&mut peers, &mut net, 0);
+        peers[0].edit(Duration::from_secs(20), |g| {
+            g.add_node(node("b"));
+        });
+        announce(&mut peers, &mut net, 0);
+        run(&mut peers, &mut net, seed);
+        assert_converged(&peers);
+
+        peers[0].revert(Duration::from_secs(30), e1);
+        announce(&mut peers, &mut net, 0);
+        peers[1].edit(Duration::from_secs(31), |g| {
+            g.add_node(node("c"));
+        });
+        announce(&mut peers, &mut net, 1);
+        run(&mut peers, &mut net, seed);
+        let tip = assert_converged(&peers);
+        assert_eq!(node_set(&peers[0]), ["a", "base", "c"], "seed {seed}");
+        assert_eq!(
+            reachable_merge_commits(&peers[0].reg, tip),
+            1,
+            "seed {seed}"
+        );
+    }
 }

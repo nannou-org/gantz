@@ -1194,6 +1194,10 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         }
     }
 
+    // Recorded VM-state writes exist for collaborative sessions (see
+    // `gantz_egui::StateWritten`); the demo has none, so drop them silently.
+    responses.take::<gantz_egui::StateWritten>();
+
     // Any remaining payloads are unhandled - report rather than silently drop.
     for name in responses.type_names() {
         log::warn!("unhandled response payload: {name}");

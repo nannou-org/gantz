@@ -79,6 +79,7 @@ mod tests {
             gantz_core::node::Ref::new([0u8; 32].into()),
         );
         let exts: [&dyn RefExtUi; 1] = [&StubExt];
+        let mut writes = Vec::new();
 
         let mut merged = InspectorRowsResponse::default();
         egui::__run_test_ui(|ui| {
@@ -86,7 +87,15 @@ mod tests {
                 .column(egui_extras::Column::auto())
                 .column(egui_extras::Column::remainder())
                 .body(|mut body| {
-                    let mut ctx = crate::NodeCtx::new(&env, &[0][..], &[], &[], &exts[..], &mut vm);
+                    let mut ctx = crate::NodeCtx::new(
+                        &env,
+                        &[0][..],
+                        &[],
+                        &[],
+                        &exts[..],
+                        &mut vm,
+                        &mut writes,
+                    );
                     merged = named.inspector_rows(&mut ctx, &mut body);
                 });
         });

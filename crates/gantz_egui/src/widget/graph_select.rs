@@ -14,6 +14,12 @@ pub struct GraphSelect<'a> {
     heads: &'a [gantz_ca::Head],
     focused_head: Option<usize>,
     base_names: &'a crate::reg::Names,
+    /// Collaborative-session display state, when a collab layer is wired:
+    /// enables the join button and the per-row session dots.
+    collab: Option<&'a crate::collab::CollabUiState>,
+    /// A host-provided clipboard reader, for the join popup's right-click
+    /// paste (egui alone cannot read the clipboard).
+    clipboard: Option<&'a dyn Fn() -> Option<String>>,
 }
 
 #[derive(Clone)]
@@ -56,6 +62,8 @@ pub struct GraphSelectResponse {
     pub closed: Option<gantz_ca::Head>,
     /// The name mapping was removed.
     pub name_removed: Option<Name>,
+    /// A session invite ticket was submitted via the join popup.
+    pub join_ticket: Option<String>,
 }
 
 impl GraphSelectResponse {
@@ -69,6 +77,7 @@ impl GraphSelectResponse {
             opened: other.opened.or(self.opened),
             closed: other.closed.or(self.closed),
             name_removed: other.name_removed.or(self.name_removed),
+            join_ticket: other.join_ticket.or(self.join_ticket),
         }
     }
 }
@@ -99,6 +108,8 @@ impl<'a> GraphSelect<'a> {
             id,
             focused_head: None,
             base_names,
+            collab: None,
+            clipboard: None,
         }
     }
 
@@ -110,6 +121,22 @@ impl<'a> GraphSelect<'a> {
     /// Set the index of the focused head to show a focus indicator.
     pub fn focused_head(mut self, focused_head: usize) -> Self {
         self.focused_head = Some(focused_head);
+        self
+    }
+
+    /// Provide the collaborative-session display state. Without this call
+    /// (no networking layer wired), the join button and per-row session
+    /// dots are hidden.
+    pub fn collab(mut self, collab: Option<&'a crate::collab::CollabUiState>) -> Self {
+        self.collab = collab;
+        self
+    }
+
+    /// Provide a clipboard reader for the join popup's right-click paste.
+    /// Without it the paste menu item is hidden (Ctrl+V keeps working
+    /// through egui's own event path).
+    pub fn clipboard(mut self, clipboard: Option<&'a dyn Fn() -> Option<String>>) -> Self {
+        self.clipboard = clipboard;
         self
     }
 
@@ -177,6 +204,7 @@ impl<'a> GraphSelect<'a> {
                 };
 
                 let mut visited = HashSet::new();
+                let collab = self.collab;
 
                 // Helper: show a named graph row, its right-click menu, and
                 // handle clicks.
@@ -195,7 +223,14 @@ impl<'a> GraphSelect<'a> {
                             HeadRowType::Named(&name_str)
                         };
                         let head = gantz_ca::Head::Branch(name.clone());
-                        let mut res = head_row(heads, &head, row_type, ca, focused_head, ui);
+                        // A live session's dot beside the name (mirroring the
+                        // graph tabs) - sessions outlive their tabs, so this
+                        // is where a closed head's session stays visible.
+                        let status = collab
+                            .and_then(|c| c.sessions.get(name))
+                            .map(|d| (d.conn.color(), d.hover_text().into()));
+                        let mut res =
+                            head_row(heads, &head, row_type, ca, focused_head, status, ui);
                         // Show the graph's description + input/output docs on hover.
                         res.row = res.row.on_hover_ui(|ui| {
                             // Re-assert wrap width every frame (see `socket_hover`).
@@ -328,7 +363,8 @@ impl<'a> GraphSelect<'a> {
                     // Use the timestamp as a row name.
                     let head = gantz_ca::Head::Commit(*ca);
                     let row_type = HeadRowType::Unnamed(&commit.timestamp);
-                    let res = head_row(self.heads, &head, row_type, ca, self.focused_head, ui);
+                    let res =
+                        head_row(self.heads, &head, row_type, ca, self.focused_head, None, ui);
                     if res.row.clicked() {
                         click_head(ui, self.heads, self.focused_head, head, &mut response);
                     }
@@ -351,6 +387,53 @@ impl<'a> GraphSelect<'a> {
                     .clicked()
                 {
                     response.import = true;
+                }
+                // Join a session from an invite ticket (only when a collab
+                // layer is wired).
+                if self.collab.is_some() {
+                    let btn = ui
+                        .button("\u{1F310} join")
+                        .on_hover_text("join a session from an invite ticket");
+                    let ticket_id = self.id.with("join_ticket");
+                    let clipboard = self.clipboard;
+                    egui::Popup::menu(&btn)
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                        .show(|ui| {
+                            let mut ticket = ui
+                                .data(|d| d.get_temp::<String>(ticket_id))
+                                .unwrap_or_default();
+                            ui.horizontal(|ui| {
+                                let edit = ui.add(
+                                    egui::TextEdit::singleline(&mut ticket)
+                                        .hint_text("paste an invite ticket"),
+                                );
+                                // Right-click paste: pasting is how this field
+                                // is nearly always filled. egui alone cannot
+                                // read the clipboard, so the affordance needs
+                                // a host-provided reader (Ctrl+V works through
+                                // egui's event path regardless).
+                                if let Some(read) = clipboard {
+                                    edit.context_menu(|ui| {
+                                        if ui.button("paste").clicked() {
+                                            if let Some(text) = read() {
+                                                ticket = text.trim().to_string();
+                                            }
+                                            ui.close();
+                                        }
+                                    });
+                                }
+                                let ready = !ticket.trim().is_empty();
+                                if ui
+                                    .add_enabled(ready, egui::Button::new("connect"))
+                                    .clicked()
+                                {
+                                    response.join_ticket = Some(ticket.trim().to_string());
+                                    ticket.clear();
+                                    ui.close();
+                                }
+                            });
+                            ui.data_mut(|d| d.insert_temp(ticket_id, ticket));
+                        });
                 }
                 // Fill remaining space with the "+" button.
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {

@@ -53,6 +53,10 @@ pub struct Gantz<'a> {
     edge_styles: &'a [&'a dyn widget::EdgeStyle],
     base_sources: Option<BaseSourcesCtx<'a>>,
     pane_window_mode: PaneWindowMode,
+    collab: Option<&'a crate::collab::CollabUiState>,
+    /// A host-provided clipboard reader for widget paste affordances (egui
+    /// alone cannot read the clipboard); `None` hides them.
+    clipboard: Option<&'a dyn Fn() -> Option<String>>,
 }
 
 /// Base-source authoring context for the graph config pane's "source"
@@ -113,6 +117,9 @@ pub struct GantzState {
     /// command bindings (see [`crate::keybind`]); edited in Settings -> Keybinds.
     #[serde(default)]
     pub keymap: Keymap,
+    /// User-editable collaboration configuration (Settings -> Collab).
+    #[serde(default)]
+    pub collab: crate::collab::CollabConfig,
     /// How graph merges resolve conflicts; edited via the merge row's "⛭"
     /// menu in the Graph Config pane.
     #[serde(default)]
@@ -120,6 +127,11 @@ pub struct GantzState {
     /// Per-head redo stacks for undo/redo support.
     #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub redo_stacks: HashMap<gantz_ca::Head, Vec<gantz_ca::CommitAddr>>,
+    /// Per-head stepping state for session (revert-commit) undo/redo (see
+    /// [`crate::ops::session_undo`]). Lives and migrates beside
+    /// [`Self::redo_stacks`].
+    #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
+    pub undo_cursors: HashMap<gantz_ca::Head, crate::ops::RevertCursor>,
     /// The sidebar's pixel width, maintained across window resizes (fixed, not
     /// proportional). Updated when the user drags the divider.
     #[serde(default = "default_sidebar_width")]
@@ -783,7 +795,24 @@ impl<'a> Gantz<'a> {
             edge_styles: &[],
             base_sources: None,
             pane_window_mode: PaneWindowMode::default(),
+            collab: None,
+            clipboard: None,
         }
+    }
+
+    /// Provide the collaborative-session display state so the Graph Config
+    /// pane shows the collab row for shared (or shareable) graphs.
+    pub fn collab(mut self, collab: &'a crate::collab::CollabUiState) -> Self {
+        self.collab = Some(collab);
+        self
+    }
+
+    /// Provide a clipboard reader for widget paste affordances (e.g. the
+    /// join popup's right-click paste). Ctrl+V works through egui's own
+    /// event path regardless.
+    pub fn clipboard(mut self, clipboard: &'a dyn Fn() -> Option<String>) -> Self {
+        self.clipboard = Some(clipboard);
+        self
     }
 
     /// Choose whether the widget draws popped-out panes as `egui::Window`s
@@ -1146,8 +1175,10 @@ impl GantzState {
             layout_config: LayoutConfig::default(),
             scene_config: SceneConfig::default(),
             keymap: Keymap::default(),
+            collab: Default::default(),
             merge_resolutions: Default::default(),
             redo_stacks: HashMap::new(),
+            undo_cursors: HashMap::new(),
             sidebar_width: default_sidebar_width(),
             tray_height: default_tray_height(),
             windowed_geometry: HashMap::new(),
@@ -1163,12 +1194,25 @@ impl GantzState {
         if let Some(state) = self.open_heads.remove(old) {
             self.open_heads.insert(new.clone(), state);
         }
-        if clear_redo {
-            self.redo_stacks.remove(old);
-            self.redo_stacks.remove(new);
-        } else if let Some(stack) = self.redo_stacks.remove(old) {
-            self.redo_stacks.insert(new.clone(), stack);
-        }
+        migrate_or_clear(&mut self.redo_stacks, old, new, clear_redo);
+        migrate_or_clear(&mut self.undo_cursors, old, new, clear_redo);
+    }
+}
+
+/// Migrate one per-head map entry across a head-identity change: cleared for
+/// both keys when `clear` (a new edit invalidates it), otherwise moved to
+/// the new key.
+fn migrate_or_clear<V>(
+    map: &mut HashMap<gantz_ca::Head, V>,
+    old: &gantz_ca::Head,
+    new: &gantz_ca::Head,
+    clear: bool,
+) {
+    if clear {
+        map.remove(old);
+        map.remove(new);
+    } else if let Some(v) = map.remove(old) {
+        map.insert(new.clone(), v);
     }
 }
 
@@ -1409,6 +1453,12 @@ where
                     _ => None,
                 };
 
+                // The head's session display, when a collab layer is wired.
+                let session = gantz.collab.map(|c| match &head {
+                    gantz_ca::Head::Branch(name) => c.sessions.get(name),
+                    _ => None,
+                });
+
                 let res = pane_ui(ui, |ui| {
                     let mut config = widget::GraphConfig::new(&head, head_state, &names)
                         .is_base(is_base)
@@ -1428,6 +1478,9 @@ where
                             .unwrap_or(ctx.default_source);
                         config = config.base_sources(ctx.sources, Some(current));
                     }
+                    if let Some(session) = session {
+                        config = config.collab(session);
+                    }
                     config.show(ui)
                 });
                 if res.inner.new_branch.is_some() {
@@ -1435,6 +1488,16 @@ where
                 }
                 if let Some(merge) = res.inner.merge {
                     gantz_response.responses.push(Some(head.clone()), merge);
+                }
+                if res.inner.share {
+                    gantz_response
+                        .responses
+                        .push(Some(head.clone()), crate::ShareHead { public: true });
+                }
+                if res.inner.stop_sharing {
+                    gantz_response
+                        .responses
+                        .push(Some(head.clone()), crate::StopSharing);
                 }
                 if let Some(demo_val) = res.inner.demo_changed {
                     gantz_response.demo_changed = Some((head.clone(), demo_val));
@@ -1507,6 +1570,7 @@ where
                     .unwrap_or(cfg!(debug_assertions)),
                 ext_panes: &ext_panes,
                 edge_styles: gantz.edge_styles,
+                collab: gantz.collab,
             };
             graph_tree.ui(&mut graph_behaviour, ui);
 
@@ -1628,10 +1692,23 @@ where
             paint_gantz_file_hover_overlay(ui);
 
             let heads = access.heads();
-            let res = graph_select(gantz.env, heads, *focused_head, *base_names, ui);
+            let mut res = graph_select(
+                gantz.env,
+                heads,
+                *focused_head,
+                *base_names,
+                gantz.collab,
+                gantz.clipboard,
+                ui,
+            );
 
             if res.inner.export_all {
                 gantz_response.responses.push(None, ExportAllNamed);
+            }
+            if let Some(ticket) = res.inner.join_ticket.take() {
+                gantz_response
+                    .responses
+                    .push(None, crate::JoinSession { ticket });
             }
             match &mut gantz_response.graph_select {
                 Some(gs) => *gs |= res.inner,
@@ -1772,6 +1849,8 @@ where
                         return;
                     }
                     let env = gantz.env;
+                    // VM-state writes recorded by the node's `NodeCtx`.
+                    let mut writes = Vec::new();
                     // Scope child widget ids by (head, path) so views never share
                     // ids with each other or the in-graph node.
                     let result = ui
@@ -1789,7 +1868,15 @@ where
                                 // completes within its site); erase back iff
                                 // changed, updating the witness.
                                 let mut entry = data.instances.take(codec, n_ix, weight).ok()?;
-                                let ctx = NodeCtx::new(env, &path, &inlets, &outlets, &[], data.vm);
+                                let ctx = NodeCtx::new(
+                                    env,
+                                    &path,
+                                    &inlets,
+                                    &outlets,
+                                    &[],
+                                    data.vm,
+                                    &mut writes,
+                                );
                                 let r = entry.inst.node.view_ui(ctx, ui);
                                 if r.changed {
                                     match entry.inst.erase() {
@@ -1816,6 +1903,9 @@ where
                                 gantz_response.changed_heads.push(head.clone());
                             }
                             gantz_response.responses.extend(Some(&head), payloads);
+                            gantz_response
+                                .responses
+                                .extend(Some(&head), crate::action::state_written(&mut writes));
                         }
                         _ => {
                             // Head open but node missing at `path` (e.g. removed
@@ -1937,12 +2027,20 @@ where
                             &[ix] => n_outs.get(&ix).copied(),
                             _ => None,
                         };
-                        let mut node_ctx = NodeCtx::new(env, &[], &inlets, &outlets, &[], data.vm);
+                        let mut writes = Vec::new();
+                        let mut node_ctx =
+                            NodeCtx::new(env, &[], &inlets, &outlets, &[], data.vm, &mut writes);
                         let root_id = egui::Id::new(("gantz-gui-debug", &head));
                         let r = crate::ui_tree::UiTree::new(root_id)
                             .n_outputs(&resolver)
                             .show(&decoded.root, &mut node_ctx, ui);
-                        r.payloads
+                        let mut payloads = r.payloads;
+                        payloads.extend(
+                            writes
+                                .drain(..)
+                                .map(|w| crate::DynResponse::new(crate::StateWritten(w))),
+                        );
+                        payloads
                     });
                     if let Some(payloads) = payloads {
                         gantz_response.responses.extend(Some(&head), payloads);
@@ -2024,6 +2122,9 @@ where
     ext_panes: &'a [widget::ExtPaneEntry],
     /// Domain edge stylers for the graph scenes (see [`widget::EdgeStyle`]).
     edge_styles: &'a [&'a dyn widget::EdgeStyle],
+    /// Collaborative-session display state, when a collab layer is wired:
+    /// drives the per-tab session dot and the connecting/error overlay.
+    collab: Option<&'a crate::collab::CollabUiState>,
 }
 
 impl<'a, Access> egui_tiles::Behavior<GraphPane> for GraphTreeBehaviour<'a, Access>
@@ -2146,17 +2247,25 @@ where
             // Render the tab using our custom widget.
             // Append a filled circle if this head is focused.
             let mut title = self.tab_title_for_tile(tiles, tile_id).text().to_string();
+            let mut session = None;
             if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
                 let heads = self.access.heads();
                 if crate::head_is_focused(heads, *self.focused_head, head) {
                     title.push_str(" ⚫");
                 }
+                // The head's collab session, when shared.
+                if let (Some(collab), gantz_ca::Head::Branch(name)) = (self.collab, head) {
+                    session = collab.sessions.get(name);
+                }
             }
-            let res = widget::Tab::new(title, id)
+            let mut tab = widget::Tab::new(title, id)
                 .active(state.active)
                 .closable(state.closable)
-                .hint("double-click to rename")
-                .show(ui);
+                .hint("double-click to rename");
+            if let Some(display) = session {
+                tab = tab.status_dot(display.conn.color(), display.hover_text());
+            }
+            let res = tab.show(ui);
 
             // Handle double-click to enter edit mode.
             if res.tab.double_clicked() {
@@ -2232,8 +2341,11 @@ where
         let rect = ui.available_rect_before_wrap();
 
         // Get mutable access to this head's data and render the graph scene.
-        let graph_response = self.access.with_head_mut(pane_head, |data| {
-            graph_scene(
+        // The camera rides out for overlays that map graph-space positions
+        // (e.g. peer pointers) to the pane.
+        let (graph_response, camera) = match self.access.with_head_mut(pane_head, |data| {
+            let camera = data.view.camera;
+            let res = graph_scene(
                 self.env,
                 self.codec,
                 data.graph,
@@ -2252,10 +2364,14 @@ where
                 &diagnostics,
                 data.vm,
                 ui,
-            )
-        });
+            );
+            (res, camera)
+        }) {
+            Some((res, camera)) => (res, Some(camera)),
+            None => (None, None),
+        };
 
-        if let Some(Some(response)) = graph_response {
+        if let Some(response) = graph_response {
             // Focus this head when clicking on the graph or any of its nodes.
             if response.scene.clicked() || response.any_node_interacted() {
                 *self.focused_head = ix;
@@ -2278,7 +2394,118 @@ where
         let crumbs = name_breadcrumb(rect, pane_head, ui);
         self.responses.extend(Some(&*pane_head), crumbs);
 
+        // A collab-session overlay: while a join is still connecting (or has
+        // failed) the pane's graph is only a placeholder - dim the scene and
+        // say what is happening. Peers' live pointers paint beneath it.
+        if let (Some(collab), gantz_ca::Head::Branch(name)) = (self.collab, &*pane_head) {
+            if let Some(display) = collab.sessions.get(name) {
+                if self.state.collab.show_pointers && !display.pointers.is_empty() {
+                    if let Some(camera) = camera {
+                        paint_peer_pointers(rect, camera, &display.pointers, ui);
+                        // Cursors move between this peer's frames.
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_millis(100));
+                    }
+                }
+                paint_session_overlay(rect, display, ui);
+            }
+        }
+
         egui_tiles::UiResponse::None
+    }
+}
+
+/// Paint session peers' live pointers (presence cursors) over the pane.
+///
+/// Positions arrive in graph-space coordinates; the head's camera maps them
+/// to screen space, so cursors land on the right nodes regardless of either
+/// peer's viewport. Painted on a foreground layer for the same reason as
+/// [`paint_session_overlay`]: the scene's sublayer background would hide a
+/// plain `ui.painter()` overlay.
+fn paint_peer_pointers(
+    rect: egui::Rect,
+    camera: crate::Camera,
+    pointers: &[crate::collab::PointerDisplay],
+    ui: &egui::Ui,
+) {
+    let layer = egui::LayerId::new(egui::Order::Foreground, ui.id().with("peer_pointers"));
+    let mut painter = ui.ctx().layer_painter(layer);
+    painter.set_clip_rect(rect);
+    for pointer in pointers {
+        let screen = rect.center() + (pointer.pos - camera.center) * camera.zoom;
+        // Skip cursors far outside the viewport (the clip rect would hide
+        // them anyway; this skips the label layout too).
+        if !rect.expand(24.0).contains(screen) {
+            continue;
+        }
+        painter.circle(
+            screen,
+            4.0,
+            pointer.color,
+            egui::Stroke::new(1.0, egui::Color32::from_black_alpha(160)),
+        );
+        painter.text(
+            screen + egui::vec2(8.0, 6.0),
+            egui::Align2::LEFT_TOP,
+            &pointer.label,
+            egui::FontId::proportional(11.0),
+            pointer.color,
+        );
+    }
+}
+
+/// Dim a joining session's still-empty scene with its sync progress, or the
+/// error when the join failed. Painted only while the join placeholder is
+/// shown (`awaiting_snapshot`); once the snapshot arrives - or for a host,
+/// which never shows a placeholder - the graph renders unobscured.
+fn paint_session_overlay(rect: egui::Rect, display: &crate::collab::SessionDisplay, ui: &egui::Ui) {
+    use crate::collab::SessionConn;
+    // Only ever cover the empty placeholder scene. Once the graph has loaded a
+    // mid-session error surfaces through the tab's status dot, not a full-scene
+    // overlay that would obscure a usable graph.
+    if !display.awaiting_snapshot {
+        return;
+    }
+    let (heading, detail, color) = if let Some(error) = &display.error {
+        (
+            "Failed to connect".to_string(),
+            Some(error.clone()),
+            SessionConn::Degraded.color(),
+        )
+    } else {
+        // Animated ellipsis while we wait.
+        let dots = 1 + (ui.input(|i| i.time) * 2.0) as usize % 3;
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(250));
+        let heading = format!("Connecting{}", ".".repeat(dots));
+        (
+            heading,
+            Some(display.sync_status()),
+            ui.visuals().strong_text_color(),
+        )
+    };
+    // egui_graph draws the scene in a sublayer with an opaque background,
+    // composited directly above this pane's own layer, so a `ui.painter()`
+    // overlay would be hidden beneath it. Paint on a foreground layer instead.
+    let layer = egui::LayerId::new(egui::Order::Foreground, ui.id().with("session_overlay"));
+    let mut painter = ui.ctx().layer_painter(layer);
+    painter.set_clip_rect(rect);
+    painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(120));
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        heading,
+        egui::FontId::proportional(20.0),
+        color,
+    );
+    if let Some(detail) = detail {
+        painter.text(
+            rect.center() + egui::vec2(0.0, 28.0),
+            egui::Align2::CENTER_CENTER,
+            detail,
+            egui::FontId::proportional(14.0),
+            ui.visuals().weak_text_color(),
+        );
     }
 }
 
@@ -3163,11 +3390,15 @@ fn graph_select(
     heads: &[gantz_ca::Head],
     focused_head: usize,
     base_names: &crate::reg::Names,
+    collab: Option<&crate::collab::CollabUiState>,
+    clipboard: Option<&dyn Fn() -> Option<String>>,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse> {
     pane_ui(ui, |ui| {
         widget::GraphSelect::new(env, heads, base_names)
             .focused_head(focused_head)
+            .collab(collab)
+            .clipboard(clipboard)
             .show(ui)
     })
 }
@@ -3449,6 +3680,9 @@ fn node_inspector<'a>(
                 let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
                 // The rect of the first selected node, used to scroll to it.
                 let mut selected_rect: Option<egui::Rect> = None;
+                // VM-state writes recorded by each node's `NodeCtx` (drained
+                // per node into `StateWritten` payloads).
+                let mut writes = Vec::new();
                 for id in ids {
                     let mut frame = egui::Frame::group(ui.style());
                     let is_selected = head_state.scene.interaction.selection.nodes.contains(&id);
@@ -3469,8 +3703,15 @@ fn node_inspector<'a>(
                             return;
                         };
                         let path = [ix];
-                        let ctx =
-                            NodeCtx::new(registry, &path[..], &inlets, &outlets, ref_ext_uis, vm);
+                        let ctx = NodeCtx::new(
+                            registry,
+                            &path[..],
+                            &inlets,
+                            &outlets,
+                            ref_ext_uis,
+                            vm,
+                            &mut writes,
+                        );
                         let resp = widget::NodeInspector::new(&mut entry.inst.node, ctx, immutable)
                             .show(ui);
                         if resp.changed {
@@ -3502,6 +3743,7 @@ fn node_inspector<'a>(
                             }
                         }
                     });
+                    responses.extend(crate::action::state_written(&mut writes));
                     if is_selected && selected_rect.is_none() {
                         selected_rect = Some(frame_resp.response.rect);
                     }

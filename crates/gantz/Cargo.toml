@@ -14,12 +14,14 @@ async-channel.workspace = true
 bevy.workspace = true
 bevy_egui.workspace = true
 bevy_gantz.workspace = true
+bevy_gantz_collab = { workspace = true, optional = true }
 bevy_gantz_egui.workspace = true
 bevy_gantz_plyphon.workspace = true
 bevy_pkv.workspace = true
 egui_graph.workspace = true
 gantz_base.workspace = true
 gantz_ca.workspace = true
+gantz_collab = { workspace = true, optional = true }
 gantz_core.workspace = true
 gantz_egui.workspace = true
 gantz_format.workspace = true
@@ -36,8 +38,13 @@ web-time.workspace = true
 # AudioWorklet build); the cpal deps it pulls are wasm32-gated, so it is a no-op on native. Build
 # with `--no-default-features` to fall back to cpal's default ScriptProcessor host on the web. The
 # website build supplies the WASM-threads flags it needs (see `pkgs/gantz-website.nix`).
-default = ["audioworklet"]
+default = ["audioworklet", "collab"]
 audioworklet = ["bevy_gantz_plyphon/audioworklet"]
+# P2P collaborative sessions (share/join live-edited graphs over iroh). Enabled by default;
+# build with `--no-default-features` (or without this feature) to drop all p2p networking -
+# the collab UI (Graph Config row, Settings subtab) simply never renders. Everything
+# network-facing lives behind this one edge: only `main.rs` names the collab crates.
+collab = ["dep:bevy_gantz_collab", "dep:gantz_collab"]
 
 [[bin]]
 name = "gantz"

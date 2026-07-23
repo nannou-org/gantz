@@ -2,6 +2,7 @@
 use time::{OffsetDateTime, UtcOffset, format_description};
 
 pub use checkbox_enabled::CheckboxEnabled;
+pub use collab_config::{CollabSettings, CollabSettingsTab, collab_config};
 pub use edge_style::{EdgeStyle, EdgeStyleCtx, EdgeStyling};
 pub use ext_pane::{ExtPane, ExtPaneCtx, ExtPaneEntry};
 pub use gantz::{
@@ -25,11 +26,13 @@ pub use node_palette::NodePalette;
 pub use panes_config::{panes_config, reset_layout_button};
 pub use perf_view::{PerfCapture, PerfView};
 pub use settings::{SettingsResponse, SettingsTab, settings};
+pub use status_dot::status_dot;
 pub use steel_view::SteelView;
 pub use style_config::style_config;
 pub use tab::{Tab, TabResponse};
 
 pub mod checkbox_enabled;
+pub mod collab_config;
 pub mod edge_style;
 pub mod ext_pane;
 pub mod gantz;
@@ -50,6 +53,7 @@ pub mod node_palette;
 pub mod panes_config;
 pub mod perf_view;
 pub mod settings;
+pub mod status_dot;
 pub mod steel_view;
 pub mod style_config;
 pub mod tab;

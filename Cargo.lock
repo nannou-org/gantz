@@ -1010,6 +1010,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_gantz_collab"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_gantz",
+ "bevy_gantz_egui",
+ "bevy_log",
+ "gantz_ca",
+ "gantz_collab",
+ "gantz_core",
+ "gantz_egui",
+ "ron 0.10.1",
+ "serde",
+ "steel-core",
+ "web-time",
+]
+
+[[package]]
 name = "bevy_gantz_egui"
 version = "0.4.0"
 dependencies = [
@@ -3766,12 +3785,14 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "bevy_gantz",
+ "bevy_gantz_collab",
  "bevy_gantz_egui",
  "bevy_gantz_plyphon",
  "bevy_pkv",
  "egui_graph",
  "gantz_base",
  "gantz_ca",
+ "gantz_collab",
  "gantz_core",
  "gantz_egui",
  "gantz_format",

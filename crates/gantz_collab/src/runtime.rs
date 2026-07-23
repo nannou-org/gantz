@@ -31,9 +31,12 @@ use crate::{
     store::{self, SessionEntry, Shared},
     ticket::SessionTicket,
 };
-use gantz_ca::{Commit, CommitAddr, DataGraph, GraphAddr, Name};
+use gantz_ca::{
+    BlobLiveness, Bytes, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Key, Liveness,
+    MergePolicy, Name, SectionId, Value,
+};
 use iroh::{
-    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode,
+    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, Watcher,
     address_lookup::{PkarrPublisher, PkarrResolver},
     endpoint::{Connection, presets},
     protocol::{AcceptError, Router},
@@ -125,15 +128,18 @@ pub enum Command {
     /// served content (a filled store for a host, an empty one for a guest).
     Register(SessionEntry),
     /// Merge served content into a registered session's store:
-    /// content-addressed commit/graph inserts (idempotent) and per-name head
-    /// upserts. Graphs are verified against their claimed addresses (see
-    /// [`store::merge`]); a failed verification drops the whole update with
-    /// a warning. Unknown sessions are ignored with a warning.
+    /// content-addressed commit/graph/blob inserts (idempotent), per-name
+    /// head upserts and section entries applied per the section's merge
+    /// policy. Graphs and blobs are verified against their claimed addresses
+    /// (see [`store::merge`]); a failed verification drops the whole update
+    /// with a warning. Unknown sessions are ignored with a warning.
     Update {
         session: SessionId,
         heads: Vec<(Name, CommitAddr)>,
         commits: Vec<(CommitAddr, Commit)>,
         graphs: Vec<(GraphAddr, DataGraph)>,
+        sections: Vec<(SectionId, MergePolicy, Liveness, Key, Value)>,
+        blobs: Vec<(SectionId, BlobLiveness, ContentAddr, Bytes)>,
     },
     /// Start serving and gossiping a session. The session must already be
     /// [`Register`](Command::Register)ed. Emits [`Event::TicketReady`].
@@ -189,6 +195,8 @@ pub enum Event {
     PeerUp { session: SessionId, peer: PeerId },
     /// A gossip neighbour was dropped.
     PeerDown { session: SessionId, peer: PeerId },
+    /// The endpoint's home relay(s) changed: `(url, connected)` per relay.
+    RelayStatus { relays: Vec<(String, bool)> },
     /// A recoverable failure the application may surface.
     Error {
         session: Option<SessionId>,
@@ -351,6 +359,22 @@ async fn drive(
             return;
         }
     };
+    // Surface the home relay(s) and their connection state to the app.
+    {
+        let evt_tx = evt_tx.clone();
+        let mut statuses = endpoint.home_relay_status().stream();
+        n0_future::task::spawn(async move {
+            while let Some(statuses) = statuses.next().await {
+                let relays = statuses
+                    .iter()
+                    .map(|s| (s.url().to_string(), s.is_connected()))
+                    .collect();
+                if evt_tx.send(Event::RelayStatus { relays }).await.is_err() {
+                    break;
+                }
+            }
+        });
+    }
     let gossip = Gossip::builder().spawn(endpoint.clone());
     let router = Router::builder(endpoint.clone())
         .accept(iroh_gossip::ALPN, gossip.clone())
@@ -384,13 +408,17 @@ async fn drive(
                 heads,
                 commits,
                 graphs,
+                sections,
+                blobs,
             } => {
                 let mut state = shared.lock();
                 let Some(entry) = state.sessions.get_mut(&session) else {
                     log::warn!("collab: update for an unregistered session");
                     continue;
                 };
-                if let Err(e) = store::merge(&mut entry.store, heads, commits, graphs) {
+                let result =
+                    store::merge(&mut entry.store, heads, commits, graphs, sections, blobs);
+                if let Err(e) = result {
                     log::warn!("collab: update rejected: {e}");
                 }
             }
