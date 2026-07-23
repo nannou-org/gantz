@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_ca-v0.3.0...gantz_ca-v0.4.0) - 2026-07-23
+
+### Added
+
+- *(gantz_egui,gantz_ca)* session revert ops
+- *(bevy_gantz_collab)* session plugin bridging the collab runtime
+- *(ca,collab)* [**breaking**] concrete Registry, verified relays, RawGraph deleted
+- *(ca)* concrete data-graph registry surface
+- *(ca)* add erased node representation, move Edge into gantz_ca
+- *(ca)* [**breaking**] rewrite Registry around content columns + sections
+- *(ca)* datum, name and section foundations
+
+### Other
+
+- *(collab)* [**breaking**] serve store is the registry with blob-at-rest graphs
+- *(format)* [**breaking**] graph-addressed refs, heads and generic section forms
+- *(core)* [**breaking**] Ref pins content, reachability goes graph-centric
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_ca-v0.2.1...gantz_ca-v0.3.0) - 2026-07-12
 
 ### Added

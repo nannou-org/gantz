@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/nannou-org/gantz/compare/gantz_ui-v0.1.1...gantz_ui-v0.2.0) - 2026-07-23
+
+### Added
+
+- *(gantz_ui)* add the interactive attr to the plot element
+
 ## [0.1.1](https://github.com/nannou-org/gantz/compare/gantz_ui-v0.1.0...gantz_ui-v0.1.1) - 2026-07-12
 
 ### Other

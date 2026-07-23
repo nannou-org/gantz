@@ -1,6 +1,6 @@
 [package]
 name = "gantz_ui"
-version = "0.1.1"
+version = "0.2.0"
 description = "Declarative UI tree model and value codecs for user-defined gantz GUIs."
 authors.workspace = true
 edition.workspace = true

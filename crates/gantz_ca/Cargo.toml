@@ -1,6 +1,6 @@
 [package]
 name = "gantz_ca"
-version = "0.3.0"
+version = "0.4.0"
 description = "Content-addressing for gantz"
 authors.workspace = true
 edition.workspace = true

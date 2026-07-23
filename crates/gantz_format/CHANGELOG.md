@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_format-v0.3.0...gantz_format-v0.4.0) - 2026-07-23
+
+### Added
+
+- *(format,plyphon)* unit keyword sugar + datum-aware label stems
+- *(ca,collab)* [**breaking**] concrete Registry, verified relays, RawGraph deleted
+- *(format)* node-set-free raise
+- [**breaking**] flip the app stack onto the concrete data registry
+
+### Other
+
+- *(egui,format)* [**breaking**] registry-side helpers operate on data
+- *(format)* [**breaking**] graph-addressed refs, heads and generic section forms
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_format-v0.2.1...gantz_format-v0.3.0) - 2026-07-12
 
 ### Added

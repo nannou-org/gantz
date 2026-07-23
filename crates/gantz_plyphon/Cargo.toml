@@ -1,6 +1,6 @@
 [package]
 name = "gantz_plyphon"
-version = "0.1.1"
+version = "0.2.0"
 description = "DSP nodes and a synthdef compiler that derives plyphon synthdefs from gantz graphs."
 authors.workspace = true
 edition.workspace = true
