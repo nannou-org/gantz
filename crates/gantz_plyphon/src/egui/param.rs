@@ -1,7 +1,7 @@
 //! Shared inspector rows for DSP node parameters (see [`crate::param`] for
 //! the headless param helpers these rows read and write through).
 
-use crate::param::pending_len;
+use crate::param::{pending_len, pending_len_total};
 use gantz_core::steel::SteelVal;
 
 /// One inspector row toggling a node's ugen rate (`ar`/`kr`). Returns `true` on
@@ -112,10 +112,21 @@ pub fn value_row(
 /// (scheduled-but-not-yet-drained) control updates across the node's param(s).
 ///
 /// DSP nodes emit this (via `show_state() -> false` + a call here) in place of the
-/// inspector's default raw `{value, pending}` state dump.
+/// inspector's default raw `{value, pending}` state dump. This row reads the
+/// *bare* single-param state shape; keyed multi-param nodes use
+/// [`params_state_row`].
 pub fn param_state_row(body: &mut egui_extras::TableBody, state: Option<&SteelVal>) {
+    queued_row(body, state.map(pending_len).unwrap_or(0));
+}
+
+/// The [`param_state_row`] analogue for a node with *keyed* multi-param state:
+/// the queued count sums every param's pending queue.
+pub fn params_state_row(body: &mut egui_extras::TableBody, state: Option<&SteelVal>) {
+    queued_row(body, state.map(pending_len_total).unwrap_or(0));
+}
+
+fn queued_row(body: &mut egui_extras::TableBody, n: usize) {
     let row_h = gantz_egui::widget::node_inspector::table_row_h(body.ui_mut());
-    let n = state.map(pending_len).unwrap_or(0);
     body.row(row_h, |mut row| {
         row.col(|ui| {
             ui.label("state");

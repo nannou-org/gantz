@@ -13,4 +13,5 @@ pub mod play_buf;
 pub mod scope_out;
 pub mod sin_osc;
 pub mod sum;
+pub mod unit;
 pub mod unpack;
