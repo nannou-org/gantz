@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/nannou-org/gantz/compare/bevy_gantz-v0.4.0...bevy_gantz-v0.5.0) - 2026-07-23
+
+### Added
+
+- *(egui)* [**breaking**] graph_scene retains node instances via the cache
+- [**breaking**] the working graph is data
+- [**breaking**] builtins are data
+- *(ca,collab)* [**breaking**] concrete Registry, verified relays, RawGraph deleted
+- [**breaking**] flip the app stack onto the concrete data registry
+
+### Other
+
+- [**breaking**] concrete Env, N-free plugins, app node trait retired
+- *(bevy)* graph-addr resolution and generalized incremental persistence
+
 ## [0.4.0](https://github.com/nannou-org/gantz/compare/bevy_gantz-v0.3.1...bevy_gantz-v0.4.0) - 2026-07-12
 
 ### Added

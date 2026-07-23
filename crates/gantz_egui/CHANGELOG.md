@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.5.0...gantz_egui-v0.6.0) - 2026-07-23
+
+### Added
+
+- *(gantz_egui,bevy_gantz_egui)* join popup polish
+- *(gantz_egui)* default the action send rate to ~16ms
+- *(collab)* live peer pointers over shared graphs
+- *(gantz_egui)* session status dot on Graphs-list rows
+- *(gantz_egui)* join sessions from the Graphs pane
+- *(gantz_egui,bevy_gantz_collab)* configurable action send rate
+- *(collab)* overlay sync progress until the join snapshot arrives
+- *(gantz_egui)* action module - wire-encodable node interactions
+- *(gantz_egui,gantz_ca)* session revert ops
+- *(collab)* relay visibility and a custom relay setting
+- *(collab)* joining opens the session tab immediately with progress
+- *(gantz_egui)* painted status dots + session indicator on graph tabs
+- *(gantz_egui)* collab UI - session row, Settings subtab, payloads
+- *(gantz_egui)* session sync ops
+- *(egui)* node views and inspector use the instance cache
+- *(egui,bevy)* [**breaking**] remove_nodes migrates the instance cache
+- *(egui)* [**breaking**] graph_scene retains node instances via the cache
+- *(egui,bevy)* plumb NodeInstances through HeadDataMut
+- *(egui)* add NodeInstances reified-node cache
+- [**breaking**] the working graph is data
+- [**breaking**] builtins are data
+- *(core,egui)* the node codec seam
+- *(ca,collab)* [**breaking**] concrete Registry, verified relays, RawGraph deleted
+- *(format)* node-set-free raise
+- [**breaking**] flip the app stack onto the concrete data registry
+- canonical dehydration gate + skip-if-default serde sweep
+- *(gantz_egui)* add the EdgeStyle seam for domain edge styling
+- *(gantz_egui)* add the GUI Debug pane
+- *(gantz_egui)* interpret controls and their events
+- *(gantz_egui)* add the gantz_ui tree interpreter (layout + display)
+- *(gantz_egui)* add path-addressed state access to NodeCtx
+- *(bevy_gantz_plyphon)* surface per-head derive status via DspHead and a DSP pane
+- *(gantz_egui)* extensible top-level panes (ExtPane trait, Pane::Ext)
+- *(gantz_collab)* identity, sessions, tickets and the iroh runtime
+
+### Fixed
+
+- *(bevy_gantz_collab,gantz_egui)* batch rate-limited writes, replay all
+- *(collab)* move mod and use decls to start of mod
+- *(gantz_egui,bevy_gantz_egui,bevy_gantz_collab)* seed merge-commit views at mint
+- *(gantz_egui)* list extension panes in the graph-area panes submenu
+
+### Other
+
+- *(gantz_egui)* split ops.rs into session and sync modules
+- *(gantz_egui)* dedup node-id, cascade and payload helpers
+- remove dead code left by superseded iterations
+- cargo fmt + validate-default doc note
+- *(egui)* [**breaking**] rename UiNodeInstance to NodeUiInstance
+- [**breaking**] purge typed-node CaHash
+- [**breaking**] concrete Env, N-free plugins, app node trait retired
+- *(egui,format)* [**breaking**] registry-side helpers operate on data
+- *(egui)* collapse the five registry traits into one
+- *(egui)* [**breaking**] content-aware refs and gui data as registry sections
+- *(gantz_egui)* render Plot via its plot fragment
+- *(gantz_egui)* render Inspect via its value fragment
+- *(gantz_egui)* render Bang via its button fragment
+- *(gantz_egui)* render Number via its dialer fragment
+- *(gantz_egui)* extract the shared plot leaf renderer
+- *(gantz_egui)* named ExtPaneEntry + non_exhaustive ExtPaneCtx
+
 ## [0.5.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.4.0...gantz_egui-v0.5.0) - 2026-07-12
 
 ### Added

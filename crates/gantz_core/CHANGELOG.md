@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.4.1...gantz_core-v0.5.0) - 2026-07-23
+
+### Added
+
+- [**breaking**] builtins are data
+- *(core,egui)* the node codec seam
+- *(plyphon)* DSP-graph discovery as a pure data walk
+- *(ca,collab)* [**breaking**] concrete Registry, verified relays, RawGraph deleted
+- [**breaking**] flip the app stack onto the concrete data registry
+- *(core)* ensure_all + erase_with_addr codec helpers
+- canonical dehydration gate + skip-if-default serde sweep
+- *(core)* dehydrate/hydrate codec + HydratedGraphs cache
+- *(ca)* add erased node representation, move Edge into gantz_ca
+- *(ca)* datum, name and section foundations
+
+### Other
+
+- [**breaking**] purge typed-node CaHash
+- [**breaking**] concrete Env, N-free plugins, app node trait retired
+- *(core)* rename dehydrate/hydrate to erase/reify
+- *(core)* [**breaking**] Ref pins content, reachability goes graph-centric
+
 ## [0.4.1](https://github.com/nannou-org/gantz/compare/gantz_core-v0.4.0...gantz_core-v0.4.1) - 2026-07-12
 
 ### Added

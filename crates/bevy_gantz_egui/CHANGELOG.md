@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.4.0...bevy_gantz_egui-v0.5.0) - 2026-07-23
+
+### Added
+
+- *(gantz_egui,bevy_gantz_egui)* join popup polish
+- *(gantz_egui)* action module - wire-encodable node interactions
+- *(bevy_gantz_egui,bevy_gantz_collab)* session undo/redo mints revert commits
+- *(collab)* joining opens the session tab immediately with progress
+- *(collab)* sync node layouts between session peers
+- *(gantz_egui)* collab UI - session row, Settings subtab, payloads
+- *(bevy_gantz_collab)* session plugin bridging the collab runtime
+- *(egui,bevy)* [**breaking**] remove_nodes migrates the instance cache
+- *(egui,bevy)* plumb NodeInstances through HeadDataMut
+- [**breaking**] the working graph is data
+- [**breaking**] builtins are data
+- *(ca,collab)* [**breaking**] concrete Registry, verified relays, RawGraph deleted
+- [**breaking**] flip the app stack onto the concrete data registry
+- canonical dehydration gate + skip-if-default serde sweep
+- *(bevy_gantz_egui)* EdgeStyles provider resource
+- *(bevy_gantz_egui)* plumb the ExtPanes provider resource to both render paths
+
+### Fixed
+
+- *(bevy_gantz_egui,bevy_gantz_collab)* announce sessions after view persistence
+- *(gantz_egui,bevy_gantz_egui,bevy_gantz_collab)* seed merge-commit views at mint
+- *(egui,app)* [**breaking**] session-restored heads missed the instance cache component
+
+### Other
+
+- *(bevy_gantz_egui)* shared finish for locally-minted merge commits
+- remove dead code left by superseded iterations
+- [**breaking**] purge typed-node CaHash
+- [**breaking**] concrete Env, N-free plugins, app node trait retired
+- *(egui,format)* [**breaking**] registry-side helpers operate on data
+- *(bevy)* graph-addr resolution and generalized incremental persistence
+
 ## [0.4.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.3.1...bevy_gantz_egui-v0.4.0) - 2026-07-12
 
 ### Added

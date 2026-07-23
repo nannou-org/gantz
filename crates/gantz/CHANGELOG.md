@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz-v0.2.3...gantz-v0.3.0) - 2026-07-23
+
+### Added
+
+- *(gantz)* collab cargo feature gating the p2p networking
+- *(gantz)* wire up live collaborative sessions
+- *(app,plyphon)* [**breaking**] register unit nodes, migrate ~sinosc/~lag to the table
+- [**breaking**] the working graph is data
+- [**breaking**] builtins are data
+- *(core,egui)* the node codec seam
+- *(ca,collab)* [**breaking**] concrete Registry, verified relays, RawGraph deleted
+- [**breaking**] flip the app stack onto the concrete data registry
+- canonical dehydration gate + skip-if-default serde sweep
+- *(gantz_plyphon)* the ~playbuf sample-playback node
+
+### Fixed
+
+- *(egui,app)* [**breaking**] session-restored heads missed the instance cache component
+
+### Other
+
+- [**breaking**] purge typed-node CaHash
+- [**breaking**] concrete Env, N-free plugins, app node trait retired
+- *(egui,format)* [**breaking**] registry-side helpers operate on data
+- *(core)* rename dehydrate/hydrate to erase/reify
+- *(gantz,bevy_gantz_plyphon)* end-to-end ~playbuf playback + reachability
+- *(plyphon,gantz)* graph-addr resolution and app-crate port
+- Merge pull request #332 from mitchmindtree/feat/hybrid-dsp-inputs
+
 ## [0.2.3](https://github.com/nannou-org/gantz/compare/gantz-v0.2.2...gantz-v0.2.3) - 2026-07-12
 
 ### Added

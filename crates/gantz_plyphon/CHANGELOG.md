@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.1.1...gantz_plyphon-v0.2.0) - 2026-07-23
+
+### Added
+
+- *(app,plyphon)* [**breaking**] register unit nodes, migrate ~sinosc/~lag to the table
+- *(format,plyphon)* unit keyword sugar + datum-aware label stems
+- *(plyphon,egui)* UnitNode inspector and graph UI
+- *(plyphon)* unit descriptor table + the generic UnitNode
+- *(plyphon)* [**breaking**] keyed multi-param state + ParamBinding keys
+- [**breaking**] builtins are data
+- *(plyphon)* DSP-graph discovery as a pure data walk
+- *(ca,collab)* [**breaking**] concrete Registry, verified relays, RawGraph deleted
+- [**breaking**] flip the app stack onto the concrete data registry
+- canonical dehydration gate + skip-if-default serde sweep
+- *(gantz_plyphon)* the ~playbuf sample-playback node
+- *(gantz_plyphon)* thread BufferBinding through the compile pipeline
+- *(gantz_plyphon)* AudioAsset canonical PCM + the dsp.buffer section
+- *(plyphon)* style dsp signal edges in the graph view
+- *(gantz_plyphon)* root-level dsp port classification
+- *(bevy_gantz_plyphon)* surface per-head derive status via DspHead and a DSP pane
+- *(gantz_plyphon)* add DeriveStatus and a readable derived-program description
+- *(gantz_plyphon)* record per-port width/rate shapes during derivation
+- *(gantz_plyphon)* add Display impls for DeriveError and FlattenError
+
+### Other
+
+- [**breaking**] purge typed-node CaHash
+- [**breaking**] concrete Env, N-free plugins, app node trait retired
+- *(plyphon,gantz)* graph-addr resolution and app-crate port
+- *(gantz_egui)* named ExtPaneEntry + non_exhaustive ExtPaneCtx
+- Merge pull request #332 from mitchmindtree/feat/hybrid-dsp-inputs
+
 ## [0.1.1](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.1.0...gantz_plyphon-v0.1.1) - 2026-07-12
 
 ### Added

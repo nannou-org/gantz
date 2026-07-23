@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.1.1...bevy_gantz_plyphon-v0.2.0) - 2026-07-23
+
+### Added
+
+- *(app,plyphon)* [**breaking**] register unit nodes, migrate ~sinosc/~lag to the table
+- *(plyphon)* [**breaking**] keyed multi-param state + ParamBinding keys
+- [**breaking**] the working graph is data
+- [**breaking**] builtins are data
+- *(plyphon)* DSP-graph discovery as a pure data walk
+- *(ca,collab)* [**breaking**] concrete Registry, verified relays, RawGraph deleted
+- [**breaking**] flip the app stack onto the concrete data registry
+- *(bevy_gantz_plyphon)* resident buffer table + refcount for ~playbuf
+- *(gantz_plyphon)* thread BufferBinding through the compile pipeline
+- *(plyphon)* style dsp signal edges in the graph view
+- *(bevy_gantz_plyphon)* persist derived port shapes on DspHead
+- *(bevy_gantz_egui)* EdgeStyles provider resource
+- *(bevy_gantz_plyphon)* surface per-head derive status via DspHead and a DSP pane
+- *(gantz_plyphon)* record per-port width/rate shapes during derivation
+
+### Other
+
+- *(bevy_gantz_plyphon)* audible unit-chain e2e with keyed control
+- [**breaking**] purge typed-node CaHash
+- [**breaking**] concrete Env, N-free plugins, app node trait retired
+- *(gantz,bevy_gantz_plyphon)* end-to-end ~playbuf playback + reachability
+- *(plyphon,gantz)* graph-addr resolution and app-crate port
+- Merge pull request #332 from mitchmindtree/feat/hybrid-dsp-inputs
+
 ## [0.1.1](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.1.0...bevy_gantz_plyphon-v0.1.1) - 2026-07-12
 
 ### Added
