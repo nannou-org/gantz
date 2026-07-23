@@ -1926,6 +1926,7 @@ pub fn update(
         base_sources,
         mut base_name_sources,
         collab_ui,
+        clipboard,
     ): (
         Res<NodeCodecRes>,
         Res<BaseNames>,
@@ -1942,6 +1943,7 @@ pub fn update(
         Res<base::BaseSources>,
         ResMut<base::BaseNameSources>,
         Option<Res<CollabUi>>,
+        Option<ResMut<bevy_egui::EguiClipboard>>,
     ),
     dispatchers: Res<ResponseDispatchers>,
     mut cmds: Commands,
@@ -1996,6 +1998,16 @@ pub fn update(
     // The base source names, for the graph config pane's source dropdown.
     let source_names: Vec<&str> = base_sources.0.iter().map(|s| s.name).collect();
 
+    // Clipboard reader for widget paste affordances. `RefCell`: the widget
+    // takes a shared `Fn` while `EguiClipboard::get_text` needs `&mut`.
+    let clipboard = clipboard.map(std::cell::RefCell::new);
+    let read_clipboard = || {
+        clipboard
+            .as_ref()
+            .and_then(|c| c.borrow_mut().get_text())
+            .filter(|t| !t.is_empty())
+    };
+
     let mut response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show_inside(&mut panel_ui, |ui| {
@@ -2045,6 +2057,7 @@ pub fn update(
             if let Some(collab_ui) = collab_ui.as_ref() {
                 widget = widget.collab(&collab_ui.0);
             }
+            widget = widget.clipboard(&read_clipboard);
             widget.show(&mut *gui_state, focused_ix, &mut access, ui)
         })
         .inner;

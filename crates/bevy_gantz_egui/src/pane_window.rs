@@ -170,6 +170,7 @@ fn render_windowed_panes(
         base_sources,
         mut base_name_sources,
         collab_ui,
+        clipboard,
     ): (
         Res<BaseNames>,
         Res<BaseImmutable>,
@@ -184,6 +185,7 @@ fn render_windowed_panes(
         Res<crate::base::BaseSources>,
         ResMut<crate::base::BaseNameSources>,
         Option<Res<crate::CollabUi>>,
+        Option<ResMut<bevy_egui::EguiClipboard>>,
     ),
     mut cmds: Commands,
 ) {
@@ -215,6 +217,15 @@ fn render_windowed_panes(
 
     // The base source names, for the graph config pane's source dropdown.
     let source_names: Vec<&str> = base_sources.0.iter().map(|s| s.name).collect();
+
+    // Clipboard reader for widget paste affordances (mirrors `update`).
+    let clipboard = clipboard.map(std::cell::RefCell::new);
+    let read_clipboard = || {
+        clipboard
+            .as_ref()
+            .and_then(|c| c.borrow_mut().get_text())
+            .filter(|t| !t.is_empty())
+    };
 
     for (ctx, mut pane) in targets {
         // Render the pane into a `CentralPanel` filling the window, using the
@@ -266,6 +277,7 @@ fn render_windowed_panes(
             if let Some(collab_ui) = collab_ui.as_ref() {
                 widget = widget.collab(&collab_ui.0);
             }
+            widget = widget.clipboard(&read_clipboard);
 
             // A background `Ui` spanning the window (as `update` builds for the
             // primary context).

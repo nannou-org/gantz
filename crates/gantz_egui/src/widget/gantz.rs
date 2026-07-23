@@ -54,6 +54,9 @@ pub struct Gantz<'a> {
     base_sources: Option<BaseSourcesCtx<'a>>,
     pane_window_mode: PaneWindowMode,
     collab: Option<&'a crate::collab::CollabUiState>,
+    /// A host-provided clipboard reader for widget paste affordances (egui
+    /// alone cannot read the clipboard); `None` hides them.
+    clipboard: Option<&'a dyn Fn() -> Option<String>>,
 }
 
 /// Base-source authoring context for the graph config pane's "source"
@@ -793,6 +796,7 @@ impl<'a> Gantz<'a> {
             base_sources: None,
             pane_window_mode: PaneWindowMode::default(),
             collab: None,
+            clipboard: None,
         }
     }
 
@@ -800,6 +804,14 @@ impl<'a> Gantz<'a> {
     /// pane shows the collab row for shared (or shareable) graphs.
     pub fn collab(mut self, collab: &'a crate::collab::CollabUiState) -> Self {
         self.collab = Some(collab);
+        self
+    }
+
+    /// Provide a clipboard reader for widget paste affordances (e.g. the
+    /// join popup's right-click paste). Ctrl+V works through egui's own
+    /// event path regardless.
+    pub fn clipboard(mut self, clipboard: &'a dyn Fn() -> Option<String>) -> Self {
+        self.clipboard = Some(clipboard);
         self
     }
 
@@ -1686,6 +1698,7 @@ where
                 *focused_head,
                 *base_names,
                 gantz.collab,
+                gantz.clipboard,
                 ui,
             );
 
@@ -3378,12 +3391,14 @@ fn graph_select(
     focused_head: usize,
     base_names: &crate::reg::Names,
     collab: Option<&crate::collab::CollabUiState>,
+    clipboard: Option<&dyn Fn() -> Option<String>>,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse> {
     pane_ui(ui, |ui| {
         widget::GraphSelect::new(env, heads, base_names)
             .focused_head(focused_head)
             .collab(collab)
+            .clipboard(clipboard)
             .show(ui)
     })
 }

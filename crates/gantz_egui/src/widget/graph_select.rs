@@ -17,6 +17,9 @@ pub struct GraphSelect<'a> {
     /// Collaborative-session display state, when a collab layer is wired:
     /// enables the join button and the per-row session dots.
     collab: Option<&'a crate::collab::CollabUiState>,
+    /// A host-provided clipboard reader, for the join popup's right-click
+    /// paste (egui alone cannot read the clipboard).
+    clipboard: Option<&'a dyn Fn() -> Option<String>>,
 }
 
 #[derive(Clone)]
@@ -106,6 +109,7 @@ impl<'a> GraphSelect<'a> {
             focused_head: None,
             base_names,
             collab: None,
+            clipboard: None,
         }
     }
 
@@ -125,6 +129,14 @@ impl<'a> GraphSelect<'a> {
     /// dots are hidden.
     pub fn collab(mut self, collab: Option<&'a crate::collab::CollabUiState>) -> Self {
         self.collab = collab;
+        self
+    }
+
+    /// Provide a clipboard reader for the join popup's right-click paste.
+    /// Without it the paste menu item is hidden (Ctrl+V keeps working
+    /// through egui's own event path).
+    pub fn clipboard(mut self, clipboard: Option<&'a dyn Fn() -> Option<String>>) -> Self {
+        self.clipboard = clipboard;
         self
     }
 
@@ -383,26 +395,43 @@ impl<'a> GraphSelect<'a> {
                         .button("\u{1F310} join")
                         .on_hover_text("join a session from an invite ticket");
                     let ticket_id = self.id.with("join_ticket");
+                    let clipboard = self.clipboard;
                     egui::Popup::menu(&btn)
                         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                         .show(|ui| {
                             let mut ticket = ui
                                 .data(|d| d.get_temp::<String>(ticket_id))
                                 .unwrap_or_default();
-                            ui.add(
-                                egui::TextEdit::singleline(&mut ticket)
-                                    .hint_text("paste an invite ticket")
-                                    .desired_width(220.0),
-                            );
-                            let ready = !ticket.trim().is_empty();
-                            if ui
-                                .add_enabled(ready, egui::Button::new("connect"))
-                                .clicked()
-                            {
-                                response.join_ticket = Some(ticket.trim().to_string());
-                                ticket.clear();
-                                ui.close();
-                            }
+                            ui.horizontal(|ui| {
+                                let edit = ui.add(
+                                    egui::TextEdit::singleline(&mut ticket)
+                                        .hint_text("paste an invite ticket"),
+                                );
+                                // Right-click paste: pasting is how this field
+                                // is nearly always filled. egui alone cannot
+                                // read the clipboard, so the affordance needs
+                                // a host-provided reader (Ctrl+V works through
+                                // egui's event path regardless).
+                                if let Some(read) = clipboard {
+                                    edit.context_menu(|ui| {
+                                        if ui.button("paste").clicked() {
+                                            if let Some(text) = read() {
+                                                ticket = text.trim().to_string();
+                                            }
+                                            ui.close();
+                                        }
+                                    });
+                                }
+                                let ready = !ticket.trim().is_empty();
+                                if ui
+                                    .add_enabled(ready, egui::Button::new("connect"))
+                                    .clicked()
+                                {
+                                    response.join_ticket = Some(ticket.trim().to_string());
+                                    ticket.clear();
+                                    ui.close();
+                                }
+                            });
                             ui.data_mut(|d| d.insert_temp(ticket_id, ticket));
                         });
                 }
