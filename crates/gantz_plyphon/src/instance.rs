@@ -1469,6 +1469,7 @@ fn instantiate_into(
                         .iter()
                         .map(|b| ParamBinding {
                             node_path: prefixed(&b.node_path),
+                            key: b.key.clone(),
                             index: b.index,
                         })
                         .collect(),

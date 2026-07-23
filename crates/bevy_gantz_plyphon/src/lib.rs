@@ -581,6 +581,10 @@ struct PartSynth {
 struct ParamSlot {
     /// The dsp node's path in the graph (where its value lives in VM state).
     node_path: Vec<usize>,
+    /// Which of the node's params feeds this slot: `None` drains the node's
+    /// bare single-param state, `Some(name)` the `name`d sub-map of its keyed
+    /// state (see `gantz_plyphon::param`).
+    key: Option<String>,
     /// The param's index within the synth.
     index: usize,
     /// The last value pushed via `set_control` (`None` until first applied).
@@ -855,8 +859,11 @@ fn drive_synths(
             let node_id = synth.node_id;
             let mut backend = Embedded::new(&mut dsp.controller);
             for slot in &mut synth.params {
-                let Some((value, pending)) = gantz_plyphon::param::drain_param(vm, &slot.node_path)
-                else {
+                let drained = match &slot.key {
+                    None => gantz_plyphon::param::drain_param(vm, &slot.node_path),
+                    Some(key) => gantz_plyphon::param::drain_param_keyed(vm, &slot.node_path, key),
+                };
+                let Some((value, pending)) = drained else {
                     continue;
                 };
                 let value = value as f32;
@@ -1389,6 +1396,7 @@ fn spawn_part(
                 .iter()
                 .map(|b| ParamSlot {
                     node_path: b.node_path.clone(),
+                    key: b.key.clone(),
                     index: b.index,
                     last: None,
                 })

@@ -247,6 +247,10 @@ impl<T: ToNodeDsp + ?Sized> ToNodeDsp for &T {
 pub struct ParamBinding {
     /// The dsp node's path within the graph (e.g. `[2]` for a flat graph).
     pub node_path: Vec<usize>,
+    /// Which of the node's params feeds this synth param: `None` for the *bare*
+    /// single-param state shape, `Some(name)` for a sub-map of *keyed* state
+    /// (see the [`param`](crate::param) module docs on the two shapes).
+    pub key: Option<String>,
     /// The param's index within the synthdef's `params`.
     pub index: usize,
 }
@@ -374,11 +378,31 @@ impl DspBuilder {
 
     /// Declare a control parameter belonging to the dsp node at `path`, returning
     /// its index for [`InputRef::Param`] and recording its [`ParamBinding`].
+    ///
+    /// The node's *whole* VM state is the param's `{ value, pending }` map (the
+    /// bare shape) - see [`push_param_keyed`](Self::push_param_keyed) for nodes
+    /// with several params.
     pub fn push_param(&mut self, path: &[usize], param: Param) -> u32 {
         let index = self.params.len();
         self.params.push(param);
         self.bindings.push(ParamBinding {
             node_path: path.to_vec(),
+            key: None,
+            index,
+        });
+        index as u32
+    }
+
+    /// Declare a control parameter fed by the `key`d sub-map of the *keyed* VM
+    /// state of the dsp node at `path` (see the [`param`](crate::param) module
+    /// docs), returning its index for [`InputRef::Param`] and recording its
+    /// [`ParamBinding`].
+    pub fn push_param_keyed(&mut self, path: &[usize], key: &str, param: Param) -> u32 {
+        let index = self.params.len();
+        self.params.push(param);
+        self.bindings.push(ParamBinding {
+            node_path: path.to_vec(),
+            key: Some(key.to_string()),
             index,
         });
         index as u32
