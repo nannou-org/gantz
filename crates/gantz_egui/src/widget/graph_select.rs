@@ -192,6 +192,7 @@ impl<'a> GraphSelect<'a> {
                 };
 
                 let mut visited = HashSet::new();
+                let collab = self.collab;
 
                 // Helper: show a named graph row, its right-click menu, and
                 // handle clicks.
@@ -210,7 +211,14 @@ impl<'a> GraphSelect<'a> {
                             HeadRowType::Named(&name_str)
                         };
                         let head = gantz_ca::Head::Branch(name.clone());
-                        let mut res = head_row(heads, &head, row_type, ca, focused_head, ui);
+                        // A live session's dot beside the name (mirroring the
+                        // graph tabs) - sessions outlive their tabs, so this
+                        // is where a closed head's session stays visible.
+                        let status = collab
+                            .and_then(|c| c.sessions.get(name))
+                            .map(|d| (d.conn.color(), d.hover_text().into()));
+                        let mut res =
+                            head_row(heads, &head, row_type, ca, focused_head, status, ui);
                         // Show the graph's description + input/output docs on hover.
                         res.row = res.row.on_hover_ui(|ui| {
                             // Re-assert wrap width every frame (see `socket_hover`).
@@ -343,7 +351,8 @@ impl<'a> GraphSelect<'a> {
                     // Use the timestamp as a row name.
                     let head = gantz_ca::Head::Commit(*ca);
                     let row_type = HeadRowType::Unnamed(&commit.timestamp);
-                    let res = head_row(self.heads, &head, row_type, ca, self.focused_head, ui);
+                    let res =
+                        head_row(self.heads, &head, row_type, ca, self.focused_head, None, ui);
                     if res.row.clicked() {
                         click_head(ui, self.heads, self.focused_head, head, &mut response);
                     }

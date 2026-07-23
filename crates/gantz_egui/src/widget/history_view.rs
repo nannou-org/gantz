@@ -135,7 +135,8 @@ impl<'a> HistoryView<'a> {
                 for (ca, commit) in filtered_commits {
                     let head = gantz_ca::Head::Commit(*ca);
                     let row_type = HeadRowType::Unnamed(&commit.timestamp);
-                    let res = head_row(self.heads, &head, row_type, ca, self.focused_head, ui);
+                    let res =
+                        head_row(self.heads, &head, row_type, ca, self.focused_head, None, ui);
 
                     if res.row.clicked() {
                         click_head(ui, self.heads, self.focused_head, head, &mut response);
