@@ -10,7 +10,7 @@ use gantz_core::node::graph::{Graph, NodeIx};
 use gantz_core::node::{ExprCtx, ExprResult, MetaCtx, parse_expr};
 use gantz_plyphon::flatten::{Flat, FlattenError, RefKind, flatten};
 use gantz_plyphon::{
-    AddAction, Bus, Lag, NodeDsp, Out, ROOT_GROUP_ID, ScopeOut, SinOsc, ToNodeDsp, derive_synthdef,
+    AddAction, Bus, NodeDsp, Out, ROOT_GROUP_ID, ScopeOut, ToNodeDsp, UnitNode, derive_synthdef,
     derive_synthdefs, structural_sig,
 };
 use petgraph::Direction;
@@ -24,8 +24,7 @@ const SR: f32 = 48_000.0;
 /// non-DSP `Other` stand-in.
 #[derive(Clone)]
 enum N {
-    SinOsc(SinOsc),
-    Lag(Lag),
+    Unit(UnitNode),
     Out(Out),
     ScopeOut(ScopeOut),
     Bus(Bus),
@@ -40,8 +39,7 @@ enum N {
 impl ToNodeDsp for N {
     fn to_node_dsp(&self) -> Option<&dyn NodeDsp> {
         match self {
-            N::SinOsc(s) => Some(s),
-            N::Lag(l) => Some(l),
+            N::Unit(u) => Some(u),
             N::Out(o) => Some(o),
             N::ScopeOut(t) => Some(t),
             N::Bus(b) => Some(b),
@@ -66,6 +64,14 @@ impl gantz_core::Node for N {
 
 fn ca(byte: u8) -> ContentAddr {
     ContentAddr([byte; 32])
+}
+
+fn sinosc() -> N {
+    N::Unit(UnitNode::from_unit("SinOsc").expect("SinOsc row"))
+}
+
+fn lag() -> N {
+    N::Unit(UnitNode::from_unit("Lag").expect("Lag row"))
 }
 
 /// A `Resolve` closure over a map of committed graphs: `Ref` nodes resolve
@@ -127,7 +133,7 @@ fn edges_into(flat: &Graph<Flat<&N>>, path: &[usize]) -> Vec<(Vec<usize>, u16, u
 fn lag_child() -> Graph<N> {
     let mut g = Graph::<N>::default();
     let i = g.add_node(N::Inlet);
-    let l = g.add_node(N::Lag(Lag::default()));
+    let l = g.add_node(lag());
     let o = g.add_node(N::Outlet);
     g.add_edge(i, l, Edge::new(0.into(), 0.into()));
     g.add_edge(l, o, Edge::new(0.into(), 0.into()));
@@ -148,7 +154,7 @@ fn flat_graph_flattens_to_identity() {
     // No refs: every node is copied with its flat path and every edge kept, and
     // the derived def is structurally identical to deriving the raw graph.
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let other = g.add_node(N::Other);
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, o, Edge::new(0.into(), 0.into()));
@@ -174,7 +180,7 @@ fn splices_a_nested_child() {
     // its dur param is named and bound by that path.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(1)));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, r, Edge::new(0.into(), 0.into()));
@@ -208,14 +214,14 @@ fn inlet_fans_out_to_every_consumer() {
     // becomes an edge to each consumer.
     let mut child = Graph::<N>::default();
     let i = child.add_node(N::Inlet);
-    let l0 = child.add_node(N::Lag(Lag::default()));
-    let l1 = child.add_node(N::Lag(Lag::default()));
+    let l0 = child.add_node(lag());
+    let l1 = child.add_node(lag());
     child.add_edge(i, l0, Edge::new(0.into(), 0.into()));
     child.add_edge(i, l1, Edge::new(0.into(), 0.into()));
     let map = HashMap::from([(ca(1), child)]);
 
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(1)));
     g.add_edge(s, r, Edge::new(0.into(), 0.into()));
 
@@ -229,7 +235,7 @@ fn pass_through_wire_dissolves() {
     // child: inlet -> outlet. The ref dissolves into a direct parent edge.
     let map = HashMap::from([(ca(1), wire_child())]);
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(1)));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, r, Edge::new(0.into(), 0.into()));
@@ -254,7 +260,7 @@ fn two_levels_splice_and_pass_through() {
     let map = HashMap::from([(ca(1), lag_child()), (ca(2), child)]);
 
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(2)));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, r, Edge::new(0.into(), 0.into()));
@@ -296,7 +302,7 @@ fn multi_instance_refs_are_independent() {
     // independent param bindings.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let r1 = g.add_node(N::Ref(ca(1)));
     let r2 = g.add_node(N::Ref(ca(1)));
     let o = g.add_node(N::Out(Out::default()));
@@ -381,8 +387,8 @@ fn every_edge_bridges_across_a_boundary() {
     // so derivation sums them - no edge is dropped at the boundary.
     let map = HashMap::from([(ca(1), wire_child())]);
     let mut g = Graph::<N>::default();
-    let s_old = g.add_node(N::SinOsc(SinOsc::default()));
-    let s_new = g.add_node(N::SinOsc(SinOsc::default()));
+    let s_old = g.add_node(sinosc());
+    let s_new = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(1)));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s_old, r, Edge::new(0.into(), 0.into()));
@@ -421,7 +427,7 @@ fn duplicate_chains_bridge_as_two_summands() {
     let map = HashMap::from([(ca(1), child)]);
 
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(1)));
     let out = g.add_node(N::Out(Out::default()));
     g.add_edge(s, r, Edge::new(0.into(), 0.into()));
@@ -449,7 +455,7 @@ fn nested_sinks_and_buses_derive_with_stable_keys() {
     let map = HashMap::from([(ca(1), child)]);
 
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(1)));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, r, Edge::new(0.into(), 0.into()));
@@ -481,7 +487,7 @@ fn nested_scopeout_binds_by_nested_path() {
     let map = HashMap::from([(ca(1), child)]);
 
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(1)));
     g.add_edge(s, r, Edge::new(0.into(), 0.into()));
 
@@ -496,7 +502,7 @@ fn nested_synth_plays_expected_tone() {
     // The whole pipeline end to end: a sine committed inside a child graph
     // sounds through the parent's `~out` when rendered by the real engine.
     let mut child = Graph::<N>::default();
-    let s = child.add_node(N::SinOsc(SinOsc::default()));
+    let s = child.add_node(sinosc());
     let o = child.add_node(N::Outlet);
     child.add_edge(s, o, Edge::new(0.into(), 0.into()));
     let map = HashMap::from([(ca(1), child)]);
@@ -574,7 +580,7 @@ fn instanced_ref_stays_an_opaque_marker() {
     // nodes do not appear in the flat graph).
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let r = g.add_node(N::DspRef(ca(1), false));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, r, Edge::new(0.into(), 0.into()));
@@ -597,7 +603,7 @@ fn inlined_dsp_ref_splices_as_a_plain_ref() {
     // nested path.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
-    let s = g.add_node(N::SinOsc(SinOsc::default()));
+    let s = g.add_node(sinosc());
     let r = g.add_node(N::DspRef(ca(1), true));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, r, Edge::new(0.into(), 0.into()));
@@ -627,8 +633,8 @@ fn instance_marker_preserves_multiport_edges() {
     let map = HashMap::from([(ca(2), child)]);
 
     let mut g = Graph::<N>::default();
-    let s0 = g.add_node(N::SinOsc(SinOsc::default()));
-    let s1 = g.add_node(N::SinOsc(SinOsc::default()));
+    let s0 = g.add_node(sinosc());
+    let s1 = g.add_node(sinosc());
     let r = g.add_node(N::DspRef(ca(2), false));
     let pk = g.add_node(N::Out(Out::default()));
     // Two inputs into the ref (input 0 and 1), two outputs out (0 and 1 - the
@@ -660,7 +666,7 @@ fn root_boundaries_kept_as_markers() {
     // outlet). Nested boundaries keep dissolving (covered elsewhere).
     let mut g = Graph::<N>::default();
     let i0 = g.add_node(N::Inlet);
-    let l = g.add_node(N::Lag(Lag::default()));
+    let l = g.add_node(lag());
     let i1 = g.add_node(N::Inlet);
     let o0 = g.add_node(N::Outlet);
     g.add_edge(i0, l, Edge::new(0.into(), 0.into()));

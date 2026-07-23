@@ -6,7 +6,7 @@ use gantz_core::Edge;
 use gantz_core::data::ReifiedGraphs;
 use gantz_core::node::graph::Graph;
 use gantz_core::node::{AsRefNode, ExprCtx, ExprResult, MetaCtx, Ref, parse_expr};
-use gantz_plyphon::{Lag, NodeDsp, Out, PortShape, PortShapes, SinOsc, ToNodeDsp, root_port_info};
+use gantz_plyphon::{NodeDsp, Out, PortShape, PortShapes, ToNodeDsp, UnitNode, root_port_info};
 use plyphon::Rate;
 
 /// A minimal node standing in for the app's node set. Adjacent tagging keeps
@@ -15,8 +15,7 @@ use plyphon::Rate;
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", content = "c")]
 enum N {
-    SinOsc(SinOsc),
-    Lag(Lag),
+    Unit(UnitNode),
     Out(Out),
     Ref(Ref),
     Inlet,
@@ -28,8 +27,7 @@ enum N {
 impl ToNodeDsp for N {
     fn to_node_dsp(&self) -> Option<&dyn NodeDsp> {
         match self {
-            N::SinOsc(s) => Some(s),
-            N::Lag(l) => Some(l),
+            N::Unit(u) => Some(u),
             N::Out(o) => Some(o),
             N::Ref(_) | N::Inlet | N::Outlet | N::Other => None,
         }
@@ -52,15 +50,17 @@ impl gantz_core::Node for N {
 
     fn n_inputs(&self, ctx: MetaCtx) -> usize {
         match self {
-            N::SinOsc(_) | N::Lag(_) | N::Outlet => 1,
+            N::Unit(u) => gantz_core::Node::n_inputs(u, ctx),
+            N::Outlet => 1,
             N::Out(o) => gantz_core::Node::n_inputs(o, ctx),
             N::Ref(_) | N::Inlet | N::Other => 0,
         }
     }
 
-    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
+    fn n_outputs(&self, ctx: MetaCtx) -> usize {
         match self {
-            N::SinOsc(_) | N::Lag(_) | N::Inlet | N::Other => 1,
+            N::Unit(u) => gantz_core::Node::n_outputs(u, ctx),
+            N::Inlet | N::Other => 1,
             N::Out(_) | N::Ref(_) | N::Outlet => 0,
         }
     }
@@ -91,6 +91,14 @@ fn reify_all(registry: &gantz_ca::Registry) -> ReifiedGraphs<N> {
     reified
 }
 
+fn sinosc() -> N {
+    N::Unit(UnitNode::from_unit("SinOsc").expect("SinOsc row"))
+}
+
+fn lag() -> N {
+    N::Unit(UnitNode::from_unit("Lag").expect("Lag row"))
+}
+
 fn shape(width: usize, rate: Rate) -> PortShape {
     PortShape { width, rate }
 }
@@ -108,7 +116,7 @@ fn shapes<const M: usize>(entries: [(&[usize], usize, PortShape); M]) -> PortSha
 fn flat_graph_classifies_dsp_ports() {
     let registry = gantz_ca::Registry::default();
     let mut g: Graph<N> = Graph::default();
-    let sin = g.add_node(N::SinOsc(SinOsc::default()));
+    let sin = g.add_node(sinosc());
     let out = g.add_node(N::Out(Out::default()));
     let slider = g.add_node(N::Other);
     let slider2 = g.add_node(N::Other);
@@ -141,7 +149,7 @@ fn ref_ports_classify_through_child() {
     // Child: inlet -> ~lag -> outlet.
     let mut child: Graph<N> = Graph::default();
     let i = child.add_node(N::Inlet);
-    let l = child.add_node(N::Lag(Lag::default()));
+    let l = child.add_node(lag());
     let o = child.add_node(N::Outlet);
     child.add_edge(i, l, Edge::new(0.into(), 0.into()));
     child.add_edge(l, o, Edge::new(0.into(), 0.into()));
@@ -149,7 +157,7 @@ fn ref_ports_classify_through_child() {
 
     // Root: ~sinosc -> ref -> ~out.
     let mut g: Graph<N> = Graph::default();
-    let sin = g.add_node(N::SinOsc(SinOsc::default()));
+    let sin = g.add_node(sinosc());
     let r = g.add_node(N::Ref(Ref::new(ca)));
     let out = g.add_node(N::Out(Out::default()));
     g.add_edge(sin, r, Edge::new(0.into(), 0.into()));
@@ -176,7 +184,7 @@ fn ref_ports_classify_through_child() {
 fn ref_output_without_recorded_shape_is_signal_with_none() {
     let mut registry = gantz_ca::Registry::default();
     let mut child: Graph<N> = Graph::default();
-    let s = child.add_node(N::SinOsc(SinOsc::default()));
+    let s = child.add_node(sinosc());
     let o = child.add_node(N::Outlet);
     child.add_edge(s, o, Edge::new(0.into(), 0.into()));
     let ca = commit(&mut registry, child);
@@ -196,7 +204,7 @@ fn nested_ref_paths_compose() {
 
     // Inner: ~sinosc -> outlet.
     let mut inner: Graph<N> = Graph::default();
-    let s = inner.add_node(N::SinOsc(SinOsc::default()));
+    let s = inner.add_node(sinosc());
     let o = inner.add_node(N::Outlet);
     inner.add_edge(s, o, Edge::new(0.into(), 0.into()));
     let inner_ca = commit(&mut registry, inner);
@@ -229,7 +237,7 @@ fn root_boundaries_forward_classification() {
     let registry = gantz_ca::Registry::default();
     let mut g: Graph<N> = Graph::default();
     let i = g.add_node(N::Inlet);
-    let l = g.add_node(N::Lag(Lag::default()));
+    let l = g.add_node(lag());
     let o = g.add_node(N::Outlet);
     g.add_edge(i, l, Edge::new(0.into(), 0.into()));
     g.add_edge(l, o, Edge::new(0.into(), 0.into()));
@@ -255,7 +263,7 @@ fn dangling_ref_is_control() {
     let registry = gantz_ca::Registry::default();
     let mut g: Graph<N> = Graph::default();
     let r = g.add_node(N::Ref(Ref::new(ContentAddr::from([9u8; 32]))));
-    let sin = g.add_node(N::SinOsc(SinOsc::default()));
+    let sin = g.add_node(sinosc());
     g.add_edge(sin, r, Edge::new(0.into(), 0.into()));
 
     let info = root_port_info(&g, &reify_all(&registry), &PortShapes::default());
@@ -271,8 +279,8 @@ fn multi_fed_ref_outlet_sums_shapes() {
 
     // Child: two sources feeding the one outlet.
     let mut child: Graph<N> = Graph::default();
-    let a = child.add_node(N::SinOsc(SinOsc::default()));
-    let b = child.add_node(N::Lag(Lag::default()));
+    let a = child.add_node(sinosc());
+    let b = child.add_node(lag());
     let o = child.add_node(N::Outlet);
     child.add_edge(a, o, Edge::new(0.into(), 0.into()));
     child.add_edge(b, o, Edge::new(0.into(), 0.into()));

@@ -41,9 +41,8 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             bevy_gantz_egui::node::TickBang,
             gantz_egui::node::Inspect,
             gantz_egui::node::Plot,
-            gantz_plyphon::SinOsc,
+            gantz_plyphon::UnitNode,
             gantz_plyphon::Out,
-            gantz_plyphon::Lag,
             gantz_plyphon::ScopeOut,
             gantz_plyphon::Pack,
             gantz_plyphon::Sum,
@@ -178,10 +177,12 @@ mod tests {
 
     /// Gate test for the app's builtin palette: the set composed from the
     /// per-domain `builtins()` lists must match the full expected name set.
-    /// A builtin dropped from (or added to) any domain list fails here.
+    /// A builtin dropped from (or added to) any domain list fails here. The
+    /// `~` set is the bespoke DSP nodes plus one entry per plyphon unit
+    /// descriptor row (whose own gate tests cover the table's contents).
     #[test]
     fn builtins_match_expected_name_set() {
-        let expected = vec![
+        let mut expected = vec![
             "apply",
             "bang",
             "branch",
@@ -199,15 +200,15 @@ mod tests {
             "tick!",
             "update!",
             "~bus",
-            "~lag",
             "~out",
             "~pack",
             "~playbuf",
             "~scopeout",
-            "~sinosc",
             "~sum",
             "~unpack",
         ];
+        expected.extend(gantz_plyphon::UNITS.iter().map(|d| d.keyword));
+        expected.sort_unstable();
         let builtins = super::builtins();
         let names: Vec<_> = builtins.names().collect();
         assert_eq!(names, expected);
@@ -321,11 +322,37 @@ mod tests {
                     ("y_max", Datum::Null),
                 ],
             ),
-            node_datum("SinOsc", vec![]),
-            node_datum("SinOsc", vec![("rate", Datum::Str("kr".into()))]),
+            node_datum("Unit", vec![("unit", Datum::Str("SinOsc".into()))]),
+            node_datum(
+                "Unit",
+                vec![
+                    ("unit", Datum::Str("SinOsc".into())),
+                    ("rate", Datum::Str("kr".into())),
+                ],
+            ),
+            node_datum("Unit", vec![("unit", Datum::Str("Lag".into()))]),
+            node_datum(
+                "Unit",
+                vec![
+                    ("unit", Datum::Str("Lag".into())),
+                    (
+                        "lags",
+                        Datum::Map(vec![("dur".to_string(), Datum::F64(0.02))]),
+                    ),
+                ],
+            ),
+            node_datum(
+                "Unit",
+                vec![
+                    ("unit", Datum::Str("CombC".into())),
+                    (
+                        "init",
+                        Datum::Map(vec![("maxdelay".to_string(), Datum::F64(0.5))]),
+                    ),
+                ],
+            ),
+            node_datum("Unit", vec![("unit", Datum::Str("Pan2".into()))]),
             node_datum("Out", vec![]),
-            node_datum("Lag", vec![]),
-            node_datum("Lag", vec![("rate", Datum::Str("kr".into()))]),
             node_datum("ScopeOut", vec![]),
             node_datum("ScopeOut", vec![("size", Datum::U64(64))]),
             // Legacy: pre-channel-group `~scopeout` data carries a `channels`
@@ -377,6 +404,29 @@ mod tests {
                 .reify_ui(&nd)
                 .unwrap_or_else(|e| panic!("tag `{}` missing from the codec: {e}", nd.tag));
         }
+    }
+
+    /// A `Unit` datum naming a unit outside the descriptor table fails to
+    /// reify - the same UX as an unknown node type tag, rather than a
+    /// half-alive node whose sockets cannot be enumerated.
+    #[test]
+    fn unknown_unit_name_fails_to_reify() {
+        use gantz_format::Datum;
+        let nd = gantz_ca::NodeData::new(
+            "Unit".to_string(),
+            Datum::Map(vec![(
+                "unit".to_string(),
+                Datum::Str("NoSuchUnit".to_string()),
+            )]),
+        );
+        let err = match super::codec().reify_ui(&nd) {
+            Ok(_) => panic!("an unknown unit name must fail to reify"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("NoSuchUnit"),
+            "the error names the unknown unit: {err}",
+        );
     }
 
     /// The stored instances the erased-representation gate runs over: every
@@ -502,10 +552,6 @@ mod tests {
                 "f33771875aa2d1e58ba6d0b78508d3fbefb67bb9cea450a58c661f0c1f8c94ad",
             ),
             (
-                "Lag",
-                "25b2a58df0f09fbfbac24f66e392b3bbc37dac93f6be3a4615c2564ec93bc98b",
-            ),
-            (
                 "Log",
                 "e342bc3f0fbb7f89223b045a6083a84de3e099074d969aec9b5a5c9f27169c09",
             ),
@@ -542,16 +588,16 @@ mod tests {
                 "f52e55d37ad94f3c6bd37c78f55282f8b8e934c8f26e075cd1afb32a5eee133c",
             ),
             (
-                "SinOsc",
-                "8855fa0969785b3f32a540a882d4993aec164be346317fa0ad4563e25a36a25e",
-            ),
-            (
                 "Sum",
                 "80658975450345544a9d54870972ef3ffe60d100778adbee6113455963254389",
             ),
             (
                 "TickBang",
                 "5b3327a3738cae95967f9b7969d8ddf07eedf1e681e3e1a45147614fa75a1ea1",
+            ),
+            (
+                "Unit",
+                "da058fab687dc2013f75b42e1678d907fa873f5e12dc77e80b1cffe01596cf92",
             ),
             (
                 "Unpack",
@@ -587,15 +633,13 @@ mod tests {
             gantz_ca::Datum::tagged(&nd.tag, fields)
         }
 
+        let unit = |name: &str| gantz_plyphon::UnitNode::from_unit(name).expect("table row");
         let sugar = super::codec().sugars();
-        let cases: [(gantz_ca::NodeData, &str, &str); 8] = [
-            (
-                erased(&gantz_plyphon::SinOsc::default()),
-                "SinOsc",
-                "~sinosc",
-            ),
+        let cases: [(gantz_ca::NodeData, &str, &str); 9] = [
+            (erased(&unit("SinOsc")), "Unit", "~sinosc"),
+            (erased(&unit("Lag")), "Unit", "~lag"),
+            (erased(&unit("LPF")), "Unit", "~lpf"),
             (erased(&gantz_plyphon::Out::default()), "Out", "~out"),
-            (erased(&gantz_plyphon::Lag::default()), "Lag", "~lag"),
             (
                 erased(&gantz_plyphon::ScopeOut::default()),
                 "ScopeOut",
@@ -636,9 +680,10 @@ mod tests {
         // channel 1 to the out - covering the whole dsp node set including the
         // routing pair and the boundary (which the single-def `derive_synthdef`
         // fuses to a plain wire).
+        let sinosc = || gantz_plyphon::UnitNode::from_unit("SinOsc").expect("SinOsc row");
         let mut g: G = Graph::default();
-        let s0 = g.add_node(Box::new(gantz_plyphon::SinOsc::default()) as DynNode);
-        let s1 = g.add_node(Box::new(gantz_plyphon::SinOsc::default()) as DynNode);
+        let s0 = g.add_node(Box::new(sinosc()) as DynNode);
+        let s1 = g.add_node(Box::new(sinosc()) as DynNode);
         let pk = g.add_node(Box::new(gantz_plyphon::Pack::default()) as DynNode);
         let bus = g.add_node(Box::new(gantz_plyphon::Bus::default()) as DynNode);
         let up = g.add_node(Box::new(gantz_plyphon::Unpack::default()) as DynNode);
@@ -795,9 +840,19 @@ mod tests {
         let config = gantz_core::compile::Config::default();
         let (mut vm, _compiled) =
             gantz_core::vm::init(&get_node, parent, &[], &config).expect("vm init");
-        let (value, pending) = gantz_plyphon::param::drain_param(&mut vm, &binding.node_path)
-            .expect("nested lag param state");
-        assert_eq!(value, f64::from(gantz_plyphon::Lag::DEFAULT_DUR));
+        let key = binding
+            .key
+            .as_deref()
+            .expect("the lag's dur binding is keyed");
+        assert_eq!(key, "dur");
+        let (value, pending) =
+            gantz_plyphon::param::drain_param_keyed(&mut vm, &binding.node_path, key)
+                .expect("nested lag param state");
+        assert_eq!(
+            value,
+            f64::from(0.1f32),
+            "the descriptor's dur default (widened from its f32)",
+        );
         assert!(pending.is_empty());
     }
 
@@ -853,7 +908,8 @@ mod tests {
             let mut unpack = gantz_plyphon::Unpack::default();
             unpack.set_count(count);
             let mut g: G = Graph::default();
-            let s = g.add_node(Box::new(gantz_plyphon::SinOsc::default()) as DynNode);
+            let sinosc = gantz_plyphon::UnitNode::from_unit("SinOsc").expect("SinOsc row");
+            let s = g.add_node(Box::new(sinosc) as DynNode);
             let up = g.add_node(Box::new(unpack) as DynNode);
             let insp = g.add_node(Box::new(gantz_egui::node::Inspect::default()) as DynNode);
             g.add_edge(s, up, Edge::new(0.into(), 0.into()));
@@ -883,8 +939,9 @@ mod tests {
 
         // number (a push source) -> ~sinosc.freq (control input at index 0).
         let mut g: G = Graph::default();
+        let sinosc = gantz_plyphon::UnitNode::from_unit("SinOsc").expect("SinOsc row");
         let num = g.add_node(Box::new(gantz_std::Number::default()) as DynNode);
-        let sine = g.add_node(Box::new(gantz_plyphon::SinOsc::default()) as DynNode);
+        let sine = g.add_node(Box::new(sinosc) as DynNode);
         g.add_edge(num, sine, Edge::new(0.into(), 0.into()));
 
         let get_node = |_: &gantz_ca::ContentAddr| -> Option<&dyn gantz_core::Node> { None };
@@ -914,15 +971,16 @@ mod tests {
             .expect("extract ~sinosc state")
             .expect("~sinosc state present");
         assert_eq!(
-            gantz_plyphon::param::pending_len(&queued),
+            gantz_plyphon::param::pending_len_total(&queued),
             1,
-            "pending_len must count the queued update without draining",
+            "pending_len_total must count the queued update without draining",
         );
 
         // The control value landed in ~sinosc's freq param: the current value is
         // updated, and the timestamped update is queued for the dsp driver.
-        let (value, pending) = gantz_plyphon::param::drain_param(&mut vm, &[sine.index()])
-            .expect("~sinosc param state present");
+        let (value, pending) =
+            gantz_plyphon::param::drain_param_keyed(&mut vm, &[sine.index()], "freq")
+                .expect("~sinosc param state present");
         assert_eq!(value, 440.0, "control input must update the param value");
         assert_eq!(
             pending,
@@ -946,10 +1004,11 @@ mod tests {
 
         // number -> ~lag (dsp input) -> ~sinosc.freq: pushing the number fires
         // the whole chain, so the lag's placeholder reaches the freq input.
+        let unit = |name: &str| gantz_plyphon::UnitNode::from_unit(name).expect("table row");
         let mut g: G = Graph::default();
         let num = g.add_node(Box::new(gantz_std::Number::default()) as DynNode);
-        let lag = g.add_node(Box::new(gantz_plyphon::Lag::default()) as DynNode);
-        let sine = g.add_node(Box::new(gantz_plyphon::SinOsc::default()) as DynNode);
+        let lag = g.add_node(Box::new(unit("Lag")) as DynNode);
+        let sine = g.add_node(Box::new(unit("SinOsc")) as DynNode);
         g.add_edge(num, lag, Edge::new(0.into(), 0.into()));
         g.add_edge(lag, sine, Edge::new(0.into(), 0.into()));
 
@@ -964,12 +1023,12 @@ mod tests {
             .expect("set number state");
         fire_push(&mut vm, &eps, num.index());
 
-        let (value, pending) = gantz_plyphon::param::drain_param(&mut vm, &[sine.index()])
-            .expect("~sinosc param state present");
+        let (value, pending) =
+            gantz_plyphon::param::drain_param_keyed(&mut vm, &[sine.index()], "freq")
+                .expect("~sinosc param state present");
         assert_eq!(
-            value,
-            f64::from(gantz_plyphon::SinOsc::DEFAULT_FREQ),
-            "a dsp wire must not overwrite the param value",
+            value, 220.0,
+            "a dsp wire must not overwrite the param value (the descriptor default)",
         );
         assert!(
             pending.is_empty(),

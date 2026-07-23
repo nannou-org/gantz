@@ -581,6 +581,10 @@ struct PartSynth {
 struct ParamSlot {
     /// The dsp node's path in the graph (where its value lives in VM state).
     node_path: Vec<usize>,
+    /// Which of the node's params feeds this slot: `None` drains the node's
+    /// bare single-param state, `Some(name)` the `name`d sub-map of its keyed
+    /// state (see `gantz_plyphon::param`).
+    key: Option<String>,
     /// The param's index within the synth.
     index: usize,
     /// The last value pushed via `set_control` (`None` until first applied).
@@ -855,8 +859,11 @@ fn drive_synths(
             let node_id = synth.node_id;
             let mut backend = Embedded::new(&mut dsp.controller);
             for slot in &mut synth.params {
-                let Some((value, pending)) = gantz_plyphon::param::drain_param(vm, &slot.node_path)
-                else {
+                let drained = match &slot.key {
+                    None => gantz_plyphon::param::drain_param(vm, &slot.node_path),
+                    Some(key) => gantz_plyphon::param::drain_param_keyed(vm, &slot.node_path, key),
+                };
+                let Some((value, pending)) = drained else {
                     continue;
                 };
                 let value = value as f32;
@@ -1389,6 +1396,7 @@ fn spawn_part(
                 .iter()
                 .map(|b| ParamSlot {
                     node_path: b.node_path.clone(),
+                    key: b.key.clone(),
                     index: b.index,
                     last: None,
                 })
@@ -1931,7 +1939,7 @@ mod tests {
         use gantz_plyphon::flatten::{Flat, RefKind, flatten};
 
         let mut g = Graph::<TestN>::default();
-        let s = g.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
+        let s = g.add_node(sinosc());
         let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
         g.add_edge(s, o, Edge::new(0.into(), 0.into()));
         let resolve =
@@ -1972,6 +1980,85 @@ mod tests {
         assert!(
             rms > 0.05,
             "sin -> out must sound via spawn_part: rms={rms}"
+        );
+    }
+
+    /// End-to-end for the descriptor-table nodes: a `~saw -> ~lpf -> ~out`
+    /// chain spawns through `spawn_part` and sounds, and the filter's *keyed*
+    /// cutoff binding drives the running synth via `set_control` - slamming
+    /// the cutoff down collapses the saw's energy. Guards the whole
+    /// `UnitNode` pipeline (derive, keyed `ParamSlot`s, live control) with an
+    /// offline engine.
+    #[test]
+    fn unit_chain_sounds_and_keyed_param_controls_it() {
+        use gantz_core::edge::Edge;
+        use gantz_core::node::graph::Graph;
+        use gantz_plyphon::flatten::{Flat, RefKind, flatten};
+
+        let mut g = Graph::<TestN>::default();
+        let s = g.add_node(unit("Saw"));
+        let f = g.add_node(unit("LPF"));
+        let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
+        g.add_edge(s, f, Edge::new(0.into(), 0.into()));
+        g.add_edge(f, o, Edge::new(0.into(), 0.into()));
+        let resolve =
+            |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
+        let flat: Graph<Flat<&TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
+
+        let mut cache = DefCache::new();
+        let template = derive_template(&flat, 1, &|_| None, &mut cache).expect("derive");
+        let part = instantiate(&template, &cache).into_iter().next().unwrap();
+        let wiring = wiring_hash(&part);
+
+        let (mut controller, _nrt, mut world) = plyphon::engine(plyphon::Options {
+            sample_rate: 48_000.0,
+            output_channels: 1,
+            ..plyphon::Options::default()
+        });
+        let mut state = HeadSynths::default();
+        let assets = BufferBlobs::default();
+        let entity = entities(1)[0];
+        let synth = spawn_part(
+            &mut controller,
+            &mut state,
+            &assets,
+            entity,
+            part,
+            wiring,
+            48_000.0,
+            None,
+        )
+        .expect("spawn_part");
+
+        // The filter's cutoff arrives as a *keyed* slot at the LPF's path.
+        let cutoff = synth
+            .params
+            .iter()
+            .find(|p| p.node_path == vec![1] && p.key.as_deref() == Some("freq"))
+            .expect("the LPF's keyed freq slot");
+
+        // Open (the 440 Hz default): the saw sounds.
+        let render = |world: &mut plyphon::World| {
+            let mut out = vec![0.0f32; 48_000 / 2];
+            for block in out.chunks_mut(64) {
+                world.fill(block, 1);
+            }
+            (out.iter().map(|v| v * v).sum::<f32>() / out.len() as f32).sqrt()
+        };
+        let open = render(&mut world);
+        assert!(open > 0.05, "saw -> lpf -> out must sound: rms={open}");
+
+        // Slam the cutoff to 20 Hz via the keyed slot: the 220 Hz saw all but
+        // vanishes behind the 2nd-order low-pass.
+        let mut backend = Embedded::new(&mut controller);
+        backend
+            .set_control(synth.node_id, cutoff.index, 20.0)
+            .expect("set_control");
+        let _settle = render(&mut world);
+        let closed = render(&mut world);
+        assert!(
+            closed < open * 0.2,
+            "closing the keyed cutoff must collapse the output: open={open}, closed={closed}",
         );
     }
 
@@ -2068,7 +2155,7 @@ mod tests {
 
         // Frame 1: `~sinosc -> ~out`.
         let mut g1 = Graph::<TestN>::default();
-        let s = g1.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
+        let s = g1.add_node(sinosc());
         let o = g1.add_node(TestN::Out(gantz_plyphon::Out::default()));
         g1.add_edge(s, o, Edge::new(0.into(), 0.into()));
         let ca1 = graph_addr(&g1);
@@ -2093,7 +2180,7 @@ mod tests {
 
         // Frame 2: add unconnected `inlet`/`outlet` (different graph address).
         let mut g2 = Graph::<TestN>::default();
-        let s = g2.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
+        let s = g2.add_node(sinosc());
         let o = g2.add_node(TestN::Out(gantz_plyphon::Out::default()));
         let _i = g2.add_node(TestN::Inlet);
         let _o2 = g2.add_node(TestN::Outlet);
@@ -2180,7 +2267,7 @@ mod tests {
         // Frame 2: connect `~sinosc -> ~pack` (same `~out` path -> stable key,
         // same name, but the def CHANGED: now carries a SinOsc). Must re-install.
         let mut g2 = g1.clone();
-        let s = g2.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
+        let s = g2.add_node(sinosc());
         g2.add_edge(s, pk, Edge::new(0.into(), 0.into()));
         let ca2 = graph_addr(&g2);
         structural_sync(
@@ -2210,7 +2297,7 @@ mod tests {
     /// address, arity and `inline` flag.
     #[derive(Clone)]
     enum TestN {
-        SinOsc(gantz_plyphon::SinOsc),
+        Unit(gantz_plyphon::UnitNode),
         Out(gantz_plyphon::Out),
         Pack(gantz_plyphon::Pack),
         Unpack(gantz_plyphon::Unpack),
@@ -2218,6 +2305,16 @@ mod tests {
         Inlet,
         Outlet,
         Ref(gantz_ca::ContentAddr, usize, usize, bool),
+    }
+
+    /// A test node wrapping the named plyphon unit (a descriptor-table row).
+    fn unit(name: &str) -> TestN {
+        TestN::Unit(gantz_plyphon::UnitNode::from_unit(name).expect("table row"))
+    }
+
+    /// A `~sinosc` test node (the `UnitNode` wrapping plyphon's `SinOsc`).
+    fn sinosc() -> TestN {
+        unit("SinOsc")
     }
 
     /// The graph's erased (data-layer) address: the same scheme the registry
@@ -2228,7 +2325,7 @@ mod tests {
         use gantz_core::data::erase_node_typed;
         let dg: gantz_ca::DataGraph = g.map(
             |_, n| match n {
-                TestN::SinOsc(s) => erase_node_typed(s).unwrap(),
+                TestN::Unit(s) => erase_node_typed(s).unwrap(),
                 TestN::Out(o) => erase_node_typed(o).unwrap(),
                 TestN::Pack(p) => erase_node_typed(p).unwrap(),
                 TestN::Unpack(u) => erase_node_typed(u).unwrap(),
@@ -2262,7 +2359,7 @@ mod tests {
     impl gantz_plyphon::ToNodeDsp for TestN {
         fn to_node_dsp(&self) -> Option<&dyn gantz_plyphon::NodeDsp> {
             match self {
-                TestN::SinOsc(s) => Some(s),
+                TestN::Unit(s) => Some(s),
                 TestN::Out(o) => Some(o),
                 TestN::Pack(p) => Some(p),
                 TestN::Unpack(u) => Some(u),
@@ -2355,7 +2452,7 @@ mod tests {
     fn sine_out_child() -> gantz_core::node::graph::Graph<TestN> {
         use gantz_core::edge::Edge;
         let mut g = gantz_core::node::graph::Graph::<TestN>::default();
-        let s = g.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
+        let s = g.add_node(sinosc());
         let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
         g.add_edge(s, o, Edge::new(0.into(), 0.into()));
         g
@@ -2445,7 +2542,7 @@ mod tests {
         // The edited child: structurally different (an extra `~pack` stage).
         let ca2 = gantz_ca::ContentAddr([2u8; 32]);
         let mut child2 = Graph::<TestN>::default();
-        let s = child2.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
+        let s = child2.add_node(sinosc());
         let pk = child2.add_node(TestN::Pack(gantz_plyphon::Pack::default()));
         let o = child2.add_node(TestN::Out(gantz_plyphon::Out::default()));
         child2.add_edge(s, pk, Edge::new(0.into(), 0.into()));
@@ -2455,7 +2552,7 @@ mod tests {
         // Head: its own region (sin -> out) + two instances of the child.
         let head = |ca: gantz_ca::ContentAddr| {
             let mut g = Graph::<TestN>::default();
-            let s = g.add_node(TestN::SinOsc(gantz_plyphon::SinOsc::default()));
+            let s = g.add_node(sinosc());
             let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
             g.add_edge(s, o, Edge::new(0.into(), 0.into()));
             g.add_node(TestN::Ref(ca, 0, 0, false));

@@ -282,7 +282,10 @@ fn node_spec_from_datum(
             Ok((spec, if func { "fnref" } else { "ref" }.to_string()))
         }
         other => {
-            let keyword = sugar.keyword_for_tag(other).unwrap_or("node").to_string();
+            let keyword = sugar
+                .label_stem(other, &value)
+                .unwrap_or("node")
+                .to_string();
             Ok((NodeSpec::Value(value), keyword))
         }
     }

@@ -178,6 +178,16 @@ pub trait Sugar {
     /// The label stem to generate for a node with this tag (e.g. `inlet`); used
     /// when naming nodes during serialization.
     fn keyword_for_tag(&self, tag: &str) -> Option<&str>;
+
+    /// The label stem for a concrete `node` datum with this tag. Defaults to
+    /// [`keyword_for_tag`](Self::keyword_for_tag); a sugar whose one tag
+    /// covers many keywords (e.g. the plyphon `"Unit"` node, whose keyword
+    /// depends on its `unit` field) overrides this to pick the stem from the
+    /// datum.
+    fn label_stem(&self, tag: &str, node: &Datum) -> Option<&str> {
+        let _ = node;
+        self.keyword_for_tag(tag)
+    }
 }
 
 /// Treat a reference to a sugar as a sugar, so `&S`/`&dyn Sugar` compose freely.
@@ -196,6 +206,10 @@ impl<S: Sugar + ?Sized> Sugar for &S {
 
     fn keyword_for_tag(&self, tag: &str) -> Option<&str> {
         (**self).keyword_for_tag(tag)
+    }
+
+    fn label_stem(&self, tag: &str, node: &Datum) -> Option<&str> {
+        (**self).label_stem(tag, node)
     }
 }
 
@@ -223,6 +237,11 @@ impl Sugar for Sugars<'_> {
 
     fn keyword_for_tag(&self, tag: &str) -> Option<&str> {
         self.0.iter().find_map(|s| s.keyword_for_tag(tag))
+    }
+
+    fn label_stem(&self, tag: &str, node: &Datum) -> Option<&str> {
+        // Forwarded (not defaulted) so each member's own override applies.
+        self.0.iter().find_map(|s| s.label_stem(tag, node))
     }
 }
 
