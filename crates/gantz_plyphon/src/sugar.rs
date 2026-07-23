@@ -6,10 +6,13 @@
 //! `(~out #:gain-lag s)`, `(~scopeout #:size n)` and `(~pack #:count n)`/
 //! `(~sum #:count n)`/
 //! `(~unpack #:count n)` forms carrying the structural smoothing lag / ugen
-//! rate / ring length / socket count. The `freq`/`gain`/`dur` param *values*
-//! live in VM state (not the node weight), so they are not serialized and never
-//! appear here. Compose it with [`gantz_format::CoreSugar`] (and the other
-//! crates' sugars) via [`gantz_format::Sugars`].
+//! rate / ring length / socket count. Every descriptor-table keyword (see
+//! [`crate::units`]) reads/writes the same way: bare `~lpf`, or
+//! `(~combc #:delay-lag s #:maxdelay v #:rate kr)` carrying the structural
+//! per-param lags, init-only values and rate. Param *values* live in VM state
+//! (not the node weight), so they are not serialized and never appear here.
+//! Compose it with [`gantz_format::CoreSugar`] (and the other crates' sugars)
+//! via [`gantz_format::Sugars`].
 
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
 
@@ -58,13 +61,21 @@ impl Sugar for PlyphonSugar {
             "~sum" => count_spec("Sum", args)?,
             "~unpack" => count_spec("Unpack", args)?,
             "~bus" => node_datum("Bus", vec![]),
-            _ => return Ok(None),
+            other => match crate::units::unit_desc_by_keyword(other) {
+                Some(desc) => unit_spec(desc, args)?,
+                None => return Ok(None),
+            },
         };
         Ok(Some(datum))
     }
 
     fn read_bare(&self, keyword: &str) -> Option<Datum> {
-        tag_for_keyword(keyword).map(|tag| node_datum(tag, vec![]))
+        tag_for_keyword(keyword)
+            .map(|tag| node_datum(tag, vec![]))
+            .or_else(|| {
+                crate::units::unit_desc_by_keyword(keyword)
+                    .map(|desc| node_datum("Unit", vec![("unit", Datum::Str(desc.unit.into()))]))
+            })
     }
 
     fn write_spec(&self, tag: &str, node: &Datum) -> Option<String> {
@@ -88,6 +99,8 @@ impl Sugar for PlyphonSugar {
             "Pack" => Some(write_count("~pack", crate::Pack::DEFAULT_COUNT, node)),
             "Sum" => Some(write_count("~sum", crate::Sum::DEFAULT_COUNT, node)),
             "Unpack" => Some(write_count("~unpack", crate::Unpack::DEFAULT_COUNT, node)),
+            // An unknown unit name falls through to the generic form.
+            "Unit" => write_unit(node),
             other => keyword_for_tag(other).map(str::to_string),
         }
     }
@@ -95,6 +108,80 @@ impl Sugar for PlyphonSugar {
     fn keyword_for_tag(&self, tag: &str) -> Option<&str> {
         keyword_for_tag(tag)
     }
+
+    fn label_stem(&self, tag: &str, node: &Datum) -> Option<&str> {
+        match tag {
+            // One tag, many keywords: the stem comes from the `unit` field
+            // (`~lpf0`, not `~unit0`).
+            "Unit" => node
+                .get("unit")
+                .and_then(Datum::as_str)
+                .and_then(crate::units::unit_desc)
+                .map(|desc| desc.keyword),
+            other => keyword_for_tag(other),
+        }
+    }
+}
+
+/// Read a table keyword's `(<kw> [#:<param>-lag s]... [#:<init> v]...
+/// [#:rate ar|kr])` form into a `Unit` node datum, carrying each map/field
+/// only when its keyword is present (so a bare form stays bare). Fields are
+/// pushed in `UnitNode`'s serde order (unit, rate, lags, init).
+fn unit_spec(desc: &'static crate::UnitDesc, args: SugarArgs<'_>) -> Result<Datum, FormatError> {
+    let mut fields = vec![("unit", Datum::Str(desc.unit.into()))];
+    push_rate(&mut fields, &args)?;
+    let mut lags = Vec::new();
+    for (name, _) in desc.hybrid_params() {
+        if let Some(lag) = args.keyword_f64(&format!("{name}-lag"))? {
+            lags.push((name.to_string(), Datum::F64(lag)));
+        }
+    }
+    if !lags.is_empty() {
+        fields.push(("lags", Datum::Map(lags)));
+    }
+    let mut init = Vec::new();
+    for (name, _) in desc.init_params() {
+        if let Some(value) = args.keyword_f64(name)? {
+            init.push((name.to_string(), Datum::F64(value)));
+        }
+    }
+    if !init.is_empty() {
+        fields.push(("init", Datum::Map(init)));
+    }
+    Ok(node_datum("Unit", fields))
+}
+
+/// Write a `Unit` node datum: the bare keyword when everything is defaulted,
+/// else `(<kw> [#:<param>-lag s]... [#:<init> v]... [#:rate kr])`. Stored
+/// values are `f32`s widened to `f64`; comparing and formatting them back as
+/// `f32` keeps the form exact and tidy (as [`write_lag`]). `None` (no such
+/// unit in the table) falls back to the generic `(node "Unit" ...)` form.
+fn write_unit(node: &Datum) -> Option<String> {
+    let desc = node
+        .get("unit")
+        .and_then(Datum::as_str)
+        .and_then(crate::units::unit_desc)?;
+    let mut parts = Vec::new();
+    if let Some(lags) = node.get("lags") {
+        for (name, _) in desc.hybrid_params() {
+            if let Some(lag) = lags.get(name).and_then(Datum::as_f64) {
+                if lag as f32 != 0.0 {
+                    parts.push(format!("#:{name}-lag {}", lag as f32));
+                }
+            }
+        }
+    }
+    if let Some(init) = node.get("init") {
+        for (name, default) in desc.init_params() {
+            if let Some(value) = init.get(name).and_then(Datum::as_f64) {
+                if value as f32 != default {
+                    parts.push(format!("#:{name} {}", value as f32));
+                }
+            }
+        }
+    }
+    parts.extend(rate_part(node));
+    Some(write_form(desc.keyword, parts))
 }
 
 /// Read a `(<head> [#:<keyword> s] [#:rate ar|kr])` form into a node datum tagged
@@ -373,6 +460,68 @@ mod tests {
             assert_eq!(counted.get("count").and_then(Datum::as_i64), Some(4));
             assert_eq!(s.write_spec(tag, &counted).as_deref(), Some(form.as_str()));
         }
+    }
+
+    #[test]
+    fn unit_keywords_round_trip() {
+        let s = PlyphonSugar;
+        // A bare table keyword reads to a `Unit` datum and writes back bare.
+        let bare = s.read_bare("~lpf").expect("bare");
+        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("Unit"));
+        assert_eq!(bare.get("unit").and_then(Datum::as_str), Some("LPF"));
+        assert_eq!(s.write_spec("Unit", &bare).as_deref(), Some("~lpf"));
+        // Structural args round-trip (written in lags/init/rate order).
+        let form = "(~combc #:delay-lag 0.02 #:maxdelay 0.5 #:rate kr)";
+        let combc = read_spec(form).expect("combc");
+        assert_eq!(combc.get("unit").and_then(Datum::as_str), Some("CombC"));
+        assert_eq!(
+            combc
+                .get("lags")
+                .and_then(|l| l.get("delay"))
+                .and_then(Datum::as_f64),
+            Some(0.02),
+        );
+        assert_eq!(
+            combc
+                .get("init")
+                .and_then(|i| i.get("maxdelay"))
+                .and_then(Datum::as_f64),
+            Some(0.5),
+        );
+        assert_eq!(s.write_spec("Unit", &combc).as_deref(), Some(form));
+        // Defaulted lag/init entries write back bare.
+        let defaulted = node_datum(
+            "Unit",
+            vec![
+                ("unit", Datum::Str("CombC".into())),
+                (
+                    "lags",
+                    Datum::Map(vec![("delay".to_string(), Datum::F64(0.0))]),
+                ),
+                (
+                    "init",
+                    Datum::Map(vec![("maxdelay".to_string(), Datum::F64(0.2))]),
+                ),
+            ],
+        );
+        assert_eq!(s.write_spec("Unit", &defaulted).as_deref(), Some("~combc"));
+        // An unknown unit name falls back to the generic form.
+        let unknown = node_datum("Unit", vec![("unit", Datum::Str("NoSuchUnit".into()))]);
+        assert_eq!(s.write_spec("Unit", &unknown), None);
+    }
+
+    #[test]
+    fn unit_label_stems_come_from_the_unit_field() {
+        let s = PlyphonSugar;
+        let lpf = s.read_bare("~lpf").expect("bare");
+        assert_eq!(s.label_stem("Unit", &lpf), Some("~lpf"));
+        let pan = s.read_bare("~pan2").expect("bare");
+        assert_eq!(s.label_stem("Unit", &pan), Some("~pan2"));
+        // The default still applies to the bespoke tags.
+        assert_eq!(
+            s.label_stem("Out", &node_datum("Out", vec![])),
+            Some("~out")
+        );
     }
 
     #[test]
