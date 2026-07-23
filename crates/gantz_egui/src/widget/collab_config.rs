@@ -1,5 +1,6 @@
-//! The "Settings > Collab" subtab: identity, username, relay and joining
-//! sessions.
+//! The "Settings > Collab" subtab: identity, username, action rate and
+//! relay configuration. Joining a session lives with the graphs it creates:
+//! the Graphs pane's join button.
 
 use crate::Responses;
 use crate::collab::{CollabConfig, SessionConn};
@@ -15,14 +16,13 @@ pub struct CollabSettings<'a> {
     pub relays: &'a [(String, bool)],
 }
 
-/// The Collab settings subtab: identity, username, relay and joining
-/// sessions.
+/// The Collab settings subtab: identity, username, action rate and relay
+/// configuration.
 ///
 /// Holds a per-frame snapshot of the persisted [`CollabConfig`] plus the
 /// user's displayable identity and relay status. Edits apply to the snapshot
 /// in place, and the full updated [`CollabConfig`] is emitted as a payload
-/// for the collab layer to apply; a submitted invite ticket is emitted as a
-/// [`JoinSession`][crate::JoinSession] payload.
+/// for the collab layer to apply.
 #[derive(Clone, Debug, Default)]
 pub struct CollabSettingsTab {
     /// The editable configuration snapshot.
@@ -33,13 +33,6 @@ pub struct CollabSettingsTab {
     pub relays: Vec<(String, bool)>,
 }
 
-/// Response from [`collab_config`].
-#[derive(Default)]
-pub struct CollabConfigResponse {
-    /// A ticket was submitted via the join field.
-    pub join_ticket: Option<String>,
-}
-
 impl crate::widget::SettingsTab for CollabSettingsTab {
     fn title(&self) -> &str {
         "Collab"
@@ -48,7 +41,7 @@ impl crate::widget::SettingsTab for CollabSettingsTab {
     fn ui(&mut self, ui: &mut egui::Ui) -> Responses {
         let mut responses = Responses::default();
         let before = self.config.clone();
-        let res = egui::ScrollArea::vertical()
+        egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let settings = CollabSettings {
@@ -57,11 +50,7 @@ impl crate::widget::SettingsTab for CollabSettingsTab {
                     relays: &self.relays,
                 };
                 collab_config(settings, ui)
-            })
-            .inner;
-        if let Some(ticket) = res.join_ticket {
-            responses.push(None, crate::JoinSession { ticket });
-        }
+            });
         if self.config != before {
             responses.push(None, self.config.clone());
         }
@@ -70,15 +59,13 @@ impl crate::widget::SettingsTab for CollabSettingsTab {
 }
 
 /// Render the collab configuration: the user's identity, their shared
-/// username, the relay configuration/status, and a field for joining a
-/// session from an invite ticket.
-pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> CollabConfigResponse {
+/// username, the live-action send rate and the relay configuration/status.
+pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) {
     let CollabSettings {
         config,
         peer_id,
         relays,
     } = settings;
-    let mut res = CollabConfigResponse::default();
     let control_w = (ui.available_width() - 64.0).max(64.0);
     egui::Grid::new("collab_config_grid")
         .num_columns(2)
@@ -184,27 +171,5 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> CollabConfi
                 });
                 ui.end_row();
             }
-
-            // Join a session from a pasted invite ticket.
-            ui.label("join");
-            let ticket_id = ui.id().with("collab_join_ticket");
-            let mut ticket = ui
-                .data(|d| d.get_temp::<String>(ticket_id))
-                .unwrap_or_default();
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut ticket)
-                        .hint_text("paste an invite ticket")
-                        .desired_width((control_w - 48.0).max(48.0)),
-                );
-                let ready = !ticket.trim().is_empty();
-                if ui.add_enabled(ready, egui::Button::new("join")).clicked() {
-                    res.join_ticket = Some(ticket.trim().to_string());
-                    ticket.clear();
-                }
-            });
-            ui.data_mut(|d| d.insert_temp(ticket_id, ticket));
-            ui.end_row();
         });
-    res
 }

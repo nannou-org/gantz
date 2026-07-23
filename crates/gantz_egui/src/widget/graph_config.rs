@@ -384,8 +384,8 @@ impl<'a> GraphConfig<'a> {
                                     if ui
                                         .button("copy invite")
                                         .on_hover_text(
-                                            "copy the invite ticket; \
-                                             others join via Settings > Collab",
+                                            "copy the invite ticket; others join via \
+                                             the \u{1F310} join button in the Graphs pane",
                                         )
                                         .clicked()
                                     {

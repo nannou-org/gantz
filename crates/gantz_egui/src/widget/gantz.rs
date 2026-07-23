@@ -1680,10 +1680,22 @@ where
             paint_gantz_file_hover_overlay(ui);
 
             let heads = access.heads();
-            let res = graph_select(gantz.env, heads, *focused_head, *base_names, ui);
+            let mut res = graph_select(
+                gantz.env,
+                heads,
+                *focused_head,
+                *base_names,
+                gantz.collab,
+                ui,
+            );
 
             if res.inner.export_all {
                 gantz_response.responses.push(None, ExportAllNamed);
+            }
+            if let Some(ticket) = res.inner.join_ticket.take() {
+                gantz_response
+                    .responses
+                    .push(None, crate::JoinSession { ticket });
             }
             match &mut gantz_response.graph_select {
                 Some(gs) => *gs |= res.inner,
@@ -3311,11 +3323,13 @@ fn graph_select(
     heads: &[gantz_ca::Head],
     focused_head: usize,
     base_names: &crate::reg::Names,
+    collab: Option<&crate::collab::CollabUiState>,
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<widget::graph_select::GraphSelectResponse> {
     pane_ui(ui, |ui| {
         widget::GraphSelect::new(env, heads, base_names)
             .focused_head(focused_head)
+            .collab(collab)
             .show(ui)
     })
 }
