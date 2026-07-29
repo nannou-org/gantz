@@ -142,20 +142,25 @@ fn eq_style(a: &egui::Style, b: &egui::Style) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{StyleConfig, from_ron, set_style_of, style_of, to_ron};
+    use super::{StyleConfig, apply, eq_style, from_ron, set_style_of, style_of, to_ron};
+
+    /// A config with both themes customised, distinguishably.
+    fn customised() -> StyleConfig {
+        let mut cfg = StyleConfig::default();
+        for (theme, gap) in [(egui::Theme::Dark, 3.0), (egui::Theme::Light, 7.0)] {
+            let mut style = style_of(&cfg, theme);
+            style.spacing.item_spacing.x = gap;
+            set_style_of(&mut cfg, theme, style);
+        }
+        cfg
+    }
 
     /// A customised config must survive the RON round-trip used by
     /// export/import and by GUI-state persistence. Guards against an egui bump
     /// breaking `Style`'s serde.
     #[test]
     fn style_config_round_trips_through_ron() {
-        let mut cfg = StyleConfig::default();
-        for theme in [egui::Theme::Dark, egui::Theme::Light] {
-            let mut style = style_of(&cfg, theme);
-            style.spacing.item_spacing.x += 3.0;
-            style.visuals.window_corner_radius = egui::CornerRadius::same(9);
-            set_style_of(&mut cfg, theme, style);
-        }
+        let cfg = customised();
         assert!(cfg.dark.is_some() && cfg.light.is_some());
         let text = to_ron(&cfg).expect("serialize StyleConfig");
         assert_eq!(cfg, from_ron(&text).expect("deserialize StyleConfig"));
@@ -172,5 +177,43 @@ mod tests {
             egui::Theme::Dark.default_style(),
         );
         assert!(cfg.dark.is_none());
+    }
+
+    /// Applying installs both themes' styles and the preference, whichever
+    /// theme is active - so a pop-out window's fresh context matches the
+    /// primary's after a single call.
+    #[test]
+    fn apply_installs_theme_and_both_styles() {
+        let mut cfg = customised();
+        cfg.theme = egui::ThemePreference::Light;
+        let ctx = egui::Context::default();
+        apply(&ctx, &cfg);
+        assert_eq!(ctx.theme(), egui::Theme::Light);
+        for theme in [egui::Theme::Dark, egui::Theme::Light] {
+            assert!(eq_style(&ctx.style_of(theme), &style_of(&cfg, theme)));
+        }
+    }
+
+    /// Re-applying an unchanged config is a no-op, so the per-frame call costs
+    /// nothing and does not fight a style set elsewhere in the same session.
+    #[test]
+    fn apply_skips_an_unchanged_config() {
+        let mut cfg = customised();
+        let ctx = egui::Context::default();
+        apply(&ctx, &cfg);
+
+        let mut meddled = ctx.style_of(egui::Theme::Dark).as_ref().clone();
+        meddled.spacing.item_spacing.x = 99.0;
+        ctx.set_style_of(egui::Theme::Dark, meddled.clone());
+        apply(&ctx, &cfg);
+        assert!(eq_style(&ctx.style_of(egui::Theme::Dark), &meddled));
+
+        // A changed config applies again, restoring what it specifies.
+        cfg.theme = egui::ThemePreference::Light;
+        apply(&ctx, &cfg);
+        assert!(eq_style(
+            &ctx.style_of(egui::Theme::Dark),
+            &style_of(&cfg, egui::Theme::Dark)
+        ));
     }
 }
