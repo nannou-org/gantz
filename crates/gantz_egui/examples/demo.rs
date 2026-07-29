@@ -1240,6 +1240,47 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         }
     }
 
+    for (_, gantz_egui::ExportStyle) in responses.take() {
+        let text = match gantz_egui::style::to_ron(&state.gantz.style) {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("ExportStyle: failed to serialize: {e}");
+                continue;
+            }
+        };
+        let ext = gantz_egui::style::FILE_EXTENSION;
+        let dialog = rfd::AsyncFileDialog::new()
+            .set_title("Export Style")
+            .set_file_name(&format!("gantz-style.{ext}"))
+            .add_filter("Gantz Style", &[ext]);
+        if let Some(handle) = pollster::block_on(dialog.save_file()) {
+            if let Err(e) = pollster::block_on(handle.write(text.as_bytes())) {
+                log::error!("ExportStyle: failed to write: {e}");
+            } else {
+                log::info!("Exported style to {}", handle.file_name());
+            }
+        }
+    }
+
+    for (_, gantz_egui::ImportStyle) in responses.take() {
+        let ext = gantz_egui::style::FILE_EXTENSION;
+        let dialog = rfd::AsyncFileDialog::new()
+            .set_title("Import Style")
+            .add_filter("Gantz Style", &[ext]);
+        let Some(handle) = pollster::block_on(dialog.pick_file()) else {
+            continue;
+        };
+        let bytes = pollster::block_on(handle.read());
+        match std::str::from_utf8(&bytes).map(gantz_egui::style::from_ron) {
+            Ok(Ok(style)) => {
+                state.gantz.style = style;
+                log::info!("Imported style from {}", handle.file_name());
+            }
+            Ok(Err(e)) => log::error!("ImportStyle: failed to parse: {e}"),
+            Err(e) => log::error!("ImportStyle: invalid UTF-8: {e}"),
+        }
+    }
+
     // Recorded VM-state writes exist for collaborative sessions (see
     // `gantz_egui::StateWritten`); the demo has none, so drop them silently.
     responses.take::<gantz_egui::StateWritten>();
