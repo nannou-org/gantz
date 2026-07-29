@@ -1,14 +1,84 @@
-//! The "Style" settings subtab: visual configuration of the graph scene.
+//! The "Style" settings subtab: the egui theme and style, plus the visual
+//! configuration of the graph scene.
 //!
-//! Currently hosts the dot-grid controls (show/hide and base step). The grid
-//! step also feeds snap-to-grid (see `Global > Snap`), so it stays editable even
-//! when the grid is hidden.
+//! The theme preference and the per-theme [`egui::Style`] live in a
+//! [`StyleConfig`] on [`GantzState`][super::GantzState] (see [`crate::style`]);
+//! this only edits it, and [`crate::style::apply`] does the applying. Either
+//! theme's style can be edited, whichever one is active.
+//!
+//! Also hosts the dot-grid controls (show/hide and base step). The grid step
+//! feeds snap-to-grid (see `Global > Snap`), so it stays editable even when the
+//! grid is hidden.
 
 use super::gantz::GridConfig;
+use crate::{
+    StyleConfig,
+    style::{reset_theme, set_style_of, style_of},
+};
 
-/// Render the style configuration controls. `grid` is mutated in place; the
-/// config applies to all open heads.
-pub fn style_config(grid: &mut GridConfig, ui: &mut egui::Ui) {
+/// Response from [`style_config`].
+#[derive(Default)]
+pub struct StyleConfigResponse {
+    /// The "Export" button was clicked.
+    pub export: bool,
+    /// The "Import" button was clicked.
+    pub import: bool,
+}
+
+/// Render the style configuration controls. `style` and `grid` are mutated in
+/// place; both apply to the whole UI, including all open heads.
+pub fn style_config(
+    style: &mut StyleConfig,
+    grid: &mut GridConfig,
+    ui: &mut egui::Ui,
+) -> StyleConfigResponse {
+    ui.label("Theme:");
+    style.theme.radio_buttons(ui);
+    ui.separator();
+
+    // Which theme's style the editor below edits - not necessarily the active
+    // one, so a theme can be styled before switching to it.
+    let edit_id = ui.id().with("edit_theme");
+    let mut edit = ui
+        .data(|d| d.get_temp::<egui::Theme>(edit_id))
+        .unwrap_or_else(|| ui.ctx().theme());
+
+    ui.label("Style:");
+    let mut res = StyleConfigResponse::default();
+    let mut reset = false;
+    ui.horizontal(|ui| {
+        ui.radio_value(&mut edit, egui::Theme::Dark, "Dark");
+        ui.radio_value(&mut edit, egui::Theme::Light, "Light")
+            .on_hover_text(
+                "Which theme's style the controls below edit. Either can be \
+                 edited, whichever theme is active.",
+            );
+        reset = ui
+            .button("Reset")
+            .on_hover_text("Discard this theme's edits, restoring egui's default style.")
+            .clicked();
+        res.export = ui
+            .button("Export…")
+            .on_hover_text("Save both themes' styles to a file.")
+            .clicked();
+        res.import = ui
+            .button("Import…")
+            .on_hover_text("Load both themes' styles from an exported file.")
+            .clicked();
+    });
+    ui.data_mut(|d| d.insert_temp(edit_id, edit));
+    if reset {
+        reset_theme(style, edit);
+    }
+
+    // egui's own style editor, as seen in its demo. It edits a copy of the
+    // effective style; storing that back drops the override again if the user
+    // has hand-reverted every value.
+    let mut edited = style_of(style, edit);
+    edited.ui(ui);
+    set_style_of(style, edit, edited);
+    ui.separator();
+
     ui.label("Grid:");
     ui.checkbox(&mut grid.show, "Show grid")
         .on_hover_text("Draw the dot grid behind the graph.");
@@ -26,4 +96,6 @@ pub fn style_config(grid: &mut GridConfig, ui: &mut egui::Ui) {
         );
         ui.label("Grid step");
     });
+
+    res
 }

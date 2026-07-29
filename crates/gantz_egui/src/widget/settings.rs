@@ -3,7 +3,7 @@
 //! extension subtabs (see [`SettingsTab`]).
 
 use super::gantz::{LayoutConfig, SceneConfig, ViewToggles};
-use crate::{Keymap, Responses};
+use crate::{Keymap, Responses, StyleConfig};
 
 /// An application-supplied settings subtab.
 ///
@@ -43,6 +43,10 @@ pub struct SettingsResponse {
     pub validate_change_tracking: Option<bool>,
     /// The "Reset all demos" button was clicked (Global subtab).
     pub reset_all_demos: bool,
+    /// The "Export" style button was clicked (Style subtab).
+    pub export_style: bool,
+    /// The "Import" style button was clicked (Style subtab).
+    pub import_style: bool,
     /// The "reset all" layout button was clicked (Panes subtab).
     pub reset_layout: bool,
     /// Payloads emitted by extension subtabs.
@@ -60,6 +64,7 @@ pub fn settings(
     validate_change_tracking: Option<bool>,
     layout_config: &mut LayoutConfig,
     scene_config: &mut SceneConfig,
+    style: &mut StyleConfig,
     keymap: &mut Keymap,
     ext_tabs: &mut [&mut dyn SettingsTab],
     ext_panes: &[super::ExtPaneEntry],
@@ -128,9 +133,14 @@ pub fn settings(
                 });
         }
         SubTab::Style => {
-            egui::ScrollArea::vertical()
+            let s = egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
-                .show(ui, |ui| super::style_config(&mut scene_config.grid, ui));
+                .show(ui, |ui| {
+                    super::style_config(style, &mut scene_config.grid, ui)
+                })
+                .inner;
+            res.export_style = s.export;
+            res.import_style = s.import;
         }
         SubTab::Keybinds => {
             egui::ScrollArea::vertical()

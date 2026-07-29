@@ -1,7 +1,8 @@
 use crate::{
     Action, CopyNodes, CreateNestedGraph, CreateNode, CutNodes, DuplicateNodes, Env,
-    ExportAllNamed, ExportHead, HeadAccess, Keymap, NodeCtx, NodeUi, OpenLogs, OpenNodePalette,
-    OpenNodeView, Paste, Redo, ReplaceHead, ResetTilesLayout, Undo, export,
+    ExportAllNamed, ExportHead, ExportStyle, HeadAccess, ImportStyle, Keymap, NodeCtx, NodeUi,
+    OpenLogs, OpenNodePalette, OpenNodeView, Paste, Redo, ReplaceHead, ResetTilesLayout, Undo,
+    export,
     node::NodeCodec,
     response::{DynResponse, Responses},
     widget::{self, GraphScene, GraphSceneState, graph_scene},
@@ -2173,6 +2174,7 @@ where
                     validate_change_tracking,
                     &mut state.layout_config,
                     &mut state.scene_config,
+                    &mut state.style,
                     &mut state.keymap,
                     ext_tabs,
                     &ext_panes,
@@ -2190,6 +2192,12 @@ where
             }
             if res.inner.reset_layout {
                 gantz_response.responses.push(None, ResetTilesLayout);
+            }
+            if res.inner.export_style {
+                gantz_response.responses.push(None, ExportStyle);
+            }
+            if res.inner.import_style {
+                gantz_response.responses.push(None, ImportStyle);
             }
             let mut ext_responses = res.inner.responses;
             gantz_response

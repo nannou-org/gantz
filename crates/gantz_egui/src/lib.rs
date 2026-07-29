@@ -501,6 +501,16 @@ pub struct ExportAllNamed;
 #[derive(Clone, Copy, Debug)]
 pub struct ExportHead;
 
+/// Export the GUI's [`StyleConfig`] to a file (see [`style`]). Emitted without
+/// an associated head.
+#[derive(Clone, Copy, Debug)]
+pub struct ExportStyle;
+
+/// Replace the GUI's [`StyleConfig`] with one loaded from a file (see
+/// [`style`]). Emitted without an associated head.
+#[derive(Clone, Copy, Debug)]
+pub struct ImportStyle;
+
 /// Insert an inspect node on the given edge at the given position.
 #[derive(Clone, Debug)]
 pub struct InspectEdge {

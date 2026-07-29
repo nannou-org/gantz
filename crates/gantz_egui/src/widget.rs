@@ -28,7 +28,7 @@ pub use perf_view::{PerfCapture, PerfView};
 pub use settings::{SettingsResponse, SettingsTab, settings};
 pub use status_dot::status_dot;
 pub use steel_view::SteelView;
-pub use style_config::style_config;
+pub use style_config::{StyleConfigResponse, style_config};
 pub use tab::{Tab, TabResponse};
 
 pub mod checkbox_enabled;
