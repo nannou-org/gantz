@@ -22,6 +22,7 @@ pub mod ops;
 pub mod reg;
 pub mod response;
 pub mod section;
+pub mod style;
 pub mod sugar;
 pub mod sync;
 #[cfg(test)]
@@ -50,6 +51,7 @@ pub use response::{
     ContextMenuResponse, DynResponse, InspectorRowsResponse, InspectorUiResponse, NodeUiResponse,
     NodeViewResponse, ResponseData, Responses,
 };
+pub use style::StyleConfig;
 pub use sugar::EguiSugar;
 pub use view::{Camera, SceneView};
 

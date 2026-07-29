@@ -113,6 +113,10 @@ pub struct GantzState {
     /// apply to every open head.
     #[serde(default)]
     pub scene_config: SceneConfig,
+    /// The egui theme preference and per-theme style overrides, applied to
+    /// every gantz context (see [`crate::style`]); edited in Settings -> Style.
+    #[serde(default)]
+    pub style: crate::StyleConfig,
     /// The command keyboard shortcuts. The single source of truth for editor
     /// command bindings (see [`crate::keybind`]); edited in Settings -> Keybinds.
     #[serde(default)]
@@ -951,6 +955,8 @@ impl<'a> Gantz<'a> {
             ui.ctx().memory_mut(|m| m.data.clear());
         }
 
+        crate::style::apply(ui.ctx(), &state.style);
+
         // The persisted outer tree. The version suffix invalidates any tree
         // persisted before the latest default-layout change (v4: perf panes
         // side by side at half height), forcing a rebuild via `create_tree`.
@@ -1143,6 +1149,7 @@ impl<'a> Gantz<'a> {
         's: 'a,
         Access: HeadAccess,
     {
+        crate::style::apply(ui.ctx(), &state.style);
         let mut response = GantzResponse::new(focused_head);
         let base_names = self.base_names;
         let mut cx = PaneCtx {
@@ -1174,6 +1181,7 @@ impl GantzState {
             view_toggles: ViewToggles::default(),
             layout_config: LayoutConfig::default(),
             scene_config: SceneConfig::default(),
+            style: Default::default(),
             keymap: Keymap::default(),
             collab: Default::default(),
             merge_resolutions: Default::default(),
