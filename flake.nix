@@ -39,7 +39,9 @@
           craneLib = final.gantzCraneLib;
         };
         gantz = final.callPackage ./pkgs/gantz.nix { };
-        gantz-website = final.callPackage ./pkgs/gantz-website.nix { };
+        gantz-website = final.callPackage ./pkgs/gantz-website.nix {
+          craneLib = final.gantzCraneLibWasm;
+        };
         serve-gantz-website = final.callPackage ./pkgs/serve-gantz-website.nix { };
         wasm-bindgen-cli = prev.callPackage ./pkgs/wasm-bindgen-cli.nix { };
         # Nightly wasm toolchain for the AudioWorklet website build: `-Z build-std`
