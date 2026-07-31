@@ -2,6 +2,8 @@
   description = "An environment for creative systems.";
 
   inputs = {
+    # No `follows` for crane: it has no inputs of its own.
+    crane.url = "github:ipetkov/crane";
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     rust-overlay = {
       inputs.nixpkgs.follows = "nixpkgs";
@@ -25,6 +27,14 @@
     in
     {
       overlays.default = final: prev: {
+        # crane with nixpkgs' stable rustc: the same toolchain `buildRustPackage`
+        # used, now driving a deps-only artifact derivation so source edits stop
+        # rebuilding the whole dependency closure.
+        gantzCraneLib = inputs.crane.mkLib final;
+        # crane with the nightly wasm toolchain (rust-src + wasm32) for the
+        # website's `-Z build-std` build.
+        gantzCraneLibWasm = final.gantzCraneLib.overrideToolchain (p: p.rustToolchainWasmNightly);
+
         gantz-unwrapped = prev.callPackage ./pkgs/gantz-unwrapped.nix { };
         gantz = final.callPackage ./pkgs/gantz.nix { };
         gantz-website = final.callPackage ./pkgs/gantz-website.nix { };
