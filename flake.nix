@@ -35,7 +35,9 @@
         # website's `-Z build-std` build.
         gantzCraneLibWasm = final.gantzCraneLib.overrideToolchain (p: p.rustToolchainWasmNightly);
 
-        gantz-unwrapped = prev.callPackage ./pkgs/gantz-unwrapped.nix { };
+        gantz-unwrapped = prev.callPackage ./pkgs/gantz-unwrapped.nix {
+          craneLib = final.gantzCraneLib;
+        };
         gantz = final.callPackage ./pkgs/gantz.nix { };
         gantz-website = final.callPackage ./pkgs/gantz-website.nix { };
         serve-gantz-website = final.callPackage ./pkgs/serve-gantz-website.nix { };
