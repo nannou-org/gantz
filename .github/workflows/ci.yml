@@ -46,7 +46,6 @@ jobs:
       - uses: cachix/cachix-action@v17
         with:
           name: mitchmindtree-gantz
-          # Absent on fork PRs: the public cache is still readable, pushes are skipped.
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - uses: Swatinem/rust-cache@v2
       - run: nix ${{ matrix.command }}
@@ -64,7 +63,6 @@ jobs:
       - uses: cachix/cachix-action@v17
         with:
           name: mitchmindtree-gantz
-          # Absent on fork PRs: the public cache is still readable, pushes are skipped.
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - run: nix build --print-build-logs .#gantz-website
       - name: Prepare artifact
@@ -90,7 +88,6 @@ jobs:
       - uses: cachix/cachix-action@v17
         with:
           name: mitchmindtree-gantz
-          # Absent on fork PRs: the public cache is still readable, pushes are skipped.
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - run: nix build --print-build-logs .#gantz-website
       - uses: peaceiris/actions-gh-pages@v4

@@ -18,8 +18,6 @@
 }:
 let
   root = ../.;
-  # Cargo-relevant files (incl. Trunk.toml and .cargo/config.toml via the *.toml
-  # rule), the compile-time .gantz assets, and the web page assets/hooks.
   src = lib.fileset.toSource {
     inherit root;
     fileset = lib.fileset.unions [
@@ -29,9 +27,6 @@ let
     ];
   };
 
-  # Shared verbatim between the deps and website derivations: any divergence in
-  # cargo flags, RUSTFLAGS or profile between the two invalidates cargo's
-  # fingerprints and silently recompiles everything in the final derivation.
   commonArgs =
     # RUSTFLAGS (atomics + shared memory), CARGO_UNSTABLE_BUILD_STD, and the
     # wasm-capable CC/AR for `ring`.
@@ -48,7 +43,6 @@ let
         inherit (craneLib.findCargoFiles src) cargoConfigs;
         cargoLockList = [
           ../Cargo.lock
-          # `std`'s own lock, from the rust-src component `build-std` rebuilds from.
           "${rustToolchainWasmNightly.passthru.availableComponents.rust-src}/lib/rustlib/src/rust/library/Cargo.lock"
         ];
       };
@@ -69,8 +63,6 @@ craneLib.buildTrunkPackage (
   // {
     inherit cargoArtifacts wasm-bindgen-cli;
     trunkIndexPath = "crates/gantz/web/index.html";
-    # buildTrunkPackage installs "$(dirname trunkIndexPath)/dist"; Trunk.toml
-    # lives at the root so trunk's default dist would land there instead.
     trunkExtraBuildArgs = "--dist crates/gantz/web/dist";
   }
 )
