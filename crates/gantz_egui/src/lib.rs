@@ -451,6 +451,15 @@ pub struct CutNodes(pub std::collections::HashSet<widget::graph_scene::NodeIndex
 #[derive(Clone, Debug)]
 pub struct DuplicateNodes(pub std::collections::HashSet<widget::graph_scene::NodeIndex>);
 
+/// Nest the given nodes into a new nested graph node.
+///
+/// The selected nodes (and edges between them) become the contents of a fresh
+/// nested graph, referenced by a new synced `NamedRef` node in their place.
+/// Edges crossing the selection boundary become the nested graph's inlets/outlets,
+/// and the parent graph is re-wired to the new node's sockets.
+#[derive(Clone, Debug)]
+pub struct NestNodes(pub std::collections::HashSet<widget::graph_scene::NodeIndex>);
+
 /// Create a new node of the given type in the emitting head's graph.
 #[derive(Clone, Debug)]
 pub struct CreateNode {
