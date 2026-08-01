@@ -1,5 +1,5 @@
 use crate::{
-    CopyNodes, Env, InspectEdge, NodeUi, OpenHead, OpenNodePalette, OpenNodeView, Paste, PastePos,
+    CopyNodes, Env, InspectEdge, NestNodes, NodeUi, OpenHead, OpenNodePalette, OpenNodeView, Paste, PastePos,
     ResetTilesLayout, SocketDoc,
     node::{NodeCodec, NodeInstances},
     response::DynResponse,
@@ -856,6 +856,17 @@ fn nodes(
                 }
             }
             if !immutable {
+                // Nest the selected nodes into a new nested graph. Only
+                // meaningful for a multi-node selection (a real subgraph).
+                if multi
+                    && ui
+                        .button("nest")
+                        .on_hover_text("nest the selected nodes into a new nested graph")
+                        .clicked()
+                {
+                    responses.push(DynResponse::new(NestNodes(target.clone())));
+                    ui.close();
+                }
                 // The reset target may include other selected nodes; peek
                 // each one's cached instance to ask whether any is stateful,
                 // reifying transiently on a miss (e.g. this node's own entry,
