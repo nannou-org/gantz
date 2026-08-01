@@ -10,14 +10,7 @@
   wayland,
 }:
 let
-  root = ../.;
-  src = lib.fileset.toSource {
-    inherit root;
-    fileset = lib.fileset.unions [
-      (craneLib.fileset.commonCargoSources root)
-      (lib.fileset.fileFilter (file: file.hasExt "gantz") root)
-    ];
-  };
+  inherit (import ./workspace-src.nix { inherit craneLib lib; }) src;
 
   buildInputs = lib.optionals stdenv.hostPlatform.isLinux [
     alsa-lib

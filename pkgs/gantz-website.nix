@@ -17,12 +17,12 @@
   wasm-bindgen-cli,
 }:
 let
-  root = ../.;
+  workspace = import ./workspace-src.nix { inherit craneLib lib; };
+  # The workspace source plus the web page assets and hooks.
   src = lib.fileset.toSource {
-    inherit root;
+    inherit (workspace) root;
     fileset = lib.fileset.unions [
-      (craneLib.fileset.commonCargoSources root)
-      (lib.fileset.fileFilter (file: file.hasExt "gantz") root)
+      workspace.fileset
       ../crates/gantz/web
     ];
   };
