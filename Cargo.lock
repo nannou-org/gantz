@@ -998,6 +998,7 @@ dependencies = [
  "bevy_ecs",
  "bevy_input",
  "bevy_log",
+ "bevy_tasks",
  "bevy_time",
  "bevy_window",
  "gantz_ca",

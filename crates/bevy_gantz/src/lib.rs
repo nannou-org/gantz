@@ -25,6 +25,7 @@ pub mod debounced_input;
 pub mod head;
 pub mod reg;
 pub mod storage;
+pub mod task;
 pub mod vm;
 
 use bevy_app::{App, Plugin, Update};
