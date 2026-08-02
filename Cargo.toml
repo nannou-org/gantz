@@ -39,9 +39,9 @@ bevy_log = "0.19"
 bevy_tasks = "0.19"
 bevy_egui = { version = "0.40", features = ["serde"] }
 bevy_gantz = { version = "0.5.0", path = "crates/bevy_gantz" }
-bevy_gantz_collab = { version = "0.1.0", path = "crates/bevy_gantz_collab" }
-bevy_gantz_egui = { version = "0.5.0", path = "crates/bevy_gantz_egui" }
-bevy_gantz_plyphon = { version = "0.2.0", path = "crates/bevy_gantz_plyphon" }
+bevy_gantz_collab = { version = "0.1.1", path = "crates/bevy_gantz_collab" }
+bevy_gantz_egui = { version = "0.5.1", path = "crates/bevy_gantz_egui" }
+bevy_gantz_plyphon = { version = "0.2.1", path = "crates/bevy_gantz_plyphon" }
 bevy_input = "0.19"
 bevy_pkv = "0.16"
 bevy_time = "0.19"
@@ -66,11 +66,11 @@ gantz_ca = { version = "0.4.0", path = "crates/gantz_ca" }
 gantz_ca_derive = { version = "0.2.1", path = "crates/gantz_ca_derive" }
 gantz_collab = { version = "0.2.0", path = "crates/gantz_collab" }
 gantz_core = { version = "0.5.0", path = "crates/gantz_core" }
-gantz_egui = { version = "0.6.0", path = "crates/gantz_egui" }
+gantz_egui = { version = "0.6.1", path = "crates/gantz_egui" }
 gantz_format = { version = "0.4.0", path = "crates/gantz_format" }
 gantz_nodetag = { version = "0.2.0", path = "crates/gantz_nodetag" }
 gantz_nodetag_derive = { version = "0.1.1", path = "crates/gantz_nodetag_derive" }
-gantz_plyphon = { version = "0.2.0", path = "crates/gantz_plyphon" }
+gantz_plyphon = { version = "0.2.1", path = "crates/gantz_plyphon" }
 gantz_std = { version = "0.5.0", path = "crates/gantz_std" }
 gantz_ui = { version = "0.2.0", path = "crates/gantz_ui" }
 hex = "0.4"
