@@ -118,6 +118,7 @@ impl Plugin for GantzEguiPlugin {
             .register_head_response::<gantz_egui::CopyNodes>()
             .register_head_response::<gantz_egui::CutNodes>()
             .register_head_response::<gantz_egui::DuplicateNodes>()
+            .register_head_response::<gantz_egui::NestNodes>()
             .register_head_response::<gantz_egui::CreateNode>()
             .register_head_response::<gantz_egui::CreateNestedGraph>()
             .register_head_response::<gantz_egui::InspectEdge>()
