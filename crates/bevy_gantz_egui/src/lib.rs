@@ -133,6 +133,8 @@ impl Plugin for GantzEguiPlugin {
             .register_response_with::<gantz_egui::ExportHead>(dispatch_export_head)
             .register_response_with::<gantz_egui::ExportAllNamed>(dispatch_export_all_named);
 
+        app.init_non_send::<node::await_::AwaitTasks>();
+
         app.insert_resource(BaseImmutable(self.base_immutable))
             .init_resource::<GraphCache>()
             .init_resource::<BuiltinNodes>()
@@ -190,6 +192,9 @@ impl Plugin for GantzEguiPlugin {
                         .after(bevy_gantz::VmSet)
                         .in_set(bevy_gantz::EntrypointSet),
                     node::tick_bang::drive_tick_bangs
+                        .after(bevy_gantz::VmSet)
+                        .in_set(bevy_gantz::EntrypointSet),
+                    node::await_::drive_awaits
                         .after(bevy_gantz::VmSet)
                         .in_set(bevy_gantz::EntrypointSet),
                     persist_camera_and_seed.in_set(ViewPersistSet),

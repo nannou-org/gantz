@@ -6,11 +6,11 @@
 //! [`gantz_format::CoreSugar`] (and the other crates' sugars) via
 //! [`gantz_format::Sugars`].
 
-use crate::node::{TickBang, UpdateBang, tick_bang};
+use crate::node::{Await, Sleep, TickBang, UpdateBang, sleep, tick_bang};
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
 use gantz_nodetag::NodeTag;
 
-/// Keyword sugar for [`UpdateBang`] and [`TickBang`].
+/// Keyword sugar for [`UpdateBang`], [`TickBang`], [`Await`] and [`Sleep`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BevySugar;
 
@@ -19,6 +19,8 @@ pub struct BevySugar;
 const KEYWORD_TAG: &[(&str, &str)] = &[
     ("update-bang", UpdateBang::TAG),
     ("tick-bang", TickBang::TAG),
+    ("await", Await::TAG),
+    ("sleep", Sleep::TAG),
 ];
 
 /// The node tag for a sugar keyword.
@@ -41,6 +43,7 @@ impl Sugar for BevySugar {
     fn read_spec(&self, head: &str, args: SugarArgs<'_>) -> Result<Option<Datum>, FormatError> {
         let datum = match head {
             "tick-bang" => tick_bang::read_sugar(args)?,
+            "sleep" => sleep::read_sugar(args)?,
             _ => return Ok(None),
         };
         Ok(Some(datum))
@@ -53,6 +56,7 @@ impl Sugar for BevySugar {
     fn write_spec(&self, tag: &str, node: &Datum) -> Option<String> {
         match tag {
             "TickBang" => Some(tick_bang::write_sugar(node)),
+            "Sleep" => Some(sleep::write_sugar(node)),
             other => keyword_for_tag(other).map(str::to_string),
         }
     }
@@ -126,5 +130,35 @@ mod tests {
             s.read_spec("tick-bang", SugarArgs::new(&args[1..], text))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn await_round_trips() {
+        let bare = BevySugar.read_bare("await").expect("bare await");
+        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("Await"));
+        assert_eq!(
+            BevySugar.write_spec("Await", &bare).as_deref(),
+            Some("await")
+        );
+    }
+
+    #[test]
+    fn sleep_config_round_trips() {
+        let s = BevySugar;
+
+        // A bare (default-duration) sleep stays bare, read as keyword or spec.
+        let bare = s.read_bare("sleep").expect("bare sleep");
+        assert_eq!(s.write_spec("Sleep", &bare).as_deref(), Some("sleep"));
+
+        // A custom duration round-trips via the `#:duration` keyword (seconds).
+        let d = read_spec("(sleep #:duration 0.5)").expect("duration");
+        assert_eq!(
+            s.write_spec("Sleep", &d).as_deref(),
+            Some("(sleep #:duration 0.5)"),
+        );
+
+        // An explicit default duration also writes as the bare keyword.
+        let one = read_spec("(sleep #:duration 1)").expect("default duration");
+        assert_eq!(s.write_spec("Sleep", &one).as_deref(), Some("sleep"));
     }
 }

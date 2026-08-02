@@ -37,3 +37,6 @@ web-time.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bevy_camera.workspace = true
 bevy_window.workspace = true
+
+[dev-dependencies]
+petgraph.workspace = true

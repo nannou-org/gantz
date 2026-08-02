@@ -1052,6 +1052,7 @@ dependencies = [
  "gantz_egui",
  "gantz_format",
  "gantz_nodetag",
+ "petgraph",
  "rfd",
  "serde",
  "steel-core",
