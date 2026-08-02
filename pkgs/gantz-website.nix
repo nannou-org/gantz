@@ -3,98 +3,66 @@
 # *nightly* toolchain (`-Z build-std` to recompile `std` with atomics) and the shared-memory
 # build flags from `wasm-threads-env.nix`.
 #
-# This is a plain `mkDerivation` rather than `buildRustPackage` because `-Z build-std`
-# recompiles `std` from the rust-src component, so `std`'s own crates.io deps must be vendored
-# alongside the app's - the sandbox has no network and `buildRustPackage` only vendors the
-# workspace lock.
+# Built with crane's `buildTrunkPackage` plus an explicit deps-only artifact derivation, so the
+# dependency closure AND the build-std `std` rebuild compile once and survive workspace source
+# edits. `-Z build-std` recompiles `std` from the rust-src component, so `std`'s own crates.io
+# deps must be vendored alongside the app's (the sandbox has no network) - crane's
+# `vendorMultipleCargoDeps` merges both lockfiles into one vendor dir.
 {
-  binaryen,
+  craneLib,
   lib,
   lld,
   llvmPackages,
-  runCommand,
-  rustPlatform,
   rustToolchainWasmNightly,
-  stdenv,
-  trunk,
   wasm-bindgen-cli,
 }:
 let
-  # Everything except build artifacts.
-  src = lib.cleanSourceWith {
-    src = ../.;
-    filter =
-      path: type:
-      let
-        base = baseNameOf (toString path);
-      in
-      !(builtins.elem base [
-        "target"
-        "result"
-        "dist"
-        ".direnv"
-      ])
-      && lib.cleanSourceFilter path type;
-  };
-
-  # Vendor both the workspace deps and `std`'s deps (from the rust-src component the nightly
-  # toolchain ships), then merge them into one source-replacement tree so build-std resolves
-  # everything offline. Neither lock has git deps, so no `outputHashes` are needed.
-  appDeps = rustPlatform.importCargoLock { lockFile = ../Cargo.lock; };
-  stdDeps = rustPlatform.importCargoLock {
-    lockFile = "${rustToolchainWasmNightly}/lib/rustlib/src/rust/library/Cargo.lock";
-  };
-  cargoVendor = runCommand "gantz-website-vendor" { } ''
-    mkdir -p $out
-    cp -r ${appDeps}/. $out/
-    # Shared crate+version dirs are byte-identical, so skipping collisions is safe.
-    cp -rn ${stdDeps}/. $out/
-  '';
-in
-stdenv.mkDerivation (
-  {
-    pname = "gantz-website";
-    version = "0.1.0";
-    inherit src;
-
-    nativeBuildInputs = [
-      rustToolchainWasmNightly
-      binaryen
-      lld
-      trunk
-      wasm-bindgen-cli
+  workspace = import ./workspace-src.nix { inherit craneLib lib; };
+  # The workspace source plus the web page assets and hooks.
+  src = lib.fileset.toSource {
+    inherit (workspace) root;
+    fileset = lib.fileset.unions [
+      workspace.fileset
+      ../crates/gantz/web
     ];
+  };
 
-    # Tell trunk to use Nix-provided tools, not download its own; resolve everything from the vendor.
-    TRUNK_SKIP_VERSION_CHECK = "true";
-    CARGO_NET_OFFLINE = "true";
+  commonArgs =
+    # RUSTFLAGS (atomics + shared memory), CARGO_UNSTABLE_BUILD_STD, and the
+    # wasm-capable CC/AR for `ring`.
+    (import ./wasm-threads-env.nix { inherit llvmPackages; }) // {
+      inherit src;
+      pname = "gantz-website";
+      inherit (craneLib.crateNameFromCargoToml { cargoToml = ../crates/gantz/Cargo.toml; })
+        version
+        ;
+      strictDeps = true;
+      CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
+      cargoExtraArgs = "--locked -p gantz --bin gantz";
+      cargoVendorDir = craneLib.vendorMultipleCargoDeps {
+        inherit (craneLib.findCargoFiles src) cargoConfigs;
+        cargoLockList = [
+          ../Cargo.lock
+          "${rustToolchainWasmNightly.passthru.availableComponents.rust-src}/lib/rustlib/src/rust/library/Cargo.lock"
+        ];
+      };
+      doCheck = false;
+      # trunk, binaryen and the pinned wasm-bindgen-cli come via buildTrunkPackage.
+      nativeBuildInputs = [ lld ];
+    };
 
-    configurePhase = ''
-      runHook preConfigure
-      # trunk (via wasm-bindgen) and cargo need writable home/cache dirs in the sandbox.
-      export HOME=$(mktemp -d)
-      export CARGO_HOME=$HOME/.cargo
-      mkdir -p $CARGO_HOME
-      cat > $CARGO_HOME/config.toml <<EOF
-      [source.crates-io]
-      replace-with = "vendored-sources"
-      [source.vendored-sources]
-      directory = "${cargoVendor}"
-      EOF
-      runHook postConfigure
-    '';
-
-    buildPhase = ''
-      runHook preBuild
-      # The page (crates/gantz/web/index.html) builds on cpal's AudioWorklet backend (the
-      # `audioworklet` feature, now the app's default); the shared build flags (atomics +
-      # build-std) come from the derivation env below.
-      trunk build --release --dist $out
-      runHook postBuild
-    '';
-
-    dontInstall = true;
-    dontFixup = true;
+  # Trunk compiles with `--profile wasm_release` (index.html's
+  # data-cargo-profile-release), so deps must be compiled under the same
+  # profile. Only here: buildTrunkPackage passes `--release` to trunk exactly
+  # when CARGO_PROFILE is the default "release", and trunk applies
+  # data-cargo-profile-release only under `--release`.
+  cargoArtifacts = craneLib.buildDepsOnly (commonArgs // { CARGO_PROFILE = "wasm_release"; });
+in
+craneLib.buildTrunkPackage (
+  commonArgs
+  // {
+    inherit cargoArtifacts wasm-bindgen-cli;
+    trunkIndexPath = "crates/gantz/web/index.html";
+    trunkExtraBuildArgs = "--dist crates/gantz/web/dist";
   }
-  // (import ./wasm-threads-env.nix { inherit llvmPackages; })
 )

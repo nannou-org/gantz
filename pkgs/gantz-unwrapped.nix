@@ -1,28 +1,18 @@
 {
   alsa-lib,
+  craneLib,
   lib,
   libxkbcommon,
-  makeWrapper,
   pkg-config,
-  rustPlatform,
   stdenv,
   vulkan-loader,
   vulkan-validation-layers,
   wayland,
 }:
 let
-  src = lib.sourceFilesBySuffices ../. [
-    ".gantz"
-    ".lock"
-    ".rs"
-    ".toml"
-  ];
-  buildAndTestSubdir = "crates/gantz";
-  manifestPath = "${src}/${buildAndTestSubdir}/Cargo.toml";
-  manifest = builtins.fromTOML (builtins.readFile manifestPath);
+  inherit (import ./workspace-src.nix { inherit craneLib lib; }) src;
 
   buildInputs = lib.optionals stdenv.hostPlatform.isLinux [
-    # `cpal` (via `bevy_gantz_plyphon`) links ALSA on Linux for audio output.
     alsa-lib
     libxkbcommon
     vulkan-loader
@@ -34,20 +24,21 @@ let
     LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs;
   };
 
+  commonArgs = {
+    inherit src buildInputs env;
+    inherit (craneLib.crateNameFromCargoToml { cargoToml = ../crates/gantz/Cargo.toml; })
+      pname
+      version
+      ;
+    strictDeps = true;
+    nativeBuildInputs = [ pkg-config ];
+    cargoExtraArgs = "--locked -p gantz --bin gantz";
+    doCheck = false;
+  };
 in
-rustPlatform.buildRustPackage {
-  inherit src buildAndTestSubdir;
-  pname = manifest.package.name;
-  version = manifest.package.version;
-  cargoLock.lockFile = ../Cargo.lock;
-  cargoBuildFlags = [
-    "--bin"
-    "gantz"
-  ];
-  doCheck = false;
-  nativeBuildInputs = [
-    makeWrapper
-    pkg-config
-  ];
-  inherit buildInputs env;
-}
+craneLib.buildPackage (
+  commonArgs
+  // {
+    cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+  }
+)

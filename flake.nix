@@ -2,6 +2,7 @@
   description = "An environment for creative systems.";
 
   inputs = {
+    crane.url = "github:ipetkov/crane";
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     rust-overlay = {
       inputs.nixpkgs.follows = "nixpkgs";
@@ -25,9 +26,16 @@
     in
     {
       overlays.default = final: prev: {
-        gantz-unwrapped = prev.callPackage ./pkgs/gantz-unwrapped.nix { };
+        gantzCraneLib = inputs.crane.mkLib final;
+        gantzCraneLibWasm = final.gantzCraneLib.overrideToolchain (p: p.rustToolchainWasmNightly);
+
+        gantz-unwrapped = prev.callPackage ./pkgs/gantz-unwrapped.nix {
+          craneLib = final.gantzCraneLib;
+        };
         gantz = final.callPackage ./pkgs/gantz.nix { };
-        gantz-website = final.callPackage ./pkgs/gantz-website.nix { };
+        gantz-website = final.callPackage ./pkgs/gantz-website.nix {
+          craneLib = final.gantzCraneLibWasm;
+        };
         serve-gantz-website = final.callPackage ./pkgs/serve-gantz-website.nix { };
         wasm-bindgen-cli = prev.callPackage ./pkgs/wasm-bindgen-cli.nix { };
         # Nightly wasm toolchain for the AudioWorklet website build: `-Z build-std`
