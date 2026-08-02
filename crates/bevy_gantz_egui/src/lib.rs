@@ -118,6 +118,7 @@ impl Plugin for GantzEguiPlugin {
             .register_head_response::<gantz_egui::CopyNodes>()
             .register_head_response::<gantz_egui::CutNodes>()
             .register_head_response::<gantz_egui::DuplicateNodes>()
+            .register_head_response::<gantz_egui::NestNodes>()
             .register_head_response::<gantz_egui::CreateNode>()
             .register_head_response::<gantz_egui::CreateNestedGraph>()
             .register_head_response::<gantz_egui::InspectEdge>()
@@ -163,6 +164,7 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(on_inspect_edge)
             .add_observer(on_copy_nodes)
             .add_observer(on_cut_nodes)
+            .add_observer(on_nest_nodes)
             .add_observer(on_duplicate_nodes)
             .add_observer(on_merge_head)
             .add_observer(on_sync_remote_tip)
@@ -1201,6 +1203,62 @@ pub fn on_cut_nodes(
 
     // Uphold the `WorkingGraph` invariant: commit the in-place edit (a no-op
     // when nothing was cut).
+    bevy_gantz::commit_working_graph(&mut registry, &mut cmds, event.head, &mut head_ref.0, &wg.0);
+    refresh_cache(&registry, &mut cache, &codec.0);
+}
+
+/// Handle nest payloads: cut the selected nodes into a new nested graph node.
+pub fn on_nest_nodes(
+    trigger: On<ForHead<gantz_egui::NestNodes>>,
+    mut registry: ResMut<Registry>,
+    mut cache: ResMut<GraphCache>,
+    codec: Res<NodeCodecRes>,
+    mut gui_state: ResMut<GuiState>,
+    mut vms: NonSendMut<head::HeadVms>,
+    mut cmds: Commands,
+    mut heads: Query<
+        (
+            &mut head::HeadRef,
+            &mut head::WorkingGraph,
+            &mut GraphView,
+            &mut HeadNodeInstances,
+        ),
+        With<head::OpenHead>,
+    >,
+) {
+    let event = trigger.event();
+    let Ok((mut head_ref, mut wg, mut gv, mut instances)) = heads.get_mut(event.head) else {
+        log::error!("NestNodes: head not found for entity {:?}", event.head);
+        return;
+    };
+    let ca::Head::Branch(parent) = head_ref.0.clone() else {
+        log::warn!("NestNodes: name the graph before nesting nodes");
+        return;
+    };
+    let Some(head_state) = gui_state.open_heads.get_mut(&**head_ref) else {
+        log::error!("NestNodes: GUI state not found for head");
+        return;
+    };
+    let Some(vm) = vms.get_mut(&event.head) else {
+        log::error!("NestNodes: VM not found for head");
+        return;
+    };
+
+    gantz_egui::ops::nest_nodes(
+        &mut registry,
+        bevy_gantz::reg::timestamp(),
+        &mut wg,
+        vm,
+        &mut gv,
+        head_state,
+        &mut instances.0,
+        &event.data.0,
+        &parent,
+    );
+
+    // The fresh nested graph must be reified before its NamedRef resolves.
+    refresh_cache(&registry, &mut cache, &codec.0);
+    // Uphold the `WorkingGraph` invariant: commit the in-place edit.
     bevy_gantz::commit_working_graph(&mut registry, &mut cmds, event.head, &mut head_ref.0, &wg.0);
     refresh_cache(&registry, &mut cache, &codec.0);
 }

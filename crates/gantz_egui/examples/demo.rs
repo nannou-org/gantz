@@ -1059,6 +1059,38 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         }
     }
 
+    for (head, gantz_egui::NestNodes(nodes)) in responses.take() {
+        let Some((head, ix)) = tagged_head(state, head) else {
+            continue;
+        };
+        let gantz_ca::Head::Branch(parent) = head else {
+            log::warn!("NestNodes: name the graph before nesting nodes");
+            continue;
+        };
+        let head_state = state
+            .gantz
+            .open_heads
+            .entry(gantz_ca::Head::Branch(parent.clone()))
+            .or_default();
+        let (_, graph, gv) = &mut state.heads[ix];
+        let vm = &mut state.vms[ix];
+        let nested = gantz_egui::ops::nest_nodes(
+            &mut state.env.registry,
+            timestamp(),
+            graph,
+            vm,
+            gv,
+            head_state,
+            &mut state.instances[ix],
+            &nodes,
+            &parent,
+        );
+        // The fresh nested graph must be reified before its NamedRef resolves.
+        if nested.is_some() {
+            state.env.ensure_reified();
+        }
+    }
+
     for (
         head,
         gantz_egui::MergeHead {

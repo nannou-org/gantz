@@ -13,8 +13,9 @@ use crate::widget::graph_scene::NodeIndex;
 use crate::{CreateNode, InspectEdge, PastePos, export, node::NamedRef};
 use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, NodeData};
 use gantz_core::node::{self, GetNode};
+use petgraph::visit::EdgeRef;
 pub use session::{RevertCursor, redo, session_redo, session_undo, undo};
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use steel::steel_vm::engine::Engine;
 pub use sync::{MergeHeadOutcome, SyncTipOutcome, merge_head, sync_remote_tip};
 
@@ -31,6 +32,32 @@ fn node_id(ix: usize) -> egui_graph::NodeId {
 /// visible without overlapping.
 fn cascade_pos(center: egui::Pos2, i: usize) -> egui::Pos2 {
     center + egui::vec2(20.0, 20.0) * i as f32
+}
+
+/// The centroid of the given nodes' positions in `view`, or `None` when none
+/// of them has a layout entry.
+fn selection_centroid(view: &crate::SceneView, nodes: &HashSet<NodeIndex>) -> Option<egui::Pos2> {
+    let mut sum = egui::Vec2::ZERO;
+    let mut count = 0usize;
+    for &n in nodes {
+        if let Some(&pos) = view.layout.get(&node_id(n.index())) {
+            sum += pos.to_vec2();
+            count += 1;
+        }
+    }
+    (count > 0).then(|| egui::Pos2::new(sum.x / count as f32, sum.y / count as f32))
+}
+
+/// The first free `<parent>:<n>` leaf name in the registry.
+fn next_child_name(registry: &gantz_ca::Registry, parent: &Name) -> Name {
+    let mut n = 1u32;
+    loop {
+        let candidate = parent.child(n.to_string());
+        if registry.head(&candidate).is_none() {
+            return candidate;
+        }
+        n += 1;
+    }
 }
 
 /// Branch a named node: commit the graph at the given (graph) content address
@@ -207,14 +234,7 @@ pub fn create_nested_graph(
     parent: &Name,
 ) -> Option<NodeIndex> {
     // Pick the first free `<parent>:<n>` leaf name.
-    let mut n = 1u32;
-    let name = loop {
-        let candidate = parent.child(n.to_string());
-        if registry.head(&candidate).is_none() {
-            break candidate;
-        }
-        n += 1;
-    };
+    let name = next_child_name(registry, parent);
 
     // Commit a fresh empty graph under the chosen name.
     let nested_graph = DataGraph::default();
@@ -247,6 +267,164 @@ pub fn create_nested_graph(
     sel.nodes.insert(node_ix);
 
     Some(node_ix)
+}
+
+/// Nest the selected nodes into a new nested graph node.
+///
+/// The selected nodes (and edges between them) are cut from the parent graph and
+/// become the contents of a fresh nested graph, committed under the first free
+/// `<parent>:<n>` name (see [`create_nested_graph`]). Edges crossing the
+/// selection boundary become the nested graph's inlets/outlets - one per cut
+/// point - and the parent graph is re-wired to the new synced [`NamedRef`]
+/// node's sockets.
+///
+/// Returns the index of the new node, or `None` when the selection is empty or
+/// a node cannot be erased.
+#[allow(clippy::too_many_arguments)]
+pub fn nest_nodes(
+    registry: &mut gantz_ca::Registry,
+    timestamp: std::time::Duration,
+    graph: &mut DataGraph,
+    vm: &mut Engine,
+    view: &mut crate::SceneView,
+    head_state: &mut OpenHeadState,
+    instances: &mut crate::node::NodeInstances,
+    nodes: &HashSet<NodeIndex>,
+    parent: &Name,
+) -> Option<NodeIndex> {
+    if nodes.is_empty() {
+        return None;
+    }
+
+    // Collect the edges crossing the selection boundary, split by direction:
+    // incoming (external source -> selected target) and outgoing (selected source
+    // -> external target). Each becomes one inlet/outlet on the nested node; the
+    // sort below matches how the graph node numbers its sockets (by inlet/outlet
+    // node index).
+    let mut incoming: Vec<(NodeIndex, gantz_core::Edge, NodeIndex)> = Vec::new();
+    let mut outgoing: Vec<(NodeIndex, gantz_core::Edge, NodeIndex)> = Vec::new();
+    for edge in graph.edge_references() {
+        let src = edge.source();
+        let tgt = edge.target();
+        let sel_src = nodes.contains(&src);
+        let sel_tgt = nodes.contains(&tgt);
+        if !sel_src && sel_tgt {
+            incoming.push((tgt, edge.weight().clone(), src));
+        } else if sel_src && !sel_tgt {
+            outgoing.push((src, edge.weight().clone(), tgt));
+        }
+    }
+    incoming.sort_by_key(|&(dst, ref w, _)| (dst.index(), w.input.0));
+    outgoing.sort_by_key(|&(src, ref w, _)| (src.index(), w.output.0));
+
+    // Capture the new node's position from the selection's centroid (falling back
+    // to the view centre) before the nodes are removed.
+    let pos = selection_centroid(view, nodes).unwrap_or(view.camera.center);
+
+    // Build the nested graph: inlets, outlets, then the cut subgraph.
+    let mut nested = DataGraph::default();
+    let in_ixs: Vec<NodeIndex> = incoming
+        .iter()
+        .map(|_| {
+            let inlet =
+                gantz_core::data::erase_node_typed(&gantz_core::node::graph::Inlet::default())
+                    .ok()?;
+            Some(nested.add_node(inlet))
+        })
+        .collect::<Option<_>>()?;
+    let out_ixs: Vec<NodeIndex> = outgoing
+        .iter()
+        .map(|_| {
+            let outlet =
+                gantz_core::data::erase_node_typed(&gantz_core::node::graph::Outlet::default())
+                    .ok()?;
+            Some(nested.add_node(outlet))
+        })
+        .collect::<Option<_>>()?;
+    let subgraph = gantz_core::graph::extract_subgraph(graph, nodes);
+    let new_indices = gantz_core::graph::add_subgraph(&mut nested, &subgraph);
+
+    // Map old selected index -> subgraph index -> nested index, so the cut-point
+    // connections can reach the moved nodes.
+    let sorted: BTreeSet<_> = nodes.iter().copied().collect();
+    let mut old_to_sub = HashMap::new();
+    for (old_ix, sub_ix) in sorted.iter().zip(subgraph.node_indices()) {
+        old_to_sub.insert(*old_ix, sub_ix);
+    }
+    let mut sub_to_nested = HashMap::new();
+    for (sub_ix, &nested_ix) in subgraph.node_indices().zip(new_indices.iter()) {
+        sub_to_nested.insert(sub_ix, nested_ix);
+    }
+
+    // Wire each inlet to its selected target and each selected source to its outlet.
+    for (i, &(dst, ref w, _)) in incoming.iter().enumerate() {
+        let dst_nested = sub_to_nested[&old_to_sub[&dst]];
+        nested.add_edge(
+            in_ixs[i],
+            dst_nested,
+            gantz_core::Edge::new(node::Output(0), w.input),
+        );
+    }
+    for (j, &(src, ref w, _)) in outgoing.iter().enumerate() {
+        let src_nested = sub_to_nested[&old_to_sub[&src]];
+        nested.add_edge(
+            src_nested,
+            out_ixs[j],
+            gantz_core::Edge::new(w.output, node::Input(0)),
+        );
+    }
+
+    // Commit the fresh nested graph under the first free `<parent>:<n>` name.
+    let graph_ca = gantz_ca::graph_addr(&nested);
+    let name = next_child_name(registry, parent);
+    registry.commit_graph_to_name(timestamp, graph_ca, || nested.clone(), &name);
+
+    // Cut the selected nodes from the parent, then insert the new reference in
+    // their place. Removal happens first so the new node's index is stable (as the
+    // last node, unaffected by the swap-removals). The returned `Reindex` maps
+    // surviving external nodes that were swap-moved by the removals.
+    let reindex = remove_nodes(
+        graph,
+        vm,
+        &mut view.layout,
+        &mut head_state.scene.interaction.selection,
+        instances,
+        nodes.iter().copied(),
+    );
+    let named_ref = NamedRef::with_sync(name, node::Ref::new(graph_ca.into()));
+    let node_data = gantz_core::data::erase_node_typed(&named_ref).ok()?;
+    let new_ix = graph.add_node(node_data);
+
+    // Re-wire the parent graph to the new node's sockets.
+    for (i, &(_, ref w, external)) in incoming.iter().enumerate() {
+        let ext = reindex
+            .apply_to_index(external.index())
+            .expect("external boundary node must survive the cut");
+        graph.add_edge(
+            NodeIndex::new(ext),
+            new_ix,
+            gantz_core::Edge::new(w.output, node::Input(i as u16)),
+        );
+    }
+    for (j, &(_, ref w, external)) in outgoing.iter().enumerate() {
+        let ext = reindex
+            .apply_to_index(external.index())
+            .expect("external boundary node must survive the cut");
+        graph.add_edge(
+            new_ix,
+            NodeIndex::new(ext),
+            gantz_core::Edge::new(node::Output(j as u16), w.input),
+        );
+    }
+
+    // Position the new node and make it the sole selection.
+    view.layout.insert(node_id(new_ix.index()), pos);
+    let sel = &mut head_state.scene.interaction.selection;
+    sel.nodes.clear();
+    sel.edges.clear();
+    sel.nodes.insert(new_ix);
+
+    Some(new_ix)
 }
 
 /// A single node removal recorded by [`remove_nodes`]: the node at `removed`
@@ -896,5 +1074,156 @@ mod tests {
         }];
         let view = merged_view(&srcs, None, None);
         assert!(view.layout.is_empty());
+    }
+
+    // A helper edge: output socket `o` to input socket `i`.
+    fn edge(o: u16, i: u16) -> gantz_core::Edge {
+        gantz_core::Edge::new(node::Output(o), node::Input(i))
+    }
+
+    // A parent graph `0 -> 1 -> 3 -> 4` with an extra `2 -> 3`, so
+    // selecting {1, 3} leaves incoming boundaries (0->1, 2->3) and one
+    // outgoing boundary (3->4).
+    fn nest_graph() -> DataGraph {
+        let mut graph = test_graph(&[10, 11, 12, 13, 14]);
+        graph.add_edge(NodeIx::new(0), NodeIx::new(1), edge(0, 0));
+        graph.add_edge(NodeIx::new(2), NodeIx::new(3), edge(0, 0));
+        graph.add_edge(NodeIx::new(1), NodeIx::new(3), edge(0, 0));
+        graph.add_edge(NodeIx::new(3), NodeIx::new(4), edge(0, 0));
+        graph
+    }
+
+    // Nesting a subgraph cuts the selected nodes into a fresh nested graph,
+    // turns boundary edges into inlets/outlets, and re-wires the parent to
+    // the new node's sockets.
+    #[test]
+    fn nest_nodes_moves_subgraph_and_rewires_parent() {
+        let mut registry = gantz_ca::Registry::default();
+        let mut graph = nest_graph();
+        let mut vm = Engine::new_base();
+        let mut view = crate::SceneView::default();
+        view.camera.center = egui::pos2(100.0, 50.0);
+        let mut head_state = OpenHeadState::default();
+        let selection: HashSet<_> = [NodeIx::new(1), NodeIx::new(3)].into_iter().collect();
+        head_state.scene.interaction.selection.nodes = selection.clone();
+        let mut instances = crate::node::NodeInstances::default();
+        let parent: Name = "alpha".parse().unwrap();
+
+        let new_ix = nest_nodes(
+            &mut registry,
+            std::time::Duration::from_secs(1),
+            &mut graph,
+            &mut vm,
+            &mut view,
+            &mut head_state,
+            &mut instances,
+            &selection,
+            &parent,
+        )
+        .unwrap();
+
+        // The new node is a synced NamedRef to the fresh `alpha:1` graph.
+        let weight = &graph[new_ix];
+        let named = named_ref_of(weight).expect("new node must be a NamedRef");
+        assert_eq!(named.name().to_string(), "alpha:1");
+        assert!(named.is_nested());
+
+        // The parent keeps the external nodes and the new node, wired to its
+        // sockets: incoming 0->input0, 2->input1, outgoing output0->4.
+        assert_eq!(graph.node_count(), 4);
+        assert!(graph.find_edge(NodeIx::new(0), new_ix).is_some());
+        assert!(graph.find_edge(NodeIx::new(2), new_ix).is_some());
+        assert!(graph.find_edge(new_ix, NodeIx::new(1)).is_some());
+
+        // The nested graph carries the internal edge and the boundary inlets/outlets.
+        let nested = registry
+            .commit_graph_ref(&registry.head(&"alpha:1".parse().unwrap()).unwrap())
+            .unwrap();
+        // inlet0 -> old1, inlet1 -> old3, old1 -> old3, old3 -> outlet0.
+        assert_eq!(nested.node_count(), 5);
+        assert!(nested.find_edge(NodeIx::new(0), NodeIx::new(3)).is_some());
+        assert!(nested.find_edge(NodeIx::new(1), NodeIx::new(4)).is_some());
+        assert!(nested.find_edge(NodeIx::new(3), NodeIx::new(4)).is_some());
+        assert!(nested.find_edge(NodeIx::new(4), NodeIx::new(2)).is_some());
+
+        // The selection becomes the new node.
+        assert_eq!(
+            head_state
+                .scene
+                .interaction
+                .selection
+                .nodes
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![new_ix],
+        );
+    }
+
+    // A selection with no boundary edges yields a nested node with zero sockets.
+    #[test]
+    fn nest_nodes_without_boundaries_has_no_sockets() {
+        let mut registry = gantz_ca::Registry::default();
+        let mut graph = DataGraph::default();
+        // Two internally-connected nodes, no external edges.
+        let a = graph.add_node(nd(0));
+        let b = graph.add_node(nd(1));
+        graph.add_edge(a, b, edge(0, 0));
+        let mut vm = Engine::new_base();
+        let mut view = crate::SceneView::default();
+        let mut head_state = OpenHeadState::default();
+        let selection: HashSet<_> = [a, b].into_iter().collect();
+        head_state.scene.interaction.selection.nodes = selection.clone();
+        let mut instances = crate::node::NodeInstances::default();
+        let parent: Name = "alpha".parse().unwrap();
+
+        let new_ix = nest_nodes(
+            &mut registry,
+            std::time::Duration::from_secs(1),
+            &mut graph,
+            &mut vm,
+            &mut view,
+            &mut head_state,
+            &mut instances,
+            &selection,
+            &parent,
+        )
+        .unwrap();
+
+        // Only the new node remains; it has no inlets or outlets.
+        assert_eq!(graph.node_count(), 1);
+        assert!(graph.node_weight(new_ix).is_some());
+        let nested = registry
+            .commit_graph_ref(&registry.head(&"alpha:1".parse().unwrap()).unwrap())
+            .unwrap();
+        // Two moved nodes, no inlets/outlets.
+        assert_eq!(nested.node_count(), 2);
+    }
+
+    // An empty selection nests nothing.
+    #[test]
+    fn nest_nodes_empty_selection_is_a_noop() {
+        let mut registry = gantz_ca::Registry::default();
+        let mut graph = test_graph(&[10, 11]);
+        let mut vm = Engine::new_base();
+        let mut view = crate::SceneView::default();
+        let mut head_state = OpenHeadState::default();
+        let mut instances = crate::node::NodeInstances::default();
+        let parent: Name = "alpha".parse().unwrap();
+
+        let result = nest_nodes(
+            &mut registry,
+            std::time::Duration::from_secs(1),
+            &mut graph,
+            &mut vm,
+            &mut view,
+            &mut head_state,
+            &mut instances,
+            &HashSet::new(),
+            &parent,
+        );
+
+        assert!(result.is_none());
+        assert_eq!(graph.node_count(), 2);
     }
 }
