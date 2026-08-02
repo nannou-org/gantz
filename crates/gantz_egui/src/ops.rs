@@ -1148,7 +1148,14 @@ mod tests {
 
         // The selection becomes the new node.
         assert_eq!(
-            head_state.scene.interaction.selection.nodes.iter().copied().collect::<Vec<_>>(),
+            head_state
+                .scene
+                .interaction
+                .selection
+                .nodes
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
             vec![new_ix],
         );
     }
