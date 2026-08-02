@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.6.0...gantz_egui-v0.6.1) - 2026-08-02
+
+### Added
+
+- *(gantz_egui)* handle NestNodes in the demo
+- *(gantz_egui)* add nest button to the node context menu
+- *(gantz_egui)* add ops::nest_nodes
+- *(gantz_egui)* add NestNodes response payload
+
+### Other
+
+- *(gantz_egui)* rustfmt
+- *(gantz_egui)* cover nest_nodes
+
 ## [0.6.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.5.0...gantz_egui-v0.6.0) - 2026-07-23
 
 ### Added
