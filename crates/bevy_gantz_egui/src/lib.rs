@@ -192,6 +192,9 @@ impl Plugin for GantzEguiPlugin {
                     node::tick_bang::drive_tick_bangs
                         .after(bevy_gantz::VmSet)
                         .in_set(bevy_gantz::EntrypointSet),
+                    node::await_::drive_awaits
+                        .after(bevy_gantz::VmSet)
+                        .in_set(bevy_gantz::EntrypointSet),
                     persist_camera_and_seed.in_set(ViewPersistSet),
                     // On layout settle, fork a layout-only commit. Runs after
                     // `VmSet` (so a graph edit commits first and its baseline is

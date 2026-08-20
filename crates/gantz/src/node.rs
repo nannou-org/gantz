@@ -39,6 +39,8 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_egui::node::Comment,
             bevy_gantz_egui::node::UpdateBang,
             bevy_gantz_egui::node::TickBang,
+            bevy_gantz_egui::node::Await,
+            bevy_gantz_egui::node::Sleep,
             gantz_egui::node::Inspect,
             gantz_egui::node::Plot,
             gantz_plyphon::UnitNode,
@@ -184,6 +186,7 @@ mod tests {
     fn builtins_match_expected_name_set() {
         let mut expected = vec![
             "apply",
+            "await",
             "bang",
             "branch",
             "comment",
@@ -197,6 +200,7 @@ mod tests {
             "number",
             "outlet",
             "plot",
+            "sleep",
             "tick!",
             "update!",
             "~bus",
@@ -257,6 +261,9 @@ mod tests {
             node_datum("Bang", vec![]),
             node_datum("Inspect", vec![]),
             node_datum("UpdateBang", vec![]),
+            node_datum("Await", vec![]),
+            node_datum("Sleep", vec![]),
+            node_datum("Sleep", vec![("duration", Datum::F64(0.25))]),
             node_datum(
                 "TickBang",
                 vec![(
@@ -512,6 +519,10 @@ mod tests {
                 "7efc434b814bf22f86e51c95a525c335b050cefe38a37598dd45bce0f1ebfde4",
             ),
             (
+                "Await",
+                "ae7e6f2aa5a151e730875311da2eaddb271ccf2b21b8043e5a2dc2a36b036e08",
+            ),
+            (
                 "Bang",
                 "ac2f4e3d47c7b69a188da461568e9c9c013d1458f68a259ad3c64c3e4055c825",
             ),
@@ -586,6 +597,10 @@ mod tests {
             (
                 "ScopeOut",
                 "f52e55d37ad94f3c6bd37c78f55282f8b8e934c8f26e075cd1afb32a5eee133c",
+            ),
+            (
+                "Sleep",
+                "c2b64d4e118478d3be0f7c5eca933105fafbd788e8ca05e0736e28d9d4e317eb",
             ),
             (
                 "Sum",
