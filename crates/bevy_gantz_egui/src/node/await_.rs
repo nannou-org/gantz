@@ -1,23 +1,30 @@
 //! The `await` node: receive a gantz task, swallow evaluation, and fire a
 //! push evaluation with the task's result once it resolves.
 //!
-//! On receiving a [`TaskHandle`] the node
-//! stashes it in its state and selects a dead branch arm, so evaluation stops
-//! at the node. The [`drive_awaits`] Bevy system moves the task out of VM
-//! state, polls it each update, and on completion writes the result back into
-//! the node's state and triggers the node's push entrypoint - the value output
-//! fires on success, the error output on failure. A non-task input value
-//! passes straight through the value output in the same evaluation.
+//! On receiving a [`TaskHandle`] the node stashes it in its state and selects
+//! a dead branch arm, so evaluation stops at the node. The [`drive_awaits`]
+//! Bevy system polls the stashed task in place each update, and on completion
+//! writes the result pair into the node's state and triggers the node's push
+//! entrypoint - the value output fires on success, the error output on
+//! failure. A non-task input value passes straight through the value output
+//! in the same evaluation.
+//!
+//! Pending tasks never leave the node's VM state, so the state-maintenance
+//! machinery carries in-flight work everywhere the node goes: editor deletes
+//! reindex it via `remove_value`/`move_value`, and head navigation, merges and
+//! collab sync migrate it via `remap_root` (dropping - and thereby cancelling
+//! - the tasks of deleted nodes). The one corner where a pending task is
+//! deliberately dropped is nesting, which removes rather than relocates the
+//! nested nodes' state.
 
 use bevy_ecs::prelude::*;
 use bevy_egui::egui;
-use bevy_gantz::task::{GantzTask, TASK_PREDICATE, TaskHandle};
+use bevy_gantz::task::{TASK_CANCEL_FN, TASK_PREDICATE, TaskHandle};
 use gantz_core::node::{self, Conns, EvalConf, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::visit;
 use gantz_egui::node::DynNode;
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
 use steel::SteelVal;
 use steel::rvals::FromSteelVal;
 
@@ -81,10 +88,15 @@ impl gantz_core::Node for Await {
         let expr = match ctx.inputs().first() {
             // A value arrived: stash tasks in state for the driver and select
             // the dead arm; pass anything else straight through the value
-            // output.
+            // output. Any pending predecessor is cancelled explicitly (latest
+            // wins) - relying on the replaced pair being dropped would be
+            // best-effort timing, since steel heap-boxes `set!` state.
             Some(Some(input)) => format!(
                 "(if ({TASK_PREDICATE} {input}) \
-                     (begin (set! state (list {PENDING_ARM} {input})) (list {PENDING_ARM} '())) \
+                     (begin \
+                         ({TASK_CANCEL_FN} state) \
+                         (set! state (list {PENDING_ARM} {input})) \
+                         (list {PENDING_ARM} '())) \
                      (list {VALUE_ARM} {input}))"
             ),
             // Entered via the push entry fn: the driver wrote the result pair
@@ -176,11 +188,13 @@ fn pair(arm: isize, payload: SteelVal) -> SteelVal {
     SteelVal::ListV([SteelVal::IntV(arm), payload].into_iter().collect())
 }
 
-/// The stashed task, if the given state value is a pending pair holding one.
+/// The stashed task's handle, if the given state value is a pending pair
+/// holding one.
 ///
-/// Extraction leaves the handle's shared cell empty, so a subsequent read of
-/// the same state yields `None`.
-fn take_stashed_task(state: &SteelVal) -> Option<GantzTask> {
+/// The returned handle shares the cell of the one in state, so checking it
+/// polls the task in place. A dead pair's `'()` payload simply fails the
+/// handle conversion.
+pub fn pending_handle(state: &SteelVal) -> Option<TaskHandle> {
     let SteelVal::ListV(list) = state else {
         return None;
     };
@@ -191,7 +205,7 @@ fn take_stashed_task(state: &SteelVal) -> Option<GantzTask> {
     if *arm != SteelVal::IntV(PENDING_ARM) {
         return None;
     }
-    TaskHandle::from_steelval(payload).ok()?.take()
+    TaskHandle::from_steelval(payload).ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -217,50 +231,26 @@ impl visit::TypedVisitor<DynNode> for AwaitCollector {
 // Bevy system
 // ---------------------------------------------------------------------------
 
-/// The pending tasks taken out of `await` node state, keyed by head entity
-/// and node path.
-///
-/// Dropping an entry cancels its task, so pruning (head closed, node removed)
-/// and latest-wins replacement cancel superseded work for free.
-///
-/// Known limitation: unlike VM state, the map is not remapped when a graph
-/// edit reindexes nodes, so such an edit cancels the in-flight task of any
-/// awaiting node whose path changed.
-#[derive(Default)]
-pub struct AwaitTasks(pub HashMap<(Entity, Vec<usize>), GantzTask>);
-
 /// Drives `await` nodes every update, independent of GUI visibility.
 ///
-/// For each open head and each `await` node: moves any task stashed in the
-/// node's state into [`AwaitTasks`] (replacing - and thereby cancelling - a
-/// previously pending task at the same node), polls the pending tasks, and on
-/// completion writes the result pair into the node's state and triggers the
-/// node's push entrypoint. Pending entries whose head or node has gone are
-/// dropped.
+/// For each open head and each `await` node whose state is a pending pair,
+/// checks the stashed task in place. On completion it writes the result pair
+/// into the node's state - overwriting the pair releases the handle - and
+/// triggers the node's push entrypoint.
+///
+/// Pending tasks live entirely in node state, so nothing here needs pruning
+/// or remapping: deleting a node, closing a head, or navigating to a graph
+/// without the node drops the state (cancelling the task), while reindexing
+/// edits and head navigation migrate it with the node.
 pub fn drive_awaits(
     registry: Res<crate::Registry>,
     cache: Res<crate::GraphCache>,
     builtins: Res<crate::BuiltinNodes>,
     mut vms: NonSendMut<bevy_gantz::head::HeadVms>,
-    mut tasks: NonSendMut<AwaitTasks>,
     heads: Query<(Entity, &bevy_gantz::head::HeadRef), With<bevy_gantz::head::OpenHead>>,
     mut cmds: Commands,
 ) {
-    // Prune bookkeeping. `open`: every open head. `walked`: heads whose graph
-    // was traversed this update. `live`: every (head, path) with a
-    // still-pending task at a present await node. An entry is dropped - which
-    // cancels its task - when its head is closed, or when its head was walked
-    // but the entry is not live (the node is gone, or its task was delivered).
-    // Entries of open heads that could not be walked this update (e.g. the
-    // reified graph is not cached yet) are kept rather than spuriously
-    // cancelled.
-    let mut open: HashSet<Entity> = HashSet::new();
-    let mut walked: HashSet<Entity> = HashSet::new();
-    let mut live: HashSet<(Entity, Vec<usize>)> = HashSet::new();
-
     for (entity, head_ref) in heads.iter() {
-        open.insert(entity);
-
         // The head's committed graph, read from the reified cache (the
         // working graph equals it by the `WorkingGraph` invariant).
         let Some(graph_ca) = registry.head_commit(&head_ref.0).map(|c| c.graph) else {
@@ -274,7 +264,6 @@ pub fn drive_awaits(
 
         let mut collector = AwaitCollector { paths: vec![] };
         gantz_core::graph::visit_typed(&get_node, graph, &[], &mut collector);
-        walked.insert(entity);
 
         if collector.paths.is_empty() {
             continue;
@@ -285,32 +274,20 @@ pub fn drive_awaits(
         };
 
         for path in collector.paths {
-            // Stash: move a newly received task out of the node's state,
-            // replacing (and thereby cancelling) any pending predecessor.
-            match node::state::extract_value(vm, &path) {
-                Ok(Some(state)) => {
-                    if let Some(task) = take_stashed_task(&state) {
-                        tasks.0.insert((entity, path.clone()), task);
-                        if let Err(e) = node::state::update_value(vm, &path, dead_pair()) {
-                            bevy_log::error!("await state reset failed: {e}");
-                        }
-                    }
+            let state = match node::state::extract_value(vm, &path) {
+                Ok(Some(state)) => state,
+                Ok(None) => continue,
+                Err(e) => {
+                    bevy_log::error!("await state read failed: {e}");
+                    continue;
                 }
-                Ok(None) => {}
-                Err(e) => bevy_log::error!("await state read failed: {e}"),
-            }
-
-            // Poll: deliver a resolved task's result and fire the entrypoint.
-            let key = (entity, path);
-            let Some(task) = tasks.0.get_mut(&key) else {
+            };
+            let Some(handle) = pending_handle(&state) else {
                 continue;
             };
-            let Some(result) = task.check() else {
-                live.insert(key);
+            let Some(result) = handle.check() else {
                 continue;
             };
-            tasks.0.remove(&key);
-            let (_, path) = key;
             let pair = match result {
                 Ok(val) => value_pair(val),
                 Err(err) => error_pair(err),
@@ -336,8 +313,4 @@ pub fn drive_awaits(
             });
         }
     }
-
-    tasks
-        .0
-        .retain(|key, _| open.contains(&key.0) && (!walked.contains(&key.0) || live.contains(key)));
 }
