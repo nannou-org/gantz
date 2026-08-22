@@ -262,6 +262,47 @@ impl Env<'_> {
         info
     }
 
+    /// The `gui` markers declared by the graph referenced by `ca`, in index
+    /// order.
+    ///
+    /// Read straight from the stored graph data (see
+    /// [`crate::node::gui::markers`]), so markers resolve even when the
+    /// graph contains foreign nodes the codec cannot reify. Call sites
+    /// resolve a duplicate role as first-in-index-order.
+    pub fn gui_markers(&self, ca: &ca::ContentAddr) -> Vec<(node::Id, crate::node::Gui)> {
+        let graph_ca = ca::GraphAddr::from(*ca);
+        self.registry
+            .graph(&graph_ca)
+            .map(crate::node::gui::markers)
+            .unwrap_or_default()
+    }
+
+    /// The graph address pinned by the node `id` within the graph referenced
+    /// by `ca` - one reference-stand-in hop (see
+    /// [`crate::node::gui::ref_target_of`]).
+    pub fn ref_target(&self, ca: &ca::ContentAddr, id: node::Id) -> Option<ca::ContentAddr> {
+        let graph_ca = ca::GraphAddr::from(*ca);
+        let g = self.registry.graph(&graph_ca)?;
+        crate::node::gui::ref_target_of(g.node_weight(petgraph::graph::NodeIndex::new(id))?)
+    }
+
+    /// The typed node at `rel_path` within the graph referenced by `ca`.
+    ///
+    /// Non-terminal path segments hop one reference stand-in each (see
+    /// [`ref_target`][Self::ref_target]); the terminal node resolves through
+    /// the reified cache, so a leaf graph the codec cannot reify yields
+    /// `None`.
+    pub fn node_at(&self, ca: &ca::ContentAddr, rel_path: &[node::Id]) -> Option<&dyn Node> {
+        let (&last, hops) = rel_path.split_last()?;
+        let mut ca = *ca;
+        for &hop in hops {
+            ca = self.ref_target(&ca, hop)?;
+        }
+        let g = self.graphs.get(&ca::GraphAddr::from(ca))?;
+        let weight = g.node_weight(petgraph::graph::NodeIndex::new(last))?;
+        Some(&**weight as &dyn Node)
+    }
+
     /// Dry-run the merge of the branch named `source` into `ours` under the
     /// given conflict resolutions (see [`crate::merge::merge_preview`]), for
     /// hover previews in the merge row.
@@ -305,4 +346,37 @@ pub fn head_graph_addr(reg: &ca::Registry, name: &ca::Name) -> Option<ca::GraphA
 /// All name -> head commit pairs, in name order.
 pub fn names(reg: &ca::Registry) -> Vec<(ca::Name, ca::CommitAddr)> {
     reg.heads().map(|(name, ca)| (name.clone(), ca)).collect()
+}
+
+/// The output count of the node at `rel_path` within the graph referenced by
+/// `ca`, resolved via [`Env::node_at`].
+///
+/// Ref-like nodes resolve their output count transparently through the
+/// referenced graph, so a terminal segment that is itself a reference reports
+/// the referenced graph's outlet count.
+pub fn n_outputs_at(env: &Env<'_>, ca: &ca::ContentAddr, rel_path: &[node::Id]) -> Option<usize> {
+    let node = env.node_at(ca, rel_path)?;
+    let get_node = |c: &ca::ContentAddr| env.node(c);
+    Some(node.n_outputs(node::MetaCtx::new(&get_node)))
+}
+
+/// Fold [`Env::ref_target`] over `chain` from `start`, then find the leaf
+/// graph's body marker.
+///
+/// The chain may be empty, resolving `start`'s own body marker. Returns the
+/// leaf graph's address and its body marker's node id.
+pub fn resolve_ref_chain(
+    env: &Env<'_>,
+    start: ca::ContentAddr,
+    chain: &[node::Id],
+) -> Option<(ca::ContentAddr, node::Id)> {
+    let mut ca = start;
+    for &hop in chain {
+        ca = env.ref_target(&ca, hop)?;
+    }
+    let (id, _) = env
+        .gui_markers(&ca)
+        .into_iter()
+        .find(|(_, gui)| gui.role == crate::node::GuiRole::Body)?;
+    Some((ca, id))
 }

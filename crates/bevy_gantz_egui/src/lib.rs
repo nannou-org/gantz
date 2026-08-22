@@ -157,6 +157,8 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(on_branched_head_fork_nested)
             // VM timing observer
             .add_observer(on_eval_entry_complete)
+            // Marker refresh dirty flag (see `node::gui_refresh`)
+            .add_observer(node::gui_refresh::mark_gui_dirty_on_push)
             // GUI response payload observers
             .add_observer(on_create_node)
             .add_observer(on_create_nested_graph)
@@ -194,6 +196,15 @@ impl Plugin for GantzEguiPlugin {
                         .in_set(bevy_gantz::EntrypointSet),
                     node::await_::drive_awaits
                         .after(bevy_gantz::VmSet)
+                        .in_set(bevy_gantz::EntrypointSet),
+                    // Re-pulls gui markers of dirty / recompiled heads. After
+                    // the entrypoint drivers so their pushes refresh markers
+                    // the same frame.
+                    node::gui_refresh::refresh_gui_markers
+                        .after(bevy_gantz::VmSet)
+                        .after(node::update_bang::drive_update_bangs)
+                        .after(node::tick_bang::drive_tick_bangs)
+                        .after(node::await_::drive_awaits)
                         .in_set(bevy_gantz::EntrypointSet),
                     persist_camera_and_seed.in_set(ViewPersistSet),
                     // On layout settle, fork a layout-only commit. Runs after

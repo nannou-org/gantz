@@ -1976,77 +1976,177 @@ where
             );
         }
         Pane::GuiDebug => {
-            // The editor (plus its eval error and decode warnings) on the
-            // left, the interpreted tree on the right, rendered against the
-            // focused head's live VM: bindings resolve into its node state
-            // and pushes fire its entrypoints.
-            let cache = egui::Panel::left(egui::Id::new("gui-debug-editor-panel"))
-                .resizable(true)
-                .show_inside(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .show(ui, |ui| {
-                            let id = egui::Id::new("gantz-gui-debug-editor");
-                            let out = super::gui_debug::tree_editor(id, ui);
-                            if let Some(err) = &out.cache.eval_err {
-                                ui.colored_label(ui.visuals().error_fg_color, err);
-                            }
-                            if let Some(decoded) = &out.cache.decoded {
-                                if !decoded.warnings.is_empty() {
-                                    let title = format!("warnings ({})", decoded.warnings.len());
-                                    egui::CollapsingHeader::new(title).show(ui, |ui| {
-                                        for w in &decoded.warnings {
-                                            ui.horizontal_wrapped(|ui| {
-                                                ui.weak(format!("{:?}", w.path.0));
-                                                ui.label(w.kind.to_string());
-                                            });
-                                        }
-                                    });
+            // Mode selector: the focused graph's own marker tree (default),
+            // or the scratch editor for vocabulary experiments.
+            let scratch_id = egui::Id::new("gantz-gui-debug-scratch-mode");
+            let mut scratch: bool = ui
+                .ctx()
+                .data_mut(|d| d.get_persisted(scratch_id))
+                .unwrap_or(false);
+            egui::Panel::top(egui::Id::new("gui-debug-mode-panel")).show_inside(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui
+                        .selectable_label(!scratch, "marker")
+                        .on_hover_text("the focused graph's own gui marker tree")
+                        .clicked()
+                    {
+                        scratch = false;
+                    }
+                    if ui
+                        .selectable_label(scratch, "scratch")
+                        .on_hover_text("an editable tree literal")
+                        .clicked()
+                    {
+                        scratch = true;
+                    }
+                });
+            });
+            ui.ctx()
+                .data_mut(|d| d.insert_persisted(scratch_id, scratch));
+
+            if scratch {
+                // The editor (plus its eval error and decode warnings) on the
+                // left, the interpreted tree on the right, rendered against
+                // the focused head's live VM: bindings resolve into its node
+                // state and pushes fire its entrypoints.
+                let cache = egui::Panel::left(egui::Id::new("gui-debug-editor-panel"))
+                    .resizable(true)
+                    .show_inside(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .show(ui, |ui| {
+                                let id = egui::Id::new("gantz-gui-debug-editor");
+                                let out = super::gui_debug::tree_editor(id, ui);
+                                if let Some(err) = &out.cache.eval_err {
+                                    ui.colored_label(ui.visuals().error_fg_color, err);
                                 }
-                            }
-                            out.cache
-                        })
-                        .inner
-                })
-                .inner;
-            egui::CentralPanel::default().show_inside(ui, |ui| {
-                let Some(decoded) = &cache.decoded else {
-                    ui.weak("nothing to render");
-                    return;
-                };
+                                if let Some(decoded) = &out.cache.decoded {
+                                    gui_debug_warnings(decoded, ui);
+                                }
+                                out.cache
+                            })
+                            .inner
+                    })
+                    .inner;
+                egui::CentralPanel::default().show_inside(ui, |ui| {
+                    let Some(decoded) = &cache.decoded else {
+                        ui.weak("nothing to render");
+                        return;
+                    };
+                    let Some(head) = access.heads().get(*focused_head).cloned() else {
+                        ui.weak("no focused graph");
+                        return;
+                    };
+                    let env = gantz.env;
+                    let codec = gantz.codec;
+                    egui::ScrollArea::both().show(ui, |ui| {
+                        let payloads = access.with_head_mut(&head, |data| {
+                            gui_debug_tree(
+                                env, codec, &head, data.graph, data.vm, decoded, "scratch", ui,
+                            )
+                        });
+                        if let Some(payloads) = payloads {
+                            gantz_response.responses.extend(Some(&head), payloads);
+                        }
+                    });
+                });
+            } else {
+                // Marker mode: the raw stored tree of one of the focused
+                // graph's own gui markers as text on the left, the decoded
+                // tree rendered live on the right. Bindings are correct by
+                // construction here - the tree IS this graph's GUI.
                 let Some(head) = access.heads().get(*focused_head).cloned() else {
                     ui.weak("no focused graph");
                     return;
                 };
                 let env = gantz.env;
                 let codec = gantz.codec;
-                egui::ScrollArea::both().show(ui, |ui| {
-                    let payloads = access.with_head_mut(&head, |data| {
-                        let (inlets, outlets) = crate::inlet_outlet_ids(env, data.graph);
-                        let n_outs = super::gui_debug::node_output_counts(env, codec, data.graph);
-                        let resolver = move |p: &[node::Id]| match p {
-                            &[ix] => n_outs.get(&ix).copied(),
-                            _ => None,
+                let payloads = access.with_head_mut(&head, |data| {
+                    let markers = crate::node::gui::markers(data.graph);
+                    let decoded = egui::Panel::left(egui::Id::new("gui-debug-marker-panel"))
+                        .resizable(true)
+                        .show_inside(ui, |ui| {
+                            egui::ScrollArea::vertical()
+                                .show(ui, |ui| {
+                                    if markers.is_empty() {
+                                        ui.weak("add a `gui` node to this graph to define its GUI");
+                                        return None;
+                                    }
+                                    // Role picker over the roles that exist,
+                                    // remembered per head.
+                                    let role_id = egui::Id::new(("gantz-gui-debug-role", &head));
+                                    let role = ui
+                                        .ctx()
+                                        .data(|d| d.get_temp::<crate::node::GuiRole>(role_id))
+                                        .filter(|r| markers.iter().any(|(_, g)| g.role == *r))
+                                        .unwrap_or_else(|| {
+                                            markers
+                                                .iter()
+                                                .map(|&(_, g)| g.role)
+                                                .find(|&r| r == crate::node::GuiRole::Body)
+                                                .unwrap_or(markers[0].1.role)
+                                        });
+                                    let mut role = role;
+                                    ui.horizontal(|ui| {
+                                        for r in crate::node::GuiRole::ALL {
+                                            if markers.iter().any(|(_, g)| g.role == r)
+                                                && ui
+                                                    .selectable_label(role == r, r.as_str())
+                                                    .clicked()
+                                            {
+                                                role = r;
+                                            }
+                                        }
+                                    });
+                                    ui.ctx().data_mut(|d| d.insert_temp(role_id, role));
+
+                                    // First marker of the role, in index order.
+                                    let &(ix, _) = markers
+                                        .iter()
+                                        .find(|(_, g)| g.role == role)
+                                        .expect("role picked from existing markers");
+                                    let val = node::state::extract_value(data.vm, &[ix])
+                                        .ok()
+                                        .flatten()
+                                        .filter(|v| !matches!(v, steel::SteelVal::Void));
+                                    let Some(val) = val else {
+                                        ui.weak("the marker has no stored tree yet");
+                                        return None;
+                                    };
+                                    ui.separator();
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(format!("{val}")).monospace(),
+                                        )
+                                        .selectable(true),
+                                    );
+                                    let decoded = gantz_ui::codec::steel::decode(
+                                        &val,
+                                        &gantz_ui::Limits::default(),
+                                    );
+                                    gui_debug_warnings(&decoded, ui);
+                                    Some(decoded)
+                                })
+                                .inner
+                        })
+                        .inner;
+                    let mut payloads = Vec::new();
+                    egui::CentralPanel::default().show_inside(ui, |ui| {
+                        let Some(decoded) = &decoded else {
+                            ui.weak("nothing to render");
+                            return;
                         };
-                        let mut writes = Vec::new();
-                        let mut node_ctx =
-                            NodeCtx::new(env, &[], &inlets, &outlets, &[], data.vm, &mut writes);
-                        let root_id = egui::Id::new(("gantz-gui-debug", &head));
-                        let r = crate::ui_tree::UiTree::new(root_id)
-                            .n_outputs(&resolver)
-                            .show(&decoded.root, &mut node_ctx, ui);
-                        let mut payloads = r.payloads;
-                        payloads.extend(
-                            writes
-                                .drain(..)
-                                .map(|w| crate::DynResponse::new(crate::StateWritten(w))),
-                        );
-                        payloads
+                        egui::ScrollArea::both().show(ui, |ui| {
+                            payloads = gui_debug_tree(
+                                env, codec, &head, data.graph, data.vm, decoded, "marker", ui,
+                            );
+                        });
                     });
-                    if let Some(payloads) = payloads {
-                        gantz_response.responses.extend(Some(&head), payloads);
-                    }
+                    payloads
                 });
-            });
+                if let Some(payloads) = payloads {
+                    gantz_response.responses.extend(Some(&head), payloads);
+                }
+            }
         }
         Pane::VmPerf => {
             if let Some(ref mut capture) = gantz.perf_vm {
@@ -3331,6 +3431,74 @@ fn collect_gantz_file_drops(ctx: &egui::Context) -> Vec<FileDrop> {
         .filter_map(|f| export::read_dropped_file(f))
         .map(|bytes| FileDrop { bytes, target })
         .collect()
+}
+
+/// Render a decoded tree against a head's live VM: the GuiDebug pane's
+/// central-panel body, shared by the marker and scratch modes. Bindings
+/// resolve into the head's node state both ways, and the returned payloads
+/// carry the tree's push evaluations and state writes.
+#[allow(clippy::too_many_arguments)]
+fn gui_debug_tree(
+    env: &Env<'_>,
+    codec: &crate::node::NodeCodec,
+    head: &gantz_ca::Head,
+    graph: &gantz_ca::DataGraph,
+    vm: &mut Engine,
+    decoded: &gantz_ui::Decoded,
+    salt: &'static str,
+    ui: &mut egui::Ui,
+) -> Vec<crate::response::DynResponse> {
+    let (inlets, outlets) = crate::inlet_outlet_ids(env, graph);
+    // The focused head's committed graph address: resolver hops into
+    // instances go through the registry (instances always resolve committed
+    // children).
+    let head_ca: Option<gantz_ca::ContentAddr> = env
+        .registry
+        .head_commit(head)
+        .map(|commit| commit.graph.into());
+    let n_outs = super::gui_debug::node_output_counts(env, codec, graph);
+    let resolver = |p: &[node::Id]| -> Option<usize> {
+        match p {
+            // Top-level nodes read the working graph.
+            [ix] => n_outs.get(ix).copied(),
+            _ => crate::reg::n_outputs_at(env, head_ca.as_ref()?, p),
+        }
+    };
+    let ref_gui = |chain: &[node::Id]| -> Option<node::Id> {
+        let (_, marker) = crate::reg::resolve_ref_chain(env, head_ca?, chain)?;
+        Some(marker)
+    };
+    let mut writes = Vec::new();
+    let mut node_ctx = NodeCtx::new(env, &[], &inlets, &outlets, &[], vm, &mut writes);
+    let root_id = egui::Id::new(("gantz-gui-debug", head, salt));
+    let r = crate::ui_tree::UiTree::new(root_id)
+        .n_outputs(&resolver)
+        .ref_gui(&ref_gui)
+        .show(&decoded.root, &mut node_ctx, ui);
+    let mut payloads = r.payloads;
+    payloads.extend(
+        writes
+            .drain(..)
+            .map(|w| crate::DynResponse::new(crate::StateWritten(w))),
+    );
+    payloads
+}
+
+/// The GuiDebug pane's collapsible decode-warnings list, shared by both
+/// modes.
+fn gui_debug_warnings(decoded: &gantz_ui::Decoded, ui: &mut egui::Ui) {
+    if decoded.warnings.is_empty() {
+        return;
+    }
+    let title = format!("warnings ({})", decoded.warnings.len());
+    egui::CollapsingHeader::new(title).show(ui, |ui| {
+        for w in &decoded.warnings {
+            ui.horizontal_wrapped(|ui| {
+                ui.weak(format!("{:?}", w.path.0));
+                ui.label(w.kind.to_string());
+            });
+        }
+    });
 }
 
 /// Provides a consistent frame and styling for the panes.

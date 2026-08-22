@@ -9,6 +9,7 @@ pub use dyn_node::{DynNode, NodeCodec, NodeUiInstance, NormalizeNodeError, UiBui
 pub use fn_named_ref::FnNamedRef;
 #[doc(inline)]
 pub use gantz_core::node::{Id, state};
+pub use gui::{GUI_REF_EXT_KEY, Gui, GuiDisplay, GuiRefExt, GuiRole};
 pub use inspect::Inspect;
 pub use instance_cache::{InstanceEntry, NodeInstances};
 pub use named_ref::{NamedRef, missing_color, outdated_color};
@@ -18,6 +19,7 @@ pub use ref_ext::RefExtUi;
 pub mod comment;
 pub mod dyn_node;
 pub mod fn_named_ref;
+pub mod gui;
 pub mod inspect;
 pub mod instance_cache;
 pub mod named_ref;
@@ -38,6 +40,7 @@ pub fn builtins() -> Vec<gantz_core::Builtin> {
     vec![
         Builtin::new("comment", &Comment::default()),
         Builtin::new("fn", &gantz_core::node::Fn::new(named_ref)),
+        Builtin::new("gui", &Gui::default()),
         Builtin::new("inspect", &Inspect::default()),
         Builtin::new("plot", &Plot::default()),
     ]
