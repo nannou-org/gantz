@@ -133,3 +133,153 @@ impl Backend for Embedded<'_> {
         res
     }
 }
+
+/// Schedule a batch of `(time_osc, value)` control updates for one param,
+/// spending at most `budget` sends.
+///
+/// When the batch exceeds the remaining budget, the middle is dropped and
+/// the final pair is scheduled in its place, so the param still lands on
+/// its end state at the right time. Sends the backend rejects also count
+/// as dropped. Returns the number of dropped pairs.
+pub fn schedule_batch<B: Backend>(
+    backend: &mut B,
+    node: i32,
+    param: usize,
+    batch: &[(u64, f32)],
+    budget: &mut usize,
+) -> usize {
+    if *budget == 0 {
+        return batch.len();
+    }
+    let keep = batch.len().min(*budget);
+    let (head, tail) = if keep < batch.len() {
+        (&batch[..keep - 1], &batch[batch.len() - 1..])
+    } else {
+        (batch, &batch[0..0])
+    };
+    let mut dropped = batch.len() - head.len() - tail.len();
+    for &(when, v) in head.iter().chain(tail) {
+        *budget -= 1;
+        if backend.set_control_at(node, param, v, when).is_err() {
+            dropped += 1;
+        }
+    }
+    dropped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A recording backend that fails scheduled sends after `ok` successes.
+    struct Fake {
+        calls: Vec<(usize, f32, u64)>,
+        ok: usize,
+    }
+
+    impl Backend for Fake {
+        fn install_synthdef(&mut self, _def: SynthDef) -> Result<(), BackendError> {
+            unreachable!()
+        }
+        fn free_synthdef(&mut self, _name: &str) -> Result<(), BackendError> {
+            unreachable!()
+        }
+        fn spawn(
+            &mut self,
+            _def_name: &str,
+            _target: i32,
+            _action: AddAction,
+        ) -> Result<i32, BackendError> {
+            unreachable!()
+        }
+        fn free_node(&mut self, _node: i32) -> Result<(), BackendError> {
+            unreachable!()
+        }
+        fn set_control(
+            &mut self,
+            _node: i32,
+            _param: usize,
+            _value: f32,
+        ) -> Result<(), BackendError> {
+            unreachable!()
+        }
+        fn set_control_at(
+            &mut self,
+            _node: i32,
+            param: usize,
+            value: f32,
+            time_osc: u64,
+        ) -> Result<(), BackendError> {
+            if self.calls.len() < self.ok {
+                self.calls.push((param, value, time_osc));
+                Ok(())
+            } else {
+                Err(BackendError::QueueFull)
+            }
+        }
+    }
+
+    fn batch(n: usize) -> Vec<(u64, f32)> {
+        (0..n).map(|i| (i as u64, i as f32)).collect()
+    }
+
+    /// A batch within budget schedules every pair in order.
+    #[test]
+    fn schedules_all_within_budget() {
+        let mut fake = Fake {
+            calls: vec![],
+            ok: usize::MAX,
+        };
+        let mut budget = 10;
+        let dropped = schedule_batch(&mut fake, 1, 0, &batch(4), &mut budget);
+        assert_eq!(dropped, 0);
+        assert_eq!(budget, 6);
+        assert_eq!(fake.calls.len(), 4);
+        assert_eq!(fake.calls[3], (0, 3.0, 3));
+    }
+
+    /// A batch beyond the budget drops the middle, keeping the head and
+    /// scheduling the final pair at its own time.
+    #[test]
+    fn over_budget_drops_middle_keeps_final() {
+        let mut fake = Fake {
+            calls: vec![],
+            ok: usize::MAX,
+        };
+        let mut budget = 3;
+        let dropped = schedule_batch(&mut fake, 1, 0, &batch(10), &mut budget);
+        assert_eq!(dropped, 7);
+        assert_eq!(budget, 0);
+        assert_eq!(fake.calls.len(), 3);
+        assert_eq!(fake.calls[0], (0, 0.0, 0));
+        assert_eq!(fake.calls[1], (0, 1.0, 1));
+        assert_eq!(fake.calls[2], (0, 9.0, 9));
+    }
+
+    /// An exhausted budget drops the whole batch without sending.
+    #[test]
+    fn exhausted_budget_drops_all() {
+        let mut fake = Fake {
+            calls: vec![],
+            ok: usize::MAX,
+        };
+        let mut budget = 0;
+        let dropped = schedule_batch(&mut fake, 1, 0, &batch(5), &mut budget);
+        assert_eq!(dropped, 5);
+        assert!(fake.calls.is_empty());
+    }
+
+    /// Rejected sends count as dropped without panicking.
+    #[test]
+    fn rejected_sends_count_as_dropped() {
+        let mut fake = Fake {
+            calls: vec![],
+            ok: 2,
+        };
+        let mut budget = 10;
+        let dropped = schedule_batch(&mut fake, 1, 0, &batch(5), &mut budget);
+        assert_eq!(dropped, 3);
+        assert_eq!(budget, 5);
+        assert_eq!(fake.calls.len(), 2);
+    }
+}

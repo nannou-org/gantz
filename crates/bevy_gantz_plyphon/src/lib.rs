@@ -109,6 +109,14 @@ const FADE_GRACE: Duration = Duration::from_millis(100);
 /// been decaying for at least a frame.
 const MAX_FADING_PER_HEAD: usize = 2;
 
+/// The most timestamped param updates scheduled per frame across all heads.
+/// The engine's control ring holds 1024 commands and only drains at audio
+/// callbacks, so this is the flood guard that keeps a burst (a huge pattern
+/// window, an absurd tick rate) from starving spawns, fades and everything
+/// else sharing the ring. Surplus updates are dropped with each param still
+/// landing on its final value (see [`gantz_plyphon::backend::schedule_batch`]).
+const MAX_SCHED_PER_FRAME: usize = 256;
+
 /// Frames per chunk in a `~scopeout`'s scope stream (one plyphon block).
 const CHUNK_FRAMES: usize = 64;
 /// Chunks pre-allocated per `~scopeout` scope stream (~43 ms of slack at 48 kHz before a
@@ -792,6 +800,8 @@ fn drive_synths(
     let out_channels = dsp.out_channels;
     let sample_rate = dsp.sample_rate;
     let mut live: HashSet<Entity> = HashSet::new();
+    let mut sched_budget = MAX_SCHED_PER_FRAME;
+    let mut sched_dropped = 0;
 
     for (entity, head_ref) in heads.iter() {
         live.insert(entity);
@@ -878,14 +888,20 @@ fn drive_synths(
                     }
                 } else {
                     // Timestamped automation: schedule each update at its own time
-                    // plus the lead, preserving the inter-tick spacing.
-                    for (t, v) in pending {
-                        let when = osc(t + dsp_config.0.sched_lead.as_secs_f64());
-                        if let Err(e) = backend.set_control_at(node_id, slot.index, v as f32, when)
-                        {
-                            log::error!("bevy_gantz_plyphon: set_control_at failed: {e:?}");
-                        }
-                    }
+                    // plus the lead, preserving the inter-tick spacing, within the
+                    // frame's shared budget.
+                    let lead = dsp_config.0.sched_lead.as_secs_f64();
+                    let batch: Vec<(u64, f32)> = pending
+                        .into_iter()
+                        .map(|(t, v)| (osc(t + lead), v as f32))
+                        .collect();
+                    sched_dropped += gantz_plyphon::backend::schedule_batch(
+                        &mut backend,
+                        node_id,
+                        slot.index,
+                        &batch,
+                        &mut sched_budget,
+                    );
                     // The latest queued value is now current; record it so a later
                     // immediate pass doesn't resend it.
                     slot.last = Some(value);
@@ -913,6 +929,14 @@ fn drive_synths(
                 }
             }
         }
+    }
+
+    if sched_dropped > 0 {
+        log::warn!(
+            "bevy_gantz_plyphon: dropped {sched_dropped} timestamped param \
+             updates (budget {MAX_SCHED_PER_FRAME}/frame); each param still \
+             lands on its final value",
+        );
     }
 
     // Fade out synths whose heads are no longer open (their defs are freed now -
