@@ -57,7 +57,9 @@
          pat/euclid-full
          pat/event-onset?
          pat/window
-         pat/events->secs)
+         pat/events->secs
+         pat/euclid-with
+         pat/m)
 
 ;; -- internal helpers ---------------------------------------------------------
 
@@ -631,3 +633,249 @@
            (let ((v (pat/event-value e)))
              (if (number? v) (exact->inexact v) v))))
    (pat//filter pat/event-onset? events)))
+
+;; -- mini-notation --------------------------------------------------------------
+;;
+;; `pat/m` parses a tidal-style notation string into a pattern:
+;;
+;;   bd sn        whitespace-separated steps fill one cycle
+;;   ~            a rest
+;;   [a b]        a nested subsequence in one step
+;;   [a, b]       stacked sequences
+;;   <a b>        alternation, one step per cycle
+;;   a*2  a/2     speed a step up or down
+;;   a@3  a _ _   weighted or extended steps
+;;   a(3,8,1)     a euclidean mask over the step, with optional rotation
+;;
+;; Atoms parse as numbers when possible, exact rationals like 3/4
+;; included, and as symbols otherwise. Malformed, empty or non-string
+;; input parses to silence so mid-edit strings stay quiet rather than
+;; erroring on every tick.
+
+;; Apply the euclidean mask to the pattern. Structure comes from the
+;; mask's onsets, values from `p`.
+(define (pat/euclid-with p k n off)
+  (pat/appr p (pat/map (lambda (b) (lambda (v) v)) (pat/euclid-off k n off))))
+
+(define pat//m-specials "[]<>(),*/@~")
+
+(define (pat//m-special? c)
+  (string-contains? pat//m-specials (string c)))
+
+;; Tokenize into a list of strings, specials as single-char tokens and
+;; anything else as words. A / directly between digits stays inside the
+;; word so rational atoms survive.
+(define (pat//m-tokenize s)
+  (pat//m-tok-loop (string->list s) '() '()))
+
+(define (pat//m-tok-loop cs word acc)
+  (if (empty? cs)
+      (reverse (pat//m-tok-flush word acc))
+      (let ((c (car cs)))
+        (if (char-whitespace? c)
+            (pat//m-tok-loop (cdr cs) '() (pat//m-tok-flush word acc))
+            (if (pat//m-special? c)
+                (if (pat//m-rational-slash? c word cs)
+                    (pat//m-tok-loop (cdr cs) (cons c word) acc)
+                    (pat//m-tok-loop (cdr cs)
+                                     '()
+                                     (cons (string c) (pat//m-tok-flush word acc))))
+                (pat//m-tok-loop (cdr cs) (cons c word) acc))))))
+
+(define (pat//m-tok-flush word acc)
+  (if (empty? word) acc (cons (list->string (reverse word)) acc)))
+
+(define (pat//m-rational-slash? c word cs)
+  (if (string=? (string c) "/")
+      (if (empty? word)
+          #f
+          (if (char-digit? (car word))
+              (if (empty? (cdr cs)) #f (char-digit? (car (cdr cs))))
+              #f))
+      #f))
+
+;; The recursive-descent parsers below each return `(cons result
+;; rest-tokens)`, or #f on failure, which propagates to the caller.
+
+(define (pat//m-contains-str? xs s)
+  (if (empty? xs)
+      #f
+      (if (string=? (car xs) s) #t (pat//m-contains-str? (cdr xs) s))))
+
+(define (pat//m-at-token? ts tok)
+  (if (empty? ts) #f (string=? (car ts) tok)))
+
+(define (pat//m-expect ts tok)
+  (if (pat//m-at-token? ts tok) (cdr ts) #f))
+
+;; The next token as a number.
+(define (pat//m-number ts)
+  (if (empty? ts)
+      #f
+      (let ((n (string->number (car ts))))
+        (if n (cons n (cdr ts)) #f))))
+
+(define (pat//m-int x) (exact (round x)))
+
+(define (pat//m-atom t)
+  (let ((n (string->number t)))
+    (if n n (string->symbol t))))
+
+(define (pat//m-special-token? t)
+  (if (= (string-length t) 1) (pat//m-special? (string-ref t 0)) #f))
+
+;; A sequence of terms until one of the `closers` (left unconsumed) or
+;; exhaustion, assembled with fastcat, or timecat when weighted.
+(define (pat//m-seq ts closers)
+  (pat//m-seq-loop ts closers '()))
+
+(define (pat//m-seq-loop ts closers pairs)
+  (if (if (empty? ts) #t (pat//m-contains-str? closers (car ts)))
+      (cons (pat//m-assemble (reverse pairs)) ts)
+      (if (string=? (car ts) "_")
+          (if (empty? pairs)
+              #f
+              (pat//m-seq-loop (cdr ts)
+                               closers
+                               (cons (cons (+ 1 (car (car pairs))) (cdr (car pairs)))
+                                     (cdr pairs))))
+          (let ((r (pat//m-term ts)))
+            (if r
+                (pat//m-seq-loop (cdr r) closers (cons (car r) pairs))
+                #f)))))
+
+(define (pat//m-assemble pairs)
+  (if (empty? pairs)
+      pat/silence
+      (if (pat//m-all-weight-1? pairs)
+          (if (empty? (cdr pairs))
+              (cdr (car pairs))
+              (pat/fastcat (pat//map cdr pairs)))
+          (pat/timecat (pat//map (lambda (pr) (list (car pr) (cdr pr))) pairs)))))
+
+(define (pat//m-all-weight-1? pairs)
+  (if (empty? pairs)
+      #t
+      (if (= (car (car pairs)) 1)
+          (pat//m-all-weight-1? (cdr pairs))
+          #f)))
+
+;; A factor with its modifiers, as a `(weight . pattern)` pair.
+(define (pat//m-term ts)
+  (let ((f (pat//m-factor ts)))
+    (if f (pat//m-mods (car f) 1 (cdr f)) #f)))
+
+(define (pat//m-mods p w ts)
+  (if (empty? ts)
+      (cons (cons w p) ts)
+      (let ((t (car ts)))
+        (if (string=? t "*")
+            (let ((n (pat//m-number (cdr ts))))
+              (if n
+                  (pat//m-mods (pat/fast (pat/rationalize (car n)) p) w (cdr n))
+                  #f))
+            (if (string=? t "/")
+                (let ((n (pat//m-number (cdr ts))))
+                  (if n
+                      (pat//m-mods (pat/slow (pat/rationalize (car n)) p) w (cdr n))
+                      #f))
+                (if (string=? t "@")
+                    (let ((n (pat//m-number (cdr ts))))
+                      (if n (pat//m-mods p (car n) (cdr n)) #f))
+                    (if (string=? t "(")
+                        (let ((e (pat//m-euclid (cdr ts))))
+                          (if e
+                              (pat//m-mods (pat/euclid-with p
+                                                            (car (car e))
+                                                            (car (cdr (car e)))
+                                                            (car (cdr (cdr (car e)))))
+                                           w
+                                           (cdr e))
+                              #f))
+                        (cons (cons w p) ts))))))))
+
+;; `k , n [, r] )` after an opening paren, as `(list k n r)`.
+(define (pat//m-euclid ts)
+  (let ((k (pat//m-number ts)))
+    (if k
+        (let ((ts2 (pat//m-expect (cdr k) ",")))
+          (if ts2
+              (let ((n (pat//m-number ts2)))
+                (if n
+                    (if (pat//m-at-token? (cdr n) ",")
+                        (let ((r (pat//m-number (cdr (cdr n)))))
+                          (if r
+                              (let ((ts3 (pat//m-expect (cdr r) ")")))
+                                (if ts3
+                                    (cons (list (pat//m-int (car k))
+                                                (pat//m-int (car n))
+                                                (pat//m-int (car r)))
+                                          ts3)
+                                    #f))
+                              #f))
+                        (let ((ts3 (pat//m-expect (cdr n) ")")))
+                          (if ts3
+                              (cons (list (pat//m-int (car k)) (pat//m-int (car n)) 0)
+                                    ts3)
+                              #f)))
+                    #f))
+              #f))
+        #f)))
+
+(define (pat//m-factor ts)
+  (if (empty? ts)
+      #f
+      (let ((t (car ts)))
+        (if (string=? t "~")
+            (cons pat/silence (cdr ts))
+            (if (string=? t "[")
+                (pat//m-group (cdr ts))
+                (if (string=? t "<")
+                    (pat//m-alt (cdr ts))
+                    (if (pat//m-special-token? t)
+                        #f
+                        (if (string=? t "_")
+                            #f
+                            (cons (pat/pure (pat//m-atom t)) (cdr ts))))))))))
+
+;; Comma-separated sequences until `]`, stacked when there are several.
+(define (pat//m-group ts)
+  (pat//m-group-loop ts '()))
+
+(define (pat//m-group-loop ts seqs)
+  (let ((r (pat//m-seq ts (list "," "]"))))
+    (if r
+        (let ((rest (cdr r)))
+          (if (pat//m-at-token? rest ",")
+              (pat//m-group-loop (cdr rest) (cons (car r) seqs))
+              (if (pat//m-at-token? rest "]")
+                  (let ((all (reverse (cons (car r) seqs))))
+                    (cons (if (empty? (cdr all)) (car all) (pat/stack all))
+                          (cdr rest)))
+                  #f)))
+        #f)))
+
+;; Terms until `>`, alternated one per cycle.
+(define (pat//m-alt ts)
+  (pat//m-alt-loop ts '()))
+
+(define (pat//m-alt-loop ts ps)
+  (if (empty? ts)
+      #f
+      (if (string=? (car ts) ">")
+          (if (empty? ps)
+              #f
+              (cons (pat/slowcat (reverse ps)) (cdr ts)))
+          (let ((r (pat//m-term ts)))
+            (if r
+                (pat//m-alt-loop (cdr r) (cons (cdr (car r)) ps))
+                #f)))))
+
+;; Parse a notation string to a pattern, silence when malformed.
+(define (pat/m s)
+  (if (string? s)
+      (let ((r (pat//m-seq (pat//m-tokenize s) '())))
+        (if r
+            (if (empty? (cdr r)) (car r) pat/silence)
+            pat/silence))
+      pat/silence))
