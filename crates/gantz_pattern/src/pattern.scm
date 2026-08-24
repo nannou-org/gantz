@@ -583,6 +583,13 @@
           (if (< astart wstart) #f (not (< wstart astart))))
         #f)))
 
+;; The longest span a single window may cover, in cycles. Steady-state
+;; windows span tick-duration times cps cycles, so this sits far above
+;; sane configurations while bounding the events a single tick can
+;; produce. A jump beyond it, such as a cps change rescaling the
+;; timeline, resets rather than querying the whole gap.
+(define pat//max-window 8)
+
 ;; Advance a tick-driven query window.
 ;;
 ;; `st` is the previous cycle position, where any non-number means the
@@ -593,13 +600,19 @@
 ;; The position derives from absolute time snapped to the 1/1920-cycle
 ;; grid, so successive spans abut exactly, quantisation error never
 ;; accumulates, and denominators stay bounded. The span is empty on the
-;; first tick and whenever the position has not advanced. A `cps` change
-;; rescales the whole timeline, so the position jumps. Backwards jumps
-;; yield an empty span and continue from the new position.
+;; first tick and whenever the position has not advanced. Any position
+;; jump beyond `pat//max-window`, in either direction, also yields an
+;; empty span and continues from the new position. A cps change
+;; rescales the timeline, so its gap is dropped rather than replayed or
+;; fast-forwarded.
 (define (pat/window st t cps)
   (let ((pos (/ (exact (round (* t cps pat//grid))) pat//grid)))
     (let ((prev (if (number? st) st pos)))
-      (list (if (< pos prev) (cons pos pos) (cons prev pos))
+      (list (if (< pos prev)
+                (cons pos pos)
+                (if (> (- pos prev) pat//max-window)
+                    (cons pos pos)
+                    (cons prev pos)))
             pos))))
 
 ;; Convert queried window events to a list of `(list seconds value)`

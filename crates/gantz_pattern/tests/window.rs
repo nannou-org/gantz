@@ -45,6 +45,23 @@ fn stalls_and_jumps_yield_empty_spans() {
     );
 }
 
+// A forward jump beyond the window cap resets rather than covering the
+// gap, so a cps raise cannot flood downstream with a giant span. A
+// multi-cycle advance below the cap passes through.
+#[test]
+fn forward_jumps_beyond_the_cap_reset() {
+    assert_pinned(
+        "(((200 1) (200 1)) (200 1))",
+        "(let ((r (pat/window 1 100.0 2)))
+           (list (pin-span (car r)) (pin-num (car (cdr r)))))",
+    );
+    assert_pinned(
+        "(((0 1) (4 1)) (4 1))",
+        "(let ((r (pat/window 0 4.0 1)))
+           (list (pin-span (car r)) (pin-num (car (cdr r)))))",
+    );
+}
+
 // Positions snap to the 1/1920 grid, so the float closest to 1/3 lands
 // on exactly 1/3 and denominators stay bounded.
 #[test]
