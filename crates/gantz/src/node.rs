@@ -2290,6 +2290,111 @@ mod tests {
         }
     }
 
+    /// Partial evals over demo-pattern stay silent: the tick entrypoint
+    /// interleaved with the cps number node's push entrypoint (the dial),
+    /// whose cone reaches the pattern nodes without their pattern inputs.
+    /// Pinned against the not-a-procedure application errors this produced
+    /// before the pattern module guarded its invocation sites.
+    #[test]
+    fn demo_pattern_partial_evals_are_silent() {
+        use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
+
+        let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
+        let mut merged = DataReg::default();
+        for bytes in [
+            gantz_base::BYTES,
+            gantz_plyphon::BASE_BYTES,
+            gantz_pattern::BASE_BYTES,
+        ] {
+            let export: DataReg =
+                gantz_egui::export::parse_export_at(bytes, ts, &super::codec()).expect("parse");
+            merged.merge(export);
+        }
+        let reified = reify_all(&merged);
+        let builtins = builtins_with_instances();
+        let codec = super::codec();
+        let reg_env = env(&merged, &reified, &builtins, &codec);
+        let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
+        let config = gantz_core::compile::Config::default();
+        let head = gantz_ca::Head::Branch(name("demo-pattern"));
+        let graph = head_graph(&reified, &merged, &head).expect("demo-pattern graph");
+
+        let mut eps = push_pull_entrypoints(&get_node, graph);
+        eps.extend(bevy_gantz_egui::node::tick_bang::entrypoints(
+            &get_node, graph,
+        ));
+
+        let (mut vm, _c) = gantz_core::vm::init_with_modules(
+            &get_node,
+            graph,
+            &eps,
+            &config,
+            gantz_pattern::modules(),
+        )
+        .unwrap_or_else(|e| panic!("init: {}", gantz_core::vm::error_chain(&e)));
+
+        let tick_ix = graph
+            .node_indices()
+            .find(|&ix| {
+                (&*graph[ix] as &dyn std::any::Any)
+                    .downcast_ref::<bevy_gantz_egui::node::tick_bang::TickBang>()
+                    .is_some()
+            })
+            .expect("tick node")
+            .index();
+        let tick_ep = eps
+            .iter()
+            .find(|ep| {
+                ep.0.iter()
+                    .any(|s| s.kind == EvalKind::Push && s.path == [tick_ix])
+            })
+            .expect("tick ep");
+        let tick_fn = entry_fn_name(&tick_ep.id());
+
+        let num_ix = graph
+            .node_indices()
+            .find(|&ix| {
+                (&*graph[ix] as &dyn std::any::Any)
+                    .downcast_ref::<gantz_std::Number>()
+                    .is_some()
+            })
+            .expect("number node")
+            .index();
+        let num_ep = eps
+            .iter()
+            .find(|ep| {
+                ep.0.iter()
+                    .any(|s| s.kind == EvalKind::Push && s.path == [num_ix])
+            })
+            .cloned();
+
+        let mut t = 0.0f64;
+        let mut errs = 0usize;
+        for i in 0..3600 {
+            t += 1.0 / 60.0;
+            vm.update_value(gantz_core::ARGS, gantz_core::args::time(t));
+            if let Err(e) = vm.call_function_by_name_with_args(&tick_fn, vec![]) {
+                if errs < 3 {
+                    println!("tick {i} t={t}: ERR {e}");
+                }
+                errs += 1;
+            }
+            if i % 30 == 7 {
+                if let Some(ep) = &num_ep {
+                    if let Err(e) =
+                        vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+                    {
+                        if errs < 6 {
+                            println!("dial {i}: ERR {e}");
+                        }
+                        errs += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(errs, 0, "partial evals must not error");
+    }
+
     /// Resetting a demo re-parses the base and merges the demo's commit subset
     /// back in. Because the base's hand-authored graphs are stamped at a fixed
     /// [`bevy_gantz_egui::base::BASE_TIMESTAMP`], the re-parse reproduces the
