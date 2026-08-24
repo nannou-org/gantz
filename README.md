@@ -26,8 +26,10 @@ The following gantz crates are included in this repo.
 This repo is **multi-license**. Most crates are dual-licensed `MIT OR Apache-2.0`.
 The DSP crates (`gantz_plyphon`, `bevy_gantz_plyphon`) and the `gantz` application
 are `GPL-3.0-or-later`, since they build on
-[plyphon](https://github.com/mitchmindtree/plyphon) (GPL-3.0). Each crate carries
-its own license file(s).
+[plyphon](https://github.com/mitchmindtree/plyphon) (GPL-3.0). The pattern crate
+(`gantz_pattern`) is also `GPL-3.0-or-later`, matching
+[cycles](https://github.com/mitchmindtree/cycles) (GPL-3.0), whose semantics it
+ports. Each crate carries its own license file(s).
 
 | Crate | Release | License | Description |
 |---|---|---|---|
@@ -44,6 +46,7 @@ its own license file(s).
 | **`bevy_gantz_collab`** | [![Crates.io](https://img.shields.io/crates/v/bevy_gantz_collab.svg)](https://crates.io/crates/bevy_gantz_collab) | ![MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT_OR_Apache--2.0-blue.svg) | Bevy integration of gantz's peer-to-peer collaborative sessions. |
 | **`gantz_plyphon`** | [![Crates.io](https://img.shields.io/crates/v/gantz_plyphon.svg)](https://crates.io/crates/gantz_plyphon) | ![GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blueviolet.svg) | DSP nodes + synthdef compiler deriving [plyphon](https://github.com/mitchmindtree/plyphon) synthdefs from gantz graphs. |
 | **`bevy_gantz_plyphon`** | [![Crates.io](https://img.shields.io/crates/v/bevy_gantz_plyphon.svg)](https://crates.io/crates/bevy_gantz_plyphon) | ![GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blueviolet.svg) | Bevy + plyphon audio runtime for gantz (cpal stream, synth driver). |
+| **`gantz_pattern`** | [![Crates.io](https://img.shields.io/crates/v/gantz_pattern.svg)](https://crates.io/crates/gantz_pattern) | ![GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blueviolet.svg) | Tidal-style pattern vocabulary as a Steel module, porting [cycles](https://github.com/mitchmindtree/cycles) semantics. |
 | **`gantz`** | [![Crates.io](https://img.shields.io/crates/v/gantz.svg)](https://crates.io/crates/gantz) | ![GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blueviolet.svg) | The top-level gantz app. |
 
 ## Design Overview
