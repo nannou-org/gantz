@@ -104,6 +104,12 @@ impl<N: Node> Node for Fn<N> {
         self.0.required_blobs()
     }
 
+    /// Forwarded from the inner node: the emitted lambda inlines the inner
+    /// node's expression, so its module bindings are load-bearing.
+    fn required_modules(&self, ctx: node::MetaCtx) -> Vec<String> {
+        self.0.required_modules(ctx)
+    }
+
     fn visit(&self, ctx: visit::Ctx<'_, '_>, visitor: &mut dyn node::Visitor) {
         self.0.visit(ctx, visitor);
     }

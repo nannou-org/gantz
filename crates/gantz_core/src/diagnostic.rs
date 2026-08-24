@@ -93,6 +93,11 @@ pub fn from_module_error(err: &ModuleError) -> Vec<Diagnostic> {
         ModuleError::InvalidIr { path, .. } => {
             vec![Diagnostic::compile(path.clone(), err.to_string())]
         }
+        // Module requirements are collected graph-wide, so no single node
+        // path can be attributed.
+        ModuleError::InvalidModuleName { .. } => {
+            vec![Diagnostic::compile(vec![], err.to_string())]
+        }
     }
 }
 

@@ -269,6 +269,12 @@ impl Node for Ref {
         vec![self.addr]
     }
 
+    fn required_modules(&self, ctx: node::MetaCtx) -> Vec<String> {
+        ctx.node(&self.addr)
+            .map(|n| n.required_modules(ctx))
+            .unwrap_or_default()
+    }
+
     fn visit(&self, ctx: visit::Ctx<'_, '_>, visitor: &mut dyn node::Visitor) {
         if let Some(n) = ctx.node(&self.addr) {
             n.visit(ctx, visitor);

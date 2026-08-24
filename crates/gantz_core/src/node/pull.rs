@@ -91,4 +91,8 @@ impl<N: Node> Node for Pull<N> {
     fn required_blobs(&self) -> Vec<(gantz_ca::SectionId, gantz_ca::ContentAddr)> {
         self.node.required_blobs()
     }
+
+    fn required_modules(&self, ctx: node::MetaCtx) -> Vec<String> {
+        self.node.required_modules(ctx)
+    }
 }
