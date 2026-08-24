@@ -1,18 +1,14 @@
-;; The gantz/pattern module: a tidalcycles-inspired pattern vocabulary.
+;; The gantz/pattern module.
 ;;
 ;; A pattern is a function from a span to the list of events occurring
 ;; along it. Spans are pairs of exact rational time points measured in
-;; cycles. Events carry an `active` span (where the value applies within
-;; the query), a `whole` span (the event's full structure, #f for
-;; continuous signals) and a `value`.
+;; cycles. Events carry a `value`, an `active` span where the value
+;; applies within the query, and a `whole` span carrying the event's
+;; full structure. Whole is #f for continuous signals.
 ;;
-;; Semantics follow the cycles crate (the reference implementation whose
-;; tests are ported into this crate's test suite).
-;;
-;; Written for the prelude-free base engine: primitive special forms only
-;; (no `and`, `or`, `cond`, `when`) and no prelude list fns (`map`,
-;; `filter`, `sort` and friends are hand-rolled below, tail-recursively).
-;; Names prefixed `pat//` are internal helpers and are not provided.
+;; Written for the prelude-free base engine. Primitive special forms
+;; only, with the missing prelude list fns hand-rolled below. Names
+;; prefixed `pat//` are internal helpers and are not provided.
 
 (provide pat/span
          pat/span-start
@@ -68,8 +64,8 @@
 (define (pat//max2 a b) (if (< a b) b a))
 (define (pat//min2 a b) (if (< b a) b a))
 
-;; Tail-recursive list helpers (the prelude's are unavailable on the base
-;; engine).
+;; Tail-recursive list helpers, standing in for the unavailable prelude
+;; fns.
 
 (define (pat//rev-append xs acc)
   (if (empty? xs) acc (pat//rev-append (cdr xs) (cons (car xs) acc))))
@@ -106,7 +102,7 @@
       init
       (pat//fold f (f init (car xs)) (cdr xs))))
 
-;; A stable merge sort (`sort` on the base engine rejects closures).
+;; A stable merge sort. The base engine's `sort` rejects closures.
 ;; `less?` must be a strict order. Merge recursion depth is bounded by the
 ;; list length, fine at event-list scale.
 (define (pat//sort less? xs)
@@ -160,7 +156,7 @@
             (pat//span-cycles-loop this-end end (cons (cons start this-end) acc))))))
 
 ;; The intersecting span between `a` and `b`, or #f when the intersection
-;; is empty (including the degenerate zero-length case).
+;; is empty or zero-length.
 (define (pat/span-intersect a b)
   (let ((start (pat//max2 (car a) (car b)))
         (end (pat//min2 (cdr a) (cdr b))))
@@ -168,8 +164,8 @@
 
 ;; -- events -------------------------------------------------------------------
 
-;; An event: `value` over the `active` span, with `whole` carrying the
-;; event's full structure (#f for continuous signals).
+;; An event holds a `value`, its `active` span and its `whole` span.
+;; Whole is #f for continuous signals.
 (define (pat/event value active whole)
   (hash 'value value 'active active 'whole whole))
 
@@ -200,7 +196,7 @@
 ;; A pattern is `(lambda (span) <list of events>)`. Combinators make no
 ;; ordering guarantee on the returned events. [`pat/query`] sorts.
 
-;; Repeats the given value once per cycle (cycles' `atom`).
+;; Repeats the given value once per cycle.
 (define (pat/pure v)
   (lambda (span)
     (pat//map (lambda (cyc)
@@ -227,7 +223,7 @@
 (define pat/saw
   (pat/signal (lambda (r) (- r (floor r)))))
 
-;; A signal ramping -1 to 1 over every cycle (polar [`pat/saw`]).
+;; A signal ramping -1 to 1 over every cycle.
 (define pat/saw2
   (pat/signal (lambda (r) (- (* 2 (- r (floor r))) 1))))
 
@@ -251,9 +247,7 @@
       x
       (/ (exact (round (* x pat//grid))) pat//grid)))
 
-;; Speed the pattern up by the factor `r` (cycles' `rate`).
-;;
-;; A zero rate yields silence.
+;; Speed the pattern up by the factor `r`. A zero rate yields silence.
 (define (pat/fast r p)
   (if (zero? r)
       pat/silence
@@ -342,8 +336,7 @@
     (pat//flat-map (lambda (p) (p span)) ps)))
 
 ;; Fit the pattern's `src` span to the `dst` span by adjusting the rate
-;; and shifting (faithful port of cycles' `fit_span`, whose shift derives
-;; from `src-start * rate`). Degenerate spans yield silence.
+;; and shifting. Degenerate spans yield silence.
 (define (pat/fit-span src dst p)
   (if (zero? (pat/span-len dst))
       pat/silence
@@ -412,10 +405,9 @@
         ((pat/event-value oe) (pat/event-active oe))))
      (pp q-span))))
 
-;; Like [`pat/join`], but structure comes from the outer pattern alone:
-;; the inner is queried at the instant of the outer's whole start (so a
-;; discrete inner, which yields nothing for a zero-width query, produces
-;; no events - only signal inners are productive, per cycles).
+;; Like [`pat/join`], but structure comes from the outer pattern alone.
+;; The inner is queried at the instant of the outer's whole start, so a
+;; discrete inner yields nothing and only signal inners are productive.
 (define (pat/outer-join pp)
   (lambda (q-span)
     (pat//flat-map
@@ -485,9 +477,9 @@
       (reverse acc)
       (pat//zip-append (cdr xs) (cdr ys) (cons (append (car xs) (car ys)) acc))))
 
-;; The bjorklund left/right merge over two lists of onset groups. This is
-;; the true algorithm ported from cycles: the Bresenham-style closed
-;; forms produce a different rotation (they diverge at e.g. (5, 8)).
+;; The bjorklund left/right merge over two lists of onset groups. The
+;; true merge is required here. Bresenham-style closed forms produce a
+;; differently rotated pattern, diverging at e.g. (5, 8).
 (define (pat//bjorklund-loop xs ys)
   (if (<= (pat//min2 (length xs) (length ys)) 1)
       (append xs ys)
@@ -555,8 +547,7 @@
               (pat/fastcat (pat//map pat/pure (pat/euclid-bools k n off)))))
 
 ;; [`pat/euclid`] with each onset elongated to fill the silence before
-;; the next onset. Event values are #t (cycles carries the internal
-;; (bool distance) pair through as the value - dropped here).
+;; the next onset. Event values are #t.
 (define (pat/euclid-full k n)
   (let ((bs (pat/euclid-bools k n 0)))
     (let ((ds (pat//onset-distances bs)))
@@ -581,9 +572,9 @@
 
 ;; -- windowing and delivery -----------------------------------------------------
 
-;; Whether the event begins at its whole's start: a true onset rather
-;; than the continuation of an event chopped by a window boundary.
-;; Signal events (whole #f) are never onsets.
+;; Whether the event begins at its whole's start, i.e. is a true onset
+;; rather than the continuation of an event chopped by a window
+;; boundary. Signal events are never onsets.
 (define (pat/event-onset? e)
   (let ((w (pat/event-whole e)))
     (if w
@@ -594,18 +585,17 @@
 
 ;; Advance a tick-driven query window.
 ;;
-;; `st` is the previous cycle position (any non-number, e.g. a fresh expr
-;; node's Void state, means "first tick"), `t` the eval time in seconds
-;; and `cps` the tempo in cycles per second. Returns
-;; `(list span new-position)` where `span` runs from the previous
-;; position to the current one.
+;; `st` is the previous cycle position, where any non-number means the
+;; first tick. `t` is the eval time in seconds and `cps` the tempo in
+;; cycles per second. Returns `(list span new-position)` where `span`
+;; runs from the previous position to the current one.
 ;;
 ;; The position derives from absolute time snapped to the 1/1920-cycle
 ;; grid, so successive spans abut exactly, quantisation error never
 ;; accumulates, and denominators stay bounded. The span is empty on the
 ;; first tick and whenever the position has not advanced. A `cps` change
-;; rescales the whole timeline, so the position jumps (backwards jumps
-;; yield an empty span and continue from the new position).
+;; rescales the whole timeline, so the position jumps. Backwards jumps
+;; yield an empty span and continue from the new position.
 (define (pat/window st t cps)
   (let ((pos (/ (exact (round (* t cps pat//grid))) pat//grid)))
     (let ((prev (if (number? st) st pos)))
@@ -613,14 +603,14 @@
             pos))))
 
 ;; Convert queried window events to a list of `(list seconds value)`
-;; pairs for delivery (e.g. the plyphon timestamped control path).
+;; pairs for timestamped delivery paths.
 ;;
 ;; `span` is the queried window, `t` the eval time in seconds anchoring
-;; the span's start, and `cps` the tempo used to convert cycle offsets
-;; to seconds. Only onset events are kept - window-chopped continuations
+;; the span's start, and `cps` the tempo converting cycle offsets to
+;; seconds. Only onset events are kept, as window-chopped continuations
 ;; of a sustained event would otherwise retrigger every tick. Times and
-;; numeric values leave the exact world here: floats only, since the
-;; delivery paths drop rationals.
+;; numeric values leave as floats, since the delivery paths drop
+;; rationals.
 (define (pat/events->secs events span t cps)
   (pat//map
    (lambda (e)

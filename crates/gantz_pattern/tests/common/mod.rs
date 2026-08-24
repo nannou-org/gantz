@@ -1,12 +1,12 @@
-//! Shared test harness: a fresh engine with the `gantz/pattern` module
+//! Shared test harness. A fresh engine with the `gantz/pattern` module
 //! plus the pin-projection helpers.
 //!
-//! Steel 0.8.2's `equal?` cannot compare rationals nested in containers
-//! (see the canary test in `span.rs`), so expected values are compared via
-//! "pinned" projections: every exact number becomes a `(numerator
-//! denominator)` list, spans become 2-lists, events become `(value active
-//! whole)` lists. Pinned forms contain only ints, floats, bools and
-//! symbols, which `equal?` handles, and they also pin exactness: an
+//! Steel 0.8.2's `equal?` cannot compare rationals nested in containers,
+//! see the canary test in `span.rs`, so expected values are compared via
+//! pinned projections. Every exact number becomes a numerator and
+//! denominator list, spans become 2-lists and events become value,
+//! active and whole lists. Pinned forms contain only ints, floats, bools
+//! and symbols, which `equal?` handles, and they also pin exactness. An
 //! accidental float shows up as e.g. `0.5` instead of `(1 2)`.
 
 // Each integration test binary compiles this module separately and uses

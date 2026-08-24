@@ -1,24 +1,23 @@
-//! A tidalcycles-inspired pattern domain for gantz.
+//! A pattern domain for gantz.
 //!
-//! A pattern is a Steel closure from a span (a pair of rational time
-//! points) to the list of events occurring along it. Starting from simple
-//! constructors, higher-order composition builds intricate patterns from
-//! simple parts. The vocabulary lives in the [`MODULE`] Steel module so
-//! patterns and their combinators compose as ordinary closures inside the
-//! VM, and user functions (including graphs lifted via `fn-ref`) apply to
-//! pattern values with no VM boundary to cross.
+//! A pattern is a Steel closure from a span, a pair of rational time
+//! points, to the list of events occurring along it. Higher-order
+//! composition builds intricate patterns from simple constructors. The
+//! vocabulary lives in the [`MODULE`] Steel module so patterns and their
+//! combinators compose as ordinary closures inside the VM, and user
+//! functions such as graphs lifted via `fn-ref` apply directly.
 //!
-//! The representation follows the `cycles` crate: events carry an `active`
-//! span (where the value applies within the query) and an optional `whole`
-//! span (the event's full structure, absent for continuous signals).
+//! Events carry an `active` span where the value applies within the
+//! query, and a `whole` span carrying the event's full structure. Whole
+//! is absent for continuous signals.
 
 use gantz_core::vm::SteelModule;
 
 /// The `gantz/pattern` Steel module.
 ///
-/// Register via [`gantz_core::vm::new_engine`]/`init_with_modules` (or the
-/// app's steel-module collection) and `(require "gantz/pattern")` to use.
-/// All provided names carry the `pat/` prefix.
+/// Register via [`gantz_core::vm::new_engine`] or the app's steel-module
+/// collection, then `(require "gantz/pattern")` to use. All provided
+/// names carry the `pat/` prefix.
 pub const MODULE: SteelModule = SteelModule {
     name: "gantz/pattern",
     src: include_str!("pattern.scm"),
@@ -30,6 +29,6 @@ pub fn modules() -> &'static [SteelModule] {
     MODULES
 }
 
-/// The domain's base `.gantz` source: named graphs wrapping the module
+/// The domain's base `.gantz` source. Named graphs wrapping the module
 /// fns as thin expr nodes, plus a tick-driven demo.
 pub const BASE_BYTES: &[u8] = include_bytes!("../base.gantz");

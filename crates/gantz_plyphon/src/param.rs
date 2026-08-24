@@ -53,9 +53,9 @@ pub fn plyphon_param(name: impl Into<String>, default: f32, lag: f32) -> Param {
 /// dsp output (`"state"` for a source like `~sinosc`, `"'()"` for a sink like
 /// `~out`). DSP nodes are otherwise Steel-inert.
 ///
-/// A non-empty list of 2-element numeric `(time value)` lists is queued as a
-/// pre-timestamped *batch* instead (the shape `pat/events->secs` emits), with
-/// `value` taking the batch's last value: a whole pattern window lands
+/// A non-empty list of 2-element numeric `(time value)` lists, the shape
+/// `pat/events->secs` emits, is queued as a pre-timestamped *batch* instead,
+/// with `value` taking the batch's last value. A whole pattern window lands
 /// sample-accurately from a single eval.
 ///
 /// The `number?` guard is what makes a *hybrid* input work (a dsp input that
@@ -93,14 +93,13 @@ pub fn control_input_expr(ctx: &ExprCtx<'_, '_>, control_ix: usize, output: &str
     gantz_core::node::parse_expr(&expr)
 }
 
-/// The queueing dispatch for a connected control input's value `val`:
+/// The queueing dispatch for a connected control input's value `val`.
 ///
-/// - a number runs `single` (the one-pair, eval-timestamped queue write),
-/// - a non-empty list whose head is a 2-element numeric `(time value)`
-///   list runs `batch` (a pre-timestamped batch, e.g. from
-///   `pat/events->secs` - queued whole, newest-first like the singles),
-/// - anything else (a dsp placeholder, a multi-edge list of bare values)
-///   is ignored.
+/// A number runs `single`, the one-pair eval-timestamped queue write. A
+/// non-empty list whose head is a 2-element numeric `(time value)` list
+/// runs `batch`, the pre-timestamped shape `pat/events->secs` emits.
+/// Anything else, such as a dsp placeholder or a multi-edge list of bare
+/// values, is ignored.
 fn guarded_queue_expr(val: &str, single: &str, batch: &str) -> String {
     format!(
         "(if (number? {val}) \

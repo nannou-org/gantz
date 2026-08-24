@@ -1,13 +1,11 @@
-//! Rate, concatenation, shift and fit-span tests, ported from the cycles
-//! crate (`test_rate`, `test_slowcat`, `test_fastcat`, `test_timecat`,
-//! `test_shift`, `test_fit_span`).
+//! Rate, concatenation, shift and fit-span tests.
 
 mod common;
 
 use common::{assert_pinned, assert_steel_true};
 
-// Ported `test_rate`: fast 2 doubles events per cycle, slow 4 of that
-// nets a half-speed pattern.
+// fast 2 doubles events per cycle and slow 4 of that nets a half-speed
+// pattern.
 #[test]
 fn fast_and_slow() {
     assert_pinned(
@@ -34,8 +32,8 @@ fn rate_zero_is_silent() {
     );
 }
 
-// Ported `test_slowcat`: one pattern per cycle, wrapping, with the final
-// partial cycle keeping its full-cycle whole.
+// One pattern per cycle, wrapping, with the final partial cycle keeping
+// its full-cycle whole.
 #[test]
 fn slowcat() {
     assert_pinned(
@@ -47,7 +45,7 @@ fn slowcat() {
     );
 }
 
-// Ported `test_fastcat`: both patterns fit one cycle.
+// Both patterns fit within one cycle.
 #[test]
 fn fastcat() {
     assert_pinned(
@@ -59,8 +57,8 @@ fn fastcat() {
     );
 }
 
-// Ported `test_timecat`: weighted sub-spans, every event's whole becomes
-// its pattern's sub-span.
+// Weighted sub-spans, where every event's whole becomes its pattern's
+// sub-span.
 #[test]
 fn timecat() {
     assert_pinned(
@@ -74,8 +72,7 @@ fn timecat() {
     );
 }
 
-// Ported `test_shift`: the five equivalences and one inequality over a
-// single cycle, on the pattern `bd ~ bd ~`.
+// Shift equivalences over a single cycle on the pattern `bd ~ bd ~`.
 #[test]
 fn shift_equivalences() {
     let pat_a = "(pat/fastcat (list (pat/pure 'bd) pat/silence (pat/pure 'bd) pat/silence))";
@@ -99,8 +96,8 @@ fn shift_equivalences() {
     ));
 }
 
-// Ported `test_fit_span`: a unit-cycle pattern squeezed into [1/2, 3/4),
-// and fit-cycle as the unit-src shorthand.
+// A unit-cycle pattern squeezed into [1/2, 3/4), with fit-cycle as the
+// unit-src shorthand.
 #[test]
 fn fit_span_and_fit_cycle() {
     assert_pinned(

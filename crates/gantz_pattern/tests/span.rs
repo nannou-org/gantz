@@ -1,6 +1,5 @@
-//! Span-algebra and event-representation tests, ported from the cycles
-//! crate's `span.rs` tests (intersect table, cycle splitting), executed
-//! against the `gantz/pattern` Steel module.
+//! Span-algebra and event-representation tests for the `gantz/pattern`
+//! Steel module.
 
 mod common;
 
@@ -31,7 +30,7 @@ fn span_cycles_empty_and_negative() {
     assert_pinned("()", "(pin-spans (pat/span-cycles (pat/span 3/2 1/2)))");
 }
 
-// Ported from cycles `test_span_intersect`.
+// Intersections clip to the overlap and reject disjoint spans.
 #[test]
 fn span_intersect() {
     assert_pinned(

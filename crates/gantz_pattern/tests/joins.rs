@@ -1,16 +1,14 @@
-//! Join tests: `test_join` ported from cycles, plus derived vectors
-//! discriminating the three variants' whole/active semantics (cycles has
-//! no tests for `inner_join`/`outer_join`, so those pin behavior derived
-//! from its source).
+//! Join tests discriminating the three variants' whole and active
+//! derivation.
 
 mod common;
 
 use common::assert_pinned;
 
-// Ported `test_join`: an outer event spanning the whole query whose value
-// is a two-per-cycle inner pattern.
+// join flattens an outer event spanning the whole query whose value is
+// a two-per-cycle inner pattern.
 #[test]
-fn join_ported() {
+fn join_flattens_nested_pattern() {
     assert_pinned(
         "(((1 1) ((0 1) (1 2)) ((0 1) (1 2))) \
           ((1 1) ((1 2) (1 1)) ((1 2) (1 1))) \
@@ -23,8 +21,8 @@ fn join_ported() {
     );
 }
 
-// join chops the inner whole to the outer's, inner-join keeps the inner
-// whole untouched: the discriminating pair.
+// join chops the inner whole to the outer's, while inner-join keeps the
+// inner whole untouched.
 #[test]
 fn join_chops_whole_inner_join_keeps_it() {
     let pp = "(pat/fast 2 (pat/pure (pat/pure 'c)))";
@@ -41,7 +39,7 @@ fn join_chops_whole_inner_join_keeps_it() {
 }
 
 // outer-join queries the inner at a zero-width instant, so a discrete
-// inner yields nothing (documented cycles behavior).
+// inner yields nothing.
 #[test]
 fn outer_join_discrete_inner_is_silent() {
     assert_pinned(

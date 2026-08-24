@@ -1,11 +1,10 @@
-//! Constructor and query tests, ported from the cycles crate
-//! (`test_atom`, `test_atom_whole`, `test_saw`, saw2/steady/silence).
+//! Constructor and query tests.
 
 mod common;
 
 use common::{assert_pinned, assert_steel_true};
 
-// Ported `test_atom`: one event per cycle, whole == cycle == active.
+// pure yields one event per cycle with whole equal to the cycle.
 #[test]
 fn pure_values_per_cycle() {
     assert_pinned(
@@ -16,8 +15,8 @@ fn pure_values_per_cycle() {
     );
 }
 
-// Ported `test_atom_whole`: a partial trailing cycle keeps the full-cycle
-// whole while the active is clipped to the query.
+// A partial trailing cycle keeps the full-cycle whole while the active
+// is clipped to the query.
 #[test]
 fn pure_partial_cycle_whole() {
     assert_pinned(
@@ -53,7 +52,7 @@ fn saw_samples_midpoint() {
     );
 }
 
-// Ported `test_saw`: negative phases wrap (saw -1/2 == saw 1/2 etc.).
+// Negative saw phases wrap.
 #[test]
 fn saw_negative_phases_wrap() {
     let saw_value = |span: &str| {

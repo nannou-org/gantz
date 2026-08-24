@@ -1,13 +1,11 @@
-//! Windower and delivery-helper tests: first-tick behavior, exact span
-//! abutment across tick sequences, position jumps, grid snapping, onset
-//! filtering and float-only delivery output.
+//! Windower and delivery-helper tests.
 
 mod common;
 
 use common::{assert_pinned, assert_steel_true};
 
-// The first tick (Void state from a fresh expr node) yields an empty
-// span anchored at the current position.
+// The first tick, with the Void state of a fresh expr node, yields an
+// empty span anchored at the current position.
 #[test]
 fn first_tick_empty_span() {
     assert_pinned(
@@ -17,7 +15,7 @@ fn first_tick_empty_span() {
     );
 }
 
-// Successive ticks produce abutting spans: each span's start is exactly
+// Successive ticks produce abutting spans. Each span's start is exactly
 // the previous span's end.
 #[test]
 fn spans_abut_exactly() {
@@ -30,9 +28,9 @@ fn spans_abut_exactly() {
     );
 }
 
-// A tick that does not advance the position yields an empty span, and a
-// backwards position jump (a cps drop rescaling the timeline) yields an
-// empty span continuing from the new position.
+// A tick that does not advance the position yields an empty span, as
+// does a backwards position jump from a cps drop, continuing from the
+// new position.
 #[test]
 fn stalls_and_jumps_yield_empty_spans() {
     assert_pinned(
@@ -47,8 +45,8 @@ fn stalls_and_jumps_yield_empty_spans() {
     );
 }
 
-// Positions snap to the 1/1920 grid: the float closest to 1/3 lands on
-// exactly 1/3 (640/1920), keeping denominators bounded.
+// Positions snap to the 1/1920 grid, so the float closest to 1/3 lands
+// on exactly 1/3 and denominators stay bounded.
 #[test]
 fn grid_snaps_thirds_exactly() {
     assert_pinned(
@@ -75,8 +73,8 @@ fn events_to_secs() {
     );
 }
 
-// Non-onset events (window-chopped continuations) and signal events are
-// filtered out of delivery.
+// Window-chopped continuations and signal events are filtered out of
+// delivery.
 #[test]
 fn only_onsets_delivered() {
     assert_steel_true("(pat/event-onset? (pat/event 'x (pat/span 0 1/2) (pat/span 0 1)))");

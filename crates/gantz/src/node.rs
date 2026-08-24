@@ -70,10 +70,8 @@ pub fn builtins() -> gantz_core::Builtins {
 
 /// Contribute the domains that have no bevy plugin of their own.
 ///
-/// The pattern domain is pure - a steel module plus a base source, no
-/// systems - so the app pushes its contributions directly (the shared
-/// `get_resource_or_init` convention plugins use, safe before or after
-/// plugin construction, but required before the first head compiles).
+/// The pattern domain is a steel module and a base source with no
+/// systems, so the app pushes its contributions directly.
 pub fn push_plain_domains(app: &mut bevy::app::App) {
     app.world_mut()
         .get_resource_or_init::<bevy_gantz::vm::SteelModules>()

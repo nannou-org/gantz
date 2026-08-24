@@ -1,6 +1,5 @@
-//! Apply-family tests: cycles' `test_apply` span table for `app`, plus
-//! derived whole tables for `appl`/`appr` and the continuous-side
-//! degradation to a #f whole.
+//! Apply-family tests covering each variant's whole derivation and the
+//! continuous-side degradation to a #f whole.
 
 mod common;
 
@@ -9,8 +8,8 @@ use common::assert_pinned;
 const A: &str = "(pat/fast 2 (pat/pure 1))";
 const B: &str = "(pat/fast 3 (pat/pure (lambda (v) (+ v 2))))";
 
-// Ported `test_apply`: fast 2 values applied with fast 3 functions over
-// one cycle, structure from the intersections.
+// fast 2 values applied with fast 3 functions over one cycle, structure
+// from the intersections.
 #[test]
 fn app_intersection_structure() {
     assert_pinned(

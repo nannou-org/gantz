@@ -1,14 +1,13 @@
-//! Euclidean rhythm tests: the full bjorklund onset table ported from
-//! cycles' `bjorklund.rs`, plus event-level euclid/euclid-off/euclid-full
-//! behavior.
+//! Euclidean rhythm tests pinning the full bjorklund onset table and
+//! event-level behavior.
 
 mod common;
 
 use common::{assert_pinned, eval_in, new_pin_engine};
 use gantz_core::steel::SteelVal;
 
-/// Every pinned (k, n, onsets) vector from cycles' bjorklund tests,
-/// onsets encoded as one char per slot ('t' onset, 'f' rest).
+/// Pinned (k, n, onsets) vectors, one char per slot with 't' an onset
+/// and 'f' a rest.
 const TABLE: &[(usize, usize, &str)] = &[
     (2, 3, "ttf"),
     (2, 5, "tftff"),
@@ -62,7 +61,7 @@ fn steel_bools(onsets: &str) -> String {
     format!("(list {})", bools.join(" "))
 }
 
-// The full onset table from cycles' bjorklund tests, on one shared engine.
+// The full pinned onset table, on one shared engine.
 #[test]
 fn bjorklund_table() {
     let mut vm = new_pin_engine();

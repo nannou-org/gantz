@@ -2,12 +2,12 @@
   (tick-bang0 tick-bang)
   (expr1 (expr (begin $t 0.5)))
   (expr2 (expr (begin $t (pat/euclid 3 8)) #:require "gantz/pattern"))
-  (ref3 (ref window #:sync))
-  (ref4 (ref query #:sync))
+  (ref3 (ref pwindow #:sync))
+  (ref4 (ref pquery #:sync))
   (inspect5 inspect)
   (expr6 (expr (begin $t (pat/fastcat (list (pat/pure 220) (pat/pure 330) (pat/pure 440)))) #:require "gantz/pattern"))
-  (ref7 (ref query #:sync))
-  (ref8 (ref events->secs #:sync))
+  (ref7 (ref pquery #:sync))
+  (ref8 (ref psecs #:sync))
   (~sinosc9 ~sinosc)
   (~out10 ~out)
   (-> tick-bang0 expr1)
@@ -35,7 +35,7 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
-(graph euclid-full
+(graph euclidfull
   (expr0 (expr (pat/euclid-full (exact (round $k)) (exact (round $n))) #:require "gantz/pattern"))
   (inlet1 (inlet "number" "onset count"))
   (inlet2 (inlet "number" "slot count"))
@@ -44,7 +44,7 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
-(graph euclid-off
+(graph euclidoff
   (expr0 (expr (pat/euclid-off (exact (round $k)) (exact (round $n)) (exact (round $off))) #:require "gantz/pattern"))
   (inlet1 (inlet "number" "onset count"))
   (inlet2 (inlet "number" "slot count"))
@@ -55,33 +55,6 @@
   (-> inlet3 (expr0 2))
   (-> expr0 outlet4))
 
-(graph events->secs
-  (expr0 (expr (pat/events->secs $events $span (hash-ref %args 'time) $cps) #:require "gantz/pattern"))
-  (inlet1 (inlet "events" "queried window events"))
-  (inlet2 (inlet "span" "the queried window"))
-  (inlet3 (inlet "number" "tempo in cycles per second"))
-  (outlet4 (outlet "list" "(seconds value) onset pairs"))
-  (-> inlet1 expr0)
-  (-> inlet2 (expr0 1))
-  (-> inlet3 (expr0 2))
-  (-> expr0 outlet4))
-
-(graph fast
-  (expr0 (expr (pat/fast (pat/rationalize $rate) $p) #:require "gantz/pattern"))
-  (inlet1 (inlet "number" "speed factor"))
-  (inlet2 (inlet "pattern" "input pattern"))
-  (outlet3 (outlet "pattern" "sped-up pattern"))
-  (-> inlet1 expr0)
-  (-> inlet2 (expr0 1))
-  (-> expr0 outlet3))
-
-(graph fastcat
-  (expr0 (expr (pat/fastcat (if (list? $ps) $ps (list $ps))) #:require "gantz/pattern"))
-  (inlet1 (inlet "pattern(s)" "patterns in connection order"))
-  (outlet2 (outlet "pattern" "all patterns within one cycle"))
-  (-> inlet1 expr0)
-  (-> expr0 outlet2))
-
 (graph papp
   (expr0 (expr (pat/app $pv $pf) #:require "gantz/pattern"))
   (inlet1 (inlet "pattern" "pattern of values"))
@@ -90,6 +63,22 @@
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
+
+(graph pfast
+  (expr0 (expr (pat/fast (pat/rationalize $rate) $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "number" "speed factor"))
+  (inlet2 (inlet "pattern" "input pattern"))
+  (outlet3 (outlet "pattern" "sped-up pattern"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph pfastcat
+  (expr0 (expr (pat/fastcat (if (list? $ps) $ps (list $ps))) #:require "gantz/pattern"))
+  (inlet1 (inlet "pattern(s)" "patterns in connection order"))
+  (outlet2 (outlet "pattern" "all patterns within one cycle"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
 
 (graph pfilter
   (expr0 (expr (pat/filter $f $p) #:require "gantz/pattern"))
@@ -109,14 +98,14 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
-(graph pure
+(graph ppure
   (expr0 (expr (pat/pure $v) #:require "gantz/pattern"))
   (inlet1 (inlet "value" "event value"))
   (outlet2 (outlet "pattern" "one event per cycle"))
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
-(graph query
+(graph pquery
   (expr0 (expr (pat/query $p $span) #:require "gantz/pattern"))
   (inlet1 (inlet "pattern" "pattern to query"))
   (inlet2 (inlet "span" "span to query over"))
@@ -125,14 +114,25 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
-(graph saw
+(graph psaw
   (expr0 (expr (begin $b pat/saw) #:require "gantz/pattern"))
   (inlet1 (inlet "bang" "trigger"))
   (outlet2 (outlet "pattern" "0 to 1 ramp each cycle"))
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
-(graph shift
+(graph psecs
+  (expr0 (expr (pat/events->secs $events $span (hash-ref %args 'time) $cps) #:require "gantz/pattern"))
+  (inlet1 (inlet "events" "queried window events"))
+  (inlet2 (inlet "span" "the queried window"))
+  (inlet3 (inlet "number" "tempo in cycles per second"))
+  (outlet4 (outlet "list" "(seconds value) onset pairs"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
+
+(graph pshift
   (expr0 (expr (pat/shift (pat/rationalize $amount) $p) #:require "gantz/pattern"))
   (inlet1 (inlet "number" "cycles to shift later"))
   (inlet2 (inlet "pattern" "input pattern"))
@@ -141,14 +141,14 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
-(graph silence
+(graph psilence
   (expr0 (expr (begin $b pat/silence) #:require "gantz/pattern"))
   (inlet1 (inlet "bang" "trigger"))
   (outlet2 (outlet "pattern" "no events"))
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
-(graph slow
+(graph pslow
   (expr0 (expr (pat/slow (pat/rationalize $rate) $p) #:require "gantz/pattern"))
   (inlet1 (inlet "number" "slow-down factor"))
   (inlet2 (inlet "pattern" "input pattern"))
@@ -157,28 +157,28 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
-(graph slowcat
+(graph pslowcat
   (expr0 (expr (pat/slowcat (if (list? $ps) $ps (list $ps))) #:require "gantz/pattern"))
   (inlet1 (inlet "pattern(s)" "patterns in connection order"))
   (outlet2 (outlet "pattern" "one pattern per cycle"))
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
-(graph stack
+(graph pstack
   (expr0 (expr (pat/stack (if (list? $ps) $ps (list $ps))) #:require "gantz/pattern"))
   (inlet1 (inlet "pattern(s)" "patterns in connection order"))
   (outlet2 (outlet "pattern" "layered patterns"))
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
-(graph steady
+(graph psteady
   (expr0 (expr (pat/steady $v) #:require "gantz/pattern"))
   (inlet1 (inlet "value" "constant value"))
   (outlet2 (outlet "pattern" "continuous constant signal"))
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
-(graph window
+(graph pwindow
   (expr0 (expr (begin $tick (let ((r (pat/window state (hash-ref %args 'time) $cps))) (begin (set! state (list-ref r 1)) (list-ref r 0)))) #:require "gantz/pattern"))
   (inlet1 (inlet "bang" "tick trigger"))
   (inlet2 (inlet "number" "tempo in cycles per second"))
@@ -188,23 +188,23 @@
   (-> expr0 outlet3))
 
 (descriptions
-  (demo-pattern "Patterns queried per tick: euclid events inspected, a frequency pattern scheduled onto a sine.")
+  (demo-pattern "Patterns queried per tick. Euclid events are inspected and a frequency pattern is scheduled onto a sine.")
   (euclid "K onsets distributed over N slots per cycle.")
-  (euclid-full "Euclidean onsets elongated to fill the gaps.")
-  (euclid-off "Euclidean onsets rotated left by an offset.")
-  (events->secs "Window events as (seconds value) onset pairs for delivery.")
-  (fast "Speed a pattern up by a factor.")
-  (fastcat "Concatenate patterns within a single cycle.")
+  (euclidfull "Euclidean onsets elongated to fill the gaps.")
+  (euclidoff "Euclidean onsets rotated left by an offset.")
   (papp "Apply a pattern of functions to a pattern of values.")
+  (pfast "Speed a pattern up by a factor.")
+  (pfastcat "Concatenate patterns within a single cycle.")
   (pfilter "Keep events whose values satisfy a predicate.")
   (pmap "Map a function over a pattern's values.")
-  (pure "Repeat a value once per cycle.")
-  (query "Query a pattern over a span for its sorted events.")
-  (saw "A 0 to 1 ramp signal each cycle.")
-  (shift "Shift a pattern later in time.")
-  (silence "The empty pattern.")
-  (slow "Slow a pattern down by a factor.")
-  (slowcat "Concatenate patterns, one per cycle.")
-  (stack "Layer patterns on top of each other.")
-  (steady "A continuous constant signal.")
-  (window "Advance a tick-driven query window in cycles."))
+  (ppure "Repeat a value once per cycle.")
+  (pquery "Query a pattern over a span for its sorted events.")
+  (psaw "A 0 to 1 ramp signal each cycle.")
+  (psecs "Window events as (seconds value) onset pairs for delivery.")
+  (pshift "Shift a pattern later in time.")
+  (psilence "The empty pattern.")
+  (pslow "Slow a pattern down by a factor.")
+  (pslowcat "Concatenate patterns, one per cycle.")
+  (pstack "Layer patterns on top of each other.")
+  (psteady "A continuous constant signal.")
+  (pwindow "Advance a tick-driven query window in cycles."))

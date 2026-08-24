@@ -1,7 +1,7 @@
 [package]
 name = "gantz_pattern"
 version = "0.1.0"
-description = "A tidalcycles-inspired pattern domain for gantz, implemented as a Steel module."
+description = "A pattern domain for gantz, implemented as a Steel module."
 edition.workspace = true
 authors.workspace = true
 homepage.workspace = true
