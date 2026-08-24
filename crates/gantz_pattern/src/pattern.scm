@@ -129,6 +129,13 @@
 (define (pat//event-earlier? a b)
   (< (car (pat/event-active a)) (car (pat/event-active b))))
 
+;; Query `p` when it is a pattern, no events otherwise. Partial graph
+;; evals can hand a combinator a non-pattern in place of an unfired
+;; pattern input, which should be silent rather than an application
+;; error.
+(define (pat//events p span)
+  (if (function? p) (p span) '()))
+
 ;; -- spans --------------------------------------------------------------------
 
 ;; A span over `[start, end)`, in cycles.
@@ -214,8 +221,10 @@
 ;; for any query, including a zero-width one.
 (define (pat/signal sample)
   (lambda (span)
-    (let ((mid (+ (car span) (/ (- (cdr span) (car span)) 2))))
-      (list (pat/event (sample mid) span #f)))))
+    (if (function? sample)
+        (let ((mid (+ (car span) (/ (- (cdr span) (car span)) 2))))
+          (list (pat/event (sample mid) span #f)))
+        '())))
 
 ;; A continuous pattern of a constant value.
 (define (pat/steady v)
@@ -231,7 +240,7 @@
 
 ;; Query the pattern over the span, events sorted by active-span start.
 (define (pat/query p span)
-  (pat//sort pat//event-earlier? (p span)))
+  (pat//sort pat//event-earlier? (pat//events p span)))
 
 ;; -- rates, cats, shift -------------------------------------------------------
 
@@ -245,9 +254,11 @@
 ;; nodes produce floats, so node exprs pass numeric pattern parameters
 ;; (rates, shifts, weights) through this to keep pattern time exact.
 (define (pat/rationalize x)
-  (if (exact? x)
-      x
-      (/ (exact (round (* x pat//grid))) pat//grid)))
+  (if (number? x)
+      (if (exact? x)
+          x
+          (/ (exact (round (* x pat//grid))) pat//grid))
+      x))
 
 ;; Speed the pattern up by the factor `r`. A zero rate yields silence.
 (define (pat/fast r p)
@@ -258,7 +269,7 @@
                     (pat/event-map-spans
                      (lambda (s) (pat/span-map (lambda (t) (/ t r)) s))
                      e))
-                  (p (pat/span-map (lambda (t) (* t r)) span))))))
+                  (pat//events p (pat/span-map (lambda (t) (* t r)) span))))))
 
 ;; Slow the pattern down by the factor `r`. A zero factor yields silence.
 (define (pat/slow r p)
@@ -273,7 +284,7 @@
                 (pat/event-map-spans
                  (lambda (s) (pat/span-map (lambda (t) (+ t amount)) s))
                  e))
-              (p (pat/span-map (lambda (t) (- t amount)) span)))))
+              (pat//events p (pat/span-map (lambda (t) (- t amount)) span)))))
 
 ;; Concatenate the patterns, one pattern per cycle.
 (define (pat/slowcat ps)
@@ -284,7 +295,7 @@
           (pat//flat-map
            (lambda (cyc)
              (let ((ix (modulo (floor (car cyc)) n)))
-               ((list-ref ps ix) cyc)))
+               (pat//events (list-ref ps ix) cyc)))
            (pat/span-cycles span))))))
 
 ;; Concatenate the patterns so they all fit within a single cycle.
@@ -315,7 +326,7 @@
                                         (pat/event (pat/event-value e)
                                                    (pat/event-active e)
                                                    p-span))
-                                      ((car (cdr sp)) sect))
+                                      (pat//events (car (cdr sp)) sect))
                             '()))))
                   sub-spans)))
              (pat/span-cycles span)))))))
@@ -335,7 +346,7 @@
 ;; Layer the patterns: a query concatenates every pattern's events.
 (define (pat/stack ps)
   (lambda (span)
-    (pat//flat-map (lambda (p) (p span)) ps)))
+    (pat//flat-map (lambda (p) (pat//events p span)) ps)))
 
 ;; Fit the pattern's `src` span to the `dst` span by adjusting the rate
 ;; and shifting. Degenerate spans yield silence.
@@ -353,20 +364,27 @@
 
 ;; -- higher-order combinators ---------------------------------------------------
 
-;; Map event values with `f`.
+;; Map event values with `f`. A non-fn `f` yields silence.
 (define (pat/map f p)
   (lambda (span)
-    (pat//map (lambda (e) (pat/event-map-value f e)) (p span))))
+    (if (function? f)
+        (pat//map (lambda (e) (pat/event-map-value f e)) (pat//events p span))
+        '())))
 
-;; Keep events whose value satisfies `keep?`.
+;; Keep events whose value satisfies `keep?`. A non-fn `keep?` yields
+;; silence.
 (define (pat/filter keep? p)
   (lambda (span)
-    (pat//filter (lambda (e) (keep? (pat/event-value e))) (p span))))
+    (if (function? keep?)
+        (pat//filter (lambda (e) (keep? (pat/event-value e))) (pat//events p span))
+        '())))
 
-;; Keep events satisfying `keep?`.
+;; Keep events satisfying `keep?`. A non-fn `keep?` yields silence.
 (define (pat/filter-events keep? p)
   (lambda (span)
-    (pat//filter keep? (p span))))
+    (if (function? keep?)
+        (pat//filter keep? (pat//events p span))
+        '())))
 
 ;; The whole common to both events: the intersection of their wholes when
 ;; both are present, otherwise #f (including non-intersecting wholes).
@@ -389,8 +407,8 @@
                                  (pat//whole-intersect (pat/event-whole oe)
                                                        (pat/event-whole ie))))
                 '())))
-        ((pat/event-value oe) (pat/event-active oe))))
-     (pp span))))
+        (pat//events (pat/event-value oe) (pat/event-active oe))))
+     (pat//events pp span))))
 
 ;; Like [`pat/join`], but structure comes from the inner pattern alone:
 ;; wholes untouched, actives clipped to the original query span.
@@ -404,8 +422,8 @@
             (if active
                 (list (pat/event (pat/event-value ie) active (pat/event-whole ie)))
                 '())))
-        ((pat/event-value oe) (pat/event-active oe))))
-     (pp q-span))))
+        (pat//events (pat/event-value oe) (pat/event-active oe))))
+     (pat//events pp q-span))))
 
 ;; Like [`pat/join`], but structure comes from the outer pattern alone.
 ;; The inner is queried at the instant of the outer's whole start, so a
@@ -421,8 +439,8 @@
               (if active
                   (list (pat/event (pat/event-value ie) active (pat/event-whole oe)))
                   '())))
-          ((pat/event-value oe) (cons start start)))))
-     (pp q-span))))
+          (pat//events (pat/event-value oe) (cons start start)))))
+     (pat//events pp q-span))))
 
 ;; Apply a pattern of functions `pf` to a pattern of values `pv`: an event
 ;; per intersection of active spans (both sides queried with the original
@@ -435,16 +453,19 @@
        (pat//flat-map
         (lambda (ef)
           (let ((active (pat/span-intersect (pat/event-active ev)
-                                            (pat/event-active ef))))
+                                            (pat/event-active ef)))
+                (f (pat/event-value ef)))
             (if active
-                (let ((lw (pat/event-whole ev))
-                      (rw (pat/event-whole ef)))
-                  (list (pat/event ((pat/event-value ef) (pat/event-value ev))
-                                   active
-                                   (if lw (if rw (structure lw rw) #f) #f))))
+                (if (function? f)
+                    (let ((lw (pat/event-whole ev))
+                          (rw (pat/event-whole ef)))
+                      (list (pat/event (f (pat/event-value ev))
+                                       active
+                                       (if lw (if rw (structure lw rw) #f) #f))))
+                    '())
                 '())))
-        (pf span)))
-     (pv span))))
+        (pat//events pf span)))
+     (pat//events pv span))))
 
 ;; Apply with structure from the intersection of both wholes.
 (define (pat/app pv pf)
@@ -608,14 +629,18 @@
 ;; rescales the timeline, so its gap is dropped rather than replayed or
 ;; fast-forwarded.
 (define (pat/window st t cps)
-  (let ((pos (/ (exact (round (* t cps pat//grid))) pat//grid)))
-    (let ((prev (if (number? st) st pos)))
-      (list (if (< pos prev)
-                (cons pos pos)
-                (if (> (- pos prev) pat//max-window)
+  (if (if (number? t) (number? cps) #f)
+      (let ((pos (/ (exact (round (* t cps pat//grid))) pat//grid)))
+        (let ((prev (if (number? st) st pos)))
+          (list (if (< pos prev)
                     (cons pos pos)
-                    (cons prev pos)))
-            pos))))
+                    (if (> (- pos prev) pat//max-window)
+                        (cons pos pos)
+                        (cons prev pos)))
+                pos)))
+      ;; A partial eval without a numeric time or cps holds position, an
+      ;; empty span and untouched state.
+      (list (cons 0 0) st)))
 
 ;; Convert queried window events to a list of `(list seconds value)`
 ;; pairs for timestamped delivery paths.
@@ -627,12 +652,16 @@
 ;; numeric values leave as floats, since the delivery paths drop
 ;; rationals.
 (define (pat/events->secs events span t cps)
-  (pat//map
-   (lambda (e)
-     (list (+ t (exact->inexact (/ (- (car (pat/event-active e)) (car span)) cps)))
-           (let ((v (pat/event-value e)))
-             (if (number? v) (exact->inexact v) v))))
-   (pat//filter pat/event-onset? events)))
+  (if (if (list? events)
+          (if (pair? span) (if (number? t) (number? cps) #f) #f)
+          #f)
+      (pat//map
+       (lambda (e)
+         (list (+ t (exact->inexact (/ (- (car (pat/event-active e)) (car span)) cps)))
+               (let ((v (pat/event-value e)))
+                 (if (number? v) (exact->inexact v) v))))
+       (pat//filter pat/event-onset? events))
+      '()))
 
 ;; -- mini-notation --------------------------------------------------------------
 ;;
