@@ -34,7 +34,17 @@
          pat/steady
          pat/saw
          pat/saw2
-         pat/query)
+         pat/query
+         pat/rationalize
+         pat/fast
+         pat/slow
+         pat/shift
+         pat/slowcat
+         pat/fastcat
+         pat/timecat
+         pat/stack
+         pat/fit-span
+         pat/fit-cycle)
 
 ;; -- internal helpers ---------------------------------------------------------
 
@@ -73,6 +83,11 @@
   (if (empty? xs)
       (reverse acc)
       (pat//flat-map-loop f (cdr xs) (pat//rev-append (f (car xs)) acc))))
+
+(define (pat//fold f init xs)
+  (if (empty? xs)
+      init
+      (pat//fold f (f init (car xs)) (cdr xs))))
 
 ;; A stable merge sort (`sort` on the base engine rejects closures).
 ;; `less?` must be a strict order. Merge recursion depth is bounded by the
@@ -202,3 +217,124 @@
 ;; Query the pattern over the span, events sorted by active-span start.
 (define (pat/query p span)
   (pat//sort pat//event-earlier? (p span)))
+
+;; -- rates, cats, shift -------------------------------------------------------
+
+;; The grid pattern time snaps to when converting from floats: fine enough
+;; for musical subdivisions (2^7 * 3 * 5 per cycle), coarse enough to keep
+;; denominators bounded.
+(define pat//grid 1920)
+
+;; Convert a number to an exact rational, snapping floats to the nearest
+;; 1/1920 of a cycle. Exact numbers pass through untouched. Graph number
+;; nodes produce floats, so node exprs pass numeric pattern parameters
+;; (rates, shifts, weights) through this to keep pattern time exact.
+(define (pat/rationalize x)
+  (if (exact? x)
+      x
+      (/ (exact (round (* x pat//grid))) pat//grid)))
+
+;; Speed the pattern up by the factor `r` (cycles' `rate`).
+;;
+;; A zero rate yields silence.
+(define (pat/fast r p)
+  (if (zero? r)
+      pat/silence
+      (lambda (span)
+        (pat//map (lambda (e)
+                    (pat/event-map-spans
+                     (lambda (s) (pat/span-map (lambda (t) (/ t r)) s))
+                     e))
+                  (p (pat/span-map (lambda (t) (* t r)) span))))))
+
+;; Slow the pattern down by the factor `r`. A zero factor yields silence.
+(define (pat/slow r p)
+  (if (zero? r)
+      pat/silence
+      (pat/fast (/ 1 r) p)))
+
+;; Shift the pattern later in time by `amount` cycles.
+(define (pat/shift amount p)
+  (lambda (span)
+    (pat//map (lambda (e)
+                (pat/event-map-spans
+                 (lambda (s) (pat/span-map (lambda (t) (+ t amount)) s))
+                 e))
+              (p (pat/span-map (lambda (t) (- t amount)) span)))))
+
+;; Concatenate the patterns, one pattern per cycle.
+(define (pat/slowcat ps)
+  (let ((n (length ps)))
+    (if (zero? n)
+        pat/silence
+        (lambda (span)
+          (pat//flat-map
+           (lambda (cyc)
+             (let ((ix (modulo (floor (car cyc)) n)))
+               ((list-ref ps ix) cyc)))
+           (pat/span-cycles span))))))
+
+;; Concatenate the patterns so they all fit within a single cycle.
+(define (pat/fastcat ps)
+  (let ((n (length ps)))
+    (if (zero? n)
+        pat/silence
+        (pat/fast n (pat/slowcat ps)))))
+
+;; Like [`pat/fastcat`], but each element is a `(list weight pattern)`
+;; pair giving the pattern's proportion of the cycle. Every resulting
+;; event's whole becomes its pattern's sub-span.
+(define (pat/timecat pairs)
+  (let ((total (pat//fold (lambda (acc pr) (+ acc (car pr))) 0 pairs)))
+    (if (zero? total)
+        pat/silence
+        (let ((sub-spans (pat//timecat-spans pairs total 0 '())))
+          (lambda (span)
+            (pat//flat-map
+             (lambda (cyc)
+               (let ((sam (floor (car cyc))))
+                 (pat//flat-map
+                  (lambda (sp)
+                    (let ((p-span (pat/span-map (lambda (t) (+ t sam)) (car sp))))
+                      (let ((sect (pat/span-intersect cyc p-span)))
+                        (if sect
+                            (pat//map (lambda (e)
+                                        (pat/event (pat/event-value e)
+                                                   (pat/event-active e)
+                                                   p-span))
+                                      ((car (cdr sp)) sect))
+                            '()))))
+                  sub-spans)))
+             (pat/span-cycles span)))))))
+
+;; Normalize timecat weights into abutting sub-spans of one cycle.
+(define (pat//timecat-spans pairs total start acc)
+  (if (empty? pairs)
+      (reverse acc)
+      (let ((w (car (car pairs)))
+            (p (car (cdr (car pairs)))))
+        (let ((end (+ start (/ w total))))
+          (pat//timecat-spans (cdr pairs)
+                              total
+                              end
+                              (cons (list (cons start end) p) acc))))))
+
+;; Layer the patterns: a query concatenates every pattern's events.
+(define (pat/stack ps)
+  (lambda (span)
+    (pat//flat-map (lambda (p) (p span)) ps)))
+
+;; Fit the pattern's `src` span to the `dst` span by adjusting the rate
+;; and shifting (faithful port of cycles' `fit_span`, whose shift derives
+;; from `src-start * rate`). Degenerate spans yield silence.
+(define (pat/fit-span src dst p)
+  (if (zero? (pat/span-len dst))
+      pat/silence
+      (if (zero? (pat/span-len src))
+          pat/silence
+          (let ((r (/ (pat/span-len src) (pat/span-len dst))))
+            (pat/shift (- (car dst) (* (car src) r)) (pat/fast r p))))))
+
+;; [`pat/fit-span`] with a single-cycle `src`.
+(define (pat/fit-cycle dst p)
+  (pat/fit-span (cons 0 1) dst p))
