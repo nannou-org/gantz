@@ -1,0 +1,12 @@
+[package]
+name = "gantz_pattern"
+version = "0.1.0"
+description = "A tidalcycles-inspired pattern domain for gantz, implemented as a Steel module."
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+
+[dependencies]
+gantz_core.workspace = true

@@ -3935,6 +3935,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gantz_pattern"
+version = "0.1.0"
+dependencies = [
+ "gantz_core",
+]
+
+[[package]]
 name = "gantz_plyphon"
 version = "0.2.0"
 dependencies = [
