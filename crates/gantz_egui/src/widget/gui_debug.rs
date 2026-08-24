@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 /// The tree seeded into a fresh editor: self-contained layout/display
 /// elements plus a couple of bindings into the focused graph (nodes 0 and 1)
-/// to demonstrate the live harness. Evaluated by `Engine::new_base` (no
-/// prelude), hence the quote.
+/// to demonstrate the live harness. Evaluated by the same prelude-free base
+/// engine the runtime uses, hence the quote.
 const SEED: &str = r#"'(col
   (frame (@ (title "gui debug"))
     (label "edit this tree - it renders live")
@@ -81,7 +81,7 @@ pub fn tree_editor(id: egui::Id, ui: &mut egui::Ui) -> TreeEditOutput {
         .on_hover_text(
             "A quoted tree literal, evaluated by a scratch Steel engine on \
              the UI thread whenever the text changes (no prelude - primitive \
-             forms only)",
+             forms plus gantz's core modules via require)",
         );
 
     // Re-evaluate only when the text changes.
@@ -106,8 +106,12 @@ pub fn tree_editor(id: egui::Id, ui: &mut egui::Ui) -> TreeEditOutput {
 
 /// Evaluate the editor text in a scratch base engine and decode the last
 /// yielded value into an element tree.
+///
+/// The engine comes from `gantz_core::vm::new_engine` for parity with node
+/// exprs: gantz's core steel modules are requirable, though domain modules
+/// are not plumbed through to this scratch pane (yet).
 fn evaluate(text_hash: u64, code: &str) -> Cache {
-    let mut engine = steel::steel_vm::engine::Engine::new_base();
+    let mut engine = gantz_core::vm::new_engine(&[]);
     let (eval_err, decoded) = match engine.run(code.to_string()) {
         Err(e) => (Some(e.to_string()), None),
         Ok(vals) => match vals.last() {
