@@ -42,6 +42,11 @@ pub struct Expr {
     src: String,
     #[serde(skip_serializing_if = "is_default_outputs")]
     outputs: u8,
+    /// The registered Steel modules the expression depends on. Omitted from
+    /// serialization when empty so pre-existing nodes keep their content
+    /// addresses.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    requires: Vec<String>,
     /// Unique `$` variable names in order of first appearance (cached).
     /// Skipped during serialization and recomputed on deserialization.
     #[serde(skip)]
@@ -58,6 +63,8 @@ impl<'de> Deserialize<'de> for Expr {
             src: String,
             #[serde(default = "default_outputs")]
             outputs: u8,
+            #[serde(default)]
+            requires: Vec<String>,
         }
         let data = ExprData::deserialize(deserializer)?;
         if data.outputs < 1 || data.outputs > 16 {
@@ -70,6 +77,7 @@ impl<'de> Deserialize<'de> for Expr {
         Ok(Expr {
             src: data.src,
             outputs: data.outputs,
+            requires: data.requires,
             vars,
         })
     }
@@ -111,6 +119,7 @@ impl Expr {
         Ok(Expr {
             src,
             outputs: 1,
+            requires: vec![],
             vars,
         })
     }
@@ -146,6 +155,25 @@ impl Expr {
     /// The source string that was used to create this node.
     pub fn src(&self) -> &str {
         &self.src
+    }
+
+    /// Set the registered Steel modules the expression depends on (see
+    /// [`Node::required_modules`]).
+    ///
+    /// Compilation emits a `(require ...)` for each named module, making
+    /// its provided bindings available to the expression.
+    pub fn with_requires<I>(mut self, requires: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<String>,
+    {
+        self.requires = requires.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// The names of the registered Steel modules the expression depends on.
+    pub fn requires(&self) -> &[String] {
+        &self.requires
     }
 
     /// The unique `$` variable names, in order of first appearance.
@@ -286,6 +314,10 @@ impl Node for Expr {
         let (_, path, vm) = ctx.into_parts();
         node::state::init_value_if_absent(vm, path, || steel::SteelVal::Void).unwrap();
     }
+
+    fn required_modules(&self, _ctx: node::MetaCtx) -> Vec<String> {
+        self.requires.clone()
+    }
 }
 
 impl fmt::Display for Expr {
@@ -399,6 +431,26 @@ fn test_set_outputs() {
     let mut e = Expr::new("(values $a $b $c)").unwrap();
     e.set_outputs(3);
     assert_eq!(e.outputs(), 3);
+}
+
+// An `Expr` without requires must serialize exactly as before the field
+// existed (content addresses hash the serialized form), and the requires
+// round-trip when present.
+#[test]
+fn test_requires_serde() {
+    let e = Expr::new("(+ $a 1)").unwrap();
+    let json = serde_json::to_string(&e).unwrap();
+    assert!(!json.contains("requires"));
+    let de: Expr = serde_json::from_str(&json).unwrap();
+    assert_eq!(e, de);
+
+    let e = Expr::new("(unwrap-or $?a 0)")
+        .unwrap()
+        .with_requires(["gantz/option"]);
+    assert_eq!(e.requires(), ["gantz/option"]);
+    let json = serde_json::to_string(&e).unwrap();
+    let de: Expr = serde_json::from_str(&json).unwrap();
+    assert_eq!(e, de);
 }
 
 #[test]

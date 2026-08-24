@@ -170,6 +170,31 @@ fn required_module_bindings_evaluate() {
         .unwrap();
 }
 
+// The `Expr` node's own `requires` field drives emission end-to-end: an
+// expr using a `gantz/option` binding compiles and evaluates via `vm::init`
+// with no custom node type involved.
+#[test]
+fn expr_requires_field_evaluates() {
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let unwrap = g.add_node(Box::new(
+        node::expr("(begin $push (unwrap-or (None) 42))")
+            .unwrap()
+            .with_requires(["gantz/option"]),
+    ) as Box<_>);
+    let check = g.add_node(Box::new(node::expr("(assert! (equal? $x 42))").unwrap()) as Box<_>);
+    g.add_edge(push, unwrap, Edge::from((0, 0)));
+    g.add_edge(unwrap, check, Edge::from((0, 0)));
+
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let (mut vm, compiled) =
+        gantz_core::vm::init(&no_lookup, &g, &eps, &Config::default()).unwrap();
+    assert!(compiled.src.starts_with("(require"));
+    let fn_name = entry_fn_name(&eps[0].id());
+    vm.call_function_by_name_with_args(&fn_name, vec![])
+        .unwrap();
+}
+
 // A declared name that cannot be emitted as a `(require ...)` string
 // literal surfaces as a compile error rather than emitting broken Steel.
 #[test]
