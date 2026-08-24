@@ -46,6 +46,33 @@ pub enum CompileError {
     },
 }
 
+/// A named Steel source module that can be registered with an [`Engine`].
+///
+/// Registration is cheap: the engine stores the source text and only
+/// compiles the module when a program first `(require ...)`s it by name,
+/// caching the result for the engine's lifetime. Graphs that never
+/// require a module never pay for it.
+///
+/// Modules must be registered via [`new_engine`], which installs a
+/// minimal prelude string first. Steel prepends its prelude string to a
+/// module's source *at registration time*, and the default prelude would
+/// drag the entire steel stdlib into the module's first `(require ...)`.
+#[derive(Clone, Copy, Debug)]
+pub struct SteelModule {
+    /// The name used to `(require ...)` the module.
+    pub name: &'static str,
+    /// The module's Steel source.
+    pub src: &'static str,
+}
+
+/// The Steel modules provided by `gantz_core` itself.
+///
+/// Always registered by [`new_engine`], ahead of any domain modules.
+const CORE_MODULES: &[SteelModule] = &[SteelModule {
+    name: "gantz/option",
+    src: include_str!("vm/option.scm"),
+}];
+
 impl CompileError {
     /// The generated module, when compilation got far enough to produce one
     /// (steel rejecting the module still yields the artifact, so its source
@@ -58,7 +85,39 @@ impl CompileError {
     }
 }
 
+/// The Steel modules provided by `gantz_core` itself.
+///
+/// [`new_engine`] registers these on every engine, so their bindings are
+/// available to any graph via `(require ...)` regardless of which domains
+/// are present.
+pub fn modules() -> &'static [SteelModule] {
+    CORE_MODULES
+}
+
+/// Create a new base [`Engine`] with gantz's core Steel [`modules`] and
+/// the given domain modules registered, plus the root state and args
+/// globals.
+///
+/// The prelude string is reduced to `(require-builtin steel/base)` before
+/// any module is registered (see [`SteelModule`]): module sources get the
+/// base primitives and must `(require-builtin ...)` anything further
+/// themselves.
+pub fn new_engine(extra_modules: &[SteelModule]) -> Engine {
+    let mut vm = Engine::new_base();
+    vm.set_prelude_string(std::borrow::Cow::Borrowed("(require-builtin steel/base)\n"));
+    for m in modules().iter().chain(extra_modules) {
+        vm.register_steel_module(m.name.to_string(), m.src.to_string());
+    }
+    vm.register_value(crate::ROOT_STATE, SteelVal::empty_hashmap());
+    vm.register_value(crate::ARGS, crate::args::default());
+    vm
+}
+
 /// Initialize a new VM with root state and register the given graph.
+///
+/// The VM is created via [`new_engine`] with no domain modules, so
+/// gantz_core's own [`modules`] are available. To register additional
+/// domain modules, use [`init_with_modules`].
 ///
 /// Returns the initialized VM and the compiled module.
 pub fn init<'a, G>(
@@ -76,9 +135,28 @@ where
         + Copy,
     G::NodeWeight: Node,
 {
-    let mut vm = Engine::new_base();
-    vm.register_value(crate::ROOT_STATE, SteelVal::empty_hashmap());
-    vm.register_value(crate::ARGS, crate::args::default());
+    init_with_modules(get_node, graph, entrypoints, config, &[])
+}
+
+/// The same as [`init`], but with additional domain [`SteelModule`]s
+/// registered on the freshly created engine (see [`new_engine`]).
+pub fn init_with_modules<'a, G>(
+    get_node: node::GetNode<'a>,
+    graph: G,
+    entrypoints: &[crate::compile::Entrypoint],
+    config: &crate::compile::Config,
+    extra_modules: &[SteelModule],
+) -> Result<(Engine, Compiled), CompileError>
+where
+    G: Data<EdgeWeight = Edge>
+        + IntoEdgesDirected
+        + IntoNodeReferences
+        + NodeIndexable
+        + Visitable
+        + Copy,
+    G::NodeWeight: Node,
+{
+    let mut vm = new_engine(extra_modules);
     crate::graph::register(get_node, graph, &[], &mut vm);
     let compiled = compile(get_node, graph, &mut vm, entrypoints, config)?;
     Ok((vm, compiled))
