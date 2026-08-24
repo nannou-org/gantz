@@ -58,7 +58,10 @@
          pat/euclid-bools
          pat/euclid
          pat/euclid-off
-         pat/euclid-full)
+         pat/euclid-full
+         pat/event-onset?
+         pat/window
+         pat/events->secs)
 
 ;; -- internal helpers ---------------------------------------------------------
 
@@ -575,3 +578,53 @@
                                e)))
                        '())))
                (p span))))))))
+
+;; -- windowing and delivery -----------------------------------------------------
+
+;; Whether the event begins at its whole's start: a true onset rather
+;; than the continuation of an event chopped by a window boundary.
+;; Signal events (whole #f) are never onsets.
+(define (pat/event-onset? e)
+  (let ((w (pat/event-whole e)))
+    (if w
+        (let ((astart (car (pat/event-active e)))
+              (wstart (car w)))
+          (if (< astart wstart) #f (not (< wstart astart))))
+        #f)))
+
+;; Advance a tick-driven query window.
+;;
+;; `st` is the previous cycle position (any non-number, e.g. a fresh expr
+;; node's Void state, means "first tick"), `t` the eval time in seconds
+;; and `cps` the tempo in cycles per second. Returns
+;; `(list span new-position)` where `span` runs from the previous
+;; position to the current one.
+;;
+;; The position derives from absolute time snapped to the 1/1920-cycle
+;; grid, so successive spans abut exactly, quantisation error never
+;; accumulates, and denominators stay bounded. The span is empty on the
+;; first tick and whenever the position has not advanced. A `cps` change
+;; rescales the whole timeline, so the position jumps (backwards jumps
+;; yield an empty span and continue from the new position).
+(define (pat/window st t cps)
+  (let ((pos (/ (exact (round (* t cps pat//grid))) pat//grid)))
+    (let ((prev (if (number? st) st pos)))
+      (list (if (< pos prev) (cons pos pos) (cons prev pos))
+            pos))))
+
+;; Convert queried window events to a list of `(list seconds value)`
+;; pairs for delivery (e.g. the plyphon timestamped control path).
+;;
+;; `span` is the queried window, `t` the eval time in seconds anchoring
+;; the span's start, and `cps` the tempo used to convert cycle offsets
+;; to seconds. Only onset events are kept - window-chopped continuations
+;; of a sustained event would otherwise retrigger every tick. Times and
+;; numeric values leave the exact world here: floats only, since the
+;; delivery paths drop rationals.
+(define (pat/events->secs events span t cps)
+  (pat//map
+   (lambda (e)
+     (list (+ t (exact->inexact (/ (- (car (pat/event-active e)) (car span)) cps)))
+           (let ((v (pat/event-value e)))
+             (if (number? v) (exact->inexact v) v))))
+   (pat//filter pat/event-onset? events)))
