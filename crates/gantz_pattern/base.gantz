@@ -26,7 +26,16 @@
   (-> ref8 ~sinosc9)
   (-> ~sinosc9 ~out10))
 
-(graph euclid
+(graph papp
+  (expr0 (expr (pat/app $pv $pf) #:require "gantz/pattern"))
+  (inlet1 (inlet "pattern" "pattern of values"))
+  (inlet2 (inlet "pattern" "pattern of functions"))
+  (outlet3 (outlet "pattern" "functions applied at intersections"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph peuclid
   (expr0 (expr (pat/euclid (exact (round $k)) (exact (round $n))) #:require "gantz/pattern"))
   (inlet1 (inlet "number" "onset count"))
   (inlet2 (inlet "number" "slot count"))
@@ -35,7 +44,7 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
-(graph euclidfull
+(graph peuclidfull
   (expr0 (expr (pat/euclid-full (exact (round $k)) (exact (round $n))) #:require "gantz/pattern"))
   (inlet1 (inlet "number" "onset count"))
   (inlet2 (inlet "number" "slot count"))
@@ -44,7 +53,7 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
-(graph euclidoff
+(graph peuclidoff
   (expr0 (expr (pat/euclid-off (exact (round $k)) (exact (round $n)) (exact (round $off))) #:require "gantz/pattern"))
   (inlet1 (inlet "number" "onset count"))
   (inlet2 (inlet "number" "slot count"))
@@ -54,15 +63,6 @@
   (-> inlet2 (expr0 1))
   (-> inlet3 (expr0 2))
   (-> expr0 outlet4))
-
-(graph papp
-  (expr0 (expr (pat/app $pv $pf) #:require "gantz/pattern"))
-  (inlet1 (inlet "pattern" "pattern of values"))
-  (inlet2 (inlet "pattern" "pattern of functions"))
-  (outlet3 (outlet "pattern" "functions applied at intersections"))
-  (-> inlet1 expr0)
-  (-> inlet2 (expr0 1))
-  (-> expr0 outlet3))
 
 (graph pfast
   (expr0 (expr (pat/fast (pat/rationalize $rate) $p) #:require "gantz/pattern"))
@@ -189,10 +189,10 @@
 
 (descriptions
   (demo-pattern "Patterns queried per tick. Euclid events are inspected and a frequency pattern is scheduled onto a sine.")
-  (euclid "K onsets distributed over N slots per cycle.")
-  (euclidfull "Euclidean onsets elongated to fill the gaps.")
-  (euclidoff "Euclidean onsets rotated left by an offset.")
   (papp "Apply a pattern of functions to a pattern of values.")
+  (peuclid "K onsets distributed over N slots per cycle.")
+  (peuclidfull "Euclidean onsets elongated to fill the gaps.")
+  (peuclidoff "Euclidean onsets rotated left by an offset.")
   (pfast "Speed a pattern up by a factor.")
   (pfastcat "Concatenate patterns within a single cycle.")
   (pfilter "Keep events whose values satisfy a predicate.")
