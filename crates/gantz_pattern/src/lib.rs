@@ -29,3 +29,7 @@ pub fn modules() -> &'static [SteelModule] {
     const MODULES: &[SteelModule] = &[MODULE];
     MODULES
 }
+
+/// The domain's base `.gantz` source: named graphs wrapping the module
+/// fns as thin expr nodes, plus a tick-driven demo.
+pub const BASE_BYTES: &[u8] = include_bytes!("../base.gantz");

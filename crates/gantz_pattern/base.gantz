@@ -1,0 +1,197 @@
+(graph demo-pattern
+  (tick-bang0 tick-bang)
+  (expr1 (expr (begin $t 0.5)))
+  (expr2 (expr (begin $t (pat/euclid 3 8)) #:require "gantz/pattern"))
+  (ref3 (ref window #:sync))
+  (ref4 (ref query #:sync))
+  (inspect5 inspect)
+  (-> tick-bang0 expr1)
+  (-> tick-bang0 expr2)
+  (-> tick-bang0 ref3)
+  (-> expr1 (ref3 1))
+  (-> expr2 ref4)
+  (-> ref3 (ref4 1))
+  (-> ref4 inspect5))
+
+(graph euclid
+  (expr0 (expr (pat/euclid (exact (round $k)) (exact (round $n))) #:require "gantz/pattern"))
+  (inlet1 (inlet "number" "onset count"))
+  (inlet2 (inlet "number" "slot count"))
+  (outlet3 (outlet "pattern" "one event per onset slot"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph euclid-full
+  (expr0 (expr (pat/euclid-full (exact (round $k)) (exact (round $n))) #:require "gantz/pattern"))
+  (inlet1 (inlet "number" "onset count"))
+  (inlet2 (inlet "number" "slot count"))
+  (outlet3 (outlet "pattern" "onsets elongated to the next onset"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph euclid-off
+  (expr0 (expr (pat/euclid-off (exact (round $k)) (exact (round $n)) (exact (round $off))) #:require "gantz/pattern"))
+  (inlet1 (inlet "number" "onset count"))
+  (inlet2 (inlet "number" "slot count"))
+  (inlet3 (inlet "number" "rotation in slots"))
+  (outlet4 (outlet "pattern" "one event per rotated onset slot"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
+
+(graph events->secs
+  (expr0 (expr (pat/events->secs $events $span (hash-ref %args 'time) $cps) #:require "gantz/pattern"))
+  (inlet1 (inlet "events" "queried window events"))
+  (inlet2 (inlet "span" "the queried window"))
+  (inlet3 (inlet "number" "tempo in cycles per second"))
+  (outlet4 (outlet "list" "(seconds value) onset pairs"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
+
+(graph fast
+  (expr0 (expr (pat/fast (pat/rationalize $rate) $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "number" "speed factor"))
+  (inlet2 (inlet "pattern" "input pattern"))
+  (outlet3 (outlet "pattern" "sped-up pattern"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph fastcat
+  (expr0 (expr (pat/fastcat (if (list? $ps) $ps (list $ps))) #:require "gantz/pattern"))
+  (inlet1 (inlet "pattern(s)" "patterns in connection order"))
+  (outlet2 (outlet "pattern" "all patterns within one cycle"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph papp
+  (expr0 (expr (pat/app $pv $pf) #:require "gantz/pattern"))
+  (inlet1 (inlet "pattern" "pattern of values"))
+  (inlet2 (inlet "pattern" "pattern of functions"))
+  (outlet3 (outlet "pattern" "functions applied at intersections"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph pfilter
+  (expr0 (expr (pat/filter $f $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "function" "value predicate"))
+  (inlet2 (inlet "pattern" "input pattern"))
+  (outlet3 (outlet "pattern" "events whose values satisfy the predicate"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph pmap
+  (expr0 (expr (pat/map $f $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "function" "value mapping"))
+  (inlet2 (inlet "pattern" "input pattern"))
+  (outlet3 (outlet "pattern" "pattern of mapped values"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph pure
+  (expr0 (expr (pat/pure $v) #:require "gantz/pattern"))
+  (inlet1 (inlet "value" "event value"))
+  (outlet2 (outlet "pattern" "one event per cycle"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph query
+  (expr0 (expr (pat/query $p $span) #:require "gantz/pattern"))
+  (inlet1 (inlet "pattern" "pattern to query"))
+  (inlet2 (inlet "span" "span to query over"))
+  (outlet3 (outlet "events" "events sorted by active start"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph saw
+  (expr0 (expr (begin $b pat/saw) #:require "gantz/pattern"))
+  (inlet1 (inlet "bang" "trigger"))
+  (outlet2 (outlet "pattern" "0 to 1 ramp each cycle"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph shift
+  (expr0 (expr (pat/shift (pat/rationalize $amount) $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "number" "cycles to shift later"))
+  (inlet2 (inlet "pattern" "input pattern"))
+  (outlet3 (outlet "pattern" "shifted pattern"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph silence
+  (expr0 (expr (begin $b pat/silence) #:require "gantz/pattern"))
+  (inlet1 (inlet "bang" "trigger"))
+  (outlet2 (outlet "pattern" "no events"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph slow
+  (expr0 (expr (pat/slow (pat/rationalize $rate) $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "number" "slow-down factor"))
+  (inlet2 (inlet "pattern" "input pattern"))
+  (outlet3 (outlet "pattern" "slowed pattern"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph slowcat
+  (expr0 (expr (pat/slowcat (if (list? $ps) $ps (list $ps))) #:require "gantz/pattern"))
+  (inlet1 (inlet "pattern(s)" "patterns in connection order"))
+  (outlet2 (outlet "pattern" "one pattern per cycle"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph stack
+  (expr0 (expr (pat/stack (if (list? $ps) $ps (list $ps))) #:require "gantz/pattern"))
+  (inlet1 (inlet "pattern(s)" "patterns in connection order"))
+  (outlet2 (outlet "pattern" "layered patterns"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph steady
+  (expr0 (expr (pat/steady $v) #:require "gantz/pattern"))
+  (inlet1 (inlet "value" "constant value"))
+  (outlet2 (outlet "pattern" "continuous constant signal"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph window
+  (expr0 (expr (begin $tick (let ((r (pat/window state (hash-ref %args 'time) $cps))) (begin (set! state (list-ref r 1)) (list-ref r 0)))) #:require "gantz/pattern"))
+  (inlet1 (inlet "bang" "tick trigger"))
+  (inlet2 (inlet "number" "tempo in cycles per second"))
+  (outlet3 (outlet "span" "the window since the previous tick"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(descriptions
+  (demo-pattern "A euclidean pattern queried per tick and inspected.")
+  (euclid "K onsets distributed over N slots per cycle.")
+  (euclid-full "Euclidean onsets elongated to fill the gaps.")
+  (euclid-off "Euclidean onsets rotated left by an offset.")
+  (events->secs "Window events as (seconds value) onset pairs for delivery.")
+  (fast "Speed a pattern up by a factor.")
+  (fastcat "Concatenate patterns within a single cycle.")
+  (papp "Apply a pattern of functions to a pattern of values.")
+  (pfilter "Keep events whose values satisfy a predicate.")
+  (pmap "Map a function over a pattern's values.")
+  (pure "Repeat a value once per cycle.")
+  (query "Query a pattern over a span for its sorted events.")
+  (saw "A 0 to 1 ramp signal each cycle.")
+  (shift "Shift a pattern later in time.")
+  (silence "The empty pattern.")
+  (slow "Slow a pattern down by a factor.")
+  (slowcat "Concatenate patterns, one per cycle.")
+  (stack "Layer patterns on top of each other.")
+  (steady "A continuous constant signal.")
+  (window "Advance a tick-driven query window in cycles."))

@@ -25,6 +25,9 @@ fn main() {
         return;
     }
     let mut app = App::new();
+    // Domains with no bevy plugin (the pattern domain's steel module and
+    // base source).
+    node::push_plain_domains(&mut app);
     app
         // Core gantz plugin (provides FocusedHead, HeadTabOrder, HeadVms, Registry, Views)
         .add_plugins(GantzPlugin)

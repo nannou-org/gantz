@@ -68,6 +68,26 @@ pub fn builtins() -> gantz_core::Builtins {
     )
 }
 
+/// Contribute the domains that have no bevy plugin of their own.
+///
+/// The pattern domain is pure - a steel module plus a base source, no
+/// systems - so the app pushes its contributions directly (the shared
+/// `get_resource_or_init` convention plugins use, safe before or after
+/// plugin construction, but required before the first head compiles).
+pub fn push_plain_domains(app: &mut bevy::app::App) {
+    app.world_mut()
+        .get_resource_or_init::<bevy_gantz::vm::SteelModules>()
+        .0
+        .extend(gantz_pattern::modules().iter().copied());
+    app.world_mut()
+        .get_resource_or_init::<bevy_gantz_egui::base::BaseSources>()
+        .0
+        .push(bevy_gantz_egui::base::BaseSource {
+            name: "pattern",
+            bytes: gantz_pattern::BASE_BYTES,
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use gantz_egui::node::DynNode;
@@ -2435,7 +2455,11 @@ mod tests {
     #[test]
     fn merged_base_sources_all_compile() {
         let mut merged = DataReg::default();
-        for bytes in [gantz_base::BYTES, gantz_plyphon::BASE_BYTES] {
+        for bytes in [
+            gantz_base::BYTES,
+            gantz_plyphon::BASE_BYTES,
+            gantz_pattern::BASE_BYTES,
+        ] {
             let export: DataReg = gantz_egui::export::parse_export_at(
                 bytes,
                 bevy_gantz_egui::base::BASE_TIMESTAMP,
@@ -2451,19 +2475,65 @@ mod tests {
         let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
         let names: Vec<gantz_ca::Name> = merged.heads().map(|(n, _)| n.clone()).collect();
         assert!(names.contains(&name("demo-sine")), "plyphon demo loaded");
+        assert!(names.contains(&name("demo-pattern")), "pattern demo loaded");
         for n in names {
             let head = gantz_ca::Head::Branch(n.clone());
             let graph = head_graph(&reified, &merged, &head)
                 .unwrap_or_else(|| panic!("`{n}` has no head graph"));
             let entrypoints = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
             let config = gantz_core::compile::Config::default();
-            gantz_core::vm::init(&get_node, graph, &entrypoints, &config).unwrap_or_else(|e| {
+            // `init_with_modules` mirrors the app path: the pattern domain's
+            // module must be registered for the pattern graphs' requires.
+            gantz_core::vm::init_with_modules(
+                &get_node,
+                graph,
+                &entrypoints,
+                &config,
+                gantz_pattern::modules(),
+            )
+            .unwrap_or_else(|e| {
                 panic!(
                     "merged base graph `{n}` failed to compile:\n{}",
                     gantz_core::vm::error_chain(&e),
                 )
             });
         }
+    }
+
+    /// The pattern base source is exactly the writer's canonical form: the
+    /// file re-exports byte-identically, so `update-base` write-backs never
+    /// churn it.
+    #[test]
+    fn pattern_base_export_is_stable() {
+        let text1 = std::str::from_utf8(gantz_pattern::BASE_BYTES).expect("utf8");
+        let base: DataReg =
+            gantz_egui::export::parse_export(gantz_pattern::BASE_BYTES, &super::codec())
+                .expect("parse base");
+        let text2 =
+            gantz_egui::format::to_string_named(&base, &super::codec()).expect("to_string_named");
+        assert_eq!(
+            text1, text2,
+            "the pattern base file must match the writer's canonical form",
+        );
+    }
+
+    /// The pattern source parses reproducibly at BASE_TIMESTAMP (the
+    /// invariant demo reset relies on, per source).
+    #[test]
+    fn pattern_base_parses_reproducibly() {
+        let parse = || -> DataReg {
+            gantz_egui::export::parse_export_at(
+                gantz_pattern::BASE_BYTES,
+                bevy_gantz_egui::base::BASE_TIMESTAMP,
+                &super::codec(),
+            )
+            .expect("parse")
+        };
+        let a = parse();
+        let b = parse();
+        let ca_a = a.head(&name("demo-pattern")).expect("demo-pattern");
+        let ca_b = b.head(&name("demo-pattern")).expect("demo-pattern");
+        assert_eq!(ca_a, ca_b, "reset must resolve the startup commit address");
     }
 
     /// The plyphon source parses reproducibly at BASE_TIMESTAMP: startup and
