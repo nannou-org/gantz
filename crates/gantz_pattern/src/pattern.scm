@@ -27,12 +27,77 @@
          pat/event-whole
          pat/event-whole-or-active
          pat/event-map-value
-         pat/event-map-spans)
+         pat/event-map-spans
+         pat/pure
+         pat/silence
+         pat/signal
+         pat/steady
+         pat/saw
+         pat/saw2
+         pat/query)
 
 ;; -- internal helpers ---------------------------------------------------------
 
 (define (pat//max2 a b) (if (< a b) b a))
 (define (pat//min2 a b) (if (< b a) b a))
+
+;; Tail-recursive list helpers (the prelude's are unavailable on the base
+;; engine).
+
+(define (pat//rev-append xs acc)
+  (if (empty? xs) acc (pat//rev-append (cdr xs) (cons (car xs) acc))))
+
+(define (pat//map f xs)
+  (pat//map-loop f xs '()))
+
+(define (pat//map-loop f xs acc)
+  (if (empty? xs)
+      (reverse acc)
+      (pat//map-loop f (cdr xs) (cons (f (car xs)) acc))))
+
+(define (pat//filter keep? xs)
+  (pat//filter-loop keep? xs '()))
+
+(define (pat//filter-loop keep? xs acc)
+  (if (empty? xs)
+      (reverse acc)
+      (pat//filter-loop keep?
+                        (cdr xs)
+                        (if (keep? (car xs)) (cons (car xs) acc) acc))))
+
+;; Map `f` over `xs` and concatenate the resulting lists, preserving order.
+(define (pat//flat-map f xs)
+  (pat//flat-map-loop f xs '()))
+
+(define (pat//flat-map-loop f xs acc)
+  (if (empty? xs)
+      (reverse acc)
+      (pat//flat-map-loop f (cdr xs) (pat//rev-append (f (car xs)) acc))))
+
+;; A stable merge sort (`sort` on the base engine rejects closures).
+;; `less?` must be a strict order. Merge recursion depth is bounded by the
+;; list length, fine at event-list scale.
+(define (pat//sort less? xs)
+  (let ((n (length xs)))
+    (if (< n 2)
+        xs
+        (let ((mid (exact (floor (/ n 2)))))
+          (pat//merge less?
+                      (pat//sort less? (take xs mid))
+                      (pat//sort less? (list-tail xs mid)))))))
+
+(define (pat//merge less? a b)
+  (if (empty? a)
+      b
+      (if (empty? b)
+          a
+          (if (less? (car b) (car a))
+              (cons (car b) (pat//merge less? a (cdr b)))
+              (cons (car a) (pat//merge less? (cdr a) b))))))
+
+;; Order events by the start of their active spans.
+(define (pat//event-earlier? a b)
+  (< (car (pat/event-active a)) (car (pat/event-active b))))
 
 ;; -- spans --------------------------------------------------------------------
 
@@ -97,3 +162,43 @@
              (f (hash-ref e 'active))
              (let ((w (hash-ref e 'whole)))
                (if w (f w) #f))))
+
+;; -- constructors -------------------------------------------------------------
+;;
+;; A pattern is `(lambda (span) <list of events>)`. Combinators make no
+;; ordering guarantee on the returned events. [`pat/query`] sorts.
+
+;; Repeats the given value once per cycle (cycles' `atom`).
+(define (pat/pure v)
+  (lambda (span)
+    (pat//map (lambda (cyc)
+                (let ((start (floor (car cyc))))
+                  (pat/event v cyc (cons start (+ start 1)))))
+              (pat/span-cycles span))))
+
+;; The pattern producing no events.
+(define pat/silence (lambda (span) '()))
+
+;; A continuous pattern sampling `sample` at the query span's midpoint.
+;; Signal events carry no `whole`, and a signal yields exactly one event
+;; for any query, including a zero-width one.
+(define (pat/signal sample)
+  (lambda (span)
+    (let ((mid (+ (car span) (/ (- (cdr span) (car span)) 2))))
+      (list (pat/event (sample mid) span #f)))))
+
+;; A continuous pattern of a constant value.
+(define (pat/steady v)
+  (pat/signal (lambda (r) v)))
+
+;; A signal ramping 0 to 1 over every cycle.
+(define pat/saw
+  (pat/signal (lambda (r) (- r (floor r)))))
+
+;; A signal ramping -1 to 1 over every cycle (polar [`pat/saw`]).
+(define pat/saw2
+  (pat/signal (lambda (r) (- (* 2 (- r (floor r))) 1))))
+
+;; Query the pattern over the span, events sorted by active-span start.
+(define (pat/query p span)
+  (pat//sort pat//event-earlier? (p span)))
