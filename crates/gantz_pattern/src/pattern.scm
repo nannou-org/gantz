@@ -44,7 +44,17 @@
          pat/timecat
          pat/stack
          pat/fit-span
-         pat/fit-cycle)
+         pat/fit-cycle
+         pat/map
+         pat/filter
+         pat/filter-events
+         pat/join
+         pat/inner-join
+         pat/outer-join
+         pat/app
+         pat/appl
+         pat/appr
+         pat/merge-with)
 
 ;; -- internal helpers ---------------------------------------------------------
 
@@ -338,3 +348,116 @@
 ;; [`pat/fit-span`] with a single-cycle `src`.
 (define (pat/fit-cycle dst p)
   (pat/fit-span (cons 0 1) dst p))
+
+;; -- higher-order combinators ---------------------------------------------------
+
+;; Map event values with `f`.
+(define (pat/map f p)
+  (lambda (span)
+    (pat//map (lambda (e) (pat/event-map-value f e)) (p span))))
+
+;; Keep events whose value satisfies `keep?`.
+(define (pat/filter keep? p)
+  (lambda (span)
+    (pat//filter (lambda (e) (keep? (pat/event-value e))) (p span))))
+
+;; Keep events satisfying `keep?`.
+(define (pat/filter-events keep? p)
+  (lambda (span)
+    (pat//filter keep? (p span))))
+
+;; The whole common to both events: the intersection of their wholes when
+;; both are present, otherwise #f (including non-intersecting wholes).
+(define (pat//whole-intersect ow iw)
+  (if ow (if iw (pat/span-intersect ow iw) #f) #f))
+
+;; Join a pattern of patterns: inner patterns queried with the outer
+;; event's active span, event spans intersected (whole and active alike).
+(define (pat/join pp)
+  (lambda (span)
+    (pat//flat-map
+     (lambda (oe)
+       (pat//flat-map
+        (lambda (ie)
+          (let ((active (pat/span-intersect (pat/event-active oe)
+                                            (pat/event-active ie))))
+            (if active
+                (list (pat/event (pat/event-value ie)
+                                 active
+                                 (pat//whole-intersect (pat/event-whole oe)
+                                                       (pat/event-whole ie))))
+                '())))
+        ((pat/event-value oe) (pat/event-active oe))))
+     (pp span))))
+
+;; Like [`pat/join`], but structure comes from the inner pattern alone:
+;; wholes untouched, actives clipped to the original query span.
+(define (pat/inner-join pp)
+  (lambda (q-span)
+    (pat//flat-map
+     (lambda (oe)
+       (pat//flat-map
+        (lambda (ie)
+          (let ((active (pat/span-intersect q-span (pat/event-active ie))))
+            (if active
+                (list (pat/event (pat/event-value ie) active (pat/event-whole ie)))
+                '())))
+        ((pat/event-value oe) (pat/event-active oe))))
+     (pp q-span))))
+
+;; Like [`pat/join`], but structure comes from the outer pattern alone:
+;; the inner is queried at the instant of the outer's whole start (so a
+;; discrete inner, which yields nothing for a zero-width query, produces
+;; no events - only signal inners are productive, per cycles).
+(define (pat/outer-join pp)
+  (lambda (q-span)
+    (pat//flat-map
+     (lambda (oe)
+       (let ((start (car (pat/event-whole-or-active oe))))
+         (pat//flat-map
+          (lambda (ie)
+            (let ((active (pat/span-intersect q-span (pat/event-active oe))))
+              (if active
+                  (list (pat/event (pat/event-value ie) active (pat/event-whole oe)))
+                  '())))
+          ((pat/event-value oe) (cons start start)))))
+     (pp q-span))))
+
+;; Apply a pattern of functions `pf` to a pattern of values `pv`: an event
+;; per intersection of active spans (both sides queried with the original
+;; query span), whole = `(structure left-whole right-whole)` only when
+;; both wholes are present, else #f.
+(define (pat//apply pv pf structure)
+  (lambda (span)
+    (pat//flat-map
+     (lambda (ev)
+       (pat//flat-map
+        (lambda (ef)
+          (let ((active (pat/span-intersect (pat/event-active ev)
+                                            (pat/event-active ef))))
+            (if active
+                (let ((lw (pat/event-whole ev))
+                      (rw (pat/event-whole ef)))
+                  (list (pat/event ((pat/event-value ef) (pat/event-value ev))
+                                   active
+                                   (if lw (if rw (structure lw rw) #f) #f))))
+                '())))
+        (pf span)))
+     (pv span))))
+
+;; Apply with structure from the intersection of both wholes.
+(define (pat/app pv pf)
+  (pat//apply pv pf pat/span-intersect))
+
+;; Apply with structure from the left (the value pattern).
+(define (pat/appl pv pf)
+  (pat//apply pv pf (lambda (l r) l)))
+
+;; Apply with structure from the right (the function pattern).
+(define (pat/appr pv pf)
+  (pat//apply pv pf (lambda (l r) r)))
+
+;; Merge two patterns by calling `(f a-value b-value)` at every
+;; intersection of active spans (intersection structure).
+(define (pat/merge-with f pa pb)
+  (pat/app pa (pat/map (lambda (bv) (lambda (av) (f av bv))) pb)))
