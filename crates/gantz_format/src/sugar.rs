@@ -102,6 +102,28 @@ impl<'a> SugarArgs<'a> {
         }
     }
 
+    /// Find every `#:<key>` keyword and return the string value following
+    /// each occurrence.
+    ///
+    /// Returns an empty vec when the keyword is absent. Errors when an
+    /// occurrence lacks a following string.
+    pub fn keyword_strs(&self, key: &str) -> Result<Vec<String>, FormatError> {
+        self.args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| as_keyword(a).as_deref() == Some(key))
+            .map(|(i, kw)| {
+                self.args.get(i + 1).and_then(as_string).ok_or_else(|| {
+                    err_at(
+                        kw,
+                        self.src,
+                        ErrorKind::Malformed(format!("#:{key} requires a string")),
+                    )
+                })
+            })
+            .collect()
+    }
+
     /// Whether a bare `#:<key>` flag keyword is present.
     pub fn has_flag(&self, key: &str) -> bool {
         self.args
@@ -347,6 +369,11 @@ fn expr_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     if let Some(out) = args.keyword_int("out")? {
         fields.push(("outputs", Datum::U64(out.max(0) as u64)));
     }
+    let requires = args.keyword_strs("require")?;
+    if !requires.is_empty() {
+        let seq = requires.into_iter().map(Datum::Str).collect();
+        fields.push(("requires", Datum::Seq(seq)));
+    }
     Ok(node_datum("Expr", fields))
 }
 
@@ -375,9 +402,19 @@ fn branch_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
 
 fn write_expr(node: &Datum) -> String {
     let src = node.get("src").and_then(Datum::as_str).unwrap_or("'()");
+    let requires = node
+        .get("requires")
+        .and_then(Datum::as_seq)
+        .map(|seq| {
+            seq.iter()
+                .filter_map(Datum::as_str)
+                .map(|name| format!(" #:require {}", quote(name)))
+                .collect::<String>()
+        })
+        .unwrap_or_default();
     match node.get("outputs").and_then(Datum::as_i64) {
-        Some(n) if n != 1 => format!("(expr {src} #:out {n})"),
-        _ => format!("(expr {src})"),
+        Some(n) if n != 1 => format!("(expr {src} #:out {n}{requires})"),
+        _ => format!("(expr {src}{requires})"),
     }
 }
 
@@ -494,6 +531,75 @@ mod tests {
         with_args("(osc #:rate 5)", |args| {
             assert!(args.keyword_symbol("rate").is_err(), "5 is not a symbol");
         });
+    }
+
+    /// `(expr <code> [#:out n] [#:require "name"]...)` round-trips the
+    /// requires: repeated occurrences read in order, a non-string value
+    /// errors, and a `#:require` nested inside the code slice is ignored.
+    #[test]
+    fn expr_requires_round_trip() {
+        let s = CoreSugar;
+
+        // A single require.
+        let d = read_spec(&s, r#"(expr (unwrap-or $?a 0) #:require "gantz/option")"#)
+            .expect("recognised");
+        let requires: Vec<_> = d
+            .get("requires")
+            .and_then(Datum::as_seq)
+            .expect("requires seq")
+            .iter()
+            .filter_map(Datum::as_str)
+            .collect();
+        assert_eq!(requires, ["gantz/option"]);
+        assert_eq!(
+            s.write_spec("Expr", &d).as_deref(),
+            Some(r#"(expr (unwrap-or $?a 0) #:require "gantz/option")"#),
+        );
+
+        // Repeated requires keep their order, composing with #:out.
+        let d = read_spec(
+            &s,
+            r#"(expr (list (f $x) (g $x)) #:out 2 #:require "b/mod" #:require "a/mod")"#,
+        )
+        .expect("recognised");
+        let requires: Vec<_> = d
+            .get("requires")
+            .and_then(Datum::as_seq)
+            .expect("requires seq")
+            .iter()
+            .filter_map(Datum::as_str)
+            .collect();
+        assert_eq!(requires, ["b/mod", "a/mod"]);
+        assert_eq!(
+            s.write_spec("Expr", &d).as_deref(),
+            Some(r#"(expr (list (f $x) (g $x)) #:out 2 #:require "b/mod" #:require "a/mod")"#),
+        );
+
+        // No requires: the field is absent and the written form unchanged.
+        let d = read_spec(&s, "(expr (+ 1 2))").expect("recognised");
+        assert!(d.get("requires").is_none());
+        assert_eq!(s.write_spec("Expr", &d).as_deref(), Some("(expr (+ 1 2))"));
+
+        // A non-string value errors.
+        let exprs = sexpr::read("(expr (+ 1 2) #:require 5)").expect("read");
+        let args = sexpr::list_args(&exprs[0]).expect("list");
+        assert!(
+            CoreSugar
+                .read_spec(
+                    "expr",
+                    SugarArgs::new(&args[1..], "(expr (+ 1 2) #:require 5)")
+                )
+                .is_err()
+        );
+
+        // A keyword inside the code s-expression is not a require: the
+        // keyword scan only covers top-level args.
+        let d = read_spec(&s, r#"(expr (foo #:require "x"))"#).expect("recognised");
+        assert!(d.get("requires").is_none());
+        assert_eq!(
+            d.get("src").and_then(Datum::as_str),
+            Some(r#"(foo #:require "x")"#),
+        );
     }
 
     #[test]
