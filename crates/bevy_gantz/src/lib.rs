@@ -104,6 +104,7 @@ impl Plugin for GantzPlugin {
             .init_resource::<HeadTabOrder>()
             .init_resource::<Registry>()
             .init_resource::<vm::CompileConfig>()
+            .init_resource::<vm::SteelModules>()
             .init_resource::<vm::ValidateCommitted>()
             .insert_resource(EvalEpoch(web_time::Instant::now()))
             .init_non_send::<HeadVms>()

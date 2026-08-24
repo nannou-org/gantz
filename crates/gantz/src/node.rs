@@ -1912,6 +1912,48 @@ mod tests {
         }
     }
 
+    /// The full app pipeline for `#:require`: a `.gantz` snippet declaring a
+    /// steel module dep on an expr parses through the app codec, compiles via
+    /// `vm::init` (which registers `gantz/option`), emits the `(require ...)`
+    /// and evaluates the module's bindings.
+    #[test]
+    fn expr_require_sugar_compiles_and_evaluates() {
+        use std::time::Duration;
+
+        let text = "\
+(graph opt-demo
+  (b bang)
+  (u (expr (begin $push (unwrap-or (None) 42)) #:require \"gantz/option\"))
+  (c (expr (assert! (equal? $x 42))))
+  (-> b u)
+  (-> u c))";
+        let registry: DataReg =
+            gantz_egui::format::from_str(text, Duration::from_secs(0), &super::codec())
+                .expect("from_str");
+        let reified = reify_all(&registry);
+        let builtins = builtins_with_instances();
+        let codec = super::codec();
+        let reg_env = env(&registry, &reified, &builtins, &codec);
+        let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
+
+        let head = gantz_ca::Head::Branch(name("opt-demo"));
+        let graph = head_graph(&reified, &registry, &head).expect("head graph");
+        let entrypoints = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
+        assert_eq!(entrypoints.len(), 1, "the bang provides one entrypoint");
+
+        let (mut vm, compiled) =
+            gantz_core::vm::init(&get_node, graph, &entrypoints, &Default::default())
+                .expect("init");
+        assert!(
+            compiled.src.starts_with("(require"),
+            "the declared module leads the emitted module:\n{}",
+            compiled.src,
+        );
+        let fn_name = gantz_core::compile::entry_fn_name(&entrypoints[0].id());
+        vm.call_function_by_name_with_args(&fn_name, vec![])
+            .expect("the required binding evaluates");
+    }
+
     /// Every `ref` in `base.gantz` is auto-syncing, so the demos track the latest
     /// primitive commits automatically. Verified through a load + re-serialize
     /// round-trip (the `update-base` export path): a loaded `NamedRef` whose

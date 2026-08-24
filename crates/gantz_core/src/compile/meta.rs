@@ -37,6 +37,9 @@ pub struct Meta {
     pub inputs: BTreeMap<node::Id, usize>,
     /// The total number of outputs on node (whether or not they're connected).
     pub outputs: BTreeMap<node::Id, usize>,
+    /// The names of the registered Steel modules required by this graph's
+    /// nodes (see [`Node::required_modules`]).
+    pub requires: BTreeSet<String>,
 }
 
 /// Whether an edge is known to always be traversed, or whether it is
@@ -147,6 +150,7 @@ impl Meta {
         if node.stateful(ctx) {
             self.stateful.insert(id);
         }
+        self.requires.extend(node.required_modules(ctx));
         Ok(())
     }
 }

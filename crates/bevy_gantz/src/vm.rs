@@ -21,6 +21,22 @@ use std::time::Duration;
 #[derive(Default, Resource)]
 pub struct CompileConfig(pub core_compile::Config);
 
+/// Resource collecting the domain-provided [`SteelModule`]s registered on
+/// every freshly created head VM.
+///
+/// Domain plugins contribute via `get_resource_or_init` + push (never
+/// `insert_resource`), so plugin order does not matter. `gantz_core`'s own
+/// modules are baked into engine creation (`gantz_core::vm::new_engine`)
+/// and need no entry here.
+///
+/// Contributions must land during plugin construction: an engine only sees
+/// the modules present when its head is first compiled, and the in-place
+/// recompile path never re-registers.
+///
+/// [`SteelModule`]: gantz_core::vm::SteelModule
+#[derive(Default, Resource)]
+pub struct SteelModules(pub Vec<gantz_core::vm::SteelModule>);
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------

@@ -549,11 +549,42 @@ where
             .map(|(depth, f)| (depth, 1, f)),
     );
     fns.sort_by(|(d1, k1, _), (d2, k2, _)| d2.cmp(d1).then(k1.cmp(k2)));
-    Ok(fns
+
+    // One `(require ...)` per Steel module named by any node in the meta
+    // tree, ahead of every definition. Steel resolves the free identifiers
+    // of every emitted fn at definition time, so module bindings must be
+    // required even for nodes outside any eval path. The `BTreeSet` union
+    // keeps emission order deterministic.
+    let requires = collect_requires(&meta_tree)
         .into_iter()
-        .map(|(_, _, f)| f)
+        .map(|name| {
+            // Node-declared names reach a string literal in emitted Steel, so
+            // restrict them to a conservative charset rather than escaping.
+            let valid = !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "/-_.".contains(c));
+            if !valid {
+                return Err(ModuleError::InvalidModuleName { name });
+            }
+            Ok(emit::parse_one(&format!("(require \"{name}\")")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(requires
+        .into_iter()
+        .chain(fns.into_iter().map(|(_, _, f)| f))
         .chain(builder.fns)
         .collect())
+}
+
+/// The union of [`Meta::requires`] over every level of the meta tree.
+fn collect_requires(tree: &RoseTree<Meta>) -> std::collections::BTreeSet<String> {
+    let mut set = tree.elem.requires.clone();
+    for sub in tree.nested.values() {
+        set.extend(collect_requires(sub));
+    }
+    set
 }
 
 /// Insert the all-connected variant conf of every node at every level of the

@@ -194,6 +194,22 @@ pub trait Node: std::any::Any {
         vec![]
     }
 
+    /// The names of the registered Steel modules this node's [`expr`]
+    /// depends on (see [`crate::vm::SteelModule`]).
+    ///
+    /// Compilation emits one `(require ...)` per module named by any node
+    /// in the graph. Steel resolves the free identifiers in every emitted
+    /// node fn at module definition time, so a node whose expression
+    /// references a module binding must declare the module here even if
+    /// no eval path reaches it.
+    ///
+    /// By default, returns an empty vec (no module dependencies).
+    ///
+    /// [`expr`]: Self::expr
+    fn required_modules(&self, _ctx: MetaCtx) -> Vec<String> {
+        vec![]
+    }
+
     /// Traverse all nested nodes, depth-first, with the given [`Visitor`].
     ///
     /// For each nested node:
@@ -453,6 +469,10 @@ macro_rules! impl_node_for_ptr {
 
             fn required_blobs(&self) -> Vec<(gantz_ca::SectionId, gantz_ca::ContentAddr)> {
                 (**self).required_blobs()
+            }
+
+            fn required_modules(&self, ctx: MetaCtx) -> Vec<String> {
+                (**self).required_modules(ctx)
             }
 
             fn visit(&self, ctx: visit::Ctx<'_, '_>, visitor: &mut dyn Visitor) {

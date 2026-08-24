@@ -201,6 +201,10 @@ impl Node for NamedRef {
         vec![self.ref_.content_addr()]
     }
 
+    fn required_modules(&self, ctx: MetaCtx) -> Vec<String> {
+        self.ref_.required_modules(ctx)
+    }
+
     fn visit(&self, ctx: gantz_core::visit::Ctx<'_, '_>, visitor: &mut dyn node::Visitor) {
         self.ref_.visit(ctx, visitor)
     }

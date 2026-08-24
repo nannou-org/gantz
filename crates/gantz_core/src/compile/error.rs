@@ -141,6 +141,10 @@ pub enum ModuleError {
     /// so it surfaces as a compile error rather than emitting malformed Steel.
     #[error("internal compiler error: invalid IR for {}: {detail}", level(path))]
     InvalidIr { path: Vec<node::Id>, detail: String },
+    /// A node declared a required Steel module under a name that cannot be
+    /// emitted as a `(require ...)` string literal.
+    #[error("invalid steel module name {name:?}")]
+    InvalidModuleName { name: String },
 }
 
 impl fmt::Display for MetaError {

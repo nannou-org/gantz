@@ -94,3 +94,71 @@ fn define_after_expression_in_body() {
                (top)";
     assert_eq!(run_int(src), 3);
 }
+
+// ----------------------------------------------------------------------------
+// Pins for the registered-steel-module semantics `vm::new_engine` relies on:
+// registration is lazy (no compilation until the first `require`), compiled
+// modules are cached for the engine's lifetime, and provided names bind
+// unmangled in the requiring program.
+
+fn run_int_vm(vm: &mut Engine, src: &str) -> isize {
+    let vals = vm.run(src.to_string()).unwrap();
+    match vals.last() {
+        Some(SteelVal::IntV(i)) => *i,
+        other => panic!("expected IntV, got {other:?}"),
+    }
+}
+
+/// A module registered via `new_engine` resolves through `require`, and its
+/// provided names bind unmangled in the requiring program.
+#[test]
+fn required_module_provides_bind_unmangled() {
+    let mut vm = gantz_core::vm::new_engine(&[]);
+    let src = "(require \"gantz/option\")
+               (+ (unwrap-or (Some 5) 0)
+                  (unwrap-or (None) 2)
+                  (if (option? (Some 1)) 10 0)
+                  (unwrap-or (map-option (lambda (x) (* x 10)) (Some 4)) 0))";
+    assert_eq!(run_int_vm(&mut vm, src), 57);
+}
+
+/// Registration performs no compilation: a syntactically invalid module is
+/// accepted silently, and the error surfaces only at the first `require`.
+#[test]
+fn module_registration_is_lazy() {
+    let broken = gantz_core::vm::SteelModule {
+        name: "gantz/test-broken",
+        src: "(define (broken",
+    };
+    let mut vm = gantz_core::vm::new_engine(&[broken]);
+    assert_eq!(run_int_vm(&mut vm, "(+ 1 2)"), 3);
+    assert!(
+        vm.run("(require \"gantz/test-broken\")".to_string())
+            .is_err()
+    );
+}
+
+/// A second program containing the same `require` hits the engine's module
+/// cache: the module's top-level defines run once per engine, not per run.
+#[test]
+fn required_module_is_cached_across_runs() {
+    let counting = gantz_core::vm::SteelModule {
+        name: "gantz/test-counting",
+        src: "(provide get-count)
+              (define count (box 0))
+              (set-box! count (+ (unbox count) 1))
+              (define (get-count) (unbox count))",
+    };
+    let mut vm = gantz_core::vm::new_engine(&[counting]);
+    let src = "(require \"gantz/test-counting\") (get-count)";
+    assert_eq!(run_int_vm(&mut vm, src), 1);
+    assert_eq!(run_int_vm(&mut vm, src), 1);
+}
+
+/// Requiring a name that was never registered errors rather than silently
+/// binding nothing.
+#[test]
+fn require_of_unregistered_module_errors() {
+    let mut vm = gantz_core::vm::new_engine(&[]);
+    assert!(vm.run("(require \"gantz/nope\")".to_string()).is_err());
+}
