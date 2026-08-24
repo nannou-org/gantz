@@ -7,7 +7,7 @@ use crate::reg::{BuiltinNodes, GraphCache, lookup_node};
 use bevy_ecs::prelude::*;
 use bevy_gantz::Registry;
 use bevy_gantz::head;
-use bevy_gantz::vm::{CompileConfig, Inputs};
+use bevy_gantz::vm::{CompileConfig, Inputs, SteelModules};
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::node::{GetNode, graph::Graph};
@@ -92,6 +92,7 @@ pub fn sync(
     codec: Res<NodeCodecRes>,
     ep_fns: Res<EntrypointFns>,
     config: Res<CompileConfig>,
+    modules: Res<SteelModules>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads_query: Query<head::OpenHeadData, With<head::OpenHead>>,
 ) {
@@ -154,12 +155,17 @@ pub fn sync(
         let get_node = |ca: &ca::ContentAddr| lookup_node(&cache, &builtins.instances, ca);
         let entrypoints = collect_entrypoints(&ep_fns, &get_node, graph);
         let result = match vms.get_mut(&data.entity) {
-            None => gantz_core::vm::init(&get_node, graph, &entrypoints, &config.0).map(
-                |(vm, module)| {
-                    vms.insert(data.entity, vm);
-                    module
-                },
-            ),
+            None => gantz_core::vm::init_with_modules(
+                &get_node,
+                graph,
+                &entrypoints,
+                &config.0,
+                &modules.0,
+            )
+            .map(|(vm, module)| {
+                vms.insert(data.entity, vm);
+                module
+            }),
             Some(vm) => {
                 gantz_core::graph::register(&get_node, graph, &[], vm);
                 gantz_core::vm::compile(&get_node, graph, vm, &entrypoints, &config.0)
@@ -194,5 +200,23 @@ mod tests {
             4,
             "the pre-pushed provider and the plugin's three seeds must survive",
         );
+    }
+
+    /// Steel modules pushed into `SteelModules` before `GantzPlugin` is
+    /// added must survive its build (same shared-collection convention as
+    /// `EntrypointFns`).
+    #[test]
+    fn steel_modules_survive_plugin_order() {
+        let mut app = bevy_app::App::new();
+        app.world_mut()
+            .get_resource_or_init::<SteelModules>()
+            .0
+            .push(gantz_core::vm::SteelModule {
+                name: "test/module",
+                src: "(provide nothing) (define nothing '())",
+            });
+        app.add_plugins(bevy_gantz::GantzPlugin);
+        let modules = app.world().resource::<SteelModules>();
+        assert_eq!(modules.0.len(), 1, "the pre-pushed module must survive");
     }
 }
