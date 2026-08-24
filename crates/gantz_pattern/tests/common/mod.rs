@@ -14,6 +14,7 @@
 #![allow(dead_code)]
 
 use gantz_core::steel::SteelVal;
+use gantz_core::steel::steel_vm::engine::Engine;
 
 /// Steel source prepended to every test snippet: the module require plus
 /// the pin helpers. Kept here rather than in the module so runtime code
@@ -35,17 +36,29 @@ pub const PIN: &str = r#"
 (define (pin-value v) (if (number? v) (pin-num v) v))
 "#;
 
-/// Evaluate a snippet (with the pin preamble) on a fresh pattern engine,
-/// returning the final value.
-pub fn eval(snippet: &str) -> SteelVal {
+/// A fresh engine with the pattern module registered and the pin
+/// preamble evaluated, for tests running many snippets.
+pub fn new_pin_engine() -> Engine {
     let mut vm = gantz_core::vm::new_engine(gantz_pattern::modules());
-    let src = format!("{PIN}\n{snippet}");
+    vm.run(PIN.to_string()).expect("pin preamble");
+    vm
+}
+
+/// Evaluate a snippet on an engine prepared by [`new_pin_engine`],
+/// returning the final value.
+pub fn eval_in(vm: &mut Engine, snippet: &str) -> SteelVal {
     let vals = vm
-        .run(src)
+        .run(snippet.to_string())
         .unwrap_or_else(|e| panic!("steel error: {e}\nin snippet:\n{snippet}"));
     vals.last()
         .unwrap_or_else(|| panic!("snippet evaluated to no value:\n{snippet}"))
         .clone()
+}
+
+/// Evaluate a snippet (with the pin preamble) on a fresh pattern engine,
+/// returning the final value.
+pub fn eval(snippet: &str) -> SteelVal {
+    eval_in(&mut new_pin_engine(), snippet)
 }
 
 /// Assert the snippet evaluates to `#t`.

@@ -54,7 +54,11 @@
          pat/app
          pat/appl
          pat/appr
-         pat/merge-with)
+         pat/merge-with
+         pat/euclid-bools
+         pat/euclid
+         pat/euclid-off
+         pat/euclid-full)
 
 ;; -- internal helpers ---------------------------------------------------------
 
@@ -461,3 +465,113 @@
 ;; intersection of active spans (intersection structure).
 (define (pat/merge-with f pa pb)
   (pat/app pa (pat/map (lambda (bv) (lambda (av) (f av bv))) pb)))
+
+;; -- euclidean rhythms ----------------------------------------------------------
+
+(define (pat//repeat v n acc)
+  (if (<= n 0) acc (pat//repeat v (- n 1) (cons v acc))))
+
+(define (pat//zip2 xs ys acc)
+  (if (empty? xs)
+      (reverse acc)
+      (pat//zip2 (cdr xs) (cdr ys) (cons (list (car xs) (car ys)) acc))))
+
+;; Pairwise-append two equal-length lists of lists.
+(define (pat//zip-append xs ys acc)
+  (if (empty? xs)
+      (reverse acc)
+      (pat//zip-append (cdr xs) (cdr ys) (cons (append (car xs) (car ys)) acc))))
+
+;; The bjorklund left/right merge over two lists of onset groups. This is
+;; the true algorithm ported from cycles: the Bresenham-style closed
+;; forms produce a different rotation (they diverge at e.g. (5, 8)).
+(define (pat//bjorklund-loop xs ys)
+  (if (<= (pat//min2 (length xs) (length ys)) 1)
+      (append xs ys)
+      (if (> (length xs) (length ys))
+          (let ((ly (length ys)))
+            (pat//bjorklund-loop (pat//zip-append (take xs ly) ys '())
+                                 (list-tail xs ly)))
+          (let ((lx (length xs)))
+            (pat//bjorklund-loop (pat//zip-append xs (take ys lx) '())
+                                 (list-tail ys lx))))))
+
+;; Rotate the list left by `off` (modulo its length).
+(define (pat//rotate xs off)
+  (let ((len (length xs)))
+    (if (< len 1)
+        xs
+        (let ((o (modulo off len)))
+          (append (list-tail xs o) (take xs o))))))
+
+;; The bjorklund onset pattern distributing `k` onsets as evenly as
+;; possible over `n` slots (`k` clamped to `0..=n`), rotated left by
+;; `off` slots. Returns a list of `n` booleans.
+(define (pat/euclid-bools k n off)
+  (if (< n 1)
+      '()
+      (let ((kk (pat//min2 (pat//max2 k 0) n)))
+        (pat//rotate
+         (pat//flat-map (lambda (g) g)
+                        (pat//bjorklund-loop (pat//repeat (list #t) kk '())
+                                             (pat//repeat (list #f) (- n kk) '())))
+         off))))
+
+;; Cyclic distance from each slot to the next onset (inclusive of the
+;; current slot), or the empty list when there are no onsets at all.
+(define (pat//onset-distances bs)
+  (let ((len (length bs)))
+    (if (< len 1)
+        '()
+        (if (pat//onset-distance 0 bs len)
+            (pat//map (lambda (i) (pat//onset-distance i bs len)) (range 0 len))
+            '()))))
+
+(define (pat//onset-distance ix bs len)
+  (pat//onset-distance-loop ix 1 bs len))
+
+(define (pat//onset-distance-loop ix dist bs len)
+  (if (> dist len)
+      #f
+      (if (list-ref bs (modulo (+ ix dist) len))
+          dist
+          (pat//onset-distance-loop ix (+ dist 1) bs len))))
+
+;; Map the span's length with `f`, adjusting the end.
+(define (pat//span-map-len f s)
+  (cons (car s) (+ (car s) (f (- (cdr s) (car s))))))
+
+;; `k` onsets distributed over `n` equal slots per cycle, silent slots
+;; filtered out. Event values are #t.
+(define (pat/euclid k n)
+  (pat/euclid-off k n 0))
+
+;; [`pat/euclid`] rotated left by `off` slots.
+(define (pat/euclid-off k n off)
+  (pat/filter (lambda (v) v)
+              (pat/fastcat (pat//map pat/pure (pat/euclid-bools k n off)))))
+
+;; [`pat/euclid`] with each onset elongated to fill the silence before
+;; the next onset. Event values are #t (cycles carries the internal
+;; (bool distance) pair through as the value - dropped here).
+(define (pat/euclid-full k n)
+  (let ((bs (pat/euclid-bools k n 0)))
+    (let ((ds (pat//onset-distances bs)))
+      (if (empty? ds)
+          pat/silence
+          (let ((p (pat/fastcat (pat//map pat/pure (pat//zip2 bs ds '())))))
+            (lambda (span)
+              (pat//flat-map
+               (lambda (e)
+                 (let ((v (pat/event-value e)))
+                   (if (car v)
+                       (list (pat/event-map-value
+                              (lambda (bv) #t)
+                              (pat/event-map-spans
+                               (lambda (s)
+                                 (pat//span-map-len
+                                  (lambda (l) (* l (car (cdr v))))
+                                  s))
+                               e)))
+                       '())))
+               (p span))))))))
