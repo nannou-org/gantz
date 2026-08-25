@@ -80,6 +80,7 @@ iroh-gossip = { version = "0.101", default-features = false, features = ["net"] 
 iroh-tickets = "1"
 log = { version = "0.4", features = ["serde"] }
 n0-future = "0.3"
+num-rational = "0.4"
 petgraph = { version = "0.8", features = ["serde-1"] }
 plyphon = "0.1.1"
 pollster = "0.4"

@@ -11,6 +11,8 @@
 //! query, and a `whole` span carrying the event's full structure. Whole
 //! is absent for continuous signals.
 
+pub mod mini;
+
 use gantz_core::vm::SteelModule;
 
 /// The `gantz/pattern` Steel module.

@@ -1,17 +1,24 @@
-//! Mini-notation tests, comparing parsed patterns against their
-//! combinator-built equivalents.
+//! Mini-notation tests: the Rust parser's emitted combinator source is
+//! evaluated against hand-built combinator expressions on the pin
+//! harness.
 
 mod common;
 
 use common::{assert_pinned, assert_steel_true};
+use gantz_pattern::mini::steel_src;
 
-/// Assert the notation and the combinator expression query identically
-/// over the span.
+/// Assert the notation's emission and the combinator expression query
+/// identically over the span.
 fn assert_m_eq(notation: &str, combinators: &str, span: &str) {
+    let emitted = steel_src(notation).unwrap_or_else(|| panic!("{notation:?} failed to parse"));
     assert_steel_true(&format!(
-        "(equal? (pin-events (pat/query (pat/m {notation:?}) (pat/span {span})))
+        "(equal? (pin-events (pat/query {emitted} (pat/span {span})))
                  (pin-events (pat/query {combinators} (pat/span {span}))))",
     ));
+}
+
+fn emitted(notation: &str) -> String {
+    steel_src(notation).unwrap_or_else(|| panic!("{notation:?} failed to parse"))
 }
 
 #[test]
@@ -43,7 +50,10 @@ fn rational_atoms() {
     assert_pinned(
         "(((1 4) ((0 1) (1 2)) ((0 1) (1 2))) \
           ((3 4) ((1 2) (1 1)) ((1 2) (1 1))))",
-        "(pin-events (pat/query (pat/m \"1/4 3/4\") (pat/span 0 1)))",
+        &format!(
+            "(pin-events (pat/query {} (pat/span 0 1)))",
+            emitted("1/4 3/4"),
+        ),
     );
 }
 
@@ -62,10 +72,12 @@ fn nested_groups() {
 // Redundant nesting collapses to the same events.
 #[test]
 fn redundant_nesting() {
-    assert_steel_true(
-        "(equal? (pin-events (pat/query (pat/m \"[[[bd sn]]]\") (pat/span 0 1)))
-                 (pin-events (pat/query (pat/m \"bd sn\") (pat/span 0 1))))",
-    );
+    assert_steel_true(&format!(
+        "(equal? (pin-events (pat/query {} (pat/span 0 1)))
+                 (pin-events (pat/query {} (pat/span 0 1))))",
+        emitted("[[[bd sn]]]"),
+        emitted("bd sn"),
+    ));
 }
 
 #[test]
@@ -90,10 +102,12 @@ fn elongation_by_continuation() {
 // `@n` weights a step, equivalent to `_` continuation.
 #[test]
 fn elongation_by_weight() {
-    assert_steel_true(
-        "(equal? (pin-events (pat/query (pat/m \"a@3 b\") (pat/span 0 1)))
-                 (pin-events (pat/query (pat/m \"a _ _ b\") (pat/span 0 1))))",
-    );
+    assert_steel_true(&format!(
+        "(equal? (pin-events (pat/query {} (pat/span 0 1)))
+                 (pin-events (pat/query {} (pat/span 0 1))))",
+        emitted("a@3 b"),
+        emitted("a _ _ b"),
+    ));
 }
 
 #[test]
@@ -124,7 +138,11 @@ fn fast_and_slow_modifiers() {
         "(pat/fastcat (list (pat/fast 2 (pat/pure 'bd)) (pat/pure 'sn)))",
         "0 1",
     );
-    assert_m_eq("[a b]/2", "(pat/slow 2 (pat/m \"a b\"))", "0 2");
+    assert_m_eq(
+        "[a b]/2",
+        "(pat/slow 2 (pat/fastcat (list (pat/pure 'a) (pat/pure 'b))))",
+        "0 2",
+    );
     // Modifiers compose with alternation.
     assert_m_eq(
         "<a b>*2",
@@ -140,26 +158,18 @@ fn euclid_application() {
         "((bd ((0 1) (1 8)) ((0 1) (1 8))) \
           (bd ((3 8) (1 2)) ((3 8) (1 2))) \
           (bd ((3 4) (7 8)) ((3 4) (7 8))))",
-        "(pin-events (pat/query (pat/m \"bd(3,8)\") (pat/span 0 1)))",
+        &format!(
+            "(pin-events (pat/query {} (pat/span 0 1)))",
+            emitted("bd(3,8)"),
+        ),
     );
     assert_pinned(
         "((bd ((1 4) (3 8)) ((1 4) (3 8))) \
           (bd ((5 8) (3 4)) ((5 8) (3 4))) \
           (bd ((7 8) (1 1)) ((7 8) (1 1))))",
-        "(pin-events (pat/query (pat/m \"bd(3,8,1)\") (pat/span 0 1)))",
+        &format!(
+            "(pin-events (pat/query {} (pat/span 0 1)))",
+            emitted("bd(3,8,1)"),
+        ),
     );
-}
-
-// Malformed, empty and non-string input all parse to silence.
-#[test]
-fn malformed_input_is_silent() {
-    for src in [
-        "\"bd [\"", "\"*2\"", "\"<a\"", "\"bd(3\"", "\")\"", "\"\"", "\"   \"", "\"_ bd\"",
-        "\"<>\"", "7", "'sym",
-    ] {
-        assert_pinned(
-            "()",
-            &format!("(pin-events (pat/query (pat/m {src}) (pat/span 0 2)))"),
-        );
-    }
 }

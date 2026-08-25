@@ -3940,6 +3940,7 @@ name = "gantz_pattern"
 version = "0.1.0"
 dependencies = [
  "gantz_core",
+ "num-rational",
 ]
 
 [[package]]
