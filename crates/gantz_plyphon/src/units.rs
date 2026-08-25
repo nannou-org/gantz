@@ -8,9 +8,15 @@
 //! each is fed - see [`In`]) and its outputs. Adding a plyphon unit as a gantz
 //! node is one new row.
 //!
+//! The operator-selector units (`BinaryOpUGen`/`UnaryOpUGen`) get one row
+//! *per operator*: such a row's [`Special`] override carries the emitted
+//! plyphon unit name and operator-selecting `special_index`, while its
+//! [`unit`](UnitDesc::unit) stays a unique per-operator identity (`"Mul"`,
+//! `"TanH"`, ...).
+//!
 //! Excluded for now: buffer-reading units, variable-arity units (`EnvGen`,
-//! `Klang`), demand-rate, FFT/PV, IO/routing (covered by the bespoke nodes)
-//! and the operator-selector units (`BinaryOpUGen`/`UnaryOpUGen`).
+//! `Klang`), demand-rate, FFT/PV and IO/routing (covered by the bespoke
+//! nodes).
 
 /// How one plyphon input of a wrapped unit is fed.
 ///
@@ -79,6 +85,19 @@ impl In {
     }
 }
 
+/// A [`UnitDesc`] emission override for scsynth's operator-selector units:
+/// the actual emitted plyphon unit name plus the operator-selecting
+/// `special_index`. A row carrying one keeps a unique per-operator
+/// [`unit`](UnitDesc::unit) identity (`"Mul"`, `"TanH"`, ...) that is *not* a
+/// plyphon registry name.
+#[derive(Clone, Copy, Debug)]
+pub struct Special {
+    /// The emitted plyphon unit name (`"BinaryOpUGen"`/`"UnaryOpUGen"`).
+    pub unit: &'static str,
+    /// scsynth's `mSpecialIndex`: the operator selector.
+    pub index: i16,
+}
+
 /// One wrapped plyphon unit generator: the descriptor a
 /// [`UnitNode`](crate::UnitNode) (identified by [`unit`](Self::unit)) is
 /// driven by.
@@ -86,9 +105,14 @@ impl In {
 pub struct UnitDesc {
     /// The `.gantz` keyword and palette name, e.g. `"~lpf"`.
     pub keyword: &'static str,
-    /// The plyphon unit name, e.g. `"LPF"` - the node's stored identity and
-    /// the emitted [`UnitSpec`](plyphon::synthdef::UnitSpec) name.
+    /// The row's unique identity (the node's stored `unit` field), e.g.
+    /// `"LPF"`. Also the emitted
+    /// [`UnitSpec`](plyphon::synthdef::UnitSpec) name, unless
+    /// [`special`](Self::special) overrides it.
     pub unit: &'static str,
+    /// The emission override for operator-selector rows (`None` for rows
+    /// whose [`unit`](Self::unit) is itself the emitted plyphon name).
+    pub special: Option<Special>,
     /// One entry per plyphon input, in plyphon input order.
     pub inputs: &'static [In],
     /// One doc line per unit output (the node's dsp output ports).
@@ -98,6 +122,23 @@ pub struct UnitDesc {
 }
 
 impl UnitDesc {
+    /// The emitted plyphon unit name: the [`Special`] override's, or
+    /// [`unit`](Self::unit) itself.
+    pub fn emitted_unit(&self) -> &'static str {
+        match self.special {
+            Some(Special { unit, .. }) => unit,
+            None => self.unit,
+        }
+    }
+
+    /// The emitted `special_index` (`0` for non-operator rows).
+    pub fn special_index(&self) -> i16 {
+        match self.special {
+            Some(Special { index, .. }) => index,
+            None => 0,
+        }
+    }
+
     /// The socketed entries (`Signal`/`Param`) in socket order.
     pub fn sockets(&self) -> impl Iterator<Item = &'static In> + '_ {
         self.inputs.iter().filter(|i| i.is_socket())
@@ -203,10 +244,52 @@ const fn u(
     UnitDesc {
         keyword,
         unit,
+        special: None,
         inputs,
         outputs,
         doc,
     }
+}
+
+/// A binary-operator row: an emitted `BinaryOpUGen` selecting the operator
+/// at the given `special_index`, with a pure signal input `a` and a hybrid
+/// param input `b`. A macro (not a `const fn`) so each row's input slice is
+/// a promotable literal.
+macro_rules! bop {
+    ($kw:literal, $unit:literal, $ix:literal, $b:literal, $b_doc:literal, $out:literal, $doc:literal $(,)?) => {
+        UnitDesc {
+            keyword: $kw,
+            unit: $unit,
+            special: Some(Special {
+                unit: "BinaryOpUGen",
+                index: $ix,
+            }),
+            inputs: &[
+                sig("a", "left operand signal"),
+                par("b", $b, -10_000.0, 10_000.0, "", $b_doc),
+            ],
+            outputs: &[$out],
+            doc: $doc,
+        }
+    };
+}
+
+/// A unary-operator row: an emitted `UnaryOpUGen` selecting the operator at
+/// the given `special_index`.
+macro_rules! uop {
+    ($kw:literal, $unit:literal, $ix:literal, $out:literal, $doc:literal $(,)?) => {
+        UnitDesc {
+            keyword: $kw,
+            unit: $unit,
+            special: Some(Special {
+                unit: "UnaryOpUGen",
+                index: $ix,
+            }),
+            inputs: &[sig("in", "input signal")],
+            outputs: &[$out],
+            doc: $doc,
+        }
+    };
 }
 
 /// A hybrid oscillator/filter frequency param.
@@ -1177,6 +1260,617 @@ pub static UNITS: &[UnitDesc] = &[
         &["folded signal"],
         "Fold (mirror) a signal into [lo, hi]",
     ),
+    // --- Operators (BinaryOpUGen / UnaryOpUGen) ---
+    // One row per operator plyphon's dispatch tables support, indices per
+    // SC's `SpecialSelectorsOperatorsAndClasses.h` (see plyphon-unit's
+    // `binary_op.rs`/`unary_op.rs`). `b` defaults are 1 for
+    // multiplicative/range-like operators and 0 otherwise.
+    bop!(
+        "~add",
+        "Add",
+        0,
+        0.0,
+        "addend",
+        "a + b",
+        "Add the two inputs"
+    ),
+    bop!(
+        "~sub",
+        "Sub",
+        1,
+        0.0,
+        "subtrahend",
+        "a - b",
+        "Subtract `b` from `a`",
+    ),
+    bop!(
+        "~mul",
+        "Mul",
+        2,
+        1.0,
+        "multiplier",
+        "a * b",
+        "Multiply the two inputs (ring modulation when both are signals, \
+         a gain otherwise)",
+    ),
+    bop!(
+        "~idiv",
+        "IDiv",
+        3,
+        1.0,
+        "divisor",
+        "floor(a / b)",
+        "Integer division: divide and round down",
+    ),
+    bop!(
+        "~div",
+        "Div",
+        4,
+        1.0,
+        "divisor",
+        "a / b",
+        "Divide `a` by `b`"
+    ),
+    bop!(
+        "~mod",
+        "Mod",
+        5,
+        1.0,
+        "divisor",
+        "a mod b",
+        "Floating-point modulo (SC `mod` semantics)",
+    ),
+    bop!(
+        "~eq",
+        "Eq",
+        6,
+        0.0,
+        "comparand",
+        "1 when a == b, else 0",
+        "Equality comparator gate",
+    ),
+    bop!(
+        "~ne",
+        "Ne",
+        7,
+        0.0,
+        "comparand",
+        "1 when a != b, else 0",
+        "Inequality comparator gate",
+    ),
+    bop!(
+        "~lt",
+        "Lt",
+        8,
+        0.0,
+        "threshold",
+        "1 when a < b, else 0",
+        "Less-than comparator gate",
+    ),
+    bop!(
+        "~gt",
+        "Gt",
+        9,
+        0.0,
+        "threshold",
+        "1 when a > b, else 0",
+        "Greater-than comparator gate",
+    ),
+    bop!(
+        "~le",
+        "Le",
+        10,
+        0.0,
+        "threshold",
+        "1 when a <= b, else 0",
+        "Less-than-or-equal comparator gate",
+    ),
+    bop!(
+        "~ge",
+        "Ge",
+        11,
+        0.0,
+        "threshold",
+        "1 when a >= b, else 0",
+        "Greater-than-or-equal comparator gate",
+    ),
+    bop!(
+        "~min",
+        "Min",
+        12,
+        0.0,
+        "ceiling",
+        "min(a, b)",
+        "Minimum of the two inputs",
+    ),
+    bop!(
+        "~max",
+        "Max",
+        13,
+        0.0,
+        "floor",
+        "max(a, b)",
+        "Maximum of the two inputs",
+    ),
+    bop!(
+        "~bitand",
+        "BitAnd",
+        14,
+        0.0,
+        "operand",
+        "a AND b",
+        "Bitwise AND of the inputs truncated to integers",
+    ),
+    bop!(
+        "~bitor",
+        "BitOr",
+        15,
+        0.0,
+        "operand",
+        "a OR b",
+        "Bitwise OR of the inputs truncated to integers",
+    ),
+    bop!(
+        "~bitxor",
+        "BitXor",
+        16,
+        0.0,
+        "operand",
+        "a XOR b",
+        "Bitwise XOR of the inputs truncated to integers",
+    ),
+    bop!(
+        "~lcm",
+        "Lcm",
+        17,
+        1.0,
+        "operand",
+        "lcm(a, b)",
+        "Least common multiple (integer semantics)",
+    ),
+    bop!(
+        "~gcd",
+        "Gcd",
+        18,
+        1.0,
+        "operand",
+        "gcd(a, b)",
+        "Greatest common divisor (integer semantics)",
+    ),
+    bop!(
+        "~round",
+        "Round",
+        19,
+        1.0,
+        "quantum",
+        "a rounded to the nearest multiple of b",
+        "Round to a multiple of `b`",
+    ),
+    bop!(
+        "~roundup",
+        "RoundUp",
+        20,
+        1.0,
+        "quantum",
+        "a rounded up to a multiple of b",
+        "Round up to a multiple of `b`",
+    ),
+    bop!(
+        "~trunc",
+        "Trunc",
+        21,
+        1.0,
+        "quantum",
+        "a truncated to a multiple of b",
+        "Truncate to a multiple of `b`",
+    ),
+    bop!(
+        "~atan2",
+        "Atan2",
+        22,
+        1.0,
+        "x coordinate",
+        "atan2(a, b) in radians",
+        "Arctangent of `a / b` using both signs (with b at its default 1, \
+         plain atan of `a`)",
+    ),
+    bop!(
+        "~hypot",
+        "Hypot",
+        23,
+        0.0,
+        "operand",
+        "sqrt(a^2 + b^2)",
+        "Hypotenuse (distance) of the two inputs",
+    ),
+    bop!(
+        "~hypotx",
+        "Hypotx",
+        24,
+        0.0,
+        "operand",
+        "approximate hypotenuse",
+        "Cheap approximate hypotenuse (SC `hypotApx`)",
+    ),
+    bop!(
+        "~pow",
+        "Pow",
+        25,
+        1.0,
+        "exponent",
+        "a ^ b",
+        "Raise `a` to the power `b` (SC sign-preserving pow)",
+    ),
+    bop!(
+        "~shiftleft",
+        "ShiftLeft",
+        26,
+        0.0,
+        "bit count",
+        "a << b",
+        "Bitwise left shift of the inputs truncated to integers",
+    ),
+    bop!(
+        "~shiftright",
+        "ShiftRight",
+        27,
+        0.0,
+        "bit count",
+        "a >> b",
+        "Bitwise right shift of the inputs truncated to integers",
+    ),
+    bop!(
+        "~ring1",
+        "Ring1",
+        30,
+        0.0,
+        "modulator",
+        "a * b + a",
+        "Ring modulation plus the carrier",
+    ),
+    bop!(
+        "~ring2",
+        "Ring2",
+        31,
+        0.0,
+        "modulator",
+        "a * b + a + b",
+        "Ring modulation plus both inputs",
+    ),
+    bop!(
+        "~ring3",
+        "Ring3",
+        32,
+        0.0,
+        "modulator",
+        "a * a * b",
+        "Ring modulation variant `a^2 * b`",
+    ),
+    bop!(
+        "~ring4",
+        "Ring4",
+        33,
+        0.0,
+        "modulator",
+        "a^2 * b - a * b^2",
+        "Ring modulation variant",
+    ),
+    bop!(
+        "~difsqr",
+        "DifSqr",
+        34,
+        0.0,
+        "operand",
+        "a^2 - b^2",
+        "Difference of squares",
+    ),
+    bop!(
+        "~sumsqr",
+        "SumSqr",
+        35,
+        0.0,
+        "operand",
+        "a^2 + b^2",
+        "Sum of squares",
+    ),
+    bop!(
+        "~sqrsum",
+        "SqrSum",
+        36,
+        0.0,
+        "operand",
+        "(a + b)^2",
+        "Square of the sum",
+    ),
+    bop!(
+        "~sqrdif",
+        "SqrDif",
+        37,
+        0.0,
+        "operand",
+        "(a - b)^2",
+        "Square of the difference",
+    ),
+    bop!(
+        "~absdif",
+        "AbsDif",
+        38,
+        0.0,
+        "operand",
+        "|a - b|",
+        "Absolute difference",
+    ),
+    bop!(
+        "~thresh",
+        "Thresh",
+        39,
+        0.0,
+        "threshold",
+        "0 when a < b, else a",
+        "Thresholding gate: silence `a` below `b`",
+    ),
+    bop!(
+        "~amclip",
+        "AmClip",
+        40,
+        1.0,
+        "gain",
+        "a * b when b > 0, else 0",
+        "Two-quadrant amplitude modulation",
+    ),
+    bop!(
+        "~scaleneg",
+        "ScaleNeg",
+        41,
+        1.0,
+        "scale",
+        "a scaled by b when a < 0, else a",
+        "Scale only the negative half of the signal",
+    ),
+    bop!(
+        "~clip2",
+        "Clip2",
+        42,
+        1.0,
+        "limit",
+        "a clipped into [-b, b]",
+        "Bilateral hard clip",
+    ),
+    bop!(
+        "~excess",
+        "Excess",
+        43,
+        1.0,
+        "limit",
+        "a - clip2(a, b)",
+        "The residual removed by clipping",
+    ),
+    bop!(
+        "~fold2",
+        "Fold2",
+        44,
+        1.0,
+        "limit",
+        "a folded into [-b, b]",
+        "Bilateral fold-back distortion",
+    ),
+    bop!(
+        "~wrap2",
+        "Wrap2",
+        45,
+        1.0,
+        "limit",
+        "a wrapped into [-b, b]",
+        "Bilateral wrap-around",
+    ),
+    bop!(
+        "~firstarg",
+        "FirstArg",
+        46,
+        0.0,
+        "ignored operand",
+        "a",
+        "Pass `a` through, ignoring `b` (forces a dependency on `b`)",
+    ),
+    uop!("~neg", "Neg", 0, "-in", "Negate the input"),
+    uop!(
+        "~not",
+        "Not",
+        1,
+        "1 when in == 0, else 0",
+        "Logical NOT gate"
+    ),
+    uop!(
+        "~bitnot",
+        "BitNot",
+        4,
+        "NOT in",
+        "Bitwise NOT of the input truncated to an integer",
+    ),
+    uop!(
+        "~abs",
+        "Abs",
+        5,
+        "|in|",
+        "Absolute value (full-wave rectify)"
+    ),
+    uop!(
+        "~ceil",
+        "Ceil",
+        8,
+        "in rounded up",
+        "Round up to an integer"
+    ),
+    uop!(
+        "~floor",
+        "Floor",
+        9,
+        "in rounded down",
+        "Round down to an integer",
+    ),
+    uop!("~frac", "Frac", 10, "in - floor(in)", "Fractional part"),
+    uop!("~sign", "Sign", 11, "-1, 0 or 1", "Sign of the input"),
+    uop!("~squared", "Squared", 12, "in^2", "Square the input"),
+    uop!("~cubed", "Cubed", 13, "in^3", "Cube the input"),
+    uop!(
+        "~sqrt",
+        "Sqrt",
+        14,
+        "sqrt(in), sign-preserving",
+        "Square root (negative inputs mirror: -sqrt(-in))",
+    ),
+    uop!("~exp", "Exp", 15, "e^in", "Natural exponential"),
+    uop!("~recip", "Recip", 16, "1 / in", "Reciprocal"),
+    uop!(
+        "~midicps",
+        "MidiCps",
+        17,
+        "frequency in Hz",
+        "MIDI note number to cycles per second",
+    ),
+    uop!(
+        "~cpsmidi",
+        "CpsMidi",
+        18,
+        "MIDI note number",
+        "Cycles per second to MIDI note number",
+    ),
+    uop!(
+        "~midiratio",
+        "MidiRatio",
+        19,
+        "frequency ratio",
+        "MIDI interval in semitones to frequency ratio",
+    ),
+    uop!(
+        "~ratiomidi",
+        "RatioMidi",
+        20,
+        "interval in semitones",
+        "Frequency ratio to MIDI interval in semitones",
+    ),
+    uop!(
+        "~dbamp",
+        "DbAmp",
+        21,
+        "linear amplitude",
+        "Decibels to linear amplitude",
+    ),
+    uop!(
+        "~ampdb",
+        "AmpDb",
+        22,
+        "decibels",
+        "Linear amplitude to decibels",
+    ),
+    uop!(
+        "~octcps",
+        "OctCps",
+        23,
+        "frequency in Hz",
+        "Decimal octaves to cycles per second",
+    ),
+    uop!(
+        "~cpsoct",
+        "CpsOct",
+        24,
+        "decimal octaves",
+        "Cycles per second to decimal octaves",
+    ),
+    uop!("~log", "Log", 25, "ln(in)", "Natural logarithm"),
+    uop!("~log2", "Log2", 26, "log2(in)", "Base-2 logarithm"),
+    uop!(
+        "~log10",
+        "Log10",
+        27,
+        "log10(|in|)",
+        "Base-10 logarithm of the absolute value",
+    ),
+    uop!("~sin", "Sin", 28, "sin(in)", "Sine (radians)"),
+    uop!("~cos", "Cos", 29, "cos(in)", "Cosine (radians)"),
+    uop!("~tan", "Tan", 30, "tan(in)", "Tangent (radians)"),
+    uop!("~asin", "Asin", 31, "asin(in)", "Arcsine"),
+    uop!("~acos", "Acos", 32, "acos(in)", "Arccosine"),
+    uop!("~atan", "Atan", 33, "atan(in)", "Arctangent"),
+    uop!("~sinh", "SinH", 34, "sinh(in)", "Hyperbolic sine"),
+    uop!("~cosh", "CosH", 35, "cosh(in)", "Hyperbolic cosine"),
+    uop!(
+        "~tanh",
+        "TanH",
+        36,
+        "tanh(in)",
+        "Hyperbolic tangent (soft saturation)",
+    ),
+    uop!(
+        "~distort",
+        "Distort",
+        42,
+        "in / (1 + |in|)",
+        "Nonlinear distortion",
+    ),
+    uop!(
+        "~softclip",
+        "SoftClip",
+        43,
+        "softly clipped in",
+        "Soft clip: linear below +/-0.5, curved above",
+    ),
+    uop!(
+        "~silence",
+        "Silence",
+        46,
+        "0",
+        "Silence, ignoring the input"
+    ),
+    uop!(
+        "~thru",
+        "Thru",
+        47,
+        "in",
+        "Pass the input through unchanged"
+    ),
+    uop!(
+        "~rectwindow",
+        "RectWindow",
+        48,
+        "1 inside [0, 1], else 0",
+        "Rectangular window over input phase 0..1",
+    ),
+    uop!(
+        "~hanwindow",
+        "HanWindow",
+        49,
+        "Hann window of in",
+        "Hann window over input phase 0..1",
+    ),
+    uop!(
+        "~welchwindow",
+        "WelchWindow",
+        50,
+        "Welch window of in",
+        "Welch window over input phase 0..1",
+    ),
+    uop!(
+        "~triwindow",
+        "TriWindow",
+        51,
+        "triangle window of in",
+        "Triangle window over input phase 0..1",
+    ),
+    uop!(
+        "~ramp",
+        "OpRamp",
+        52,
+        "in clamped into [0, 1]",
+        "Ramp shaping: clamp to the unit range",
+    ),
+    uop!(
+        "~scurve",
+        "SCurve",
+        53,
+        "smoothstep of in",
+        "S-curve (smoothstep) shaping over 0..1",
+    ),
 ];
 
 #[cfg(test)]
@@ -1190,10 +1884,37 @@ mod tests {
         let names: HashSet<&str> = registry.names().collect();
         for desc in UNITS {
             assert!(
-                names.contains(desc.unit),
+                names.contains(desc.emitted_unit()),
                 "unit `{}` is not registered in plyphon",
+                desc.emitted_unit()
+            );
+        }
+    }
+
+    #[test]
+    fn operator_rows_are_well_formed() {
+        let registry = plyphon::UnitRegistry::with_builtins();
+        let names: HashSet<&str> = registry.names().collect();
+        for desc in UNITS {
+            let Some(special) = desc.special else {
+                continue;
+            };
+            // A pseudo identity must never shadow a real registry unit, so a
+            // future plain row can always wrap that unit under its own name.
+            assert!(
+                !names.contains(desc.unit),
+                "operator row identity `{}` shadows a plyphon unit",
                 desc.unit
             );
+            // plyphon's op ctors hard-reject any other arity.
+            let n_inputs = match special.unit {
+                "BinaryOpUGen" => 2,
+                "UnaryOpUGen" => 1,
+                other => panic!("{}: unexpected operator unit `{other}`", desc.unit),
+            };
+            assert_eq!(desc.inputs.len(), n_inputs, "{}: input arity", desc.unit);
+            assert_eq!(desc.n_sockets(), n_inputs, "{}: socket arity", desc.unit);
+            assert_eq!(desc.outputs.len(), 1, "{}: output arity", desc.unit);
         }
     }
 
