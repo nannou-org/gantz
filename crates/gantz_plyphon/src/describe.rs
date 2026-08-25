@@ -89,12 +89,15 @@ fn describe_part(s: &mut String, i: usize, part: &ResolvedPart) {
     }
 }
 
-/// One unit as `Name rate (inputs) -> n_outs`, decoding a binary op's
+/// One unit as `Name rate (inputs) -> n_outs`, decoding an operator unit's
 /// selector (e.g. `BinaryOpUGen[mul]`).
 fn unit_str(unit: &UnitSpec) -> String {
     let op = match (unit.name.as_str(), unit.special_index) {
+        // An index-0 `BinaryOpUGen` is the implicit `add` (derivation's
+        // input summing) - common enough to display bare.
+        ("BinaryOpUGen", 0) => String::new(),
+        (name @ ("BinaryOpUGen" | "UnaryOpUGen"), i) => format!("[{}]", op_name(name, i)),
         (_, 0) => String::new(),
-        ("BinaryOpUGen", i) => format!("[{}]", binary_op(i)),
         (_, i) => format!("[{i}]"),
     };
     let inputs = unit
@@ -156,13 +159,16 @@ pub(crate) fn rate_token(rate: Rate) -> &'static str {
     }
 }
 
-/// SC's `BinaryOpUGen` selector names (the ones derivation emits).
-fn binary_op(special_index: i16) -> String {
-    match special_index {
-        0 => "add".to_string(),
-        1 => "sub".to_string(),
-        2 => "mul".to_string(),
-        4 => "div".to_string(),
-        i => format!("op{i}"),
-    }
+/// An operator-selector unit's operator name, from the descriptor table's
+/// operator rows (the keyword sans `~`), falling back to `op{i}` for an
+/// unmapped index.
+fn op_name(unit: &str, index: i16) -> String {
+    crate::units::UNITS
+        .iter()
+        .find(|d| {
+            d.special
+                .is_some_and(|s| s.unit == unit && s.index == index)
+        })
+        .map(|d| d.keyword[1..].to_string())
+        .unwrap_or_else(|| format!("op{index}"))
 }
