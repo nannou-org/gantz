@@ -53,10 +53,29 @@ impl NodeUi for Pm {
             // notation is malformed (it compiles to silence).
             let parses = mini::steel_src(&state.text).is_some();
             let font_id = egui::FontSelection::from(egui::TextStyle::Monospace).resolve(ui.style());
+
+            // Size the editor to the live buffer like the expr node: a
+            // TextEdit lays its text out within `desired_width` minus its
+            // horizontal margin, so measure the unwrapped galley and add
+            // the margin back, plus 1px for sub-pixel rounding. The hint's
+            // width is the floor so an empty node still shows it.
+            const HINT: &str = "bd(3,8) ~ [sn sn]";
+            let margin = egui::Margin::symmetric(4, 2);
+            let measure = |ui: &egui::Ui, text: &str| {
+                ui.ctx().fonts_mut(|f| {
+                    f.layout_no_wrap(text.to_string(), font_id.clone(), egui::Color32::WHITE)
+                        .rect
+                        .width()
+                })
+            };
+            let text_w = measure(ui, &state.text).max(measure(ui, HINT));
+            let desired_width = text_w.ceil() + margin.sum().x + 1.0;
+
             let mut edit = egui::TextEdit::singleline(&mut state.text)
-                .font(font_id)
-                .hint_text("bd(3,8) ~ [sn sn]")
-                .desired_width(180.0);
+                .font(font_id.clone())
+                .hint_text(HINT)
+                .margin(margin)
+                .desired_width(desired_width);
             if !parses {
                 edit = edit.text_color(ui.visuals().error_fg_color);
             }
