@@ -3939,8 +3939,16 @@ dependencies = [
 name = "gantz_pattern"
 version = "0.1.0"
 dependencies = [
+ "egui",
+ "egui_graph",
+ "gantz_ca",
  "gantz_core",
+ "gantz_egui",
+ "gantz_format",
+ "gantz_nodetag",
  "num-rational",
+ "petgraph",
+ "serde",
 ]
 
 [[package]]

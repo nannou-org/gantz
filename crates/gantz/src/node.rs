@@ -11,6 +11,7 @@ impl gantz_format::NodeSugar for NodeSet {
             &gantz_egui::EguiSugar,
             &bevy_gantz_egui::BevySugar,
             &gantz_plyphon::PlyphonSugar,
+            &gantz_pattern::PatternSugar,
         ])
     }
 }
@@ -52,6 +53,7 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_plyphon::Unpack,
             gantz_plyphon::Bus,
             gantz_plyphon::PlayBuf,
+            gantz_pattern::Pm,
         }
     }
 }
@@ -64,7 +66,8 @@ pub fn builtins() -> gantz_core::Builtins {
             .chain(gantz_std::builtins())
             .chain(gantz_egui::builtins())
             .chain(bevy_gantz_egui::builtins())
-            .chain(gantz_plyphon::builtins()),
+            .chain(gantz_plyphon::builtins())
+            .chain(gantz_pattern::builtins()),
     )
 }
 
@@ -220,6 +223,7 @@ mod tests {
             "number",
             "outlet",
             "plot",
+            "pm",
             "sleep",
             "tick!",
             "update!",
@@ -402,6 +406,7 @@ mod tests {
             node_datum("Identity", vec![]),
             node_datum("Bang", vec![]),
             node_datum("Inspect", vec![]),
+            node_datum("Pm", vec![("src", Datum::Str("bd(3,8) ~ [sn sn]".into()))]),
             node_datum("Gui", vec![]),
             node_datum(
                 "Gui",
@@ -747,6 +752,10 @@ mod tests {
             (
                 "Plot",
                 "deb280956a42f29de5d9515537c19b57a8ccb1575e2620dd68ab2d66aaae4484",
+            ),
+            (
+                "Pm",
+                "fab35e2e8e50ba541d18ce50e51e288b2d4853e38e030e3ab129d310a11a9beb",
             ),
             (
                 "ScopeOut",
