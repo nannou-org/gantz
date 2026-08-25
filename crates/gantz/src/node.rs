@@ -11,6 +11,7 @@ impl gantz_format::NodeSugar for NodeSet {
             &gantz_egui::EguiSugar,
             &bevy_gantz_egui::BevySugar,
             &gantz_plyphon::PlyphonSugar,
+            &gantz_pattern::PatternSugar,
         ])
     }
 }
@@ -52,6 +53,7 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_plyphon::Unpack,
             gantz_plyphon::Bus,
             gantz_plyphon::PlayBuf,
+            gantz_pattern::Pmini,
         }
     }
 }
@@ -64,8 +66,27 @@ pub fn builtins() -> gantz_core::Builtins {
             .chain(gantz_std::builtins())
             .chain(gantz_egui::builtins())
             .chain(bevy_gantz_egui::builtins())
-            .chain(gantz_plyphon::builtins()),
+            .chain(gantz_plyphon::builtins())
+            .chain(gantz_pattern::builtins()),
     )
+}
+
+/// Contribute the domains that have no bevy plugin of their own.
+///
+/// The pattern domain is a steel module and a base source with no
+/// systems, so the app pushes its contributions directly.
+pub fn push_plain_domains(app: &mut bevy::app::App) {
+    app.world_mut()
+        .get_resource_or_init::<bevy_gantz::vm::SteelModules>()
+        .0
+        .extend(gantz_pattern::modules().iter().copied());
+    app.world_mut()
+        .get_resource_or_init::<bevy_gantz_egui::base::BaseSources>()
+        .0
+        .push(bevy_gantz_egui::base::BaseSource {
+            name: "pattern",
+            bytes: gantz_pattern::BASE_BYTES,
+        });
 }
 
 #[cfg(test)]
@@ -202,6 +223,7 @@ mod tests {
             "number",
             "outlet",
             "plot",
+            "pmini",
             "sleep",
             "tick!",
             "update!",
@@ -384,6 +406,10 @@ mod tests {
             node_datum("Identity", vec![]),
             node_datum("Bang", vec![]),
             node_datum("Inspect", vec![]),
+            node_datum(
+                "Pmini",
+                vec![("src", Datum::Str("bd(3,8) ~ [sn sn]".into()))],
+            ),
             node_datum("Gui", vec![]),
             node_datum(
                 "Gui",
@@ -729,6 +755,10 @@ mod tests {
             (
                 "Plot",
                 "deb280956a42f29de5d9515537c19b57a8ccb1575e2620dd68ab2d66aaae4484",
+            ),
+            (
+                "Pmini",
+                "84670e8d51c15a952187697e06d022ce46e243038fc7d7cb0f2a07925a1d1d6c",
             ),
             (
                 "ScopeOut",
@@ -2272,6 +2302,111 @@ mod tests {
         }
     }
 
+    /// Partial evals over demo-pattern stay silent: the tick entrypoint
+    /// interleaved with the cps number node's push entrypoint (the dial),
+    /// whose cone reaches the pattern nodes without their pattern inputs.
+    /// Pinned against the not-a-procedure application errors this produced
+    /// before the pattern module guarded its invocation sites.
+    #[test]
+    fn demo_pattern_partial_evals_are_silent() {
+        use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
+
+        let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
+        let mut merged = DataReg::default();
+        for bytes in [
+            gantz_base::BYTES,
+            gantz_plyphon::BASE_BYTES,
+            gantz_pattern::BASE_BYTES,
+        ] {
+            let export: DataReg =
+                gantz_egui::export::parse_export_at(bytes, ts, &super::codec()).expect("parse");
+            merged.merge(export);
+        }
+        let reified = reify_all(&merged);
+        let builtins = builtins_with_instances();
+        let codec = super::codec();
+        let reg_env = env(&merged, &reified, &builtins, &codec);
+        let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
+        let config = gantz_core::compile::Config::default();
+        let head = gantz_ca::Head::Branch(name("demo-pattern"));
+        let graph = head_graph(&reified, &merged, &head).expect("demo-pattern graph");
+
+        let mut eps = push_pull_entrypoints(&get_node, graph);
+        eps.extend(bevy_gantz_egui::node::tick_bang::entrypoints(
+            &get_node, graph,
+        ));
+
+        let (mut vm, _c) = gantz_core::vm::init_with_modules(
+            &get_node,
+            graph,
+            &eps,
+            &config,
+            gantz_pattern::modules(),
+        )
+        .unwrap_or_else(|e| panic!("init: {}", gantz_core::vm::error_chain(&e)));
+
+        let tick_ix = graph
+            .node_indices()
+            .find(|&ix| {
+                (&*graph[ix] as &dyn std::any::Any)
+                    .downcast_ref::<bevy_gantz_egui::node::tick_bang::TickBang>()
+                    .is_some()
+            })
+            .expect("tick node")
+            .index();
+        let tick_ep = eps
+            .iter()
+            .find(|ep| {
+                ep.0.iter()
+                    .any(|s| s.kind == EvalKind::Push && s.path == [tick_ix])
+            })
+            .expect("tick ep");
+        let tick_fn = entry_fn_name(&tick_ep.id());
+
+        let num_ix = graph
+            .node_indices()
+            .find(|&ix| {
+                (&*graph[ix] as &dyn std::any::Any)
+                    .downcast_ref::<gantz_std::Number>()
+                    .is_some()
+            })
+            .expect("number node")
+            .index();
+        let num_ep = eps
+            .iter()
+            .find(|ep| {
+                ep.0.iter()
+                    .any(|s| s.kind == EvalKind::Push && s.path == [num_ix])
+            })
+            .cloned();
+
+        let mut t = 0.0f64;
+        let mut errs = 0usize;
+        for i in 0..3600 {
+            t += 1.0 / 60.0;
+            vm.update_value(gantz_core::ARGS, gantz_core::args::time(t));
+            if let Err(e) = vm.call_function_by_name_with_args(&tick_fn, vec![]) {
+                if errs < 3 {
+                    println!("tick {i} t={t}: ERR {e}");
+                }
+                errs += 1;
+            }
+            if i % 30 == 7 {
+                if let Some(ep) = &num_ep {
+                    if let Err(e) =
+                        vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+                    {
+                        if errs < 6 {
+                            println!("dial {i}: ERR {e}");
+                        }
+                        errs += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(errs, 0, "partial evals must not error");
+    }
+
     /// Resetting a demo re-parses the base and merges the demo's commit subset
     /// back in. Because the base's hand-authored graphs are stamped at a fixed
     /// [`bevy_gantz_egui::base::BASE_TIMESTAMP`], the re-parse reproduces the
@@ -2435,7 +2570,11 @@ mod tests {
     #[test]
     fn merged_base_sources_all_compile() {
         let mut merged = DataReg::default();
-        for bytes in [gantz_base::BYTES, gantz_plyphon::BASE_BYTES] {
+        for bytes in [
+            gantz_base::BYTES,
+            gantz_plyphon::BASE_BYTES,
+            gantz_pattern::BASE_BYTES,
+        ] {
             let export: DataReg = gantz_egui::export::parse_export_at(
                 bytes,
                 bevy_gantz_egui::base::BASE_TIMESTAMP,
@@ -2451,19 +2590,65 @@ mod tests {
         let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
         let names: Vec<gantz_ca::Name> = merged.heads().map(|(n, _)| n.clone()).collect();
         assert!(names.contains(&name("demo-sine")), "plyphon demo loaded");
+        assert!(names.contains(&name("demo-pattern")), "pattern demo loaded");
         for n in names {
             let head = gantz_ca::Head::Branch(n.clone());
             let graph = head_graph(&reified, &merged, &head)
                 .unwrap_or_else(|| panic!("`{n}` has no head graph"));
             let entrypoints = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
             let config = gantz_core::compile::Config::default();
-            gantz_core::vm::init(&get_node, graph, &entrypoints, &config).unwrap_or_else(|e| {
+            // `init_with_modules` mirrors the app path: the pattern domain's
+            // module must be registered for the pattern graphs' requires.
+            gantz_core::vm::init_with_modules(
+                &get_node,
+                graph,
+                &entrypoints,
+                &config,
+                gantz_pattern::modules(),
+            )
+            .unwrap_or_else(|e| {
                 panic!(
                     "merged base graph `{n}` failed to compile:\n{}",
                     gantz_core::vm::error_chain(&e),
                 )
             });
         }
+    }
+
+    /// The pattern base source is exactly the writer's canonical form: the
+    /// file re-exports byte-identically, so `update-base` write-backs never
+    /// churn it.
+    #[test]
+    fn pattern_base_export_is_stable() {
+        let text1 = std::str::from_utf8(gantz_pattern::BASE_BYTES).expect("utf8");
+        let base: DataReg =
+            gantz_egui::export::parse_export(gantz_pattern::BASE_BYTES, &super::codec())
+                .expect("parse base");
+        let text2 =
+            gantz_egui::format::to_string_named(&base, &super::codec()).expect("to_string_named");
+        assert_eq!(
+            text1, text2,
+            "the pattern base file must match the writer's canonical form",
+        );
+    }
+
+    /// The pattern source parses reproducibly at BASE_TIMESTAMP (the
+    /// invariant demo reset relies on, per source).
+    #[test]
+    fn pattern_base_parses_reproducibly() {
+        let parse = || -> DataReg {
+            gantz_egui::export::parse_export_at(
+                gantz_pattern::BASE_BYTES,
+                bevy_gantz_egui::base::BASE_TIMESTAMP,
+                &super::codec(),
+            )
+            .expect("parse")
+        };
+        let a = parse();
+        let b = parse();
+        let ca_a = a.head(&name("demo-pattern")).expect("demo-pattern");
+        let ca_b = b.head(&name("demo-pattern")).expect("demo-pattern");
+        assert_eq!(ca_a, ca_b, "reset must resolve the startup commit address");
     }
 
     /// The plyphon source parses reproducibly at BASE_TIMESTAMP: startup and

@@ -53,32 +53,69 @@ pub fn plyphon_param(name: impl Into<String>, default: f32, lag: f32) -> Param {
 /// dsp output (`"state"` for a source like `~sinosc`, `"'()"` for a sink like
 /// `~out`). DSP nodes are otherwise Steel-inert.
 ///
+/// A non-empty list of 2-element numeric `(time value)` lists, the shape
+/// `pat/events->secs` emits, is queued as a pre-timestamped *batch* instead,
+/// with `value` taking the batch's last value. A whole pattern window lands
+/// sample-accurately from a single eval.
+///
 /// The `number?` guard is what makes a *hybrid* input work (a dsp input that
 /// falls back to a control param, e.g. `~sinosc`'s freq - see
 /// [`NodeDsp::n_dsp_inputs`](crate::NodeDsp::n_dsp_inputs)): a connected dsp
 /// source's placeholder output is non-numeric by contract and is ignored here,
-/// as is the list a multi-edge input evaluates to. So while any dsp wire shares
-/// the input the wire wins - numbers are not queued, matching the derived def,
-/// where the param is absent and nothing would drain the queue.
+/// as is the list of bare values a multi-edge input evaluates to (its head is
+/// not a `(time value)` pair). So while any dsp wire shares the input the wire
+/// wins - numbers are not queued, matching the derived def, where the param is
+/// absent and nothing would drain the queue.
 pub fn control_input_expr(ctx: &ExprCtx<'_, '_>, control_ix: usize, output: &str) -> ExprResult {
     let expr = match ctx.inputs().get(control_ix) {
         Some(Some(val)) => {
             let time = format!("(hash-ref {} '{})", ctx.args(), gantz_core::args::TIME);
-            format!(
-                "(begin \
-                   (if (number? {val}) \
-                       (set! state \
-                         (hash-insert \
-                           (hash-insert state '{VALUE} {val}) \
-                           '{PENDING} \
-                           (cons (list {time} {val}) (hash-ref state '{PENDING})))) \
-                       void) \
-                   {output})"
-            )
+            let single = format!(
+                "(set! state \
+                   (hash-insert \
+                     (hash-insert state '{VALUE} {val}) \
+                     '{PENDING} \
+                     (cons (list {time} {val}) (hash-ref state '{PENDING}))))"
+            );
+            let batch = format!(
+                "(let ((rev (reverse {val}))) \
+                   (set! state \
+                     (hash-insert \
+                       (hash-insert state '{VALUE} (car (cdr (car rev)))) \
+                       '{PENDING} \
+                       (append rev (hash-ref state '{PENDING})))))"
+            );
+            let queue = guarded_queue_expr(val, &single, &batch);
+            format!("(begin {queue} {output})")
         }
         _ => format!("(begin {output})"),
     };
     gantz_core::node::parse_expr(&expr)
+}
+
+/// The queueing dispatch for a connected control input's value `val`.
+///
+/// A number runs `single`, the one-pair eval-timestamped queue write. A
+/// non-empty list whose head is a 2-element numeric `(time value)` list
+/// runs `batch`, the pre-timestamped shape `pat/events->secs` emits.
+/// Anything else, such as a dsp placeholder or a multi-edge list of bare
+/// values, is ignored.
+fn guarded_queue_expr(val: &str, single: &str, batch: &str) -> String {
+    format!(
+        "(if (number? {val}) \
+             {single} \
+             (if (list? {val}) \
+                 (if (empty? {val}) \
+                     void \
+                     (if (list? (car {val})) \
+                         (if (number? (car (car {val}))) \
+                             (if (number? (car (cdr (car {val})))) \
+                                 {batch} \
+                                 void) \
+                             void) \
+                         void)) \
+                 void))"
+    )
 }
 
 /// Build a multi-param DSP node's Steel `expr` over *keyed* state.
@@ -101,16 +138,25 @@ pub fn control_inputs_expr(
             continue;
         };
         let sub = format!("(hash-ref state '{name})");
-        expr.push_str(&format!(
-            "(if (number? {val}) \
-                 (set! state \
-                   (hash-insert state '{name} \
-                     (hash-insert \
-                       (hash-insert {sub} '{VALUE} {val}) \
-                       '{PENDING} \
-                       (cons (list {time} {val}) (hash-ref {sub} '{PENDING}))))) \
-                 void) "
-        ));
+        let single = format!(
+            "(set! state \
+               (hash-insert state '{name} \
+                 (hash-insert \
+                   (hash-insert {sub} '{VALUE} {val}) \
+                   '{PENDING} \
+                   (cons (list {time} {val}) (hash-ref {sub} '{PENDING})))))"
+        );
+        let batch = format!(
+            "(let ((rev (reverse {val}))) \
+               (set! state \
+                 (hash-insert state '{name} \
+                   (hash-insert \
+                     (hash-insert {sub} '{VALUE} (car (cdr (car rev)))) \
+                     '{PENDING} \
+                     (append rev (hash-ref {sub} '{PENDING}))))))"
+        );
+        expr.push_str(&guarded_queue_expr(val, &single, &batch));
+        expr.push(' ');
     }
     expr.push_str(output);
     expr.push(')');
@@ -316,6 +362,92 @@ mod tests {
     /// A `(time value)` pending-queue entry.
     fn pair(t: f64, v: f64) -> SteelVal {
         SteelVal::ListV([SteelVal::NumV(t), SteelVal::NumV(v)].into_iter().collect())
+    }
+
+    /// Evaluate a bare-state control-input expr whose input binding is the
+    /// given steel expression, mirroring the codegen's stateful wrapper
+    /// (a local `state` binding written back after the expr), then drain.
+    /// The eval time is 7.0.
+    fn eval_control_input(input_expr: &str) -> (f64, Vec<(f64, f64)>) {
+        let mut vm = Engine::new_base();
+        vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
+        vm.register_value(gantz_core::ARGS, gantz_core::args::time(7.0));
+        let path = [0usize];
+        gantz_core::node::state::update_value(&mut vm, &path, param_state(1.0)).unwrap();
+        let inputs = [Some(input_expr.to_string())];
+        let outputs = gantz_core::node::Conns::try_from([true]).unwrap();
+        let ctx = gantz_core::node::ExprCtx::new(&|_| None, &path, &inputs, &outputs);
+        let expr = control_input_expr(&ctx, 0, "state")
+            .expect("expr")
+            .to_pretty(80);
+        let src = format!(
+            "(define state (hash-ref {root} 0))
+             {expr}
+             (set! {root} (hash-insert {root} 0 state))",
+            root = gantz_core::ROOT_STATE,
+        );
+        vm.run(src).expect("run control input expr");
+        drain_param(&mut vm, &path).expect("drain")
+    }
+
+    /// A connected number queues one pair stamped with the eval time.
+    #[test]
+    fn control_input_number_queues_one_pair() {
+        let (value, pending) = eval_control_input("42.0");
+        assert_eq!(value, 42.0);
+        assert_eq!(pending, vec![(7.0, 42.0)]);
+    }
+
+    /// A batch of `(time value)` pairs (the `pat/events->secs` shape) is
+    /// queued whole, draining oldest-first, with `value` taking the last.
+    #[test]
+    fn control_input_batch_queues_all_pairs() {
+        let (value, pending) =
+            eval_control_input("(list (list 1.0 10.0) (list 2.0 20.0) (list 3.0 30.0))");
+        assert_eq!(value, 30.0);
+        assert_eq!(pending, vec![(1.0, 10.0), (2.0, 20.0), (3.0, 30.0)]);
+    }
+
+    /// Multi-edge lists of bare values, empty lists and non-numeric values
+    /// are all ignored: no queue, value untouched.
+    #[test]
+    fn control_input_ignores_non_batches() {
+        for ignored in ["(list 1.0 2.0)", "(list)", "'sym", "(list (list 'x 1.0))"] {
+            let (value, pending) = eval_control_input(ignored);
+            assert_eq!(value, 1.0, "value untouched for {ignored}");
+            assert_eq!(pending, vec![], "nothing queued for {ignored}");
+        }
+    }
+
+    /// The keyed emitter queues a batch into the named param's sub-map
+    /// only, leaving siblings untouched.
+    #[test]
+    fn control_inputs_keyed_batch() {
+        let mut vm = Engine::new_base();
+        vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
+        vm.register_value(gantz_core::ARGS, gantz_core::args::time(7.0));
+        let path = [0usize];
+        let state = params_state(&[("freq", 220.0), ("width", 0.5)]);
+        gantz_core::node::state::update_value(&mut vm, &path, state).unwrap();
+        let inputs = [Some("(list (list 1.0 330.0) (list 2.0 440.0))".to_string())];
+        let outputs = gantz_core::node::Conns::try_from([true]).unwrap();
+        let ctx = gantz_core::node::ExprCtx::new(&|_| None, &path, &inputs, &outputs);
+        let expr = control_inputs_expr(&ctx, &[(0, "freq")], "state")
+            .expect("expr")
+            .to_pretty(80);
+        let src = format!(
+            "(define state (hash-ref {root} 0))
+             {expr}
+             (set! {root} (hash-insert {root} 0 state))",
+            root = gantz_core::ROOT_STATE,
+        );
+        vm.run(src).expect("run control inputs expr");
+        let (value, pending) = drain_param_keyed(&mut vm, &path, "freq").expect("drain freq");
+        assert_eq!(value, 440.0);
+        assert_eq!(pending, vec![(1.0, 330.0), (2.0, 440.0)]);
+        let (value, pending) = drain_param_keyed(&mut vm, &path, "width").expect("drain width");
+        assert_eq!(value, 0.5);
+        assert_eq!(pending, vec![]);
     }
 
     /// A param sub-map with the given queue (stored newest-first, as the expr

@@ -1,0 +1,29 @@
+[package]
+name = "gantz_pattern"
+version = "0.1.0"
+description = "A pattern domain for gantz, implemented as a Steel module."
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+license = "GPL-3.0-or-later"
+repository.workspace = true
+
+[dependencies]
+gantz_core.workspace = true
+num-rational.workspace = true
+gantz_format.workspace = true
+gantz_nodetag.workspace = true
+serde.workspace = true
+egui = { workspace = true, optional = true }
+egui_graph = { workspace = true, optional = true }
+gantz_egui = { workspace = true, optional = true }
+
+[dev-dependencies]
+petgraph.workspace = true
+gantz_ca.workspace = true
+
+[features]
+# The egui-flavoured impls (`NodeUi` for the pattern nodes). Without it
+# the crate is headless.
+default = ["egui"]
+egui = ["dep:egui", "dep:egui_graph", "dep:gantz_egui"]

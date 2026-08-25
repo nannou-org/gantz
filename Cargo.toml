@@ -9,10 +9,9 @@ homepage = "https://github.com/nannou-org/gantz"
 repository = "https://github.com/nannou-org/gantz"
 # NOTE: no `license` here on purpose - each crate must declare its own `license`
 # explicitly. This repo is multi-license: the pure-library crates are
-# `MIT OR Apache-2.0`, while the plyphon-linked crates (`gantz_plyphon`,
-# `bevy_gantz_plyphon`) and the `gantz` app are `GPL-3.0-or-later` (plyphon is
-# GPL). Requiring an explicit per-crate license avoids silently mis-licensing a
-# newly added crate.
+# `MIT OR Apache-2.0`, while `gantz_plyphon`, `bevy_gantz_plyphon`,
+# `gantz_pattern` and the `gantz` app are `GPL-3.0-or-later`. Requiring an
+# explicit per-crate license avoids silently mis-licensing a newly added crate.
 
 [workspace.dependencies]
 async-channel = "2.5"
@@ -70,6 +69,7 @@ gantz_egui = { version = "0.6.0", path = "crates/gantz_egui" }
 gantz_format = { version = "0.4.0", path = "crates/gantz_format" }
 gantz_nodetag = { version = "0.2.0", path = "crates/gantz_nodetag" }
 gantz_nodetag_derive = { version = "0.1.1", path = "crates/gantz_nodetag_derive" }
+gantz_pattern = { version = "0.1.0", path = "crates/gantz_pattern" }
 gantz_plyphon = { version = "0.2.0", path = "crates/gantz_plyphon" }
 gantz_std = { version = "0.5.0", path = "crates/gantz_std" }
 gantz_ui = { version = "0.2.0", path = "crates/gantz_ui" }
@@ -80,6 +80,7 @@ iroh-gossip = { version = "0.101", default-features = false, features = ["net"] 
 iroh-tickets = "1"
 log = { version = "0.4", features = ["serde"] }
 n0-future = "0.3"
+num-rational = "0.4"
 petgraph = { version = "0.8", features = ["serde-1"] }
 plyphon = "0.1.1"
 pollster = "0.4"

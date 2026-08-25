@@ -3799,6 +3799,7 @@ dependencies = [
  "gantz_egui",
  "gantz_format",
  "gantz_nodetag",
+ "gantz_pattern",
  "gantz_plyphon",
  "gantz_std",
  "serde",
@@ -3932,6 +3933,22 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "gantz_pattern"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "egui_graph",
+ "gantz_ca",
+ "gantz_core",
+ "gantz_egui",
+ "gantz_format",
+ "gantz_nodetag",
+ "num-rational",
+ "petgraph",
+ "serde",
 ]
 
 [[package]]

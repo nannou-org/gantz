@@ -23,8 +23,11 @@ mod node;
 mod storage;
 
 fn main() {
-    App::new()
-        .add_plugins(GantzPlugin)
+    let mut app = App::new();
+    // Domains with no bevy plugin (the pattern domain's steel module and
+    // base source).
+    node::push_plain_domains(&mut app);
+    app.add_plugins(GantzPlugin)
         .add_plugins(GantzEguiPlugin::default().base_immutable(false))
         // The DSP plugin contributes the plyphon base source, and lets DSP
         // demos be heard while they are edited.
@@ -52,6 +55,10 @@ fn main() {
                 (
                     "plyphon",
                     concat!(env!("CARGO_MANIFEST_DIR"), "/../gantz_plyphon/base.gantz"),
+                ),
+                (
+                    "pattern",
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/../gantz_pattern/base.gantz"),
                 ),
             ]
             .into_iter()
