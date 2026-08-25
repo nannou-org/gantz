@@ -106,3 +106,20 @@ fn event_representation() {
 fn nested_rational_equal_canary() {
     assert_steel_true("(equal? #f (equal? (list 1/2) (list 1/2)))");
 }
+
+// Events print deterministically as a transparent struct, stable across
+// repeated renders (the previous hashmap representation printed its
+// fields in arbitrary order).
+#[test]
+fn event_prints_deterministically() {
+    for _ in 0..2 {
+        assert_steel_true(
+            "(equal? \"(event bd (0 . 1/2) #false)\"
+                     (to-string (pat/event 'bd (pat/span 0 1/2) #f)))",
+        );
+        assert_steel_true(
+            "(equal? \"(event 220.0 (1/4 . 1/2) (1/4 . 1/2))\"
+                     (to-string (pat/event 220.0 (pat/span 1/4 1/2) (pat/span 1/4 1/2))))",
+        );
+    }
+}

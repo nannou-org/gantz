@@ -173,32 +173,39 @@
 
 ;; -- events -------------------------------------------------------------------
 
+;; The struct printer references `display`, which is prelude-only. It is
+;; only invoked by the scheme display path, never by the Rust fmt gantz
+;; renders values with, so a shim satisfies the struct expansion.
+(define (display . args) void)
+
 ;; An event holds a `value`, its `active` span and its `whole` span.
-;; Whole is #f for continuous signals.
-(define (pat/event value active whole)
-  (hash 'value value 'active active 'whole whole))
+;; Whole is #f for continuous signals. Transparent, so events print
+;; deterministically as `(event value active whole)`.
+(struct event (value active whole) #:transparent)
 
-(define (pat/event-value e) (hash-ref e 'value))
+(define (pat/event value active whole) (event value active whole))
 
-(define (pat/event-active e) (hash-ref e 'active))
+(define (pat/event-value e) (event-value e))
 
-(define (pat/event-whole e) (hash-ref e 'whole))
+(define (pat/event-active e) (event-active e))
+
+(define (pat/event-whole e) (event-whole e))
 
 ;; The event's whole when present, otherwise its active span.
 (define (pat/event-whole-or-active e)
-  (let ((w (hash-ref e 'whole)))
-    (if w w (hash-ref e 'active))))
+  (let ((w (event-whole e)))
+    (if w w (event-active e))))
 
 ;; Map the event's value with `f`.
 (define (pat/event-map-value f e)
-  (pat/event (f (hash-ref e 'value)) (hash-ref e 'active) (hash-ref e 'whole)))
+  (event (f (event-value e)) (event-active e) (event-whole e)))
 
 ;; Map the event's active span and (when present) whole span with `f`.
 (define (pat/event-map-spans f e)
-  (pat/event (hash-ref e 'value)
-             (f (hash-ref e 'active))
-             (let ((w (hash-ref e 'whole)))
-               (if w (f w) #f))))
+  (event (event-value e)
+         (f (event-active e))
+         (let ((w (event-whole e)))
+           (if w (f w) #f))))
 
 ;; -- constructors -------------------------------------------------------------
 ;;
