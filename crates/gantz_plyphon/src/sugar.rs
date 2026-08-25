@@ -517,6 +517,29 @@ mod tests {
     }
 
     #[test]
+    fn operator_keywords_round_trip() {
+        // Operator rows resolve through their pseudo `unit` identity like any
+        // other table row: bare keywords stay bare, and the hybrid `b`
+        // param's structural lag round-trips.
+        let s = PlyphonSugar;
+        let bare = s.read_bare("~tanh").expect("bare");
+        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("Unit"));
+        assert_eq!(bare.get("unit").and_then(Datum::as_str), Some("TanH"));
+        assert_eq!(s.write_spec("Unit", &bare).as_deref(), Some("~tanh"));
+        let form = "(~mul #:b-lag 0.02 #:rate kr)";
+        let mul = read_spec(form).expect("mul");
+        assert_eq!(mul.get("unit").and_then(Datum::as_str), Some("Mul"));
+        assert_eq!(
+            mul.get("lags")
+                .and_then(|l| l.get("b"))
+                .and_then(Datum::as_f64),
+            Some(0.02),
+        );
+        assert_eq!(s.write_spec("Unit", &mul).as_deref(), Some(form));
+        assert_eq!(s.label_stem("Unit", &mul), Some("~mul"));
+    }
+
+    #[test]
     fn other_nodes_are_not_ours() {
         // A non-plyphon node falls through (so composition tries the next sugar).
         let exprs = sexpr::read("(number 5)").expect("read");
