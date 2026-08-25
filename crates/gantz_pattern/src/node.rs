@@ -1,9 +1,7 @@
 use crate::mini;
-use gantz_core::node::{ExprCtx, ExprResult, MetaCtx, RegCtx};
-use gantz_core::steel::SteelVal;
+use gantz_core::node::{ExprCtx, ExprResult, MetaCtx};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
-use std::hash::{Hash, Hasher};
 
 /// A mini-notation pattern, parsed at graph compile time.
 ///
@@ -49,29 +47,18 @@ impl gantz_core::Node for Pm {
         1
     }
 
+    /// Emits the parsed combinator source directly. Invalid notation is a
+    /// compile error attributed to the node, like an invalid expr - the
+    /// node's editor refuses to commit unparseable buffers, so this only
+    /// fires for file-authored or deserialized sources.
     fn expr(&self, _ctx: ExprCtx<'_, '_>) -> ExprResult {
-        let Some(pattern) = mini::steel_src(&self.src) else {
-            return gantz_core::node::parse_expr("pat/silence");
-        };
-        let hash = {
-            let mut h = std::hash::DefaultHasher::new();
-            self.src.hash(&mut h);
-            h.finish() as i64
-        };
-        gantz_core::node::parse_expr(&format!(
-            "(if (if (pair? state) (equal? (car state) {hash}) #f) \
-                 (cdr state) \
-                 (begin (set! state (cons {hash} {pattern})) (cdr state)))"
-        ))
-    }
-
-    fn stateful(&self, _ctx: MetaCtx) -> bool {
-        true
-    }
-
-    fn register(&self, ctx: RegCtx<'_, '_>) {
-        let (_, path, vm) = ctx.into_parts();
-        gantz_core::node::state::init_value_if_absent(vm, path, || SteelVal::Void).unwrap();
+        match mini::steel_src(&self.src) {
+            Some(pattern) => gantz_core::node::parse_expr(&pattern),
+            None => Err(gantz_core::node::ExprError::custom(format!(
+                "invalid mini-notation: {:?}",
+                self.src,
+            ))),
+        }
     }
 
     fn required_modules(&self, _ctx: MetaCtx) -> Vec<String> {
@@ -96,20 +83,29 @@ mod tests {
         pm.expr(ctx).unwrap().to_pretty(200)
     }
 
-    // The expr embeds the parsed combinators under a memo sentinel.
+    // The expr is exactly the parsed combinators - no state, no wrapper.
     #[test]
-    fn expr_memoises_parsed_pattern() {
-        let pm = Pm::new("bd sn");
-        let src = expr_str(&pm);
-        assert!(src.contains("(pat/fastcat (list (pat/pure (quote bd)) (pat/pure (quote sn))))"));
-        assert!(src.contains("(set! state (cons"));
-        // A different notation bakes a different sentinel.
-        assert_ne!(src, expr_str(&Pm::new("bd sn cp")));
+    fn expr_emits_combinators() {
+        assert_eq!(
+            expr_str(&Pm::new("bd sn")),
+            "(pat/fastcat (list (pat/pure (quote bd)) (pat/pure (quote sn))))",
+        );
+        // The default (empty) notation compiles to silence.
+        assert_eq!(expr_str(&Pm::default()), "pat/silence");
     }
 
-    // Malformed notation compiles to silence.
+    // Malformed notation is a compile error naming the source, mirroring
+    // an invalid expr node.
     #[test]
-    fn malformed_notation_is_silence() {
-        assert_eq!(expr_str(&Pm::new("bd [")), "pat/silence");
+    fn malformed_notation_errors() {
+        let pm = Pm::new("bd [");
+        let outputs = gantz_core::node::Conns::try_from([true]).unwrap();
+        let inputs = [None];
+        let ctx = gantz_core::node::ExprCtx::new(&|_| None, &[], &inputs, &outputs);
+        let err = pm.expr(ctx).unwrap_err();
+        assert!(
+            format!("{err}").contains("bd ["),
+            "err names the source: {err}"
+        );
     }
 }

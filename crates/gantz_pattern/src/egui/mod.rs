@@ -80,6 +80,12 @@ impl NodeUi for Pm {
                 edit = edit.text_color(ui.visuals().error_fg_color);
             }
             let response = ui.add(edit);
+            let response = if parses {
+                response
+            } else {
+                response
+                    .on_hover_text("not a valid pattern - the node keeps its last valid notation")
+            };
 
             let time = ui.input(|i| i.time);
             if response.changed() {
@@ -91,7 +97,10 @@ impl NodeUi for Pm {
                 && ui.input(|i| {
                     i.pointer.is_moving() || i.pointer.any_pressed() || i.pointer.any_released()
                 });
-            if response.lost_focus() || timed_out || mouse_active {
+            // Only a parsing buffer commits, mirroring the expr editor:
+            // an invalid buffer changes the text but never the node, so
+            // the last valid pattern keeps playing while mid-edit.
+            if (response.lost_focus() || timed_out || mouse_active) && parses {
                 if buffer_dirty {
                     self.set_src(state.text.clone());
                     state.src_hash = hash_str(self.src());

@@ -12,10 +12,36 @@ fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }
 
-// push -> pm -> query(span [0,1)) -> sink; two evals produce identical
-// events and the state holds the memoised (hash . pattern) pair.
+// A file-authored invalid notation fails compilation with a node
+// diagnostic, like an invalid expr.
 #[test]
-fn pm_compiles_evaluates_and_memoises() {
+fn invalid_notation_fails_compile() {
+    let mut g = petgraph::graph::DiGraph::new();
+    let push =
+        g.add_node(Box::new(node::expr("'()").unwrap().with_push_eval()) as Box<dyn DebugNode>);
+    let pm = g.add_node(Box::new(gantz_pattern::Pm::new("bd [")) as Box<_>);
+    g.add_edge(push, pm, Edge::from((0, 0)));
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let err = gantz_core::vm::init_with_modules(
+        &no_lookup,
+        &g,
+        &eps,
+        &Default::default(),
+        gantz_pattern::modules(),
+    )
+    .err()
+    .expect("invalid notation must fail to compile");
+    assert!(
+        gantz_core::vm::error_chain(&err).contains("invalid mini-notation"),
+        "unexpected error: {}",
+        gantz_core::vm::error_chain(&err),
+    );
+}
+
+// push -> pm -> query(span [0,1)) -> sink; two evals produce identical
+// events.
+#[test]
+fn pm_compiles_and_evaluates() {
     let mut g = petgraph::graph::DiGraph::new();
     let push =
         g.add_node(Box::new(node::expr("'()").unwrap().with_push_eval()) as Box<dyn DebugNode>);
@@ -57,9 +83,8 @@ fn pm_compiles_evaluates_and_memoises() {
         "events flowed: {first:?}"
     );
 
-    // The pm state holds the memo pair.
-    let memo: SteelVal = gantz_core::node::state::extract_value(&vm, &[pm.index()])
-        .unwrap()
-        .unwrap();
-    assert!(matches!(memo, SteelVal::Pair(_)), "memo pair, got {memo:?}");
+    // The pm node is pure: no state slot exists for it.
+    let state: Option<SteelVal> =
+        gantz_core::node::state::extract_value(&vm, &[pm.index()]).unwrap();
+    assert!(state.is_none(), "pm must be stateless, got {state:?}");
 }
