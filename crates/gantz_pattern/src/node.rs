@@ -6,10 +6,8 @@ use serde::{Deserialize, Serialize};
 /// A mini-notation pattern, parsed at graph compile time.
 ///
 /// The notation string is part of the node's identity, so editing it
-/// recompiles. The expr embeds the parsed combinator source, memoised in
-/// node state under a source-hash sentinel so the pattern is constructed
-/// once per edit and the steady-state cost per eval is a state read.
-/// Malformed notation compiles to silence.
+/// recompiles. The expr embeds the parsed combinator source directly,
+/// making the node pure and stateless.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize, NodeTag)]
 pub struct Pm {
     src: String,
@@ -30,11 +28,6 @@ impl Pm {
     pub fn set_src(&mut self, src: impl Into<String>) {
         self.src = src.into();
     }
-
-    /// Whether the current notation parses.
-    pub fn parses(&self) -> bool {
-        mini::steel_src(&self.src).is_some()
-    }
 }
 
 impl gantz_core::Node for Pm {
@@ -49,8 +42,8 @@ impl gantz_core::Node for Pm {
 
     /// Emits the parsed combinator source directly. Invalid notation is a
     /// compile error attributed to the node, like an invalid expr - the
-    /// node's editor refuses to commit unparseable buffers, so this only
-    /// fires for file-authored or deserialized sources.
+    /// recompile fails in place, leaving the previously compiled pattern
+    /// evaluable.
     fn expr(&self, _ctx: ExprCtx<'_, '_>) -> ExprResult {
         match mini::steel_src(&self.src) {
             Some(pattern) => gantz_core::node::parse_expr(&pattern),

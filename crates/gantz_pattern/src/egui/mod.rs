@@ -1,18 +1,21 @@
 //! The egui surface for the pattern node set. Only egui-flavoured items
 //! live here, so the crate's `egui` feature holds with a single cfg gate.
 
-use crate::{Pm, mini};
+use crate::Pm;
 use gantz_egui::{Env, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind};
 use std::hash::{Hash, Hasher};
 
 /// The buffered edit state for a [`Pm`] node's notation editor, held in
 /// egui temp memory so keystrokes do not commit a new content address
-/// each frame. Mirrors the comment node's flush-on-settle behaviour.
+/// each frame. The buffer flushes when the edit settles, the editor
+/// loses focus or the node is deselected - so a mid-edit invalid
+/// notation never raises its compile diagnostic per keystroke.
 #[derive(Clone, Default)]
 struct PmEditState {
     src_hash: u64,
     text: String,
     last_edit_time: f64,
+    was_selected: bool,
 }
 
 /// Seconds of no typing before a dirty buffer flushes to the node.
@@ -35,6 +38,7 @@ impl NodeUi for Pm {
 
     fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
         let mut changed = false;
+        let selected = uictx.interaction().selected;
         let framed = uictx.framed(|ui, _sockets| {
             let state_id = egui::Id::new("PmEdit").with(ctx.path());
             let mut state: PmEditState = ui
@@ -49,9 +53,6 @@ impl NodeUi for Pm {
                 state.text = self.src().to_string();
             }
 
-            // A live parse check on the buffer: tint the text while the
-            // notation is malformed (it compiles to silence).
-            let parses = mini::steel_src(&state.text).is_some();
             let font_id = egui::FontSelection::from(egui::TextStyle::Monospace).resolve(ui.style());
 
             // Size the editor to the live buffer like the expr node: a
@@ -71,21 +72,12 @@ impl NodeUi for Pm {
             let text_w = measure(ui, &state.text).max(measure(ui, HINT));
             let desired_width = text_w.ceil() + margin.sum().x + 1.0;
 
-            let mut edit = egui::TextEdit::singleline(&mut state.text)
+            let edit = egui::TextEdit::singleline(&mut state.text)
                 .font(font_id.clone())
                 .hint_text(HINT)
                 .margin(margin)
                 .desired_width(desired_width);
-            if !parses {
-                edit = edit.text_color(ui.visuals().error_fg_color);
-            }
             let response = ui.add(edit);
-            let response = if parses {
-                response
-            } else {
-                response
-                    .on_hover_text("not a valid pattern - the node keeps its last valid notation")
-            };
 
             let time = ui.input(|i| i.time);
             if response.changed() {
@@ -93,14 +85,14 @@ impl NodeUi for Pm {
             }
             let buffer_dirty = state.text != self.src();
             let timed_out = buffer_dirty && (time - state.last_edit_time >= FLUSH_TIMEOUT);
-            let mouse_active = buffer_dirty
-                && ui.input(|i| {
-                    i.pointer.is_moving() || i.pointer.any_pressed() || i.pointer.any_released()
-                });
-            // Only a parsing buffer commits, mirroring the expr editor:
-            // an invalid buffer changes the text but never the node, so
-            // the last valid pattern keeps playing while mid-edit.
-            if (response.lost_focus() || timed_out || mouse_active) && parses {
+            let deselected = state.was_selected && !selected;
+            state.was_selected = selected;
+            // An invalid buffer still commits: the in-place recompile
+            // keeps the previous module evaluable, so the last valid
+            // pattern keeps playing while the node glows with the
+            // compile diagnostic. The flush timing above keeps that
+            // feedback from firing per keystroke mid-edit.
+            if response.lost_focus() || timed_out || deselected {
                 if buffer_dirty {
                     self.set_src(state.text.clone());
                     state.src_hash = hash_str(self.src());

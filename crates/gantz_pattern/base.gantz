@@ -4,7 +4,7 @@
   (pm2 (pm "220 [330 440] <550 660>"))
   (ref3 (ref pwindow #:sync))
   (ref4 (ref pquery #:sync))
-  (ref5 (ref psecs #:sync))
+  (ref5 (ref psched #:sync))
   (~sinosc6 ~sinosc)
   (~out7 ~out)
   (bang8 bang)
@@ -116,7 +116,7 @@
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
-(graph psecs
+(graph psched
   (expr0 (expr (pat/events->secs $events $span (hash-ref %args 'time) $cps) #:require "gantz/pattern"))
   (inlet1 (inlet "events" "queried window events"))
   (inlet2 (inlet "span" "the queried window"))
@@ -195,7 +195,7 @@
   (ppure "Repeat a value once per cycle.")
   (pquery "Query a pattern over a span for its sorted events.")
   (psaw "A 0 to 1 ramp signal each cycle.")
-  (psecs "Window events as (seconds value) onset pairs for delivery.")
+  (psched "Window events as (seconds value) onset pairs for delivery.")
   (pshift "Shift a pattern later in time.")
   (psilence "The empty pattern.")
   (pslow "Slow a pattern down by a factor.")
