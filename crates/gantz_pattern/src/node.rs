@@ -9,14 +9,14 @@ use serde::{Deserialize, Serialize};
 /// recompiles. The expr embeds the parsed combinator source directly,
 /// making the node pure and stateless.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize, NodeTag)]
-pub struct Pm {
+pub struct Pmini {
     src: String,
 }
 
-impl Pm {
+impl Pmini {
     /// A node for the given notation source.
     pub fn new(src: impl Into<String>) -> Self {
-        Pm { src: src.into() }
+        Pmini { src: src.into() }
     }
 
     /// The notation source.
@@ -30,7 +30,7 @@ impl Pm {
     }
 }
 
-impl gantz_core::Node for Pm {
+impl gantz_core::Node for Pmini {
     /// A single bang input triggering emission of the pattern.
     fn n_inputs(&self, _ctx: MetaCtx) -> usize {
         1
@@ -61,7 +61,7 @@ impl gantz_core::Node for Pm {
 
 /// The builtin node specs provided by this domain.
 pub fn builtins() -> Vec<gantz_core::Builtin> {
-    vec![gantz_core::Builtin::new("pm", &Pm::default())]
+    vec![gantz_core::Builtin::new("pmini", &Pmini::default())]
 }
 
 #[cfg(test)]
@@ -69,33 +69,33 @@ mod tests {
     use super::*;
     use gantz_core::Node;
 
-    fn expr_str(pm: &Pm) -> String {
+    fn expr_str(pmini: &Pmini) -> String {
         let outputs = gantz_core::node::Conns::try_from([true]).unwrap();
         let inputs = [None];
         let ctx = gantz_core::node::ExprCtx::new(&|_| None, &[], &inputs, &outputs);
-        pm.expr(ctx).unwrap().to_pretty(200)
+        pmini.expr(ctx).unwrap().to_pretty(200)
     }
 
     // The expr is exactly the parsed combinators - no state, no wrapper.
     #[test]
     fn expr_emits_combinators() {
         assert_eq!(
-            expr_str(&Pm::new("bd sn")),
+            expr_str(&Pmini::new("bd sn")),
             "(pat/fastcat (list (pat/pure (quote bd)) (pat/pure (quote sn))))",
         );
         // The default (empty) notation compiles to silence.
-        assert_eq!(expr_str(&Pm::default()), "pat/silence");
+        assert_eq!(expr_str(&Pmini::default()), "pat/silence");
     }
 
     // Malformed notation is a compile error naming the source, mirroring
     // an invalid expr node.
     #[test]
     fn malformed_notation_errors() {
-        let pm = Pm::new("bd [");
+        let pmini = Pmini::new("bd [");
         let outputs = gantz_core::node::Conns::try_from([true]).unwrap();
         let inputs = [None];
         let ctx = gantz_core::node::ExprCtx::new(&|_| None, &[], &inputs, &outputs);
-        let err = pm.expr(ctx).unwrap_err();
+        let err = pmini.expr(ctx).unwrap_err();
         assert!(
             format!("{err}").contains("bd ["),
             "err names the source: {err}"

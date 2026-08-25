@@ -53,7 +53,7 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_plyphon::Unpack,
             gantz_plyphon::Bus,
             gantz_plyphon::PlayBuf,
-            gantz_pattern::Pm,
+            gantz_pattern::Pmini,
         }
     }
 }
@@ -223,7 +223,7 @@ mod tests {
             "number",
             "outlet",
             "plot",
-            "pm",
+            "pmini",
             "sleep",
             "tick!",
             "update!",
@@ -406,7 +406,10 @@ mod tests {
             node_datum("Identity", vec![]),
             node_datum("Bang", vec![]),
             node_datum("Inspect", vec![]),
-            node_datum("Pm", vec![("src", Datum::Str("bd(3,8) ~ [sn sn]".into()))]),
+            node_datum(
+                "Pmini",
+                vec![("src", Datum::Str("bd(3,8) ~ [sn sn]".into()))],
+            ),
             node_datum("Gui", vec![]),
             node_datum(
                 "Gui",
@@ -754,8 +757,8 @@ mod tests {
                 "deb280956a42f29de5d9515537c19b57a8ccb1575e2620dd68ab2d66aaae4484",
             ),
             (
-                "Pm",
-                "fab35e2e8e50ba541d18ce50e51e288b2d4853e38e030e3ab129d310a11a9beb",
+                "Pmini",
+                "84670e8d51c15a952187697e06d022ce46e243038fc7d7cb0f2a07925a1d1d6c",
             ),
             (
                 "ScopeOut",

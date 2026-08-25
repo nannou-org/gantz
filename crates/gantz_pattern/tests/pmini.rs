@@ -1,4 +1,4 @@
-//! End-to-end tests for the `pm` node: compile, evaluate and memoise.
+//! End-to-end tests for the `pmini` node: compile and evaluate.
 
 use gantz_core::node::{self, Node, WithPushEval};
 use gantz_core::steel::SteelVal;
@@ -19,8 +19,8 @@ fn invalid_notation_fails_compile() {
     let mut g = petgraph::graph::DiGraph::new();
     let push =
         g.add_node(Box::new(node::expr("'()").unwrap().with_push_eval()) as Box<dyn DebugNode>);
-    let pm = g.add_node(Box::new(gantz_pattern::Pm::new("bd [")) as Box<_>);
-    g.add_edge(push, pm, Edge::from((0, 0)));
+    let pmini = g.add_node(Box::new(gantz_pattern::Pmini::new("bd [")) as Box<_>);
+    g.add_edge(push, pmini, Edge::from((0, 0)));
     let eps = push_pull_entrypoints(&no_lookup, &g);
     let err = gantz_core::vm::init_with_modules(
         &no_lookup,
@@ -38,22 +38,22 @@ fn invalid_notation_fails_compile() {
     );
 }
 
-// push -> pm -> query(span [0,1)) -> sink; two evals produce identical
+// push -> pmini -> query(span [0,1)) -> sink; two evals produce identical
 // events.
 #[test]
 fn pm_compiles_and_evaluates() {
     let mut g = petgraph::graph::DiGraph::new();
     let push =
         g.add_node(Box::new(node::expr("'()").unwrap().with_push_eval()) as Box<dyn DebugNode>);
-    let pm = g.add_node(Box::new(gantz_pattern::Pm::new("bd(3,8) <hh cp>")) as Box<_>);
+    let pmini = g.add_node(Box::new(gantz_pattern::Pmini::new("bd(3,8) <hh cp>")) as Box<_>);
     let q = g.add_node(Box::new(
         node::expr("(pat/query $p (pat/span 0 1))")
             .unwrap()
             .with_requires(["gantz/pattern"]),
     ) as Box<_>);
     let sink = g.add_node(Box::new(node::expr("(begin (set! state $x) state)").unwrap()) as Box<_>);
-    g.add_edge(push, pm, Edge::from((0, 0)));
-    g.add_edge(pm, q, Edge::from((0, 0)));
+    g.add_edge(push, pmini, Edge::from((0, 0)));
+    g.add_edge(pmini, q, Edge::from((0, 0)));
     g.add_edge(q, sink, Edge::from((0, 0)));
 
     let eps = push_pull_entrypoints(&no_lookup, &g);
@@ -83,8 +83,8 @@ fn pm_compiles_and_evaluates() {
         "events flowed: {first:?}"
     );
 
-    // The pm node is pure: no state slot exists for it.
+    // The pmini node is pure: no state slot exists for it.
     let state: Option<SteelVal> =
-        gantz_core::node::state::extract_value(&vm, &[pm.index()]).unwrap();
-    assert!(state.is_none(), "pm must be stateless, got {state:?}");
+        gantz_core::node::state::extract_value(&vm, &[pmini.index()]).unwrap();
+    assert!(state.is_none(), "pmini must be stateless, got {state:?}");
 }

@@ -12,7 +12,7 @@
 //!   included (a `/` directly between digits stays in the number), and
 //!   as symbols otherwise.
 //!
-//! Parsing happens at graph compile time (see the `pm` node), so the
+//! Parsing happens at graph compile time (see the `pmini` node), so the
 //! runtime never tokenizes: [`steel_src`] returns combinator source for
 //! the node's expr, or `None` for malformed input, which the node turns
 //! into silence.

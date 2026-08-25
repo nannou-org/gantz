@@ -1,17 +1,17 @@
 //! The egui surface for the pattern node set. Only egui-flavoured items
 //! live here, so the crate's `egui` feature holds with a single cfg gate.
 
-use crate::Pm;
+use crate::Pmini;
 use gantz_egui::{Env, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind};
 use std::hash::{Hash, Hasher};
 
-/// The buffered edit state for a [`Pm`] node's notation editor, held in
+/// The buffered edit state for a [`Pmini`] node's notation editor, held in
 /// egui temp memory so keystrokes do not commit a new content address
 /// each frame. The buffer flushes when the edit settles, the editor
 /// loses focus or the node is deselected - so a mid-edit invalid
 /// notation never raises its compile diagnostic per keystroke.
 #[derive(Clone, Default)]
-struct PmEditState {
+struct PminiEditState {
     src_hash: u64,
     text: String,
     last_edit_time: f64,
@@ -27,9 +27,9 @@ fn hash_str(s: &str) -> u64 {
     h.finish()
 }
 
-impl NodeUi for Pm {
+impl NodeUi for Pmini {
     fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
-        "pm".into()
+        "pmini".into()
     }
 
     fn description(&self) -> Option<&'static str> {
@@ -40,8 +40,8 @@ impl NodeUi for Pm {
         let mut changed = false;
         let selected = uictx.interaction().selected;
         let framed = uictx.framed(|ui, _sockets| {
-            let state_id = egui::Id::new("PmEdit").with(ctx.path());
-            let mut state: PmEditState = ui
+            let state_id = egui::Id::new("PminiEdit").with(ctx.path());
+            let mut state: PminiEditState = ui
                 .memory_mut(|m| m.data.remove_temp(state_id))
                 .unwrap_or_default();
 

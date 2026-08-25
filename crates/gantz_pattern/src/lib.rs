@@ -18,7 +18,7 @@ pub mod sugar;
 #[cfg(feature = "egui")]
 pub mod egui;
 
-pub use node::{Pm, builtins};
+pub use node::{Pmini, builtins};
 pub use sugar::PatternSugar;
 
 use gantz_core::vm::SteelModule;
