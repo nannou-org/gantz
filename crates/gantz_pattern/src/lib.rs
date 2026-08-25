@@ -12,6 +12,14 @@
 //! is absent for continuous signals.
 
 pub mod mini;
+pub mod node;
+pub mod sugar;
+
+#[cfg(feature = "egui")]
+pub mod egui;
+
+pub use node::{Pm, builtins};
+pub use sugar::PatternSugar;
 
 use gantz_core::vm::SteelModule;
 

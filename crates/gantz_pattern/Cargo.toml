@@ -11,3 +11,19 @@ repository.workspace = true
 [dependencies]
 gantz_core.workspace = true
 num-rational.workspace = true
+gantz_format.workspace = true
+gantz_nodetag.workspace = true
+serde.workspace = true
+egui = { workspace = true, optional = true }
+egui_graph = { workspace = true, optional = true }
+gantz_egui = { workspace = true, optional = true }
+
+[dev-dependencies]
+petgraph.workspace = true
+gantz_ca.workspace = true
+
+[features]
+# The egui-flavoured impls (`NodeUi` for the pattern nodes). Without it
+# the crate is headless.
+default = ["egui"]
+egui = ["dep:egui", "dep:egui_graph", "dep:gantz_egui"]
