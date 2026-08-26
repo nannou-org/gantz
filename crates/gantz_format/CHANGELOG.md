@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/nannou-org/gantz/compare/gantz_format-v0.4.0...gantz_format-v0.4.1) - 2026-08-26
+
+### Added
+
+- *(gantz_format)* add #:require expr sugar for steel module deps
+
 ## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_format-v0.3.0...gantz_format-v0.4.0) - 2026-07-23
 
 ### Added

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/nannou-org/gantz/compare/gantz-v0.3.0...gantz-v0.3.1) - 2026-08-26
+
+### Added
+
+- *(gantz_plyphon)* add ringmod and waveshape demos
+- *(gantz)* register the pm node and use it in the demo
+- *(gantz)* wire the pattern domain base file and steel module
+- *(gantz_egui)* resolve gui markers via the environment
+- *(gantz_egui)* add the Gui marker node
+- *(gantz)* register await and sleep in the app node set
+
+### Other
+
+- *(gantz_pattern)* rename the pm node to pmini
+- *(gantz)* pin demo-pattern partial evals as silent
+- *(gantz_pattern)* address review on naming and comments
+- *(gantz)* pin the #:require pipeline end to end
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz-v0.2.3...gantz-v0.3.0) - 2026-07-23
 
 ### Added
