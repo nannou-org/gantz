@@ -1897,12 +1897,11 @@ fn unit_hybrid_socket_takes_the_wire() {
     );
 }
 
-/// Operator rows must select the *right* operator, not merely a supported
-/// one - a transposed `special_index` still derives and builds, so the sweep
-/// alone cannot catch it. Rendered offline: the same sine wired into both
-/// operands makes `~mul` emit sin^2 (non-negative, mean 1/2) and `~sub`
-/// silence, while `~abs` full-wave rectifies (non-negative, mean 2/pi).
-/// Everything is scaled by the out's default gain.
+/// Operator rows must select the right operator, not merely a supported one.
+/// A transposed `special_index` still derives and builds, so the sweep alone
+/// cannot catch it. Rendered offline, the same sine wired into both operands
+/// makes `~mul` emit sin^2 and `~sub` silence, while `~abs` full-wave
+/// rectifies. Everything is scaled by the out's default gain.
 #[test]
 fn operator_rows_apply_the_right_operator() {
     // Render `~sinosc` wired into the first `sockets` inputs of the operator

@@ -8,11 +8,10 @@
 //! each is fed - see [`In`]) and its outputs. Adding a plyphon unit as a gantz
 //! node is one new row.
 //!
-//! The operator-selector units (`BinaryOpUGen`/`UnaryOpUGen`) get one row
-//! *per operator*: such a row's [`Special`] override carries the emitted
-//! plyphon unit name and operator-selecting `special_index`, while its
-//! [`unit`](UnitDesc::unit) stays a unique per-operator identity (`"Mul"`,
-//! `"TanH"`, ...).
+//! The operator-selector units `BinaryOpUGen` and `UnaryOpUGen` get one row
+//! per operator. Such a row carries a [`Special`] override naming the real
+//! emitted unit and its `special_index`, while its [`unit`](UnitDesc::unit)
+//! field holds a unique per-operator identity such as `"Mul"` or `"TanH"`.
 //!
 //! Excluded for now: buffer-reading units, variable-arity units (`EnvGen`,
 //! `Klang`), demand-rate, FFT/PV and IO/routing (covered by the bespoke
@@ -85,16 +84,16 @@ impl In {
     }
 }
 
-/// A [`UnitDesc`] emission override for scsynth's operator-selector units:
-/// the actual emitted plyphon unit name plus the operator-selecting
-/// `special_index`. A row carrying one keeps a unique per-operator
-/// [`unit`](UnitDesc::unit) identity (`"Mul"`, `"TanH"`, ...) that is *not* a
-/// plyphon registry name.
+/// A [`UnitDesc`] emission override for scsynth's operator-selector units.
+/// It names the real emitted plyphon unit and the `special_index` selecting
+/// the operator. A row carrying one keeps a unique per-operator
+/// [`unit`](UnitDesc::unit) identity such as `"Mul"` or `"TanH"`, which is
+/// never a plyphon registry name.
 #[derive(Clone, Copy, Debug)]
 pub struct Special {
-    /// The emitted plyphon unit name (`"BinaryOpUGen"`/`"UnaryOpUGen"`).
+    /// The emitted plyphon unit name, `"BinaryOpUGen"` or `"UnaryOpUGen"`.
     pub unit: &'static str,
-    /// scsynth's `mSpecialIndex`: the operator selector.
+    /// The operator selector, scsynth's `mSpecialIndex`.
     pub index: i16,
 }
 
@@ -105,13 +104,12 @@ pub struct Special {
 pub struct UnitDesc {
     /// The `.gantz` keyword and palette name, e.g. `"~lpf"`.
     pub keyword: &'static str,
-    /// The row's unique identity (the node's stored `unit` field), e.g.
-    /// `"LPF"`. Also the emitted
-    /// [`UnitSpec`](plyphon::synthdef::UnitSpec) name, unless
-    /// [`special`](Self::special) overrides it.
+    /// The row's unique identity and the node's stored `unit` field, e.g.
+    /// `"LPF"`. Unless [`special`](Self::special) overrides it, this is also
+    /// the emitted [`UnitSpec`](plyphon::synthdef::UnitSpec) name.
     pub unit: &'static str,
-    /// The emission override for operator-selector rows (`None` for rows
-    /// whose [`unit`](Self::unit) is itself the emitted plyphon name).
+    /// The emission override for operator-selector rows. `None` means
+    /// [`unit`](Self::unit) is itself the emitted plyphon name.
     pub special: Option<Special>,
     /// One entry per plyphon input, in plyphon input order.
     pub inputs: &'static [In],
@@ -122,8 +120,8 @@ pub struct UnitDesc {
 }
 
 impl UnitDesc {
-    /// The emitted plyphon unit name: the [`Special`] override's, or
-    /// [`unit`](Self::unit) itself.
+    /// The emitted plyphon unit name, from the [`Special`] override when
+    /// there is one and from [`unit`](Self::unit) otherwise.
     pub fn emitted_unit(&self) -> &'static str {
         match self.special {
             Some(Special { unit, .. }) => unit,
@@ -131,7 +129,7 @@ impl UnitDesc {
         }
     }
 
-    /// The emitted `special_index` (`0` for non-operator rows).
+    /// The emitted `special_index`. Non-operator rows emit `0`.
     pub fn special_index(&self) -> i16 {
         match self.special {
             Some(Special { index, .. }) => index,
@@ -251,10 +249,10 @@ const fn u(
     }
 }
 
-/// A binary-operator row: an emitted `BinaryOpUGen` selecting the operator
+/// A binary-operator row. It emits a `BinaryOpUGen` selecting the operator
 /// at the given `special_index`, with a pure signal input `a` and a hybrid
-/// param input `b`. A macro (not a `const fn`) so each row's input slice is
-/// a promotable literal.
+/// param input `b`. This is a macro rather than a `const fn` so that each
+/// row's input slice is a promotable literal.
 macro_rules! bop {
     ($kw:literal, $unit:literal, $ix:literal, $b:literal, $b_doc:literal, $out:literal, $doc:literal $(,)?) => {
         UnitDesc {
@@ -274,7 +272,7 @@ macro_rules! bop {
     };
 }
 
-/// A unary-operator row: an emitted `UnaryOpUGen` selecting the operator at
+/// A unary-operator row. It emits a `UnaryOpUGen` selecting the operator at
 /// the given `special_index`.
 macro_rules! uop {
     ($kw:literal, $unit:literal, $ix:literal, $out:literal, $doc:literal $(,)?) => {
@@ -1261,10 +1259,9 @@ pub static UNITS: &[UnitDesc] = &[
         "Fold (mirror) a signal into [lo, hi]",
     ),
     // --- Operators (BinaryOpUGen / UnaryOpUGen) ---
-    // One row per operator plyphon's dispatch tables support, indices per
-    // SC's `SpecialSelectorsOperatorsAndClasses.h` (see plyphon-unit's
-    // `binary_op.rs`/`unary_op.rs`). `b` defaults are 1 for
-    // multiplicative/range-like operators and 0 otherwise.
+    // One row per operator in plyphon's dispatch tables, which follow SC's
+    // operator indices. Defaults for `b` are 1 for multiplicative operators
+    // and 0 otherwise.
     bop!(
         "~add",
         "Add",

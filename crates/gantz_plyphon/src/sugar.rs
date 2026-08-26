@@ -518,8 +518,8 @@ mod tests {
 
     #[test]
     fn operator_keywords_round_trip() {
-        // Operator rows resolve through their pseudo `unit` identity like any
-        // other table row: bare keywords stay bare, and the hybrid `b`
+        // Operator rows resolve through their pseudo `unit` identity like
+        // any other table row. Bare keywords stay bare and the hybrid `b`
         // param's structural lag round-trips.
         let s = PlyphonSugar;
         let bare = s.read_bare("~tanh").expect("bare");
