@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.5.0...gantz_core-v0.6.0) - 2026-08-26
+
+### Added
+
+- *(gantz_core)* declare steel module deps on the expr node
+- *(gantz_core)* emit requires for node-declared steel modules
+- *(gantz_core)* add a lazily-compiled steel module seam to the VM
+
 ## [0.5.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.4.1...gantz_core-v0.5.0) - 2026-07-23
 
 ### Added

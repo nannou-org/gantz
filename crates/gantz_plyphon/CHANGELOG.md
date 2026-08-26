@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.2.0...gantz_plyphon-v0.3.0) - 2026-08-26
+
+### Added
+
+- *(gantz_plyphon)* dial the operator demos with number nodes
+- *(gantz_plyphon)* add ringmod and waveshape demos
+- *(gantz_plyphon)* operator rows for BinaryOpUGen/UnaryOpUGen
+- *(gantz_plyphon)* accept timestamped batches on control inputs
+
+### Fixed
+
+- *(bevy_gantz_plyphon)* bound timestamped param sends per frame
+
+### Other
+
+- *(gantz_plyphon)* simplify the operator row comments
+- *(gantz_plyphon)* pin operator behaviour and sugar round-trips
+- *(gantz_plyphon)* decode operator names from the table
+- *(gantz_pattern)* address review on naming and comments
+
 ## [0.2.0](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.1.1...gantz_plyphon-v0.2.0) - 2026-07-23
 
 ### Added

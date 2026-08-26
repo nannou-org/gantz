@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.6.0...gantz_egui-v0.6.1) - 2026-08-26
+
+### Added
+
+- *(gantz_core)* emit requires for node-declared steel modules
+- *(bevy_gantz_egui)* eagerly refresh gui marker state
+- *(gantz_egui)* add the marker-driven GuiDebug mode
+- *(gantz_egui)* render NamedRef instances via their gui markers
+- *(gantz_egui)* resolve ref-gui embeds in the ui_tree interpreter
+- *(gantz_egui)* resolve gui markers via the environment
+- *(gantz_egui)* add the Gui marker node
+- *(gantz_egui)* handle NestNodes in the demo
+- *(gantz_egui)* add nest button to the node context menu
+- *(gantz_egui)* add ops::nest_nodes
+- *(gantz_egui)* add NestNodes response payload
+
+### Other
+
+- *(gantz_egui)* build the gui-debug scratch engine via new_engine
+- *(gantz_egui)* rustfmt
+- *(gantz_egui)* cover nest_nodes
+
 ## [0.6.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.5.0...gantz_egui-v0.6.0) - 2026-07-23
 
 ### Added
