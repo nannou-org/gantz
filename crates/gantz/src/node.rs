@@ -2666,9 +2666,11 @@ mod tests {
         };
         let a = parse();
         let b = parse();
-        let ca_a = a.head(&name("demo-sine")).expect("demo-sine");
-        let ca_b = b.head(&name("demo-sine")).expect("demo-sine");
-        assert_eq!(ca_a, ca_b, "reset must resolve the startup commit address");
+        for demo in ["demo-sine", "demo-ringmod", "demo-waveshape"] {
+            let ca_a = a.head(&name(demo)).expect(demo);
+            let ca_b = b.head(&name(demo)).expect(demo);
+            assert_eq!(ca_a, ca_b, "reset must resolve the startup commit address");
+        }
     }
 
     /// A domain base source can reference another source's graphs: the parse

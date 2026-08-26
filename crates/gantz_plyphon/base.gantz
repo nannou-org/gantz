@@ -1,12 +1,46 @@
+(graph demo-ringmod
+  (~sinosc0 ~sinosc)
+  (~sinosc1 ~sinosc)
+  (~mul2 ~mul)
+  (~out3 ~out)
+  (-> ~sinosc0 ~mul2)
+  (-> ~sinosc1 (~mul2 1))
+  (-> ~mul2 ~out3))
+
 (graph demo-sine
   (~sinosc0 ~sinosc)
   (~out1 ~out)
   (-> ~sinosc0 ~out1))
 
+(graph demo-waveshape
+  (~sinosc0 ~sinosc)
+  (~mul1 ~mul)
+  (~tanh2 ~tanh)
+  (~out3 ~out)
+  (-> ~sinosc0 ~mul1)
+  (-> ~mul1 ~tanh2)
+  (-> ~tanh2 ~out3))
+
 (descriptions
-  (demo-sine "A sine wave into the audio output - the simplest DSP graph."))
+  (demo-ringmod "Two sines multiplied. Dial one freq right down for tremolo, or detune it for ring modulation.")
+  (demo-sine "A sine wave into the audio output - the simplest DSP graph.")
+  (demo-waveshape "A sine into a tanh waveshaper. Raise the ~mul b param for drive."))
+
+(layout demo-ringmod
+  (~mul2 0 80)
+  (~out3 0 160)
+  (~sinosc0 -70 0)
+  (~sinosc1 70 0)
+  (camera 0 80 1))
 
 (layout demo-sine
   (~out1 0 80)
   (~sinosc0 0 0)
   (camera 0 40 1))
+
+(layout demo-waveshape
+  (~mul1 0 80)
+  (~out3 0 240)
+  (~sinosc0 0 0)
+  (~tanh2 0 160)
+  (camera 0 120 1))
