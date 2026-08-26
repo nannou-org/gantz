@@ -134,7 +134,7 @@ fn slot(cfg: &StyleConfig, theme: egui::Theme) -> &Option<egui::Style> {
 /// `Arc` identity, so styles that are otherwise identical - a deserialized one
 /// against a fresh default, say - never compare equal. The formatter is neither
 /// editable nor serialized, so normalise it out of the comparison.
-fn eq_style(a: &egui::Style, b: &egui::Style) -> bool {
+pub(crate) fn eq_style(a: &egui::Style, b: &egui::Style) -> bool {
     let mut b = b.clone();
     b.number_formatter = a.number_formatter.clone();
     *a == b

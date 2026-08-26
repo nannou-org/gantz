@@ -13,7 +13,7 @@
 use super::gantz::GridConfig;
 use crate::{
     StyleConfig,
-    style::{reset_theme, set_style_of, style_of},
+    style::{eq_style, reset_theme, set_style_of, style_of},
 };
 
 /// Response from [`style_config`].
@@ -76,6 +76,12 @@ pub fn style_config(
     // has hand-reverted every value.
     let mut edited = style_of(style, edit);
     edited.ui(ui);
+    // egui's "Reset style" button at the bottom of the tree resets to
+    // `Style::default()`, whose visuals are dark whichever theme is edited.
+    // Treat it as a reset to the edited theme's own default.
+    if eq_style(&edited, &egui::Style::default()) {
+        edited = edit.default_style();
+    }
     set_style_of(style, edit, edited);
     ui.separator();
 
