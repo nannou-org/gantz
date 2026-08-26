@@ -1,12 +1,59 @@
+(graph demo-ringmod
+  (comment0 (comment "Ring modulation.\nDial the two freqs." 130 30))
+  (number1 (number #:min 220))
+  (number2 (number #:min 2))
+  (~sinosc3 ~sinosc)
+  (~sinosc4 ~sinosc)
+  (~mul5 ~mul)
+  (~out6 ~out)
+  (-> number1 ~sinosc3)
+  (-> number2 ~sinosc4)
+  (-> ~sinosc3 ~mul5)
+  (-> ~sinosc4 (~mul5 1))
+  (-> ~mul5 ~out6))
+
 (graph demo-sine
   (~sinosc0 ~sinosc)
   (~out1 ~out)
   (-> ~sinosc0 ~out1))
 
+(graph demo-waveshape
+  (comment0 (comment "Waveshaping.\nDial the drive." 100 30))
+  (number1 (number #:min 1))
+  (~sinosc2 ~sinosc)
+  (~mul3 ~mul)
+  (~tanh4 ~tanh)
+  (~out5 ~out)
+  (-> number1 (~mul3 1))
+  (-> ~sinosc2 ~mul3)
+  (-> ~mul3 ~tanh4)
+  (-> ~tanh4 ~out5))
+
 (descriptions
-  (demo-sine "A sine wave into the audio output - the simplest DSP graph."))
+  (demo-ringmod "Two sines multiplied. Dial the numbers to sweep from tremolo to ring modulation.")
+  (demo-sine "A sine wave into the audio output - the simplest DSP graph.")
+  (demo-waveshape "A sine into a tanh waveshaper. Dial the number to raise the drive."))
+
+(layout demo-ringmod
+  (comment0 -240 0)
+  (number1 -70 0)
+  (number2 70 0)
+  (~mul5 0 140)
+  (~out6 0 220)
+  (~sinosc3 -70 60)
+  (~sinosc4 70 60)
+  (camera 0 110 1))
 
 (layout demo-sine
   (~out1 0 80)
   (~sinosc0 0 0)
   (camera 0 40 1))
+
+(layout demo-waveshape
+  (comment0 -200 0)
+  (number1 110 20)
+  (~mul3 0 80)
+  (~out5 0 240)
+  (~sinosc2 0 0)
+  (~tanh4 0 160)
+  (camera 0 120 1))

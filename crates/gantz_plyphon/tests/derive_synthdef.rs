@@ -1897,6 +1897,83 @@ fn unit_hybrid_socket_takes_the_wire() {
     );
 }
 
+/// Operator rows must select the right operator, not merely a supported one.
+/// A transposed `special_index` still derives and builds, so the sweep alone
+/// cannot catch it. Rendered offline, the same sine wired into both operands
+/// makes `~mul` emit sin^2 and `~sub` silence, while `~abs` full-wave
+/// rectifies. Everything is scaled by the out's default gain.
+#[test]
+fn operator_rows_apply_the_right_operator() {
+    // Render `~sinosc` wired into the first `sockets` inputs of the operator
+    // row identified by `unit`, through `~out`.
+    let render_op = |unit: &str, sockets: usize| -> Vec<f32> {
+        let mut g = Graph::<N>::default();
+        let s = g.add_node(sinosc());
+        let n = g.add_node(N::Unit(UnitNode::from_unit(unit).expect("operator row")));
+        let o = g.add_node(N::Out(Out::default()));
+        for socket in 0..sockets {
+            g.add_edge(s, n, Edge::new(0.into(), (socket as u16).into()));
+        }
+        g.add_edge(n, o, Edge::new(0.into(), 0.into()));
+        let derived = derive_synthdef(&g, 1, "op").expect("derive");
+
+        let (mut controller, _nrt, mut world) = engine(Options {
+            sample_rate: SR as f64,
+            output_channels: 1,
+            ..Options::default()
+        });
+        controller.add_synthdef(derived.def);
+        let node = controller
+            .synth_new("op", ROOT_GROUP_ID, AddAction::Tail)
+            .expect("synth_new");
+        {
+            let mut backend = Embedded::new(&mut controller);
+            for gain in &derived.gains {
+                backend.set_control(node, gain.index, 1.0).expect("fade in");
+            }
+        }
+        let a = render(&mut world, SR as usize / 4);
+        // Analyse past the fade-in ramp.
+        a[a.len() / 2..].to_vec()
+    };
+    let mean = |xs: &[f32]| xs.iter().sum::<f32>() / xs.len() as f32;
+    let gain = Out::DEFAULT_GAIN;
+
+    let sq = render_op("Mul", 2);
+    assert!(
+        sq.iter().all(|&s| s >= -1e-3),
+        "sin * sin must be non-negative"
+    );
+    let m = mean(&sq);
+    assert!(
+        (m - 0.5 * gain).abs() < 0.1 * gain,
+        "sin^2 mean must be gain/2, got {m}",
+    );
+
+    let zero = render_op("Sub", 2);
+    assert!(
+        zero.iter().all(|&s| s.abs() < 1e-4),
+        "sin - sin must be silence",
+    );
+
+    let rect = render_op("Abs", 1);
+    assert!(
+        rect.iter().all(|&s| s >= -1e-3),
+        "|sin| must be non-negative"
+    );
+    let peak = rect.iter().fold(0.0f32, |p, &s| p.max(s));
+    assert!(
+        peak > 0.9 * gain && peak <= gain * 1.01,
+        "|sin| peak must reach the gain, got {peak}",
+    );
+    let m = mean(&rect);
+    let expected = gain * 2.0 / std::f32::consts::PI;
+    assert!(
+        (m - expected).abs() < 0.1 * gain,
+        "|sin| mean must be gain * 2/pi, got {m}",
+    );
+}
+
 /// Init-only values are baked into the def as constants: changing one changes
 /// the structural sig (respawn), as does a param smoothing lag.
 #[test]

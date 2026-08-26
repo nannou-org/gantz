@@ -359,12 +359,13 @@ impl NodeDsp for UnitNode {
                         Feed::Const(v) => InputRef::Constant(*v),
                     })
                     .collect();
-                b.push_unit(UnitSpec::new(
-                    desc.unit,
-                    self.rate.to_plyphon(),
-                    ins,
-                    desc.outputs.len(),
-                ))
+                b.push_unit(UnitSpec {
+                    name: desc.emitted_unit().to_string(),
+                    rate: self.rate.to_plyphon(),
+                    inputs: ins,
+                    num_outputs: desc.outputs.len(),
+                    special_index: desc.special_index(),
+                })
             })
             .collect();
         (0..desc.outputs.len())
