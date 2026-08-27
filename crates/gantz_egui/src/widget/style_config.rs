@@ -32,7 +32,7 @@ pub fn style_config(
     grid: &mut GridConfig,
     ui: &mut egui::Ui,
 ) -> StyleConfigResponse {
-    ui.label("Theme:");
+    ui.strong("Theme");
     style.theme.radio_buttons(ui);
     ui.separator();
 
@@ -44,7 +44,7 @@ pub fn style_config(
         egui::ThemePreference::System => ui.ctx().theme(),
     };
 
-    ui.label("Style:");
+    ui.strong("Style");
     let mut res = StyleConfigResponse::default();
     let mut reset = false;
     ui.horizontal(|ui| {
@@ -79,7 +79,7 @@ pub fn style_config(
     set_style_of(style, edit, edited);
     ui.separator();
 
-    ui.label("Grid:");
+    ui.strong("Grid");
     ui.checkbox(&mut grid.show, "Show grid")
         .on_hover_text("Draw the dot grid behind the graph.");
     ui.horizontal(|ui| {

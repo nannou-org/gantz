@@ -37,7 +37,7 @@ pub fn global_config(
     let mut changed_config = None;
     let mut changed_validate = None;
     if compile_config.is_some() || validate_change_tracking.is_some() {
-        ui.label("Compile:");
+        ui.strong("Compile");
     }
     if let Some(mut cfg) = compile_config {
         let mut changed = false;
@@ -83,7 +83,7 @@ pub fn global_config(
 
     // Auto-layout parameters (the non-flow `egui_graph` layout params; flow is
     // per-head, in the Graph Config pane). Applied on the next auto-layout.
-    ui.label("Layout:");
+    ui.strong("Layout");
     let gap = |ui: &mut egui::Ui, label: &str, value: &mut f32, hover: &str| {
         ui.horizontal(|ui| {
             ui.add(
@@ -124,7 +124,7 @@ pub fn global_config(
 
     // Drag snapping. Point snaps to unit points (effectively free); Grid snaps
     // to a fraction of the dot grid (the grid step is set in Style).
-    ui.label("Snap:");
+    ui.strong("Snap");
     ui.horizontal(|ui| {
         ui.radio_value(&mut snap.mode, SnapMode::Point, "Point")
             .on_hover_text("Snap to the nearest unit point - effectively free movement.");
@@ -149,7 +149,7 @@ pub fn global_config(
 
     // Drag-time snap-align: snap a dragged node to its neighbours' edges /
     // centres and draw guides.
-    ui.label("Snap-align:");
+    ui.strong("Snap-align");
     ui.checkbox(&mut align.enabled, "Align to neighbours")
         .on_hover_text(
             "While dragging, align a node to its neighbours' edges or centres \
@@ -166,7 +166,7 @@ pub fn global_config(
     // Maintenance: a recovery tool to drop egui's persisted UI memory if it
     // accumulates stale state (e.g. tile-layout snapshots from old builds),
     // without touching the graph registry.
-    ui.label("Maintenance:");
+    ui.strong("Maintenance");
     if ui
         .button("Clear egui memory")
         .on_hover_text(
