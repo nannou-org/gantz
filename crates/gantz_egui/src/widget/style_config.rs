@@ -3,8 +3,8 @@
 //!
 //! The theme preference and the per-theme [`egui::Style`] live in a
 //! [`StyleConfig`] on [`GantzState`][super::GantzState] (see [`crate::style`]);
-//! this only edits it, and [`crate::style::apply`] does the applying. Either
-//! theme's style can be edited, whichever one is active.
+//! this only edits it, and [`crate::style::apply`] does the applying. The
+//! editor edits the selected theme's style.
 //!
 //! Also hosts the dot-grid controls (show/hide and base step). The grid step
 //! feeds snap-to-grid (see `Global > Snap`), so it stays editable even when the
@@ -36,23 +36,18 @@ pub fn style_config(
     style.theme.radio_buttons(ui);
     ui.separator();
 
-    // Which theme's style the editor below edits - not necessarily the active
-    // one, so a theme can be styled before switching to it.
-    let edit_id = ui.id().with("edit_theme");
-    let mut edit = ui
-        .data(|d| d.get_temp::<egui::Theme>(edit_id))
-        .unwrap_or_else(|| ui.ctx().theme());
+    // The editor below edits the selected theme's style. `ctx.theme()` only
+    // reflects a preference change on the next frame, so resolve directly.
+    let edit = match style.theme {
+        egui::ThemePreference::Dark => egui::Theme::Dark,
+        egui::ThemePreference::Light => egui::Theme::Light,
+        egui::ThemePreference::System => ui.ctx().theme(),
+    };
 
     ui.label("Style:");
     let mut res = StyleConfigResponse::default();
     let mut reset = false;
     ui.horizontal(|ui| {
-        ui.radio_value(&mut edit, egui::Theme::Dark, "Dark");
-        ui.radio_value(&mut edit, egui::Theme::Light, "Light")
-            .on_hover_text(
-                "Which theme's style the controls below edit. Either can be \
-                 edited, whichever theme is active.",
-            );
         reset = ui
             .button("Reset")
             .on_hover_text("Discard this theme's edits, restoring egui's default style.")
@@ -66,7 +61,6 @@ pub fn style_config(
             .on_hover_text("Load both themes' styles from an exported file.")
             .clicked();
     });
-    ui.data_mut(|d| d.insert_temp(edit_id, edit));
     if reset {
         reset_theme(style, edit);
     }
