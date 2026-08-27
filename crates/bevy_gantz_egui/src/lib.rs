@@ -131,7 +131,9 @@ impl Plugin for GantzEguiPlugin {
             .register_response_with::<gantz_egui::OpenHead>(dispatch_open_head)
             .register_response_with::<gantz_egui::ReplaceHead>(dispatch_replace_head)
             .register_response_with::<gantz_egui::ExportHead>(dispatch_export_head)
-            .register_response_with::<gantz_egui::ExportAllNamed>(dispatch_export_all_named);
+            .register_response_with::<gantz_egui::ExportAllNamed>(dispatch_export_all_named)
+            .register_response_with::<gantz_egui::ExportStyle>(dispatch_export_style)
+            .register_response_with::<gantz_egui::ImportStyle>(dispatch_import_style);
 
         app.insert_resource(BaseImmutable(self.base_immutable))
             .init_resource::<GraphCache>()
@@ -176,6 +178,8 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(on_redo)
             .add_observer(on_export_head)
             .add_observer(on_export_all_named)
+            .add_observer(on_export_style)
+            .add_observer(on_import_style)
             .add_observer(on_import_file)
             .add_observer(on_reset_base_graph)
             // Systems. `drive_update_bangs` evaluates head VMs, so it must not
@@ -217,6 +221,7 @@ impl Plugin for GantzEguiPlugin {
                         .after(persist_camera_and_seed)
                         .run_if(on_message::<bevy_gantz::debounced_input::DebouncedInputEvent>),
                     poll_import_task,
+                    poll_style_import_task,
                 ),
             )
             .add_systems(First, clear_ui_providers)
@@ -347,6 +352,10 @@ pub struct HostNativePaneWindows;
 #[derive(Resource)]
 pub struct ImportTask(bevy_tasks::Task<Option<Vec<u8>>>);
 
+/// In-flight style import file dialog task.
+#[derive(Resource)]
+pub struct StyleImportTask(bevy_tasks::Task<Option<Vec<u8>>>);
+
 /// Settings subtabs contributed by domains (see
 /// [`SettingsTab`][gantz_egui::widget::SettingsTab]).
 ///
@@ -419,6 +428,14 @@ pub struct ExportHeadEvent {
 /// Event emitted when the user requests exporting all named graphs.
 #[derive(Event)]
 pub struct ExportAllNamedEvent;
+
+/// Event emitted when the user requests exporting the GUI style.
+#[derive(Event)]
+pub struct ExportStyleEvent;
+
+/// Event emitted when the user requests importing a GUI style.
+#[derive(Event)]
+pub struct ImportStyleEvent;
 
 /// Event emitted when a `.gantz` file is dropped onto a pane.
 #[derive(Event)]
@@ -1756,6 +1773,61 @@ pub fn on_export_all_named(
         .detach();
 }
 
+/// Handle style export events.
+///
+/// Writes the GUI's [`gantz_egui::StyleConfig`] to a `.ron` file chosen via an
+/// `rfd` file dialog.
+pub fn on_export_style(_trigger: On<ExportStyleEvent>, gui_state: Res<GuiState>) {
+    let text = match gantz_egui::style::to_ron(&gui_state.style) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("ExportStyle: failed to serialize: {e}");
+            return;
+        }
+    };
+
+    let ext = gantz_egui::style::FILE_EXTENSION;
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title("Export Style")
+        .set_file_name(&format!("gantz-style.{ext}"))
+        .add_filter("Gantz Style", &[ext]);
+    bevy_tasks::AsyncComputeTaskPool::get()
+        .spawn(async move {
+            if let Some(handle) = dialog.save_file().await {
+                if let Err(e) = handle.write(text.as_bytes()).await {
+                    log::error!("ExportStyle: failed to write: {e}");
+                } else {
+                    log::info!("Exported style to {}", handle.file_name());
+                }
+            }
+        })
+        .detach();
+}
+
+/// Handle style import events by opening a file dialog.
+///
+/// The chosen file's bytes return to the main world via [`StyleImportTask`],
+/// polled by `poll_style_import_task`.
+pub fn on_import_style(
+    _trigger: On<ImportStyleEvent>,
+    task: Option<Res<StyleImportTask>>,
+    mut cmds: Commands,
+) {
+    // Only one dialog at a time.
+    if task.is_some() {
+        return;
+    }
+    let ext = gantz_egui::style::FILE_EXTENSION;
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title("Import Style")
+        .add_filter("Gantz Style", &[ext]);
+    let task = bevy_tasks::AsyncComputeTaskPool::get().spawn(async move {
+        let handle = dialog.pick_file().await?;
+        Some(handle.read().await)
+    });
+    cmds.insert_resource(StyleImportTask(task));
+}
+
 /// Handle import file events (dropped `.gantz` files).
 ///
 /// Deserializes the export, optionally computes root names, merges into the
@@ -1958,6 +2030,32 @@ fn poll_import_task(task: Option<ResMut<ImportTask>>, mut cmds: Commands) {
                 open_head: true,
             });
         }
+    }
+}
+
+/// Poll the in-flight style import file dialog task.
+///
+/// When the task completes with file bytes, replaces the GUI's style config;
+/// `gantz_egui::style::apply` picks it up on the next pass. The resource is
+/// removed regardless of whether a file was selected.
+fn poll_style_import_task(
+    task: Option<ResMut<StyleImportTask>>,
+    mut gui_state: ResMut<GuiState>,
+    mut cmds: Commands,
+) {
+    let Some(mut task) = task else { return };
+    let Some(result) = bevy_tasks::futures::check_ready(&mut task.0) else {
+        return;
+    };
+    cmds.remove_resource::<StyleImportTask>();
+    let Some(bytes) = result else { return };
+    match std::str::from_utf8(&bytes).map(gantz_egui::style::from_ron) {
+        Ok(Ok(style)) => {
+            gui_state.style = style;
+            log::info!("Imported style");
+        }
+        Ok(Err(e)) => log::error!("ImportStyle: failed to parse: {e}"),
+        Err(e) => log::error!("ImportStyle: invalid UTF-8: {e}"),
     }
 }
 
@@ -2448,6 +2546,18 @@ fn dispatch_export_head(entity: Option<Entity>, payload: DynResponse, cmds: &mut
 fn dispatch_export_all_named(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
     let gantz_egui::ExportAllNamed = downcast_payload(payload);
     cmds.trigger(ExportAllNamedEvent);
+}
+
+/// Dispatch a [`gantz_egui::ExportStyle`] payload as an [`ExportStyleEvent`].
+fn dispatch_export_style(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
+    let gantz_egui::ExportStyle = downcast_payload(payload);
+    cmds.trigger(ExportStyleEvent);
+}
+
+/// Dispatch a [`gantz_egui::ImportStyle`] payload as an [`ImportStyleEvent`].
+fn dispatch_import_style(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
+    let gantz_egui::ImportStyle = downcast_payload(payload);
+    cmds.trigger(ImportStyleEvent);
 }
 
 /// Trigger the appropriate event to move a head to a target commit.

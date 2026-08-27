@@ -29,7 +29,7 @@ impl gantz_egui::widget::SettingsTab for DspSettingsTab {
     fn ui(&mut self, ui: &mut egui::Ui) -> Responses {
         let mut responses = Responses::default();
 
-        ui.label("Status:");
+        ui.strong("Status");
         if self.status.present {
             egui::Grid::new("dsp_status_grid")
                 .num_columns(2)
@@ -96,7 +96,7 @@ impl gantz_egui::widget::SettingsTab for DspSettingsTab {
         // head's in full).
         if !self.heads.is_empty() {
             ui.separator();
-            ui.label("Graphs:");
+            ui.strong("Graphs");
             egui::Grid::new("dsp_heads_grid")
                 .num_columns(2)
                 .spacing([12.0, 4.0])

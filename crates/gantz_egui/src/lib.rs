@@ -22,6 +22,7 @@ pub mod ops;
 pub mod reg;
 pub mod response;
 pub mod section;
+pub mod style;
 pub mod sugar;
 pub mod sync;
 #[cfg(test)]
@@ -50,6 +51,7 @@ pub use response::{
     ContextMenuResponse, DynResponse, InspectorRowsResponse, InspectorUiResponse, NodeUiResponse,
     NodeViewResponse, ResponseData, Responses,
 };
+pub use style::StyleConfig;
 pub use sugar::EguiSugar;
 pub use view::{Camera, SceneView};
 
@@ -498,6 +500,16 @@ pub struct ExportAllNamed;
 /// file.
 #[derive(Clone, Copy, Debug)]
 pub struct ExportHead;
+
+/// Export the GUI's [`StyleConfig`] to a file (see [`style`]). Emitted without
+/// an associated head.
+#[derive(Clone, Copy, Debug)]
+pub struct ExportStyle;
+
+/// Replace the GUI's [`StyleConfig`] with one loaded from a file (see
+/// [`style`]). Emitted without an associated head.
+#[derive(Clone, Copy, Debug)]
+pub struct ImportStyle;
 
 /// Insert an inspect node on the given edge at the given position.
 #[derive(Clone, Debug)]
