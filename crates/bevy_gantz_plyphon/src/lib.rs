@@ -21,10 +21,13 @@
 //! and plyphon sums all synths on that bus.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use bevy_app::{App, Plugin, PreUpdate, Update};
 use bevy_ecs::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use bevy_ecs::system::NonSend;
 use bevy_ecs::system::NonSendMut;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
@@ -233,6 +236,9 @@ impl Plugin for PlyphonPlugin {
         // evaluations have flushed, so the control values they queue are visible to
         // the param drain below in the same frame.
         app.add_systems(Update, drive_synths.after(VmSet).after(EntrypointSet));
+        // Keep the web audio callback's epoch anchor fresh.
+        #[cfg(target_arch = "wasm32")]
+        app.add_systems(Update, refresh_clock_offset.before(drive_synths));
     }
 
     // Engine construction lives in `finish` rather than `build`: it reads the
@@ -289,6 +295,13 @@ struct DspEngine {
     sample_rate: f64,
     /// The cpal output stream; held to keep audio running, paused/played on mute.
     stream: cpal::Stream,
+    /// The audio callback's epoch anchor on the web, as `f64` bits: [`EvalEpoch`]
+    /// seconds minus the stream's `AudioContext.currentTime` seconds at the same
+    /// moment. The callback adds it to its context-time playback instant to feed
+    /// [`World::fill_at`] an epoch time. Refreshed each frame by
+    /// [`refresh_clock_offset`], which also absorbs context suspends.
+    #[cfg(target_arch = "wasm32")]
+    clock_offset: std::sync::Arc<AtomicU64>,
 }
 
 /// The audio-buffer blob entries: content address -> canonical encoded PCM
@@ -1578,6 +1591,29 @@ fn release_def(
     }
 }
 
+/// Refresh the web audio callback's epoch anchor ([`DspEngine::clock_offset`]):
+/// [`EvalEpoch`] seconds minus the stream's `AudioContext.currentTime` seconds.
+///
+/// Both clocks advance in real time while the context runs, so the offset is
+/// stable no matter when within a frame it is sampled. While the context is
+/// suspended its `currentTime` freezes and the refreshed offset grows to
+/// match, so the callback stays anchored across the autoplay gate before the
+/// first user gesture, the mute toggle's pause, and any other stall.
+#[cfg(target_arch = "wasm32")]
+fn refresh_clock_offset(dsp: Option<NonSend<DspEngine>>, epoch: Res<EvalEpoch>) {
+    let Some(dsp) = dsp else {
+        return;
+    };
+    let ctx_secs = dsp
+        .stream
+        .now()
+        .duration_since(cpal::StreamInstant::ZERO)
+        .as_secs_f64();
+    let offset = epoch.now_secs() - ctx_secs;
+    dsp.clock_offset
+        .store(offset.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Whether this call is running on cpal's AudioWorklet audio thread.
 ///
 /// cpal's AudioWorklet backend re-instantiates the wasm module on the audio
@@ -1643,7 +1679,20 @@ fn build_dsp_engine(epoch: EvalEpoch, unit_registrars: &[UnitRegistrar]) -> Opti
         register(controller.registry_mut());
     }
 
-    let stream = build_stream(&device, config, channels, sample_format, world, epoch)?;
+    // Seed the web callback's epoch anchor. A fresh context's `currentTime` is
+    // 0.0, so the offset starts as the epoch's elapsed seconds. The seed cannot
+    // race the first callback because the worklet's async setup only runs once
+    // this synchronous startup code returns to the JS event loop.
+    let clock_offset = std::sync::Arc::new(AtomicU64::new(epoch.now_secs().to_bits()));
+    let stream = build_stream(
+        &device,
+        config,
+        channels,
+        sample_format,
+        world,
+        epoch,
+        clock_offset.clone(),
+    )?;
     stream.play().ok()?;
 
     Some(DspEngine {
@@ -1655,6 +1704,8 @@ fn build_dsp_engine(epoch: EvalEpoch, unit_registrars: &[UnitRegistrar]) -> Opti
         device: device_name,
         sample_rate,
         stream,
+        #[cfg(target_arch = "wasm32")]
+        clock_offset,
     })
 }
 
@@ -1667,11 +1718,18 @@ fn build_stream(
     format: cpal::SampleFormat,
     world: World,
     epoch: EvalEpoch,
+    clock_offset: std::sync::Arc<AtomicU64>,
 ) -> Option<cpal::Stream> {
     match format {
-        cpal::SampleFormat::F32 => build_typed::<f32>(device, config, channels, world, epoch),
-        cpal::SampleFormat::I16 => build_typed::<i16>(device, config, channels, world, epoch),
-        cpal::SampleFormat::U16 => build_typed::<u16>(device, config, channels, world, epoch),
+        cpal::SampleFormat::F32 => {
+            build_typed::<f32>(device, config, channels, world, epoch, clock_offset)
+        }
+        cpal::SampleFormat::I16 => {
+            build_typed::<i16>(device, config, channels, world, epoch, clock_offset)
+        }
+        cpal::SampleFormat::U16 => {
+            build_typed::<u16>(device, config, channels, world, epoch, clock_offset)
+        }
         other => {
             log::error!("bevy_gantz_plyphon: unsupported sample format {other:?}");
             None
@@ -1687,6 +1745,7 @@ fn build_typed<T>(
     channels: usize,
     mut world: World,
     epoch: EvalEpoch,
+    clock_offset: std::sync::Arc<AtomicU64>,
 ) -> Option<cpal::Stream>
 where
     T: SizedSample + FromSample<f32>,
@@ -1699,16 +1758,15 @@ where
             move |output: &mut [T], info: &cpal::OutputCallbackInfo| {
                 scratch.clear();
                 scratch.resize(output.len(), 0.0);
-                // Natively, anchor the engine clock to this buffer's heard-time on the
-                // shared monotonic epoch (`now` + the callback-to-playback latency), so
-                // scheduled control updates resolve to the right sample even as the audio
-                // device clock drifts against the epoch. On the web there is no clock on
-                // cpal's AudioWorklet thread (no `performance`/`window` in an
-                // `AudioWorkletGlobalScope`), so the engine clock free-runs at the nominal
-                // rate instead - control times are then relative to engine start, matching
-                // plyphon's web audio path.
+                // Anchor the engine clock to the time this buffer is heard, on the
+                // shared monotonic epoch. Scheduled control updates carry epoch
+                // times, so they resolve to the right sample even as the audio
+                // clock drifts against the epoch.
                 #[cfg(not(target_arch = "wasm32"))]
                 {
+                    // The epoch is readable on the audio thread, so heard-time is
+                    // now plus the callback-to-playback latency.
+                    let _ = &clock_offset;
                     let ts = info.timestamp();
                     let ahead = ts.playback.duration_since(ts.callback).as_secs_f64();
                     let buffer_time = osc(epoch.now_secs() + ahead);
@@ -1716,8 +1774,20 @@ where
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
-                    let _ = (info, &epoch);
-                    world.fill(&mut scratch, channels);
+                    // No epoch clock here. An `AudioWorkletGlobalScope` has no
+                    // `performance`. cpal stamps the callback with times on the
+                    // `AudioContext.currentTime` timeline instead, so heard-time
+                    // is the playback instant shifted onto the epoch by the
+                    // main-thread-refreshed `clock_offset`.
+                    let _ = &epoch;
+                    let playback_secs = info
+                        .timestamp()
+                        .playback
+                        .duration_since(cpal::StreamInstant::ZERO)
+                        .as_secs_f64();
+                    let offset =
+                        f64::from_bits(clock_offset.load(std::sync::atomic::Ordering::Relaxed));
+                    world.fill_at(&mut scratch, channels, osc(playback_secs + offset));
                 }
                 for (o, s) in output.iter_mut().zip(scratch.iter()) {
                     *o = T::from_sample(*s);
