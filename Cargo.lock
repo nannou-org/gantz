@@ -1012,7 +1012,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_gantz_collab"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
@@ -1031,7 +1031,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_gantz_egui"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64",
  "bevy_app",
@@ -1061,7 +1061,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_gantz_plyphon"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bevy",
  "bevy_app",
@@ -3781,7 +3781,7 @@ dependencies = [
 
 [[package]]
 name = "gantz"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "async-channel",
  "bevy",
@@ -3871,7 +3871,7 @@ dependencies = [
 
 [[package]]
 name = "gantz_egui"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "dyn-clone",
@@ -3937,7 +3937,7 @@ dependencies = [
 
 [[package]]
 name = "gantz_pattern"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "egui",
  "egui_graph",
@@ -3953,7 +3953,7 @@ dependencies = [
 
 [[package]]
 name = "gantz_plyphon"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "egui",
  "egui_extras",

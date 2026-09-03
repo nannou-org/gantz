@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.6.1...gantz_egui-v0.7.0) - 2026-09-03
+
+### Added
+
+- *(gantz_egui)* export/import the style from the demo host
+- *(gantz_egui)* egui style editor in Settings -> Style
+- *(gantz_egui)* add StyleConfig and per-context style application
+
+### Fixed
+
+- *(gantz_egui)* edit the selected theme's style directly
+- *(gantz_egui)* make egui's "Reset style" button theme-aware
+
+### Other
+
+- *(gantz_egui)* strong headings without colons in settings
+- *(gantz_egui)* cover style application against a real context
+
 ## [0.6.1](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.6.0...gantz_egui-v0.6.1) - 2026-08-26
 
 ### Added

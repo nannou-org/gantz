@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.3.0...gantz_plyphon-v0.3.1) - 2026-09-03
+
+### Other
+
+- *(gantz_plyphon)* strong headings without colons in DSP settings
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.2.0...gantz_plyphon-v0.3.0) - 2026-08-26
 
 ### Added

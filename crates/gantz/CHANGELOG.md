@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/nannou-org/gantz/compare/gantz-v0.3.1...gantz-v0.3.2) - 2026-09-03
+
+### Other
+
+- updated the following local packages: gantz_egui, bevy_gantz_egui, gantz_plyphon, bevy_gantz_plyphon, bevy_gantz_collab, gantz_pattern
+
 ## [0.3.1](https://github.com/nannou-org/gantz/compare/gantz-v0.3.0...gantz-v0.3.1) - 2026-08-26
 
 ### Added

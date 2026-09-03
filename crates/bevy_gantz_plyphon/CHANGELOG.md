@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.2.1...bevy_gantz_plyphon-v0.2.2) - 2026-09-03
+
+### Fixed
+
+- *(bevy_gantz_plyphon)* anchor web audio clock to the eval epoch
+
 ## [0.2.1](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.2.0...bevy_gantz_plyphon-v0.2.1) - 2026-08-26
 
 ### Fixed
