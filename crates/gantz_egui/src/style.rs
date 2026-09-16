@@ -1,14 +1,14 @@
-//! Global egui appearance: the theme preference and the per-theme
-//! [`egui::Style`], edited in `Settings -> Style`.
+//! Global egui appearance. The theme preference and the per-theme
+//! [`egui::Style`], edited in the Style tab of the settings panel.
 //!
-//! egui omits its own styles when serializing its `Options` (`dark_style` and
-//! `light_style` are `#[serde(skip)]`), so gantz owns them: [`StyleConfig`]
-//! rides [`GantzState`][crate::widget::GantzState] - which both hosts already
-//! persist - and is applied to a context by [`apply`]. Owning the preference
-//! also keeps pop-out pane windows in step, as each is a separate
+//! egui omits its own styles when serializing its `Options`, since
+//! `dark_style` and `light_style` are `#[serde(skip)]`. So gantz owns them.
+//! [`StyleConfig`] rides [`GantzState`][crate::widget::GantzState], which
+//! both hosts already persist. [`apply`] applies it to a context. Owning the
+//! preference also keeps pop-out pane windows in step, as each is a separate
 //! `egui::Context` with its own options.
 
-/// File extension for exported style files (without the leading dot).
+/// File extension for exported style files, without the leading dot.
 pub const FILE_EXTENSION: &str = "ron";
 
 /// The id under which a context tracks the config last applied to it.
@@ -56,8 +56,8 @@ impl PartialEq for StyleConfig {
 
 /// gantz's default theme preference.
 ///
-/// Dark rather than egui's `System`: gantz's remaining hand-picked colours are
-/// dark-tuned (#203), and `bevy_egui` reports no system theme, so following the
+/// Dark rather than egui's `System`. gantz's remaining hand-picked colours are
+/// dark-tuned, see #203. `bevy_egui` reports no system theme, so following the
 /// system would leave the app and the `gantz_egui` demo disagreeing.
 fn default_theme() -> egui::ThemePreference {
     egui::ThemePreference::Dark
@@ -93,9 +93,9 @@ pub fn reset_theme(cfg: &mut StyleConfig, theme: egui::Theme) {
 /// Apply `cfg` to `ctx`, unless it is already what was last applied to it.
 ///
 /// Cheap enough to call every frame. The last-applied config is tracked in the
-/// context's *temporary* data, so a context without one - a freshly spawned
-/// pop-out window, or the primary context after a wholesale `Memory` restore -
-/// is brought back into line on its next frame.
+/// context's temporary data. A context without one is brought back into line
+/// on its next frame. A freshly spawned pop-out window is one example. The
+/// primary context after a wholesale `Memory` restore is another.
 pub fn apply(ctx: &egui::Context, cfg: &StyleConfig) {
     let id = egui::Id::new(APPLIED_ID);
     if ctx.data(|d| d.get_temp::<StyleConfig>(id)).as_ref() == Some(cfg) {
@@ -131,9 +131,9 @@ fn slot(cfg: &StyleConfig, theme: egui::Theme) -> &Option<egui::Style> {
 /// Whether two styles are equal in everything a user can edit or store.
 ///
 /// `egui::Style`'s own `PartialEq` compares its `number_formatter` callback by
-/// `Arc` identity, so styles that are otherwise identical - a deserialized one
-/// against a fresh default, say - never compare equal. The formatter is neither
-/// editable nor serialized, so normalise it out of the comparison.
+/// `Arc` identity, so styles that are otherwise identical never compare equal.
+/// A deserialized style against a fresh default is one example. The formatter
+/// is neither editable nor serialized, so normalise it out of the comparison.
 pub(crate) fn eq_style(a: &egui::Style, b: &egui::Style) -> bool {
     let mut b = b.clone();
     b.number_formatter = a.number_formatter.clone();
@@ -155,9 +155,9 @@ mod tests {
         cfg
     }
 
-    /// A customised config must survive the RON round-trip used by
-    /// export/import and by GUI-state persistence. Guards against an egui bump
-    /// breaking `Style`'s serde.
+    /// A customised config must survive the RON round-trip used by export,
+    /// import and GUI-state persistence. Guards against an egui bump breaking
+    /// `Style`'s serde.
     #[test]
     fn style_config_round_trips_through_ron() {
         let cfg = customised();
@@ -180,7 +180,7 @@ mod tests {
     }
 
     /// Applying installs both themes' styles and the preference, whichever
-    /// theme is active - so a pop-out window's fresh context matches the
+    /// theme is active. So a pop-out window's fresh context matches the
     /// primary's after a single call.
     #[test]
     fn apply_installs_theme_and_both_styles() {

@@ -1,24 +1,24 @@
 //! Dynamic, typed response data emitted from within the widget tree.
 //!
-//! Widgets deep within the tree (node UIs via [`NodeCtx`][crate::NodeCtx],
-//! the graph scene's context menus, keyboard shortcuts, etc.) cannot mutate
-//! application state directly. Instead they emit typed payloads (e.g.
-//! [`CreateNode`][crate::CreateNode], [`Paste`][crate::Paste], or any custom
-//! type) that are collected into a [`Responses`] and returned from
+//! Widgets deep within the tree cannot mutate application state directly.
+//! Node UIs via [`NodeCtx`][crate::NodeCtx], the graph scene's context menus
+//! and keyboard shortcuts are examples. Instead they emit typed payloads such
+//! as [`CreateNode`][crate::CreateNode], [`Paste`][crate::Paste] or any
+//! custom type. These are collected into a [`Responses`] and returned from
 //! [`Gantz::show`][crate::widget::Gantz::show] as part of its response, for
 //! the application to handle after the pass.
 //!
 //! Payloads are dynamically typed so that nodes defined downstream can emit
-//! their own custom types without this crate knowing about them: the
-//! application drains the payloads it understands via [`Responses::take`]
-//! (or dispatches on [`DynResponse::type_id`]) and warns on the rest.
+//! their own custom types without this crate knowing about them. The
+//! application drains the payloads it understands via [`Responses::take`],
+//! or dispatches on [`DynResponse::type_id`], and warns on the rest.
 
 use std::any::{Any, TypeId};
 
 /// A dynamic response payload emitted from within the widget tree.
 ///
-/// Blanket-implemented for any eligible type, so emitting a custom payload
-/// requires no trait impl - only `Debug + Send + Sync + 'static`.
+/// Blanket-implemented for any `Debug + Send + Sync + 'static` type, so
+/// emitting a custom payload requires no trait impl.
 pub trait ResponseData: Any + std::fmt::Debug + Send + Sync {
     /// Upcast for downcasting to the concrete payload type.
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
@@ -28,9 +28,9 @@ pub trait ResponseData: Any + std::fmt::Debug + Send + Sync {
 ///
 /// The concrete type's identity is captured at construction, where the type
 /// is statically known. This matters because `Box<dyn ResponseData>` itself
-/// satisfies the [`ResponseData`] blanket impl: identity queried through a
-/// box via method calls would resolve to the *box's* impl and report the
-/// box's `TypeId` rather than the payload's, silently breaking dispatch.
+/// satisfies the [`ResponseData`] blanket impl. Identity queried through a
+/// box via method calls would resolve to the box's impl and report the box's
+/// `TypeId` rather than the payload's. That would silently break dispatch.
 #[derive(Debug)]
 pub struct DynResponse {
     type_id: TypeId,
@@ -40,8 +40,8 @@ pub struct DynResponse {
 
 /// Dynamic response data collected during one widget pass.
 ///
-/// Entries are tagged with the head whose UI emitted them (`None` for
-/// app-level emissions like [`ExportAllNamed`][crate::ExportAllNamed]).
+/// Entries are tagged with the head whose UI emitted them. App-level
+/// emissions like [`ExportAllNamed`][crate::ExportAllNamed] carry `None`.
 #[derive(Debug, Default)]
 pub struct Responses {
     entries: Vec<(Option<gantz_ca::Head>, DynResponse)>,
@@ -83,8 +83,8 @@ impl DynResponse {
 }
 
 impl Responses {
-    /// Emit a payload, tagged with the head whose UI emitted it (`None` for
-    /// app-level payloads).
+    /// Emit a payload, tagged with the head whose UI emitted it. App-level
+    /// payloads carry `None`.
     pub fn push<T: ResponseData>(&mut self, head: Option<gantz_ca::Head>, data: T) {
         self.entries.push((head, DynResponse::new(data)));
     }
@@ -138,24 +138,14 @@ where
     }
 }
 
-// ----------------------------------------------------------------------------
-// `NodeUi` method response types
-//
-// Each [`NodeUi`][crate::NodeUi] method returns one of these: the egui part of
-// the interaction, whether the node mutated CA-affecting state, and any
-// payloads emitted (collected here rather than via a `NodeCtx` side-channel).
-// ----------------------------------------------------------------------------
-
 /// The response from [`NodeUi::ui`][crate::NodeUi::ui].
 ///
-/// Bundles the node body's framed egui response with whether the node mutated
-/// its content-addressed (CA) state this frame and any payloads it emitted for
-/// the application to handle. See the [`NodeUi`][crate::NodeUi] docs for the
-/// `changed` contract.
+/// Bundles the node body's framed egui response, the `changed` flag and any
+/// payloads the node emitted for the application to handle.
 pub struct NodeUiResponse {
     /// The framed egui response for the node body.
     pub framed: egui_graph::FramedResponse<egui::Response>,
-    /// Whether the node mutated CA-affecting state this frame.
+    /// See the `changed` contract on [`NodeUi`][crate::NodeUi].
     pub changed: bool,
     /// Payloads emitted by the node for the application to handle after the
     /// GUI pass.
@@ -176,7 +166,7 @@ impl NodeUiResponse {
 /// The response from [`NodeUi::inspector_rows`][crate::NodeUi::inspector_rows].
 #[derive(Debug, Default)]
 pub struct InspectorRowsResponse {
-    /// Whether the node mutated CA-affecting state this frame.
+    /// See the `changed` contract on [`NodeUi`][crate::NodeUi].
     pub changed: bool,
     /// Payloads emitted by the node for the application to handle.
     pub payloads: Vec<DynResponse>,
@@ -187,7 +177,7 @@ pub struct InspectorRowsResponse {
 pub struct InspectorUiResponse {
     /// The egui response for the extra inspector UI, if any.
     pub inner: Option<egui::Response>,
-    /// Whether the node mutated CA-affecting state this frame.
+    /// See the `changed` contract on [`NodeUi`][crate::NodeUi].
     pub changed: bool,
     /// Payloads emitted by the node for the application to handle.
     pub payloads: Vec<DynResponse>,
@@ -195,13 +185,13 @@ pub struct InspectorUiResponse {
 
 /// The response from [`NodeUi::view_ui`][crate::NodeUi::view_ui].
 ///
-/// Mirrors [`InspectorUiResponse`]'s shape today, but is a distinct type so the
-/// detached node view and the inspector can diverge as each grows.
+/// Mirrors [`InspectorUiResponse`]'s shape, but is a distinct type so the
+/// detached node view and the inspector can diverge.
 #[derive(Debug, Default)]
 pub struct NodeViewResponse {
     /// The egui response for the node's view, if any.
     pub inner: Option<egui::Response>,
-    /// Whether the node mutated CA-affecting state this frame.
+    /// See the `changed` contract on [`NodeUi`][crate::NodeUi].
     pub changed: bool,
     /// Payloads emitted by the node for the application to handle.
     pub payloads: Vec<DynResponse>,
@@ -210,16 +200,15 @@ pub struct NodeViewResponse {
 /// The response from [`NodeUi::context_menu`][crate::NodeUi::context_menu].
 #[derive(Debug, Default)]
 pub struct ContextMenuResponse {
-    /// Whether the node mutated CA-affecting state this frame.
+    /// See the `changed` contract on [`NodeUi`][crate::NodeUi].
     pub changed: bool,
     /// Payloads emitted by the node for the application to handle.
     pub payloads: Vec<DynResponse>,
 }
 
-/// Implement the shared `changed`/payload builder helpers on each node
-/// response type. These replace the old `NodeCtx::response` side-channel: a
-/// node records CA-affecting edits and emitted payloads on its returned
-/// response.
+/// Implement the shared `changed` and payload builder helpers on each node
+/// response type. A node records CA-affecting edits and emitted payloads on
+/// its returned response.
 macro_rules! impl_node_response_emit {
     ($($Ty:ty),* $(,)?) => {$(
         impl $Ty {
@@ -239,19 +228,21 @@ macro_rules! impl_node_response_emit {
             }
 
             /// Queue a call to the generated push evaluation fn for the node at
-            /// `path` (typically [`NodeCtx::path`][crate::NodeCtx::path]).
+            /// `path`. The path is typically
+            /// [`NodeCtx::path`][crate::NodeCtx::path].
             ///
             /// Only successful if the node's [`gantz_core::Node::push_eval`]
-            /// returned `Some` at the last compile. Does not imply `changed`:
-            /// an eval is a runtime trigger, not an edit to the graph's
-            /// identity.
+            /// declared a push entrypoint at the last compile. Does not imply
+            /// `changed`. An eval is a runtime trigger, not an edit to the
+            /// graph's identity.
             pub fn push_eval(&mut self, path: &[gantz_core::node::Id], n_outputs: u8) {
                 let ep = gantz_core::compile::entrypoint::push(path.to_vec(), n_outputs);
                 self.emit(crate::EvalEntry(ep));
             }
 
             /// Queue a call to the generated pull evaluation fn for the node at
-            /// `path` (typically [`NodeCtx::path`][crate::NodeCtx::path]).
+            /// `path`. The path is typically
+            /// [`NodeCtx::path`][crate::NodeCtx::path].
             ///
             /// See [`push_eval`](Self::push_eval) for the caveats.
             pub fn pull_eval(&mut self, path: &[gantz_core::node::Id], n_inputs: u8) {
@@ -280,8 +271,8 @@ mod tests {
     #[derive(Debug, PartialEq)]
     struct B(&'static str);
 
-    /// Identity must be the concrete payload's, never the erased box's (the
-    /// box itself satisfies the `ResponseData` blanket impl).
+    /// Identity must be the concrete payload's, never the erased box's. The
+    /// box itself satisfies the `ResponseData` blanket impl.
     #[test]
     fn payload_identity_is_the_concrete_type() {
         let p = DynResponse::new(A(1));

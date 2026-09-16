@@ -1,10 +1,10 @@
 //! Merge-candidate detection and dry-run previews for the graph config pane.
 //!
-//! The core three-way merge lives in [`gantz_ca::merge`]; this module wraps it
-//! with the GUI-facing queries: which named graphs *can* be merged into the
-//! current head ([`merge_candidates`]), and what a given merge would do
-//! ([`merge_preview`]). Both are pure reads, so the config pane can call them
-//! while rendering; the mutating op is [`crate::ops::merge_head`].
+//! The three-way merge lives in [`gantz_ca::merge`]. This module wraps it
+//! with the GUI-facing queries. [`merge_candidates`] finds which named graphs
+//! can be merged into the current head. [`merge_preview`] describes what a
+//! given merge would do. Both are pure reads, so the config pane can call
+//! them while rendering. The mutating op is [`crate::ops::merge_head`].
 
 use crate::cycle::named_ref_of;
 use gantz_ca as ca;
@@ -19,40 +19,41 @@ pub struct MergeCandidate {
     pub theirs: ca::CommitAddr,
     /// The merge base shared with the current head's tip.
     pub base: ca::CommitAddr,
-    /// The current head has no changes since the base: merging just moves the
-    /// head to `theirs`, with no merge commit.
+    /// The current head has no changes since the base. Merging moves the head
+    /// to `theirs`, with no merge commit.
     pub fast_forward: bool,
 }
 
 /// A dry-run summary of merging one candidate, for hover previews.
 ///
-/// Cached by the config pane in egui temp memory keyed by the two tips, which
-/// are content addresses - a pair's preview can never go stale.
+/// Cached by the config pane in egui temp memory keyed by the two tips. The
+/// tips are content addresses, so a pair's preview can never go stale.
 #[derive(Clone, Debug)]
 pub struct MergePreview {
-    /// The changes the merge would bring in (the source branch's changes
-    /// relative to the merge base; for a fast-forward, relative to ours' tip).
+    /// The changes the merge would bring in. These are the source branch's
+    /// changes relative to the merge base. For a fast-forward they are
+    /// relative to ours' tip.
     pub summary: ca::DiffSummary,
     /// Conflicts, rendered for display. Merging despite these applies the
-    /// default resolutions (see [`gantz_ca::merge::Conflict`]).
+    /// default resolutions. See [`gantz_ca::merge::Conflict`].
     pub conflicts: Vec<String>,
-    /// Hard blockers, rendered for display: problems (e.g. reference cycles)
-    /// that prevent the merge entirely.
+    /// Hard blockers, rendered for display. These are problems that prevent
+    /// the merge entirely, such as reference cycles.
     pub blockers: Vec<String>,
 }
 
 impl MergePreview {
-    /// Whether the merge can proceed as-is (no conflicts, no blockers).
+    /// Whether the merge can proceed as-is, with no conflicts and no blockers.
     pub fn is_clean(&self) -> bool {
         self.conflicts.is_empty() && self.blockers.is_empty()
     }
 }
 
-/// The named graphs that can be merged into `ours`: those whose tip shares an
-/// ancestor with ours' tip and has changes ours lacks.
+/// The named graphs that can be merged into `ours`. A graph qualifies when its
+/// tip shares an ancestor with ours' tip and has changes ours lacks.
 ///
-/// Skips ours' own name and nested (`parent:child`) graphs. Candidates are
-/// ordered by name (the registry's name order).
+/// Skips ours' own name and nested `parent:child` graphs. Candidates are in
+/// the registry's name order.
 pub fn merge_candidates(reg: &ca::Registry, ours: &ca::Head) -> Vec<MergeCandidate> {
     let Some(ours_tip) = reg.head_commit_ca(ours) else {
         return vec![];
@@ -81,11 +82,12 @@ pub fn merge_candidates(reg: &ca::Registry, ours: &ca::Head) -> Vec<MergeCandida
         .collect()
 }
 
-/// Dry-run the merge of the branch named `source` into `ours` (see
-/// [`gantz_ca::merge_commits`]).
+/// Dry-run the merge of the branch named `source` into `ours`. See
+/// [`gantz_ca::merge_commits`].
 ///
-/// Returns `None` when there is nothing to merge (unknown source, unrelated or
-/// already-up-to-date histories, or missing registry data).
+/// Returns `None` when there is nothing to merge. That covers an unknown
+/// source, unrelated or already-up-to-date histories, and missing registry
+/// data.
 pub fn merge_preview(
     reg: &ca::Registry,
     ours: &ca::Head,
@@ -120,8 +122,8 @@ pub fn merge_preview(
     }
 }
 
-/// Render a [`ca::DiffSummary`] as a compact one-line change summary, e.g.
-/// `"+2 nodes  -1 node  ~1 modified  +3/-1 edges"`.
+/// Render a [`ca::DiffSummary`] as a compact one-line change summary. For
+/// example, `"+2 nodes  -1 node  ~1 modified  +3/-1 edges"`.
 pub fn summary_text(s: &ca::DiffSummary) -> String {
     let plural = |n: usize| if n == 1 { "" } else { "s" };
     let mut parts = Vec::new();
@@ -152,8 +154,8 @@ pub fn summary_text(s: &ca::DiffSummary) -> String {
 }
 
 /// Render merge conflicts for display, phrased from the current head's
-/// perspective ("here" = ours, "the branch" = theirs). Each line names the
-/// resolution the merge applied (per the selected [`ca::Resolutions`]).
+/// perspective. "Here" is ours and "the branch" is theirs. Each line names the
+/// resolution the merge applied per the selected [`ca::Resolutions`].
 pub fn conflict_strings(conflicts: &[ca::Conflict]) -> Vec<String> {
     conflicts
         .iter()
@@ -192,12 +194,12 @@ pub fn conflict_strings(conflicts: &[ca::Conflict]) -> Vec<String> {
 /// Hard blockers preventing a merge of `merged` into `ours` entirely,
 /// regardless of conflict resolution.
 ///
-/// Currently one class: a merged-in [`crate::node::NamedRef`] that would form
-/// a reference cycle back to the edited graph (mirroring the guard in
-/// [`crate::ops::paste`]; with sync enabled such a cycle recommits endlessly).
+/// There is one class. A merged-in [`crate::node::NamedRef`] that would form
+/// a reference cycle back to the edited graph. This mirrors the guard in
+/// [`crate::ops::paste`].
 pub fn merge_blockers(reg: &ca::Registry, ours: &ca::Head, merged: &DataGraph) -> Vec<String> {
     let ca::Head::Branch(editing) = ours else {
-        // A nameless (detached commit) head can't be a name-based cycle target.
+        // A detached commit head has no name, so it cannot be a cycle target.
         return vec![];
     };
     merged

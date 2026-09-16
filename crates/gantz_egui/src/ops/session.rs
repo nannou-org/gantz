@@ -1,11 +1,11 @@
-//! Head history stepping: plain navigation undo/redo and the session
-//! (revert-commit) counterparts, which mint forward revert commits so an
-//! undo propagates to peers like any other edit.
+//! Head history stepping. Plain navigation undo and redo, plus the session
+//! counterparts. The session forms mint forward revert commits so an undo
+//! propagates to peers like any other edit.
 
 use gantz_ca::CommitAddr;
 use std::collections::HashMap;
 
-/// Undo: push the head's current commit onto its redo stack and return the
+/// Undo. Push the head's current commit onto its redo stack and return the
 /// parent commit to navigate to.
 ///
 /// Returns `None` when the head has no parent commit to return to.
@@ -21,7 +21,7 @@ pub fn undo(
     Some(parent)
 }
 
-/// Redo: pop the most recently undone commit from the head's redo stack.
+/// Redo. Pop the most recently undone commit from the head's redo stack.
 ///
 /// Navigation itself is frontend-specific and stays with the caller.
 pub fn redo(
@@ -31,19 +31,19 @@ pub fn redo(
     redo_stacks.get_mut(head)?.pop()
 }
 
-/// Mint a forward *revert* commit: a new commit whose parent is `tip` and
-/// whose graph is `target`'s, without moving any head or name.
+/// Mint a forward revert commit. That is a new commit whose parent is `tip`
+/// and whose graph is `target`'s. No head or name moves.
 ///
-/// This is the durable form of undo for shared sessions: navigating a head
-/// backwards presents peers an ancestor tip (dropped as up-to-date by
-/// design), whereas a revert commit propagates like any other edit. A
-/// same-graph revert still mints - undoing a layout-only commit must move
-/// the tip so node positions revert on peers too.
+/// This is the durable form of undo for shared sessions. Navigating a head
+/// backwards presents peers an ancestor tip, which they drop as up-to-date
+/// by design. A revert commit propagates like any other edit. A same-graph
+/// revert still mints. Undoing a layout-only commit must move the tip so
+/// node positions revert on peers too.
 ///
 /// The graph already exists in the registry, so nothing is re-hashed or
 /// cloned. Returns `None` when `tip` or `target` is missing from the
 /// registry. Moving the head, views and the working-graph refresh stay with
-/// the caller (see [`session_undo`] / [`session_redo`]).
+/// the caller. See [`session_undo`] and [`session_redo`].
 pub(crate) fn revert_commit(
     registry: &mut gantz_ca::Registry,
     timestamp: gantz_ca::Timestamp,
@@ -59,36 +59,38 @@ pub(crate) fn revert_commit(
     )
 }
 
-/// The stepping state for revert-commit undo (see [`session_undo`]).
+/// The stepping state for revert-commit undo. See [`session_undo`].
 ///
 /// A revert commit's parent is the pre-revert tip, so plain parent-stepping
-/// would oscillate: a second consecutive undo would target the first
-/// revert's parent - the very tip the first undo left. The cursor records
-/// where stepping stands in the *original* history; it counts only while
-/// [`RevertCursor::minted`] is still the head's tip, so any other commit (an
-/// edit, a remote merge, a navigation) invalidates it automatically.
+/// would oscillate. A second consecutive undo would target the first
+/// revert's parent, the very tip the first undo left. The cursor records
+/// where stepping stands in the original history. It counts only while
+/// [`RevertCursor::minted`] is still the head's tip. So any other commit
+/// invalidates it automatically, whether an edit, a remote merge or a
+/// navigation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RevertCursor {
     /// The revert commit last minted for this head.
     pub minted: CommitAddr,
-    /// The historical commit whose graph that revert restored - the head's
-    /// current position in the original history.
+    /// The historical commit whose graph that revert restored. This is the
+    /// head's current position in the original history.
     pub target: CommitAddr,
 }
 
-/// Session undo: mint a forward revert commit (see `revert_commit`)
-/// stepping one commit back through the head's original history, copy the
-/// restored commit's stored view to the minted commit (substituting the live
-/// camera), and record the stepping state.
+/// Session undo. Mint a forward revert commit stepping one commit back
+/// through the head's original history. Copy the restored commit's stored
+/// view to the minted commit, with the live camera substituted. Record the
+/// stepping state.
 ///
-/// The step base is the head's cursor position while the cursor is current
-/// (`cursor.minted == tip`), else the tip itself; the revert target is that
-/// base's parent. The base (the pre-undo history position) is pushed onto
-/// the head's redo stack - [`session_redo`] mints a revert back to it.
+/// The step base is the head's cursor position while the cursor is current,
+/// which means `cursor.minted == tip`. Otherwise the base is the tip itself.
+/// The revert target is that base's parent. The base is the pre-undo history
+/// position. It is pushed onto the head's redo stack, and [`session_redo`]
+/// mints a revert back to it.
 ///
-/// Returns the minted commit for the caller to navigate the head to; `None`
-/// at the history horizon (no parent - e.g. wire-truncated history) or when
-/// the head is unresolvable.
+/// Returns the minted commit for the caller to navigate the head to. Returns
+/// `None` at the history horizon or when the head is unresolvable.
+/// Wire-truncated history is one way to reach the horizon.
 pub fn session_undo(
     registry: &mut gantz_ca::Registry,
     redo_stacks: &mut HashMap<gantz_ca::Head, Vec<CommitAddr>>,
@@ -111,9 +113,9 @@ pub fn session_undo(
     Some(minted)
 }
 
-/// Session redo: pop the most recently undone history position from the
-/// head's redo stack and mint a forward revert commit restoring it (the
-/// session counterpart of [`redo`]; see [`session_undo`]).
+/// Session redo. Pop the most recently undone history position from the
+/// head's redo stack and mint a forward revert commit restoring it. This is
+/// the session counterpart of [`redo`]. See [`session_undo`].
 ///
 /// Returns the minted commit for the caller to navigate the head to.
 pub fn session_redo(
@@ -132,9 +134,9 @@ pub fn session_redo(
     Some(minted)
 }
 
-/// Copy `src`'s stored view to `dst` (a freshly minted revert commit),
-/// substituting the live camera so the viewport doesn't jump. Empty-layout
-/// views are never stored (an adopting peer would auto-layout them).
+/// Copy `src`'s stored view to `dst`, a freshly minted revert commit. The
+/// live camera is substituted so the viewport does not jump. Empty-layout
+/// views are never stored, since an adopting peer would auto-layout them.
 fn copy_view(
     registry: &mut gantz_ca::Registry,
     src: CommitAddr,
@@ -159,7 +161,7 @@ mod tests {
     use crate::ops::node_id;
     use crate::ops::test_util::*;
 
-    // Session undo: the previous graph is committed *forward*.
+    // Session undo commits the previous graph forward.
     #[test]
     fn revert_commit_mints_previous_graph_forward() {
         let secs = |s| std::time::Duration::from_secs(s);
@@ -170,19 +172,19 @@ mod tests {
         let g2 = test_graph(&[1, 2]);
         let g2_ca = gantz_ca::graph_addr(&g2);
         let c2 = reg.commit_graph(secs(2), Some(c1), g2_ca, || g2);
-        // A layout-only commit: same graph, new commit.
+        // A layout-only commit. Same graph, new commit.
         let c3 = reg.commit_graph(secs(3), Some(c2), g2_ca, || unreachable!("graph exists"));
         reg.set_head("alpha".parse().unwrap(), c3);
 
         let reverted = revert_commit(&mut reg, secs(4), c3, c1).unwrap();
         let commit = &reg.commits()[&reverted];
-        // The revert is a new forward commit carrying the old graph; no head
+        // The revert is a new forward commit carrying the old graph. No head
         // or name moved.
         assert_eq!(commit.parent, Some(c3));
         assert_eq!(commit.graph, g1_ca);
         assert_eq!(reg.head(&"alpha".parse().unwrap()), Some(c3));
-        // A same-graph revert still mints (a layout-only undo must move the
-        // tip so positions revert on peers).
+        // A same-graph revert still mints. A layout-only undo must move the
+        // tip so positions revert on peers.
         let again = revert_commit(&mut reg, secs(5), c3, c2).unwrap();
         assert_eq!(reg.commits()[&again].graph, g2_ca);
         assert_eq!(reg.commits()[&again].parent, Some(c3));
@@ -194,7 +196,7 @@ mod tests {
     fn session_undo_redo_stepping() {
         let secs = |s| std::time::Duration::from_secs(s);
         let mut reg = gantz_ca::Registry::default();
-        // e1 -> l (layout-only) -> e2.
+        // The history is e1, then l, then e2. l is layout-only.
         let g1 = test_graph(&[1]);
         let g1_ca = gantz_ca::graph_addr(&g1);
         let e1 = reg.commit_graph(secs(1), None, g1_ca, || g1);
@@ -205,7 +207,7 @@ mod tests {
         reg.set_head("alpha".parse().unwrap(), e2);
         let head = gantz_ca::Head::Branch("alpha".parse().unwrap());
 
-        // Stored views for the history commits; none for the mints yet.
+        // Stored views for the history commits. None for the mints yet.
         let view = |x: f32| {
             let mut v = crate::SceneView::default();
             v.layout.insert(node_id(0), egui::pos2(x, 0.0));
@@ -227,7 +229,7 @@ mod tests {
             reg.set_head("alpha".parse().unwrap(), minted);
         };
 
-        // Undo 1: restores l's graph (== e1's content).
+        // Undo 1 restores l's graph, which has e1's content.
         let r1 = session_undo(
             &mut reg,
             &mut redo,
@@ -244,7 +246,7 @@ mod tests {
         assert_eq!(stored(&reg, r1).layout, stored(&reg, l).layout);
         assert_eq!(stored(&reg, r1).camera, cam);
 
-        // Undo 2: steps to e1 through the cursor (NOT back to r1's parent).
+        // Undo 2 steps to e1 through the cursor, not back to r1's parent.
         let r2 = session_undo(
             &mut reg,
             &mut redo,
@@ -259,7 +261,7 @@ mod tests {
         assert_eq!(reg.commits()[&r2].parent, Some(r1));
         assert_eq!(stored(&reg, r2).layout, stored(&reg, e1).layout);
 
-        // Undo 3: at the history horizon - no-op.
+        // Undo 3 is at the history horizon, so it is a no-op.
         assert_eq!(
             session_undo(
                 &mut reg,
@@ -272,7 +274,7 @@ mod tests {
             None,
         );
 
-        // Redo 1: back to the l position.
+        // Redo 1 goes back to the l position.
         let r3 = session_redo(
             &mut reg,
             &mut redo,
@@ -287,8 +289,8 @@ mod tests {
         assert_eq!(reg.commits()[&r3].parent, Some(r2));
         assert_eq!(stored(&reg, r3).layout, stored(&reg, l).layout);
 
-        // Undo after redo: steps back to e1 (the cursor tracks the original
-        // history position, not the revert commits' parents).
+        // Undo after redo steps back to e1. The cursor tracks the original
+        // history position, not the revert commits' parents.
         let r4 = session_undo(
             &mut reg,
             &mut redo,
@@ -300,7 +302,7 @@ mod tests {
         .unwrap();
         navigate(&mut reg, r4);
         assert_eq!(stored(&reg, r4).layout, stored(&reg, e1).layout);
-        // Redo back to l, then redo to e2: the full round trip.
+        // Redo back to l, then redo to e2. The full round trip.
         let r5 = session_redo(
             &mut reg,
             &mut redo,
@@ -327,8 +329,8 @@ mod tests {
         assert!(redo.get(&head).is_none_or(|s| s.is_empty()));
     }
 
-    // A real edit on top of a revert invalidates the cursor: the next undo
-    // steps from the new tip, restoring the pre-edit (reverted) state.
+    // A real edit on top of a revert invalidates the cursor. The next undo
+    // steps from the new tip and restores the pre-edit reverted state.
     #[test]
     fn session_undo_cursor_invalidated_by_edit() {
         let secs = |s| std::time::Duration::from_secs(s);
@@ -353,8 +355,8 @@ mod tests {
         let r1 = session_undo(&mut reg, &mut redo, &mut cursors, secs(10), &head, None).unwrap();
         reg.set_head("alpha".parse().unwrap(), r1);
 
-        // A real edit on top of the revert; the committed machinery clears
-        // the redo stack (mirrored here), and the cursor is stale by tip.
+        // A real edit on top of the revert. The commit machinery clears the
+        // redo stack, mirrored here, and the cursor is stale by tip.
         let g3 = test_graph(&[1, 3]);
         let g3_ca = gantz_ca::graph_addr(&g3);
         let e3 = reg.commit_graph(secs(11), Some(r1), g3_ca, || g3);

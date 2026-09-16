@@ -1,5 +1,5 @@
-//! A minimal node set for exercising the format/export round-trip paths in
-//! unit tests: an `Expr` leaf plus `NamedRef` for graph references.
+//! A minimal node set for the format and export round-trip paths in unit
+//! tests. It has an `Expr` leaf plus `NamedRef` for graph references.
 
 use crate::node::NamedRef;
 use dyn_clone::DynClone;
@@ -29,8 +29,8 @@ impl gantz_format::NodeSugar for Box<dyn TestNode> {
     }
 }
 
-/// The value-level codec for the test node set: the SAME manifest as the
-/// `impl_node_set_serde!` invocation above.
+/// The value-level codec for the test node set. It must list the same
+/// manifest as the `impl_node_set_serde!` invocation above.
 pub fn codec() -> crate::node::NodeCodec {
     crate::ui_node_codec! {
         Box<dyn TestNode> {
@@ -49,8 +49,9 @@ pub fn named_ref(name: &str, graph_ca: gantz_ca::GraphAddr) -> Box<dyn TestNode>
     Box::new(NamedRef::new(name.parse().unwrap(), ref_))
 }
 
-/// Erase `graph` and commit it under `name`, returning the new commit and the
-/// erased graph's address (the registry's identity for the graph).
+/// Erase `graph` and commit it under `name`. Returns the new commit and the
+/// erased graph's address. The address is the registry's identity for the
+/// graph.
 pub fn commit_named(
     reg: &mut gantz_ca::Registry,
     timestamp: std::time::Duration,

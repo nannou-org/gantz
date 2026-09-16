@@ -1,22 +1,20 @@
-//! The keymap: a single source of truth for the editor's command keyboard
+//! The keymap. The single source of truth for the editor's command keyboard
 //! shortcuts.
 //!
 //! [`Action`] enumerates every user-bindable command. [`Keymap`] maps actions
-//! to their [`egui::KeyboardShortcut`]s and is the one place dispatch sites read
-//! their bindings from (via [`Keymap::consume`]) and that the
-//! `Settings -> Keybinds` panel edits.
+//! to their [`egui::KeyboardShortcut`]s. Dispatch sites read their bindings
+//! from it via [`Keymap::consume`]. The Keybinds tab of the settings panel
+//! edits it.
 //!
-//! The map is *sparse*: it stores only user overrides. An action absent from the
-//! map uses [`Action::default_bindings`]. This gives forward-compatibility for
-//! free (a newly-added action just works with its defaults) and makes "reset"
-//! simply forgetting the override.
+//! The map is sparse. It stores only user overrides. An action absent from the
+//! map uses [`Action::default_bindings`]. A newly-added action works with its
+//! defaults, and "reset" is forgetting the override.
 //!
-//! To add a command shortcut: add an [`Action`] variant, give it a `label`,
-//! `description` and `default_bindings`, list it in [`Action::ALL`], then call
-//! `keymap.consume(ui, Action::Foo)` at the one site that has the context to act.
-//! It then appears in the panel, persists, and participates in conflict
-//! detection automatically. Dispatch more-specific bindings first (see
-//! [`Keymap::consume`]).
+//! To add a command shortcut, add an [`Action`] variant. Give it a `label`,
+//! `description` and `default_bindings`. List it in [`Action::ALL`]. Then call
+//! `keymap.consume(ui, Action::Foo)` at the one site that has the context to
+//! act. It then appears in the panel, persists, and takes part in conflict
+//! detection. Dispatch more-specific bindings first. See [`Keymap::consume`].
 
 use egui::{Key, KeyboardShortcut, Modifiers};
 use std::collections::{BTreeMap, HashMap};
@@ -47,17 +45,17 @@ pub enum Action {
     Duplicate,
 }
 
-/// The keymap: action -> bindings, holding only user overrides (see module
-/// docs). Defaults come from [`Action::default_bindings`].
+/// The keymap from action to bindings. It holds only user overrides. See the
+/// module docs. Defaults come from [`Action::default_bindings`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct Keymap {
-    /// User overrides. An action absent here uses its default bindings; an
+    /// User overrides. An action absent here uses its default bindings. An
     /// action present with an empty `Vec` is explicitly unbound.
     #[serde(default)]
     overrides: BTreeMap<Action, Vec<KeyboardShortcut>>,
 }
 
-/// `Cmd` on macOS, `Ctrl` elsewhere (cross-platform; see [`Modifiers::command`]).
+/// `Cmd` on macOS, `Ctrl` elsewhere. See [`Modifiers::command`].
 const CMD: Modifiers = Modifiers {
     alt: false,
     ctrl: false,
@@ -66,7 +64,7 @@ const CMD: Modifiers = Modifiers {
     command: true,
 };
 
-/// `Cmd`/`Ctrl` plus `Shift`.
+/// `Cmd` or `Ctrl` plus `Shift`.
 const CMD_SHIFT: Modifiers = Modifiers {
     alt: false,
     ctrl: false,
@@ -75,8 +73,8 @@ const CMD_SHIFT: Modifiers = Modifiers {
     command: true,
 };
 
-// Default bindings, as named consts so the slices are `'static` (a `&[..]` built
-// inline in a `match` arm is not const-promoted when returned).
+// Default bindings, as named consts so the slices are `'static`. A `&[..]`
+// built inline in a `match` arm is not const-promoted when returned.
 const COPY: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::C)];
 const PASTE: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::V)];
 const NEW_GRAPH: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::T)];
@@ -135,9 +133,9 @@ impl Action {
         }
     }
 
-    /// The default binding(s) for this action.
+    /// The default bindings for this action.
     ///
-    /// Returns a `'static` slice (const-promoted) so the common no-override path
+    /// Returns a const-promoted `'static` slice so the common no-override path
     /// allocates nothing.
     pub fn default_bindings(self) -> &'static [KeyboardShortcut] {
         match self {
@@ -145,8 +143,8 @@ impl Action {
             Action::Paste => PASTE,
             Action::NewGraph => NEW_GRAPH,
             Action::Undo => UNDO,
-            // Two defaults; `Cmd+Shift+Z` is the more specific, so dispatch Redo
-            // before Undo (see [`Keymap::consume`]).
+            // Two defaults. `Cmd+Shift+Z` is the more specific, so dispatch Redo
+            // before Undo. See `Keymap::consume`.
             Action::Redo => REDO,
             Action::ToggleNodePalette => TOGGLE_NODE_PALETTE,
             Action::SelectAll => SELECT_ALL,
@@ -157,7 +155,7 @@ impl Action {
 }
 
 impl Keymap {
-    /// The effective bindings for `action`: the user override if set, otherwise
+    /// The effective bindings for `action`. The user override if set, otherwise
     /// the default. Borrows, so the no-override path allocates nothing.
     pub fn bindings(&self, action: Action) -> &[KeyboardShortcut] {
         match self.overrides.get(&action) {
@@ -171,19 +169,19 @@ impl Keymap {
         self.overrides.contains_key(&action)
     }
 
-    /// Consume any input event matching one of `action`'s bindings, returning
+    /// Consume any input event matching one of `action`'s bindings. Returns
     /// whether one fired this frame.
     ///
-    /// `egui`'s `consume_shortcut` matches modifiers *logically* (extra
-    /// Shift/Alt are ignored), so a less-specific binding like `Cmd+Z` also
-    /// matches a `Cmd+Shift+Z` event. Dispatch more-specific bindings first
-    /// (e.g. [`Action::Redo`] before [`Action::Undo`]); a consumed event will
-    /// not fire again.
+    /// `egui`'s `consume_shortcut` matches modifiers logically and ignores
+    /// extra Shift and Alt. So a less-specific binding like `Cmd+Z` also
+    /// matches a `Cmd+Shift+Z` event. Dispatch more-specific bindings first,
+    /// for example [`Action::Redo`] before [`Action::Undo`]. A consumed event
+    /// will not fire again.
     pub fn consume(&self, ui: &egui::Ui, action: Action) -> bool {
         let bindings = self.bindings(action);
         ui.input_mut(|i| {
-            // Consume every matching binding (don't short-circuit) so none leak
-            // to another handler.
+            // Consume every matching binding without short-circuiting so none
+            // leak to another handler.
             bindings
                 .iter()
                 .fold(false, |fired, s| i.consume_shortcut(s) | fired)
@@ -191,7 +189,7 @@ impl Keymap {
     }
 
     /// Set `action`'s bindings. Setting them back to the default forgets the
-    /// override, keeping the map sparse.
+    /// override, which keeps the map sparse.
     pub fn set(&mut self, action: Action, bindings: Vec<KeyboardShortcut>) {
         if bindings.as_slice() == action.default_bindings() {
             self.overrides.remove(&action);
@@ -200,7 +198,7 @@ impl Keymap {
         }
     }
 
-    /// Add a single binding to `action` (no-op if it already has it).
+    /// Add a single binding to `action`. A no-op if it already has it.
     pub fn add(&mut self, action: Action, shortcut: KeyboardShortcut) {
         let mut bindings = self.bindings(action).to_vec();
         if !bindings.contains(&shortcut) {
@@ -216,18 +214,18 @@ impl Keymap {
         self.set(action, bindings);
     }
 
-    /// Reset `action` to its default binding(s).
+    /// Reset `action` to its default bindings.
     pub fn reset(&mut self, action: Action) {
         self.overrides.remove(&action);
     }
 
-    /// Reset every action to its default binding(s).
+    /// Reset every action to its default bindings.
     pub fn reset_all(&mut self) {
         self.overrides.clear();
     }
 
     /// Shortcuts bound to more than one action, mapped to the conflicting
-    /// actions (in [`Action::ALL`] order). Empty when there are no conflicts.
+    /// actions in [`Action::ALL`] order. Empty when there are no conflicts.
     pub fn conflicts(&self) -> HashMap<KeyboardShortcut, Vec<Action>> {
         let mut by_shortcut: HashMap<KeyboardShortcut, Vec<Action>> = HashMap::new();
         for &action in Action::ALL {
@@ -265,7 +263,8 @@ mod tests {
         assert!(km.is_overridden(Action::Copy));
         assert_eq!(km.bindings(Action::Copy), new.as_slice());
 
-        // Setting back to the default forgets the override (stays sparse).
+        // Setting back to the default forgets the override, so the map stays
+        // sparse.
         km.set(Action::Copy, Action::Copy.default_bindings().to_vec());
         assert!(!km.is_overridden(Action::Copy));
 

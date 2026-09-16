@@ -1,10 +1,10 @@
 //! Shared operations behind the GUI's graph-mutating response payloads.
 //!
-//! Each fn implements the state change for one payload (e.g.
-//! [`CreateNode`]) over plain graph/view/VM/registry types
-//! so that frontends (e.g. `bevy_gantz_egui` and the pure-egui demo) remain
-//! thin adapters around identical behaviour. Frontend-specific effects
-//! (clipboard access, file dialogs, head navigation) stay with the caller.
+//! Each fn implements the state change for one payload, such as
+//! [`CreateNode`], over plain graph, view, VM and registry types. Frontends
+//! such as `bevy_gantz_egui` and the pure-egui demo remain thin adapters
+//! around identical behaviour. Frontend-specific effects stay with the
+//! caller. Those are clipboard access, file dialogs and head navigation.
 
 use crate::cycle::named_ref_of;
 use crate::node::NodeCodec;
@@ -27,8 +27,8 @@ fn node_id(ix: usize) -> egui_graph::NodeId {
     egui_graph::NodeId::from_u64(ix as u64)
 }
 
-/// The fallback position for the `i`th node a view migration could not map:
-/// cascade down-right from the camera `center` so unplaced nodes stay
+/// The fallback position for the `i`th node a view migration could not map.
+/// Cascades down-right from the camera `center` so unplaced nodes stay
 /// visible without overlapping.
 fn cascade_pos(center: egui::Pos2, i: usize) -> egui::Pos2 {
     center + egui::vec2(20.0, 20.0) * i as f32
@@ -60,13 +60,12 @@ fn next_child_name(registry: &gantz_ca::Registry, parent: &Name) -> Name {
     }
 }
 
-/// Branch a named node: commit the graph at the given (graph) content address
-/// under a new name, and replace the node at `path` with a [`NamedRef`]
-/// referencing it. `path`'s last element is the node's index within the
-/// graph.
+/// Branch a named node. Commit the graph at the given content address under a
+/// new name, and replace the node at `path` with a [`NamedRef`] referencing
+/// it. `path`'s last element is the node's index within the graph.
 ///
-/// The newest existing commit pointing at the graph (if any) becomes the new
-/// commit's parent, preserving the fork point's history.
+/// The newest existing commit pointing at the graph, if any, becomes the new
+/// commit's parent. This preserves the fork point's history.
 pub fn branch_node(
     registry: &mut gantz_ca::Registry,
     timestamp: std::time::Duration,
@@ -93,9 +92,9 @@ pub fn branch_node(
         return;
     };
     let node_id = node::graph::NodeIx::new(node_ix);
-    // Carry the old reference's ext data over: the forked content is
-    // identical, so domain flags still apply. `sync` deliberately resets - a
-    // fork pins.
+    // Carry the old reference's ext data over. The forked content is
+    // identical, so domain flags still apply. `sync` resets, since a fork
+    // pins.
     let new_ref = match graph.node_weight(node_id).and_then(named_ref_of) {
         Some(old) => old.ref_().retarget(graph_addr.into()),
         None => node::Ref::new(graph_addr.into()),
@@ -115,8 +114,8 @@ pub fn branch_node(
     }
 }
 
-/// The newest commit pointing at the given graph, if any (ties broken by
-/// address for determinism).
+/// The newest commit pointing at the given graph, if any. Ties are broken by
+/// address for determinism.
 fn newest_commit_for_graph(
     registry: &gantz_ca::Registry,
     graph_addr: GraphAddr,
@@ -131,9 +130,9 @@ fn newest_commit_for_graph(
 
 /// Serialize the current selection to a `.gantz` clipboard payload.
 ///
-/// Returns `None` when the selection is empty or serialization fails (logging
-/// the cause). Writing the resulting string to the clipboard is the caller's
-/// responsibility.
+/// Returns `None` when the selection is empty or serialization fails, and
+/// logs the cause. Writing the resulting string to the clipboard is the
+/// caller's responsibility.
 pub fn copy_nodes(
     registry: &gantz_ca::Registry,
     graph: &DataGraph,
@@ -157,9 +156,9 @@ pub fn copy_nodes(
 /// Create a node of the given type in `graph`, register it with the VM, and
 /// ensure it has a layout entry.
 ///
-/// `new_node` produces the node's stored data form (see e.g.
-/// [`crate::Env::create_node`]); the fresh node reifies once through
-/// the `codec` for its VM registration step.
+/// `new_node` produces the node's stored data form. [`crate::Env::create_node`]
+/// is one such producer. The fresh node reifies once through the `codec` for
+/// its VM registration step.
 ///
 /// Returns the index of the new node.
 #[allow(clippy::too_many_arguments)]
@@ -176,9 +175,9 @@ pub fn create_node(
     cmd: CreateNode,
 ) -> Option<NodeIndex> {
     let CreateNode { node_type, pos } = cmd;
-    // Refuse references that would form a cycle back to the editing graph; with
-    // sync on such a cycle recommits endlessly (see `crate::cycle`). A nameless
-    // (detached commit) head can't be the target of a name-based cycle.
+    // Refuse references that would form a cycle back to the editing graph. See
+    // `crate::cycle`. A detached commit head has no name, so it cannot be a
+    // cycle target.
     if editing.is_some_and(|editing| {
         let target: Name = node_type.parse().expect("infallible");
         let editing: Name = editing.parse().expect("infallible");
@@ -193,7 +192,8 @@ pub fn create_node(
     };
     let node_ix = graph.add_node(node);
 
-    // Register the new node with the VM (its one transient typed appearance).
+    // Register the new node with the VM. This is its one transient typed
+    // appearance.
     match codec.reify_ui(&graph[node_ix]) {
         Ok(inst) => {
             let node_path = [node_ix.index()];
@@ -209,7 +209,7 @@ pub fn create_node(
     let egui_id = node_id(node_ix.index());
     view.layout.insert(egui_id, pos);
 
-    // Make the new node the sole selection (clearing the previous one).
+    // Make the new node the sole selection.
     let sel = &mut head_state.scene.interaction.selection;
     sel.nodes.clear();
     sel.edges.clear();
@@ -218,11 +218,11 @@ pub fn create_node(
     Some(node_ix)
 }
 
-/// Create a nested graph: commit a fresh empty graph to the registry under the
+/// Create a nested graph. Commit a fresh empty graph to the registry under the
 /// name `<parent>:<n>` and insert a synced [`NamedRef`] to it in `graph`,
 /// seeding its layout entry.
 ///
-/// `parent` is the emitting head's name; the new graph is named with the first
+/// `parent` is the emitting head's name. The new graph is named with the first
 /// free `<parent>:<n>` leaf. Returns the index of the new node.
 pub fn create_nested_graph(
     registry: &mut gantz_ca::Registry,
@@ -233,17 +233,15 @@ pub fn create_nested_graph(
     pos: Option<egui::Pos2>,
     parent: &Name,
 ) -> Option<NodeIndex> {
-    // Pick the first free `<parent>:<n>` leaf name.
     let name = next_child_name(registry, parent);
 
-    // Commit a fresh empty graph under the chosen name.
     let nested_graph = DataGraph::default();
     let graph_ca = gantz_ca::graph_addr(&nested_graph);
     registry.commit_graph_to_name(timestamp, graph_ca, || nested_graph, &name);
 
-    // Insert a synced reference to the new nested graph. The referenced graph is
-    // empty, so the node has no state to register here; the next `vm::sync`
-    // recompile re-registers the whole working graph.
+    // The referenced graph is empty, so the node has no state to register
+    // here. The next `vm::sync` recompile re-registers the whole working
+    // graph.
     let named_ref = NamedRef::with_sync(name, node::Ref::new(graph_ca.into()));
     let node_data = match gantz_core::data::erase_node_typed(&named_ref) {
         Ok(node_data) => node_data,
@@ -260,7 +258,7 @@ pub fn create_nested_graph(
     let egui_id = node_id(node_ix.index());
     view.layout.insert(egui_id, pos);
 
-    // Make the new node the sole selection (clearing the previous one).
+    // Make the new node the sole selection.
     let sel = &mut head_state.scene.interaction.selection;
     sel.nodes.clear();
     sel.edges.clear();
@@ -271,12 +269,12 @@ pub fn create_nested_graph(
 
 /// Nest the selected nodes into a new nested graph node.
 ///
-/// The selected nodes (and edges between them) are cut from the parent graph and
-/// become the contents of a fresh nested graph, committed under the first free
-/// `<parent>:<n>` name (see [`create_nested_graph`]). Edges crossing the
-/// selection boundary become the nested graph's inlets/outlets - one per cut
-/// point - and the parent graph is re-wired to the new synced [`NamedRef`]
-/// node's sockets.
+/// The selected nodes and the edges between them are cut from the parent
+/// graph. They become the contents of a fresh nested graph, committed under
+/// the first free `<parent>:<n>` name. See [`create_nested_graph`]. Edges
+/// crossing the selection boundary become the nested graph's inlets and
+/// outlets, one per cut point. The parent graph is re-wired to the new synced
+/// [`NamedRef`] node's sockets.
 ///
 /// Returns the index of the new node, or `None` when the selection is empty or
 /// a node cannot be erased.
@@ -296,11 +294,11 @@ pub fn nest_nodes(
         return None;
     }
 
-    // Collect the edges crossing the selection boundary, split by direction:
-    // incoming (external source -> selected target) and outgoing (selected source
-    // -> external target). Each becomes one inlet/outlet on the nested node; the
-    // sort below matches how the graph node numbers its sockets (by inlet/outlet
-    // node index).
+    // Collect the edges crossing the selection boundary, split by direction. An
+    // incoming edge runs from an external source to a selected target. An
+    // outgoing edge runs from a selected source to an external target. Each
+    // becomes one inlet or outlet on the nested node. The sort below matches
+    // how the graph node numbers its sockets, by inlet or outlet node index.
     let mut incoming: Vec<(NodeIndex, gantz_core::Edge, NodeIndex)> = Vec::new();
     let mut outgoing: Vec<(NodeIndex, gantz_core::Edge, NodeIndex)> = Vec::new();
     for edge in graph.edge_references() {
@@ -317,11 +315,11 @@ pub fn nest_nodes(
     incoming.sort_by_key(|&(dst, ref w, _)| (dst.index(), w.input.0));
     outgoing.sort_by_key(|&(src, ref w, _)| (src.index(), w.output.0));
 
-    // Capture the new node's position from the selection's centroid (falling back
-    // to the view centre) before the nodes are removed.
+    // Capture the new node's position from the selection's centroid before the
+    // nodes are removed. Fall back to the view centre.
     let pos = selection_centroid(view, nodes).unwrap_or(view.camera.center);
 
-    // Build the nested graph: inlets, outlets, then the cut subgraph.
+    // Build the nested graph. Inlets, outlets, then the cut subgraph.
     let mut nested = DataGraph::default();
     let in_ixs: Vec<NodeIndex> = incoming
         .iter()
@@ -344,8 +342,8 @@ pub fn nest_nodes(
     let subgraph = gantz_core::graph::extract_subgraph(graph, nodes);
     let new_indices = gantz_core::graph::add_subgraph(&mut nested, &subgraph);
 
-    // Map old selected index -> subgraph index -> nested index, so the cut-point
-    // connections can reach the moved nodes.
+    // Map each old selected index to its subgraph index, then to its nested
+    // index, so the cut-point connections can reach the moved nodes.
     let sorted: BTreeSet<_> = nodes.iter().copied().collect();
     let mut old_to_sub = HashMap::new();
     for (old_ix, sub_ix) in sorted.iter().zip(subgraph.node_indices()) {
@@ -380,9 +378,10 @@ pub fn nest_nodes(
     registry.commit_graph_to_name(timestamp, graph_ca, || nested.clone(), &name);
 
     // Cut the selected nodes from the parent, then insert the new reference in
-    // their place. Removal happens first so the new node's index is stable (as the
-    // last node, unaffected by the swap-removals). The returned `Reindex` maps
-    // surviving external nodes that were swap-moved by the removals.
+    // their place. Removal happens first so the new node's index is stable. As
+    // the last node it is unaffected by the swap-removals. The returned
+    // `Reindex` maps surviving external nodes that were swap-moved by the
+    // removals.
     let reindex = remove_nodes(
         graph,
         vm,
@@ -427,8 +426,8 @@ pub fn nest_nodes(
     Some(new_ix)
 }
 
-/// A single node removal recorded by [`remove_nodes`]: the node at `removed`
-/// was deleted, and (when `Some`) the node that was at `moved_from` was
+/// A single node removal recorded by [`remove_nodes`]. The node at `removed`
+/// was deleted. When `moved_from` is `Some`, the node that was there was
 /// swapped down into the `removed` slot.
 #[derive(Clone, Copy, Debug)]
 pub struct RemoveOp {
@@ -436,9 +435,9 @@ pub struct RemoveOp {
     pub moved_from: Option<usize>,
 }
 
-/// The ordered index changes performed by a [`remove_nodes`] call, for callers
-/// that key persistent data by node index and must migrate it the same way (e.g.
-/// detached node views - see `migrate_node_view_paths`).
+/// The ordered index changes performed by a [`remove_nodes`] call. Callers
+/// that key persistent data by node index must migrate it the same way.
+/// Detached node views are one example, see `migrate_node_view_paths`.
 #[derive(Clone, Debug, Default)]
 pub struct Reindex(pub Vec<RemoveOp>);
 
@@ -448,9 +447,10 @@ impl Reindex {
         self.0.is_empty()
     }
 
-    /// Replay the removals onto a single node index, returning its new index, or
+    /// Replay the removals onto a single node index. Returns its new index, or
     /// `None` if that node was the one removed. Mirrors how `remove_nodes`
-    /// migrates state/layout/selection, so index-keyed data stays consistent.
+    /// migrates state, layout and selection, so index-keyed data stays
+    /// consistent.
     pub fn apply_to_index(&self, mut ix: usize) -> Option<usize> {
         for op in &self.0 {
             if ix == op.removed {
@@ -467,19 +467,20 @@ impl Reindex {
 /// Remove `nodes` from `graph`, migrating the per-node state, layout,
 /// selection and cached instances that are keyed by node index.
 ///
-/// `petgraph::Graph::remove_node` swap-removes: the former-last node adopts the
-/// removed index, so exactly one surviving node changes index per removal.
-/// Targets are processed highest-index first, so a swap only ever pulls a
-/// surviving node down into an already-freed higher slot and never invalidates a
-/// pending target. The swapped node's state, layout entry and selection are then
-/// moved to its new index. Edge selection is cleared because removing a node
-/// drops its incident edges with compounded edge swaps.
+/// `petgraph::Graph::remove_node` swap-removes. The former-last node adopts
+/// the removed index, so exactly one surviving node changes index per
+/// removal. Targets are processed highest-index first. So a swap only ever
+/// pulls a surviving node down into an already-freed higher slot and never
+/// invalidates a pending target. The swapped node's state, layout entry and
+/// selection are then moved to its new index. Edge selection is cleared
+/// because removing a node drops its incident edges with compounded edge
+/// swaps.
 ///
-/// Returns the ordered [`Reindex`] describing each removal/swap, so other
-/// index-keyed data can be migrated the same way (any future reindexing edit
-/// must do likewise).
+/// Returns the ordered [`Reindex`] describing each removal and swap, so other
+/// index-keyed data can be migrated the same way. Any future reindexing edit
+/// must do likewise.
 ///
-/// Run this before the next recompile (`vm::sync`): the regenerated code reads
+/// Run this before the next `vm::sync` recompile. The regenerated code reads
 /// state by the new index, so the migration must already be in place.
 pub fn remove_nodes(
     graph: &mut DataGraph,
@@ -503,7 +504,7 @@ pub fn remove_nodes(
         layout.remove(&node_id(t.index()));
         selection.nodes.remove(&t);
         graph.remove_node(t);
-        // Migrate the node that swapped into `t` (the former `last`), if any.
+        // Migrate the node that swapped into `t`, the former `last`, if any.
         let moved_from = (t.index() != last).then_some(last);
         if let Some(last) = moved_from {
             let _ = node::state::move_value(vm, &[last], &[t.index()]);
@@ -527,10 +528,10 @@ pub fn remove_nodes(
     reindex
 }
 
-/// Cut: serialize `nodes` to a `.gantz` clipboard payload, then remove them.
+/// Cut. Serialize `nodes` to a `.gantz` clipboard payload, then remove them.
 ///
 /// Returns the payload for the caller to write to the clipboard. Returns `None`
-/// - removing nothing - when the selection is empty or serialization fails, so
+/// and removes nothing when the selection is empty or serialization fails, so
 /// a failed copy never loses nodes. Like [`remove_nodes`], run this before the
 /// next recompile.
 pub fn cut_nodes(
@@ -558,7 +559,7 @@ pub fn cut_nodes(
 /// Insert an Inspect node on the given edge, splicing it between the
 /// endpoints and positioning it at `cmd.pos`.
 ///
-/// `new_inspect` produces the node's stored data form; the fresh node
+/// `new_inspect` produces the node's stored data form. The fresh node
 /// reifies once through the `codec` for its VM registration step.
 pub fn inspect_edge(
     codec: &NodeCodec,
@@ -571,24 +572,22 @@ pub fn inspect_edge(
 ) {
     let InspectEdge { edge, pos } = cmd;
 
-    // Get edge endpoints and weight.
     let Some((src_node, dst_node)) = graph.edge_endpoints(edge) else {
         log::error!("InspectEdge: edge not found");
         return;
     };
     let edge_weight = *graph.edge_weight(edge).unwrap();
 
-    // Remove the edge.
     graph.remove_edge(edge);
 
-    // Create a new Inspect node.
     let Some(inspect_node) = new_inspect() else {
         log::error!("InspectEdge: could not create inspect node");
         return;
     };
     let inspect_id = graph.add_node(inspect_node);
 
-    // Register the new node with the VM (its one transient typed appearance).
+    // Register the new node with the VM. This is its one transient typed
+    // appearance.
     match codec.reify_ui(&graph[inspect_id]) {
         Ok(inst) => {
             let node_path = [inspect_id.index()];
@@ -598,21 +597,20 @@ pub fn inspect_edge(
         Err(e) => log::error!("InspectEdge: cannot register the inspect node with the VM: {e}"),
     }
 
-    // Add edge: src -> inspect (using original output, input 0).
+    // Wire src to inspect using the original output and input 0.
     graph.add_edge(
         src_node,
         inspect_id,
         gantz_core::Edge::new(edge_weight.output, node::Input(0)),
     );
 
-    // Add edge: inspect -> dst (using output 0, original input).
+    // Wire inspect to dst using output 0 and the original input.
     graph.add_edge(
         inspect_id,
         dst_node,
         gantz_core::Edge::new(node::Output(0), edge_weight.input),
     );
 
-    // Position the new node at the click position.
     let node_id = node_id(inspect_id.index());
     view.layout.insert(node_id, pos);
 }
@@ -642,11 +640,10 @@ pub fn paste(
         }
     };
 
-    // Refuse the whole paste if any pasted `NamedRef` would reference the
-    // editing graph (a cycle); with sync on such a cycle recommits endlessly
-    // (see `crate::cycle`). Checked against the live registry before merging, so
-    // a refused paste mutates nothing. A nameless (detached commit) head can't
-    // be a name-based cycle target.
+    // Refuse the whole paste if any pasted `NamedRef` would form a cycle with
+    // the editing graph. See `crate::cycle`. Checked against the live registry
+    // before merging, so a refused paste mutates nothing. A detached commit
+    // head has no name, so it cannot be a cycle target.
     if let Some(editing) = editing {
         let editing: Name = editing.parse().expect("infallible");
         if let Some(named) = copied
@@ -667,14 +664,13 @@ pub fn paste(
 
     let new_indices = export::paste(registry, graph, &mut head_view.layout, &copied, offset);
 
-    // Update selection to the pasted nodes.
     head_state.scene.interaction.selection.nodes = new_indices.into_iter().collect();
     head_state.scene.interaction.selection.edges.clear();
     true
 }
 
-/// Duplicate `nodes` in place: serialize them, then [`paste`] at a small offset
-/// (no clipboard involved). The selection becomes the new nodes.
+/// Duplicate `nodes` in place. Serialize them, then [`paste`] at a small
+/// offset. No clipboard is involved. The selection becomes the new nodes.
 ///
 /// Returns `true` if anything was duplicated. Like [`paste`], the caller
 /// re-registers the root graph with the VM afterwards so the new nodes get
@@ -703,17 +699,17 @@ pub fn duplicate_nodes(
     )
 }
 
-/// Build a view for a navigation target commit that has no stored view by
-/// carrying the live view's node positions forward through the navigation
-/// node-identity `matching` (old index -> new index), keeping the live
+/// Build a view for a navigation target commit that has no stored view.
+/// Carries the live view's node positions forward through the navigation
+/// node-identity `matching` from old index to new index. Keeps the live
 /// camera.
 ///
-/// Nodes of the new graph absent from the matching (e.g. merged-in from a
-/// peer) are placed in a cascade from the camera centre. An empty live
-/// layout, or a matching that
-/// carries no positions at all, yields an empty result: the scene's one-shot
-/// auto-layout is the right treatment for a genuinely layoutless graph (e.g.
-/// a join placeholder), not a cascade of every node.
+/// Nodes of the new graph absent from the matching are placed in a cascade
+/// from the camera centre. Nodes merged in from a peer are one example. An
+/// empty live layout, or a matching that carries no positions at all, yields
+/// an empty result. The scene's one-shot auto-layout is the right treatment
+/// for a genuinely layoutless graph such as a join placeholder, not a cascade
+/// of every node.
 pub fn carry_layout(
     live: &crate::SceneView,
     matching: &gantz_ca::Matching,
@@ -742,14 +738,15 @@ pub fn carry_layout(
 }
 
 /// Build a view for a headlessly minted merge commit from the two parent
-/// tips' stored views: each merged node takes its position from the first
-/// (ours) tip's view where it survives there, falling back to the second
-/// (theirs) tip's view, then to a cascade from the camera centre - the same
-/// fallback as `apply_merge_migration`. The camera comes from whichever
-/// side has a view, preferring the first.
+/// tips' stored views. Each merged node takes its position from the first
+/// tip's view where it survives there. Otherwise it falls back to the second
+/// tip's view, then to a cascade from the camera centre. This is the same
+/// fallback as `apply_merge_migration`. The first tip is ours and the second
+/// is theirs. The camera comes from whichever side has a view, preferring
+/// the first.
 ///
-/// When neither side has a view (or no position carries over at all) the
-/// result is empty; callers must not store empty-layout views, as an
+/// When neither side has a view, or no position carries over at all, the
+/// result is empty. Callers must not store empty-layout views, as an
 /// adopting peer would destructively auto-layout them.
 pub fn merged_view(
     node_srcs: &[gantz_ca::merge::NodeSrc],
@@ -790,21 +787,22 @@ pub fn merged_view(
     view
 }
 
-/// Commit the current layout as a new commit on the head's *existing* graph
+/// Commit the current layout as a new commit on the head's existing graph
 /// when node positions have changed since the head commit's frozen baseline
-/// view, advancing `head` to the new commit.
+/// view. Advances `head` to the new commit.
 ///
 /// The graph content is unchanged, so the new commit reuses the head's
-/// [`gantz_ca::GraphAddr`]: the registry dedups the graph (the `graph` closure
-/// passed to [`gantz_ca::Registry::commit_graph_to_head`] is never called) and
-/// the VM does not need to recompile. Only `layout` (node positions) is
-/// compared; the `camera` is excluded, so camera pan/zoom never produces a
+/// [`gantz_ca::GraphAddr`]. The registry dedups the graph and never calls the
+/// `graph` closure passed to [`gantz_ca::Registry::commit_graph_to_head`].
+/// The VM does not need to recompile. Only the `layout` node positions are
+/// compared. The `camera` is excluded, so camera pan and zoom never produce a
 /// layout commit.
 ///
-/// Returns the new commit address when a layout commit was created, else `None`
-/// (no baseline view yet - i.e. the head commit's view section entry has not
-/// been seeded - or no node-position change). Seeding the new commit's view,
-/// clearing the redo stack and migrating GUI state stay with the caller.
+/// Returns the new commit address when a layout commit was created. Returns
+/// `None` when there is no baseline view yet or no node-position change. A
+/// missing baseline means the head commit's view section entry has not been
+/// seeded. Seeding the new commit's view, clearing the redo stack and
+/// migrating GUI state stay with the caller.
 pub fn commit_layout(
     registry: &mut gantz_ca::Registry,
     timestamp: gantz_ca::Timestamp,
@@ -894,11 +892,11 @@ mod tests {
     use crate::widget::graph_scene::Selection;
     use gantz_core::node::graph::NodeIx;
 
-    // Deleting a node swap-removes the former-last node into its slot; the
+    // Deleting a node swap-removes the former-last node into its slot. The
     // swapped node's layout entry and selection must follow it to the new index.
     #[test]
     fn remove_nodes_migrates_layout_and_selection() {
-        // Five nodes 0..5 (weights 10..15) each with a distinct layout x.
+        // Five nodes 0..5 with weights 10..15, each with a distinct layout x.
         let mut graph = DataGraph::default();
         for w in 10u32..15 {
             graph.add_node(nd(w));
@@ -908,13 +906,14 @@ mod tests {
             layout.insert(node_id(i), egui::pos2(i as f32, 0.0));
         }
         let mut selection = Selection::default();
-        selection.nodes.insert(NodeIx::new(4)); // select the (to-be-swapped) last
+        selection.nodes.insert(NodeIx::new(4)); // select the last, which gets swapped
 
         let mut vm = Engine::new_base();
 
         // Seed a cache entry per node so the instance migration is exercised
-        // too. The entries' weights are stand-ins (the `nd` weights aren't in
-        // the test codec's manifest); `apply_reindex` migrates by key alone.
+        // too. The entries' weights are stand-ins, since the `nd` weights are
+        // not in the test codec's manifest. `apply_reindex` migrates by key
+        // alone.
         let codec = crate::test_node::codec();
         let mut instances = crate::node::NodeInstances::default();
         let datas: Vec<_> = (0..5)
@@ -930,7 +929,7 @@ mod tests {
             instances.put(i, entry);
         }
 
-        // Delete index 1: node 4 (weight 14) swap-removes into slot 1.
+        // Delete index 1. Node 4 with weight 14 swap-removes into slot 1.
         let reindex = remove_nodes(
             &mut graph,
             &mut vm,
@@ -949,19 +948,19 @@ mod tests {
         assert_eq!(graph.node_count(), 4);
         assert_eq!(value(&graph[NodeIx::new(1)]), 14);
 
-        // Layout followed the swap; the deleted and old-last slots are gone.
+        // Layout followed the swap. The deleted and old-last slots are gone.
         assert_eq!(layout.len(), 4);
         assert_eq!(layout.get(&node_id(1)).copied(), Some(egui::pos2(4.0, 0.0)));
         assert!(!layout.contains_key(&node_id(4)));
 
-        // Selection followed the swap: node 4 -> node 1.
+        // Selection followed the swap from node 4 to node 1.
         assert_eq!(
             selection.nodes.iter().copied().collect::<Vec<_>>(),
             vec![NodeIx::new(1)],
         );
 
-        // Cached instances followed the swap: node 4's entry now lives at
-        // index 1, the deleted and old-last slots are gone.
+        // Cached instances followed the swap. Node 4's entry now lives at
+        // index 1. The deleted and old-last slots are gone.
         assert_eq!(instances.len(), 4);
         assert!(instances.peek(1, &datas[4]).is_some());
         assert!(instances.peek(1, &datas[1]).is_none());
@@ -978,8 +977,9 @@ mod tests {
         live.layout.insert(node_id(1), egui::pos2(2.0, 2.0));
         live.layout.insert(node_id(2), egui::pos2(3.0, 3.0));
 
-        // 0 -> 1, 2 -> 0 (a swap-style remap); live node 1 was removed; the
-        // new graph has an extra node at index 2 with no provenance.
+        // A swap-style remap. Live node 0 moves to 1 and live node 2 moves to
+        // 0. Live node 1 was removed. The new graph has an extra node at index
+        // 2 with no provenance.
         let matching: gantz_ca::Matching = [(0, 1), (2, 0)].into_iter().collect();
         let view = carry_layout(&live, &matching, 3);
 
@@ -1000,7 +1000,7 @@ mod tests {
         );
     }
 
-    // An empty live layout carries nothing: the scene's one-shot auto-layout
+    // An empty live layout carries nothing. The scene's one-shot auto-layout
     // is the right treatment for a genuinely layoutless graph.
     #[test]
     fn carry_layout_empty_live_yields_empty() {
@@ -1023,7 +1023,7 @@ mod tests {
 
     // merged_view sources each merged node's position from the first tip's
     // view where it survives there, falling back to the second tip's, then
-    // cascading from the camera centre; the camera prefers the first side.
+    // cascading from the camera centre. The camera prefers the first side.
     #[test]
     fn merged_view_sources_ours_then_theirs_then_cascade() {
         let src = |ours: Option<usize>, theirs: Option<usize>| gantz_ca::merge::NodeSrc {
@@ -1038,8 +1038,8 @@ mod tests {
         second.layout.insert(node_id(0), egui::pos2(2.0, 0.0));
         second.layout.insert(node_id(1), egui::pos2(3.0, 0.0));
 
-        // Merged node 0 exists on both sides (ours wins); node 1 is
-        // theirs-only; node 2 has no stored position anywhere.
+        // Merged node 0 exists on both sides, so ours wins. Node 1 is
+        // theirs-only. Node 2 has no stored position anywhere.
         let srcs = [
             src(Some(0), Some(0)),
             src(None, Some(1)),
@@ -1064,7 +1064,7 @@ mod tests {
     }
 
     // Without a stored view on either side, merged_view yields an empty
-    // layout: callers must not store empty-layout views.
+    // layout. Callers must not store empty-layout views.
     #[test]
     fn merged_view_no_views_yields_empty() {
         let srcs = [gantz_ca::merge::NodeSrc {
@@ -1076,14 +1076,14 @@ mod tests {
         assert!(view.layout.is_empty());
     }
 
-    // A helper edge: output socket `o` to input socket `i`.
+    // A helper edge from output socket `o` to input socket `i`.
     fn edge(o: u16, i: u16) -> gantz_core::Edge {
         gantz_core::Edge::new(node::Output(o), node::Input(i))
     }
 
-    // A parent graph `0 -> 1 -> 3 -> 4` with an extra `2 -> 3`, so
-    // selecting {1, 3} leaves incoming boundaries (0->1, 2->3) and one
-    // outgoing boundary (3->4).
+    // A parent graph `0 -> 1 -> 3 -> 4` with an extra `2 -> 3`. Selecting
+    // {1, 3} leaves incoming boundaries `0 -> 1` and `2 -> 3`, and one
+    // outgoing boundary `3 -> 4`.
     fn nest_graph() -> DataGraph {
         let mut graph = test_graph(&[10, 11, 12, 13, 14]);
         graph.add_edge(NodeIx::new(0), NodeIx::new(1), edge(0, 0));
@@ -1094,7 +1094,7 @@ mod tests {
     }
 
     // Nesting a subgraph cuts the selected nodes into a fresh nested graph,
-    // turns boundary edges into inlets/outlets, and re-wires the parent to
+    // turns boundary edges into inlets and outlets, and re-wires the parent to
     // the new node's sockets.
     #[test]
     fn nest_nodes_moves_subgraph_and_rewires_parent() {
@@ -1129,17 +1129,20 @@ mod tests {
         assert!(named.is_nested());
 
         // The parent keeps the external nodes and the new node, wired to its
-        // sockets: incoming 0->input0, 2->input1, outgoing output0->4.
+        // sockets. Node 0 feeds input 0, node 2 feeds input 1, and output 0
+        // feeds node 4.
         assert_eq!(graph.node_count(), 4);
         assert!(graph.find_edge(NodeIx::new(0), new_ix).is_some());
         assert!(graph.find_edge(NodeIx::new(2), new_ix).is_some());
         assert!(graph.find_edge(new_ix, NodeIx::new(1)).is_some());
 
-        // The nested graph carries the internal edge and the boundary inlets/outlets.
+        // The nested graph carries the internal edge and the boundary inlets
+        // and outlets.
         let nested = registry
             .commit_graph_ref(&registry.head(&"alpha:1".parse().unwrap()).unwrap())
             .unwrap();
-        // inlet0 -> old1, inlet1 -> old3, old1 -> old3, old3 -> outlet0.
+        // The edges are inlet 0 to old 1, inlet 1 to old 3, old 1 to old 3,
+        // and old 3 to outlet 0.
         assert_eq!(nested.node_count(), 5);
         assert!(nested.find_edge(NodeIx::new(0), NodeIx::new(3)).is_some());
         assert!(nested.find_edge(NodeIx::new(1), NodeIx::new(4)).is_some());
@@ -1190,13 +1193,13 @@ mod tests {
         )
         .unwrap();
 
-        // Only the new node remains; it has no inlets or outlets.
+        // Only the new node remains. It has no inlets or outlets.
         assert_eq!(graph.node_count(), 1);
         assert!(graph.node_weight(new_ix).is_some());
         let nested = registry
             .commit_graph_ref(&registry.head(&"alpha:1".parse().unwrap()).unwrap())
             .unwrap();
-        // Two moved nodes, no inlets/outlets.
+        // Two moved nodes, no inlets or outlets.
         assert_eq!(nested.node_count(), 2);
     }
 

@@ -1,26 +1,27 @@
-//! Ephemeral node-interaction *actions*, in a wire-encodable form.
+//! Ephemeral node-interaction actions, in a wire-encodable form.
 //!
-//! Graph edits are durable actions: they mint content-addressed commits and
+//! Graph edits are durable actions. They mint content-addressed commits and
 //! replicate via the registry sync machinery. Everything else a node UI can
-//! do reduces - by construction of [`NodeCtx`][crate::NodeCtx] - to exactly
-//! two ephemeral primitives, captured here in serialisable form:
+//! do reduces to two ephemeral primitives. [`NodeCtx`][crate::NodeCtx]
+//! guarantees this by construction. This module captures both in
+//! serialisable form:
 //!
-//! - a **VM-state write** ([`Action::SetState`]): the only state-write
-//!   channel available to a `NodeUi` implementation is
+//! - A VM-state write ([`Action::SetState`]). The only state-write channel
+//!   available to a `NodeUi` implementation is
 //!   [`NodeCtx::update_value`][crate::NodeCtx::update_value], which records a
-//!   [`StateWrite`] as a side effect (see
-//!   [`NodeCtx::update_value_local`][crate::NodeCtx::update_value_local] to
-//!   opt out);
-//! - an **evaluation trigger** ([`Action::Eval`]): push/pull entrypoints are
-//!   content-addressed and re-derivable from their [`Source`]s, so a remote
-//!   peer holding the same graph rebuilds the identical entry fn - no code
+//!   [`StateWrite`] as a side effect.
+//!   [`NodeCtx::update_value_local`][crate::NodeCtx::update_value_local]
+//!   opts out.
+//! - An evaluation trigger ([`Action::Eval`]). Push and pull entrypoints are
+//!   content-addressed and re-derivable from their [`Source`]s. A remote
+//!   peer holding the same graph rebuilds the identical entry fn. No code
 //!   travels.
 //!
-//! Actions are addressed by node-index [`path`](gantz_core::node::Id)s,
-//! which are only meaningful relative to a specific graph: transport layers
+//! Actions are addressed by node-index [`path`](gantz_core::node::Id)s.
+//! These are only meaningful relative to a specific graph. Transport layers
 //! anchor each action to the graph address it was issued against and drop it
-//! on mismatch. Delivery is fire-and-forget; a lost action is no worse than
-//! an app restart (VM state is not persisted either).
+//! on mismatch. Delivery is fire-and-forget. A lost action is no worse than
+//! an app restart, since VM state is not persisted either.
 
 use gantz_core::compile::entrypoint::{self, EvalKind, EvalSource};
 use gantz_core::node;
@@ -29,34 +30,34 @@ use steel::SteelVal;
 
 /// An ephemeral node-interaction action.
 ///
-/// The complete algebra of what a `NodeUi` can do to the VM: state writes
-/// and evaluation triggers, plus a reserved extension variant.
+/// The complete algebra of what a `NodeUi` can do to the VM. It covers state
+/// writes and evaluation triggers, plus a reserved extension variant.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Action {
     /// A batch of live VM-state writes to one node, optionally fused with
-    /// the push-eval they triggered (fused so "set then evaluate" stays
-    /// atomic on the remote side - an eval arriving before its value would
-    /// fire on stale state).
+    /// the push-eval they triggered. The fusion keeps "set then evaluate"
+    /// atomic on the remote side. An eval arriving before its value would
+    /// fire on stale state.
     ///
     /// `values` is every value written within one send window, oldest
-    /// first. Receivers apply them in order and, when `eval` is present,
-    /// fire the push-eval after EACH value: rate-limited transports batch
+    /// first. Receivers apply them in order. When `eval` is present, they
+    /// fire the push-eval after each value. Rate-limited transports batch
     /// steps rather than dropping them, so accumulative downstream state
-    /// (e.g. a scope plot sampling per evaluation) stays in step with the
-    /// emitting peer. A window that recorded no push-eval ships
+    /// stays in step with the emitting peer. A scope plot sampling per
+    /// evaluation is one example. A window that recorded no push-eval ships
     /// `eval: None` and fires nothing.
     SetState {
         path: Vec<node::Id>,
         values: Vec<Value>,
         eval: Option<Source>,
     },
-    /// A push/pull evaluation with no accompanying state write (e.g. a
-    /// `bang` click).
+    /// A push or pull evaluation with no accompanying state write. A `bang`
+    /// click is one example.
     Eval { sources: Vec<Source> },
     /// Reserved escape hatch for custom node actions, tagged with a
-    /// wire-stable string (the [`gantz_nodetag`]-style discipline; `TypeId`s
-    /// are not stable across builds). Nothing emits this today; decoders
-    /// must log and drop unknown tags.
+    /// wire-stable string in the [`gantz_nodetag`] style. `TypeId`s are not
+    /// stable across builds. No node emits this variant. Decoders must log
+    /// and drop unknown tags.
     ///
     /// [`gantz_nodetag`]: https://docs.rs/gantz_nodetag
     Custom { tag: String, data: Vec<u8> },
@@ -82,18 +83,19 @@ pub enum Kind {
 
 /// A VM-state value in wire-encodable form.
 ///
-/// Covers the value shapes interactive nodes actually write (numbers, lists
-/// and friends); rich runtime values (closures, ports, custom types) are
-/// deliberately unsupported - a write of one simply isn't captured.
+/// Covers the value shapes interactive nodes write, such as numbers and
+/// lists. Rich runtime values such as closures, ports and custom types are
+/// unsupported. A write of one is not captured.
 ///
-/// `Int` and `Num` are distinct on purpose: nodes branch on the steel
-/// variant (e.g. the `number` dialer renders integer vs float dialers), so a
-/// lossy `serde_json`-style int-to-float bridge would corrupt behaviour.
+/// `Int` and `Num` are distinct on purpose. Nodes branch on the steel
+/// variant. For example, the `number` node renders an integer or a float
+/// dialer. A lossy `serde_json`-style int-to-float bridge would corrupt
+/// behaviour.
 ///
-/// `gantz_core::Datum` is deliberately not reused here: its `Deserialize` is
-/// data-model style (`deserialize_any`), which a non-self-describing wire
-/// format like the action envelope's postcard cannot drive. This plain
-/// derived enum round-trips postcard directly.
+/// `gantz_core::Datum` is not reused here. Its `Deserialize` is data-model
+/// style and uses `deserialize_any`. A non-self-describing wire format like
+/// the action envelope's postcard cannot drive that. This plain derived enum
+/// round-trips postcard directly.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     Unit,
@@ -113,17 +115,17 @@ pub struct StateWrite {
     pub value: Value,
 }
 
-/// Response payload: a node UI wrote VM state via
+/// Response payload. A node UI wrote VM state via
 /// [`NodeCtx::update_value`][crate::NodeCtx::update_value] this frame.
 ///
 /// Emitted head-tagged alongside the node's other payloads. Applications
-/// without a use for it may drop it silently; the collaborative-session
+/// without a use for it may drop it silently. The collaborative-session
 /// layer broadcasts it to peers as an [`Action::SetState`].
 #[derive(Clone, Debug)]
 pub struct StateWritten(pub StateWrite);
 
-/// Drain recorded writes as head-taggable [`StateWritten`] payloads (the
-/// shared tail of every `NodeCtx` capture site).
+/// Drain recorded writes as head-taggable [`StateWritten`] payloads. This is
+/// the shared tail of every `NodeCtx` capture site.
 pub(crate) fn state_written(
     writes: &mut Vec<StateWrite>,
 ) -> impl Iterator<Item = crate::DynResponse> + '_ {
@@ -215,9 +217,9 @@ impl From<Source> for EvalSource {
 }
 
 /// Rebuild the content-addressed [`Entrypoint`](entrypoint::Entrypoint) an
-/// [`Action::Eval`]'s sources describe. The id (and thus the generated entry
-/// fn name) is identical to the emitting peer's, because entrypoints are
-/// content-addressed over their sorted source set.
+/// [`Action::Eval`]'s sources describe. The id is identical to the emitting
+/// peer's, because entrypoints are content-addressed over their sorted
+/// source set. So is the generated entry fn name.
 pub fn entrypoint(sources: impl IntoIterator<Item = Source>) -> entrypoint::Entrypoint {
     entrypoint::from_sources(sources.into_iter().map(EvalSource::from))
 }
@@ -243,7 +245,7 @@ mod tests {
         }
     }
 
-    // Int and Num must stay distinct through the round trip: nodes branch on
+    // Int and Num must stay distinct through the round trip. Nodes branch on
     // the steel variant.
     #[test]
     fn value_preserves_int_vs_num() {
@@ -254,7 +256,7 @@ mod tests {
         ));
     }
 
-    // Unsupported runtime values (closures etc.) are skipped, not mangled.
+    // Unsupported runtime values such as closures are rejected, not mangled.
     #[test]
     fn unsupported_values_are_rejected() {
         let steel = SteelVal::SymbolV("nope".into());
@@ -268,8 +270,8 @@ mod tests {
         assert_eq!(Value::try_from(&steel), Err(UnsupportedValue));
     }
 
-    // A round-tripped Source rebuilds the IDENTICAL content-addressed
-    // entrypoint - the property remote eval relies on.
+    // A round-tripped Source rebuilds the identical content-addressed
+    // entrypoint. Remote eval relies on this property.
     #[test]
     fn eval_sources_rebuild_the_identical_entrypoint() {
         let ep = entrypoint::push(vec![3, 1], 2);

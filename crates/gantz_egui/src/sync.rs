@@ -1,16 +1,16 @@
 //! Keeping `NamedRef` references current across the registry.
 //!
-//! When a named graph is edited it commits to a new address; every graph that
+//! When a named graph is edited it commits to a new address. Every graph that
 //! references it by name must then follow. [`resync`] brings all sync-enabled
-//! [`NamedRef`]s up to their name's current commit,
-//! recommitting any graph whose references changed. This is the headless
-//! counterpart of the inspector's render-time auto-sync, and the mechanism by
-//! which editing a nested graph propagates up to its parents.
+//! [`NamedRef`]s up to their name's current commit. It recommits any graph
+//! whose references changed. This is the headless counterpart of the
+//! inspector's render-time auto-sync. It is also the mechanism by which
+//! editing a nested graph propagates up to its parents.
 //!
 //! The whole cascade operates on the registry's stored [`DataGraph`]s
-//! directly: each `NamedRef` weight is rewritten in place via a tag-gated
-//! monomorphic round-trip (`with_named_ref_mut`), so no node-set type
-//! parameter is involved.
+//! directly. Each `NamedRef` weight is rewritten in place via a tag-gated
+//! monomorphic round-trip in `with_named_ref_mut`. No node-set type parameter
+//! is involved.
 
 use crate::node::NamedRef;
 use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, NodeData, Registry};
@@ -32,10 +32,10 @@ pub struct Moved {
 /// Run `f` over the [`NamedRef`] stored in `weight`, writing the rewritten
 /// node back when `f` reports a change. Returns whether `weight` changed.
 ///
-/// Tag-gated: only a weight whose tag is exactly `NamedRef`'s matches (never
-/// `Fn`/`FnNamedRef`, which reference a graph without standing in for it).
-/// The round-trip is monomorphic - [`reify_node_concrete`], mutate,
-/// [`erase_node_typed`] - so the refs column is recomputed for free. Codec
+/// Tag-gated. Only a weight whose tag is exactly `NamedRef`'s matches. `Fn`
+/// and `FnNamedRef` reference a graph without standing in for it, so they
+/// never match. The round-trip is [`reify_node_concrete`], mutate, then
+/// [`erase_node_typed`], so the refs column is recomputed for free. Codec
 /// failures are logged and reported as unchanged.
 ///
 /// [`reify_node_concrete`]: gantz_core::data::reify_node_concrete
@@ -70,7 +70,7 @@ pub(crate) fn with_named_ref_mut(
 }
 
 /// The [`NamedRef`] stored in `weight`, if it is one. Tag-gated like
-/// [`with_named_ref_mut`]; codec failures are logged and read as `None`.
+/// [`with_named_ref_mut`]. Codec failures are logged and read as `None`.
 fn named_ref_of(weight: &NodeData) -> Option<NamedRef> {
     if weight.tag != <NamedRef as NodeTag>::TAG {
         return None;
@@ -105,9 +105,9 @@ fn commit_data_graph(
     registry.commit_graph_to_name(timestamp, graph_ca, || graph, name)
 }
 
-/// Rewrite the references in the graph at `source_commit` via `mutate`, and -
-/// when something changed - commit the result under `name`. Returns the
-/// resulting [`Moved`], or `None` when nothing changed.
+/// Rewrite the references in the graph at `source_commit` via `mutate`. When
+/// something changed, commit the result under `name`. Returns the resulting
+/// [`Moved`], or `None` when nothing changed.
 fn commit_rewritten(
     registry: &mut Registry,
     timestamp: Duration,
@@ -127,8 +127,8 @@ fn commit_rewritten(
     })
 }
 
-/// Repoint a [`NamedRef`] whose name was renamed, per a `old -> (new, graph)`
-/// map. Returns whether it changed.
+/// Repoint a [`NamedRef`] whose name was renamed. `remap` maps each old name
+/// to its new name and graph. Returns whether it changed.
 fn remap_ref(named_ref: &mut NamedRef, remap: &HashMap<Name, (Name, GraphAddr)>) -> bool {
     match remap.get(named_ref.name()) {
         Some((new_name, new_graph)) => {
@@ -139,8 +139,8 @@ fn remap_ref(named_ref: &mut NamedRef, remap: &HashMap<Name, (Name, GraphAddr)>)
     }
 }
 
-/// The renamed counterpart of `descendant` when `old` is renamed to `new`:
-/// `new`'s segments followed by `descendant`'s segments past `old`'s.
+/// The renamed counterpart of `descendant` when `old` is renamed to `new`.
+/// That is `new`'s segments followed by `descendant`'s segments past `old`'s.
 fn renamed(descendant: &Name, old: &Name, new: &Name) -> Name {
     let segments: Vec<String> = new
         .segments()
@@ -153,12 +153,12 @@ fn renamed(descendant: &Name, old: &Name, new: &Name) -> Name {
 
 /// Give a freshly-forked graph independent nested children.
 ///
-/// Forking `old` to `new` copies `old`'s graph (done by the caller), but that
-/// copy still references `old`'s nested children (`old:*`). This copies the
-/// whole `old:*` subtree to `new:*` and rewrites the references so editing the
-/// fork's nested graphs no longer affects the original. Returns the named
-/// graphs whose commits were created or moved (the `new` root plus each
-/// `new:*` child), so callers can refresh the open fork and migrate views.
+/// The caller forks `old` to `new` by copying `old`'s graph. That copy still
+/// references `old`'s nested children, `old:*`. This copies the whole `old:*`
+/// subtree to `new:*` and rewrites the references, so editing the fork's
+/// nested graphs does not affect the original. Returns the named graphs whose
+/// commits were created or moved. That is the `new` root plus each `new:*`
+/// child. Callers use it to refresh the open fork and migrate views.
 ///
 /// Children are copied deepest-first so a parent's references resolve to its
 /// already-copied children.
@@ -175,11 +175,11 @@ pub fn fork_nested(
         .collect();
     descendants.sort_by(|a, b| b.depth().cmp(&a.depth()).then_with(|| a.cmp(b)));
 
-    // old descendant name -> (new name, new graph).
+    // Maps each old descendant name to its new name and new graph.
     let mut remap: HashMap<Name, (Name, GraphAddr)> = HashMap::new();
     let mut moves = Vec::new();
 
-    // Each descendant is copied (under a fresh `new:*` name) with its references
+    // Each descendant is copied under a fresh `new:*` name, with its references
     // to already-copied descendants repointed.
     for d in &descendants {
         let d_new = renamed(d, old, new);
@@ -225,18 +225,18 @@ pub fn fork_nested(
 /// heads and migrate their views.
 ///
 /// Graphs are processed deepest-name-first so a parent observes its children's
-/// new commits within a single pass; a bounded fixpoint loop covers any
-/// non-nesting reference shape. The loop cannot run forever even for a
-/// (degenerate) mutually-referencing registry - it simply stops once no graph
-/// changes.
+/// new commits within a single pass. A bounded fixpoint loop covers any
+/// non-nesting reference shape. The loop cannot run forever, even for a
+/// degenerate mutually-referencing registry. It stops once no graph changes.
 pub fn resync(registry: &mut Registry, timestamp: Duration) -> Vec<Moved> {
-    // Deepest names first: a child is updated before the parent that refs it.
+    // Deepest names first, so a child is updated before the parent that refs
+    // it.
     let mut order: Vec<Name> = registry.heads().map(|(n, _)| n.clone()).collect();
     order.sort_by(|a, b| b.depth().cmp(&a.depth()).then_with(|| a.cmp(b)));
 
-    // A name -> current head graph snapshot, kept in step with commits we
-    // make so a referrer resolves its children to their freshly-committed
-    // content.
+    // A snapshot of each name's current head graph. It is kept in step with
+    // new commits so a referrer resolves its children to their
+    // freshly-committed content.
     let mut current: HashMap<Name, (CommitAddr, GraphAddr)> = registry
         .heads()
         .filter_map(|(n, ca)| {
@@ -278,18 +278,19 @@ pub fn resync(registry: &mut Registry, timestamp: Duration) -> Vec<Moved> {
     moves
 }
 
-/// The names a session sharing `root` must sync: `root` plus, transitively,
-/// every name referenced by a *sync-enabled* [`NamedRef`] in a scoped name's
-/// current graph.
+/// The names a session sharing `root` must sync. That is `root` plus,
+/// transitively, every name referenced by a sync-enabled [`NamedRef`] in a
+/// scoped name's current graph.
 ///
-/// Nested names (`parent:child`) force sync on, so a scoped graph's nested
-/// children are always captured. Pinned (sync-off) references are excluded:
-/// the referenced content travels with the referring graph's commit closure,
-/// and a peer's differing tip for the referenced *name* cannot affect
-/// session content. A scoped name that does not resolve locally stays in the
-/// scope (a peer may hold it) but contributes no further references.
+/// Nested `parent:child` names force sync on, so a scoped graph's nested
+/// children are always captured. Pinned references with sync off are
+/// excluded. Their referenced content travels with the referring graph's
+/// commit closure, and a peer's differing tip for the referenced name cannot
+/// affect session content. A scoped name that does not resolve locally stays
+/// in the scope, since a peer may hold it. It contributes no further
+/// references.
 ///
-/// Session sync must move names only through this scope - a blind
+/// Session sync must move names only through this scope. A blind
 /// [`Registry::merge`] of received names would clobber unrelated local ones.
 pub fn session_scope(registry: &Registry, root: &Name) -> BTreeSet<Name> {
     let mut scope = BTreeSet::new();
@@ -315,24 +316,24 @@ pub fn session_scope(registry: &Registry, root: &Name) -> BTreeSet<Name> {
     scope
 }
 
-/// Promote a nested graph that was renamed to a (root) name: repoint its
-/// parent's references from the old nested name to `new_name`, then drop the
-/// now-orphaned nested name and its descendants.
+/// Promote a nested graph that was renamed to a root name. Repoints its
+/// parent's references from the old nested name to `new_name`, then drops the
+/// orphaned nested name and its descendants.
 ///
-/// `old_nested` is the renamed graph's former `parent:child` name; `new_name`
-/// is its new root name (a fresh copy of its graph already committed under it).
-/// The parent may hold *several* references to the nested graph - each an
-/// independent instance with its own state - and they are all repointed.
-/// Returns the parent's move (if it changed) so an open parent head can be
-/// refreshed. A no-op (empty) when `old_nested` is not a nested name.
+/// `old_nested` is the renamed graph's former `parent:child` name. `new_name`
+/// is its new root name, with a fresh copy of its graph already committed
+/// under it. The parent may hold several references to the nested graph, each
+/// an independent instance with its own state. They are all repointed.
+/// Returns the parent's move if it changed, so an open parent head can be
+/// refreshed. Returns nothing when `old_nested` is not a nested name.
 pub fn promote_nested(
     registry: &mut Registry,
     timestamp: Duration,
     old_nested: &Name,
     new_name: &Name,
 ) -> Vec<Moved> {
-    // The parent referencing the nested graph: the name with the last leaf
-    // stripped (`A:1` -> `A`, `A:1:2` -> `A:1`).
+    // The parent referencing the nested graph is the name with the last leaf
+    // stripped. For example, `A:1:2` gives `A:1`.
     let Some(parent) = old_nested.parent() else {
         return Vec::new();
     };
@@ -343,7 +344,8 @@ pub fn promote_nested(
         return Vec::new();
     };
 
-    // Repoint every parent reference (each a distinct instance) to the new name.
+    // Repoint every parent reference to the new name. Each is a distinct
+    // instance.
     let mut moves = Vec::new();
     moves.extend(commit_rewritten(
         registry,
@@ -360,8 +362,8 @@ pub fn promote_nested(
         },
     ));
 
-    // Drop the orphaned nested name and its descendants (their content survives
-    // as the new root graph copy).
+    // Drop the orphaned nested name and its descendants. Their content survives
+    // as the new root graph copy.
     let orphans: Vec<Name> = registry
         .heads()
         .filter(|(n, _)| n.starts_with(old_nested))
@@ -380,8 +382,8 @@ mod tests {
     use gantz_ca::{ContentAddr, Datum};
     use std::time::Duration;
 
-    /// An erased [`NamedRef`] node weight (scope walking reads the erased
-    /// registry graphs directly).
+    /// An erased [`NamedRef`] node weight. Scope walking reads the erased
+    /// registry graphs directly.
     fn ref_node(name: &str, sync: bool) -> NodeData {
         let ref_ = gantz_core::node::Ref::new(ContentAddr::from([0; 32]));
         let name: Name = name.parse().unwrap();
@@ -393,8 +395,8 @@ mod tests {
         gantz_core::data::erase_node_typed(&named_ref).unwrap()
     }
 
-    /// Commit `graph` under `name` with a fabricated graph address (scope
-    /// walking never hashes node content).
+    /// Commit `graph` under `name` with a fabricated graph address. Scope
+    /// walking never hashes node content.
     fn add_named(registry: &mut Registry, name: &str, n: u8, graph: DataGraph) {
         let graph_ca = gantz_ca::GraphAddr::from(ContentAddr::from([n; 32]));
         let name: Name = name.parse().unwrap();
@@ -412,13 +414,13 @@ mod tests {
     #[test]
     fn session_scope_follows_sync_refs_transitively_and_skips_pinned() {
         let mut registry = Registry::default();
-        // root -> sync ref to "dep" + pinned ref to "pin".
+        // `root` holds a sync ref to `dep` and a pinned ref to `pin`.
         let mut root = DataGraph::default();
         root.add_node(NodeData::new("test", Datum::Map(vec![])));
         root.add_node(ref_node("dep", true));
         root.add_node(ref_node("pin", false));
         add_named(&mut registry, "root", 1, root);
-        // dep -> its (sync-forced) nested child, plus a ref to a name that
+        // `dep` holds its sync-forced nested child, plus a ref to a name that
         // does not resolve locally.
         let mut dep = DataGraph::default();
         dep.add_node(ref_node("dep:1", true));

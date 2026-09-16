@@ -1,9 +1,9 @@
 //! Detecting reference cycles among named graphs.
 //!
-//! Adding a [`NamedRef`] to the graph it lives in -
-//! directly, or transitively through the referenced graph's own named
-//! references - would form a reference cycle. With `sync` enabled such a cycle
-//! recommits endlessly (a parent chases its own moving commit), so creation is
+//! Adding a [`NamedRef`] to the graph it lives in would form a reference
+//! cycle. The reference can be direct, or transitive through the referenced
+//! graph's own named references. With `sync` enabled such a cycle recommits
+//! endlessly, since a parent chases its own moving commit. Creation is
 //! refused up-front. This is the live-editor counterpart of `gantz_format`'s
 //! load-time `CycleInRefs` check.
 
@@ -14,10 +14,10 @@ use std::collections::HashSet;
 
 /// The [`NamedRef`] stored in `weight`, if it is one.
 ///
-/// Tag-gated: only a weight whose tag is exactly `NamedRef`'s matches (never
-/// `Fn`/`FnNamedRef`, which reference a graph without standing in for it). A
-/// tag-matched weight that fails to decode is logged and treated as no
-/// reference.
+/// Tag-gated. Only a weight whose tag is exactly `NamedRef`'s matches. `Fn`
+/// and `FnNamedRef` reference a graph without standing in for it, so they
+/// never match. A tag-matched weight that fails to decode is logged and
+/// treated as no reference.
 pub(crate) fn named_ref_of(weight: &NodeData) -> Option<NamedRef> {
     if weight.tag != <NamedRef as NodeTag>::TAG {
         return None;
@@ -35,10 +35,10 @@ pub(crate) fn named_ref_of(weight: &NodeData) -> Option<NamedRef> {
 /// named `editing` would create a reference cycle.
 ///
 /// A cycle exists when `editing` is reachable from `target` through named
-/// references at any depth - including the trivial `target == editing`. Names
-/// that resolve to no graph (e.g. builtins) simply contribute no edges. The
-/// walk reads `NamedRef` names straight off the registry's stored data
-/// graphs (see `named_ref_of`) - no typed node set involved.
+/// references at any depth. The trivial `target == editing` case counts.
+/// Names that resolve to no graph, such as builtins, contribute no edges.
+/// The walk reads `NamedRef` names straight off the registry's stored data
+/// graphs via `named_ref_of`. No typed node set is involved.
 pub fn would_cycle(registry: &Registry, target: &Name, editing: &Name) -> bool {
     let mut stack = vec![target.clone()];
     let mut visited = HashSet::new();
@@ -73,13 +73,14 @@ mod tests {
         s.parse().unwrap()
     }
 
-    /// Commit a graph of `NamedRef`s (one per referenced name) under `name`.
+    /// Commit a graph of `NamedRef`s under `graph_name`, one per referenced
+    /// name.
     fn commit_named_refs(registry: &mut Registry, graph_name: &str, refs: &[&str]) {
         let mut graph = TestGraph::default();
         for &r in refs {
             // The referenced content address is irrelevant to the name-based
-            // walk; point each ref at the target name's head graph if known,
-            // else a placeholder derived from an empty graph.
+            // walk. Point each ref at the target name's head graph if known,
+            // else at a placeholder derived from an empty graph.
             let ga: gantz_ca::GraphAddr = registry
                 .named_commit(&name(r))
                 .map(|c| c.graph)
@@ -102,7 +103,7 @@ mod tests {
     #[test]
     fn detects_cycles_by_name() {
         let mut registry = Registry::default();
-        // `a` references `b`; `b` references `a`.
+        // `a` and `b` reference each other.
         commit_named_refs(&mut registry, "b", &[]);
         commit_named_refs(&mut registry, "a", &["b"]);
         commit_named_refs(&mut registry, "b", &["a"]);
@@ -113,9 +114,9 @@ mod tests {
         assert!(would_cycle(&registry, &name("a"), &name("a")));
         // `b` reaches `a`, so referencing `b` from `a` closes the loop.
         assert!(would_cycle(&registry, &name("b"), &name("a")));
-        // `c` references nothing - safe.
+        // `c` references nothing, so it is safe.
         assert!(!would_cycle(&registry, &name("c"), &name("a")));
-        // An unknown / builtin name resolves to no graph - safe.
+        // An unknown or builtin name resolves to no graph, so it is safe.
         assert!(!would_cycle(&registry, &name("not-a-name"), &name("a")));
     }
 }
