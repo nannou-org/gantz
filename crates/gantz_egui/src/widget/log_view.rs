@@ -241,7 +241,7 @@ impl<'a> LogView<'a> {
             state.show_level,
             state.show_target,
         );
-        let mut table = TableBuilder::new(ui).striped(true).resizable(true);
+        let mut table = TableBuilder::new(ui).resizable(true);
         if show_time {
             table = table.column(Column::auto().at_least(80.0)); // Timestamp
         }

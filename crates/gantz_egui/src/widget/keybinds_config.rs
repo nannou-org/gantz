@@ -44,7 +44,6 @@ pub fn keybinds_config(keymap: &mut Keymap, ui: &mut egui::Ui) {
     egui::Grid::new(ui.id().with("keybinds_grid"))
         .num_columns(2)
         .spacing([16.0, 6.0])
-        .striped(true)
         .show(ui, |ui| {
             for &action in Action::ALL {
                 // Right-clicking the command name or any of its bindings offers

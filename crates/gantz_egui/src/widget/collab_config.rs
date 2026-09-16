@@ -70,7 +70,6 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) {
     egui::Grid::new("collab_config_grid")
         .num_columns(2)
         .spacing([8.0, 6.0])
-        .striped(true)
         .show(ui, |ui| {
             // The public identity peers see (and can allowlist).
             ui.label("identity");
