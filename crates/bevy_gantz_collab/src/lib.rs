@@ -1,21 +1,21 @@
-//! Bevy integration of gantz's peer-to-peer collaborative sessions (#286).
+//! Bevy integration of gantz's peer-to-peer collaborative sessions.
 //!
-//! [`CollabPlugin`] bridges the [`gantz_collab`] runtime into the app:
+//! [`CollabPlugin`] bridges the [`gantz_collab`] runtime into the app.
 //!
-//! - **Outbound**: any local commit marks the session state dirty;
-//!   [`announce_sessions`] then mirrors the session's scoped closure into
-//!   the served [`SessionRegistry`](gantz_collab::SessionRegistry) and
-//!   broadcasts the changed tips. Fast-forwards and adoptions of *received*
-//!   tips are never re-announced (echo suppression).
-//! - **Inbound**: `poll_collab_events` drains the runtime, drives the
-//!   want/fetch loop through `gantz_ca::sync::Staged` validation, applies
-//!   completed closures to the registry and converges each scoped name -
-//!   open heads via `bevy_gantz_egui`'s [`SyncRemoteTip`][bevy_gantz_egui::SyncRemoteTip] observer (VM
-//!   state/layout/selection migration included), background names headlessly
-//!   followed by a reference resync.
+//! Outbound: any local commit marks the session state dirty.
+//! [`announce_sessions`] then mirrors the session's scoped closure into the
+//! served [`gantz_collab::SessionRegistry`] and broadcasts the changed tips.
+//! Fast-forwards and adoptions of received tips are never re-announced.
 //!
-//! The session's *decisions* (what to merge, in which orientation) are the
-//! pure `gantz_ca::sync` rules; everything here is bookkeeping around them.
+//! Inbound: `poll_collab_events` drains the runtime, drives the want and
+//! fetch loop through `gantz_ca::sync::Staged` validation, applies completed
+//! closures to the registry and converges each scoped name. Open heads
+//! converge via the [`bevy_gantz_egui::SyncRemoteTip`] observer, which also
+//! migrates VM state, layout and selection. Background names move headlessly,
+//! followed by a reference resync.
+//!
+//! The pure `gantz_ca::sync` rules decide what to merge and in which
+//! orientation. Everything here is bookkeeping around them.
 
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
@@ -41,12 +41,12 @@ pub mod storage;
 mod sync;
 mod ui;
 
-/// The plugin: registers the session resources, observers and systems.
+/// The plugin. Registers the session resources, observers and systems.
 ///
 /// Requires `bevy_gantz::GantzPlugin` and `bevy_gantz_egui`'s plugin. The
-/// app provides the [`CollabIdentity`] resource (loaded or generated at
-/// startup); sharing and joining are requested via [`ShareSessionEvent`] /
-/// [`JoinSessionEvent`] triggers.
+/// app provides the [`CollabIdentity`] resource at startup. Sharing and
+/// joining are requested via [`ShareSessionEvent`] and [`JoinSessionEvent`]
+/// triggers.
 #[derive(Default)]
 pub struct CollabPlugin;
 
@@ -62,13 +62,13 @@ pub struct CollabRuntime(pub Option<Handle>);
 #[derive(Default, Resource)]
 pub struct CollabSessions {
     pub sessions: HashMap<SessionId, SessionState>,
-    /// Set on any local commit; consumed by [`announce_sessions`].
+    /// Set on any local commit. Consumed by [`announce_sessions`].
     pub dirty: bool,
-    /// The endpoint's home relay(s) and their connection state.
+    /// The endpoint's home relays and their connection state.
     pub relays: Vec<(String, bool)>,
 }
 
-/// One session's local (non-persisted) runtime state.
+/// One session's local runtime state. It is not persisted.
 pub struct SessionState {
     /// The persisted configuration.
     pub session: Session,
@@ -78,21 +78,19 @@ pub struct SessionState {
     pub conn: ConnState,
     /// Connected peers and their self-reported usernames.
     pub peers: BTreeMap<PeerId, Option<String>>,
-    /// Echo suppression: the tip most recently announced (or adopted from
-    /// the network) per scoped name.
+    /// The tip most recently announced or adopted per scoped name, for echo
+    /// suppression.
     pub last_announced: HashMap<ca::Name, ca::CommitAddr>,
     /// The per-origin gossip sequence number.
     pub seq: u64,
     /// In-flight fetches, per scoped name.
     pub pending: HashMap<ca::Name, PendingTip>,
-    /// Auto-resolved conflicts accumulated since the session started, for
-    /// surfacing in the GUI.
+    /// Auto-resolved conflicts since the session started, shown in the GUI.
     pub conflicts: usize,
-    /// The most recent session error (e.g. a failed join), cleared once the
-    /// session progresses.
+    /// The most recent session error, cleared once the session progresses.
     pub error: Option<String>,
     /// The empty-graph commit minted at join time so the session's tab
-    /// opens immediately; the snapshot adopts over it.
+    /// opens immediately. The snapshot adopts over it.
     pub placeholder: Option<ca::CommitAddr>,
     /// Commits already mirrored into the runtime-owned served store, so
     /// `serve_scope`'s updates stay incremental without reading it back.
@@ -102,20 +100,20 @@ pub struct SessionState {
     /// Blobs already mirrored into the served store.
     pub served_blobs: HashSet<(ca::SectionId, ca::ContentAddr)>,
     /// Section entries already mirrored into the served store. Entries are
-    /// recorded only once actually sent, so metadata seeded *after* its
-    /// subject (e.g. a commit's view baseline) is caught by a later pass.
+    /// recorded only once sent, so metadata seeded after its subject is
+    /// caught by a later pass.
     pub served_sections: HashSet<(ca::SectionId, ca::Key)>,
-    /// The served `name -> tip` map as last mirrored.
+    /// The served name to tip map as last mirrored.
     pub served_heads: HashMap<ca::Name, ca::CommitAddr>,
     /// Peers' live pointers over the session's shared graph, keyed by
-    /// origin. Entries persist through `pos: None` so reordered stale
-    /// updates still drop by `seq`; freshness is filtered at display time.
+    /// origin. Entries persist through `pos: None`, so reordered stale
+    /// updates still drop by `seq`. Freshness is filtered at display time.
     pub pointers: HashMap<PeerId, PeerPointer>,
 }
 
-/// One peer's last-known pointer state (see `GossipMsg::Pointer`).
+/// One peer's last-known pointer state from `GossipMsg::Pointer`.
 pub struct PeerPointer {
-    /// Graph-space position; `None` = the pointer left the scene.
+    /// Graph-space position. `None` means the pointer left the scene.
     pub pos: Option<(f32, f32)>,
     /// The origin's latest sequence number, for stale-drop.
     pub seq: u64,
@@ -149,7 +147,7 @@ pub struct JoinSessionEvent {
     pub ticket: String,
 }
 
-/// Request leaving (and forgetting) a session.
+/// Request leaving and forgetting a session.
 #[derive(Debug, Event)]
 pub struct LeaveSessionEvent {
     pub session: SessionId,
@@ -186,10 +184,9 @@ impl SessionState {
 impl Plugin for CollabPlugin {
     fn build(&self, app: &mut App) {
         use bevy_gantz_egui::RegisterResponseExt;
-        // The Settings > Collab subtab: the tab's emitted `CollabConfig`
-        // payloads dispatch into a buffered message, applied (and
-        // re-snapshotted into the tab) by `sync_collab_settings`. The
-        // `init_resource` is idempotent (`bevy_gantz_egui` owns the clear).
+        // The Settings > Collab subtab's `CollabConfig` payloads dispatch
+        // into a buffered message. `sync_collab_settings` applies it and
+        // re-snapshots it into the tab.
         app.init_resource::<bevy_gantz_egui::SettingsTabs>()
             .add_message::<CollabSettingsChanged>()
             .register_response_with::<gantz_egui::collab::CollabConfig>(dispatch_collab_settings)
@@ -203,8 +200,8 @@ impl Plugin for CollabPlugin {
             .register_head_response::<gantz_egui::ShareHead>()
             .register_head_response::<gantz_egui::StopSharing>()
             .register_response_with::<gantz_egui::JoinSession>(dispatch_join_session)
-            // Capture overrides (last registration wins over the
-            // bevy_gantz_egui defaults; the app adds this plugin after it).
+            // Capture overrides. The last registration wins, and the app adds
+            // this plugin after `bevy_gantz_egui`'s.
             .register_response_with::<gantz_egui::StateWritten>(action::dispatch_state_written)
             .register_response_with::<gantz_egui::EvalEntry>(action::dispatch_eval_entry)
             .add_observer(action::on_capture_write)

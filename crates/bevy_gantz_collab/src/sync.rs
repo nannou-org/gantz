@@ -1,6 +1,6 @@
-//! The fetch/converge plane: draining runtime events, the want/fetch loop
-//! through `gantz_ca::sync::Staged` validation, per-name convergence, and
-//! announcing local tips into the runtime-owned served stores.
+//! The fetch and converge plane. It drains runtime events, runs the want and
+//! fetch loop through `gantz_ca::sync::Staged` validation, converges each
+//! name, and announces local tips into the runtime-owned served stores.
 
 use crate::{CollabIdentity, CollabRuntime, CollabSessions, PendingTip, SessionState, action};
 use bevy_ecs::prelude::*;
@@ -19,12 +19,11 @@ use std::collections::{BTreeSet, HashSet};
 /// well under iroh-gossip's size limit.
 const TIPS_PER_MSG: usize = 16;
 
-/// The world access threaded through the fetch/converge call graph
-/// ([`apply_join_snapshot`], [`start_fetch`], [`feed_objects`],
-/// [`resolve_tip`]): the registry the fetched closures apply to, the open
-/// heads (to converge heads pointing at moved names), the live graph views
-/// (to substitute the local camera when adopting stored views), and
-/// commands for the follow-up triggers.
+/// The world access threaded through the fetch and converge call graph.
+///
+/// It holds the registry the fetched closures apply to, the open heads to
+/// converge, the live graph views that supply the local camera when adopting
+/// stored views, and commands for the follow-up triggers.
 #[derive(bevy_ecs::system::SystemParam)]
 pub(crate) struct SyncCtx<'w, 's> {
     registry: ResMut<'w, Registry>,
@@ -33,7 +32,7 @@ pub(crate) struct SyncCtx<'w, 's> {
     cmds: Commands<'w, 's>,
 }
 
-/// Drain the runtime's events: fetch, validate, apply and converge.
+/// Drain the runtime's events. Fetch, validate, apply and converge.
 pub(crate) fn poll_collab_events(
     runtime: Res<CollabRuntime>,
     mut sessions: ResMut<CollabSessions>,
@@ -69,11 +68,11 @@ pub(crate) fn poll_collab_events(
                         state.peers.insert(origin, name);
                     }
                 }
-                // Anti-entropy digests: heads pulls are a follow-up; gossip
-                // re-announcement covers transient losses meanwhile.
+                // Gossip re-announcement covers transient losses, so
+                // anti-entropy digests are ignored.
                 GossipMsg::Digest { .. } => {}
-                // Ephemeral actions: queue for [`action::apply_remote_actions`]
-                // (which runs after this system, before `VmSet`).
+                // Queue ephemeral actions for `action::apply_remote_actions`,
+                // which runs after this system and before `VmSet`.
                 GossipMsg::Action {
                     origin,
                     seq,
@@ -93,9 +92,9 @@ pub(crate) fn poll_collab_events(
                         received: web_time::Instant::now(),
                     });
                 }
-                // Presence cursors: keep the newest per origin (gossip may
-                // reorder - stale sequence numbers drop), scoped to the
-                // session's shared branch.
+                // Keep the newest pointer per origin, scoped to the session's
+                // shared branch. Gossip may reorder, so stale sequence
+                // numbers drop.
                 GossipMsg::Pointer {
                     origin,
                     seq,
@@ -199,15 +198,15 @@ pub fn announce_sessions(
 }
 
 /// Mirror the scoped closure of `scope` into the session's served store via
-/// [`Command::Update`]: one reachability walk from the scoped tips
-/// ([`ca::closure_from`]) surfaces every required commit, graph (nested
-/// references included) and content-referenced blob. In-scope metadata
-/// section entries (e.g. commits' stored views, so peers place synced nodes
-/// where their author put them) ride along.
+/// [`Command::Update`]. One reachability walk from the scoped tips via
+/// [`ca::closure_from`] surfaces every required commit, graph and
+/// content-referenced blob, nested references included. In-scope metadata
+/// section entries ride along, so peers place synced nodes where their
+/// author put them.
 ///
 /// The runtime owns the store, so `state`'s served-content shadows keep the
 /// update incremental without reading it back. Inserts are content-addressed
-/// and idempotent: shadow loss only ever costs a re-send.
+/// and idempotent, so shadow loss only costs a re-send.
 pub(crate) fn serve_scope(
     handle: &Handle,
     state: &mut SessionState,
@@ -255,9 +254,9 @@ pub(crate) fn serve_scope(
             blobs.push((section.clone(), store.liveness, addr, bytes.clone()));
         }
     }
-    // In-scope metadata: section entries keyed by scoped names or content in
-    // the closure. The `heads` section travels as the head list; arbitrary
-    // address-keyed entries have no scoping rule and stay local.
+    // In-scope metadata is the section entries keyed by scoped names or
+    // content in the closure. The `heads` section travels as the head list.
+    // Address-keyed entries have no scoping rule and stay local.
     let mut sections = Vec::new();
     for (id, section) in registry.sections() {
         if id.as_str() == ca::HEADS_ID {
@@ -314,8 +313,8 @@ pub(crate) fn serve_scope(
     });
 }
 
-/// Apply a join snapshot: staged (grandfathered) validation, per-name
-/// reconciliation, store fill, and opening the shared graph.
+/// Apply a join snapshot. Validate it with grandfathered staging, reconcile
+/// each name, fill the store and open the shared graph.
 #[allow(clippy::too_many_arguments)]
 fn apply_join_snapshot(
     handle: &Handle,
@@ -385,12 +384,11 @@ fn apply_join_snapshot(
         applied.blobs.len(),
         applied.truncated,
     );
-    // Adopt the host's node layouts (before opening the head, so the shared
-    // graph opens with its nodes where the host placed them).
+    // Adopt the host's node layouts before opening the head, so the shared
+    // graph opens with its nodes where the host placed them.
     let camera = local_camera(state, &ctx.open, &ctx.graph_views);
     apply_sections(&mut ctx.registry, sections, camera);
 
-    // Reconcile each snapshot head with any local state.
     let resolutions = state.session.resolutions;
     for (name, tip) in heads {
         match ctx.registry.head(&name) {
@@ -401,15 +399,15 @@ fn apply_join_snapshot(
             Some(local) if local == tip => {
                 state.last_announced.insert(name, tip);
             }
-            // The placeholder minted at join time: adopt over it (the
-            // resolve path recognises it and navigates the open head).
+            // Adopt over the placeholder minted at join time. The resolve
+            // path recognises it and navigates the open head.
             Some(local) if state.placeholder == Some(local) => {
                 resolve_tip(state, ctx, &name, tip, resolutions);
             }
             Some(local) => match ca::plan_sync_step(ctx.registry.commits(), local, tip) {
                 ca::SyncStep::Unrelated => {
-                    // The session owns the name: rename the local graph
-                    // aside rather than losing it or deadlocking the join.
+                    // The session owns the name. Rename the local graph aside
+                    // rather than lose it or deadlock the join.
                     let aside: ca::Name = format!("{name}-local-{}", local.display_short())
                         .parse()
                         .expect("names parse infallibly");
@@ -422,7 +420,8 @@ fn apply_join_snapshot(
                     state.last_announced.insert(name, tip);
                 }
                 _ => {
-                    // Behind/ahead/diverged: the live convergence path.
+                    // Behind, ahead or diverged. Use the live convergence
+                    // path.
                     resolve_tip(state, ctx, &name, tip, resolutions);
                 }
             },
@@ -444,12 +443,12 @@ fn apply_join_snapshot(
 }
 
 /// Apply received section entries to the local registry per their stamped
-/// merge policy. Advisory metadata: no addresses to verify, and a decode
-/// failure upstream simply skips the entry.
+/// merge policy. This is advisory metadata. There are no addresses to
+/// verify, and a decode failure upstream skips the entry.
 ///
-/// Adopted view entries have their camera replaced with `local_camera` (the
-/// session head's live camera) when given: peers' layouts are welcome, but
-/// adopting a view must never yank the local viewport to a peer's.
+/// When `local_camera` is given, adopted view entries have their camera
+/// replaced with it. Peers' layouts are welcome, but adopting a view must
+/// never move the local viewport to a peer's.
 fn apply_sections(
     registry: &mut Registry,
     sections: Vec<(
@@ -498,7 +497,7 @@ fn local_camera(
         .map(|gv| gv.0.camera)
 }
 
-/// Begin (or refresh) fetching an announced tip's closure.
+/// Begin or refresh fetching an announced tip's closure.
 #[allow(clippy::too_many_arguments)]
 fn start_fetch(
     handle: &Handle,
@@ -512,7 +511,7 @@ fn start_fetch(
     let Some(state) = sessions.sessions.get_mut(&session) else {
         return;
     };
-    // Already known and contained: drop silently.
+    // Already known and contained. Drop silently.
     if ctx.registry.commits().contains_key(&tip) {
         if let Some(local) = ctx.registry.head(&name) {
             if ca::plan_sync_step(ctx.registry.commits(), local, tip) == ca::SyncStep::UpToDate {
@@ -557,9 +556,9 @@ fn feed_objects(
         return;
     };
     let resolutions = state.session.resolutions;
-    // Decode graphs once and split by kind; verification happens per staged
-    // insert. Section entries (answered commits' piggybacked views) apply
-    // directly: advisory metadata rides no closure.
+    // Decode graphs once and split by kind. Verification happens per staged
+    // insert. Section entries apply directly, because advisory metadata
+    // rides no closure.
     let mut commits: Vec<(ca::CommitAddr, ca::Commit)> = Vec::new();
     let mut graphs: Vec<(ca::GraphAddr, ca::DataGraph)> = Vec::new();
     let mut blobs: Vec<(ca::SectionId, ca::BlobLiveness, ca::ContentAddr, ca::Bytes)> = Vec::new();
@@ -590,8 +589,8 @@ fn feed_objects(
         }
     }
     // Adopt the peer's layouts for incoming commits before any of them can
-    // be navigated to or merged (merged-in nodes seed their positions from
-    // the other tip's view).
+    // be navigated to or merged. Merged-in nodes seed their positions from
+    // the other tip's view.
     let camera = local_camera(state, &ctx.open, &ctx.graph_views);
     apply_sections(&mut ctx.registry, sections, camera);
     let names: Vec<ca::Name> = state.pending.keys().cloned().collect();
@@ -641,8 +640,8 @@ fn feed_objects(
             }
             continue;
         }
-        // No progress means the peer cannot supply the closure: drop and let
-        // a future announcement retry.
+        // No progress means the peer cannot supply the closure. Drop it and
+        // let a future announcement retry.
         if pending.last_want.as_ref() == Some(&want.refs) {
             log::warn!("fetch: no progress on '{name}'; dropping");
             continue;
@@ -658,10 +657,11 @@ fn feed_objects(
     }
 }
 
-/// Everything still needed for a pending tip: its commit/graph closure via
-/// [`ca::sync::Staged::missing`], plus the staged graphs' outgoing references
-/// ([`ca::data_graph_out`]) - nested graphs and content-referenced blobs -
-/// that neither the registry nor the staging area holds yet.
+/// Everything still needed for a pending tip. That is its commit and graph
+/// closure via [`ca::sync::Staged::missing`], plus the staged graphs'
+/// outgoing references via [`ca::data_graph_out`] that neither the registry
+/// nor the staging area holds yet. Those references are nested graphs and
+/// content-referenced blobs.
 fn compute_want(registry: &ca::Registry, pending: &mut PendingTip) -> Want {
     let missing = pending.staged.missing(registry, pending.tip);
     let mut refs: Vec<ObjectRef> = missing.commits.into_iter().map(ObjectRef::Commit).collect();
@@ -700,11 +700,12 @@ fn compute_want(registry: &ca::Registry, pending: &mut PendingTip) -> Want {
     Want { refs }
 }
 
-/// Converge a scoped name with a (now fully applied) remote tip.
+/// Converge a scoped name with a fully applied remote tip.
 ///
 /// A name open as a head goes through the [`SyncRemoteTip`] observer, which
-/// migrates VM state/layout/selection and fires the committed machinery;
-/// background names move headlessly, followed by a reference resync.
+/// migrates VM state, layout and selection and fires the committed
+/// machinery. Background names move headlessly, followed by a reference
+/// resync.
 fn resolve_tip(
     state: &mut SessionState,
     ctx: &mut SyncCtx<'_, '_>,
@@ -719,15 +720,14 @@ fn resolve_tip(
         ..
     } = ctx;
     let Some(local) = registry.head(name) else {
-        // A name born on the remote side: adopt it.
+        // A name born on the remote side. Adopt it.
         registry.set_head(name.clone(), tip);
         state.last_announced.insert(name.clone(), tip);
         cmds.trigger(bevy_gantz_egui::ResyncRefsEvent);
         return;
     };
-    // The join flow's placeholder (an empty graph minted so the session's
-    // tab opens immediately) is deliberately unrelated to the session
-    // content it awaits: adopt over it rather than surfacing `Unrelated`.
+    // The join flow's placeholder is unrelated to the session content it
+    // awaits by design. Adopt over it rather than surface `Unrelated`.
     let adopt_unrelated = state.placeholder == Some(local);
     let plan = ca::plan_sync_step(registry.commits(), local, tip);
     let open_entity = open
@@ -745,8 +745,8 @@ fn resolve_tip(
             state.placeholder = None;
             state.last_announced.insert(name.clone(), tip);
             match open_entity {
-                // The observer navigates the open head onto the adopted tip
-                // (which moves the name).
+                // The observer navigates the open head onto the adopted tip,
+                // which moves the name.
                 Some(entity) => {
                     cmds.trigger(ForHead {
                         head: entity,
@@ -789,10 +789,10 @@ fn resolve_tip(
                     let graph_ca = ca::graph_addr(&outcome.graph);
                     let mut branch_head = ca::Head::Branch(name.clone());
                     // Seed the minted merge commit's view from the parent
-                    // tips' stored views before it can be announced: a
-                    // viewless tip on the wire auto-layouts on every
-                    // adopting peer. (An open head seeds from its live
-                    // layout instead - see `on_sync_remote_tip`.)
+                    // tips' stored views before it can be announced. A
+                    // viewless tip on the wire auto-layouts on every adopting
+                    // peer. An open head seeds from its live layout instead,
+                    // in `on_sync_remote_tip`.
                     let first_view = gantz_egui::section::view(registry, &first);
                     let second_view = gantz_egui::section::view(registry, &second);
                     let seeded = gantz_egui::ops::merged_view(

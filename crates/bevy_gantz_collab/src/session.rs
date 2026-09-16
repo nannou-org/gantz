@@ -14,8 +14,9 @@ use gantz_collab::{
     Command, Handle, Identity, Role, Session, SessionEntry, SessionId, SessionRegistry,
 };
 
-/// The fixed conflict policy for shared sessions: last edit wins, edits beat
-/// deletes. Symmetric, so independently merging peers converge.
+/// The fixed conflict policy for shared sessions. The last edit wins and
+/// edits beat deletes. It is symmetric, so independently merging peers
+/// converge.
 pub fn session_resolutions() -> ca::merge::Resolutions {
     ca::merge::Resolutions {
         both_modified: ca::merge::BothModified::KeepNewest,
@@ -23,8 +24,8 @@ pub fn session_resolutions() -> ca::merge::Resolutions {
     }
 }
 
-/// The runtime handle, spawning it on first use with the user's collab
-/// configuration (a later config change applies when the app restarts).
+/// The runtime handle, spawned on first use with the user's collab
+/// configuration. A later config change applies when the app restarts.
 fn ensure_runtime<'a>(
     runtime: &'a mut CollabRuntime,
     identity: &Identity,
@@ -32,9 +33,9 @@ fn ensure_runtime<'a>(
 ) -> &'a Handle {
     runtime.0.get_or_insert_with(|| {
         let infra = match config.custom_relay.as_deref() {
-            // A custom relay means self-hosted infrastructure: nothing n0.
-            // Peers reach each other via invite-ticket addresses and the
-            // relay itself, so no address-lookup service is required.
+            // A custom relay means self-hosted infrastructure with nothing
+            // from n0. Peers reach each other via invite-ticket addresses and
+            // the relay itself, so no address-lookup service is required.
             Some(url) => gantz_collab::Infra::Custom {
                 relays: vec![url.to_string()],
                 pkarr: None,
@@ -45,8 +46,8 @@ fn ensure_runtime<'a>(
     })
 }
 
-/// Handle [`ShareSessionEvent`]: mint a session for the head's branch, fill
-/// its served store, and start gossiping.
+/// Observer for [`ShareSessionEvent`]. Mints a session for the head's
+/// branch, fills its served store and starts gossiping.
 pub fn on_share_session(
     trigger: On<ShareSessionEvent>,
     mut runtime: ResMut<CollabRuntime>,
@@ -96,8 +97,8 @@ pub fn on_share_session(
     }
 }
 
-/// Handle [`JoinSessionEvent`]: parse the ticket and ask the runtime to
-/// join; the snapshot lands via `poll_collab_events`.
+/// Observer for [`JoinSessionEvent`]. Parses the ticket and asks the runtime
+/// to join. The snapshot lands via `poll_collab_events`.
 pub fn on_join_session(
     trigger: On<JoinSessionEvent>,
     mut runtime: ResMut<CollabRuntime>,
@@ -142,9 +143,9 @@ pub fn on_join_session(
     }));
     let mut state = SessionState::new(session);
 
-    // Open the session's tab immediately: when the name is unknown locally,
-    // mint an empty placeholder graph for it (recorded so the snapshot adopts
-    // over it rather than renaming it aside) - the empty scene shows the
+    // Open the session's tab immediately. When the name is unknown locally,
+    // mint an empty placeholder graph for it and record it, so the snapshot
+    // adopts over it rather than renaming it aside. The empty scene shows the
     // connecting overlay until then. An existing local graph opens as-is and
     // reconciles when the snapshot lands, with no placeholder or overlay.
     let branch: ca::Name = ticket.name.parse().expect("names parse infallibly");
@@ -164,7 +165,8 @@ pub fn on_join_session(
     }
 }
 
-/// Handle [`LeaveSessionEvent`]: stop gossiping and forget the session.
+/// Observer for [`LeaveSessionEvent`]. Stops gossiping and forgets the
+/// session.
 pub fn on_leave_session(
     trigger: On<LeaveSessionEvent>,
     runtime: Res<CollabRuntime>,
@@ -186,18 +188,17 @@ pub fn on_leave_session(
     }
 }
 
-/// Mark the sessions dirty on `E` so [`announce_sessions`][crate::announce_sessions] re-checks their
-/// scoped tips. Registered once per tip-moving event: local commits
-/// (`head::CommittedEvent`), head navigation (`head::ChangedEvent` - e.g.
-/// history-pane moves), and settled node-moves' layout-only commits
-/// (`LayoutCommittedEvent` - no committed machinery, but peers still follow
-/// node positions).
+/// Mark the sessions dirty on `E` so [`crate::announce_sessions`] re-checks
+/// their scoped tips. Registered once per tip-moving event. Those are local
+/// commits, head navigation and settled node-moves' layout-only commits.
+/// Layout-only commits skip the committed machinery, but peers still follow
+/// node positions.
 pub fn mark_dirty<E: Event>(_trigger: On<E>, mut sessions: ResMut<CollabSessions>) {
     sessions.dirty = true;
 }
 
 /// Keep `SessionRef` components attached to open heads whose branch is a
-/// session's shared graph (covers heads opened after the join).
+/// session's shared graph. This covers heads opened after the join.
 pub fn attach_session_refs(
     sessions: Res<CollabSessions>,
     open: Query<(Entity, &head::HeadRef), (With<head::OpenHead>, Without<SessionRef>)>,

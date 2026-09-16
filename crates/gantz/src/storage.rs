@@ -12,16 +12,15 @@ use std::sync::{Arc, Mutex};
 /// [`Save`].
 ///
 /// `Arc<Mutex<_>>` lets a background persistence worker share the single store
-/// handle with the main thread - redb permits only one handle per database file,
-/// so sharing, rather than a second handle, is required.
+/// handle with the main thread. redb permits only one handle per database
+/// file.
 ///
-/// Despite the `Mutex`, there is no lock contention during the steady-state
-/// render loop. The main thread only ever *reads* the store, and every read
-/// happens during startup and the first-frame egui-memory load - before any
-/// debounced persist can fire (a persist needs prior input). From then on the
-/// worker is the sole accessor: the persist systems hand their writes to it over
-/// a channel rather than locking the store themselves. So the worker's fsync'd
-/// writes, however long they take, never block a frame.
+/// Despite the `Mutex`, there is no lock contention during the render loop.
+/// The main thread only reads the store, during startup and the first-frame
+/// egui-memory load. A debounced persist needs prior input, so none can fire
+/// before then. From then on the worker is the sole accessor. The persist
+/// systems hand their writes to it over a channel rather than lock the store.
+/// So the worker's fsync'd writes never block a frame.
 #[derive(Resource, Clone)]
 pub struct Pkv(pub Arc<Mutex<PkvStore>>);
 

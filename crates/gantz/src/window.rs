@@ -2,8 +2,8 @@
 //!
 //! On native platforms the window's size is restored on launch and persisted
 //! via the same [`bevy_pkv`]-backed store as the rest of the app state. On web
-//! the window is governed by `fit_canvas_to_parent` (the canvas fills its HTML
-//! container), so persisting a fixed size is meaningless and is disabled.
+//! `fit_canvas_to_parent` governs the window, so the canvas fills its HTML
+//! container and a fixed size is not persisted.
 
 use bevy::{
     prelude::*,
@@ -32,18 +32,17 @@ pub fn plugin() -> WindowPlugin {
             title: "gantz".into(),
             name: Some("gantz".into()),
             fit_canvas_to_parent: true,
-            // NOTE: This vastly improves input-latency on wayland. If you
-            // notice tearing or simialr issues, open an issue so we can try and
-            // select the right `PresentMode` for each system!
+            // This vastly improves input latency on wayland. If you notice
+            // tearing or similar issues, open an issue so the right
+            // `PresentMode` can be selected for each system.
             present_mode: bevy::window::PresentMode::AutoNoVsync,
-            // On web, let the browser's default keydown handling proceed:
-            // winit otherwise calls `preventDefault()` on *every* keydown,
-            // which cancels the browser's paste event - the only source of
-            // paste input on wasm (bevy_egui's Ctrl+V clipboard fallback is
-            // compiled out there). eframe ships the same policy. The
-            // side-effects we care about (the native context menu, file
-            // shortcuts) are guarded by small JS listeners in
-            // `web/index.html`.
+            // On web, let the browser's default keydown handling proceed.
+            // winit otherwise calls `preventDefault()` on every keydown, which
+            // cancels the browser's paste event. That event is the only source
+            // of paste input on wasm, because bevy_egui's Ctrl+V clipboard
+            // fallback is compiled out there. eframe ships the same policy.
+            // Small JS listeners in `web/index.html` guard the unwanted
+            // side-effects such as the native context menu.
             #[cfg(target_arch = "wasm32")]
             prevent_default_event_handling: false,
             ..default()

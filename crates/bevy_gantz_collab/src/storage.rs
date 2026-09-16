@@ -1,5 +1,5 @@
-//! Persistence for the collab identity and session configurations, over the
-//! app's key-value storage (see `bevy_gantz::storage`).
+//! Persistence for the collab identity and session configurations over the
+//! app's key-value storage in `bevy_gantz::storage`.
 
 use bevy_gantz::storage::{Load, Save, load, save};
 use gantz_collab::{Identity, Session};

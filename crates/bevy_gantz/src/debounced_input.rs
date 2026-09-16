@@ -1,12 +1,11 @@
 //! Provides a Bevy plugin for debounced event emission based on input activity.
 //!
 //! The plugin monitors input events and emits an event after a configurable
-//! delay from the last input event. This can be used for auto-saving, or any
-//! other behavior that should occur after a period of user inactivity.
+//! delay from the last input event. Use it for auto-saving, or for any other
+//! behavior that should occur after a period of user inactivity.
 //!
-//! The plugin is generic over the event it emits ([`DebouncedEvent`]), so
-//! several instances with different delays - and distinct event types - can run
-//! side by side to debounce independent behaviours.
+//! The plugin is generic over the [`DebouncedEvent`] it emits. Several
+//! instances with distinct event types and delays can run side by side.
 
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
@@ -17,12 +16,11 @@ use std::marker::PhantomData;
 
 /// A plugin that emits a debounced event of type `E` based on input activity.
 ///
-/// The plugin monitors keyboard, mouse, and touch input. When any input is
-/// detected it (re)starts a timer; once the timer expires without new input, an
-/// `E` is emitted. `E` is also emitted immediately if the window loses focus
-/// with pending input.
+/// The plugin monitors keyboard, mouse, and touch input. Any input restarts a
+/// timer. When the timer expires without new input, an `E` is emitted. `E` is
+/// also emitted immediately if the window loses focus with pending input.
 ///
-/// Add one instance per debounce cadence - each tracks its own timer:
+/// Add one instance per debounce cadence. Each tracks its own timer.
 ///
 /// ```ignore
 /// app.add_plugins(DebouncedInputPlugin::<DebouncedInputEvent>::new(0.25))
@@ -39,8 +37,8 @@ pub struct DebouncedInputPlugin<E = DebouncedInputEvent> {
 /// Implement this for a custom type to run an additional debounce at a
 /// different delay.
 pub trait DebouncedEvent: Message {
-    /// Construct the event. `triggered_by_focus_loss` is `true` when emitted
-    /// early because the window lost focus rather than the timer expiring.
+    /// Construct the event. `triggered_by_focus_loss` is `true` when the
+    /// window lost focus before the timer expired.
     fn debounced(triggered_by_focus_loss: bool) -> Self;
 }
 
@@ -141,7 +139,6 @@ fn handle_window_focus<E: DebouncedEvent>(
     mut timer: ResMut<DebouncedInputTimer<E>>,
     mut msgs: MessageWriter<E>,
 ) {
-    // If we lose window focus and have pending input, emit the event immediately.
     for msg in window_focused.read() {
         if !msg.focused && timer.has_pending_input {
             msgs.write(E::debounced(true));

@@ -1,31 +1,30 @@
 //! Generic storage utilities for persisting gantz state.
 //!
-//! Provides [`Load`] and [`Save`] traits for abstracting over storage backends,
-//! generic [`load`] and [`save`] helpers for RON serialization, and functions
-//! for persisting the gantz registry, open heads and focused head.
+//! Provides the [`Load`] and [`Save`] storage backend traits, the generic
+//! [`load`] and [`save`] RON helpers, and functions that persist the gantz
+//! registry, open heads and focused head.
 //!
 //! # Registry schema
 //!
 //! Content is append-only and written once per address. Mutable metadata
-//! sections are small and written whole per section, so an edit rewrites
-//! exactly one section blob:
+//! sections are small and written whole, so an edit rewrites exactly one
+//! section blob.
 //!
-//! - `o/c/<hex>`: one commit, RON (append-only).
-//! - `o/g/<hex>`: one graph, RON (append-only).
-//! - `b/<section>/<hex>`: one blob, base64 of the raw bytes (append-only).
+//! - `o/c/<hex>`: one commit, RON, append-only.
+//! - `o/g/<hex>`: one graph, RON, append-only.
+//! - `b/<section>/<hex>`: one blob, base64 of the raw bytes, append-only.
 //! - `commit-addrs`: sorted `Vec<CommitAddr>` index, rewritten on membership
 //!   change.
 //! - `graph-addrs`: sorted `Vec<GraphAddr>` index.
 //! - `blob-manifest`: RON `Vec<(SectionId, BlobLiveness, Vec<ContentAddr>)>`,
-//!   rewritten on membership change (store liveness rides here, since blob
-//!   values are raw bytes).
-//! - `ns/<section>`: one whole [`gantz_ca::Section`] (policy + liveness +
-//!   entries), rewritten when it differs from the last persisted form.
+//!   rewritten on membership change. Store liveness lives here because blob
+//!   values are raw bytes.
+//! - `ns/<section>`: one whole [`gantz_ca::Section`], rewritten when it
+//!   differs from the last persisted form.
 //! - `ns-index`: sorted `Vec<SectionId>`, rewritten on membership change.
 //! - `open-heads`, `focused-head`: session state.
 //!
-//! GUI-related storage (gui state, egui memory) is provided by
-//! `bevy_gantz_egui::storage`.
+//! `bevy_gantz_egui::storage` provides the GUI-related storage.
 
 use crate::reg::Registry;
 use base64::Engine as _;
@@ -34,10 +33,6 @@ use bevy_log as log;
 use gantz_ca as ca;
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::{BTreeMap, HashSet};
-
-// ---------------------------------------------------------------------------
-// Traits
-// ---------------------------------------------------------------------------
 
 /// Read strings from a key-value store.
 pub trait Load {
@@ -51,15 +46,11 @@ pub trait Save {
     fn set_string(&mut self, key: &str, value: &str) -> Result<(), Self::Err>;
 }
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 /// A [`Save`] that buffers writes instead of committing them.
 ///
-/// Lets a caller build a batch on the main thread - serializing in place via the
-/// usual `save_*` functions - then hand the collected `(key, value)` pairs to a
-/// background writer. Never fails.
+/// A caller builds a batch on the main thread with the usual `save_*`
+/// functions, then hands the collected `(key, value)` pairs to a background
+/// writer. Never fails.
 #[derive(Default)]
 pub struct BatchWriter {
     pub writes: Vec<(String, String)>,
@@ -68,13 +59,14 @@ pub struct BatchWriter {
 /// Tracks what is already written to storage, so [`save_registry_incremental`]
 /// only writes what changed.
 ///
-/// Content addresses (graphs, commits and per-section blobs) are tracked as
-/// sets: content is immutable, so a known address never needs rewriting.
-/// Sections are mutable, so each is tracked as its last-persisted clone and
-/// rewritten whole when it differs.
+/// Graph, commit and blob content addresses are tracked as sets. Content is
+/// immutable, so a known address never needs rewriting. Sections are mutable,
+/// so each is tracked as its last-persisted clone and rewritten whole when it
+/// differs.
 ///
-/// Seed it from the disk-loaded registry via [`PersistedRegistry::from_registry`]:
-/// everything `load_registry` returns is, by definition, already on disk.
+/// Seed it from the disk-loaded registry via
+/// [`PersistedRegistry::from_registry`]. Everything `load_registry` returns
+/// is already on disk.
 #[derive(Resource, Default)]
 pub struct PersistedRegistry {
     graphs: HashSet<ca::GraphAddr>,
@@ -82,10 +74,6 @@ pub struct PersistedRegistry {
     blobs: BTreeMap<ca::SectionId, HashSet<ca::ContentAddr>>,
     sections: BTreeMap<ca::SectionId, ca::Section>,
 }
-
-// ---------------------------------------------------------------------------
-// Inherent impls
-// ---------------------------------------------------------------------------
 
 impl BatchWriter {
     /// Take the collected writes, leaving the buffer empty.
@@ -120,10 +108,6 @@ impl PersistedRegistry {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Trait impls
-// ---------------------------------------------------------------------------
-
 impl Save for BatchWriter {
     type Err = std::convert::Infallible;
     fn set_string(&mut self, key: &str, value: &str) -> Result<(), Self::Err> {
@@ -131,10 +115,6 @@ impl Save for BatchWriter {
         Ok(())
     }
 }
-
-// ---------------------------------------------------------------------------
-// Generic helpers
-// ---------------------------------------------------------------------------
 
 /// Serialize `value` as RON and persist it under `key`.
 pub fn save<T: Serialize + ?Sized>(storage: &mut impl Save, key: &str, value: &T) {
@@ -173,62 +153,43 @@ pub fn load<T: DeserializeOwned>(storage: &impl Load, key: &str) -> Option<T> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Keys
-// ---------------------------------------------------------------------------
-
+/// Storage keys. See the module docs for the schema.
 mod key {
-    /// All known graph addresses (sorted).
     pub const GRAPH_ADDRS: &str = "graph-addrs";
-    /// All known commit addresses (sorted).
     pub const COMMIT_ADDRS: &str = "commit-addrs";
-    /// Every blob store's section id, liveness and addresses.
     pub const BLOB_MANIFEST: &str = "blob-manifest";
-    /// All known section ids (sorted).
     pub const SECTION_INDEX: &str = "ns-index";
-    /// The key at which the list of open heads is stored.
     pub const OPEN_HEADS: &str = "open-heads";
-    /// The key at which the focused head is stored.
     pub const FOCUSED_HEAD: &str = "focused-head";
 
-    /// The key for a particular graph in storage.
     pub fn graph(ca: gantz_ca::GraphAddr) -> String {
         format!("o/g/{ca}")
     }
 
-    /// The key for a particular commit in storage.
     pub fn commit(ca: gantz_ca::CommitAddr) -> String {
         format!("o/c/{ca}")
     }
 
-    /// The key for a particular blob in storage.
     pub fn blob(section: &str, addr: &gantz_ca::ContentAddr) -> String {
         format!("b/{section}/{addr}")
     }
 
-    /// The key for a whole metadata section in storage.
     pub fn section(id: &str) -> String {
         format!("ns/{id}")
     }
 }
 
-// ---------------------------------------------------------------------------
-// Registry
-// ---------------------------------------------------------------------------
-
-/// Incrementally persist the registry, writing only what `persisted` doesn't yet
-/// have. Content is content-addressed and immutable (the key *is* the content
-/// hash), so an already-written entry never needs rewriting and this is O(new
-/// content + changed sections) rather than O(registry). An unchanged registry
-/// writes nothing.
+/// Persist the registry, writing only what `persisted` does not yet have.
 ///
-/// A fresh [`PersistedRegistry::default`] makes this a full save.
+/// The key of each content entry is its content hash, so an already-written
+/// entry never needs rewriting. The cost is proportional to the new content
+/// and changed sections, not to the registry. An unchanged registry writes
+/// nothing. A fresh [`PersistedRegistry::default`] makes this a full save.
 pub fn save_registry_incremental(
     storage: &mut impl Save,
     registry: &Registry,
     persisted: &mut PersistedRegistry,
 ) {
-    // Graph blobs: write only newly-seen content addresses.
     let mut graphs_changed = false;
     for (&ca, graph) in registry.graphs() {
         if persisted.graphs.insert(ca) {
@@ -236,8 +197,8 @@ pub fn save_registry_incremental(
             graphs_changed = true;
         }
     }
-    // Prune detection: every live key is now in `persisted`, so it is a superset
-    // of the live keys; a length mismatch means stale (pruned) addrs remain.
+    // Every live key is now in `persisted`, so a length mismatch means pruned
+    // addrs remain.
     if persisted.graphs.len() != registry.graphs().len() {
         persisted
             .graphs
@@ -250,7 +211,6 @@ pub fn save_registry_incremental(
         save(storage, key::GRAPH_ADDRS, &addrs);
     }
 
-    // Commit blobs: same pattern.
     let mut commits_changed = false;
     for (&ca, commit) in registry.commits() {
         if persisted.commits.insert(ca) {
@@ -270,8 +230,8 @@ pub fn save_registry_incremental(
         save(storage, key::COMMIT_ADDRS, &addrs);
     }
 
-    // Blob stores: raw bytes per address, membership (and store liveness) in
-    // the manifest.
+    // Blob stores keep raw bytes per address. Membership and store liveness
+    // live in the manifest.
     let mut manifest_changed = false;
     for (id, store) in registry.blobs() {
         let tracked = persisted.blobs.entry(id.clone()).or_default();
@@ -300,7 +260,7 @@ pub fn save_registry_incremental(
         save(storage, key::BLOB_MANIFEST, &manifest);
     }
 
-    // Sections: mutable, so each is compared against its last-persisted form
+    // Sections are mutable. Each is compared against its last-persisted form
     // and rewritten whole when it differs.
     let mut index_changed = false;
     for (id, section) in registry.sections() {
@@ -339,7 +299,7 @@ pub fn load_registry(storage: &impl Load) -> Registry {
 
     let mut registry = ca::Registry::from_parts(graphs, commits, BTreeMap::new());
 
-    // Sections load whole: the first write per section stamps its stored
+    // Sections load whole. The first write per section stamps its stored
     // policy and liveness.
     let section_ids: Vec<ca::SectionId> = load(storage, key::SECTION_INDEX).unwrap_or_default();
     for id in section_ids {
@@ -351,9 +311,9 @@ pub fn load_registry(storage: &impl Load) -> Registry {
         }
     }
 
-    // Blobs: `add_blob` re-derives each address from the bytes, so the load is
-    // self-verifying (corrupt bytes land under a different address and are
-    // unreachable).
+    // `add_blob` re-derives each address from the bytes, so the load is
+    // self-verifying. Corrupt bytes land under a different address and are
+    // unreachable.
     let manifest: Vec<(ca::SectionId, ca::BlobLiveness, Vec<ca::ContentAddr>)> =
         load(storage, key::BLOB_MANIFEST).unwrap_or_default();
     for (id, liveness, addrs) in manifest {
@@ -377,7 +337,7 @@ fn save_blob(storage: &mut impl Save, key: &str, bytes: &[u8]) {
     }
 }
 
-/// Load raw blob bytes from `key` (see [`save_blob`]).
+/// Load raw blob bytes written by [`save_blob`].
 fn load_blob(storage: &impl Load, key: &str) -> Option<Vec<u8>> {
     let encoded = match storage.get_string(key) {
         Ok(Some(s)) => s,
@@ -396,37 +356,25 @@ fn load_blob(storage: &impl Load, key: &str) -> Option<Vec<u8>> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Open heads
-// ---------------------------------------------------------------------------
-
-/// Save all open heads to storage.
+/// Save the open heads.
 pub fn save_open_heads(storage: &mut impl Save, heads: &[ca::Head]) {
     save(storage, key::OPEN_HEADS, heads);
 }
 
-/// Load all open heads from storage.
+/// Load the open heads.
 pub fn load_open_heads(storage: &impl Load) -> Option<Vec<ca::Head>> {
     load(storage, key::OPEN_HEADS)
 }
 
-// ---------------------------------------------------------------------------
-// Focused head
-// ---------------------------------------------------------------------------
-
-/// Save the focused head to storage.
+/// Save the focused head.
 pub fn save_focused_head(storage: &mut impl Save, head: &ca::Head) {
     save(storage, key::FOCUSED_HEAD, head);
 }
 
-/// Load the focused head from storage.
+/// Load the focused head.
 pub fn load_focused_head(storage: &impl Load) -> Option<ca::Head> {
     load(storage, key::FOCUSED_HEAD)
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -488,9 +436,9 @@ mod tests {
         key::section(ca::HEADS_ID)
     }
 
-    /// Build a registry from `(graph, commit)` synthetic-addr pairs (one commit
-    /// per graph) plus `(name, commit)` head pairs. Graph blob values are empty -
-    /// the dedup is keyed on the map keys, not the values.
+    /// Build a registry from `(graph, commit)` synthetic-addr pairs, one commit
+    /// per graph, plus `(name, commit)` head pairs. Graph values are empty
+    /// because the dedup is keyed on the map keys.
     fn registry(graphs: &[(u8, u8)], heads: &[(&str, u8)]) -> Registry {
         let g = graphs
             .iter()
@@ -510,8 +458,8 @@ mod tests {
         Registry(ca::Registry::from_parts(g, c, h))
     }
 
-    /// Store a synthetic per-commit "view" entry in a KeepExisting/WithCommit
-    /// section, mirroring how the GUI persists scene views.
+    /// Store a synthetic per-commit view entry the way the GUI persists scene
+    /// views.
     fn set_view(reg: &mut Registry, commit: u8, value: u8) {
         ca::section_insert_datum(
             &mut reg.0,
@@ -539,7 +487,6 @@ mod tests {
         assert!(wrote(&writes, key::COMMIT_ADDRS));
         assert!(wrote(&writes, &heads_key()));
         assert!(wrote(&writes, key::SECTION_INDEX));
-        // No blobs, so no manifest.
         assert!(!wrote(&writes, key::BLOB_MANIFEST));
     }
 
@@ -573,7 +520,6 @@ mod tests {
         assert!(wrote(&writes, &key::commit(commit_addr(12))));
         assert!(wrote(&writes, key::GRAPH_ADDRS));
         assert!(wrote(&writes, key::COMMIT_ADDRS));
-        // Already-persisted blobs and unchanged sections are not rewritten.
         assert!(!wrote(&writes, &key::graph(graph_addr(1))));
         assert!(!wrote(&writes, &key::commit(commit_addr(11))));
         assert!(!wrote(&writes, &heads_key()));
@@ -589,7 +535,6 @@ mod tests {
         let mut store = MockStore::default();
         save_registry_incremental(&mut store, &reg, &mut persisted);
         store.take_writes();
-        // One view entry moves; heads and content are untouched.
         set_view(&mut reg, 12, 3);
         save_registry_incremental(&mut store, &reg, &mut persisted);
         let writes = store.take_writes();
@@ -633,7 +578,6 @@ mod tests {
         let mut store = MockStore::default();
         save_registry_incremental(&mut store, &reg, &mut persisted);
         store.take_writes();
-        // Keep only commit 11 (and graph 1, which it references).
         let live = ca::LiveSet {
             commits: HashSet::from([commit_addr(11)]),
             graphs: HashSet::from([graph_addr(1)]),
@@ -642,12 +586,11 @@ mod tests {
         ca::prune(&mut reg.0, &live);
         save_registry_incremental(&mut store, &reg, &mut persisted);
         let writes = store.take_writes();
-        // Nothing new to write, but both indices shrank and are rewritten.
+        // Both indices shrank, so they are rewritten.
         assert!(wrote(&writes, key::GRAPH_ADDRS));
         assert!(wrote(&writes, key::COMMIT_ADDRS));
         assert!(!wrote(&writes, &key::graph(graph_addr(1))));
         assert!(!wrote(&writes, &key::commit(commit_addr(11))));
-        // Tracker trimmed to the surviving keys.
         assert_eq!(persisted.graphs.len(), 1);
         assert_eq!(persisted.commits.len(), 1);
     }
@@ -670,8 +613,6 @@ mod tests {
 
     #[test]
     fn batch_writer_collects_pairs_and_take_empties() {
-        // Building a batch via the usual `save_*` path collects the same writes
-        // a direct store would, as ordered (key, ron) pairs.
         let reg = registry(&[(1, 11)], &[("alpha", 11)]);
         let mut persisted = PersistedRegistry::default();
         let mut batch = BatchWriter::default();
@@ -683,7 +624,6 @@ mod tests {
         assert!(keys.contains(&key::GRAPH_ADDRS));
         assert!(keys.contains(&key::COMMIT_ADDRS));
         assert!(keys.contains(&heads_key().as_str()));
-        // Values are the RON the direct `save` path would have written.
         let (_, heads_ron) = batch
             .writes
             .iter()
@@ -692,14 +632,12 @@ mod tests {
         let heads_section = reg.section(ca::HEADS_ID).expect("heads section");
         assert_eq!(heads_ron, &ron::to_string(heads_section).unwrap());
 
-        // `take` hands off the buffer and leaves it empty.
         let taken = batch.take();
         assert!(!taken.is_empty());
         assert!(batch.writes.is_empty());
     }
 
-    /// A section entry's raw `Value` forms (datum, blob pointer, commit) all
-    /// survive the whole-section round trip.
+    /// Every `Value` form survives the whole-section round trip.
     #[test]
     fn section_value_forms_round_trip() {
         let mut reg = registry(&[(1, 11)], &[("alpha", 11)]);
