@@ -1,9 +1,10 @@
 //! The Steel runtime codec, the v1 backend encoding of the tree.
 //!
-//! Symbols lower to identifiers, strings to strings, and Steel lists and
-//! vectors both lower to lists, matching how the rest of gantz treats the
-//! two interchangeably. Non-finite numbers and values outside the abstract
-//! model lower to [`SExpr::Other`] so the decoder can report them by name.
+//! Symbols lower to identifiers and strings to strings. Steel lists and
+//! vectors both lower to lists, which matches how the rest of gantz treats
+//! the two interchangeably. Non-finite numbers and values outside the
+//! abstract model lower to [`SExpr::Other`] so the decoder can report them
+//! by name.
 
 use crate::decode::{Decoded, Limits};
 use crate::elem::Element;
@@ -35,7 +36,7 @@ pub fn lower(val: &SteelVal) -> SExpr {
 
 /// Raise an abstract value into a Steel value.
 ///
-/// Total. `Other` never comes out of the encoder, it raises to its
+/// Total. `Other` never comes out of the encoder. It raises to its
 /// description string for completeness. Integers saturate to the `isize`
 /// range on 32 bit targets.
 pub fn raise(expr: &SExpr) -> SteelVal {
@@ -53,12 +54,12 @@ pub fn raise(expr: &SExpr) -> SteelVal {
     }
 }
 
-/// Decode a UI tree from a Steel value. Total, see [`crate::decode::decode`].
+/// Decode a UI tree from a Steel value. Total. See [`crate::decode::decode`].
 pub fn decode(val: &SteelVal, limits: &Limits) -> Decoded {
     crate::decode::decode(lower(val), limits)
 }
 
-/// Encode an element as a Steel value in canonical form, see
+/// Encode an element as a Steel value in canonical form. See
 /// [`crate::encode::encode`].
 pub fn encode(elem: &Element) -> SteelVal {
     raise(&crate::encode::encode(elem))

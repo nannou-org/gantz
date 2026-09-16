@@ -1,11 +1,11 @@
-//! The `Gui` marker node: declares a graph's GUI from within the graph.
+//! The `Gui` marker node declares a graph's GUI from within the graph.
 //!
-//! Just as [`Inlet`][gantz_core::node::graph::Inlet]/[`Outlet`][gantz_core::node::graph::Outlet]
-//! markers declare a graph's sockets, a [`Gui`] marker declares its GUI: the
-//! tree pull-evaluated into the marker is stored in the marker's state slot,
-//! where the host reads it and renders it via the `ui_tree` interpreter. One
-//! marker per [`GuiRole`] (a duplicate role is resolved as first-in-index-order
-//! wins).
+//! [`gantz_core::node::graph::Inlet`] and [`gantz_core::node::graph::Outlet`]
+//! markers declare a graph's sockets. A [`Gui`] marker declares its GUI the
+//! same way. The tree pull-evaluated into the marker is stored in the
+//! marker's state slot. The host reads it there and renders it via the
+//! `ui_tree` interpreter. One marker per [`GuiRole`]. For a duplicate role,
+//! the first in index order wins.
 
 use crate::widget::node_inspector::{self, radio_option};
 use crate::{Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind};
@@ -21,12 +21,13 @@ pub const GUI_REF_EXT_KEY: &str = "gantz.gui";
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GuiRole {
-    /// The in-graph node form (`NodeUi::ui`).
+    /// The in-graph node form. Rendered by `NodeUi::ui`.
     #[default]
     Body,
-    /// The detached pane (`NodeUi::view_ui`).
+    /// The detached pane. Rendered by `NodeUi::view_ui`.
     View,
-    /// Appended after the inspector's default table (`NodeUi::inspector_ui`).
+    /// Appended after the inspector's default table. Rendered by
+    /// `NodeUi::inspector_ui`.
     Inspector,
     /// Condensed body variant for dense patching.
     Compact,
@@ -34,7 +35,7 @@ pub enum GuiRole {
 
 /// How instances present the graph's body GUI by default.
 ///
-/// Meaningful on the [`GuiRole::Body`] marker; instances may override it via
+/// Meaningful on the [`GuiRole::Body`] marker. Instances may override it via
 /// [`GuiRefExt`].
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -42,7 +43,7 @@ pub enum GuiDisplay {
     /// Render the full body marker tree.
     #[default]
     Full,
-    /// Render the compact marker tree (falls back to a label).
+    /// Render the compact marker tree, or a label when there is none.
     Compact,
     /// Render the name label only.
     Label,
@@ -51,8 +52,8 @@ pub enum GuiDisplay {
 /// A marker node declaring the tree wired into it as this graph's GUI for
 /// `role`.
 ///
-/// Stateful with a single pull-evaluated input: the pull stores the incoming
-/// tree in the marker's state slot, where the host reads it each frame.
+/// Stateful with a single pull-evaluated input. The pull stores the incoming
+/// tree in the marker's state slot. The host reads it there each frame.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag)]
 pub struct Gui {
     /// The surface this marker's tree presents.
@@ -66,9 +67,9 @@ pub struct Gui {
 /// Per-instance GUI overrides, stored in a ref's ext map under
 /// [`GUI_REF_EXT_KEY`].
 ///
-/// Absent means "follow the definition default" (the body marker's
-/// [`display`][Gui::display]); present means the user chose an explicit
-/// display for this instance, even if it matches the definition default.
+/// Absent means follow the definition default, the body marker's
+/// [`Gui::display`]. Present means the user chose an explicit display for
+/// this instance, even if it matches the definition default.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct GuiRefExt {
     /// The display mode this instance renders the referenced GUI with.
@@ -117,9 +118,9 @@ impl GuiDisplay {
 
 /// The `gui` markers among a graph's stored nodes, in index order.
 ///
-/// A pure data walk: a marker is a node whose tag is [`Gui`]'s, with its
-/// role/display read via the type's own serde (no codec, no reification).
-/// Call sites resolve a duplicate role as first-in-index-order.
+/// A pure data walk. A marker is a node whose tag is [`Gui`]'s. Its role and
+/// display are read via the type's own serde, with no codec and no
+/// reification. Call sites resolve a duplicate role as first in index order.
 pub fn markers(g: &gantz_ca::DataGraph) -> Vec<(node::Id, Gui)> {
     use petgraph::visit::{IntoNodeReferences, NodeRef};
     g.node_references()
@@ -133,13 +134,12 @@ pub fn markers(g: &gantz_ca::DataGraph) -> Vec<(node::Id, Gui)> {
         .collect()
 }
 
-/// The graph address a stored node pins, if it is a reference *stand-in* (a
-/// `NamedRef` or bare `Ref`).
+/// The graph address a stored node pins, if it is a reference stand-in.
+/// Stand-ins are `NamedRef` and bare `Ref`.
 ///
-/// `Fn`-wrapped refs deliberately do not match: a function value references
-/// a graph without standing in for it. This mirrors the typed `AsRefNode`
-/// rule as a pure data check, the same tag rule the plyphon DSP-graph walk
-/// uses.
+/// `Fn`-wrapped refs deliberately do not match. This mirrors the typed
+/// `AsRefNode` rule as a pure data check. The plyphon DSP-graph walk uses
+/// the same tag rule.
 pub fn ref_target_of(nd: &gantz_ca::NodeData) -> Option<gantz_ca::ContentAddr> {
     let is_ref = nd.tag == crate::node::NamedRef::TAG || nd.tag == gantz_core::node::Ref::TAG;
     is_ref.then(|| nd.refs.first().copied()).flatten()
@@ -148,9 +148,9 @@ pub fn ref_target_of(nd: &gantz_ca::NodeData) -> Option<gantz_ca::ContentAddr> {
 /// The path and input count of every `gui` marker in the graph tree rooted
 /// at `g`, recursing through reference stand-ins via the registry.
 ///
-/// Backs the hosts' eager marker refresh: each `(path, n_inputs)` names the
-/// singleton pull entrypoint compiled for that marker instance. A pure data
-/// walk over stored graphs - no codec and no reified cache involved.
+/// Backs the hosts' eager marker refresh. Each `(path, n_inputs)` names the
+/// singleton pull entrypoint compiled for that marker instance. It is a pure
+/// data walk over stored graphs, with no codec and no reified cache.
 pub fn marker_paths(
     reg: &gantz_ca::Registry,
     g: &gantz_ca::DataGraph,
@@ -163,8 +163,8 @@ pub fn marker_paths(
 }
 
 /// The recursive body of [`marker_paths`]. `descent` guards against cyclic
-/// reference data (the registry prevents true cycles; corrupt data must not
-/// hang the walk).
+/// reference data. The registry prevents true cycles, but corrupt data must
+/// not hang the walk.
 fn collect_marker_paths(
     reg: &gantz_ca::Registry,
     g: &gantz_ca::DataGraph,
@@ -346,7 +346,6 @@ mod tests {
     use steel::SteelVal;
     use steel::steel_vm::engine::Engine;
 
-    // A node lookup is unnecessary for these self-contained graphs.
     fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
         None
     }
@@ -364,7 +363,6 @@ mod tests {
         vm
     }
 
-    // Fire the pull entrypoint of the marker at `path`.
     fn fire_pull(vm: &mut Engine, path: Vec<usize>) {
         let ep = entrypoint::pull(path, 1);
         let fn_name = entry_fn_name(&ep.id());
@@ -372,7 +370,6 @@ mod tests {
             .unwrap();
     }
 
-    // Fire the push entrypoint of node `ix`.
     fn fire_push(vm: &mut Engine, g: &petgraph::graph::DiGraph<Box<dyn Node>, Edge>, ix: usize) {
         let ctx = node::MetaCtx::new(&no_lookup);
         let outs = g[petgraph::graph::NodeIndex::new(ix)].n_outputs(ctx) as u8;
@@ -390,7 +387,8 @@ mod tests {
         }
     }
 
-    // Build `expr -> gui`, returning the graph and the two node indices.
+    // Build a graph with `src` wired into `gui`. Returns the graph and both
+    // node indices.
     fn graph_with(
         src: Box<dyn Node>,
         gui: Gui,
@@ -438,9 +436,9 @@ mod tests {
     }
 
     // A marker nested in an inner graph gets its own per-instance pull
-    // entrypoint (collected through the nesting), and firing it stores the
-    // inner tree at the nested path. Gui is the first 0-output stateful node,
-    // so this also pins the compiled form.
+    // entrypoint, collected through the nesting. Firing it stores the inner
+    // tree at the nested path. Gui is the first 0-output stateful node, so
+    // this also pins the compiled form.
     #[test]
     fn nested_marker_pull_entrypoint_fires() {
         let mut inner = gantz_core::node::graph::Graph::<Box<dyn Node>>::default();

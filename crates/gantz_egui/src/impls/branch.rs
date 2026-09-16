@@ -3,12 +3,12 @@ use crate::{
     SocketKind,
 };
 
-/// A widget used to allow for editing and parsing a branch expression.
+/// A widget for editing and parsing a branch expression.
 pub struct BranchEdit<'a> {
     branch: &'a mut gantz_core::node::Branch,
     pub id: egui::Id,
-    /// When `true`, the editor fills the available width/height (for the
-    /// detached view) instead of sizing to its widest line.
+    /// When `true`, the editor fills the available width and height instead
+    /// of sizing to its widest line. The detached view uses this.
     fill: bool,
 }
 
@@ -23,7 +23,6 @@ impl<'a> egui::Widget for BranchEdit<'a> {
         let Self { branch, id, fill } = self;
         let code_id = id.with("code");
 
-        // Retrieve the working state.
         let mut state: BranchEditState = ui
             .memory_mut(|m| m.data.remove_temp(code_id))
             .unwrap_or_default();
@@ -50,13 +49,11 @@ impl<'a> egui::Widget for BranchEdit<'a> {
             ui.fonts_mut(|fonts| fonts.layout_job(layout_job))
         };
 
-        // Size the editor to its widest line. A multiline `TextEdit` wraps its
-        // text within `desired_width` minus its horizontal margin, so measure
-        // the same (unwrapped) highlighted layout the editor renders and pass a
-        // matching `desired_width` and `margin`.
+        // `margin` is passed to both the editor and the width measurement.
         let font_id = egui::FontSelection::from(egui::TextStyle::Monospace).resolve(ui.style());
         let margin = egui::Margin::symmetric(4, 2);
-        // Fill the pane (detached view) or size to the widest line (in-graph).
+        // Fill the pane in the detached view, or size to the widest line in
+        // the graph.
         let (desired_width, desired_rows) = if fill {
             let row_h = ui.text_style_height(&egui::TextStyle::Monospace);
             let rows = ((ui.available_height() / row_h).floor() as usize).max(1);
@@ -87,7 +84,6 @@ impl<'a> egui::Widget for BranchEdit<'a> {
             }
         }
 
-        // Persist the WIP editing code.
         ui.memory_mut(|m| m.data.insert_temp(code_id, state));
 
         response
@@ -104,9 +100,10 @@ impl NodeUi for gantz_core::node::Branch {
     }
 
     fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
-        // `src` (and the branch conns) are part of the content address. Detect a
-        // real edit by hashing before and after: a keystroke that fails to parse
-        // changes the buffer but not the node, so must not mark `changed`.
+        // `src` and the branch conns are part of the content address. Detect a
+        // real edit by hashing before and after. A keystroke that fails to
+        // parse changes the buffer but not the node, so it must not mark
+        // `changed`.
         let before = branch_hash(self);
         let framed = uictx.framed(|ui, _sockets| {
             let id = egui::Id::new("BranchEdit").with(ctx.path());
@@ -118,9 +115,9 @@ impl NodeUi for gantz_core::node::Branch {
     }
 
     fn view_ui(&mut self, _ctx: NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
-        // The same code editor as the in-graph node, but filling the pane (the
-        // pane keeps its margin). A distinct id (the pane scopes `ui.id`) keeps
-        // its WIP edit state separate from the in-graph editor.
+        // The same code editor as the in-graph node, but filling the pane. The
+        // pane keeps its margin. The pane scopes `ui.id`, so the distinct id
+        // keeps the WIP edit state separate from the in-graph editor.
         let before = branch_hash(self);
         let id = ui.id().with("branch-view");
         let res = ui.add(BranchEdit::new(self, id).fill(true));
@@ -152,7 +149,6 @@ impl NodeUi for gantz_core::node::Branch {
                     .changed()
                 {
                     self.set_outputs(n.clamp(1, 16) as u8);
-                    // Ensure all branches still have at least 2 entries.
                     ensure_min_branches(self);
                     resp.mark_changed();
                 }
@@ -178,7 +174,7 @@ impl NodeUi for gantz_core::node::Branch {
             });
         });
 
-        // Checkbox grid: rows = branches, columns = outputs.
+        // Checkbox grid. Rows are branches, columns are outputs.
         let outputs = self.outputs() as usize;
         let n_branches = self.n_branches();
         let mut branches = self.branch_conns().to_vec();
@@ -269,8 +265,8 @@ impl<'a> BranchEdit<'a> {
         }
     }
 
-    /// Fill the available width/height (for the detached view) rather than
-    /// sizing to the widest line.
+    /// Fill the available width and height rather than sizing to the widest
+    /// line. The detached view uses this.
     pub fn fill(mut self, fill: bool) -> Self {
         self.fill = fill;
         self

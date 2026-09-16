@@ -1,8 +1,8 @@
 //! The `Datum` codec, the storage and interchange encoding of the tree.
 //!
 //! `Datum` has no symbol variant, so identifiers and strings both map to
-//! [`Datum::Str`]: the decoder's ident-or-string tolerance rule exists for
-//! exactly this. Raising is therefore not injective, a datum round trip
+//! [`Datum::Str`]. The decoder's ident-or-string tolerance rule exists for
+//! exactly this. Raising is therefore not injective. A datum round trip
 //! normalizes identifiers to strings while decoding to the same tree.
 //! Nulls, characters, byte buffers and maps lower to [`SExpr::Other`] so the
 //! decoder can report them by name.
@@ -34,8 +34,8 @@ pub fn lower(datum: &Datum) -> SExpr {
 
 /// Raise an abstract value into a datum.
 ///
-/// Total. Identifiers and strings both become [`Datum::Str`], and `Other`
-/// (which never comes out of the encoder) becomes its description string.
+/// Total. Identifiers and strings both become [`Datum::Str`]. `Other` never
+/// comes out of the encoder, but it becomes its description string.
 pub fn raise(expr: &SExpr) -> Datum {
     match expr {
         SExpr::Ident(s) | SExpr::Str(s) => Datum::Str(s.clone()),
@@ -47,12 +47,12 @@ pub fn raise(expr: &SExpr) -> Datum {
     }
 }
 
-/// Decode a UI tree from a datum. Total, see [`crate::decode::decode`].
+/// Decode a UI tree from a datum. Total. See [`crate::decode::decode`].
 pub fn decode(datum: &Datum, limits: &Limits) -> Decoded {
     crate::decode::decode(lower(datum), limits)
 }
 
-/// Encode an element as a datum in canonical form, see
+/// Encode an element as a datum in canonical form. See
 /// [`crate::encode::encode`].
 pub fn encode(elem: &Element) -> Datum {
     raise(&crate::encode::encode(elem))

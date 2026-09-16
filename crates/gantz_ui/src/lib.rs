@@ -1,17 +1,17 @@
 //! The declarative UI tree model for user-defined gantz GUIs.
 //!
-//! **A graph's GUI is a value.** A tree of plain data that the graph itself
-//! produces, bound to node state by path, interpreted by a host every frame.
-//! This crate defines the canonical typed model of that tree ([`Element`]),
-//! a total decoder with inline diagnostics, a canonical encoder, and
-//! per-runtime codecs. It is deliberately free of any GUI toolkit and, with
-//! no features enabled, free of any runtime.
+//! A graph's GUI is a value. It is a tree of plain data that the graph
+//! itself produces. The tree binds to node state by path. A host interprets
+//! it every frame. This crate defines the typed model of that tree
+//! ([`Element`]), a total decoder with inline diagnostics, a canonical
+//! encoder, and per-runtime codecs. It depends on no GUI toolkit. With no
+//! features enabled it depends on no runtime.
 //!
 //! # The form
 //!
-//! The vocabulary is specified over an abstract data model ([`SExpr`]):
-//! identifier atoms, booleans, integers, floats, strings and lists. Written
-//! in s-expression reference syntax:
+//! The vocabulary is specified over an abstract data model ([`SExpr`]). The
+//! model has identifier atoms, booleans, integers, floats, strings and
+//! lists. The reference syntax is s-expressions:
 //!
 //! ```text
 //! element  := (tag attrs? arg ... child ...)
@@ -33,29 +33,29 @@
 //!   (ref-gui 9))
 //! ```
 //!
-//! Each runtime encodes the model in its own value type through a codec
-//! (see [`codec`]). The Steel encoding writes tags and names as symbols, the
-//! `Datum` encoding writes them as strings, and the decoder treats
-//! identifiers and strings as interchangeable in identifier and text
-//! positions so both agree.
+//! Each runtime encodes the model in its own value type through a codec.
+//! See [`codec`]. The Steel encoding writes tags and names as symbols. The
+//! `Datum` encoding writes them as strings. The decoder treats identifiers
+//! and strings as interchangeable in identifier and text positions, so both
+//! encodings agree.
 //!
 //! # Principles
 //!
 //! 1. The tree is inert data. No callbacks, no code. The graph produces it
-//!    on change, the host interprets it per frame.
-//! 2. Bindings are structural and machine produced. Paths are baked by
-//!    codegen or the host, never hand authored in the normal flow.
+//!    on change. The host interprets it every frame.
+//! 2. Bindings are structural and machine produced. Codegen or the host
+//!    bakes the paths. They are never hand authored in the normal flow.
 //! 3. State granularity beats binding splicing. A dynamic collection is one
 //!    widget bound to one structured state value, not many spliced bindings.
 //! 4. Restore never fires. Widgets emit events only from user interaction.
-//! 5. Unknown attributes are ignored (forward compatibility), unknown tags
+//! 5. Unknown attributes are ignored for forward compatibility. Unknown tags
 //!    are visible inline errors, never silently blank.
 //!
 //! # Element catalog
 //!
-//! Every element accepts a `key` attribute, a string or integer identity
-//! override for children whose order can change at runtime (see
-//! [Identity](#identity-and-keys)).
+//! Every element accepts a `key` attribute. It is a string or integer
+//! identity override for children whose order can change at runtime. See
+//! [Identity](#identity-and-keys).
 //!
 //! ## Layout
 //!
@@ -70,9 +70,9 @@
 //!
 //! ## Controls
 //!
-//! Controls bind to node state and emit events (a `set` writes the bound
-//! state, and when the `push` attribute is on it also queues a push eval at
-//! the bound node).
+//! Controls bind to node state and emit events. A `set` writes the bound
+//! state. When the `push` attribute is on, a `set` also queues a push eval
+//! at the bound node.
 //!
 //! | element | state shape | attrs |
 //! |---|---|---|
@@ -91,71 +91,71 @@
 //!
 //! ## Embedding
 //!
-//! `(ref-gui id)` is a host resolved embed of a child instance's GUI: the
-//! host resolves the instance's body marker (else its auto GUI, else a
-//! label) and renders it at the instance path inside an implicit scope. The
-//! required positional id is the instance's node id in the defining graph.
+//! `(ref-gui id)` is a host resolved embed of a child instance's GUI. The
+//! host resolves the instance's body marker, else its auto GUI, else a
+//! label. It renders the result at the instance path inside an implicit
+//! scope. The required positional id is the instance's node id in the
+//! defining graph.
 //!
 //! ## Reserved
 //!
-//! Tag names claimed for later tiers decode as visible errors today:
+//! Tag names reserved for later versions decode as visible errors:
 //! `tabs`, `page`, `canvas`, `paint`, `image`, `dropdown`, `text-input`,
-//! `xy-pad`, `meter` ([`RESERVED_TAGS`]).
+//! `xy-pad`, `meter`. See [`RESERVED_TAGS`].
 //!
 //! # Binding model
 //!
-//! A `bind` attribute holds a list of non-negative integers, a node path
-//! relative to the graph the tree was defined in ([`BindPath`], matching
-//! `gantz_core::node::Id` paths). Hosts resolve a binding as
-//! `instance prefix ++ scope prefixes ++ bind path`, reading and writing VM
+//! A `bind` attribute holds a list of non-negative integers. It is a node
+//! path relative to the graph the tree was defined in. See [`BindPath`],
+//! which matches `gantz_core::node::Id` paths. Hosts resolve a binding as
+//! `instance prefix ++ scope prefixes ++ bind path`. They read and write VM
 //! runtime state at that path. `(scope id ...)` pushes `id` onto the prefix
-//! for its subtree. Neither is hand authored in the normal flow: widget
-//! fragments bake their own node id at codegen and hosts insert scopes where
-//! a child's GUI crosses into a parent.
+//! for its subtree. Widget fragments bake their own node id at codegen.
+//! Hosts insert scopes where a child's GUI crosses into a parent.
 //!
 //! # Identity and keys
 //!
-//! Host widget identity derives from the render root, accumulated scope
-//! prefixes and structural tree position, with the `key` attribute as the
-//! override. Keys are required for children whose order can change at
-//! runtime, otherwise widget memory (focus, drag state) follows the position
-//! rather than the child. Label text never contributes to identity, so
-//! relabelling never resets widget state.
+//! Host widget identity derives from the render root, the accumulated scope
+//! prefixes and the structural tree position. The `key` attribute overrides
+//! the position. Keys are required for children whose order can change at
+//! runtime. Without a key, widget memory such as focus and drag state
+//! follows the position rather than the child. Label text never contributes
+//! to identity, so relabelling never resets widget state.
 //!
 //! # Diagnostics and totality
 //!
-//! [`decode()`] is total. One boundary rule (see [`diag`]):
+//! [`decode()`] is total. One boundary rule applies. See [`diag`].
 //!
 //! - A subtree that cannot render meaningfully becomes an inline
-//!   [`Element::Error`] preserving its slot: unknown or reserved tags,
-//!   non-element values in element position, a misplaced `@` block, a
-//!   missing required positional argument, an exceeded limit. Siblings
+//!   [`Element::Error`] that keeps its slot. Causes are unknown or reserved
+//!   tags, non-element values in element position, a misplaced `@` block, a
+//!   missing required positional argument and an exceeded limit. Siblings
 //!   decode independently.
-//! - Everything recoverable is a [`Warning`] and the element still renders:
-//!   unknown attributes are ignored, mistyped attribute values fall back to
-//!   their defaults, duplicates keep the first value, extra children of leaf
+//! - Everything recoverable is a [`Warning`] and the element still renders.
+//!   Unknown attributes are ignored. Mistyped attribute values fall back to
+//!   their defaults. Duplicates keep the first value. Extra children of leaf
 //!   elements are dropped.
 //!
-//! [`Limits`] caps nesting depth and element count so a pathological
-//! computed tree stays a visible inline error rather than a stalled host.
+//! [`Limits`] caps nesting depth and element count. A pathological computed
+//! tree stays a visible inline error rather than a stalled host.
 //!
 //! # Codecs and features
 //!
-//! - `steel` (default): [`codec::steel`], the v1 backend encoding over
-//!   `SteelVal`. Symbols are identifiers, Steel lists and vectors both read
-//!   as lists.
-//! - `datum`: [`codec::datum`], the storage and interchange encoding over
-//!   `gantz_core::datum::Datum`. `Datum` has no symbol variant, so
-//!   identifiers normalize to strings on a store and reload while decoding
-//!   to the identical tree.
+//! - `steel` is the default feature. [`codec::steel`] is the backend
+//!   encoding over `SteelVal`. Symbols are identifiers. Steel lists and
+//!   vectors both read as lists.
+//! - `datum` enables [`codec::datum`], the storage and interchange encoding
+//!   over `gantz_core::datum::Datum`. `Datum` has no symbol variant, so
+//!   identifiers normalize to strings on a store and reload. The result
+//!   decodes to the identical tree.
 //!
 //! With no features enabled the crate is the pure model: [`SExpr`],
 //! [`Element`], [`decode()`] and [`encode()`].
 //!
-//! The canonical encoding ([`encode()`]) emits the minimal form: only
-//! attributes differing from an element's `Default` (required attributes and
-//! positional arguments always emit), in field declaration order, `key`
-//! last.
+//! The canonical encoding ([`encode()`]) emits the minimal form. Only
+//! attributes that differ from an element's `Default` emit. Required
+//! attributes and positional arguments always emit. Attributes emit in
+//! field declaration order, with `key` last.
 
 pub use decode::{Decoded, Limits, decode};
 pub use diag::{ErrorReason, TreePath, Warning, WarningKind};

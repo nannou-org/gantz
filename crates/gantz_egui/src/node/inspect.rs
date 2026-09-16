@@ -68,7 +68,7 @@ impl NodeUi for Inspect {
     }
 }
 
-/// The inspect's value fragment: a read-only repr of its own state.
+/// The inspect's value fragment, a read-only repr of its own state.
 fn fragment(id: node::Id) -> gantz_ui::Element {
     gantz_ui::Element::Value(gantz_ui::Value {
         bind: Some(gantz_ui::BindPath(vec![id])),

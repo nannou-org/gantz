@@ -16,8 +16,8 @@ impl NodeUi for Number {
 
     fn ui(&mut self, mut ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
         // The numeric value lives in VM runtime state, not the node weight, so
-        // editing the dialer does NOT change the graph's content address - the
-        // interpreter only queues an evaluation (when enabled), never `changed`.
+        // editing the dialer never sets `changed`. The interpreter only queues
+        // an evaluation when push is enabled.
         let frame = egui_graph::node::default_frame(uictx.style(), uictx.interaction());
         let (&id, prefix) = ctx.path().split_last().expect("a node path is never empty");
         let tree = fragment(self, id);
@@ -37,7 +37,7 @@ impl NodeUi for Number {
     }
 
     fn view_ui(&mut self, mut ctx: NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
-        // The same fragment as the in-graph node; the pane provides the
+        // The same fragment as the in-graph node. The pane provides the
         // background and margin.
         let (&id, prefix) = ctx.path().split_last().expect("a node path is never empty");
         let tree = fragment(self, id);
@@ -57,14 +57,14 @@ impl NodeUi for Number {
         body: &mut egui_extras::TableBody,
     ) -> InspectorRowsResponse {
         let row_h = crate::widget::node_inspector::table_row_h(body.ui_mut());
-        // All four config fields contribute to the content address (so they
-        // persist and are undoable): `changed` tracks any edit; `bounds_changed`
-        // additionally drives a re-clamp of the stored value.
+        // All four config fields contribute to the content address. `changed`
+        // tracks any edit. `bounds_changed` also drives a re-clamp of the
+        // stored value.
         let mut changed = false;
         let mut bounds_changed = false;
 
-        // Min and max are two columns of one `range` row (hover text says which
-        // is which), sharing the inspector's `bound_col` helper with the plot
+        // Min and max are two columns of one `range` row. Hover text says which
+        // is which. They share the inspector's `bound_col` helper with the plot
         // node. Fixed-width dialers keep the max column put as the min value's
         // width changes.
         body.row(row_h, |mut row| {
@@ -98,8 +98,8 @@ impl NodeUi for Number {
                     .on_hover_text("precision: decimal places the dialer shows (display only)");
             });
             row.col(|ui| {
-                // Same checkbox+dialer widget as the `range` bounds, so the rows
-                // look consistent.
+                // The same checkbox and dialer widget as the `range` bounds, so
+                // the rows look consistent.
                 let mut on = self.precision().is_some();
                 let mut n = self.precision().unwrap_or(2) as i32;
                 let dialer = egui::DragValue::new(&mut n).range(0..=10).speed(0.1);
@@ -179,7 +179,7 @@ fn fragment(num: &Number, id: node::Id) -> gantz_ui::Element {
 
 /// Keep `max >= min` and re-clamp the stored value into the new bounds so the
 /// displayed value, the stored state and the output stay consistent. Queues an
-/// evaluation on `resp` when the value moved (and push-eval is enabled).
+/// evaluation on `resp` when the value moved and push-eval is enabled.
 fn reclamp_stored(num: &mut Number, ctx: &mut NodeCtx, resp: &mut InspectorRowsResponse) {
     if let (Some(lo), Some(hi)) = (num.min(), num.max()) {
         if hi < lo {

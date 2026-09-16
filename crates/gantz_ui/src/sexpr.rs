@@ -1,17 +1,17 @@
 //! The abstract data model of the UI tree form.
 //!
 //! The vocabulary is specified over this model rather than over any one
-//! runtime's value type: identifier atoms, booleans, integers, floats,
-//! strings and lists. Each runtime codec lowers its own value type into
-//! [`SExpr`] totally, so the decoder is written once and every backend
-//! shares it. Values outside the model (closures, maps, byte buffers and so
-//! on) lower to [`SExpr::Other`] carrying a short description so diagnostics
-//! can name what was found.
+//! runtime's value type. The model has identifier atoms, booleans, integers,
+//! floats, strings and lists. Each runtime codec lowers its own value type
+//! into [`SExpr`] totally, so the decoder is written once and every backend
+//! shares it. Values outside the model, such as closures, maps and byte
+//! buffers, lower to [`SExpr::Other`] with a short description so
+//! diagnostics can name what was found.
 
 /// A runtime neutral s-expression value, the seam every codec lowers into.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SExpr {
-    /// An identifier atom (a symbol in Steel, a string in `Datum`).
+    /// An identifier atom. A symbol in Steel, a string in `Datum`.
     Ident(String),
     /// A boolean.
     Bool(bool),

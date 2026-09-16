@@ -1,4 +1,4 @@
-//! Datum codec integration tests: the storage-side encoding.
+//! Datum codec integration tests for the storage-side encoding.
 
 #![cfg(feature = "datum")]
 

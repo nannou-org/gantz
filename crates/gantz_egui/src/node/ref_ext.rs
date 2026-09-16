@@ -1,27 +1,27 @@
 //! The domain seam for extending the [`NamedRef`] inspector.
 //!
 //! A domain stores its per-reference data in the underlying
-//! [`Ref`](gantz_core::node::Ref)'s ext slot (see
-//! [`Ref::set_ext`](gantz_core::node::Ref::set_ext)) and exposes it by
-//! providing a [`RefExtUi`] to the [`Gantz`](crate::widget::Gantz) widget via
-//! [`Gantz::ref_ext_uis`](crate::widget::Gantz::ref_ext_uis). The
-//! [`NamedRef`] inspector appends each provider's rows after its own.
+//! [`gantz_core::node::Ref`]'s ext slot. See
+//! [`gantz_core::node::Ref::set_ext`]. It exposes the data by providing a
+//! [`RefExtUi`] to the [`crate::widget::Gantz`] widget via
+//! [`crate::widget::Gantz::ref_ext_uis`]. The [`NamedRef`] inspector appends
+//! each provider's rows after its own.
 
 use crate::node::NamedRef;
 use crate::{InspectorRowsResponse, NodeCtx};
 
 /// An inspector extension for [`NamedRef`] nodes, provided by a domain.
 ///
-/// Implementations self-gate: return [`InspectorRowsResponse::default`] for
-/// references the domain has no interest in (e.g. a DSP extension checks
-/// whether the referenced graph contains DSP nodes).
+/// Implementations self-gate. Return [`InspectorRowsResponse::default`] for
+/// references the domain has no interest in. For example, a DSP extension
+/// checks whether the referenced graph contains DSP nodes.
 pub trait RefExtUi {
     /// Append the domain's rows to a `NamedRef`'s inspector table.
     ///
-    /// Edits typically read/write the reference's ext data
-    /// ([`NamedRef::ext_as`]/[`NamedRef::set_ext`]/[`NamedRef::remove_ext`])
-    /// and mark the response changed, letting the ordinary commit pipeline
-    /// persist them.
+    /// Edits typically read and write the reference's ext data through
+    /// [`NamedRef::ext_as`], [`NamedRef::set_ext`] and
+    /// [`NamedRef::remove_ext`]. They mark the response changed so the
+    /// ordinary commit pipeline persists them.
     fn inspector_rows(
         &self,
         named: &mut NamedRef,
