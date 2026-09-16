@@ -1,6 +1,6 @@
-//! The "DSP" top-level pane: the focused head's derive status and a readable
-//! rendering of its derived program (see
-//! [`describe_parts`][crate::describe_parts]).
+//! The "DSP" top-level pane. It shows the focused head's derive status and a
+//! readable rendering of its derived program. See
+//! [`describe_parts`][crate::describe_parts].
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use crate::DeriveStatus;
 pub const DSP_PANE_KEY: &str = "dsp";
 
 /// The "DSP" top-level pane, the domain's analogue of the built-in Steel
-/// pane: the focused head's derive status, with the derived program rendered
+/// pane. It shows the focused head's derive status and the derived program
 /// as text on success.
 ///
 /// Holds a per-frame snapshot of every open head's status so the pane follows
@@ -21,7 +21,8 @@ pub const DSP_PANE_KEY: &str = "dsp";
 /// [`Gantz`][gantz_egui::widget::Gantz] widget via
 /// [`ExtPane`][gantz_egui::widget::ExtPane].
 pub struct DspPane {
-    /// Whether a DSP output device is present (else the app runs silent).
+    /// Whether a DSP output device is present. Without one the app runs
+    /// silent.
     pub present: bool,
     /// Each open head's snapshot.
     pub heads: HashMap<gantz_ca::Head, DspPaneHead>,
@@ -76,9 +77,9 @@ impl gantz_egui::widget::ExtPane for DspPane {
     }
 }
 
-/// One line summarising a [`DeriveStatus`]: weak for pending/silent, plain
-/// for ok, error-coloured (with the full message) for failures. Shared by
-/// the DSP pane and the settings tab's per-head grid.
+/// One line summarising a [`DeriveStatus`]. Pending and silent are weak, ok
+/// is plain and failures are error-coloured with the full message on hover.
+/// Shared by the DSP pane and the settings tab's per-head grid.
 pub(crate) fn derive_status_label(status: &DeriveStatus, ui: &mut egui::Ui) {
     match status {
         DeriveStatus::Pending => {
@@ -91,8 +92,7 @@ pub(crate) fn derive_status_label(status: &DeriveStatus, ui: &mut egui::Ui) {
             ui.label(format!("ok - {parts} part(s)"));
         }
         DeriveStatus::FlattenError(e) | DeriveStatus::DeriveError(e) => {
-            // Truncated to the available width (errors can be long); the full
-            // message is on hover.
+            // Errors can be long, so truncate to the available width.
             let text = egui::RichText::new(e).color(ui.visuals().error_fg_color);
             ui.add(egui::Label::new(text).truncate()).on_hover_text(e);
         }

@@ -1,5 +1,5 @@
-//! Offline tests for `derive_template`/`instantiate`: instance composition
-//! (shared synthdefs for nested-graph refs, #295).
+//! Offline tests for `derive_template` and `instantiate`. They cover instance
+//! composition, the shared synthdefs for nested-graph refs.
 
 use std::collections::HashMap;
 
@@ -19,8 +19,8 @@ enum N {
     Pack(Pack),
     Inlet,
     Outlet,
-    /// A ref standing in for an instanced graph: child CA + its arity
-    /// (the reference reports the child's inlet/outlet counts).
+    /// A ref standing in for an instanced graph. It carries the child CA and
+    /// the child's inlet and outlet counts.
     Ref(gantz_ca::ContentAddr, usize, usize),
 }
 
@@ -67,18 +67,16 @@ fn ca(byte: u8) -> gantz_ca::ContentAddr {
     gantz_ca::ContentAddr([byte; 32])
 }
 
-/// A default `~sinosc` node.
 fn sinosc() -> N {
     N::Unit(UnitNode::from_unit("SinOsc").expect("SinOsc row"))
 }
 
-/// A default `~lag` node.
 fn lag() -> N {
     N::Unit(UnitNode::from_unit("Lag").expect("Lag row"))
 }
 
-/// A child graph that produces a 220 Hz sine through its own `~out` (no
-/// inlets/outlets): a complete, self-contained subgraph.
+/// A self-contained child graph that produces a 220 Hz sine through its own
+/// `~out`. It has no inlets or outlets.
 fn sine_out_child() -> Graph<N> {
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
@@ -120,7 +118,7 @@ fn flat_children<'g>(
         .collect()
 }
 
-/// Derive a head graph's template + cache against `map`'s children.
+/// Derive a head graph's template and cache against the children in `map`.
 fn derive(
     g: &Graph<N>,
     map: &HashMap<gantz_ca::ContentAddr, Graph<N>>,
@@ -155,8 +153,8 @@ fn instances(t: &GraphTemplate) -> Vec<&gantz_plyphon::InstancePart> {
 
 #[test]
 fn no_instances_delegates_to_derive_synthdefs() {
-    // A plain graph (no markers) derives via the region path: one region per
-    // `~out` sink, no cached variants, content-hashed def name.
+    // A plain graph with no markers derives via the region path. One region
+    // per `~out` sink, no cached variants and a content-hashed def name.
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));
@@ -175,10 +173,10 @@ fn no_instances_delegates_to_derive_synthdefs() {
 
 #[test]
 fn two_instances_share_one_variant() {
-    // parent: two instances of the same sine-producing child (each child has
-    // its own `~out`, so each instance is a sink). Both share one VariantKey
-    // (same child, no inlets/outlets), so the DefCache holds one entry and
-    // both resolved parts name the same def.
+    // The parent holds two instances of the same sine-producing child. Each
+    // child has its own `~out`, so each instance is a sink. Both share one
+    // VariantKey, since they have the same child and no inlets or outlets.
+    // The DefCache holds one entry and both resolved parts name the same def.
     let map = HashMap::from([(ca(1), sine_out_child())]);
     let mut g = Graph::<N>::default();
     let _r0 = g.add_node(N::Ref(ca(1), 0, 0));
@@ -207,8 +205,8 @@ fn two_instances_share_one_variant() {
 
 #[test]
 fn distinct_children_produce_distinct_variants() {
-    // Two instances of DIFFERENT children (different content addresses)
-    // produce two distinct variants.
+    // Two instances of children with different content addresses produce two
+    // distinct variants.
     let map = HashMap::from([(ca(1), sine_out_child()), (ca(2), sine_out_child())]);
     let mut g = Graph::<N>::default();
     let _r0 = g.add_node(N::Ref(ca(1), 0, 0));
@@ -220,10 +218,10 @@ fn distinct_children_produce_distinct_variants() {
 
 #[test]
 fn staging_diamond_derives_two_stages() {
-    // src -> instance -> mix plus src -> mix directly: `src` must run before
-    // the instance and `mix` after it, so they cannot share a def. The
-    // staging pass splits them into two regions and the direct edge lowers to
-    // an implicit `Src` bus - no `BusCycle`.
+    // `src -> instance -> mix` plus a direct `src -> mix`. `src` must run
+    // before the instance and `mix` after it, so they cannot share a def. The
+    // staging pass splits them into two regions. The direct edge lowers to an
+    // implicit `Src` bus with no `BusCycle`.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
     let src = g.add_node(sinosc());
@@ -272,9 +270,9 @@ fn staging_diamond_derives_two_stages() {
 
 #[test]
 fn width_flows_through_an_instance() {
-    // A stereo (2ch pack) signal into the instance's inlet: the variant keys
-    // the width, the child's `In` is 2 wide, the child's outlet carries width
-    // 2 and the downstream reader's `In` sees width 2.
+    // A stereo pack signal into the instance's inlet. The variant keys the
+    // width. The child's `In` is 2 wide, the child's outlet carries width 2
+    // and the downstream reader's `In` sees width 2.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
     let s0 = g.add_node(sinosc());
@@ -314,8 +312,8 @@ fn width_flows_through_an_instance() {
 
 #[test]
 fn unconnected_inlet_bakes_silence() {
-    // A child with two inlets, only the first fed: the variant records
-    // `[Some(1), None]` and the child def holds exactly one interface `In`.
+    // A child with two inlets, only the first fed. The variant records
+    // `[[1], []]` and the child def holds exactly one interface `In`.
     let mut child = Graph::<N>::default();
     let i0 = child.add_node(N::Inlet);
     let i1 = child.add_node(N::Inlet);
@@ -354,12 +352,11 @@ fn unconnected_inlet_bakes_silence() {
 
 #[test]
 fn instance_inlet_drives_hybrid_freq() {
-    // A child `inlet -> ~sinosc.freq -> ~out` (an FM voice whose modulation
-    // input is the interface inlet). Fed variant: the carrier reads its freq
-    // from the interface `In` wire and bakes no freq param. Unfed variant: the
-    // freq falls back to its param - a distinct `VariantKey` (inlet
-    // connectivity is part of the key), so the two defs never collide in the
-    // cache.
+    // A child `inlet -> ~sinosc.freq -> ~out`, an FM voice whose modulation
+    // input is the interface inlet. In the fed variant the carrier reads its
+    // freq from the interface `In` wire and bakes no freq param. In the unfed
+    // variant the freq falls back to its param. Inlet connectivity is part of
+    // the `VariantKey`, so the two defs never collide in the cache.
     let mut child = Graph::<N>::default();
     let i = child.add_node(N::Inlet);
     let s = child.add_node(sinosc());
@@ -368,7 +365,7 @@ fn instance_inlet_drives_hybrid_freq() {
     child.add_edge(s, o, Edge::new(0.into(), 0.into()));
     let map = HashMap::from([(ca(1), child)]);
 
-    // Fed: a parent modulator wired into the instance's inlet.
+    // Fed. A parent modulator is wired into the instance's inlet.
     let mut g = Graph::<N>::default();
     let m = g.add_node(sinosc());
     let r = g.add_node(N::Ref(ca(1), 1, 0));
@@ -403,7 +400,7 @@ fn instance_inlet_drives_hybrid_freq() {
         "the wired carrier bakes no freq param",
     );
 
-    // Unfed: the same child with nothing into the inlet.
+    // Unfed. The same child with nothing into the inlet.
     let mut g2 = Graph::<N>::default();
     let _r = g2.add_node(N::Ref(ca(1), 1, 0));
     let (template2, cache2) = derive(&g2, &map).expect("derive");
@@ -425,7 +422,7 @@ fn instance_inlet_drives_hybrid_freq() {
 
 #[test]
 fn consumed_outlet_mask_keys_the_variant() {
-    // A child with two outlets, only the second consumed: the variant records
+    // A child with two outlets, only the second consumed. The variant records
     // `[false, true]` and the child def writes exactly one outlet bus.
     let mut child = Graph::<N>::default();
     let s0 = child.add_node(sinosc());
@@ -457,16 +454,16 @@ fn consumed_outlet_mask_keys_the_variant() {
 
 #[test]
 fn def_names_are_stable_across_heads() {
-    // The same child variant derived under two different heads (fresh caches)
-    // yields identical content-hashed def names - the cross-head sharing the
-    // driver's install refcounting relies on.
+    // The same child variant derived under two different heads with fresh
+    // caches yields identical content-hashed def names. The driver's install
+    // refcounting relies on this for cross-head sharing.
     let map = HashMap::from([(ca(1), sine_out_child())]);
 
     let mut g1 = Graph::<N>::default();
     let _r = g1.add_node(N::Ref(ca(1), 0, 0));
 
     let mut g2 = Graph::<N>::default();
-    // A different head: its own sine plus the same child instance.
+    // A different head with its own sine plus the same child instance.
     let s = g2.add_node(sinosc());
     let o = g2.add_node(N::Out(Out::default()));
     g2.add_edge(s, o, Edge::new(0.into(), 0.into()));
@@ -488,9 +485,9 @@ fn def_names_are_stable_across_heads() {
 
 #[test]
 fn bus_params_are_unlagged_and_named_by_key() {
-    // Every read/write bus param indexes a no-lag control in its own def,
-    // named by the key's path + label - the contract the driver's post-spawn
-    // `set_control` wiring relies on.
+    // Every read and write bus param indexes a no-lag control in its own def,
+    // named by the key's path and label. The driver's post-spawn `set_control`
+    // wiring relies on this contract.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
     let src = g.add_node(sinosc());
@@ -515,10 +512,10 @@ fn bus_params_are_unlagged_and_named_by_key() {
             );
         }
     }
-    // Two readers share src's endpoint bus: the child's interface In (its
-    // param named by the child-local inlet marker path) and the mix region
-    // (its param named by the source path + port). One bus, two synths, each
-    // with its own def-local param.
+    // Two readers share src's endpoint bus. The child's interface In names
+    // its param by the child-local inlet marker path. The mix region names
+    // its param by the source path and port. One bus, two synths, each with
+    // its own def-local param.
     let src_key = BusKey::Src {
         path: vec![src.index()],
         output: 0,
@@ -547,7 +544,7 @@ fn bus_params_are_unlagged_and_named_by_key() {
 
 #[test]
 fn instance_ref_cycle_errors() {
-    // A instances B instances A: no finite template exists.
+    // A instances B and B instances A. No finite template exists.
     let mut a = Graph::<N>::default();
     let s = a.add_node(sinosc());
     let o = a.add_node(N::Out(Out::default()));
@@ -569,9 +566,9 @@ fn instance_ref_cycle_errors() {
 
 #[test]
 fn recursive_instantiate_prefixes_paths() {
-    // head -> I1(child A), where A contains I2(child B, self-contained sine).
-    // The resolved list carries B's region at the absolute prefix [I1, I2],
-    // in global topo order, with absolute binding paths.
+    // The head instances child A as I1. A instances child B, a self-contained
+    // sine, as I2. The resolved list carries B's region at the absolute prefix
+    // `[I1, I2]`, in global topo order, with absolute binding paths.
     let mut b = Graph::<N>::default();
     let s = b.add_node(sinosc());
     let o = b.add_node(N::Out(Out::default()));
@@ -597,7 +594,7 @@ fn recursive_instantiate_prefixes_paths() {
 
 #[test]
 fn describe_parts_renders_readably() {
-    // Substring checks only - the exact layout is free to iterate.
+    // Substring checks only. The exact layout is free to change.
     let (template, cache) = derive(&sine_out_child(), &HashMap::new()).expect("derive");
     let resolved = instantiate(&template, &cache);
     let text = gantz_plyphon::describe_parts(&resolved);
@@ -609,8 +606,8 @@ fn describe_parts_renders_readably() {
 
 #[test]
 fn resolved_part_shapes_are_instance_prefixed() {
-    // head -> I1(child: sine -> out): the child's osc port shape resolves at
-    // the absolute path [I1, sine].
+    // The head instances a `sine -> out` child as I1. The child's osc port
+    // shape resolves at the absolute path `[I1, sine]`.
     let map = HashMap::from([(ca(1), sine_out_child())]);
     let mut g = Graph::<N>::default();
     let i1 = g.add_node(N::Ref(ca(1), 0, 0));
@@ -626,8 +623,8 @@ fn resolved_part_shapes_are_instance_prefixed() {
 
 #[test]
 fn instance_to_instance_shares_one_bus() {
-    // I1's consumed outlet feeds I2's inlet: both sides resolve to ONE
-    // absolute bus (the bus carrying I1's child outlet signal) - no relay.
+    // I1's consumed outlet feeds I2's inlet. Both sides resolve to the one
+    // absolute bus carrying I1's child outlet signal. There is no relay.
     let mut producer = Graph::<N>::default();
     let s = producer.add_node(sinosc());
     let o = producer.add_node(N::Outlet);
@@ -671,8 +668,8 @@ fn instance_to_instance_shares_one_bus() {
     );
 }
 
-/// A child graph of two sines both feeding one `outlet` (a multi-fed root
-/// outlet).
+/// A child graph of two sines both feeding one `outlet`. That is a multi-fed
+/// root outlet.
 fn two_sines_outlet_child() -> Graph<N> {
     let mut g = Graph::<N>::default();
     let s0 = g.add_node(sinosc());
@@ -683,8 +680,8 @@ fn two_sines_outlet_child() -> Graph<N> {
     g
 }
 
-/// The add-selector summing units of a def (`special_index` 0; `Sum3`/`Sum4`
-/// would count too, but these tests sum pairs).
+/// The number of summing units in a def. `Sum3`, `Sum4` and add-selector
+/// `BinaryOpUGen`s with `special_index` 0 count.
 fn n_adds(def: &plyphon::synthdef::SynthDef) -> usize {
     def.units
         .iter()
@@ -698,9 +695,9 @@ fn n_adds(def: &plyphon::synthdef::SynthDef) -> usize {
 
 #[test]
 fn multi_fed_inlet_sums_inside_the_child() {
-    // Two `~sinosc` feeding ONE instance inlet: the variant keys both summand
-    // widths, the instance records one bus key per summand, and the child def
-    // reads two interface `In`s summed where the inlet is consumed.
+    // Two `~sinosc` feed one instance inlet. The variant keys both summand
+    // widths and the instance records one bus key per summand. The child def
+    // reads two interface `In`s, summed where the inlet is consumed.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
     let s0 = g.add_node(sinosc());
@@ -754,10 +751,10 @@ fn multi_fed_inlet_sums_inside_the_child() {
 
 #[test]
 fn instance_outlet_and_plain_node_sum_at_a_parent_input() {
-    // A plain `~sinosc` and an instance's outlet both wired into one `~out`
-    // input: the reader region emits an `In` per source (the sine sits a
-    // stage below the instance-fed consumer, so it also crosses regions) and
-    // sums them.
+    // A plain `~sinosc` and an instance's outlet are both wired into one
+    // `~out` input. The reader region emits an `In` per source and sums them.
+    // The sine sits a stage below the instance-fed consumer, so it also
+    // crosses regions.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
@@ -797,10 +794,10 @@ fn instance_outlet_and_plain_node_sum_at_a_parent_input() {
 
 #[test]
 fn multi_fed_outlet_exports_a_bus_per_summand() {
-    // A child whose outlet is fed by two sines: the child exports one bus per
-    // summand (no relay def sums inside the child), the parent reader emits
-    // one `In` per summand and sums, and `instantiate` resolves each summand
-    // read to the child's own endpoint bus.
+    // A child whose outlet is fed by two sines. The child exports one bus per
+    // summand, so no relay def sums inside the child. The parent reader emits
+    // one `In` per summand and sums. `instantiate` resolves each summand read
+    // to the child's own endpoint bus.
     let map = HashMap::from([(ca(1), two_sines_outlet_child())]);
     let mut g = Graph::<N>::default();
     let r = g.add_node(N::Ref(ca(1), 0, 1));

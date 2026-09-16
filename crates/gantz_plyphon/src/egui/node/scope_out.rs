@@ -17,15 +17,15 @@ impl NodeUi for ScopeOut {
     }
 
     fn ui(&mut self, _ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
-        // The body shows just the node name; the buffered samples surface via the
-        // outlet (into a `plot`), and the config is edited in the inspector.
+        // The body shows only the node name. The buffered samples surface via the
+        // outlet, into a `plot`. The config is edited in the inspector.
         let framed =
             uictx.framed(|ui, _sockets| ui.add(egui::Label::new("~scopeout").selectable(false)));
         NodeUiResponse::new(framed)
     }
 
     fn show_state(&self) -> bool {
-        // A summarised "frames × channels" state row (in `inspector_rows`) replaces the
+        // The summarised "frames × channels" row in `inspector_rows` replaces the
         // raw dump of the per-channel sample rings.
         false
     }
@@ -37,8 +37,8 @@ impl NodeUi for ScopeOut {
     ) -> InspectorRowsResponse {
         let mut resp = InspectorRowsResponse::default();
 
-        // State summary: how many rings the driver has written (the tapped
-        // signal's width), and how many frames each holds.
+        // The state summary shows how many rings the driver has written and how
+        // many frames each holds. The ring count is the tapped signal's width.
         let (frames, channels) = ctx
             .extract_value()
             .ok()
@@ -64,8 +64,8 @@ impl NodeUi for ScopeOut {
             });
         });
 
-        // Ring length in frames (non-structural: not in the def; the driver caps
-        // each per-channel ring at `size` frames).
+        // The ring length in frames. It is not in the def. The driver caps each
+        // per-channel ring at `size` frames.
         let mut size = self.size();
         let size_dv = egui::DragValue::new(&mut size)
             .range(1..=16_384)

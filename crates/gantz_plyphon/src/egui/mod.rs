@@ -1,12 +1,12 @@
-//! The DSP domain's egui implementations, everything behind the `egui`
-//! feature in one place: the node set's `NodeUi` impls, their shared
+//! The DSP domain's egui implementations. Everything behind the `egui`
+//! feature lives here. That is the node set's `NodeUi` impls, their shared
 //! inspector-row helpers, the settings subtab and the reference inspector's
 //! `inline` toggle.
 //!
-//! Keeping every egui-flavoured item here means the feature holds with a
-//! single cfg gate (this module's declaration in the crate root) - the rest
-//! of the crate is headless by construction, so new UI code cannot
-//! accidentally leak egui into a `--no-default-features` build.
+//! Keeping every egui item here means the feature holds with a single cfg
+//! gate on this module's declaration in the crate root. The rest of the crate
+//! is headless by construction, so new UI code cannot leak egui into a
+//! `--no-default-features` build.
 
 pub use edge_style::DspEdgeStyle;
 pub use pane::{DSP_PANE_KEY, DspPane, DspPaneHead};

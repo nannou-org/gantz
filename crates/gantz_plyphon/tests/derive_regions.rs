@@ -1,5 +1,5 @@
-//! Tests for `derive_synthdefs`: cutting a DSP graph into per-region synthdefs
-//! at `~bus` boundaries, and running the split defs through the real engine.
+//! Tests for `derive_synthdefs`. It cuts a DSP graph into per-region synthdefs
+//! at `~bus` boundaries. The split defs also run through the real engine.
 
 use gantz_core::edge::Edge;
 use gantz_core::node::graph::Graph;
@@ -35,21 +35,19 @@ impl ToNodeDsp for N {
     }
 }
 
-/// A default `~sinosc` node.
 fn sinosc() -> N {
     N::Unit(UnitNode::from_unit("SinOsc").expect("SinOsc row"))
 }
 
-/// A default `~lag` node.
 fn lag() -> N {
     N::Unit(UnitNode::from_unit("Lag").expect("Lag row"))
 }
 
 #[test]
 fn sine_bus_out_splits_two_regions() {
-    // `~sinosc -> ~bus -> ~out`: two regions in writer-first order. The writer
-    // ends in a fade-gained `Out` to a placeholder bus; the reader begins with
-    // an `In` of the inferred width.
+    // `~sinosc -> ~bus -> ~out` derives two regions in writer-first order. The
+    // writer ends in a fade-gained `Out` to a placeholder bus. The reader
+    // begins with an `In` of the inferred width.
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
     let b = g.add_node(N::Bus(Bus::default()));
@@ -63,7 +61,7 @@ fn sine_bus_out_splits_two_regions() {
     assert!(writer.derived.def.name.starts_with("head-"));
     assert_ne!(writer.key, reader.key);
 
-    // Writer: SinOsc(0) -> fade mul(1) -> Out(2, bus placeholder).
+    // The writer is `SinOsc(0) -> fade mul(1) -> Out(2, bus placeholder)`.
     let wdef = &writer.derived.def;
     assert_eq!(wdef.units.len(), 3, "SinOsc + fade mul + bus Out");
     assert_eq!(wdef.units[0].name, "SinOsc");
@@ -89,7 +87,7 @@ fn sine_bus_out_splits_two_regions() {
         "the fade has no node binding",
     );
 
-    // Reader: In(0) -> level mul(1) -> channel mul(2) -> hardware Out(3).
+    // The reader is `In(0) -> level mul(1) -> channel mul(2) -> Out(3)`.
     let rdef = &reader.derived.def;
     assert_eq!(rdef.units.len(), 4, "In + level/channel muls + Out");
     assert_eq!(reader.bus_reads.len(), 1);
@@ -104,8 +102,8 @@ fn sine_bus_out_splits_two_regions() {
 
 #[test]
 fn width_flows_across_the_boundary() {
-    // 2 sines -> ~pack(2) -> ~bus -> ~out: the writer's bus `Out` carries both
-    // channels (each fade-gained) and the reader's `In` is 2 wide.
+    // `2 sines -> ~pack(2) -> ~bus -> ~out`. The writer's bus `Out` carries
+    // both channels, each fade-gained. The reader's `In` is 2 wide.
     let mut g = Graph::<N>::default();
     let s0 = g.add_node(sinosc());
     let s1 = g.add_node(sinosc());
@@ -134,8 +132,9 @@ fn width_flows_across_the_boundary() {
 
 #[test]
 fn same_region_bus_is_a_wire() {
-    // A `~bus` whose two sides share a region (an uncut path also connects
-    // them): one region, no bus units - the def equals the bus-less graph's.
+    // A `~bus` whose two sides share a region, since an uncut path also
+    // connects them. One region and no bus units. The def equals the bus-less
+    // graph's.
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
     let b = g.add_node(N::Bus(Bus::default()));
@@ -168,8 +167,8 @@ fn same_region_bus_is_a_wire() {
 
 #[test]
 fn bus_chain_aliases_upstream() {
-    // `~bus -> ~bus` aliases rather than relaying: still two regions, and the
-    // reader reads the *upstream* bus's path.
+    // `~bus -> ~bus` aliases rather than relaying. Still two regions, and the
+    // reader reads the upstream bus's path.
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
     let b1 = g.add_node(N::Bus(Bus::default()));
@@ -187,8 +186,8 @@ fn bus_chain_aliases_upstream() {
 
 #[test]
 fn unconnected_bus_reads_silence() {
-    // A `~bus` with nothing upstream: one region, no bus units, the consumer's
-    // channel resolves to silence.
+    // A `~bus` with nothing upstream. One region and no bus units. The
+    // consumer's channel resolves to silence.
     let mut g = Graph::<N>::default();
     let b = g.add_node(N::Bus(Bus::default()));
     let o = g.add_node(N::Out(Out::default()));
@@ -211,7 +210,7 @@ fn unconnected_bus_reads_silence() {
 
 #[test]
 fn bus_into_scopeout_only() {
-    // `~sinosc -> ~bus -> ~scopeout`: the monitor roots the reader region; its
+    // `~sinosc -> ~bus -> ~scopeout`. The monitor roots the reader region. Its
     // binding lands in the reader's `Derived`.
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
@@ -237,8 +236,8 @@ fn bus_into_scopeout_only() {
 
 #[test]
 fn two_buses_between_the_same_regions() {
-    // Two `~bus`es from one writer region into one reader region: still two
-    // regions, with two write/read pairs.
+    // Two `~bus`es from one writer region into one reader region. Still two
+    // regions, with two write and read pairs.
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
     let b0 = g.add_node(N::Bus(Bus::default()));
@@ -259,10 +258,10 @@ fn two_buses_between_the_same_regions() {
 
 #[test]
 fn fm_across_a_bus_boundary() {
-    // `~sinosc -> ~bus -> ~sinosc.freq -> ~out`: the modulator crosses the
+    // `~sinosc -> ~bus -> ~sinosc.freq -> ~out`. The modulator crosses the
     // boundary, so the reader region's carrier reads its freq from the bus `In`
-    // wire and bakes no freq fallback param (the writer's own freq param is
-    // unaffected).
+    // wire and bakes no freq fallback param. The writer's own freq param is
+    // unaffected.
     let mut g = Graph::<N>::default();
     let m = g.add_node(sinosc());
     let b = g.add_node(N::Bus(Bus::default()));
@@ -305,9 +304,9 @@ fn fm_across_a_bus_boundary() {
 
 #[test]
 fn bus_cycle_is_rejected() {
-    // Two regions reading each other's buses: no writer-before-reader order
-    // exists, so derivation reports the cycle (deliberate feedback is a planned
-    // InFeedback follow-up).
+    // Two regions read each other's buses, so no writer-before-reader order
+    // exists and derivation reports the cycle. The `instance` module doc
+    // covers the feedback limitation.
     let mut g = Graph::<N>::default();
     let l0 = g.add_node(lag());
     let l1 = g.add_node(lag());
@@ -328,9 +327,9 @@ fn bus_cycle_is_rejected() {
 
 #[test]
 fn no_boundary_graph_matches_single_def() {
-    // Without a `~bus`, `derive_synthdefs` yields one region whose def matches
-    // `derive_synthdef`'s exactly (modulo the key-suffixed name), and the key is
-    // stable across unrelated (non-dsp) additions.
+    // Without a `~bus`, `derive_synthdefs` yields one region. Its def matches
+    // the `derive_synthdef` def apart from the key-suffixed name. The key is
+    // stable across unrelated non-dsp additions.
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
     let l = g.add_node(lag());
@@ -358,10 +357,10 @@ fn no_boundary_graph_matches_single_def() {
 
 #[test]
 fn bus_index_param_is_unlagged_and_sig_stable() {
-    // The bus channel index is a no-lag control param (a lagged bus index would
-    // glide through wrong buses), baked at `0.0` and set per spawn via
-    // `set_control`. The driver never mutates the def, so `structural_sig` is
-    // computed on the final def and is stable across re-derives.
+    // The bus channel index is a no-lag control param, since a lagged bus index
+    // would glide through wrong buses. It is baked at `0.0` and set per spawn
+    // via `set_control`. The driver never mutates the def, so `structural_sig`
+    // is computed on the final def and is stable across re-derives.
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
     let b = g.add_node(N::Bus(Bus::default()));
@@ -391,11 +390,12 @@ fn bus_index_param_is_unlagged_and_sig_stable() {
 
 #[test]
 fn split_regions_play_through_the_engine() {
-    // `~sinosc -> ~bus -> ~out` end to end offline: set each region's bus-index
-    // param to a real private channel via `set_control`, spawn writer-then-reader,
-    // and the tone crosses the boundary. Reversed spawn order renders silence -
-    // `In` reads only channels written EARLIER in the node tree this block (the ordering
-    // requirement the driver's topo placement exists for).
+    // `~sinosc -> ~bus -> ~out` end to end offline. Set each region's bus-index
+    // param to a real private channel via `set_control` and spawn the writer
+    // before the reader. The tone then crosses the boundary. Reversed spawn
+    // order renders silence, since `In` reads only channels written earlier in
+    // the node tree this block. The driver's topo placement exists for this
+    // ordering requirement.
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
     let b = g.add_node(N::Bus(Bus::default()));
@@ -423,7 +423,7 @@ fn split_regions_play_through_the_engine() {
         out
     };
     // Wire a region's bus-index param and ramp its fade gains to unity after
-    // spawning (the synth spawns silent behind its baked fade 0.0 default).
+    // spawning. The synth spawns silent behind its baked fade 0.0 default.
     let wire = |controller: &mut plyphon::Controller,
                 node: i32,
                 bus: &gantz_plyphon::BusBinding,
@@ -437,7 +437,7 @@ fn split_regions_play_through_the_engine() {
         }
     };
 
-    // Writer before reader: the tone crosses the bus.
+    // Writer before reader. The tone crosses the bus.
     let (mut controller, _nrt, mut world) = engine(opts());
     controller.add_synthdef(writer.derived.def.clone());
     controller.add_synthdef(reader.derived.def.clone());
@@ -470,7 +470,7 @@ fn split_regions_play_through_the_engine() {
     let (m220, m440) = (goertzel(&out, 220.0), goertzel(&out, 440.0));
     assert!(m220 > 5.0 * m440, "220 Hz dominant: {m220} vs {m440}");
 
-    // Reader before writer: silence (documents the ordering requirement).
+    // Reader before writer. Silence, which documents the ordering requirement.
     let (mut controller, _nrt, mut world) = engine(opts());
     controller.add_synthdef(writer.derived.def.clone());
     controller.add_synthdef(reader.derived.def.clone());
@@ -502,7 +502,7 @@ fn split_regions_play_through_the_engine() {
     );
 }
 
-/// Goertzel magnitude estimate at `freq` (Hz) over mono `samples` sampled at [`SR`].
+/// Goertzel magnitude estimate at `freq` in Hz over mono `samples` sampled at [`SR`].
 fn goertzel(samples: &[f32], freq: f32) -> f32 {
     let n = samples.len();
     let k = (0.5 + n as f32 * freq / SR).floor();
@@ -520,9 +520,9 @@ fn goertzel(samples: &[f32], freq: f32) -> f32 {
 
 #[test]
 fn multi_fed_bus_sums_at_the_reader() {
-    // Two `~sinosc` (each its own region - they meet only at the boundary)
-    // feeding one `~bus`, read by `~out`: the bus keeps only its cut role.
-    // Each sine writes its own implicit endpoint bus, and the reader emits
+    // Two `~sinosc` feed one `~bus`, read by `~out`. Each sine is its own
+    // region, since they meet only at the boundary. The bus keeps only its cut
+    // role. Each sine writes its own implicit endpoint bus. The reader emits
     // one `In` per endpoint and sums them after the reads.
     let mut g = Graph::<N>::default();
     let s0 = g.add_node(sinosc());
@@ -536,8 +536,8 @@ fn multi_fed_bus_sums_at_the_reader() {
     let regions = derive_synthdefs(&g, 1, "head").expect("derive");
     assert_eq!(regions.len(), 3, "two writers + one reader");
 
-    // Each writer emits one endpoint-keyed bus write (the sine's own path +
-    // output port), not a `~bus`-keyed one.
+    // Each writer emits one bus write keyed by the sine's own path and output
+    // port, not by the `~bus`.
     for (region, s) in regions[..2].iter().zip([s0, s1]) {
         assert_eq!(region.bus_writes.len(), 1);
         let w = &region.bus_writes[0];
@@ -547,7 +547,7 @@ fn multi_fed_bus_sums_at_the_reader() {
         assert!(region.bus_reads.is_empty());
     }
 
-    // The reader holds two `In`s (canonical endpoint order) and one add.
+    // The reader holds two `In`s in canonical endpoint order and one add.
     let reader = &regions[2];
     assert_eq!(reader.bus_reads.len(), 2);
     assert_eq!(reader.bus_reads[0].node_path, vec![s0.index()]);
@@ -566,9 +566,9 @@ fn multi_fed_bus_sums_at_the_reader() {
 
 #[test]
 fn single_fed_bus_keeps_its_classic_shape_and_key() {
-    // A single-summand `~bus` chain must keep the exact pre-summing lowering:
-    // bus-keyed bindings (no endpoint port) and unchanged region keys, so
-    // existing patches neither respawn nor resound differently.
+    // A single-summand `~bus` chain keeps the classic lowering. Its bindings
+    // are bus-keyed with no endpoint port and its region keys are unchanged.
+    // Existing patches then neither respawn nor sound different.
     let build = |extra_edge: bool| {
         let mut g = Graph::<N>::default();
         let s = g.add_node(sinosc());
@@ -592,8 +592,8 @@ fn single_fed_bus_keeps_its_classic_shape_and_key() {
     assert_eq!(reader.bus_reads[0].node_path, vec![b.index()]);
     assert_eq!(reader.bus_reads[0].output, None);
 
-    // Adding a second summand re-keys the boundary's buses (endpoint-keyed),
-    // while removing it again restores the classic keys.
+    // Adding a second summand re-keys the boundary's buses by endpoint.
+    // Removing it again restores the classic keys.
     let (g2, _) = build(true);
     let regions2 = derive_synthdefs(&g2, 1, "head").expect("derive");
     assert_eq!(regions2.len(), 3);

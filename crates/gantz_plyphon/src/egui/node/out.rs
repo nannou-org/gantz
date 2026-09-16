@@ -17,14 +17,14 @@ impl NodeUi for Out {
     }
 
     fn ui(&mut self, _ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
-        // The body shows just the node name; params are edited in the inspector.
+        // The body shows only the node name. Params are edited in the inspector.
         let framed =
             uictx.framed(|ui, _sockets| ui.add(egui::Label::new("~out").selectable(false)));
         NodeUiResponse::new(framed)
     }
 
     fn show_state(&self) -> bool {
-        // A summarised "N queued" state row (in `inspector_rows`) replaces the raw
+        // The summarised "N queued" row in `inspector_rows` replaces the raw
         // `{value, pending}` dump.
         false
     }
@@ -47,7 +47,7 @@ impl NodeUi for Out {
             .speed(0.005);
         let (value_changed, lag_changed) = param_row(body, "gain", dv, &mut lag);
         if value_changed {
-            // Preserve any queued `pending` updates; only the value changes.
+            // Preserve any queued `pending` updates. Only the value changes.
             let prev = state.unwrap_or_else(|| param_state(Self::DEFAULT_GAIN as f64));
             let _ = ctx.update_value(with_value(prev, value as f64));
         }
