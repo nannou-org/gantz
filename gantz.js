@@ -1,8 +1,8 @@
 // GANTZ_TEXTCODEC_POLYFILL
-// cpal's AudioWorklet backend loads the wasm-bindgen glue on the audio worklet thread, whose
-// `AudioWorkletGlobalScope` lacks `TextEncoder`/`TextDecoder` (notably in Firefox) - which the glue
-// constructs at module load. Define minimal UTF-8 implementations when they're missing. On the main
-// thread the native constructors exist, so this is a no-op there.
+// cpal's AudioWorklet backend loads the wasm-bindgen glue on the audio worklet thread. The glue
+// constructs `TextEncoder` and `TextDecoder` at module load, but `AudioWorkletGlobalScope` lacks
+// them. Firefox is the known case. This defines minimal UTF-8 implementations when they are
+// missing. On the main thread the native constructors exist, so this is a no-op there.
 (function (g) {
   if (typeof g.TextEncoder === "undefined") {
     g.TextEncoder = class TextEncoder {
