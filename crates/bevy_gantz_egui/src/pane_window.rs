@@ -1,20 +1,20 @@
-//! Native OS windows for popped-out panes (#271 part 1).
+//! Native OS windows for popped-out panes.
 //!
-//! Each popped-out pane becomes a real OS window (for monitoring on a second
-//! display / projection-mapping). A pop-out window is a Bevy [`Window`] + a
-//! camera carrying an [`EguiContext`] but **no** `EguiMultipassSchedule`, i.e. a
-//! *single-pass* secondary context: bevy_egui auto-begins/ends its egui pass each
-//! frame, so `render_windowed_panes` - one ordinary `Update` system - draws
-//! into an unbounded number of them. There is no fixed window pool.
+//! Each popped-out pane becomes a real OS window, for example for monitoring
+//! on a second display. A pop-out window is a Bevy [`Window`] plus a camera
+//! carrying an [`EguiContext`] and no `EguiMultipassSchedule`. It is a
+//! single-pass secondary context. bevy_egui begins and ends its egui pass each
+//! frame, so `render_windowed_panes`, one ordinary `Update` system, draws into
+//! any number of them. There is no fixed window pool.
 //!
-//! Each frame the widget reports its windowed set via [`WindowedPanesRequested`]
-//! (mirrored by [`update`][crate::update]); `reconcile_windowed_panes` diffs it
-//! against the live pop-out entities, spawning / despawning windows to match.
-//! Closing a window re-docks its pane. A windowed pane is rendered with the exact
-//! same widget inputs and response handling (`handle_gantz_response`) as a
-//! docked one, so behaviour is identical either way.
+//! Each frame the widget reports its windowed set via [`WindowedPanesRequested`],
+//! mirrored by [`update`][crate::update]. `reconcile_windowed_panes` diffs it
+//! against the live pop-out entities and spawns or despawns windows to match.
+//! Closing a window re-docks its pane. A windowed pane is rendered with the
+//! same widget inputs and response handling as a docked one, through
+//! `handle_gantz_response`, so behaviour is identical either way.
 //!
-//! Native only - on web the widget draws popped-out panes as in-canvas
+//! Native only. On web the widget draws popped-out panes as in-canvas
 //! `egui::Window`s instead.
 
 use crate::{
@@ -36,17 +36,17 @@ use std::collections::HashMap;
 #[derive(Component)]
 struct PopoutWindow;
 
-/// On a pop-out camera: the pane it renders and its window entity.
+/// On a pop-out camera. The pane it renders and its window entity.
 #[derive(Component)]
 struct PopoutView {
     pane: Pane,
     window: Entity,
 }
 
-/// Registers native pop-out windows: the reconciler, the shared render system,
-/// and the close handler. Opt-in (the app adds it); presence of the inserted
-/// [`HostNativePaneWindows`] makes [`crate::update`] stop drawing `egui::Window`s
-/// and leave the windows to this plugin.
+/// Adds the native pop-out window systems. These are the reconciler, the
+/// shared render system, and the close handler. The app opts in by adding the
+/// plugin. The inserted [`HostNativePaneWindows`] makes [`crate::update`] stop
+/// drawing `egui::Window`s and leave the windows to this plugin.
 #[derive(Default)]
 pub struct PaneWindowPlugin;
 
@@ -54,13 +54,14 @@ impl Plugin for PaneWindowPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WindowedPanesRequested>()
             .insert_resource(HostNativePaneWindows)
-            // Spawn / despawn pop-out windows in `PreUpdate` before bevy_egui
-            // initialises contexts, so a newly-spawned single-pass context gets
-            // its full first-frame lifecycle (screen rect -> input/scale ->
-            // `begin_pass`, which builds its fonts) before it is drawn in
-            // `Update` and tessellated in `PostUpdate`. Spawning it in `Update`
-            // would miss `begin_pass` yet still be tessellated the same frame -
-            // "No fonts loaded".
+            // Spawn and despawn pop-out windows in `PreUpdate` before bevy_egui
+            // initialises contexts. A newly spawned single-pass context then
+            // gets its full first-frame lifecycle before it is drawn in
+            // `Update` and tessellated in `PostUpdate`. That lifecycle is
+            // screen rect, input and scale, then `begin_pass`, which builds
+            // its fonts. Spawning in `Update` would miss `begin_pass` yet
+            // still tessellate the same frame, and panic with "No fonts
+            // loaded".
             .add_systems(
                 PreUpdate,
                 reconcile_windowed_panes.before(EguiPreUpdateSet::InitContexts),
@@ -76,10 +77,10 @@ impl Plugin for PaneWindowPlugin {
     }
 }
 
-/// Diff the widget's reported windowed set against the live pop-out windows:
-/// spawn a window + camera for each newly-windowed pane, and despawn those whose
-/// pane is no longer windowed. The ECS is the map - each pop-out camera carries
-/// its [`PopoutView`].
+/// Diff the widget's reported windowed set against the live pop-out windows.
+/// Spawn a window and camera for each newly windowed pane. Despawn those
+/// whose pane is not windowed any more. The ECS is the map. Each pop-out
+/// camera carries its [`PopoutView`].
 fn reconcile_windowed_panes(
     mut cmds: Commands,
     requested: Res<WindowedPanesRequested>,
@@ -87,17 +88,18 @@ fn reconcile_windowed_panes(
     primary_window: Query<&Window, With<PrimaryWindow>>,
     gui_state: Res<GuiState>,
 ) {
-    // Despawn windows whose pane is no longer requested.
+    // Despawn windows whose pane is not requested.
     for (camera, view) in &popouts {
         if !requested.0.iter().any(|w| w.pane == view.pane) {
             cmds.entity(camera).try_despawn();
             cmds.entity(view.window).try_despawn();
         }
     }
-    // Inherit the primary window's present mode so a pop-out doesn't stall the
-    // shared render thread with a different (blocking) surface-acquire cadence -
-    // e.g. the app's `AutoNoVsync` primary paired with a default `Fifo` pop-out
-    // judders on Wayland. Match the frame-latency queue depth for the same reason.
+    // Inherit the primary window's present mode. A pop-out with a different
+    // blocking surface-acquire cadence stalls the shared render thread. For
+    // example, an `AutoNoVsync` primary paired with a default `Fifo` pop-out
+    // judders on Wayland. Match the frame-latency queue depth for the same
+    // reason.
     let (present_mode, desired_maximum_frame_latency) = primary_window
         .single()
         .map(|w| (w.present_mode, w.desired_maximum_frame_latency))
@@ -113,8 +115,8 @@ fn reconcile_windowed_panes(
             desired_maximum_frame_latency,
             ..Default::default()
         };
-        // Restore this pane's last window size (tracked in `GantzState` and
-        // persisted with the rest of the GUI state), so it reopens as it was.
+        // Restore this pane's last window size so it reopens as it was.
+        // `GantzState` tracks it and persists it with the rest of the GUI state.
         if let Some(geom) = gui_state
             .0
             .windowed_geometry
@@ -137,9 +139,9 @@ fn reconcile_windowed_panes(
 
 /// Render every pop-out pane into its window's single-pass egui context.
 ///
-/// Reuses the same head access / registry construction, widget inputs, and
-/// response handling as [`crate::update`], so a windowed pane behaves exactly
-/// like a docked one.
+/// Reuses the same head access, registry construction, widget inputs, and
+/// response handling as [`crate::update`], so a windowed pane behaves like a
+/// docked one.
 #[allow(clippy::too_many_arguments)]
 fn render_windowed_panes(
     mut popouts: Query<(&mut EguiContext, &PopoutView), Without<EguiMultipassSchedule>>,
@@ -189,8 +191,9 @@ fn render_windowed_panes(
     ),
     mut cmds: Commands,
 ) {
-    // Collect each window's context (cheap Arc clone) + pane up front, so the
-    // `popouts` borrow is released before borrowing the head/registry resources.
+    // Collect each window's context and pane up front. The context is a cheap
+    // Arc clone. This releases the `popouts` borrow before the head and
+    // registry resources are borrowed.
     let targets: Vec<(egui::Context, Pane)> = popouts
         .iter_mut()
         .map(|(mut ctx, view)| (ctx.get_mut().clone(), view.pane.clone()))
@@ -203,8 +206,9 @@ fn render_windowed_panes(
         .and_then(|e| tab_order.iter().position(|&x| x == e))
         .unwrap_or(0);
 
-    // Map heads to entities for response dispatch (heads are stable across the
-    // loop - open/close events applied via `cmds` only flush after this system).
+    // Map heads to entities for response dispatch. Heads are stable across
+    // the loop, since open and close events applied via `cmds` flush after
+    // this system.
     let head_to_entity: HashMap<ca::Head, Entity> = tab_order
         .iter()
         .filter_map(|&e| {
@@ -218,7 +222,7 @@ fn render_windowed_panes(
     // The base source names, for the graph config pane's source dropdown.
     let source_names: Vec<&str> = base_sources.0.iter().map(|s| s.name).collect();
 
-    // Clipboard reader for widget paste affordances (mirrors `update`).
+    // Clipboard reader for widget paste affordances, as in `update`.
     let clipboard = clipboard.map(std::cell::RefCell::new);
     let read_clipboard = || {
         clipboard
@@ -229,10 +233,10 @@ fn render_windowed_panes(
 
     for (ctx, mut pane) in targets {
         // Render the pane into a `CentralPanel` filling the window, using the
-        // regular pane frame. Scoped so the registry / query borrows release
+        // regular pane frame. Scoped so the registry and query borrows release
         // before `handle_gantz_response`. The settings-tab view list is
-        // rebuilt per window: each iteration's borrow of the boxes ends with
-        // it (mirrors `update`, where it is built inside the panel closure).
+        // rebuilt per window. Each iteration's borrow of the boxes ends with
+        // it, as in `update`, where it is built inside the panel closure.
         let mut response = {
             let node_reg = env(&registry, &cache, &builtins, &codec);
             let mut access = HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
@@ -266,7 +270,7 @@ fn render_windowed_panes(
                 .ext_panes(&mut panes)
                 .ref_ext_uis(&exts)
                 .edge_styles(&stylers);
-            // Base-source authoring context (mirrors `update`).
+            // Base-source authoring context, as in `update`.
             if let Some(paths) = &export_paths {
                 widget = widget.base_sources(gantz_egui::widget::BaseSourcesCtx {
                     sources: &source_names,
@@ -279,8 +283,8 @@ fn render_windowed_panes(
             }
             widget = widget.clipboard(&read_clipboard);
 
-            // A background `Ui` spanning the window (as `update` builds for the
-            // primary context).
+            // A background `Ui` spanning the window, as `update` builds for the
+            // primary context.
             let panel_id = egui::Id::new((ctx.viewport_id(), "gantz-windowed-pane-panel"));
             let mut panel_ui = egui::Ui::new(
                 ctx.clone(),
@@ -347,10 +351,11 @@ fn on_window_close_redock(
     }
 }
 
-/// Record each pop-out window's current size into `GantzState` (keyed by
-/// [`pane_key`][gantz_egui::widget::pane_key]) when it changes, so it is
+/// Record each pop-out window's current size into `GantzState`, keyed by
+/// [`pane_key`][gantz_egui::widget::pane_key], when it changes. It is
 /// persisted with the rest of the GUI state and restored next session by
-/// [`reconcile_windowed_panes`]. `Changed<Window>` keeps this to actual resizes.
+/// [`reconcile_windowed_panes`]. `Changed<Window>` keeps this to actual
+/// resizes.
 fn track_popout_geometry(
     mut gui_state: ResMut<GuiState>,
     changed: Query<(&Window, &PopoutView), Changed<Window>>,
@@ -358,7 +363,7 @@ fn track_popout_geometry(
     for (window, view) in &changed {
         let width = window.resolution.width();
         let height = window.resolution.height();
-        // Skip before the surface is realized, when the size is still ~zero.
+        // Skip before the surface is realized, when the size is still near zero.
         if width >= 1.0 && height >= 1.0 {
             gui_state.0.windowed_geometry.insert(
                 gantz_egui::widget::pane_key(&view.pane),

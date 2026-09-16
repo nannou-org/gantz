@@ -1,24 +1,25 @@
 //! Bevy + plyphon DSP runtime for gantz.
 //!
-//! [`PlyphonPlugin`] owns the dsp engine: at startup it opens a cpal output
-//! stream (its own audio thread, running [`plyphon::World::fill_at`] so the engine
-//! clock is anchored to the host) and keeps the [`plyphon::Controller`] +
-//! [`plyphon::Nrt`] handles. Each update, after [`bevy_gantz::VmSet`], it derives
-//! one synthdef per *part* of each open head's DSP subgraph (rooted at its
-//! `~out` outputs and `~scopeout` monitors): the `~bus`-and-stage-cut regions,
-//! plus one spawn per *instanced* nested-graph ref of its child's shared,
-//! content-named defs (installed once, spawned per instance - see
-//! [`gantz_plyphon::instance`]). Parts reconcile with the running synths via
-//! the [`gantz_plyphon::Backend`] seam whenever the head's committed graph
-//! changes: unchanged parts keep their synths (and their unit state -
-//! oscillator phase, delay lines), changed ones are crossfade-replaced.
+//! [`PlyphonPlugin`] owns the dsp engine. At startup it opens a cpal output
+//! stream on its own audio thread, running [`plyphon::World::fill_at`] so the
+//! engine clock is anchored to the host. It keeps the [`plyphon::Controller`]
+//! and [`plyphon::Nrt`] handles. Each update, after [`bevy_gantz::VmSet`], it
+//! derives one synthdef per part of each open head's DSP subgraph, rooted at
+//! its `~out` outputs and `~scopeout` monitors. The parts are the
+//! `~bus`-and-stage-cut regions, plus one spawn per instanced nested-graph ref
+//! of its child's shared, content-named defs. Those are installed once and
+//! spawned per instance, see [`gantz_plyphon::instance`]. Parts reconcile with
+//! the running synths via the [`gantz_plyphon::Backend`] seam whenever the
+//! head's committed graph changes. Unchanged parts keep their synths and
+//! their unit state, such as oscillator phase and delay lines. Changed parts
+//! are crossfade-replaced.
 //!
-//! The bridge runs both ways: control values drive dsp params via `set_control`,
-//! and each `~scopeout` monitor's scope stream is drained here into the node's
-//! ring-buffer state (so the control world can scope a dsp signal).
+//! The bridge runs both ways. Control values drive dsp params via
+//! `set_control`. Each `~scopeout` monitor's scope stream is drained here into
+//! the node's ring-buffer state, so the control world can scope a dsp signal.
 //!
-//! Mixing across heads is free: every head's `~out` synth writes to output bus 0,
-//! and plyphon sums all synths on that bus.
+//! Mixing across heads is free. Every head's `~out` synth writes to output bus
+//! 0, and plyphon sums all synths on that bus.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU64;
@@ -39,18 +40,18 @@ use gantz_plyphon::{
     ToNodeDsp, derive_template, flatten_from_registry, flatten_instance_children, instantiate,
 };
 use plyphon::{Controller, Nrt, Options, StreamConsumer, World, engine};
-// `std::time::Instant` panics ("time not implemented") on `wasm32-unknown-unknown`;
-// `web_time::Instant` shims it to `performance.now()` there and is plain `std::Instant`
-// on native. This clock drives the crossfade fade-out deadlines and the bus-run graveyard.
+// `std::time::Instant` panics on `wasm32-unknown-unknown`. `web_time::Instant`
+// shims it to `performance.now()` there and is plain `std::Instant` on native.
+// This clock drives the crossfade fade-out deadlines and the bus-run graveyard.
 use web_time::Instant;
 
 /// Re-export of [`plyphon`] so downstream crates can implement custom units
-/// (`Unit`, `UnitDef`, `unit_spec`, …) against the exact version this runtime
-/// uses, without pinning it separately. See [`PlyphonPlugin::with_units`].
+/// against the exact version this runtime uses, without pinning it
+/// separately. See [`PlyphonPlugin::with_units`].
 pub use plyphon;
 
 /// A callback that registers custom plyphon units into the embedded engine's
-/// [`plyphon::UnitRegistry`] at startup (see [`PlyphonPlugin::with_units`]).
+/// [`plyphon::UnitRegistry`] at startup. See [`PlyphonPlugin::with_units`].
 type UnitRegistrar = Box<dyn Fn(&mut plyphon::UnitRegistry) + Send + Sync>;
 
 use bevy_gantz::head::{HeadRef, HeadVms, OpenHead};
@@ -62,68 +63,70 @@ use gantz_plyphon::{
     RootPortInfo, Status, describe_parts, root_port_info,
 };
 
-/// Editable DSP settings: the domain's [`Config`] as a bevy resource.
-/// Runtime-only - not persisted, so it resets to the defaults each session.
+/// Editable DSP settings. The domain's [`Config`] as a bevy resource. It is
+/// not persisted, so it resets to the defaults each session.
 #[derive(Clone, Debug, Default, Resource)]
 pub struct DspConfig(pub Config);
 
-/// Read-only DSP status: the domain's [`Status`] as a bevy resource, written
-/// at startup for the Settings -> DSP tab to display.
+/// Read-only DSP status. The domain's [`Status`] as a bevy resource, written
+/// at startup for the Settings > DSP tab to display.
 #[derive(Clone, Debug, Default, Resource)]
 pub struct DspStatus(pub Status);
 
-/// A settings change emitted by the DSP settings tab (the full updated
-/// [`Config`]), buffered for the settings-sync system to apply next frame.
+/// A settings change emitted by the DSP settings tab. Carries the full
+/// updated [`Config`], buffered for the settings-sync system to apply next
+/// frame.
 #[derive(Message)]
 pub struct DspSettingsChanged(pub Config);
 
 /// Per-head DSP derive status plus a readable rendering of the derived
-/// program - the DSP analogue of `bevy_gantz`'s `Module`/`Diagnostics` head
-/// components. Written by the synth driver on each structural sync, i.e. only
-/// when the head's committed graph changes. Heads the driver never reaches
-/// (no dsp engine) carry no `DspHead`; readers treat a missing component as
-/// [`DeriveStatus::Pending`].
+/// program. The DSP analogue of `bevy_gantz`'s `Module` and `Diagnostics`
+/// head components. Written by the synth driver on each structural sync,
+/// which happens only when the head's committed graph changes. Heads the
+/// driver never reaches carry no `DspHead`. Readers treat a missing component
+/// as [`DeriveStatus::Pending`].
 #[derive(Clone, Component, Debug, Default)]
 pub struct DspHead {
     /// The most recent derivation's outcome.
     pub status: DeriveStatus,
-    /// The derived program rendered as text ([`describe_parts`]), or the
+    /// The derived program rendered as text by [`describe_parts`], or the
     /// failure message.
     pub view: std::sync::Arc<str>,
     /// The per-port shapes recorded at derive time, merged across the head's
-    /// parts. Instanced parts arrive absolutized by their instance path (see
-    /// [`gantz_plyphon::instance`]), so keys are node paths absolute to the
+    /// parts. Instanced parts arrive absolutized by their instance path, see
+    /// [`gantz_plyphon::instance`], so keys are node paths absolute to the
     /// head's root graph. Empty unless `status` is [`DeriveStatus::Ok`].
     pub shapes: std::sync::Arc<gantz_plyphon::PortShapes>,
 }
 
-/// OSC/NTP fixed-point units per second (OSC time is 32.32 fixed point: 2^32).
+/// OSC and NTP fixed-point units per second. OSC time is 32.32 fixed point.
 const OSC_UNITS_PER_SEC: f64 = 4_294_967_296.0;
 
 /// The minimum time a crossfade-retired synth keeps running before its deferred
-/// free (its fade gains ramp to zero over their own lags. A `LagControl` decays
-/// to 0.1% within its lag, so this floor comfortably covers
-/// [`gantz_plyphon::FADE_LAG`]). A longer gain lag extends the deadline to match.
+/// free. Its fade gains ramp to zero over their own lags. A `LagControl` decays
+/// to 0.1% within its lag, so this floor covers [`gantz_plyphon::FADE_LAG`]. A
+/// longer gain lag extends the deadline to match.
 const FADE_GRACE: Duration = Duration::from_millis(100);
 
-/// The most crossfade-retired synths kept per head: a structural-weight drag
+/// The most crossfade-retired synths kept per head. A structural-weight drag
 /// respawns every frame, so without a cap fades would pile up faster than they
-/// expire. Freeing the oldest early is near-click-free - its gain has already
+/// expire. Freeing the oldest early is near-click-free. Its gain has already
 /// been decaying for at least a frame.
 const MAX_FADING_PER_HEAD: usize = 2;
 
 /// The most timestamped param updates scheduled per frame across all heads.
 /// The engine's control ring holds 1024 commands and only drains at audio
-/// callbacks, so this is the flood guard that keeps a burst (a huge pattern
-/// window, an absurd tick rate) from starving spawns, fades and everything
-/// else sharing the ring. Surplus updates are dropped with each param still
-/// landing on its final value (see [`gantz_plyphon::backend::schedule_batch`]).
+/// callbacks. This flood guard keeps a burst, such as a huge pattern window
+/// or an absurd tick rate, from starving spawns, fades and everything else
+/// sharing the ring. Surplus updates are dropped with each param still
+/// landing on its final value. See [`gantz_plyphon::backend::schedule_batch`].
 const MAX_SCHED_PER_FRAME: usize = 256;
 
-/// Frames per chunk in a `~scopeout`'s scope stream (one plyphon block).
+/// Frames per chunk in a `~scopeout`'s scope stream. One plyphon block.
 const CHUNK_FRAMES: usize = 64;
-/// Chunks pre-allocated per `~scopeout` scope stream (~43 ms of slack at 48 kHz before a
-/// bounded overrun drops surplus - harmless, as the ring only keeps the last `size`).
+/// Chunks pre-allocated per `~scopeout` scope stream. About 43 ms of slack at
+/// 48 kHz before a bounded overrun drops surplus. That is harmless, as the
+/// ring only keeps the last `size` frames.
 const NUM_CHUNKS: usize = 32;
 
 /// Convert monotonic [`EvalEpoch`] seconds to an absolute OSC/NTP engine-clock time.
@@ -133,35 +136,26 @@ fn osc(secs: f64) -> u64 {
 
 /// Plugin wiring plyphon DSP into a gantz bevy app.
 ///
-/// Generic over `N`, the graph node type (must expose its DSP nodes via
-/// [`ToNodeDsp`]).
-///
 /// To use custom UGens, register them with [`with_units`](Self::with_units). A
 /// node's [`NodeDsp::ugens`](gantz_plyphon::NodeDsp::ugens) can then name them in a
 /// [`UnitSpec`](plyphon::UnitSpec).
 ///
 /// # The domain plugin shape
 ///
-/// This plugin is the reference for wiring a domain into a gantz app: a
-/// plain bevy `Plugin` (deliberately no `GantzDomain` umbrella trait or
-/// plugin group - the plugin IS the domain's bevy-side assembly point),
-/// addable in ANY order relative to the other gantz plugins:
+/// This plugin is the reference for wiring a domain into a gantz app. It is a
+/// plain bevy `Plugin` with no umbrella trait or plugin group. The plugin is
+/// the domain's bevy-side assembly point. It can be added in any order
+/// relative to the other gantz plugins:
 ///
-/// - Cross-plugin resource reads (here the shared [`EvalEpoch`] clock)
-///   happen in [`Plugin::finish`], which bevy runs after every plugin's
-///   `build`, before the schedule first ticks.
-/// - Contributions to shared collections go through
-///   `get_resource_or_init` + push (see
-///   [`bevy_gantz_egui::EntrypointFns`],
-///   [`RegisterResponseExt::register_response_with`]) - never
-///   `insert_resource`, which would clobber earlier contributions.
-/// - GUI surfaces are provided by per-frame systems in `PreUpdate`
-///   (here `sync_dsp_settings` and `provide_dsp_ref_ext`) pushing into the
-///   `First`-cleared collections ([`SettingsTabs`], [`RefExtUis`],
-///   [`EdgeStyles`]), whose `init_resource` calls are idempotent on purpose
-///   so the plugin works with or without `GantzEguiPlugin`.
-/// - The domain's own extension points (here
-///   [`with_units`](Self::with_units)) hang off the plugin itself.
+/// - Cross-plugin resource reads, here the shared [`EvalEpoch`] clock, happen
+///   in [`Plugin::finish`]. Bevy runs it after every plugin's `build` and
+///   before the schedule first ticks.
+/// - Contributions to shared collections go through `get_resource_or_init`
+///   and push, never `insert_resource`. See [`bevy_gantz_egui::EntrypointFns`].
+/// - GUI surfaces are provided by per-frame systems in `PreUpdate` that push
+///   into the `First`-cleared collections. See [`SettingsTabs`].
+/// - The domain's own extension points, here [`with_units`](Self::with_units),
+///   hang off the plugin itself.
 pub struct PlyphonPlugin {
     unit_registrars: Vec<UnitRegistrar>,
 }
@@ -175,7 +169,7 @@ impl Default for PlyphonPlugin {
 }
 
 impl PlyphonPlugin {
-    /// A plugin with no custom units (equivalent to [`default`](Self::default)).
+    /// A plugin with no custom units. Equivalent to [`default`](Self::default).
     pub fn new() -> Self {
         Self::default()
     }
@@ -183,7 +177,7 @@ impl PlyphonPlugin {
     /// Register custom plyphon units into the embedded engine at startup, before
     /// any synth that names them is spawned. The callback gets the controller's
     /// [`plyphon::UnitRegistry`]. Call [`register`](plyphon::UnitRegistry::register)
-    /// (or `register_demand`) once per unit. Chainable.
+    /// or `register_demand` once per unit. Chainable.
     ///
     /// ```ignore
     /// PlyphonPlugin::new().with_units(|reg| {
@@ -201,14 +195,11 @@ impl PlyphonPlugin {
 
 impl Plugin for PlyphonPlugin {
     fn build(&self, app: &mut App) {
-        // DSP settings (the Settings -> DSP tab).
         app.init_resource::<DspConfig>();
-        // The Settings -> DSP tab: the tab's emitted `Config` payloads dispatch
-        // into a buffered message, applied (and re-snapshotted into the tab)
-        // by `sync_dsp_settings`. The `NamedRef` inspector's DSP `inline`
-        // toggle is provided per frame by `provide_dsp_ref_ext`. The
-        // `init_resource` calls are idempotent and keep the providers valid
-        // without the egui plugin.
+        // The Settings > DSP tab. The tab's emitted `Config` payloads dispatch
+        // into a buffered message. `sync_dsp_settings` applies it and
+        // re-snapshots it into the tab. `provide_dsp_ref_ext` provides the
+        // `NamedRef` inspector's DSP `inline` toggle per frame.
         app.init_resource::<SettingsTabs>()
             .init_resource::<ExtPanes>()
             .init_resource::<RefExtUis>()
@@ -224,7 +215,7 @@ impl Plugin for PlyphonPlugin {
                     provide_dsp_edge_style,
                 ),
             );
-        // The DSP domain's base graphs (see `bevy_gantz_egui::base`).
+        // The DSP domain's base graphs. See `bevy_gantz_egui::base`.
         app.world_mut()
             .get_resource_or_init::<bevy_gantz_egui::base::BaseSources>()
             .0
@@ -232,20 +223,20 @@ impl Plugin for PlyphonPlugin {
                 name: "plyphon",
                 bytes: gantz_plyphon::BASE_BYTES,
             });
-        // `.after(EntrypointSet)`: run once the `tick!`/`update!` drivers' triggered
-        // evaluations have flushed, so the control values they queue are visible to
-        // the param drain below in the same frame.
+        // Run once the `tick!` and `update!` drivers' triggered evaluations
+        // have flushed, so the control values they queue are visible to the
+        // param drain in the same frame.
         app.add_systems(Update, drive_synths.after(VmSet).after(EntrypointSet));
         // Keep the web audio callback's epoch anchor fresh.
         #[cfg(target_arch = "wasm32")]
         app.add_systems(Update, refresh_clock_offset.before(drive_synths));
     }
 
-    // Engine construction lives in `finish` rather than `build`: it reads the
-    // shared `EvalEpoch` clock, which another plugin (`GantzPlugin`) inserts
-    // at build time. `finish` runs after every plugin's `build` and before
-    // the schedule first ticks, so plugin order does not matter and the
-    // systems registered above find their resources on the first frame.
+    // Engine construction lives in `finish` rather than `build`. It reads the
+    // shared `EvalEpoch` clock, which `GantzPlugin` inserts at build time.
+    // `finish` runs after every plugin's `build` and before the schedule first
+    // ticks, so plugin order does not matter and the systems registered above
+    // find their resources on the first frame.
     fn finish(&self, app: &mut App) {
         // The shared monotonic epoch is the dsp clock's time base. The cpal
         // callback anchors the engine clock to it via `fill_at`, matching
@@ -271,31 +262,32 @@ impl Plugin for PlyphonPlugin {
             }
         };
         app.insert_resource(DspStatus(status));
-        // `HeadSynths` is a NonSend resource: it holds each `~scopeout`'s
-        // scope `StreamConsumer` (a `!Sync` SPSC handle).
+        // `HeadSynths` is a NonSend resource. It holds each `~scopeout`'s
+        // scope `StreamConsumer`, which is a `!Sync` SPSC handle.
         app.insert_non_send(head_synths);
     }
 }
 
-/// The in-process plyphon engine: the control handle, the NRT cleanup handle, and
-/// the held cpal output stream (kept alive for audio to continue). The plyphon
-/// [`World`] itself lives inside the stream's audio callback.
+/// The in-process plyphon engine. The control handle, the NRT cleanup handle,
+/// and the held cpal output stream, kept alive for audio to continue. The
+/// plyphon [`World`] itself lives inside the stream's audio callback.
 struct DspEngine {
     controller: Controller,
     nrt: Nrt,
     out_channels: usize,
-    /// The first *private* audio-bus channel (after the hardware output + input
-    /// banks) and how many follow - the range [`BusAlloc`] hands out for `~bus`
-    /// boundaries.
+    /// The first private audio-bus channel, after the hardware output and
+    /// input banks, and how many follow. The range [`BusAlloc`] hands out for
+    /// `~bus` boundaries.
     first_private_channel: usize,
     private_channels: usize,
-    /// The active output device's name (for the Settings -> DSP status readout).
+    /// The active output device's name, for the Settings > DSP status readout.
     device: String,
     /// The output sample rate (Hz).
     sample_rate: f64,
-    /// The cpal output stream; held to keep audio running, paused/played on mute.
+    /// The cpal output stream. Held to keep audio running. Paused and played on
+    /// mute.
     stream: cpal::Stream,
-    /// The audio callback's epoch anchor on the web, as `f64` bits: [`EvalEpoch`]
+    /// The audio callback's epoch anchor on the web, as `f64` bits. [`EvalEpoch`]
     /// seconds minus the stream's `AudioContext.currentTime` seconds at the same
     /// moment. The callback adds it to its context-time playback instant to feed
     /// [`World::fill_at`] an epoch time. Refreshed each frame by
@@ -304,55 +296,55 @@ struct DspEngine {
     clock_offset: std::sync::Arc<AtomicU64>,
 }
 
-/// The audio-buffer blob entries: content address -> canonical encoded PCM
-/// (the registry's `dsp.buffer` section entries).
+/// The audio-buffer blob entries, from content address to canonical encoded
+/// PCM. The registry's `dsp.buffer` section entries.
 type BufferBlobs = std::collections::BTreeMap<ca::ContentAddr, ca::Bytes>;
 
 /// The empty buffer store, for registries with no `dsp.buffer` section.
 static EMPTY_BUFFERS: BufferBlobs = BufferBlobs::new();
 
-/// Per-head synth bookkeeping (which committed graph produced the currently
-/// installed synthdef and running synth, so we only re-derive on change), plus the
-/// allocator of global scope-stream indices for `~scopeout`s. A NonSend resource - a
-/// `~scopeout`'s scope `StreamConsumer` is `Send` but not `Sync`.
+/// Per-head synth bookkeeping, plus the allocator of global scope-stream
+/// indices for `~scopeout`s. Records which committed graph produced the
+/// installed synthdef and running synth, so a re-derive happens only on
+/// change. A NonSend resource, since a `~scopeout`'s scope `StreamConsumer` is
+/// `Send` but not `Sync`.
 #[derive(Default)]
 struct HeadSynths {
     heads: HashMap<Entity, HeadParts>,
     scope_alloc: ScopeAlloc,
     bus_alloc: BusAlloc,
-    /// Allocator of global buffer-table indices (bufnums) for resident assets.
+    /// Allocator of global buffer-table indices, or bufnums, for resident assets.
     buffer_alloc: BufferAlloc,
-    /// Assets currently installed in the engine's buffer table, keyed by
-    /// address, shared read-only across every synth referencing them. Loaded
-    /// once and refcounted; freed when the last reference retires.
+    /// Assets installed in the engine's buffer table, keyed by address and
+    /// shared read-only across every synth referencing them. Loaded once and
+    /// refcounted. Freed when the last reference retires.
     resident: HashMap<ca::ContentAddr, ResidentBuffer>,
-    /// Installed synthdef names -> `(refcount, structural_sig)`. A def is
-    /// installed once per name and reused while its structure is unchanged;
-    /// a structural edit (same name, different sig) re-installs (retiring the
-    /// old compiled def, which running synths keep via their own `Arc`). The
-    /// refcount frees the def only when its last synth is retired. Per-head
-    /// region defs (unique names per region) refcount 0 -> 1 -> 0 as before.
+    /// Installed synthdef names to `(refcount, structural_sig)`. A def is
+    /// installed once per name and reused while its structure is unchanged.
+    /// A structural edit with the same name and a different sig re-installs.
+    /// The old compiled def retires, but running synths keep it via their own
+    /// `Arc`. The refcount frees the def only when its last synth is retired.
     shared_defs: HashMap<String, (usize, u64)>,
     /// Crossfade-retired synths still ramping their gains to zero, freed once
-    /// their deadline passes (oldest first - entries are pushed in replacement
-    /// order). Their scope streams ride along: a stream index must not be
-    /// re-cued while the old `ScopeOut` (bufnum baked into its def) can still
-    /// write it.
+    /// their deadline passes. Entries are pushed in replacement order, oldest
+    /// first. Their scope streams ride along. A stream index must not be
+    /// re-cued while the old `ScopeOut`, whose bufnum is baked into its def,
+    /// can still write it.
     fading: Vec<FadingSynth>,
-    /// Memoised child templates, shared across heads and frames (content
-    /// addressed, so entries stay valid for as long as their variant recurs).
+    /// Memoised child templates, shared across heads and frames. Content
+    /// addressed, so entries stay valid for as long as their variant recurs.
     def_cache: DefCache,
 }
 
-/// One open head's running synths: one per resolved part, in part-DAG
-/// topological order (bus writers before their readers - also their node-tree
-/// order). Empty when the head's graph has no dsp sink.
+/// One open head's running synths. One per resolved part, in part-DAG
+/// topological order, which is bus writers before their readers and also
+/// their node-tree order. Empty when the head's graph has no dsp sink.
 struct HeadParts {
     graph: ca::GraphAddr,
-    /// Re-run the structural sync next frame even though `graph` is current:
-    /// a spawn failed transiently (command ring full). The ring drains within
-    /// a block and the re-run is convergent - already-spawned parts match by
-    /// key + sig + wiring and are kept.
+    /// Re-run the structural sync next frame even though `graph` is current,
+    /// because a spawn failed transiently on a full command ring. The ring
+    /// drains within a block and the re-run is convergent. Already-spawned
+    /// parts match by key, sig and wiring and are kept.
     retry: bool,
     parts: Vec<PartSynth>,
 }
@@ -365,11 +357,11 @@ struct Run {
 }
 
 /// Allocates runs of consecutive private audio-bus channels for `~bus`
-/// boundaries, keyed by (head, bus node path) so a bus keeps its channels
-/// across re-derives (an unchanged region's def bakes its patched channel).
-/// Released runs are quarantined until a deadline passes: a crossfade-retired
-/// synth may still write them, and handing a run to another bus meanwhile would
-/// sum unrelated audio into it.
+/// boundaries, keyed by head and bus node path so a bus keeps its channels
+/// across re-derives. An unchanged region's def bakes its patched channel.
+/// Released runs are quarantined until a deadline passes. A crossfade-retired
+/// synth may still write them, and handing a run to another bus meanwhile
+/// would sum unrelated audio into it.
 #[derive(Default)]
 struct BusAlloc {
     /// Free runs, sorted by start and coalesced.
@@ -392,8 +384,8 @@ impl BusAlloc {
         }
     }
 
-    /// The run for `key`, `channels` wide - allocating, or re-allocating on a
-    /// width change (the old run is quarantined). `None` = range exhausted.
+    /// The run for `key`, `channels` wide. Allocates, or re-allocates on a width
+    /// change and quarantines the old run. `None` means the range is exhausted.
     fn get_or_alloc(
         &mut self,
         key: (Entity, BusKey),
@@ -421,7 +413,7 @@ impl BusAlloc {
         Some(run)
     }
 
-    /// Quarantine `key`'s run (if any).
+    /// Quarantine `key`'s run, if any.
     fn release(&mut self, key: &(Entity, BusKey), now: Instant) {
         if let Some(run) = self.allocated.remove(key) {
             self.graveyard.push((run, now + FADE_GRACE * 2));
@@ -473,24 +465,25 @@ impl BusAlloc {
     }
 }
 
-/// A synth retired by a crossfaded replacement: its gains have been set to zero
-/// (ramping via their own lags) and it is freed once `deadline` passes.
+/// A synth retired by a crossfaded replacement. Its gains have been set to
+/// zero, ramping via their own lags, and it is freed once `deadline` passes.
 struct FadingSynth {
-    /// The head the synth belonged to (for the per-head backlog cap).
+    /// The head the synth belonged to, for the per-head backlog cap.
     entity: Entity,
     /// The running synth to free at `deadline`.
     node_id: i32,
-    /// When the fade has died away and the synth (+ scopes) can be freed.
+    /// When the fade has died away and the synth and scopes can be freed.
     deadline: Instant,
-    /// The synth's cued scope streams, closed + freed only at `deadline`.
+    /// The synth's cued scope streams, closed and freed only at `deadline`.
     scopes: Vec<ScopeSlot>,
-    /// The assets whose refcount this synth still holds, released at `deadline`
-    /// (not at fade-out) so the buffer stays resident through the crossfade.
+    /// The assets whose refcount this synth still holds. Released at `deadline`,
+    /// not at fade-out, so the buffer stays resident through the crossfade.
     buffers: Vec<ca::ContentAddr>,
 }
 
-/// Allocates globally-unique scope-stream indices (plyphon recording-slot ids) for
-/// live `~scopeout`s, reusing freed ones so a long editing session doesn't exhaust them.
+/// Allocates globally-unique scope-stream indices for live `~scopeout`s. These
+/// are plyphon recording-slot ids. Freed ones are reused so a long editing
+/// session does not exhaust them.
 #[derive(Default)]
 struct ScopeAlloc {
     free: Vec<usize>,
@@ -498,7 +491,7 @@ struct ScopeAlloc {
 }
 
 impl ScopeAlloc {
-    /// A free index (reused if available, else a fresh one).
+    /// A free index. Reused if available, else a fresh one.
     fn alloc(&mut self) -> usize {
         self.free.pop().unwrap_or_else(|| {
             let index = self.next;
@@ -513,22 +506,23 @@ impl ScopeAlloc {
     }
 }
 
-/// How long a freed bufnum is quarantined before reuse: a just-retired
+/// How long a freed bufnum is quarantined before reuse. A just-retired
 /// `PlayBuf`'s trailing blocks and its `buffer_free` command may still be in
-/// flight when the index is handed out again, so a reuse must not `buffer_set`
-/// over an index a fading reader can still see (mirrors the bus-run graveyard).
+/// flight when the index is handed out again. A reuse must not `buffer_set`
+/// over an index a fading reader can still see. Mirrors the bus-run graveyard.
 const BUFFER_GRACE: Duration = Duration::from_millis(200);
 
-/// An asset installed in the engine's buffer table: the bufnum it occupies and
-/// how many live-or-fading synths still reference it. Freed at refcount 0.
+/// An asset installed in the engine's buffer table. The bufnum it occupies
+/// and how many live or fading synths still reference it. Freed at refcount 0.
 struct ResidentBuffer {
     bufnum: usize,
     refcount: usize,
 }
 
-/// Allocates global buffer-table indices (bufnums) for resident assets, reusing
-/// freed ones. A freed index is quarantined for [`BUFFER_GRACE`] before it can
-/// be reused, so a fading `PlayBuf` never reads a bufnum re-`buffer_set` under it.
+/// Allocates global buffer-table indices, or bufnums, for resident assets,
+/// reusing freed ones. A freed index is quarantined for [`BUFFER_GRACE`]
+/// before reuse, so a fading `PlayBuf` never reads a bufnum re-`buffer_set`
+/// under it.
 #[derive(Default)]
 struct BufferAlloc {
     free: Vec<usize>,
@@ -538,7 +532,7 @@ struct BufferAlloc {
 }
 
 impl BufferAlloc {
-    /// A free bufnum (reused if available, else a fresh one).
+    /// A free bufnum. Reused if available, else a fresh one.
     fn alloc(&mut self) -> usize {
         self.free.pop().unwrap_or_else(|| {
             let index = self.next;
@@ -565,73 +559,74 @@ impl BufferAlloc {
     }
 }
 
-/// The installed synthdef + running synth for one resolved part of a head
-/// (a top-level region, or one instance's spawn of a shared child region).
+/// The installed synthdef and running synth for one resolved part of a head.
+/// A top-level region, or one instance's spawn of a shared child region.
 struct PartSynth {
-    /// The part's identity across re-derives (`ResolvedPart::key`), the
-    /// driver's match for the keep/replace decision.
+    /// The part's identity across re-derives, `ResolvedPart::key`. The driver
+    /// matches on it for the keep or replace decision.
     key: u64,
     def_name: String,
     node_id: i32,
-    /// Structural signature of the running synth's def (excludes param values) -
-    /// unchanged across a structural-graph edit means the synth need not respawn.
+    /// Structural signature of the running synth's def, excluding param values.
+    /// Unchanged across a structural-graph edit means the synth need not respawn.
     sig: u64,
-    /// Hash of the part's bus wiring (keys + widths + params). A wiring change
-    /// with an unchanged def (e.g. an inlet re-routed to another source)
-    /// crossfade-respawns rather than live-switching the bus param - an abrupt
-    /// bus switch clicks, while the respawn reuses the trusted fade machinery.
+    /// Hash of the part's bus wiring, its keys, widths and params. A wiring
+    /// change with an unchanged def, for example an inlet re-routed to another
+    /// source, crossfade-respawns rather than live-switching the bus param. An
+    /// abrupt bus switch clicks, while the respawn reuses the fade machinery.
     wiring: u64,
     /// One slot per control param, binding a dsp node's state value to its synth
     /// param index, with the last value pushed via `set_control`.
     params: Vec<ParamSlot>,
-    /// One slot per `~scopeout`: the cued scope stream whose samples the driver drains into
-    /// the node's ring state each frame.
+    /// One slot per `~scopeout`. The cued scope stream whose samples the driver
+    /// drains into the node's ring state each frame.
     scopes: Vec<ScopeSlot>,
-    /// The def's driver-owned fade gains (one per sink), used to fade the synth
+    /// The def's driver-owned fade gains, one per sink. Used to fade the synth
     /// in on spawn and out across a crossfaded replacement.
     gains: Vec<GainRef>,
     /// The distinct assets this synth references, each holding one refcount on
-    /// its [`ResidentBuffer`]. Released (decrementing the refcount) only when
-    /// the synth is finally freed - immediately if it has no fade, else at its
-    /// [`FadingSynth`] deadline - so a crossfade respawn keeps the buffer
-    /// resident with no reload flicker.
+    /// its [`ResidentBuffer`]. Released only when the synth is finally freed.
+    /// That is immediately if it has no fade, else at its [`FadingSynth`]
+    /// deadline. So a crossfade respawn keeps the buffer resident with no
+    /// reload flicker.
     buffers: Vec<ca::ContentAddr>,
 }
 
 /// Binds one synth control param to a dsp node's VM state value.
 struct ParamSlot {
-    /// The dsp node's path in the graph (where its value lives in VM state).
+    /// The dsp node's path in the graph, where its value lives in VM state.
     node_path: Vec<usize>,
-    /// Which of the node's params feeds this slot: `None` drains the node's
-    /// bare single-param state, `Some(name)` the `name`d sub-map of its keyed
-    /// state (see `gantz_plyphon::param`).
+    /// Which of the node's params feeds this slot. `None` drains the node's bare
+    /// single-param state. `Some(name)` drains the `name`d sub-map of its keyed
+    /// state. See `gantz_plyphon::param`.
     key: Option<String>,
     /// The param's index within the synth.
     index: usize,
-    /// The last value pushed via `set_control` (`None` until first applied).
+    /// The last value pushed via `set_control`. `None` until first applied.
     last: Option<f32>,
 }
 
-/// A `~scopeout`'s live scope stream: every sample of its dsp input arrives here (via
-/// plyphon `ScopeOut` -> `cue_scope`) for the driver to append into the node's rings.
+/// A `~scopeout`'s live scope stream. Every sample of its dsp input arrives
+/// here via plyphon `ScopeOut` and `cue_scope`, for the driver to append into
+/// the node's rings.
 struct ScopeSlot {
-    /// The `~scopeout` node's path in the graph (where its ring state lives).
+    /// The `~scopeout` node's path in the graph, where its ring state lives.
     node_path: Vec<usize>,
-    /// Each per-channel ring's length in *frames*.
+    /// Each per-channel ring's length in frames.
     size: usize,
-    /// The number of interleaved channels the stream carries (`cue_scope`'s width) -
-    /// the tapped signal's width, inferred at derive time.
+    /// The number of interleaved channels the stream carries, `cue_scope`'s
+    /// width. The tapped signal's width, inferred at derive time.
     channels: usize,
-    /// The cued scope-stream index (a global recording-slot id, baked into the def's
-    /// `ScopeOut` and freed on teardown).
+    /// The cued scope-stream index. A global recording-slot id, baked into the
+    /// def's `ScopeOut` and freed on teardown.
     index: usize,
-    /// The consumer the driver drains (`pop_filled`/`recycle`) each frame.
+    /// The consumer the driver drains each frame with `pop_filled` and `recycle`.
     consumer: StreamConsumer,
 }
 
 /// Dispatch a [`Config`] payload emitted by the DSP settings tab as a
-/// buffered [`DspSettingsChanged`] message (registered via
-/// [`RegisterResponseExt::register_response_with`]).
+/// buffered [`DspSettingsChanged`] message. Registered via
+/// [`RegisterResponseExt::register_response_with`].
 fn dispatch_dsp_settings(
     _entity: Option<Entity>,
     payload: gantz_egui::DynResponse,
@@ -643,8 +638,8 @@ fn dispatch_dsp_settings(
 }
 
 /// Apply any pending settings change, then provide this frame's DSP settings
-/// tab: a fresh snapshot of the applied [`Config`] + [`Status`] (see
-/// [`SettingsTabs`] for the First/PreUpdate schedule contract).
+/// tab. A fresh snapshot of the applied [`Config`] and [`Status`]. See
+/// [`SettingsTabs`] for the schedule contract.
 fn sync_dsp_settings(
     mut msgs: MessageReader<DspSettingsChanged>,
     mut config: ResMut<DspConfig>,
@@ -671,9 +666,9 @@ fn sync_dsp_settings(
     }));
 }
 
-/// Provide this frame's DSP pane: each open head's [`DspHead`] snapshot plus
-/// the engine's presence (see [`ExtPanes`] for the First/PreUpdate schedule
-/// contract). Heads without a [`DspHead`] read as [`DeriveStatus::Pending`].
+/// Provide this frame's DSP pane. Each open head's [`DspHead`] snapshot plus
+/// the engine's presence. See [`ExtPanes`] for the schedule contract. Heads
+/// without a [`DspHead`] read as [`DeriveStatus::Pending`].
 fn provide_dsp_pane(
     status: Res<DspStatus>,
     heads: Query<(&HeadRef, Option<&DspHead>), With<OpenHead>>,
@@ -696,13 +691,13 @@ fn provide_dsp_pane(
     }));
 }
 
-/// Provide this frame's DSP `NamedRef` inspector extension: the `inline`
-/// toggle for references to DSP graphs (see [`RefExtUis`] for the
-/// First/PreUpdate schedule contract).
+/// Provide this frame's DSP `NamedRef` inspector extension. The `inline`
+/// toggle for references to DSP graphs. See [`RefExtUis`] for the schedule
+/// contract.
 ///
-/// The DSP-graph set is a pure walk over the stored registry data (see
-/// [`gantz_plyphon::dsp_graphs`]), recomputed only when the registry changes
-/// and handed to the UI.
+/// The DSP-graph set is a pure walk over the stored registry data, see
+/// [`gantz_plyphon::dsp_graphs`]. It is recomputed only when the registry
+/// changes and handed to the UI.
 fn provide_dsp_ref_ext(
     registry: Res<Registry>,
     mut dsp_graphs: Local<Option<std::sync::Arc<std::collections::HashSet<ca::ContentAddr>>>>,
@@ -715,14 +710,13 @@ fn provide_dsp_ref_ext(
     ref_ext_uis.0.push(Box::new(DspRefExtUi { dsp_graphs }));
 }
 
-/// Provide this frame's DSP edge styler: each open head's root-level port
-/// classification, driving signal-edge rendering in the graph scene (see
-/// [`EdgeStyles`] for the First/PreUpdate schedule contract).
+/// Provide this frame's DSP edge styler. Each open head's root-level port
+/// classification, driving signal-edge rendering in the graph scene. See
+/// [`EdgeStyles`] for the schedule contract.
 ///
-/// Classification requires the concrete node type (see
-/// [`root_port_info`]), so it is computed here and handed to the UI -
-/// recomputed per head only when the registry, the head's working graph or
-/// its [`DspHead`] change.
+/// Classification requires the concrete node type, see [`root_port_info`],
+/// so it is computed here and handed to the UI. It is recomputed per head only
+/// when the registry, the head's working graph or its [`DspHead`] change.
 fn provide_dsp_edge_style(
     registry: Res<Registry>,
     reified: Res<GraphCache>,
@@ -733,8 +727,8 @@ fn provide_dsp_edge_style(
     let mut styled: HashMap<ca::Head, std::sync::Arc<RootPortInfo>> = HashMap::new();
     for (head_ref, dsp) in heads.iter() {
         let head = head_ref.0.clone();
-        // The head's committed graph, read from the reified cache (the
-        // working graph equals it by the `WorkingGraph` invariant). An edit
+        // The head's committed graph, read from the reified cache. It equals
+        // the working graph, see `bevy_gantz::head::WorkingGraph`. An edit
         // commits, so `registry.is_changed()` covers working-graph changes.
         let Some(graph) = registry
             .head_commit(&head)
@@ -753,24 +747,24 @@ fn provide_dsp_edge_style(
         }
         styled.insert(head.clone(), cache[&head].clone());
     }
-    // Forget heads that are no longer open.
+    // Forget closed heads.
     cache.retain(|head, _| styled.contains_key(head));
     edge_styles.0.push(Box::new(DspEdgeStyle { heads: styled }));
 }
 
 /// Keep each open head's synth in sync, `.after(VmSet)` and `.after(EntrypointSet)`.
-/// Two passes per head:
+/// Three passes per head:
 ///
-/// - *Structural sync* (only when the head's committed graph changed): re-derive
-///   the synthdef and respawn the synth if its structure changed (else keep it).
-/// - *Param sync* (every frame): drain each dsp param's queued `(time, value)`
-///   control updates from VM state and *schedule* them on the running synth at
-///   `time + SCHED_LEAD` via [`Backend::set_control_at`], so automation plays
-///   sample-accurately. A direct inspector edit (no queue) is applied immediately.
-///   Either way the synth is not respawned (preserving phase), and value/automation
-///   edits no longer change the graph address.
-/// - *Scope sync* (every frame): drain each `~scopeout`'s scope stream and append its
-///   samples into the node's ring state (capped at the tap's `size`).
+/// - Structural sync, only when the head's committed graph changed. Re-derive
+///   the synthdef and respawn the synth if its structure changed, else keep it.
+/// - Param sync, every frame. Drain each dsp param's queued `(time, value)`
+///   control updates from VM state and schedule them on the running synth at
+///   `time + sched_lead` via [`Backend::set_control_at`], so automation plays
+///   sample-accurately. A direct inspector edit with no queue is applied
+///   immediately. Either way the synth is not respawned, which preserves
+///   phase. Value and automation edits do not change the graph address.
+/// - Scope sync, every frame. Drain each `~scopeout`'s scope stream and append
+///   its samples into the node's ring state, capped at the tap's `size`.
 ///
 /// Also tears down synths for closed heads.
 fn drive_synths(
@@ -790,7 +784,7 @@ fn drive_synths(
     let dsp = dsp.into_inner();
     let state = state.into_inner();
 
-    // Apply the enable/mute toggle by pausing/playing the output stream on change.
+    // Apply the enable toggle by pausing or playing the output stream on change.
     if *enabled_applied != Some(dsp_config.0.enabled) {
         let result = if dsp_config.0.enabled {
             dsp.stream.play()
@@ -803,7 +797,8 @@ fn drive_synths(
         *enabled_applied = Some(dsp_config.0.enabled);
     }
 
-    // Tick NRT cleanup off the audio thread (drops freed synths, surfaces events).
+    // Tick NRT cleanup off the audio thread. Drops freed synths and surfaces
+    // events.
     dsp.nrt.process();
     while dsp.nrt.poll().is_some() {}
     // Drop retired compiled defs once the audio thread is done with them.
@@ -821,19 +816,19 @@ fn drive_synths(
         let Some(graph_ca) = registry.head_commit(&head_ref.0).map(|c| c.graph) else {
             continue;
         };
-        // The head's committed graph, read from the reified cache (the
-        // working graph equals it by the `WorkingGraph` invariant). A cache
-        // miss (e.g. an unknown-tag reify failure) keeps the previous synths.
+        // The head's committed graph, read from the reified cache. See
+        // `bevy_gantz::head::WorkingGraph`. A cache miss, for example an
+        // unknown-tag reify failure, keeps the previous synths.
         let Some(graph) = reified.get(&graph_ca) else {
             continue;
         };
 
-        // Structural sync: only when the committed graph changed. Flattening
-        // first splices any nested graphs (resolved through the registry) into
-        // one flat graph whose nodes carry their original nested paths. On a
-        // flatten error (a ref cycle or an unresolvable ref, both forbidden
-        // upstream): keep the previous synths, parking the head at this graph
-        // address so the error logs once per commit rather than every frame.
+        // Structural sync, only when the committed graph changed. Flattening
+        // first splices any nested graphs, resolved through the registry, into
+        // one flat graph whose nodes carry their original nested paths. A
+        // flatten error is a ref cycle or an unresolvable ref, both forbidden
+        // upstream. Then keep the previous synths and park the head at this
+        // graph address so the error logs once per commit, not every frame.
         // Either way the outcome lands on the head as a `DspHead` for the GUI.
         let stale = state
             .heads
@@ -872,8 +867,8 @@ fn drive_synths(
             cmds.entity(entity).insert(dsp_head);
         }
 
-        // Param sync: drain each param's queued control updates and schedule
-        // them ahead of the dsp clock. direct (untimestamped) value edits apply
+        // Param sync. Drain each param's queued control updates and schedule
+        // them ahead of the dsp clock. Direct untimestamped value edits apply
         // immediately.
         let (Some(head), Some(vm)) = (state.heads.get_mut(&entity), vms.get_mut(&entity)) else {
             continue;
@@ -891,8 +886,8 @@ fn drive_synths(
                 };
                 let value = value as f32;
                 if pending.is_empty() {
-                    // No automation this frame: apply a direct inspector edit
-                    // immediately, only when the value actually changed.
+                    // No automation this frame. Apply a direct inspector edit
+                    // immediately, only when the value changed.
                     if slot.last.map(f32::to_bits) != Some(value.to_bits()) {
                         if let Err(e) = backend.set_control(node_id, slot.index, value) {
                             log::error!("bevy_gantz_plyphon: set_control failed: {e:?}");
@@ -900,7 +895,7 @@ fn drive_synths(
                         slot.last = Some(value);
                     }
                 } else {
-                    // Timestamped automation: schedule each update at its own time
+                    // Timestamped automation. Schedule each update at its own time
                     // plus the lead, preserving the inter-tick spacing, within the
                     // frame's shared budget.
                     let lead = dsp_config.0.sched_lead.as_secs_f64();
@@ -915,16 +910,17 @@ fn drive_synths(
                         &batch,
                         &mut sched_budget,
                     );
-                    // The latest queued value is now current; record it so a later
-                    // immediate pass doesn't resend it.
+                    // The latest queued value is now current. Record it so a later
+                    // immediate pass does not resend it.
                     slot.last = Some(value);
                 }
             }
 
-            // Scope sync: drain each `~scopeout`'s scope stream and append every streamed
-            // sample into its per-channel ring state (the list-of-rings its control
-            // `expr` surfaces on a trigger push. `push_ring` deinterleaves and keeps
-            // the last `size` frames per channel).
+            // Scope sync. Drain each `~scopeout`'s scope stream and append every
+            // streamed sample into its per-channel ring state. That is the
+            // list-of-rings its control `expr` surfaces on a trigger push.
+            // `push_ring` deinterleaves and keeps the last `size` frames per
+            // channel.
             for scope in &mut synth.scopes {
                 let mut samples = Vec::new();
                 while let Some(chunk) = scope.consumer.pop_filled() {
@@ -952,8 +948,8 @@ fn drive_synths(
         );
     }
 
-    // Fade out synths whose heads are no longer open (their defs are freed now -
-    // safe, a running synth holds its own compiled def until freed).
+    // Fade out synths whose heads are closed. Their defs are freed now. That
+    // is safe, since a running synth holds its own compiled def until freed.
     let stale: Vec<Entity> = state
         .heads
         .keys()
@@ -982,11 +978,11 @@ fn drive_synths(
     state.buffer_alloc.sweep(Instant::now());
 }
 
-/// Split the fade backlog: drains and returns the entries due for freeing - those
-/// past their deadline, plus the *oldest* entries of any head whose backlog
-/// exceeds [`MAX_FADING_PER_HEAD`] (entries are pushed in replacement order, so a
-/// structural-weight drag that respawns every frame retires its pile-up early.
-/// Near-click-free, as their gains have already been decaying).
+/// Split the fade backlog. Drains and returns the entries due for freeing.
+/// Those past their deadline, plus the oldest entries of any head whose
+/// backlog exceeds [`MAX_FADING_PER_HEAD`]. Entries are pushed in replacement
+/// order, so a structural-weight drag that respawns every frame retires its
+/// pile-up early. Near-click-free, as their gains have already been decaying.
 fn expire_fades(fading: &mut Vec<FadingSynth>, now: Instant) -> Vec<FadingSynth> {
     let mut backlog: HashMap<Entity, usize> = HashMap::new();
     for f in fading.iter() {
@@ -1005,18 +1001,9 @@ fn expire_fades(fading: &mut Vec<FadingSynth>, now: Instant) -> Vec<FadingSynth>
     expired
 }
 
-/// Re-derive `entity`'s per-region synthdefs and reconcile them with the running
-/// synths: a region whose key + structural signature both match keeps its synth
-/// untouched (its unit state - oscillator phase, delay lines - survives exactly).
-/// A changed region is crossfade-replaced. A disappeared region fades out. Every
-/// signature is computed on the final def - bus indices, `ScopeOut` bufnums
-/// and fade defaults are all no-lag control params / baked defaults excluded
-/// from [`structural_sig`] - so a re-derive of the same graph never spuriously
-/// respawns (and the driver never mutates a def copy).
-///
 /// Park `entity` at `graph_ca` without touching its running synths, so an
-/// unactionable commit (a flatten or derive error) is not retried (and its
-/// error not re-logged) every frame.
+/// unactionable commit, such as a flatten or derive error, is not retried and
+/// its error not re-logged every frame.
 fn park_head(state: &mut HeadSynths, entity: Entity, graph_ca: ca::GraphAddr) {
     match state.heads.get_mut(&entity) {
         Some(head) => head.graph = graph_ca,
@@ -1033,15 +1020,6 @@ fn park_head(state: &mut HeadSynths, entity: Entity, graph_ca: ca::GraphAddr) {
     }
 }
 
-/// A replacement spawns *silent* (fade defaults patched to `0.0`. Defaults seed
-/// both the control wire and the lag state) and ramps its fades to unity once
-/// up, while the old synth's fades ramp to zero ahead of a deferred free - the
-/// overlap is the crossfade (on a bus, `Out` sums the two ramps). Placement
-/// follows the region DAG: a spawned synth lands `Before` the first kept synth
-/// later in topo order (bus readers hear only writers computed earlier in the
-/// node tree), else at the tail. On install/spawn failure the old synth is left
-/// playing - strictly better than going silent.
-///
 /// The registry's audio-buffer blob entries, or the empty store when the
 /// `dsp.buffer` section is absent.
 fn buffer_blobs(reg: &ca::Registry) -> &BufferBlobs {
@@ -1051,6 +1029,25 @@ fn buffer_blobs(reg: &ca::Registry) -> &BufferBlobs {
         .unwrap_or(&EMPTY_BUFFERS)
 }
 
+/// Re-derive `entity`'s per-region synthdefs and reconcile them with the running
+/// synths. A region whose key and structural signature both match keeps its
+/// synth untouched, so its unit state such as oscillator phase and delay lines
+/// survives exactly. A changed region is crossfade-replaced. A disappeared
+/// region fades out. Every signature is computed on the final def. Bus
+/// indices, `ScopeOut` bufnums and fade defaults are all no-lag control params
+/// or baked defaults excluded from `structural_sig`, so a re-derive of the
+/// same graph never spuriously respawns and the driver never mutates a def
+/// copy.
+///
+/// A replacement spawns silent, with fade defaults patched to `0.0`. Defaults
+/// seed both the control wire and the lag state. It ramps its fades to unity
+/// once up, while the old synth's fades ramp to zero ahead of a deferred free.
+/// The overlap is the crossfade. On a bus, `Out` sums the two ramps. Placement
+/// follows the region DAG. A spawned synth lands `Before` the first kept synth
+/// later in topo order, else at the tail. Bus readers hear only writers
+/// computed earlier in the node tree. On install or spawn failure the old
+/// synth is left playing, which is better than going silent.
+///
 /// Returns the sync's outcome as the head's [`DspHead`], for the GUI.
 fn structural_sync<N>(
     controller: &mut Controller,
@@ -1073,8 +1070,8 @@ where
     log::debug!("Derived synthdef template ({:?})", derive_start.elapsed());
     let derived: Vec<ResolvedPart> = match template_result {
         Ok(template) => instantiate(&template, &state.def_cache),
-        // No dsp sink to root any synthdef at: fade every region out. Freeing
-        // the defs now is safe - a fading synth holds its own compiled copy.
+        // No dsp sink to root any synthdef at. Fade every region out. Freeing
+        // the defs now is safe, since a fading synth holds its own compiled copy.
         Err(gantz_plyphon::DeriveError::NoSink) => {
             if let Some(head) = state.heads.remove(&entity) {
                 for synth in head.parts {
@@ -1085,7 +1082,7 @@ where
             }
             state.bus_alloc.release_head(entity, now);
             // An empty entry parks the head at this graph address so sinkless
-            // graphs don't re-derive every frame.
+            // graphs do not re-derive every frame.
             state.heads.insert(
                 entity,
                 HeadParts {
@@ -1100,10 +1097,10 @@ where
                 shapes: Default::default(),
             };
         }
-        // A part cycle (`~bus` regions or instances with no runnable
-        // writer-before-reader order) or an instanced-reference failure: keep
-        // the previous synths, parking the head so the error logs once per
-        // commit rather than every frame.
+        // A part cycle or an instanced-reference failure. A part cycle means
+        // `~bus` regions or instances with no runnable writer-before-reader
+        // order. Keep the previous synths and park the head so the error logs
+        // once per commit rather than every frame.
         Err(e) => {
             log::error!("bevy_gantz_plyphon: {e}, keeping the previous synths");
             park_head(state, entity, graph_ca);
@@ -1143,9 +1140,9 @@ where
         state.bus_alloc.release(&key, now);
     }
 
-    // Plan each part: keep the running synth when key + sig + wiring match,
-    // else spawn a replacement (fading any predecessor once the replacement
-    // is up).
+    // Plan each part. Keep the running synth when key, sig and wiring match.
+    // Else spawn a replacement and fade any predecessor once the replacement
+    // is up.
     enum Plan {
         Keep(PartSynth),
         Spawn(ResolvedPart, u64, Option<PartSynth>),
@@ -1162,16 +1159,17 @@ where
             Some(ix) => {
                 let mut p = prev.remove(ix);
                 if p.sig == r.sig && p.wiring == wiring {
-                    // Structure + wiring unchanged (e.g. a non-dsp edit, or a
-                    // ring-size edit that is not in the def): keep the synth +
-                    // its param slots + its cued scope streams. Refresh each
-                    // tap's ring `size` in case a size edit changed it.
+                    // Structure and wiring unchanged, for example a non-dsp
+                    // edit or a ring-size edit that is not in the def. Keep the
+                    // synth, its param slots and its cued scope streams.
+                    // Refresh each tap's ring `size` in case a size edit
+                    // changed it.
                     for m in &r.monitors {
                         if let Some(slot) = p.scopes.iter_mut().find(|s| s.node_path == m.node_path)
                         {
                             slot.size = m.size;
                             // A width change always changes the `ScopeOut` unit's
-                            // input count and thus the sig - it can't reach here.
+                            // input count and thus the sig, so it cannot reach here.
                             debug_assert_eq!(
                                 slot.channels, m.channels,
                                 "sig-unchanged sync must not change a scope's width",
@@ -1186,16 +1184,17 @@ where
             None => plans.push(Plan::Spawn(r, wiring, None)),
         }
     }
-    // Parts that disappeared entirely: fade out + free their defs.
+    // Parts that disappeared entirely fade out and free their defs.
     for old in prev {
         let def_name = old.def_name.clone();
         fade_out(controller, state, entity, old);
         release_def(controller, &mut state.shared_defs, &def_name);
     }
 
-    // Each spawn's node-tree anchor: the first KEPT synth later in topo order
-    // (spawning `Before` it keeps writers ahead of readers. Successive spawns
-    // before the same anchor preserve their relative order), else the tail.
+    // Each spawn's node-tree anchor is the first kept synth later in topo
+    // order, else the tail. Spawning `Before` it keeps writers ahead of
+    // readers. Successive spawns before the same anchor preserve their
+    // relative order.
     let anchors: Vec<Option<i32>> = (0..plans.len())
         .map(|i| {
             plans[i + 1..].iter().find_map(|p| match p {
@@ -1222,14 +1221,14 @@ where
                     anchor,
                 ) {
                     Ok(synth) => {
-                        // The replacement is live: fade the old out (the gain
-                        // overlap is the crossfade) and release its def
-                        // refcount. If the new synth shares the name (stable
-                        // key), the refcount was bumped by `spawn_part`, so
-                        // this just drops the old's reference (the def stays
-                        // installed for the new synth); if the name differs,
-                        // the old def frees now (the old synth keeps its own
-                        // `Arc` while it fades out).
+                        // The replacement is live. Fade the old out, so the
+                        // gain overlap is the crossfade, and release its def
+                        // refcount. If the new synth shares the name via a
+                        // stable key, `spawn_part` bumped the refcount, so this
+                        // just drops the old's reference and the def stays
+                        // installed for the new synth. If the name differs,
+                        // the old def frees now. The old synth keeps its own
+                        // `Arc` while it fades out.
                         if let Some(old) = old {
                             let old_def_name = old.def_name.clone();
                             fade_out(controller, state, entity, old);
@@ -1237,9 +1236,9 @@ where
                         }
                         parts.push(synth);
                     }
-                    // Keep the old synth playing untouched on failure -
-                    // strictly better than the silence a teardown would leave.
-                    // A transient failure (full command ring) marks the head
+                    // Keep the old synth playing untouched on failure. That is
+                    // better than the silence a teardown would leave. A
+                    // transient failure on a full command ring marks the head
                     // for a convergent re-sync next frame.
                     Err(e) => {
                         transient_failure |= matches!(e, SpawnError::Transient);
@@ -1268,17 +1267,17 @@ where
 /// Why a part failed to spawn.
 #[derive(Debug)]
 enum SpawnError {
-    /// The command ring was momentarily full; retrying next frame converges.
+    /// The command ring was momentarily full. Retrying next frame converges.
     Transient,
-    /// Anything else (bus exhaustion, install or build failure) - retrying
-    /// without an edit would fail identically, so the head parks as usual.
+    /// Anything else, such as bus exhaustion or an install or build failure.
+    /// Retrying without an edit would fail identically, so the head parks.
     Permanent,
 }
 
-/// Hash of a part's bus wiring - every read/write's key, width and param.
-/// Combined with the def's structural sig for the keep/replace decision: a
-/// re-route that keeps the def (e.g. an instance inlet fed from a different
-/// source) still respawns, crossfading onto the new buses.
+/// Hash of a part's bus wiring. Every read and write's key, width and param.
+/// Combined with the def's structural sig for the keep or replace decision. A
+/// re-route that keeps the def, for example an instance inlet fed from a
+/// different source, still respawns, crossfading onto the new buses.
 fn wiring_hash(part: &ResolvedPart) -> u64 {
     use std::hash::{DefaultHasher, Hash, Hasher};
     let mut h = DefaultHasher::new();
@@ -1291,14 +1290,14 @@ fn wiring_hash(part: &ResolvedPart) -> u64 {
     h.finish()
 }
 
-/// Cue scope streams and allocate buses (so their indices are known), then
-/// install and spawn one part's def - `Before` the given anchor when present,
-/// else at the root group's tail. The synth spawns silent behind its fade
-/// gains' baked `0.0` defaults; bus indices, scope bufnums and unbound
-/// fade-to-unity are then set via `set_control` in one command-ring drain
-/// (landing before the first audible block). Bound params re-send from node
+/// Cue scope streams and allocate buses so their indices are known, then
+/// install and spawn one part's def. It spawns `Before` the given anchor when
+/// present, else at the root group's tail. The synth spawns silent behind its
+/// fade gains' baked `0.0` defaults. Bus indices, scope bufnums and unbound
+/// fade-to-unity are then set via `set_control` in one command-ring drain,
+/// landing before the first audible block. Bound params re-send from node
 /// state via the same-frame param sync. On failure, cleans up after itself
-/// and reports whether retrying next frame can converge ([`SpawnError`]).
+/// and reports whether retrying next frame can converge. See [`SpawnError`].
 fn spawn_part(
     controller: &mut Controller,
     state: &mut HeadSynths,
@@ -1324,11 +1323,11 @@ fn spawn_part(
     } = part;
 
     // Allocate buses and cue scope streams up front so their indices are known
-    // for the post-spawn `set_control` drain below (no def mutation: the bus
-    // indices and bufnums are no-lag control params, set live per block).
-    // Whichever side of a bus spawns first allocates; the counterpart (spawned
-    // later in topo order, or kept from a previous sync) looks the run up by
-    // the same key.
+    // for the post-spawn `set_control` drain below. No def mutation is needed.
+    // The bus indices and bufnums are no-lag control params, set live per
+    // block. Whichever side of a bus spawns first allocates. The counterpart,
+    // spawned later in topo order or kept from a previous sync, looks the run
+    // up by the same key.
     let mut set_after_spawn: Vec<(usize, f32)> = Vec::new();
     for binding in bus_writes.iter().chain(&bus_reads) {
         let bus_key = (entity, binding.key.clone());
@@ -1361,9 +1360,10 @@ fn spawn_part(
         }
     }
 
-    // Make each referenced asset resident (shared + refcounted) and wire the
-    // node's driver-owned bufnum + rate. A missing/undecodable asset is wired to
-    // a missing buffer (`-1`) so the node plays silence rather than a wrong buffer.
+    // Make each referenced asset resident, shared and refcounted, and wire the
+    // node's driver-owned bufnum and rate. A missing or undecodable asset is
+    // wired to the missing buffer `-1` so the node plays silence rather than
+    // a wrong buffer.
     let mut part_assets: Vec<ca::ContentAddr> = Vec::new();
     for binding in &buffers {
         match resolve_resident(controller, state, assets, &mut part_assets, binding.asset) {
@@ -1382,10 +1382,10 @@ fn spawn_part(
 
     let def_name = def.name.clone();
     let mut backend = Embedded::new(controller);
-    // Install the def unless an identical one (same name AND structural sig) is
+    // Install the def unless one with the same name and structural sig is
     // already installed. A structural edit to a stable-key region changes the
-    // def while keeping the name, so the sig differs and we re-install
-    // (retiring the old compiled def; running synths keep their own `Arc`).
+    // def while keeping the name, so the sig differs and the def re-installs.
+    // The old compiled def retires. Running synths keep their own `Arc`.
     let sig_matches = state
         .shared_defs
         .get(&def_name)
@@ -1413,10 +1413,10 @@ fn spawn_part(
     };
     match backend.spawn(&def_name, target, action) {
         Ok(node_id) => {
-            // Wire the synth in one command-ring drain: bus indices, scope
+            // Wire the synth in one command-ring drain. Bus indices, scope
             // bufnums, then the unbound fade gains ramped to unity. All land
-            // before the synth's first audible block (it spawns silent behind
-            // the fade's baked `0.0` default).
+            // before the synth's first audible block. It spawns silent behind
+            // the fade's baked `0.0` default.
             for (param, value) in &set_after_spawn {
                 if let Err(e) = backend.set_control(node_id, *param, *value) {
                     log::error!("bevy_gantz_plyphon: post-spawn set_control failed: {e:?}");
@@ -1465,15 +1465,16 @@ fn spawn_part(
     }
 }
 
-/// Begin fading `synth` out: ramp every gain to zero (each through its own lag)
-/// and queue the synth - with its cued scope streams - for a deferred free once
-/// the slowest ramp has died away. A synth with no gains (e.g. monitor-only) has
-/// no audible output to de-click and is freed immediately.
+/// Begin fading `synth` out. Ramp every gain to zero, each through its own lag,
+/// and queue the synth with its cued scope streams for a deferred free once
+/// the slowest ramp has died away. A synth with no gains, for example a
+/// monitor-only one, has no audible output to de-click and is freed
+/// immediately.
 fn fade_out(controller: &mut Controller, state: &mut HeadSynths, entity: Entity, synth: PartSynth) {
     if synth.gains.is_empty() {
         let _ = Embedded::new(controller).free_node(synth.node_id);
         free_scopes(controller, &mut state.scope_alloc, synth.scopes);
-        // No fade to ride through: release the buffer refcounts now.
+        // No fade to ride through. Release the buffer refcounts now.
         free_buffers(controller, state, &synth.buffers, Instant::now());
         return;
     }
@@ -1485,8 +1486,8 @@ fn fade_out(controller: &mut Controller, state: &mut HeadSynths, entity: Entity,
             log::error!("bevy_gantz_plyphon: fade-out set_control failed: {e:?}");
         }
     }
-    // The buffers ride into the fading entry: their refcounts drop only at the
-    // deadline (below), keeping the buffer resident through the crossfade so a
+    // The buffers ride into the fading entry. Their refcounts drop only at
+    // the deadline, keeping the buffer resident through the crossfade so a
     // respawn on the same asset never reloads.
     state.fading.push(FadingSynth {
         entity,
@@ -1498,7 +1499,7 @@ fn fade_out(controller: &mut Controller, state: &mut HeadSynths, entity: Entity,
 }
 
 /// Close each scope stream's cued recording slot and return its index to the
-/// allocator for reuse (the `StreamConsumer`s drop with the vec).
+/// allocator for reuse. The `StreamConsumer`s drop with the vec.
 fn free_scopes(controller: &mut Controller, scope_alloc: &mut ScopeAlloc, scopes: Vec<ScopeSlot>) {
     for scope in scopes {
         let _ = controller.close_recording(scope.index);
@@ -1506,14 +1507,15 @@ fn free_scopes(controller: &mut Controller, scope_alloc: &mut ScopeAlloc, scopes
     }
 }
 
-/// Ensure `asset` is resident (installing its buffer from the content-addressed
-/// blob on first use), take a refcount for the spawning part, and return its
-/// bufnum - or `None` if the blob is missing/undecodable or installation failed
-/// (the caller then wires the node to a missing buffer so it plays silence).
+/// Ensure `asset` is resident, take a refcount for the spawning part, and
+/// return its bufnum. On first use its buffer is installed from the
+/// content-addressed blob. Returns `None` if the blob is missing or
+/// undecodable or installation failed. The caller then wires the node to a
+/// missing buffer so it plays silence.
 ///
 /// `part_assets` records the distinct assets this part already holds a refcount
 /// for, so a part with two nodes playing the same asset shares one bufnum and
-/// takes one refcount (released once when the synth is freed).
+/// takes one refcount, released once when the synth is freed.
 fn resolve_resident(
     controller: &mut Controller,
     state: &mut HeadSynths,
@@ -1553,9 +1555,9 @@ fn resolve_resident(
     Some(bufnum)
 }
 
-/// Release each asset's refcount as a retired synth is freed; a buffer whose
+/// Release each asset's refcount as a retired synth is freed. A buffer whose
 /// last reference is gone is freed from the engine and its bufnum quarantined
-/// (see [`BufferAlloc::free`]) before reuse.
+/// before reuse. See [`BufferAlloc::free`].
 fn free_buffers(
     controller: &mut Controller,
     state: &mut HeadSynths,
@@ -1575,9 +1577,9 @@ fn free_buffers(
     }
 }
 
-/// Decrement the refcount of `def_name`, freeing the def (retiring it on the
-/// audio thread) only when the last reference drops. A shared variant def is
-/// thus installed once and freed once its last instance is retired.
+/// Decrement the refcount of `def_name`. The def is freed, and retired on
+/// the audio thread, only when the last reference drops. A shared variant
+/// def is thus installed once and freed once its last instance is retired.
 fn release_def(
     controller: &mut Controller,
     shared_defs: &mut HashMap<String, (usize, u64)>,
@@ -1591,7 +1593,7 @@ fn release_def(
     }
 }
 
-/// Refresh the web audio callback's epoch anchor ([`DspEngine::clock_offset`]):
+/// Refresh the web audio callback's epoch anchor, [`DspEngine::clock_offset`].
 /// [`EvalEpoch`] seconds minus the stream's `AudioContext.currentTime` seconds.
 ///
 /// Both clocks advance in real time while the context runs, so the offset is
@@ -1617,9 +1619,9 @@ fn refresh_clock_offset(dsp: Option<NonSend<DspEngine>>, epoch: Res<EvalEpoch>) 
 /// Whether this call is running on cpal's AudioWorklet audio thread.
 ///
 /// cpal's AudioWorklet backend re-instantiates the wasm module on the audio
-/// thread, re-running `main` there - an application `main` must return early
+/// thread and re-runs `main` there. An application `main` must return early
 /// when this is `true`, or the whole app would boot again on the audio thread.
-/// Always `false` off the web / without the `audioworklet` feature.
+/// Always `false` off the web or without the `audioworklet` feature.
 pub fn on_worklet_thread() -> bool {
     #[cfg(all(target_arch = "wasm32", feature = "audioworklet"))]
     {
@@ -1631,10 +1633,10 @@ pub fn on_worklet_thread() -> bool {
     }
 }
 
-/// The cpal host the output stream is built from: the platform default, or -
-/// on the web with the `audioworklet` feature - cpal's AudioWorklet host (the
+/// The cpal host the output stream is built from. The platform default, or
+/// cpal's AudioWorklet host on the web with the `audioworklet` feature. The
 /// default there is the deprecated ScriptProcessor-based Web Audio host, which
-/// runs audio on the main thread).
+/// runs audio on the main thread.
 fn output_host() -> cpal::Host {
     #[cfg(all(target_arch = "wasm32", feature = "audioworklet"))]
     {
@@ -1647,15 +1649,15 @@ fn output_host() -> cpal::Host {
     }
 }
 
-/// Build the plyphon engine + cpal output stream from the default output device.
-/// Returns `None` (and the app runs silently) if no device is available. `epoch`
-/// is the shared monotonic clock the callback anchors the engine clock to;
-/// `unit_registrars` register any custom units into the controller's registry
-/// before the stream starts.
+/// Build the plyphon engine and cpal output stream from the default output
+/// device. Returns `None` if no device is available, and the app runs
+/// silently. `epoch` is the shared monotonic clock the callback anchors the
+/// engine clock to. `unit_registrars` register any custom units into the
+/// controller's registry before the stream starts.
 fn build_dsp_engine(epoch: EvalEpoch, unit_registrars: &[UnitRegistrar]) -> Option<DspEngine> {
     let host = output_host();
     let device = host.default_output_device()?;
-    // cpal's `Device` `Display` is its name (there is no `name()` in 0.18).
+    // cpal's `Device` `Display` is its name.
     let device_name = device.to_string();
     let supported = device.default_output_config().ok()?;
     let sample_format = supported.sample_format();
@@ -1673,8 +1675,8 @@ fn build_dsp_engine(epoch: EvalEpoch, unit_registrars: &[UnitRegistrar]) -> Opti
     let private_channels = options.audio_bus_channels;
     let (mut controller, nrt, world) = engine(options);
 
-    // Register any custom units before the engine compiles/spawns a synth naming
-    // them (the compiled GraphDef carries their fn-pointers to the audio thread).
+    // Register any custom units before the engine compiles a synth naming them.
+    // The compiled GraphDef carries their fn-pointers to the audio thread.
     for register in unit_registrars {
         register(controller.registry_mut());
     }
@@ -1750,7 +1752,8 @@ fn build_typed<T>(
 where
     T: SizedSample + FromSample<f32>,
 {
-    // Reused interleaved `f32` scratch; the engine writes it, then we convert.
+    // Reused interleaved `f32` scratch. The engine writes it, then it is
+    // converted to `T`.
     let mut scratch: Vec<f32> = Vec::new();
     device
         .build_output_stream(
@@ -1836,7 +1839,7 @@ mod tests {
         plyphon::engine(plyphon::Options::default()).0
     }
 
-    /// A freed bufnum is quarantined (not reused immediately) and only returns
+    /// A freed bufnum is quarantined, not reused immediately, and only returns
     /// to the pool once its grace has passed.
     #[test]
     fn buffer_alloc_quarantines_then_reuses() {
@@ -1845,7 +1848,7 @@ mod tests {
         let _b1 = a.alloc();
         let base = Instant::now();
         a.free(b0, base);
-        // Immediately, a fresh index is handed out - not the quarantined one.
+        // Immediately, a fresh index is handed out, not the quarantined one.
         assert_ne!(a.alloc(), b0);
         // A sweep before the grace expires keeps it quarantined.
         a.sweep(base);
@@ -1898,7 +1901,7 @@ mod tests {
         assert_eq!(state.resident.get(&addr).unwrap().refcount, 1);
     }
 
-    /// An asset absent from the store resolves to `None` (the node plays silence).
+    /// An asset absent from the store resolves to `None`. The node plays silence.
     #[test]
     fn resolve_resident_missing_asset_is_none() {
         let mut controller = test_controller();
@@ -1912,7 +1915,7 @@ mod tests {
         assert!(refs.is_empty());
     }
 
-    /// Entries past their deadline drain; the rest stay, in order.
+    /// Entries past their deadline drain. The rest stay, in order.
     #[test]
     fn expire_fades_drains_past_deadline() {
         let e = entities(1);
@@ -1924,8 +1927,8 @@ mod tests {
         assert!(fading[0].deadline > base);
     }
 
-    /// A head's backlog over the cap retires its OLDEST entries early, leaving
-    /// at most `MAX_FADING_PER_HEAD`; other heads' entries are untouched.
+    /// A head's backlog over the cap retires its oldest entries early, leaving
+    /// at most `MAX_FADING_PER_HEAD`. Other heads' entries are untouched.
     #[test]
     fn expire_fades_caps_per_head_backlog() {
         let e = entities(2);
@@ -1933,7 +1936,7 @@ mod tests {
         let mut fading: Vec<FadingSynth> = (0..4).map(|i| fade(e[0], later(base, 1 + i))).collect();
         fading.push(fade(e[1], later(base, 1)));
         let expired = expire_fades(&mut fading, base);
-        // The two oldest of e0's four go; e1's single entry stays.
+        // The two oldest of e0's four go. e1's single entry stays.
         assert_eq!(expired.len(), 4 - MAX_FADING_PER_HEAD);
         assert!(expired.iter().all(|f| f.entity == e[0]));
         assert_eq!(
@@ -1941,7 +1944,7 @@ mod tests {
             MAX_FADING_PER_HEAD,
         );
         assert_eq!(fading.iter().filter(|f| f.entity == e[1]).count(), 1);
-        // The kept entries are the newest (latest deadlines).
+        // The kept entries are the newest, with the latest deadlines.
         assert!(
             fading
                 .iter()
@@ -1974,13 +1977,13 @@ mod tests {
             .get_or_alloc((e[0], BusKey::Bus(vec![2])), 3, base)
             .expect("3 channels");
         assert_eq!(b, Run { start: 6, len: 3 });
-        // Same key + width: the same run (an unchanged region's baked channel
-        // stays valid).
+        // Same key and width gives the same run, so an unchanged region's baked
+        // channel stays valid.
         assert_eq!(
             alloc.get_or_alloc((e[0], BusKey::Bus(vec![1])), 2, base),
             Some(a)
         );
-        // A width change re-allocates; the old run is quarantined, not reused.
+        // A width change re-allocates. The old run is quarantined, not reused.
         let a2 = alloc
             .get_or_alloc((e[0], BusKey::Bus(vec![1])), 4, base)
             .expect("4 channels");
@@ -2022,10 +2025,10 @@ mod tests {
         );
     }
 
-    /// A `~sinosc -> ~out` graph spawns through `spawn_part` and sounds: the
-    /// fade gain (baked at `0.0`) is ramped to unity via `set_control`, and the
+    /// A `~sinosc -> ~out` graph spawns through `spawn_part` and sounds. The
+    /// fade gain, baked at `0.0`, is ramped to unity via `set_control`, and the
     /// tone is audible after the fade lag. Guards the driver's runtime spawn
-    /// path (the GUI's path) end to end with an offline engine.
+    /// path, the GUI's path, end to end with an offline engine.
     #[test]
     fn spawn_part_sounds_sin_out() {
         use gantz_core::edge::Edge;
@@ -2077,12 +2080,12 @@ mod tests {
         );
     }
 
-    /// End-to-end for the descriptor-table nodes: a `~saw -> ~lpf -> ~out`
-    /// chain spawns through `spawn_part` and sounds, and the filter's *keyed*
-    /// cutoff binding drives the running synth via `set_control` - slamming
+    /// End-to-end for the descriptor-table nodes. A `~saw -> ~lpf -> ~out`
+    /// chain spawns through `spawn_part` and sounds, and the filter's keyed
+    /// cutoff binding drives the running synth via `set_control`. Slamming
     /// the cutoff down collapses the saw's energy. Guards the whole
-    /// `UnitNode` pipeline (derive, keyed `ParamSlot`s, live control) with an
-    /// offline engine.
+    /// `UnitNode` pipeline of derive, keyed `ParamSlot`s and live control with
+    /// an offline engine.
     #[test]
     fn unit_chain_sounds_and_keyed_param_controls_it() {
         use gantz_core::edge::Edge;
@@ -2124,14 +2127,14 @@ mod tests {
         )
         .expect("spawn_part");
 
-        // The filter's cutoff arrives as a *keyed* slot at the LPF's path.
+        // The filter's cutoff arrives as a keyed slot at the LPF's path.
         let cutoff = synth
             .params
             .iter()
             .find(|p| p.node_path == vec![1] && p.key.as_deref() == Some("freq"))
             .expect("the LPF's keyed freq slot");
 
-        // Open (the 440 Hz default): the saw sounds.
+        // Open at the 440 Hz default, the saw sounds.
         let render = |world: &mut plyphon::World| {
             let mut out = vec![0.0f32; 48_000 / 2];
             for block in out.chunks_mut(64) {
@@ -2142,7 +2145,7 @@ mod tests {
         let open = render(&mut world);
         assert!(open > 0.05, "saw -> lpf -> out must sound: rms={open}");
 
-        // Slam the cutoff to 20 Hz via the keyed slot: the 220 Hz saw all but
+        // Slam the cutoff to 20 Hz via the keyed slot. The 220 Hz saw all but
         // vanishes behind the 2nd-order low-pass.
         let mut backend = Embedded::new(&mut controller);
         backend
@@ -2156,16 +2159,17 @@ mod tests {
         );
     }
 
-    /// End-to-end: a `~playbuf -> ~out` graph plays a content-addressed asset.
-    /// Exercises the whole chain - node -> derive -> `BufferBinding` -> resident
-    /// install -> `PlayBuf` reads the buffer -> `Out` - and confirms it sounds.
+    /// End-to-end. A `~playbuf -> ~out` graph plays a content-addressed asset.
+    /// Exercises the whole chain from node to derive to `BufferBinding` to
+    /// resident install to `PlayBuf` reading the buffer to `Out`, and confirms
+    /// it sounds.
     #[test]
     fn playbuf_sounds_through_out() {
         use gantz_core::edge::Edge;
         use gantz_core::node::graph::Graph;
         use gantz_plyphon::flatten::{Flat, RefKind, flatten};
 
-        // An alternating +/-0.5 waveform (nonzero RMS), content-addressed and
+        // An alternating +/-0.5 waveform with nonzero RMS, content-addressed and
         // placed in the store the driver reads.
         let samples = (0..64)
             .map(|i| if i % 2 == 0 { 0.5 } else { -0.5 })
@@ -2220,11 +2224,10 @@ mod tests {
         assert!(rms > 0.05, "playbuf -> out must sound: rms={rms}");
     }
 
-    /// Multi-frame `structural_sync`: a `~sinosc -> ~out` head graph sounds,
-    /// and adding unconnected `inlet`/`outlet` nodes (which dissolve in the
-    /// flattener) keeps the tone audible (the region is kept or respawned with
-    /// the fade ramped in). Regression guard for the GUI's reported "no sound
-    /// with inlet/outlet" issue. Mimics the GUI exactly: flatten, then sync.
+    /// Multi-frame `structural_sync`. A `~sinosc -> ~out` head graph sounds,
+    /// and adding unconnected `inlet` and `outlet` nodes, which dissolve in
+    /// the flattener, keeps the tone audible. The region is kept or respawned
+    /// with the fade ramped in. Mimics the GUI. Flatten, then sync.
     #[test]
     fn structural_sync_keeps_sound_with_inlets() {
         use gantz_core::edge::Edge;
@@ -2247,7 +2250,7 @@ mod tests {
         let mut state = HeadSynths::default();
         let entity = entities(1)[0];
 
-        // Frame 1: `~sinosc -> ~out`.
+        // Frame 1 is `~sinosc -> ~out`.
         let mut g1 = Graph::<TestN>::default();
         let s = g1.add_node(sinosc());
         let o = g1.add_node(TestN::Out(gantz_plyphon::Out::default()));
@@ -2272,7 +2275,7 @@ mod tests {
         let rms1 = (out.iter().map(|v| v * v).sum::<f32>() / out.len() as f32).sqrt();
         assert!(rms1 > 0.05, "frame 1 must sound: rms={rms1}");
 
-        // Frame 2: add unconnected `inlet`/`outlet` (different graph address).
+        // Frame 2 adds unconnected `inlet` and `outlet`, a different graph address.
         let mut g2 = Graph::<TestN>::default();
         let s = g2.add_node(sinosc());
         let o = g2.add_node(TestN::Out(gantz_plyphon::Out::default()));
@@ -2293,7 +2296,7 @@ mod tests {
             1,
             48_000.0,
         );
-        // Render past the crossfade (the respawn fades in over FADE_LAG).
+        // Render past the crossfade. The respawn fades in over FADE_LAG.
         let mut out = vec![0.0f32; 48_000 / 2];
         for block in out.chunks_mut(64) {
             world.fill(block, 1);
@@ -2302,11 +2305,11 @@ mod tests {
         assert!(rms2 > 0.05, "frame 2 (with inlets) must sound: rms={rms2}");
     }
 
-    /// A structural edit within a stable-key region (connecting `~sinosc` into
-    /// an existing `~pack -> ~unpack -> ~out` chain) re-installs the def and
-    /// the synth plays the NEW (sounding) def. Regression guard for the GUI's
-    /// reported "~pack/~unpack no longer work" issue: the Phase-4 refcounting
-    /// must not skip `install_synthdef` when the def changed (same name, new sig).
+    /// A structural edit within a stable-key region re-installs the def and
+    /// the synth plays the new, sounding def. Here `~sinosc` is connected into
+    /// an existing `~pack -> ~unpack -> ~out` chain. The refcounting must not
+    /// skip `install_synthdef` when the def changed with the same name and a
+    /// new sig.
     #[test]
     fn structural_edit_in_stable_region_reinstalls_def() {
         use gantz_core::edge::Edge;
@@ -2329,7 +2332,8 @@ mod tests {
         let mut state = HeadSynths::default();
         let entity = entities(1)[0];
 
-        // Frame 1: `~pack -> ~unpack -> ~out` (pack input unconnected -> silence).
+        // Frame 1 is `~pack -> ~unpack -> ~out`. The pack input is unconnected,
+        // so silence.
         let mut g1 = Graph::<TestN>::default();
         let pk = g1.add_node(TestN::Pack(gantz_plyphon::Pack::default()));
         let up = g1.add_node(TestN::Unpack(gantz_plyphon::Unpack::default()));
@@ -2358,8 +2362,9 @@ mod tests {
             "frame 1 (unconnected pack) must be silent: rms={rms1}"
         );
 
-        // Frame 2: connect `~sinosc -> ~pack` (same `~out` path -> stable key,
-        // same name, but the def CHANGED: now carries a SinOsc). Must re-install.
+        // Frame 2 connects `~sinosc -> ~pack`. Same `~out` path, so a stable key
+        // and the same name, but the def changed and now carries a SinOsc. Must
+        // re-install.
         let mut g2 = g1.clone();
         let s = g2.add_node(sinosc());
         g2.add_edge(s, pk, Edge::new(0.into(), 0.into()));
@@ -2386,9 +2391,9 @@ mod tests {
         );
     }
 
-    /// A minimal node enum for driver tests: DSP sinks/sources plus the nesting
-    /// markers (`Inlet`/`Outlet`) and a graph ref carrying its child's content
-    /// address, arity and `inline` flag.
+    /// A minimal node enum for driver tests. DSP sinks and sources plus the
+    /// nesting markers `Inlet` and `Outlet`, and a graph ref carrying its child's
+    /// content address, arity and `inline` flag.
     #[derive(Clone)]
     enum TestN {
         Unit(gantz_plyphon::UnitNode),
@@ -2401,19 +2406,19 @@ mod tests {
         Ref(gantz_ca::ContentAddr, usize, usize, bool),
     }
 
-    /// A test node wrapping the named plyphon unit (a descriptor-table row).
+    /// A test node wrapping the named plyphon unit, a descriptor-table row.
     fn unit(name: &str) -> TestN {
         TestN::Unit(gantz_plyphon::UnitNode::from_unit(name).expect("table row"))
     }
 
-    /// A `~sinosc` test node (the `UnitNode` wrapping plyphon's `SinOsc`).
+    /// A `~sinosc` test node. The `UnitNode` wrapping plyphon's `SinOsc`.
     fn sinosc() -> TestN {
         unit("SinOsc")
     }
 
-    /// The graph's erased (data-layer) address: the same scheme the registry
-    /// uses for graph identity, so structural edits change the address and
-    /// identical graphs share one.
+    /// The graph's erased data-layer address. The same scheme the registry uses
+    /// for graph identity, so structural edits change the address and identical
+    /// graphs share one.
     fn graph_addr(g: &gantz_core::node::graph::Graph<TestN>) -> gantz_ca::GraphAddr {
         use gantz_ca::{Datum, NodeData};
         use gantz_core::data::erase_node_typed;
@@ -2487,8 +2492,8 @@ mod tests {
         }
     }
 
-    /// Flatten a head graph over `map`'s children (refs lower per their
-    /// `inline` flag) and pre-flatten every child for the derivation resolver.
+    /// Flatten a head graph over `map`'s children and pre-flatten every child
+    /// for the derivation resolver. Refs lower per their `inline` flag.
     #[allow(clippy::type_complexity)]
     fn flatten_head<'g>(
         g: &'g gantz_core::node::graph::Graph<TestN>,
@@ -2542,7 +2547,7 @@ mod tests {
         (out.iter().map(|v| v * v).sum::<f32>() / out.len() as f32).sqrt()
     }
 
-    /// A self-contained child: `~sinosc -> ~out`.
+    /// A self-contained child, `~sinosc -> ~out`.
     fn sine_out_child() -> gantz_core::node::graph::Graph<TestN> {
         use gantz_core::edge::Edge;
         let mut g = gantz_core::node::graph::Graph::<TestN>::default();
@@ -2560,8 +2565,8 @@ mod tests {
         })
     }
 
-    /// Two instances of one self-contained child both sound (louder than one),
-    /// sharing ONE installed def with refcount 2.
+    /// Two instances of one self-contained child both sound, louder than one,
+    /// and share one installed def with refcount 2.
     #[test]
     fn two_instances_of_one_child_both_sound() {
         use gantz_core::node::graph::Graph;
@@ -2624,16 +2629,16 @@ mod tests {
         );
     }
 
-    /// Editing the child respawns exactly its instances: the head's own region
-    /// keeps its synth (node id unchanged) while both instance spawns are
-    /// replaced and the old pair fade out.
+    /// Editing the child respawns exactly its instances. The head's own region
+    /// keeps its synth with its node id unchanged, while both instance spawns
+    /// are replaced and the old pair fade out.
     #[test]
     fn child_edit_respawns_only_its_instances() {
         use gantz_core::edge::Edge;
         use gantz_core::node::graph::Graph;
 
         let ca1 = gantz_ca::ContentAddr([1u8; 32]);
-        // The edited child: structurally different (an extra `~pack` stage).
+        // The edited child is structurally different, with an extra `~pack` stage.
         let ca2 = gantz_ca::ContentAddr([2u8; 32]);
         let mut child2 = Graph::<TestN>::default();
         let s = child2.add_node(sinosc());
@@ -2643,7 +2648,7 @@ mod tests {
         child2.add_edge(pk, o, Edge::new(0.into(), 0.into()));
         let map = HashMap::from([(ca1, sine_out_child()), (ca2, child2)]);
 
-        // Head: its own region (sin -> out) + two instances of the child.
+        // The head has its own `sin -> out` region plus two instances of the child.
         let head = |ca: gantz_ca::ContentAddr| {
             let mut g = Graph::<TestN>::default();
             let s = g.add_node(sinosc());
@@ -2697,9 +2702,9 @@ mod tests {
             .collect();
         assert_eq!(after.len(), 3);
 
-        // Exactly one part survives by key - the head's own region - with its
-        // synth untouched. The instance parts (child CA in their key) are new,
-        // and the two retired spawns are fading.
+        // Exactly one part survives by key, the head's own region, with its
+        // synth untouched. The instance parts have the child CA in their key and
+        // are new. The two retired spawns are fading.
         let kept: Vec<_> = after
             .iter()
             .filter(|(k, _)| before.contains_key(k))
@@ -2713,7 +2718,7 @@ mod tests {
         assert_eq!(state.fading.len(), 2, "both old instance spawns fade out");
     }
 
-    /// Toggling `inline` on the ref switches the lowering live: the instanced
+    /// Toggling `inline` on the ref switches the lowering live. The instanced
     /// spawn crossfades to the spliced one, audibly on both sides.
     #[test]
     fn inline_toggle_switches_lowering_live() {
@@ -2772,7 +2777,7 @@ mod tests {
             1,
             48_000.0,
         );
-        // Render across the crossfade: the tone stays audible throughout.
+        // Render across the crossfade. The tone stays audible throughout.
         let rms2 = render_rms(&mut world, 48_000 / 2);
         assert!(
             rms2 > 0.05,
@@ -2781,9 +2786,9 @@ mod tests {
         assert_eq!(state.heads[&entity].parts.len(), 1);
     }
 
-    /// A param edit lands on ONE instance's synth: setting one spawn's freq to
-    /// zero leaves its sibling sounding (the shared def's param index is per
-    /// synth), and the sibling's slot state is untouched.
+    /// A param edit lands on one instance's synth. Setting one spawn's freq to
+    /// zero leaves its sibling sounding, since the shared def's param index is
+    /// per synth, and the sibling's slot state is untouched.
     #[test]
     fn param_edit_on_one_instance_leaves_sibling() {
         use gantz_core::node::graph::Graph;
@@ -2811,10 +2816,10 @@ mod tests {
         );
         let rms_both = render_rms(&mut world, 48_000 / 2);
 
-        // Silence the FIRST instance's sine via its own synth's freq param
-        // (the same set_control the driver's param sync issues). The slots
-        // pair absolute node paths with def-local indices: both instances
-        // share the index, but each has its own node id.
+        // Silence the first instance's sine via its own synth's freq param, the
+        // same set_control the driver's param sync issues. The slots pair
+        // absolute node paths with def-local indices. Both instances share the
+        // index, but each has its own node id.
         let parts = &state.heads[&entity].parts;
         assert_eq!(parts.len(), 2);
         let (a, b) = (&parts[0], &parts[1]);

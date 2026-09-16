@@ -1,11 +1,11 @@
-//! The `sleep` node: produce a gantz task that resolves to the input value
+//! The `sleep` node produces a gantz task that resolves to the input value
 //! after a configurable duration.
 //!
-//! The simplest task producer, useful for testing and demonstrating `await`.
-//! The task is a driver-polled deadline check (see
-//! [`GantzTask::poll_fn`](bevy_gantz::task::GantzTask::poll_fn)) rather than
-//! an executor-driven future, so it is portable to single-threaded targets
-//! and costs nothing while pending.
+//! It is the simplest task producer, useful for testing and demonstrating
+//! `await`. The task is a driver-polled deadline check, see
+//! [`GantzTask::poll_fn`](bevy_gantz::task::GantzTask::poll_fn). It is not an
+//! executor-driven future, so it is portable to single-threaded targets and
+//! costs nothing while pending.
 
 use bevy_egui::egui;
 use bevy_gantz::task::{GantzTask, TaskHandle};
@@ -26,15 +26,11 @@ const MIN_DURATION: f64 = 0.0;
 /// The name of the registered fn producing the sleep task.
 const SLEEP_FN: &str = "gantz-sleep";
 
-// ---------------------------------------------------------------------------
-// Sleep node
-// ---------------------------------------------------------------------------
-
 /// A node producing a gantz task that resolves to the received input value
 /// after the configured duration.
 ///
-/// Push a value into it (e.g. from a `bang`) and wire the task output into an
-/// `await` node to receive the value once the duration elapses.
+/// Push a value into it, for example from a `bang`. Wire the task output
+/// into an `await` node to receive the value once the duration elapses.
 #[derive(Clone, Debug, Serialize, Deserialize, NodeTag)]
 pub struct Sleep {
     #[serde(
@@ -58,7 +54,7 @@ impl Sleep {
         self.duration
     }
 
-    /// Set the sleep duration in seconds (content-address affecting).
+    /// Set the sleep duration in seconds. This affects the content address.
     pub fn set_duration(&mut self, duration: f64) {
         self.duration = duration.max(MIN_DURATION);
     }
@@ -101,8 +97,8 @@ impl gantz_core::Node for Sleep {
 
     fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
         // The forwarded value is the input when connected, else `'()`.
-        // `{:?}` formats the float with a guaranteed `.`/exponent so Steel
-        // parses it as a number rather than an integer.
+        // `{:?}` formats the float with a `.` or exponent so Steel parses it
+        // as a number rather than an integer.
         let val = match ctx.inputs().first() {
             Some(Some(input)) => input.as_str(),
             _ => "'()",
@@ -113,9 +109,9 @@ impl gantz_core::Node for Sleep {
     fn register(&self, mut ctx: RegCtx<'_, '_>) {
         let vm = ctx.vm();
         bevy_gantz::task::register_task_type(vm);
-        // Register the producer fn only once: `register_fn` allocates a new
-        // global slot and shadows the previous binding rather than
-        // overwriting it, so re-running this on every recompile would leak.
+        // Register the producer fn only once. `register_fn` allocates a new
+        // global slot and shadows the previous binding, so re-running it on
+        // every recompile would leak.
         if vm.extract_value(SLEEP_FN).is_err() {
             vm.register_fn(SLEEP_FN, gantz_sleep);
         }
@@ -197,10 +193,6 @@ impl gantz_egui::NodeUi for Sleep {
     }
 }
 
-// ---------------------------------------------------------------------------
-// `.gantz` keyword sugar
-// ---------------------------------------------------------------------------
-
 /// Read a `(sleep [#:duration secs])` form into a [`Sleep`] datum. No
 /// `#:duration` yields the default. Dispatched by [`crate::sugar::BevySugar`].
 pub(crate) fn read_sugar(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
@@ -219,10 +211,6 @@ pub(crate) fn write_sugar(node: &Datum) -> String {
         _ => "sleep".to_string(),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Registered fns
-// ---------------------------------------------------------------------------
 
 /// Produce a task resolving to `val` once `secs` seconds have passed.
 ///

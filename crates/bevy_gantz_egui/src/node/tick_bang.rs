@@ -1,12 +1,11 @@
 //! A self-driven node that fires once per configurable tick duration.
 //!
-//! Unlike `update!`, which bangs once per update, `tick!` owns its own time
-//! accumulator fed from Bevy `Time` and fires once for *every* whole tick
-//! duration elapsed since the last update (fixed-timestep catch-up). This keeps
-//! the tick *count* correct even when the app updates more slowly than the tick
-//! rate. Evaluation is driven by the [`drive_tick_bangs`] Bevy system rather
-//! than from the node's `ui()` method, so it continues even when the graph tab
-//! is not visible.
+//! `update!` bangs once per update. `tick!` owns its own time accumulator fed
+//! from Bevy `Time` and fires once for every whole tick duration elapsed since
+//! the last update. This keeps the tick count correct even when the app
+//! updates more slowly than the tick rate. The [`drive_tick_bangs`] Bevy
+//! system drives evaluation, not the node's `ui()` method, so it continues
+//! when the graph tab is not visible.
 
 use bevy_ecs::prelude::*;
 use bevy_egui::egui;
@@ -32,25 +31,19 @@ const MIN_RATE: f64 = 0.001;
 
 /// The most ticks a single `tick!` node may fire in one update.
 ///
-/// Caps fixed-timestep catch-up so a long stall (e.g. the window was hidden or
-/// a breakpoint paused the app) cannot trigger an unbounded burst of
-/// evaluations - any backlog beyond this many ticks is discarded.
+/// Caps fixed-timestep catch-up so a long stall cannot trigger an unbounded
+/// burst of evaluations. Any backlog beyond this many ticks is discarded.
 const MAX_CATCHUP_TICKS: f64 = 64.0;
-
-// ---------------------------------------------------------------------------
-// TickBang node
-// ---------------------------------------------------------------------------
 
 /// How a [`TickBang`]'s tick interval is specified.
 ///
-/// Stored in the user's chosen unit so it round-trips exactly - deriving Hz
-/// from a stored duration (or vice versa) would accumulate float error across
-/// edits.
+/// Stored in the user's chosen unit so it round-trips exactly. Deriving Hz
+/// from a stored duration would accumulate float error across edits.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Interval {
     /// A duration in seconds between ticks.
     Duration(f64),
-    /// A rate in Hz (ticks per second).
+    /// A rate in ticks per second (Hz).
     Rate(f64),
 }
 
@@ -75,13 +68,9 @@ impl Default for Interval {
     }
 }
 
-// ---------------------------------------------------------------------------
-// `.gantz` keyword sugar
-// ---------------------------------------------------------------------------
-
 /// Read a `(tick-bang [#:duration secs | #:rate hz])` form into a [`TickBang`]'s
-/// `interval` enum field. `#:duration` and `#:rate` are mutually exclusive;
-/// neither given yields the default duration. Dispatched by
+/// `interval` enum field. `#:duration` and `#:rate` are mutually exclusive.
+/// Neither given yields the default duration. Dispatched by
 /// [`crate::sugar::BevySugar`].
 pub(crate) fn read_sugar(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let duration = args.keyword_f64("duration")?;
@@ -111,7 +100,8 @@ pub(crate) fn write_sugar(node: &Datum) -> String {
     }
 }
 
-/// The externally-tagged `interval` enum datum for a variant (e.g. `(("Rate" hz))`).
+/// The externally-tagged `interval` enum datum for a variant, for example
+/// `(("Rate" hz))`.
 fn interval_datum(variant: &str, value: f64) -> Datum {
     Datum::Map(vec![(variant.to_string(), Datum::F64(value))])
 }
@@ -156,10 +146,10 @@ impl Hash for Interval {
 
 /// A self-driven node that fires once per configurable tick interval.
 ///
-/// The interval is set either as a duration (seconds) or a rate (Hz). Outputs
-/// the effective tick duration in seconds as `f64` on each tick. The driver
-/// fires it once for every whole interval elapsed since the last update, so the
-/// tick *count* stays correct even when updates are slower than the tick rate.
+/// The interval is set as a duration in seconds or a rate in Hz. Outputs the
+/// effective tick duration in seconds as `f64` on each tick. The driver fires
+/// it once for every whole interval elapsed since the last update, so the
+/// tick count stays correct even when updates are slower than the tick rate.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, NodeTag)]
 pub struct TickBang {
     #[serde(default, skip_serializing_if = "is_default_interval")]
@@ -171,12 +161,13 @@ fn is_default_interval(interval: &Interval) -> bool {
 }
 
 impl TickBang {
-    /// How the tick interval is specified (a duration in seconds or rate in Hz).
+    /// How the tick interval is specified. Either a duration in seconds or a
+    /// rate in Hz.
     pub fn interval(&self) -> Interval {
         self.interval
     }
 
-    /// Set how the tick interval is specified (content-address affecting).
+    /// Set how the tick interval is specified. This affects the content address.
     pub fn set_interval(&mut self, interval: Interval) {
         self.interval = interval;
     }
@@ -205,11 +196,11 @@ impl gantz_core::Node for TickBang {
     }
 
     fn expr(&self, _ctx: ExprCtx<'_, '_>) -> ExprResult {
-        // The per-tick output is the (constant) tick duration. The time
-        // accumulator also lives in this node's state but is owned entirely by
-        // `drive_tick_bangs`; eval reads `state` and writes it back untouched.
-        // `{:?}` formats the float with a guaranteed `.`/exponent so Steel
-        // parses it as a number rather than an integer.
+        // The per-tick output is the constant tick duration. The time
+        // accumulator also lives in this node's state but `drive_tick_bangs`
+        // owns it. Eval reads `state` and writes it back untouched. `{:?}`
+        // formats the float with a `.` or exponent so Steel parses it as a
+        // number rather than an integer.
         node::parse_expr(&format!("(begin {:?})", self.duration()))
     }
 
@@ -252,7 +243,6 @@ impl gantz_egui::NodeUi for TickBang {
         let row_h = gantz_egui::widget::node_inspector::table_row_h(body.ui_mut());
         let mut changed = false;
 
-        // Mode row: specify the interval as a duration (seconds) or rate (Hz).
         body.row(row_h, |mut row| {
             row.col(|ui| {
                 ui.label("mode").on_hover_text(
@@ -279,7 +269,6 @@ impl gantz_egui::NodeUi for TickBang {
             });
         });
 
-        // Value row: the duration (seconds) or rate (Hz), in the chosen unit.
         body.row(row_h, |mut row| {
             let is_rate = self.interval.is_rate();
             row.col(|ui| {
@@ -342,13 +331,8 @@ impl gantz_egui::NodeUi for TickBang {
     }
 }
 
-// ---------------------------------------------------------------------------
-// TickBangCollector
-// ---------------------------------------------------------------------------
-
-/// Collects the path and configured duration of every [`TickBang`] node found
-/// during graph traversal, discovered by [`Any`](std::any::Any) downcast
-/// within the erased UI node.
+/// Collects the path and configured duration of every [`TickBang`] node in
+/// the graph, found by [`Any`](std::any::Any) downcast of the erased UI node.
 struct TickBangCollector {
     pub ticks: Vec<(Vec<usize>, f64)>,
 }
@@ -362,16 +346,12 @@ impl visit::TypedVisitor<DynNode> for TickBangCollector {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Entrypoints
-// ---------------------------------------------------------------------------
-
 /// Return one push entrypoint per `TickBang` node in the graph.
 ///
-/// Unlike `update!` - whose nodes all fire together every update and so share a
-/// single multi-source entrypoint - `tick!` nodes fire independently (each on
-/// its own duration), so each gets its own single-source entrypoint that the
-/// [`drive_tick_bangs`] driver can trigger the right number of times.
+/// `update!` nodes all fire together every update and share a single
+/// multi-source entrypoint. `tick!` nodes fire independently, each on its own
+/// duration, so each gets its own single-source entrypoint that
+/// [`drive_tick_bangs`] can trigger the right number of times.
 pub fn entrypoints(
     get_node: node::GetNode<'_>,
     graph: &gantz_core::node::graph::Graph<DynNode>,
@@ -388,15 +368,12 @@ pub fn entrypoints(
         .collect()
 }
 
-// ---------------------------------------------------------------------------
-// Bevy system
-// ---------------------------------------------------------------------------
-
 /// Drives `tick!` nodes every update, independent of GUI visibility.
 ///
 /// For each open head and each `tick!` node, advances the node's time
 /// accumulator by the update delta time and triggers one push evaluation for
-/// every whole tick duration elapsed (capped by `MAX_CATCHUP_TICKS`).
+/// every whole tick duration elapsed. Catch-up is capped by
+/// `MAX_CATCHUP_TICKS`.
 pub fn drive_tick_bangs(
     time: Res<Time>,
     epoch: Res<bevy_gantz::EvalEpoch>,
@@ -408,12 +385,12 @@ pub fn drive_tick_bangs(
     mut cmds: Commands,
 ) {
     let dt = time.delta_secs_f64();
-    // The frame's monotonic "now"; each tick's exact firing time is derived from it.
+    // The frame's monotonic now. Each tick's exact firing time derives from it.
     let now = epoch.now_secs();
 
     for (entity, head_ref) in heads.iter() {
-        // The head's committed graph, read from the reified cache (the
-        // working graph equals it by the `WorkingGraph` invariant).
+        // The head's committed graph, read from the reified cache. It equals
+        // the working graph, see `bevy_gantz::head::WorkingGraph`.
         let Some(graph_ca) = registry.head_commit(&head_ref.0).map(|c| c.graph) else {
             continue;
         };
@@ -423,7 +400,6 @@ pub fn drive_tick_bangs(
         let get_node =
             |ca: &gantz_ca::ContentAddr| crate::lookup_node(&cache, &builtins.instances, ca);
 
-        // Collect all TickBang paths + durations.
         let mut collector = TickBangCollector { ticks: vec![] };
         gantz_core::graph::visit_typed(&get_node, graph, &[], &mut collector);
 
@@ -436,14 +412,14 @@ pub fn drive_tick_bangs(
         };
 
         for (path, dur) in &collector.ticks {
-            // Defensive: the inspector clamps to `MIN_DURATION`, but never
-            // divide by a non-positive duration.
+            // The inspector clamps to `MIN_DURATION`, but never divide by a
+            // non-positive duration.
             if !(*dur > 0.0) {
                 continue;
             }
 
-            // Advance this node's accumulator and count whole ticks elapsed,
-            // capping catch-up so a long stall can't burst.
+            // Advance this node's accumulator and count whole ticks elapsed.
+            // Cap catch-up so a long stall cannot burst.
             let mut acc = node::state::extract::<f64>(vm, path)
                 .ok()
                 .flatten()
@@ -451,20 +427,20 @@ pub fn drive_tick_bangs(
             acc += dt;
             let full = (acc / dur).floor();
             let n = full.min(MAX_CATCHUP_TICKS) as u32;
-            // Subtract the full elapsed so the remainder is < dur; any backlog
-            // beyond the cap is dropped rather than carried forward. The remainder
-            // `acc` is the time since the most recent tick boundary, so the latest
-            // tick fired `acc` seconds ago.
+            // Subtract the full elapsed so the remainder is less than dur. Any
+            // backlog beyond the cap is dropped, not carried forward. The
+            // remainder `acc` is the time since the most recent tick boundary,
+            // so the latest tick fired `acc` seconds ago.
             acc -= full * dur;
             if let Err(e) = node::state::update_value(vm, path, SteelVal::NumV(acc)) {
                 bevy_log::error!("tick! state update failed: {e}");
             }
 
-            // Trigger one eval per elapsed tick, oldest first, each stamped with the
-            // exact monotonic time it should fire: the i-th most-recent tick (i = 0
-            // latest) fired at `now - acc - i*dur`. Carrying each tick's own time
-            // lets the dsp driver schedule them sample-accurately, spread across
-            // the interval, rather than bunched at the frame boundary.
+            // Trigger one eval per elapsed tick, oldest first. Each is stamped
+            // with the exact monotonic time it should fire. The i-th most
+            // recent tick fired at `now - acc - i*dur`, with i = 0 the latest.
+            // Per-tick times let the dsp driver schedule them sample-accurately
+            // across the interval rather than bunched at the frame boundary.
             for i in (0..n).rev() {
                 let t = now - acc - i as f64 * *dur;
                 let source = gantz_core::compile::entrypoint::push_source(path.clone(), 1);

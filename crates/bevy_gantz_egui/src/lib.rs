@@ -1,7 +1,7 @@
 //! Egui integration for bevy_gantz.
 //!
 //! This crate provides:
-//! - [`GantzEguiPlugin`] — Bevy plugin for egui-based UI
+//! - [`GantzEguiPlugin`], the Bevy plugin for the egui-based UI
 //! - GUI state resources and observers
 //! - The main `update` system for rendering the gantz GUI
 
@@ -35,18 +35,13 @@ pub use reg::{BuiltinNodes, GraphCache, env, lookup_node, prune_unused, refresh_
 pub use sugar::BevySugar;
 pub use vm::{EntrypointFn, EntrypointFns};
 
-// ----------------------------------------------------------------------------
-// Plugin
-// ----------------------------------------------------------------------------
-
 /// Plugin providing egui-based UI for gantz.
 ///
 /// This plugin:
-/// - Initializes GUI resources (`GuiState`, `TraceCapture`, `PerfVm`, `PerfGui`)
-/// - Owns the typed side of the registry ([`GraphCache`], [`BuiltinNodes`])
+/// - Initializes the GUI resources such as `GuiState` and `TraceCapture`
+/// - Owns the typed side of the registry, [`GraphCache`] and [`BuiltinNodes`],
 ///   and keeps head VMs in sync with their compile inputs via [`vm::sync`]
-/// - Registers observers for GUI state management
-/// - Registers node creation/inspection observers
+/// - Registers the GUI state and response payload observers
 /// - Runs the main GUI update system
 pub struct GantzEguiPlugin {
     base_immutable: bool,
@@ -61,13 +56,13 @@ impl Default for GantzEguiPlugin {
 }
 
 impl GantzEguiPlugin {
-    /// Whether base node graphs should be immutable (view-only).
+    /// Whether base node graphs are immutable in the GUI.
     ///
-    /// When `true` (the default), graphs for heads whose branch name
-    /// appears in `BaseNames` are shown in immutable mode.
+    /// When `true`, the default, graphs for heads whose branch name appears
+    /// in `BaseNames` are shown in view-only mode.
     ///
-    /// Set to `false` for developer tools like `update-base` that need
-    /// to edit base nodes.
+    /// Set to `false` for developer tools like `update-base` that need to
+    /// edit base nodes.
     pub fn base_immutable(mut self, base_immutable: bool) -> Self {
         self.base_immutable = base_immutable;
         self
@@ -75,20 +70,18 @@ impl GantzEguiPlugin {
 }
 
 /// The system set containing the per-frame view persistence passes
-/// ([`persist_camera_and_seed`] and [`settle_layout`]) in the `Update`
+/// [`persist_camera_and_seed`] and [`settle_layout`] in the `Update`
 /// schedule.
 ///
-/// Layers that publish commit views beyond the process (e.g. the
-/// collaborative-session announce) should run `.after(ViewPersistSet)` so a
+/// Layers that publish commit views beyond the process, for example the
+/// collaborative-session announce, should run `.after(ViewPersistSet)` so a
 /// commit rendered this frame has its view seeded before it can be served.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
 pub struct ViewPersistSet;
 
 impl Plugin for GantzEguiPlugin {
     fn build(&self, app: &mut App) {
-        // Register the push/pull, update_bang and tick_bang entrypoint
-        // providers. Contributed via `get_resource_or_init` + push so plugin
-        // order does not matter.
+        // Push the entrypoint providers. See `vm::EntrypointFns`.
         let mut entrypoint_fns = app.world_mut().get_resource_or_init::<vm::EntrypointFns>();
         entrypoint_fns.0.push(Box::new(|get_node, graph| {
             gantz_core::compile::push_pull_entrypoints(get_node, graph)
@@ -110,10 +103,10 @@ impl Plugin for GantzEguiPlugin {
             });
 
         // Builtin GUI response payload dispatchers. Head-scoped payloads
-        // arrive at the observers below as `ForHead<T>` events; the rest map
-        // onto existing event types via custom dispatch fns. Observers that edit
-        // a head's working graph commit it before returning (see the
-        // `WorkingGraph` invariant), so no dispatch-side handling is needed.
+        // arrive at the observers below as `ForHead<T>` events. The rest map
+        // onto existing event types via custom dispatch fns. Observers that
+        // edit a head's working graph commit it before returning, see
+        // `head::WorkingGraph`, so no dispatch-side handling is needed.
         app.register_head_response::<gantz_egui::BranchNode>()
             .register_head_response::<gantz_egui::CopyNodes>()
             .register_head_response::<gantz_egui::CutNodes>()
@@ -159,7 +152,7 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(on_branched_head_fork_nested)
             // VM timing observer
             .add_observer(on_eval_entry_complete)
-            // Marker refresh dirty flag (see `node::gui_refresh`)
+            // Marker refresh dirty flag, see `node::gui_refresh`
             .add_observer(node::gui_refresh::mark_gui_dirty_on_push)
             // GUI response payload observers
             .add_observer(on_create_node)
@@ -184,13 +177,11 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(on_reset_base_graph)
             // Systems. `drive_update_bangs` evaluates head VMs, so it must not
             // observe the gap between a head pointing at a new graph and
-            // `vm::sync` (re)initializing its VM.
+            // `vm::sync` reinitializing its VM.
             .add_systems(
                 Update,
                 (
-                    // Input-addressed VM synchronisation: (re)compiles
-                    // whenever a head's compile inputs (committed graph
-                    // content address + config) change.
+                    // Recompiles whenever a head's compile inputs change.
                     vm::sync.in_set(bevy_gantz::VmSet),
                     node::update_bang::drive_update_bangs
                         .after(bevy_gantz::VmSet)
@@ -201,9 +192,9 @@ impl Plugin for GantzEguiPlugin {
                     node::await_::drive_awaits
                         .after(bevy_gantz::VmSet)
                         .in_set(bevy_gantz::EntrypointSet),
-                    // Re-pulls gui markers of dirty / recompiled heads. After
-                    // the entrypoint drivers so their pushes refresh markers
-                    // the same frame.
+                    // Re-pulls gui markers of dirty or recompiled heads. Runs
+                    // after the entrypoint drivers so their pushes refresh
+                    // markers the same frame.
                     node::gui_refresh::refresh_gui_markers
                         .after(bevy_gantz::VmSet)
                         .after(node::update_bang::drive_update_bangs)
@@ -212,9 +203,9 @@ impl Plugin for GantzEguiPlugin {
                         .in_set(bevy_gantz::EntrypointSet),
                     persist_camera_and_seed.in_set(ViewPersistSet),
                     // On layout settle, fork a layout-only commit. Runs after
-                    // `VmSet` (so a graph edit commits first and its baseline is
-                    // already seeded - no spurious layout commit) and after the
-                    // camera/seed pass (so the head's baseline exists).
+                    // `VmSet` so a graph edit commits first with its baseline
+                    // seeded, and after the camera and seed pass so the head's
+                    // baseline exists.
                     settle_layout
                         .in_set(ViewPersistSet)
                         .after(bevy_gantz::VmSet)
@@ -229,9 +220,9 @@ impl Plugin for GantzEguiPlugin {
     }
 }
 
-/// Empty the domain-provided GUI collections ([`SettingsTabs`], [`ExtPanes`],
-/// [`RefExtUis`], [`EdgeStyles`]) so domain providers refill them with fresh
-/// snapshots each frame (see the resource docs for the schedule contract).
+/// Empty the domain-provided GUI collections so domain providers refill them
+/// with fresh snapshots each frame. See [`SettingsTabs`] for the schedule
+/// contract.
 fn clear_ui_providers(
     mut tabs: ResMut<SettingsTabs>,
     mut ext_panes: ResMut<ExtPanes>,
@@ -244,48 +235,39 @@ fn clear_ui_providers(
     edge_styles.0.clear();
 }
 
-// ----------------------------------------------------------------------------
-// Components
-// ----------------------------------------------------------------------------
-
 /// Per-head GUI state component.
 ///
-/// This component wraps `gantz_egui::widget::gantz::OpenHeadState` to store
-/// GUI-related state for each open head entity.
+/// Wraps `gantz_egui::widget::gantz::OpenHeadState` for each open head entity.
 #[derive(Component, Default)]
 pub struct HeadGuiState(pub gantz_egui::widget::gantz::OpenHeadState);
 
-/// Views for a single head's graphs (keyed by subgraph path).
+/// Views for a single head's graphs, keyed by subgraph path.
 ///
-/// Requires the rest of the per-head GUI state so every spawn path (including
-/// app-side session restore, which bypasses the [`on_head_opened`] observer)
-/// gets the full trio: the `OpenHeadViews` query silently skips entities
-/// missing any of them.
+/// Requires the rest of the per-head GUI state so every spawn path gets the
+/// full trio. App-side session restore bypasses the [`on_head_opened`]
+/// observer. The `OpenHeadViews` query silently skips entities missing any
+/// of them.
 #[derive(Component, Default, Clone)]
 #[require(HeadGuiState, HeadNodeInstances)]
 pub struct GraphView(pub gantz_egui::SceneView);
 
 /// Per-head cache of reified node instances for the working graph.
 ///
-/// Reset wholesale on head navigation (`on_head_changed`) - not required for
-/// correctness (each entry's witness check self-heals) but bounds memory when
-/// the graph is replaced outright.
+/// Reset wholesale on head navigation in `on_head_changed`. Not required for
+/// correctness, since each entry's witness check self-heals, but it bounds
+/// memory when the graph is replaced outright.
 #[derive(Component, Default)]
 pub struct HeadNodeInstances(pub gantz_egui::node::NodeInstances);
 
-/// Marker: this open head participates in a live collaborative session.
+/// Marker. This open head participates in a live collaborative session.
 ///
-/// Maintained by the session layer (inserted alongside its own session
-/// bookkeeping, removed on leave). While present, the undo/redo handlers
-/// mint forward revert commits (see [`gantz_egui::ops::session_undo`])
-/// instead of navigating backwards - peers plan an ancestor tip as
-/// up-to-date and drop it, so plain navigation undo never syncs.
+/// The session layer inserts it on join and removes it on leave. While
+/// present, the undo and redo handlers mint forward revert commits, see
+/// [`gantz_egui::ops::session_undo`], instead of navigating backwards. Peers
+/// plan an ancestor tip as up-to-date and drop it, so plain navigation undo
+/// never syncs.
 #[derive(Component)]
 pub struct SessionHead;
-
-// ----------------------------------------------------------------------------
-// Resources
-// ----------------------------------------------------------------------------
 
 /// Captures tracing logs for the TraceView widget.
 #[derive(Default, Resource)]
@@ -299,25 +281,25 @@ pub struct PerfVm(pub gantz_egui::widget::PerfCapture);
 #[derive(Default, Resource)]
 pub struct PerfGui(pub gantz_egui::widget::PerfCapture);
 
-/// The gantz GUI state (open head states, etc.).
+/// The gantz GUI state, such as open head states.
 #[derive(Resource, Default)]
 pub struct GuiState(pub gantz_egui::widget::GantzState);
 
-/// The application's value-level [`NodeCodec`][gantz_egui::node::NodeCodec]:
-/// the seam through which `.gantz` parse/export paths validate and normalize
-/// stored nodes.
+/// The application's value-level [`NodeCodec`][gantz_egui::node::NodeCodec].
+/// The seam through which `.gantz` parse and export paths validate and
+/// normalize stored nodes.
 ///
-/// The application inserts this alongside [`BuiltinNodes`]
-/// (typically `NodeCodecRes(node::codec())`); [`GantzEguiPlugin`]'s
-/// import/export/base systems read it.
+/// The application inserts this alongside [`BuiltinNodes`], typically as
+/// `NodeCodecRes(node::codec())`. [`GantzEguiPlugin`]'s import, export and
+/// base systems read it.
 #[derive(Clone, Copy, Resource)]
 pub struct NodeCodecRes(pub gantz_egui::node::NodeCodec);
 
 /// The collaborative-session display state threaded into the Gantz widget.
 ///
-/// Absent unless a collab layer (e.g. `bevy_gantz_collab`) inserts and fills
-/// it, in which case the Graph Config pane renders its collab row. (The
-/// Settings > Collab subtab arrives separately, via [`SettingsTabs`].)
+/// Absent unless a collab layer such as `bevy_gantz_collab` inserts and fills
+/// it. When present, the Graph Config pane renders its collab row. The
+/// Settings > Collab subtab arrives separately, via [`SettingsTabs`].
 #[derive(Resource, Default)]
 pub struct CollabUi(pub gantz_egui::collab::CollabUiState);
 
@@ -328,7 +310,7 @@ pub struct CollabUi(pub gantz_egui::collab::CollabUiState);
 #[derive(Resource, Default)]
 pub struct BaseNames(pub gantz_egui::reg::Names);
 
-/// Whether base node graphs are immutable (view-only) in the GUI.
+/// Whether base node graphs are immutable in the GUI.
 ///
 /// Inserted by [`GantzEguiPlugin`] based on its `base_immutable` setting.
 #[derive(Resource)]
@@ -336,8 +318,8 @@ pub struct BaseImmutable(pub bool);
 
 /// The panes the widget currently has popped out into windows, mirrored from
 /// [`GantzResponse::windowed_panes`][gantz_egui::widget::gantz::GantzResponse]
-/// each frame by [`update`]. A native host (the `gantz` binary) reads this to
-/// create / destroy its OS windows. Present on all targets (only read natively).
+/// each frame by [`update`]. A native host reads this to create and destroy
+/// its OS windows. Present on all targets, but only read natively.
 #[derive(Resource, Default)]
 pub struct WindowedPanesRequested(pub Vec<gantz_egui::widget::WindowedPane>);
 
@@ -356,59 +338,50 @@ pub struct ImportTask(bevy_tasks::Task<Option<Vec<u8>>>);
 #[derive(Resource)]
 pub struct StyleImportTask(bevy_tasks::Task<Option<Vec<u8>>>);
 
-/// Settings subtabs contributed by domains (see
-/// [`SettingsTab`][gantz_egui::widget::SettingsTab]).
+/// Settings subtabs contributed by domains. See
+/// [`SettingsTab`][gantz_egui::widget::SettingsTab].
 ///
-/// Cleared each frame in `First`, refilled by domain provider systems in
-/// `PreUpdate` (guaranteeing the tabs exist before both GUI render paths),
-/// and consumed by [`update`] and the native pop-out window render pass
-/// (`pane_window::render_windowed_panes`). A provider typically pushes a
+/// The provider contract: cleared each frame in `First`. Domain provider
+/// systems refill it in `PreUpdate`, so the tabs exist before both GUI
+/// render paths. Consumed by [`update`] and the native pop-out window render
+/// pass `pane_window::render_windowed_panes`. A provider typically pushes a
 /// fresh snapshot of its domain's config and status, and applies the change
 /// payloads its tab emitted on the previous frame.
 #[derive(Default, Resource)]
 pub struct SettingsTabs(pub Vec<Box<dyn gantz_egui::widget::SettingsTab + Send + Sync>>);
 
-/// Top-level panes contributed by domains (see
-/// [`ExtPane`][gantz_egui::widget::ExtPane]).
+/// Top-level panes contributed by domains. See
+/// [`ExtPane`][gantz_egui::widget::ExtPane].
 ///
-/// Same provider contract as [`SettingsTabs`]: cleared each frame in `First`,
-/// refilled by domain provider systems in `PreUpdate`, consumed by both GUI
-/// render paths. A provider typically pushes a fresh snapshot of its domain's
-/// per-head data.
+/// Same contract as [`SettingsTabs`]. A provider typically pushes a fresh
+/// snapshot of its domain's per-head data.
 #[derive(Default, Resource)]
 pub struct ExtPanes(pub Vec<Box<dyn gantz_egui::widget::ExtPane + Send + Sync>>);
 
-/// `NamedRef` inspector extensions contributed by domains (see
-/// [`RefExtUi`][gantz_egui::node::RefExtUi]).
+/// `NamedRef` inspector extensions contributed by domains. See
+/// [`RefExtUi`][gantz_egui::node::RefExtUi].
 ///
-/// Same provider contract as [`SettingsTabs`]: cleared each frame in `First`,
-/// refilled by domain provider systems in `PreUpdate`, consumed by both GUI
-/// render paths. Extensions take `&self`, so consumers borrow the resource
-/// shared.
+/// Same contract as [`SettingsTabs`]. Extensions take `&self`, so consumers
+/// borrow the resource shared.
 #[derive(Default, Resource)]
 pub struct RefExtUis(pub Vec<Box<dyn gantz_egui::node::RefExtUi + Send + Sync>>);
 
-/// Graph-scene edge stylers contributed by domains (see
-/// [`EdgeStyle`][gantz_egui::widget::EdgeStyle]).
+/// Graph-scene edge stylers contributed by domains. See
+/// [`EdgeStyle`][gantz_egui::widget::EdgeStyle].
 ///
-/// Same provider contract as [`SettingsTabs`]: cleared each frame in `First`,
-/// refilled by domain provider systems in `PreUpdate`, consumed by both GUI
-/// render paths. Stylers take `&self`, so consumers borrow the resource
-/// shared. A provider typically pushes a styler holding precomputed per-head
-/// classifications, since the erased GUI registry hides concrete node types.
+/// Same contract as [`SettingsTabs`]. Stylers take `&self`, so consumers
+/// borrow the resource shared. A provider typically pushes a styler holding
+/// precomputed per-head classifications, since the erased GUI registry hides
+/// concrete node types.
 #[derive(Default, Resource)]
 pub struct EdgeStyles(pub Vec<Box<dyn gantz_egui::widget::EdgeStyle + Send + Sync>>);
-
-// ----------------------------------------------------------------------------
-// Events
-// ----------------------------------------------------------------------------
 
 /// A GUI response payload targeting an open-head entity.
 ///
 /// The `update` system drains the payloads emitted during the GUI pass and
-/// dispatches each via [`ResponseDispatchers`]; head-scoped payloads arrive
+/// dispatches each via [`ResponseDispatchers`]. Head-scoped payloads arrive
 /// as this event. Observers take the mutable per-head queries that the GUI
-/// system itself cannot (ECS borrow rules).
+/// system itself cannot, due to ECS borrow rules.
 #[derive(EntityEvent)]
 pub struct ForHead<T: Send + Sync + 'static> {
     /// The open-head entity the payload targets.
@@ -442,7 +415,7 @@ pub struct ImportStyleEvent;
 pub struct ImportFileEvent {
     /// The raw bytes of the dropped file.
     pub bytes: Vec<u8>,
-    /// Whether to open the root head after merging (GraphScene target).
+    /// Whether to open the root head after merging. Set for a GraphScene drop.
     pub open_head: bool,
 }
 
@@ -450,14 +423,10 @@ pub struct ImportFileEvent {
 #[derive(Event)]
 pub struct ResetBaseGraphEvent(pub ca::Name);
 
-// ----------------------------------------------------------------------------
-// Response dispatch
-// ----------------------------------------------------------------------------
-
 /// The signature of dispatch fns stored in [`ResponseDispatchers`].
 ///
 /// The `Option<Entity>` is the open-head entity resolved from the payload's
-/// head tag (`None` for app-level payloads).
+/// head tag. It is `None` for app-level payloads.
 pub type DispatchFn = fn(Option<Entity>, DynResponse, &mut Commands);
 
 /// `TypeId`-keyed dispatchers turning the dynamic GUI response payloads into
@@ -467,10 +436,10 @@ pub struct ResponseDispatchers(pub HashMap<TypeId, DispatchFn>);
 
 /// App extension for registering GUI response payload handlers.
 ///
-/// This is how nodes declared in independent plugins receive custom payloads
-/// emitted from their UI (via the `emit` helper on the node's returned
-/// [`gantz_egui::NodeUiResponse`] and friends): register the payload type here
-/// and add an observer for [`ForHead<T>`]:
+/// Nodes declared in independent plugins receive custom payloads emitted from
+/// their UI this way. The node's returned [`gantz_egui::NodeUiResponse`] and
+/// friends carry an `emit` helper. Register the payload type here and add an
+/// observer for [`ForHead<T>`]:
 ///
 /// ```ignore
 /// app.register_head_response::<MyPayload>()
@@ -481,8 +450,8 @@ pub trait RegisterResponseExt {
     /// emitting head's entity. Pair with an observer for `On<ForHead<T>>`.
     fn register_head_response<T: ResponseData>(&mut self) -> &mut Self;
 
-    /// Dispatch payloads of type `T` with a custom fn, e.g. to map onto an
-    /// existing event type or to handle payloads with no associated head.
+    /// Dispatch payloads of type `T` with a custom fn. For example, to map onto
+    /// an existing event type or to handle payloads with no associated head.
     fn register_response_with<T: ResponseData>(&mut self, f: DispatchFn) -> &mut Self;
 }
 
@@ -500,11 +469,7 @@ impl RegisterResponseExt for App {
     }
 }
 
-// ----------------------------------------------------------------------------
-// QueryData
-// ----------------------------------------------------------------------------
-
-/// Bundled query data for open heads (core data + views).
+/// Bundled query data for open heads. Core data plus views.
 #[derive(QueryData)]
 #[query_data(mutable)]
 pub struct OpenHeadViews {
@@ -513,21 +478,16 @@ pub struct OpenHeadViews {
     pub instances: &'static mut HeadNodeInstances,
 }
 
-// ----------------------------------------------------------------------------
-// HeadAccess adapter
-// ----------------------------------------------------------------------------
-
-/// Provides [`gantz_egui::HeadAccess`] implementation for Bevy ECS.
+/// The [`gantz_egui::HeadAccess`] implementation for Bevy ECS.
 ///
-/// This struct wraps the necessary Bevy queries and resources to implement
-/// the `HeadAccess` trait, allowing the gantz_egui widget to access head data
-/// without knowing about Bevy's ECS.
+/// Wraps the Bevy queries and resources so the gantz_egui widget can access
+/// head data without knowing about Bevy's ECS.
 pub struct HeadAccess<'q, 'w, 's> {
     /// Heads in tab order, pre-collected.
     heads: Vec<ca::Head>,
     /// Map from head to entity for lookup.
     head_to_entity: HashMap<ca::Head, Entity>,
-    /// Query for accessing head data + views mutably.
+    /// Query for accessing head data and views mutably.
     query: &'q mut Query<'w, 's, OpenHeadViews, With<head::OpenHead>>,
     /// The VMs keyed by entity.
     vms: &'q mut head::HeadVms,
@@ -539,7 +499,6 @@ impl<'q, 'w, 's> HeadAccess<'q, 'w, 's> {
         query: &'q mut Query<'w, 's, OpenHeadViews, With<head::OpenHead>>,
         vms: &'q mut head::HeadVms,
     ) -> Self {
-        // Pre-collect heads in tab order and build entity lookup.
         let mut heads = Vec::new();
         let mut head_to_entity = HashMap::new();
 
@@ -552,8 +511,8 @@ impl<'q, 'w, 's> HeadAccess<'q, 'w, 's> {
                 }
                 // A tab-order entity outside the query means a spawn path
                 // missed one of the per-head GUI components. Dropping it here
-                // would hide the head from the UI (no tab, blank panes) while
-                // its VM keeps running - make it loud instead.
+                // would hide the head from the UI while its VM keeps running,
+                // so log it loudly instead.
                 Err(e) => {
                     log::error!("open head {entity} missing from the views query: {e}");
                 }
@@ -568,7 +527,7 @@ impl<'q, 'w, 's> HeadAccess<'q, 'w, 's> {
         }
     }
 
-    /// Iterate over all heads mutably (for post-GUI updates).
+    /// Iterate over all heads mutably, for post-GUI updates.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = OpenHeadViewsItem<'_, '_>> + '_ {
         self.query.iter_mut()
     }
@@ -618,10 +577,6 @@ impl gantz_egui::HeadAccess for HeadAccess<'_, '_, '_> {
     }
 }
 
-// ----------------------------------------------------------------------------
-// Deref impls
-// ----------------------------------------------------------------------------
-
 impl Deref for HeadGuiState {
     type Target = gantz_egui::widget::gantz::OpenHeadState;
     fn deref(&self) -> &Self::Target {
@@ -661,22 +616,18 @@ impl DerefMut for GraphView {
     }
 }
 
-// ----------------------------------------------------------------------------
 // Observers
-// ----------------------------------------------------------------------------
 
-/// Record VM execution timing from EvalEntryComplete events.
-///
-/// This observer receives timing events from `bevy_gantz::vm` and records
-/// them to `PerfVm` for the performance widget.
+/// Record VM execution timing from `EvalEntryComplete` events into `PerfVm`
+/// for the performance widget.
 fn on_eval_entry_complete(trigger: On<EvalEntryComplete>, mut perf_vm: ResMut<PerfVm>) {
     perf_vm.0.record(trigger.event().duration);
 }
 
-/// Initialize GUI state entry and components for opened head.
+/// Initialize GUI state entry and components for an opened head.
 ///
-/// Loads the view from the registry's view section and spawns `GraphView` +
-/// `HeadGuiState` components.
+/// Loads the view from the registry's view section and inserts the per-head
+/// GUI components.
 pub fn on_head_opened(
     trigger: On<head::OpenedEvent>,
     registry: Res<Registry>,
@@ -686,7 +637,6 @@ pub fn on_head_opened(
     let event = trigger.event();
     gui_state.open_heads.entry(event.head.clone()).or_default();
 
-    // Load the view for this head's commit.
     let head_view = registry
         .head_commit_ca(&event.head)
         .and_then(|ca| gantz_egui::section::view(&registry, &ca))
@@ -698,9 +648,9 @@ pub fn on_head_opened(
         .insert(HeadNodeInstances::default());
 }
 
-/// Migrate GUI state for changed head and reset components.
+/// Migrate GUI state for a changed head and reset its components.
 ///
-/// Loads views for the new head and updates `GraphView` + `HeadGuiState` components.
+/// Loads the view for the new head and resets the per-head GUI components.
 pub fn on_head_changed(
     trigger: On<head::ChangedEvent>,
     mut registry: ResMut<Registry>,
@@ -715,13 +665,12 @@ pub fn on_head_changed(
         gantz_egui::widget::update_graph_pane_head(ctx, &event.old_head, &event.new_head);
     }
 
-    // Load the view for the new head's commit. When the target commit has no
-    // stored view (e.g. a wire-fetched merge tip whose view blob went
-    // missing, or a commit minted by a headless peer), carry the live layout
-    // forward through the navigation node-identity matching rather than
-    // falling back to an empty layout - which the scene would destructively
-    // auto-layout - and seed the store so the commit has a view before any
-    // same-frame session announce.
+    // Load the view for the new head's commit. The target commit may have no
+    // stored view. For example, a wire-fetched merge tip whose view blob went
+    // missing, or a commit minted by a headless peer. Then carry the live
+    // layout forward through the navigation node-identity matching. An empty
+    // layout would make the scene auto-layout destructively. Seed the store
+    // so the commit has a view before any same-frame session announce.
     let stored = event
         .new_commit
         .and_then(|ca| gantz_egui::section::view(&registry, &ca));
@@ -751,8 +700,8 @@ pub fn on_head_changed(
         }
     };
 
-    // Camera is excluded from undo: on a same-graph navigation (a layout
-    // undo/redo) keep the live camera rather than restoring the target commit's
+    // Camera is excluded from undo. On a same-graph navigation, such as a
+    // layout undo, keep the live camera rather than the target commit's
     // stored camera.
     if event.same_graph {
         if let Ok(current) = graph_views.get(event.entity) {
@@ -787,9 +736,8 @@ pub fn on_branch_created(
     }
 }
 
-/// Handle graph commit by updating egui state.
+/// Handle a graph commit by updating egui state.
 ///
-/// This observer is triggered by `vm::sync` when a graph change is committed.
 /// Also clears the redo stack, since a new edit invalidates the redo history.
 pub fn on_head_committed(
     trigger: On<head::CommittedEvent>,
@@ -803,9 +751,9 @@ pub fn on_head_committed(
     }
 }
 
-/// On any head commit, propagate the change to referrers: bring all
+/// On any head commit, propagate the change to referrers. Bring all
 /// sync-enabled `NamedRef`s up to date and refresh any open head whose commit
-/// moved (e.g. a nested graph edit propagating up to its open parent).
+/// moved. For example, a nested graph edit propagates up to its open parent.
 pub fn on_head_committed_resync(
     _trigger: On<head::CommittedEvent>,
     mut registry: ResMut<Registry>,
@@ -818,9 +766,9 @@ pub fn on_head_committed_resync(
     refresh_moved_heads(&moves, &mut registry, &mut heads);
 }
 
-/// On a fork (branch from a head), give the fork independent nested children:
-/// copy the original's `parent:*` subtree to the fork and rewrite its
-/// references, then refresh the open fork.
+/// On a fork, give the fork independent nested children. Copy the original's
+/// `parent:*` subtree to the fork and rewrite its references, then refresh
+/// the open fork.
 pub fn on_branched_head_fork_nested(
     trigger: On<head::BranchedHeadEvent>,
     mut registry: ResMut<Registry>,
@@ -833,8 +781,8 @@ pub fn on_branched_head_fork_nested(
         return;
     };
     let ts = bevy_gantz::reg::timestamp();
-    // Give the fork independent nested children, then (when the fork renamed a
-    // *nested* graph to a root name) repoint the parent's references to it.
+    // Give the fork independent nested children. When the fork renamed a
+    // nested graph to a root name, repoint the parent's references to it.
     let mut moves = gantz_egui::sync::fork_nested(&mut registry, ts, old, new);
     moves.extend(gantz_egui::sync::promote_nested(
         &mut registry,
@@ -847,9 +795,9 @@ pub fn on_branched_head_fork_nested(
 }
 
 /// Carry moved graphs' views forward to their new commits, and refresh any open
-/// head whose commit moved: reload its working graph to the new version and
-/// clear its compile memo so `vm::sync` recompiles it (without re-committing,
-/// since the registry already holds this graph).
+/// head whose commit moved. Reload its working graph to the new version and
+/// clear its compile memo so `vm::sync` recompiles it. No re-commit is needed,
+/// since the registry already holds this graph.
 fn refresh_moved_heads(
     moves: &[gantz_egui::sync::Moved],
     registry: &mut Registry,
@@ -872,7 +820,6 @@ fn refresh_moved_heads(
         let Some(m) = moves.iter().find(|m| m.name == name) else {
             continue;
         };
-        // Clone the moved commit's graph data straight from the registry.
         let Some(graph) = registry
             .commits()
             .get(&m.new_commit)
@@ -934,7 +881,7 @@ pub fn on_create_node(
         vm,
         event.data.clone(),
     );
-    // Uphold the `WorkingGraph` invariant: commit the in-place edit.
+    // See `head::WorkingGraph`.
     bevy_gantz::commit_working_graph(
         &mut registry,
         &mut cmds,
@@ -947,8 +894,9 @@ pub fn on_create_node(
 
 /// Handle branch node payloads.
 ///
-/// Creates a new commit (same graph content, new timestamp, original as parent),
-/// inserts the new name, and replaces the NamedRef node in the working graph.
+/// Creates a new commit with the same graph content, a new timestamp and the
+/// original as parent. Inserts the new name and replaces the NamedRef node in
+/// the working graph.
 pub fn on_branch_node(
     trigger: On<ForHead<gantz_egui::BranchNode>>,
     mut registry: ResMut<Registry>,
@@ -970,7 +918,6 @@ pub fn on_branch_node(
         event.data.ca,
         &event.data.path,
     );
-    // Uphold the `WorkingGraph` invariant: commit the in-place edit.
     bevy_gantz::commit_working_graph(
         &mut registry,
         &mut cmds,
@@ -983,8 +930,8 @@ pub fn on_branch_node(
 
 /// Handle create nested graph payloads.
 ///
-/// Commits a fresh empty graph named `<parent>:<n>` (where `<parent>` is the
-/// head's branch name) and inserts a synced `NamedRef` to it in the head's
+/// Commits a fresh empty graph named `<parent>:<n>`, where `<parent>` is the
+/// head's branch name. Inserts a synced `NamedRef` to it in the head's
 /// working graph. Requires the head to be named.
 pub fn on_create_nested_graph(
     trigger: On<ForHead<gantz_egui::CreateNestedGraph>>,
@@ -1030,7 +977,6 @@ pub fn on_create_nested_graph(
     );
     // The fresh nested graph must be reified before its NamedRef resolves.
     refresh_cache(&registry, &mut cache, &codec.0);
-    // Uphold the `WorkingGraph` invariant: commit the in-place edit.
     bevy_gantz::commit_working_graph(
         &mut registry,
         &mut cmds,
@@ -1078,7 +1024,6 @@ pub fn on_inspect_edge(
         vm,
         event.data.clone(),
     );
-    // Uphold the `WorkingGraph` invariant: commit the in-place edit.
     bevy_gantz::commit_working_graph(
         &mut registry,
         &mut cmds,
@@ -1091,8 +1036,8 @@ pub fn on_inspect_edge(
 
 /// Handle copy selection payloads.
 ///
-/// Serializes the selected nodes (and their registry dependencies) to a `.gantz`
-/// document and writes the result directly to the system clipboard via
+/// Serializes the selected nodes and their registry dependencies to a
+/// `.gantz` document and writes the result to the system clipboard via
 /// [`bevy_egui::EguiClipboard`].
 pub fn on_copy_nodes(
     trigger: On<ForHead<gantz_egui::CopyNodes>>,
@@ -1115,10 +1060,10 @@ pub fn on_copy_nodes(
 
 /// Handle paste selection payloads.
 ///
-/// Resolves the clipboard text (via [`bevy_egui::EguiClipboard`] when the
-/// payload doesn't carry it), parses it into a [`gantz_egui::export::Copied`],
-/// merges registry dependencies, adds the subgraph, maps positions, and updates
-/// the selection to the newly pasted nodes.
+/// Resolves the clipboard text via [`bevy_egui::EguiClipboard`] when the
+/// payload does not carry it. Parses it into a [`gantz_egui::export::Copied`],
+/// merges registry dependencies, adds the subgraph, maps positions, and
+/// selects the pasted nodes.
 pub fn on_paste(
     trigger: On<ForHead<gantz_egui::Paste>>,
     mut registry: ResMut<Registry>,
@@ -1163,10 +1108,10 @@ pub fn on_paste(
     );
 
     // Re-register the full root graph so pasted nodes get their state
-    // initialized with the correct nested hashmap structure. Idempotent
-    // for existing nodes; registration reifies the graph transiently. The
-    // paste may have merged new dependency graphs into the registry, so
-    // refresh the cache first.
+    // initialized with the correct nested hashmap structure. Idempotent for
+    // existing nodes. Registration reifies the graph transiently. The paste
+    // may have merged new dependency graphs into the registry, so refresh
+    // the cache first.
     if pasted {
         refresh_cache(&registry, &mut cache, &codec.0);
         if let Some(vm) = vms.get_mut(&event.head) {
@@ -1179,12 +1124,11 @@ pub fn on_paste(
         }
     }
 
-    // Uphold the `WorkingGraph` invariant: commit the in-place edit.
     bevy_gantz::commit_working_graph(&mut registry, &mut cmds, event.head, &mut head_ref.0, &wg.0);
     refresh_cache(&registry, &mut cache, &codec.0);
 }
 
-/// Handle cut payloads: copy the selection to the clipboard, then remove it.
+/// Handle cut payloads. Copy the selection to the clipboard, then remove it.
 pub fn on_cut_nodes(
     trigger: On<ForHead<gantz_egui::CutNodes>>,
     mut registry: ResMut<Registry>,
@@ -1232,13 +1176,11 @@ pub fn on_cut_nodes(
         clipboard.set_text(&text);
     }
 
-    // Uphold the `WorkingGraph` invariant: commit the in-place edit (a no-op
-    // when nothing was cut).
     bevy_gantz::commit_working_graph(&mut registry, &mut cmds, event.head, &mut head_ref.0, &wg.0);
     refresh_cache(&registry, &mut cache, &codec.0);
 }
 
-/// Handle nest payloads: cut the selected nodes into a new nested graph node.
+/// Handle nest payloads. Cut the selected nodes into a new nested graph node.
 pub fn on_nest_nodes(
     trigger: On<ForHead<gantz_egui::NestNodes>>,
     mut registry: ResMut<Registry>,
@@ -1289,12 +1231,11 @@ pub fn on_nest_nodes(
 
     // The fresh nested graph must be reified before its NamedRef resolves.
     refresh_cache(&registry, &mut cache, &codec.0);
-    // Uphold the `WorkingGraph` invariant: commit the in-place edit.
     bevy_gantz::commit_working_graph(&mut registry, &mut cmds, event.head, &mut head_ref.0, &wg.0);
     refresh_cache(&registry, &mut cache, &codec.0);
 }
 
-/// Handle duplicate payloads: copy the selection, then paste it at an offset.
+/// Handle duplicate payloads. Copy the selection, then paste it at an offset.
 pub fn on_duplicate_nodes(
     trigger: On<ForHead<gantz_egui::DuplicateNodes>>,
     mut registry: ResMut<Registry>,
@@ -1334,7 +1275,7 @@ pub fn on_duplicate_nodes(
     );
 
     // Re-register the full root graph so the new nodes get their state
-    // initialized. Idempotent for existing nodes; registration reifies the
+    // initialized. Idempotent for existing nodes. Registration reifies the
     // graph transiently.
     if duplicated {
         refresh_cache(&registry, &mut cache, &codec.0);
@@ -1348,36 +1289,26 @@ pub fn on_duplicate_nodes(
         }
     }
 
-    // Uphold the `WorkingGraph` invariant: commit the in-place edit.
     bevy_gantz::commit_working_graph(&mut registry, &mut cmds, event.head, &mut head_ref.0, &wg.0);
     refresh_cache(&registry, &mut cache, &codec.0);
 }
 
-/// Handle merge payloads: merge the named source branch into the head.
-///
-/// A fast-forward navigates the head to the source's tip (reloading the
-/// working graph, VM and views); a true merge is applied to the working graph
-/// and committed with two parents by [`gantz_egui::ops::merge_head`] itself,
-/// so this triggers [`head::CommittedEvent`] directly rather than calling
-/// `commit_working_graph` (which would see the already-committed graph and
-/// skip the event).
-/// Seed `commit`'s stored view, ignoring empty layouts: an empty layout
-/// reads as "never laid out" to the scene (which then destructively
-/// auto-layouts), so it must never become a commit's baseline.
+/// Seed `commit`'s stored view, ignoring empty layouts. An empty layout reads
+/// as never laid out to the scene, which then auto-layouts destructively, so
+/// it must never become a commit's baseline.
 pub fn seed_view(registry: &mut Registry, commit: ca::CommitAddr, view: gantz_egui::SceneView) {
     if !view.layout.is_empty() {
         gantz_egui::section::set_view(&mut registry.0, commit, &view);
     }
 }
 
-/// Finish a locally-minted merge commit (a local merge or session
-/// convergence, whose op has already committed with both parents): seed the
-/// minted commit's view from the migrated live layout so it exists before
-/// any same-frame session announce (a viewless tip auto-layouts on adopting
-/// peers), re-register the root graph so merged-in nodes get their state
-/// initialized (idempotent for existing nodes), then fire the committed
-/// machinery (GUI-state migration, redo-stack clear, NamedRef resync,
-/// `vm::sync` recompile).
+/// Finish a locally-minted merge commit. The op has already committed with
+/// both parents, for a local merge or session convergence. Seed the minted
+/// commit's view from the migrated live layout so it exists before any
+/// same-frame session announce. A viewless tip auto-layouts on adopting
+/// peers. Re-register the root graph so merged-in nodes get their state
+/// initialized. Then fire the committed machinery. That is GUI-state
+/// migration, redo-stack clear, NamedRef resync and `vm::sync` recompile.
 #[allow(clippy::too_many_arguments)] // A cohesive tail over ECS-owned data.
 fn finish_merge_commit(
     new_commit: ca::CommitAddr,
@@ -1399,6 +1330,13 @@ fn finish_merge_commit(
     cmds.trigger(committed);
 }
 
+/// Handle merge payloads. Merge the named source branch into the head.
+///
+/// A fast-forward navigates the head to the source's tip and reloads the
+/// working graph, VM and views. A true merge is applied to the working graph
+/// and committed with two parents by [`gantz_egui::ops::merge_head`] itself.
+/// So this triggers [`head::CommittedEvent`] directly. `commit_working_graph`
+/// would see the already-committed graph and skip the event.
 pub fn on_merge_head(
     trigger: On<ForHead<gantz_egui::MergeHead>>,
     mut registry: ResMut<Registry>,
@@ -1470,7 +1408,7 @@ pub fn on_merge_head(
             );
         }
         gantz_egui::ops::MergeHeadOutcome::Refused(reasons) => {
-            // Defensive: the UI disables conflicted/blocked candidates.
+            // The UI disables conflicted and blocked candidates.
             log::warn!(
                 "MergeHead: refused to merge '{}': {}",
                 event.data.source,
@@ -1481,24 +1419,24 @@ pub fn on_merge_head(
     }
 }
 
-/// Bring an open head up to date with a remote session tip (see
-/// [`gantz_egui::ops::sync_remote_tip`]).
+/// Bring an open head up to date with a remote session tip. See
+/// [`gantz_egui::ops::sync_remote_tip`].
 ///
-/// Triggered as `ForHead<SyncRemoteTip>` by the collaborative-session layer
+/// The collaborative-session layer triggers it as `ForHead<SyncRemoteTip>`
 /// once the remote tip's closure has been fetched, validated and applied to
-/// the registry. Not a GUI payload: nothing emits it from widgets.
+/// the registry. Not a GUI payload. Nothing emits it from widgets.
 #[derive(Clone, Copy, Debug)]
 pub struct SyncRemoteTip {
     /// The remote tip to converge with.
     pub remote: ca::CommitAddr,
     /// The session's fixed conflict-resolution policy.
     pub resolutions: ca::merge::Resolutions,
-    /// Adopt an unrelated remote tip instead of surfacing it: set when the
-    /// head currently points at the join flow's placeholder graph.
+    /// Adopt an unrelated remote tip instead of surfacing it. Set when the
+    /// head points at the join flow's placeholder graph.
     pub adopt_unrelated: bool,
 }
 
-/// Handle [`SyncRemoteTip`]: the session analogue of [`on_merge_head`].
+/// Handle [`SyncRemoteTip`]. The session analogue of [`on_merge_head`].
 pub fn on_sync_remote_tip(
     trigger: On<ForHead<SyncRemoteTip>>,
     mut registry: ResMut<Registry>,
@@ -1545,10 +1483,10 @@ pub fn on_sync_remote_tip(
     match outcome {
         gantz_egui::ops::SyncTipOutcome::UpToDate => (),
         gantz_egui::ops::SyncTipOutcome::Moved(target) => {
-            // A remote edit invalidates local redo just like a local one (the
-            // Merged arm clears via CommittedEvent); a stale session-redo
-            // would otherwise mint a whole-graph revert clobbering the
-            // peers' newer work.
+            // A remote edit invalidates local redo just like a local one. The
+            // Merged arm clears via CommittedEvent. A stale session-redo would
+            // otherwise mint a whole-graph revert that clobbers the peers'
+            // newer work.
             gui_state.redo_stacks.remove(&old_head);
             gui_state.undo_cursors.remove(&old_head);
             navigate_head(&mut cmds, event.head, &old_head, target);
@@ -1587,15 +1525,15 @@ pub fn on_sync_remote_tip(
     }
 }
 
-/// Request a reference resync outside the usual committed flow: bring
+/// Request a reference resync outside the usual committed flow. Bring
 /// sync-enabled `NamedRef`s up to date and refresh open heads whose commits
-/// moved. Triggered by the collaborative-session layer after it moves scoped
-/// names that no open head points at (fast-forwards/adoptions of nested or
-/// referenced graphs).
+/// moved. The collaborative-session layer triggers it after it moves scoped
+/// names that no open head points at, such as fast-forwards of nested or
+/// referenced graphs.
 #[derive(Debug, Event)]
 pub struct ResyncRefsEvent;
 
-/// Handle [`ResyncRefsEvent`]: the same pass as [`on_head_committed_resync`].
+/// Handle [`ResyncRefsEvent`]. The same pass as [`on_head_committed_resync`].
 pub fn on_resync_refs(
     _trigger: On<ResyncRefsEvent>,
     mut registry: ResMut<Registry>,
@@ -1608,9 +1546,9 @@ pub fn on_resync_refs(
     refresh_moved_heads(&moves, &mut registry, &mut heads);
 }
 
-/// Handle undo payloads: move the head back to its parent commit.
+/// Handle undo payloads. Move the head back to its parent commit.
 ///
-/// A session head (see [`SessionHead`]) instead mints a forward revert
+/// A session head, see [`SessionHead`], instead mints a forward revert
 /// commit so the undo propagates to peers like any other edit.
 pub fn on_undo(
     trigger: On<ForHead<gantz_egui::Undo>>,
@@ -1645,9 +1583,9 @@ pub fn on_undo(
     }
 }
 
-/// Handle redo payloads: move the head forward to a previously undone commit.
+/// Handle redo payloads. Move the head forward to an undone commit.
 ///
-/// A session head (see [`SessionHead`]) instead mints a forward revert
+/// A session head, see [`SessionHead`], instead mints a forward revert
 /// commit restoring the undone position, mirroring [`on_undo`].
 pub fn on_redo(
     trigger: On<ForHead<gantz_egui::Redo>>,
@@ -1684,9 +1622,9 @@ pub fn on_redo(
 
 /// Handle export head events.
 ///
-/// Exports the head's graph (with transitive dependencies and views) to a
+/// Exports the head's graph with transitive dependencies and views to a
 /// `.gantz` file chosen via an `rfd` file dialog. The export is serialized as
-/// `.gantz` text using the [`gantz_egui::export`] infrastructure.
+/// `.gantz` text by [`gantz_egui::export`].
 pub fn on_export_head(
     trigger: On<ExportHeadEvent>,
     registry: Res<Registry>,
@@ -1708,7 +1646,6 @@ pub fn on_export_head(
         }
     };
 
-    // Derive a default filename from the head.
     let default_name = gantz_egui::export::default_filename(&head);
 
     let dialog = rfd::AsyncFileDialog::new()
@@ -1730,7 +1667,7 @@ pub fn on_export_head(
 
 /// Handle export-all-named events.
 ///
-/// Exports every named graph (with transitive dependencies and views) to a
+/// Exports every named graph with transitive dependencies and views to a
 /// single `.gantz` file chosen via an `rfd` file dialog.
 pub fn on_export_all_named(
     _trigger: On<ExportAllNamedEvent>,
@@ -1828,7 +1765,7 @@ pub fn on_import_style(
     cmds.insert_resource(StyleImportTask(task));
 }
 
-/// Handle import file events (dropped `.gantz` files).
+/// Handle import file events for dropped `.gantz` files.
 ///
 /// Deserializes the export, optionally computes root names, merges into the
 /// registry, and opens the unique root head if requested.
@@ -1848,7 +1785,8 @@ pub fn on_import_file(
         }
     };
 
-    // Compute the root name before merge if we might open a head.
+    // The root name is needed only to open a head. Compute it before the
+    // merge consumes the export.
     let root_name = if event.open_head {
         gantz_egui::export::unique_root_name(&export)
     } else {
@@ -1879,10 +1817,10 @@ pub fn on_reset_base_graph(
     codec: Res<NodeCodecRes>,
 ) {
     let name = &trigger.event().0;
-    // Re-parse the source that defined the name (recorded at load), seeded
-    // with the loaded base names so the source's cross-source refs resolve.
-    // Its own names shadow the seed via the in-document lookup, and every
-    // source parses at BASE_TIMESTAMP, so addresses match the startup parse.
+    // Re-parse the source that defined the name, seeded with the loaded base
+    // names so the source's cross-source refs resolve. Its own names shadow
+    // the seed via the in-document lookup. Every source parses at
+    // BASE_TIMESTAMP, so addresses match the startup parse.
     let Some(source) = name_sources
         .0
         .get(&name.to_string())
@@ -1907,8 +1845,8 @@ pub fn on_reset_base_graph(
             return;
         }
     };
-    // Extract just the content reachable from the target name (all parents,
-    // so merge ancestry survives a reset).
+    // Extract just the content reachable from the target name. All parents
+    // are included, so merge ancestry survives a reset.
     if let Some(base_commit_ca) = export.head(name) {
         let live = ca::closure_from(&export, [base_commit_ca]);
         let mut subset = ca::export(&export, &live);
@@ -1924,18 +1862,15 @@ pub fn on_reset_base_graph(
     }
 }
 
-// ---------------------------------------------------------------------------
 // Systems
-// ---------------------------------------------------------------------------
 
 /// Keep each open head's camera current and seed its commit's layout baseline.
 ///
-/// Runs every frame. Unlike a blind per-frame copy, this keeps each commit's
-/// stored `layout` (node positions) *frozen* as an undo baseline: it is written
-/// exactly once - when a commit first has a populated live layout - and is never
-/// overwritten in place. Node-position changes only ever produce a *new* commit
-/// (see [`settle_layout`]). The camera is excluded from undo, so it tracks the
-/// live view in place every frame.
+/// Runs every frame. Each commit's stored `layout` stays frozen as an undo
+/// baseline. It is written exactly once, when a commit first has a populated
+/// live layout, and is never overwritten in place. Node-position changes only
+/// ever produce a new commit, see [`settle_layout`]. The camera is excluded
+/// from undo, so it tracks the live view in place every frame.
 pub fn persist_camera_and_seed(
     mut registry: ResMut<Registry>,
     heads: Query<(&head::HeadRef, &GraphView), With<head::OpenHead>>,
@@ -1945,7 +1880,7 @@ pub fn persist_camera_and_seed(
             continue;
         };
         match gantz_egui::section::view(&registry, &commit_addr) {
-            // Layout frozen as the undo baseline; only the camera tracks live.
+            // Layout frozen as the undo baseline. Only the camera tracks live.
             Some(mut view) => {
                 if view.camera != head_view.camera {
                     view.camera = head_view.camera;
@@ -1962,15 +1897,16 @@ pub fn persist_camera_and_seed(
     }
 }
 
-/// On layout settle ([`DebouncedInputEvent`]), fork a layout-only commit for any
-/// open head whose node positions changed since its frozen baseline view.
+/// On layout settle, signalled by [`DebouncedInputEvent`], fork a layout-only
+/// commit for any open head whose node positions changed since its frozen
+/// baseline view.
 ///
-/// Mirrors the graph-commit path's GUI bookkeeping (migrate per-head GUI state,
-/// clear redo, migrate the graph pane) but deliberately does *not* fire
-/// [`head::CommittedEvent`]: the graph content is unchanged, so there is nothing
-/// to resync, and firing it would churn every sync-enabled referrer's history
-/// for a pure layout move. `GraphView` is left untouched - it already holds the
-/// settled layout, which now matches the new commit's seeded baseline.
+/// Mirrors the graph-commit path's GUI bookkeeping. It migrates per-head GUI
+/// state, clears redo and migrates the graph pane. It does not fire
+/// [`head::CommittedEvent`]. The graph content is unchanged, so there is
+/// nothing to resync, and firing it would churn every sync-enabled referrer's
+/// history for a pure layout move. `GraphView` is left untouched. It already
+/// holds the settled layout, which matches the new commit's seeded baseline.
 ///
 /// [`DebouncedInputEvent`]: bevy_gantz::debounced_input::DebouncedInputEvent
 pub fn settle_layout(
@@ -1993,23 +1929,23 @@ pub fn settle_layout(
         // Freeze the new commit's layout baseline this frame, before any
         // debounce-gated save/export reads the registry's view section.
         gantz_egui::section::set_view(&mut registry.0, new_commit, head_view);
-        // Clear redo (a new commit invalidates it) and migrate GUI state.
+        // Clear redo, since a new commit invalidates it, and migrate GUI state.
         let new_head = (**head_ref).clone();
         gui_state.migrate_head(&old_head, &new_head, true);
         if let Ok(ctx) = ctxs.ctx_mut() {
             gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
         }
-        // Deliberately not a `CommittedEvent` (no resync cascade), but layers
-        // that mirror commits elsewhere (e.g. collab sessions syncing node
-        // positions) still need to hear about it.
+        // Not a `CommittedEvent`, so no resync cascade. Layers that mirror
+        // commits elsewhere, such as collab sessions syncing node positions,
+        // still need to hear about it.
         cmds.trigger(LayoutCommittedEvent { entity, new_commit });
     }
 }
 
-/// Emitted after a settled node-move produced a layout-only commit (same
-/// graph, new commit). Unlike [`head::CommittedEvent`] this triggers no
-/// resync/recompile machinery - it exists for layers that follow the commit
-/// chain (e.g. collaborative sessions syncing node positions).
+/// Emitted after a settled node-move produced a layout-only commit, with the
+/// same graph and a new commit. Unlike [`head::CommittedEvent`] this triggers
+/// no resync or recompile machinery. It exists for layers that follow the
+/// commit chain, such as collaborative sessions syncing node positions.
 #[derive(Debug, Event)]
 pub struct LayoutCommittedEvent {
     pub entity: Entity,
@@ -2035,7 +1971,7 @@ fn poll_import_task(task: Option<ResMut<ImportTask>>, mut cmds: Commands) {
 
 /// Poll the in-flight style import file dialog task.
 ///
-/// When the task completes with file bytes, replaces the GUI's style config;
+/// When the task completes with file bytes, replaces the GUI's style config.
 /// `gantz_egui::style::apply` picks it up on the next pass. The resource is
 /// removed regardless of whether a file was selected.
 fn poll_style_import_task(
@@ -2063,9 +1999,10 @@ fn poll_style_import_task(
 ///
 /// This system:
 /// - Shows the Gantz widget in an egui CentralPanel
-/// - Processes GUI responses (head open/close/replace, branch creation, etc.)
+/// - Processes GUI responses such as head open, close and replace
 /// - Dispatches dynamic response payloads via [`ResponseDispatchers`]
-/// - Uses TraceCapture for tracing and PerfVm/PerfGui for performance capture
+/// - Uses TraceCapture for tracing and PerfVm and PerfGui for performance
+///   capture
 pub fn update(
     trace_capture: Res<TraceCapture>,
     mut perf_vm: ResMut<PerfVm>,
@@ -2120,15 +2057,13 @@ pub fn update(
 ) -> Result {
     let ctx = ctxs.ctx_mut()?;
 
-    // Measure GUI frame time.
     let gui_start = web_time::Instant::now();
 
-    // Determine the focused head index from the focused entity.
     let focused_ix = (**focused)
         .and_then(|e| tab_order.iter().position(|&x| x == e))
         .unwrap_or(0);
 
-    // Map heads to entities for response payload dispatch (after `show`).
+    // Map heads to entities for response payload dispatch after `show`.
     let head_to_entity: HashMap<ca::Head, Entity> = tab_order
         .iter()
         .filter_map(|&e| {
@@ -2137,15 +2072,12 @@ pub fn update(
         })
         .collect();
 
-    // Create the head access adapter.
     let mut access = HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
 
-    // Construct node registry on-demand for the widget (with demo + doc lookup).
     let node_reg = env(&registry, &cache, &builtins, &codec);
 
     let level = bevy_log::tracing_subscriber::filter::LevelFilter::current();
 
-    // Build and show the Gantz widget.
     let current_compile_config = compile_config.0;
     let current_validate_change_tracking = change_validation.0;
     let panel_id = egui::Id::new((ctx.viewport_id(), "central_panel"));
@@ -2159,7 +2091,7 @@ pub fn update(
     panel_ui.set_clip_rect(ctx.content_rect());
 
     // A native host owns the pop-out windows when `HostNativePaneWindows` is
-    // present; otherwise the widget draws them itself as `egui::Window`s.
+    // present. Otherwise the widget draws them itself as `egui::Window`s.
     let pane_window_mode = match host_native {
         Some(_) => gantz_egui::widget::PaneWindowMode::HostNative,
         None => gantz_egui::widget::PaneWindowMode::EguiWindow,
@@ -2168,8 +2100,9 @@ pub fn update(
     // The base source names, for the graph config pane's source dropdown.
     let source_names: Vec<&str> = base_sources.0.iter().map(|s| s.name).collect();
 
-    // Clipboard reader for widget paste affordances. `RefCell`: the widget
-    // takes a shared `Fn` while `EguiClipboard::get_text` needs `&mut`.
+    // Clipboard reader for widget paste affordances. The `RefCell` is needed
+    // because the widget takes a shared `Fn` while `EguiClipboard::get_text`
+    // needs `&mut`.
     let clipboard = clipboard.map(std::cell::RefCell::new);
     let read_clipboard = || {
         clipboard
@@ -2181,7 +2114,7 @@ pub fn update(
     let mut response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show_inside(&mut panel_ui, |ui| {
-            // Built inside the closure: `&mut dyn` slices are invariant, so
+            // Built inside the closure. `&mut dyn` slices are invariant, so
             // building the view list outside would escape its lifetime.
             let mut tabs: Vec<&mut dyn gantz_egui::widget::SettingsTab> = settings_tabs
                 .0
@@ -2214,9 +2147,9 @@ pub fn update(
                 .ext_panes(&mut panes)
                 .ref_ext_uis(&exts)
                 .edge_styles(&stylers);
-            // Base-source authoring context, present only where the
-            // per-source write-back runs (`update-base` inserts ExportPaths),
-            // so the main app never shows a non-durable source dropdown.
+            // Base-source authoring context. Present only where the per-source
+            // write-back runs, since `update-base` inserts ExportPaths. The
+            // main app never shows a non-durable source dropdown.
             if let Some(paths) = &export_paths {
                 widget = widget.base_sources(gantz_egui::widget::BaseSourcesCtx {
                     sources: &source_names,
@@ -2232,14 +2165,14 @@ pub fn update(
         })
         .inner;
 
-    // Mirror the windowed set so a native host can create / destroy OS windows
-    // to match (see `pane_window::reconcile_windowed_panes`).
+    // Mirror the windowed set so a native host can create and destroy OS
+    // windows to match. See `pane_window::reconcile_windowed_panes`.
     requested.0 = std::mem::take(&mut response.windowed_panes);
 
     // Apply every outcome of the GUI pass. Shared with each native pop-out
-    // window's render pass (see `pane_window::render_windowed_panes`) so a pane
-    // behaves identically whether docked or windowed. `access` is no longer
-    // used past `show`, freeing `heads_query` for the handler.
+    // window's render pass, see `pane_window::render_windowed_panes`, so a
+    // pane behaves identically whether docked or windowed. `access` is not
+    // used past `show`, which frees `heads_query` for the handler.
     handle_gantz_response(
         &mut response,
         &tab_order,
@@ -2259,7 +2192,6 @@ pub fn update(
         &mut cmds,
     );
 
-    // Record GUI frame time.
     perf_gui.0.record(gui_start.elapsed());
 
     Ok(())
@@ -2268,10 +2200,10 @@ pub fn update(
 /// Apply every outcome of a `Gantz` GUI pass to the app.
 ///
 /// Shared by the primary [`update`] pass and each native pop-out window's render
-/// pass ([`pane_window::render_windowed_panes`]) so a pane behaves identically
-/// whether docked or windowed. Handles focus, graph open/close/replace/new,
-/// branch, file drops, demo/description edits, resets, compile config, change-
-/// tracking, import, in-place head commits, and dynamic payload dispatch.
+/// pass, [`pane_window::render_windowed_panes`], so a pane behaves identically
+/// whether docked or windowed. Handles focus, graph open, close, replace and
+/// new, branch, file drops, demo and description edits, resets, compile config,
+/// change tracking, import, in-place head commits, and dynamic payload dispatch.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_gantz_response(
     response: &mut gantz_egui::widget::gantz::GantzResponse,
@@ -2291,14 +2223,12 @@ pub(crate) fn handle_gantz_response(
     dispatchers: &ResponseDispatchers,
     cmds: &mut Commands,
 ) {
-    // Update focused head from the widget's response.
     if let Some(&entity) = tab_order.get(response.focused_head) {
         **focused = Some(entity);
     }
 
-    // The given graph name was removed.
     if let Some(name) = response.graph_name_removed() {
-        // Update any open heads that reference this name.
+        // Detach any open heads that reference the removed name.
         for mut data in heads_query.iter_mut() {
             if let ca::Head::Branch(head_name) = &**data.core.head_ref {
                 if *head_name == name {
@@ -2310,24 +2240,20 @@ pub(crate) fn handle_gantz_response(
         registry.remove_head(&name);
     }
 
-    // Trigger events for head operations (handled by observers).
-
-    // Single click: replace the focused head with the selected one.
+    // A single click replaces the focused head with the selected one.
     if let Some(new_head) = response.graph_replaced() {
         cmds.trigger(head::ReplaceEvent(new_head.clone()));
     }
 
-    // Open head as a new tab (or focus if already open).
+    // Open the head as a new tab, or focus it if already open.
     if let Some(new_head) = response.graph_opened() {
         cmds.trigger(head::OpenEvent(new_head.clone()));
     }
 
-    // Close head.
     if let Some(h) = response.graph_closed() {
         cmds.trigger(head::CloseEvent(h.clone()));
     }
 
-    // Create a new empty graph and open it.
     if response.new_graph() {
         let new_head = registry.init_head(bevy_gantz::timestamp());
         cmds.trigger(head::OpenEvent(new_head));
@@ -2346,7 +2272,7 @@ pub(crate) fn handle_gantz_response(
         });
     }
 
-    // Handle file drops (egui-level DnD).
+    // Handle egui-level file drops.
     for drop in &response.file_drops {
         let open_head = drop.target == gantz_egui::widget::gantz::FileDropTarget::GraphScene;
         cmds.trigger(ImportFileEvent {
@@ -2355,8 +2281,8 @@ pub(crate) fn handle_gantz_response(
         });
     }
 
-    // Handle demo graph association change. Keyed by the head's branch name so
-    // the association survives later edits (which mint a new commit).
+    // Handle a demo graph association change. Keyed by the head's branch name
+    // so the association survives later edits, which mint a new commit.
     if let Some((ca::Head::Branch(graph_name), demo_val)) = &response.demo_changed {
         match demo_val {
             Some(demo) => {
@@ -2368,14 +2294,14 @@ pub(crate) fn handle_gantz_response(
         }
     }
 
-    // Handle a graph description edit (keyed by the graph's name).
+    // Handle a graph description edit, keyed by the graph's name.
     if let Some((ca::Head::Branch(name), description)) = &response.description_changed {
         gantz_egui::section::set_description(&mut registry.0, name.clone(), description.clone());
     }
 
     // Re-attribute a graph to a different base source. Durable wherever the
-    // per-source write-back runs (`update-base`), which rewrites every
-    // configured file on the next save - moving the graph between files.
+    // per-source write-back runs, as in `update-base`. That rewrites every
+    // configured file on the next save, which moves the graph between files.
     if let Some((ca::Head::Branch(name), source)) = &response.base_source_changed {
         match base_sources.0.iter().find(|s| s.name == source.as_str()) {
             Some(s) => {
@@ -2385,14 +2311,14 @@ pub(crate) fn handle_gantz_response(
         }
     }
 
-    // Handle demo reset - re-merge the base version of the demo graph.
+    // Handle a demo reset. Re-merge the base version of the demo graph.
     if let Some(head) = &response.reset_base_graph {
         if let ca::Head::Branch(name) = head {
             cmds.trigger(ResetBaseGraphEvent(name.clone()));
         }
     }
 
-    // Handle "reset all demos" - re-merge every `demo-*` base graph.
+    // Handle reset all demos. Re-merge every `demo-*` base graph.
     if response.reset_all_demos {
         for name in base_names.0.keys() {
             if name.to_string().starts_with("demo-") {
@@ -2401,21 +2327,20 @@ pub(crate) fn handle_gantz_response(
         }
     }
 
-    // Handle compile config change. The recompile happens next frame via
-    // `bevy_gantz::vm::sync`, which compares each head's compile inputs
-    // (graph content address + config) by value.
+    // Handle a compile config change. The recompile happens next frame in
+    // `vm::sync`, which compares each head's compile inputs by value.
     if let Some(cfg) = response.compile_config {
         if compile_config.0 != cfg {
             compile_config.0 = cfg;
         }
     }
 
-    // Toggle change-tracking validation (a debugging aid; see `vm::sync`).
+    // Toggle change-tracking validation, a debugging aid.
     if let Some(enabled) = response.validate_change_tracking {
         change_validation.0 = enabled;
     }
 
-    // Handle import button - open a file dialog (only if none already in flight).
+    // Handle the import button. Open a file dialog if none is in flight.
     if response.import() && import_task.is_none() {
         let ext = gantz_egui::export::FILE_EXTENSION;
         let dialog = rfd::AsyncFileDialog::new()
@@ -2429,9 +2354,8 @@ pub(crate) fn handle_gantz_response(
     }
 
     // Commit each head whose graph the GUI edited in place this pass, so
-    // `vm::sync` recompiles it from the committed address without re-hashing
-    // every open graph (#159). Graph ops applied via response observers commit
-    // themselves.
+    // `vm::sync` recompiles it from the committed address. Graph ops applied
+    // via response observers commit themselves.
     for head in &response.changed_heads {
         let Some(&entity) = head_to_entity.get(head) else {
             continue;
@@ -2449,8 +2373,8 @@ pub(crate) fn handle_gantz_response(
     }
 
     // Dispatch the dynamic response payloads emitted during the GUI pass.
-    // DynResponse types are registered in `ResponseDispatchers` (see
-    // `RegisterResponseExt`); unregistered payloads are reported.
+    // `RegisterResponseExt` registers the types in `ResponseDispatchers`.
+    // Unregistered payloads are reported.
     for (head, payload) in response.responses.drain() {
         log::debug!("{payload:?}");
         let entity = head.and_then(|h| head_to_entity.get(&h).copied());
@@ -2460,20 +2384,16 @@ pub(crate) fn handle_gantz_response(
         }
     }
 
-    // The pass may have mutated the registry (in-place commits, `init_head`),
-    // so bring the reified cache back in step before any typed reads.
+    // The pass may have mutated the registry, so bring the reified cache
+    // back in step before any typed reads.
     refresh_cache(registry, cache, &codec.0);
 }
-
-// ---------------------------------------------------------------------------
-// Functions
-// ---------------------------------------------------------------------------
 
 /// Downcast a dispatched payload to its concrete type.
 ///
 /// Dispatchers are keyed by the payload's `TypeId`, so the downcast cannot
 /// fail for a correctly registered dispatcher. Public so external plugins
-/// (e.g. `bevy_gantz_collab`) can write custom [`DispatchFn`]s.
+/// such as `bevy_gantz_collab` can write custom [`DispatchFn`]s.
 pub fn downcast_payload<T: ResponseData>(payload: DynResponse) -> T {
     payload
         .downcast::<T>()
@@ -2512,9 +2432,9 @@ fn dispatch_eval_entry(entity: Option<Entity>, payload: DynResponse, cmds: &mut 
     });
 }
 
-/// Drop a [`gantz_egui::StateWritten`] payload: recorded VM-state writes
+/// Drop a [`gantz_egui::StateWritten`] payload. Recorded VM-state writes
 /// exist for the collaborative-session layer, which overrides this
-/// registration (last registration wins) to broadcast them; without it they
+/// registration to broadcast them. Last registration wins. Without it they
 /// are local-only by design, not unhandled.
 fn dispatch_state_written(_: Option<Entity>, _payload: DynResponse, _cmds: &mut Commands) {}
 
@@ -2524,9 +2444,9 @@ fn dispatch_open_head(_: Option<Entity>, payload: DynResponse, cmds: &mut Comman
     cmds.trigger(head::OpenEvent(target));
 }
 
-/// Dispatch a [`gantz_egui::ReplaceHead`] payload as a [`head::ReplaceEvent`],
-/// navigating the focused tab to the target head in place (e.g. entering a
-/// nested graph or breadcrumb navigation).
+/// Dispatch a [`gantz_egui::ReplaceHead`] payload as a [`head::ReplaceEvent`].
+/// This navigates the focused tab to the target head in place, for example
+/// when entering a nested graph.
 fn dispatch_replace_head(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
     let gantz_egui::ReplaceHead(target) = downcast_payload(payload);
     cmds.trigger(head::ReplaceEvent(target));
@@ -2562,8 +2482,8 @@ fn dispatch_import_style(_: Option<Entity>, payload: DynResponse, cmds: &mut Com
 
 /// Trigger the appropriate event to move a head to a target commit.
 ///
-/// Branch heads use `MoveBranchEvent` for atomic registry+graph updates
-/// (avoids oscillation with `vm::sync`). Commit heads use `ReplaceEvent`.
+/// Branch heads use `MoveBranchEvent` for atomic registry and graph updates,
+/// which avoids oscillation with `vm::sync`. Commit heads use `ReplaceEvent`.
 fn navigate_head(cmds: &mut Commands, entity: Entity, head: &ca::Head, target: ca::CommitAddr) {
     match head {
         ca::Head::Commit(_) => cmds.trigger(head::ReplaceEvent(ca::Head::Commit(target))),

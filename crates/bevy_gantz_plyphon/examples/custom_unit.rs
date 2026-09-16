@@ -1,19 +1,20 @@
-//! A downstream **custom UGen + custom DSP node**, end to end through the bevy +
-//! plyphon runtime.
+//! A downstream custom UGen and custom DSP node, end to end through the bevy
+//! and plyphon runtime.
 //!
 //! Run with `cargo run --example custom_unit -p bevy_gantz_plyphon` to hear a 220 Hz
 //! saw played by a custom `Saw` UGen wired into a `~saw -> ~out` graph. It shows the
 //! whole downstream path:
 //!
-//! 1. a custom plyphon [`Unit`] (`Saw`) + its [`UnitDef`] (`SawCtor`).
-//! 2. a custom gantz DSP node (`SawNode`) whose [`NodeDsp::ugens`] emits that unit.
-//! 3. a tiny node codec over the set (`SawNode` + the reused `~out`), through
+//! 1. a custom plyphon [`Unit`], `Saw`, and its [`UnitDef`], `SawCtor`.
+//! 2. a custom gantz DSP node, `SawNode`, whose [`NodeDsp::ugens`] emits that unit.
+//! 3. a tiny node codec over the set, `SawNode` and the reused `~out`, through
 //!    which the runtime's reified-graph cache serves the graph.
 //! 4. a headless bevy app that registers the unit via
 //!    [`PlyphonPlugin::with_units`], builds the graph, and plays it.
 //!
 //! `Saw`'s frequency is baked in for brevity. See `gantz_plyphon`'s `~sinosc` for the
-//! settable-control-param pattern (a `push_param` + node VM state the driver reads).
+//! settable-control-param pattern. That is a `push_param` plus node VM state the
+//! driver reads.
 
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::prelude::*;
@@ -32,12 +33,11 @@ use plyphon::{
     BuildContext, BuildError, BuiltUnit, DoneAction, ProcessCtx, Rate, Unit, UnitDef, unit_spec,
 };
 
-// ---------------------------------------------------------------------------
-// 1. A custom plyphon UGen: a band-unlimited saw oscillator.
-// ---------------------------------------------------------------------------
+// 1. A custom plyphon UGen, a band-unlimited saw oscillator.
 
-/// The unit's per-instance state: a phase accumulator and its per-sample increment.
-/// Units are `#[repr(C)] + Pod` - their bytes live in the engine's rt-pool.
+/// The unit's per-instance state. A phase accumulator and its per-sample
+/// increment. Units are `#[repr(C)]` and `Pod`, since their bytes live in the
+/// engine's rt-pool.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct Saw {
@@ -45,13 +45,13 @@ struct Saw {
     inc: f32,
 }
 
-/// Output amplitude. A naive (band-unlimited) saw is bright/harsh, so keep it gentle.
+/// Output amplitude. A naive band-unlimited saw is harsh, so keep it gentle.
 const AMP: f32 = 0.2;
 
 impl Unit for Saw {
     fn process(&mut self, ctx: &mut ProcessCtx<'_>) -> DoneAction {
         for o in ctx.outs.audio(0).iter_mut() {
-            *o = (self.phase * 2.0 - 1.0) * AMP; // 0..1 ramp -> -1..1 saw, scaled
+            *o = (self.phase * 2.0 - 1.0) * AMP; // 0..1 ramp to -1..1 saw, scaled
             self.phase += self.inc;
             if self.phase >= 1.0 {
                 self.phase -= 1.0;
@@ -61,8 +61,8 @@ impl Unit for Saw {
     }
 }
 
-/// Builds a [`Saw`] off the audio thread: reads its frequency from input 0 (a baked
-/// constant) and the engine sample rate to compute the phase increment.
+/// Builds a [`Saw`] off the audio thread. Reads its frequency from input 0, a
+/// baked constant, and the engine sample rate to compute the phase increment.
 struct SawCtor;
 
 impl UnitDef for SawCtor {
@@ -73,13 +73,11 @@ impl UnitDef for SawCtor {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 2. A custom gantz DSP node emitting the `Saw` unit.
-// ---------------------------------------------------------------------------
 
-/// A saw-oscillator DSP node. `gantz_core::Node` makes it a graph node (Steel-inert
-/// - audio is plyphon's job); `NodeDsp` emits its UGen graph; `NodeUi` gives the
-/// erased UI node its (minimal) rendering.
+/// A saw-oscillator DSP node. `gantz_core::Node` makes it a graph node. It is
+/// Steel-inert, since audio is plyphon's job. `NodeDsp` emits its UGen graph.
+/// `NodeUi` gives the erased UI node its minimal rendering.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, gantz_nodetag::NodeTag)]
 struct SawNode {
     freq: f32,
@@ -91,7 +89,7 @@ impl GantzNode for SawNode {
     }
 
     fn expr(&self, _: ExprCtx<'_, '_>) -> ExprResult {
-        // Steel-inert: a placeholder output for the (ignored) dsp edge.
+        // Steel-inert. A placeholder output for the ignored dsp edge.
         parse_expr("0")
     }
 }
@@ -107,7 +105,7 @@ impl NodeDsp for SawNode {
         _inputs: &[Option<Signal>],
         b: &mut DspBuilder,
     ) -> Vec<Signal> {
-        // Name our custom unit. Freq is a baked constant (see ~sinosc for a param).
+        // Freq is a baked constant. See ~sinosc for a settable param.
         let unit = b.push_unit(UnitSpec::new(
             "Saw",
             Rate::Audio,
@@ -139,12 +137,10 @@ impl gantz_egui::NodeUi for SawNode {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 3. The node codec: our source + the reused `~out` sink.
-// ---------------------------------------------------------------------------
+// 3. The node codec over the `~saw` source and the reused `~out` sink.
 
-/// The example's `.gantz` sugar carrier (unused here beyond the codec's
-/// requirement - this example never parses or exports text).
+/// The example's `.gantz` sugar carrier. The codec macro requires it. This
+/// example never parses or exports text.
 struct NodeSet;
 
 impl gantz_format::NodeSugar for NodeSet {
@@ -153,7 +149,7 @@ impl gantz_format::NodeSugar for NodeSet {
     }
 }
 
-/// The value-level codec over the example's node set: the seam through which
+/// The value-level codec over the example's node set. The seam through which
 /// the runtime's reified-graph cache serves the stored graph as typed nodes.
 fn codec() -> gantz_egui::node::NodeCodec {
     gantz_egui::ui_node_codec! {
@@ -164,13 +160,11 @@ fn codec() -> gantz_egui::node::NodeCodec {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 4. The headless bevy app.
-// ---------------------------------------------------------------------------
 
 fn main() {
     App::new()
-        // Headless: just tick the schedule ~60x/s (no window/render).
+        // Headless. Tick the schedule about 60 times per second with no window.
         .add_plugins(
             MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
                 1.0 / 60.0,
@@ -181,8 +175,9 @@ fn main() {
         .add_plugins(PlyphonPlugin::new().with_units(|reg| {
             reg.register("Saw", Box::new(SawCtor));
         }))
-        // The typed side the DSP driver reads. This example builds its graph
-        // in code and fills the cache itself in `setup` (no `GantzEguiPlugin`).
+        // The typed side the DSP driver reads. This example has no
+        // `GantzEguiPlugin`. It builds its graph in code and fills the cache in
+        // `setup`.
         .insert_resource(NodeCodecRes(codec()))
         .init_resource::<GraphCache>()
         .add_systems(Startup, setup)
@@ -192,8 +187,8 @@ fn main() {
 /// Build `~saw -> ~out`, commit it, and open it as a head. `drive_synths` derives a
 /// synthdef from the `~out` root and spawns it. The cpal stream then plays the saw.
 fn setup(mut registry: ResMut<Registry>, mut cache: ResMut<GraphCache>, mut cmds: Commands) {
-    // The registry stores graphs as erased data (the graph address is always
-    // computed on the erased form).
+    // The registry stores graphs as erased data. The graph address is always
+    // computed on the erased form.
     let mut dg = gantz_ca::DataGraph::default();
     let saw = dg.add_node(gantz_core::data::erase_node_typed(&SawNode { freq: 220.0 }).unwrap());
     let out =

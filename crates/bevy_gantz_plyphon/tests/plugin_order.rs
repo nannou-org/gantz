@@ -1,5 +1,5 @@
-//! Plugin assembly must be order-insensitive: `PlyphonPlugin` reads the
-//! shared `EvalEpoch` in `Plugin::finish`, so adding it BEFORE `GantzPlugin`
+//! Plugin assembly must be order-insensitive. `PlyphonPlugin` reads the
+//! shared `EvalEpoch` in `Plugin::finish`, so adding it before `GantzPlugin`
 //! must work identically.
 
 use bevy::MinimalPlugins;
@@ -7,16 +7,16 @@ use bevy::app::App;
 use bevy_gantz::GantzPlugin;
 use bevy_gantz_plyphon::{DspConfig, DspStatus, PlyphonPlugin};
 
-/// A headless app with the gantz plugins added in REVERSED order builds,
+/// A headless app with the gantz plugins added in reversed order builds,
 /// finishes and ticks without panicking, with the DSP resources present.
 #[test]
 fn plugin_order_is_insensitive() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
-    // Deliberately reversed: the DSP runtime before the core plugin.
+    // Reversed on purpose. The DSP runtime before the core plugin.
     app.add_plugins(PlyphonPlugin::new());
     app.add_plugins(GantzPlugin);
-    // The typed side (cache + builtin instances) is otherwise owned by
+    // The typed side, the cache and builtin instances, is otherwise owned by
     // `GantzEguiPlugin`, which this headless test does not add.
     app.init_resource::<bevy_gantz_egui::GraphCache>();
     app.init_resource::<bevy_gantz_egui::BuiltinNodes>();
