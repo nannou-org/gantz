@@ -1125,8 +1125,8 @@ fn test_graph_multi_output_expr() {
 //
 // Both effect nodes end up in the same basic block. The first one is not
 // last in the block, so the emitter destructures its outputs. With 0 outputs
-// this must be a no-op. It must not emit an invalid `(define-values ()
-// node-X)` that references an undefined binding.
+// this must be a no-op. It must not emit a binding that references an
+// undefined value.
 #[test]
 fn test_graph_zero_output_leaf_nodes() {
     /// A node with 1 input and 0 outputs. It is a pure side effect.

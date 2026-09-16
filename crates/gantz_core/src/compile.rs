@@ -28,9 +28,10 @@
 //! Nested graphs compile call-based. Each active-inlet variant becomes one
 //! `graph-fn-{path}-i{mask}`, called like a node fn. An entrypoint sourced
 //! inside a nested graph becomes a per-level fn. The fn threads the level's
-//! state and returns the outlet result. When the push reaches the outlets
-//! through branching, the result is a `(list branch-ix vals)` pair. The
-//! parent level continues from it as a pre-bound source.
+//! state and returns the outlet result. A stateful level fn returns
+//! `(list result state)`. When the push reaches the outlets through
+//! branching, the result is a `(list branch-ix vals)` pair. The parent level
+//! continues from it as a pre-bound source.
 //!
 //! Cycles are legal when they pass through a [`node::Delay`]. Ordering and
 //! reachability never propagate through a delay. Its value crosses between
@@ -111,8 +112,9 @@ pub struct Config {
     /// compiler itself, never in the compiled graph.
     ///
     /// On by default. Disable it as an optimisation. An internal compiler
-    /// error then surfaces further downstream as a confusing Steel evaluation
-    /// error instead of at lowering with a precise diagnosis.
+    /// error then surfaces further downstream, for example as a confusing
+    /// Steel evaluation error, instead of at lowering with a precise
+    /// diagnosis.
     pub validate_ir: bool,
     /// Emit the all-connected variant node fn for every node, not only the
     /// variants called by some lowered evaluation.

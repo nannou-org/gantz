@@ -297,7 +297,7 @@ pub fn remap_root(
     let mut remapped = steel::HashMap::new();
     for (key, val) in root_state.iter() {
         let &SteelVal::IntV(old) = key else {
-            // Non-index keys must not exist at the root. Keep them as-is.
+            // Non-index keys are not expected at the root. Keep them as-is.
             remapped = remapped.update(key.clone(), val.clone());
             continue;
         };

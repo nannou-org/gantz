@@ -170,13 +170,13 @@ pub struct CommittedEvent {
 /// Per-head VMs stored in a NonSend resource, keyed by entity because
 /// `Engine` is not `Send`.
 ///
-/// A head's VM owns its graph's runtime node state. Replace and branch move
-/// point a head at a different graph. They keep the VM and migrate its node
-/// state through the commits' node-identity mapping. See
+/// A head's VM owns its graph's runtime node state. When replace or branch
+/// move point a head at a different graph, they keep the VM and migrate its
+/// node state through the commits' node-identity mapping. See
 /// [`crate::vm::migrate_vm_state`]. They also reset
-/// [`crate::vm::CompiledInputs`] so `vm::sync` recompiles. In-place edits
-/// leave both untouched. The VM is dropped and re-initialized with default
-/// state only when no mapping can be derived.
+/// [`crate::vm::CompiledInputs`] so `vm::sync` recompiles. A same-graph move
+/// keeps the VM, its state and the memo. The VM is dropped and re-initialized
+/// with default state only when no mapping can be derived.
 #[derive(Default)]
 pub struct HeadVms(pub HashMap<Entity, Engine>);
 

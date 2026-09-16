@@ -196,7 +196,7 @@ pub fn conflict_strings(conflicts: &[ca::Conflict]) -> Vec<String> {
 ///
 /// There is one class. A merged-in [`crate::node::NamedRef`] that would form
 /// a reference cycle back to the edited graph. This mirrors the guard in
-/// [`crate::ops::paste`].
+/// [`crate::ops::paste`]. See [`crate::cycle`] for why a cycle is refused.
 pub fn merge_blockers(reg: &ca::Registry, ours: &ca::Head, merged: &DataGraph) -> Vec<String> {
     let ca::Head::Branch(editing) = ours else {
         // A detached commit head has no name, so it cannot be a cycle target.

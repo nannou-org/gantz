@@ -45,16 +45,16 @@ pub fn plyphon_param(name: impl Into<String>, default: f32, lag: f32) -> Param {
 /// Build a single-param DSP node's Steel `expr`.
 ///
 /// When the node's control input at `control_ix` is connected, a numeric
-/// incoming value is queued onto the param state's `pending` list, tagged
-/// with this evaluation's firing time from `(hash-ref %args 'time)`, and
-/// written to the param's current `value`. The audio driver drains `pending`
-/// each frame and schedules each `(time value)` ahead of the audio clock. A
-/// `tick!`-driven chain therefore animates the param sample-accurately rather
-/// than bunched at the frame boundary. `value` is the driver's immediate
-/// fallback for direct inspector edits. The expr always evaluates to
-/// `output`, the node's placeholder dsp output. That is `"state"` for a
-/// source like `~sinosc` and `"'()"` for a sink like `~out`. DSP nodes are
-/// otherwise Steel-inert.
+/// incoming value is queued onto the param state's `pending` list. The entry
+/// is tagged with this evaluation's firing time from `(hash-ref %args 'time)`.
+/// The value is also written to the param's current `value`. The audio driver
+/// drains `pending` each frame and schedules each `(time value)` ahead of the
+/// audio clock. A `tick!`-driven chain therefore animates the param
+/// sample-accurately rather than bunched at the frame boundary. `value` is
+/// the driver's immediate fallback for direct inspector edits. The expr
+/// always evaluates to `output`, the node's placeholder dsp output. That is
+/// `"state"` for a source like `~sinosc` and `"'()"` for a sink like `~out`.
+/// DSP nodes are otherwise Steel-inert.
 ///
 /// A non-empty list of 2-element numeric `(time value)` lists, the shape
 /// `pat/events->secs` emits, is queued as a pre-timestamped batch instead.

@@ -2,7 +2,7 @@
 //!
 //! Provides [`Env`], a borrowed view combining the content-addressed
 //! registry, the builtin palette, the app's node codec and the reified
-//! caches. The caches serve both as typed nodes.
+//! caches. The caches serve registry graphs and builtins as typed nodes.
 
 use crate::node::{NodeCodec, UiBuiltins};
 use gantz_ca as ca;

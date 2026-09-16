@@ -449,8 +449,8 @@ const GRAPH_TREE_ID: &str = "gantz-graph-tiles-tree";
 /// `TypeId` is stable across recompiles, whereas the `TypeId` of a type like
 /// `Tree<Pane>` changes whenever this crate is rebuilt. Storing the typed
 /// value would leave a stale copy behind in egui's per-type persisted map on
-/// every dev build, since egui never evicts entries of a type the running
-/// build no longer uses. The persisted memory would bloat without bound.
+/// every dev build. egui never evicts entries of a type the running build no
+/// longer uses. The persisted memory would bloat without bound.
 fn load_ron<T: serde::de::DeserializeOwned>(ctx: &egui::Context, id: egui::Id) -> Option<T> {
     let ron = ctx.memory_mut(|m| m.data.get_persisted::<String>(id))?;
     ron::from_str(&ron).ok()
@@ -3981,8 +3981,8 @@ mod tests {
     use super::*;
 
     /// The fixed sidebar width must be imposed on the sidebar, not the main
-    /// area, and the anchors must identify the sidebar as the column that
-    /// does not contain the graph scene.
+    /// area. The anchors must identify the sidebar as the column that does
+    /// not contain the graph scene.
     #[test]
     fn impose_sets_sidebar_width_on_left_column() {
         let mut tree = create_tree();

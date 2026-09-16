@@ -82,8 +82,9 @@ use crate::flatten::Flat;
 ///
 /// Every instance of the same child at the same inlet-width signature, outlet
 /// consumption mask and engine width shares one [`GraphTemplate`]. An
-/// unconnected inlet is part of the key, so the child bakes its silence as a
-/// constant. The outlet mask records which outlets are consumed downstream.
+/// unconnected inlet bakes as a constant in the child, so inlet connectivity
+/// is part of the key. The outlet mask records which outlets are consumed
+/// downstream.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct VariantKey {
     /// The referenced child graph's commit content address.

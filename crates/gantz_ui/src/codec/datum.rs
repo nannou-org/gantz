@@ -35,7 +35,8 @@ pub fn lower(datum: &Datum) -> SExpr {
 /// Raise an abstract value into a datum.
 ///
 /// Total. Identifiers and strings both become [`Datum::Str`]. `Other` never
-/// comes out of the encoder, but it becomes its description string.
+/// comes out of the encoder. It raises to its description string for
+/// completeness.
 pub fn raise(expr: &SExpr) -> Datum {
     match expr {
         SExpr::Ident(s) | SExpr::Str(s) => Datum::Str(s.clone()),

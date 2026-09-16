@@ -104,9 +104,9 @@ pub fn env<'a>(
 
 /// Bring the reified-graph cache up to date with the registry, best effort.
 ///
-/// Graphs that fail to reify are logged and remain cache misses that typed
-/// lookups degrade over. For example, an unknown tag from a domain not
-/// compiled in.
+/// Graphs that fail to reify, for example on an unknown tag from a domain not
+/// compiled in, are logged and remain cache misses that typed lookups degrade
+/// over.
 pub fn refresh_cache(reg: &Registry, cache: &mut GraphCache, codec: &NodeCodec) {
     let reify = |nd: &ca::NodeData| codec.reify_ui(nd).map(|inst| inst.node);
     for e in cache.0.ensure_all_with(reg, reify) {

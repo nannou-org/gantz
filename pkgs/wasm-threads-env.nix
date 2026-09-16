@@ -1,14 +1,15 @@
 # Build environment for cpal's AudioWorklet backend on wasm32. The worklet runs on a real audio
-# thread, which needs WASM threads. `-Z build-std` recompiles `std` with atomics, and the
-# linear memory is shared and imported so the worklet thread gets the same memory. Both are
-# nightly-only. Cargo excludes host build scripts when `--target` is set, so RUSTFLAGS applies
-# only to the wasm target. The `__tls_*` exports let wasm-bindgen's threading transform set up
-# per-thread state. The flags follow cpal's audioworklet-beep example. `pkgs/gantz-website.nix`
-# and the `gantz-web` dev shell share this file so the flags cannot drift.
+# thread, which needs WASM threads. `CARGO_UNSTABLE_BUILD_STD` sets `-Z build-std`, which
+# recompiles `std` with atomics. The linear memory is shared and imported so the worklet thread
+# gets the same memory. Both are nightly-only. Cargo excludes host build scripts when `--target`
+# is set, so RUSTFLAGS applies only to the wasm target. The `__tls_*` exports let wasm-bindgen's
+# threading transform set up per-thread state. Without them wasm-bindgen fails with
+# `failed to find __heap_base`. `pkgs/gantz-website.nix` and the `gantz-web` dev shell share this
+# file so the flags cannot drift. The flags follow cpal's audioworklet-beep example.
 { llvmPackages }:
 {
   RUSTFLAGS = builtins.concatStringsSep " " [
-    # SIMD128 vectorizes the per-sample DSP loops. Browsers that support threads support it too.
+    # SIMD128 vectorizes the per-sample DSP loops. Browser support for it is broad.
     "-C target-feature=+atomics,+simd128"
     "-C link-arg=--shared-memory"
     "-C link-arg=--max-memory=1073741824"
@@ -25,6 +26,7 @@
   # wasm. That needs the unwrapped clang, since the nix cc wrapper pins the
   # host target. Without it the build leaves the `ring_core_*` symbols as
   # dangling `env` imports and the browser fails to instantiate the module.
+  # The splash then hangs at 0%.
   CC_wasm32_unknown_unknown = "${llvmPackages.clang-unwrapped}/bin/clang";
   AR_wasm32_unknown_unknown = "${llvmPackages.llvm}/bin/llvm-ar";
 }

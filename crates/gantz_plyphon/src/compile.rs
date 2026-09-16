@@ -63,16 +63,16 @@ pub struct BusBinding {
     pub param: usize,
     /// `None` for a classic single-writer `~bus`, keyed by the effective bus
     /// node. `Some(port)` for an implicit endpoint bus. When several summands
-    /// feed a boundary, the `~bus` keeps only its cut role and each transitive
+    /// feed a boundary, the `~bus` keeps only its cut role. Each transitive
     /// endpoint gets its own single-writer bus, keyed by the endpoint source's
     /// path and output port. Readers emit one `In` per endpoint and sum them.
     pub output: Option<usize>,
 }
 
-/// A cross-region bus identity within [`derive_synthdefs`]. Either a classic
-/// single-writer `~bus` chain keyed by the effective bus node, or an implicit
-/// per-endpoint bus keyed by the endpoint source node and output port where
-/// the chain fans out. See [`BusBinding::output`].
+/// A cross-region bus identity within [`derive_synthdefs`]. A classic
+/// single-writer `~bus` chain is keyed by the effective bus node. An implicit
+/// per-endpoint bus is keyed by the endpoint source node and output port
+/// where the chain fans out. See [`BusBinding::output`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum RegionBus {
     Bus(NodeIx),
@@ -340,9 +340,9 @@ pub(crate) fn merged_pull_order<N: ToNodeDsp>(
 /// boundary fed directly by another boundary aliases it with no relay def
 /// and no extra latency. An unconnected boundary contributes no summand. A
 /// boundary fed by several summands keeps only its cut role. Each transitive
-/// endpoint writes its own implicit single-writer bus, see
-/// [`BusBinding::output`], and every reader emits one `In` per endpoint, then
-/// sums via [`sum_signals`] so mono broadcast reconciles on materialized
+/// endpoint writes its own implicit single-writer bus. See
+/// [`BusBinding::output`]. Every reader emits one `In` per endpoint and sums
+/// them via [`sum_signals`], so mono broadcast reconciles on materialized
 /// signals. A region is derived only if it feeds a sink transitively. Bus
 /// writes are lifted to audio rate via [`DspBuilder::ensure_audio`] and
 /// fade-gained via [`DspBuilder::push_fade_gain`]. Widths flow forward across

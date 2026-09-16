@@ -5,9 +5,9 @@
 //! `~bus`. The forms `(~out #:gain-lag s)`, `(~scopeout #:size n)`,
 //! `(~pack #:count n)`, `(~sum #:count n)` and `(~unpack #:count n)` carry
 //! the structural smoothing lag, ring length or socket count. Every
-//! [`crate::units`] descriptor-table keyword reads and writes the same way,
-//! bare as `~sinosc` or `~lpf`, or as
-//! `(~combc #:delay-lag s #:maxdelay v #:rate kr)` carrying the structural
+//! [`crate::units`] descriptor-table keyword reads and writes the same way.
+//! A bare form is `~sinosc` or `~lpf`. A full form such as
+//! `(~combc #:delay-lag s #:maxdelay v #:rate kr)` carries the structural
 //! per-param lags, init-only values and ugen rate. Param values live in VM
 //! state, not the node weight, so they are not serialized and never appear
 //! here. Compose it with [`gantz_format::CoreSugar`] and the other crates'

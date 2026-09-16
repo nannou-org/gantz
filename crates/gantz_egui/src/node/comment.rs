@@ -7,8 +7,9 @@ use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
-/// Buffered text edits stored in egui memory. See [`NodeUi`] for why edits
-/// flush to the node on focus loss rather than per keystroke.
+/// Buffered text edits stored in egui memory. Flushing per keystroke would
+/// mint a commit per keystroke, so the buffer flushes to the node on focus
+/// loss. See [`NodeUi`] for the `changed` contract.
 #[derive(Clone, Default)]
 struct CommentEditState {
     text_hash: u64,

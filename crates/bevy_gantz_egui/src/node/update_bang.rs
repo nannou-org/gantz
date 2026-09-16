@@ -126,9 +126,9 @@ pub fn entrypoints(
 /// Drives `update!` nodes every update, independent of GUI visibility.
 ///
 /// For each open head, walks the head's committed graph to find all
-/// `UpdateBang` nodes, sets their state to the current update delta time,
-/// and triggers a single push evaluation for all of them. The committed
-/// graph is read from the reified cache. It equals the working graph, see
+/// `UpdateBang` nodes. Sets their state to the current update delta time and
+/// triggers a single push evaluation for all of them. The committed graph is
+/// read from the reified cache. It equals the working graph, see
 /// [`bevy_gantz::head::WorkingGraph`].
 pub fn drive_update_bangs(
     time: Res<Time>,

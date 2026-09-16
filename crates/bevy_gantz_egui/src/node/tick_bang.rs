@@ -37,8 +37,8 @@ const MAX_CATCHUP_TICKS: f64 = 64.0;
 
 /// How a [`TickBang`]'s tick interval is specified.
 ///
-/// Stored in the user's chosen unit so it round-trips exactly. Deriving Hz
-/// from a stored duration would accumulate float error across edits.
+/// Stored in the user's chosen unit so it round-trips exactly. Deriving one
+/// unit from the other would accumulate float error across edits.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum Interval {
     /// A duration in seconds between ticks.

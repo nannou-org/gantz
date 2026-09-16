@@ -467,7 +467,7 @@ fn test_graph_nested_push_through_outlet() {
 }
 
 // A nested graph with multiple outlets returns a list. The outer graph
-// destructures it with `define-values`.
+// destructures it by index.
 //
 // INNER GRAPH:
 //
@@ -2418,12 +2418,9 @@ fn test_graph_nested_push_through_branch_with_constant_outlet() {
 
 // Multi-root branch-reconvergence ordering tests.
 //
-// A single entrypoint with two flow roots. One root branches and its arms
-// reconverge at a join that also consumes the other root's value. The join is
-// the branch's post-dominator yet depends on a second root. The emitter must
-// emit a producing component before a consuming one. It must also
-// destructure a terminal block's last node so its outputs are available
-// cross-component.
+// A single entrypoint with two push roots. One root branches and its arms
+// reconverge at a join that also consumes the other root's value. The join
+// must see the second root's output before it runs.
 
 // Compile and run `g` from two push sources in one entrypoint. Returns the VM
 // for state queries.
@@ -2477,9 +2474,8 @@ fn test_multiroot_branch_join_external_pred() {
     assert_eq!(build(1), Some(119)); // arm 1: 99 + 20
 }
 
-// The same logical graph, but the predecessor's nodes are added first. So the
-// topological ordering linearizes `int(20)` ahead of the branch within a
-// single component. This guards the linearized form.
+// The predecessor's nodes have lower ids, so `int(20)` lowers ahead of the
+// branch. This guards that ordering.
 #[test]
 fn test_multiroot_branch_join_external_pred_reversed() {
     let build = |sel: i32| {

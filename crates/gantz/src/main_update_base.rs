@@ -91,6 +91,9 @@ fn main() {
 fn log_plugin() -> bevy::log::LogPlugin {
     bevy::log::LogPlugin {
         custom_layer: move |app| {
+            // `get_resource_or_init` shares the instance with
+            // `GantzEguiPlugin`'s `init_resource`, so plugin order does not
+            // matter.
             let capture = app.world_mut().get_resource_or_init::<TraceCapture>();
             Some(Box::new(capture.0.clone().layer()))
         },

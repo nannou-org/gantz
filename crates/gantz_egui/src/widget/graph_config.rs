@@ -34,7 +34,7 @@ pub struct GraphConfigResponse {
     pub demo_changed: Option<Option<String>>,
     /// The "Reset" button was clicked for a base graph.
     pub reset_base_graph: bool,
-    /// The graph's description was edited and committed. An empty string
+    /// The graph's description was committed on focus loss. An empty string
     /// clears the description.
     pub description_changed: Option<String>,
     /// A merge candidate was chosen from the merge row.

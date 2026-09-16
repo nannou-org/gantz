@@ -511,7 +511,7 @@ pub fn layout(
         return Default::default();
     }
     // Describe each node's socket count and padding and each edge's actual
-    // source and destination socket so the socket-aware layout can order
+    // source and destination socket. The socket-aware layout can then order
     // sockets and minimise edge crossings, matching how the nodes render.
     // Nodes reify transiently through the codec. An unknown tag falls back to
     // the placeholder's edge-derived socket counts.
@@ -955,10 +955,9 @@ fn nodes(
 
         // Return the instance to the cache. Erase it back into the weight only
         // when a response marked a CA-affecting change. See the `changed`
-        // contract on `NodeUi`.
-        // The entry's witness updates in the same breath, so the cache hits
-        // exactly while the stored weight is untouched. Non-CA state lives in
-        // VM or egui memory by contract.
+        // contract on `NodeUi`. The entry's witness updates in the same breath,
+        // so the cache hits exactly while the stored weight is untouched.
+        // Non-CA state lives in VM or egui memory by contract.
         if let Some(mut entry) = instance {
             if node_changed {
                 *changed = true;
@@ -1231,10 +1230,11 @@ const STRAND_CAP: usize = 4;
 /// fringe of the base colour beside each notch.
 const NOTCH_COVER: f32 = 1.0;
 
-/// The wrap stripes that mark a bundle wider than [`STRAND_CAP`]. Their
-/// spacing along the edge, their total overshoot of the band split across
-/// both sides so it reads as wrapping around, and their lean off
-/// perpendicular in radians as a forward diagonal. All in graph units.
+/// The wrap stripes that mark a bundle wider than [`STRAND_CAP`].
+/// `WRAP_SPACING` is their spacing along the edge. `WRAP_OVERHANG` is their
+/// total overshoot of the band, split across both sides so it reads as
+/// wrapping around. `WRAP_LEAN` is their lean off perpendicular in radians, a
+/// forward diagonal. All in graph units.
 const WRAP_SPACING: f32 = 7.0;
 const WRAP_OVERHANG: f32 = 4.0;
 const WRAP_LEAN: f32 = 0.7;

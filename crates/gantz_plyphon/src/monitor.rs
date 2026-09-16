@@ -26,10 +26,10 @@ use gantz_core::steel::steel_vm::engine::Engine;
 /// list of numbers.
 ///
 /// Each ring is rebuilt in a single `collect` rather than element by element.
-/// Steel's list is an unrolled persistent list whose `push_back` is O(n), so
-/// appending a whole frame's samples one at a time is O(frame x ring) on the
-/// main thread every frame. When the frame alone fills a ring, the prior ring
-/// is dropped without being read.
+/// Steel's list is an unrolled persistent list whose `push_back` is O(n).
+/// Appending a whole frame's samples one at a time is therefore
+/// O(frame x ring) on the main thread every frame. When the frame alone
+/// fills a ring, the prior ring is dropped without being read.
 ///
 /// Any trailing partial frame in `values` is dropped. plyphon streams whole
 /// frames, so this is normally a no-op, but a misbehaving producer must not

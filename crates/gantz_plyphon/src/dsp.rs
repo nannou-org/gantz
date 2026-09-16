@@ -82,7 +82,7 @@ impl Signal {
     }
 
     /// Concatenate channel groups into one wide group whose width is the sum
-    /// of the input widths.
+    /// of the input widths. An empty iterator concatenates to mono silence.
     pub fn concat(signals: impl IntoIterator<Item = Signal>) -> Self {
         signals.into_iter().flat_map(|s| s.0).collect()
     }
@@ -305,9 +305,9 @@ pub struct ScopeOutBinding {
     pub bufnum_param: usize,
 }
 
-/// Records a `~playbuf` node's asset reference, so the audio driver can make
-/// the referenced [`gantz_ca::ContentAddr`] resident, allocate a bufnum,
-/// install the buffer, and set the node's `bufnum` and `rate` params after
+/// Records a `~playbuf` node's asset reference. The audio driver makes the
+/// referenced [`gantz_ca::ContentAddr`] resident, allocates a bufnum,
+/// installs the buffer, and sets the node's `bufnum` and `rate` params after
 /// spawning.
 ///
 /// This is the buffer analogue of [`ScopeOutBinding`]. Where a scope stream

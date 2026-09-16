@@ -107,7 +107,7 @@ pub struct InboundAction {
     /// Per-origin sequence number, carried for debugging. Values converge
     /// via last-write-wins and evals apply per delivery, so no seq-based
     /// stale-drop is needed. iroh-gossip dedups a broadcast, so duplicates
-    /// are absent.
+    /// are effectively absent.
     pub seq: u64,
     /// Sender wall-clock milliseconds since the epoch.
     pub timestamp: u64,

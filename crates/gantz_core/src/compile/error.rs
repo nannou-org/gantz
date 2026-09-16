@@ -138,8 +138,8 @@ pub enum ModuleError {
     /// The lowering produced IR violating the compiler's own invariants.
     /// This is a bug in gantz, not in the compiled graph. Validation runs on
     /// every lowering unless [`Config::validate_ir`][super::Config] disables
-    /// it. The bug then surfaces as a compile error rather than malformed
-    /// Steel.
+    /// it. With validation on, the bug surfaces as a compile error rather
+    /// than malformed Steel.
     #[error("internal compiler error: invalid IR for {}: {detail}", level(path))]
     InvalidIr { path: Vec<node::Id>, detail: String },
     /// A node declared a required Steel module under a name that cannot be

@@ -11,10 +11,10 @@
 //!   deterministic adoption, [`SyncStep::Adopt`]. No merge commit is minted
 //!   for twin commits that differ only in timestamp. Truly diverged graphs
 //!   are merged in canonical orientation, [`SyncStep::Merge`]. Every peer
-//!   merges the same `(first, second)` pair. The merged graph's node order
-//!   depends on orientation, see [`MergeOutcome::graph`], so the merged
-//!   graph and the resulting merge commit are identical on every peer. See
-//!   [`Registry::commit_merge_canonical`].
+//!   merges the same `(first, second)` pair, so the merged graph and the
+//!   resulting merge commit are identical on every peer. The merged graph's
+//!   node order depends on orientation. See [`MergeOutcome::graph`]. See
+//!   also [`Registry::commit_merge_canonical`].
 //! - [`Staged`] validates fetched commits and graphs against their claimed
 //!   addresses before they may touch a registry. Graph content is recomputed
 //!   and rejected on mismatch. See [`verify_graph`]. This is the

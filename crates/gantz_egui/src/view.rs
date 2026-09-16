@@ -3,7 +3,7 @@
 //! The persisted and runtime currency for a graph's view is [`SceneView`], a
 //! [`Camera`] plus a node [`Layout`](egui_graph::Layout). It is viewport
 //! independent. The camera stores a centre and a zoom factor in screen points
-//! per graph unit rather than a visible rectangle, so the zoom level is
+//! per graph unit rather than a visible rectangle. The zoom level is therefore
 //! preserved across sessions and window sizes. An [`egui_graph::View`] has a
 //! viewport-dependent `scene_rect`. It is materialised from a `SceneView` only
 //! at the `egui_graph` API boundary, where the live viewport size is known.

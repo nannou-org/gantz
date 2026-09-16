@@ -123,11 +123,12 @@ impl Serialize for ExtMap<'_> {
     }
 }
 
-// Hand-written serde keeps the ext-free wire form a bare address. That is
-// `(("hex"))` in RON and a string datum in the `Datum` codec. An ext-carrying
-// reference wraps a map of `addr` and `ext` in the same newtype, so both
-// forms parse through one entry point. RON is not self-describing at the top
-// level. The newtype is where its parser branches.
+// Hand-written serde keeps the ext-free wire form identical to the original
+// newtype derive, so stored references keep their content addresses. That
+// form is a bare address, `(("hex"))` in RON and a string datum in the
+// `Datum` codec. An ext-carrying reference wraps a map of `addr` and `ext` in
+// the same newtype, so both forms parse through one entry point. RON is not
+// self-describing at the top level. The newtype is where its parser branches.
 impl Serialize for Ref {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         if self.ext.is_empty() {

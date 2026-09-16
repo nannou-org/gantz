@@ -115,8 +115,9 @@ pub fn load_egui_memory(storage: &impl Load, ctx: &egui::Context) {
             // egui's `zoom_factor` is the display-driven scale set by bevy_egui
             // from `native_pixels_per_point`, not a user preference. Persisted
             // memory can carry a stale value from older bevy_egui, which
-            // double-applies on top of `native_pixels_per_point` and
-            // over-scales the UI on HiDPI displays.
+            // folded the display scale into egui's zoom. Restoring that value
+            // would double-apply on top of `native_pixels_per_point` and
+            // over-scale the UI on HiDPI displays.
             let zoom_factor = m.options.zoom_factor;
             *m = memory;
             m.options.zoom_factor = zoom_factor;

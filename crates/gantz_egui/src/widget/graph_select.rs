@@ -476,7 +476,7 @@ pub(crate) fn is_demo(name: &Name) -> bool {
 /// Ctrl+click toggles the head. It closes the head if open, otherwise opens it
 /// as a new tab. A plain click replaces the focused head. When the focused
 /// head is an unnamed commit, the clicked head opens as a new tab instead, or
-/// is focused if already open, so the unnamed graph is not lost.
+/// is focused if already open. The unnamed graph is then not lost.
 pub(crate) fn click_head(
     ui: &egui::Ui,
     heads: &[gantz_ca::Head],

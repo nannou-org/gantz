@@ -46,9 +46,9 @@ type TestGraph = petgraph::graph::DiGraph<Box<dyn DebugNode>, Edge, usize>;
 type Nested = node::graph::Graph<Box<dyn DebugNode>>;
 
 // A graph that exercises both toggles. A reachable push chain runs through a
-// nested graph. The `mul` node (id 4) and the stateful `number` node (id 5)
-// are unreachable at the root level. A `mul` node (id 2) is unreachable
-// inside the nested graph.
+// nested graph. The `mul` node with id 4 and the stateful `number` node with
+// id 5 are unreachable at the root level. The `mul` node with id 2 is
+// unreachable inside the nested graph.
 //
 //    --------
 //    | push |                      // id 0

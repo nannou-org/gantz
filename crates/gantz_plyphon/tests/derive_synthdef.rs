@@ -533,9 +533,9 @@ fn derive_error_displays_readably() {
 #[test]
 fn scopeout_joins_output_in_one_def() {
     // `~sinosc -> ~out` and `~sinosc -> ~scopeout`. The tap is a second sink that
-    // shares the sine's chain, so one synthdef carries SinOsc, Out and a ScopeOut
-    // with a single monitor binding at the tap's node path. The shared SinOsc is
-    // emitted once.
+    // shares the sine's chain. One synthdef therefore carries SinOsc, Out and a
+    // ScopeOut with a single monitor binding at the tap's node path. The shared
+    // SinOsc is emitted once.
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
     let o = g.add_node(N::Out(Out::default()));

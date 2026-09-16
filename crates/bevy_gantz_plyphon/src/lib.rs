@@ -199,7 +199,9 @@ impl Plugin for PlyphonPlugin {
         // The Settings > DSP tab. The tab's emitted `Config` payloads dispatch
         // into a buffered message. `sync_dsp_settings` applies it and
         // re-snapshots it into the tab. `provide_dsp_ref_ext` provides the
-        // `NamedRef` inspector's DSP `inline` toggle per frame.
+        // `NamedRef` inspector's DSP `inline` toggle per frame. The
+        // `init_resource` calls are idempotent, so the providers stay valid
+        // with or without `GantzEguiPlugin`.
         app.init_resource::<SettingsTabs>()
             .init_resource::<ExtPanes>()
             .init_resource::<RefExtUis>()
@@ -284,8 +286,8 @@ struct DspEngine {
     device: String,
     /// The output sample rate (Hz).
     sample_rate: f64,
-    /// The cpal output stream. Held to keep audio running. Paused and played on
-    /// mute.
+    /// The cpal output stream. Held to keep audio running. Paused on mute and
+    /// played on unmute.
     stream: cpal::Stream,
     /// The audio callback's epoch anchor on the web, as `f64` bits. [`EvalEpoch`]
     /// seconds minus the stream's `AudioContext.currentTime` seconds at the same
@@ -1035,9 +1037,9 @@ fn buffer_blobs(reg: &ca::Registry) -> &BufferBlobs {
 /// survives exactly. A changed region is crossfade-replaced. A disappeared
 /// region fades out. Every signature is computed on the final def. Bus
 /// indices, `ScopeOut` bufnums and fade defaults are all no-lag control params
-/// or baked defaults excluded from `structural_sig`, so a re-derive of the
-/// same graph never spuriously respawns and the driver never mutates a def
-/// copy.
+/// or baked defaults excluded from `structural_sig`. A re-derive of the same
+/// graph therefore never spuriously respawns, and the driver never mutates a
+/// def copy.
 ///
 /// A replacement spawns silent, with fade defaults patched to `0.0`. Defaults
 /// seed both the control wire and the lag state. It ramps its fades to unity
@@ -1657,7 +1659,8 @@ fn output_host() -> cpal::Host {
 fn build_dsp_engine(epoch: EvalEpoch, unit_registrars: &[UnitRegistrar]) -> Option<DspEngine> {
     let host = output_host();
     let device = host.default_output_device()?;
-    // cpal's `Device` `Display` is its name.
+    // cpal's `Device` `Display` is its name. cpal 0.18 has no `Device::name`,
+    // so `Display` is used.
     let device_name = device.to_string();
     let supported = device.default_output_config().ok()?;
     let sample_format = supported.sample_format();

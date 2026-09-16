@@ -1,7 +1,7 @@
 # Trunk config for the gantz website. pkgs/gantz-website.nix and local `trunk serve` from the
 # `gantz-web` dev shell both use it. A post-build hook prepends a TextEncoder/TextDecoder
 # polyfill to the wasm-bindgen glue. cpal loads that glue on the audio worklet thread, whose
-# scope lacks them in Firefox.
+# scope lacks them. Firefox is the known case.
 [build]
 target = "crates/gantz/web/index.html"
 public_url = "./"

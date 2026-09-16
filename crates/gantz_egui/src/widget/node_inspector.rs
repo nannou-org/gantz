@@ -316,11 +316,13 @@ struct SocketDocEditState {
 ///
 /// `type` is a short single-line field. `desc.` is multiline and word-wraps,
 /// with its row sized to fit the wrapped text. Edits are buffered in egui
-/// memory and written back trimmed only on commit. See [`NodeUi`] for why
-/// edits commit on focus loss. Enter also commits. In the description,
-/// Cmd/Ctrl+Enter inserts a newline. `id_salt` scopes the edit state to the
-/// node. Returns whether the commit changed `ty` or `description`, so it is
-/// `true` only on the flush frame that writes a new value.
+/// memory and written back trimmed only on commit. Writing back per keystroke
+/// would mint a commit per keystroke, so edits commit on focus loss. See
+/// [`NodeUi`] for the `changed` contract. Enter also commits. In the
+/// description, Cmd/Ctrl+Enter inserts a newline. `id_salt` scopes the edit
+/// state to the node. Returns whether the commit changed `ty` or
+/// `description`, so it is `true` only on the flush frame that writes a new
+/// value.
 pub(crate) fn socket_doc_rows(
     body: &mut egui_extras::TableBody,
     id_salt: impl std::hash::Hash,

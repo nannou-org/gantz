@@ -113,8 +113,8 @@ pub(crate) fn join_name(join: JoinId) -> String {
 /// Parse an emitted identifier back to the entity it names.
 ///
 /// Returns `None` for identifiers the compiler did not generate from a graph
-/// entity. That includes params, temporaries like `%vals-*` and user
-/// identifiers.
+/// entity. That includes params, temporaries like `%vals-*` and `%lvl-*`,
+/// and user identifiers.
 pub fn parse(name: &str) -> Option<Name> {
     if let Some(rest) = name.strip_prefix("node-fn-") {
         let mut segs = rest.split('-');

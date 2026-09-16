@@ -12,9 +12,9 @@ use crate::instance::{BusKey, ResolvedBus, ResolvedPart};
 /// parts the audio driver spawns, in part order.
 ///
 /// Each part lists the def name and identity, its params with bound node
-/// paths, its units, its monitors, the buses it writes and reads, and the
-/// width and rate each dsp output port carried at derive time, see
-/// [`ResolvedPart::shapes`].
+/// paths, its units and its monitors. It also lists the buses it writes and
+/// reads, and the width and rate each dsp output port carried at derive time.
+/// See [`ResolvedPart::shapes`].
 pub fn describe_parts(parts: &[ResolvedPart]) -> String {
     let mut s = String::new();
     for (i, part) in parts.iter().enumerate() {
