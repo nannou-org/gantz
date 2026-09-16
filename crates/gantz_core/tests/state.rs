@@ -17,9 +17,8 @@ fn node_push() -> node::Push<node::Expr> {
     node::expr("'()").unwrap().with_push_eval()
 }
 
-// A simple counter node.
-//
-// Increases its `u32` state by `1` each time it receives an input of any type.
+// A counter node. It increases its `u32` state by `1` on every input of any
+// type.
 fn node_counter() -> node::State<node::Expr, Counter> {
     let expr = r#"
         (begin
@@ -31,8 +30,8 @@ fn node_counter() -> node::State<node::Expr, Counter> {
     node::expr(expr).unwrap().with_state_type::<Counter>()
 }
 
-// A counter driven by a nested graph's inlet (input `$x`) rather than `$push`,
-// so it can live inside a nested graph.
+// A counter driven by the `$x` input instead of `$push`, so it can live
+// inside a nested graph.
 fn node_inlet_counter() -> node::State<node::Expr, Counter> {
     let expr = r#"
         (begin
@@ -65,16 +64,14 @@ impl NodeState for Counter {
     }
 }
 
-// Helper trait for debugging the graph.
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
-// A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }
 
-// A simple as possible test graph for testing state.
+// The simplest test graph for state.
 //
 //    --------
 //    | push | // push_eval
@@ -84,38 +81,31 @@ fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
 //    | counter |
 //    -+---------
 //
-// The push evaluation enabled `push` node is called three times once loaded.
+// The test calls the `push` node's eval fn three times once loaded.
 #[test]
 fn test_graph_with_counter() {
     let mut g = petgraph::graph::DiGraph::new();
 
-    // Instantiate the nodes.
     let push = node_push();
     let counter = node_counter();
 
-    // Add the nodes to the graph.
     let push = g.add_node(Box::new(push) as Box<dyn DebugNode>);
     let counter = g.add_node(Box::new(counter) as Box<_>);
     g.add_edge(push, counter, Edge::from((0, 0)));
 
-    // Generate the module, which should have just one top-level expr for `push`.
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
 
-    // Initialise the VM.
     let mut vm = Engine::new_base();
 
-    // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
-    // Initialise the eval fn.
     for f in module {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Call the push eval fn 3 times to increment the counter thrice.
     let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
     let fn_name = entry_fn_name(&ep.id());
     for _ in 0..3 {
@@ -123,31 +113,28 @@ fn test_graph_with_counter() {
             .unwrap();
     }
 
-    // Check the counter was incremented thrice.
     let res = node::state::extract::<Counter>(&vm, &[counter.index()])
         .unwrap()
         .unwrap();
     assert_eq!(res, Counter(3));
 
-    // Set the value back to `0`.
     node::state::update(&mut vm, &[counter.index()], Counter(0)).unwrap();
     let res = node::state::extract::<Counter>(&vm, &[counter.index()])
         .unwrap()
         .unwrap();
     assert_eq!(res, Counter(0));
 
-    // Check that calling the function again works based on the new state.
+    // The next call increments from the new state, so the value is 1.
     vm.call_function_by_name_with_args(&fn_name, vec![])
         .unwrap();
 
-    // The value should now be 1.
     let res = node::state::extract::<Counter>(&vm, &[counter.index()])
         .unwrap()
         .unwrap();
     assert_eq!(res, Counter(1));
 }
 
-// A slightly more complex test of state.
+// A larger test of state.
 //
 //    --------    --------    --------
 //    | push |    | push |    | push |
@@ -174,12 +161,10 @@ fn test_graph_with_counter() {
 fn test_graph_with_counters() {
     let mut g = petgraph::graph::DiGraph::new();
 
-    // Instantiate the nodes.
     let push_a = node_push();
     let push_b = node_push();
     let push_c = node_push();
 
-    // Add the nodes to the project.
     let p_a = g.add_node(Box::new(push_a) as Box<dyn DebugNode>);
     let p_b = g.add_node(Box::new(push_b) as Box<_>);
     let p_c = g.add_node(Box::new(push_c) as Box<_>);
@@ -192,24 +177,19 @@ fn test_graph_with_counters() {
     g.add_edge(c_b, c_c, Edge::from((0, 0)));
     g.add_edge(p_c, c_c, Edge::from((0, 0)));
 
-    // Generate the module, which should have one expr for each `push`.
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
 
-    // Initialise the VM.
     let mut vm = Engine::new_base();
 
-    // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
-    // Initialise the eval fns.
     for f in &module {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Call a, b then c.
     let ep_a = entrypoint::push(vec![p_a.index()], g[p_a].n_outputs(ctx) as u8);
     let ep_b = entrypoint::push(vec![p_b.index()], g[p_b].n_outputs(ctx) as u8);
     let ep_c = entrypoint::push(vec![p_c.index()], g[p_c].n_outputs(ctx) as u8);
@@ -246,7 +226,7 @@ fn move_value_moves_nested_subtree() {
         Some(Counter(7)),
     );
 
-    // Move node 5 -> 2; its child state must follow under the new key.
+    // Move node 5 to 2. Its child state must follow under the new key.
     node::state::move_value(&mut vm, &[5], &[2]).unwrap();
     assert_eq!(
         node::state::extract::<Counter>(&vm, &[2, 3]).unwrap(),
@@ -259,16 +239,17 @@ fn move_value_moves_nested_subtree() {
     assert!(node::state::extract_value(&vm, &[1]).unwrap().is_none());
 }
 
-// A plain `petgraph::Graph` swap-removes: the former-last node adopts the removed
-// index. The GUI removal migration (`remove_value` for the deleted node, then
-// `move_value` for the swapped node) must carry the swapped stateful node's
-// accumulated state to its new index, so the recompiled code - which reads state
-// by the new index - still finds it.
+// A plain `petgraph::Graph` swap-removes. The former-last node adopts the
+// removed index. The GUI removal migration calls `remove_value` for the deleted
+// node and then `move_value` for the swapped node. It must carry the swapped
+// stateful node's state to its new index. The recompiled code reads state by
+// the new index.
 #[test]
 fn swap_remove_migrates_stateful_node_state() {
     use gantz_core::node::graph::Graph;
 
-    // 0: standalone push (stateless), 1: push_b, 2: counter_b driven by push_b.
+    // Index 0 is a stateless standalone push. Index 1 is push_b. Index 2 is
+    // counter_b, driven by push_b.
     let mut g: Graph<Box<dyn DebugNode>> = Graph::default();
     let p_a = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let p_b = g.add_node(Box::new(node_push()) as Box<_>);
@@ -278,7 +259,7 @@ fn swap_remove_migrates_stateful_node_state() {
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
 
-    // (Re)compile + register + load the eval fns for the current graph shape.
+    // Compile, register and load the eval fns for the current graph shape.
     let load = |g: &Graph<Box<dyn DebugNode>>, vm: &mut Engine| {
         gantz_core::graph::register(&no_lookup, g, &[], vm);
         let eps = push_pull_entrypoints(&no_lookup, g);
@@ -294,7 +275,7 @@ fn swap_remove_migrates_stateful_node_state() {
             .unwrap();
     };
 
-    // Push b twice -> counter_b (index 2) == 2.
+    // Push b twice, so counter_b at index 2 reads 2.
     load(&g, &mut vm);
     push(&g, &mut vm, p_b.index());
     push(&g, &mut vm, p_b.index());
@@ -310,12 +291,12 @@ fn swap_remove_migrates_stateful_node_state() {
     g.remove_node(p_a);
     node::state::move_value(&mut vm, &[last], &[p_a.index()]).unwrap();
 
-    // counter_b is now at index 0, p_b stayed at index 1. Recompile + re-register.
+    // counter_b is now at index 0 and p_b stayed at index 1.
     let c_b = node::graph::NodeIx::new(0);
     let p_b = node::graph::NodeIx::new(1);
     load(&g, &mut vm);
 
-    // The migrated state survived the move; pushing b once more -> 3.
+    // The migrated state survived the move. One more push of b gives 3.
     assert_eq!(
         node::state::extract::<Counter>(&vm, &[c_b.index()]).unwrap(),
         Some(Counter(2)),
@@ -327,21 +308,19 @@ fn swap_remove_migrates_stateful_node_state() {
     );
 }
 
-// Manual regression check for #266: a stateful node must not leak memory per
-// evaluation. Drives one over a *single* persistent `Engine`, sampling RSS, and
-// asserts it stays bounded once warmed up.
+// A stateful node must not leak memory per evaluation. The test drives one
+// over a single persistent `Engine`, samples RSS, and asserts it stays bounded
+// once warmed up.
 //
-// The leak was a steel 0.7.0 bug: the mutated+captured `graph-state` local
-// (threaded by `compile::emit`) was heap-boxed via an `ALLOC` path whose box
-// is never reclaimed, so every evaluation leaked ~0.8 KB and RSS climbed
-// unbounded (1e6 pushes: 21 -> 718 MB). steel >=0.8 compiles that local to a
-// GC-managed box the collector reclaims, so RSS plateaus (~65 MB, flat).
+// The risk is the mutated and captured `graph-state` local that
+// `compile::emit` threads through the code. Steel must compile it to a
+// GC-managed box that the collector reclaims, so that RSS plateaus.
 //
-// `#[ignore]`d, so it is opt-in rather than part of the default suite, for two
-// reasons: the only available signal is process RSS (`/proc/self/statm`), which
-// is Linux-only and would conflate this graph's footprint with whatever else
-// the shared test process is doing; and it drives ~1e6 VM calls. steel exposes
-// no public per-engine heap/allocation count to measure instead. Run with:
+// The test is `#[ignore]`d, so it is opt-in. The only available signal is
+// process RSS from `/proc/self/statm`. That is Linux-only and conflates this
+// graph's footprint with the rest of the shared test process. The test also
+// drives about 1e6 VM calls. Steel exposes no public per-engine allocation
+// count to measure instead. Run with:
 //   cargo test -p gantz_core --test state -- --ignored --nocapture leak
 #[cfg(target_os = "linux")]
 #[test]
@@ -372,10 +351,10 @@ fn stateful_eval_does_not_leak() {
     let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
     let fn_name = entry_fn_name(&ep.id());
 
-    // Measure RSS growth over the run *after* a warmup, so the no-leak heap's
-    // initial ramp (~100k pushes) isn't counted. A fixed leak adds ~0.8 KB per
-    // push - tens of MB over the window - so growth beyond `MAX_GROWTH` (well
-    // above any allocator noise) means the leak is back.
+    // Measure RSS growth after a warmup, so the initial heap ramp of about
+    // 100k pushes is not counted. A leak adds about 0.8 KB per push, which is
+    // tens of MB over the window. So growth beyond `MAX_GROWTH` means a leak.
+    // The limit sits well above allocator noise.
     const PUSHES: usize = 1_000_000;
     const SAMPLE: usize = 100_000;
     const WARMUP: usize = 2 * SAMPLE;
@@ -408,18 +387,18 @@ fn stateful_eval_does_not_leak() {
     );
 }
 
-// Two `Ref`s to the *same* nested graph commit, at different positions in the
+// Two `Ref`s to the same nested graph commit, at different positions in the
 // parent, must keep independent runtime state. State is keyed by the ref's
-// positional path (`graph-fn-{path}` + a per-path state slot), not by the
-// shared graph's identity - so a shared definition still yields per-instance
-// state, exactly as the old inline `GraphNode` (a separate copy) did.
+// positional path through `graph-fn-{path}` and a per-path state slot, not by
+// the shared graph's identity. So a shared definition still yields
+// per-instance state.
 #[test]
 fn nested_ref_instances_have_independent_state() {
     use gantz_core::node::Ref;
     type Nested = node::graph::Graph<Box<dyn DebugNode>>;
 
-    // Nested graph: inlet -> counter -> outlet. Each evaluation increments the
-    // counter's state.
+    // The nested graph chains inlet, counter and outlet. Each evaluation
+    // increments the counter's state.
     let mut inner = Nested::default();
     let i = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
     let c = inner.add_node(Box::new(node_inlet_counter()) as Box<_>);
@@ -452,7 +431,8 @@ fn nested_ref_instances_have_independent_state() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Each push evaluates both refs, incrementing each counter once; push twice.
+    // Each push evaluates both refs and increments each counter once. Push
+    // twice.
     let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
     let fn_name = entry_fn_name(&ep.id());
     for _ in 0..2 {
@@ -460,7 +440,7 @@ fn nested_ref_instances_have_independent_state() {
             .unwrap();
     }
 
-    // Independent state: each instance counted 2 (a shared slot would read 4).
+    // Each instance counted 2. A shared slot would read 4.
     let s1 = node::state::extract::<Counter>(&vm, &[ref1.index(), counter_ix])
         .unwrap()
         .unwrap();

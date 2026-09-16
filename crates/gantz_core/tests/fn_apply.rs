@@ -1,4 +1,4 @@
-// Tests for the Fn and Apply nodes - first-class functions in gantz.
+// Tests for the Fn and Apply nodes. They provide first-class functions in gantz.
 
 use gantz_core::compile::{entry_fn_name, entrypoint, push_pull_entrypoints};
 use gantz_core::node::{self, Apply, Fn, Node, Ref, WithPullEval, graph};
@@ -24,11 +24,10 @@ fn node_assert_eq() -> node::expr::Expr {
     node::expr("(assert! (equal? $l $r))").unwrap()
 }
 
-// Helper trait for debugging
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
-// Test that Fn can wrap the identity function and Apply can call it
+// Fn wraps the identity function and Apply calls it.
 //
 //    --------
 //    | bang |
@@ -54,23 +53,20 @@ impl<T> DebugNode for T where T: Debug + Node {}
 fn test_fn_apply_identity() {
     let mut g = petgraph::graph::DiGraph::new();
 
-    // Setup the node registry as a HashMap.
     let mut nodes: HashMap<gantz_ca::ContentAddr, Box<dyn DebugNode>> = HashMap::new();
 
-    // Just add the identity node, registered under its erased (data-layer)
-    // content address - the scheme all registry addresses use.
+    // Register the identity node under its erased content address. All
+    // registry addresses use the data-layer scheme.
     let id = gantz_core::node::Identity;
     let id_ca = gantz_core::data::erase_node_typed(&id)
         .unwrap()
         .content_addr();
     nodes.insert(id_ca, Box::new(id) as Box<dyn DebugNode>);
 
-    // Create closure for node lookup.
     let get_node = |ca: &gantz_ca::ContentAddr| -> Option<&dyn Node> {
         nodes.get(ca).map(|b| &**b as &dyn Node)
     };
 
-    // Create nodes
     let bang = node_bang();
     let fn_node = Fn::new(Ref::new(id_ca));
     let apply_node = Apply;
@@ -79,7 +75,6 @@ fn test_fn_apply_identity() {
     let expected = node_int(42);
     let assert_eq = node_assert_eq().with_pull_eval();
 
-    // Add nodes to graph
     let bang = g.add_node(Box::new(bang) as Box<dyn DebugNode>);
     let fn_node = g.add_node(Box::new(fn_node) as Box<_>);
     let apply_node = g.add_node(Box::new(apply_node) as Box<_>);
@@ -88,46 +83,39 @@ fn test_fn_apply_identity() {
     let expected = g.add_node(Box::new(expected) as Box<_>);
     let assert_eq = g.add_node(Box::new(assert_eq) as Box<_>);
 
-    // Bang triggers fn to emit lambda.
+    // The bang triggers fn to emit the lambda.
     g.add_edge(bang, fn_node, Edge::from((0, 0)));
-    // Fn output (lambda) goes to apply's function input.
+    // The lambda goes to apply's function input.
     g.add_edge(fn_node, apply_node, Edge::from((0, 0)));
-    // Value goes to list to wrap it.
     g.add_edge(value, list, Edge::from((0, 0)));
-    // List goes to apply's argument input.
+    // The list goes to apply's argument input.
     g.add_edge(list, apply_node, Edge::from((0, 1)));
-    // Apply output goes to assert_eq.
     g.add_edge(apply_node, assert_eq, Edge::from((0, 0)));
-    // Expected value goes to assert_eq.
     g.add_edge(expected, assert_eq, Edge::from((0, 1)));
 
-    // Generate the module.
     let ctx = node::MetaCtx::new(&get_node);
     let eps = push_pull_entrypoints(&get_node, &g);
     let module = gantz_core::compile::module(&get_node, &g, &eps, &Default::default()).unwrap();
 
-    // Create and setup VM.
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&get_node, &g, &[], &mut vm);
 
-    // Register all functions
     for expr in module {
         vm.run(expr.to_pretty(80)).unwrap();
     }
 
-    // Execute pull evaluation from assert_eq
     let ep = entrypoint::pull(vec![assert_eq.index()], g[assert_eq].n_inputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
 
-// Test that Fn can wrap a graph node (not just a primitive) and Apply can call it.
-// This tests that the NodeFns visitor correctly recurses into the graph via Fn's
-// visit() delegation to generate the nested node functions.
+// Fn wraps a graph node and Apply calls it. The NodeFns visitor must recurse
+// into the graph through Fn's `visit` delegation to generate the nested node
+// fns.
 //
-// The "double" graph: inlet -> add (both inputs from inlet) -> outlet
-// Result: double(x) = x + x
+// The "double" graph feeds one inlet to both inputs of an add node and then
+// to an outlet. So double(x) = x + x.
 //
 //    --------
 //    | bang |
@@ -151,12 +139,12 @@ fn test_fn_apply_identity() {
 //    ----------
 #[test]
 fn test_fn_apply_graph() {
-    // First, create the "double" graph: inlet -> add -> outlet
     let inlet_node = graph::Inlet::default();
     let add_node = node::expr("(+ $l $r)").unwrap();
     let outlet_node = graph::Outlet::default();
 
-    // Its registry address is computed on the erased (data-layer) form.
+    // The registry address of the "double" graph comes from its erased
+    // data-layer form.
     let mut double_data = gantz_ca::DataGraph::default();
     let d_inlet = double_data.add_node(gantz_core::data::erase_node_typed(&inlet_node).unwrap());
     let d_add = double_data.add_node(gantz_core::data::erase_node_typed(&add_node).unwrap());
@@ -171,21 +159,18 @@ fn test_fn_apply_graph() {
     let add = double_graph.add_node(Box::new(add_node) as Box<_>);
     let outlet = double_graph.add_node(Box::new(outlet_node) as Box<_>);
 
-    // Connect inlet to both inputs of add.
     double_graph.add_edge(inlet, add, Edge::from((0, 0)));
     double_graph.add_edge(inlet, add, Edge::from((0, 1)));
-    // Connect add output to outlet.
     double_graph.add_edge(add, outlet, Edge::from((0, 0)));
 
     // The nested "double" graph is referenced by content address. A bare
-    // `Graph` implements `Node`, so the `get_node` lookup returns it directly
-    // (no inline `GraphNode` wrapper).
+    // `Graph` implements `Node`, so the `get_node` lookup returns it directly.
     let double_ca: gantz_ca::ContentAddr = gantz_ca::graph_addr(&double_data).into();
     let get_node = |ca: &gantz_ca::ContentAddr| -> Option<&dyn Node> {
         (*ca == double_ca).then_some(&double_graph as &dyn Node)
     };
 
-    // Now create the main graph that uses Fn<Ref> to wrap the double graph.
+    // The main graph wraps the double graph in `Fn<Ref>`.
     let mut g = petgraph::graph::DiGraph::new();
 
     let bang = node_bang();
@@ -204,35 +189,28 @@ fn test_fn_apply_graph() {
     let expected = g.add_node(Box::new(expected) as Box<_>);
     let assert_eq = g.add_node(Box::new(assert_eq) as Box<_>);
 
-    // Bang triggers fn to emit lambda.
+    // The bang triggers fn to emit the lambda.
     g.add_edge(bang, fn_node, Edge::from((0, 0)));
-    // Fn output (lambda) goes to apply's function input.
+    // The lambda goes to apply's function input.
     g.add_edge(fn_node, apply_node, Edge::from((0, 0)));
-    // Value goes to list to wrap it.
     g.add_edge(value, list, Edge::from((0, 0)));
-    // List goes to apply's argument input.
+    // The list goes to apply's argument input.
     g.add_edge(list, apply_node, Edge::from((0, 1)));
-    // Apply output goes to assert_eq.
     g.add_edge(apply_node, assert_eq, Edge::from((0, 0)));
-    // Expected value goes to assert_eq.
     g.add_edge(expected, assert_eq, Edge::from((0, 1)));
 
-    // Generate the module.
     let ctx = node::MetaCtx::new(&get_node);
     let eps = push_pull_entrypoints(&get_node, &g);
     let module = gantz_core::compile::module(&get_node, &g, &eps, &Default::default()).unwrap();
 
-    // Create and setup VM.
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&get_node, &g, &[], &mut vm);
 
-    // Register all functions.
     for expr in module {
         vm.run(expr.to_pretty(80)).unwrap();
     }
 
-    // Execute pull evaluation from assert_eq.
     let ep = entrypoint::pull(vec![assert_eq.index()], g[assert_eq].n_inputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();

@@ -1,18 +1,17 @@
-//! Pins the Steel semantics the IR emitter relies on (see the compiler
-//! redesign plan). The emitter lowers branch reconvergence to local
-//! "join point" fns and feedback loops to self-recursive local fns, so it
-//! depends on:
+//! Pins the Steel semantics the IR emitter relies on. The emitter lowers
+//! branch reconvergence to local join point fns and feedback loops to
+//! self-recursive local fns. So it depends on the following.
 //!
-//! 1. Local `define`s in a fn body behaving like `letrec*` (forward refs from
-//!    later-called bodies, self-recursion).
-//! 2. Tail-call optimization for self- and mutual recursion between local
-//!    defines (loop iterations must not grow the stack).
+//! 1. Local `define`s in a fn body behave like `letrec*`. Forward refs from
+//!    later-called bodies and self-recursion work.
+//! 2. Tail-call optimization for self and mutual recursion between local
+//!    defines. Loop iterations must not grow the stack.
 //! 3. `define-values` within a body.
 //! 4. `define`s interleaved with expression statements within a body.
 //!
-//! All on `Engine::new_base()` - the prelude-free engine the VM runs - using
-//! only primitive forms (`if`, `begin`, `define`, `define-values`, `let`,
-//! `lambda`, `set!`).
+//! All tests run on `Engine::new_base()`, the prelude-free engine the VM
+//! uses. They use only primitive forms. These are `if`, `begin`, `define`,
+//! `define-values`, `let`, `lambda` and `set!`.
 
 use steel::SteelVal;
 use steel::steel_vm::engine::Engine;
@@ -31,7 +30,7 @@ fn run_int(src: &str) -> isize {
 }
 
 /// A self-recursive local define in tail position runs in constant stack.
-/// This is the shape of a lowered iterate-until-branch loop (`rec` join).
+/// This is the shape of a lowered iterate-until-branch loop with a `rec` join.
 #[test]
 fn tco_self_recursive_local_define() {
     let src = format!(
@@ -58,8 +57,8 @@ fn tco_mutual_tail_calls_between_local_defines() {
     assert_eq!(run_int(&src), DEEP as isize);
 }
 
-/// A local define may call a sibling defined *after* it (letrec* semantics):
-/// the reference resolves at call time. Gives the emitter freedom in join
+/// A local define may call a sibling defined after it. The reference resolves
+/// at call time as with `letrec*`. This gives the emitter freedom in join
 /// emission order.
 #[test]
 fn forward_reference_between_sibling_defines() {
@@ -71,8 +70,8 @@ fn forward_reference_between_sibling_defines() {
     assert_eq!(run_int(src), 20);
 }
 
-/// `define-values` destructures a list within a body (multi-output node
-/// results bind this way).
+/// `define-values` destructures a list within a body. Multi-output node
+/// results bind this way.
 #[test]
 fn define_values_in_body() {
     let src = "(define (top)
@@ -82,8 +81,8 @@ fn define_values_in_body() {
     assert_eq!(run_int(src), 7);
 }
 
-/// `define`s may be interleaved with expression statements within a fn body
-/// (a lowered body mixes node-call defines with branch `if` expressions).
+/// `define`s may be interleaved with expression statements within a fn body.
+/// A lowered body mixes node-call defines with branch `if` expressions.
 #[test]
 fn define_after_expression_in_body() {
     let src = "(define (top)
@@ -95,10 +94,9 @@ fn define_after_expression_in_body() {
     assert_eq!(run_int(src), 3);
 }
 
-// ----------------------------------------------------------------------------
-// Pins for the registered-steel-module semantics `vm::new_engine` relies on:
-// registration is lazy (no compilation until the first `require`), compiled
-// modules are cached for the engine's lifetime, and provided names bind
+// Pins for the registered-steel-module semantics `vm::new_engine` relies on.
+// Registration is lazy, with no compilation until the first `require`.
+// Compiled modules are cached for the engine's lifetime. Provided names bind
 // unmangled in the requiring program.
 
 fn run_int_vm(vm: &mut Engine, src: &str) -> isize {
@@ -122,8 +120,8 @@ fn required_module_provides_bind_unmangled() {
     assert_eq!(run_int_vm(&mut vm, src), 57);
 }
 
-/// Registration performs no compilation: a syntactically invalid module is
-/// accepted silently, and the error surfaces only at the first `require`.
+/// Registration performs no compilation. A syntactically invalid module is
+/// accepted silently. The error surfaces only at the first `require`.
 #[test]
 fn module_registration_is_lazy() {
     let broken = gantz_core::vm::SteelModule {
@@ -139,7 +137,7 @@ fn module_registration_is_lazy() {
 }
 
 /// A second program containing the same `require` hits the engine's module
-/// cache: the module's top-level defines run once per engine, not per run.
+/// cache. The module's top-level defines run once per engine, not per run.
 #[test]
 fn required_module_is_cached_across_runs() {
     let counting = gantz_core::vm::SteelModule {

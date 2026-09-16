@@ -35,22 +35,17 @@ fn node_number() -> node::Expr {
     .unwrap()
 }
 
-// Helper trait for debugging the graph.
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
-// A nested graph: now an ordinary `Graph` (which implements `Node`) boxed
-// straight into its parent, in place of the removed `GraphNode` wrapper.
 type Nested = node::graph::Graph<Box<dyn DebugNode>>;
 
-// A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }
 
-// A simple test for nested graph support.
-//
-// This is the core method of abstraction provided by gantz, so it better work!
+// A simple test for nested graph support. Nesting is the core method of
+// abstraction in gantz.
 //
 // GRAPH A
 //
@@ -97,7 +92,6 @@ fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
 fn test_graph_nested_stateless() {
     env_logger::init();
 
-    // Graph A, used as a nested node.
     let mut ga = Nested::default();
     let inlet_a = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
     let inlet_b = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
@@ -107,7 +101,6 @@ fn test_graph_nested_stateless() {
     ga.add_edge(inlet_b, mul, Edge::from((0, 1)));
     ga.add_edge(mul, outlet, Edge::from((0, 0)));
 
-    // Graph B.
     let mut gb = petgraph::graph::DiGraph::new();
     let push = gb.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let six = gb.add_node(Box::new(node_int(6)) as Box<_>);
@@ -123,24 +116,19 @@ fn test_graph_nested_stateless() {
     gb.add_edge(graph_a, assert_eq, Edge::from((0, 0)));
     gb.add_edge(forty_two, assert_eq, Edge::from((0, 1)));
 
-    // Generate the module, which should have just one top-level expr for `push`.
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &gb);
     let module = gantz_core::compile::module(&no_lookup, &gb, &eps, &Default::default()).unwrap();
 
-    // Create the VM.
     let mut vm = Engine::new_base();
 
-    // Initialise the node state vars.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, &gb, &[], &mut vm);
 
-    // Register the fns.
     for f in module {
         vm.run(f.to_pretty(100)).unwrap();
     }
 
-    // Call the `push` eval function.
     let ep = entrypoint::push(vec![push.index()], gb[push].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
@@ -176,11 +164,10 @@ fn test_graph_nested_stateless() {
 //    | number |
 //    ----------
 //
-// We push evaluation from the root graph B's `push` node, and then check that
-// the value is incremented by checking the state of the `number` node.
+// Push evaluation from the root graph B's `push` node. Then check the state
+// of the `number` node to see the incremented value.
 #[test]
 fn test_graph_nested_counter() {
-    // The counter node for the nested graph.
     let counter = node::expr(
         "
         (begin
@@ -192,7 +179,6 @@ fn test_graph_nested_counter() {
     )
     .unwrap();
 
-    // Graph A.
     let mut ga = Nested::default();
     let inlet = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
     let counter = ga.add_node(Box::new(counter) as Box<_>);
@@ -200,7 +186,6 @@ fn test_graph_nested_counter() {
     ga.add_edge(inlet, counter, Edge::from((0, 0)));
     ga.add_edge(counter, outlet, Edge::from((0, 0)));
 
-    // Graph B.
     let mut gb = petgraph::graph::DiGraph::new();
     let push = gb.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let graph_a = gb.add_node(Box::new(ga) as Box<_>);
@@ -208,26 +193,21 @@ fn test_graph_nested_counter() {
     gb.add_edge(push, graph_a, Edge::from((0, 0)));
     gb.add_edge(graph_a, number, Edge::from((0, 0)));
 
-    // Generate the module.
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &gb);
     let module = gantz_core::compile::module(&no_lookup, &gb, &eps, &Default::default()).unwrap();
 
-    // Create the VM.
     let mut vm = Engine::new_base();
 
-    // Initialise the node state vars.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, &gb, &[], &mut vm);
 
-    // Register the fns.
     for f in module {
         println!("{}\n", f.to_pretty(100));
         vm.run(f.to_pretty(100)).unwrap();
     }
 
-    // Increment the nested counter by pushing evaluation.
-    // The first is `0`, the second is `1`.
+    // Push twice. The counter yields `0` then `1`.
     let ep = entrypoint::push(vec![push.index()], gb[push].n_outputs(ctx) as u8);
     let fn_name = entry_fn_name(&ep.id());
     vm.call_function_by_name_with_args(&fn_name, vec![])
@@ -235,51 +215,20 @@ fn test_graph_nested_counter() {
     vm.call_function_by_name_with_args(&fn_name, vec![])
         .unwrap();
 
-    // First, check that the nested expr's state is `1`.
     let counter_state = node::state::extract::<u32>(&vm, &[graph_a.index(), counter.index()])
         .expect("failed to extract counter state")
         .expect("counter state was `None`");
     assert_eq!(counter_state, 1);
 
-    // Outlets are stateless - they just pass through their input value.
-    // The value flows through to the downstream `number` node.
-
-    // Check that the number in the root graph was updated from the outlet.
+    // Outlets are stateless and pass through their input value. The value
+    // flows through to the downstream `number` node.
     let number_state = node::state::extract::<u32>(&vm, &[number.index()])
         .expect("failed to extract number state")
         .expect("number state was `None`");
     assert_eq!(number_state, 1);
 }
 
-// A simple test for pushing evaluation from a node within a nested graph.
-//
-// GRAPH A
-//
-//    --------
-//    | Push |
-//    -+------
-//     |
-//    -+----
-//    | 42 |
-//    -+----
-//     |
-//    -+--------
-//    | Outlet |
-//    ----------
-//
-// GRAPH B
-//
-//    -+---------
-//    | GRAPH A |
-//    -+---------
-//     |
-//    -+--------
-//    | number |
-//    ----------
-//
-// A simple-as-possible demonstration of pushing evaluation from within a nested
-// node, and propagating that evaluation through the outlets of the graph node.
-// Test pushing evaluation from a node inside a nested graph.
+// Push evaluation from a node inside a nested graph.
 //
 // GRAPH A (inner):
 //
@@ -297,12 +246,11 @@ fn test_graph_nested_counter() {
 //    | GRAPH A |
 //    -----------
 //
-// The push fires inside graph A, driving evaluation to the number node
-// which stores the received value. This demonstrates that entrypoints
-// can target nodes inside nested graphs.
+// The push fires inside graph A and drives evaluation to the number node,
+// which stores the received value. Entrypoints can target nodes inside
+// nested graphs.
 #[test]
 fn test_graph_nested_push_eval() {
-    // GRAPH A: push -> number (stateful, stores value)
     let mut ga = Nested::default();
     let push = ga.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let num = ga.add_node(Box::new(node_number()) as Box<_>);
@@ -312,47 +260,39 @@ fn test_graph_nested_push_eval() {
     let ctx = node::MetaCtx::new(&no_lookup);
     let push_n_outputs = ga[push].n_outputs(ctx) as u8;
 
-    // Graph B: just contains graph A (no outlet propagation needed).
+    // Graph B only contains graph A. No outlet propagation is needed.
     let mut gb = petgraph::graph::DiGraph::new();
     let graph_a = gb.add_node(Box::new(ga) as Box<dyn DebugNode>);
 
-    // Nested entrypoint: push inside graph A.
     let ep = entrypoint::from_source(push_source(
         vec![graph_a.index(), push.index()],
         push_n_outputs,
     ));
 
-    // Generate the module.
     let module =
         gantz_core::compile::module(&no_lookup, &gb, &[ep.clone()], &Default::default()).unwrap();
 
-    // Create the VM.
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, &gb, &[], &mut vm);
 
-    // Register the fns.
     for f in &module {
         println!("{}\n", f.to_pretty(100));
         vm.run(f.to_pretty(100)).unwrap();
     }
 
-    // Call the nested push eval fn.
     vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 
-    // The number node inside graph A should have received the push value.
-    // node_push outputs '() which is not a number, so number's state stays
-    // at its initial void value. But we can verify the eval ran without
-    // error - the state::extract call itself confirms the state path exists.
+    // node_push outputs '(), which is not a number, so number's state stays
+    // at its initial void value. The extract call confirms the state path
+    // exists and the eval ran without error.
     let _num_state = node::state::extract_value(&vm, &[graph_a.index(), num.index()])
         .expect("failed to extract number state from nested graph");
 }
 
-// Test that inlet bindings work correctly when node indices don't match inlet positions.
-//
-// This verifies that inlets are correctly bound even when they're not the first nodes
-// in the graph (i.e., their node indices don't match their inlet positions).
+// Inlet bindings must work when node indices do not match inlet positions.
+// The inlets are not the first nodes in the graph.
 //
 // GRAPH A (inner)
 //
@@ -401,27 +341,23 @@ fn test_graph_nested_push_eval() {
 //    -------------
 #[test]
 fn test_graph_nested_non_sequential_inlets() {
-    // Graph A with non-sequential inlet indices.
     let mut ga = Nested::default();
 
-    // Add dummy nodes first to offset inlet indices
+    // Add dummy nodes first to offset the inlet indices.
     let _dummy1 = ga.add_node(Box::new(node_int(999)) as Box<dyn DebugNode>);
     let _dummy2 = ga.add_node(Box::new(node_int(998)) as Box<_>);
 
-    // Now add inlets - they'll have indices 2 and 3
+    // The inlets get indices 2 and 3.
     let inlet_a = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
     let inlet_b = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
 
-    // Add processing nodes
     let sub = ga.add_node(Box::new(node::expr("(- $l $r)").unwrap()) as Box<_>);
     let outlet = ga.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
 
-    // Connect the graph
     ga.add_edge(inlet_a, sub, Edge::from((0, 0)));
     ga.add_edge(inlet_b, sub, Edge::from((0, 1)));
     ga.add_edge(sub, outlet, Edge::from((0, 0)));
 
-    // Graph B that uses graph A.
     let mut gb = petgraph::graph::DiGraph::new();
     let push = gb.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let ten = gb.add_node(Box::new(node_int(10)) as Box<_>);
@@ -438,31 +374,27 @@ fn test_graph_nested_non_sequential_inlets() {
     gb.add_edge(graph_a, assert_eq, Edge::from((0, 0)));
     gb.add_edge(seven, assert_eq, Edge::from((0, 1)));
 
-    // Generate the module.
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &gb);
     let module = gantz_core::compile::module(&no_lookup, &gb, &eps, &Default::default()).unwrap();
 
-    // Create the VM.
     let mut vm = Engine::new_base();
 
-    // Initialise the node state vars.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, &gb, &[], &mut vm);
 
-    // Register the fns.
     for f in module {
         vm.run(f.to_pretty(100)).unwrap();
     }
 
-    // Call the `push` eval function - should compute 10 - 3 = 7
+    // The push computes 10 - 3 = 7.
     let ep = entrypoint::push(vec![push.index()], gb[push].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
 
-// Test that push evaluation inside a nested graph propagates through its outlet
-// to downstream nodes in the outer graph.
+// Push evaluation inside a nested graph propagates through its outlet to
+// downstream nodes in the outer graph.
 //
 // GRAPH A (inner):
 //
@@ -488,12 +420,10 @@ fn test_graph_nested_non_sequential_inlets() {
 //    | number |
 //    ----------
 //
-// The push fires inside graph A, value 42 flows through the outlet to the
-// number node in the outer graph. Verifies that nested push evaluation
-// propagates through outlets.
+// The push fires inside graph A. Value 42 flows through the outlet to the
+// number node in the outer graph.
 #[test]
 fn test_graph_nested_push_through_outlet() {
-    // GRAPH A: push -> int(42) -> outlet
     let mut ga = Nested::default();
     let push = ga.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let forty_two = ga.add_node(Box::new(node_int(42)) as Box<_>);
@@ -505,45 +435,39 @@ fn test_graph_nested_push_through_outlet() {
     let ctx = node::MetaCtx::new(&no_lookup);
     let push_n_outputs = ga[push].n_outputs(ctx) as u8;
 
-    // GRAPH B: graph_a -> number
     let mut gb = petgraph::graph::DiGraph::new();
     let graph_a = gb.add_node(Box::new(ga) as Box<dyn DebugNode>);
     let number = gb.add_node(Box::new(node_number()) as Box<_>);
     gb.add_edge(graph_a, number, Edge::from((0, 0)));
 
-    // Nested entrypoint: push inside graph A.
     let ep = entrypoint::from_source(push_source(
         vec![graph_a.index(), push.index()],
         push_n_outputs,
     ));
 
-    // Generate the module.
     let module =
         gantz_core::compile::module(&no_lookup, &gb, &[ep.clone()], &Default::default()).unwrap();
 
-    // Create the VM.
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, &gb, &[], &mut vm);
 
-    // Register the fns.
     for f in &module {
         vm.run(f.to_pretty(100)).unwrap();
     }
 
-    // Call the nested push eval fn.
     vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 
-    // The number node should have received 42 via the outlet.
+    // The number node received 42 through the outlet.
     let number_state = node::state::extract::<u32>(&vm, &[number.index()])
         .expect("failed to extract number state")
         .expect("number state was None");
     assert_eq!(number_state, 42);
 }
 
-// Test that a nested graph with multiple outlets correctly returns a list
-// that is destructured via `define-values` in the outer graph.
+// A nested graph with multiple outlets returns a list. The outer graph
+// destructures it with `define-values`.
 //
 // INNER GRAPH:
 //
@@ -579,7 +503,6 @@ fn test_graph_nested_push_through_outlet() {
 //   num_a  num_b
 #[test]
 fn test_graph_nested_multi_outlet() {
-    // Inner graph: 2 inlets pass through to 2 outlets.
     let mut inner = Nested::default();
     let inlet_a = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
     let inlet_b = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
@@ -588,7 +511,6 @@ fn test_graph_nested_multi_outlet() {
     inner.add_edge(inlet_a, outlet_a, Edge::from((0, 0)));
     inner.add_edge(inlet_b, outlet_b, Edge::from((0, 0)));
 
-    // Outer graph.
     let mut outer = petgraph::graph::DiGraph::new();
     let push = outer.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let six = outer.add_node(Box::new(node_int(6)) as Box<_>);
@@ -631,7 +553,7 @@ fn test_graph_nested_multi_outlet() {
     assert_eq!(b, 7);
 }
 
-// Test nested push evaluation propagating through multiple outlets.
+// Nested push evaluation propagates through multiple outlets.
 //
 // INNER GRAPH:
 //    push -> int(10) -> outlet_a
@@ -641,8 +563,8 @@ fn test_graph_nested_multi_outlet() {
 //    inner_graph -> num_a (from outlet 0)
 //               -> num_b (from outlet 1)
 //
-// Push fires inside inner graph. Both outlet values should propagate to
-// the outer graph's number nodes.
+// The push fires inside the inner graph. Both outlet values propagate to the
+// outer graph's number nodes.
 #[test]
 fn test_graph_nested_push_through_outlet_multi() {
     let mut inner = Nested::default();
@@ -696,7 +618,7 @@ fn test_graph_nested_push_through_outlet_multi() {
     assert_eq!(b, 20);
 }
 
-// Test nested push evaluation propagating through two levels of nesting.
+// Nested push evaluation propagates through two levels of nesting.
 //
 // INNERMOST GRAPH:
 //    push -> int(99) -> outlet
@@ -707,11 +629,10 @@ fn test_graph_nested_push_through_outlet_multi() {
 // OUTER GRAPH:
 //    middle -> number
 //
-// Push fires in innermost, value 99 propagates through two outlet levels
-// to the outer number node.
+// The push fires in the innermost graph. Value 99 propagates through two
+// outlet levels to the outer number node.
 #[test]
 fn test_graph_nested_push_through_outlet_deep() {
-    // Innermost: push -> int(99) -> outlet
     let mut innermost = Nested::default();
     let push = innermost.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let ninety_nine = innermost.add_node(Box::new(node_int(99)) as Box<_>);
@@ -722,13 +643,11 @@ fn test_graph_nested_push_through_outlet_deep() {
     let ctx = node::MetaCtx::new(&no_lookup);
     let push_n_outputs = innermost[push].n_outputs(ctx) as u8;
 
-    // Middle: innermost_graph -> outlet
     let mut middle = Nested::default();
     let innermost_node = middle.add_node(Box::new(innermost) as Box<dyn DebugNode>);
     let outlet_mid = middle.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     middle.add_edge(innermost_node, outlet_mid, Edge::from((0, 0)));
 
-    // Outer: middle_graph -> number
     let mut outer = petgraph::graph::DiGraph::new();
     let middle_node = outer.add_node(Box::new(middle) as Box<dyn DebugNode>);
     let number = outer.add_node(Box::new(node_number()) as Box<_>);
@@ -760,9 +679,9 @@ fn test_graph_nested_push_through_outlet_deep() {
     assert_eq!(val, 99);
 }
 
-// Test that `push_pull_entrypoints` discovers push eval nodes inside nested
-// graphs. This mirrors the real-world scenario of a UpdateBang node inside a
-// nested graph placed in a top-level graph via NamedRef.
+// `push_pull_entrypoints` must discover push eval nodes inside nested graphs.
+// This mirrors an UpdateBang node inside a nested graph placed in a top-level
+// graph through a NamedRef.
 //
 // INNER GRAPH:
 //    push -> int(42) -> outlet
@@ -770,11 +689,10 @@ fn test_graph_nested_push_through_outlet_deep() {
 // OUTER GRAPH:
 //    inner_graph -> number
 //
-// `push_pull_entrypoints` on the outer graph should discover the push node
-// inside the inner graph and create an entrypoint with path [graph_a, push].
+// On the outer graph it must find the push node inside the inner graph and
+// create an entrypoint with path [graph_a, push].
 #[test]
 fn test_push_pull_entrypoints_discovers_nested_push() {
-    // Inner graph: push -> int(42) -> outlet
     let mut inner = Nested::default();
     let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let forty_two = inner.add_node(Box::new(node_int(42)) as Box<_>);
@@ -782,20 +700,17 @@ fn test_push_pull_entrypoints_discovers_nested_push() {
     inner.add_edge(push, forty_two, Edge::from((0, 0)));
     inner.add_edge(forty_two, outlet, Edge::from((0, 0)));
 
-    // Outer graph: inner -> number
     let mut outer = petgraph::graph::DiGraph::new();
     let graph_a = outer.add_node(Box::new(inner) as Box<dyn DebugNode>);
     let number = outer.add_node(Box::new(node_number()) as Box<_>);
     outer.add_edge(graph_a, number, Edge::from((0, 0)));
 
-    // push_pull_entrypoints should find the nested push node.
     let eps = push_pull_entrypoints(&no_lookup, &outer);
     assert!(
         !eps.is_empty(),
         "push_pull_entrypoints should discover the nested push eval node"
     );
 
-    // There should be an entrypoint with path [graph_a, push].
     let has_nested_push = eps.iter().any(|ep| {
         ep.0.iter()
             .any(|src| src.path == vec![graph_a.index(), push.index()])
@@ -810,8 +725,8 @@ fn test_push_pull_entrypoints_discovers_nested_push() {
             .collect::<Vec<_>>()
     );
 
-    // The generated module should include the entry fn for this entrypoint,
-    // and it should work end-to-end (value 42 flows through outlet to number).
+    // The generated module includes the entry fn for this entrypoint. Value
+    // 42 flows through the outlet to number.
     let module =
         gantz_core::compile::module(&no_lookup, &outer, &eps, &Default::default()).unwrap();
 
@@ -823,7 +738,6 @@ fn test_push_pull_entrypoints_discovers_nested_push() {
         vm.run(f.to_pretty(100)).unwrap();
     }
 
-    // Find and call the nested push entrypoint.
     let nested_ep = eps
         .iter()
         .find(|ep| {
@@ -840,12 +754,10 @@ fn test_push_pull_entrypoints_discovers_nested_push() {
     assert_eq!(val, 42);
 }
 
-// Test that two nested graph nodes sharing a multi-source entrypoint both
-// propagate through their outlets to the parent graph.
-//
-// This mirrors the scenario of two NamedRef "deltams" nodes in a top-level
-// graph, where both contain a UpdateBang and are combined into a single
-// multi-source entrypoint.
+// Two nested graph nodes that share a multi-source entrypoint both propagate
+// through their outlets to the parent graph. This mirrors two NamedRef
+// "deltams" nodes in a top-level graph. Both contain an UpdateBang and
+// combine into one multi-source entrypoint.
 //
 // INNER GRAPH (shared by both):
 //    push -> int(10) -> outlet
@@ -855,10 +767,9 @@ fn test_push_pull_entrypoints_discovers_nested_push() {
 //    graph_b -> num_b
 //
 // A single multi-source entrypoint fires push inside both graph_a and graph_b.
-// Both outlets should propagate, writing 10 to both num_a and num_b.
+// Both outlets propagate and write 10 to num_a and num_b.
 #[test]
 fn test_graph_nested_multi_source_outlet_propagation() {
-    // Inner graph: push -> int(10) -> outlet
     let make_inner = || {
         let mut inner = Nested::default();
         let push = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
@@ -875,7 +786,6 @@ fn test_graph_nested_multi_source_outlet_propagation() {
     let ctx = node::MetaCtx::new(&no_lookup);
     let push_n_outputs = inner_a[push_a].n_outputs(ctx) as u8;
 
-    // Outer graph: two graph nodes -> two number nodes
     let mut outer = petgraph::graph::DiGraph::new();
     let graph_a = outer.add_node(Box::new(inner_a) as Box<dyn DebugNode>);
     let graph_b = outer.add_node(Box::new(inner_b) as Box<dyn DebugNode>);
@@ -884,7 +794,6 @@ fn test_graph_nested_multi_source_outlet_propagation() {
     outer.add_edge(graph_a, num_a, Edge::from((0, 0)));
     outer.add_edge(graph_b, num_b, Edge::from((0, 0)));
 
-    // Multi-source entrypoint: both pushes in one entrypoint.
     let ep = entrypoint::from_sources([
         push_source(vec![graph_a.index(), push_a.index()], push_n_outputs),
         push_source(vec![graph_b.index(), push_b.index()], push_n_outputs),
@@ -915,26 +824,25 @@ fn test_graph_nested_multi_source_outlet_propagation() {
     assert_eq!(b, 10, "graph_b outlet should propagate to num_b");
 }
 
-// Test a multi-source entrypoint with sources at different nesting levels:
-// a direct push source at the root and a nested push source inside a graph
-// node that propagates through an outlet.
-//
-// This mirrors the scenario of a top-level UpdateBang + a NamedRef "deltams"
-// (which contains its own UpdateBang inside) combined into one entrypoint.
+// A multi-source entrypoint with sources at different nesting levels. One is
+// a direct push source at the root. The other is a nested push source inside
+// a graph node that propagates through an outlet. This mirrors a top-level
+// UpdateBang and a NamedRef "deltams" with its own UpdateBang combined into
+// one entrypoint.
 //
 // INNER GRAPH:
 //    push_inner -> int(10) -> outlet
 //
 // OUTER GRAPH:
 //    graph_node --(outlet)--> add (input 0)
-//    push_outer ------------> add (input 1)
+//    push_outer -> int(20) -> add (input 1)
 //    add -> number
 //
-// Both pushes fire in a single entrypoint. The graph_node outlet value (10)
-// and push_outer value ('()) reach add, whose result is stored in number.
+// Both pushes fire in a single entrypoint. The graph_node outlet value 10
+// and the push_outer chain value 20 reach add, whose result is stored in
+// number.
 #[test]
 fn test_graph_nested_mixed_level_multi_source() {
-    // Inner graph: push -> int(10) -> outlet
     let mut inner = Nested::default();
     let push_inner = inner.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let ten = inner.add_node(Box::new(node_int(10)) as Box<_>);
@@ -945,12 +853,10 @@ fn test_graph_nested_mixed_level_multi_source() {
     let ctx = node::MetaCtx::new(&no_lookup);
     let push_inner_n = inner[push_inner].n_outputs(ctx) as u8;
 
-    // Outer graph
     let mut outer = petgraph::graph::DiGraph::new();
     let graph_node = outer.add_node(Box::new(inner) as Box<dyn DebugNode>);
     let push_outer = outer.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let twenty = outer.add_node(Box::new(node_int(20)) as Box<_>);
-    // add: (+ $l $r) - takes two inputs
     let add = outer.add_node(Box::new(node::expr("(+ $l $r)").unwrap()) as Box<_>);
     let number = outer.add_node(Box::new(node_number()) as Box<_>);
     outer.add_edge(graph_node, add, Edge::from((0, 0))); // outlet(10) -> add input 0
@@ -960,7 +866,6 @@ fn test_graph_nested_mixed_level_multi_source() {
 
     let push_outer_n = outer[push_outer].n_outputs(ctx) as u8;
 
-    // Multi-source entrypoint: nested push + direct push
     let ep = entrypoint::from_sources([
         push_source(vec![graph_node.index(), push_inner.index()], push_inner_n),
         push_source(vec![push_outer.index()], push_outer_n),
@@ -981,32 +886,30 @@ fn test_graph_nested_mixed_level_multi_source() {
     vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 
-    // outlet produces 10, push_outer -> int produces 20, add = 10 + 20 = 30
+    // The outlet gives 10 and the push_outer chain gives 20, so add stores 30.
     let val = node::state::extract::<i32>(&vm, &[number.index()])
         .expect("failed to extract number state")
         .expect("number state was None");
     assert_eq!(val, 30);
 }
 
-// ===========================================================================
 // Nested-graph branching tests.
 //
-// A nested graph whose interior branches should report that branching to the
-// outer graph via `Node::branches`, so the outer graph only evaluates the
-// downstream of outlets actually produced by the taken inner branch.
+// A nested graph whose interior branches must report that branching to the
+// outer graph through `Node::branches`. The outer graph then only evaluates
+// the downstream of outlets the taken inner branch produced.
 //
-// Each test's INNER graph is sketched above it. `branches()` lists the sets of
-// outputs active per external branch (`{}` = a branch producing nothing).
-// Diagram legend:
+// Each test's inner graph is sketched above it. `branches()` lists the sets
+// of outputs active per external branch. `{}` is a branch that produces
+// nothing. Diagram legend:
 //   [In]     inlet            [Out X]  outlet
 //   [Sel]    node_select: input ==0 -> o0(42), else -> o1(99)
 //   oN       branch output N    /  \   the two arms of a branch
-// The OUTER graph is uniform: push -> int value(s) -> [Nested] -> a `number`
-// store per output (which records the value it receives).
-// ===========================================================================
+// The outer graph is uniform. A push feeds int values into the nested graph,
+// and a `number` store per output records the value it receives.
 
-// A 1-input, 2-output branch primitive. Routes to output 0 (value 42) when the
-// input is 0, else to output 1 (value 99).
+// A 1-input, 2-output branch primitive. Input 0 routes 42 to output 0.
+// Anything else routes 99 to output 1.
 fn node_select() -> node::Branch {
     node::branch(
         "(if (= 0 $x) (list 0 42) (list 1 99))",
@@ -1018,8 +921,8 @@ fn node_select() -> node::Branch {
     .unwrap()
 }
 
-// Assert that `inner.branches()` reports exactly `expected` (order-insensitive),
-// where each entry lists the output indices active in that branch.
+// Assert that `inner.branches()` reports exactly `expected`, in any order.
+// Each entry lists the output indices active in that branch.
 fn assert_inner_branches<N: Node + ?Sized>(inner: &N, n_outputs: usize, expected: &[&[u16]]) {
     let ctx = node::MetaCtx::new(&no_lookup);
     let got: std::collections::BTreeSet<Vec<u16>> = inner
@@ -1045,7 +948,7 @@ fn assert_inner_branches<N: Node + ?Sized>(inner: &N, n_outputs: usize, expected
     assert_eq!(got, want, "branch patterns mismatch");
 }
 
-// Build, compile and run a graph from `push`; returns the VM for state queries.
+// Compile and run `g` from `push`. Returns the VM for state queries.
 fn compile_and_push<N: DebugNode + ?Sized>(
     g: &petgraph::graph::DiGraph<Box<N>, Edge>,
     push: petgraph::graph::NodeIndex,
@@ -1065,16 +968,17 @@ fn compile_and_push<N: DebugNode + ?Sized>(
     vm
 }
 
-// `Some(v)` if the store node holds a number, else `None` (never evaluated).
+// `Some(v)` if the store node holds a number. `None` means it was never
+// evaluated.
 fn store_val(vm: &Engine, store: petgraph::graph::NodeIndex) -> Option<i32> {
     node::state::extract::<i32>(vm, &[store.index()])
         .ok()
         .flatten()
 }
 
-// Build, compile and run `g` from a `push_eval` nested at `path` (e.g.
-// `[graph_node, push]`); returns the VM for state queries. Unlike
-// `compile_and_push`, the push lives *inside* a nested graph and propagates out
+// Compile and run `g` from a `push_eval` nested at `path`, for example
+// `[graph_node, push]`. Returns the VM for state queries. Unlike
+// `compile_and_push`, the push lives inside a nested graph and propagates out
 // through that graph's outlets.
 fn compile_and_push_nested<N: DebugNode + ?Sized>(
     g: &petgraph::graph::DiGraph<Box<N>, Edge>,
@@ -1095,7 +999,7 @@ fn compile_and_push_nested<N: DebugNode + ?Sized>(
     vm
 }
 
-// Divergent branch: each arm routes to its own outlet.  branches: [{A}, {B}]
+// A divergent branch. Each arm routes to its own outlet. branches: [{A}, {B}]
 //
 //        [In]
 //         |
@@ -1116,7 +1020,7 @@ fn test_graph_nested_divergent_branch() {
         inner
     };
 
-    // Two arms: arm 0 -> outlet A only, arm 1 -> outlet B only.
+    // Arm 0 fires only outlet A and arm 1 only outlet B.
     assert_inner_branches(&make_inner(), 2, &[&[0], &[1]]);
 
     let build = |sel: i32| {
@@ -1134,14 +1038,15 @@ fn test_graph_nested_divergent_branch() {
         (store_val(&vm, store_a), store_val(&vm, store_b))
     };
 
-    // sel == 0 -> arm 0 -> only store_a written (42).
+    // sel == 0 takes arm 0, so only store_a is written with 42.
     assert_eq!(build(0), (Some(42), None));
-    // sel != 0 -> arm 1 -> only store_b written (99).
+    // sel != 0 takes arm 1, so only store_b is written with 99.
     assert_eq!(build(1), (None, Some(99)));
 }
 
-// Reconvergent: both arms feed the SAME outlet, so it is always produced and
-// there is no external branching (the value still differs per arm).  branches: []
+// Reconvergent. Both arms feed the same outlet, so it is always produced and
+// there is no external branching. The value still differs per arm.
+// branches: []
 //
 //        [In]
 //         |
@@ -1161,7 +1066,7 @@ fn test_graph_nested_reconvergent_branch() {
         inner
     };
 
-    // No external branching: the outlet is always produced.
+    // No external branching. The outlet is always produced.
     assert_inner_branches(&make_inner(), 1, &[]);
 
     let build = |sel: i32| {
@@ -1176,12 +1081,12 @@ fn test_graph_nested_reconvergent_branch() {
         store_val(&compile_and_push(&g, push), store)
     };
 
-    // Outlet always written; the value differs per arm (phi reconvergence).
+    // The outlet is always written. The value differs per arm.
     assert_eq!(build(0), Some(42));
     assert_eq!(build(1), Some(99));
 }
 
-// Dead arm: arm 1's output is unconnected, so it produces nothing.
+// A dead arm. Arm 1's output is unconnected, so it produces nothing.
 // branches: [{}, {A}]
 //
 //        [In]
@@ -1198,11 +1103,11 @@ fn test_graph_nested_dead_arm() {
         let outlet = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
         inner.add_edge(inlet, select, Edge::from((0, 0)));
         inner.add_edge(select, outlet, Edge::from((0, 0)));
-        // Output 1 of Select is left unconnected (a dead arm).
+        // Output 1 of Select stays unconnected as a dead arm.
         inner
     };
 
-    // Two patterns: empty (dead arm) and {outlet}.
+    // Two patterns. The dead arm is empty and the other is {outlet}.
     assert_inner_branches(&make_inner(), 1, &[&[], &[0]]);
 
     let build = |sel: i32| {
@@ -1221,7 +1126,7 @@ fn test_graph_nested_dead_arm() {
     assert_eq!(build(1), None); // arm 1 -> dead, nothing downstream evaluated
 }
 
-// Per-arm intermediates: each arm transforms its value before its outlet.
+// Per-arm intermediates. Each arm transforms its value before its outlet.
 // branches: [{A}, {B}]
 //
 //         [In]
@@ -1270,7 +1175,8 @@ fn test_graph_nested_branch_intermediates() {
     assert_eq!(build(1), (None, Some(119))); // 99 + 20
 }
 
-// Multi-output arm: arm 0 fires TWO outputs (a list value); arm 1 fires one.
+// A multi-output arm. Arm 0 fires two outputs with a list value. Arm 1 fires
+// one.
 // branches: [{A, B}, {C}]
 //
 //          [In]
@@ -1331,8 +1237,8 @@ fn test_graph_nested_branch_multi_outlet_arm() {
     assert_eq!(build(1), (None, None, Some(30))); // arm 1 -> c
 }
 
-// Parallel branches: two independent Selects -> Cartesian product of 4 branches.
-// Exercises a multi-component (multi-root) inner flow graph.
+// Parallel branches. Two independent Selects give a Cartesian product of 4
+// branches. This exercises a multi-root inner flow graph.
 // branches: [{A,C}, {A,D}, {B,C}, {B,D}]
 //
 //   [In a]        [In b]
@@ -1361,7 +1267,7 @@ fn test_graph_nested_parallel_branches() {
         inner
     };
 
-    // Outputs A=0, B=1, C=2, D=3; 4 Cartesian arms.
+    // Outputs A=0, B=1, C=2, D=3. 4 Cartesian arms.
     assert_inner_branches(&make_inner(), 4, &[&[0, 2], &[0, 3], &[1, 2], &[1, 3]]);
 
     let build = |s1: i32, s2: i32| {
@@ -1397,8 +1303,8 @@ fn test_graph_nested_parallel_branches() {
     assert_eq!(build(1, 1), [None, Some(99), None, Some(99)]); // B + D
 }
 
-// Nested/sequential: Gate exists only under Sel1's arm 0, so the result is
-// PRUNED to 3 branches (not the Cartesian 4).  branches: [{A}, {B}, {C}]
+// Sequential branches. Gate exists only under Sel1's arm 0, so the result is
+// pruned to 3 branches instead of the Cartesian 4. branches: [{A}, {B}, {C}]
 //
 //  [In sel]  [In val]
 //       \      /
@@ -1410,7 +1316,7 @@ fn test_graph_nested_parallel_branches() {
 // [Out A][Out B]
 #[test]
 fn test_graph_nested_sequential_branches() {
-    // 2-input outer select: $sel picks the arm, $val is passed on arm 0.
+    // A 2-input outer select. $sel picks the arm and $val is passed on arm 0.
     let outer_sel = || {
         node::branch(
             "(if (= 0 $sel) (list 0 $val) (list 1 88))",
@@ -1440,7 +1346,7 @@ fn test_graph_nested_sequential_branches() {
         inner
     };
 
-    // A=0, B=1, C=2. Pruned (not Cartesian): {A}, {B}, {C}.
+    // A=0, B=1, C=2. Pruned to {A}, {B}, {C}.
     assert_inner_branches(&make_inner(), 3, &[&[0], &[1], &[2]]);
 
     let build = |sel: i32, val: i32| {
@@ -1463,14 +1369,15 @@ fn test_graph_nested_sequential_branches() {
         [store_val(&vm, sa), store_val(&vm, sb), store_val(&vm, sc)]
     };
 
-    // sel==0 reaches gate with $val; gate routes by ($val == 0).
+    // sel==0 reaches gate with $val. Gate routes by whether $val == 0.
     assert_eq!(build(0, 0), [Some(42), None, None]); // gate arm 0 -> A
     assert_eq!(build(0, 5), [None, Some(99), None]); // gate arm 1 -> B
     assert_eq!(build(9, 0), [None, None, Some(88)]); // sel arm 1 -> C
 }
 
-// Branch after a join: the branch is reachable from two inlet chains, but must
-// be assigned ONCE per world (two branches, not four).  branches: [{A}, {B}]
+// A branch after a join. The branch is reachable from two inlet chains, but
+// must be assigned once per world. That gives two branches, not four.
+// branches: [{A}, {B}]
 //
 //  [In l]  [In r]
 //      \    /
@@ -1497,7 +1404,7 @@ fn test_graph_nested_branch_after_join() {
         inner
     };
 
-    // Two branches, NOT four (the join-fed branch is assigned once).
+    // Two branches, not four. The join-fed branch is assigned once.
     assert_inner_branches(&make_inner(), 2, &[&[0], &[1]]);
 
     let build = |l: i32, r: i32| {
@@ -1522,8 +1429,8 @@ fn test_graph_nested_branch_after_join() {
     assert_eq!(build(1, 0), (None, Some(99))); // sum 1 -> arm 1
 }
 
-// Static outlet: C is fed by a constant (reached via pull, no inlet), so it is
-// active in EVERY branch.  branches: [{A, C}, {B, C}]
+// A static outlet. C is fed by a constant with no inlet, so it is active in
+// every branch. branches: [{A, C}, {B, C}]
 //
 //    [In]          [const 123]
 //     |                 |
@@ -1571,7 +1478,7 @@ fn test_graph_nested_branch_with_constant_outlet() {
     assert_eq!(build(1), [None, Some(99), Some(123)]); // B + C
 }
 
-// Three-arm branch: one branch node with three arms, each to its own outlet.
+// A three-arm branch. One branch node with three arms, each to its own outlet.
 // branches: [{A}, {B}, {C}]
 //
 //         [In]
@@ -1630,7 +1537,7 @@ fn test_graph_nested_three_arm_branch() {
     assert_eq!(build(2), [None, None, Some(3)]);
 }
 
-// Two levels of nesting: branching propagates outward through both.
+// Two levels of nesting. Branching propagates outward through both.
 // inner1.branches: [{X}, {Y}]
 //
 //  inner2:            inner1 (wraps inner2):
@@ -1686,7 +1593,8 @@ fn test_graph_nested_branch_two_levels() {
     assert_eq!(build(1), (None, Some(99)));
 }
 
-// Stateful node on a branch arm: its state persists across pushes taking arm 0.
+// A stateful node on a branch arm. Its state persists across pushes that take
+// arm 0.
 // branches: [{A}, {B}]
 //
 //       [In]
@@ -1737,7 +1645,7 @@ fn test_graph_nested_branch_stateful() {
     vm.call_function_by_name_with_args(&fname, vec![]).unwrap();
     vm.call_function_by_name_with_args(&fname, vec![]).unwrap();
 
-    // Counter incremented twice on arm 0: 0 then 1.
+    // The counter incremented twice on arm 0, to 0 then 1.
     let count_state = node::state::extract::<i32>(&vm, &[inner_node.index(), count.index()])
         .unwrap()
         .unwrap();
@@ -1745,9 +1653,9 @@ fn test_graph_nested_branch_stateful() {
     assert_eq!(store_val(&vm, sa), Some(1));
 }
 
-// Alignment: same inner shape as `parallel_branches` (two parallel Sels -> 4
-// branches); asserts Node::branches() == outer meta.branches[inner_node],
-// pointwise.
+// Alignment. The same inner shape as `parallel_branches` with two parallel
+// Sels and 4 branches. Asserts Node::branches() equals the outer
+// meta.branches[inner_node] pointwise.
 //
 //   [In a]        [In b]
 //     |             |
@@ -1794,9 +1702,8 @@ fn test_graph_nested_branches_align_with_meta() {
     }
 }
 
-// Regression: two independent (non-branching) chains form a multi-component
-// flow graph. It must compile (previously the single-entry assertion panicked)
-// and report no external branching.  branches: []
+// Two independent chains form a multi-component flow graph. It must compile
+// and report no external branching. branches: []
 //
 //  [In a]   [In b]
 //    |        |
@@ -1838,9 +1745,8 @@ fn test_graph_nested_multi_component_no_branch() {
     assert_eq!(store_val(&vm, sb), Some(22)); // 20 + 2
 }
 
-// Reconvergent intermediates: both arms pass through a distinct intermediate
-// then feed the SAME outlet -> no external branching (exercises is_join via an
-// intermediate). branches: []
+// Reconvergent intermediates. Both arms pass through a distinct intermediate,
+// then feed the same outlet. No external branching. branches: []
 //
 //        [In]
 //         |
@@ -1881,8 +1787,8 @@ fn test_graph_nested_branch_reconvergent_intermediates() {
     assert_eq!(build(1), Some(100)); // 99 + 1
 }
 
-// Mixed direct/intermediate arms: arm 0 goes straight to its outlet, arm 1 via
-// an intermediate. branches: [{A}, {B}]
+// Mixed direct and intermediate arms. Arm 0 goes straight to its outlet. Arm
+// 1 goes through an intermediate. branches: [{A}, {B}]
 #[test]
 fn test_graph_nested_branch_mixed_direct_intermediate() {
     let make_inner = || {
@@ -1917,7 +1823,7 @@ fn test_graph_nested_branch_mixed_direct_intermediate() {
     assert_eq!(build(1), (None, Some(100))); // 99 + 1
 }
 
-// Chained intermediates: each arm passes through a two-node chain.
+// Chained intermediates. Each arm passes through a two-node chain.
 // branches: [{A}, {B}]
 #[test]
 fn test_graph_nested_branch_chained_intermediates() {
@@ -1959,10 +1865,10 @@ fn test_graph_nested_branch_chained_intermediates() {
     assert_eq!(build(1), (None, Some(110))); // 99 + 10 + 1
 }
 
-// Cascading reconvergence: three sequential branches, but Select A and Select B
-// each reconverge at a join, so only Select C affects the outlet. The 2^3 = 8
-// inner worlds collapse to just TWO external branches (dedup by outlet set;
-// the prior implementation reported 8). branches: [{A}, {B}]
+// Cascading reconvergence. Three sequential branches, but Select A and Select
+// B each reconverge at a join. So only Select C affects the outlet. The 2^3 =
+// 8 inner worlds collapse to two external branches, deduplicated by outlet
+// set. branches: [{A}, {B}]
 #[test]
 fn test_graph_nested_cascading_reconvergence() {
     let make_inner = || {
@@ -2027,8 +1933,8 @@ fn test_graph_nested_cascading_reconvergence() {
     assert_eq!(build(1), (None, Some(99))); // SelectC arm 1 -> B
 }
 
-// Inner reconvergence + an independent outer branch in the same graph:
-// Select1 reconverges to A (always active); Select2 picks B or C.
+// Inner reconvergence and an independent outer branch in the same graph.
+// Select1 reconverges to A, which is always active. Select2 picks B or C.
 // branches: [{A, B}, {A, C}]
 #[test]
 fn test_graph_nested_inner_reconvergence_outer_branching() {
@@ -2080,9 +1986,9 @@ fn test_graph_nested_inner_reconvergence_outer_branching() {
     assert_eq!(build(1, 0), [Some(119), Some(42), None]); // A=99+20, B
 }
 
-// A Static inlet used at branch depth 3: `value` feeds `depth3`, which sits on
-// Select3's arm 0. node_inputs_in_scope must keep `value` in scope inside that
-// arm even though it enters from outside the arm. Sequential -> 4 branches.
+// A static inlet used at branch depth 3. `value` feeds `depth3`, which sits
+// on Select3's arm 0. `value` must stay in scope inside that arm even though
+// it enters from outside the arm. Sequential, so 4 branches.
 // branches: [{A}, {B}, {C}, {D}]
 #[test]
 fn test_graph_nested_static_inlet_at_depth_three() {
@@ -2148,8 +2054,8 @@ fn test_graph_nested_static_inlet_at_depth_three() {
     assert_eq!(build(9, 9, 9, 7), [None, None, None, Some(99)]); // all !=0 -> D
 }
 
-// Three independent parallel branches -> 2^3 = 8 external branches (a 3-component
-// flow graph). branches: all 8 of {A|B} x {C|D} x {E|F}.
+// Three independent parallel branches give 2^3 = 8 external branches in a
+// 3-component flow graph. branches: all 8 of {A|B} x {C|D} x {E|F}.
 #[test]
 fn test_graph_nested_multi_branch_three() {
     let make_inner = || {
@@ -2217,7 +2123,7 @@ fn test_graph_nested_multi_branch_three() {
         let vm = compile_and_push(&g, push);
         st.iter().map(|&s| store_val(&vm, s)).collect::<Vec<_>>()
     };
-    // (0,0,0): A=42+10, C=42+30, E=42+50 fire; B,D,F dead.
+    // (0,0,0) fires A=42+10, C=42+30, E=42+50. B, D and F are dead.
     assert_eq!(
         build(0, 0, 0),
         [Some(52), None, Some(72), None, Some(92), None]
@@ -2234,18 +2140,16 @@ fn test_graph_nested_multi_branch_three() {
     );
 }
 
-// ===========================================================================
 // Push-through-outlet branching tests.
 //
-// Here the `push_eval` lives *inside* the nested graph and propagates *out*
-// through the graph's outlets via an interior branch. The bridged graph node
-// therefore acts as a branch node in the parent for that entrypoint, so the
-// parent only evaluates downstream of the outlets the taken arm produced.
-// Each test's INNER graph (with the push inside) is sketched above it; `[Sel]`
-// is `node_select` (input ==0 -> o0(42), else -> o1(99)).
-// ===========================================================================
+// Here the `push_eval` lives inside the nested graph and propagates out
+// through the graph's outlets through an interior branch. The bridged graph
+// node acts as a branch node in the parent for that entrypoint. So the parent
+// only evaluates downstream of the outlets the taken arm produced. Each
+// test's inner graph is sketched above it. `[Sel]` is `node_select`.
 
-// Divergent push-through: each arm drives its own outlet -> its own outer store.
+// Divergent push-through. Each arm drives its own outlet and its own outer
+// store.
 //
 //   INNER: [push]->[int(sel)]->[Sel]        OUTER: [inner]
 //                            o0/  \o1               o0/  \o1
@@ -2282,7 +2186,7 @@ fn test_graph_nested_push_through_divergent_branch() {
     assert_eq!(build(1), (None, Some(99))); // arm 1 -> outlet B -> store_b
 }
 
-// Dead-arm push-through: arm 1 leaves the select output unconnected, so it
+// Dead-arm push-through. Arm 1 leaves the select output unconnected, so it
 // produces nothing and no outer store is written.
 //
 //   INNER: [push]->[int(sel)]->[Sel]        OUTER: [inner]
@@ -2299,7 +2203,7 @@ fn test_graph_nested_push_through_dead_arm() {
         inner.add_edge(push, int, Edge::from((0, 0)));
         inner.add_edge(int, select, Edge::from((0, 0)));
         inner.add_edge(select, outlet, Edge::from((0, 0)));
-        // Select output 1 left unconnected (dead arm).
+        // Select output 1 stays unconnected as a dead arm.
 
         let ctx = node::MetaCtx::new(&no_lookup);
         let push_n = inner[push].n_outputs(ctx) as u8;
@@ -2317,7 +2221,7 @@ fn test_graph_nested_push_through_dead_arm() {
     assert_eq!(build(1), None); // arm 1 -> dead, store never evaluated
 }
 
-// Multi-output-arm push-through: arm 0 fires two outlets, arm 1 fires one.
+// Multi-output-arm push-through. Arm 0 fires two outlets and arm 1 fires one.
 //
 //   INNER: [push]->[int(sel)]->[Branch]     arm 0 -> o0,o1 (values 10,20)
 //                          o0/o1|\o2         arm 1 -> o2    (value 30)
@@ -2372,9 +2276,9 @@ fn test_graph_nested_push_through_multi_outlet_arm() {
     assert_eq!(build(1), (None, None, Some(30))); // arm 1 -> c
 }
 
-// Two-level push-through: the push is inside the *innermost* graph; its branch
+// Two-level push-through. The push is inside the innermost graph. Its branch
 // propagates out through two levels of outlets. The middle graph branches
-// because the inner one does (multi-level pattern threading).
+// because the inner one does.
 //
 //   INNER2: [push]->[int(sel)]->[Sel]->{oa,ob}
 //   INNER1: [inner2]->{ox,oy}
@@ -2422,9 +2326,10 @@ fn test_graph_nested_push_through_two_levels() {
     assert_eq!(build(1), (None, Some(99)));
 }
 
-// Reconvergent push-through: a divergent interior branch whose two arms feed
-// distinct outlets that re-join at a single outer store - a phi across the
-// bridge boundary. The store always fires, with the taken arm's value.
+// Reconvergent push-through. A divergent interior branch whose two arms feed
+// distinct outlets that re-join at a single outer store. This is a join
+// across the bridge boundary. The store always fires with the taken arm's
+// value.
 //
 //   INNER: [push]->[int(sel)]->[Sel]->{oa(o0), ob(o1)}
 //   OUTER: inner.o0 -\
@@ -2449,7 +2354,8 @@ fn test_graph_nested_push_through_reconvergent_branch() {
         let mut g = petgraph::graph::DiGraph::new();
         let inner_node = g.add_node(Box::new(inner) as Box<dyn DebugNode>);
         let store = g.add_node(Box::new(node_number()) as Box<_>);
-        // Both arms route to the same store (phi reconvergence across the bridge).
+        // Both arms route to the same store, so they reconverge across the
+        // bridge.
         g.add_edge(inner_node, store, Edge::from((0, 0)));
         g.add_edge(inner_node, store, Edge::from((1, 0)));
 
@@ -2461,9 +2367,9 @@ fn test_graph_nested_push_through_reconvergent_branch() {
     assert_eq!(build(1), Some(99)); // arm 1 -> outlet B -> store
 }
 
-// Push-through branch alongside an always-active outlet: the push also drives a
-// constant-fed outlet that every arm produces, so its store always fires while
-// the branch arms route to their own stores.
+// A push-through branch alongside an always-active outlet. The push also
+// drives a constant-fed outlet that every arm produces. Its store always
+// fires while the branch arms route to their own stores.
 //
 //   INNER: [push]-+->[int(sel)]->[Sel]->{oa(o0), ob(o1)}
 //                 +->[int(7)]---------->{oc(o2)}   (always produced)
@@ -2510,20 +2416,17 @@ fn test_graph_nested_push_through_branch_with_constant_outlet() {
     assert_eq!(build(1), (None, Some(99), Some(7))); // arm 1 -> b, plus constant c
 }
 
-// ===========================================================================
 // Multi-root branch-reconvergence ordering tests.
 //
-// A single entrypoint with two flow roots, where one root branches and its arms
-// reconverge at a join that ALSO consumes the other root's value. The join is
-// the branch's post-dominator yet depends on a second root: previously the
-// branch root was emitted first and the join referenced the second root's output
-// before it was defined (a `FreeIdentifier` VM error). Fixed by `order_roots`
-// (emit a producing component before a consuming one) plus destructuring a
-// terminal block's last node so its outputs are available cross-component.
-// ===========================================================================
+// A single entrypoint with two flow roots. One root branches and its arms
+// reconverge at a join that also consumes the other root's value. The join is
+// the branch's post-dominator yet depends on a second root. The emitter must
+// emit a producing component before a consuming one. It must also
+// destructure a terminal block's last node so its outputs are available
+// cross-component.
 
-// Build, compile and run `g` from two push sources in one entrypoint; returns
-// the VM for state queries.
+// Compile and run `g` from two push sources in one entrypoint. Returns the VM
+// for state queries.
 fn run_two_push<N: DebugNode + ?Sized>(
     g: &petgraph::graph::DiGraph<Box<N>, Edge>,
     a: (Vec<usize>, u8),
@@ -2543,7 +2446,7 @@ fn run_two_push<N: DebugNode + ?Sized>(
     vm
 }
 
-// Two push roots; Root A branches and its arms reconverge at `add`, which also
+// Two push roots. Root A branches and its arms reconverge at `add`, which also
 // takes Root B's `int(20)`.
 //
 //   ROOT A: [push_a]->[int sel]->[select]   o0,o1 -> add.$l (phi)
@@ -2574,16 +2477,14 @@ fn test_multiroot_branch_join_external_pred() {
     assert_eq!(build(1), Some(119)); // arm 1: 99 + 20
 }
 
-// Sibling-shape guard: the same logical graph, but the predecessor's nodes are
-// added first so the topological `last`-chaining linearizes `int(20)` ahead of
-// the branch within a single component. This shape already worked; it verifies
-// the terminal-destructure / `order_roots` changes don't regress the linearized
-// form.
+// The same logical graph, but the predecessor's nodes are added first. So the
+// topological ordering linearizes `int(20)` ahead of the branch within a
+// single component. This guards the linearized form.
 #[test]
 fn test_multiroot_branch_join_external_pred_reversed() {
     let build = |sel: i32| {
         let mut g = petgraph::graph::DiGraph::new();
-        // Root B first (lower ids).
+        // Root B first, with lower ids.
         let push_b = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
         let twenty = g.add_node(Box::new(node_int(20)) as Box<_>);
         // Root A second.
@@ -2607,10 +2508,10 @@ fn test_multiroot_branch_join_external_pred_reversed() {
     assert_eq!(build(1), Some(119));
 }
 
-// The same branch-join shape one level down: inside a nested graph, inlet_a
-// branches and its arms reconverge at `add`, which also takes inlet_b. Here the
-// inlets linearize into one component, so it already worked - this guards the
-// node-style `nested_expr` codegen path against the terminal-destructure change.
+// The same branch-join shape one level down. Inside a nested graph, inlet_a
+// branches and its arms reconverge at `add`, which also takes inlet_b. Here
+// the inlets linearize into one component. This guards the nested codegen
+// path.
 //
 //   INNER: [inlet_a]->[select] o0,o1 -> add.$l ;  [inlet_b] -> add.$r ;  add -> outlet
 //   OUTER: [push]->[int sel]->inlet_a ;  [push]->[int 20]->inlet_b ;  inner -> store
@@ -2648,9 +2549,9 @@ fn test_nested_branch_join_external_inlet() {
     assert_eq!(build(1), Some(119));
 }
 
-// An `Outlet` at the *root* level (no enclosing graph node) must compile and be
-// ignored: there is no parent to read its value, so it is a no-op while the rest
-// of the graph still evaluates.
+// An `Outlet` at the root level has no enclosing graph node. It must compile
+// and be ignored. There is no parent to read its value, so it is a no-op
+// while the rest of the graph still evaluates.
 //
 //    --------
 //    | push | // push_eval
@@ -2683,8 +2584,8 @@ fn test_graph_root_outlet_connected() {
     assert_eq!(store_val(&compile_and_push(&g, push), store), Some(42));
 }
 
-// A *disconnected* `Outlet` at the root level (no incoming edge) is never
-// reached by the flow, so it emits nothing and the rest of the graph evaluates
+// A disconnected `Outlet` at the root level has no incoming edge. The flow
+// never reaches it, so it emits nothing and the rest of the graph evaluates
 // normally.
 #[test]
 fn test_graph_root_outlet_disconnected() {
@@ -2699,18 +2600,18 @@ fn test_graph_root_outlet_disconnected() {
     assert_eq!(store_val(&compile_and_push(&g, push), store), Some(42));
 }
 
-// === pd+ optional-input ($?) cold/hot inlet tests ===
+// pd+ optional-input cold/hot inlet tests.
 //
-// Emulates Pure Data's stateful `+`: a left "hot" inlet (always outputs the
-// sum) and a right "cold" inlet (updates internal state only, no output). The
-// node is a nested `Graph` whose interior is a single `Branch` reading two
-// optional inputs (`$?l`, `$?r`). The cold/hot behaviour relies on the inner
-// branch seeing `(None)` for the inlet that did not fire - which only works once
-// the active-input-set is propagated into the nested graph's interior.
+// These emulate Pure Data's stateful `+`. The left hot inlet always outputs
+// the sum. The right cold inlet only updates internal state. The node is a
+// nested `Graph` whose interior is a single `Branch` that reads two optional
+// inputs, `$?l` and `$?r`. The cold/hot behaviour relies on the inner branch
+// seeing `(None)` for the inlet that did not fire. That requires the
+// active-input-set to propagate into the nested graph's interior.
 
-// The pd+ Branch: cold (`$?r`) sets state; hot (`$?l`) outputs `left + state`.
-// Branch 0 activates the single output (hot fired), branch 1 activates nothing
-// (cold-only, no output).
+// The pd+ Branch. Cold `$?r` sets state. Hot `$?l` outputs `left + state`.
+// Branch 0 activates the single output when hot fired. Branch 1 activates
+// nothing for cold-only.
 fn pd_plus_branch() -> node::Branch {
     node::Branch::new(
         r#"
@@ -2728,9 +2629,9 @@ fn pd_plus_branch() -> node::Branch {
     .unwrap()
 }
 
-// A pd+ nested graph. Input 0 = left/hot inlet, input 1 = right/cold inlet,
-// output 0 = the sum. Returns the graph and the inner branch node id (for state
-// queries via the path `[pd_node, branch]`).
+// A pd+ nested graph. Input 0 is the left hot inlet. Input 1 is the right
+// cold inlet. Output 0 is the sum. Returns the graph and the inner branch
+// node id for state queries through the path `[pd_node, branch]`.
 //
 //    [In L]   [In R]
 //       \       /        (In R -> $?r branch input 0, In L -> $?l branch input 1)
@@ -2778,9 +2679,9 @@ fn push_from<N: DebugNode + ?Sized>(
         .unwrap();
 }
 
-// Root graph wiring a left push -> left value, a right push -> right value, into
-// a pd+ node whose output feeds a `store`. Returns (graph, left_push,
-// right_push, pd, branch_id, store).
+// A root graph. A left push feeds a left value and a right push feeds a right
+// value into a pd+ node. Its output feeds a `store`. Returns (graph,
+// left_push, right_push, pd, branch_id, store).
 type PdPlusRoot = (
     petgraph::graph::DiGraph<Box<dyn DebugNode>, Edge>,
     petgraph::graph::NodeIndex,
@@ -2812,8 +2713,8 @@ fn branch_state(vm: &Engine, pd: petgraph::graph::NodeIndex, branch_ix: usize) -
         .flatten()
 }
 
-// Pushing ONLY the cold (right) inlet must set state and produce no output -
-// and crucially must NOT raise `+ expects a number, found '()`.
+// Pushing only the cold right inlet must set state and produce no output. It
+// must not raise `+ expects a number, found '()`.
 #[test]
 fn test_nested_pd_plus_cold_only() {
     let (g, _left_push, right_push, pd, branch_ix, store) = pd_plus_root(10, 5);
@@ -2823,7 +2724,7 @@ fn test_nested_pd_plus_cold_only() {
     assert_eq!(store_val(&vm, store), None, "cold produces no output");
 }
 
-// Cold (right) then hot (left): state is seeded by the cold push, the hot push
+// Cold right then hot left. The cold push seeds state and the hot push
 // outputs `left + state`.
 #[test]
 fn test_nested_pd_plus_hot_after_cold() {
@@ -2835,8 +2736,8 @@ fn test_nested_pd_plus_hot_after_cold() {
     assert_eq!(store_val(&vm, store), Some(15));
 }
 
-// Firing both inlets in one push: the cold value updates state first, then the
-// hot arm outputs `left + state`.
+// Firing both inlets in one push. The cold value updates state first, then
+// the hot arm outputs `left + state`.
 #[test]
 fn test_nested_pd_plus_both() {
     let (inner, branch_ix) = pd_plus();
@@ -2858,8 +2759,8 @@ fn test_nested_pd_plus_both() {
     assert_eq!(store_val(&vm, store), Some(15)); // 10 + 5
 }
 
-// A sequence of pushes across multiple entrypoint calls: two cold updates then
-// a hot output, exercising state persistence.
+// A sequence of pushes across multiple entrypoint calls. Two cold updates,
+// then a hot output. This exercises state persistence.
 #[test]
 fn test_nested_pd_plus_sequence() {
     let (inner, branch_ix) = pd_plus();
@@ -2891,8 +2792,7 @@ fn test_nested_pd_plus_sequence() {
     assert_eq!(store_val(&vm, store), Some(17));
 }
 
-// The same Branch at top level (where `$?` already works) and nested must
-// behave identically.
+// The same Branch at top level and nested must behave identically.
 fn pd_plus_top_level(
     left: i32,
     right: i32,
@@ -2919,7 +2819,7 @@ fn pd_plus_top_level(
 
 #[test]
 fn test_pd_plus_top_level_vs_nested_equivalence() {
-    // Nested: cold(5) then hot(10).
+    // Nested. Cold 5 then hot 10.
     let (gn, ln, rn, _pd, _bix, sn) = pd_plus_root(10, 5);
     let mut vmn = compile_only(&gn);
     push_from(&mut vmn, &gn, rn);
@@ -2927,7 +2827,7 @@ fn test_pd_plus_top_level_vs_nested_equivalence() {
     push_from(&mut vmn, &gn, ln);
     let hot_n = store_val(&vmn, sn);
 
-    // Top level: same sequence.
+    // Top level, same sequence.
     let (gt, lt, rt, st) = pd_plus_top_level(10, 5);
     let mut vmt = compile_only(&gt);
     push_from(&mut vmt, &gt, rt);
@@ -2941,9 +2841,9 @@ fn test_pd_plus_top_level_vs_nested_equivalence() {
     assert_eq!(hot_n, Some(15));
 }
 
-// The reduced inner-branch variants (cold push -> i10, hot push -> i01) must be
-// DEFINED in the module, not just the all-connected i11. Guards the conf
-// post-pass and call/def agreement.
+// The reduced inner-branch variants must be defined in the module, not just
+// the all-connected i11. A cold push gives i10 and a hot push gives i01. This
+// guards the conf post-pass and call/def agreement.
 #[test]
 fn test_nested_pd_plus_emits_reduced_variant() {
     let (g, _l, _r, pd, branch_ix, _store) = pd_plus_root(10, 5);
@@ -2966,7 +2866,8 @@ fn test_nested_pd_plus_emits_reduced_variant() {
 }
 
 // pd+ wrapped in a second nested `Graph`. Returns (outer, pd_id_in_outer,
-// branch_id_in_pd). Outer input 0 -> pd left (hot), input 1 -> pd right (cold).
+// branch_id_in_pd). Outer input 0 feeds the hot pd left inlet. Input 1 feeds
+// the cold pd right inlet.
 fn pd_plus_wrapped() -> (Nested, usize, usize) {
     let (pd_inner, branch_ix) = pd_plus();
     let mut outer = Nested::default();
@@ -2980,9 +2881,10 @@ fn pd_plus_wrapped() -> (Nested, usize, usize) {
     (outer, pd.index(), branch_ix)
 }
 
-// Two-level nesting: cold-only push from the outside must propagate the reduced
-// active-set through BOTH graph layers (outer + pd) so the grandchild branch
-// sees `(None)` for the hot inlet - no error, state set, no output.
+// Two-level nesting. A cold-only push from the outside must propagate the
+// reduced active-set through both graph layers. The grandchild branch then
+// sees `(None)` for the hot inlet. There is no error, state is set and there
+// is no output.
 #[test]
 fn test_nested_pd_plus_two_levels() {
     let (outer, pd_in_outer, branch_in_pd) = pd_plus_wrapped();
@@ -3002,7 +2904,7 @@ fn test_nested_pd_plus_two_levels() {
     let branch_path = [outer_node.index(), pd_in_outer, branch_in_pd];
     let mut vm = compile_only(&g);
 
-    // Cold-only: state set deep inside, no output.
+    // Cold only. State is set deep inside and there is no output.
     push_from(&mut vm, &g, right_push);
     assert_eq!(
         node::state::extract::<i32>(&vm, &branch_path)
@@ -3012,16 +2914,17 @@ fn test_nested_pd_plus_two_levels() {
     );
     assert_eq!(store_val(&vm, store), None);
 
-    // Hot: outputs 10 + 5 = 15.
+    // Hot outputs 10 + 5 = 15.
     push_from(&mut vm, &g, left_push);
     assert_eq!(store_val(&vm, store), Some(15));
 }
 
-// A wrapper `Graph` exposing ONLY pd+'s hot inlet, leaving the cold inlet
+// A wrapper `Graph` that exposes only pd+'s hot inlet. The cold inlet stays
 // permanently unconnected. Even when the wrapper is invoked all-active, its
-// interior invokes pd+ with a statically reduced active-set (only the hot inlet
-// wired), whose inner branch variant must still be defined. Guards the conf
-// post-pass recursing through an all-active parent into a reduced child.
+// interior invokes pd+ with a statically reduced active-set with only the hot
+// inlet wired. That inner branch variant must still be defined. This guards
+// the conf post-pass recursing through an all-active parent into a reduced
+// child.
 #[test]
 fn test_nested_reduced_child_under_active_parent() {
     let (pd_inner, _branch_ix) = pd_plus();
@@ -3043,16 +2946,16 @@ fn test_nested_reduced_child_under_active_parent() {
 
     let mut vm = compile_only(&g);
     push_from(&mut vm, &g, push);
-    // The cold inlet is never wired => `$?r` is `(None)` => state stays 0 =>
-    // output = 10 + 0. Reaching this without a free-identifier error proves the
-    // reduced inner branch variant was defined and called.
+    // The cold inlet is never wired, so `$?r` is `(None)`, state stays 0 and
+    // the output is 10 + 0. Reaching this without a free-identifier error
+    // proves the reduced inner branch variant was defined and called.
     assert_eq!(store_val(&vm, store), Some(10));
 }
 
-// Push-through reaching a nested-optional child: an interior push fires only the
-// hot inlet of a nested pd+, whose output propagates out through the wrapper's
-// outlet. Exercises a reduced inner-branch variant reached via push-through (not
-// via the wrapper's own inlets).
+// Push-through reaching a nested-optional child. An interior push fires only
+// the hot inlet of a nested pd+. Its output propagates out through the
+// wrapper's outlet. This exercises a reduced inner-branch variant reached
+// through push-through, not through the wrapper's own inlets.
 #[test]
 fn test_push_through_into_nested_optional_hot() {
     let (c_inner, _branch_ix) = pd_plus();
@@ -3077,11 +2980,10 @@ fn test_push_through_into_nested_optional_hot() {
     assert_eq!(store_val(&vm, store), Some(10)); // 10 + state(0)
 }
 
-// Push-through into a side-effect-only nested-optional child: an interior push
-// fires only the cold inlet of a nested pd+ that produces no output and feeds no
-// outlet. The all-connected interior flow never reaches C, so C's reduced branch
-// variant is discoverable only from the interior push's flow - which the
-// all-connected nested_fg + node-style reduction miss.
+// Push-through into a side-effect-only nested-optional child. An interior
+// push fires only the cold inlet of a nested pd+ that produces no output and
+// feeds no outlet. The all-connected interior flow never reaches C. So C's
+// reduced branch variant is discoverable only from the interior push's flow.
 #[test]
 fn test_push_through_into_nested_optional_sideeffect() {
     let (c_inner, branch_ix) = pd_plus();

@@ -1,10 +1,9 @@
-//! Shape coverage for the IR pipeline (`compile::module`).
+//! Shape coverage for the IR pipeline in `compile::module`.
 //!
-//! These shapes were developed as a differential suite against the old
-//! flow-graph pipeline before the cutover. Each compiles and runs a call
-//! sequence end-to-end: in-graph `assert!` nodes, explicit state
-//! assertions, and runtime errors carry the verification (`tests/graph.rs`
-//! and `tests/nested.rs` assert overlapping shapes' behavior in detail).
+//! Each shape compiles and runs a call sequence end-to-end. In-graph
+//! `assert!` nodes, explicit state assertions and runtime errors carry the
+//! verification. `tests/graph.rs` and `tests/nested.rs` assert overlapping
+//! shapes in detail.
 
 use gantz_core::compile::{Entrypoint, entry_fn_name, entrypoint, push_pull_entrypoints};
 use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
@@ -50,7 +49,7 @@ fn node_number() -> node::Expr {
     .unwrap()
 }
 
-/// A 1-in 2-out select: input 0 takes arm 0, anything else arm 1.
+/// A 1-in 2-out select. Input 0 takes arm 0, anything else arm 1.
 #[derive(Debug)]
 struct Select;
 
@@ -114,7 +113,8 @@ fn agree_on_all_entrypoints(g: &Graph) {
     assert_pipelines_agree(g, &eps, &calls);
 }
 
-/// push -> one -> add(x2) plus push -> two, asserting 1 + 1 == 2.
+/// Push feeds one, which feeds both add inputs. Push also feeds two. Asserts
+/// 1 + 1 == 2.
 #[test]
 fn push_eval() {
     let mut g = Graph::new();
@@ -183,7 +183,7 @@ fn branch_target_is_join() {
     agree_on_all_entrypoints(&g);
 }
 
-/// Both branch outputs feed the same target input (arm-varying scalar).
+/// Both branch outputs feed the same target input with an arm-varying scalar.
 #[test]
 fn branch_both_outputs_same_target() {
     let mut g = Graph::new();
@@ -198,7 +198,7 @@ fn branch_both_outputs_same_target() {
     agree_on_all_entrypoints(&g);
 }
 
-/// Nested diamond: an inner branch inside the outer branch's first arm.
+/// A nested diamond with an inner branch inside the outer branch's first arm.
 #[test]
 fn nested_diamond() {
     let mut g = Graph::new();
@@ -224,7 +224,7 @@ fn nested_diamond() {
     agree_on_all_entrypoints(&g);
 }
 
-/// Lattice: two inner branches share arm targets, all converging at one join.
+/// A lattice. Two inner branches share arm targets, all converging at one join.
 #[test]
 fn lattice_reconvergence() {
     let mut g = Graph::new();
@@ -356,7 +356,7 @@ fn multi_edge_input_list() {
     agree_on_all_entrypoints(&g);
 }
 
-/// Branch arms ending at independent stateful terminals (no reconvergence).
+/// Branch arms ending at independent stateful terminals with no reconvergence.
 #[test]
 fn branch_divergent_terminal() {
     let mut g = Graph::new();
@@ -542,7 +542,7 @@ fn branch_two_outputs_one_dead() {
     agree_on_all_entrypoints(&g);
 }
 
-/// Every arm dead: the branch's side effects run, nothing propagates.
+/// Every arm dead. The branch's side effects run and nothing propagates.
 #[test]
 fn branch_all_dead() {
     let branch = node::Branch::new(
@@ -562,8 +562,8 @@ fn branch_all_dead() {
     agree_on_all_entrypoints(&g);
 }
 
-/// Pd-style hot/cold `+`: cold push stores state without emitting, hot push
-/// emits. Order matters: cold first, then hot.
+/// Pd-style hot/cold `+`. A cold push stores state without emitting. A hot
+/// push emits. Order matters, so cold comes first, then hot.
 #[test]
 fn branch_optional_input_pd_add() {
     let pd_add = node::Branch::new(
@@ -612,15 +612,9 @@ fn stateful_counter() {
     assert_pipelines_agree(&g, &eps, &[&ep, &ep, &ep]);
 }
 
-/// Two branches in one multi-source entrypoint reconverging at a shared add:
-/// the join of the first branch depends on the second branch's result, so
-/// the first branch must export its arm value past its own dispatch (the
-/// shape behind the old cross-component root-ordering fix).
-///
-/// NOTE: this is asserted against the IR pipeline only - the flow pipeline
-/// (`compile::module`) miscompiles this shape at runtime (`+` receives `'()`:
-/// the second branch's join reads the first branch's arm value before it is
-/// defined), a pre-existing bug beyond what `order_roots` fixed.
+/// Two branches in one multi-source entrypoint reconverge at a shared add.
+/// The join of the first branch depends on the second branch's result. So
+/// the first branch must export its arm value past its own dispatch.
 #[test]
 fn two_branch_shared_join() {
     let mut g = Graph::new();
@@ -640,7 +634,7 @@ fn two_branch_shared_join() {
     g.add_edge(sel_p, seven, Edge::from((1, 0)));
     g.add_edge(sel_q, eight, Edge::from((0, 0)));
     g.add_edge(sel_q, nine, Edge::from((1, 0)));
-    // Both of sel_p's arms feed add input 0; both of sel_q's feed input 1.
+    // Both of sel_p's arms feed add input 0. Both of sel_q's feed input 1.
     g.add_edge(six, add, Edge::from((0, 0)));
     g.add_edge(seven, add, Edge::from((0, 0)));
     g.add_edge(eight, add, Edge::from((0, 1)));
@@ -665,26 +659,23 @@ fn two_branch_shared_join() {
     vm.call_function_by_name_with_args(&entry_fn_name(&combined.id()), vec![])
         .unwrap();
 
-    // push_p emits 0 -> sel_p arm 0 -> six; push_q emits 1 -> sel_q arm 1 ->
-    // nine; add = 6 + 9 = 15.
+    // push_p emits 0, so sel_p takes arm 0 and six. push_q emits 1, so sel_q
+    // takes arm 1 and nine. add gives 6 + 9 = 15.
     let val = node::state::extract::<u32>(&vm, &[number.index()])
         .expect("failed to extract")
         .expect("was None");
     assert_eq!(val, 15);
 }
 
-// ===========================================================================
-// Nested-graph shapes (mirroring tests/nested.rs).
-// ===========================================================================
+// Nested-graph shapes, mirroring tests/nested.rs.
 
 use gantz_core::node::graph::{Inlet, Outlet};
 
-// A nested graph: an ordinary `Graph` (which implements `Node`) boxed into its
-// parent, in place of the removed `GraphNode` wrapper. (`Graph` here is the
-// outer DiGraph alias, so the nested type is spelled out in full.)
+// `Graph` is the outer DiGraph alias, so the nested type is spelled out in
+// full.
 type Nested = gantz_core::node::graph::Graph<Box<dyn DebugNode>>;
 
-/// inlet x2 -> mul -> outlet.
+/// Two inlets feed mul, which feeds the outlet.
 fn graph_mul() -> Nested {
     let mut ga = Nested::default();
     let inlet_a = ga.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
@@ -697,7 +688,7 @@ fn graph_mul() -> Nested {
     ga
 }
 
-/// A stateless nested graph: 6 * 7 == 42 asserted in the parent.
+/// A stateless nested graph. The parent asserts 6 * 7 == 42.
 #[test]
 fn nested_stateless() {
     let mut g = Graph::new();
@@ -717,7 +708,7 @@ fn nested_stateless() {
     agree_on_all_entrypoints(&g);
 }
 
-/// A stateful nested counter, pushed twice; inner state and the propagated
+/// A stateful nested counter, pushed twice. Inner state and the propagated
 /// value must agree.
 #[test]
 fn nested_counter() {
@@ -884,7 +875,8 @@ fn nested_mixed_level_multi_source() {
     assert_pipelines_agree(&g, std::slice::from_ref(&combined), &[&combined]);
 }
 
-/// A 1-in 2-out select for nested-branch shapes: 0 -> o0(42), else o1(99).
+/// A 1-in 2-out select for nested-branch shapes. Input 0 emits 42 on output
+/// 0. Anything else emits 99 on output 1.
 fn node_select2() -> node::Branch {
     node::branch(
         "(if (= 0 $x) (list 0 42) (list 1 99))",
@@ -896,7 +888,7 @@ fn node_select2() -> node::Branch {
     .unwrap()
 }
 
-/// A divergent inner branch: each arm feeds its own outlet, so the graph
+/// A divergent inner branch. Each arm feeds its own outlet, so the graph
 /// node branches externally and the parent stores per arm.
 #[test]
 fn nested_divergent_branch() {
@@ -922,8 +914,8 @@ fn nested_divergent_branch() {
     agree_on_all_entrypoints(&g);
 }
 
-/// A reconvergent inner branch: both arms reach the single outlet, so the
-/// graph node does NOT branch externally.
+/// A reconvergent inner branch. Both arms reach the single outlet, so the
+/// graph node does not branch externally.
 #[test]
 fn nested_reconvergent_branch() {
     let mut ga = Nested::default();
@@ -945,8 +937,8 @@ fn nested_reconvergent_branch() {
     agree_on_all_entrypoints(&g);
 }
 
-/// An inner branch with a dead arm: one pattern produces the outlet, the
-/// other produces nothing, so downstream must not run on the dead arm.
+/// An inner branch with a dead arm. One pattern produces the outlet and the
+/// other produces nothing. Downstream must not run on the dead arm.
 #[test]
 fn nested_dead_arm() {
     let dead_sel = node::branch(
@@ -1010,7 +1002,7 @@ fn nested_branch_intermediates_and_constant_outlet() {
     agree_on_all_entrypoints(&g);
 }
 
-/// An inner push reaching the outlets through a branch: the parent only
+/// An inner push reaching the outlets through a branch. The parent only
 /// evaluates downstream of the outlet the taken arm produced.
 #[test]
 fn nested_push_through_divergent_branch() {
@@ -1035,8 +1027,8 @@ fn nested_push_through_divergent_branch() {
     assert_pipelines_agree(&g, std::slice::from_ref(&ep), &[&ep]);
 }
 
-/// A cold/hot nested graph: pushing only the cold inlet must not fire the
-/// hot path (the reduced active-input-set variant).
+/// A cold/hot nested graph. Pushing only the cold inlet must not fire the
+/// hot path. This is the reduced active-input-set variant.
 #[test]
 fn nested_cold_hot_inlets() {
     let mut ga = Nested::default();
@@ -1103,11 +1095,11 @@ fn nested_three_arm_branch() {
     agree_on_all_entrypoints(&g);
 }
 
-/// A branching graph nested inside another branching graph: the outer graph
+/// A branching graph nested inside another branching graph. The outer graph
 /// node's external branches compose from two levels of dispatch.
 #[test]
 fn nested_branch_two_levels() {
-    // Innermost: divergent select.
+    // The innermost graph holds a divergent select.
     let mut inner = Nested::default();
     let in_inlet = inner.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
     let in_sel = inner.add_node(Box::new(node_select2()) as Box<_>);
@@ -1117,7 +1109,8 @@ fn nested_branch_two_levels() {
     inner.add_edge(in_sel, in_out_a, Edge::from((0, 0)));
     inner.add_edge(in_sel, in_out_b, Edge::from((1, 0)));
 
-    // Middle: passes through the inner branching graph to its own outlets.
+    // The middle graph passes the inner branching graph through to its own
+    // outlets.
     let mut mid = Nested::default();
     let mid_inlet = mid.add_node(Box::new(Inlet::default()) as Box<dyn DebugNode>);
     let inner_ix = mid.add_node(Box::new(inner) as Box<_>);
@@ -1140,7 +1133,7 @@ fn nested_branch_two_levels() {
     agree_on_all_entrypoints(&g);
 }
 
-/// A stateful node inside an inner branch arm: it must run only on its arm.
+/// A stateful node inside an inner branch arm. It must run only on its arm.
 #[test]
 fn nested_branch_stateful_arm() {
     let mut ga = Nested::default();
@@ -1149,7 +1142,7 @@ fn nested_branch_stateful_arm() {
     let store_arm = ga.add_node(Box::new(node_number()) as Box<_>);
     let out = ga.add_node(Box::new(Outlet::default()) as Box<_>);
     ga.add_edge(inlet, sel, Edge::from((0, 0)));
-    // Arm 0 passes through the stateful store; arm 1 goes straight out.
+    // Arm 0 passes through the stateful store. Arm 1 goes straight out.
     ga.add_edge(sel, store_arm, Edge::from((0, 0)));
     ga.add_edge(store_arm, out, Edge::from((0, 0)));
     ga.add_edge(sel, out, Edge::from((1, 0)));
@@ -1165,8 +1158,8 @@ fn nested_branch_stateful_arm() {
     agree_on_all_entrypoints(&g);
 }
 
-/// Inlet/outlet ids interleaved with other nodes: input i must map to the
-/// i-th inlet in id order regardless of insertion order.
+/// Inlet and outlet ids interleaved with other nodes. Input i must map to
+/// the i-th inlet in id order regardless of insertion order.
 #[test]
 fn nested_non_sequential_inlets() {
     let mut ga = Nested::default();
@@ -1192,10 +1185,7 @@ fn nested_non_sequential_inlets() {
     agree_on_all_entrypoints(&g);
 }
 
-// ===========================================================================
-// Delay-cell feedback (IR pipeline only - the flow pipeline does not support
-// cyclic graphs, so these assert expected behavior directly).
-// ===========================================================================
+// Delay-cell feedback shapes.
 
 /// Compile through the IR pipeline, run, and call each entrypoint in order.
 fn run_v2(g: &Graph, eps: &[Entrypoint], calls: &[&Entrypoint]) -> Engine {
@@ -1214,14 +1204,16 @@ fn run_v2(g: &Graph, eps: &[Entrypoint], calls: &[&Entrypoint]) -> Engine {
     vm
 }
 
-/// The classic feedback accumulator: `add` sums its input with the delayed
-/// previous sum. The cycle is legal because it passes through the delay; the
-/// value crosses *between* evaluations.
+/// The classic feedback accumulator. `add` sums its input with the delayed
+/// previous sum. The cycle is legal because it passes through the delay. The
+/// value crosses between evaluations.
 ///
+/// ```text
 ///   push(5) -> add <----- delay
 ///               |  \------^
 ///               v
 ///             number
+/// ```
 #[test]
 fn delay_feedback_accumulator() {
     let mut g = Graph::new();
@@ -1245,7 +1237,7 @@ fn delay_feedback_accumulator() {
     assert_eq!(val, 15);
 }
 
-/// The same accumulator inside a nested graph: the delay's state lives in
+/// The same accumulator inside a nested graph. The delay's state lives in
 /// the nested level's state map and the feedback survives across pushes.
 #[test]
 fn delay_feedback_in_nested_graph() {
@@ -1276,16 +1268,18 @@ fn delay_feedback_in_nested_graph() {
     assert_eq!(val, 15);
 }
 
-/// A delay read without any write this evaluation: a separate entrypoint
-/// stores into the delay; the reader sees the previous stored value only.
+/// A delay read without any write in the same evaluation. A separate
+/// entrypoint stores into the delay. The reader sees only the previous stored
+/// value.
 #[test]
 fn delay_read_and_write_in_separate_entrypoints() {
     let mut g = Graph::new();
-    // Writer chain: push_w(7) -> delay.
+    // The writer chain pushes 7 into the delay.
     let push_w = g.add_node(Box::new(node_int(7).with_push_eval()) as Box<dyn DebugNode>);
     let delay = g.add_node(Box::new(node::Delay) as Box<_>);
     g.add_edge(push_w, delay, Edge::from((0, 0)));
-    // Reader chain: push_r -> get(reads delay) -> number.
+    // The reader chain pushes through get, which reads the delay, into
+    // number.
     let push_r = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let get = g
         .add_node(Box::new(node::expr("(begin $bang (if (number? $d) $d -1))").unwrap()) as Box<_>);
@@ -1298,7 +1292,7 @@ fn delay_read_and_write_in_separate_entrypoints() {
     let ep_w = entrypoint::push(vec![push_w.index()], 1);
     let ep_r = entrypoint::push(vec![push_r.index()], 1);
 
-    // Read before any write: -1. Write 7, read again: 7.
+    // A read before any write gives -1. After writing 7, a read gives 7.
     let vm = run_v2(&g, &eps, &[&ep_r]);
     let val = node::state::extract::<i32>(&vm, &[number.index()])
         .unwrap()
@@ -1312,10 +1306,9 @@ fn delay_read_and_write_in_separate_entrypoints() {
     assert_eq!(val, 7, "read after a write sees the stored value");
 }
 
-/// An inner push whose value circulates through a delay cycle AND reaches
-/// the outlet: push-through-outlet bridging must work for cyclic interiors.
-/// (The pre-cutover flow analysis used a cycle-blind topological walk and
-/// would have missed the outlet reach here.)
+/// An inner push whose value circulates through a delay cycle and also
+/// reaches the outlet. Push-through-outlet bridging must work for cyclic
+/// interiors.
 #[test]
 fn delay_feedback_push_through_outlet() {
     let mut ga = Nested::default();

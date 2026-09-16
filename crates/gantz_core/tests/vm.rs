@@ -1,5 +1,5 @@
-//! Tests for the vm module: single-program execution with a registered
-//! source, recompilation, and steel-error-to-node attribution.
+//! Tests for the vm module. They cover single-program execution with a
+//! registered source, recompilation, and steel-error-to-node attribution.
 
 use gantz_core::{
     Edge, ROOT_STATE,
@@ -12,11 +12,8 @@ use steel::{SteelVal, steel_vm::engine::Engine};
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
-// A nested graph: an ordinary `Graph` (which implements `Node`) boxed into its
-// parent, in place of the removed `GraphNode` wrapper.
 type Nested = node::graph::Graph<Box<dyn DebugNode>>;
 
-// A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }
@@ -29,7 +26,7 @@ fn node_int(i: i32) -> node::Expr {
     node::expr(format!("(begin $push {})", i)).unwrap()
 }
 
-// A counter: increments its numeric state on every push, starting from 1.
+// A counter. It increments its numeric state on every push, starting from 1.
 fn node_counter() -> node::Expr {
     node::expr("(begin $push (set! state (if (number? state) (+ state 1) 1)) state)").unwrap()
 }
@@ -39,8 +36,8 @@ fn node_sink() -> node::Expr {
     node::expr("(begin (set! state $x) state)").unwrap()
 }
 
-// A graph with a stateful counter and a nested graph, ending in a stateful
-// sink so results survive evaluation:
+// A graph with a stateful counter and a nested graph. It ends in a stateful
+// sink so results survive evaluation.
 //
 //    push -> counter -> [inlet -> +1 -> outlet] -> sink
 fn test_graph() -> (
@@ -86,17 +83,17 @@ fn sink_state(vm: &Engine, sink: petgraph::graph::NodeIndex) -> SteelVal {
         .unwrap()
 }
 
-// The single-program run (vm::init) must behave identically to the
-// historical per-expression loop.
+// The single-program run through `vm::init` must behave identically to the
+// per-expression loop.
 #[test]
 fn single_run_parity_with_per_expr() {
     let (g, push, sink) = test_graph();
     let eps = push_pull_entrypoints(&no_lookup, &g);
     let fn_name = push_fn_name(&g, push);
 
-    // New path: single program with registered source.
+    // Single program with registered source.
     let (mut vm_new, _) = gantz_core::vm::init(&no_lookup, &g, &eps, &Default::default()).unwrap();
-    // Old path: each expression run separately.
+    // Each expression run separately.
     let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
     let mut vm_old = Engine::new_base();
     vm_old.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -140,7 +137,8 @@ fn recompile_redefines_module() {
 
     vm.call_function_by_name_with_args(&fn_name, vec![])
         .unwrap();
-    // Counter state persisted (2nd call -> 2), nested +1 -> 3, sink scales.
+    // Counter state persisted, so the second call yields 2. The nested +1
+    // gives 3 and the sink scales it.
     assert_eq!(sink_state(&vm, sink), SteelVal::IntV(300));
 }
 
@@ -149,7 +147,9 @@ fn recompile_redefines_module() {
 #[test]
 fn steel_err_node_attribution() {
     // The failing node lives inside a nested graph to exercise full-path
-    // resolution: push -> int -> [inlet -> car-of-int -> outlet].
+    // resolution.
+    //
+    //    push -> int -> [inlet -> car-of-int -> outlet]
     let mut ga = Nested::default();
     let inlet = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
     let boom = ga.add_node(Box::new(node::expr("(car $x)").unwrap()) as Box<_>);
@@ -175,8 +175,8 @@ fn steel_err_node_attribution() {
     let path = gantz_core::vm::steel_err_node(&err, &vm, &compiled);
     assert_eq!(path, Some(vec![nested.index(), boom.index()]));
 
-    // After a recompile, errors attribute against the *new* module: fail at
-    // the root `int` node, which evaluates before the nested graph.
+    // After a recompile, errors attribute against the new module. The root
+    // `int` node fails. It evaluates before the nested graph.
     g[int] = Box::new(node::expr("(begin $push (car '()))").unwrap());
     gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
     let eps = push_pull_entrypoints(&no_lookup, &g);
@@ -187,6 +187,6 @@ fn steel_err_node_attribution() {
         .unwrap_err();
     let path = gantz_core::vm::steel_err_node(&err, &vm, &recompiled);
     assert_eq!(path, Some(vec![int.index()]));
-    // The stale pre-recompile error no longer attributes to the new module.
-    // (Its span belongs to the old source text.)
+    // The stale pre-recompile error does not attribute to the new module.
+    // Its span belongs to the old source text.
 }
