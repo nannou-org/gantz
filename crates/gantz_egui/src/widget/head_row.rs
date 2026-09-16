@@ -4,26 +4,26 @@
 pub struct HeadRowResponse {
     /// Response for the row.
     pub row: egui::Response,
-    /// The response for the delete button (only present for named rows).
+    /// The response for the delete button. Only present for named rows.
     pub delete: Option<egui::Response>,
 }
 
 /// The type of row being rendered.
 pub enum HeadRowType<'a> {
-    /// A named graph (branch).
+    /// A named graph, that is a branch.
     Named(&'a str),
-    /// An unnamed commit (addressed by timestamp).
+    /// An unnamed commit, addressed by timestamp.
     Unnamed(&'a gantz_ca::Timestamp),
-    /// A base node (ships with the binary, resets on launch).
+    /// A base node. It ships with the binary and resets on launch.
     Base(&'a str),
 }
 
-/// Render a single head/commit row.
+/// Render a single head or commit row.
 ///
-/// Shows the name/timestamp, CA address, open/focused indicators, and an
-/// optional status dot beside the name (colour + hover text - e.g. a live
-/// collaborative session's connection state, mirroring the graph tabs).
-/// Returns responses for click interaction.
+/// Shows the name or timestamp, the CA address and the open and focused
+/// indicators. `status` adds a status dot beside the name with a colour and
+/// hover text, like the graph tabs show a collaborative session's connection
+/// state. Returns responses for click interaction.
 pub fn head_row(
     open_heads: &[gantz_ca::Head],
     head: &gantz_ca::Head,
@@ -46,14 +46,12 @@ pub fn head_row(
             let mut res = ui.response();
             let hovered = res.hovered();
 
-            // Create a child UI for the labels positioned over the allocated rect
             ui.horizontal(|ui| {
                 let mut name = match row_type {
                     HeadRowType::Named(name) => name.to_string(),
                     HeadRowType::Unnamed(&timestamp) => fmt_commit_timestamp(timestamp),
                     HeadRowType::Base(name) => name.to_string(),
                 };
-                // Append focus indicator if this head is focused.
                 if let Some(focused) = focused_head {
                     if crate::head_is_focused(open_heads.iter(), focused, head) {
                         name.push_str(" ⚫");
@@ -74,7 +72,6 @@ pub fn head_row(
                     super::status_dot(ui, color).on_hover_text(hover);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Show the address.
                     let row_ca_string = format!("{}", row_ca.display_short());
                     let mut text = egui::RichText::new(row_ca_string).monospace();
                     text = if is_open {
@@ -87,7 +84,6 @@ pub fn head_row(
                     let label = egui::Label::new(text).selectable(false);
                     res |= ui.add(label);
 
-                    // Show an x for removing the name mapping.
                     let delete = match row_type {
                         HeadRowType::Named(_) => {
                             Some(ui.add(egui::Button::new("×").frame_when_inactive(false)))

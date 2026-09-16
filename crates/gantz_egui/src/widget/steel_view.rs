@@ -1,6 +1,6 @@
-//! A read-only view of compiled steel source with byte-range highlighting
-//! (e.g. the selected node's emitted fns and call sites, diagnostic spans)
-//! and scroll-to support.
+//! A read-only view of compiled steel source. It highlights byte ranges such
+//! as the selected node's emitted fns or diagnostic spans, and can scroll to
+//! an offset.
 
 use egui::text::{LayoutJob, LayoutSection};
 use std::ops::Range;
@@ -8,7 +8,7 @@ use std::ops::Range;
 /// A syntax-highlighted, read-only steel source view.
 pub struct SteelView<'a> {
     code: &'a str,
-    /// Byte ranges to emphasise (e.g. the selected node's spans).
+    /// Byte ranges to emphasise, for example the selected node's spans.
     highlights: &'a [Range<usize>],
     /// Byte ranges of diagnostic spans, tinted with the error colour.
     errors: &'a [Range<usize>],
@@ -44,7 +44,7 @@ impl<'a> SteelView<'a> {
         self
     }
 
-    /// Render the view (expects to be shown within a `ScrollArea`).
+    /// Render the view. Show it within a `ScrollArea`.
     pub fn show(self, ui: &mut egui::Ui) -> egui::Response {
         let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
         let mut job = egui_extras::syntax_highlighting::highlight(
@@ -146,7 +146,7 @@ mod tests {
             ranges(&job),
             vec![(0..3, false), (3..5, true), (5..8, true), (8..12, false)]
         );
-        // Full text preserved in order.
+        // The full text is preserved in order.
         assert_eq!(job.sections.last().unwrap().byte_range.end, job.text.len());
     }
 
@@ -162,7 +162,7 @@ mod tests {
         let mut job = job();
         apply_background(&mut job, &[0..4, 2..6], Color32::YELLOW);
         let r = ranges(&job);
-        // Every byte in 0..6 highlighted, the rest untouched.
+        // Every byte in 0..6 is highlighted and the rest untouched.
         assert!(r.iter().all(|(range, bg)| *bg == (range.start < 6)));
         assert_eq!(r.last().unwrap().0.end, 12);
     }

@@ -11,8 +11,8 @@ use web_time::SystemTime;
 pub struct LogView<'a> {
     logger: Logger,
     id: egui::Id,
-    /// Labels for entries whose target identifies an emitting node (see
-    /// `gantz_std::log::log_target`), keyed by node path.
+    /// Labels for entries whose target identifies an emitting node, keyed by
+    /// node path. See `gantz_std::log::log_target`.
     node_labels: Option<&'a HashMap<Vec<node::Id>, String>>,
 }
 
@@ -27,14 +27,14 @@ pub struct LogViewResponse {
 #[derive(Clone)]
 struct LogViewState {
     level_filter: log::LevelFilter,
-    /// Substring filter over each entry's message and target (space-separated
-    /// terms, all must match).
+    /// Substring filter over each entry's message and target. All
+    /// space-separated terms must match.
     text_filter: String,
     auto_scroll: bool,
     /// Whether the Time, Level and Target columns are shown. Target defaults
-    /// off as it's the least useful column for most entries.
+    /// off since it is the least useful column for most entries.
     show_time: bool,
-    /// Whether the Time column includes the date (vs time-of-day only).
+    /// Whether the Time column includes the date rather than time-of-day only.
     show_date: bool,
     show_level: bool,
     show_target: bool,
@@ -134,8 +134,8 @@ impl<'a> LogView<'a> {
         }
     }
 
-    /// Provide node labels for gantz-target entries; their target cells
-    /// then show `label (path)` and become clickable for navigation.
+    /// Provide node labels for gantz-target entries. Their target cells then
+    /// show `label (path)` and become clickable for navigation.
     pub fn node_labels(mut self, labels: &'a HashMap<Vec<node::Id>, String>) -> Self {
         self.node_labels = Some(labels);
         self
@@ -143,7 +143,6 @@ impl<'a> LogView<'a> {
 
     pub fn show(&mut self, ui: &mut egui::Ui) -> LogViewResponse {
         let mut response = LogViewResponse::default();
-        // Get or initialize our state from memory
         let state_id = self.id.with("state");
         let mut state = ui
             .memory_mut(|mem| mem.data.get_temp::<LogViewState>(state_id))
@@ -158,7 +157,7 @@ impl<'a> LogView<'a> {
             });
 
         // A text filter, with an options button on the right that opens a popup
-        // menu of view settings (level, auto-scroll, columns, clear).
+        // menu of view settings.
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let h = ui.spacing().interact_size.y;
@@ -212,7 +211,6 @@ impl<'a> LogView<'a> {
 
         ui.separator();
 
-        // Get and filter entries
         let mut entries = self.logger.get_entries();
 
         entries.retain(|entry| entry.level <= state.level_filter);
@@ -233,8 +231,8 @@ impl<'a> LogView<'a> {
             a.level == b.level && a.message == b.message && a.target == b.target
         });
 
-        // Create table. The Time/Level/Target columns are optional; Message is
-        // always the trailing remainder column.
+        // The Time, Level and Target columns are optional. Message is always
+        // the trailing remainder column.
         let (show_time, show_date, show_level, show_target) = (
             state.show_time,
             state.show_date,
@@ -358,7 +356,6 @@ impl<'a> LogView<'a> {
             ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
         }
 
-        // Store the modified state back in memory
         ui.memory_mut(|mem| mem.data.insert_temp(state_id, state));
 
         response

@@ -1,19 +1,18 @@
 /// A button widget that visually looks like a label.
 pub struct LabelButton {
-    /// Either a user-provided Label or text that will be converted to a Label
     label: egui::Label,
 }
 
 impl LabelButton {
-    /// Create a new LabelButton from raw text
+    /// Create a new LabelButton from raw text.
     pub fn new(text: impl Into<egui::WidgetText>) -> Self {
         Self {
             label: egui::Label::new(text),
         }
     }
 
-    /// Create a LabelButton from an existing Label
-    /// This allows using all Label options like wrap(), truncate(), etc.
+    /// Create a LabelButton from an existing Label. This keeps Label options
+    /// such as `wrap` and `truncate`.
     pub fn from_label(label: egui::Label) -> Self {
         Self { label }
     }

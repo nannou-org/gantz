@@ -1,4 +1,4 @@
-//! The "Panes" controls: per-pane visibility checkboxes plus a reset-layout
+//! The "Panes" controls. Per-pane visibility checkboxes plus a reset-layout
 //! button. Shared between the Settings pane's Panes subtab and the graph-area
 //! context menu's "panes" submenu.
 
@@ -6,11 +6,11 @@ use super::gantz::ViewToggles;
 
 /// Render the per-pane visibility checkboxes.
 ///
-/// `ext` lists the supplied extension panes (see [`ExtPane`][super::ExtPane])
-/// - one checkbox per entry after the built-in tray panes.
+/// `ext` lists the supplied extension panes. See [`ExtPane`][super::ExtPane].
+/// Each entry gets one checkbox after the built-in tray panes.
 pub fn panes_config(view: &mut ViewToggles, ext: &[super::ExtPaneEntry], ui: &mut egui::Ui) {
-    // Sidebar panes: enabling one also opens the sidebar if it is closed, so
-    // the toggle has a visible effect (e.g. from the graph-area context menu).
+    // Enabling a sidebar pane also opens the sidebar if it is closed, so the
+    // toggle has a visible effect from the graph-area context menu.
     sidebar_pane(
         ui,
         &mut view.sidebar_open,
@@ -60,7 +60,7 @@ pub fn panes_config(view: &mut ViewToggles, ext: &[super::ExtPaneEntry], ui: &mu
         "GUI Perf",
         "GUI rendering timing.",
     );
-    // Tray panes: independent of the sidebar.
+    // Tray panes are independent of the sidebar.
     ui.checkbox(&mut view.logs, "Logs")
         .on_hover_text("Log output from the running graphs.");
     ui.checkbox(&mut view.steel, "Steel")

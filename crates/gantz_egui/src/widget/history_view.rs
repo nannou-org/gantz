@@ -51,7 +51,6 @@ impl<'a> HistoryView<'a> {
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) -> GraphSelectResponse {
-        // Load state.
         let state_id = self.id.with("state");
         let mut state = ui
             .memory_mut(|mem| mem.data.get_temp::<HistoryViewState>(state_id))
@@ -59,7 +58,6 @@ impl<'a> HistoryView<'a> {
 
         let mut response = GraphSelectResponse::default();
 
-        // Mode toggle at top.
         ui.horizontal(|ui| {
             ui.radio_value(&mut state.mode, HistoryMode::All, "All")
                 .on_hover_text("show all commits in the registry");
@@ -87,16 +85,13 @@ impl<'a> HistoryView<'a> {
                 });
         });
 
-        // Get commits based on mode.
         let commits = commits_by_recency(self.registry.registry);
         let commit_map: HashMap<_, _> = commits.iter().map(|(ca, c)| (*ca, *c)).collect();
 
-        // Build set of commit addresses to show based on mode.
         let filtered_cas: Option<std::collections::HashSet<gantz_ca::CommitAddr>> = match state.mode
         {
-            HistoryMode::All => None, // Show all
+            HistoryMode::All => None,
             HistoryMode::Focused => {
-                // Get the focused head's commit address and walk parent chain.
                 let focused_ca = self.focused_head.and_then(|idx| {
                     self.heads.get(idx).and_then(|head| match head {
                         gantz_ca::Head::Branch(name) => self.registry.registry.head(name),
@@ -105,7 +100,6 @@ impl<'a> HistoryView<'a> {
                 });
 
                 if let Some(start_ca) = focused_ca {
-                    // Walk the parent chain and collect addresses.
                     let mut chain = std::collections::HashSet::new();
                     let mut current = Some(start_ca);
                     while let Some(ca) = current {
@@ -119,7 +113,6 @@ impl<'a> HistoryView<'a> {
             }
         };
 
-        // Filter commits if in focused mode.
         let filtered_commits: Vec<_> = match &filtered_cas {
             None => commits,
             Some(cas) => commits
@@ -128,7 +121,6 @@ impl<'a> HistoryView<'a> {
                 .collect(),
         };
 
-        // Show commits in scroll area.
         egui::ScrollArea::vertical()
             .auto_shrink(egui::Vec2b::FALSE)
             .show(ui, |ui| {
@@ -144,7 +136,6 @@ impl<'a> HistoryView<'a> {
                 }
             });
 
-        // Store state.
         ui.memory_mut(|mem| mem.data.insert_temp(state_id, state));
 
         response

@@ -1,11 +1,11 @@
 //! A custom tab widget shared by the inner graph tree and the outer pane tree.
 //!
-//! It renders a tab as plain text (no background box) coloured by state, with a
-//! small close button, so all tabs look consistent.
+//! It renders a tab as plain text coloured by state, with no background box
+//! and a small close button, so all tabs look consistent.
 
 /// Response from the [`Tab`] widget.
 pub struct TabResponse {
-    /// The response for the tab area (for click/drag detection).
+    /// The response for the tab area. Use it for click and drag detection.
     pub tab: egui::Response,
     /// The response for the close button, if present.
     pub close: Option<egui::Response>,
@@ -17,9 +17,9 @@ pub struct Tab {
     active: bool,
     closable: bool,
     id: egui::Id,
-    /// Optional hover hint for the tab (e.g. "double-click to rename").
+    /// Optional hover hint for the tab, for example "double-click to rename".
     hint: Option<egui::WidgetText>,
-    /// Optional painted status dot after the title: colour + hover text.
+    /// Optional painted status dot after the title, as colour and hover text.
     status: Option<(egui::Color32, egui::WidgetText)>,
 }
 
@@ -35,16 +35,16 @@ impl Tab {
         }
     }
 
-    /// Show a small painted status dot after the title (e.g. a collab
-    /// session's connection state) with the given hover text. Painted, not a
-    /// glyph: circle glyphs are missing from egui's default fonts on some
-    /// platforms.
+    /// Show a small painted status dot after the title with the given hover
+    /// text, for example a collab session's connection state. The dot is
+    /// painted rather than a glyph because circle glyphs are missing from
+    /// egui's default fonts on some platforms.
     pub fn status_dot(mut self, color: egui::Color32, hover: impl Into<egui::WidgetText>) -> Self {
         self.status = Some((color, hover.into()));
         self
     }
 
-    /// Set whether this tab is currently active (selected).
+    /// Set whether this tab is currently active.
     pub fn active(mut self, active: bool) -> Self {
         self.active = active;
         self
@@ -78,7 +78,6 @@ impl Tab {
 
         let x_margin = ui.spacing().button_padding.x;
         let close_btn_width = if closable {
-            // Width for the close button area.
             ui.spacing().icon_width
         } else {
             0.0
@@ -106,7 +105,7 @@ impl Tab {
         let mut close_response = None;
 
         if ui.is_rect_visible(rect) {
-            // Text color based on state - no background, only text responds.
+            // Only the text colour responds to state. There is no background.
             let text_color = if active {
                 ui.visuals().strong_text_color()
             } else if tab_response.hovered() {
@@ -115,7 +114,7 @@ impl Tab {
                 ui.visuals().weak_text_color()
             };
 
-            // Draw title text (leaving space for the dot/close areas).
+            // Draw the title, leaving space for the dot and close areas.
             let text_rect = rect
                 .shrink2(egui::vec2(x_margin, 0.0))
                 .with_max_x(rect.right() - close_btn_width - dot_width);
@@ -136,7 +135,6 @@ impl Tab {
                 ui.painter().circle_filled(dot_rect.center(), radius, color);
             }
 
-            // Draw close button if closable.
             if closable {
                 let close_rect = egui::Rect::from_min_max(
                     egui::pos2(rect.right() - close_btn_width, rect.top()),
@@ -147,7 +145,6 @@ impl Tab {
                     .interact(close_rect, close_id, egui::Sense::click())
                     .on_hover_cursor(egui::CursorIcon::Default);
 
-                // Draw the × character.
                 let close_color = if close_res.hovered() {
                     ui.visuals().strong_text_color()
                 } else {

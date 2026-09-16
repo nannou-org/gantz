@@ -2,15 +2,14 @@
 
 /// A checkbox on the left enabling/disabling a widget on the right.
 ///
-/// The checkbox is bound to `on`; the wrapped `widget` is shown enabled when
-/// `on` is true and disabled (greyed, non-interactive) when false. The gap
-/// between the two is tightened so the pair reads as one control, and an
-/// optional fixed [`width`][Self::width] keeps a following column aligned as the
-/// widget's content width changes.
+/// The checkbox is bound to `on`. The wrapped `widget` is enabled when `on` is
+/// true and greyed out when false. The gap between the two is tightened so the
+/// pair reads as one control. An optional fixed [`width`][Self::width] keeps a
+/// following column aligned as the widget's content width changes.
 ///
-/// The returned [`Response`](egui::Response) is the union of the checkbox and
-/// the inner widget, so `changed()` is true when either the toggle flips or the
-/// inner widget is edited.
+/// The returned [`egui::Response`] is the union of the checkbox and the inner
+/// widget. `changed()` is true when the toggle flips or the inner widget is
+/// edited.
 pub struct CheckboxEnabled<'a, W> {
     on: &'a mut bool,
     widget: W,

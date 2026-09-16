@@ -1,9 +1,9 @@
-//! The GUI Debug pane's editor: a Steel tree literal that evaluates and
+//! The GUI Debug pane's editor. A Steel tree literal that evaluates and
 //! decodes into a [`gantz_ui::Element`] tree as it is typed.
 //!
 //! The pane renders the decoded tree through the [`ui_tree`][crate::ui_tree]
-//! interpreter against the focused head's live VM, making it both a
-//! playground for the GUI vocabulary and a live harness: bindings resolve
+//! interpreter against the focused head's live VM. This makes it both a
+//! playground for the GUI vocabulary and a live harness. Bindings resolve
 //! into the focused graph's node state, and pushes fire its entrypoints.
 
 use crate::{Env, node};
@@ -12,10 +12,10 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
-/// The tree seeded into a fresh editor: self-contained layout/display
-/// elements plus a couple of bindings into the focused graph (nodes 0 and 1)
-/// to demonstrate the live harness. Evaluated by the same prelude-free base
-/// engine the runtime uses, hence the quote.
+/// The tree seeded into a fresh editor. Self-contained layout and display
+/// elements plus bindings into nodes 0 and 1 of the focused graph to show the
+/// live harness. The same prelude-free base engine as the runtime evaluates
+/// it, hence the quote.
 const SEED: &str = r#"'(col
   (frame (@ (title "gui debug"))
     (label "edit this tree - it renders live")
@@ -25,13 +25,13 @@ const SEED: &str = r#"'(col
     (value (@ (bind (0))))))
 "#;
 
-/// The evaluated + decoded state of the editor text, cached by text hash so
-/// the Steel engine only runs when the text changes.
+/// The evaluated and decoded state of the editor text. It is cached by text
+/// hash so the Steel engine only runs when the text changes.
 pub struct Cache {
     text_hash: u64,
     /// The engine's error when the text failed to evaluate to a value.
     pub eval_err: Option<String>,
-    /// The decoded tree + warnings when evaluation yielded a value.
+    /// The decoded tree and warnings when evaluation yielded a value.
     pub decoded: Option<gantz_ui::Decoded>,
 }
 
@@ -43,9 +43,9 @@ pub struct TreeEditOutput {
     pub response: egui::Response,
 }
 
-/// A multiline Steel editor whose text is evaluated (in a scratch base
-/// engine) and decoded into an element tree whenever it changes. The WIP
-/// text and the evaluation cache persist in egui temp memory under `id`.
+/// A multiline Steel editor. Whenever the text changes, a scratch base engine
+/// evaluates it and the result decodes into an element tree. The WIP text and
+/// the evaluation cache persist in egui temp memory under `id`.
 pub fn tree_editor(id: egui::Id, ui: &mut egui::Ui) -> TreeEditOutput {
     let code_id = id.with("code");
     let cache_id = id.with("cache");
@@ -108,8 +108,8 @@ pub fn tree_editor(id: egui::Id, ui: &mut egui::Ui) -> TreeEditOutput {
 /// yielded value into an element tree.
 ///
 /// The engine comes from `gantz_core::vm::new_engine` for parity with node
-/// exprs: gantz's core steel modules are requirable, though domain modules
-/// are not plumbed through to this scratch pane (yet).
+/// exprs, so gantz's core steel modules are requirable. Domain modules are
+/// not plumbed through to this scratch pane.
 fn evaluate(text_hash: u64, code: &str) -> Cache {
     let mut engine = gantz_core::vm::new_engine(&[]);
     let (eval_err, decoded) = match engine.run(code.to_string()) {
@@ -132,11 +132,11 @@ fn evaluate(text_hash: u64, code: &str) -> Cache {
     }
 }
 
-/// The output count of every node in `g`, backing the interpreter's
-/// push-eval resolver (a push entry fn's identity covers the count).
+/// The output count of every node in `g`. It backs the interpreter's
+/// push-eval resolver, since a push entry fn's identity covers the count.
 ///
-/// Nodes reify transiently through the codec; a weight that fails to reify
-/// (an unknown tag) reports no count.
+/// Nodes reify transiently through the codec. A weight with an unknown tag
+/// fails to reify and reports no count.
 pub fn node_output_counts(
     registry: &Env<'_>,
     codec: &node::NodeCodec,

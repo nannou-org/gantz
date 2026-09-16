@@ -4,7 +4,7 @@ use super::head_row::{HeadRowType, head_row};
 use gantz_ca::Name;
 use std::collections::HashSet;
 
-/// The glyph for the filter-options button (swap if it doesn't render).
+/// The glyph for the filter-options button. Swap it if it does not render.
 const FILTER_GLYPH: &str = "⛭";
 
 /// A widget for selecting between, naming, and creating new graphs.
@@ -14,20 +14,20 @@ pub struct GraphSelect<'a> {
     heads: &'a [gantz_ca::Head],
     focused_head: Option<usize>,
     base_names: &'a crate::reg::Names,
-    /// Collaborative-session display state, when a collab layer is wired:
+    /// Collaborative-session display state, when a collab layer is wired. It
     /// enables the join button and the per-row session dots.
     collab: Option<&'a crate::collab::CollabUiState>,
-    /// A host-provided clipboard reader, for the join popup's right-click
-    /// paste (egui alone cannot read the clipboard).
+    /// A host-provided clipboard reader for the join popup's right-click
+    /// paste. egui alone cannot read the clipboard.
     clipboard: Option<&'a dyn Fn() -> Option<String>>,
 }
 
 #[derive(Clone)]
 struct GraphSelectState {
     name_filter: String,
-    /// Whether base (non-demo) graphs are shown.
+    /// Whether base graphs that are not demos are shown.
     show_base: bool,
-    /// Whether demo graphs are shown (including base demos).
+    /// Whether demo graphs are shown, including base demos.
     show_demo: bool,
 }
 
@@ -50,15 +50,16 @@ pub struct GraphSelectResponse {
     pub import: bool,
     /// Indicates the export-all button was clicked.
     pub export_all: bool,
-    /// Click while the focused head is named: replace the focused head with this one.
+    /// A plain click while the focused head is named. Replace the focused head
+    /// with this one.
     pub replaced: Option<gantz_ca::Head>,
     /// Open this head as a new tab, or focus it if already open.
     ///
     /// Emitted on ctrl+click of a head that is not open, or on a plain click
-    /// while the focused head is an unnamed commit (so that clicking another
-    /// head can't silently lose an unnamed graph).
+    /// while the focused head is an unnamed commit. This way clicking another
+    /// head cannot silently lose an unnamed graph.
     pub opened: Option<gantz_ca::Head>,
-    /// Ctrl+click on a head that is already open: close this head.
+    /// Ctrl+click on a head that is already open. Close this head.
     pub closed: Option<gantz_ca::Head>,
     /// The name mapping was removed.
     pub name_removed: Option<Name>,
@@ -124,24 +125,22 @@ impl<'a> GraphSelect<'a> {
         self
     }
 
-    /// Provide the collaborative-session display state. Without this call
-    /// (no networking layer wired), the join button and per-row session
-    /// dots are hidden.
+    /// Provide the collaborative-session display state. Without this call the
+    /// join button and per-row session dots are hidden.
     pub fn collab(mut self, collab: Option<&'a crate::collab::CollabUiState>) -> Self {
         self.collab = collab;
         self
     }
 
     /// Provide a clipboard reader for the join popup's right-click paste.
-    /// Without it the paste menu item is hidden (Ctrl+V keeps working
-    /// through egui's own event path).
+    /// Without it the paste menu item is hidden. Ctrl+V keeps working through
+    /// egui's own event path.
     pub fn clipboard(mut self, clipboard: Option<&'a dyn Fn() -> Option<String>>) -> Self {
         self.clipboard = clipboard;
         self
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) -> GraphSelectResponse {
-        // Load any state specific to this widget (e.g. working text strings).
         let state_id = self.id.with("state");
         let mut state = ui
             .memory_mut(|mem| mem.data.get_temp::<GraphSelectState>(state_id))
@@ -186,14 +185,14 @@ impl<'a> GraphSelect<'a> {
                 ui.available_height() - ui.spacing().interact_size.y - ui.spacing().item_spacing.y,
             )
             .show(ui, |ui| {
-                // Partition names into groups:
+                // Names fall into three groups.
                 // 1. User-named, non-demo
                 // 2. Base-named, non-demo
-                // 3. All demos (alphabetical, regardless of user/base)
+                // 3. All demos, alphabetical, regardless of user or base
                 let is_base = |name: &Name| self.base_names.contains_key(name);
                 let is_demo = self::is_demo;
-                // Nested graphs (`parent:child`) are hidden from the root list;
-                // they are reached by navigating into their parent.
+                // Nested `parent:child` graphs are hidden from the root list.
+                // They are reached by navigating into their parent.
                 let is_nested = |name: &Name| name.is_nested();
                 let matches_filter = |name: &str| {
                     state.name_filter.is_empty()
@@ -206,8 +205,8 @@ impl<'a> GraphSelect<'a> {
                 let mut visited = HashSet::new();
                 let collab = self.collab;
 
-                // Helper: show a named graph row, its right-click menu, and
-                // handle clicks.
+                // Show a named graph row and its right-click menu, and handle
+                // clicks.
                 let show_named =
                     |ui: &mut egui::Ui,
                      name: &Name,
@@ -223,22 +222,22 @@ impl<'a> GraphSelect<'a> {
                             HeadRowType::Named(&name_str)
                         };
                         let head = gantz_ca::Head::Branch(name.clone());
-                        // A live session's dot beside the name (mirroring the
-                        // graph tabs) - sessions outlive their tabs, so this
-                        // is where a closed head's session stays visible.
+                        // A live session's dot beside the name, mirroring the
+                        // graph tabs. Sessions outlive their tabs, so this is
+                        // where a closed head's session stays visible.
                         let status = collab
                             .and_then(|c| c.sessions.get(name))
                             .map(|d| (d.conn.color(), d.hover_text().into()));
                         let mut res =
                             head_row(heads, &head, row_type, ca, focused_head, status, ui);
-                        // Show the graph's description + input/output docs on hover.
+                        // Show the graph's description and socket docs on hover.
                         res.row = res.row.on_hover_ui(|ui| {
-                            // Re-assert wrap width every frame (see `socket_hover`).
+                            // Re-assert wrap width every frame. See `socket_hover`.
                             let max_width = ui.spacing().tooltip_width;
                             ui.set_max_width(max_width);
                             crate::node_info_ui(&registry.command_info(&name_str), ui);
                         });
-                        // Deletable iff the row offers an `×` (named, non-base).
+                        // Only named non-base rows offer an `×` and are deletable.
                         let deletable = res.delete.is_some();
                         // The associated demo to offer, if any.
                         let demo = registry.demo_graph(&name_str);
@@ -297,7 +296,7 @@ impl<'a> GraphSelect<'a> {
                     );
                 }
 
-                // 2. Base-named, non-demo (hidden when the `base` filter is off).
+                // 2. Base-named, non-demo. Hidden when the `base` filter is off.
                 for (name, ca) in names
                     .iter()
                     .filter(|(n, _)| state.show_base && is_base(n) && !is_demo(n) && !is_nested(n))
@@ -317,8 +316,8 @@ impl<'a> GraphSelect<'a> {
                     );
                 }
 
-                // 3. All demos, alphabetical, regardless of user/base (hidden
-                //    when the `demo` filter is off; shown even if also a base).
+                // 3. All demos, alphabetical, regardless of user or base. Hidden
+                //    when the `demo` filter is off. Shown even if also a base.
                 for (name, ca) in names
                     .iter()
                     .filter(|(n, _)| state.show_demo && is_demo(n) && !is_nested(n))
@@ -338,12 +337,13 @@ impl<'a> GraphSelect<'a> {
                     );
                 }
 
-                // Collect commit addresses for open heads (excluding named ones already shown).
+                // Collect commit addresses for open unnamed heads. Named ones
+                // are already shown.
                 let open_head_cas: HashSet<_> = self
                     .heads
                     .iter()
                     .filter_map(|head| match head {
-                        gantz_ca::Head::Branch(_) => None, // Already shown in named section
+                        gantz_ca::Head::Branch(_) => None,
                         gantz_ca::Head::Commit(ca) => Some(*ca),
                     })
                     .collect();
@@ -360,7 +360,6 @@ impl<'a> GraphSelect<'a> {
                         }
                     }
 
-                    // Use the timestamp as a row name.
                     let head = gantz_ca::Head::Commit(*ca);
                     let row_type = HeadRowType::Unnamed(&commit.timestamp);
                     let res =
@@ -372,7 +371,6 @@ impl<'a> GraphSelect<'a> {
             });
 
         ui.horizontal(|ui| {
-            // Place import and export buttons on the right.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .button("\u{2B07}")
@@ -388,8 +386,8 @@ impl<'a> GraphSelect<'a> {
                 {
                     response.import = true;
                 }
-                // Join a session from an invite ticket (only when a collab
-                // layer is wired).
+                // Join a session from an invite ticket. Only shown when a
+                // collab layer is wired.
                 if self.collab.is_some() {
                     let btn = ui
                         .button("\u{1F310} join")
@@ -407,11 +405,11 @@ impl<'a> GraphSelect<'a> {
                                     egui::TextEdit::singleline(&mut ticket)
                                         .hint_text("paste an invite ticket"),
                                 );
-                                // Right-click paste: pasting is how this field
-                                // is nearly always filled. egui alone cannot
-                                // read the clipboard, so the affordance needs
-                                // a host-provided reader (Ctrl+V works through
-                                // egui's event path regardless).
+                                // Pasting is how this field is nearly always
+                                // filled. egui alone cannot read the clipboard,
+                                // so right-click paste needs a host-provided
+                                // reader. Ctrl+V works through egui's event
+                                // path regardless.
                                 if let Some(read) = clipboard {
                                     edit.context_menu(|ui| {
                                         if ui.button("paste").clicked() {
@@ -448,7 +446,6 @@ impl<'a> GraphSelect<'a> {
             });
         });
 
-        // Store the modified state back in memory
         ui.memory_mut(|mem| mem.data.insert_temp(state_id, state));
 
         response
@@ -457,8 +454,8 @@ impl<'a> GraphSelect<'a> {
 
 /// All commits in the registry, sorted newest to oldest.
 ///
-/// The head-listing widgets (graph select, history view) share this ordering
-/// for their unnamed-commit rows.
+/// The head-listing widgets share this ordering for their unnamed-commit
+/// rows.
 pub fn commits_by_recency(
     reg: &gantz_ca::Registry,
 ) -> Vec<(&gantz_ca::CommitAddr, &gantz_ca::Commit)> {
@@ -476,10 +473,10 @@ pub(crate) fn is_demo(name: &Name) -> bool {
 
 /// Update `response` for a click on the row for `head`.
 ///
-/// Ctrl+click toggles the head: closes it if open, otherwise opens it as a new
-/// tab. A plain click replaces the focused head, unless the focused head is an
-/// unnamed commit, in which case the clicked head is opened as a new tab
-/// instead (or focused if already open) so that the unnamed graph isn't lost.
+/// Ctrl+click toggles the head. It closes the head if open, otherwise opens it
+/// as a new tab. A plain click replaces the focused head. When the focused
+/// head is an unnamed commit, the clicked head opens as a new tab instead, or
+/// is focused if already open, so the unnamed graph is not lost.
 pub(crate) fn click_head(
     ui: &egui::Ui,
     heads: &[gantz_ca::Head],

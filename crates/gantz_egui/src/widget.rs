@@ -60,14 +60,15 @@ pub mod tab;
 #[cfg(feature = "tracing")]
 pub mod trace_view;
 
-/// Convert a UTC datetime to local timezone, with fallback to UTC if unavailable.
+/// Convert a UTC datetime to the local timezone. Falls back to UTC when the
+/// local offset is unavailable.
 pub(crate) fn to_local_datetime(datetime: OffsetDateTime) -> OffsetDateTime {
     UtcOffset::current_local_offset()
         .map(|offset| datetime.to_offset(offset))
         .unwrap_or(datetime)
 }
 
-/// The glyph for a widget's options/settings button (swap if it doesn't render).
+/// The glyph for a widget's options button. Swap it if it does not render.
 pub(crate) const OPTIONS_GLYPH: &str = "⛭";
 
 /// Format a SystemTime as a local string using the given `time` format
@@ -86,16 +87,16 @@ pub(crate) fn format_local_datetime(system_time: std::time::SystemTime) -> Strin
     format_local(system_time, "[year]-[month]-[day] [hour]:[minute]:[second]")
 }
 
-/// Format a SystemTime as a local `HH:MM:SS` time-of-day string (no date).
+/// Format a SystemTime as a local `HH:MM:SS` time-of-day string without a date.
 pub(crate) fn format_local_time(system_time: std::time::SystemTime) -> String {
     format_local(system_time, "[hour]:[minute]:[second]")
 }
 
-/// Group consecutive slice elements considered equal by `eq` into runs,
-/// returned as `(index_of_first, count)` pairs in order.
+/// Group consecutive slice elements that `eq` considers equal into runs.
+/// Returns `(index_of_first, count)` pairs in order.
 ///
-/// Used by the log/trace views to collapse runs of repeated entries (equal but
-/// for their timestamp) into a single row carrying an occurrence count.
+/// The log and trace views use this to collapse repeated entries into a
+/// single row with an occurrence count.
 pub(crate) fn group_runs<T>(items: &[T], eq: impl Fn(&T, &T) -> bool) -> Vec<(usize, usize)> {
     let mut runs: Vec<(usize, usize)> = Vec::new();
     for (i, item) in items.iter().enumerate() {
@@ -121,8 +122,8 @@ mod tests {
 
     #[test]
     fn group_runs_collapses_consecutive_equal_items() {
-        // The trailing `a` is a *separate* run from the leading ones - only
-        // consecutive equals collapse.
+        // Only consecutive equal items collapse. The trailing `a` items form
+        // a separate run from the leading ones.
         let items = ['a', 'a', 'a', 'b', 'a', 'a'];
         let runs = group_runs(&items, |x, y| x == y);
         assert_eq!(runs, vec![(0, 3), (3, 1), (4, 2)]);

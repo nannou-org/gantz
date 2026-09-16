@@ -1,33 +1,34 @@
-//! Application-supplied top-level panes (see [`ExtPane`]).
+//! Application-supplied top-level panes. See [`ExtPane`].
 
 use crate::Responses;
 use gantz_core::node;
 
-/// An application-supplied top-level pane - the pane analogue of
+/// An application-supplied top-level pane. It is the pane analogue of
 /// [`SettingsTab`][super::SettingsTab].
 ///
 /// Domains contribute their own panes by supplying implementations to the
 /// [`Gantz`][super::Gantz] widget via
 /// [`Gantz::ext_panes`][super::Gantz::ext_panes]. A pane typically holds a
-/// per-frame snapshot of its domain's data, and reports changes by pushing
+/// per-frame snapshot of its domain's data. It reports changes by pushing
 /// typed payloads into the returned [`Responses`] for the host to apply.
 ///
 /// A supplied pane's tile is inserted into the tray on first sight of its
 /// [`key`][Self::key] and persists in the tile tree from then on. While no
-/// provider supplies the key (e.g. the owning domain is disabled), the tile
-/// renders a placeholder. Visibility defaults to hidden, toggled via
-/// Settings -> Panes like the built-in tray panes.
+/// provider supplies the key, the tile renders a placeholder. Visibility
+/// defaults to hidden and is toggled in the Settings Panes subtab like the
+/// built-in tray panes.
 pub trait ExtPane {
-    /// The pane's stable identity: persisted in the tile tree and keying its
-    /// pop-out window geometry. Unique among the supplied panes and stable
-    /// across sessions.
+    /// The pane's stable identity. It is persisted in the tile tree and keys
+    /// the pop-out window geometry. It must be unique among the supplied panes
+    /// and stable across sessions.
     fn key(&self) -> &str;
 
-    /// The tab label. Suffixed with the focused head in the tab title, like
+    /// The tab label. The tab title suffixes it with the focused head, like
     /// the built-in Steel pane.
     fn title(&self) -> &str;
 
-    /// Hover text for the pane's Settings -> Panes visibility checkbox.
+    /// Hover text for the pane's visibility checkbox in the Settings Panes
+    /// subtab.
     fn description(&self) -> &str {
         ""
     }
@@ -36,29 +37,27 @@ pub trait ExtPane {
     fn ui(&mut self, cx: ExtPaneCtx, ui: &mut egui::Ui) -> Responses;
 }
 
-/// The context handed to [`ExtPane::ui`] - what the widget knows about the
-/// focused head that a pane might want to follow (the built-in Steel pane's
-/// inputs, roughly).
+/// The context handed to [`ExtPane::ui`]. It carries what the widget knows
+/// about the focused head, roughly the built-in Steel pane's inputs.
 ///
-/// `#[non_exhaustive]` so future context reaches panes without breaking
-/// implementors: only the widget constructs one.
+/// Only the widget constructs one. It is `#[non_exhaustive]` so new context
+/// can reach panes without breaking implementors.
 #[non_exhaustive]
 pub struct ExtPaneCtx<'a> {
     /// The currently focused head, if any.
     pub focused: Option<&'a gantz_ca::Head>,
-    /// The focused head's selected nodes (root-level indices), sorted.
+    /// The focused head's selected root-level node indices, sorted.
     pub selection: &'a [node::Id],
 }
 
-/// One supplied extension pane's identity and labels, for the pane-visibility
-/// checkbox UIs (Settings -> Panes and the graph-area context menu's "panes"
-/// submenu - see [`panes_config`][super::panes_config()]).
+/// One supplied extension pane's identity and labels for the pane-visibility
+/// checkboxes. See [`panes_config`][super::panes_config()].
 #[derive(Clone, Debug)]
 pub struct ExtPaneEntry {
-    /// The pane's stable identity ([`ExtPane::key`]).
+    /// The pane's stable identity. See [`ExtPane::key`].
     pub key: String,
-    /// The checkbox label ([`ExtPane::title`]).
+    /// The checkbox label. See [`ExtPane::title`].
     pub title: String,
-    /// The checkbox hover text ([`ExtPane::description`]).
+    /// The checkbox hover text. See [`ExtPane::description`].
     pub description: String,
 }

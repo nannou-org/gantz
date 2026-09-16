@@ -15,8 +15,8 @@ pub struct NodeInspectorResponse {
     pub scroll_area_output: ScrollAreaOutput<()>,
     pub node_response: Option<egui::Response>,
     pub label_response: egui::Response,
-    /// Whether the inspector made a CA-affecting edit to the node this frame
-    /// (from its rows or its extra UI). See [`NodeUi`].
+    /// Whether the rows or the extra UI reported a change. See the `changed`
+    /// contract on [`NodeUi`].
     pub changed: bool,
     /// Payloads emitted from the inspector UI, for the application to handle.
     pub payloads: Vec<DynResponse>,
@@ -75,15 +75,17 @@ fn state_triangle(ui: &mut egui::Ui, expanded: bool) -> bool {
     .clicked()
 }
 
-/// The fixed width (px) for the optional-numeric dialers in `range`/`prec.`
-/// inspector rows, so a following column stays put as a value's width changes.
+/// The fixed width in px for the optional-numeric dialers in `range` and
+/// `prec.` inspector rows. A following column stays put as a value's width
+/// changes.
 pub const DIAL_W: f32 = 44.0;
 
-/// Render an optional numeric bound as a tight `<checkbox> <dialer>` group
-/// (a [`CheckboxEnabled`](crate::widget::CheckboxEnabled) dialer), suitable as
-/// one column of a `range` grid row. The dialer is always shown but disabled
-/// while the checkbox is off. `kind` names the bound for the hover text (e.g.
-/// `"minimum"`). Returns whether `bound` changed this frame.
+/// Render an optional numeric bound as a tight `<checkbox> <dialer>` group,
+/// suitable as one column of a `range` grid row. It is a
+/// [`CheckboxEnabled`][crate::widget::CheckboxEnabled] dialer. The dialer is
+/// always shown but disabled while the checkbox is off. `kind` names the bound
+/// for the hover text, for example `"minimum"`. Returns whether `bound`
+/// changed this frame.
 pub fn bound_col<T: egui::emath::Numeric>(
     ui: &mut egui::Ui,
     kind: &str,
@@ -96,17 +98,18 @@ pub fn bound_col<T: egui::emath::Numeric>(
         .add(crate::widget::CheckboxEnabled::new(&mut on, dialer).width(DIAL_W))
         .on_hover_text(format!("clamp the {kind} value"));
     if resp.changed() {
-        // `on == false` -> None; a just-toggled-on bound takes the default `v`.
+        // An unchecked box clears the bound. A just-toggled-on bound takes the
+        // default `v`.
         *bound = on.then_some(v);
         return true;
     }
     false
 }
 
-/// Render `text` as a label-styled radio option for a mode/style row: dim when
-/// unselected, strong when selected (no fill, like the app's tabs). Lay several
-/// out in a `ui.horizontal` to form a selector. Returns whether it was just
-/// selected.
+/// Render `text` as a label-styled radio option for a mode or style row. It is
+/// dim when unselected and strong when selected, with no fill, like the app's
+/// tabs. Lay several out in a `ui.horizontal` to form a selector. Returns
+/// whether it was just selected.
 pub fn radio_option<T: Copy + PartialEq>(
     ui: &mut egui::Ui,
     current: &mut T,
@@ -119,7 +122,7 @@ pub fn radio_option<T: Copy + PartialEq>(
     let resp = ui
         .add(crate::widget::LabelToggle::new(text, &mut selected).selected_color(strong))
         .on_hover_text(hover);
-    // Clicking an already-selected option is a no-op (it stays selected).
+    // Clicking an already-selected option is a no-op. It stays selected.
     if resp.changed() && selected {
         *current = value;
         true
@@ -134,12 +137,11 @@ pub fn table(
     immutable: bool,
     ui: &mut egui::Ui,
 ) -> (ScrollAreaOutput<()>, egui::Response, InspectorRowsResponse) {
-    // Extract info we need upfront before the closure borrows ctx.
+    // Gather what the table closure needs before it borrows `ctx`.
     let registry = ctx.env();
     let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
     let meta_ctx = MetaCtx::new(&get_node);
 
-    // Compute all node metadata before the table closure.
     let name = node.name(registry);
     let path = ctx.path().to_vec();
     let n_inputs = node.n_inputs(meta_ctx);
@@ -147,8 +149,8 @@ pub fn table(
     let push_eval = !node.push_eval(meta_ctx).is_empty();
     let pull_eval = !node.pull_eval(meta_ctx).is_empty();
     let is_stateful = node.stateful(meta_ctx);
-    // A node may opt out of the default state row (e.g. to summarise a large
-    // buffer in its `inspector_ui` instead).
+    // A node may opt out of the default state row, for example to summarise a
+    // large buffer in its `inspector_ui` instead.
     let state_value = if is_stateful && node.show_state() {
         Some(ctx.extract_value())
     } else {
@@ -162,9 +164,9 @@ pub fn table(
     );
     ui.add_space(ui.spacing().item_spacing.y);
     let row_h = table_row_h(ui);
-    // The state row is a collapsed single line by default; a persistent per-node flag
-    // controls whether it is expanded, which drives the row height (one line, or the
-    // measured height of the pretty-printed value).
+    // The state row is a collapsed single line by default. A persistent
+    // per-node flag controls whether it is expanded, which drives the row
+    // height.
     let state_id = egui::Id::new(("inspector_state_expanded", &path));
     let state_texts = match &state_value {
         Some(Ok(Some(state))) => Some((format!("{state:?}"), format!("{state:#?}"))),
@@ -244,7 +246,7 @@ pub fn table(
                                         state_toggled = true;
                                     }
                                     // No-wrap so the rendered height matches the
-                                    // measured `state_row_h` (no overflow).
+                                    // measured `state_row_h`.
                                     ui.add(
                                         egui::Label::new(egui::RichText::new(pretty).monospace())
                                             .wrap_mode(egui::TextWrapMode::Extend),
@@ -253,14 +255,13 @@ pub fn table(
                             } else {
                                 ui.horizontal(|ui| {
                                     // The triangle only makes sense for a multi-line
-                                    // value; a scalar has nothing to expand.
+                                    // value. A scalar has nothing to expand.
                                     if state_multiline && state_triangle(ui, false) {
                                         state_toggled = true;
                                     }
-                                    // One clipped line; hover shows the full value.
+                                    // One clipped line. Hover shows the full value.
                                     // Suppress egui's built-in elided-text tooltip
-                                    // (the compact `{:?}`) so only the pretty
-                                    // `{:#?}` tooltip below shows, not both.
+                                    // so only the pretty `{:#?}` tooltip shows.
                                     ui.add(
                                         egui::Label::new(egui::RichText::new(compact).monospace())
                                             .truncate()
@@ -299,32 +300,27 @@ pub fn path_string(path: &[node::Id]) -> String {
         .join(" ")
 }
 
-/// Working state for the [`socket_doc_rows`] editor, persisted in egui memory so
-/// in-progress text isn't clobbered by re-seeding every frame.
+/// Working state for the [`socket_doc_rows`] editor. It persists in egui
+/// memory so re-seeding every frame does not clobber in-progress text.
 #[derive(Clone, Default)]
 struct SocketDocEditState {
     ty: String,
     desc: String,
-    /// The `(ty, desc)` of the `current` doc we last seeded from, used to detect
-    /// external changes (e.g. a carried-forward edit) without overwriting
-    /// in-progress typing.
+    /// The `(ty, desc)` last seeded from the stored fields. Used to detect
+    /// external changes without overwriting in-progress typing.
     seeded: (String, String),
 }
 
-/// Append `type` and `desc.` editor rows for an inlet/outlet marker's stored
-/// `ty`/`description` fields (a type label and a note) to the inspector table
-/// `body`.
+/// Append `type` and `desc.` editor rows for an inlet or outlet marker's
+/// stored `ty` and `description` fields to the inspector table `body`.
 ///
-/// `type` is a short single-line field; `desc.` is multiline and word-wraps,
-/// with its row sized to fit the wrapped text. Edits are buffered in egui memory
-/// and written back into `ty`/`description` (trimmed) only on commit (focus loss,
-/// or Enter - in the description, Cmd/Ctrl+Enter inserts a newline). Buffering
-/// avoids re-seeding (and trimming trailing whitespace) on every keystroke, and
-/// means the node - and thus the working graph - only changes on commit, so
-/// editing produces a single graph edit rather than one per keystroke. `id_salt`
-/// scopes the edit state to the node. Returns whether a commit actually changed
-/// `ty`/`description` (so the caller can report the CA-affecting edit), `true`
-/// only on the flush frame that writes a new value.
+/// `type` is a short single-line field. `desc.` is multiline and word-wraps,
+/// with its row sized to fit the wrapped text. Edits are buffered in egui
+/// memory and written back trimmed only on commit. See [`NodeUi`] for why
+/// edits commit on focus loss. Enter also commits. In the description,
+/// Cmd/Ctrl+Enter inserts a newline. `id_salt` scopes the edit state to the
+/// node. Returns whether the commit changed `ty` or `description`, so it is
+/// `true` only on the flush frame that writes a new value.
 pub(crate) fn socket_doc_rows(
     body: &mut egui_extras::TableBody,
     id_salt: impl std::hash::Hash,
@@ -337,8 +333,8 @@ pub(crate) fn socket_doc_rows(
         .memory(|m| m.data.get_temp(id))
         .unwrap_or_default();
 
-    // Re-seed the buffer only when the stored fields changed externally (never
-    // mid-edit, since our own edits aren't written back until committed).
+    // Re-seed the buffer only when the stored fields changed externally. Edits
+    // are not written back until commit, so this never fires mid-edit.
     let cur = (ty.clone(), description.clone());
     if st.seeded != cur {
         st.ty = cur.0.clone();
@@ -365,7 +361,7 @@ pub(crate) fn socket_doc_rows(
         });
     });
 
-    // `desc.` is multiline and word-wraps; the value column is the table's
+    // `desc.` is multiline and word-wraps. The value column is the table's
     // remainder, so estimate its width conservatively to wrap within the cell
     // and size the row to the wrapped text.
     let wrap_w = (body.ui_mut().available_width() - 64.0).max(64.0);
@@ -376,8 +372,8 @@ pub(crate) fn socket_doc_rows(
             ui.label("desc.");
         });
         row.col(|ui| {
-            // Plain Enter commits: the return key is Cmd/Ctrl+Enter, so a bare
-            // Enter surrenders focus instead of inserting a newline.
+            // The return key is Cmd/Ctrl+Enter, so a bare Enter surrenders
+            // focus to commit instead of inserting a newline.
             desc_resp = Some(
                 ui.add(
                     egui::TextEdit::multiline(&mut st.desc)
@@ -397,7 +393,7 @@ pub(crate) fn socket_doc_rows(
     let ty_resp = ty_resp.expect("value column always rendered");
     let desc_resp = desc_resp.expect("value column always rendered");
     // The single-line `type` commits on Enter via focus loss. For the multiline
-    // `desc.`, a plain Enter surrenders focus (see the field above) to commit.
+    // `desc.`, a plain Enter surrenders focus to commit.
     let desc_enter = desc_resp.has_focus()
         && body
             .ui_mut()
@@ -410,13 +406,13 @@ pub(crate) fn socket_doc_rows(
     let mut changed = false;
     if commit {
         let new = (st.ty.trim().to_string(), st.desc.trim().to_string());
-        // Only a commit that actually alters the stored fields is a CA-affecting
-        // edit; committing unchanged text (e.g. a bare focus loss) is not.
+        // Only a commit that alters the stored fields is a CA-affecting edit.
+        // Committing unchanged text is not.
         changed = new.0 != *ty || new.1 != *description;
         *ty = new.0.clone();
         *description = new.1.clone();
-        // Keep the seed in sync with what we just wrote back so the trimmed
-        // values aren't treated as an external change next frame.
+        // Keep the seed in sync with the written-back values so the trimmed
+        // values are not treated as an external change next frame.
         st.ty = new.0.clone();
         st.desc = new.1.clone();
         st.seeded = new;
@@ -426,14 +422,14 @@ pub(crate) fn socket_doc_rows(
     changed
 }
 
-/// A table-row height that fits `text` wrapped at `wrap_width` (at least one
-/// line), including the multiline `TextEdit`'s vertical margin.
+/// A table-row height that fits `text` wrapped at `wrap_width`, at least one
+/// line, including the multiline `TextEdit`'s vertical margin.
 fn doc_field_height(ui: &egui::Ui, text: &str, wrap_width: f32) -> f32 {
     let font_id = egui::TextStyle::Body.resolve(ui.style());
     let line_h = ui.text_style_height(&egui::TextStyle::Body);
     let color = ui.visuals().text_color();
     // Lay out a touch narrower than the field so the measured line count is
-    // never below the field's (which would clip); the small extra height is
+    // never below the field's, which would clip. The small extra height is
     // harmless.
     let galley = ui
         .painter()
