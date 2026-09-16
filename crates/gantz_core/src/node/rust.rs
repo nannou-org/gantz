@@ -1,6 +1,6 @@
 //! Helpers for writing gantz [`super::Node`] expressions as natural Rust functions.
 //!
-//! Instead of manually writing Steel (Scheme) strings, users can write
+//! Instead of manually writing Steel strings, users can write
 //! standard Rust functions with named parameters and register them with the
 //! Steel VM. Type inference resolves the arity automatically.
 //!
@@ -20,8 +20,8 @@
 //!
 //! # Stateful example
 //!
-//! State and return types can be any type implementing `FromSteelVal` /
-//! `IntoSteelVal` (including `SteelVal` itself for untyped usage):
+//! State and return types can be any type implementing `FromSteelVal` and
+//! `IntoSteelVal`. That includes `SteelVal` itself for untyped usage.
 //!
 //! ```ignore
 //! // Typed state - no manual SteelVal matching needed.
@@ -44,10 +44,6 @@ use steel::{
     steel_vm::{engine::Engine, register_fn::RegisterFn},
 };
 
-// ---------------------------------------------------------------------------
-// Stateless registration
-// ---------------------------------------------------------------------------
-
 /// Register a stateless Rust function with the Steel VM.
 ///
 /// Forwards directly to [`Engine::register_fn`]. Type inference resolves
@@ -59,14 +55,10 @@ where
     vm.register_fn(name, f);
 }
 
-// ---------------------------------------------------------------------------
-// Stateful registration
-// ---------------------------------------------------------------------------
-
 /// Trait for registering a Rust function that takes `&mut S` state as its last
 /// parameter and returns `R`.
 ///
-/// Implementations are generated for arities 0-15 (positional inputs) via the
+/// Implementations are generated for 0 to 15 positional inputs via the
 /// internal `impl_register_stateful` macro. The user writes:
 ///
 /// ```ignore
@@ -76,20 +68,20 @@ where
 /// where `S: FromSteelVal + IntoSteelVal` and `R: IntoSteelVal`.
 ///
 /// The trait impl wraps it into a function that:
-/// 1. Accepts `state` as an owned `S` argument (Steel handles `FromSteelVal`)
-/// 2. Calls the user's function with `&mut state`
-/// 3. Converts output and state back via `IntoSteelVal`
-/// 4. Returns `vec![output, state]` (converted to a Steel list)
+/// 1. Accepts `state` as an owned `S` argument. Steel handles `FromSteelVal`.
+/// 2. Calls the user's function with `&mut state`.
+/// 3. Converts output and state back via `IntoSteelVal`.
+/// 4. Returns `vec![output, state]`, converted to a Steel list.
 ///
 /// `SteelVal` trivially implements both `FromSteelVal` and `IntoSteelVal`, so
-/// existing `&mut SteelVal` signatures continue to work unchanged.
+/// `&mut SteelVal` signatures work too.
 pub trait RegisterStatefulNodeFn<ARGS, S, R> {
     fn register_node_fn(self, vm: &mut Engine, name: &'static str);
 }
 
 /// Register a stateful Rust function with the Steel VM.
 ///
-/// The function's last parameter must be `&mut S` (the node's state) where
+/// The function's last parameter must be `&mut S`, the node's state, where
 /// `S: FromSteelVal + IntoSteelVal`. The return type `R` must implement
 /// `IntoSteelVal`.
 ///
@@ -109,9 +101,9 @@ where
     f.register_node_fn(vm, name);
 }
 
-/// Generate `RegisterStatefulNodeFn` impls for arities 0..N (positional args).
+/// Generate `RegisterStatefulNodeFn` impls for 0 to N positional args.
 macro_rules! impl_register_stateful {
-    // Base case: 0 positional inputs, state only.
+    // Base case. 0 positional inputs, state only.
     (0 =>) => {
         impl<FN, S, R> RegisterStatefulNodeFn<(), S, R> for FN
         where
@@ -128,7 +120,8 @@ macro_rules! impl_register_stateful {
             }
         }
     };
-    // N positional inputs + state. Takes pairs of (TypeParam, binding_name).
+    // N positional inputs plus state. Takes pairs of type param and binding
+    // name.
     ($n:tt => $($T:ident $b:ident),+) => {
         impl<FN, $($T,)+ S, R> RegisterStatefulNodeFn<($($T,)+), S, R> for FN
         where
@@ -166,10 +159,6 @@ impl_register_stateful!(13 => A a, B b, C c, D d, E e, F2 f2, G g, H h, I i, J j
 impl_register_stateful!(14 => A a, B b, C c, D d, E e, F2 f2, G g, H h, I i, J j, K k, L l, M m, N n);
 impl_register_stateful!(15 => A a, B b, C c, D d, E e, F2 f2, G g, H h, I i, J j, K k, L l, M m, N n, O o);
 
-// ---------------------------------------------------------------------------
-// Expression generation
-// ---------------------------------------------------------------------------
-
 /// Generate a Steel call expression for a stateless Rust function.
 ///
 /// Produces `(fn_name arg0 arg1 ...)`.
@@ -194,8 +183,8 @@ pub fn expr(fn_name: &str, args: &[&str]) -> ExprResult {
 /// 3. Updates the `state` binding via `set!`
 /// 4. Evaluates to the output value
 ///
-/// The compiler's stateful wrapping (see `node_fn.rs`) will then capture the
-/// updated `state` binding and return `(list output state)`.
+/// The compiler's stateful wrapping in `node_fn.rs` then captures the
+/// updated `state` binding and returns `(list output state)`.
 pub fn expr_stateful(fn_name: &str, args: &[&str]) -> ExprResult {
     let call_args = if args.is_empty() {
         "state".to_string()
@@ -209,10 +198,6 @@ pub fn expr_stateful(fn_name: &str, args: &[&str]) -> ExprResult {
     );
     super::parse_expr(&src)
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -247,10 +232,11 @@ mod tests {
             }
         }
         register_stateful(&mut vm, "test-counter", counter);
-        // The registered fn takes (trigger, state) and returns a list [output, new_state].
+        // The registered fn takes `trigger` and `state` and returns the list
+        // `(output new-state)`.
         let result = vm.run("(test-counter 'bang 0)").unwrap();
         assert_eq!(result.len(), 1);
-        // Should be a list: (1 1)
+        // The result is the list (1 1).
         let list = Vec::<SteelVal>::from_steelval(&result[0]).unwrap();
         assert_eq!(list[0], SteelVal::IntV(1));
         assert_eq!(list[1], SteelVal::IntV(1));

@@ -1,8 +1,8 @@
 //! [`Node`] implementations for nested graphs.
 //!
-//! A nested graph is a [`Graph`] referenced by a [`Ref`](crate::node::Ref):
-//! the `Graph<N>: Node` impl here compiles it (a call to its graph fn, see
-//! [`graph_call_expr`]), while [`Inlet`]/[`Outlet`] mark its input/output
+//! A nested graph is a [`Graph`] referenced by a [`Ref`](crate::node::Ref).
+//! The `Graph<N>: Node` impl here compiles it as a call to its graph fn. See
+//! [`graph_call_expr`]. [`Inlet`] and [`Outlet`] mark its input and output
 //! interface.
 
 use crate::{
@@ -21,10 +21,10 @@ use std::hash::Hash;
 
 /// The graph type used to represent a nested graph.
 ///
-/// A plain (non-stable) `petgraph::Graph`: node indices stay contiguous (`0..n`)
-/// because `remove_node` swap-removes (the former-last node adopts the removed
-/// index). Callers that key persistent data by node index must migrate the
-/// swapped node on removal - see `gantz_core::node::state::move_value`.
+/// A plain, non-stable `petgraph::Graph`. Node indices stay contiguous in
+/// `0..n` because `remove_node` swap-removes. The former-last node adopts the
+/// removed index. Callers that key persistent data by node index must migrate
+/// the swapped node on removal. See `gantz_core::node::state::move_value`.
 pub type Graph<N> = petgraph::graph::Graph<N, Edge, Directed, Index>;
 
 /// The type used for indexing into the graph.
@@ -38,9 +38,10 @@ pub type EdgeIx = EdgeIndex<Index>;
 ///
 /// Inlet values are provided via `define` bindings by the parent graph node.
 ///
-/// `ty` and `description` are optional, GUI-facing documentation for the inlet
-/// (a short "type" label and a longer note). They are plain data stored with
-/// the node; the GUI layer interprets and presents them.
+/// `ty` and `description` are optional GUI-facing documentation for the
+/// inlet. `ty` is a short type label and `description` a longer note. They
+/// are plain data stored with the node. The GUI layer interprets and presents
+/// them.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, NodeTag)]
 pub struct Inlet {
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -53,7 +54,7 @@ pub struct Inlet {
 ///
 /// Outlet values are passed through directly as the node's output.
 ///
-/// See [`Inlet`] regarding `ty`/`description`.
+/// See [`Inlet`] regarding `ty` and `description`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, NodeTag)]
 pub struct Outlet {
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -87,8 +88,8 @@ impl<N: Node> Node for Graph<N> {
     }
 
     /// The expression calls the graph fn compiled for this graph's
-    /// active-input variant, so a graph node compiles like any other node: a
-    /// node fn whose body is the call (see [`graph_call_expr`]).
+    /// active-input variant, so a graph node compiles like any other node.
+    /// Its node fn body is the call. See [`graph_call_expr`].
     fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         graph_call_expr(
             ctx.get_node(),
@@ -115,14 +116,10 @@ impl<N: Node> Node for Graph<N> {
 }
 
 impl Node for Inlet {
-    /// This method should never be called during compilation.
+    /// Never called during compilation. The compiler special-cases inlets.
+    /// No node fn is generated and inlet values resolve as bindings.
     ///
-    /// Inlet nodes are special-cased to enable statelessness:
-    /// - No node functions are generated for inlets (skipped in NodeFns visitor)
-    /// - Inlet values are provided via direct `(define inlet-{ix} ...)` bindings in nested_expr
-    /// - eval_stmt creates simple aliases to these bindings rather than calling node functions
-    ///
-    /// Returns `'()` as a safe fallback in case this is ever called outside normal compilation.
+    /// Returns `'()` as a safe fallback.
     fn expr(&self, _ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         node::parse_expr("'()")
     }
@@ -141,14 +138,11 @@ impl Node for Inlet {
 }
 
 impl Node for Outlet {
-    /// This method should never be called during compilation.
+    /// Never called during compilation. The compiler special-cases outlets.
+    /// No node fn is generated and outlet values are read from their source
+    /// bindings.
     ///
-    /// Outlet nodes are special-cased to enable statelessness:
-    /// - No node functions are generated for outlets (skipped in NodeFns visitor)
-    /// - No evaluation statements are generated for outlets (skipped in eval_stmt)
-    /// - Outlet values are read directly from source node output bindings by nested_expr
-    ///
-    /// Returns `'()` as a safe fallback in case this is ever called outside normal compilation.
+    /// Returns `'()` as a safe fallback.
     fn expr(&self, _ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         node::parse_expr("'()")
     }
@@ -166,8 +160,9 @@ impl Node for Outlet {
     }
 }
 
-/// Compute the external branch masks for a nested graph (see [`Node::branches`]):
-/// the distinct outlet-activation patterns of the all-inlets-active analysis.
+/// Compute the external branch masks for a nested graph. See
+/// [`Node::branches`]. These are the distinct outlet-activation patterns of
+/// the all-inlets-active analysis.
 fn graph_branches<'a, G>(
     get_node: node::GetNode<'a>,
     g: G,
@@ -182,17 +177,18 @@ where
 }
 
 /// The expression calling the graph fn compiled for this graph's
-/// active-input variant (`graph-fn-{path}-i{mask}`, see [`compile::module`]).
+/// active-input variant. The fn is `graph-fn-{path}-i{mask}`. See
+/// [`compile::module`].
 ///
-/// The graph fn yields all outlet values (raw for one outlet, a `(list ...)`
-/// for several), or a `(list branch-ix value)` pair matching
-/// `graph_branches` when the interior branches externally. Branching pairs
-/// pass through untouched (the value is already shaped per arm, mirroring
-/// the `Branch` node contract); otherwise, when only a subset of several
-/// outlets is consumed (`outputs`), the active subset is selected so the
+/// The graph fn yields all outlet values. That is raw for one outlet and a
+/// `(list ...)` for several. When the interior branches externally it yields
+/// a `(list branch-ix value)` pair matching `graph_branches`. Branching pairs
+/// pass through untouched, since the value is already shaped per arm like
+/// the `Branch` node contract. Otherwise, when `outputs` selects only a
+/// subset of several outlets, the active subset is selected so the
 /// expression honours the node-fn result contract. A stateful interior
-/// threads the node's `state` (the nested level's state hashmap) through
-/// the call.
+/// threads the node's `state` through the call. That is the nested level's
+/// state hashmap.
 pub fn graph_call_expr<'a, G>(
     get_node: node::GetNode<'a>,
     g: G,

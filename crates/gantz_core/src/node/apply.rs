@@ -30,7 +30,6 @@ impl node::Node for Apply {
     fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         let inputs = ctx.inputs();
 
-        // Get function and arguments from inputs
         let function = inputs.get(0).and_then(|opt| opt.as_ref());
         let arguments = inputs.get(1).and_then(|opt| opt.as_ref());
         let args = arguments.map_or("'()", |s| &s[..]);

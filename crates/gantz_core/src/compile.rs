@@ -3,39 +3,39 @@
 //!
 //! ## Pipeline
 //!
-//! 1. **Meta** (`meta`): a visitor walk collects one [`Meta`] per graph level
-//!    (adjacency, arities, branch masks, stateful/inlet/outlet/delay
-//!    sets) into a rose tree.
-//! 2. **Lowering** (`lower`): each level lowers once per use - per
-//!    active-inlet variant for graph fns, per entrypoint for level bodies -
-//!    to an IR (`ir`) of node-call steps, branch dispatches and join points
-//!    (local fns whose parameters carry reconverging values; values consumed
-//!    outside a branch construct ride its exports). `ir::validate` checks
-//!    the IR's scoping/arity invariants on every lowering (on by default,
-//!    see [`Config::validate_ir`]); a violation is a compiler bug and
-//!    surfaces as [`ModuleError::InvalidIr`].
-//! 3. **Outlet-activation analysis** (`analysis`): the distinct sets of a
-//!    level's outlets that can fire together, computed by abstract
-//!    interpretation of the lowered IR itself (forking per branch arm), so
-//!    the patterns cannot drift from the emitted code. Backs
-//!    `Graph::branches` and push-through-outlet propagation.
-//! 4. **Emission** (`emit`): a mechanical IR -> Steel walk restricted to
-//!    primitive base-engine forms, plus the per-variant node fns
-//!    (`codegen::node_fn`). Definition order is semantic (Steel resolves
-//!    free identifiers at definition): deepest levels first, a level's node
-//!    fns before its graph fns, entry fns last.
+//! 1. Meta, in `meta`. A visitor walk collects one [`Meta`] per graph level
+//!    into a rose tree. A `Meta` holds adjacency, arities, branch masks and
+//!    the stateful, inlet, outlet and delay sets.
+//! 2. Lowering, in `lower`. Each level lowers once per use. Graph fns lower
+//!    once per active-inlet variant. Level bodies lower once per entrypoint.
+//!    The result is an IR, in `ir`, of node-call steps, branch dispatches
+//!    and join points. A join point is a local fn whose parameters carry
+//!    reconverging values. Values consumed outside a branch construct ride
+//!    its exports. `ir::validate` checks the IR's scoping and arity
+//!    invariants on every lowering. See [`Config::validate_ir`]. A violation
+//!    is a compiler bug and surfaces as [`ModuleError::InvalidIr`].
+//! 3. Outlet-activation analysis, in `analysis`. The distinct sets of a
+//!    level's outlets that can fire together. Abstract interpretation of the
+//!    lowered IR computes them, forking per branch arm, so the patterns
+//!    cannot drift from the emitted code. Backs `Graph::branches` and
+//!    push-through-outlet propagation.
+//! 4. Emission, in `emit`. A mechanical walk from IR to Steel restricted to
+//!    primitive base-engine forms, plus the per-variant node fns in
+//!    `codegen::node_fn`. Definition order is semantic because Steel
+//!    resolves free identifiers at definition. Deepest levels come first.
+//!    A level's node fns precede its graph fns. Entry fns come last.
 //!
-//! Nested graphs compile *call-based*: one `graph-fn-{path}-i{mask}` per
-//! active-inlet variant, called like a node fn. An entrypoint sourced inside
-//! a nested graph becomes a per-level fn threading the level's state and
-//! returning the outlet result - a `(list branch-ix vals)` pair when the
-//! push reaches the outlets through branching - which the parent level
-//! continues from as a pre-bound source.
+//! Nested graphs compile call-based. Each active-inlet variant becomes one
+//! `graph-fn-{path}-i{mask}`, called like a node fn. An entrypoint sourced
+//! inside a nested graph becomes a per-level fn. The fn threads the level's
+//! state and returns the outlet result. When the push reaches the outlets
+//! through branching, the result is a `(list branch-ix vals)` pair. The
+//! parent level continues from it as a pre-bound source.
 //!
-//! Cycles are legal when they pass through a [`node::Delay`]: ordering and
-//! reachability never propagate through a delay, whose value crosses
-//! *between* evaluations (read at the top of a level body, written where its
-//! input is produced).
+//! Cycles are legal when they pass through a [`node::Delay`]. Ordering and
+//! reachability never propagate through a delay. Its value crosses between
+//! evaluations. It is read at the top of a level body and written where its
+//! input is produced.
 
 use crate::{
     Edge,
@@ -101,27 +101,26 @@ impl Edges for Vec<Edge> {
 
 /// Options controlling [`module`] compilation.
 ///
-/// The defaults are what regular builds want; the toggles exist for
-/// optimisation ([`validate_ir`][Self::validate_ir]) and codegen debugging
-/// ([`emit_all_node_fns`][Self::emit_all_node_fns]).
+/// The defaults suit regular builds. [`validate_ir`][Self::validate_ir] is
+/// an optimisation toggle. [`emit_all_node_fns`][Self::emit_all_node_fns]
+/// is a codegen debugging toggle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Config {
-    /// Check the scoping/arity invariants of every lowered IR body, surfacing
-    /// a violation as [`ModuleError::InvalidIr`]. A violation is a bug in the
+    /// Check the scoping and arity invariants of every lowered IR body. A
+    /// violation surfaces as [`ModuleError::InvalidIr`]. It is a bug in the
     /// compiler itself, never in the compiled graph.
     ///
-    /// On by default. Disable as an optimisation, at the cost of an internal
-    /// compiler error surfacing further downstream (e.g. as a confusing Steel
-    /// evaluation error) instead of at lowering with a precise diagnosis.
+    /// On by default. Disable it as an optimisation. An internal compiler
+    /// error then surfaces further downstream as a confusing Steel evaluation
+    /// error instead of at lowering with a precise diagnosis.
     pub validate_ir: bool,
-    /// Emit a node fn for every node - its all-connected variant - rather
-    /// than only the variants called by some lowered evaluation.
+    /// Emit the all-connected variant node fn for every node, not only the
+    /// variants called by some lowered evaluation.
     ///
-    /// Off by default: node fns are normally emitted on demand, so a node
-    /// that no entrypoint's evaluation calls produces no code at all. Enable
-    /// to inspect any node's generated code (e.g. in the app's module view)
-    /// before anything calls it. The extra definitions are never called and
-    /// do not affect evaluation.
+    /// Off by default. Node fns are normally emitted on demand, so a node
+    /// that no entrypoint's evaluation calls produces no code. Enable this to
+    /// inspect any node's generated code before anything calls it. The extra
+    /// definitions are never called and do not affect evaluation.
     pub emit_all_node_fns: bool,
 }
 
@@ -153,9 +152,9 @@ where
             let conn_ix = src_conn(&edge);
             // An edge to a connection index not represented in `conns` is not part
             // of this eval configuration, so exclude it. This happens when pulling
-            // over only a subset of a node's inputs - e.g. `derive_synthdef` seeds
-            // the pull with just a DSP node's dsp inputs, so a control input at a
-            // higher index falls outside `conns` and must not be traversed.
+            // over only a subset of a node's inputs. For example, `derive_synthdef`
+            // seeds the pull with only a DSP node's dsp inputs. A control input at
+            // a higher index then falls outside `conns` and must not be traversed.
             let include = conns.get(conn_ix).unwrap_or(false);
             if include {
                 set.insert(e_ref.target());
@@ -199,7 +198,7 @@ where
     G: IntoEdgesDirected + Visitable,
     G::NodeId: Eq + Hash,
 {
-    /// A filter around a graph's `IntoNeighbors` implementation that discludes
+    /// A filter around a graph's `IntoNeighbors` implementation that excludes
     /// edges from the root that are not in the given src neighbors set.
     #[derive(Clone, Copy)]
     struct EvalFilter<'a, G: GraphBase> {
@@ -211,8 +210,8 @@ where
     }
 
     /// The iterator filter applied to the inner graph's neighbors iterator.
-    /// If we're iterating over the eval src's neighbors, this will only yield
-    /// those specified in the included set.
+    /// When the neighbors are the eval src's, this yields only those in the
+    /// included set.
     struct EvalFilterNeighbors<'a, I: Iterator> {
         neighbors: I,
         // Whether or not `neighbors` are from the eval src.
@@ -276,8 +275,6 @@ where
         }
     }
 
-    // Wrap the graph in a filter to only include src neighbors that appear in
-    // the eval set.
     let g = EvalFilter {
         g,
         src,
@@ -348,11 +345,11 @@ where
 
 /// The evaluation order of the nodes feeding `node` via pull evaluation.
 ///
-/// A topological order (sources first) of the connected component ending at
-/// `node`, seeded from the inputs selected by `conns`. A thin wrapper over
-/// the internal `eval_order` with no push sources and a single pull source, so a backend
-/// that pulls from a node (e.g. deriving a synthdef from the DSP subgraph
-/// feeding an output node) orders nodes the same way Steel does.
+/// A topological order of the connected component ending at `node`. Sources
+/// come first. The inputs selected by `conns` seed the order. This wraps the
+/// internal `eval_order` with no push sources and a single pull source. A
+/// backend that pulls from a node, for example to derive a synthdef, orders
+/// nodes the same way Steel does.
 pub fn pull_eval_order<G>(
     g: G,
     node: G::NodeId,
@@ -370,10 +367,11 @@ where
     )
 }
 
-/// Group entrypoint sources by graph level (parent path).
+/// Group entrypoint sources by graph level, that is by parent path.
 ///
-/// Returns a map from level_path -> Vec<(EntrypointId, sources_at_this_level)>.
-/// A single entrypoint with cross-level sources appears at multiple levels.
+/// Returns a map from level path to the entrypoints with sources at that
+/// level. A single entrypoint with cross-level sources appears at multiple
+/// levels.
 fn group_sources_by_level(
     entrypoints: &[Entrypoint],
 ) -> std::collections::BTreeMap<Vec<node::Id>, Vec<(EntrypointId, Vec<&EvalSource>)>> {
@@ -397,8 +395,9 @@ fn group_sources_by_level(
         .collect()
 }
 
-/// Bitwise-OR of the branch patterns (all of equal width): the set of outputs a
-/// branching push-through can produce across all its branch outcomes.
+/// Bitwise-OR of the branch patterns. All patterns have equal width. The
+/// result is the set of outputs a branching push-through can produce across
+/// all its branch outcomes.
 fn or_patterns(patterns: &[node::Conns]) -> Result<node::Conns, error::NodeConnsError> {
     let n = patterns.first().map_or(0, node::Conns::len);
     let bits: Vec<bool> = (0..n)
@@ -407,19 +406,13 @@ fn or_patterns(patterns: &[node::Conns]) -> Result<node::Conns, error::NodeConns
     node::Conns::try_from_slice(&bits).map_err(|_| error::TooManyConns(n).into())
 }
 
-/// Given a root gantz graph, generate the full module with all the necessary
-/// functions for executing it: a function per node variant (input/output
-/// configuration), a graph fn per nested level variant, and a function per
-/// entrypoint's evaluation.
+/// Given a root gantz graph, generate the full module with all the functions
+/// needed to execute it. That is a function per node variant, a graph fn per
+/// nested level variant, and a function per entrypoint's evaluation.
 ///
-/// Lowers through the join-point IR pipeline (`lower` -> `ir` -> `emit`),
-/// with the toggles in [`Config`] applied along the way. Nested graphs
-/// compile *call-based*: each level becomes one `graph-fn-{path}-i{mask}`
-/// per active-inlet variant, which parents call like a node fn. An
-/// entrypoint sourced inside a nested graph becomes a per-level fn whose
-/// result - `(list value state')`, with `value` a `(list branch-ix vals)`
-/// pair when the push reaches the outlets through branching - the parent
-/// level continues from (push-through-outlet as an ordinary value return).
+/// Lowers through the join-point IR pipeline with the toggles in [`Config`]
+/// applied. See the module docs for how nested graphs and the entrypoints
+/// sourced inside them compile.
 pub fn module<'a, G>(
     get_node: node::GetNode<'a>,
     g: G,
@@ -448,7 +441,7 @@ where
         fns: Vec::new(),
     };
 
-    // One entry fn per entrypoint; the recursive level walk emits any nested
+    // One entry fn per entrypoint. The recursive level walk emits any nested
     // level fns and yields the root statements inline.
     let ep_ids: std::collections::BTreeSet<EntrypointId> =
         entrypoints.iter().map(|ep| ep.id()).collect();
@@ -472,10 +465,9 @@ where
             .push(emit::fn_def(&names::entry_fn_name(ep_id), &[], stmts));
     }
 
-    // Every nested level compiles its all-active variant unconditionally:
-    // wrapper nodes without graph-call semantics (e.g. `Fn`) inline an
-    // expression that calls it, and its interior node fns must exist either
-    // way (mirroring the all-connected interiors of the flow pipeline).
+    // Every nested level compiles its all-active variant unconditionally.
+    // Wrapper nodes without graph-call semantics, for example `Fn`, inline an
+    // expression that calls it. Its interior node fns must exist either way.
     let mut emitted: std::collections::BTreeSet<(Vec<node::Id>, node::Conns)> =
         std::collections::BTreeSet::new();
     let mut levels = Vec::new();
@@ -491,16 +483,16 @@ where
     }
 
     // With `emit_all_node_fns`, every node contributes its all-connected
-    // variant so its node fn is emitted even when nothing reachable from an
-    // entrypoint calls it. Before the fixpoint below so any graph fns these
-    // variants call are generated too.
+    // variant. Its node fn is then emitted even when nothing reachable from
+    // an entrypoint calls it. This runs before the fixpoint below so the
+    // graph fns these variants call are generated too.
     if config.emit_all_node_fns {
         all_connected_confs(&meta_tree, &mut Vec::new(), &mut builder.confs)?;
     }
 
-    // Generate a graph fn per (nested level, active-inlet variant) reachable
-    // from the lowered bodies, to a fixpoint (graph fns may call deeper
-    // variants).
+    // Generate a graph fn per nested level and active-inlet variant reachable
+    // from the lowered bodies. Iterate to a fixpoint because graph fns may
+    // call deeper variants.
     loop {
         let mut queue = Vec::new();
         for (path, confs) in &builder.confs {
@@ -527,17 +519,17 @@ where
     }
 
     // A node fn per non-graph variant. The conf tree mirrors the full meta
-    // tree so the generating visitor finds every level; graph-node confs
-    // are excluded (they are graph fns, not node fns).
+    // tree so the generating visitor finds every level. Graph-node confs are
+    // excluded because they compile to graph fns.
     let confs_tree = node_confs_tree(&meta_tree, &builder.confs, &mut Vec::new());
     let node_fns = codegen::node_fns(get_node, g, &confs_tree)?;
 
-    // Definition order (Steel resolves free identifiers at definition):
-    // deepest levels first; within a depth, a level's interior node fns
-    // precede the graph fns of the levels at that depth. A wrapper node fn
-    // (e.g. `Fn`) at depth D may call a graph fn at depth D+1; a graph fn
-    // calls its interior node fns and deeper graph fns; level and entry fns
-    // come last.
+    // Steel resolves free identifiers at definition, so definition order
+    // matters. Deepest levels come first. Within a depth, a level's interior
+    // node fns precede the graph fns of the levels at that depth. A wrapper
+    // node fn at depth D may call a graph fn at depth D+1. A graph fn calls
+    // its interior node fns and deeper graph fns. Level and entry fns come
+    // last.
     let mut fns: Vec<(usize, usize, ExprKind)> = node_fns
         .into_iter()
         .map(|(depth, f)| (depth, 0, f))
@@ -588,9 +580,8 @@ fn collect_requires(tree: &RoseTree<Meta>) -> std::collections::BTreeSet<String>
 }
 
 /// Insert the all-connected variant conf of every node at every level of the
-/// meta tree (the [`Config::emit_all_node_fns`] set). Inlets and outlets
-/// resolve as bindings and delays are intrinsics - none have node fns - so
-/// they are skipped.
+/// meta tree. This is the [`Config::emit_all_node_fns`] set. Inlets, outlets
+/// and delays have no node fns, so they are skipped.
 fn all_connected_confs(
     tree: &RoseTree<Meta>,
     path: &mut Vec<node::Id>,
@@ -640,17 +631,18 @@ fn collect_levels(
 struct LevelPiece {
     /// The emitted level fn's name.
     fn_name: String,
-    /// Whether the level's interior holds any state (the fn then threads the
-    /// level's state hashmap in and out).
+    /// Whether the level's interior holds any state. If so, the fn threads
+    /// the level's state hashmap in and out.
     stateful: bool,
-    /// `Some` when the level's evaluation reaches its outlets: the distinct
-    /// activation patterns (>= 2 = the parent dispatches per pattern).
+    /// `Some` when the level's evaluation reaches its outlets. It holds the
+    /// distinct activation patterns. With two or more, the parent dispatches
+    /// per pattern.
     patterns: Option<Vec<node::Conns>>,
 }
 
-/// The working state of one [`module`] invocation: accumulated node variant
-/// confs and emitted fns, with the per-entrypoint level recursion and the
-/// per-variant graph fn generation as methods.
+/// The working state of one [`module`] invocation. It accumulates node
+/// variant confs and emitted fns. The per-entrypoint level recursion and the
+/// per-variant graph fn generation are methods.
 struct ModuleBuilder<'a> {
     meta_tree: &'a RoseTree<Meta>,
     level_sources:
@@ -660,17 +652,17 @@ struct ModuleBuilder<'a> {
     confs: std::collections::BTreeMap<Vec<node::Id>, std::collections::BTreeSet<NodeConf>>,
     /// Emitted graph fns with their level depth. A graph fn calls only
     /// deeper graph fns, so they are defined deepest-first, before all level
-    /// and entry fns (Steel resolves free identifiers at definition).
+    /// and entry fns. Steel resolves free identifiers at definition.
     graph_fns: Vec<(usize, ExprKind)>,
     /// Emitted level and entry fns, child levels before their parents.
     fns: Vec<ExprKind>,
 }
 
 impl ModuleBuilder<'_> {
-    /// Lower the evaluation of `ep` at the level `path`: the glue statements
-    /// calling child level fns (with state threading and result binding),
-    /// and this level's own lowered body. Returns `None` when neither this
-    /// level nor any descendant has sources for `ep`.
+    /// Lower the evaluation of `ep` at the level `path`. Yields the glue
+    /// statements that call child level fns, and this level's own lowered
+    /// body. The glue threads state and binds results. Returns `None` when
+    /// neither this level nor any descendant has sources for `ep`.
     fn ep_level_stmts(
         &mut self,
         ep: &EntrypointId,
@@ -688,8 +680,8 @@ impl ModuleBuilder<'_> {
         let mut prebound_vars: Vec<ir::Var> = Vec::new();
         let mut any_child = false;
 
-        // Children first (post-order): each contributing child evaluates via
-        // its level fn; one that reaches its outlets becomes a pre-bound
+        // Children first, in post-order. Each contributing child evaluates
+        // via its level fn. One that reaches its outlets becomes a pre-bound
         // source this level continues from.
         for (&gid, sub_meta) in &meta_node.nested {
             let mut child_path = path.to_vec();
@@ -730,7 +722,7 @@ impl ModuleBuilder<'_> {
             } else if piece.patterns.is_some() {
                 glue.push(l([a("define"), pair.clone(), l([a(piece.fn_name)])]));
             } else {
-                // Stateless, no outlets reached: evaluate for side effects.
+                // Stateless and no outlets reached. Evaluate for side effects.
                 glue.push(l([a(piece.fn_name)]));
             }
 
@@ -836,8 +828,8 @@ impl ModuleBuilder<'_> {
             return Ok(None);
         };
 
-        // Whether (and how) this level's evaluation produces its outlets,
-        // analysed over the lowered body itself.
+        // Whether and how this level's evaluation produces its outlets.
+        // Analysed over the lowered body itself.
         let produced = out.outlets.iter().any(|o| o.atom.is_some());
         let patterns =
             match produced {
@@ -909,7 +901,7 @@ impl ModuleBuilder<'_> {
         }
         lower::collect_confs(&out.body, self.confs.entry(gpath.to_vec()).or_default());
 
-        // The node-contract patterns: the all-active analysis, matching the
+        // The node-contract patterns. The all-active analysis matches the
         // order `Graph::branches` reports to the parent.
         let patterns =
             analysis::level_branch_patterns(meta).map_err(|error| ModuleError::Lower {
@@ -940,8 +932,8 @@ impl ModuleBuilder<'_> {
     }
 }
 
-/// Build the node-fn conf tree mirroring the meta tree, excluding
-/// nested-graph node confs (those compile to graph fns).
+/// Build the node-fn conf tree mirroring the meta tree. Nested-graph node
+/// confs are excluded because they compile to graph fns.
 fn node_confs_tree(
     meta_node: &RoseTree<Meta>,
     confs: &std::collections::BTreeMap<Vec<node::Id>, std::collections::BTreeSet<NodeConf>>,
@@ -961,8 +953,9 @@ fn node_confs_tree(
     RoseTree { elem, nested }
 }
 
-/// The inlet ids active for a parent input-conns mask (bit `i` <=> `inlet_ids[i]`,
-/// the "input i -> inlet i" contract shared with `node::graph::graph_call_expr`).
+/// The inlet ids active for a parent input-conns mask. Bit `i` maps to
+/// `inlet_ids[i]`. This is the input-to-inlet contract shared with
+/// `node::graph::graph_call_expr`.
 fn active_inlets_from_conns(
     inlet_ids: &[node::Id],
     conns: &node::Conns,

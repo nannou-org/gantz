@@ -1,10 +1,10 @@
-//! Builtin nodes as plain data: composable specs and the composed palette.
+//! Builtin nodes as plain data. Composable specs and the composed palette.
 //!
 //! Builtins are nodes that are always available and not stored in the
-//! registry. They typically include primitive operations like arithmetic,
-//! control flow, etc. Each domain crate exports its builtin node set as a
-//! plain `fn builtins() -> Vec<Builtin>`; applications compose the domain
-//! lists into a [`Builtins`].
+//! registry. They typically include primitive operations like arithmetic and
+//! control flow. Each domain crate exports its builtin node set as a plain
+//! `fn builtins() -> Vec<Builtin>`. Applications compose the domain lists
+//! into a [`Builtins`].
 
 use crate::data;
 use gantz_ca::{ContentAddr, NodeData};
@@ -13,16 +13,16 @@ use std::collections::{BTreeMap, HashMap};
 /// One palette entry: a builtin node's name and its erased data form.
 #[derive(Clone, Debug)]
 pub struct Builtin {
-    /// The unique name identifying the builtin (e.g. `"expr"`).
+    /// The unique name identifying the builtin, for example `"expr"`.
     pub name: &'static str,
     /// The builtin's default instance, erased to its canonical data form.
     pub node: NodeData,
 }
 
-/// A composed builtin palette: name <-> erased node data, as plain data.
+/// A composed builtin palette. It maps names to erased node data and back.
 ///
 /// The erased [`NodeData`] content address is a builtin's one network-wide
-/// address - the same scheme registry graphs use.
+/// address. Registry graphs use the same scheme.
 #[derive(Clone, Debug, Default)]
 pub struct Builtins {
     /// Erased builtin nodes keyed by name.
@@ -34,11 +34,11 @@ pub struct Builtins {
 }
 
 impl Builtin {
-    /// A new builtin spec: erase the given default instance under its
+    /// A new builtin spec. Erases the given default instance under its
     /// declared [`NodeTag`](gantz_nodetag::NodeTag).
     ///
-    /// Panics if erasure fails - a builtin that cannot erase is a node-set
-    /// composition error, caught at startup or in tests.
+    /// Panics if erasure fails. A builtin that cannot erase is a node-set
+    /// composition error. Startup or tests catch it.
     pub fn new<T>(name: &'static str, node: &T) -> Self
     where
         T: gantz_nodetag::NodeTag + serde::Serialize + crate::Node,
@@ -52,9 +52,9 @@ impl Builtin {
 impl Builtins {
     /// Compose a palette from the given specs.
     ///
-    /// Panics on duplicate names AND duplicate addresses (two names erasing
-    /// to identical [`NodeData`] would shadow each other in the reverse
-    /// index) - both indicate a composition error.
+    /// Panics on duplicate names and on duplicate addresses. Two names that
+    /// erase to identical [`NodeData`] would shadow each other in the reverse
+    /// index. Both indicate a composition error.
     pub fn from_specs(specs: impl IntoIterator<Item = Builtin>) -> Self {
         let mut by_name = BTreeMap::new();
         let mut addr_by_name = BTreeMap::new();

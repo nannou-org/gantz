@@ -60,13 +60,13 @@ pub trait Node: std::any::Any {
     /// This is intended for nodes that conditionally activate outputs based on
     /// some received input.
     ///
-    /// If the returned `Vec` is empty, we assume the node has no branching, and
-    /// simply evaluates to all outputs.
+    /// If the returned `Vec` is empty, the node has no branching and
+    /// evaluates to all outputs.
     ///
-    /// If the returned `Vec` is non-empty, the expression returned from
-    /// [`Node::expr`] method must return a list with two elements where the
-    /// first element is the index of the selected branch, and the second
-    /// element is the node's output value(s).
+    /// If the returned `Vec` is non-empty, the expression from [`Node::expr`]
+    /// must return a list with two elements. The first element is the index
+    /// of the selected branch. The second element is the node's output
+    /// values.
     ///
     /// By default, this is `vec![]`.
     fn branches(&self, _ctx: MetaCtx) -> Vec<EvalConf> {
@@ -74,7 +74,7 @@ pub trait Node: std::any::Any {
     }
 
     /// The expression that, given the expressions of connected inputs,
-    /// produces the output(s).
+    /// produces the outputs.
     ///
     /// The given `inputs` slice is guaranteed to match the length of a call to
     /// [`Node::n_inputs`] immediately prior. Inputs are `Some` in the case that
@@ -85,41 +85,29 @@ pub trait Node: std::any::Any {
     /// edges target the same input index, the binding holds a `(list ...)` of
     /// all incoming values in topological source order.
     ///
-    /// If [`Node::n_outputs`] is 1, the expr should result in a single value.
+    /// If [`Node::n_outputs`] is 1, the expr must result in a single value.
     ///
-    /// If [`Node::n_outputs`] is > 1, the expr should result in a list of values.
+    /// If [`Node::n_outputs`] is > 1, the expr must result in a list of values.
     fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult;
 
-    /// Specifies whether or not code should be generated to allow for push
-    /// evaluation from instances of this node. Enabling push evaluation allows
-    /// applications to call into the graph by calling the resulting generated
-    /// code at runtime.
+    /// The push-evaluation entrypoints to generate for instances of this
+    /// node. One entry fn is generated per returned [`EvalConf`].
+    /// Applications call the generated entry fn at runtime to evaluate the
+    /// graph.
     ///
     /// Push evaluation order is equivalent to a topological ordering of the
-    /// connected component that starts from the `push_eval` node.
-    ///
-    /// Within a **Graph** node, a new function will be generated for each
-    /// `EvalConf` set for each node. If **Some**, a function will be generated
-    /// with the given **Signature** that represents pushing evaluation from
-    /// this node.
+    /// connected component that starts from this node.
     ///
     /// By default, this is an empty vec.
     fn push_eval(&self, _ctx: MetaCtx) -> Vec<EvalConf> {
         vec![]
     }
 
-    /// Specifies whether or not code should be generated to allow for pull
-    /// evaluation from instances of this node. Enabling pull evaluation allows
-    /// applications to call into the graph by loading the resulting generated
-    /// code at runtime.
+    /// The pull-evaluation entrypoints to generate for instances of this
+    /// node. One entry fn is generated per returned [`EvalConf`].
     ///
     /// Pull evaluation order is equivalent to a topological ordering of the
-    /// connected component that ends at the `pull_eval` node.
-    ///
-    /// Within a **Graph** node, a new function will be generated for each node
-    /// that signals **Some**.  If **Some**, a function will be generated with
-    /// the given **Signature** that represents pulling evaluation from this
-    /// node.
+    /// connected component that ends at this node.
     ///
     /// By default, this is an empty vec.
     fn pull_eval(&self, _ctx: MetaCtx) -> Vec<EvalConf> {
@@ -136,14 +124,11 @@ pub trait Node: std::any::Any {
         false
     }
 
-    /// Whether or not this node is a unit delay: its output is the value its
-    /// input received on the *previous* evaluation.
+    /// Whether or not this node is a unit delay. Its output is the value its
+    /// input received on the previous evaluation.
     ///
-    /// Delay nodes are compiler intrinsics (no [`Node::expr`] is generated):
-    /// their value is read from state when an evaluation begins, and their
-    /// input is stored to state where it is produced. Evaluation never
-    /// propagates *through* a delay, so a cycle containing one is legal -
-    /// this is the pd-style feedback primitive.
+    /// Delay nodes are compiler intrinsics and no [`Node::expr`] is
+    /// generated. See [`Delay`].
     fn delay(&self, _ctx: MetaCtx) -> bool {
         false
     }
@@ -160,7 +145,7 @@ pub trait Node: std::any::Any {
     /// default values as necessary.
     ///
     /// This method is called each time the graph changes and must be idempotent.
-    /// Implementations should check whether state already exists before
+    /// Implementations must check whether state already exists before
     /// initializing to avoid resetting existing state. See
     /// [`state::init_value_if_absent`] and [`state::init_if_absent`].
     ///
@@ -172,12 +157,12 @@ pub trait Node: std::any::Any {
 
     /// Returns the content addresses of external nodes this node requires.
     ///
-    /// Used during reachability (pruning, export closure) to determine which
-    /// graphs are still in use. Nodes that reference other graphs (like
-    /// `Ref`, `NamedRef`) should return the addresses they depend on - for
-    /// graph references this is the referenced graph's `GraphAddr`.
+    /// Used during reachability to determine which graphs are still in use.
+    /// Nodes that reference other graphs, like `Ref`, must return the
+    /// addresses they depend on. For graph references this is the referenced
+    /// graph's `GraphAddr`.
     ///
-    /// By default, returns an empty vec (no external dependencies).
+    /// By default, returns an empty vec.
     fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
         vec![]
     }
@@ -185,17 +170,17 @@ pub trait Node: std::any::Any {
     /// Returns the blob references this node requires, as
     /// `(blob section, content address)` pairs.
     ///
-    /// The blob half of reachability: nodes referencing content-addressed
-    /// bytes (e.g. audio buffers) report them here so pruning and export
-    /// keep the blobs alive.
+    /// The blob half of reachability. Nodes referencing content-addressed
+    /// bytes, for example audio buffers, report them here so pruning and
+    /// export keep the blobs alive.
     ///
-    /// By default, returns an empty vec (no blob dependencies).
+    /// By default, returns an empty vec.
     fn required_blobs(&self) -> Vec<(gantz_ca::SectionId, gantz_ca::ContentAddr)> {
         vec![]
     }
 
     /// The names of the registered Steel modules this node's [`expr`]
-    /// depends on (see [`crate::vm::SteelModule`]).
+    /// depends on. See [`crate::vm::SteelModule`].
     ///
     /// Compilation emits one `(require ...)` per module named by any node
     /// in the graph. Steel resolves the free identifiers in every emitted
@@ -203,7 +188,7 @@ pub trait Node: std::any::Any {
     /// references a module binding must declare the module here even if
     /// no eval path reaches it.
     ///
-    /// By default, returns an empty vec (no module dependencies).
+    /// By default, returns an empty vec.
     ///
     /// [`expr`]: Self::expr
     fn required_modules(&self, _ctx: MetaCtx) -> Vec<String> {
@@ -218,9 +203,8 @@ pub trait Node: std::any::Any {
     /// 2. `Node::visit`
     /// 3. `Visitor::visit_post`
     ///
-    /// Note that implementations should *only* visit nested nodes and not the
-    /// node itself. To visit the node *and* all nested nodes, use the [`visit()`]
-    /// function.
+    /// Implementations must only visit nested nodes and not the node itself.
+    /// To visit the node and all nested nodes, use the [`visit()`] function.
     fn visit(&self, _ctx: visit::Ctx<'_, '_>, _visitor: &mut dyn Visitor) {}
 }
 
@@ -244,13 +228,13 @@ pub type Id = usize;
 /// Used by context types to allow looking up nodes by content address.
 pub type GetNode<'a> = &'a dyn std::ops::Fn(&gantz_ca::ContentAddr) -> Option<&'a dyn Node>;
 
-/// Context for node metadata queries (`n_inputs`, `n_outputs`, `stateful`, etc.).
+/// Context for node metadata queries such as `n_inputs` and `stateful`.
 #[derive(Clone, Copy)]
 pub struct MetaCtx<'a> {
     get_node: GetNode<'a>,
 }
 
-/// Context for node registration (registering state, functions with VM).
+/// Context for node registration of state and functions with the VM.
 pub struct RegCtx<'env, 'data> {
     get_node: GetNode<'env>,
     path: &'data [Id],
@@ -261,25 +245,11 @@ pub struct RegCtx<'env, 'data> {
 pub struct ExprCtx<'env, 'data> {
     /// Function for looking up nodes by content address.
     get_node: GetNode<'env>,
-    /// The path of this node relative to the root of the gantz graph.
-    ///
-    /// This is primarily provided to allow `GraphNode`s (or custom graph node
-    /// implementations) to generate the correct function names for their
-    /// nested nodes.
-    ///
-    /// Besides this special case, `path` should not be used so that node's
-    /// maintain consistent behaviour whether nested or not.
+    /// See [`ExprCtx::path`].
     path: &'data [Id],
-    /// An element for each input to the node.
-    ///
-    /// If the input is connected, it is `Some(name)` where `name` is a binding
-    /// to the incoming value. When multiple unconditional edges target the same
-    /// input index, the binding holds a `(list ...)` of all incoming values
-    /// rather than a single value.
+    /// See [`ExprCtx::inputs`].
     inputs: &'data [Option<String>],
-    /// An element for each output from the node.
-    ///
-    /// If an output is `true`, it means a value is expected for the output.
+    /// See [`ExprCtx::outputs`].
     outputs: &'data Conns,
 }
 
@@ -367,12 +337,11 @@ impl<'env, 'data> ExprCtx<'env, 'data> {
 
     /// The path of this node relative to the root of the gantz graph.
     ///
-    /// This is primarily provided to allow `GraphNode`s (or custom graph node
-    /// implementations) to generate the correct function names for their
-    /// nested nodes.
+    /// This is primarily provided so that graph nodes can generate the
+    /// correct function names for their nested nodes.
     ///
-    /// Besides this special case, `path` should not be used so that node's
-    /// maintain consistent behaviour whether nested or not.
+    /// Besides this special case, `path` must not be used, so that nodes keep
+    /// consistent behaviour whether nested or not.
     pub fn path(&self) -> &'data [Id] {
         self.path
     }
@@ -407,7 +376,7 @@ impl<'env, 'data> ExprCtx<'env, 'data> {
     ///
     /// For example, a timing-sensitive node reads the firing time with
     /// `format!("(hash-ref {} '{})", ctx.args(), gantz_core::args::TIME)`. The
-    /// caller sets `%args` before invoking the entry fn (see [`args`](crate::args)).
+    /// caller sets `%args` before invoking the entry fn. See [`args`](crate::args).
     pub fn args(&self) -> &str {
         crate::ARGS
     }

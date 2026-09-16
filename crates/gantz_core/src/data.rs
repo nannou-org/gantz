@@ -1,12 +1,12 @@
-//! The codec between typed nodes and the registry's erased
-//! [`NodeData`]/[`DataGraph`] representation, plus the reified-graph cache.
+//! The codec between typed nodes and the registry's erased [`NodeData`] and
+//! [`DataGraph`] representation, plus the reified-graph cache.
 //!
 //! The registry stores graphs as plain data. Typed nodes cross that boundary
-//! here: [`erase`] erases a working graph for storage and [`reify`]
-//! reifies one for editing and compilation. Erasure rides the node set's
-//! tag-dispatched serde (`gantz_format::impl_node_set_serde!`) through
-//! [`Datum`], so the node-set manifest is the codec: a node type is storable
-//! exactly when it is listed there.
+//! here. [`erase`] erases a working graph for storage. [`reify`] reifies one
+//! for editing and compilation. Erasure rides the node set's tag-dispatched
+//! serde through [`Datum`]. See `gantz_format::impl_node_set_serde!`. The
+//! node-set manifest is thus the codec. A node type is storable exactly when
+//! it is listed there.
 
 use crate::node::graph::Graph;
 use crate::node::{self, Node};
@@ -20,20 +20,22 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 /// An append-only cache of reified registry graphs, keyed by graph address.
 ///
-/// Content addressing makes entries immutable: an address names exactly one
+/// Content addressing makes entries immutable. An address names exactly one
 /// graph forever, so the cache never invalidates. [`ReifiedGraphs::retain_live`]
 /// may drop entries to bound memory after a prune.
 ///
-/// Intended use is two-phase: [`ReifiedGraphs::ensure`] everything a pass can
-/// reach (requires `&mut self`), then serve the whole pass immutably through
-/// [`ReifiedGraphs::get`] borrows (e.g. behind a `GetNode` closure).
+/// Intended use is two-phase. First [`ReifiedGraphs::ensure`] everything a
+/// pass can reach, which requires `&mut self`. Then serve the whole pass
+/// immutably through [`ReifiedGraphs::get`] borrows, for example behind a
+/// `GetNode` closure.
 #[derive(Debug)]
 pub struct ReifiedGraphs<N> {
     graphs: HashMap<GraphAddr, Graph<N>>,
 }
 
-/// Failure to erase a node: its serde did not produce a `type`-tagged map
-/// (i.e. it is not the node set's tag-dispatched serde), or errored outright.
+/// Failure to erase a node. Its serde did not produce a `type`-tagged map, so
+/// it is not the node set's tag-dispatched serde. Or its serde errored
+/// outright.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum EraseNodeError {
     /// The node's own serde failed.
@@ -55,7 +57,7 @@ pub struct EraseError {
     pub source: EraseNodeError,
 }
 
-/// Failure to reify a typed node from its data form: the tag is unknown to
+/// Failure to reify a typed node from its data form. The tag is unknown to
 /// the node set, or the fields fail the node's own deserialization.
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("node type `{tag}`: {source}")]
@@ -118,9 +120,10 @@ impl<N> ReifiedGraphs<N> {
     /// reference, decoding each node weight through `reify_node`.
     ///
     /// References are resolved through the stored graphs' [`NodeData::refs`]
-    /// columns, a pure data walk: nothing is decoded to *find* the set.
-    /// Addresses that don't resolve to registry graphs (e.g. builtin node
-    /// addresses in a node's refs) are ignored, as are already-cached graphs.
+    /// columns. This is a pure data walk. Nothing is decoded to find the set.
+    /// Addresses that do not resolve to registry graphs are ignored, for
+    /// example builtin node addresses in a node's refs. Already-cached graphs
+    /// are ignored too.
     pub fn ensure_with(
         &mut self,
         reg: &Registry,
@@ -149,9 +152,10 @@ impl<N> ReifiedGraphs<N> {
     /// Reify every graph in the registry's column, best effort, decoding each
     /// node weight through `reify_node`.
     ///
-    /// Graphs that fail to reify (e.g. an unknown tag from a domain not
-    /// compiled in) are skipped and reported, and remain cache misses that
-    /// lookups degrade over the same way as any missing node.
+    /// Graphs that fail to reify are skipped and reported. An unknown tag
+    /// from a domain not compiled in is one example. They remain cache
+    /// misses, and lookups degrade over them the same way as over any
+    /// missing node.
     pub fn ensure_all_with(
         &mut self,
         reg: &Registry,
@@ -177,8 +181,8 @@ impl<N> ReifiedGraphs<N> {
 }
 
 impl<N: DeserializeOwned> ReifiedGraphs<N> {
-    /// [`ensure_with`][Self::ensure_with] over the node set's own serde
-    /// ([`reify_node`]).
+    /// [`ensure_with`][Self::ensure_with] over the node set's own serde,
+    /// [`reify_node`].
     pub fn ensure(
         &mut self,
         reg: &Registry,
@@ -188,7 +192,7 @@ impl<N: DeserializeOwned> ReifiedGraphs<N> {
     }
 
     /// [`ensure_all_with`][Self::ensure_all_with] over the node set's own
-    /// serde ([`reify_node`]).
+    /// serde, [`reify_node`].
     pub fn ensure_all(&mut self, reg: &Registry) -> Vec<EnsureError> {
         self.ensure_all_with(reg, reify_node)
     }
@@ -202,10 +206,10 @@ impl<N> Default for ReifiedGraphs<N> {
 
 /// Erase a typed node to data.
 ///
-/// Runs the node's own (tag-dispatched) serde to a [`Datum`], splits the
-/// `"type"` tag out, and extracts the node's direct outgoing references from
-/// its own reporting ([`Node::required_addrs`]/[`Node::required_blobs`],
-/// including physically nested nodes). The result is canonical, so its
+/// Runs the node's own tag-dispatched serde to a [`Datum`] and splits the
+/// `"type"` tag out. It also extracts the node's direct outgoing references
+/// from [`Node::required_addrs`] and [`Node::required_blobs`], including
+/// physically nested nodes. The result is canonical, so its
 /// [`NodeData::content_addr`] is the node's one network-wide address.
 pub fn erase_node<N>(node: &N) -> Result<NodeData, EraseNodeError>
 where
@@ -227,17 +231,16 @@ where
 
 /// Erase a typed node to data under an externally supplied wire tag.
 ///
-/// The typed-path counterpart of [`erase_node`]: where that rides the node
-/// set's tag-dispatched box serde and splits the `"type"` entry out, this
-/// runs the node's own concrete serde and takes the tag from the caller
-/// (usually its [`NodeTag`](gantz_nodetag::NodeTag), via
-/// [`erase_node_typed`]). The node's serde must produce a map - a
-/// unit-struct node's `Null` counts as the empty map, matching the box
-/// path's flattened form - else the erasure fails as
-/// [`EraseNodeError::Untagged`]. A serde that embeds its own `"type"` entry
-/// (e.g. an internally tagged enum) has it stripped, keeping [`NodeData::tag`]
-/// the single source of the tag. Both paths yield the same canonical
-/// [`NodeData`], and thus the same content address.
+/// The typed-path counterpart of [`erase_node`]. That fn rides the node
+/// set's tag-dispatched box serde and splits the `"type"` entry out. This
+/// one runs the node's own concrete serde and takes the tag from the caller.
+/// The caller is usually [`erase_node_typed`], which passes the node's
+/// [`NodeTag`](gantz_nodetag::NodeTag). The node's serde must produce a map,
+/// else the erasure fails as [`EraseNodeError::Untagged`]. A unit-struct
+/// node's `Null` counts as the empty map, matching the box path's flattened
+/// form. A serde that embeds its own `"type"` entry has it stripped, so
+/// [`NodeData::tag`] stays the single source of the tag. Both paths yield
+/// the same canonical [`NodeData`], and thus the same content address.
 pub fn erase_node_tagged<N>(tag: &str, node: &N) -> Result<NodeData, EraseNodeError>
 where
     N: Serialize + Node,
@@ -263,7 +266,7 @@ where
 }
 
 /// Assemble the canonical [`NodeData`] for `node` from its wire tag and
-/// tag-stripped field entries: the shared tail of [`erase_node`] and
+/// tag-stripped field entries. The shared tail of [`erase_node`] and
 /// [`erase_node_tagged`].
 fn node_data<N: Node>(tag: String, fields: Vec<(String, Datum)>, node: &N) -> NodeData {
     let (refs, blobs) = node_out_refs(node);
@@ -277,7 +280,7 @@ fn node_data<N: Node>(tag: String, fields: Vec<(String, Datum)>, node: &N) -> No
     node_data
 }
 
-/// Reify one typed node: rebuild the tagged map and run node-set serde.
+/// Reify one typed node. Rebuild the tagged map and run node-set serde.
 pub fn reify_node<N>(node_data: &NodeData) -> Result<N, ReifyNodeError>
 where
     N: DeserializeOwned,
@@ -294,13 +297,13 @@ where
     datum::from_datum(datum).map_err(err)
 }
 
-/// Reify one node at its concrete type: run the type's own serde over the
+/// Reify one node at its concrete type. Run the type's own serde over the
 /// stored fields.
 ///
-/// The typed-path counterpart of [`reify_node`]: no `"type"` tag is
-/// prepended, since a concrete type's serde must never see one - tag
-/// dispatch belongs to the caller (e.g. matching [`NodeData::tag`] against
-/// each candidate type's [`NodeTag`](gantz_nodetag::NodeTag)).
+/// The typed-path counterpart of [`reify_node`]. No `"type"` tag is
+/// prepended, since a concrete type's serde must never see one. Tag dispatch
+/// belongs to the caller. For example, it matches [`NodeData::tag`] against
+/// each candidate type's [`NodeTag`](gantz_nodetag::NodeTag).
 pub fn reify_node_concrete<T>(node_data: &NodeData) -> Result<T, ReifyNodeError>
 where
     T: DeserializeOwned,
@@ -317,10 +320,10 @@ where
 
 /// Erase a typed graph and compute its registry address in one pass.
 ///
-/// Registry graph addresses are ALWAYS computed on the erased form: typed
+/// Registry graph addresses are always computed on the erased form. Typed
 /// nodes carry no content addressing of their own. Any site that compares
 /// or mints a registry address for a typed working graph goes through here
-/// (or erases first).
+/// or erases first.
 pub fn erase_with_addr<N>(g: &Graph<N>) -> Result<(DataGraph, GraphAddr), EraseError>
 where
     N: Serialize + Node,
@@ -330,8 +333,8 @@ where
     Ok((dg, addr))
 }
 
-/// Erase a typed graph for storage: node weights through [`erase_node`],
-/// indices and edges preserved verbatim.
+/// Erase a typed graph for storage. Node weights go through [`erase_node`].
+/// Indices and edges are preserved verbatim.
 pub fn erase<N>(g: &Graph<N>) -> Result<DataGraph, EraseError>
 where
     N: Serialize + Node,
@@ -347,8 +350,8 @@ where
     Ok(out)
 }
 
-/// Reify a typed graph from its stored data form: node weights through
-/// [`reify_node`], indices and edges preserved verbatim.
+/// Reify a typed graph from its stored data form. Node weights go through
+/// [`reify_node`]. Indices and edges are preserved verbatim.
 pub fn reify<N>(g: &DataGraph) -> Result<Graph<N>, ReifyError>
 where
     N: DeserializeOwned,
@@ -357,7 +360,7 @@ where
 }
 
 /// Reify a typed graph from its stored data form, decoding each node weight
-/// through `reify_node`: the codec-parameterized twin of [`reify`].
+/// through `reify_node`. The codec-parameterized twin of [`reify`].
 pub fn reify_with<N>(
     g: &DataGraph,
     reify_node: impl Fn(&NodeData) -> Result<N, ReifyNodeError>,
@@ -373,12 +376,12 @@ pub fn reify_with<N>(
     Ok(out)
 }
 
-/// A node's direct outgoing references: its own reporting plus that of its
+/// A node's direct outgoing references. Its own reporting plus that of its
 /// physically nested nodes.
 ///
 /// The absent node lookup stops reference nodes from following their target
-/// into other graphs, keeping the result direct - the reachability walk owns
-/// the transitive closure.
+/// into other graphs. This keeps the result direct. The reachability walk
+/// owns the transitive closure.
 fn node_out_refs<N: Node>(node: &N) -> (Vec<ContentAddr>, Vec<(SectionId, ContentAddr)>) {
     fn no_node(_: &ContentAddr) -> Option<&'static dyn Node> {
         None
@@ -407,7 +410,7 @@ mod tests {
     use super::*;
     use crate::node::ExprResult;
 
-    /// A minimal tag-dispatched node set: an internally-tagged enum serializes
+    /// A minimal tag-dispatched node set. An internally-tagged enum serializes
     /// to exactly the `"type"`-tagged map shape the node-set macro produces.
     #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
     #[serde(tag = "type")]
@@ -456,10 +459,10 @@ mod tests {
         assert_eq!(nd.refs, vec![target]);
     }
 
-    /// The typed erasure path must match the box path byte-for-byte: with the
-    /// internally tagged `TestNode` standing in for the node-set serde, the
-    /// tag-supplied erasure of each variant equals [`erase_node`]'s
-    /// tag-splitting erasure (same data, same refs, same content address).
+    /// The typed erasure path must match the box path byte-for-byte. The
+    /// internally tagged `TestNode` stands in for the node-set serde. The
+    /// tag-supplied erasure of each variant must equal [`erase_node`]'s
+    /// tag-splitting erasure. Same data, same refs, same content address.
     #[test]
     fn erase_node_tagged_matches_erase_node() {
         let link = TestNode::Link {
@@ -473,10 +476,10 @@ mod tests {
         }
     }
 
-    /// Concrete typed nodes round-trip without ever seeing a `"type"` field:
-    /// a fields struct and a unit struct (whose typed serde yields `Null`,
-    /// erased as the empty map) both erase via their [`NodeTag`] and reify
-    /// back at their concrete type.
+    /// Concrete typed nodes round-trip without ever seeing a `"type"` field.
+    /// A fields struct and a unit struct both erase via their [`NodeTag`] and
+    /// reify back at their concrete type. The unit struct's typed serde
+    /// yields `Null`, erased as the empty map.
     #[test]
     fn concrete_erase_reify_round_trips() {
         use gantz_nodetag::NodeTag;
@@ -552,7 +555,7 @@ mod tests {
             reg.add_graph(erase(&g).unwrap())
         };
         let root = {
-            // One resolvable ref and one dangling (builtin-style) addr.
+            // One resolvable ref and one dangling builtin-style addr.
             let mut g = graph([TestNode::Link { addr: mid.into() }]);
             g.add_node(TestNode::Link {
                 addr: ContentAddr([9; 32]),

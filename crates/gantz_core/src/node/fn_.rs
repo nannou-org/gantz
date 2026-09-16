@@ -15,9 +15,9 @@ pub struct Fn<N>(pub N);
 /// node set.
 ///
 /// `Fn<N>` is foreign to `N`'s crate, so the orphan rule forbids implementing
-/// [`NodeTag`] for it there directly; this lets the wrapped type declare the
-/// wrapper's tag at its own definition site instead, and the blanket impl
-/// below lifts it.
+/// [`NodeTag`] for it there directly. This trait lets the wrapped type
+/// declare the wrapper's tag at its own definition site instead. The blanket
+/// impl below lifts it.
 pub trait FnNodeTag {
     /// The `"type"` tag identifying `Fn<Self>` on the wire.
     const FN_TAG: &'static str;
@@ -28,7 +28,7 @@ impl<N: FnNodeTag> NodeTag for Fn<N> {
 }
 
 impl<N> Fn<N> {
-    /// Create a new Fn node that wraps the node at the given address.
+    /// Create a new `Fn` node that wraps the given node.
     pub fn new(node: N) -> Self {
         Self(node)
     }
@@ -40,7 +40,7 @@ impl<N: Node> Node for Fn<N> {
         1
     }
 
-    /// A single output that emits the function value (lambda).
+    /// A single output that emits the lambda function value.
     fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
         1
     }
@@ -51,18 +51,16 @@ impl<N: Node> Node for Fn<N> {
     /// The returned function receives a number of arguments equal to the inner
     /// node's `Node::n_inputs` count.
     fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
-        // Only emit a lambda in the case that some input is connected for
-        // receiving bangs. Otherwise, we'll just emit an empty list.
+        // Only emit a lambda when the bang input is connected. Otherwise emit
+        // an empty list.
         if ctx.inputs().get(0).and_then(|conn| conn.as_ref()).is_none() {
             return node::parse_expr("'()");
         }
 
-        // Create a MetaCtx for querying node metadata.
         let get_node = ctx.get_node();
         let meta_ctx = node::MetaCtx::new(get_node);
         let node = &self.0;
 
-        // Validate the node (must be stateless and non-branching).
         if node.stateful(meta_ctx) {
             return Err(node::ExprError::custom(
                 "nodes used as functions must be stateless",
@@ -80,7 +78,6 @@ impl<N: Node> Node for Fn<N> {
             ));
         }
 
-        // Generate the node's expression with a placeholder path.
         let n_inputs = node.n_inputs(meta_ctx);
         let params: Vec<_> = (0..n_inputs).map(|i| format!("arg{i}")).collect();
         let input_refs: Vec<Option<String>> = params.iter().map(|p| Some(p.clone())).collect();
@@ -89,7 +86,6 @@ impl<N: Node> Node for Fn<N> {
         let ectx = node::ExprCtx::new(get_node, path, &input_refs, &outputs);
         let expr = node.expr(ectx)?;
 
-        // Create the lambda that we'll return.
         let expr_str = expr.to_pretty(80);
         let params_str = params.join(" ");
         let lambda_expr = format!("(lambda ({}) {})", params_str, expr_str);
@@ -104,7 +100,7 @@ impl<N: Node> Node for Fn<N> {
         self.0.required_blobs()
     }
 
-    /// Forwarded from the inner node: the emitted lambda inlines the inner
+    /// Forwarded from the inner node. The emitted lambda inlines the inner
     /// node's expression, so its module bindings are load-bearing.
     fn required_modules(&self, ctx: node::MetaCtx) -> Vec<String> {
         self.0.required_modules(ctx)

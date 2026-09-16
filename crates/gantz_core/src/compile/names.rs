@@ -1,10 +1,10 @@
 //! The emitted Steel identifier naming scheme.
 //!
 //! Every identifier the compiler emits is produced by a formatter in this
-//! module, and [`parse`] is its inverse: it maps an emitted identifier back
-//! to the node, graph level, entrypoint or join it was generated for. Keeping
-//! both directions here is what stops them drifting apart - if a formatter
-//! changes, the roundtrip tests below fail.
+//! module. [`parse`] is its inverse. It maps an emitted identifier back to
+//! the node, graph level, entrypoint or join it was generated for. Keeping
+//! both directions here stops them drifting apart. If a formatter changes,
+//! the roundtrip tests below fail.
 
 use crate::{
     compile::{
@@ -16,34 +16,34 @@ use crate::{
 
 /// A parsed emitted identifier.
 ///
-/// `NodeFn`, `GraphFn` and `LvlFn` carry *full* paths (from the root graph),
-/// as their formatters embed the whole path. `Output`, `Input`, `Result` and
-/// `Join` are bindings local to one emitted definition: their ids are
+/// `NodeFn`, `GraphFn` and `LvlFn` carry full paths from the root graph, as
+/// their formatters embed the whole path. `Output`, `Input`, `Result` and
+/// `Join` are bindings local to one emitted definition. Their ids are
 /// relative to the graph level that definition was lowered from.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Name {
-    /// A per-variant node fn: `node-fn-{path}[-i{conns}][-o{conns}]`.
+    /// A per-variant node fn. `node-fn-{path}[-i{conns}][-o{conns}]`.
     NodeFn {
         path: Vec<node::Id>,
         inputs: node::Conns,
         outputs: node::Conns,
     },
-    /// A per-variant graph fn: `graph-fn-{path}[-i{conns}]`.
+    /// A per-variant graph fn. `graph-fn-{path}[-i{conns}]`.
     GraphFn {
         path: Vec<node::Id>,
         inputs: node::Conns,
     },
-    /// A per-entrypoint nested level fn: `lvl-fn-{ep}-{path}`.
+    /// A per-entrypoint nested level fn. `lvl-fn-{ep}-{path}`.
     LvlFn { ep: String, path: Vec<node::Id> },
-    /// An entrypoint fn: `entry-fn-{ep}`.
+    /// An entrypoint fn. `entry-fn-{ep}`.
     EntryFn { ep: String },
-    /// A node output binding: `node-{id}-o{output}`.
+    /// A node output binding. `node-{id}-o{output}`.
     Output { node: node::Id, output: usize },
-    /// A join param carrying a node input: `node-{id}-i{input}`.
+    /// A join param carrying a node input. `node-{id}-i{input}`.
     Input { node: node::Id, input: usize },
-    /// A branching node's raw `(branch-ix value)` pair: `node-{id}`.
+    /// A branching node's raw `(branch-ix value)` pair. `node-{id}`.
     Result { node: node::Id },
-    /// A join point fn: `join-{id}`.
+    /// A join point fn. `join-{id}`.
     Join { id: node::Id },
 }
 
@@ -57,7 +57,7 @@ pub(crate) fn path_string(path: &[node::Id]) -> String {
 
 /// Generate a function name for a node based on its path in the graph.
 ///
-/// E.g. `node-fn-0:1:2-i0101-o1100`.
+/// For example, `node-fn-0:1:2-i0101-o1100`.
 pub(crate) fn node_fn_name(
     node_path: &[node::Id],
     inputs: &node::Conns,
@@ -85,8 +85,8 @@ pub(crate) fn lvl_fn_name(ep: &EntrypointId, path: &[node::Id]) -> String {
 
 /// Generate entry fn name from an `EntrypointId`.
 ///
-/// The name is deterministic and unique - derived from the content hash
-/// (truncated to 8 hex chars).
+/// The name is deterministic and unique. It derives from the content hash
+/// truncated to 8 hex chars.
 pub fn entry_fn_name(id: &EntrypointId) -> String {
     format!("entry-fn-{}", id.0.display_short())
 }
@@ -113,7 +113,8 @@ pub(crate) fn join_name(join: JoinId) -> String {
 /// Parse an emitted identifier back to the entity it names.
 ///
 /// Returns `None` for identifiers the compiler did not generate from a graph
-/// entity (params, temporaries like `%vals-*`/`%lvl-*`, user identifiers).
+/// entity. That includes params, temporaries like `%vals-*` and user
+/// identifiers.
 pub fn parse(name: &str) -> Option<Name> {
     if let Some(rest) = name.strip_prefix("node-fn-") {
         let mut segs = rest.split('-');
@@ -179,7 +180,7 @@ fn parse_path(s: &str) -> Option<Vec<node::Id>> {
     s.split(':').map(parse_id).collect()
 }
 
-/// Parse a plain decimal id (rejecting signs, whitespace and empty strings).
+/// Parse a plain decimal id. Signs, whitespace and empty strings are rejected.
 fn parse_id(s: &str) -> Option<node::Id> {
     if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
         return None;
@@ -187,7 +188,7 @@ fn parse_id(s: &str) -> Option<node::Id> {
     s.parse().ok()
 }
 
-/// Parse a `i{conns}`/`o{conns}` segment with the given prefix.
+/// Parse an `i{conns}` or `o{conns}` segment with the given prefix.
 fn parse_conns(s: &str, prefix: char) -> Option<node::Conns> {
     let bits = s.strip_prefix(prefix)?;
     if bits.is_empty() {
@@ -196,7 +197,7 @@ fn parse_conns(s: &str, prefix: char) -> Option<node::Conns> {
     bits.parse().ok()
 }
 
-/// Parse the optional `-i{conns}`/`-o{conns}` tail of a node fn name.
+/// Parse the optional `-i{conns}` and `-o{conns}` tail of a node fn name.
 fn parse_io_conns(mut segs: std::str::Split<'_, char>) -> Option<(node::Conns, node::Conns)> {
     let empty = node::Conns::empty;
     match (segs.next(), segs.next(), segs.next()) {
@@ -209,7 +210,7 @@ fn parse_io_conns(mut segs: std::str::Split<'_, char>) -> Option<(node::Conns, n
 }
 
 /// Whether `s` is a truncated content-address hash as formatted by
-/// `ContentAddr::display_short` (8 lowercase hex chars).
+/// `ContentAddr::display_short`. That is 8 lowercase hex chars.
 fn is_short_hash(s: &str) -> bool {
     s.len() == 8
         && s.bytes()

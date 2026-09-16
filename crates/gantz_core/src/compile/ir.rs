@@ -1,38 +1,39 @@
 //! The mid-level IR between a gantz graph and Steel code.
 //!
-//! A graph evaluation lowers to a [`Body`]: a sequence of [`Step`]s ending in
-//! a [`Tail`]. The IR is Scheme-shaped - bodies are lexical scopes, branch
-//! reconvergence is a [`Join`] point (a local fn whose parameters replace the
-//! old phi variables), and a back-edge is a tail-[`Tail::Jump`] to a `rec`
-//! join. Emission (`emit.rs`) is a mechanical walk; all graph reasoning
-//! happens in lowering (`lower.rs`).
+//! A graph evaluation lowers to a [`Body`]. That is a sequence of [`Step`]s
+//! ending in a [`Tail`]. The IR is Scheme-shaped. Bodies are lexical scopes.
+//! Branch reconvergence is a [`Join`] point, a local fn whose parameters
+//! carry the reconverging values. A back-edge is a tail [`Tail::Jump`] to a
+//! `rec` join. Emission in `emit.rs` is a mechanical walk. All graph
+//! reasoning happens in lowering, in `lower.rs`.
 //!
 //! Invariants are checked by [`validate`]:
 //!
-//! - every [`Var`] is bound before use, and never re-bound in scope;
-//! - a [`Tail::Jump`] targets a lexically visible join with matching arity
-//!   (its own definition only when `rec`);
-//! - every path through a branch arm yields the arm's branch [`Step::Branch`]
-//!   export arity (`dst.len()`), directly via [`Tail::Ret`] or through the
-//!   join it jumps to.
+//! - Every [`Var`] is bound before use, and never re-bound in scope.
+//! - A [`Tail::Jump`] targets a lexically visible join with matching arity.
+//!   It may target its own definition only when `rec`.
+//! - Every path through a branch arm yields the [`Step::Branch`] export
+//!   arity, which is `dst.len()`. It does so directly via [`Tail::Ret`] or
+//!   through the join it jumps to.
 
 use crate::node;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Identifies a join point: the smallest node id of the region that
-/// reconverges at it (or the loop header for `rec` joins).
+/// Identifies a join point. The smallest node id of the region that
+/// reconverges at it, or the loop header for `rec` joins.
 pub(crate) type JoinId = node::Id;
 
 /// A reference to a bound value.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum Atom {
     Var(Var),
-    /// The empty list `'()` - the "no value" placeholder (e.g. the export of
-    /// a branch arm that does not produce it).
+    /// The empty list `'()`. The "no value" placeholder, for example the
+    /// export of a branch arm that does not produce it.
     Unit,
-    /// The sentinel marking an *outlet* value that was never produced,
-    /// distinguishing "did not fire" from "fired with `'()`". Only flows into
-    /// outlet-feeding exports and the fired-signature tests that read them.
+    /// The sentinel marking an outlet value that was never produced. It
+    /// distinguishes "did not fire" from "fired with `'()`". It only flows
+    /// into outlet-feeding exports and the fired-signature tests that read
+    /// them.
     Unfired,
 }
 
@@ -41,12 +42,12 @@ pub(crate) enum Atom {
 pub(crate) enum Var {
     /// Output `output` of node `node`. Emitted as `node-{node}-o{output}`.
     Output { node: node::Id, output: usize },
-    /// A dedicated binding for input `input` of node `node`, used where the
-    /// value reaching that input varies by branch arm (a join parameter).
+    /// A dedicated binding for input `input` of node `node`. Used as a join
+    /// parameter where the value reaching that input varies by branch arm.
     /// Emitted as `node-{node}-i{input}`.
     Input { node: node::Id, input: usize },
-    /// The whole-result binding of node `node` (a branching node's
-    /// `(branch-ix value)` pair). Emitted as `node-{node}`. Bound by a
+    /// The whole-result binding of node `node`. This is a branching node's
+    /// `(branch-ix value)` pair. Emitted as `node-{node}`. Bound by a
     /// [`Step::Branch`] with a [`Subject::Call`], or by enclosing glue for a
     /// [`Subject::PreBound`] dispatch.
     Result { node: node::Id },
@@ -56,7 +57,7 @@ pub(crate) enum Var {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Arg {
     One(Atom),
-    /// Multiple sources target the same input: passed as `(list ...)` in
+    /// Multiple sources target the same input. Passed as `(list ...)` in
     /// topological source order.
     List(Vec<Atom>),
 }
@@ -65,10 +66,12 @@ pub(crate) enum Arg {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NodeCall {
     pub node: node::Id,
-    /// One element per node input; `None` = unconnected for this variant.
-    /// The variant's input mask is derived from the `Some`-ness of these.
+    /// One element per node input. `None` means unconnected for this
+    /// variant. The variant's input mask is derived from which elements are
+    /// `Some`.
     pub args: Vec<Option<Arg>>,
-    /// The connected-outputs mask (selects the variant and the result shape).
+    /// The connected-outputs mask. It selects the variant and the result
+    /// shape.
     pub outputs: node::Conns,
     pub stateful: bool,
 }
@@ -78,8 +81,8 @@ pub(crate) struct NodeCall {
 pub(crate) enum Subject {
     /// Call the branching node's fn, binding its `(branch-ix value)` pair.
     Call(NodeCall),
-    /// The pair is already bound (as [`Var::Result`]) by enclosing glue -
-    /// e.g. a nested level's evaluation result bridged into this body.
+    /// The pair is already bound as [`Var::Result`] by enclosing glue. For
+    /// example, a nested level's evaluation result bridged into this body.
     PreBound { node: node::Id },
 }
 
@@ -88,18 +91,18 @@ pub(crate) enum Subject {
 pub(crate) enum Step {
     /// Call a non-branching node fn, binding its connected outputs.
     Node { dst: Vec<Var>, call: NodeCall },
-    /// Bind a delay node's stored (previous-evaluation) value as its output.
+    /// Bind a delay node's stored previous-evaluation value as its output.
     /// Emitted at the top of a level body, before any node runs.
     DelayRead { node: node::Id },
     /// Store the value produced for a delay node's input, to be read on the
-    /// *next* evaluation. Ordered like a node call (and conditional when the
-    /// producing path is).
+    /// next evaluation. Ordered like a node call. Conditional when the
+    /// producing path is.
     DelayWrite { node: node::Id, arg: Arg },
     /// Define a join point. Visible to all later steps in this body, the
-    /// body's tail, and (transitively) their nested arms and join bodies.
+    /// body's tail, and transitively their nested arms and join bodies.
     Join(Join),
     /// Dispatch on a branching subject's `(branch-ix value)` pair. `dst`
-    /// binds the values this statement exports to subsequent steps: every
+    /// binds the values this statement exports to subsequent steps. Every
     /// path through the arms yields `dst.len()` values.
     Branch {
         subject: Subject,
@@ -113,24 +116,24 @@ pub(crate) enum Step {
 pub(crate) struct Arm {
     /// The branch index selecting this arm.
     pub ix: usize,
-    /// The output vars bound from the branch value (the arm's active
-    /// outputs, ascending output index).
+    /// The output vars bound from the branch value. The arm's active outputs
+    /// in ascending output index.
     pub binds: Vec<Var>,
     pub body: Body,
 }
 
-/// A join point: a local fn that reconvergent paths tail-call.
+/// A join point. A local fn that reconvergent paths tail-call.
 #[derive(Debug)]
 pub(crate) struct Join {
     pub id: JoinId,
     /// Parameters carry the arm-varying values consumed by the body.
     pub params: Vec<Var>,
-    /// Whether the join may jump to itself (a loop header).
+    /// Whether the join may jump to itself as a loop header.
     pub rec: bool,
     pub body: Body,
 }
 
-/// A lexical block: steps then a tail.
+/// A lexical block. Steps then a tail.
 #[derive(Debug)]
 pub(crate) struct Body {
     pub steps: Vec<Step>,
@@ -140,8 +143,8 @@ pub(crate) struct Body {
 /// How a body ends.
 #[derive(Debug)]
 pub(crate) enum Tail {
-    /// Yield these values to the enclosing context (the branch statement's
-    /// exports, or the overall body result).
+    /// Yield these values to the enclosing context. That is the branch
+    /// statement's exports, or the overall body result.
     Ret(Vec<Atom>),
     /// Tail-call a join point.
     Jump { join: JoinId, args: Vec<Atom> },
@@ -179,14 +182,14 @@ pub(crate) enum Invalid {
 #[derive(Clone, Copy)]
 struct JoinSig {
     arity: usize,
-    /// The number of values a call to this join evaluates to, or `None`
-    /// while the join is being validated (a `rec` join's self-jumps yield
-    /// whatever the join yields, so they constrain nothing).
+    /// The number of values a call to this join evaluates to. `None` while
+    /// the join is being validated. A `rec` join's self-jumps yield whatever
+    /// the join yields, so they constrain nothing.
     yields: Option<usize>,
 }
 
-/// Lexical context threaded through validation. Cloned at scope forks (arms,
-/// join bodies) so sibling scopes stay independent.
+/// Lexical context threaded through validation. Cloned at scope forks, that
+/// is arms and join bodies, so sibling scopes stay independent.
 #[derive(Clone, Default)]
 struct Scope {
     vars: BTreeSet<Var>,
@@ -227,9 +230,9 @@ impl Scope {
     }
 }
 
-/// Check the IR invariants for a whole body, given the number of values it is
-/// expected to yield (0 for an entry fn body) and any vars bound by enclosing
-/// glue (e.g. inlet params of a graph fn, or a pre-bound dispatch pair).
+/// Check the IR invariants for a whole body. `yields` is the number of values
+/// it must yield, 0 for an entry fn body. `pre_bound` lists the vars bound by
+/// enclosing glue, for example the inlet params of a graph fn.
 pub(crate) fn validate(body: &Body, yields: usize, pre_bound: &[Var]) -> Result<(), Invalid> {
     let mut scope = Scope::default();
     for &v in pre_bound {
@@ -248,9 +251,9 @@ pub(crate) fn validate(body: &Body, yields: usize, pre_bound: &[Var]) -> Result<
     Ok(())
 }
 
-/// Validate a body within `scope`, returning the number of values it yields,
-/// or `None` when every path ends in a self-jump to an enclosing rec join
-/// (the yield is then the join's own, constraining nothing).
+/// Validate a body within `scope` and return the number of values it yields.
+/// `None` when every path ends in a self-jump to an enclosing rec join. The
+/// yield is then the join's own and constrains nothing.
 fn validate_body(body: &Body, scope: &mut Scope) -> Result<Option<usize>, Invalid> {
     for step in &body.steps {
         match step {
@@ -278,7 +281,7 @@ fn validate_body(body: &Body, scope: &mut Scope) -> Result<Option<usize>, Invali
                     inner.bind(p)?;
                 }
                 // A rec join is visible within its own body with a deferred
-                // (`None`) yield: self-jump paths yield whatever the join
+                // `None` yield. Self-jump paths yield whatever the join
                 // yields, so they constrain nothing.
                 if join.rec {
                     inner.joins.insert(
@@ -428,7 +431,7 @@ mod tests {
         assert_eq!(validate(&body, 0, &[]), Err(Invalid::Rebound(out(0, 0))));
     }
 
-    /// A branch whose arms jump to a join; the join body consumes the param.
+    /// A branch whose arms jump to a join. The join body consumes the param.
     #[test]
     fn branch_with_join_validates() {
         let param = Var::Input { node: 3, input: 0 };
@@ -499,7 +502,7 @@ mod tests {
         );
     }
 
-    /// Sibling arm scopes are independent: both arms may bind the same vars.
+    /// Sibling arm scopes are independent. Both arms may bind the same vars.
     #[test]
     fn sibling_arms_bind_same_vars() {
         let arm = |ix: usize| Arm {
@@ -533,7 +536,7 @@ mod tests {
         assert_eq!(validate(&body, 0, &[]), Err(Invalid::UnknownJoin(7)));
     }
 
-    /// A rec join may jump to itself; a non-rec join's body cannot see itself.
+    /// A rec join may jump to itself. A non-rec join's body cannot see itself.
     #[test]
     fn rec_join_self_jump() {
         let rec_join = |rec: bool| Body {

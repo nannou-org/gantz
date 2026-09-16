@@ -1,29 +1,26 @@
-//! The unit-[`Delay`] node: pd-style cross-evaluation feedback.
+//! The unit-[`Delay`] node. Pd-style cross-evaluation feedback.
 
 use crate::node::{self, Node};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
-/// A unit delay: outputs the value its input received on the *previous*
+/// A unit delay. It outputs the value its input received on the previous
 /// evaluation.
 ///
-/// The compiler treats delays as intrinsics (no node fn is generated): the
-/// stored value is bound when an evaluation begins, and the input is written
-/// to state at the point it is produced. Evaluation never propagates
-/// *through* a delay, so a feedback cycle is legal exactly when it passes
-/// through one - the value crosses between evaluations rather than looping
-/// within one.
+/// The compiler treats delays as intrinsics and generates no node fn. The
+/// stored value is bound when an evaluation begins. The input is written to
+/// state at the point it is produced. Evaluation never propagates through a
+/// delay. A feedback cycle is legal exactly when it passes through one. The
+/// value crosses between evaluations rather than looping within one.
 ///
-/// Before the first write the stored value is `'()`; downstream nodes guard
-/// accordingly (e.g. `(if (number? $x) $x 0)`).
+/// Before the first write the stored value is `'()`. Downstream nodes must
+/// guard for this, for example `(if (number? $x) $x 0)`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, NodeTag)]
 pub struct Delay;
 
 impl Node for Delay {
-    /// Never called during compilation - delays are special-cased:
-    /// no node fn is generated; the read is a state lookup bound at the top
-    /// of the evaluation and the write a state insert where the input value
-    /// is produced.
+    /// Never called during compilation. The compiler special-cases delays.
+    /// See [`Delay`].
     fn expr(&self, _ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         node::parse_expr("'()")
     }
