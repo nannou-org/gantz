@@ -8,16 +8,15 @@ pub struct Commit {
     /// The timestamp of the commit, represented as the duration since
     /// `UNIX_EPOCH`.
     pub timestamp: Timestamp,
-    /// The first parent of this commit: the commit the head was on when the
-    /// commit was made.
+    /// The first parent of this commit. This is the commit the head was on
+    /// when the commit was made.
     pub parent: Option<CommitAddr>,
     /// The address of the graph pointed to by this commit.
     pub graph: GraphAddr,
-    /// Extra parents, present only on merge commits (the merged-in tips).
+    /// Extra parents, the merged-in tips. Present only on merge commits.
     ///
-    /// Empty on ordinary commits and omitted from both the content hash and
-    /// the serialized form, so existing commit addresses and persisted
-    /// registries are unchanged.
+    /// Empty on ordinary commits. An empty list is omitted from both the
+    /// content hash and the serialized form.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub merge_parents: Vec<CommitAddr>,
 }
@@ -66,8 +65,7 @@ impl Commit {
 
     /// Create a merge commit joining `theirs` into `ours`.
     ///
-    /// `ours` becomes the first parent (the commit the head was on), `theirs`
-    /// the merge parent.
+    /// `ours` becomes the first parent and `theirs` the merge parent.
     pub fn new_merge(
         timestamp: Duration,
         ours: CommitAddr,
@@ -82,7 +80,7 @@ impl Commit {
         }
     }
 
-    /// All parents of this commit: the first parent (if any), then any merge
+    /// All parents of this commit. The first parent, if any, then the merge
     /// parents.
     pub fn parents(&self) -> impl Iterator<Item = CommitAddr> + '_ {
         self.parent
@@ -91,11 +89,11 @@ impl Commit {
     }
 }
 
-/// Commits addressed by timestamp, parent(s) and graph CA.
+/// Commits are addressed by timestamp, parents and graph CA.
 ///
 /// The `gantz.commit` prefix domain-separates commit addresses from every
-/// other kind (graphs carry their own prefix, blob addresses are raw blake3
-/// of their bytes), so no two kinds can collide on one address.
+/// other kind. Graphs carry their own prefix. Blob addresses are the raw
+/// blake3 of their bytes. No two kinds can collide on one address.
 impl CaHash for Commit {
     fn hash(&self, hasher: &mut Hasher) {
         hasher.update(b"gantz.commit");
@@ -103,8 +101,8 @@ impl CaHash for Commit {
         self.timestamp.subsec_nanos().hash(hasher);
         self.parent.hash(hasher);
         self.graph.hash(hasher);
-        // Folded in only when non-empty so a commit's address is unchanged
-        // by the presence of the (defaulted) field on ordinary commits.
+        // Folded in only when non-empty, so the field does not change the
+        // address of an ordinary commit.
         if !self.merge_parents.is_empty() {
             hasher.update(b"merge-parents");
             self.merge_parents.hash(hasher);
@@ -162,9 +160,8 @@ mod tests {
 
     #[test]
     fn commit_addr_is_domain_separated() {
-        // The kind prefix keeps a commit's address distinct from a raw
-        // blake3 hash of the same field bytes (blob addressing) and from
-        // graph addresses.
+        // The kind prefix keeps a commit's address distinct from a raw blake3
+        // hash of the same field bytes, which is how blobs are addressed.
         let root = Commit::new(Duration::from_secs(1), None, graph_addr(1));
         let mut unprefixed = Hasher::new();
         root.timestamp.as_secs().hash(&mut unprefixed);

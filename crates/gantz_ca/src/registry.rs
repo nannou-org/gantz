@@ -1,31 +1,34 @@
-//! The registry: content-addressed content columns plus open metadata
+//! The registry. Content-addressed content columns plus open metadata
 //! sections.
 //!
 //! The registry has exactly two parts:
 //!
-//! - The CONTENT columns ([`graphs`](Registry::graphs),
+//! - The content columns. These are [`graphs`](Registry::graphs),
 //!   [`commits`](Registry::commits) and per-section
-//!   [`blobs`](Registry::blobs)): immutable, content-addressed, insert-only
-//!   (modulo [`prune`](crate::reach::prune)).
-//! - The [`sections`](Registry::sections): ALL mutable state. Heads
-//!   (branches) are the core-declared [`Heads`] section. Domains attach
-//!   their own metadata by declaring a [`SectionDecl`] in their own crate -
-//!   the registry core never learns domain types, and sections carry their
-//!   merge policy and liveness rules as data so unknown sections are
-//!   merged, pruned, exported and round-tripped correctly.
+//!   [`blobs`](Registry::blobs). They are immutable, content-addressed and
+//!   insert-only, except for [`prune`](crate::reach::prune).
+//! - The [`sections`](Registry::sections). These hold all mutable state.
+//!   Heads are the core-declared [`Heads`] section. Domains attach their own
+//!   metadata by declaring a [`SectionDecl`] in their own crate. The registry
+//!   core never learns domain types. Sections carry their merge policy and
+//!   liveness rules as data, so unknown sections are merged, pruned,
+//!   exported and round-tripped correctly.
 //!
-//! Content forms a pure Merkle DAG: graphs are [`DataGraph`]s of erased
-//! [`NodeData`] nodes referencing nested graphs by [`GraphAddr`] and blobs
-//! by content address, so content identity depends only on content. Commits
-//! form the history DAG above it (timestamps live there). Names point at
-//! commits, naming lines of history.
+//! Content forms a pure Merkle DAG. Graphs are [`DataGraph`]s of erased
+//! [`NodeData`] nodes. They reference nested graphs by [`GraphAddr`] and
+//! blobs by content address, so content identity depends only on content.
+//! Commits form the history DAG above it and carry the timestamps. Names
+//! point at commits and name lines of history.
 //!
 //! Registry invariant: commits are parent-closed and graph-complete. Every
-//! stored commit's parents are present or detached (never dangling) and its
-//! graph is present. Maintained by [`add_commit`](Registry::add_commit)
-//! (clears absent parents before hashing), [`sync::Staged::apply`]
-//! (validates or detaches) and [`prune`](crate::reach::prune) (detaches
-//! after removal).
+//! stored commit's parents are present or detached, never dangling, and its
+//! graph is present. [`add_commit`](Registry::add_commit) clears absent
+//! parents before hashing. [`sync::Staged::apply`] validates or detaches.
+//! [`prune`](crate::reach::prune) detaches after removal.
+//!
+//! The commit methods take a `graph_ca` and a `graph` closure. The closure
+//! is called only when the registry has no graph at `graph_ca`. The caller
+//! must ensure `graph_ca` is the address of the graph the closure returns.
 //!
 //! [`sync::Staged::apply`]: crate::sync::Staged
 
@@ -56,11 +59,11 @@ pub struct Registry {
     sections: BTreeMap<SectionId, Section>,
 }
 
-/// The core `heads` section: maps names to the commits at the tips of their
+/// The core `heads` section. Maps names to the commits at the tips of their
 /// lines of history.
 ///
-/// Merge-replace (an incoming head wins, reported in [`MergeReport`]) and
-/// the roots of reachability.
+/// Its merge policy is replace. An incoming head wins and is reported in
+/// [`MergeReport`]. Its entries are the roots of reachability.
 pub struct Heads;
 
 pub type Graphs = HashMap<GraphAddr, DataGraph>;
@@ -74,7 +77,7 @@ pub const HEADS_ID: &str = "heads";
 pub struct MergeReport {
     /// Head names that were newly added.
     pub heads_added: Vec<Name>,
-    /// Head names that were repointed: (name, old, new).
+    /// Head names that were repointed, as (name, old, new).
     pub heads_replaced: Vec<(Name, CommitAddr, CommitAddr)>,
     /// Non-head section entries that were newly added.
     pub sections_added: Vec<(SectionId, Key)>,
@@ -160,8 +163,6 @@ impl Registry {
         self.sections.get(id).and_then(|s| s.entries.get(key))
     }
 
-    // -- Heads --
-
     /// The commit at the tip of the named line of history.
     pub fn head(&self, name: &Name) -> Option<CommitAddr> {
         section_get::<Heads>(self, name)
@@ -196,7 +197,7 @@ impl Registry {
     /// Remove the named head.
     ///
     /// Entries keyed by this name in `WithName`-liveness sections are
-    /// dropped with it (their subject is gone).
+    /// dropped with it. Their subject is gone.
     pub fn remove_head(&mut self, name: &Name) -> Option<CommitAddr> {
         let key = Key::Name(name.clone());
         let prev = self
@@ -243,12 +244,7 @@ impl Registry {
             .and_then(|commit| self.graphs.get(&commit.graph))
     }
 
-    // -- Content mutation --
-
     /// Commit the graph at the given address.
-    ///
-    /// NOTE: Assumes `graph_ca` is a correct address for the graph resulting
-    /// from `graph()`.
     pub fn commit_graph(
         &mut self,
         timestamp: Timestamp,
@@ -260,9 +256,6 @@ impl Registry {
     }
 
     /// Commit the graph to the given name.
-    ///
-    /// NOTE: Assumes `graph_ca` is a correct address for the graph resulting
-    /// from `graph()`.
     pub fn commit_graph_to_name(
         &mut self,
         timestamp: Timestamp,
@@ -275,12 +268,6 @@ impl Registry {
 
     /// Commit the graph at the given address and update `head` to a new
     /// commit pointing to the graph.
-    ///
-    /// Only calls `graph` if no graph exists within the registry for the
-    /// given address.
-    ///
-    /// NOTE: Assumes `graph_ca` is a correct address for the graph resulting
-    /// from `graph()`.
     pub fn commit_graph_to_head(
         &mut self,
         timestamp: Timestamp,
@@ -294,14 +281,8 @@ impl Registry {
     /// Commit the graph at the given address as a merge of `theirs` into the
     /// current head commit, and update `head` to the new merge commit.
     ///
-    /// The head's current commit becomes the first parent, `theirs` the
+    /// The head's current commit becomes the first parent and `theirs` the
     /// merge parent.
-    ///
-    /// Only calls `graph` if no graph exists within the registry for the
-    /// given address.
-    ///
-    /// NOTE: Assumes `graph_ca` is a correct address for the graph resulting
-    /// from `graph()`.
     pub fn commit_merge_to_head(
         &mut self,
         timestamp: Timestamp,
@@ -313,26 +294,20 @@ impl Registry {
         crate::ops::commit_merge_to_head(self, timestamp, graph_ca, graph, theirs, head)
     }
 
-    /// Commit the graph at the given address as a *canonical* merge of the
+    /// Commit the graph at the given address as a canonical merge of the
     /// diverged tips `a` and `b`, and update `head` to the new merge commit.
     ///
-    /// Unlike [`commit_merge_to_head`](Self::commit_merge_to_head), which
-    /// keeps the head's tip as the first parent, both the parent order and
-    /// the timestamp here are pure functions of the two tips (see
-    /// `sync::canonical_tips` and `sync::merge_timestamp`): peers that merge
-    /// the same pair independently mint the *identical* merge commit, which
-    /// is what lets their DAGs converge rather than re-diverge.
+    /// [`commit_merge_to_head`](Self::commit_merge_to_head) keeps the head's
+    /// tip as the first parent. Here both the parent order and the timestamp
+    /// are pure functions of the two tips. See `sync::canonical_tips` and
+    /// `sync::merge_timestamp`. Peers that merge the same pair independently
+    /// mint the identical merge commit. This lets their DAGs converge rather
+    /// than re-diverge.
     ///
     /// The caller must have produced the graph by merging in the same
-    /// canonical orientation (see
-    /// [`sync::plan_sync_step`](crate::sync::plan_sync_step)), as the merged
+    /// canonical orientation. See
+    /// [`sync::plan_sync_step`](crate::sync::plan_sync_step). The merged
     /// graph's node order depends on which side plays "ours".
-    ///
-    /// Only calls `graph` if no graph exists within the registry for the
-    /// given address.
-    ///
-    /// NOTE: Assumes `graph_ca` is a correct address for the graph resulting
-    /// from `graph()`.
     pub fn commit_merge_canonical(
         &mut self,
         a: CommitAddr,
@@ -346,12 +321,12 @@ impl Registry {
 
     /// Insert a commit, computing its address from the commit's contents.
     ///
-    /// A commit must not reference a parent that is not in the registry, so
-    /// a parent that is absent is cleared to `None` (and absent merge
-    /// parents are dropped) *before* the address is computed. Because
-    /// parents are part of the hashed content, the returned address reflects
-    /// the cleared parents: to preserve a chain's addresses, insert its
-    /// commits oldest-first so each parent is already present.
+    /// A commit must not reference a parent that is not in the registry. An
+    /// absent parent is cleared to `None` and absent merge parents are
+    /// dropped before the address is computed. Parents are part of the hashed
+    /// content, so the returned address reflects the cleared parents. To
+    /// preserve a chain's addresses, insert its commits oldest-first so each
+    /// parent is already present.
     ///
     /// Returns the computed [`CommitAddr`], which always matches the stored
     /// commit.
@@ -369,21 +344,18 @@ impl Registry {
         ca
     }
 
-    /// Insert a commit under a claimed (already validated or grandfathered)
-    /// address, used only by [`sync::Staged::apply`](crate::sync::Staged),
-    /// which inserts oldest-first with absent parents detached.
+    /// Insert a commit under a claimed, already validated address. The
+    /// caller upholds the parent-closed invariant.
     pub(crate) fn insert_commit_at(&mut self, ca: CommitAddr, commit: Commit) {
         self.commits.insert(ca, commit);
     }
 
-    /// Insert a graph under a claimed (already validated) address, used only
-    /// by [`sync::Staged::apply`](crate::sync::Staged).
+    /// Insert a graph under a claimed, already validated address.
     pub(crate) fn insert_graph_at(&mut self, ca: GraphAddr, graph: DataGraph) {
         self.graphs.entry(ca).or_insert(graph);
     }
 
-    /// Insert verified blob bytes under a claimed address, used only by
-    /// [`sync::Staged::apply`](crate::sync::Staged).
+    /// Insert verified blob bytes under a claimed address.
     pub(crate) fn insert_blob_at(
         &mut self,
         section: SectionId,
@@ -401,11 +373,11 @@ impl Registry {
 
     /// Insert a graph, computing its address from the graph's contents.
     ///
-    /// Every node is [canonicalized](NodeData::canonicalize) before hashing,
-    /// so one logical graph always lands under exactly one address.
+    /// Every node is canonicalized via [`NodeData::canonicalize`] before
+    /// hashing, so one logical graph always lands under exactly one address.
     ///
     /// Returns the computed [`GraphAddr`], which always matches the graph.
-    /// Content-addressing makes this idempotent: an existing entry for the
+    /// Content-addressing makes this idempotent. An existing entry for the
     /// computed address is identical and is left in place.
     pub fn add_graph(&mut self, mut graph: DataGraph) -> GraphAddr {
         graph.node_weights_mut().for_each(NodeData::canonicalize);
@@ -416,8 +388,8 @@ impl Registry {
 
     /// Insert bytes into the named blob section, computing their address.
     ///
-    /// Creates the section with the given liveness if absent (an existing
-    /// section's stored liveness wins).
+    /// Creates the section with the given liveness if absent. An existing
+    /// section's stored liveness wins.
     pub fn add_blob(
         &mut self,
         section: impl Into<SectionId>,
@@ -438,8 +410,8 @@ impl Registry {
         Head::Commit(commit_ca)
     }
 
-    /// Insert a raw value into the section with the given id, creating the
-    /// section (stamped with the given semantics) on first write. An
+    /// Insert a raw value into the section with the given id. The section is
+    /// created and stamped with the given semantics on first write. An
     /// existing section's stored semantics win.
     ///
     /// Returns the previous value, if any. Typed callers use
@@ -470,14 +442,13 @@ impl Registry {
     /// liveness rule holds against the surviving state. See
     /// [`reach::prune`](crate::reach::prune).
     pub(crate) fn retain_live(&mut self, live: &crate::reach::LiveSet) {
-        // Content columns.
         self.commits.retain(|ca, _| live.commits.contains(ca));
         self.graphs.retain(|ga, _| live.graphs.contains(ga));
         for (id, store) in &mut self.blobs {
             store.entries.retain(|addr, _| live.blob_live(id, addr));
         }
-        // Root sections first (heads): entries follow their commit values,
-        // so the WithName pass below sees the surviving heads.
+        // Root sections first. Their entries follow their commit values, so
+        // the WithName pass below sees the surviving heads.
         for section in self.sections.values_mut() {
             if section.liveness != Liveness::Root {
                 continue;
@@ -515,12 +486,12 @@ impl Registry {
 
     /// Merge an incoming registry into this one.
     ///
-    /// Graphs, commits and blobs are inserted idempotently
-    /// (content-addressing means duplicates are identical). Sections merge
-    /// per their stored policy: `Replace` entries are overwritten by
-    /// differing incoming entries (and reported), `KeepExisting` entries
-    /// keep the local value. An incoming section unknown locally is adopted
-    /// wholesale, semantics and all.
+    /// Graphs, commits and blobs are inserted idempotently.
+    /// Content-addressing means duplicates are identical. Sections merge per
+    /// their stored policy. `Replace` entries are overwritten by differing
+    /// incoming entries and reported. `KeepExisting` entries keep the local
+    /// value. An incoming section unknown locally is adopted wholesale,
+    /// semantics and all.
     pub fn merge(&mut self, incoming: Registry) -> MergeReport {
         let mut report = MergeReport::default();
         self.graphs.extend(incoming.graphs);
@@ -592,8 +563,8 @@ where
     reg.section_entry(S::ID, &key).and_then(S::decode)
 }
 
-/// Insert a typed value under `key` in `S`'s section, creating the section
-/// (stamped with `S`'s declared semantics) on first write.
+/// Insert a typed value under `key` in `S`'s section. The section is created
+/// and stamped with `S`'s declared semantics on first write.
 pub fn section_insert<S: SectionDecl>(
     reg: &mut Registry,
     key: S::Key,
@@ -640,7 +611,7 @@ where
 /// Encode and insert a datum-valued entry into the section with the given
 /// id, creating the section with the given semantics on first write.
 ///
-/// A convenience for erased writers (e.g. format import). Typed callers use
+/// A convenience for erased writers such as format import. Typed callers use
 /// [`section_insert`].
 pub fn section_insert_datum(
     reg: &mut Registry,
@@ -655,9 +626,8 @@ pub fn section_insert_datum(
     Ok(())
 }
 
-/// For all `parent` commits that are invalid (i.e. don't point to an
-/// existing commit), set them to `None`. Invalid merge parents are dropped
-/// likewise.
+/// Set every `parent` that does not point to an existing commit to `None`.
+/// Invalid merge parents are dropped likewise.
 pub(crate) fn detach_invalid_parents(commits: &mut Commits) {
     let present: HashSet<CommitAddr> = commits.keys().copied().collect();
     for commit in commits.values_mut() {
@@ -696,8 +666,8 @@ mod tests {
         g
     }
 
-    /// Build a simple registry with two independent commits (each with its
-    /// own graph) and a head pointing to one of them.
+    /// Build a registry with two independent commits, each with its own
+    /// graph, and a head pointing to one of them.
     fn test_registry() -> (Registry, CommitAddr, CommitAddr) {
         let ga = graph_addr(1);
         let gb = graph_addr(2);
@@ -1032,7 +1002,7 @@ mod tests {
         assert_eq!(back.commits(), reg.commits());
         assert_eq!(back.sections(), reg.sections());
         assert_eq!(back.blobs(), reg.blobs());
-        // `DataGraph` lacks `PartialEq`: compare the graph column by address
+        // `DataGraph` lacks `PartialEq`. Compare the graph column by address
         // set and node content.
         assert_eq!(
             back.graphs().keys().collect::<HashSet<_>>(),

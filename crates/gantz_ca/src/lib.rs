@@ -1,6 +1,7 @@
 //! The content-addressing abstractions for `gantz`.
 
-// Let the `CaHash` derive (which emits `gantz_ca::` paths) be used in-crate.
+// The `CaHash` derive emits `gantz_ca::` paths. This alias lets the crate use
+// the derive on its own types.
 extern crate self as gantz_ca;
 
 #[doc(inline)]

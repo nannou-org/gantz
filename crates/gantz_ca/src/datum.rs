@@ -1,24 +1,25 @@
-//! A self-describing serde value: the bridge between node types and any
-//! self-describing representation of them.
+//! A self-describing serde value. It is the bridge between node types and
+//! any self-describing representation of them.
 //!
 //! [`Datum`] mirrors the serde data model the way `serde_json::Value` does.
-//! Node types cross format boundaries through this single seam:
-//! [`to_datum`]/[`from_datum`] are a `serde` Serializer/Deserializer pair
-//! built directly on `Datum` (mirroring `serde_json`'s own `Value` codec), so
-//! every node's own `Serialize`/`Deserialize` runs unchanged and arbitrary
-//! serde types - not just erased node sets - are supported. The `gantz_format`
-//! crate maps a `Datum` to and from reader-valid Steel text.
+//! Node types cross format boundaries through this single seam. [`to_datum`]
+//! and [`from_datum`] are a serde Serializer and Deserializer pair built
+//! directly on `Datum`. Every node's own `Serialize` and `Deserialize` runs
+//! unchanged, and arbitrary serde types are supported, not just erased node
+//! sets. The `gantz_format` crate maps a `Datum` to and from reader-valid
+//! Steel text.
 //!
-//! The deserializer is *self-describing*: `Datum`'s `deserialize_any` dispatches
-//! each datum kind to the matching `visit_*`, which is what tag-dispatched
-//! node-set serde (`gantz_format::impl_node_set_serde!`) and
-//! `#[serde(tag = ...)]` derives ride on.
+//! The deserializer is self-describing. `Datum`'s `deserialize_any`
+//! dispatches each datum kind to the matching `visit_*`. Tag-dispatched
+//! node-set serde in `gantz_format::impl_node_set_serde!` and
+//! `#[serde(tag = ...)]` derives rely on this.
 //!
-//! The one deliberate divergence from `serde_json::Value` is that `char` and
-//! `bytes` keep dedicated variants ([`Datum::Char`]/[`Datum::Bytes`]) rather
-//! than collapsing to a string/array, so the full serde data model round-trips
-//! faithfully. For parity, `deserialize_str`/`deserialize_string` still accept a
-//! `Char` and `deserialize_bytes` still accepts a `Seq`.
+//! The one divergence from `serde_json::Value` is that `char` and `bytes`
+//! keep dedicated variants, [`Datum::Char`] and [`Datum::Bytes`], rather
+//! than collapsing to a string or array. The full serde data model then
+//! round-trips faithfully. For parity, `deserialize_str` and
+//! `deserialize_string` still accept a `Char`, and `deserialize_bytes` still
+//! accepts a `Seq`.
 
 use serde::de::{
     self, Deserialize, DeserializeOwned, DeserializeSeed, EnumAccess, Expected, IntoDeserializer,
@@ -28,35 +29,36 @@ use serde::ser::{self, Serialize};
 use std::fmt;
 use std::vec;
 
-/// A self-describing value mirroring the serde data model; the bridge between
-/// node types and reader-valid Steel text.
+/// A self-describing value mirroring the serde data model. It is the bridge
+/// between node types and reader-valid Steel text.
 ///
-/// `Datum` has bit-level value semantics: `PartialEq`/`Eq`/`Hash` compare
-/// [`Datum::F64`] via `to_bits`, so equality is total, reflexive and
-/// hash-consistent. (This diverges from `f64` semantics for the values
-/// `to_datum` never produces anyway: NaN compares equal to itself and
-/// `0.0 != -0.0`.)
+/// `Datum` has bit-level value semantics. `PartialEq`, `Eq` and `Hash`
+/// compare [`Datum::F64`] via `to_bits`, so equality is total, reflexive and
+/// hash-consistent. This diverges from `f64` semantics only for values that
+/// `to_datum` never produces. NaN compares equal to itself and `0.0 != -0.0`.
 #[derive(Clone, Debug)]
 pub enum Datum {
-    /// `null` / unit / `None` -> the `null` symbol.
+    /// `null`, unit or `None`. Written as the `null` symbol.
     Null,
-    /// A boolean -> `#t` / `#f`.
+    /// A boolean. Written as `#t` or `#f`.
     Bool(bool),
-    /// A signed integer -> a decimal literal.
+    /// A signed integer. Written as a decimal literal.
     I64(i64),
-    /// An unsigned integer -> a decimal literal.
+    /// An unsigned integer. Written as a decimal literal.
     U64(u64),
-    /// A finite float -> a decimal literal (always with a `.` or exponent).
+    /// A finite float. Written as a decimal literal, always with a `.` or an
+    /// exponent.
     F64(f64),
-    /// A character -> a Steel character literal (`#\c`).
+    /// A character. Written as a Steel character literal such as `#\c`.
     Char(char),
-    /// A string -> a string literal.
+    /// A string. Written as a string literal.
     Str(String),
-    /// A byte buffer -> a Steel bytevector (`#u8(...)`).
+    /// A byte buffer. Written as a Steel bytevector, `#u8(...)`.
     Bytes(Vec<u8>),
-    /// A sequence (seq / tuple) -> a Steel vector (`#(...)`).
+    /// A sequence or tuple. Written as a Steel vector, `#(...)`.
     Seq(Vec<Datum>),
-    /// A map (map / struct / struct variant) -> a list of pairs (`((k v)...)`).
+    /// A map, struct or struct variant. Written as a list of pairs,
+    /// `((k v)...)`.
     Map(Vec<(String, Datum)>),
 }
 
@@ -80,12 +82,10 @@ where
     T::deserialize(datum)
 }
 
-// -- constructors / accessors ------------------------------------------------
-
 impl Datum {
-    /// Build a node datum: a `type` field (the node's wire tag) prepended to
-    /// `fields`. The single canonical way the format constructs a tagged map.
-    /// Out-of-crate `gantz_format::Sugar` impls usually want the `&str`-keyed
+    /// Build a node datum. A `type` field holding the node's wire tag is
+    /// prepended to `fields`. This is the single way the format constructs a
+    /// tagged map. `gantz_format::Sugar` impls usually want the `&str`-keyed
     /// [`node_datum`] convenience instead.
     pub fn tagged(tag: &str, fields: Vec<(String, Datum)>) -> Datum {
         let mut entries = Vec::with_capacity(fields.len() + 1);
@@ -121,7 +121,8 @@ impl Datum {
         }
     }
 
-    /// The value of an integer datum (signed or unsigned, if it fits in `i64`).
+    /// The value of an integer datum, signed or unsigned, when it fits in
+    /// `i64`.
     pub fn as_i64(&self) -> Option<i64> {
         match self {
             Datum::I64(n) => Some(*n),
@@ -150,11 +151,11 @@ impl Datum {
 
     /// Recursively sort map entries by key, in place.
     ///
-    /// [`to_datum`] preserves a struct's field declaration order while the
-    /// codec's free-form map serialization sorts keys, so the same logical
-    /// value can otherwise take two shapes. Contexts that treat datums as
-    /// identity (e.g. content addressing of ref extension data) canonicalize
-    /// first so one logical value has exactly one form.
+    /// [`to_datum`] preserves a struct's field declaration order, while the
+    /// codec's free-form map serialization sorts keys. The same logical value
+    /// can therefore take two shapes. Contexts that treat datums as identity,
+    /// such as content addressing of ref extension data, canonicalize first
+    /// so one logical value has exactly one form.
     pub fn canonicalize(&mut self) {
         match self {
             Datum::Seq(items) => items.iter_mut().for_each(Self::canonicalize),
@@ -166,8 +167,6 @@ impl Datum {
         }
     }
 }
-
-// -- value semantics -----------------------------------------------------------
 
 impl PartialEq for Datum {
     fn eq(&self, other: &Self) -> bool {
@@ -212,11 +211,11 @@ impl crate::CaHash for Datum {
     /// Content-address folding over the datum's structure.
     ///
     /// A variant marker byte plus length-prefixed variable-size contents keep
-    /// distinct values from colliding through adjacency (e.g. `Str("ab")`
-    /// followed by another value vs `Str("abc")`). `F64` folds its bit
-    /// pattern, matching the bitwise `Eq`/`Hash` semantics. Identity-sensitive
-    /// callers hash the [canonical](Datum::canonicalize) form so one logical
-    /// value has exactly one address.
+    /// distinct values from colliding through adjacency. For example,
+    /// `Str("ab")` followed by another value must differ from `Str("abc")`.
+    /// `F64` folds its bit pattern, matching the bitwise `Eq` and `Hash`
+    /// semantics. Identity-sensitive callers hash the canonical form so one
+    /// logical value has exactly one address. See [`Datum::canonicalize`].
     fn hash(&self, hasher: &mut crate::Hasher) {
         fn len(hasher: &mut crate::Hasher, n: usize) {
             hasher.update(&(n as u64).to_be_bytes());
@@ -275,11 +274,12 @@ impl crate::CaHash for Datum {
 }
 
 impl Serialize for Datum {
-    /// Serializes the *represented* value (`Str("x")` as a string, `Map` as a
-    /// map, ...), so a datum embedded in a larger `Serialize` type round-trips
-    /// through any self-describing format. Note `to_datum(&datum) == datum`
-    /// holds for [canonical](Datum::canonicalize) datums - this codec's own
-    /// map serialization sorts keys.
+    /// Serializes the represented value. `Str("x")` serializes as a string
+    /// and `Map` as a map. A datum embedded in a larger `Serialize` type thus
+    /// round-trips through any self-describing format. Note that
+    /// `to_datum(&datum) == datum` holds only for canonical datums, since
+    /// this codec's own map serialization sorts keys. See
+    /// [`Datum::canonicalize`].
     fn serialize<S: ser::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::{SerializeMap as _, SerializeSeq as _};
         match self {
@@ -309,9 +309,10 @@ impl Serialize for Datum {
     }
 }
 
-/// Build a node datum from a node tag and ordered `&str`-keyed fields - the
-/// ergonomic builder a `gantz_format::Sugar` uses to construct the value its
-/// `read_spec` returns, without depending on `Datum`'s internal map shape.
+/// Build a node datum from a node tag and ordered `&str`-keyed fields.
+///
+/// A `gantz_format::Sugar` uses this to construct the value its `read_spec`
+/// returns, without depending on `Datum`'s internal map shape.
 pub fn node_datum(tag: &str, fields: Vec<(&str, Datum)>) -> Datum {
     Datum::tagged(
         tag,
@@ -321,8 +322,6 @@ pub fn node_datum(tag: &str, fields: Vec<(&str, Datum)>) -> Datum {
             .collect(),
     )
 }
-
-// -- error -------------------------------------------------------------------
 
 impl fmt::Display for DatumError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -343,8 +342,6 @@ impl de::Error for DatumError {
         DatumError(msg.to_string())
     }
 }
-
-// -- serializer --------------------------------------------------------------
 
 struct Serializer;
 
@@ -418,7 +415,7 @@ impl ser::Serializer for Serializer {
     }
 
     fn serialize_f64(self, v: f64) -> Result<Datum, DatumError> {
-        // Mirror `Number::from_f64`: a non-finite float has no representation.
+        // Mirror `Number::from_f64`. A non-finite float has no representation.
         Ok(if v.is_finite() {
             Datum::F64(v)
         } else {
@@ -634,8 +631,9 @@ impl ser::SerializeTupleVariant for SerializeTupleVariant {
     }
 }
 
-/// Map serialization sorts keys for deterministic output, since map iteration
-/// order (e.g. `HashMap`) is unspecified. Struct field order is preserved.
+/// Map serialization sorts keys for deterministic output. Map iteration
+/// order, such as a `HashMap`'s, is unspecified. Struct field order is
+/// preserved.
 struct SerializeMap {
     entries: Vec<(String, Datum)>,
     next_key: Option<String>,
@@ -714,8 +712,8 @@ impl ser::SerializeStructVariant for SerializeStructVariant {
     }
 }
 
-/// Serializes a map key to a `String`, mirroring `serde_json`'s map-key rules
-/// (only stringy/scalar keys are allowed).
+/// Serializes a map key to a `String`, mirroring `serde_json`'s map-key
+/// rules. Only string and scalar keys are allowed.
 struct MapKeySerializer;
 
 fn key_must_be_a_string() -> DatumError {
@@ -906,12 +904,10 @@ impl ser::Serializer for MapKeySerializer {
     }
 }
 
-// -- deserializer ------------------------------------------------------------
-
-/// Transcode into a `Datum` from any self-describing format (mirroring
-/// `serde_json::Value`'s `Deserialize`): the input is buffered as a `Datum`,
-/// which can then re-drive a concrete type's `Deserialize` via [`from_datum`].
-/// `gantz_format::impl_node_set_serde!` buffers node fields
+/// Transcode into a `Datum` from any self-describing format, mirroring
+/// `serde_json::Value`'s `Deserialize`. The input is buffered as a `Datum`,
+/// which can then re-drive a concrete type's `Deserialize` via
+/// [`from_datum`]. `gantz_format::impl_node_set_serde!` buffers node fields
 /// this way when they precede the `type` tag.
 impl<'de> Deserialize<'de> for Datum {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -1036,8 +1032,8 @@ impl Datum {
     }
 }
 
-/// Dispatch a numeric datum to the visitor by its concrete kind; non-numbers
-/// are a type error (mirrors `serde_json`'s number deserialization).
+/// Dispatch a numeric datum to the visitor by its concrete kind. Non-numbers
+/// are a type error. This mirrors `serde_json`'s number deserialization.
 fn deserialize_number<'de, V>(datum: Datum, visitor: V) -> Result<V::Value, DatumError>
 where
     V: Visitor<'de>,
@@ -1115,7 +1111,7 @@ impl<'de> de::Deserializer<'de> for Datum {
         V: Visitor<'de>,
     {
         match self {
-            // An enum is encoded as a single-key map (variant -> payload)...
+            // An enum is encoded as a single-key map from variant to payload...
             Datum::Map(mut entries) if entries.len() == 1 => {
                 let (variant, value) = entries.pop().expect("len == 1");
                 visitor.visit_enum(EnumDeserializer {
@@ -1185,7 +1181,7 @@ impl<'de> de::Deserializer<'de> for Datum {
     {
         match self {
             Datum::Str(s) => visitor.visit_string(s),
-            // Parity: a `char` can satisfy a string target.
+            // For parity, a `char` can satisfy a string target.
             Datum::Char(c) => visitor.visit_string(c.to_string()),
             _ => Err(self.invalid_type(&visitor)),
         }
@@ -1205,7 +1201,8 @@ impl<'de> de::Deserializer<'de> for Datum {
         match self {
             Datum::Bytes(b) => visitor.visit_byte_buf(b),
             Datum::Str(s) => visitor.visit_string(s),
-            // Parity: a seq of byte-valued numbers can satisfy a bytes target.
+            // For parity, a seq of byte-valued numbers can satisfy a bytes
+            // target.
             Datum::Seq(v) => visit_seq(v, visitor),
             _ => Err(self.invalid_type(&visitor)),
         }
@@ -1231,8 +1228,8 @@ impl<'de> de::Deserializer<'de> for Datum {
     {
         match self {
             // A unit-struct node's datum is an empty map once its `type` tag
-            // is split off (mirrors `serde`'s own internally-tagged special
-            // case for newtype variants around unit structs).
+            // is split off. This mirrors `serde`'s own internally-tagged
+            // special case for newtype variants around unit structs.
             Datum::Map(ref entries) if entries.is_empty() => visitor.visit_unit(),
             _ => self.deserialize_unit(visitor),
         }
@@ -1412,8 +1409,8 @@ impl<'de> MapAccess<'de> for MapDeserializer {
     }
 }
 
-/// Deserializer for a map key: a `String` that can also satisfy numeric, bool
-/// and unit-variant-enum targets (mirrors `serde_json`'s map keys).
+/// Deserializer for a map key. A `String` that can also satisfy numeric,
+/// bool and unit-variant-enum targets. This mirrors `serde_json`'s map keys.
 struct MapKeyDeserializer {
     key: String,
 }
@@ -1610,7 +1607,7 @@ mod tests {
         )
     }
 
-    /// Distinct datums fold to distinct addresses: variant markers and length
+    /// Distinct datums fold to distinct addresses. Variant markers and length
     /// prefixes prevent adjacency and cross-variant collisions.
     #[test]
     fn ca_hash_distinctness() {
@@ -1639,8 +1636,8 @@ mod tests {
         );
     }
 
-    /// Pin the fold so accidental scheme changes are caught: ext data is
-    /// content-addressed, so this scheme is wire-stability-critical.
+    /// Pin the fold so accidental scheme changes are caught. Ext data is
+    /// content-addressed, so this scheme is part of the wire format.
     #[test]
     fn ca_hash_stability_pin() {
         let d = map(&[
@@ -1658,7 +1655,8 @@ mod tests {
         );
     }
 
-    /// `Eq`/`Hash` are bitwise for floats: total, reflexive, hash-consistent.
+    /// `Eq` and `Hash` are bitwise for floats. They are total, reflexive and
+    /// hash-consistent.
     #[test]
     fn value_semantics_are_bitwise() {
         use std::collections::hash_map::DefaultHasher;
@@ -1687,7 +1685,7 @@ mod tests {
             ),
             ("a", Datum::I64(1)),
         ]);
-        // Non-canonical: to_datum sorts the maps, so the value changes shape.
+        // Non-canonical. `to_datum` sorts the maps, so the value changes shape.
         assert_ne!(to_datum(&d).unwrap(), d);
         d.canonicalize();
         assert_eq!(

@@ -1,60 +1,60 @@
 //! Node identity matching and structural diffing between graph versions.
 //!
-//! Nodes have no persistent identity of their own - only an index and a
-//! content address - so diffing two versions of a graph first requires a
-//! [`Matching`]: an injective mapping pairing "the same node" across the two
-//! versions.
+//! Nodes have no persistent identity of their own, only an index and a
+//! content address. Diffing two versions of a graph first requires a
+//! [`Matching`]. This is an injective mapping that pairs the same node across
+//! the two versions.
 //!
 //! Two strategies are provided:
 //!
-//! - [`match_nodes`]: direct content matching. Nodes are grouped by content
-//!   address and paired within each group in ascending-index order. This is
-//!   conservative: a node whose content was edited appears as a removal plus
-//!   an addition.
-//! - [`matching`]: chain-tracked matching. The registry retains every commit
-//!   and graph, and gantz's commit-on-change model means consecutive commits
-//!   differ by a single logical edit, during which a node's *index* is its
-//!   identity (an in-place edit keeps the node's index; a removal swap-moves
-//!   exactly one other node, which content-matching pairs). Matching each
-//!   consecutive pair of commits along the first-parent chain and composing
-//!   the results tracks a node's identity through content edits, so an edit
-//!   diffs as a *modification* rather than a remove + add.
+//! - [`match_nodes`] matches directly by content. Nodes are grouped by
+//!   content address and paired within each group in ascending-index order.
+//!   This is conservative. A node whose content was edited appears as a
+//!   removal plus an addition.
+//! - [`matching`] tracks identity along the commit chain. The registry
+//!   retains every commit and graph. The commit-on-change model means
+//!   consecutive commits differ by a single logical edit. During one edit a
+//!   node's index is its identity. An in-place edit keeps the node's index.
+//!   A removal swap-moves exactly one other node, which content matching
+//!   pairs. Matching each consecutive pair of commits along the first-parent
+//!   chain and composing the results tracks a node through content edits. An
+//!   edit then diffs as a modification rather than a remove plus an add.
 
 use crate::{CommitAddr, DataGraph, Edge, Registry, Timestamp, content_addr, history};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-/// A node identity mapping between two versions of a graph: left node index
-/// to right node index. Injective: no two left nodes map to the same right
-/// node.
+/// A node identity mapping between two versions of a graph, from left node
+/// index to right node index. It is injective. No two left nodes map to the
+/// same right node.
 pub type Matching = BTreeMap<usize, usize>;
 
 /// A structural diff of `other` relative to `base`, under a node [`Matching`].
 ///
-/// Node entries are expressed in the coordinates of the graph they exist in:
-/// removals in `base` indices, additions in `other` indices. Edges are
-/// treated as sets of `(source, target, weight)` triples; parallel edges with
-/// identical weights are not distinguished.
+/// Node entries use the coordinates of the graph they exist in. Removals use
+/// `base` indices and additions use `other` indices. Edges are treated as
+/// sets of `(source, target, weight)` triples. Parallel edges with identical
+/// weights are not distinguished.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Diff {
     /// Base node index to other node index, for nodes present in both.
     pub matched: Matching,
-    /// The subset of `matched` (base indices) whose node content changed.
+    /// The subset of `matched`, as base indices, whose node content changed.
     pub modified: BTreeSet<usize>,
     /// Base indices with no counterpart in `other`.
     pub removed_nodes: BTreeSet<usize>,
     /// Other indices with no counterpart in `base`.
     pub added_nodes: BTreeSet<usize>,
-    /// Edges present in `base` but not `other`, in *base* coordinates.
+    /// Edges present in `base` but not `other`, in base coordinates.
     ///
-    /// Only edges whose endpoints both survive into `other`: edges lost as a
-    /// consequence of node removal are implied by `removed_nodes`.
+    /// Only edges whose endpoints both survive into `other`. Edges lost by
+    /// node removal are implied by `removed_nodes`.
     pub removed_edges: BTreeSet<(usize, usize, Edge)>,
-    /// Edges present in `other` but not `base`, in *other* coordinates
-    /// (endpoints may be added nodes).
+    /// Edges present in `other` but not `base`, in other coordinates.
+    /// Endpoints may be added nodes.
     pub added_edges: BTreeSet<(usize, usize, Edge)>,
 }
 
-/// Change counts for a [`Diff`], e.g. for GUI hover summaries.
+/// Change counts for a [`Diff`]. For example, for GUI hover summaries.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DiffSummary {
     pub nodes_added: usize,
@@ -86,8 +86,8 @@ impl Diff {
     }
 }
 
-/// The content address of every node, indexed by node index (contiguous for
-/// a plain `petgraph::Graph`).
+/// The content address of every node, indexed by node index. Indices are
+/// contiguous for a plain `petgraph::Graph`.
 fn node_cas(g: &DataGraph) -> Vec<crate::ContentAddr> {
     g.node_weights().map(crate::content_addr).collect()
 }
@@ -113,19 +113,19 @@ fn match_cas(a: &[crate::ContentAddr], b: &[crate::ContentAddr]) -> Matching {
 /// Directly match nodes between two graphs by content.
 ///
 /// Nodes are grouped by content address and paired within each group in
-/// ascending-index order (canonical rank). Conservative: a node whose content
-/// was edited is left unmatched on both sides.
+/// ascending-index order, their canonical rank. This is conservative. A node
+/// whose content was edited is left unmatched on both sides.
 pub fn match_nodes(a: &DataGraph, b: &DataGraph) -> Matching {
     match_cas(&node_cas(a), &node_cas(b))
 }
 
-/// Match nodes between two *consecutive* commits' graphs (by their node
-/// content addresses).
+/// Match nodes between two consecutive commits' graphs by node content
+/// address.
 ///
-/// [`match_cas`] pairs everything whose content is unchanged; the leftover
+/// [`match_cas`] pairs everything whose content is unchanged. The leftover
 /// nodes on both sides are then paired when they share an index. A single
-/// edit step justifies this: an in-place content edit preserves the node's
-/// index, while a swap-removal never leaves an equal-index leftover pair.
+/// edit step justifies this. An in-place content edit preserves the node's
+/// index. A swap-removal never leaves an equal-index leftover pair.
 fn match_step_cas(prev: &[crate::ContentAddr], next: &[crate::ContentAddr]) -> Matching {
     let mut matching = match_cas(prev, next);
     let matched_next: HashSet<usize> = matching.values().copied().collect();
@@ -138,9 +138,9 @@ fn match_step_cas(prev: &[crate::ContentAddr], next: &[crate::ContentAddr]) -> M
 }
 
 /// Node identity between `base`'s graph and `tip`'s graph, tracked step-wise
-/// along `tip`'s first-parent chain (see the module docs).
+/// along `tip`'s first-parent chain. See the module docs.
 ///
-/// Steps whose graph address is unchanged (e.g. layout-only commits) are
+/// Steps whose graph address is unchanged, such as layout-only commits, are
 /// identity. Falls back to direct [`match_nodes`] between the endpoint graphs
 /// when `base` is not on the chain or an intermediate graph is unavailable.
 /// Returns `None` only when an endpoint commit or graph is missing from the
@@ -149,13 +149,15 @@ pub fn matching(reg: &Registry, base: CommitAddr, tip: CommitAddr) -> Option<Mat
     matching_with_times(reg, base, tip).map(|(matching, _)| matching)
 }
 
-/// [`matching`], also returning each tracked node's *last-edit time*: for
-/// every base node still present at the tip, the timestamp of the last commit
-/// along the chain that changed its content (no entry = content untouched).
+/// [`matching`], also returning each tracked node's last-edit time.
 ///
-/// Feeds per-node "last edit wins" conflict resolution (see
-/// [`crate::merge::BothModified::KeepNewest`]). The direct-matching fallback
-/// has no chain to read times from, so it returns them empty; callers fall
+/// For every base node still present at the tip, this is the timestamp of
+/// the last commit along the chain that changed its content. A node with no
+/// entry has untouched content.
+///
+/// Feeds per-node "last edit wins" conflict resolution. See
+/// [`crate::merge::BothModified::KeepNewest`]. The direct-matching fallback
+/// has no chain to read times from, so it returns no times. Callers then fall
 /// back to the tips' own timestamps.
 pub fn matching_with_times(
     reg: &Registry,
@@ -173,22 +175,22 @@ pub fn matching_with_times(
         return Some(direct());
     };
 
-    // Walk the chain oldest-first, composing the per-step matchings and
-    // stamping tracked nodes whose content changed at a step. Each step's
-    // node addresses are computed once and carried into the next iteration.
+    // Walk the chain oldest-first. Compose the per-step matchings and stamp
+    // tracked nodes whose content changed at a step. Each step's node
+    // addresses are computed once and carried into the next iteration.
     let mut matching: Matching = identity(base_graph);
     let mut times: BTreeMap<usize, Timestamp> = BTreeMap::new();
     let mut steps = chain.iter().rev();
     let mut prev = steps.next()?;
     let mut prev_cas: Option<Vec<crate::ContentAddr>> = None;
     for next in steps {
-        // Same graph (e.g. a layout-only commit): identity step.
+        // Same graph, such as a layout-only commit. This is an identity step.
         if prev.graph == next.graph {
             prev = next;
             continue;
         }
         let (Some(pg), Some(ng)) = (graphs.get(&prev.graph), graphs.get(&next.graph)) else {
-            // An intermediate graph is unavailable: fall back to direct.
+            // An intermediate graph is unavailable. Fall back to direct.
             return Some(direct());
         };
         let pc = prev_cas.take().unwrap_or_else(|| node_cas(pg));
@@ -211,7 +213,7 @@ pub fn matching_with_times(
 }
 
 /// The structural diff of `other` relative to `base` under the given node
-/// [`Matching`] (see [`Diff`]).
+/// [`Matching`]. See [`Diff`].
 pub fn diff(base: &DataGraph, other: &DataGraph, matching: &Matching) -> Diff {
     let matched_other: HashSet<usize> = matching.values().copied().collect();
     let modified = matching
@@ -238,7 +240,7 @@ pub fn diff(base: &DataGraph, other: &DataGraph, matching: &Matching) -> Diff {
         .iter()
         .filter(|(s, d, w)| {
             let (Some(&os), Some(&od)) = (matching.get(s), matching.get(d)) else {
-                // An endpoint was removed: implied by `removed_nodes`.
+                // An endpoint was removed. `removed_nodes` implies this edge.
                 return false;
             };
             !other_edges.contains(&(os, od, *w))
@@ -251,7 +253,7 @@ pub fn diff(base: &DataGraph, other: &DataGraph, matching: &Matching) -> Diff {
         .iter()
         .filter(|(s, d, w)| {
             let (Some(&bs), Some(&bd)) = (inverse.get(s), inverse.get(d)) else {
-                // An endpoint is an added node: the edge is necessarily new.
+                // An endpoint is an added node, so the edge is new.
                 return true;
             };
             !base_edges.contains(&(bs, bd, *w))
@@ -319,7 +321,7 @@ mod tests {
 
     #[test]
     fn match_nodes_pairs_duplicate_content_by_rank() {
-        // [A, B, A] with B removed via swap-remove -> [A, A].
+        // [A, B, A] with B swap-removed gives [A, A].
         let a = graph(&["a", "b", "a"], &[]);
         let b = graph(&["a", "a"], &[]);
         let m = match_nodes(&a, &b);
@@ -358,7 +360,7 @@ mod tests {
         let g0 = graph(&["a", "b"], &[]);
         let g1 = graph(&["a", "b2"], &[]); // edit ix 1
         let g2 = graph(&["a", "b2", "c"], &[]); // add ix 2
-        let g3 = graph(&["c", "b2"], &[]); // remove ix 0 (c swaps in)
+        let g3 = graph(&["c", "b2"], &[]); // remove ix 0, c swaps in
         let base = commit(&mut reg, 1, None, &g0);
         let c1 = commit(&mut reg, 2, Some(base), &g1);
         // A layout-only commit: same graph, new commit.
@@ -366,12 +368,12 @@ mod tests {
         let c2 = commit(&mut reg, 4, Some(c1b), &g2);
         let c3 = commit(&mut reg, 5, Some(c2), &g3);
 
-        // Through the edit: identity is preserved.
+        // Through the edit, identity is preserved.
         assert_eq!(
             matching(&reg, base, c2).unwrap(),
             Matching::from([(0, 0), (1, 1)]),
         );
-        // Through the removal: base ix 0 is gone, ix 1 tracked at ix 1.
+        // Through the removal, base ix 0 is gone and ix 1 is tracked at ix 1.
         assert_eq!(matching(&reg, base, c3).unwrap(), Matching::from([(1, 1)]));
     }
 
@@ -388,7 +390,7 @@ mod tests {
         let c3 = commit(&mut reg, 4, Some(c2), &g3);
         let (m, times) = matching_with_times(&reg, base, c3).unwrap();
         assert_eq!(m, Matching::from([(0, 0), (1, 1)]));
-        // Node 1's last content change was the t=4 commit; node 0 untouched.
+        // Node 1's last content change was the t=4 commit. Node 0 is untouched.
         assert_eq!(times, BTreeMap::from([(1, Timestamp::from_secs(4))]),);
     }
 

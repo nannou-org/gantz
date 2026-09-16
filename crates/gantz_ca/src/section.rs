@@ -1,30 +1,31 @@
-//! The open extension surface of the registry: mutable metadata sections and
-//! content-addressed blob stores.
+//! The open extension surface of the registry. Mutable metadata sections
+//! and content-addressed blob stores.
 //!
-//! A domain extends the registry by declaring a [`SectionDecl`] (keyed,
-//! mutable metadata such as descriptions or views) or a [`BlobDecl`]
-//! (content-addressed opaque bytes such as audio samples) in its own crate.
-//! The declaration is compile-time only: nothing registers at runtime, and
-//! the registry core never learns domain types.
+//! A domain extends the registry by declaring a [`SectionDecl`] or a
+//! [`BlobDecl`] in its own crate. A section holds keyed, mutable metadata
+//! such as descriptions or views. A blob store holds content-addressed
+//! opaque bytes such as audio samples. The declaration is compile-time
+//! only. Nothing registers at runtime, and the registry core never learns
+//! domain types.
 //!
-//! Section semantics travel AS DATA: the merge policy and liveness rule are
-//! stamped into the section when it is first written, so an application or
+//! Section semantics travel as data. The merge policy and liveness rule are
+//! stamped into the section when it is first written. An application or
 //! peer without the owning domain compiled in still merges, prunes, exports
 //! and round-trips the section correctly without interpreting its values.
 //!
-//! Blob addresses are the blake3 hash of the raw bytes and nothing else (no
-//! kind tag, no framing) - see [`blob_addr`]. This keeps them bit-compatible
-//! with iroh-blobs content addressing, preserving verified-streaming
-//! transfer as a future option. Blob metadata belongs beside the blob (in a
-//! metadata section), never in the hashed bytes.
+//! Blob addresses are the blake3 hash of the raw bytes and nothing else.
+//! There is no kind tag and no framing. See [`blob_addr`]. This keeps them
+//! bit-compatible with iroh-blobs content addressing, which preserves
+//! verified-streaming transfer as a future option. Blob metadata belongs
+//! beside the blob in a metadata section, never in the hashed bytes.
 
 use crate::{CommitAddr, ContentAddr, GraphAddr, datum::Datum};
 use crate::{Name, datum};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{collections::BTreeMap, sync::Arc};
 
-/// Identifies a section, by convention `<domain>.<kind>`
-/// (e.g. `egui.view`, `dsp.buffer`). The `heads` section is core.
+/// Identifies a section, by convention `<domain>.<kind>`. For example,
+/// `egui.view` or `dsp.buffer`. The `heads` section is core.
 pub type SectionId = String;
 
 /// Cheaply clonable immutable blob bytes.
@@ -39,19 +40,19 @@ pub trait SectionDecl {
     const POLICY: MergePolicy;
     /// The liveness rule stamped into the section on first write.
     const LIVENESS: Liveness;
-    /// The key type (converted through [`Key`]).
+    /// The key type. It converts through [`Key`].
     type Key: Into<Key> + TryFromKey;
-    /// The value type (encoded through [`Datum`] by default).
+    /// The value type. It encodes through [`Datum`] by default.
     type Value: Serialize + serde::de::DeserializeOwned;
 
     /// Encode a typed value as a section [`Value`]. Defaults to an inline
-    /// datum. Override to use a typed [`Value`] form (e.g. the `heads`
-    /// section encodes values as [`Value::Commit`]).
+    /// datum. Override to use a typed [`Value`] form. For example, the
+    /// `heads` section encodes values as [`Value::Commit`].
     fn encode(value: &Self::Value) -> Result<Value, datum::DatumError> {
         value_to_datum(value)
     }
 
-    /// Decode a typed value from a section [`Value`], `None` on shape
+    /// Decode a typed value from a section [`Value`]. `None` on shape
     /// mismatch. Must invert [`encode`](Self::encode).
     fn decode(value: &Value) -> Option<Self::Value> {
         value_from_datum(value)
@@ -75,15 +76,15 @@ pub trait TryFromKey: Sized {
 /// What a section's entries are keyed by.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum Key {
-    /// Keyed by a head name (metadata that survives edits to the named line
-    /// of history, e.g. descriptions).
+    /// Keyed by a head name. Such metadata survives edits to the named line
+    /// of history. For example, descriptions.
     Name(Name),
-    /// Keyed by a commit (metadata about a specific history point, e.g.
-    /// scene views).
+    /// Keyed by a commit. Such metadata is about a specific history point.
+    /// For example, scene views.
     Commit(CommitAddr),
-    /// Keyed by a graph (metadata about specific content).
+    /// Keyed by a graph. Such metadata is about specific content.
     Graph(GraphAddr),
-    /// Keyed by an arbitrary content address (e.g. blob metadata).
+    /// Keyed by an arbitrary content address. For example, blob metadata.
     Addr(ContentAddr),
 }
 
@@ -94,17 +95,18 @@ pub enum Value {
     Datum(Datum),
     /// An indirection into a blob store section, for large values.
     Blob(SectionId, ContentAddr),
-    /// A typed pointer into history (the `heads` section's value form).
+    /// A typed pointer into history. This is the `heads` section's value
+    /// form.
     Commit(CommitAddr),
 }
 
 /// How a section's entries merge when an incoming registry is merged in.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum MergePolicy {
-    /// A present local entry wins (descriptions, demos, views).
+    /// A present local entry wins. Used for descriptions, demos and views.
     KeepExisting,
-    /// A differing incoming entry replaces the local one, reported in the
-    /// merge result (the `heads` section).
+    /// A differing incoming entry replaces the local one and is reported in
+    /// the merge result. Used for the `heads` section.
     Replace,
 }
 
@@ -112,8 +114,9 @@ pub enum MergePolicy {
 /// omitted from exports.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Liveness {
-    /// Entries are garbage-collection roots: their commit values (and
-    /// everything reachable from them) are kept alive (the `heads` section).
+    /// Entries are garbage-collection roots. Their commit values and
+    /// everything reachable from them are kept alive. Used for the `heads`
+    /// section.
     Root,
     /// Live while the `heads` section contains the entry's `Key::Name`.
     WithName,
@@ -128,9 +131,9 @@ pub enum Liveness {
 /// When a blob store entry is live.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum BlobLiveness {
-    /// Live while referenced by live content (a graph node reference).
+    /// Live while referenced by live content, such as a graph node reference.
     ContentReferenced,
-    /// Live while referenced by a live section entry ([`Value::Blob`]).
+    /// Live while referenced by a live section entry via [`Value::Blob`].
     SectionReferenced,
     /// Never automatically dropped.
     Pinned,
@@ -151,8 +154,8 @@ pub struct Section {
 
 /// A content-addressed store of opaque canonical bytes.
 ///
-/// Invariant: every key equals [`blob_addr`] of its bytes. [`insert`]
-/// computes the key, [`insert_at`] verifies a claimed key.
+/// Every key equals [`blob_addr`] of its bytes. [`insert`] computes the key
+/// and [`insert_at`] verifies a claimed key.
 ///
 /// [`insert`]: Self::insert
 /// [`insert_at`]: Self::insert_at
@@ -195,8 +198,8 @@ impl BlobStore {
         }
     }
 
-    /// Insert bytes, computing their address. Idempotent: an existing entry
-    /// for the address is identical by construction.
+    /// Insert bytes, computing their address. Idempotent, since an existing
+    /// entry for the address is identical by construction.
     pub fn insert(&mut self, bytes: impl Into<Bytes>) -> ContentAddr {
         let bytes = bytes.into();
         let addr = blob_addr(&bytes);
@@ -291,8 +294,8 @@ impl std::fmt::Display for BlobVerifyError {
 
 impl std::error::Error for BlobVerifyError {}
 
-/// The content address of a blob: the blake3 hash of the raw bytes and
-/// NOTHING else. No kind tag, no length prefix, no framing: this is the
+/// The content address of a blob. The blake3 hash of the raw bytes and
+/// nothing else. No kind tag, no length prefix, no framing. This is the
 /// iroh-blobs-compatible addressing rule. See the module docs.
 pub fn blob_addr(bytes: &[u8]) -> ContentAddr {
     ContentAddr::from(*blake3::hash(bytes).as_bytes())
@@ -319,8 +322,8 @@ fn serialize_blob_entries<S: Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     use serde::ser::SerializeMap;
-    /// Serializes a byte slice via `serialize_bytes` (rather than serde's
-    /// default seq-of-u8 for slices).
+    /// Serializes a byte slice via `serialize_bytes` rather than serde's
+    /// default seq-of-u8 for slices.
     struct AsBytes<'a>(&'a [u8]);
     impl Serialize for AsBytes<'_> {
         fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -339,7 +342,7 @@ fn serialize_blob_entries<S: Serializer>(
     map.end()
 }
 
-/// Deserialize blob entries (see [`serialize_blob_entries`]).
+/// Deserialize blob entries. See [`serialize_blob_entries`].
 fn deserialize_blob_entries<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<BTreeMap<ContentAddr, Bytes>, D::Error> {
@@ -368,7 +371,7 @@ mod tests {
 
     #[test]
     fn blob_addr_is_raw_blake3() {
-        // The iroh interop guard: the address must be the plain blake3 hash
+        // The iroh interop guard. The address must be the plain blake3 hash
         // of the raw bytes, with nothing folded into the preimage.
         let bytes = b"hello gantz";
         let addr = blob_addr(bytes);

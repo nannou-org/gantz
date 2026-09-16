@@ -21,14 +21,14 @@ use syn::{DeriveInput, LitStr, parse_macro_input};
 
 /// Derive macro for `NodeTag`.
 ///
-/// Implements `gantz_nodetag::NodeTag` with the type's name as its wire tag
-/// (the `"type"` entry of the node's serialized map form).
+/// Implements `gantz_nodetag::NodeTag` with the type's name as its wire tag.
+/// The tag is the `"type"` entry of the node's serialized map form.
 ///
 /// # Attributes
 ///
-/// - `#[tag("...")]` (optional on type): Override the tag. Tags are part of
-///   the wire format - changing one breaks the loading of existing `.gantz`
-///   exports and persisted registries that contain the node.
+/// - `#[tag("...")]` on the type overrides the tag. Tags are part of the wire
+///   format. See the `NodeTag` trait docs in `gantz_nodetag` for why a tag
+///   must stay stable.
 ///
 /// # Generated Code Example
 ///

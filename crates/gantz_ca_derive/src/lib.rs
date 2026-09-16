@@ -22,38 +22,22 @@ use syn::{
 
 /// Derive macro for `CaHash`.
 ///
-/// Automatically implements content-addressable hashing for structs and enums.
+/// Implements content-addressable hashing for structs and enums. The
+/// generated impl hashes the optional discriminator, then each field that is
+/// not skipped, in declaration order.
 ///
 /// # Attributes
 ///
-/// - `#[cahash("discriminator")]` (optional on type): A unique string prefix
-///   for this type's hash. Use dotted lowercase names like `gantz.my-type`.
-///   If omitted, only the fields are hashed (useful for wrapper types).
+/// - `#[cahash("discriminator")]` on the type. A unique string prefix for
+///   this type's hash. Use dotted lowercase names like `gantz.my-type`. When
+///   omitted, only the fields are hashed. This suits wrapper types.
 ///
-/// - `#[cahash(skip)]` (optional on fields): Exclude a field from hashing.
-///   Useful for `PhantomData`, cached values, or UI-only state.
+/// - `#[cahash(skip)]` on a field. Excludes the field from hashing. This
+///   suits `PhantomData`, cached values and UI-only state.
 ///
 /// # Generated Code Examples
 ///
-/// ## Unit Structs
-///
-/// ```ignore
-/// #[derive(CaHash)]
-/// #[cahash("gantz.bang")]
-/// pub struct Bang;
-/// ```
-///
-/// Generates:
-///
-/// ```ignore
-/// impl gantz_ca::CaHash for Bang {
-///     fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-///         hasher.update("gantz.bang".as_bytes());
-///     }
-/// }
-/// ```
-///
-/// ## Structs with Named Fields
+/// ## Structs
 ///
 /// ```ignore
 /// #[derive(CaHash)]
@@ -74,50 +58,13 @@ use syn::{
 /// }
 /// ```
 ///
-/// ## Tuple Structs
+/// Tuple struct fields are hashed by index in the same way. A unit struct
+/// hashes only its discriminator.
 ///
-/// ```ignore
-/// #[derive(CaHash)]
-/// #[cahash("gantz.ref")]
-/// pub struct Ref(ContentAddr);
-/// ```
+/// ## Generic Types and Skipped Fields
 ///
-/// Generates:
-///
-/// ```ignore
-/// impl gantz_ca::CaHash for Ref {
-///     fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-///         hasher.update("gantz.ref".as_bytes());
-///         gantz_ca::CaHash::hash(&self.0, hasher);
-///     }
-/// }
-/// ```
-///
-/// ## Generic Types
-///
-/// Type parameters used in non-skipped fields automatically receive `CaHash` bounds.
-///
-/// ```ignore
-/// #[derive(CaHash)]
-/// #[cahash("gantz.fn")]
-/// pub struct Fn<N>(pub N);
-/// ```
-///
-/// Generates:
-///
-/// ```ignore
-/// impl<N: gantz_ca::CaHash> gantz_ca::CaHash for Fn<N> {
-///     fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-///         hasher.update("gantz.fn".as_bytes());
-///         gantz_ca::CaHash::hash(&self.0, hasher);
-///     }
-/// }
-/// ```
-///
-/// ## Skipping Fields
-///
-/// Use `#[cahash(skip)]` to exclude fields. Skipped fields don't contribute
-/// to generic bounds either.
+/// Type parameters used in non-skipped fields receive a `CaHash` bound.
+/// Skipped fields do not contribute to the bounds.
 ///
 /// ```ignore
 /// #[derive(CaHash)]
@@ -145,7 +92,8 @@ use syn::{
 ///
 /// ## Enums
 ///
-/// Variants are tagged with sequential `u8` values (0, 1, 2, ...).
+/// Variants are tagged with sequential `u8` values starting from 0. Named
+/// variant fields are hashed in declaration order in the same way.
 ///
 /// ```ignore
 /// #[derive(CaHash)]
@@ -175,44 +123,9 @@ use syn::{
 /// }
 /// ```
 ///
-/// ## Enums with Named Fields
-///
-/// ```ignore
-/// #[derive(CaHash)]
-/// #[cahash("my.result")]
-/// pub enum MyResult {
-///     Ok { value: i32 },
-///     Err { code: u32, msg: String },
-/// }
-/// ```
-///
-/// Generates:
-///
-/// ```ignore
-/// impl gantz_ca::CaHash for MyResult {
-///     fn hash(&self, hasher: &mut gantz_ca::Hasher) {
-///         hasher.update("my.result".as_bytes());
-///         match self {
-///             Self::Ok { value } => {
-///                 hasher.update(&[0u8]);
-///                 gantz_ca::CaHash::hash(value, hasher);
-///             }
-///             Self::Err { code, msg } => {
-///                 hasher.update(&[1u8]);
-///                 gantz_ca::CaHash::hash(code, hasher);
-///                 gantz_ca::CaHash::hash(msg, hasher);
-///             }
-///         }
-///     }
-/// }
-/// ```
-///
 /// # Errors
 ///
-/// Compilation fails if:
-/// - Missing `#[cahash("...")]` attribute on the type.
-/// - The cahash attribute contains a non-string literal.
-/// - Attempting to derive on a union type (not supported).
+/// Compilation fails for a union type.
 #[proc_macro_derive(CaHash, attributes(cahash))]
 pub fn derive_ca_hash(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -269,7 +182,6 @@ fn find_discriminator(input: &DeriveInput) -> Option<String> {
 fn add_ca_hash_bounds(generics: &Generics, data: &Data) -> Generics {
     let mut generics = generics.clone();
 
-    // Collect type parameter names that need bounds.
     let type_params: Vec<Ident> = generics
         .params
         .iter()
@@ -282,7 +194,6 @@ fn add_ca_hash_bounds(generics: &Generics, data: &Data) -> Generics {
         })
         .collect();
 
-    // Check which type parameters are used in non-skipped fields.
     let used_params: Vec<&Ident> = match data {
         Data::Struct(data) => collect_used_type_params(&data.fields, &type_params),
         Data::Enum(data) => {
@@ -295,7 +206,6 @@ fn add_ca_hash_bounds(generics: &Generics, data: &Data) -> Generics {
         Data::Union(_) => vec![],
     };
 
-    // Add CaHash bound to used type parameters.
     for param in &mut generics.params {
         if let GenericParam::Type(type_param) = param {
             if used_params.iter().any(|p| *p == &type_param.ident) {
@@ -312,12 +222,11 @@ fn collect_used_type_params<'a>(fields: &Fields, type_params: &'a [Ident]) -> Ve
     let mut used = Vec::new();
 
     for field in fields.iter() {
-        // Skip fields marked with #[cahash(skip)].
         if should_skip_field(field) {
             continue;
         }
 
-        // Check if the field type contains any of our type parameters.
+        // Match each type parameter by name against the field type's tokens.
         let ty_string = quote!(#field.ty).to_string();
         for param in type_params {
             if ty_string.contains(&param.to_string()) {

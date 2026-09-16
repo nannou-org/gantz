@@ -1,7 +1,7 @@
 //! Utilities for walking commit ancestry.
 //!
-//! Commits form a DAG: every commit has an optional first parent and, for
-//! merge commits, one or more merge parents (see [`Commit::parents`]). These
+//! Commits form a DAG. Every commit has an optional first parent. A merge
+//! commit also has one or more merge parents. See [`Commit::parents`]. These
 //! free fns provide the ancestry queries needed for merging diverged heads.
 
 use crate::{Commit, CommitAddr, registry::Commits};
@@ -13,18 +13,18 @@ use std::collections::{HashSet, VecDeque};
 pub enum MergeAnalysis {
     /// The tips share no common ancestor.
     Unrelated,
-    /// `theirs` is an ancestor of `ours`: there is nothing to merge.
+    /// `theirs` is an ancestor of `ours`. There is nothing to merge.
     AlreadyUpToDate,
-    /// `ours` is an ancestor of `theirs`: the head can simply move to
-    /// `theirs` without a merge commit.
+    /// `ours` is an ancestor of `theirs`. The head can move to `theirs`
+    /// without a merge commit.
     FastForward,
-    /// The tips have diverged; a true merge is required. Carries the merge
-    /// base (best common ancestor).
+    /// The tips have diverged and a true merge is required. Carries the merge
+    /// base, the best common ancestor.
     Diverged(CommitAddr),
 }
 
-/// All ancestors of `tip` (inclusive of `tip` itself), in breadth-first order
-/// over all parents (first parent and merge parents).
+/// All ancestors of `tip`, including `tip` itself, in breadth-first order
+/// over first and merge parents.
 ///
 /// Commits absent from `commits` terminate their branch of the walk.
 pub fn ancestors(commits: &Commits, tip: CommitAddr) -> impl Iterator<Item = CommitAddr> + '_ {
@@ -45,8 +45,8 @@ pub fn ancestors(commits: &Commits, tip: CommitAddr) -> impl Iterator<Item = Com
 
 /// The first-parent chain from `tip` back to the root (inclusive of `tip`).
 ///
-/// This is the "main line" of a head's history: merge parents are not
-/// followed, matching how undo walks back through commits.
+/// This is the main line of a head's history. Merge parents are not
+/// followed. Undo walks back through commits the same way.
 pub fn first_parent_chain(
     commits: &Commits,
     tip: CommitAddr,
@@ -59,13 +59,13 @@ pub fn first_parent_chain(
     })
 }
 
-/// All best common ancestors of `a` and `b`, canonically sorted ascending by
-/// `(timestamp, addr)`; empty when their histories are unrelated.
+/// All best common ancestors of `a` and `b`, sorted ascending by
+/// `(timestamp, addr)`. Empty when their histories are unrelated.
 ///
-/// A common ancestor is "best" when it is not itself an ancestor of another
-/// common ancestor. More than one candidate indicates criss-cross histories
-/// (each side merged the other); see [`crate::merge::merge_commits`] for how
-/// candidates are recursively merged into a virtual base.
+/// A common ancestor is best when it is not itself an ancestor of another
+/// common ancestor. More than one candidate indicates criss-cross histories,
+/// where each side merged the other. See [`crate::merge::merge_commits`] for
+/// how candidates are recursively merged into a virtual base.
 pub(crate) fn merge_bases(commits: &Commits, a: CommitAddr, b: CommitAddr) -> Vec<CommitAddr> {
     let a_ancestors: HashSet<CommitAddr> = ancestors(commits, a).collect();
     let mut common: HashSet<CommitAddr> = ancestors(commits, b)
@@ -88,9 +88,8 @@ pub(crate) fn merge_bases(commits: &Commits, a: CommitAddr, b: CommitAddr) -> Ve
 /// The best common ancestor of `a` and `b`, or `None` when their histories
 /// are unrelated.
 ///
-/// When several best candidates exist (criss-cross histories, see
-/// `merge_bases`), one is chosen deterministically by max
-/// `(timestamp, addr)`.
+/// When several best candidates exist, the max `(timestamp, addr)` wins. See
+/// `merge_bases` for criss-cross histories.
 pub fn merge_base(commits: &Commits, a: CommitAddr, b: CommitAddr) -> Option<CommitAddr> {
     merge_bases(commits, a, b).last().copied()
 }
@@ -106,8 +105,8 @@ pub fn analyze(commits: &Commits, ours: CommitAddr, theirs: CommitAddr) -> Merge
     }
 }
 
-/// The graph addresses along `tip`'s first-parent chain from `tip` back to
-/// `base` (inclusive of both), or `None` if `base` is not on the chain.
+/// The commits along `tip`'s first-parent chain from `tip` back to `base`,
+/// both inclusive. `None` if `base` is not on the chain.
 pub fn first_parent_chain_to(
     commits: &Commits,
     tip: CommitAddr,
@@ -251,7 +250,7 @@ mod tests {
         // Criss-cross: each side merges the other's tip.
         let ma = add_merge(&mut commits, 4, a, b, 4);
         let mb = add_merge(&mut commits, 5, b, a, 5);
-        // Both a and b are best common ancestors, canonically ordered; the
+        // Both a and b are best common ancestors, in canonical order. The
         // later timestamp wins the tie-break.
         assert_eq!(merge_bases(&commits, ma, mb), vec![a, b]);
         assert_eq!(merge_bases(&commits, mb, ma), vec![a, b]);

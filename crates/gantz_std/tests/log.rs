@@ -1,5 +1,5 @@
-//! Tests for the log node's provenance: the emitted expression carries the
-//! node's own path so log entries identify their emitting node.
+//! Tests for the log node's provenance. The emitted expression carries the
+//! node's own path, so log entries identify their emitting node.
 
 use gantz_core::{
     Edge, Node,
@@ -11,7 +11,6 @@ use std::fmt::Debug;
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
-// A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }

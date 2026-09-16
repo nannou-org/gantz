@@ -1,13 +1,13 @@
 //! Three-way merging of diverged graph heads.
 //!
-//! [`merge_commits`] resolves the relationship between two commit tips (see
-//! [`history::analyze`]) and, when they have truly diverged, performs a
+//! [`merge_commits`] resolves the relationship between two commit tips. See
+//! [`history::analyze`]. When the tips have diverged, it performs a
 //! three-way merge of their graphs against the merge base via
 //! [`merge_graphs`].
 //!
-//! The merge is *total*: it always produces a merged graph. Situations with
-//! no single obvious resolution are recorded as [`Conflict`]s, each carrying
-//! the default resolution that was applied, so callers can refuse the result,
+//! The merge is total. It always produces a merged graph. Situations with no
+//! single obvious resolution are recorded as [`Conflict`]s. Each carries the
+//! default resolution that was applied. Callers can refuse the result,
 //! surface the conflicts, or accept the defaults.
 
 use crate::{
@@ -28,10 +28,10 @@ pub enum Side {
     Theirs,
 }
 
-/// How a merge resolves each class of conflict (see [`Conflict`]).
+/// How a merge resolves each class of conflict. See [`Conflict`].
 ///
-/// An edge added to a node absent from the merged graph is always dropped -
-/// that is a consequence of the node's absence, not a choice.
+/// An edge added to a node absent from the merged graph is always dropped.
+/// That is a consequence of the node's absence, not a choice.
 #[derive(
     Clone, Copy, Debug, Default, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize,
 )]
@@ -56,14 +56,14 @@ pub enum BothModified {
     /// Theirs' content is kept.
     #[serde(alias = "Theirs")]
     KeepTheirs,
-    /// Last edit wins, per node: the side whose last content-changing commit
-    /// for that node is newer keeps its version (see [`EditTimes`]).
+    /// Last edit wins, per node. The side whose last content-changing commit
+    /// for that node is newer keeps its version. See [`EditTimes`].
     ///
-    /// Unlike the sided options this resolution is *symmetric*: merging A
-    /// into B picks the same content as merging B into A, so two peers
-    /// resolving the same conflict independently converge (the basis for a
-    /// shared-session "last edit wins" mode). Exact time ties break to the
-    /// greater content address - arbitrary, but side-independent.
+    /// Unlike the sided options this resolution is symmetric. Merging A into
+    /// B picks the same content as merging B into A, so two peers resolving
+    /// the same conflict independently converge. This is the basis for a
+    /// shared-session "last edit wins" mode. Exact time ties break to the
+    /// greater content address. That is arbitrary but side-independent.
     KeepNewest,
 }
 
@@ -72,7 +72,7 @@ pub enum BothModified {
     Clone, Copy, Debug, Default, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize,
 )]
 pub enum EditOrDelete {
-    /// The modified node is kept (don't lose work).
+    /// The modified node is kept, so no work is lost.
     #[default]
     KeepEdit,
     /// The node stays deleted.
@@ -81,54 +81,54 @@ pub enum EditOrDelete {
 
 /// Per-node last-edit timestamps consulted by [`BothModified::KeepNewest`].
 ///
-/// [`merge_commits`] fills this from each side's commit chain (see
-/// [`diff::matching_with_times`]); a node without an entry falls back to its
-/// side's tip timestamp. The `Default` (empty, zero tips) makes every
-/// comparison a tie, so `KeepNewest` degrades to the content-address
+/// [`merge_commits`] fills this from each side's commit chain. See
+/// [`diff::matching_with_times`]. A node without an entry falls back to its
+/// side's tip timestamp. The `Default` is empty with zero tips. It makes
+/// every comparison a tie, so `KeepNewest` degrades to the content-address
 /// tie-break.
 #[derive(Clone, Debug, Default)]
 pub struct EditTimes {
-    /// Base node index -> the last time ours' chain changed the node.
+    /// Maps a base node index to the last time ours' chain changed the node.
     pub ours: BTreeMap<usize, Timestamp>,
-    /// Base node index -> the last time theirs' chain changed the node.
+    /// Maps a base node index to the last time theirs' chain changed the
+    /// node.
     pub theirs: BTreeMap<usize, Timestamp>,
-    /// Ours' tip commit timestamp (the fallback edit time).
+    /// Ours' tip commit timestamp. This is the fallback edit time.
     pub ours_tip: Timestamp,
-    /// Theirs' tip commit timestamp (the fallback edit time).
+    /// Theirs' tip commit timestamp. This is the fallback edit time.
     pub theirs_tip: Timestamp,
 }
 
 /// A conflict encountered during a three-way merge.
 ///
-/// Conflicts are flagged, not fatal: each records the resolution the merge
-/// applied (per the caller's [`Resolutions`]) so that the result remains
-/// usable and callers can decide whether to accept it.
+/// Conflicts are flagged, not fatal. Each records the resolution the merge
+/// applied per the caller's [`Resolutions`]. The result remains usable and
+/// callers can decide whether to accept it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Conflict {
     /// Both sides modified the same base node with different results.
     ///
-    /// Applied resolution: `kept`'s content is kept. `ours`/`theirs` are the
-    /// node's indices in the respective graphs.
+    /// The content of `kept` is kept. `ours` and `theirs` are the node's
+    /// indices in the respective graphs.
     BothModified {
         base: usize,
         ours: usize,
         theirs: usize,
         kept: Side,
     },
-    /// One side deleted the node, the other (`modified`) modified it.
+    /// One side deleted the node and the other, `modified`, modified it.
     ///
-    /// Applied resolution: the modified node is kept when `kept`, else it
-    /// stays deleted.
+    /// The modified node is kept when `kept` is true. Otherwise it stays
+    /// deleted.
     DeleteModify {
         base: usize,
         modified: Side,
         kept: bool,
     },
-    /// `side` added an edge to a node the other side deleted (and which
-    /// stayed deleted).
+    /// `side` added an edge to a node the other side deleted. The node
+    /// stayed deleted.
     ///
-    /// Applied resolution: the edge is dropped. `src`/`dst` are indices in
-    /// `side`'s graph.
+    /// The edge is dropped. `src` and `dst` are indices in `side`'s graph.
     EdgeToDeleted {
         side: Side,
         src: usize,
@@ -137,7 +137,7 @@ pub enum Conflict {
     },
 }
 
-/// The provenance of one merged node: its index in each of the three input
+/// The provenance of one merged node. Its index in each of the three input
 /// graphs it appears in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NodeSrc {
@@ -149,9 +149,9 @@ pub struct NodeSrc {
 /// The result of a three-way graph merge.
 #[derive(Clone, Debug)]
 pub struct MergeOutcome {
-    /// The merged graph: ours' surviving nodes in ours' order, followed by
-    /// theirs-only nodes in ascending theirs order. When theirs removed no
-    /// nodes, ours' indices are preserved exactly.
+    /// The merged graph. Ours' surviving nodes come first in ours' order,
+    /// followed by theirs-only nodes in ascending theirs order. When theirs
+    /// removed no nodes, ours' indices are preserved exactly.
     pub graph: DataGraph,
     /// The provenance of each merged node, indexed by merged node index.
     pub node_srcs: Vec<NodeSrc>,
@@ -163,18 +163,18 @@ pub struct MergeOutcome {
 /// The resolution of merging one commit tip into another.
 #[derive(Clone, Debug)]
 pub enum MergeResolution {
-    /// Theirs is an ancestor of ours: there is nothing to merge.
+    /// Theirs is an ancestor of ours. There is nothing to merge.
     AlreadyUpToDate,
-    /// Ours is an ancestor of theirs: the head can simply move to theirs'
-    /// tip; no merge commit is required.
+    /// Ours is an ancestor of theirs. The head can move to theirs' tip
+    /// without a merge commit.
     FastForward,
     /// The tips have diverged and a three-way merge was performed.
     Diverged {
         /// The merge base the diffs are relative to.
         ///
-        /// For criss-cross histories this is the nominal (tie-break)
-        /// candidate; the diffs and outcome are computed against a *virtual*
-        /// base merged from all candidates (see [`merge_commits`]).
+        /// For criss-cross histories this is the nominal tie-break candidate.
+        /// The diffs and outcome are computed against a virtual base merged
+        /// from all candidates. See [`merge_commits`].
         base: CommitAddr,
         /// Ours' changes relative to the base.
         ours_diff: Diff,
@@ -220,21 +220,21 @@ enum Fate {
 }
 
 /// Maximum recursion depth when constructing virtual merge bases for
-/// criss-cross histories; beyond it the deterministic tie-break candidate is
+/// criss-cross histories. Beyond it the deterministic tie-break candidate is
 /// used directly as the base.
 const MAX_BASE_RECURSION: usize = 5;
 
 /// Merge two tips of a registry's commit DAG.
 ///
-/// Pure: the registry is not mutated, so this doubles as a dry run for
+/// Pure. The registry is not mutated, so this doubles as a dry run for
 /// previews. On [`MergeResolution::Diverged`], committing the result is the
-/// caller's job (see [`Registry::commit_merge_to_head`]).
+/// caller's job. See [`Registry::commit_merge_to_head`].
 ///
-/// Criss-cross histories (multiple best common ancestors, e.g. session peers
-/// repeatedly merging one another) are handled git-style: the candidates are
-/// recursively merged into a *virtual* base, so changes both tips already
-/// contain via different merge paths are part of the base rather than
-/// duplicated as parallel additions.
+/// Criss-cross histories have multiple best common ancestors. For example,
+/// session peers repeatedly merging one another. They are handled git-style.
+/// The candidates are recursively merged into a virtual base. Changes both
+/// tips already contain via different merge paths are then part of the base
+/// rather than duplicated as parallel additions.
 pub fn merge_commits(
     reg: &Registry,
     ours: CommitAddr,
@@ -244,7 +244,7 @@ pub fn merge_commits(
     merge_commits_recursive(reg, ours, theirs, resolutions, 0)
 }
 
-/// The implementation of [`merge_commits`]; `depth` guards the virtual-base
+/// The implementation of [`merge_commits`]. `depth` guards the virtual-base
 /// recursion for criss-cross histories.
 fn merge_commits_recursive(
     reg: &Registry,
@@ -255,7 +255,7 @@ fn merge_commits_recursive(
 ) -> Result<MergeResolution, MergeError> {
     let commits = reg.commits();
     // A tip that is itself a common ancestor is always the sole candidate,
-    // so the singleton checks cover the analysis (see `history::analyze`).
+    // so the singleton checks cover the analysis. See `history::analyze`.
     let bases = history::merge_bases(commits, ours, theirs);
     match bases.as_slice() {
         [] => return Err(MergeError::Unrelated),
@@ -266,13 +266,13 @@ fn merge_commits_recursive(
     let ours_g = commit_graph_of(reg, ours)?;
     let theirs_g = commit_graph_of(reg, theirs)?;
     let tip_time = |ca: CommitAddr| commits.get(&ca).map(|c| c.timestamp).unwrap_or_default();
-    // The nominal base reported in the resolution: the tie-break candidate.
+    // The nominal base reported in the resolution is the tie-break candidate.
     let base = *bases.last().expect("diverged tips have a merge base");
     let (ours_diff, theirs_diff, outcome) = if bases.len() > 1 && depth < MAX_BASE_RECURSION {
-        // Criss-cross: merge the candidates into a virtual base. It has no
+        // Criss-cross. Merge the candidates into a virtual base. It has no
         // commit chain, so node identity and edit times degrade to direct
-        // content matching and tip timestamps - deterministic (hence still
-        // convergent), just coarser.
+        // content matching and tip timestamps. This is coarser but still
+        // deterministic, so peers still converge.
         let virt = base_graph(reg, &bases, resolutions, depth)?;
         let edit_times = EditTimes {
             ours: BTreeMap::new(),
@@ -284,7 +284,7 @@ fn merge_commits_recursive(
     } else {
         let base_g = commit_graph_of(reg, base)?;
         // Endpoints are verified above, so `matching_with_times` cannot
-        // fail; degrade to direct matching rather than panicking should that
+        // fail. Degrade to direct matching rather than panic should that
         // ever change.
         let (mo, ours_times) = diff::matching_with_times(reg, base, ours)
             .unwrap_or_else(|| (diff::match_nodes(base_g, ours_g), Default::default()));
@@ -329,8 +329,8 @@ fn commit_graph_of(reg: &Registry, ca: CommitAddr) -> Result<&DataGraph, MergeEr
 }
 
 /// [`merge_graphs`] under diffs computed by direct content matching against
-/// `base`: the path for virtual bases, which have no commit chain to track
-/// node identity along.
+/// `base`. This is the path for virtual bases, which have no commit chain to
+/// track node identity along.
 fn merge_graphs_direct(
     base: &DataGraph,
     ours: &DataGraph,
@@ -354,8 +354,8 @@ fn merge_graphs_direct(
     (ours_diff, theirs_diff, outcome)
 }
 
-/// The merged graph of two commit tips, minting nothing: the building block
-/// for virtual bases.
+/// The merged graph of two commit tips, minting nothing. This is the
+/// building block for virtual bases.
 fn merged_tip_graph(
     reg: &Registry,
     a: CommitAddr,
@@ -367,8 +367,8 @@ fn merged_tip_graph(
         Ok(MergeResolution::AlreadyUpToDate) => Ok(commit_graph_of(reg, a)?.clone()),
         Ok(MergeResolution::FastForward) => Ok(commit_graph_of(reg, b)?.clone()),
         Ok(MergeResolution::Diverged { outcome, .. }) => Ok(outcome.graph),
-        // Unrelated candidates (e.g. merged-in foreign roots): merge against
-        // an empty base - everything unions, deterministically.
+        // Unrelated candidates, such as merged-in foreign roots, merge against
+        // an empty base. Everything unions, deterministically.
         Err(MergeError::Unrelated) => {
             let a_g = commit_graph_of(reg, a)?;
             let b_g = commit_graph_of(reg, b)?;
@@ -382,14 +382,15 @@ fn merged_tip_graph(
 }
 
 /// The base graph for canonically-sorted merge-base `candidates` at the
-/// given recursion `depth`:
+/// given recursion `depth`.
 ///
-/// - none (unrelated tips): an empty graph, so everything unions.
-/// - one: that candidate's graph.
-/// - several within [`MAX_BASE_RECURSION`] (criss-cross): the candidates
-///   merged left to right into a *virtual* base.
-/// - several at the recursion cap: the deterministic tie-break candidate's
-///   graph, directly.
+/// - No candidates. The tips are unrelated. The base is an empty graph, so
+///   everything unions.
+/// - One candidate. Its graph is the base.
+/// - Several candidates within [`MAX_BASE_RECURSION`]. This is a criss-cross.
+///   The candidates are merged left to right into a virtual base.
+/// - Several candidates at the recursion cap. The deterministic tie-break
+///   candidate's graph is the base.
 fn base_graph(
     reg: &Registry,
     candidates: &[CommitAddr],
@@ -408,8 +409,8 @@ fn base_graph(
     let mut virt = merged_tip_graph(reg, candidates[0], candidates[1], resolutions, depth + 1)?;
     for &c in &candidates[2..] {
         let c_g = commit_graph_of(reg, c)?;
-        // The fold step's base: the (possibly itself criss-cross) base of
-        // the first candidate and `c`; an empty graph when unrelated.
+        // The fold step's base is the base of the first candidate and `c`.
+        // That base may itself be criss-cross. It is empty when unrelated.
         let pair_bases = history::merge_bases(reg.commits(), candidates[0], c);
         let step_base = base_graph(reg, &pair_bases, resolutions, depth + 1)?;
         let (_, _, outcome) =
@@ -420,31 +421,31 @@ fn base_graph(
 }
 
 /// Three-way merge of `ours` and `theirs` against their common `base`, under
-/// the diffs produced by [`diff::diff`] (which carry the node matchings).
+/// the diffs produced by [`diff::diff`]. The diffs carry the node matchings.
 ///
 /// Node rules, per base node:
 ///
-/// - present on both sides, modified by at most one: the modified side's
-///   content is kept (change beats no-change).
-/// - modified by both to the same content: kept, no conflict.
-/// - modified by both to different content:
-///   [`resolutions.both_modified`](Resolutions::both_modified)'s content is
-///   kept and [`Conflict::BothModified`] is flagged.
-/// - deleted by one side, untouched by the other: deleted.
-/// - deleted by one side, modified by the other: resolved per
-///   [`resolutions.delete_modify`](Resolutions::delete_modify) and
-///   [`Conflict::DeleteModify`] is flagged.
+/// - Present on both sides and modified by at most one. The modified side's
+///   content is kept. Change beats no-change.
+/// - Modified by both to the same content. Kept, no conflict.
+/// - Modified by both to different content. The content chosen by
+///   [`Resolutions::both_modified`] is kept and [`Conflict::BothModified`]
+///   is flagged.
+/// - Deleted by one side, untouched by the other. Deleted.
+/// - Deleted by one side, modified by the other. Resolved per
+///   [`Resolutions::delete_modify`] and [`Conflict::DeleteModify`] is
+///   flagged.
 ///
 /// Nodes added by a side are always included. Ours' surviving nodes come
-/// first in ours' order, then theirs-only nodes in ascending theirs order, so
-/// ours' indices are preserved exactly whenever theirs removed nothing.
+/// first in ours' order, then theirs-only nodes in ascending theirs order.
+/// Ours' indices are thus preserved exactly whenever theirs removed nothing.
 ///
 /// Edge rules, on `(source, target, weight)` sets:
 ///
-/// - a base edge survives unless a side removed it or an endpoint is absent
+/// - A base edge survives unless a side removed it or an endpoint is absent
 ///   from the merged graph.
-/// - added edges from both sides are unioned; identical additions collapse.
-/// - an edge added to a node that is absent from the merged graph is dropped
+/// - Added edges from both sides are unioned. Identical additions collapse.
+/// - An edge added to a node that is absent from the merged graph is dropped
 ///   and [`Conflict::EdgeToDeleted`] is flagged.
 ///
 /// Construction order is deterministic, so merging the same inputs always
@@ -480,9 +481,9 @@ pub fn merge_graphs(
                         BothModified::KeepOurs => Side::Ours,
                         BothModified::KeepTheirs => Side::Theirs,
                         // Per-node last edit wins. Both orderings of the same
-                        // merge compare identical values (the time maps swap
+                        // merge compare identical values. The time maps swap
                         // sides but keep their entries, and the tie-break is
-                        // on content), so independent peers converge.
+                        // on content. Independent peers therefore converge.
                         BothModified::KeepNewest => {
                             let ot = edit_times
                                 .ours
@@ -554,7 +555,7 @@ pub fn merge_graphs(
     let mut merged_of_theirs: BTreeMap<usize, usize> = BTreeMap::new();
     for o in 0..ours.node_count() {
         let (weight, src) = match inv_ours.get(&o) {
-            // A node matched from base: its fate decides.
+            // A node matched from base. Its fate decides.
             Some(&b) => {
                 let t = theirs_diff.matched.get(&b).copied();
                 let src = NodeSrc {
@@ -588,8 +589,9 @@ pub fn merge_graphs(
             merged_of_theirs.insert(t, m);
         }
     }
-    // Theirs-only survivors, in theirs' order: nodes added by theirs, and
-    // nodes theirs modified but ours deleted (kept by `DeleteModify`).
+    // Theirs-only survivors, in theirs' order. These are nodes added by
+    // theirs, and nodes theirs modified but ours deleted and `DeleteModify`
+    // kept.
     for t in 0..theirs.node_count() {
         if merged_of_theirs.contains_key(&t) {
             continue;
@@ -615,7 +617,7 @@ pub fn merge_graphs(
         merged_of_theirs.insert(t, m);
     }
 
-    // The merged index of a base node, if it survived (via either side).
+    // The merged index of a base node, if it survived via either side.
     let base_merged = |b: usize| -> Option<usize> {
         let via_ours = ours_diff
             .matched
@@ -642,7 +644,7 @@ pub fn merge_graphs(
         };
         merged_edges.insert((ms, md, w));
     }
-    // Union in each side's added edges; identical additions collapse.
+    // Union in each side's added edges. Identical additions collapse.
     let mut add_edges =
         |added: &BTreeSet<(usize, usize, Edge)>, merged_of: &BTreeMap<usize, usize>, side: Side| {
             for &(s, d, w) in added {
@@ -749,11 +751,11 @@ mod tests {
 
     #[test]
     fn criss_cross_merges_via_virtual_base_without_duplication() {
-        // Each side merged the other's tip (with differing merge commits, as
-        // pre-canonical or manual merges produce), so both best common
-        // ancestors {a, b} predate the shared additions x and y. A single
-        // tie-break base would see x (or y) as an addition on *both* sides
-        // and union it twice; the virtual base already contains both.
+        // Each side merged the other's tip with differing merge commits, as
+        // manual merges produce. Both best common ancestors {a, b} predate
+        // the shared additions x and y. A single tie-break base would see x
+        // or y as an addition on both sides and union it twice. The virtual
+        // base already contains both.
         let mut reg = Registry::default();
         let root = commit(&mut reg, 1, None, &graph(&["n"], &[]));
         let ga = graph(&["n", "x"], &[]);
@@ -779,7 +781,7 @@ mod tests {
         let res = merge_commits(&reg, mab, mba, Resolutions::default()).unwrap();
         let out = diverged(res);
         assert!(out.conflicts.is_empty());
-        // Ours' order, exactly one of each: no duplicated x or y.
+        // Ours' order, exactly one of each. No duplicated x or y.
         assert_eq!(nodes(&out.graph), vec!["n", "x", "y"]);
     }
 
@@ -814,7 +816,7 @@ mod tests {
         );
     }
 
-    /// The collaborative-editing driver scenario: one side edits a node's
+    /// The collaborative-editing driver scenario. One side edits a node's
     /// content while the other connects an edge to it. Chain-tracked identity
     /// makes this a clean merge.
     #[test]
@@ -871,10 +873,10 @@ mod tests {
         );
     }
 
-    /// Per-node last edit wins: ours edited node 0 at t=2 then node 1 at
-    /// t=5 (a newer *tip*), while theirs edited node 0 at t=3. Node 0's
-    /// conflict resolves to theirs - the side whose last edit to *that node*
-    /// is newer - even though ours' tip is newer overall.
+    /// Per-node last edit wins. Ours edited node 0 at t=2 then node 1 at
+    /// t=5, so ours has the newer tip. Theirs edited node 0 at t=3. Node 0's
+    /// conflict resolves to theirs, the side whose last edit to that node is
+    /// newer, even though ours' tip is newer overall.
     #[test]
     fn keep_newest_resolves_per_node_not_per_tip() {
         let resolutions = Resolutions {
@@ -899,9 +901,9 @@ mod tests {
         );
     }
 
-    /// `KeepNewest` is symmetric: merging in either direction keeps the same
-    /// content, including on exact time ties (content-address tie-break), so
-    /// independent peers converge on the same merged graph.
+    /// `KeepNewest` is symmetric. Merging in either direction keeps the same
+    /// content, including on exact time ties via the content-address
+    /// tie-break. Independent peers converge on the same merged graph.
     #[test]
     fn keep_newest_is_symmetric() {
         let resolutions = Resolutions {
@@ -934,7 +936,7 @@ mod tests {
     #[test]
     fn delete_vs_modify_keeps_the_modified_node() {
         let base = graph(&["a", "b"], &[]);
-        // Ours deletes ix 1; theirs modifies it.
+        // Ours deletes ix 1 and theirs modifies it.
         let ours = graph(&["a"], &[]);
         let theirs = graph(&["a", "b2"], &[]);
         let (_, _, _, res) = merge_two(&base, &ours, &theirs);
@@ -961,7 +963,7 @@ mod tests {
     #[test]
     fn delete_vs_modify_deletes_when_asked() {
         let base = graph(&["a", "b"], &[]);
-        // Ours deletes ix 1; theirs modifies it *and* wires into it.
+        // Ours deletes ix 1. Theirs modifies it and wires into it.
         let ours = graph(&["a"], &[]);
         let theirs = graph(&["a", "b2"], &[(0, 1, 0)]);
         let resolutions = Resolutions {
@@ -970,7 +972,7 @@ mod tests {
         };
         let (_, _, _, res) = merge_two_with(&base, &ours, &theirs, resolutions);
         let out = diverged(res);
-        // The delete wins; theirs' edge into the node dangles and drops.
+        // The delete wins. Theirs' edge into the node dangles and drops.
         assert_eq!(nodes(&out.graph), vec!["a"]);
         assert!(edges(&out.graph).is_empty());
         assert_eq!(
@@ -1005,7 +1007,7 @@ mod tests {
     #[test]
     fn edge_to_deleted_node_is_dropped_and_flagged() {
         let base = graph(&["a", "b"], &[]);
-        // Ours deletes ix 1 (untouched by theirs); theirs wires into it.
+        // Ours deletes ix 1, which theirs left untouched. Theirs wires into it.
         let ours = graph(&["a"], &[]);
         let theirs = graph(&["a", "b"], &[(0, 1, 0)]);
         let (_, _, _, res) = merge_two(&base, &ours, &theirs);
@@ -1094,8 +1096,8 @@ mod tests {
         ));
     }
 
-    /// End-to-end: merge two diverged branches and commit the result; the
-    /// merge commit's ancestry spans both sides while undo's first-parent
+    /// End-to-end. Merge two diverged branches and commit the result. The
+    /// merge commit's ancestry spans both sides, while undo's first-parent
     /// walk lands on ours' pre-merge tip.
     #[test]
     fn merge_commit_end_to_end() {

@@ -1,14 +1,14 @@
-//! Commit operations over a [`Registry`]: minting commits and advancing
+//! Commit operations over a [`Registry`]. Minting commits and advancing
 //! heads.
+//!
+//! See the [`registry`](crate::registry) module docs for the `graph_ca` and
+//! `graph` closure contract shared by the commit fns.
 
 use crate::{
     Commit, CommitAddr, DataGraph, GraphAddr, Head, Name, Registry, Timestamp, commit_addr,
 };
 
 /// Commit the graph at the given address.
-///
-/// If the graph doesn't exist, calls `graph()` to retrieve the graph for the
-/// registry.
 pub fn commit_graph(
     reg: &mut Registry,
     timestamp: Timestamp,
@@ -23,10 +23,7 @@ pub fn commit_graph(
     commit_ca
 }
 
-/// Commit the given graph to the given name (branch).
-///
-/// If the graph doesn't exist, calls `graph()` to retrieve the graph for the
-/// registry.
+/// Commit the given graph to the given name.
 pub fn commit_graph_to_name(
     reg: &mut Registry,
     timestamp: Timestamp,
@@ -41,9 +38,6 @@ pub fn commit_graph_to_name(
 }
 
 /// Commit the given graph to the given head.
-///
-/// If the graph doesn't exist, calls `graph()` to retrieve the graph for the
-/// registry.
 pub fn commit_graph_to_head(
     reg: &mut Registry,
     timestamp: Timestamp,
@@ -59,9 +53,6 @@ pub fn commit_graph_to_head(
 
 /// Commit the given graph to the given head as a merge of `theirs` into the
 /// head's current commit.
-///
-/// If the graph doesn't exist, calls `graph()` to retrieve the graph for the
-/// registry.
 pub fn commit_merge_to_head(
     reg: &mut Registry,
     timestamp: Timestamp,
@@ -80,10 +71,7 @@ pub fn commit_merge_to_head(
 }
 
 /// Commit the given graph to the given head as a canonical merge of the
-/// diverged tips `a` and `b` (see [`Registry::commit_merge_canonical`]).
-///
-/// If the graph doesn't exist, calls `graph()` to retrieve the graph for the
-/// registry.
+/// diverged tips `a` and `b`. See [`Registry::commit_merge_canonical`].
 pub fn commit_merge_canonical(
     reg: &mut Registry,
     a: CommitAddr,
@@ -102,8 +90,8 @@ pub fn commit_merge_canonical(
     commit_ca
 }
 
-/// Point the head at the given commit: a branch head updates the heads
-/// section, a detached head is reassigned directly.
+/// Point the head at the given commit. A branch head updates the heads
+/// section. A detached head is reassigned directly.
 pub fn point_head_at(reg: &mut Registry, head: &mut Head, commit_ca: CommitAddr) {
     match *head {
         Head::Commit(ref mut ca) => *ca = commit_ca,

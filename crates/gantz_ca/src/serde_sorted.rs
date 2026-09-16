@@ -1,8 +1,9 @@
 //! Sorted serialization helpers for `HashMap` fields.
 //!
-//! These functions serialize `HashMap`s with keys in sorted order, producing
-//! deterministic output without sacrificing O(1) lookup at runtime. A transient
-//! `BTreeMap<&K, &V>` is built from borrowed references - no cloning required.
+//! These functions serialize `HashMap`s with keys in sorted order. The output
+//! is deterministic and lookup stays O(1) at runtime. A transient
+//! `BTreeMap<&K, &V>` is built from borrowed references, so nothing is
+//! cloned.
 
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap};

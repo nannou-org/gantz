@@ -1,33 +1,34 @@
-//! The registry's erased node representation: a self-describing value plus
+//! The registry's erased node representation. A self-describing value plus
 //! its structural content references.
 
 use crate::edge::Edge;
 use crate::{CaHash, ContentAddr, Datum, Hasher, SectionId};
 use serde::{Deserialize, Serialize};
 
-/// A graph of erased nodes: the registry's stored graph representation.
+/// A graph of erased nodes. This is the registry's stored graph
+/// representation.
 ///
-/// The same petgraph shape as `gantz_core`'s typed working graph, with node
-/// weights erased to [`NodeData`] so the graph is plain, self-describing data.
+/// It has the same petgraph shape as `gantz_core`'s typed working graph, with
+/// node weights erased to [`NodeData`]. The graph is plain, self-describing
+/// data.
 pub type DataGraph = petgraph::graph::Graph<NodeData, Edge, petgraph::Directed, usize>;
 
-/// One erased node: a self-describing value plus its structural references.
+/// One erased node. A self-describing value plus its structural references.
 ///
-/// - `tag` is the node type's wire tag (`gantz_nodetag::NodeTag::TAG`),
-///   identifying how to interpret `data`.
-/// - `data` is the node's field datum: the tagged map produced by node-set
-///   serde minus its `"type"` entry.
-/// - `refs` and `blobs` are the node's outgoing content references, extracted
-///   from the node's own reporting (`Node::required_addrs` /
-///   `Node::required_blobs`) when a typed node is erased. They are stored
-///   structurally, and covered by the node's address, so that reachability
-///   (liveness, export, sync want-lists) is a pure data walk: any peer can
-///   compute it, and re-verify content addresses, without the node type
-///   compiled in.
+/// - `tag` is the node type's wire tag, `gantz_nodetag::NodeTag::TAG`. It
+///   identifies how to interpret `data`.
+/// - `data` is the node's field datum. This is the tagged map produced by
+///   node-set serde minus its `"type"` entry.
+/// - `refs` and `blobs` are the node's outgoing content references. They are
+///   extracted from `Node::required_addrs` and `Node::required_blobs` when a
+///   typed node is erased. They are stored structurally and covered by the
+///   node's address. Reachability for liveness, export and sync want-lists
+///   is then a pure data walk. Any peer can compute it and re-verify content
+///   addresses without the node type compiled in.
 ///
-/// Identity-sensitive contexts (content addressing, sync staging) require the
-/// [canonical](NodeData::canonicalize) form so that one logical node has
-/// exactly one address.
+/// Identity-sensitive contexts such as content addressing and sync staging
+/// require the canonical form so that one logical node has exactly one
+/// address. See [`NodeData::canonicalize`].
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct NodeData {
     /// The node type's wire tag.
@@ -53,8 +54,8 @@ impl NodeData {
         }
     }
 
-    /// Canonical form: `data` [canonicalized](Datum::canonicalize), `refs` and
-    /// `blobs` sorted and deduplicated.
+    /// Canonical form. `data` is canonicalized via [`Datum::canonicalize`].
+    /// `refs` and `blobs` are sorted and deduplicated.
     pub fn canonicalize(&mut self) {
         self.data.canonicalize();
         self.refs.sort();
@@ -72,16 +73,17 @@ impl NodeData {
 
     /// The node's content address.
     ///
-    /// Assumes `self` is [canonical](NodeData::canonicalize): non-canonical
-    /// forms of the same logical node produce different addresses.
+    /// Assumes `self` is canonical. See [`NodeData::canonicalize`].
+    /// Non-canonical forms of the same logical node produce different
+    /// addresses.
     pub fn content_addr(&self) -> ContentAddr {
         crate::content_addr(self)
     }
 }
 
 impl CaHash for NodeData {
-    /// Content-address folding: a `gantz.node` domain prefix, the
-    /// length-prefixed tag, the [`Datum`] fold (self-delimiting), then the
+    /// Content-address folding. A `gantz.node` domain prefix, the
+    /// length-prefixed tag, the self-delimiting [`Datum`] fold, then the
     /// length-prefixed `refs` and `blobs` columns. Length prefixes keep the
     /// variable-size parts from colliding through adjacency.
     fn hash(&self, hasher: &mut Hasher) {
@@ -116,8 +118,8 @@ mod tests {
         NodeData::new(tag, Datum::Map(vec![("x".to_string(), Datum::I64(1))]))
     }
 
-    /// Distinct nodes fold to distinct addresses: the length prefixes prevent
-    /// tag/data/refs/blobs content from blurring through adjacency.
+    /// Distinct nodes fold to distinct addresses. The length prefixes prevent
+    /// tag, data, refs and blobs content from blurring through adjacency.
     #[test]
     fn ca_hash_distinctness() {
         // Tag vs data boundary.
@@ -169,8 +171,8 @@ mod tests {
         assert_eq!(n, once);
     }
 
-    /// Pin the fold so accidental scheme changes are caught: node addresses
-    /// are wire-stability-critical.
+    /// Pin the fold so accidental scheme changes are caught. Node addresses
+    /// are part of the wire format.
     #[test]
     fn ca_hash_stability_pin() {
         let mut n = NodeData::new(
@@ -190,9 +192,8 @@ mod tests {
         );
     }
 
-    /// `DataGraph` satisfies the structural-hashing bounds: the canonical-rank
-    /// graph addressing works over erased nodes, and permuting insertion
-    /// order of identical content yields the same address.
+    /// `DataGraph` satisfies the structural-hashing bounds. The canonical-rank
+    /// graph addressing works over erased nodes.
     #[test]
     fn data_graph_addr_smoke() {
         let mut g = DataGraph::default();

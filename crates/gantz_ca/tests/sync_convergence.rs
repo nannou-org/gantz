@@ -1,14 +1,14 @@
 //! Simulated-peer convergence tests for `gantz_ca::sync`.
 //!
 //! Each test drives a small fleet of in-process peers exchanging tip
-//! announcements over a network with a controllable (seeded, adversarial)
-//! delivery order. No real networking: "fetching" reads the sender's
-//! registry through the same `Staged` validate-then-apply path a live
-//! protocol would use.
+//! announcements over a network with a seeded, adversarial delivery order.
+//! There is no real networking. Fetching reads the sender's registry
+//! through the same `Staged` validate-then-apply path a live protocol would
+//! use.
 //!
-//! The property under test: after the network drains, every peer holds the
-//! *identical* tip commit address (not merely an equivalent graph), with no
-//! further announcements pending - the definition of convergence for #286.
+//! The property under test is convergence. After the network drains, every
+//! peer holds the identical tip commit address, not merely an equivalent
+//! graph, with no further announcements pending.
 
 use gantz_ca::{
     BothModified, CommitAddr, DataGraph, Datum, EditOrDelete, Head, NodeData, Registry,
@@ -31,16 +31,17 @@ fn node(tag: &str) -> NodeData {
 struct Peer {
     reg: Reg,
     tip: CommitAddr,
-    /// The newest commit timestamp observed (minted or received): feeds
+    /// The newest commit timestamp observed, minted or received. Feeds
     /// `monotonic_timestamp` when minting.
     newest_seen: Duration,
-    /// Echo suppression: the tip most recently announced.
+    /// The tip most recently announced, for echo suppression.
     last_announced: Option<CommitAddr>,
     /// Merge commits this peer minted itself.
     minted_merges: usize,
     /// Conflicts flagged by the most recent merge this peer performed.
     last_conflicts: usize,
-    /// Announcements that planned as `Unrelated` (surfaced, never automatic).
+    /// Announcements that planned as `Unrelated`. These are surfaced, never
+    /// automatic.
     unrelated: usize,
 }
 
@@ -53,17 +54,17 @@ struct Msg {
 }
 
 /// The in-flight message set. Delivery order is chosen by the test's `Rng`,
-/// so any interleaving (including per-link reordering) is reachable.
+/// so any interleaving is reachable, including per-link reordering.
 #[derive(Default)]
 struct Net {
     queue: Vec<Msg>,
 }
 
-/// A tiny deterministic LCG: adversarial delivery orders from a seed without
-/// pulling in a rand dependency.
+/// A tiny deterministic LCG. It gives adversarial delivery orders from a
+/// seed without a rand dependency.
 struct Rng(u64);
 
-/// The fixed session policy: last edit wins, edits beat deletes.
+/// The fixed session policy. Last edit wins and edits beat deletes.
 const RESOLUTIONS: Resolutions = Resolutions {
     both_modified: BothModified::KeepNewest,
     delete_modify: EditOrDelete::KeepEdit,
@@ -92,9 +93,9 @@ impl Peer {
         ca
     }
 
-    /// Session undo: mint a forward revert commit (parent = tip, graph =
-    /// `target`'s) and return the new tip for announcement - the sim
-    /// analogue of `gantz_egui`'s `revert_commit` op.
+    /// Session undo. Mint a forward revert commit whose parent is the tip
+    /// and whose graph is `target`'s. Return the new tip for announcement.
+    /// This is the sim analogue of `gantz_egui`'s `revert_commit` op.
     fn revert(&mut self, now: Duration, target: CommitAddr) -> CommitAddr {
         let ts = monotonic_timestamp(now, self.newest_seen);
         let graph_ca = self.reg.commits()[&target].graph;
@@ -106,10 +107,10 @@ impl Peer {
         ca
     }
 
-    /// Receive an announced tip: fetch its closure from the sender via the
+    /// Receive an announced tip. Fetch its closure from the sender via the
     /// strict `Staged` path, then apply the planned sync step. Returns the
-    /// new tip when this peer *minted* a commit (which must be announced);
-    /// fast-forwards and adoptions of received tips are never re-announced.
+    /// new tip when this peer minted a commit, which must be announced.
+    /// Fast-forwards and adoptions of received tips are never re-announced.
     fn receive(&mut self, sender: &Reg, tip: CommitAddr) -> Option<CommitAddr> {
         let mut staged = Staged::new();
         loop {
@@ -240,8 +241,8 @@ fn run(peers: &mut [Peer], net: &mut Net, seed: u64) -> usize {
     steps
 }
 
-/// Assert all peers hold the identical tip, graph address, and graph value
-/// (node order included), returning the converged tip.
+/// Assert all peers hold the identical tip, graph address and graph value,
+/// node order included. Returns the converged tip.
 fn assert_converged(peers: &[Peer]) -> CommitAddr {
     let tip = peers[0].tip;
     for (i, peer) in peers.iter().enumerate() {
@@ -261,9 +262,9 @@ fn assert_converged(peers: &[Peer]) -> CommitAddr {
     tip
 }
 
-/// A graph's node weights in index order plus its sorted edge triples:
-/// equality here is stronger than address equality (it pins node indices,
-/// which cross-peer layout coherence relies on).
+/// A graph's node weights in index order plus its sorted edge triples.
+/// Equality here is stronger than address equality. It pins node indices,
+/// which cross-peer layout coherence relies on.
 fn graph_value(g: &Graph) -> (Vec<NodeData>, Vec<(usize, usize, gantz_ca::Edge)>) {
     let nodes = g.node_weights().cloned().collect();
     let mut edges: Vec<_> = g
@@ -303,7 +304,7 @@ fn two_peers_disjoint_adds_converge_with_one_merge() {
     let tip = assert_converged(&peers);
     assert_eq!(node_set(&peers[0]), ["a", "b", "base"]);
     // Both peers minted the merge independently, yet exactly one distinct
-    // merge commit exists: they minted the identical commit.
+    // merge commit exists. They minted the identical commit.
     assert_eq!(peers[0].minted_merges + peers[1].minted_merges, 2);
     assert_eq!(reachable_merge_commits(&peers[0].reg, tip), 1);
 }
@@ -311,7 +312,7 @@ fn two_peers_disjoint_adds_converge_with_one_merge() {
 #[test]
 fn convergence_is_delivery_order_independent() {
     // The same two-peer scenario must converge on the same tip regardless of
-    // delivery order (here trivially, but the harness honours the seed).
+    // delivery order. The harness honours the seed.
     let converged_tip = |seed: u64| {
         let (mut peers, mut net) = peers_with_base(2, &["base"]);
         peers[0].edit(Duration::from_secs(10), |g| {
@@ -332,7 +333,7 @@ fn convergence_is_delivery_order_independent() {
 #[test]
 fn both_modified_resolves_to_newest_edit() {
     let (mut peers, mut net) = peers_with_base(2, &["n"]);
-    // Both peers modify the same base node; peer 1's edit is newer.
+    // Both peers modify the same base node. Peer 1's edit is newer.
     peers[0].edit(Duration::from_secs(10), |g| {
         g[petgraph::graph::NodeIndex::new(0)] = node("n-old");
     });
@@ -344,7 +345,7 @@ fn both_modified_resolves_to_newest_edit() {
     run(&mut peers, &mut net, 7);
     assert_converged(&peers);
     // Last edit wins. At least one peer performed the merge and saw the
-    // conflict; a peer may instead fast-forward onto the other's (identical)
+    // conflict. A peer may instead fast-forward onto the other's identical
     // merge commit without merging itself.
     assert_eq!(node_set(&peers[0]), ["n-new"]);
     assert!(peers[0].last_conflicts + peers[1].last_conflicts >= 1);
@@ -363,8 +364,8 @@ fn delete_vs_modify_keeps_the_edit() {
     announce(&mut peers, &mut net, 1);
     run(&mut peers, &mut net, 7);
     assert_converged(&peers);
-    // KeepEdit: the modified node survives the delete, flagged as a conflict
-    // on whichever peer(s) performed the merge.
+    // KeepEdit means the modified node survives the delete. It is flagged as
+    // a conflict on whichever peers performed the merge.
     assert_eq!(node_set(&peers[0]), ["base", "n-edited"]);
     assert!(peers[0].last_conflicts + peers[1].last_conflicts >= 1);
 }
@@ -392,8 +393,8 @@ fn three_peers_converge_under_arbitrary_delivery_orders() {
 #[test]
 fn twin_commits_adopt_without_merging() {
     let (mut peers, mut net) = peers_with_base(2, &["base"]);
-    // Both peers make the identical edit concurrently (e.g. two resync
-    // passes): same graph, different timestamps.
+    // Both peers make the identical edit concurrently, as two resync passes
+    // would. Same graph, different timestamps.
     peers[0].edit(Duration::from_secs(10), |g| {
         g.add_node(node("x"));
     });
@@ -404,7 +405,7 @@ fn twin_commits_adopt_without_merging() {
     announce(&mut peers, &mut net, 1);
     run(&mut peers, &mut net, 3);
     let tip = assert_converged(&peers);
-    // Adoption, not merging: zero merge commits anywhere.
+    // Adoption, not merging. Zero merge commits anywhere.
     assert_eq!(reachable_merge_commits(&peers[0].reg, tip), 0);
     assert_eq!(peers[0].minted_merges + peers[1].minted_merges, 0);
 }
@@ -416,7 +417,7 @@ fn fast_forwards_are_not_reannounced() {
         g.add_node(node("a"));
     });
     announce(&mut peers, &mut net, 0);
-    // A single delivery: peer 1 fast-forwards and must stay silent.
+    // A single delivery. Peer 1 fast-forwards and must stay silent.
     let steps = run(&mut peers, &mut net, 0);
     assert_eq!(steps, 1);
     assert_converged(&peers);
@@ -437,8 +438,8 @@ fn redelivery_is_idempotent() {
     run(&mut peers, &mut net, 42);
     let tip = assert_converged(&peers);
     let commit_counts: Vec<_> = peers.iter().map(|p| p.reg.commits().len()).collect();
-    // Re-deliver every peer's tip to everyone, bypassing suppression (a lost
-    // ack / anti-entropy repeat).
+    // Re-deliver every peer's tip to everyone, bypassing suppression. This
+    // models a lost ack or an anti-entropy repeat.
     for from in 0..peers.len() {
         let t = peers[from].tip;
         for to in 0..peers.len() {
@@ -456,14 +457,14 @@ fn redelivery_is_idempotent() {
 #[test]
 fn slow_clock_edits_stay_causally_ordered() {
     let (mut peers, mut net) = peers_with_base(2, &["n"]);
-    // Peer 0 edits at t=100; peer 1's wall clock is far behind (t=51).
+    // Peer 0 edits at t=100. Peer 1's wall clock is far behind at t=51.
     peers[0].edit(Duration::from_secs(100), |g| {
         g[petgraph::graph::NodeIndex::new(0)] = node("n-first");
     });
     announce(&mut peers, &mut net, 0);
     run(&mut peers, &mut net, 0);
     assert_converged(&peers);
-    // Peer 1 edits *after observing* the t=100 commit, with its slow clock.
+    // Peer 1 edits after observing the t=100 commit, with its slow clock.
     let tip = peers[1].edit(Duration::from_secs(51), |g| {
         g[petgraph::graph::NodeIndex::new(0)] = node("n-after");
     });
@@ -479,8 +480,7 @@ fn slow_clock_edits_stay_causally_ordered() {
 
 #[test]
 fn join_snapshot_tolerates_pruned_history() {
-    // A host with pruned history: the surviving tip was detached in place, so
-    // its content no longer hashes to its key.
+    // A host with pruned history. Its surviving tip was detached in place.
     let (mut host_peers, _) = peers_with_base(1, &["base"]);
     let mut host = host_peers.remove(0);
     host.edit(Duration::from_secs(10), |g| {
@@ -545,8 +545,8 @@ fn join_snapshot_tolerates_pruned_history() {
 
 #[test]
 fn unrelated_announcements_are_surfaced_not_applied() {
-    // Two peers with no shared history: the announcement is recorded as
-    // unrelated and the local tip is untouched (the app decides what to do).
+    // Two peers with no shared history. The announcement is recorded as
+    // unrelated and the local tip is untouched. The app decides what to do.
     let (mut a_peers, _) = peers_with_base(1, &["a"]);
     let (mut b_peers, _) = peers_with_base(1, &["b"]);
     let mut a = a_peers.remove(0);
@@ -560,11 +560,11 @@ fn unrelated_announcements_are_surfaced_not_applied() {
 
 #[test]
 fn revert_commits_converge() {
-    // A commits two edits and everyone converges; A then session-undoes the
+    // A commits two edits and everyone converges. A then session-undoes the
     // second by minting a forward revert commit. Peers converge on the
-    // revert WITHOUT any subsequent edit (backward navigation would present
-    // an ancestor tip and be dropped as up-to-date), and its graph equals
-    // the pre-edit state.
+    // revert without any subsequent edit. Backward navigation would present
+    // an ancestor tip and be dropped as up-to-date. The revert's graph
+    // equals the pre-edit state.
     let (mut peers, mut net) = peers_with_base(2, &["base"]);
     let e1 = peers[0].edit(Duration::from_secs(10), |g| {
         g.add_node(node("a"));
@@ -582,7 +582,7 @@ fn revert_commits_converge() {
     run(&mut peers, &mut net, 7);
     let tip = assert_converged(&peers);
     assert_eq!(node_set(&peers[0]), ["a", "base"]);
-    // The revert is an ordinary forward commit: peers fast-forward, no merge.
+    // The revert is an ordinary forward commit. Peers fast-forward, no merge.
     assert_eq!(peers[0].minted_merges + peers[1].minted_merges, 0);
     assert_eq!(
         peers[0].reg.commits()[&tip].graph,
@@ -592,10 +592,10 @@ fn revert_commits_converge() {
 
 #[test]
 fn concurrent_revert_and_edit_converge() {
-    // A session-undoes an edit while B concurrently adds a node: an ordinary
-    // diverged pair. Every delivery order converges on one identical merge
-    // commit; the revert acts as a removal of the undone addition, and B's
-    // concurrent addition survives.
+    // A session-undoes an edit while B concurrently adds a node. This is an
+    // ordinary diverged pair. Every delivery order converges on one
+    // identical merge commit. The revert acts as a removal of the undone
+    // addition, and B's concurrent addition survives.
     for seed in [1, 42, 1234, 987654321] {
         let (mut peers, mut net) = peers_with_base(2, &["base"]);
         let e1 = peers[0].edit(Duration::from_secs(10), |g| {

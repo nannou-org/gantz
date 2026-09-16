@@ -4,14 +4,13 @@ use serde::{Deserialize, Serialize};
 
 /// A simple node for pushing evaluation through the graph.
 ///
-/// Exposes a single *trigger* input whose value is ignored: a push into it
-/// emits a bang (`'()`) downstream. This lets a bang be fired from upstream as
-/// well as from its button, normalising any value to a bang.
+/// Exposes a single trigger input whose value is ignored. A push into it
+/// emits a bang, `'()`, downstream. This lets upstream nodes fire the bang as
+/// well as its button. Any input value becomes a bang.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag)]
 pub struct Bang;
 
 impl gantz_core::Node for Bang {
-    /// A single trigger input whose value is ignored.
     fn n_inputs(&self, _ctx: MetaCtx) -> usize {
         1
     }
