@@ -1,7 +1,7 @@
-//! End-to-end share/join/fetch between two runtimes in one process.
+//! End-to-end share, join and fetch between two runtimes in one process.
 //!
-//! Binds real sockets and may touch iroh's discovery/relay infrastructure,
-//! so it is ignored by default; run manually with
+//! Binds real sockets and may touch iroh's discovery and relay
+//! infrastructure, so it is ignored by default. Run manually with
 //! `cargo test -p gantz_collab -- --ignored`.
 
 use gantz_ca::{
@@ -45,7 +45,7 @@ fn share_join_and_fetch_between_two_runtimes() {
     let tip = commit_addr(&commit);
     let jam: Name = "jam".parse().unwrap();
     // A stored scene view for the tip and an audio-buffer blob, fed over the
-    // announce path (`Command::Update`) rather than the initial store.
+    // `Command::Update` path rather than the initial store.
     let view = Value::Datum(Datum::Map(vec![("zoom".to_string(), Datum::F64(1.5))]));
     let view_object = Object::Section {
         id: "egui.view".to_string(),
@@ -91,7 +91,7 @@ fn share_join_and_fetch_between_two_runtimes() {
             store: served,
         }))
         .unwrap();
-    // Mid-session content: the view and blob arrive as an update, not as
+    // Mid-session content. The view and blob arrive as an update, not as
     // part of the registered store. Commands apply in send order, so both
     // are served before the ticket below can exist.
     host.cmds
@@ -150,7 +150,7 @@ fn share_join_and_fetch_between_two_runtimes() {
         _ => None,
     });
     assert_eq!(heads, vec![(jam.clone(), tip)]);
-    // Snapshot order: commits, graphs, blobs, then non-head section entries.
+    // Snapshot order is commits, graphs, blobs, then non-head section entries.
     assert_eq!(
         objects.objects,
         vec![
@@ -161,7 +161,7 @@ fn share_join_and_fetch_between_two_runtimes() {
         ]
     );
 
-    // A targeted fetch over the request plane returns the same objects; the
+    // A targeted fetch over the request plane returns the same objects. The
     // wanted commit's stored view piggybacks on the commit.
     guest
         .cmds
@@ -213,7 +213,7 @@ fn restricted_sessions_deny_unlisted_peers() {
             session: Session {
                 id: session_id,
                 branch: "private".to_string(),
-                // An empty allowlist: nobody may join.
+                // An empty allowlist, so nobody may join.
                 access: Access::Restricted(Default::default()),
                 resolutions: Default::default(),
                 role: Role::Host,

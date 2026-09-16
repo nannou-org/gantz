@@ -1,28 +1,28 @@
-//! The network runtime: an iroh endpoint driven on its own executor,
-//! bridged to the application through [`Command`]/[`Event`] channels.
+//! The network runtime. An iroh endpoint driven on its own executor and
+//! bridged to the application through [`Command`] and [`Event`] channels.
 //!
 //! Natively the driver runs a current-thread tokio runtime on a dedicated
-//! thread (iroh requires a tokio reactor; the rest of gantz has none). On
+//! thread. iroh requires a tokio reactor and the rest of gantz has none. On
 //! wasm it runs on the browser's event loop via `wasm-bindgen-futures`. The
 //! channels are `async-channel`, so the application side polls with plain
-//! `try_send`/`try_recv` from its update loop on both targets.
+//! `try_send` and `try_recv` from its update loop on both targets.
 //!
-//! The runtime is deliberately dumb plumbing: it subscribes gossip topics,
+//! The runtime is deliberately dumb plumbing. It subscribes gossip topics,
 //! forwards messages both ways, fetches objects on request, and serves the
-//! [`SessionRegistry`](crate::SessionRegistry) to peers. All convergence
-//! decisions (what to announce, what to fetch, how to merge) live with the
-//! application.
+//! [`crate::SessionRegistry`] to peers. All convergence decisions live with
+//! the application. That covers what to announce, what to fetch and how to
+//! merge.
 //!
 //! # Infrastructure
 //!
-//! The endpoint's relay and address-lookup infrastructure is chosen by
-//! [`RuntimeConfig::infra`]. The default, [`Infra::N0`], uses n0's public
-//! services: free but rate-limited with no SLA - suitable for development
-//! and jamming. [`Infra::Custom`] runs entirely on self-hosted or
-//! third-party infrastructure (relays via `iroh-relay`, address lookup via
-//! a pkarr relay such as `iroh-dns-server`) - nothing n0 is baked in.
-//! Native peers usually upgrade to direct (hole-punched) paths; browser
-//! peers are relay-only by design.
+//! [`RuntimeConfig::infra`] chooses the endpoint's relay and address-lookup
+//! infrastructure. The default, [`Infra::N0`], uses n0's public services.
+//! They are free but rate-limited with no SLA, so they suit development and
+//! jamming. [`Infra::Custom`] runs entirely on self-hosted or third-party
+//! infrastructure. Relays come from `iroh-relay` and address lookup from a
+//! pkarr relay such as `iroh-dns-server`. Nothing n0 is baked in. Native
+//! peers usually upgrade to direct hole-punched paths. Browser peers are
+//! relay-only by design.
 
 use crate::{
     identity::Identity,
@@ -51,7 +51,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 /// The ALPN identifying gantz's session-sync request protocol. The version
-/// is part of the string: incompatible revisions are distinct protocols.
+/// is part of the string, so incompatible revisions are distinct protocols.
 pub const SYNC_ALPN: &[u8] = b"gantz/sync/1";
 
 /// The application-level protocol version negotiated in
@@ -59,8 +59,8 @@ pub const SYNC_ALPN: &[u8] = b"gantz/sync/1";
 pub const PROTO_VERSION: u32 = 1;
 
 /// The domain-separation tag hashed with a session id to derive its gossip
-/// topic id: the raw session id never appears on the gossip wire. Versioned
-/// alongside the protocol - changing it partitions old and new peers onto
+/// topic id. The raw session id never appears on the gossip wire. Versioned
+/// alongside the protocol. Changing it partitions old and new peers onto
 /// disjoint topics.
 pub const TOPIC_DOMAIN: &[u8] = b"gantz/session/v1";
 
@@ -71,68 +71,66 @@ pub struct RuntimeConfig {
     pub infra: Infra,
 }
 
-/// The relay and address-lookup (peer discovery) infrastructure.
+/// The relay and address-lookup infrastructure, for peer discovery.
 ///
-/// Nothing n0-specific is baked into the protocol: [`Infra::Custom`] runs
+/// Nothing n0-specific is baked into the protocol. [`Infra::Custom`] runs
 /// entirely on self-hosted or third-party services, and an invalid custom
 /// URL fails the runtime rather than silently falling back to n0.
 #[derive(Clone, Debug, Default)]
 pub enum Infra {
-    /// n0's public defaults: their relay servers and the `iroh.link`
-    /// address-lookup (pkarr/DNS) service. Free but rate-limited with no
-    /// SLA - right for development and jamming; heavier use should bring
-    /// its own infrastructure via [`Infra::Custom`].
+    /// n0's public defaults. Their relay servers and the `iroh.link` pkarr
+    /// and DNS address-lookup service. Free but rate-limited with no SLA, so
+    /// right for development and jamming. Heavier use should bring its own
+    /// infrastructure via [`Infra::Custom`].
     #[default]
     N0,
-    /// Explicit infrastructure; nothing contacts n0.
+    /// Explicit infrastructure. Nothing contacts n0.
     Custom {
-        /// Relay server URLs (e.g. a self-hosted [`iroh-relay`]). Empty
-        /// disables relaying entirely: peers must then be reachable
-        /// directly (e.g. on a LAN) via ticket bootstrap addresses or
-        /// address lookup. Browser peers are relay-routed by design, so a
-        /// session with web participants needs at least one relay.
+        /// Relay server URLs, for example a self-hosted [`iroh-relay`].
+        /// Empty disables relaying entirely. Peers must then be reachable
+        /// directly via ticket bootstrap addresses or address lookup.
+        /// Browser peers are relay-routed by design, so a session with web
+        /// participants needs at least one relay.
         ///
         /// [`iroh-relay`]: https://github.com/n0-computer/iroh/tree/main/iroh-relay
         relays: Vec<String>,
-        /// A pkarr relay URL for publishing and resolving peer addresses
-        /// (e.g. a self-hosted [`iroh-dns-server`]'s `/pkarr` endpoint).
-        /// `None` skips address lookup entirely: peers are then dialable
-        /// only via ticket bootstrap addresses, paths learnt over gossip,
-        /// and the relays above.
+        /// A pkarr relay URL for publishing and resolving peer addresses,
+        /// for example a self-hosted [`iroh-dns-server`]'s `/pkarr`
+        /// endpoint. `None` skips address lookup entirely. Peers are then
+        /// dialable only via ticket bootstrap addresses, paths learnt over
+        /// gossip, and the relays above.
         ///
         /// [`iroh-dns-server`]: https://github.com/n0-computer/iroh/tree/main/iroh-dns-server
         pkarr: Option<String>,
     },
 }
 
-/// The read limit for a request (want lists scale with missing objects).
+/// The read limit for a request. Want lists scale with missing objects.
 const REQUEST_LIMIT: usize = 1024 * 1024;
 
-/// The read limit for a response (a snapshot carries whole graph histories).
+/// The read limit for a response. A snapshot carries whole graph histories.
 const RESPONSE_LIMIT: usize = 64 * 1024 * 1024;
 
 /// An instruction from the application to the runtime.
 ///
-/// Commands apply in send order (one channel), so a [`Register`] reliably
-/// precedes the [`Share`]/[`Join`] that needs it. The channel is unbounded:
-/// sending never blocks, which keeps the application's frame loop free of
-/// runtime locks entirely - the served stores are owned by the runtime and
-/// mutated only here.
+/// Commands apply in send order on one channel, so a [`Register`] reliably
+/// precedes the [`Share`] or [`Join`] that needs it. The channel is unbounded
+/// and sending never blocks. That keeps the application's frame loop free of
+/// runtime locks. The runtime owns the served stores and mutates them only
+/// here.
 ///
 /// [`Register`]: Command::Register
 /// [`Share`]: Command::Share
 /// [`Join`]: Command::Join
 #[derive(Debug)]
 pub enum Command {
-    /// Register (or replace) a session: its configuration plus the initially
-    /// served content (a filled store for a host, an empty one for a guest).
+    /// Register or replace a session. Its configuration plus the initially
+    /// served content. That is a filled store for a host and an empty one
+    /// for a guest.
     Register(SessionEntry),
-    /// Merge served content into a registered session's store:
-    /// content-addressed commit/graph/blob inserts (idempotent), per-name
-    /// head upserts and section entries applied per the section's merge
-    /// policy. Graphs and blobs are verified against their claimed addresses
-    /// (see [`store::merge`]); a failed verification drops the whole update
-    /// with a warning. Unknown sessions are ignored with a warning.
+    /// Merge served content into a registered session's store. See
+    /// [`store::merge`]. A failed verification drops the whole update with a
+    /// warning. Unknown sessions are ignored with a warning.
     Update {
         session: SessionId,
         heads: Vec<(Name, CommitAddr)>,
@@ -142,17 +140,17 @@ pub enum Command {
         blobs: Vec<(SectionId, BlobLiveness, ContentAddr, Bytes)>,
     },
     /// Start serving and gossiping a session. The session must already be
-    /// [`Register`](Command::Register)ed. Emits [`Event::TicketReady`].
+    /// registered via [`Command::Register`]. Emits [`Event::TicketReady`].
     Share(SessionId),
-    /// Join a session from a ticket: the application
-    /// [`Register`](Command::Register)s the guest entry first; this fetches
-    /// the snapshot from the ticket's hosts and subscribes the gossip topic.
-    /// Emits [`Event::Joined`] or [`Event::Error`].
+    /// Join a session from a ticket. The application registers the guest
+    /// entry first via [`Command::Register`]. This fetches the snapshot from
+    /// the ticket's hosts and subscribes the gossip topic. Emits
+    /// [`Event::Joined`] or [`Event::Error`].
     Join(SessionTicket),
-    /// Stop gossiping a session (its content stays served until
-    /// [`Forget`](Command::Forget)).
+    /// Stop gossiping a session. Its content stays served until
+    /// [`Command::Forget`].
     Leave(SessionId),
-    /// Drop a session entirely: stop serving its content.
+    /// Drop a session entirely and stop serving its content.
     Forget(SessionId),
     /// Broadcast a message on a session's gossip topic.
     Broadcast { session: SessionId, msg: GossipMsg },
@@ -172,7 +170,7 @@ pub enum Event {
     Ready { peer: PeerId },
     /// The invite ticket for a shared session.
     TicketReady { session: SessionId, ticket: String },
-    /// A join completed: the host's scoped heads and snapshot objects,
+    /// A join completed. The host's scoped heads and snapshot objects,
     /// ready for staged validation.
     Joined {
         session: SessionId,
@@ -195,7 +193,7 @@ pub enum Event {
     PeerUp { session: SessionId, peer: PeerId },
     /// A gossip neighbour was dropped.
     PeerDown { session: SessionId, peer: PeerId },
-    /// The endpoint's home relay(s) changed: `(url, connected)` per relay.
+    /// The endpoint's home relays changed. `(url, connected)` per relay.
     RelayStatus { relays: Vec<(String, bool)> },
     /// A recoverable failure the application may surface.
     Error {
@@ -206,7 +204,7 @@ pub enum Event {
 
 /// The application's handle to the runtime.
 ///
-/// Both channels are unbounded: `cmds.try_send` never blocks and never
+/// Both channels are unbounded. `cmds.try_send` never blocks and never
 /// drops, and `events.try_recv` polls without waiting, so a per-frame
 /// application loop touches no locks and never parks.
 #[derive(Clone, Debug)]
@@ -217,8 +215,8 @@ pub struct Handle {
     pub events: async_channel::Receiver<Event>,
 }
 
-/// The request-plane server: answers [`SyncRequest`]s from the shared
-/// session stores, gating restricted sessions by peer identity.
+/// The request-plane server. It answers [`SyncRequest`]s from the shared
+/// session stores and gates restricted sessions by peer identity.
 #[derive(Clone, Debug)]
 struct SyncServer {
     shared: Shared,
@@ -226,16 +224,16 @@ struct SyncServer {
 
 /// Cached peer connections for the request plane, keyed by peer.
 ///
-/// iroh does not pool connections, and a fresh QUIC handshake per request -
-/// typically relay-routed until holepunching completes - dominated sync
-/// latency. `Connection` is a cheap clonable handle, and holding one here
-/// also keeps the connection alive between requests (the server side already
-/// serves any number of streams per connection). Shared because request
+/// iroh does not pool connections. A fresh QUIC handshake per request is
+/// typically relay-routed until holepunching completes, and it dominates
+/// sync latency. `Connection` is a cheap clonable handle. Holding one here
+/// also keeps the connection alive between requests, and the server side
+/// serves any number of streams per connection. Shared because request
 /// tasks are spawned off the driver.
 type ConnCache = Arc<Mutex<HashMap<EndpointId, Connection>>>;
 
 impl SyncServer {
-    /// Answer one request. Runs under the shared lock: lookups only.
+    /// Answer one request. Runs under the shared lock, so lookups only.
     fn respond(&self, remote: PeerId, req: SyncRequest) -> SyncResponse {
         let (SyncRequest::Hello { session, .. }
         | SyncRequest::Snapshot { session }
@@ -275,8 +273,8 @@ impl SyncServer {
 impl iroh::protocol::ProtocolHandler for SyncServer {
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
         let remote = PeerId(*conn.remote_id().as_bytes());
-        // One request per bi-stream; the connection serves until the peer
-        // closes it (any stream error means exactly that).
+        // One request per bi-stream. The connection serves until the peer
+        // closes it. Any stream error means exactly that.
         loop {
             let Ok((mut send, mut recv)) = conn.accept_bi().await else {
                 return Ok(());
@@ -321,8 +319,8 @@ pub fn spawn(identity: Identity, config: RuntimeConfig) -> Handle {
     handle
 }
 
-/// The driver: binds the endpoint, serves the sync protocol, and loops over
-/// application commands until the command channel closes.
+/// The driver. It binds the endpoint, serves the sync protocol, and loops
+/// over application commands until the command channel closes.
 async fn drive(
     identity: Identity,
     config: RuntimeConfig,
@@ -359,7 +357,7 @@ async fn drive(
             return;
         }
     };
-    // Surface the home relay(s) and their connection state to the app.
+    // Surface the home relays and their connection state to the app.
     {
         let evt_tx = evt_tx.clone();
         let mut statuses = endpoint.home_relay_status().stream();
@@ -390,7 +388,7 @@ async fn drive(
     })
     .await;
 
-    // Per-subscribed-session gossip senders (receivers live in forwarders).
+    // Gossip senders per subscribed session. Receivers live in forwarders.
     let mut senders: HashMap<SessionId, GossipSender> = HashMap::new();
     // Bootstrap addresses learnt from tickets, as a dial fallback.
     let mut bootstrap: HashMap<SessionId, Vec<EndpointAddr>> = HashMap::new();
@@ -528,7 +526,7 @@ async fn drive(
             }
         }
     }
-    // The application dropped its handle: shut the endpoint down.
+    // The application dropped its handle, so shut the endpoint down.
     router.shutdown().await.ok();
     endpoint.close().await;
 }
@@ -536,8 +534,8 @@ async fn drive(
 /// The endpoint builder for the configured [`Infra`].
 ///
 /// Custom infrastructure starts from iroh's minimal preset, so nothing n0
-/// remains; an unparsable URL is an error rather than a silent fallback (a
-/// self-hosted deployment must not leak onto n0's services by accident).
+/// remains. An unparsable URL is an error rather than a silent fallback. A
+/// self-hosted deployment must not leak onto n0's services by accident.
 fn infra_builder(infra: &Infra) -> Result<iroh::endpoint::Builder, String> {
     match infra {
         Infra::N0 => Ok(Endpoint::builder(presets::N0)),
@@ -563,7 +561,7 @@ fn infra_builder(infra: &Infra) -> Result<iroh::endpoint::Builder, String> {
     }
 }
 
-/// The session's gossip topic id: a hash of the session id under
+/// The session's gossip topic id. A hash of the session id under
 /// [`TOPIC_DOMAIN`], so the raw session id never appears on the gossip wire.
 fn topic_id(session: SessionId) -> TopicId {
     let mut hasher = gantz_ca::Hasher::new();
@@ -572,9 +570,9 @@ fn topic_id(session: SessionId) -> TopicId {
     TopicId::from_bytes(hasher.finalize().into())
 }
 
-/// The best known dial target for a peer: its id (iroh's discovery and
-/// learnt paths resolve it), enriched with any ticket bootstrap addresses
-/// for the same peer.
+/// The best known dial target for a peer. Its id, which iroh's discovery and
+/// learnt paths resolve, enriched with any ticket bootstrap addresses for
+/// the same peer.
 fn dial_addr(
     bootstrap: &HashMap<SessionId, Vec<EndpointAddr>>,
     session: SessionId,
@@ -592,8 +590,8 @@ fn dial_addr(
 
 /// A [`PeerId`] as iroh's key type.
 fn endpoint_id(peer: PeerId) -> EndpointId {
-    // An invalid key can only come from a corrupted allowlist entry; fall
-    // back to a valueless dial target that simply fails to connect.
+    // An invalid key can only come from a corrupted allowlist entry. Fall
+    // back to a valueless dial target that fails to connect.
     EndpointId::from_bytes(&peer.0).unwrap_or_else(|_| {
         log::warn!("invalid peer key {peer}");
         EndpointId::from_bytes(&Identity::generate().peer_id().0).expect("a generated key is valid")
@@ -640,9 +638,9 @@ async fn subscribe(
                 },
                 Ok(TopicEvent::Lagged) => Event::Error {
                     session: Some(session),
-                    // Dropped tips re-heal on the next `Tips` announcement
-                    // (anti-entropy `Digest`/`Heads` pulls are reserved wire
-                    // slots, not yet implemented).
+                    // Dropped tips re-heal on the next `Tips` announcement.
+                    // Anti-entropy `Digest` and `Heads` pulls are reserved
+                    // wire slots, not yet implemented.
                     message: "gossip lagged; dropped messages re-heal on the next announce"
                         .to_string(),
                 },
@@ -659,15 +657,15 @@ async fn subscribe(
     Ok(sender)
 }
 
-/// Lock the connection cache; a poisoned lock still yields the map (entries
-/// are validated before use anyway).
+/// Lock the connection cache. A poisoned lock still yields the map, since
+/// entries are validated before use.
 fn lock_conns(conns: &ConnCache) -> std::sync::MutexGuard<'_, HashMap<EndpointId, Connection>> {
     conns
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// One request/response over a bi-stream on the given connection.
+/// One request and response over a bi-stream on the given connection.
 async fn exchange(conn: &Connection, req: &SyncRequest) -> Result<SyncResponse, String> {
     let (mut send, mut recv) = conn
         .open_bi()
@@ -684,11 +682,12 @@ async fn exchange(conn: &Connection, req: &SyncRequest) -> Result<SyncResponse, 
     proto::decode(&bytes).map_err(|e| format!("undecodable response ({} bytes): {e}", bytes.len()))
 }
 
-/// One request/response, reusing the cached connection to the peer when it
-/// is still live, else dialing (and caching) a fresh one.
+/// One request and response. Reuses the cached connection to the peer when
+/// it is still live, else dials and caches a fresh one.
 ///
-/// A failure on a cached connection invalidates it and retries once fresh
-/// (the peer may have restarted); a failure on a fresh connection is final.
+/// A failure on a cached connection invalidates it and retries once fresh,
+/// since the peer may have restarted. A failure on a fresh connection is
+/// final.
 async fn request(
     endpoint: &Endpoint,
     conns: &ConnCache,
@@ -722,7 +721,7 @@ async fn request(
     }
 }
 
-/// Hello + snapshot against each ticket host in turn.
+/// Hello and snapshot against each ticket host in turn.
 async fn join_snapshot(endpoint: &Endpoint, conns: &ConnCache, ticket: &SessionTicket) -> Event {
     let session = ticket.session;
     let mut last_error = "ticket carries no host addresses".to_string();

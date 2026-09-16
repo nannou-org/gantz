@@ -41,8 +41,8 @@ impl gantz_core::Node for Pmini {
     }
 
     /// Emits the parsed combinator source directly. Invalid notation is a
-    /// compile error attributed to the node, like an invalid expr - the
-    /// recompile fails in place, leaving the previously compiled pattern
+    /// compile error attributed to the node, like an invalid expr. The
+    /// recompile fails in place and leaves the previously compiled pattern
     /// evaluable.
     fn expr(&self, _ctx: ExprCtx<'_, '_>) -> ExprResult {
         match mini::steel_src(&self.src) {
@@ -76,14 +76,14 @@ mod tests {
         pmini.expr(ctx).unwrap().to_pretty(200)
     }
 
-    // The expr is exactly the parsed combinators - no state, no wrapper.
+    // The expr is exactly the parsed combinators, with no state and no wrapper.
     #[test]
     fn expr_emits_combinators() {
         assert_eq!(
             expr_str(&Pmini::new("bd sn")),
             "(pat/fastcat (list (pat/pure (quote bd)) (pat/pure (quote sn))))",
         );
-        // The default (empty) notation compiles to silence.
+        // The default empty notation compiles to silence.
         assert_eq!(expr_str(&Pmini::default()), "pat/silence");
     }
 

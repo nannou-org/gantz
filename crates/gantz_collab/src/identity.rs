@@ -1,7 +1,7 @@
 //! The user's collaborative identity: an ed25519 key pair.
 //!
-//! Generated implicitly on first use and persisted by the application (the
-//! secret is 32 bytes). Deriving the key from another source later is a new
+//! Generated implicitly on first use and persisted by the application. The
+//! secret is 32 bytes. Deriving the key from another source later is a new
 //! constructor, not a type change.
 
 use crate::session::PeerId;
@@ -9,7 +9,7 @@ use iroh::SecretKey;
 
 /// An ed25519 key pair identifying this user across sessions.
 ///
-/// The public half is the [`PeerId`] other peers see (and allowlist); the
+/// The public half is the [`PeerId`] other peers see and allowlist. The
 /// secret half authenticates every connection via iroh.
 #[derive(Clone, Debug)]
 pub struct Identity {
@@ -20,8 +20,8 @@ impl Identity {
     /// Generate a fresh random identity.
     pub fn generate() -> Self {
         let mut bytes = [0u8; 32];
-        // Failure to source OS randomness cannot produce a usable (secret)
-        // identity; surface it loudly rather than continuing predictably.
+        // Failure to source OS randomness cannot produce a usable secret
+        // identity. Surface it loudly rather than continue predictably.
         getrandom::fill(&mut bytes).expect("failed to source randomness for an identity");
         Self::from_bytes(bytes)
     }

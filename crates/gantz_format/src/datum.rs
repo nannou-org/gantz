@@ -1,5 +1,6 @@
-//! Steel-text rendering and parsing for [`Datum`] (the self-describing serde
-//! value defined in [`gantz_core::datum`], re-exported at this crate's root).
+//! Steel-text rendering and parsing for [`Datum`]. `Datum` is the
+//! self-describing serde value defined in [`gantz_core::datum`] and re-exported
+//! at this crate's root.
 //!
 //! [`datum_text`] renders a `Datum` as a reader-valid Steel datum and
 //! [`datum_from_expr`] reads one back from a parsed Steel expression.
@@ -8,7 +9,6 @@ use crate::sexpr::{self, list_args, quote, span_src};
 pub use gantz_core::datum::{Datum, from_datum, node_datum};
 use steel::parser::ast::{Atom, ExprKind};
 use steel::parser::tokens::TokenType;
-// -- text <-> datum ----------------------------------------------------------
 
 /// Render a [`Datum`] as a reader-valid Steel datum.
 pub fn datum_text(d: &Datum) -> String {
@@ -41,7 +41,7 @@ pub fn datum_text(d: &Datum) -> String {
 }
 
 /// Read a [`Datum`] from a Steel datum expression. Numbers are read from their
-/// verbatim source slice (via `src`); seqs are vectors (`#(...)`) and maps are
+/// verbatim source slice in `src`. Seqs are vectors written `#(...)`. Maps are
 /// bare lists of `(key value)` pairs.
 pub fn datum_from_expr(e: &ExprKind, src: &str) -> Datum {
     match e {
@@ -105,8 +105,8 @@ fn number_datum(e: &ExprKind, src: &str) -> Datum {
     }
 }
 
-/// Render a float with a guaranteed decimal point (or exponent), so it never
-/// reads back as an integer. `{:?}` gives the shortest round-tripping form.
+/// Render a float with a decimal point or exponent, so it never reads back as
+/// an integer. `{:?}` gives the shortest round-tripping form.
 fn float_text(x: f64) -> String {
     let s = format!("{x:?}");
     if s.bytes().any(|b| matches!(b, b'.' | b'e' | b'E')) {
@@ -129,8 +129,8 @@ fn char_text(c: char) -> String {
     }
 }
 
-/// A map key is rendered as a bare symbol when it is identifier-safe (the common
-/// case of struct field names), else as a quoted string.
+/// A map key is rendered as a bare symbol when it is identifier-safe, as struct
+/// field names are. Otherwise it is a quoted string.
 fn key_text(k: &str) -> String {
     let safe = !k.is_empty()
         && k.chars()
@@ -197,9 +197,9 @@ mod tests {
     }
 
     /// A non-negative integer renders as bare digits, so it reads back as `I64`
-    /// regardless of whether it was a `U64`. This is harmless: a node's field
-    /// `Deserialize` produces the same value either way (the `faithful_serde_*`
-    /// tests, which compare nodes, are the real guard).
+    /// even when it was a `U64`. This is harmless. A node's field `Deserialize`
+    /// produces the same value either way. The `faithful_serde_*` tests compare
+    /// nodes and are the real guard.
     #[test]
     fn nonnegative_int_normalizes_to_i64() {
         assert_eq!(text_roundtrip(&Datum::U64(42)), Datum::I64(42));
@@ -262,7 +262,7 @@ mod tests {
         let datum = to_datum(&node).expect("to_datum");
         let back: MyNode = from_datum(datum.clone()).expect("from_datum");
         assert_eq!(node, back);
-        // And it survives a text round-trip.
+        // It survives a text round-trip too.
         let via_text: MyNode = from_datum(text_roundtrip(&datum)).expect("from text");
         assert_eq!(node, via_text);
     }
@@ -291,9 +291,7 @@ mod tests {
         }
     }
 
-    // -- additional edge cases -----------------------------------------------
-
-    /// Round-trip a serde value through the codec *and* a text round-trip.
+    /// Round-trip a serde value through the codec and through text.
     fn serde_text_roundtrip<T>(value: &T) -> T
     where
         T: Serialize + DeserializeOwned,
@@ -302,8 +300,8 @@ mod tests {
         from_datum(text_roundtrip(&datum)).expect("from_datum after text")
     }
 
-    /// Strings whose contents look like another datum kind must stay strings -
-    /// quoting is what disambiguates them from `null`/`#t`/numbers on read.
+    /// Strings whose contents look like another datum kind must stay strings.
+    /// Quoting disambiguates them from `null`, `#t` and numbers on read.
     #[test]
     fn strings_that_look_like_other_datums_stay_strings() {
         for s in [
@@ -314,8 +312,9 @@ mod tests {
         }
     }
 
-    /// Strings containing characters significant to the reader (quotes, escapes,
-    /// parens, comment/keyword markers, unicode) survive quoting and re-reading.
+    /// Strings containing reader-significant characters survive quoting and
+    /// re-reading. The cases cover quotes, escapes, parens, comment and keyword
+    /// markers, and unicode.
     #[test]
     fn string_escaping_round_trips() {
         for s in [
@@ -374,7 +373,7 @@ mod tests {
         }
     }
 
-    /// Integer boundary values round-trip with the correct variant; a value just
+    /// Integer boundary values round-trip with the correct variant. A value just
     /// past `i64::MAX` reads back as `U64`, not an overflow.
     #[test]
     fn integer_boundaries_round_trip() {
@@ -384,8 +383,8 @@ mod tests {
         assert_eq!(text_roundtrip(&just_past), just_past);
     }
 
-    /// Empty collections nested inside collections stay distinct: a seq holding
-    /// an empty map (`#(())`) is not a seq holding an empty seq (`#(#())`).
+    /// Empty collections nested inside collections stay distinct. A seq holding
+    /// an empty map, `#(())`, is not a seq holding an empty seq, `#(#())`.
     #[test]
     fn nested_empty_collections_are_distinguished() {
         let seq_of_empty_map = Datum::Seq(vec![Datum::Map(vec![])]);
@@ -408,8 +407,8 @@ mod tests {
         assert_eq!(text_roundtrip(&d), d);
     }
 
-    /// A deeply mixed structure (maps in seqs in maps, nulls/bytes/strings with
-    /// reader-significant characters interleaved) round-trips.
+    /// A deeply mixed structure round-trips. It nests maps in seqs in maps and
+    /// interleaves nulls, bytes and strings with reader-significant characters.
     #[test]
     fn deeply_mixed_nesting_round_trips() {
         let d = Datum::Map(vec![
@@ -442,8 +441,9 @@ mod tests {
         assert_eq!(text_roundtrip(&d), d);
     }
 
-    /// Characters significant to the reader (parens, brackets, quotes, hash,
-    /// comment char, a digit) round-trip via Steel's character syntax.
+    /// Reader-significant characters round-trip via Steel's character syntax.
+    /// The cases cover parens, brackets, quotes, hash, the comment char and a
+    /// digit.
     #[test]
     fn reader_significant_chars_round_trip() {
         for c in ['(', ')', '[', ']', '"', '\\', '#', ';', '5', '\''] {
@@ -463,8 +463,9 @@ mod tests {
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     struct Pair(i32, i32);
 
-    /// An externally tagged enum (serde's default) - the single-key-map / bare
-    /// string encoding, distinct from the internally tagged path `MyNode` takes.
+    /// An externally tagged enum, serde's default. It uses the single-key-map or
+    /// bare string encoding, distinct from the internally tagged path `MyNode`
+    /// takes.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     enum Shape {
         Dot,
@@ -473,8 +474,9 @@ mod tests {
         Rect { w: u32, h: u32, fill: bool },
     }
 
-    /// Every externally tagged variant shape round-trips, exercising the
-    /// enum/variant-access paths (unit, newtype, tuple and struct variants).
+    /// Every externally tagged variant shape round-trips. This exercises the
+    /// enum and variant-access paths for unit, newtype, tuple and struct
+    /// variants.
     #[test]
     fn externally_tagged_enum_variants_round_trip() {
         for value in [
@@ -508,8 +510,8 @@ mod tests {
         let str_keys: BTreeMap<String, i32> = [
             ("plain".to_string(), 1),
             ("with space".to_string(), 2),
-            ("123".to_string(), 3), // digit-leading: must be quoted
-            (String::new(), 4),     // empty key: must be quoted
+            ("123".to_string(), 3), // digit-leading, must be quoted
+            (String::new(), 4),     // empty key, must be quoted
             ("dash-ok".to_string(), 5),
         ]
         .into_iter()
@@ -522,7 +524,7 @@ mod tests {
         assert_eq!(serde_text_roundtrip(&num_keys), num_keys);
     }
 
-    /// `None` (the null datum) round-trips and stays distinct from a present
+    /// `None`, the null datum, round-trips and stays distinct from a present
     /// value.
     #[test]
     fn option_none_round_trips() {

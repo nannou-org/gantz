@@ -1,27 +1,27 @@
 //! Session identity and configuration types.
 //!
-//! These are plain serde types: peers are identified by their ed25519 public
-//! key bytes ([`PeerId`]) and sessions by 32 random bytes ([`SessionId`]),
-//! with conversion to iroh's types confined to the [`runtime`](crate::runtime).
+//! These are plain serde types. Peers are identified by their ed25519 public
+//! key bytes as [`PeerId`] and sessions by 32 random bytes as [`SessionId`].
+//! Conversion to iroh's types is confined to the [`crate::runtime`].
 
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, fmt};
 
-/// A peer's identity: its ed25519 public key bytes (iroh's `EndpointId`).
+/// A peer's identity. Its ed25519 public key bytes, iroh's `EndpointId`.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 pub struct PeerId(pub [u8; 32]);
 
-/// A session's unique identifier: 32 random bytes, minted by the sharing
+/// A session's unique identifier. 32 random bytes, minted by the sharing
 /// peer. Seeds the session's gossip topic and appears in tickets.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 pub struct SessionId(pub [u8; 32]);
 
 /// Who may read and contribute to a session.
 ///
-/// Access is enforced on the request plane (the data plane): every
+/// Access is enforced on the request plane, which is the data plane. Every
 /// connection is authenticated by iroh, and restricted sessions answer only
-/// allowlisted peers. Gossip metadata (names, tip addresses, presence) is
-/// visible to anyone holding the ticket.
+/// allowlisted peers. Gossip metadata such as names, tip addresses and
+/// presence is visible to anyone holding the ticket.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub enum Access {
     /// Anyone with the ticket may join.
@@ -45,7 +45,7 @@ pub enum Role {
 pub struct Session {
     /// The session's unique identifier.
     pub id: SessionId,
-    /// The shared (branch) name this session syncs.
+    /// The shared branch name this session syncs.
     pub branch: String,
     /// Who may join.
     pub access: Access,
@@ -64,7 +64,7 @@ pub enum ConnState {
     Connecting,
     /// At least one peer is reachable and the initial sync completed.
     Live,
-    /// No peers reachable; local edits continue and re-heal on reconnect.
+    /// No peers reachable. Local edits continue and re-heal on reconnect.
     Degraded,
 }
 
@@ -73,7 +73,7 @@ impl SessionId {
     pub fn generate() -> Self {
         let mut bytes = [0u8; 32];
         // Failure to source OS randomness is unrecoverable and cannot mint a
-        // usable session; surface it loudly rather than sharing under a
+        // usable session. Surface it loudly rather than share under a
         // predictable id.
         getrandom::fill(&mut bytes).expect("failed to source randomness for a session id");
         Self(bytes)
@@ -92,7 +92,7 @@ impl fmt::Display for SessionId {
     }
 }
 
-/// The first four bytes as lowercase hex: enough to eyeball identity.
+/// The first four bytes as lowercase hex, enough to eyeball identity.
 fn display_short(bytes: &[u8; 32], f: &mut fmt::Formatter<'_>) -> fmt::Result {
     for b in &bytes[..4] {
         write!(f, "{b:02x}")?;

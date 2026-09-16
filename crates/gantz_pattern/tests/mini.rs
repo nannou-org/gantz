@@ -1,4 +1,4 @@
-//! Mini-notation tests: the Rust parser's emitted combinator source is
+//! Mini-notation tests. The Rust parser's emitted combinator source is
 //! evaluated against hand-built combinator expressions on the pin
 //! harness.
 
@@ -44,7 +44,7 @@ fn numeric_atoms() {
     );
 }
 
-// Exact rational atoms survive tokenization (the / between digits).
+// Exact rational atoms survive tokenization with the / between digits.
 #[test]
 fn rational_atoms() {
     assert_pinned(

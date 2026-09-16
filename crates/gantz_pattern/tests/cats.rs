@@ -89,7 +89,7 @@ fn shift_equivalences() {
         events(shift("1/8", pat_a)),
         events(shift("-1/8", pat_b)),
     ));
-    // And the inequality: an eighth off is not aligned.
+    // The inequality too. An eighth off is not aligned.
     assert_steel_true(&format!(
         "(equal? #f {})",
         eq(events(shift("1/8", pat_a)), events(pat_b.to_string())),

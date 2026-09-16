@@ -38,7 +38,7 @@ fn pure_empty_span() {
 }
 
 // A signal yields exactly one whole-less event for any query, sampling
-// the midpoint, including for a zero-width (instant) query.
+// the midpoint. That includes a zero-width instant query.
 #[test]
 fn saw_samples_midpoint() {
     assert_pinned(
@@ -70,7 +70,7 @@ fn saw_negative_phases_wrap() {
     ));
 }
 
-// saw2 is the polar saw: 0 at phase 1/2.
+// saw2 is the polar saw, 0 at phase 1/2.
 #[test]
 fn saw2_polar() {
     assert_pinned(
@@ -101,7 +101,7 @@ fn steady_and_silence() {
     assert_pinned("()", "(pin-events (pat/query pat/silence (pat/span 0 10)))");
 }
 
-// query sorts events by active start (a deliberately reversed pattern).
+// query sorts events by active start. The pattern is deliberately reversed.
 #[test]
 fn query_sorts_by_active_start() {
     assert_pinned(

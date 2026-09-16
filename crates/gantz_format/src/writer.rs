@@ -1,9 +1,9 @@
 //! Serializes a [`Document`] to `.gantz` text.
 //!
-//! Output is reader-valid Steel: node code is spliced verbatim (it is already
-//! valid Steel), addresses are strings, placeholders are symbols, and node
-//! ports are `(name port)` sub-lists. Indentation is two spaces per nesting
-//! level.
+//! Output is reader-valid Steel. Node code is spliced verbatim, since it is
+//! already valid Steel. Addresses are strings, placeholders are symbols, and
+//! node ports are `(name port)` sub-lists. Indentation is two spaces per
+//! nesting level.
 
 use crate::datum::{Datum, datum_text};
 use crate::model::{
@@ -38,8 +38,6 @@ pub fn write_document(doc: &Document, sugar: &dyn Sugar) -> String {
     result.push('\n');
     result
 }
-
-// -- graphs ------------------------------------------------------------------
 
 fn write_graph(out: &mut String, id: &Addr, body: &GraphBody, sugar: &dyn Sugar) {
     write_graph_body(out, &format!("graph {}", addr_text(id)), body, 0, sugar);
@@ -77,8 +75,8 @@ fn write_node_decl(out: &mut String, decl: &NodeDecl, sugar: &dyn Sugar) {
     }
 }
 
-/// Render a node value: a sugared form if `sugar` provides one, else the generic
-/// `(node "Tag" ...)` fallback.
+/// Render a node value as a sugared form if `sugar` provides one, else as the
+/// generic `(node "Tag" ...)` fallback.
 fn value_spec(v: &Datum, sugar: &dyn Sugar) -> String {
     let tag = v.get("type").and_then(Datum::as_str).unwrap_or("node");
     sugar.write_spec(tag, v).unwrap_or_else(|| generic_spec(v))
@@ -117,8 +115,6 @@ fn generic_spec(v: &Datum) -> String {
     s
 }
 
-// -- connections -------------------------------------------------------------
-
 fn conn_text(conn: &Conn) -> String {
     format!(
         "(-> {} {})",
@@ -134,8 +130,6 @@ fn endpoint_text(ep: &Endpoint) -> String {
         format!("({} {})", ep.node, ep.port)
     }
 }
-
-// -- commits / names ---------------------------------------------------------
 
 fn write_commits(out: &mut String, commits: &[CommitDecl]) {
     out.push_str("(commits");
@@ -193,8 +187,6 @@ fn write_section(out: &mut String, section: &SectionForm) {
     }
     out.push(')');
 }
-
-// -- helpers -----------------------------------------------------------------
 
 fn addr_text(addr: &Addr) -> String {
     match addr {

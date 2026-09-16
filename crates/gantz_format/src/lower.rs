@@ -1,11 +1,11 @@
 //! Lowers a [`Document`] into a registry, plus the context an extender needs.
 //!
-//! The document mirrors the registry's three maps: graph bodies (keyed by a
-//! file-local id), a flat `(commits ...)` table and a `(names ...)` table.
-//! Graphs are built in dependency order (a graph that `ref`s another is built
-//! after it) so references resolve to already-known commits. A graph whose id
-//! is a label and which no commit references is a hand-authored named graph: it
-//! auto-registers under that label with a root commit synthesised at `now`.
+//! The document mirrors the registry's three maps. Those are graph bodies
+//! keyed by a file-local id, a flat `(commits ...)` table and a `(names ...)`
+//! table. Graphs are built in dependency order, so a graph that `ref`s another
+//! is built after it and references resolve to known commits. A graph whose id
+//! is a label and which no commit references is a hand-authored named graph.
+//! It auto-registers under that label with a root commit synthesised at `now`.
 
 use crate::datum::{Datum, from_datum};
 use crate::error::{ErrorKind, FormatError};
@@ -23,30 +23,30 @@ use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
-/// The node-normalization seam threaded through
-/// [`from_str_normalized`](crate::from_str_normalized): turns one parsed
-/// node's `"type"`-tagged [`Datum`] into its canonical stored [`NodeData`]
-/// (fields validated, refs/blobs columns recomputed).
+/// The node-normalization seam threaded through [`crate::from_str_normalized`].
+/// It turns one parsed node's `"type"`-tagged [`Datum`] into its canonical
+/// stored [`NodeData`], with fields validated and the refs and blobs columns
+/// recomputed.
 ///
-/// The node-set entry points ([`from_str`](crate::from_str) and friends)
-/// supply the node set's serde round-trip; richer layers (e.g. a GUI's
-/// value-level codec) supply their own.
+/// The node-set entry points such as [`crate::from_str`] supply the node set's
+/// serde round-trip. Richer layers such as a GUI's value-level codec supply
+/// their own.
 pub type Normalize<'a> = dyn Fn(Datum) -> Result<NodeData, FormatError> + 'a;
 
-/// The result of lowering a [`Document`]: the registry plus the resolution
-/// context and preserved extra forms an extender needs.
+/// The result of lowering a [`Document`]. It holds the registry plus the
+/// resolution context and preserved extra forms an extender needs.
 ///
-/// The registry stores graphs in their erased data form (see
-/// [`gantz_core::data`]); the node-set type the document was lowered
-/// through is only the codec, not part of the result.
+/// The registry stores graphs in their erased data form. See
+/// [`gantz_core::data`]. The node-set type the document was lowered through is
+/// only the codec, not part of the result.
 pub struct Loaded {
     /// The content-addressed registry.
     pub registry: Registry,
-    /// graph id -> head commit.
+    /// The head commit of each graph id.
     pub graph_head: HashMap<Addr, CommitAddr>,
-    /// graph id -> node label -> node index.
+    /// The node index of each node label, per graph id.
     pub index: HashMap<Addr, HashMap<String, usize>>,
-    /// registry name -> head commit.
+    /// The head commit of each registry name.
     pub names: HashMap<String, CommitAddr>,
     /// Unrecognised top-level forms, preserved for an extender.
     pub extra: Vec<Form>,
@@ -54,21 +54,19 @@ pub struct Loaded {
 
 /// Read-only reference-resolution context, threaded through graph building.
 ///
-/// References resolve to GRAPH addresses (content identity): a by-name
-/// reference resolves to the graph at the name's head, a pinned address is
-/// a graph address.
+/// References resolve to graph addresses, which are content identities. A
+/// by-name reference resolves to the graph at the name's head. A pinned
+/// address is a graph address.
 struct Resolve<'a> {
-    /// name -> head graph, for already-built graphs.
+    /// The head graph of each name, for already-built graphs.
     name_graphs: &'a HashMap<String, GraphAddr>,
-    /// commit id -> that commit's graph, for resolving pinned references by
-    /// commit label.
+    /// The graph of each commit id, for resolving pinned references by commit
+    /// label.
     commit_graphs: &'a HashMap<Addr, GraphAddr>,
-    /// every graph built so far, for resolving concrete-address prefixes.
+    /// Every graph built so far, for resolving concrete-address prefixes.
     known: &'a [GraphAddr],
-    /// Externally-known name -> head graph associations, consulted as a
-    /// fallback after the document's own names. Lets a document reference
-    /// graphs defined elsewhere (e.g. a domain base source referencing
-    /// another source's graphs).
+    /// The head graph of each externally-known name, consulted as a fallback
+    /// after the document's own names. See [`crate::from_str_seeded`].
     seed: &'a BTreeMap<String, GraphAddr>,
 }
 
@@ -81,13 +79,9 @@ where
     lower_seeded::<N>(doc, now, &BTreeMap::new())
 }
 
-/// [`lower`], resolving names the document does not define through `seed`
-/// (externally-known name -> head graph associations).
-///
-/// The document's own names shadow the seed. A seeded reference embeds the
-/// seeded graph address in the built node, so the referring graph's content
-/// address depends on it - callers wanting reproducible addresses must seed
-/// reproducible ones.
+/// As [`lower`], but names the document does not define resolve through
+/// `seed`. See [`crate::from_str_seeded`] for how the seed affects content
+/// addresses.
 pub fn lower_seeded<N>(
     doc: Document,
     now: Timestamp,
@@ -95,16 +89,16 @@ pub fn lower_seeded<N>(
 ) -> Result<Loaded, FormatError>
 where
     // Nodes are deserialized through the node set's serde, then erased back
-    // to data for storage (`Serialize` + `Node` are
-    // `gantz_core::data::erase_node`'s requirements). Registry addresses are
-    // always computed on the erased form.
+    // to data for storage. `gantz_core::data::erase_node` requires
+    // `Serialize` and `Node`. Registry addresses are always computed on the
+    // erased form.
     N: Serialize + DeserializeOwned + gantz_core::Node,
 {
     lower_normalized(doc, now, seed, &serde_normalize::<N>)
 }
 
-/// [`lower_seeded`] with an explicit node-normalization seam in place of a
-/// node-set type parameter (see [`Normalize`]).
+/// As [`lower_seeded`], with an explicit [`Normalize`] seam in place of a
+/// node-set type parameter.
 pub fn lower_normalized(
     doc: Document,
     now: Timestamp,
@@ -121,15 +115,15 @@ pub fn lower_normalized(
 
     // Index the document's three tables.
     let graphs_by_id: HashMap<Addr, &GraphDef> = graphs.iter().map(|g| (g.id.clone(), g)).collect();
-    // graph id -> the commit pointing at it (at most one per graph).
+    // The commit pointing at each graph id. At most one per graph.
     let commit_for_graph: HashMap<Addr, &CommitDecl> =
         commits.iter().map(|c| (c.graph.clone(), c)).collect();
-    // commit id -> graph id.
+    // The graph id of each commit id.
     let graph_of_commit: HashMap<Addr, Addr> = commits
         .iter()
         .map(|c| (c.id.clone(), c.graph.clone()))
         .collect();
-    // commit id -> names pointing at it.
+    // The names pointing at each commit id.
     let mut names_of_commit: HashMap<Addr, Vec<String>> = HashMap::new();
     for decl in &name_decls {
         names_of_commit
@@ -138,7 +132,7 @@ pub fn lower_normalized(
             .push(decl.name.clone());
     }
 
-    // name -> graph id, used to order graphs by their references.
+    // The graph id of each name, used to order graphs by their references.
     let name_to_graph_id =
         compute_name_to_graph_id(&graphs, &name_decls, &commit_for_graph, &graph_of_commit);
     let order = topo_order(&graphs, &graphs_by_id, &name_to_graph_id)?;
@@ -166,7 +160,7 @@ pub fn lower_normalized(
         known_graphs.push(g_addr);
         index.insert(id.clone(), index_map);
 
-        // Build the head commit: from the table where present, else a fresh root.
+        // Build the head commit from the table where present, else a fresh root.
         let head = match commit_for_graph.get(id) {
             Some(decl) => {
                 build_commit(&mut registry, decl, g_addr, &commit_ids, &mut known_commits)
@@ -179,8 +173,9 @@ pub fn lower_normalized(
         };
         graph_head.insert(id.clone(), head);
 
-        // Register names for this commit: explicit ones from the names table,
-        // plus an auto-name for an un-committed label graph (hand-authored).
+        // Register names for this commit. Those are the explicit ones from the
+        // names table, plus an auto-name for a hand-authored label graph with
+        // no commit.
         let mut register = |name: String| {
             names.insert(name.clone(), head);
             name_graphs.insert(name.clone(), g_addr);
@@ -227,8 +222,8 @@ pub fn lower_normalized(
     })
 }
 
-/// Convert a text-form section key to a registry key. Malformed hex keys
-/// are dropped (advisory metadata degrades, it never fails a load).
+/// Convert a text-form section key to a registry key. Malformed hex keys are
+/// dropped. Advisory metadata degrades and never fails a load.
 fn lower_section_key(key: SectionKey) -> Option<Key> {
     match key {
         SectionKey::Name(name) => Some(Key::Name(name.parse().expect("infallible"))),
@@ -237,8 +232,6 @@ fn lower_section_key(key: SectionKey) -> Option<Key> {
         SectionKey::Addr(hex) => Some(Key::Addr(hex.parse().ok()?)),
     }
 }
-
-// -- graph construction ------------------------------------------------------
 
 fn build_graph(
     body: &GraphBody,
@@ -293,8 +286,8 @@ fn build_node(
 }
 
 /// The node-set-serde [`Normalize`] implementation backing [`lower`] and
-/// [`lower_seeded`]: deserialize the tagged datum through `N`, then erase the
-/// node back to its canonical data form.
+/// [`lower_seeded`]. It deserializes the tagged datum through `N`, then erases
+/// the node back to its canonical data form.
 fn serde_normalize<N>(datum: Datum) -> Result<NodeData, FormatError>
 where
     N: Serialize + DeserializeOwned + gantz_core::Node,
@@ -323,10 +316,10 @@ fn resolve_ref_value(refspec: &RefSpec, resolve: &Resolve) -> Result<Datum, Form
             .get(&Addr::Label(label.clone()))
             .copied()
             .ok_or_else(|| FormatError::new(ErrorKind::MissingDependency(label.clone())))?,
-        // A pinned address is advisory: if it no longer resolves, fall back
-        // to the reference's name. Content addressing makes this rare (a
-        // graph address is independent of commit re-rooting), but a document
-        // may pin a graph version it does not itself carry.
+        // A pinned address is advisory. If it does not resolve, fall back to
+        // the reference's name. This is rare, since a graph address is
+        // independent of commit re-rooting, but a document may pin a graph
+        // version it does not carry.
         Some(Addr::Concrete(hex)) => resolve_graph(hex, resolve.known)
             .or_else(|| resolve.name_graphs.get(&refspec.name).copied())
             .or_else(|| resolve.seed.get(&refspec.name).copied())
@@ -339,8 +332,8 @@ fn resolve_ref_value(refspec: &RefSpec, resolve: &Resolve) -> Result<Datum, Form
     } else {
         "NamedRef"
     };
-    // Mirror `gantz_core::node::Ref`'s serde shape: a bare address when the
-    // reference carries no extension data, else a map of address + ext.
+    // Mirror `gantz_core::node::Ref`'s serde shape. A bare address when the
+    // reference carries no extension data, else a map of address and ext.
     let ref_value = match &refspec.ext {
         None => Datum::Str(hex),
         Some(ext) => Datum::Map(vec![
@@ -358,10 +351,8 @@ fn resolve_ref_value(refspec: &RefSpec, resolve: &Resolve) -> Result<Datum, Form
     ))
 }
 
-// -- commits -----------------------------------------------------------------
-
-/// Build the head commit described by `decl`, pointing at `g_addr` (the graph
-/// it references, which has just been built).
+/// Build the head commit described by `decl`, pointing at the just-built graph
+/// `g_addr`.
 fn build_commit(
     registry: &mut Registry,
     decl: &CommitDecl,
@@ -372,18 +363,18 @@ fn build_commit(
     let parent = resolve_parent(&decl.parent, commit_ids, known);
     let timestamp = Duration::new(decl.secs, decl.nanos);
     let mut commit = Commit::new(timestamp, parent, g_addr);
-    // Merge parents resolve like the first parent; an absent one is dropped
-    // (`resolve_parent` re-roots, which for an *extra* parent means dropping).
+    // Merge parents resolve like the first parent. `resolve_parent` re-roots
+    // an absent parent, which for an extra parent means dropping it.
     commit.merge_parents = decl
         .merge_parents
         .iter()
         .filter_map(|addr| resolve_parent(&Some(addr.clone()), commit_ids, known))
         .collect();
     let commit_ca = registry.add_commit(commit);
-    // A declared id may not match the recomputed address - e.g. the format
-    // keeps only the head commit per graph, so a dropped parent re-roots the
-    // commit and changes its hash. This is routine (refs recover by name in
-    // `resolve_ref_value`), so it is logged at debug rather than warned.
+    // A declared id may not match the recomputed address. The format keeps
+    // only the head commit per graph, so a dropped parent re-roots the commit
+    // and changes its hash. This is routine and refs recover by name in
+    // `resolve_ref_value`, so it is logged at debug rather than warned.
     if let Addr::Concrete(hex) = &decl.id {
         let computed = ContentAddr::from(commit_ca).to_string();
         if !computed.starts_with(hex.as_str()) {
@@ -398,9 +389,8 @@ fn build_commit(
 }
 
 /// Resolve a commit's declared parent to a present commit. A parent absent from
-/// the document re-roots the commit; this is routine (the format keeps only the
-/// head commit per graph, so history parents are commonly absent), so it is
-/// logged at debug rather than warned.
+/// the document re-roots the commit. This is routine, since the format keeps
+/// only the head commit per graph, so it is logged at debug rather than warned.
 fn resolve_parent(
     parent: &Option<Addr>,
     commit_ids: &HashMap<Addr, CommitAddr>,
@@ -425,10 +415,8 @@ fn resolve_parent(
     }
 }
 
-// -- dependency ordering -----------------------------------------------------
-
-/// Map each registry name to the graph id it ultimately points at, via the
-/// names + commits tables, plus auto-names for un-committed label graphs.
+/// Map each registry name to the graph id it points at via the names and
+/// commits tables. Includes auto-names for label graphs with no commit.
 fn compute_name_to_graph_id(
     graphs: &[GraphDef],
     name_decls: &[NameDecl],
@@ -452,7 +440,7 @@ fn compute_name_to_graph_id(
 }
 
 /// Topologically order graph ids so that a graph is built after every graph it
-/// references (by name). Returns an error on a reference cycle.
+/// references by name. Returns an error on a reference cycle.
 fn topo_order(
     graphs: &[GraphDef],
     graphs_by_id: &HashMap<Addr, &GraphDef>,
@@ -503,7 +491,7 @@ fn visit(
     Ok(())
 }
 
-/// All names referenced by `ref`/`fn-ref` within a graph body (recursively).
+/// All names referenced by `ref` or `fn-ref` within a graph body.
 fn referenced_names(body: &GraphBody) -> Vec<String> {
     let mut names = Vec::new();
     for decl in &body.nodes {
@@ -515,10 +503,9 @@ fn referenced_names(body: &GraphBody) -> Vec<String> {
     names
 }
 
-// -- address helpers ---------------------------------------------------------
-
-/// Resolve a concrete address (full hex or unambiguous prefix) to a *present*
-/// commit. A prefix is ambiguous only when it matches two distinct commits.
+/// Resolve a concrete address to a present commit. The address is full hex or
+/// an unambiguous prefix. A prefix is ambiguous only when it matches two
+/// distinct commits.
 fn resolve_commit(hex: &str, known: &[CommitAddr]) -> Option<CommitAddr> {
     let mut matches: Vec<CommitAddr> = known
         .iter()
@@ -533,8 +520,9 @@ fn resolve_commit(hex: &str, known: &[CommitAddr]) -> Option<CommitAddr> {
     }
 }
 
-/// Resolve a concrete address (full hex or unambiguous prefix) to a *present*
-/// graph. A prefix is ambiguous only when it matches two distinct graphs.
+/// Resolve a concrete address to a present graph. The address is full hex or
+/// an unambiguous prefix. A prefix is ambiguous only when it matches two
+/// distinct graphs.
 fn resolve_graph(hex: &str, known: &[GraphAddr]) -> Option<GraphAddr> {
     let mut matches: Vec<GraphAddr> = known
         .iter()

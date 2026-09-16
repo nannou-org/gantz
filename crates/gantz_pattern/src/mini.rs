@@ -5,17 +5,17 @@
 //! - Whitespace-separated steps fill a cycle. `~` is a rest.
 //! - `[a b]` nests a subsequence in one step. `[a, b]` stacks sequences.
 //! - `<a b>` alternates its steps across cycles.
-//! - `a*2` / `a/2` speed a step up or down.
+//! - `a*2` and `a/2` speed a step up or down.
 //! - `a@3` weights a step and `_` extends the previous step.
-//! - `a(3,8)` / `a(3,8,1)` applies a euclidean mask to the step.
+//! - `a(3,8)` and `a(3,8,1)` apply a euclidean mask to the step.
 //! - Atoms parse as numbers when possible, exact rationals like `3/4`
-//!   included (a `/` directly between digits stays in the number), and
-//!   as symbols otherwise.
+//!   included. A `/` directly between digits stays in the number. Other
+//!   atoms are symbols.
 //!
-//! Parsing happens at graph compile time (see the `pmini` node), so the
-//! runtime never tokenizes: [`steel_src`] returns combinator source for
-//! the node's expr, or `None` for malformed input, which the node turns
-//! into silence.
+//! Parsing happens at graph compile time in the `pmini` node, so the
+//! runtime never tokenizes. [`steel_src`] returns combinator source for
+//! the node's expr, or `None` for malformed input. The node reports that
+//! as a compile error.
 
 use num_rational::Ratio;
 
@@ -73,8 +73,8 @@ fn flush(word: &mut String, toks: &mut Vec<Tok>) {
     }
 }
 
-/// Parse terms until one of `closers` (left unconsumed) or exhaustion,
-/// assembling with fastcat, or timecat when weighted.
+/// Parse terms until one of `closers`, left unconsumed, or exhaustion.
+/// Assembles with fastcat, or timecat when weighted.
 fn seq<'t>(mut toks: &'t [Tok], closers: &[char]) -> Option<(String, &'t [Tok])> {
     let mut pairs: Vec<(Ratio<i64>, String)> = Vec::new();
     loop {
@@ -180,8 +180,8 @@ fn atom(word: &str) -> Option<String> {
         .chars()
         .all(|c| c.is_ascii_digit() || "./-".contains(c))
     {
-        // Number-shaped but unparseable, e.g. a zero denominator: quoting
-        // it as a symbol would emit an invalid steel literal.
+        // Number-shaped but unparseable, for example a zero denominator.
+        // Quoting it as a symbol would emit an invalid steel literal.
         None
     } else {
         Some(format!("(pat/pure '{word})"))
@@ -244,7 +244,7 @@ fn number_lit(toks: &[Tok]) -> Option<(String, &[Tok])> {
     }
 }
 
-/// The next token as an exact ratio (weights need arithmetic for `_`).
+/// The next token as an exact ratio. Weights need arithmetic for `_`.
 fn ratio(toks: &[Tok]) -> Option<(Ratio<i64>, &[Tok])> {
     match toks.first()? {
         Tok::Word(w) => Some((parse_number(w)?, &toks[1..])),
@@ -252,7 +252,7 @@ fn ratio(toks: &[Tok]) -> Option<(Ratio<i64>, &[Tok])> {
     }
 }
 
-/// The next token as an integer (euclid parameters).
+/// The next token as an integer, for euclid parameters.
 fn int(toks: &[Tok]) -> Option<(i64, &[Tok])> {
     let (r, rest) = ratio(toks)?;
     if r.is_integer() {
@@ -262,8 +262,8 @@ fn int(toks: &[Tok]) -> Option<(i64, &[Tok])> {
     }
 }
 
-/// Parse a word as an exact ratio: an integer, an `n/d` rational, or a
-/// float snapped to the 1/1920 grid (mirroring `pat/rationalize`).
+/// Parse a word as an exact ratio. An integer, an `n/d` rational, or a
+/// float snapped to the 1/1920 grid, mirroring `pat/rationalize`.
 fn parse_number(word: &str) -> Option<Ratio<i64>> {
     if let Ok(i) = word.parse::<i64>() {
         return Some(Ratio::from_integer(i));
