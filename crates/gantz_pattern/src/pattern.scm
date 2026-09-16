@@ -6,8 +6,8 @@
 ;; applies within the query, and a `whole` span carrying the event's
 ;; full structure. Whole is #f for continuous signals.
 ;;
-;; Written for the prelude-free base engine. Primitive special forms
-;; only, with the missing prelude list fns hand-rolled below. Names
+;; Written for the prelude-free base engine. It uses primitive special
+;; forms only and defines the missing prelude list fns below. Names
 ;; prefixed `pat//` are internal helpers and are not provided.
 
 (provide pat/span
@@ -60,8 +60,6 @@
          pat/events->secs
          pat/euclid-with)
 
-;; -- internal helpers ---------------------------------------------------------
-
 (define (pat//max2 a b) (if (< a b) b a))
 (define (pat//min2 a b) (if (< b a) b a))
 
@@ -105,7 +103,7 @@
 
 ;; A stable merge sort. The base engine's `sort` rejects closures.
 ;; `less?` must be a strict order. Merge recursion depth is bounded by the
-;; list length, fine at event-list scale.
+;; list length, which is fine at event-list scale.
 (define (pat//sort less? xs)
   (let ((n (length xs)))
     (if (< n 2)
@@ -128,14 +126,12 @@
 (define (pat//event-earlier? a b)
   (< (car (pat/event-active a)) (car (pat/event-active b))))
 
-;; Query `p` when it is a pattern, no events otherwise. Partial graph
-;; evals can hand a combinator a non-pattern in place of an unfired
-;; pattern input, which should be silent rather than an application
+;; Query `p` when it is a pattern. Otherwise return no events. Partial
+;; graph evals can hand a combinator a non-pattern in place of an unfired
+;; pattern input. That input must be silent rather than an application
 ;; error.
 (define (pat//events p span)
   (if (function? p) (p span) '()))
-
-;; -- spans --------------------------------------------------------------------
 
 ;; A span over `[start, end)`, in cycles.
 (define (pat/span start end) (cons start end))
@@ -170,11 +166,9 @@
         (end (pat//min2 (cdr a) (cdr b))))
     (if (<= end start) #f (cons start end))))
 
-;; -- events -------------------------------------------------------------------
-
-;; The struct printer references `display`, which is prelude-only. It is
-;; only invoked by the scheme display path, never by the Rust fmt gantz
-;; renders values with, so a shim satisfies the struct expansion.
+;; The struct printer references `display`, which is prelude-only. Only
+;; the scheme display path invokes it. The Rust fmt that gantz renders
+;; values with never does, so a shim satisfies the struct expansion.
 (define (display . args) void)
 
 ;; An event holds a `value`, its `active` span and its `whole` span.
@@ -199,15 +193,13 @@
 (define (pat/event-map-value f e)
   (event (f (event-value e)) (event-active e) (event-whole e)))
 
-;; Map the event's active span and (when present) whole span with `f`.
+;; Map the event's active span with `f`. Map its whole span too when present.
 (define (pat/event-map-spans f e)
   (event (event-value e)
          (f (event-active e))
          (let ((w (event-whole e)))
            (if w (f w) #f))))
 
-;; -- constructors -------------------------------------------------------------
-;;
 ;; A pattern is `(lambda (span) <list of events>)`. Combinators make no
 ;; ordering guarantee on the returned events. [`pat/query`] sorts.
 
@@ -244,21 +236,19 @@
 (define pat/saw2
   (pat/signal (lambda (r) (- (* 2 (- r (floor r))) 1))))
 
-;; Query the pattern over the span, events sorted by active-span start.
+;; Query the pattern over the span. Events are sorted by active-span start.
 (define (pat/query p span)
   (pat//sort pat//event-earlier? (pat//events p span)))
 
-;; -- rates, cats, shift -------------------------------------------------------
-
-;; The grid pattern time snaps to when converting from floats: fine enough
-;; for musical subdivisions (2^7 * 3 * 5 per cycle), coarse enough to keep
-;; denominators bounded.
+;; The grid that pattern time snaps to when converting from floats. It is
+;; fine enough for musical subdivisions, with 2^7 * 3 * 5 slots per cycle.
+;; It is coarse enough to keep denominators bounded.
 (define pat//grid 1920)
 
 ;; Convert a number to an exact rational, snapping floats to the nearest
 ;; 1/1920 of a cycle. Exact numbers pass through untouched. Graph number
 ;; nodes produce floats, so node exprs pass numeric pattern parameters
-;; (rates, shifts, weights) through this to keep pattern time exact.
+;; through this to keep pattern time exact.
 (define (pat/rationalize x)
   (if (number? x)
       (if (exact? x)
@@ -349,7 +339,7 @@
                               end
                               (cons (list (cons start end) p) acc))))))
 
-;; Layer the patterns: a query concatenates every pattern's events.
+;; Layer the patterns. A query concatenates every pattern's events.
 (define (pat/stack ps)
   (lambda (span)
     (pat//flat-map (lambda (p) (pat//events p span)) ps)))
@@ -367,8 +357,6 @@
 ;; [`pat/fit-span`] with a single-cycle `src`.
 (define (pat/fit-cycle dst p)
   (pat/fit-span (cons 0 1) dst p))
-
-;; -- higher-order combinators ---------------------------------------------------
 
 ;; Map event values with `f`. A non-fn `f` yields silence.
 (define (pat/map f p)
@@ -392,13 +380,14 @@
         (pat//filter keep? (pat//events p span))
         '())))
 
-;; The whole common to both events: the intersection of their wholes when
-;; both are present, otherwise #f (including non-intersecting wholes).
+;; The whole common to both events. It is the intersection of their wholes
+;; when both are present. Otherwise, and when the wholes do not intersect,
+;; it is #f.
 (define (pat//whole-intersect ow iw)
   (if ow (if iw (pat/span-intersect ow iw) #f) #f))
 
-;; Join a pattern of patterns: inner patterns queried with the outer
-;; event's active span, event spans intersected (whole and active alike).
+;; Join a pattern of patterns. Inner patterns are queried with the outer
+;; event's active span. Both whole and active spans are intersected.
 (define (pat/join pp)
   (lambda (span)
     (pat//flat-map
@@ -416,8 +405,8 @@
         (pat//events (pat/event-value oe) (pat/event-active oe))))
      (pat//events pp span))))
 
-;; Like [`pat/join`], but structure comes from the inner pattern alone:
-;; wholes untouched, actives clipped to the original query span.
+;; Like [`pat/join`], but structure comes from the inner pattern alone.
+;; Wholes are untouched and actives are clipped to the original query span.
 (define (pat/inner-join pp)
   (lambda (q-span)
     (pat//flat-map
@@ -448,10 +437,10 @@
           (pat//events (pat/event-value oe) (cons start start)))))
      (pat//events pp q-span))))
 
-;; Apply a pattern of functions `pf` to a pattern of values `pv`: an event
-;; per intersection of active spans (both sides queried with the original
-;; query span), whole = `(structure left-whole right-whole)` only when
-;; both wholes are present, else #f.
+;; Apply a pattern of functions `pf` to a pattern of values `pv`. Both
+;; sides are queried with the original query span. Each intersection of
+;; active spans yields an event. Its whole is `(structure left-whole
+;; right-whole)` when both wholes are present, else #f.
 (define (pat//apply pv pf structure)
   (lambda (span)
     (pat//flat-map
@@ -477,20 +466,19 @@
 (define (pat/app pv pf)
   (pat//apply pv pf pat/span-intersect))
 
-;; Apply with structure from the left (the value pattern).
+;; Apply with structure from the value pattern `pv`.
 (define (pat/appl pv pf)
   (pat//apply pv pf (lambda (l r) l)))
 
-;; Apply with structure from the right (the function pattern).
+;; Apply with structure from the function pattern `pf`.
 (define (pat/appr pv pf)
   (pat//apply pv pf (lambda (l r) r)))
 
 ;; Merge two patterns by calling `(f a-value b-value)` at every
-;; intersection of active spans (intersection structure).
+;; intersection of active spans. Structure is the intersection of both
+;; wholes.
 (define (pat/merge-with f pa pb)
   (pat/app pa (pat/map (lambda (bv) (lambda (av) (f av bv))) pb)))
-
-;; -- euclidean rhythms ----------------------------------------------------------
 
 (define (pat//repeat v n acc)
   (if (<= n 0) acc (pat//repeat v (- n 1) (cons v acc))))
@@ -508,7 +496,7 @@
 
 ;; The bjorklund left/right merge over two lists of onset groups. The
 ;; true merge is required here. Bresenham-style closed forms produce a
-;; differently rotated pattern, diverging at e.g. (5, 8).
+;; differently rotated pattern. For example, they diverge at (5, 8).
 (define (pat//bjorklund-loop xs ys)
   (if (<= (pat//min2 (length xs) (length ys)) 1)
       (append xs ys)
@@ -520,7 +508,7 @@
             (pat//bjorklund-loop (pat//zip-append xs (take ys lx) '())
                                  (list-tail ys lx))))))
 
-;; Rotate the list left by `off` (modulo its length).
+;; Rotate the list left by `off` modulo its length.
 (define (pat//rotate xs off)
   (let ((len (length xs)))
     (if (< len 1)
@@ -529,8 +517,8 @@
           (append (list-tail xs o) (take xs o))))))
 
 ;; The bjorklund onset pattern distributing `k` onsets as evenly as
-;; possible over `n` slots (`k` clamped to `0..=n`), rotated left by
-;; `off` slots. Returns a list of `n` booleans.
+;; possible over `n` slots, rotated left by `off` slots. `k` is clamped
+;; to `0..=n`. Returns a list of `n` booleans.
 (define (pat/euclid-bools k n off)
   (if (< n 1)
       '()
@@ -541,8 +529,8 @@
                                              (pat//repeat (list #f) (- n kk) '())))
          off))))
 
-;; Cyclic distance from each slot to the next onset (inclusive of the
-;; current slot), or the empty list when there are no onsets at all.
+;; Cyclic distance from each slot to the next onset, inclusive of the
+;; current slot. Returns the empty list when there are no onsets at all.
 (define (pat//onset-distances bs)
   (let ((len (length bs)))
     (if (< len 1)
@@ -565,7 +553,7 @@
 (define (pat//span-map-len f s)
   (cons (car s) (+ (car s) (f (- (cdr s) (car s))))))
 
-;; `k` onsets distributed over `n` equal slots per cycle, silent slots
+;; `k` onsets distributed over `n` equal slots per cycle. Silent slots are
 ;; filtered out. Event values are #t.
 (define (pat/euclid k n)
   (pat/euclid-off k n 0))
@@ -599,10 +587,8 @@
                        '())))
                (p span))))))))
 
-;; -- windowing and delivery -----------------------------------------------------
-
-;; Whether the event begins at its whole's start, i.e. is a true onset
-;; rather than the continuation of an event chopped by a window
+;; Whether the event begins at its whole's start. Such an event is a true
+;; onset rather than the continuation of an event chopped by a window
 ;; boundary. Signal events are never onsets.
 (define (pat/event-onset? e)
   (let ((w (pat/event-whole e)))
@@ -614,7 +600,7 @@
 
 ;; The longest span a single window may cover, in cycles. Steady-state
 ;; windows span tick-duration times cps cycles, so this sits far above
-;; sane configurations while bounding the events a single tick can
+;; sane configurations. It also bounds the events a single tick can
 ;; produce. A jump beyond it, such as a cps change rescaling the
 ;; timeline, resets rather than querying the whole gap.
 (define pat//max-window 8)
@@ -627,7 +613,7 @@
 ;; runs from the previous position to the current one.
 ;;
 ;; The position derives from absolute time snapped to the 1/1920-cycle
-;; grid, so successive spans abut exactly, quantisation error never
+;; grid. Successive spans therefore abut exactly, quantisation error never
 ;; accumulates, and denominators stay bounded. The span is empty on the
 ;; first tick and whenever the position has not advanced. Any position
 ;; jump beyond `pat//max-window`, in either direction, also yields an
@@ -668,8 +654,6 @@
                  (if (number? v) (exact->inexact v) v))))
        (pat//filter pat/event-onset? events))
       '()))
-
-;; -- euclid application ---------------------------------------------------------
 
 ;; Apply the euclidean mask to the pattern. Structure comes from the
 ;; mask's onsets, values from `p`.

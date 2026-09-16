@@ -19,8 +19,8 @@ jobs:
     env:
       RUSTFLAGS: "-D warnings"
       RUSTDOCFLAGS: "-D warnings"
-      # Trim debuginfo to keep `target/` under the runner's ~14GB disk limit;
-      # full debuginfo for this bevy-scale build fills the disk at link time.
+      # Trim debuginfo to keep `target/` under the runner's ~14GB disk limit.
+      # Full debuginfo for this bevy-scale build fills the disk at link time.
       CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
       CARGO_PROFILE_TEST_DEBUG: "line-tables-only"
     strategy:

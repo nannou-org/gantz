@@ -1,7 +1,6 @@
-# wasm-bindgen-cli version must match the exact version of wasm-bindgen used
-# within the crate dependencies. nixpkgs' version doesn't always match the
-# latest version picked up in our Cargo.lock, so here we pin to a particular
-# wasm-bindgen-cli so we can override the nixpkgs version.
+# The wasm-bindgen-cli version must match the exact wasm-bindgen version in
+# Cargo.lock. The nixpkgs version does not always match, so this pins
+# wasm-bindgen-cli and overrides the nixpkgs one.
 {
   buildWasmBindgenCli,
   fetchCrate,
