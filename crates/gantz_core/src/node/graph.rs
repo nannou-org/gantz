@@ -29,9 +29,9 @@ pub type Graph<N> = petgraph::graph::Graph<N, Edge, Directed, Index>;
 
 /// The type used for indexing into the graph.
 pub type Index = usize;
-/// The type used to index into a graph's node's.
+/// The type used to index a graph's nodes.
 pub type NodeIx = NodeIndex<Index>;
-/// The type used to index into a graph's edge's.
+/// The type used to index a graph's edges.
 pub type EdgeIx = EdgeIndex<Index>;
 
 /// An inlet to a nested graph.

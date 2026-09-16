@@ -300,7 +300,7 @@ pub fn decode_value(bytes: &[u8]) -> Result<Value, ron::de::SpannedError> {
 ///
 /// Callers must supply a name-ordered iteration, such as
 /// `gantz_ca::Registry::heads`, so peers holding equal heads derive equal
-/// digests. Heads-only for now. A whole-sections digest would need a
+/// digests. Only heads are digested. A whole-sections digest would need a
 /// canonical section byte encoding, which the registry does not define yet.
 pub fn heads_digest<'a>(heads: impl IntoIterator<Item = (&'a Name, CommitAddr)>) -> [u8; 32] {
     let mut hasher = gantz_ca::Hasher::new();
