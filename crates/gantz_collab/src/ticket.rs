@@ -1,4 +1,4 @@
-//! The session invite ticket: the string a user shares to let others join.
+//! The session invite ticket. The string a user shares to let others join.
 
 use crate::{
     runtime::PROTO_VERSION,
@@ -9,25 +9,25 @@ use iroh_tickets::{ParseError, Ticket};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
-/// Everything a peer needs to join a session: the session's identity and
-/// policy, plus the sharing peer's dialable address(es).
+/// Everything a peer needs to join a session. The session's identity and
+/// policy, plus the sharing peer's dialable addresses.
 ///
-/// Encodes as a `gantz…` base32 string (see [`iroh_tickets::Ticket`]),
-/// suitable for a link or QR code.
+/// Encodes as a `gantz…` base32 string suitable for a link or QR code. See
+/// [`iroh_tickets::Ticket`].
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SessionTicket {
-    /// The session to join; seeds the gossip topic.
+    /// The session to join. Seeds the gossip topic.
     pub session: SessionId,
     /// The shared graph's name.
     pub name: String,
-    /// The access mode, as a hint for the joiner's UI (enforcement is the
-    /// serving side's).
+    /// The access mode, as a hint for the joiner's UI. The serving side
+    /// enforces it.
     pub access: Access,
     /// The fixed session conflict-resolution policy.
     pub resolutions: gantz_ca::merge::Resolutions,
     /// The protocol version the sharing peer speaks.
     pub proto: u32,
-    /// Bootstrap addresses of the sharing peer(s).
+    /// Bootstrap addresses of the sharing peers.
     pub hosts: Vec<EndpointAddr>,
 }
 

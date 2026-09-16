@@ -1,6 +1,6 @@
-//! Tests for per-node Steel module requirements: `(require ...)` emission
-//! from `Node::required_modules` declarations, and evaluation against the
-//! modules registered by `vm::new_engine`.
+//! Tests for per-node Steel module requirements. They cover `(require ...)`
+//! emission from `Node::required_modules` declarations and evaluation against
+//! the modules registered by `vm::new_engine`.
 
 use gantz_core::{
     Edge,
@@ -12,7 +12,6 @@ use std::fmt::Debug;
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
-// A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }
@@ -75,8 +74,8 @@ fn no_requires_without_declarations() {
 }
 
 // Multiple declarations of the same module emit exactly one leading
-// `(require ...)`, and the SourceMap still resolves every node def around
-// the (nameless) require form.
+// `(require ...)`. The SourceMap still resolves every node def around the
+// nameless require form.
 #[test]
 fn requires_deduped_and_lead_the_module() {
     let mut g = petgraph::graph::DiGraph::new();
@@ -96,8 +95,8 @@ fn requires_deduped_and_lead_the_module() {
     assert_eq!(src.matches("gantz/option").count(), 1);
     assert!(src.starts_with("(require"));
 
-    // One def per module expression. The require's def carries no name;
-    // every other def remains a recognised define.
+    // One def per module expression. The require's def carries no name.
+    // Every other def remains a recognised define.
     let map = SourceMap::parse(&src);
     assert_eq!(map.defs().len(), module.len());
     let named = map.defs().iter().filter(|d| d.name.is_some()).count();
@@ -114,10 +113,10 @@ fn requires_deduped_and_lead_the_module() {
     }
 }
 
-// A declaring node outside every eval path still gets its require: steel
-// resolves the free identifiers of every emitted fn at definition time, so
-// the module bindings must exist even for fns nothing calls. Pinned under
-// both configs (`emit_all_node_fns` emits the orphan's fn unconditionally).
+// A declaring node outside every eval path still gets its require. Steel
+// resolves the free identifiers of every emitted fn at definition time. So
+// the module bindings must exist even for fns nothing calls. Both configs
+// are pinned since `emit_all_node_fns` emits the orphan's fn unconditionally.
 #[test]
 fn off_eval_path_node_still_requires_its_module() {
     for config in [
@@ -131,7 +130,7 @@ fn off_eval_path_node_still_requires_its_module() {
         let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
         let int = g.add_node(Box::new(node::expr("(begin $push 6)").unwrap()) as Box<_>);
         g.add_edge(push, int, Edge::from((0, 0)));
-        // No edges: the orphan is outside every eval path.
+        // The orphan has no edges, so it is outside every eval path.
         let _orphan = g
             .add_node(
                 Box::new(node_requires("(unwrap-or (Some $x) 0)", &["gantz/option"])) as Box<_>,
@@ -142,14 +141,14 @@ fn off_eval_path_node_still_requires_its_module() {
         let src = gantz_core::vm::fmt_module(&module);
         assert_eq!(src.matches("gantz/option").count(), 1);
 
-        // The module must also run: `vm::init` registers `gantz/option` so
+        // The module must also run. `vm::init` registers `gantz/option` so
         // the emitted require resolves.
         gantz_core::vm::init(&no_lookup, &g, &eps, &config).unwrap();
     }
 }
 
-// End-to-end: a node whose expr uses a `gantz/option` binding compiles and
-// evaluates through `vm::init`.
+// A node whose expr uses a `gantz/option` binding compiles and evaluates
+// through `vm::init`.
 #[test]
 fn required_module_bindings_evaluate() {
     let mut g = petgraph::graph::DiGraph::new();
@@ -170,9 +169,9 @@ fn required_module_bindings_evaluate() {
         .unwrap();
 }
 
-// The `Expr` node's own `requires` field drives emission end-to-end: an
-// expr using a `gantz/option` binding compiles and evaluates via `vm::init`
-// with no custom node type involved.
+// The `Expr` node's own `requires` field drives emission. An expr that uses
+// a `gantz/option` binding compiles and evaluates through `vm::init` with no
+// custom node type.
 #[test]
 fn expr_requires_field_evaluates() {
     let mut g = petgraph::graph::DiGraph::new();

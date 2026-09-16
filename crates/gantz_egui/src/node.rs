@@ -1,8 +1,6 @@
-//! Provides custom nodes that are commonly useful to egui applications of
-//! gantz.
+//! Custom nodes for egui applications of gantz.
 //!
-//! Provides new node items, while re-exporting some of the `gantz_core::node`
-//! items for convenience.
+//! Also re-exports some `gantz_core::node` items for convenience.
 
 pub use comment::Comment;
 pub use dyn_node::{DynNode, NodeCodec, NodeUiInstance, NormalizeNodeError, UiBuiltins};
@@ -30,8 +28,9 @@ mod size_sync;
 /// Builtin specs for the egui node set.
 pub fn builtins() -> Vec<gantz_core::Builtin> {
     use gantz_core::Builtin;
-    // The `fn` builtin defaults to referring to the `id` builtin, pinned at
-    // its ERASED content address (the same scheme all builtins index by).
+    // The `fn` builtin defaults to a reference to the `id` builtin. It is
+    // pinned at the erased content address, the same scheme all builtins
+    // index by.
     let identity_ca = gantz_core::data::erase_node_typed(&gantz_core::node::Identity)
         .expect("`id` must erase")
         .content_addr();

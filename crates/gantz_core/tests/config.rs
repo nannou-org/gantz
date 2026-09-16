@@ -35,24 +35,20 @@ fn node_number() -> node::Expr {
     .unwrap()
 }
 
-// Helper trait for debugging the graph.
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
-// A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }
 
 type TestGraph = petgraph::graph::DiGraph<Box<dyn DebugNode>, Edge, usize>;
-// A nested graph: an ordinary `Graph` (which implements `Node`) boxed into its
-// parent, in place of the removed `GraphNode` wrapper.
 type Nested = node::graph::Graph<Box<dyn DebugNode>>;
 
-// A graph exercising both toggles: a reachable push chain through a nested
-// graph, an unreachable node at the root level (`mul`, id 4), an unreachable
-// *stateful* node at the root level (`number`, id 5), and an unreachable node
-// inside the nested graph (`mul`, id 2 at level 2).
+// A graph that exercises both toggles. A reachable push chain runs through a
+// nested graph. The `mul` node with id 4 and the stateful `number` node with
+// id 5 are unreachable at the root level. The `mul` node with id 2 is
+// unreachable inside the nested graph.
 //
 //    --------
 //    | push |                      // id 0
@@ -97,8 +93,8 @@ fn test_graph() -> TestGraph {
 // The all-connected node fn names of the unreachable nodes in `test_graph`.
 const ORPHAN_FNS: &[&str] = &["node-fn-4-i11-o1", "node-fn-5-i1-o1", "node-fn-2:2-i11-o1"];
 
-// By default, node fns are emitted on demand: nodes unreachable from every
-// entrypoint produce no node fns.
+// By default the compiler emits node fns on demand. Nodes unreachable from
+// every entrypoint produce no node fns.
 #[test]
 fn default_omits_uncalled_node_fns() {
     let g = test_graph();
@@ -110,9 +106,9 @@ fn default_omits_uncalled_node_fns() {
     }
 }
 
-// With `emit_all_node_fns`, every node's all-connected variant is emitted -
-// root level orphans (pure and stateful) and nested level orphans alike -
-// and the extra definitions do not disturb evaluation.
+// With `emit_all_node_fns`, every node gets its all-connected variant. This
+// includes pure and stateful orphans at the root level and orphans in nested
+// graphs. The extra definitions do not disturb evaluation.
 #[test]
 fn emit_all_node_fns_includes_uncalled_nodes() {
     let config = Config {
@@ -127,14 +123,14 @@ fn emit_all_node_fns_includes_uncalled_nodes() {
         assert!(module_str.contains(fn_name), "missing {fn_name}");
     }
 
-    // The reachable chain still evaluates (the assert_eq node throws on
-    // failure), with the dead definitions loaded alongside.
+    // The reachable chain still evaluates with the dead definitions loaded.
+    // The assert_eq node throws on failure.
     vm.call_function_by_name_with_args(&entry_fn_name(&eps[0].id()), vec![])
         .unwrap();
 }
 
-// Skipping IR validation only skips the check: the emitted module is
-// identical to a validated build's.
+// Skipping IR validation only skips the check. The emitted module is
+// identical to a validated build.
 #[test]
 fn no_validate_ir_emits_identical_module() {
     let config = Config {

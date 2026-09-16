@@ -2,12 +2,12 @@
 //! entities the compiler generated it from.
 //!
 //! The map is built by lexically scanning the pretty-printed module source
-//! (see `vm::fmt_module`) and parsing every identifier with
-//! [`names::parse`]. Scanning the *final* text - rather than threading spans
-//! through emission - guarantees the offsets index the exact string that is
-//! displayed and executed.
+//! and parsing every identifier with [`names::parse`]. See `vm::fmt_module`.
+//! Scanning the final text rather than threading spans through emission
+//! guarantees the offsets index the exact string that is displayed and
+//! executed.
 //!
-//! The scanner is total: malformed input never panics, it just yields fewer
+//! The scanner is total. Malformed input never panics. It only yields fewer
 //! definitions and occurrences.
 
 use crate::{
@@ -23,20 +23,20 @@ pub struct SourceMap {
     /// Top-level forms in source order.
     defs: Vec<Def>,
     /// Identifier occurrences that parse as emitted [`Name`]s, in source
-    /// order. The defining identifier of each [`Def`] is excluded (it is
-    /// represented by the def itself).
+    /// order. The defining identifier of each [`Def`] is excluded. The def
+    /// itself represents it.
     occs: Vec<Occ>,
 }
 
-/// A top-level form (almost always a `(define (name ...) ...)`).
+/// A top-level form. Almost always a `(define (name ...) ...)`.
 #[derive(Clone, Debug)]
 pub struct Def {
     /// The byte range of the whole form, opening to closing paren inclusive.
     pub range: Range<usize>,
     /// The defined identifier parsed as an emitted name, if it is one.
     pub name: Option<Name>,
-    /// The byte range of the defined identifier (empty when the form defines
-    /// nothing).
+    /// The byte range of the defined identifier. Empty when the form defines
+    /// nothing.
     pub name_range: Range<usize>,
 }
 
@@ -55,11 +55,11 @@ pub struct Occ {
 /// [`SourceMap::node_spans`].
 #[derive(Clone, Debug, Default)]
 pub struct NodeSpans {
-    /// Whole-form ranges of the defs compiled *for* the node (its node fns,
-    /// and for graph nodes their graph and level fns).
+    /// Whole-form ranges of the defs compiled for the node. That is its node
+    /// fns, and for graph nodes their graph and level fns.
     pub defs: Vec<Range<usize>>,
-    /// Ranges of identifiers referring to the node elsewhere (call sites and
-    /// value bindings).
+    /// Ranges of identifiers referring to the node elsewhere. That is call
+    /// sites and value bindings.
     pub refs: Vec<Range<usize>>,
 }
 
@@ -79,7 +79,7 @@ impl SourceMap {
         &self.occs
     }
 
-    /// The spans associated with the node at the given full path: the defs
+    /// The spans associated with the node at the given full path. The defs
     /// compiled for it and the identifiers referring to it.
     pub fn node_spans(&self, path: &[node::Id]) -> NodeSpans {
         let mut spans = NodeSpans::default();
@@ -97,16 +97,15 @@ impl SourceMap {
         spans
     }
 
-    /// The full path of the node best attributed to the given byte range
-    /// (e.g. a steel error span).
+    /// The full path of the node best attributed to the given byte range,
+    /// for example a steel error span.
     ///
-    /// Resolution: a range covering the enclosing form's defined name (e.g.
-    /// a whole-define span) attributes to the def itself; otherwise the
-    /// first intersecting fn-call identifier wins, then the first
-    /// intersecting value binding (resolved against the form's level), then
-    /// the form's own attribution. `Some(vec![])` means "the module as a
-    /// whole" (e.g. an entry fn's glue); `None` means the range lies outside
-    /// every form.
+    /// A range covering the enclosing form's defined name attributes to the
+    /// def itself. Otherwise the first intersecting fn-call identifier wins.
+    /// Then the first intersecting value binding, resolved against the
+    /// form's level. Then the form's own attribution. `Some(vec![])` means
+    /// the module as a whole, for example an entry fn's glue. `None` means
+    /// the range lies outside every form.
     pub fn node_at(&self, range: Range<usize>) -> Option<Vec<node::Id>> {
         // Treat an empty range as a point query.
         let range = range.start..range.end.max(range.start + 1);
@@ -155,7 +154,7 @@ fn def_path(def: &Def) -> Option<&[node::Id]> {
 /// The graph level whose node ids are in scope within a def's body.
 fn level_path(def: &Def) -> Option<&[node::Id]> {
     match def.name.as_ref()? {
-        // A node fn's body is the node's own expr: relative ids refer to
+        // A node fn's body is the node's own expr. Relative ids refer to
         // its siblings.
         Name::NodeFn { path, .. } => path.split_last().map(|(_, parent)| parent),
         // Graph and level fn bodies are lowered from the level's interior.
@@ -349,8 +348,9 @@ mod tests {
         let map = SourceMap::parse(src);
         assert_eq!(map.defs().len(), 1);
         assert_eq!(&src[map.defs()[0].range.clone()], src);
-        // Only the quoted (but still identifier-shaped) var is recorded; the
-        // string, char literals and comment contribute nothing.
+        // Only the quoted var is recorded, since it is still
+        // identifier-shaped. The string, char literals and comment contribute
+        // nothing.
         let occs: Vec<_> = map.occs().iter().map(|o| &src[o.range.clone()]).collect();
         assert_eq!(occs, vec!["node-2-o0"]);
     }

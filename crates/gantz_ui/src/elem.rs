@@ -1,11 +1,11 @@
 //! The typed UI tree model.
 //!
 //! [`Element`] is the canonical, closed representation of the v1 vocabulary.
-//! Unknown or malformed forms never fail a decode, they become
-//! [`Element::Error`] nodes in place (see [`crate::diag`]).
+//! Unknown or malformed forms never fail a decode. They become
+//! [`Element::Error`] nodes in place. See [`crate::diag`].
 //!
 //! The `Default` impl of each element struct is the single source of truth
-//! for attribute defaults: the decoder falls back to it and the encoder
+//! for attribute defaults. The decoder falls back to it and the encoder
 //! omits attributes equal to it.
 
 use crate::diag::{ErrorReason, TreePath};
@@ -13,16 +13,15 @@ use std::fmt;
 
 /// A node path relative to the graph the tree was defined in.
 ///
-/// Segments match `gantz_core::node::Id` (a plain `usize`), stated as
-/// `usize` here so the model stays runtime free. Paths are machine produced
-/// at codegen time, never hand authored in the normal flow.
+/// Segments match `gantz_core::node::Id`, a plain `usize`. They are stated
+/// as `usize` here so the model stays runtime free. See the crate doc's
+/// binding model.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct BindPath(pub Vec<usize>);
 
 /// An explicit identity override, `(key <string|int>)`.
 ///
-/// Keys are required for children whose order can change at runtime so that
-/// host widget memory follows the child rather than its position.
+/// See the crate doc on identity and keys.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Key {
     /// A string key.
@@ -46,7 +45,7 @@ pub enum Align {
     End,
 }
 
-/// The rendering style of a `dialer`. Reserved: the v1 host renders every
+/// The rendering style of a `dialer`. Reserved. The v1 host renders every
 /// dialer as a drag value regardless.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DialerStyle {
@@ -76,7 +75,7 @@ pub enum PlotStyle {
 
 /// One node of the decoded UI tree.
 ///
-/// The model is closed: unknown tags decode to [`Element::Error`] so they
+/// The model is closed. Unknown tags decode to [`Element::Error`] so they
 /// stay visible, never silently blank.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Element {
@@ -143,7 +142,7 @@ pub struct Row {
 /// A grid filled row-major.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Grid {
-    /// The number of columns, at least 1. Required: decoding substitutes 1
+    /// The number of columns, at least 1. Required. Decoding substitutes 1
     /// with a warning when absent.
     pub cols: u32,
     /// Spacing between cells, host default when absent.
@@ -175,7 +174,7 @@ pub struct Sep {
 /// Empty space along the parent's main axis.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Space {
-    /// The amount of space, host default when absent. Positional:
+    /// The amount of space, host default when absent. Positional, as in
     /// `(space 8)`.
     pub amount: Option<f32>,
     /// Identity override.
@@ -184,12 +183,12 @@ pub struct Space {
 
 /// Prefixes the binding paths of a subtree with a node id.
 ///
-/// Never hand written in the normal flow: codegen inserts it where a child
-/// graph's exported GUI crosses into a parent expression, and hosts apply it
-/// implicitly when rendering a referenced graph at an instance path.
+/// Codegen inserts it where a child graph's exported GUI crosses into a
+/// parent expression. Hosts apply it implicitly when rendering a referenced
+/// graph at an instance path.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scope {
-    /// The node id pushed onto the binding path prefix. Positional:
+    /// The node id pushed onto the binding path prefix. Positional, as in
     /// `(scope 3 ...)`.
     pub id: usize,
     /// Identity override.
@@ -234,8 +233,8 @@ pub struct Toggle {
     pub key: Option<Key>,
 }
 
-/// A trigger control. Holds no state, a press queues a push eval at the
-/// bound node (bang semantics stay in the node's expression).
+/// A trigger control. It holds no state. A press queues a push eval at the
+/// bound node. Bang semantics stay in the node's expression.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Button {
     /// The bound node path.
@@ -248,8 +247,8 @@ pub struct Button {
 
 /// A grid of bool or number cells bound to list-of-rows state.
 ///
-/// Rows and columns come from the bound state's shape, not from attributes:
-/// a dynamic collection is one widget bound to one structured value.
+/// Rows and columns come from the bound state's shape, not from attributes.
+/// A dynamic collection is one widget bound to one structured value.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Matrix {
     /// The bound node path.
@@ -263,7 +262,7 @@ pub struct Matrix {
     pub key: Option<Key>,
 }
 
-/// Static text. The text is positional: `(label "text")`.
+/// Static text. The text is positional, as in `(label "text")`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Label {
     /// The text to display.
@@ -287,8 +286,8 @@ pub struct Value {
     pub key: Option<Key>,
 }
 
-/// A plotted view of bound state (a scope buffer or a signal, a list of
-/// lists renders as stacked channels).
+/// A plotted view of bound state, a scope buffer or a signal. A list of
+/// lists renders as stacked channels.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Plot {
     /// The bound node path.
@@ -320,11 +319,10 @@ pub struct Plot {
 /// A host resolved embed of a child instance's GUI.
 ///
 /// The id is the instance's node id in the defining graph. The host resolves
-/// the instance's body marker (else its auto GUI, else a label) and renders
-/// it at the instance path inside an implicit scope.
+/// and renders it as described in the crate doc on embedding.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RefGui {
-    /// The child instance's node id. Positional: `(ref-gui 9)`.
+    /// The child instance's node id. Positional, as in `(ref-gui 9)`.
     pub id: usize,
     /// Identity override.
     pub key: Option<Key>,
@@ -358,7 +356,7 @@ pub const RESERVED_TAGS: &[&str] = &[
 pub const ATTRS_MARKER: &str = "@";
 
 impl Element {
-    /// The element's tag name (`"error"` for [`Element::Error`]).
+    /// The element's tag name. `"error"` for [`Element::Error`].
     pub fn tag(&self) -> &'static str {
         match self {
             Element::Col(_) => "col",

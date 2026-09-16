@@ -24,29 +24,24 @@ fn node_add() -> node::Expr {
     node::expr("(+ $l $r)").unwrap()
 }
 
-// Helper trait for debugging the graph.
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
-// A nested graph: an ordinary `Graph` (which implements `Node`) boxed into its
-// parent, in place of the removed `GraphNode` wrapper.
 type Nested = node::graph::Graph<Box<dyn DebugNode>>;
 
-// A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }
 
-// A nested graph (mul of two inlets) driven by a push at the root:
+// A nested graph that multiplies two inlets, driven by a push at the root.
 //
 //    push -> 6 -> [inlet -> mul <- inlet] -> add <- 42
 //         -> 7 ---^                  ^------ 42 --|
 //
-// Asserts that the source map built from the emitted module resolves node
-// fn defs, call sites and value bindings back to full node paths.
+// The source map built from the emitted module must resolve node fn defs,
+// call sites and value bindings back to full node paths.
 #[test]
 fn source_map_roundtrip() {
-    // The nested graph: mul of two inlets.
     let mut ga = Nested::default();
     let inlet_a = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
     let inlet_b = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
@@ -56,7 +51,6 @@ fn source_map_roundtrip() {
     ga.add_edge(inlet_b, mul, Edge::from((0, 1)));
     ga.add_edge(mul, outlet, Edge::from((0, 0)));
 
-    // The root graph.
     let mut gb = petgraph::graph::DiGraph::new();
     let push = gb.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let six = gb.add_node(Box::new(node_int(6)) as Box<_>);
@@ -98,8 +92,8 @@ fn source_map_roundtrip() {
     assert_eq!(kind_count(&|n| matches!(n, Name::GraphFn { .. })), 1);
     assert_eq!(kind_count(&|n| matches!(n, Name::EntryFn { .. })), 1);
 
-    // The nested mul node: its node fn def, and its call + bindings inside
-    // the graph fn, all resolve to its full path.
+    // The nested mul node's fn def, call and bindings inside the graph fn
+    // all resolve to its full path.
     let mul_path = vec![graph_a.index(), mul.index()];
     let mul_spans = map.node_spans(&mul_path);
     assert_eq!(mul_spans.defs.len(), 1, "one node fn def for mul");
@@ -111,8 +105,8 @@ fn source_map_roundtrip() {
     assert!(src[mul_spans.defs[0].clone()].starts_with("(define node-fn-"));
     assert!(src[mul_spans.defs[0].clone()].contains("*"));
 
-    // The nested graph node itself owns two defs - its node fn wrapper and
-    // the graph fn it calls - and is called from the entry fn.
+    // The nested graph node owns two defs, its node fn wrapper and the graph
+    // fn it calls. The entry fn calls it.
     let ga_path = vec![graph_a.index()];
     let ga_spans = map.node_spans(&ga_path);
     assert_eq!(ga_spans.defs.len(), 2, "node fn wrapper + graph fn");
@@ -131,8 +125,8 @@ fn source_map_roundtrip() {
     }
 }
 
-// A push *inside* the nested graph produces a per-entrypoint level fn whose
-// def and call site both resolve to the nested graph node's path.
+// A push inside the nested graph produces a per-entrypoint level fn. Its def
+// and call site both resolve to the nested graph node's path.
 #[test]
 fn source_map_level_fn() {
     let mut ga = Nested::default();

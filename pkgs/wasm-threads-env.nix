@@ -1,20 +1,15 @@
 # Build environment for cpal's AudioWorklet backend on wasm32. The worklet runs on a real audio
-# thread, which needs WASM threads: a `std` recompiled with atomics (`-Z build-std`, hence
-# `CARGO_UNSTABLE_BUILD_STD`) and a *shared* linear memory the worklet thread imports. Both are
-# nightly-only. RUSTFLAGS applies only to the wasm target (cargo excludes host build scripts when
-# `--target` is set), so host tooling is untouched.
-#
-# These are cpal's documented audioworklet flags (examples/audioworklet-beep/.cargo/config.toml):
-# `--shared-memory`/`--max-memory`/`--import-memory` make the memory shared and imported so the
-# worklet can be handed the *same* memory, and the `__tls_*` exports let wasm-bindgen's threading
-# transform set up per-thread state (without them it fails with "failed to find `__heap_base`").
-#
-# Shared by `pkgs/gantz-website.nix` and the `gantz-web` dev shell so the flags can't drift
-# between the Nix build and local `trunk serve`.
+# thread, which needs WASM threads. `CARGO_UNSTABLE_BUILD_STD` sets `-Z build-std`, which
+# recompiles `std` with atomics. The linear memory is shared and imported so the worklet thread
+# gets the same memory. Both are nightly-only. Cargo excludes host build scripts when `--target`
+# is set, so RUSTFLAGS applies only to the wasm target. The `__tls_*` exports let wasm-bindgen's
+# threading transform set up per-thread state. Without them wasm-bindgen fails with
+# `failed to find __heap_base`. `pkgs/gantz-website.nix` and the `gantz-web` dev shell share this
+# file so the flags cannot drift. The flags follow cpal's audioworklet-beep example.
 { llvmPackages }:
 {
   RUSTFLAGS = builtins.concatStringsSep " " [
-    # SIMD128 vectorizes the per-sample DSP loops (broad browser support alongside threads).
+    # SIMD128 vectorizes the per-sample DSP loops. Browser support for it is broad.
     "-C target-feature=+atomics,+simd128"
     "-C link-arg=--shared-memory"
     "-C link-arg=--max-memory=1073741824"
@@ -27,12 +22,11 @@
   ];
   CARGO_UNSTABLE_BUILD_STD = "std,panic_abort";
 
-  # `ring` (iroh's crypto, behind the collab sessions' end-to-end
-  # encryption) compiles its C sources to wasm; that needs a clang that can
-  # target wasm32 - the *unwrapped* one, as the nix cc wrapper pins the host
-  # target. Without it the build still "succeeds" but leaves the
-  # `ring_core_*` symbols as dangling `env` imports, and the browser fails
-  # to instantiate the module (the splash hangs at 0%).
+  # `ring`, the crypto behind iroh collab sessions, compiles its C sources to
+  # wasm. That needs the unwrapped clang, since the nix cc wrapper pins the
+  # host target. Without it the build leaves the `ring_core_*` symbols as
+  # dangling `env` imports and the browser fails to instantiate the module.
+  # The splash then hangs at 0%.
   CC_wasm32_unknown_unknown = "${llvmPackages.clang-unwrapped}/bin/clang";
   AR_wasm32_unknown_unknown = "${llvmPackages.llvm}/bin/llvm-ar";
 }

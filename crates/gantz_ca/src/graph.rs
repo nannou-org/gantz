@@ -45,28 +45,18 @@ impl fmt::Display for GraphAddr {
 
 /// Calculate the content address of a graph.
 ///
-/// The address depends on graph *structure*, not on the physical node-index
-/// layout: each node is hashed by its canonical rank (its position in
-/// ascending-index order) rather than its raw index. For a hole-free graph the
-/// rank equals the raw index, so addresses are unchanged; vacant slots left by
-/// node removals (`StableGraph` "holes") are compacted away, keeping the address
-/// stable across a `gantz_format` round-trip (which cannot reproduce holes).
+/// The address depends on graph structure, not on the physical node-index
+/// layout. Each node is hashed by its canonical rank, its position in
+/// ascending-index order, rather than its raw index. For a hole-free graph
+/// the rank equals the raw index. Vacant slots left by node removals in a
+/// `StableGraph` are compacted away. This keeps the address stable across a
+/// `gantz_format` round-trip, which cannot reproduce holes.
 ///
-/// Raw indices remain meaningful at *runtime* - they key node state and appear
-/// in generated expressions - but they no longer leak into the address.
+/// Raw indices remain meaningful at runtime. They key node state and appear
+/// in generated expressions. They do not leak into the address.
 ///
-/// ## Approach
-///
-/// 1. Rank each node by its position in ascending-index order.
-/// 2. For each node (in rank order):
-///     - hash its rank (u64, big-endian).
-///     - hash the content address of the node.
-/// 3. Collect all edges (rank-src, rank-dst, edge-weight).
-/// 4. Sort the edges.
-/// 5. For each edge:
-///     - hash the source node rank (u64, big-endian).
-///     - hash the target node rank (u64, big-endian).
-///     - hash the edge weight (source output + target input).
+/// Nodes are hashed in rank order as the pair of rank and node address. Edges
+/// are then sorted and hashed as source rank, target rank and weight.
 pub fn addr<G>(g: G) -> GraphAddr
 where
     G: Data + IntoEdgeReferences + IntoNodeReferences,
@@ -87,21 +77,17 @@ where
     G::EdgeWeight: CaHash + Ord,
     G::NodeWeight: CaHash,
 {
-    // Domain-separate graph addresses from every other kind (see the
-    // matching prefix on `Commit`'s `CaHash`).
+    // Domain-separate graph addresses from every other kind. `Commit`'s
+    // `CaHash` has a matching prefix.
     hasher.update(b"gantz.graph");
-    // Assign each node a canonical rank: its position in ascending-index order
-    // (the order `node_references` yields for a `StableGraph`). For a hole-free
-    // graph the rank equals the raw index; vacant slots left by node removals
-    // are compacted away, making the address independent of the physical slot
-    // layout and stable across a round-trip.
+    // Rank each node by its position in ascending-index order, the order
+    // `node_references` yields for a `StableGraph`.
     let rank: HashMap<G::NodeId, u64> = g
         .node_references()
         .enumerate()
         .map(|(i, n_ref)| (n_ref.id(), i as u64))
         .collect();
 
-    // Hash all nodes in rank order.
     for n_ref in g.node_references() {
         let id = n_ref.id();
         let node_ca = content_addr(n_ref.weight());
@@ -109,9 +95,8 @@ where
         CaHash::hash(&*node_ca, hasher);
     }
 
-    // Collect and sort edges by (source rank, target rank, edge weight). Since
-    // edge indices don't matter, we put them in an edge-index-agnostic
-    // deterministic order.
+    // Sort edges by source rank, target rank and weight so that edge indices
+    // do not affect the address.
     let mut edges = vec![];
     for e_ref in g.edge_references() {
         let src = rank[&e_ref.source()];
@@ -120,7 +105,6 @@ where
     }
     edges.sort_by(|(sa, da, ea), (sb, db, eb)| (sa, da, ea.weight()).cmp(&(sb, db, eb.weight())));
 
-    // Hash all edges as (src rank, dst rank, edge weight).
     for (src, dst, e_ref) in edges {
         CaHash::hash(&src, hasher);
         CaHash::hash(&dst, hasher);
@@ -135,14 +119,12 @@ mod tests {
 
     type G = StableGraph<u32, u32, Directed, usize>;
 
-    /// The address must ignore `StableGraph` "holes": an edited graph (whose
-    /// node removals leave vacant index slots) and its compacted form (as
-    /// produced by a `gantz_format` round-trip, which cannot reproduce holes)
-    /// must share an address.
+    /// The address must ignore `StableGraph` holes. An edited graph with
+    /// vacant index slots and its compacted form must share an address.
     #[test]
     fn addr_is_stable_across_hole_compaction() {
-        // Holey: four nodes wired up, then an interior node removed - leaving a
-        // vacant slot at index 1 and surviving nodes at indices 0, 2, 3.
+        // Four nodes wired up, then an interior node removed. This leaves a
+        // vacant slot at index 1 and surviving nodes at indices 0, 2 and 3.
         let mut holey = G::default();
         let h0 = holey.add_node(10);
         let h1 = holey.add_node(20);
@@ -164,8 +146,8 @@ mod tests {
         assert_eq!(addr(&holey), addr(&compact));
     }
 
-    /// The address is deterministic and remains sensitive to structure (so the
-    /// canonical-rank scheme didn't collapse genuinely distinct graphs).
+    /// The address is deterministic and sensitive to structure. The
+    /// canonical-rank scheme must not collapse distinct graphs.
     #[test]
     fn addr_is_deterministic_and_structure_sensitive() {
         let build = |rev: bool| {

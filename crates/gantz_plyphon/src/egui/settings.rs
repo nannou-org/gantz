@@ -1,12 +1,12 @@
-//! The DSP settings subtab: the dsp runtime's status plus a couple of live
-//! knobs (scheduling lead and mute).
+//! The DSP settings subtab. It shows the dsp runtime's status and the live
+//! scheduling lead and mute controls.
 
 use crate::{Config, DeriveStatus, Status};
 use gantz_egui::Responses;
 
-/// The DSP settings subtab: a read-only status readout, a live
-/// scheduling-lead control and an enable/mute toggle, plus each open head's
-/// derive status.
+/// The DSP settings subtab. It has a read-only status readout, a live
+/// scheduling-lead control, an enable toggle and each open head's derive
+/// status.
 ///
 /// Holds a per-frame snapshot of the domain's [`Config`] and [`Status`].
 /// Edits apply to the snapshot in place, and the full updated [`Config`] is
@@ -92,8 +92,7 @@ impl gantz_egui::widget::SettingsTab for DspSettingsTab {
             }
         });
 
-        // Each open head's derive status (the DSP pane shows the focused
-        // head's in full).
+        // The DSP pane shows the focused head's status in full.
         if !self.heads.is_empty() {
             ui.separator();
             ui.strong("Graphs");

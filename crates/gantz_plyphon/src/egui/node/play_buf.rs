@@ -26,8 +26,7 @@ impl NodeUi for PlayBuf {
         _ctx: &mut NodeCtx,
         _body: &mut egui_extras::TableBody,
     ) -> InspectorRowsResponse {
-        // Assigning/browsing assets from the UI is a follow-up; for now the asset
-        // is set programmatically and the node has no editable rows.
+        // The asset is set programmatically. The node has no editable rows.
         InspectorRowsResponse::default()
     }
 

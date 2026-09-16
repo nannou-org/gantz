@@ -5,8 +5,8 @@ use super::head_name_edit::{head_name, head_name_edit};
 
 /// Per-head graph configuration widget.
 ///
-/// Provides a name-editing text field, one-shot `auto-layout`/`center view`
-/// buttons, and the per-head layout flow direction. The non-flow layout
+/// Provides a name-editing text field, one-shot `auto-layout` and `center
+/// view` buttons, and the per-head layout flow direction. The non-flow layout
 /// parameters live globally in `Settings > Global`.
 pub struct GraphConfig<'a> {
     head: &'a gantz_ca::Head,
@@ -29,21 +29,22 @@ pub struct GraphConfigResponse {
     pub new_branch: Option<(gantz_ca::Head, String)>,
     /// The "Export" button was clicked.
     pub export: bool,
-    /// Demo graph association changed: `Some(Some(name))` = set, `Some(None)` = clear.
+    /// The demo graph association changed. `Some(Some(name))` sets it and
+    /// `Some(None)` clears it.
     pub demo_changed: Option<Option<String>>,
     /// The "Reset" button was clicked for a base graph.
     pub reset_base_graph: bool,
-    /// The graph's description was edited (committed on focus loss). An empty
-    /// string clears the description.
+    /// The graph's description was committed on focus loss. An empty string
+    /// clears the description.
     pub description_changed: Option<String>,
     /// A merge candidate was chosen from the merge row.
     pub merge: Option<crate::MergeHead>,
-    /// The graph's base source association changed (see
-    /// [`base_sources`][GraphConfig::base_sources]).
+    /// The graph's base source association changed. See
+    /// [`base_sources`][GraphConfig::base_sources].
     pub base_source_changed: Option<String>,
     /// The "share" button was clicked in the collab row.
     pub share: bool,
-    /// The "stop" (sharing) button was clicked in the collab row.
+    /// The "stop" sharing button was clicked in the collab row.
     pub stop_sharing: bool,
 }
 
@@ -69,16 +70,15 @@ impl<'a> GraphConfig<'a> {
         }
     }
 
-    /// Whether this graph is a base node - a pre-composed graph that ships
-    /// with the binary and is reset to its original form on every launch.
-    /// Users who want to customize a base node should duplicate it under a
-    /// new name.
+    /// Whether this graph is a base node. A base node is a pre-composed graph
+    /// that ships with the binary and resets to its original form on every
+    /// launch. To customise a base node, duplicate it under a new name.
     pub fn is_base(mut self, is_base: bool) -> Self {
         self.is_base = is_base;
         self
     }
 
-    /// Whether this graph is immutable - layout controls will be disabled.
+    /// Whether this graph is immutable. Layout controls are disabled.
     pub fn immutable(mut self, immutable: bool) -> Self {
         self.immutable = immutable;
         self
@@ -103,10 +103,10 @@ impl<'a> GraphConfig<'a> {
     }
 
     /// The available base sources plus this graph's current one, shown as a
-    /// "source" dropdown selecting which base file the graph belongs to.
-    /// Without these (the default), the row is hidden - only base-authoring
-    /// hosts like `update-base` supply them, since an association change is
-    /// only durable where the per-source write-back runs.
+    /// "source" dropdown that selects which base file the graph belongs to.
+    /// Without these the row is hidden. Only base-authoring hosts like
+    /// `update-base` supply them, since an association change is only durable
+    /// where the per-source write-back runs.
     pub fn base_sources(mut self, base_sources: &'a [&'a str], current: Option<&'a str>) -> Self {
         self.base_sources = base_sources;
         self.current_base_source = current;
@@ -125,9 +125,8 @@ impl<'a> GraphConfig<'a> {
         self
     }
 
-    /// The head's collaborative-session state: `None` when the graph is not
-    /// currently shared. Without this call (no networking layer wired), the
-    /// collab row is hidden.
+    /// The head's collaborative-session state. `None` means the graph is not
+    /// currently shared. Without this call the collab row is hidden.
     pub fn collab(mut self, session: Option<&'a crate::collab::SessionDisplay>) -> Self {
         self.collab = Some(session);
         self
@@ -146,8 +145,8 @@ impl<'a> GraphConfig<'a> {
             .memory_mut(|m| m.data.get_temp::<String>(edit_id))
             .unwrap_or_else(|| head_name(self.head));
 
-        // Per-head temp state for the description editor (named graphs only).
-        // The edit is committed on focus loss to avoid a commit per keypress.
+        // Per-head temp state for the description editor of named graphs. The
+        // edit commits on focus loss.
         let desc_id = egui::Id::new("graph_config_desc_edit").with(self.head);
         let mut desc = is_named.then(|| {
             let current = self.current_description.unwrap_or("");
@@ -167,14 +166,13 @@ impl<'a> GraphConfig<'a> {
         let mut stop_sharing = false;
 
         // Reserve room for the label column so the value column's text fields
-        // don't expand to fill the entire pane.
+        // do not expand to fill the entire pane.
         let control_w = (ui.available_width() - 64.0).max(64.0);
 
         egui::Grid::new(egui::Id::new("graph_config_grid").with(self.head))
             .num_columns(2)
             .spacing([8.0, 6.0])
             .show(ui, |ui| {
-                // name
                 ui.label("name");
                 new_branch = ui
                     .scope(|ui| {
@@ -185,12 +183,11 @@ impl<'a> GraphConfig<'a> {
                     .new_branch;
                 ui.end_row();
 
-                // desc.
                 if let Some(desc) = desc.as_mut() {
                     ui.label("desc.");
                     let current = self.current_description.unwrap_or("");
-                    // Multiline + word-wrap; the grid row auto-fits its height
-                    // to the (wrapped) text, growing from a single row.
+                    // The grid row auto-fits its height to the wrapped text,
+                    // growing from a single row.
                     let resp = ui.add_enabled(
                         !self.immutable,
                         egui::TextEdit::multiline(desc)
@@ -204,7 +201,6 @@ impl<'a> GraphConfig<'a> {
                     ui.end_row();
                 }
 
-                // demo (named, non-demo graphs only)
                 if is_named && !is_demo && !self.demo_names.is_empty() {
                     ui.label("demo");
                     ui.add_enabled_ui(!self.immutable, |ui| {
@@ -234,8 +230,8 @@ impl<'a> GraphConfig<'a> {
                     ui.end_row();
                 }
 
-                // source (named graphs, when a base-authoring host supplies
-                // the source list): which base file the graph belongs to.
+                // The source row selects which base file the graph belongs
+                // to. Only a base-authoring host supplies the source list.
                 if is_named && !self.base_sources.is_empty() {
                     ui.label("source");
                     ui.add_enabled_ui(!self.immutable, |ui| {
@@ -260,7 +256,6 @@ impl<'a> GraphConfig<'a> {
                     ui.end_row();
                 }
 
-                // reset (base demo graphs only)
                 if self.is_base && is_demo {
                     ui.label("reset");
                     if ui
@@ -273,7 +268,6 @@ impl<'a> GraphConfig<'a> {
                     ui.end_row();
                 }
 
-                // base note
                 if self.is_base {
                     ui.label("");
                     ui.label(
@@ -284,9 +278,9 @@ impl<'a> GraphConfig<'a> {
                     ui.end_row();
                 }
 
-                // layout - center-view and auto-layout side by side. Both are
-                // one-shot: they apply once when clicked (consumed by the graph
-                // scene next pass), so hand-arranged nodes are never disturbed.
+                // The layout buttons are one-shot. The graph scene consumes
+                // them on its next pass, so hand-arranged nodes are never
+                // disturbed.
                 ui.label("layout");
                 ui.horizontal(|ui| {
                     if ui
@@ -310,7 +304,6 @@ impl<'a> GraphConfig<'a> {
                 });
                 ui.end_row();
 
-                // flow
                 ui.label("flow");
                 ui.add_enabled_ui(!self.immutable, |ui| {
                     ui.horizontal(|ui| {
@@ -328,7 +321,6 @@ impl<'a> GraphConfig<'a> {
                 });
                 ui.end_row();
 
-                // merge (named, mutable, non-base graphs only)
                 if is_named && !self.immutable && !self.is_base {
                     if let Some((env, resolutions)) = self.env {
                         ui.label("merge");
@@ -344,7 +336,6 @@ impl<'a> GraphConfig<'a> {
                     }
                 }
 
-                // collab (named, mutable, non-base graphs only)
                 if is_named && !self.immutable && !self.is_base {
                     if let Some(session) = self.collab {
                         ui.label("collab");
@@ -415,7 +406,6 @@ impl<'a> GraphConfig<'a> {
                     }
                 }
 
-                // export
                 ui.label("export");
                 export = ui
                     .button("export")
@@ -424,7 +414,6 @@ impl<'a> GraphConfig<'a> {
                 ui.end_row();
             });
 
-        // Persist the per-head editor buffers.
         ui.memory_mut(|m| m.data.insert_temp(edit_id, name));
         if let Some(desc) = desc {
             ui.memory_mut(|m| m.data.insert_temp(desc_id, desc));
@@ -444,16 +433,16 @@ impl<'a> GraphConfig<'a> {
     }
 }
 
-/// The merge row's branch selector: a dropdown of merge candidates, each with
-/// a dry-run hover summary. Picking a candidate *is* the action (one-shot,
-/// like the layout buttons): a clean candidate merges on click; a conflicted
-/// one is disabled, its tooltip listing the conflicts, with a separate opt-in
-/// button applying the selected [`Resolutions`]. Hard-blocked candidates
-/// (e.g. a reference cycle) can only be inspected.
+/// The merge row's branch selector. A dropdown of merge candidates, each with
+/// a dry-run hover summary. Picking a candidate is the one-shot action, like
+/// the layout buttons. A clean candidate merges on click. A conflicted one is
+/// disabled and its tooltip lists the conflicts. A separate opt-in button
+/// applies the selected [`Resolutions`]. Hard-blocked candidates, for example
+/// a reference cycle, can only be inspected.
 ///
-/// Candidates and previews are only computed while the popup is open, and each
-/// preview is cached keyed by the two branch tips (content addresses) plus the
-/// resolution strategy, so a cached preview can never go stale.
+/// Candidates and previews are only computed while the popup is open. Each
+/// preview is cached keyed by the two branch tips plus the resolution
+/// strategy, so a cached preview can never go stale.
 ///
 /// [`Resolutions`]: gantz_ca::merge::Resolutions
 fn merge_select(
@@ -476,7 +465,7 @@ fn merge_select(
                 gantz_ca::Head::Commit(ca) => Some(*ca),
             };
             for candidate in candidates {
-                // Fetch (or compute and cache) the candidate's dry-run preview.
+                // Fetch the candidate's dry-run preview, or compute and cache it.
                 let preview_id =
                     egui::Id::new("merge_preview").with((ours_tip, candidate.theirs, resolutions));
                 let preview = ui
@@ -517,9 +506,9 @@ fn merge_select(
                     continue;
                 }
 
-                // Conflicted or blocked: not directly selectable. Conflicts
-                // (but not blockers) offer an explicit opt-in that applies the
-                // selected resolutions.
+                // Conflicted or blocked candidates are not directly selectable.
+                // Conflicts offer an explicit opt-in that applies the selected
+                // resolutions. Blockers do not.
                 let preview = preview.expect("`!clean` requires a preview");
                 let warn = crate::node::named_ref::outdated_color();
                 ui.horizontal(|ui| {
@@ -559,8 +548,8 @@ fn merge_select(
     merge
 }
 
-/// The "⛭" menu beside the merge dropdown: how conflicts resolve when merging
-/// despite them. Edits the persisted, GUI-global strategy in place.
+/// The "⛭" menu beside the merge dropdown. It sets how conflicts resolve when
+/// merging despite them. Edits the persisted, GUI-global strategy in place.
 fn resolutions_menu(resolutions: &mut gantz_ca::merge::Resolutions, ui: &mut egui::Ui) {
     use gantz_ca::merge::{BothModified, EditOrDelete};
     ui.label("when both sides modified a node");

@@ -10,8 +10,9 @@ impl NodeUi for gantz_std::Bang {
     }
 
     fn ui(&mut self, mut ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
-        // A bang only triggers downstream evaluation; it never edits the
-        // node's content address, so the button pushes but never `changed`.
+        // A bang only triggers downstream evaluation. It never edits the
+        // node's content address, so the button pushes but never sets
+        // `changed`.
         let (&id, prefix) = ctx.path().split_last().expect("a node path is never empty");
         let tree = fragment(id);
         let root_id = uictx.egui_id().with("gui");

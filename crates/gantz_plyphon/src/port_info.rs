@@ -1,23 +1,23 @@
-//! Root-level DSP port classification for a viewed graph (see
-//! [`root_port_info`]), the data behind DSP edge styling.
+//! Root-level DSP port classification for a viewed graph, the data behind DSP
+//! edge styling. See [`root_port_info`].
 //!
 //! The GUI shows one graph per head, so an edge endpoint is fully identified
-//! by a `(root node index, port)` pair. This module classifies those pairs
-//! as *signal* ports (they carry DSP signals at derive time) or control
-//! ports, and attaches the [`PortShape`] derivation recorded for each signal
-//! output where one is recoverable. Typed probes like [`ToNodeDsp`] are
-//! unreachable through the GUI's erased registry, so callers (e.g. a bevy
-//! provider system) compute this where the concrete node type is known and
-//! hand the result to the UI.
+//! by a `(root node index, port)` pair. This module classifies those pairs as
+//! signal ports, which carry DSP signals at derive time, or control ports. It
+//! attaches the [`PortShape`] derivation recorded for each signal output
+//! where one is recoverable. Typed probes like [`ToNodeDsp`] are unreachable
+//! through the GUI's erased registry. Callers such as a bevy provider system
+//! compute this where the concrete node type is known and hand the result to
+//! the UI.
 //!
-//! Classification is structural, mirroring how flattening lowers the graph
-//! (see [`flatten`][crate::flatten()]): a concrete DSP node's ports come
-//! straight off [`NodeDsp`][crate::NodeDsp], a reference's ports resolve
-//! recursively through the referenced graph's inlets/outlets, and root-level
-//! boundary nodes forward their neighbours' classification. One deliberate
-//! approximation: a chain that resolves through a referenced graph's *inlet*
-//! (parent-side wiring, e.g. a pure `inlet -> outlet` wire child) is not
-//! followed, so such a reference's ports classify as control.
+//! Classification is structural and mirrors how [`flatten`](crate::flatten())
+//! lowers the graph. A concrete DSP node's ports come straight off
+//! [`NodeDsp`](crate::NodeDsp). A reference's ports resolve recursively
+//! through the referenced graph's inlets and outlets. Root-level boundary
+//! nodes forward their neighbours' classification. One approximation is by
+//! design. A chain that resolves through a referenced graph's inlet is not
+//! followed, since that is parent-side wiring. A pure `inlet -> outlet` wire
+//! child is one example. Such a reference's ports classify as control.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -37,19 +37,19 @@ use crate::dsp::{PortShape, PortShapes, ToNodeDsp};
 /// port.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RootPortInfo {
-    /// The signal *input* ports (the ports the synthdef compiler would wire).
+    /// The signal input ports, the ports the synthdef compiler would wire.
     pub signal_inputs: BTreeSet<(usize, usize)>,
-    /// The signal *output* ports, with the shape derivation recorded for
-    /// them. `None` when no shape is recoverable: the port fed no sink at
-    /// derive time, or the derivation's shapes are unavailable (e.g. a
-    /// nested view whose own head derived silent).
+    /// The signal output ports, with the shape derivation recorded for them.
+    /// `None` when no shape is recoverable. Either the port fed no sink at
+    /// derive time, or the derivation's shapes are unavailable, for example
+    /// in a nested view whose own head derived silent.
     pub signal_outputs: BTreeMap<(usize, usize), Option<PortShape>>,
 }
 
 /// Memoized reference probes, shared across one [`root_port_info`] pass so
-/// repeated references stay linear overall. Stacks guard reference cycles:
-/// a chain re-entering a graph it is already resolving through contributes
-/// nothing (mirroring [`dsp_graphs`][crate::ref_ext::dsp_graphs]).
+/// repeated references stay linear overall. Stacks guard reference cycles. A
+/// chain re-entering a graph it is already resolving through contributes
+/// nothing, mirroring [`dsp_graphs`](crate::ref_ext::dsp_graphs).
 #[derive(Default)]
 struct Memos {
     inlets: HashMap<ContentAddr, Vec<bool>>,
@@ -59,9 +59,9 @@ struct Memos {
 }
 
 /// Classify `graph`'s root-level ports, resolving references through the
-/// `reified` cache and attaching the [`PortShape`]s recorded in `shapes` (the
-/// union of the head's derived parts' shapes, keyed by node paths absolute
-/// to `graph` - see [`PortShapes`]).
+/// `reified` cache and attaching the [`PortShape`]s recorded in `shapes`.
+/// That is the union of the head's derived parts' shapes, keyed by node paths
+/// absolute to `graph`. See [`PortShapes`].
 pub fn root_port_info<N>(
     graph: &Graph<N>,
     reified: &ReifiedGraphs<N>,
@@ -111,8 +111,8 @@ where
     }
 
     // Root-level boundary nodes forward their neighbours' classification, so
-    // nested views style their interface edges too. Inlets before outlets:
-    // an outlet fed by a signal-classified inlet then classifies signal.
+    // nested views style their interface edges too. Inlets go before outlets,
+    // so an outlet fed by a signal-classified inlet then classifies signal.
     for ix in graph.node_indices() {
         if graph[ix].inlet(ctx) {
             let signal = graph.edges_directed(ix, Direction::Outgoing).any(|e| {
@@ -139,10 +139,10 @@ where
     info
 }
 
-/// Which of the graph-at-`ca`'s inlets (ascending node index, the "input i
-/// to inlet i" contract) transitively feed a DSP input, i.e. which of a
-/// reference's inputs carry signals. Empty when `ca` is unresolved or
-/// re-entered (a reference cycle).
+/// Which of the graph-at-`ca`'s inlets transitively feed a DSP input, that is
+/// which of a reference's inputs carry signals. Inlets are in ascending node
+/// index order, the "input i to inlet i" contract. Empty when `ca` is
+/// unresolved or re-entered through a reference cycle.
 fn signal_inlets<N>(
     reified: &ReifiedGraphs<N>,
     ctx: MetaCtx,
@@ -193,7 +193,7 @@ where
     result
 }
 
-/// The number of outlets of the graph at `ca` (a reference's output count).
+/// The number of outlets of the graph at `ca`, a reference's output count.
 fn n_outlets<N>(reified: &ReifiedGraphs<N>, ctx: MetaCtx, ca: ContentAddr) -> usize
 where
     N: gantz_core::Node,
@@ -206,9 +206,9 @@ where
 
 /// The concrete DSP `(path relative to the graph at ca, output port)`
 /// sources that transitively feed the graph-at-`ca`'s `outlet`-th outlet,
-/// i.e. the DSP sources behind a reference's output. Chains that dead-end
-/// (a non-DSP source, an inlet - parent-side wiring - or a cycle) contribute
-/// nothing; an empty result means the output carries no signal.
+/// that is the DSP sources behind a reference's output. Chains that dead-end
+/// at a non-DSP source, an inlet or a cycle contribute nothing. An empty
+/// result means the output carries no signal.
 fn outlet_sources<N>(
     reified: &ReifiedGraphs<N>,
     ctx: MetaCtx,
@@ -262,12 +262,13 @@ where
     sources
 }
 
-/// The shape of a reference output fed by the given concrete DSP `sources`
-/// (paths relative to the reference, which sits at root index `root_ix`).
+/// The shape of a reference output fed by the given concrete DSP `sources`.
+/// Paths are relative to the reference, which sits at root index `root_ix`.
 /// Derivation sums a multi-fed input, so the width is the widest summand and
-/// the rate is audio if any summand is audio (mirroring
-/// [`sum_signals`][crate::dsp::sum_signals] + [`signal_rate`][crate::signal_rate]).
-/// `None` when no source has a recorded shape.
+/// the rate is audio if any summand is audio, mirroring
+/// [`sum_signals`](crate::dsp::sum_signals) and
+/// [`signal_rate`](crate::signal_rate). `None` when no source has a recorded
+/// shape.
 fn sum_shape(
     shapes: &PortShapes,
     root_ix: usize,

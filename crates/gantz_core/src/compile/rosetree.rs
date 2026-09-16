@@ -9,7 +9,7 @@ pub(crate) struct RoseTree<T> {
 }
 
 impl<T> RoseTree<T> {
-    /// Get the tree (or nested tree) at the given nesting path.
+    /// Get the tree at the given nesting path.
     ///
     /// An empty list returns the top-level tree.
     pub(crate) fn tree(&self, path: &[node::Id]) -> Option<&Self> {
@@ -21,7 +21,7 @@ impl<T> RoseTree<T> {
         tree.tree(&path[1..])
     }
 
-    /// Get the tree (or nested tree) at the given nesting path.
+    /// Get the tree at the given nesting path.
     ///
     /// An empty list returns the top-level tree.
     pub(crate) fn tree_mut(&mut self, path: &[node::Id]) -> &mut Self

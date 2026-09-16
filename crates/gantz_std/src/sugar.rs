@@ -1,9 +1,9 @@
 //! `.gantz` keyword sugar for the standard node set.
 //!
-//! [`StdSugar`] provides the human-friendly keywords for this crate's nodes:
+//! [`StdSugar`] provides the keywords for this crate's nodes. These are a
 //! bare `bang`, `(number [#:min m] [#:max m] [#:precision n] [#:no-push-eval])`
-//! and `(log [level])`. Compose it with [`gantz_format::CoreSugar`] (and the
-//! other crates' sugars) via [`gantz_format::Sugars`].
+//! and `(log [level])`. Compose it with [`gantz_format::CoreSugar`] and the
+//! other crates' sugars via [`gantz_format::Sugars`].
 
 use crate::{Bang, Log, Number};
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
@@ -13,8 +13,8 @@ use gantz_nodetag::NodeTag;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StdSugar;
 
-/// Sugar keyword -> node tag, for the std builtins that lower to a plain
-/// serde object with no extra arguments.
+/// Maps each sugar keyword to its node tag, for the std builtins that lower
+/// to a plain serde object with no extra arguments.
 const KEYWORD_TAG: &[(&str, &str)] = &[
     ("bang", Bang::TAG),
     ("number", Number::TAG),
@@ -49,7 +49,7 @@ impl Sugar for StdSugar {
 
     fn read_bare(&self, keyword: &str) -> Option<Datum> {
         match keyword {
-            // A bare `log` defaults to the INFO level (not an empty node).
+            // A bare `log` defaults to the INFO level, not an empty node.
             "log" => Some(node_datum(
                 "Log",
                 vec![("level", Datum::Str("INFO".into()))],
@@ -70,8 +70,6 @@ impl Sugar for StdSugar {
         keyword_for_tag(tag)
     }
 }
-
-// -- reading -----------------------------------------------------------------
 
 /// Read a `(number [#:min m] [#:max m] [#:precision n] [#:no-push-eval])` form.
 /// Only the non-default fields are emitted, so a bare `number` stays bare.
@@ -114,11 +112,9 @@ fn log_level(sym: &str) -> Option<String> {
     }
 }
 
-// -- writing -----------------------------------------------------------------
-
-/// Write a `Number` as a bare `number` when all config is default, else as
-/// `(number #:min m #:max m #:precision n #:no-push-eval)` with only the
-/// non-default fields.
+/// Write a `Number` as a bare `number` when all config is default. Otherwise
+/// write `(number #:min m #:max m #:precision n #:no-push-eval)` with only
+/// the non-default fields.
 fn write_number(node: &Datum) -> String {
     let min = node.get("min").and_then(Datum::as_f64);
     let max = node.get("max").and_then(Datum::as_f64);
@@ -181,7 +177,7 @@ mod tests {
     fn number_config_round_trips() {
         let s = StdSugar;
 
-        // A bare (default) number stays bare, whether read as a keyword or spec.
+        // A default number stays bare, whether read as a keyword or spec.
         let bare = s.read_bare("number").expect("bare number");
         assert_eq!(s.write_spec("Number", &bare).as_deref(), Some("number"));
         let empty = read_spec("(number)").expect("empty spec");
@@ -228,7 +224,8 @@ mod tests {
     fn log_level_round_trips() {
         let s = StdSugar;
 
-        // A bare `log` and an explicit `(log)` both default to INFO and write bare.
+        // A bare `log` and an explicit `(log)` both default to INFO and write
+        // `(log)`.
         let bare = s.read_bare("log").expect("bare log");
         assert_eq!(bare.get("level").and_then(Datum::as_str), Some("INFO"));
         assert_eq!(s.write_spec("Log", &bare).as_deref(), Some("(log)"));

@@ -1,11 +1,11 @@
 //! Reads `.gantz` source text into a [`Document`].
 //!
-//! Tokenisation is handled by [`crate::sexpr`] (Steel's reader). Only the
-//! registry forms - `(graph ...)`, `(commits ...)`, `(names ...)` - are
-//! interpreted; any other top-level form is preserved verbatim in
-//! [`Document::extra`] for an extender to interpret. Embedded `expr`/`branch`
-//! code is captured verbatim from its source span so node `src` strings - and
-//! the content addresses that hash them - are preserved byte-for-byte.
+//! Tokenisation is handled by [`crate::sexpr`], which wraps Steel's reader.
+//! Only the registry forms `(graph ...)`, `(commits ...)` and `(names ...)`
+//! are interpreted. Any other top-level form is preserved verbatim in
+//! [`Document::extra`] for an extender. Embedded `expr` and `branch` code is
+//! captured verbatim from its source span, so node `src` strings and the
+//! content addresses that hash them are preserved byte-for-byte.
 
 use crate::datum::{Datum, datum_from_expr};
 use crate::error::{ErrorKind, FormatError};
@@ -38,7 +38,7 @@ pub fn parse(src: &str, sugar: &dyn Sugar) -> Result<Document, FormatError> {
             "commits" => doc.commits.extend(parse_commits_table(&args[1..], src)?),
             "names" => doc.names.extend(parse_names_table(&args[1..], src)?),
             "section" => doc.sections.push(parse_section(&args[1..], form, src)?),
-            // Preserve anything else (e.g. `layout`, `demo`) for an extender.
+            // Preserve anything else, such as `layout`, for an extender.
             other => doc.extra.push(Form {
                 head: other.to_string(),
                 raw: span_src(form, src).unwrap_or_default().to_string(),
@@ -48,8 +48,6 @@ pub fn parse(src: &str, sugar: &dyn Sugar) -> Result<Document, FormatError> {
     }
     Ok(doc)
 }
-
-// -- top-level forms ---------------------------------------------------------
 
 fn parse_graph_def(
     args: &[ExprKind],
@@ -112,8 +110,6 @@ fn parse_node_decl(
     Ok(NodeDecl { name, spec })
 }
 
-// -- node specs --------------------------------------------------------------
-
 /// Reserved core heads matched before any sugar, so a sugar cannot shadow them.
 fn parse_node_spec(e: &ExprKind, src: &str, sugar: &dyn Sugar) -> Result<NodeSpec, FormatError> {
     if let Some(kw) = as_symbol(e) {
@@ -168,7 +164,7 @@ fn parse_ref_spec(func: bool, rest: &[ExprKind], src: &str) -> Result<NodeSpec, 
         if as_keyword(a).as_deref() == Some("sync") {
             sync = true;
         } else if as_keyword(a).as_deref() == Some("ext") {
-            // `#:ext` takes the following expr (a datum map) as its payload.
+            // `#:ext` takes the following datum-map expr as its payload.
             ext = args.next().map(|payload| datum_from_expr(payload, src));
         } else if let Some(s) = as_string(a) {
             addr = Some(Addr::Concrete(s));
@@ -220,8 +216,6 @@ fn parse_generic_spec(rest: &[ExprKind], e: &ExprKind, src: &str) -> Result<Node
     }
     Ok(NodeSpec::Value(Datum::tagged(&tag, fields)))
 }
-
-// -- connections / commits / names -------------------------------------------
 
 fn parse_conn(args: &[ExprKind], item: &ExprKind, src: &str) -> Result<Conn, FormatError> {
     if args.len() != 2 {
@@ -415,7 +409,7 @@ fn parse_section(
     })
 }
 
-/// Parse a section entry key: `(name <symbol>)`, `(commit "<hex>")`,
+/// Parse a section entry key. One of `(name <symbol>)`, `(commit "<hex>")`,
 /// `(graph "<hex>")` or `(addr "<hex>")`.
 fn parse_section_key(e: &ExprKind, src: &str) -> Result<SectionKey, FormatError> {
     let args = list_args(e).ok_or_else(|| {
@@ -542,8 +536,6 @@ fn parse_commit_entry(
     })
 }
 
-// -- addresses ---------------------------------------------------------------
-
 fn parse_addr(e: &ExprKind, src: &str) -> Result<Addr, FormatError> {
     if let Some(s) = as_string(e) {
         Ok(Addr::Concrete(s))
@@ -557,8 +549,6 @@ fn parse_addr(e: &ExprKind, src: &str) -> Result<Addr, FormatError> {
         ))
     }
 }
-
-// -- small wrappers over the sexpr toolkit -----------------------------------
 
 fn int_field(e: &ExprKind, src: &str) -> Result<i64, FormatError> {
     sexpr::as_i64(e, src)
@@ -592,7 +582,7 @@ mod tests {
             }
             other => panic!("expected expr value, got {other:?}"),
         }
-        // Ports parse: `(m 1)` -> input port 1.
+        // `(m 1)` parses as input port 1.
         let c = &g.body.conns[1];
         assert_eq!(c.from.node, "r");
         assert_eq!(c.to.node, "m");
@@ -611,9 +601,9 @@ mod tests {
 
     #[test]
     fn descriptions_form_lands_in_extra() {
-        // `(descriptions ...)` is an extender's friendly form now (the gui
-        // layer maps it to the `gantz.description` section), so the core
-        // parser preserves it verbatim like any unrecognised form.
+        // `(descriptions ...)` is an extender's friendly form. The gui layer
+        // maps it to the `gantz.description` section, so the core parser
+        // preserves it verbatim like any unrecognised form.
         let text = "\
 (graph mul (m (expr 1)))
 (descriptions
@@ -626,7 +616,7 @@ mod tests {
     #[test]
     fn round_trips_sections() {
         // A section from a domain this parser knows nothing about carries
-        // its semantics as data and round-trips through write -> parse.
+        // its semantics as data and round-trips through a write and parse.
         let text = "\
 (graph mul (m (expr 1)))
 (section \"laser.palette\"
@@ -694,7 +684,7 @@ mod tests {
     }
 
     /// A generic `(node ...)` whose fields nest a map and a seq round-trips
-    /// structurally through parse -> write -> parse (the lossy-object bug fix).
+    /// structurally through parse, write and parse.
     #[test]
     fn generic_node_nested_map_round_trips() {
         let text = "\
@@ -708,8 +698,6 @@ mod tests {
         match &node1.spec {
             NodeSpec::Value(v) => {
                 assert_eq!(v.get("type").and_then(Datum::as_str), Some("Custom"));
-                // The lossy bug turned this nested object into an array; it must
-                // stay a map.
                 assert!(
                     matches!(v.get("cfg"), Some(Datum::Map(_))),
                     "cfg must be a map, got {:?}",

@@ -1,13 +1,12 @@
 //! Raises a registry into a [`Document`] and serializes it.
 //!
-//! The output mirrors the registry's three maps: a `(graph "<addr>" ...)` body
-//! per graph, a flat `(commits ...)` table (one head commit per graph, for
-//! validation), and a `(names ...)` table. Nodes get generated
+//! The output mirrors the registry's three maps. Those are a
+//! `(graph "<addr>" ...)` body per graph, a flat `(commits ...)` table with one
+//! head commit per graph, and a `(names ...)` table. Nodes get generated
 //! `{keyword}{index}` labels and are written straight from their stored
-//! [`NodeData`] form (`tag` + field [`Datum`]) - no node type is involved. The
-//! returned [`Dumped`] also exposes, per graph, the id and node labels emitted
-//! - everything an extender needs to attach its own forms (e.g. `(layout ...)`)
-//! keyed by the same ids.
+//! [`NodeData`] form. No node type is involved. The returned [`Dumped`] also
+//! exposes the id and node labels emitted per graph. An extender needs those
+//! to attach its own forms, such as `(layout ...)`, keyed by the same ids.
 
 use crate::datum::Datum;
 use crate::error::FormatError;
@@ -20,30 +19,30 @@ use gantz_ca::{ContentAddr, DataGraph, GraphAddr, Key, NodeData, Registry, Value
 use petgraph::visit::EdgeRef;
 use std::collections::HashMap;
 
-/// The result of serializing a registry: the text plus the per-graph label
+/// The result of serializing a registry. The text plus the per-graph label
 /// context an extender needs to emit its own forms.
 pub struct Dumped {
     /// The serialized registry forms.
     pub text: String,
-    /// Per graph address: the id emitted and the node index -> label map.
+    /// The id emitted and the node labels, per graph address.
     pub graphs: HashMap<GraphAddr, GraphLabels>,
 }
 
 /// The id string and node labels emitted for a single graph.
 pub struct GraphLabels {
-    /// The file-local id used in the text (a short content address).
+    /// The file-local id used in the text, a short content address.
     pub id: String,
-    /// Node index -> generated label.
+    /// The generated label of each node index.
     pub labels: HashMap<usize, String>,
 }
 
 /// Raise a registry into serialized text plus per-graph label context.
 ///
 /// `claimed` names the section ids the caller renders itself with friendly
-/// forms (e.g. `gantz.description` as `(descriptions ...)`); those are
-/// skipped here, every other section is emitted as a generic
-/// `(section ...)` form so unknown-domain data round-trips through text.
-/// The `heads` section is always covered by the `(names ...)` table.
+/// forms, for example `gantz.description` as `(descriptions ...)`. Those are
+/// skipped here. Every other section is emitted as a generic `(section ...)`
+/// form, so unknown-domain data round-trips through text. The `(names ...)`
+/// table always covers the `heads` section.
 pub fn raise(
     registry: &Registry,
     sugar: &dyn Sugar,
@@ -52,12 +51,12 @@ pub fn raise(
     let mut doc = Document::default();
     let mut graphs = HashMap::new();
 
-    // Write commits ascending by (timestamp, addr) and graphs by the newest
-    // commit pointing at them. The registry maps are unordered, but document
-    // order matters on load: a commit's parents (incl. merge parents) resolve
-    // only against already-built commits, and the last commit declared per
-    // graph wins as its head (see `lower`). Time order keeps ancestry intact
-    // across a round-trip and the output stable.
+    // Write commits ascending by timestamp then address, and graphs by the
+    // newest commit pointing at them. The registry maps are unordered, but
+    // document order matters on load. A commit's parents, merge parents
+    // included, resolve only against already-built commits, and the last
+    // commit declared per graph wins as its head. See `lower`. Time order
+    // keeps ancestry intact across a round-trip and the output stable.
     let mut commits: Vec<_> = registry.commits().iter().collect();
     commits.sort_by_key(|&(ca, c)| (c.timestamp, *ca));
     let mut newest: HashMap<gantz_ca::GraphAddr, gantz_ca::Timestamp> = HashMap::new();
@@ -107,9 +106,9 @@ pub fn raise(
 }
 
 /// Push the registry's metadata sections onto the document as generic
-/// `(section ...)` forms, skipping `heads` (covered by the names table),
-/// the caller's `claimed` ids, and non-datum values (blob indirections do
-/// not travel through text yet).
+/// `(section ...)` forms. Skips `heads`, which the names table covers, the
+/// caller's `claimed` ids, and non-datum values. Blob indirections do not
+/// travel through text yet.
 fn push_sections(doc: &mut Document, registry: &Registry, claimed: &[&str]) {
     for (id, section) in registry.sections() {
         if id == gantz_ca::registry::HEADS_ID || claimed.contains(&id.as_str()) {
@@ -143,14 +142,14 @@ fn push_sections(doc: &mut Document, registry: &Registry, claimed: &[&str]) {
     }
 }
 
-/// Raise a registry into the inline-name format: each named graph is emitted
-/// under its registry name (sorted, as [`Registry::names`] is a `BTreeMap`),
-/// references resolve by name (no pinned address), and the `(commits ...)` /
-/// `(names ...)` tables are omitted - the loader reconstructs them by
-/// auto-registering each labelled graph under its name. Intended for the
-/// baked-in base, whose addresses would otherwise churn the git history.
+/// Raise a registry into the inline-name format. Each named graph is emitted
+/// under its registry name, in sorted name order. References resolve by name
+/// with no pinned address. The `(commits ...)` and `(names ...)` tables are
+/// omitted. The loader reconstructs them by auto-registering each labelled
+/// graph under its name. Intended for the baked-in base, whose addresses would
+/// otherwise churn the git history.
 ///
-/// Graphs with no name are skipped: a name-resolved `ref` can only target a
+/// Graphs with no name are skipped. A name-resolved `ref` can only target a
 /// named graph, so an unnamed graph is unreachable in this format.
 pub fn raise_named(
     registry: &Registry,
@@ -187,11 +186,9 @@ pub fn raise_named(
     Ok(Dumped { text, graphs })
 }
 
-// -- graph -> body -----------------------------------------------------------
-
-/// A stored node's tagged datum: its `"type"` entry (the tag) prepended to its
+/// A stored node's tagged datum. Its `"type"` tag entry is prepended to its
 /// field map. This is the exact inverse of erasure's tag split, so the datum
-/// matches what node-set serde would produce - no node type involved.
+/// matches what node-set serde would produce with no node type involved.
 fn node_value(node_data: &NodeData) -> Result<Datum, FormatError> {
     match &node_data.data {
         Datum::Map(fields) => Ok(Datum::tagged(&node_data.tag, fields.clone())),
@@ -202,8 +199,9 @@ fn node_value(node_data: &NodeData) -> Result<Datum, FormatError> {
     }
 }
 
-/// Convert a stored data graph into a [`GraphBody`], returning the index ->
-/// label map used to resolve connections and (by extenders) layout positions.
+/// Convert a stored data graph into a [`GraphBody`]. Also returns the label of
+/// each node index, used to resolve connections and, by extenders, layout
+/// positions.
 fn graph_to_body(
     graph: &DataGraph,
     sugar: &dyn Sugar,
@@ -242,7 +240,7 @@ fn graph_to_body(
 
 /// Convert a node's serde [`Datum`] into a [`NodeSpec`] and a label keyword.
 ///
-/// `pin` controls whether a reference records its (advisory) pinned commit
+/// `pin` controls whether a reference records its advisory pinned commit
 /// address. The inline-name format omits it so refs resolve purely by name.
 fn node_spec_from_datum(
     value: Datum,
@@ -262,9 +260,9 @@ fn node_spec_from_datum(
                 .and_then(Datum::as_str)
                 .unwrap_or_default()
                 .to_string();
-            // `ref_` is a bare address when the reference carries no extension
-            // data, else a map of address + ext (`gantz_core::node::Ref`'s
-            // serde shape).
+            // `ref_` follows `gantz_core::node::Ref`'s serde shape. A bare
+            // address when the reference carries no extension data, else a
+            // map of address and ext.
             let ref_ = value.get("ref_");
             let hex = ref_
                 .and_then(|r| r.as_str().or_else(|| r.get("addr").and_then(Datum::as_str)))
@@ -290,8 +288,6 @@ fn node_spec_from_datum(
         }
     }
 }
-
-// -- helpers -----------------------------------------------------------------
 
 /// The first 8 hex characters of an address.
 fn short_hex(addr: impl Into<ContentAddr>) -> String {

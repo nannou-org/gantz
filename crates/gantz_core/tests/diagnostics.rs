@@ -11,11 +11,8 @@ use std::fmt::Debug;
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
-// A nested graph: an ordinary `Graph` (which implements `Node`) boxed into its
-// parent, in place of the removed `GraphNode` wrapper.
 type Nested = node::graph::Graph<Box<dyn DebugNode>>;
 
-// A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }
@@ -24,14 +21,14 @@ fn node_push() -> node::Push<node::Expr> {
     node::expr("'()").unwrap().with_push_eval()
 }
 
-// An edge referencing an out-of-range output index yields a compile
-// diagnostic carrying the offending node's full path and output index,
-// including inside a nested graph.
+// An edge that references an out-of-range output index yields a compile
+// diagnostic. The diagnostic carries the offending node's full path and
+// output index, also inside a nested graph.
 #[test]
 fn invalid_edge_diagnostic() {
     let mut ga = Nested::default();
     let inlet = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
-    // `(+ $l 1)` has one output; the edge below leaves from output 5.
+    // `(+ $l 1)` has one output. The edge below leaves from output 5.
     let inc = ga.add_node(Box::new(node::expr("(+ $l 1)").unwrap()) as Box<_>);
     let outlet = ga.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
     ga.add_edge(inlet, inc, Edge::from((0, 0)));

@@ -1,7 +1,7 @@
 //! Shared VM utilities for initializing and compiling gantz graphs.
 //!
 //! This module provides common functionality for working with the Steel VM
-//! that is shared between different gantz frontends (Bevy app, pure egui demo, etc.).
+//! that is shared between the gantz frontends.
 
 use crate::{
     Edge, Node,
@@ -20,7 +20,7 @@ use steel::{
 pub struct Compiled {
     /// The module's top-level expressions.
     pub exprs: Vec<ExprKind>,
-    /// The module source: exactly the text executed in the VM, so steel
+    /// The module source. Exactly the text executed in the VM, so steel
     /// error spans and [`Compiled::map`] offsets index into it directly.
     pub src: String,
     /// Byte-offset map from [`Compiled::src`] back to graph node paths.
@@ -36,7 +36,7 @@ pub enum CompileError {
     /// Steel rejected or errored running the module.
     #[error("module evaluation failed")]
     Eval {
-        /// The underlying steel error; its span (if any) indexes into the
+        /// The underlying steel error. Its span, if any, indexes into the
         /// carried module's source.
         #[source]
         err: SteelErr,
@@ -48,15 +48,15 @@ pub enum CompileError {
 
 /// A named Steel source module that can be registered with an [`Engine`].
 ///
-/// Registration is cheap: the engine stores the source text and only
-/// compiles the module when a program first `(require ...)`s it by name,
-/// caching the result for the engine's lifetime. Graphs that never
+/// Registration is cheap. The engine stores the source text and only
+/// compiles the module when a program first `(require ...)`s it by name.
+/// It caches the result for the engine's lifetime. Graphs that never
 /// require a module never pay for it.
 ///
 /// Modules must be registered via [`new_engine`], which installs a
 /// minimal prelude string first. Steel prepends its prelude string to a
-/// module's source *at registration time*, and the default prelude would
-/// drag the entire steel stdlib into the module's first `(require ...)`.
+/// module's source at registration time. The default prelude would drag
+/// the entire steel stdlib into the module's first `(require ...)`.
 #[derive(Clone, Copy, Debug)]
 pub struct SteelModule {
     /// The name used to `(require ...)` the module.
@@ -74,9 +74,9 @@ const CORE_MODULES: &[SteelModule] = &[SteelModule {
 }];
 
 impl CompileError {
-    /// The generated module, when compilation got far enough to produce one
-    /// (steel rejecting the module still yields the artifact, so its source
-    /// remains displayable and error spans resolvable).
+    /// The generated module, when compilation got far enough to produce one.
+    /// Steel rejecting the module still yields it, so its source remains
+    /// displayable and error spans resolvable.
     pub fn into_module(self) -> Option<Compiled> {
         match self {
             Self::Module(_) => None,
@@ -99,7 +99,7 @@ pub fn modules() -> &'static [SteelModule] {
 /// globals.
 ///
 /// The prelude string is reduced to `(require-builtin steel/base)` before
-/// any module is registered (see [`SteelModule`]): module sources get the
+/// any module is registered. See [`SteelModule`]. Module sources get the
 /// base primitives and must `(require-builtin ...)` anything further
 /// themselves.
 pub fn new_engine(extra_modules: &[SteelModule]) -> Engine {
@@ -139,7 +139,7 @@ where
 }
 
 /// The same as [`init`], but with additional domain [`SteelModule`]s
-/// registered on the freshly created engine (see [`new_engine`]).
+/// registered on the freshly created engine. See [`new_engine`].
 pub fn init_with_modules<'a, G>(
     get_node: node::GetNode<'a>,
     graph: G,
@@ -164,10 +164,10 @@ where
 
 /// Compile the graph into a Steel module and run it in the VM.
 ///
-/// The module runs as a *single* program so that the engine registers
-/// [`Compiled::src`] verbatim as one source: subsequent steel errors then
-/// carry spans whose offsets index into it directly (see
-/// [`steel_err_node`]).
+/// The module runs as a single program so that the engine registers
+/// [`Compiled::src`] verbatim as one source. Subsequent steel errors then
+/// carry spans whose offsets index into it directly. See
+/// [`steel_err_node`].
 pub fn compile<'a, G>(
     get_node: node::GetNode<'a>,
     graph: G,
@@ -220,10 +220,10 @@ pub fn fmt_module(module: &[ExprKind]) -> String {
 ///
 /// Uses the error's own span when it points into the compiled module's
 /// source, otherwise the innermost stack-trace frame that does. A span
-/// belongs to the module when its source text (looked up in the engine by
-/// the span's source id) is exactly [`Compiled::src`] - so spans from other
-/// sources (e.g. snippets run by node UIs, or modules from before a
-/// recompile) and span-less errors yield `None`.
+/// belongs to the module when its source text is exactly [`Compiled::src`].
+/// The text is looked up in the engine by the span's source id. Spans from
+/// other sources and span-less errors yield `None`. Other sources include
+/// snippets run by node UIs and modules from before a recompile.
 pub fn steel_err_span(
     err: &SteelErr,
     vm: &Engine,
@@ -239,29 +239,27 @@ pub fn steel_err_span(
         .map(|span| span.usize_range())
 }
 
-/// The first span attached to a steel error, *without* verifying which
+/// The first span attached to a steel error, without verifying which
 /// source it points into.
 ///
-/// Only sound when the error's provenance is already known - e.g. an error
-/// returned by [`compile`] itself, whose spans can only index the module
-/// just run.
+/// Only sound when the error's provenance is already known. For example, an
+/// error returned by [`compile`] itself can only index the module just run.
 pub fn steel_err_raw_span(err: &SteelErr) -> Option<std::ops::Range<usize>> {
     steel_err_spans(err).next().map(|span| span.usize_range())
 }
 
-/// The full path of the node best attributed to a steel error (see
-/// [`steel_err_span`]).
+/// The full path of the node best attributed to a steel error. See
+/// [`steel_err_span`].
 pub fn steel_err_node(err: &SteelErr, vm: &Engine, compiled: &Compiled) -> Option<Vec<node::Id>> {
     compiled.map.node_at(steel_err_span(err, vm, compiled)?)
 }
 
 /// Format an error together with its full [`std::error::Error::source`] chain.
 ///
-/// `Display` renders only the outermost message, so a wrapper like
-/// [`CompileError`] -> [`crate::compile::ModuleError`] -> the underlying cause
-/// otherwise hides what actually went wrong (e.g. a bare "module generation
-/// failed"). This walks the `source()` chain and appends each level on its own
-/// `caused by:` line.
+/// `Display` renders only the outermost message. A wrapper like
+/// [`CompileError`] over [`crate::compile::ModuleError`] otherwise hides the
+/// underlying cause behind a bare "module generation failed". This walks the
+/// `source()` chain and appends each level on its own `caused by:` line.
 pub fn error_chain(err: &dyn std::error::Error) -> String {
     use std::fmt::Write;
     let mut s = err.to_string();
@@ -273,8 +271,8 @@ pub fn error_chain(err: &dyn std::error::Error) -> String {
     s
 }
 
-/// The spans attached to a steel error: its own span first, then its stack
-/// trace frames innermost-first (frames are pushed caller-first).
+/// The spans attached to a steel error. Its own span first, then its stack
+/// trace frames innermost-first. Frames are pushed caller-first.
 fn steel_err_spans(err: &SteelErr) -> impl Iterator<Item = Span> + '_ {
     err.span().into_iter().chain(
         err.stack_trace()

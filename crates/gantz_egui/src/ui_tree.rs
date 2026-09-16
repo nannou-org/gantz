@@ -1,53 +1,38 @@
 //! A data-driven egui renderer for [`gantz_ui`] element trees.
 //!
-//! [`UiTree`] walks a decoded [`Element`] tree each frame, resolving widget
-//! bindings against VM state and reporting interactions as response
-//! payloads. It is the single rendering path for widget node GUIs: builtins
-//! construct their own fragments and render through it, and graph-defined
-//! GUIs evaluate to trees rendered the same way.
+//! [`UiTree`] walks a decoded [`Element`] tree each frame. It resolves
+//! widget bindings against VM state and reports interactions as response
+//! payloads. It is the single rendering path for widget node GUIs. Builtins
+//! construct their own fragments and render through it. Graph-defined GUIs
+//! evaluate to trees rendered the same way. The tree model, binding
+//! resolution, identity rules and decode totality are documented in
+//! [`gantz_ui`].
 //!
-//! ## Bindings
-//!
-//! A widget's `bind` path is relative to the graph its tree was defined in.
-//! The walker resolves it as `instance prefix ++ scope prefixes ++ bind
-//! path` and reads via [`NodeCtx::extract_value_at`], writes via
+//! Bindings read via [`NodeCtx::extract_value_at`] and write via
 //! [`NodeCtx::update_value_at`]. Those touch VM runtime state only, so
-//! interpreting a tree never mutates CA-affecting state and
-//! [`UiTreeResponse`] carries no `changed` flag.
+//! interpreting a tree never mutates CA-affecting state.
 //!
-//! ## Identity
+//! Each element's [`egui::Id`] derives from the render root's id, its
+//! structural position or `key` beneath its parent, and any enclosing
+//! `scope` ids.
 //!
-//! Every element's [`egui::Id`] derives from the render root's id, its
-//! structural position beneath its parent (overridden by a `key` attr), and
-//! any enclosing `scope` ids. Label text never contributes, so relabelling
-//! never resets widget state.
-//!
-//! ## Events
-//!
-//! Controls write their bound state on real user edits only (an egui
-//! `changed` signal guarded by a value comparison), then queue a push
-//! evaluation at the bound node when their `push` attr is on (`button`
-//! always pushes). Restoring or externally rewriting state never emits.
-//! Push evaluations name the compiled entry fn from the bound node's output
-//! count, so callers provide a resolver via [`UiTree::n_outputs`].
-//!
-//! ## Embeds
+//! Controls write their bound state on real user edits only. The egui
+//! `changed` signal is guarded by a value comparison. When the `push` attr
+//! is on, a write also queues a push evaluation at the bound node. `button`
+//! always pushes. Push evaluations name the compiled entry fn from the bound
+//! node's output count, so callers provide a resolver via
+//! [`UiTree::n_outputs`].
 //!
 //! A `ref-gui` element embeds a referenced graph instance's own GUI. The
 //! walker resolves the chain of ref ids entered so far to the leaf graph's
-//! body marker via the [`UiTree::ref_gui`] resolver, reads the marker's
+//! body marker via the [`UiTree::ref_gui`] resolver. It reads the marker's
 //! stored tree from VM state, decodes it, and renders it inside a group
-//! frame. The ref id becomes an implicit scope for the subtree, so the
-//! embedded tree's binds resolve inside the referenced instance.
+//! frame under an implicit scope.
 //!
-//! ## Errors
-//!
-//! [`gantz_ui::decode()`] is total: every node of the tree is renderable and
-//! [`Element::Error`] is the only inline-error case, drawn as an error chip
-//! in place while siblings render normally. Decode warnings never reach the
-//! walker for the tree it is handed. Callers that decode (rather than
-//! construct) trees surface them themselves; warnings from embedded marker
-//! trees are dropped (inspect the referenced graph to see them).
+//! [`Element::Error`] draws as an error chip in place while siblings render
+//! normally. Callers that decode trees surface the decode warnings
+//! themselves. Warnings from embedded marker trees are dropped. Inspect the
+//! referenced graph to see them.
 
 use crate::{NodeCtx, node, response::DynResponse};
 use gantz_ui::{Align, BindPath, Button, Dialer, Element, Key, Matrix, Rgba, Toggle};
@@ -57,22 +42,22 @@ pub(crate) mod plot;
 
 /// The outcome of interpreting a UI tree for one frame.
 ///
-/// Interpreting a tree never edits CA-affecting state (controls write VM
-/// runtime state and queue evaluations only), so there is no `changed` flag.
+/// Controls write VM runtime state and queue evaluations only. Interpreting
+/// a tree never edits CA-affecting state, so there is no `changed` flag.
 #[derive(Debug, Default)]
 pub struct UiTreeResponse {
     /// The union of every rendered widget's response, if anything rendered.
     pub inner: Option<egui::Response>,
-    /// Payloads emitted for the application to handle after the GUI pass
-    /// ([`EvalEntry`][crate::EvalEntry] push evaluations in v1).
+    /// Payloads for the application to handle after the GUI pass. In v1
+    /// these are [`crate::EvalEntry`] push evaluations.
     pub payloads: Vec<DynResponse>,
 }
 
-/// Renders a [`gantz_ui::Element`] tree, resolving bindings against VM state
-/// through the given [`NodeCtx`].
+/// Renders a [`gantz_ui::Element`] tree and resolves bindings against VM
+/// state through the given [`NodeCtx`].
 ///
-/// This is the only seam through which the tree touches the VM: state access
-/// goes via [`NodeCtx`], and everything else is reported on the returned
+/// This is the only seam through which the tree touches the VM. State access
+/// goes via [`NodeCtx`]. Everything else is reported on the returned
 /// [`UiTreeResponse`].
 pub struct UiTree<'a> {
     root_id: egui::Id,
@@ -84,7 +69,7 @@ pub struct UiTree<'a> {
 /// The maximum depth of nested `ref-gui` embeds rendered before falling back
 /// to an inert chip.
 ///
-/// Registry cycle-prevention makes truly cyclic references impossible; this
+/// Registry cycle-prevention makes truly cyclic references impossible. This
 /// bounds the walk's cost on corrupt data.
 const MAX_REF_GUI_DEPTH: usize = 8;
 
@@ -95,8 +80,8 @@ struct Walk<'a> {
     scopes: Vec<node::Id>,
     /// The chain of `ref-gui` ids entered so far, render root outward.
     ///
-    /// Kept apart from `scopes` (which extend binding paths regardless of
-    /// origin): the chain is what the resolver folds over the registry.
+    /// Kept apart from `scopes`, which extend binding paths regardless of
+    /// origin. The chain is what the resolver folds over the registry.
     ref_chain: Vec<node::Id>,
     n_outputs: Option<&'a dyn Fn(&[node::Id]) -> Option<usize>>,
     ref_gui: Option<&'a dyn Fn(&[node::Id]) -> Option<node::Id>>,
@@ -114,19 +99,19 @@ impl<'a> UiTree<'a> {
         }
     }
 
-    /// The path prefix prepended to every binding, i.e. the path at which
+    /// The path prefix prepended to every binding. It is the path at which
     /// the tree's defining graph is instanced. Empty by default.
     pub fn instance_prefix(mut self, prefix: &'a [node::Id]) -> Self {
         self.instance_prefix = prefix;
         self
     }
 
-    /// The output count of the node at the given resolved path, required to
-    /// queue push evaluations (the entry fn's identity covers the count).
+    /// The output count of the node at the given resolved path. Push
+    /// evaluations need it because the entry fn's identity covers the count.
     ///
     /// A node rendering its own fragment knows its own count. A caller whose
     /// tree binds arbitrary nodes resolves counts from the graph. Without a
-    /// resolver (or when it returns `None`) pushes are skipped with a
+    /// resolver, or when it returns `None`, pushes are skipped with a
     /// warning.
     pub fn n_outputs(mut self, f: &'a dyn Fn(&[node::Id]) -> Option<usize>) -> Self {
         self.n_outputs = Some(f);
@@ -135,13 +120,13 @@ impl<'a> UiTree<'a> {
 
     /// Resolve an embedded reference GUI (`ref-gui`) to its body marker.
     ///
-    /// The argument is the chain of ref ids entered so far (render root
-    /// outward, including the element being resolved); the return is the
-    /// body marker's node id within the leaf referenced graph (see
-    /// [`crate::reg::resolve_ref_chain`]). The walker reads the marker's
+    /// The argument is the chain of ref ids entered so far, render root
+    /// outward, including the element being resolved. The return is the
+    /// body marker's node id within the leaf referenced graph. See
+    /// [`crate::reg::resolve_ref_chain`]. The walker reads the marker's
     /// stored tree at the resolved instance path, decodes it, and renders it
-    /// inside a group frame under an implicit scope. Without a resolver (or
-    /// when it returns `None`) embeds render as an inert chip.
+    /// inside a group frame under an implicit scope. Without a resolver, or
+    /// when it returns `None`, embeds render as an inert chip.
     pub fn ref_gui(mut self, f: &'a dyn Fn(&[node::Id]) -> Option<node::Id>) -> Self {
         self.ref_gui = Some(f);
         self
@@ -176,7 +161,7 @@ impl Walk<'_> {
                 });
             }
             Element::Row(row) => {
-                // Mirror `Ui::horizontal`: seed the row with the interact
+                // Mirror `Ui::horizontal`. Seed the row with the interact
                 // height so cross-alignment centres within one row, not
                 // within all remaining vertical space.
                 let cross = cross_align(row.align.unwrap_or(Align::Center));
@@ -232,7 +217,7 @@ impl Walk<'_> {
                 ui.add_space(amount);
             }
             Element::Scope(scope) => {
-                // No visuals: children render inline under the extended
+                // No visuals. Children render inline under the extended
                 // binding prefix, with the scope id salting their identity.
                 self.scopes.push(scope.id);
                 let parent = id.with(("scope", scope.id));
@@ -322,8 +307,8 @@ impl Walk<'_> {
         let r = ui
             .push_id(id, |ui| {
                 if !d.push {
-                    // Flatten the dialer's fill: a cue that editing won't
-                    // fire downstream.
+                    // Flatten the dialer's fill as a cue that editing does
+                    // not fire downstream.
                     let widgets = &mut ui.visuals_mut().widgets;
                     widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
                     widgets.inactive.bg_fill = egui::Color32::TRANSPARENT;
@@ -405,7 +390,7 @@ impl Walk<'_> {
     }
 
     /// Render a button that queues a push evaluation at the bound node.
-    /// Buttons never write state: bang semantics stay in the node's expr.
+    /// Buttons never write state. Bang semantics stay in the node's expr.
     fn button(&mut self, b: &Button, id: egui::Id, ui: &mut egui::Ui) {
         let text = b.label.as_deref().unwrap_or("!");
         let r = ui.push_id(id, |ui| ui.button(text)).inner;
@@ -421,8 +406,8 @@ impl Walk<'_> {
         self.merge(r);
     }
 
-    /// Render a grid of cells bound to rows-of-cells state (bool or number
-    /// cells). Rows and columns come from the state shape, and any cell edit
+    /// Render a grid of cells bound to rows-of-cells state. Cells are bools
+    /// or numbers. Rows and columns come from the state shape. Any cell edit
     /// rebuilds and writes the whole value.
     fn matrix(&mut self, m: &Matrix, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
         let Some(bind) = &m.bind else {
@@ -504,7 +489,7 @@ impl Walk<'_> {
     }
 
     /// Render bound state through the shared plot leaf. The `mode` attr
-    /// selects how the *producing* node accumulates its state and is
+    /// selects how the producing node accumulates its state. It is
     /// irrelevant to drawing, so the walker ignores it.
     fn plot(&mut self, p: &gantz_ui::Plot, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
         let Some(bind) = &p.bind else {
@@ -526,8 +511,8 @@ impl Walk<'_> {
             y_min: p.y_min,
             y_max: p.y_max,
         };
-        // Absent dimensions fill the available space (the detached view and
-        // debug pane cases). Fragments with a fixed size set both.
+        // Absent dimensions fill the available space, as in the detached
+        // view and the debug pane. Fragments with a fixed size set both.
         let size = egui::vec2(
             p.w.unwrap_or_else(|| ui.available_width()),
             p.h.unwrap_or_else(|| ui.available_height()),
@@ -536,9 +521,9 @@ impl Walk<'_> {
         self.merge(r);
     }
 
-    /// Render an embedded reference GUI: resolve the accumulated ref chain
-    /// to the leaf graph's body marker, read and decode the marker's stored
-    /// tree, and render it inside a group frame under an implicit scope.
+    /// Render an embedded reference GUI. Resolve the accumulated ref chain
+    /// to the leaf graph's body marker. Read and decode the marker's stored
+    /// tree. Render it inside a group frame under an implicit scope.
     fn ref_gui_elem(
         &mut self,
         rg: &gantz_ui::RefGui,
@@ -562,7 +547,7 @@ impl Walk<'_> {
         let decoded = match resolver(&self.ref_chain) {
             None => Err("unresolvable reference or no body marker"),
             Some(marker_id) => {
-                // Resolved before the implicit scope push below: the marker
+                // Resolved before the implicit scope push below. The marker
                 // lives inside the instance at `rg.id`.
                 let path = self.resolve(&BindPath(vec![rg.id, marker_id]));
                 match ctx.extract_value_at(&path) {
@@ -577,9 +562,9 @@ impl Walk<'_> {
         match decoded {
             Err(why) => chip(self, ui, why),
             Ok(decoded) => {
-                // The ref id becomes an implicit scope: the embedded tree's
-                // binds resolve inside the referenced instance. The id salt
-                // is distinct from the scope arm's so a sibling
+                // The ref id becomes an implicit scope, so the embedded
+                // tree's binds resolve inside the referenced instance. The
+                // id salt is distinct from the scope arm's so a sibling
                 // `(scope <id> ...)` can never collide.
                 self.scopes.push(rg.id);
                 let child = id.with(("ref-gui", rg.id));
@@ -633,9 +618,9 @@ impl Walk<'_> {
     }
 }
 
-/// A child's identity: its structural position beneath `parent`, overridden
-/// by a `key` attr. Key spaces are disjoint from position spaces, so keyed
-/// and unkeyed siblings can never collide.
+/// A child's identity. It is the structural position beneath `parent`, or
+/// the `key` attr when present. Key spaces are disjoint from position
+/// spaces, so keyed and unkeyed siblings can never collide.
 fn child_id(parent: egui::Id, position: usize, key: Option<&Key>) -> egui::Id {
     match key {
         Some(Key::Str(s)) => parent.with(("k", s.as_str())),
@@ -644,8 +629,8 @@ fn child_id(parent: egui::Id, position: usize, key: Option<&Key>) -> egui::Id {
     }
 }
 
-/// The full state-tree path of a binding: the tree's instance prefix, then
-/// the accumulated scope prefixes, then the bind path itself.
+/// The full state-tree path of a binding. It is the tree's instance prefix,
+/// then the accumulated scope prefixes, then the bind path itself.
 fn resolve_path(prefix: &[node::Id], scopes: &[node::Id], bind: &BindPath) -> Vec<node::Id> {
     prefix
         .iter()
@@ -667,7 +652,7 @@ fn cross_align(align: Align) -> egui::Align {
 /// The default side length of a matrix cell.
 const DEFAULT_CELL_SIZE: f32 = 18.0;
 
-/// A matrix value's cells as rows, or `None` when the bound state is not
+/// A matrix value's cells as rows. `None` when the bound state is not
 /// rows-of-cells shaped. Lists and vectors are accepted interchangeably.
 fn matrix_rows(val: &SteelVal) -> Option<Vec<Vec<SteelVal>>> {
     let (_, rows) = seq_elems(val)?;
@@ -676,9 +661,9 @@ fn matrix_rows(val: &SteelVal) -> Option<Vec<Vec<SteelVal>>> {
         .collect()
 }
 
-/// Rebuild a whole matrix value with one cell replaced, preserving the
-/// list-vs-vector shape at both levels. `None` when `val` is not a matrix or
-/// the cell is out of bounds.
+/// Rebuild a whole matrix value with one cell replaced. The list-vs-vector
+/// shape is kept at both levels. `None` when `val` is not a matrix or the
+/// cell is out of bounds.
 fn matrix_set_cell(val: &SteelVal, row: usize, col: usize, cell: SteelVal) -> Option<SteelVal> {
     let (outer, mut rows) = seq_elems(val)?;
     let (inner, mut cells) = seq_elems(rows.get(row)?)?;
@@ -690,7 +675,7 @@ fn matrix_set_cell(val: &SteelVal, row: usize, col: usize, cell: SteelVal) -> Op
     Some(seq_rebuild(outer, rows))
 }
 
-/// Whether a value is a steel list or vector (interchangeable throughout).
+/// Whether a value is a steel list or vector. The two are interchangeable.
 #[derive(Clone, Copy)]
 enum Seq {
     List,
@@ -903,7 +888,7 @@ mod tests {
         });
     }
 
-    /// Each nested embed extends the chain handed to the resolver: the
+    /// Each nested embed extends the chain handed to the resolver. The
     /// walker resolves `[3]` for the root embed, then `[3, 5]` for the embed
     /// inside its marker tree.
     #[test]

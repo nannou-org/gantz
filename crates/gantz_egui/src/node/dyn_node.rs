@@ -2,12 +2,12 @@
 //! registry's [`NodeData`] representation.
 //!
 //! [`NodeUi`]'s [`gantz_core::Node`] supertrait makes [`DynNode`] a
-//! self-sufficient working-graph weight: one erased value serves rendering,
+//! self-sufficient working-graph weight. One erased value serves rendering,
 //! compilation and evaluation. The [`NodeCodec`] carries the node set as
-//! *values* rather than as a `Box<dyn Trait>` serde impl: an application
-//! composes one with [`ui_node_codec!`](crate::ui_node_codec), whose type
-//! list is the app's node-set manifest - a node type is storable exactly
-//! when it is listed there.
+//! values rather than as a `Box<dyn Trait>` serde impl. An application
+//! composes one with [`crate::ui_node_codec!`]. Its type list is the app's
+//! node-set manifest. A node type is storable exactly when it is listed
+//! there.
 
 use crate::NodeUi;
 use gantz_ca::{ContentAddr, DataGraph, NodeData};
@@ -21,16 +21,16 @@ use std::collections::HashMap;
 /// A UI-capable node erased to a trait object.
 ///
 /// Via [`NodeUi`]'s supertrait, `DynNode` implements [`gantz_core::Node`]
-/// (and `NodeUi` itself), so it slots directly into [`Graph`] weights,
+/// as well as `NodeUi`. It slots directly into [`Graph`] weights,
 /// compilation and the widgets.
 pub type DynNode = Box<dyn NodeUi>;
 
 /// A reified node paired with the monomorphic eraser for its concrete type.
 ///
-/// Produced by [`NodeCodec::reify_ui`]: the codec arm that decoded the node
+/// Produced by [`NodeCodec::reify_ui`]. The codec arm that decoded the node
 /// knows its concrete type, so it captures an eraser that downcasts and runs
-/// [`erase_node_typed`](gantz_core::data::erase_node_typed) - no trait-object
-/// serde involved.
+/// [`gantz_core::data::erase_node_typed`]. No trait-object serde is
+/// involved.
 pub struct NodeUiInstance {
     /// The reified node.
     pub node: DynNode,
@@ -41,29 +41,31 @@ pub struct NodeUiInstance {
 /// [`NodeData`] form.
 ///
 /// Two plain function pointers, so a codec is `Copy` and can be composed as
-/// a `const`. Build one with [`ui_node_codec!`](crate::ui_node_codec).
+/// a `const`. Build one with [`crate::ui_node_codec!`].
 #[derive(Clone, Copy)]
 pub struct NodeCodec {
     reify: fn(&NodeData) -> Result<NodeUiInstance, ReifyNodeError>,
     sugars: fn() -> gantz_format::Sugars<'static>,
 }
 
-/// The reified builtin palette: one typed [`DynNode`] instance per builtin,
+/// The reified builtin palette. One typed [`DynNode`] instance per builtin,
 /// keyed by its erased content address.
 ///
-/// The stored instances serve both compilation (via the [`gantz_core::Node`]
-/// supertrait upcast) and [`NodeUi`] introspection (palette docs, socket
-/// previews) without minting fresh instances per frame.
+/// The stored instances serve compilation through the [`gantz_core::Node`]
+/// supertrait upcast. They also serve [`NodeUi`] introspection such as
+/// palette docs and socket previews. No fresh instances are minted per
+/// frame.
 #[derive(Default)]
 pub struct UiBuiltins {
     map: HashMap<ContentAddr, DynNode>,
 }
 
-/// Failure to normalize a node's data form through its type: the reify or
+/// Failure to normalize a node's data form through its type. The reify or
 /// the re-erasure failed.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum NormalizeNodeError {
-    /// The stored form failed to decode (unknown tag or invalid fields).
+    /// The stored form failed to decode. The tag is unknown or the fields
+    /// are invalid.
     #[error(transparent)]
     Reify(#[from] ReifyNodeError),
     /// The reified node failed to erase back to data.
@@ -71,10 +73,10 @@ pub enum NormalizeNodeError {
     Erase(#[from] EraseNodeError),
 }
 
-// Lets reference-transparent passes (e.g. the DSP compiler's flattening) find
-// the underlying `Ref` within an erased UI node. `FnNamedRef` deliberately
-// does not match: a function value references a graph without standing in for
-// it.
+// Lets reference-transparent passes such as the DSP compiler's flattening
+// find the underlying `Ref` within an erased UI node. `FnNamedRef`
+// deliberately does not match. A function value references a graph without
+// standing in for it.
 impl gantz_core::node::AsRefNode for DynNode {
     fn as_ref_node(&self) -> Option<&gantz_core::node::Ref> {
         let node: &dyn gantz_core::Node = &**self;
@@ -89,14 +91,14 @@ impl NodeUiInstance {
     /// Pair a reified node with its concrete type's eraser.
     ///
     /// `erase` receives the node upcast to `&dyn Any` and must downcast to
-    /// the node's own concrete type - it is the codec arm's responsibility
-    /// (see [`ui_node_codec!`](crate::ui_node_codec)) that the two agree.
+    /// the node's own concrete type. The codec arm is responsible for keeping
+    /// the two in agreement. See [`crate::ui_node_codec!`].
     pub fn new(node: DynNode, erase: fn(&dyn Any) -> Result<NodeData, EraseNodeError>) -> Self {
         Self { node, erase }
     }
 
-    /// Erase the node back to its canonical data form (see
-    /// [`erase_node_typed`](gantz_core::data::erase_node_typed)).
+    /// Erase the node back to its canonical data form. See
+    /// [`gantz_core::data::erase_node_typed`].
     pub fn erase(&self) -> Result<NodeData, EraseNodeError> {
         let node: &dyn gantz_core::Node = &*self.node;
         let any: &dyn Any = node;
@@ -107,8 +109,8 @@ impl NodeUiInstance {
 impl UiBuiltins {
     /// Reify each builtin once through the codec.
     ///
-    /// Failures are returned for logging; a builtin that fails to reify
-    /// (e.g. a tag missing from the codec) degrades to a lookup miss.
+    /// Failures are returned for logging. A builtin that fails to reify, for
+    /// example on a tag missing from the codec, degrades to a lookup miss.
     pub fn reify(builtins: &Builtins, codec: &NodeCodec) -> (Self, Vec<ReifyNodeError>) {
         let mut map = HashMap::new();
         let mut errs = vec![];
@@ -132,8 +134,7 @@ impl UiBuiltins {
 
 impl NodeCodec {
     /// Compose a codec from its reify dispatch and its node set's sugar
-    /// source. See [`ui_node_codec!`](crate::ui_node_codec) for the standard
-    /// construction.
+    /// source. See [`crate::ui_node_codec!`] for the standard construction.
     pub const fn new(
         reify: fn(&NodeData) -> Result<NodeUiInstance, ReifyNodeError>,
         sugars: fn() -> gantz_format::Sugars<'static>,
@@ -146,8 +147,9 @@ impl NodeCodec {
         (self.reify)(node_data)
     }
 
-    /// Reify a stored graph: node weights through [`reify_ui`][Self::reify_ui],
-    /// indices and edges preserved verbatim (mirrors [`gantz_core::data::reify`]).
+    /// Reify a stored graph. Node weights go through [`Self::reify_ui`].
+    /// Indices and edges are preserved verbatim. This mirrors
+    /// [`gantz_core::data::reify`].
     pub fn reify_graph(&self, dg: &DataGraph) -> Result<Graph<DynNode>, ReifyError> {
         let mut out = Graph::with_capacity(dg.node_count(), dg.edge_count());
         for (node_ix, node_data) in dg.node_weights().enumerate() {
@@ -162,10 +164,11 @@ impl NodeCodec {
         Ok(out)
     }
 
-    /// Round-trip a node's data form through its type: reify, then erase.
+    /// Round-trip a node's data form through its type. Reify, then erase.
     ///
-    /// Validates the fields against the node's own serde and recomputes the
-    /// canonical form and the refs/blobs columns from the node's reporting.
+    /// This validates the fields against the node's own serde. It recomputes
+    /// the canonical form and the refs and blobs columns from the node's
+    /// reporting.
     pub fn normalize(&self, node_data: &NodeData) -> Result<NodeData, NormalizeNodeError> {
         Ok(self.reify_ui(node_data)?.erase()?)
     }
@@ -176,15 +179,15 @@ impl NodeCodec {
     }
 }
 
-/// Compose a [`NodeCodec`](crate::node::NodeCodec) over a node set.
+/// Compose a [`crate::node::NodeCodec`] over a node set.
 ///
 /// Takes the node set's `gantz_format::NodeSugar` carrier type and the list
-/// of node types - THE application's node-set manifest: a node type is
-/// storable exactly when it is listed here, and its wire tag and shape (and
-/// thus its content address) are fixed by its own `NodeTag` + serde. Each
-/// listed type must implement `gantz_nodetag::NodeTag`, `serde::Serialize`,
-/// `serde::de::DeserializeOwned` and [`NodeUi`](crate::NodeUi); the calling
-/// crate must depend on `serde`.
+/// of node types. The list is the application's node-set manifest. A node
+/// type is storable exactly when it is listed here. Its own `NodeTag` and
+/// serde fix its wire tag, shape and content address. Each listed type must
+/// implement `gantz_nodetag::NodeTag`, `serde::Serialize`,
+/// `serde::de::DeserializeOwned` and [`crate::NodeUi`]. The calling crate
+/// must depend on `serde`.
 ///
 /// Reifying data whose tag is not listed fails with a
 /// `gantz_core::data::ReifyNodeError` naming the tag.

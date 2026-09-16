@@ -1,7 +1,7 @@
 //! Partial-eval guard tests. A partial graph eval can hand any
-//! combinator a non-pattern (an unfired input's `'()` or a void-flavored
-//! binding) in place of a pattern, function, span or number. Every such
-//! case must be silent rather than an application error.
+//! combinator a non-pattern in place of a pattern, function, span or
+//! number. That is an unfired input's `'()` or a void-flavored binding.
+//! Every such case must be silent rather than an application error.
 
 mod common;
 
@@ -51,14 +51,14 @@ fn combinators_wrapping_junk_are_silent() {
             let p = wrap.replace('J', junk);
             let src = format!("(length (pat/query {p} (pat/span 0 2)))");
             // Only assert it evaluates without error and stays a list
-            // length (silent legs may still leave the non-junk legs
-            // producing events, e.g. stack).
+            // length. Silent legs may still leave the non-junk legs
+            // producing events, as in stack.
             common::assert_steel_true(&format!("(>= {src} 0)"));
         }
     }
 }
 
-// Joins with junk INNER values (a pattern of non-patterns) are silent.
+// Joins with junk inner values, a pattern of non-patterns, are silent.
 #[test]
 fn joins_with_junk_inner_values_are_silent() {
     for join in ["pat/join", "pat/inner-join", "pat/outer-join"] {

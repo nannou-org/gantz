@@ -1,6 +1,6 @@
-//! The typed side of the registry: the reified-graph cache, the builtin
+//! The typed side of the registry. The reified-graph cache, the builtin
 //! palette and node lookup, all concrete over the erased UI node
-//! ([`DynNode`]).
+//! [`DynNode`].
 
 use bevy_ecs::prelude::*;
 use bevy_gantz::Registry;
@@ -21,13 +21,13 @@ use crate::NodeCodecRes;
 #[derive(Default, Resource)]
 pub struct GraphCache(pub ReifiedGraphs<DynNode>);
 
-/// Resource carrying the app's builtin palette: the composed
+/// Resource carrying the app's builtin palette. The composed
 /// [`Builtins`](gantz_core::Builtins) data plus one reified node instance per
 /// builtin, keyed by its erased content address.
 ///
-/// The instances serve both compilation (via [`lookup_node`]'s
-/// addr -> `&dyn Node` fallback) and the GUI's introspection (palette docs,
-/// socket previews) - one map for both.
+/// The instances serve both compilation, via [`lookup_node`]'s fallback from
+/// address to `&dyn Node`, and the GUI's introspection of palette docs and
+/// socket previews.
 #[derive(Default, Resource)]
 pub struct BuiltinNodes {
     /// The composed builtin palette as data.
@@ -52,8 +52,8 @@ impl std::ops::DerefMut for GraphCache {
 impl BuiltinNodes {
     /// Reify one instance per builtin through the codec.
     ///
-    /// Failures are returned for logging; a builtin that fails to reify
-    /// (e.g. a tag from a domain not compiled in) degrades to a lookup miss.
+    /// Failures are returned for logging. A builtin that fails to reify, for
+    /// example a tag from a domain not compiled in, degrades to a lookup miss.
     pub fn reify(
         builtins: gantz_core::Builtins,
         codec: &NodeCodec,
@@ -71,8 +71,8 @@ impl BuiltinNodes {
 
 /// Look up a node by content address.
 ///
-/// Checks reified registry graphs first (a graph in the registry IS a node),
-/// then falls back to the reified builtin instances (see [`BuiltinNodes`]).
+/// Checks reified registry graphs first, since a graph in the registry is a
+/// node. Then falls back to the reified builtin instances in [`BuiltinNodes`].
 pub fn lookup_node<'a>(
     cache: &'a ReifiedGraphs<DynNode>,
     builtins: &'a UiBuiltins,
@@ -85,7 +85,7 @@ pub fn lookup_node<'a>(
     builtins.get(ca).map(|n| &**n as &dyn Node)
 }
 
-/// The [`gantz_egui::Env`] over the app's resources: the shared immutable
+/// The [`gantz_egui::Env`] over the app's resources. The shared immutable
 /// input to the widgets and nodes.
 pub fn env<'a>(
     registry: &'a Registry,
@@ -104,8 +104,9 @@ pub fn env<'a>(
 
 /// Bring the reified-graph cache up to date with the registry, best effort.
 ///
-/// Graphs that fail to reify (e.g. an unknown tag from a domain not compiled
-/// in) are logged and remain cache misses that typed lookups degrade over.
+/// Graphs that fail to reify, for example on an unknown tag from a domain not
+/// compiled in, are logged and remain cache misses that typed lookups degrade
+/// over.
 pub fn refresh_cache(reg: &Registry, cache: &mut GraphCache, codec: &NodeCodec) {
     let reify = |nd: &ca::NodeData| codec.reify_ui(nd).map(|inst| inst.node);
     for e in cache.0.ensure_all_with(reg, reify) {

@@ -1,5 +1,5 @@
-//! A readable text rendering of a resolved DSP program, for diagnostics
-//! surfacing (the GUI's "DSP" pane).
+//! A readable text rendering of a resolved DSP program, for diagnostics such
+//! as the GUI's DSP pane.
 
 use std::fmt::Write;
 
@@ -8,13 +8,13 @@ use plyphon::synthdef::{InputRef, UnitSpec};
 
 use crate::instance::{BusKey, ResolvedBus, ResolvedPart};
 
-/// Render a head's resolved DSP program - the parts the audio driver spawns,
-/// in part order - as readable text.
+/// Render a head's resolved DSP program as readable text. The program is the
+/// parts the audio driver spawns, in part order.
 ///
-/// Per part: the def name and identity, its params (with bound node paths),
-/// its units, its monitors, the buses it writes and reads, and the width/rate
-/// each dsp output port carried at derive time
-/// ([`shapes`][ResolvedPart::shapes]).
+/// Each part lists the def name and identity, its params with bound node
+/// paths, its units and its monitors. It also lists the buses it writes and
+/// reads, and the width and rate each dsp output port carried at derive time.
+/// See [`ResolvedPart::shapes`].
 pub fn describe_parts(parts: &[ResolvedPart]) -> String {
     let mut s = String::new();
     for (i, part) in parts.iter().enumerate() {
@@ -114,8 +114,8 @@ fn unit_str(unit: &UnitSpec) -> String {
     )
 }
 
-/// One input wire, compactly: a bare literal, `p2` (param) or `u3.0`
-/// (unit output).
+/// One input wire, compactly. A bare literal, `p2` for a param or `u3.0` for
+/// a unit output.
 fn input_str(input: &InputRef) -> String {
     match input {
         InputRef::Constant(c) => format!("{c}"),
@@ -135,7 +135,7 @@ fn bus_str(b: &ResolvedBus) -> String {
     )
 }
 
-/// A bus key, compactly (absolute paths).
+/// A bus key, compactly, with absolute paths.
 fn bus_key_str(key: &BusKey) -> String {
     match key {
         BusKey::Bus(path) => format!("~bus {path:?}"),
@@ -149,7 +149,7 @@ fn bus_key_str(key: &BusKey) -> String {
     }
 }
 
-/// The display token of a [`Rate`]: `ar`/`kr`/`ir`/`dr`.
+/// The display token of a [`Rate`], one of `ar`, `kr`, `ir` and `dr`.
 pub(crate) fn rate_token(rate: Rate) -> &'static str {
     match rate {
         Rate::Audio => "ar",

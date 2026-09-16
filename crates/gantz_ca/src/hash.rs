@@ -77,9 +77,8 @@ impl CaHash for bool {
 
 impl<T: CaHash, const N: usize> CaHash for [T; N] {
     fn hash(&self, hasher: &mut Hasher) {
-        // No length prefix: the element count is fixed by the type. For `[u8;
-        // N]` this streams the same bytes as a single bulk update, so existing
-        // content addresses are unchanged.
+        // No length prefix. The element count is fixed by the type. For
+        // `[u8; N]` this streams the same bytes as the `[u8]` impl.
         for elem in self {
             elem.hash(hasher);
         }
@@ -178,9 +177,8 @@ impl CaHash for crate::ContentAddr {
 mod tests {
     use crate::content_addr;
 
-    /// The generalized `[T; N]` impl must stream `[u8; N]` byte-for-byte the
-    /// same as the slice impl, so promoting it doesn't shift existing content
-    /// addresses.
+    /// The `[T; N]` impl must stream `[u8; N]` byte-for-byte the same as the
+    /// slice impl.
     #[test]
     fn u8_array_matches_slice() {
         let arr: [u8; 3] = [1, 2, 3];
@@ -188,7 +186,7 @@ mod tests {
         assert_eq!(content_addr(&arr), content_addr(slice));
     }
 
-    /// Non-`u8` arrays now hash element-wise and are order-sensitive.
+    /// Non-`u8` arrays hash element-wise and are order-sensitive.
     #[test]
     fn u16_array_is_element_and_order_sensitive() {
         assert_ne!(content_addr(&[1u16, 2]), content_addr(&[2u16, 1]));

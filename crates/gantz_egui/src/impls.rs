@@ -1,4 +1,4 @@
-//! A submodule providing implementations for core and std gantz nodes.
+//! [`crate::NodeUi`] implementations for core and std gantz nodes.
 
 mod apply;
 mod bang;
@@ -15,8 +15,8 @@ mod outlet;
 /// widest line does not wrap.
 ///
 /// A multiline `TextEdit` lays out its text within `desired_width` minus its
-/// horizontal `margin`, so we measure the same (unwrapped) highlighted galley
-/// the editor renders and add the margin back, plus 1px for sub-pixel rounding.
+/// horizontal `margin`. This measures the same unwrapped highlighted galley the
+/// editor renders and adds the margin back, plus 1px for sub-pixel rounding.
 /// Pass the same `margin` that is set on the editor via [`egui::TextEdit::margin`].
 fn code_edit_desired_width(
     ui: &egui::Ui,

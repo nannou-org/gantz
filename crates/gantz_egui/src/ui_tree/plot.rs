@@ -1,8 +1,9 @@
 //! The shared plot leaf renderer.
 //!
-//! Draws per-channel numeric series with `egui_plot`, parameterized by
-//! [`PlotParams`] so the same code renders both the `Plot` node (params from
-//! its weight) and the interpreter's `plot` element (params from its attrs).
+//! Draws per-channel numeric series with `egui_plot`. [`PlotParams`]
+//! parameterizes it, so the same code renders both the `Plot` node and the
+//! interpreter's `plot` element. The node takes its params from its weight.
+//! The element takes them from its attrs.
 
 use steel::SteelVal;
 
@@ -24,9 +25,8 @@ pub(crate) struct PlotParams {
     pub y_max: Option<f32>,
 }
 
-/// Render the plot filling `size`: a single channel fills it; multiple channels
-/// (a list-of-lists, e.g. from `~scopeout` + `deinterleave`) are stacked as one
-/// sub-plot each. Returns the combined response.
+/// Render the plot filling `size`. A single channel fills it. Multiple channels
+/// are stacked as one sub-plot each. Returns the combined response.
 pub(crate) fn plot_body(
     params: &PlotParams,
     channels: &[Vec<f64>],
@@ -34,7 +34,8 @@ pub(crate) fn plot_body(
     size: egui::Vec2,
     ui: &mut egui::Ui,
 ) -> egui::Response {
-    // No data yet: draw a single empty plot so the node still has a body.
+    // Zero or one channel draws a single plot. An empty plot keeps the node's
+    // body visible.
     if channels.len() <= 1 {
         let ys = channels.first().map(Vec::as_slice).unwrap_or(&[]);
         return plot_channel(params, ys, plot_id, size, ui);
@@ -55,7 +56,8 @@ pub(crate) fn plot_body(
     .inner
 }
 
-/// Render one channel's series (axes, grid, line/bars and bounds) filling `size`.
+/// Render one channel's series filling `size`, with its axes, grid, line or bars
+/// and bounds.
 fn plot_channel(
     params: &PlotParams,
     ys: &[f64],
@@ -83,8 +85,8 @@ fn plot_channel(
         .allow_boxed_zoom(false)
         .sense(egui::Sense::hover());
     if !interactive {
-        // Purely visual: hide the crosshair (the value readout is also
-        // suppressed via `allow_hover(false)` below).
+        // Purely visual, so hide the crosshair. `allow_hover(false)` below
+        // also suppresses the value readout.
         plot = plot.cursor_color(egui::Color32::TRANSPARENT);
     }
 
@@ -113,18 +115,17 @@ fn plot_channel(
                     );
                 }
             }
-            // Drive the view deterministically from the data + config (the
-            // plot never pans), so live updates and min/max apply.
+            // Drive the view from the data and config. The plot never pans,
+            // so live updates and min/max apply.
             let ([xlo, ylo], [xhi, yhi]) = bounds;
             plot_ui.set_plot_bounds_x(xlo..=xhi);
             plot_ui.set_plot_bounds_y(ylo..=yhi);
         })
         .response;
 
-    // egui_plot sets a crosshair *mouse cursor* on hover; when not
-    // interactive, restore the default arrow so the plot reads as a static
-    // node. (The resize corner sets its own cursor after this, so it is
-    // unaffected.)
+    // egui_plot sets a crosshair mouse cursor on hover. When not interactive,
+    // restore the default arrow so the plot reads as a static node. The
+    // resize corner sets its own cursor after this, so it is unaffected.
     if !interactive && plot_resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
     }
@@ -133,7 +134,7 @@ fn plot_channel(
 
 /// Compute `([x_min, y_min], [x_max, y_max])` for the view from the data and
 /// optional fixed value bounds. Bars include the baseline `0` and span integer
-/// x; lines span sample indices. The plot itself adds no margin.
+/// x. Lines span sample indices. The plot itself adds no margin.
 fn value_bounds(
     ys: &[f64],
     style: gantz_ui::PlotStyle,
@@ -186,35 +187,35 @@ pub(crate) fn resolve_color(color: Option<[u8; 4]>, ui: &egui::Ui) -> egui::Colo
     }
 }
 
-/// Split a stored plot value into per-channel series. A list or vector *of lists/vectors*
-/// is one series per inner container (`~scopeout`'s per-channel rings produce this); a
-/// flat numeric list or vector - or a lone number - is a single channel. Lists and
-/// vectors are treated identically ([`SteelVal::ListV`] and [`SteelVal::VectorV`]).
+/// Split a stored plot value into per-channel series. A list or vector of
+/// containers is one series per inner container. A flat numeric list or vector
+/// is a single channel. So is a lone number. [`SteelVal::ListV`] and
+/// [`SteelVal::VectorV`] are treated identically.
 pub(crate) fn split_channels(val: &SteelVal) -> Vec<Vec<f64>> {
-    // The top-level elements of a list or vector; `None` if `val` is not a container.
+    // The top-level elements of a list or vector. `None` if `val` is not a container.
     let elems: Option<Vec<&SteelVal>> = match val {
         SteelVal::ListV(list) => Some(list.iter().collect()),
         SteelVal::VectorV(vec) => Some(vec.iter().collect()),
         _ => None,
     };
     match elems {
-        // A container whose elements are themselves containers: one series each.
+        // Containers nested in a container give one series each.
         Some(elems) if elems.iter().any(|v| is_container(v)) => {
             elems.iter().map(|v| channel_numerics(v)).collect()
         }
-        // A flat numeric container: a single channel.
+        // A flat numeric container is a single channel.
         Some(elems) => vec![elems.iter().filter_map(|v| steel_num(v)).collect()],
-        // A lone number: one single-sample channel.
+        // A lone number is one single-sample channel.
         None => vec![steel_num(val).into_iter().collect()],
     }
 }
 
-/// Whether `v` is a list or vector (a channel container).
+/// Whether `v` is a list or vector, the channel container shapes.
 pub(crate) fn is_container(v: &SteelVal) -> bool {
     matches!(v, SteelVal::ListV(_) | SteelVal::VectorV(_))
 }
 
-/// One channel's numeric samples: a list's or vector's numeric elements, or a lone number.
+/// One channel's numeric samples. A list's or vector's numeric elements, or a lone number.
 fn channel_numerics(val: &SteelVal) -> Vec<f64> {
     match val {
         SteelVal::ListV(list) => list.iter().filter_map(steel_num).collect(),
@@ -236,9 +237,6 @@ pub(crate) fn steel_num(val: &SteelVal) -> Option<f64> {
 mod tests {
     use super::*;
 
-    // `split_channels` treats a list-or-vector-of-containers as one series per inner
-    // container (for the stacked multi-channel plot), and a flat list/vector or lone
-    // number as a single channel. Lists and vectors are interchangeable, including mixed.
     #[test]
     fn split_channels_by_shape() {
         let num = |n: f64| SteelVal::NumV(n);
@@ -282,17 +280,16 @@ mod tests {
         );
     }
 
-    // Bars keep the baseline in view and pad a flat series; fixed bounds are exact.
     #[test]
     fn value_bounds_by_style() {
         use gantz_ui::PlotStyle::{Bars, Line};
 
-        // Bars: x spans integer bar positions, y includes the baseline 0.
+        // Bars span integer bar positions on x and include the baseline 0 on y.
         let ([xlo, ylo], [xhi, yhi]) = value_bounds(&[1.0, 2.0, 3.0], Bars, None, None);
         assert_eq!((xlo, xhi), (-0.5, 2.5));
         assert_eq!((ylo, yhi), (0.0, 3.0));
 
-        // Lines: x spans sample indices, y spans the data.
+        // Lines span sample indices on x and the data on y.
         let ([xlo, ylo], [xhi, yhi]) = value_bounds(&[1.0, 2.0, 3.0], Line, None, None);
         assert_eq!((xlo, xhi), (0.0, 2.0));
         assert_eq!((ylo, yhi), (1.0, 3.0));
@@ -305,7 +302,7 @@ mod tests {
         let ([_, ylo], [_, yhi]) = value_bounds(&[1.0, 2.0], Line, Some(-1.0), Some(1.0));
         assert_eq!((ylo, yhi), (-1.0, 1.0));
 
-        // No data: a unit-ish default window.
+        // No data gives a unit default window.
         let ([xlo, ylo], [xhi, yhi]) = value_bounds(&[], Bars, None, None);
         assert_eq!((xlo, xhi), (-0.5, 0.5));
         assert_eq!((ylo, yhi), (0.0, 1.0));

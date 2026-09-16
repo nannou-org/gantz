@@ -1,29 +1,30 @@
-//! Lowering one graph level (via its [`Meta`]) to an IR [`Body`].
+//! Lowering one graph level, via its [`Meta`], to an IR [`Body`].
 //!
-//! Nodes are emitted as steps in a deterministic dependency order (ready
-//! nodes by ascending id, branches last so as much independent work as
-//! possible precedes each dispatch). At a branch:
+//! Nodes are emitted as steps in a deterministic dependency order. Ready
+//! nodes go by ascending id. Branches go last so as much independent work
+//! as possible precedes each dispatch. At a branch:
 //!
-//! - each arm's region (nodes reachable only while that arm is live) lowers
-//!   into the arm's body, recursively;
-//! - nodes every live arm *unconditionally* reaches reconverge: they lower
-//!   once into a join point, and each consumed input whose sources are
-//!   arm-varying becomes a join parameter (arms pass their value, or `'()`
-//!   when they don't produce one);
-//! - values consumed *outside* the branch construct - by deferred nodes,
-//!   enclosing scopes, or this level's outlets - flow out as branch exports
-//!   (the join returns them, the dispatch statement binds them). This
-//!   subsumes the old cross-component root ordering and outlet bridges.
+//! - Each arm's region lowers into the arm's body, recursively. The region
+//!   is the nodes reachable only while that arm is live.
+//! - Nodes every live arm unconditionally reaches reconverge. They lower
+//!   once into a join point. Each consumed input whose sources are
+//!   arm-varying becomes a join parameter. Arms pass their value, or `'()`
+//!   when they do not produce one.
+//! - Values consumed outside the branch construct flow out as branch
+//!   exports. The consumers are deferred nodes, enclosing scopes, or this
+//!   level's outlets. The join returns the exports and the dispatch
+//!   statement binds them.
 //!
-//! Dead arms (reaching nothing) yield the missing value for every export -
-//! `'()`, or the unfired sentinel for outlet-feeding exports so a level
-//! result can distinguish "didn't fire" from "fired with `'()`" - and bypass
-//! the join, so reconvergent work runs only when a live arm actually jumps.
+//! A dead arm reaches nothing. It yields the missing value for every export
+//! and bypasses the join. The missing value is `'()`. For outlet-feeding
+//! exports it is the unfired sentinel, so a level result can distinguish
+//! "did not fire" from "fired with `'()`". Reconvergent work thus runs only
+//! when a live arm jumps.
 //!
 //! A level is lowered the same way whether entered from an entrypoint
-//! ([`LevelSources::Eval`]) or as a graph fn ([`LevelSources::Inlets`]);
-//! inlets resolve as pre-bound parameter values and outlet values are
-//! returned to the caller via [`LevelOut`].
+//! ([`LevelSources::Eval`]) or as a graph fn ([`LevelSources::Inlets`]).
+//! Inlets resolve as pre-bound parameter values. Outlet values are returned
+//! to the caller via [`LevelOut`].
 
 use crate::{
     compile::{
@@ -51,7 +52,7 @@ pub(crate) struct NodeConf {
 pub(crate) struct NodeConns {
     /// The active inputs.
     pub inputs: node::Conns,
-    /// Includes all connected outputs (whether conditional or not).
+    /// Includes all connected outputs, conditional or not.
     pub outputs: node::Conns,
 }
 
@@ -70,22 +71,23 @@ impl fmt::Debug for NodeConns {
 /// The fixed context for lowering one level.
 pub(crate) struct Cx<'a> {
     pub meta: &'a Meta,
-    /// Additional per-entrypoint branch masks (bridged children whose inner
-    /// push reaches their outlets through branching), atop `meta.branches`.
+    /// Additional per-entrypoint branch masks atop `meta.branches`. These are
+    /// bridged children whose inner push reaches their outlets through
+    /// branching.
     pub extra_branches: BTreeMap<node::Id, Vec<node::Conns>>,
-    /// Nodes already evaluated by enclosing glue: their `(branch-ix value)`
-    /// pair ([`Var::Result`]) or outputs are bound before the body runs.
+    /// Nodes already evaluated by enclosing glue. Their [`Var::Result`] pair
+    /// or outputs are bound before the body runs.
     pub prebound: BTreeSet<node::Id>,
 }
 
 /// What drives a level's evaluation.
 pub(crate) enum LevelSources {
-    /// A graph-fn variant: these inlets are active. All-active additionally
-    /// pulls from the outlets; a subset pushes from the active inlets plus
-    /// the level's static sources only (matching the flow pipeline).
+    /// A graph-fn variant with these inlets active. All-active also pulls
+    /// from the outlets. A subset pushes from the active inlets plus the
+    /// level's static sources only.
     Inlets(BTreeSet<node::Id>),
-    /// Entrypoint sources resolved at this level (including bridged
-    /// children: pre-evaluated nodes pushing over their produced outputs).
+    /// Entrypoint sources resolved at this level. Bridged children are
+    /// included as pre-evaluated nodes pushing over their produced outputs.
     Eval {
         push: Vec<(node::Id, node::Conns)>,
         pull: Vec<(node::Id, node::Conns)>,
@@ -98,45 +100,46 @@ pub(crate) struct OutletVal {
     /// The atom holding the value in the body's final scope, or `None` when
     /// this variant's evaluation can never produce it.
     pub atom: Option<Atom>,
-    /// Whether the value may be the unfired sentinel at runtime (it flowed
-    /// through a branch export).
+    /// Whether the value may be the unfired sentinel at runtime because it
+    /// flowed through a branch export.
     pub conditional: bool,
 }
 
-/// A lowered level: its body and the values of its outlets (in id order).
+/// A lowered level. Its body and the values of its outlets in id order.
 pub(crate) struct LevelOut {
     pub body: Body,
     pub outlets: Vec<OutletVal>,
 }
 
-/// The lexical environment during lowering: which atom currently holds each
-/// value, and per-input overrides where arm-varying sources were merged into
-/// a single join parameter or export.
+/// The lexical environment during lowering. It records which atom currently
+/// holds each value. It also records per-input overrides where arm-varying
+/// sources were merged into a single join parameter or export.
 #[derive(Clone, Default)]
 struct Env {
-    /// (node, output) -> the in-scope atom holding that value.
+    /// Maps `(node, output)` to the in-scope atom holding that value.
     vals: BTreeMap<(node::Id, usize), Atom>,
-    /// (node, input) -> the atom standing in for all of that input's sources.
+    /// Maps `(node, input)` to the atom standing in for all of that input's
+    /// sources.
     inputs: BTreeMap<(node::Id, usize), Atom>,
 }
 
 impl<'a> Cx<'a> {
-    /// The branch arm masks of `n`, when branching (entrypoint-specific
-    /// bridged branches take precedence over the graph-wide set).
+    /// The branch arm masks of `n`, when branching. Entrypoint-specific
+    /// bridged branches take precedence over the graph-wide set.
     fn branches(&self, n: node::Id) -> Option<&Vec<node::Conns>> {
         self.extra_branches.get(&n).or(self.meta.branches.get(&n))
     }
 }
 
-/// The reach dag for one level's evaluation: the subgraph of nodes the
-/// given sources evaluate, with all edges between them.
+/// The reach dag for one level's evaluation. The subgraph of nodes the given
+/// sources evaluate, with all edges between them.
 ///
-/// Evaluation never propagates *through* a delay (its value crosses between
-/// evaluations), so reachability runs on a graph with delay out-edges
-/// stripped - which is also what legalizes cycles passing through one. A
-/// delay whose stored value is consumed by a reached node joins the reach so
-/// its read binding exists. Shared by [`level_body`] and the
-/// outlet-activation analysis so both see identical reachability.
+/// Evaluation never propagates through a delay. Its value crosses between
+/// evaluations. Reachability therefore runs on a graph with delay out-edges
+/// stripped. This is also what legalizes cycles passing through one. A delay
+/// whose stored value is consumed by a reached node joins the reach so its
+/// read binding exists. Shared by [`level_body`] and the outlet-activation
+/// analysis so both see identical reachability.
 pub(crate) fn level_reach_dag(
     meta: &Meta,
     sources: &LevelSources,
@@ -147,11 +150,11 @@ pub(crate) fn level_reach_dag(
             let mut push: Vec<(node::Id, node::Conns)> =
                 active.iter().map(|&n| (n, conn1())).collect();
             if active.len() == meta.inlets.len() {
-                // All inlets active: inlets push, outlets pull.
+                // All inlets active. Inlets push and outlets pull.
                 let pull = meta.outlets.iter().map(|&n| (n, conn1())).collect();
                 (push, pull)
             } else {
-                // Subset: static sources stay live; no outlet pull, so an
+                // Subset. Static sources stay live. No outlet pull, so an
                 // unfired inlet's exclusive subtree is excluded.
                 push.extend(static_sources(meta)?);
                 (push, vec![])
@@ -191,8 +194,8 @@ pub(crate) fn level_body(cx: &Cx, sources: &LevelSources) -> Result<LevelOut, Lo
     let meta = cx.meta;
     let dag = level_reach_dag(meta, sources)?;
 
-    // Seed the env: active inlet values are bound as graph fn params;
-    // pre-bound non-branching nodes' outputs are bound by enclosing glue.
+    // Seed the env. Active inlet values are bound as graph fn params.
+    // Enclosing glue binds the outputs of pre-bound non-branching nodes.
     let mut env = Env::default();
     if let LevelSources::Inlets(active) = sources {
         for &i in active {
@@ -210,16 +213,17 @@ pub(crate) fn level_body(cx: &Cx, sources: &LevelSources) -> Result<LevelOut, Lo
         }
     }
 
-    // Everything to lower: the reachable set minus inlets/outlets (resolved
-    // as values, never stepped) and pre-bound non-branching nodes. Pre-bound
-    // *branching* nodes stay pending so their dispatch lowers normally.
+    // Everything to lower. The reachable set minus inlets, outlets and
+    // pre-bound non-branching nodes. Inlets and outlets resolve as values and
+    // are never stepped. Pre-bound branching nodes stay pending so their
+    // dispatch lowers normally.
     let pending: BTreeSet<node::Id> = dag
         .nodes()
         .filter(|n| !meta.inlets.contains(n) && !meta.outlets.contains(n))
         .filter(|n| !cx.prebound.contains(n) || cx.branches(*n).is_some())
         .collect();
 
-    // Delay reads: previous-evaluation values bound before anything runs.
+    // Delay reads. Previous-evaluation values are bound before anything runs.
     let mut steps = Vec::new();
     for &d in &meta.delays {
         let consumed =
@@ -248,8 +252,8 @@ pub(crate) fn level_body(cx: &Cx, sources: &LevelSources) -> Result<LevelOut, Lo
     })
 }
 
-/// A copy of `g` without the out-edges of delay nodes (preserving all
-/// nodes), used for ordering and reachability.
+/// A copy of `g` without the out-edges of delay nodes. All nodes are kept.
+/// Used for ordering and reachability.
 fn strip_delay_out_edges(g: &MetaGraph, delays: &BTreeSet<node::Id>) -> MetaGraph {
     let mut out = MetaGraph::default();
     for n in g.nodes() {
@@ -263,8 +267,8 @@ fn strip_delay_out_edges(g: &MetaGraph, delays: &BTreeSet<node::Id>) -> MetaGrap
     out
 }
 
-/// The level's static sources: input-less interior nodes (constants), which
-/// stay live regardless of which inlets fired.
+/// The level's static sources. These are input-less interior nodes such as
+/// constants. They stay live regardless of which inlets fired.
 fn static_sources(meta: &Meta) -> Result<Vec<(node::Id, node::Conns)>, LowerError> {
     use crate::compile::error::TooManyConns;
     let mut sources = Vec::new();
@@ -292,8 +296,8 @@ fn static_sources(meta: &Meta) -> Result<Vec<(node::Id, node::Conns)>, LowerErro
     Ok(sources)
 }
 
-/// Resolve outlet `o`'s value: the merged branch export when its sources are
-/// conditional, else its single in-scope source.
+/// Resolve outlet `o`'s value. It is the merged branch export when its
+/// sources are conditional, else its single in-scope source.
 fn resolve_outlet(dag: &MetaGraph, env: &Env, o: node::Id) -> Result<OutletVal, LowerError> {
     if !dag.contains_node(o) {
         return Ok(OutletVal {
@@ -324,7 +328,7 @@ fn resolve_outlet(dag: &MetaGraph, env: &Env, o: node::Id) -> Result<OutletVal, 
     }
 }
 
-/// Collect the node configurations (variants) called anywhere in `body`.
+/// Collect the node variants called anywhere in `body`.
 pub(crate) fn collect_confs(body: &Body, confs: &mut BTreeSet<NodeConf>) {
     fn conf(call: &NodeCall) -> NodeConf {
         let inputs = node::Conns::try_from_iter(call.args.iter().map(Option::is_some))
@@ -342,7 +346,7 @@ pub(crate) fn collect_confs(body: &Body, confs: &mut BTreeSet<NodeConf>) {
             Step::Node { call, .. } => {
                 confs.insert(conf(call));
             }
-            // Delays are intrinsics: no node fn.
+            // Delays are intrinsics and have no node fn.
             Step::DelayRead { .. } | Step::DelayWrite { .. } => {}
             Step::Join(join) => collect_confs(&join.body, confs),
             Step::Branch { subject, arms, .. } => {
@@ -369,8 +373,8 @@ fn lower_steps(
     while let Some(n) = next_node(cx, dag, &pending) {
         pending.remove(&n);
         if cx.meta.delays.contains(&n) {
-            // A delay's only step is its write (the read was bound at the
-            // top of the level body); an unconnected input writes nothing.
+            // A delay's only step is its write. The read was bound at the top
+            // of the level body. An unconnected input writes nothing.
             if let Some(arg) = resolve_input(dag, env, n, 0)? {
                 steps.push(Step::DelayWrite { node: n, arg });
             }
@@ -396,13 +400,13 @@ fn lower_steps(
     Ok(steps)
 }
 
-/// The next node to lower: among pending nodes whose in-dag predecessors are
-/// all already lowered, the lowest-id non-branch node, else the lowest-id
-/// branch (emitting independent work first minimizes branch exports).
+/// The next node to lower. Among pending nodes whose in-dag predecessors are
+/// all lowered, pick the lowest-id non-branch node, else the lowest-id
+/// branch. Emitting independent work first minimizes branch exports.
 fn next_node(cx: &Cx, dag: &MetaGraph, pending: &BTreeSet<node::Id>) -> Option<node::Id> {
     let mut first_branch = None;
     for &n in pending {
-        // A pending *delay* predecessor never blocks: consumers read the
+        // A pending delay predecessor never blocks. Consumers read the
         // pre-bound previous value, not the pending write.
         let ready = dag.edges_directed(n, petgraph::Incoming).all(|e_ref| {
             !pending.contains(&e_ref.source()) || cx.meta.delays.contains(&e_ref.source())
@@ -436,13 +440,14 @@ fn node_call(cx: &Cx, dag: &MetaGraph, env: &Env, n: node::Id) -> Result<NodeCal
     })
 }
 
-/// Resolve input `i` of node `n`: the merged override if one was installed
-/// (a join param or branch export), else the in-scope source atoms - one
-/// directly, several as a `(list ...)` in source order, none as unconnected.
+/// Resolve input `i` of node `n`. Use the merged override if one was
+/// installed, that is a join param or branch export. Else use the in-scope
+/// source atoms. One source passes directly. Several pass as a `(list ...)`
+/// in source order. None means unconnected.
 ///
-/// A source with no in-scope binding is dropped: it lives in a scope that
-/// can never be live at the same time as this one (e.g. a sibling branch
-/// arm), and its contribution to the same consumer merges in an enclosing
+/// A source with no in-scope binding is dropped. It lives in a scope that
+/// can never be live at the same time as this one, for example a sibling
+/// branch arm. Its contribution to the same consumer merges in an enclosing
 /// scope instead.
 fn resolve_input(
     dag: &MetaGraph,
@@ -501,8 +506,9 @@ fn node_outputs(meta: &Meta, dag: &MetaGraph, n: node::Id) -> Result<node::Conns
 }
 
 /// The nodes reachable from `seeds` within `within`, including the seeds.
-/// Never expands through a delay node (its value crosses evaluations), nor
-/// through a member of `stop` (the member itself is still included).
+/// Never expands through a delay node, since its value crosses evaluations.
+/// Never expands through a member of `stop`, but the member itself is still
+/// included.
 fn descendants(
     cx: &Cx,
     dag: &MetaGraph,
@@ -546,12 +552,12 @@ fn arm_seeds(
     seeds
 }
 
-/// The nodes *unconditionally* evaluated once `seeds` are reached, within
-/// `within`: the forward closure that crosses a nested branch only via the
-/// nodes every one of its arms unconditionally reaches (an arm reaching
-/// nothing - a dead arm that terminates evaluation - blocks the crossing
-/// entirely). Unlike [`descendants`], a node reached only through some arms
-/// of a nested branch is conditional and excluded.
+/// The nodes unconditionally evaluated once `seeds` are reached, within
+/// `within`. This is the forward closure that crosses a nested branch only
+/// via the nodes every one of its arms unconditionally reaches. A dead arm
+/// reaches nothing and blocks the crossing entirely. Unlike
+/// [`descendants`], a node reached only through some arms of a nested
+/// branch is conditional and excluded.
 fn unconditional_reach(
     cx: &Cx,
     dag: &MetaGraph,
@@ -588,22 +594,22 @@ fn unconditional_reach(
     reached
 }
 
-/// An export slot bound by a branch dispatch statement: how the join body's
-/// final scope yields it, and the atom a bypassing (dead) arm yields instead.
+/// An export slot bound by a branch dispatch statement. It records how the
+/// join body's final scope yields it, and the atom a dead arm yields instead.
 #[derive(Clone, Copy)]
 struct Slot {
     ret: SlotRet,
     missing: Atom,
 }
 
-/// How a slot's value is read from the join body's final scope (resolved
-/// *after* the join lowers, since a cont source may itself be routed through
-/// a deeper branch construct's export).
+/// How a slot's value is read from the join body's final scope. It is
+/// resolved after the join lowers, since a cont source may itself be routed
+/// through a deeper branch construct's export.
 #[derive(Clone, Copy)]
 enum SlotRet {
     /// The join param itself.
     Param(Var),
-    /// Consumer input `consumer`: a deeper construct's export override when
+    /// Consumer input `consumer`. A deeper construct's export override when
     /// present, else its single cont `source`'s value.
     Input {
         consumer: (node::Id, usize),
@@ -613,8 +619,8 @@ enum SlotRet {
     Val((node::Id, usize)),
 }
 
-/// Lower branch node `b` and its whole region: arm bodies, the reconvergence
-/// join (if any), and the branch statement binding its exports.
+/// Lower branch node `b` and its whole region. That is the arm bodies, the
+/// reconvergence join if any, and the branch statement binding its exports.
 fn lower_branch(
     cx: &Cx,
     dag: &MetaGraph,
@@ -631,16 +637,16 @@ fn lower_branch(
         Subject::Call(node_call(cx, dag, env, b)?)
     };
 
-    // Per-arm reach: everything possibly downstream of the arm.
+    // Per-arm reach. Everything possibly downstream of the arm.
     let no_stop = BTreeSet::new();
     let r_arms: Vec<BTreeSet<node::Id>> = arm_masks
         .iter()
         .map(|mask| descendants(cx, dag, arm_seeds(dag, b, mask, pending), pending, &no_stop))
         .collect();
     let r_all: BTreeSet<node::Id> = r_arms.iter().flatten().copied().collect();
-    // An arm is live when it propagates anywhere: into its (pending-local)
-    // region, or via an active output straight to a consumer outside the
-    // current lowering scope (e.g. an enclosing join's node or an outlet).
+    // An arm is live when it propagates anywhere. That is into its
+    // pending-local region, or via an active output straight to a consumer
+    // outside the current lowering scope, for example an outlet.
     let live: Vec<bool> = arm_masks
         .iter()
         .zip(&r_arms)
@@ -657,10 +663,10 @@ fn lower_branch(
         })
         .collect();
 
-    // Reconvergence candidates: nodes every live arm *unconditionally*
-    // reaches. Set-reachability is not enough - a node reached only through
-    // some arms of a nested branch is conditional and must stay inside that
-    // branch's own lowering (the lattice shape).
+    // Reconvergence candidates. Nodes every live arm unconditionally reaches.
+    // Set-reachability is not enough. A node reached only through some arms
+    // of a nested branch is conditional and must stay inside that branch's
+    // own lowering.
     let mut live_ucr = arm_masks
         .iter()
         .zip(&live)
@@ -689,10 +695,10 @@ fn lower_branch(
     }
     let deferred: BTreeSet<node::Id> = cont_cand.intersection(&ext_desc).copied().collect();
 
-    // Arm regions hold only the work conditional on *this* branch alone:
-    // arm reach stops at reconvergence candidates, so nodes that are further
-    // conditional on a branch lowered in the join (a cascade) stay out of
-    // the arms and join the continuation's pending instead, where the inner
+    // Arm regions hold only the work conditional on this branch alone. Arm
+    // reach stops at reconvergence candidates. Nodes that are further
+    // conditional on a branch lowered in the join therefore stay out of the
+    // arms. They join the continuation's pending instead, where the inner
     // branch's own lowering places them.
     let arm_regions: Vec<BTreeSet<node::Id>> = arm_masks
         .iter()
@@ -717,13 +723,14 @@ fn lower_branch(
         .collect();
 
     // Classify each input of every consumer fed from inside this branch
-    // construct. Consumers within an arm resolve lexically inside the arm and
-    // `b`'s own inputs were resolved above, so what remains: cont members
-    // (lowered in the join; arm-varying inputs become join params) and
-    // *outside* consumers - deferred nodes, enclosing-scope nodes, or this
-    // level's outlets - whose region-fed inputs flow out as branch exports.
-    // Outlet-feeding exports always get a dedicated per-input slot whose
-    // missing value is the unfired sentinel.
+    // construct. Consumers within an arm resolve lexically inside the arm.
+    // `b`'s own inputs were resolved above. What remains are cont members
+    // and outside consumers. Cont members lower in the join and their
+    // arm-varying inputs become join params. Outside consumers are deferred
+    // nodes, enclosing-scope nodes, or this level's outlets. Their
+    // region-fed inputs flow out as branch exports. Outlet-feeding exports
+    // always get a dedicated per-input slot whose missing value is the
+    // unfired sentinel.
     let in_arms = |n: node::Id| arm_regions.iter().any(|r| r.contains(&n));
     let mut consumer_inputs: BTreeSet<(node::Id, usize)> = BTreeSet::new();
     for v in cont
@@ -742,7 +749,8 @@ fn lower_branch(
             }
         }
     }
-    // (consumer, input) -> param var, for inputs with arm-varying sources.
+    // Maps `(consumer, input)` to its param var, for inputs with arm-varying
+    // sources.
     let mut params: BTreeMap<(node::Id, usize), Var> = BTreeMap::new();
     // Everything the branch statement binds, in deterministic Var order.
     let mut slots: BTreeMap<Var, Slot> = BTreeMap::new();
@@ -762,10 +770,10 @@ fn lower_branch(
         let missing = if outlet { Atom::Unfired } else { Atom::Unit };
         let outside = !cont.contains(&t);
         if !arm_s.is_empty() {
-            // Arm-varying sources merge into one scalar param; mixing them
+            // Arm-varying sources merge into one scalar param. Mixing them
             // with simultaneously-alive sources is unsupported. Sources
             // visible in neither the region nor the current scope belong to
-            // enclosing scopes (e.g. a sibling outer arm) and merge there.
+            // enclosing scopes and merge there.
             let lexical = sources.iter().any(|s| env.vals.contains_key(s));
             if !cont_s.is_empty() || lexical || env.inputs.contains_key(&(t, i)) {
                 return Err(LowerError::MixedInputSources { node: t, input: i });
@@ -783,8 +791,8 @@ fn lower_branch(
             }
         } else if outside && !cont_s.is_empty() {
             if outlet {
-                // A dedicated slot carrying the outlet's (single) cont
-                // source, so a bypassing arm yields the unfired sentinel.
+                // A dedicated slot carrying the outlet's single cont source,
+                // so a bypassing arm yields the unfired sentinel.
                 let lexical = sources.iter().any(|s| env.vals.contains_key(s));
                 if cont_s.len() > 1 || lexical || env.inputs.contains_key(&(t, i)) {
                     return Err(LowerError::MixedInputSources { node: t, input: i });
@@ -814,8 +822,8 @@ fn lower_branch(
         }
     }
 
-    // The join body: the cont nodes, with arm-varying inputs reading their
-    // params, ending by yielding the export slots' values.
+    // The join body. The cont nodes, with arm-varying inputs reading their
+    // params. It ends by yielding the export slots' values.
     let export_vars: Vec<Var> = slots.keys().copied().collect();
     let join_id = cont.first().copied().unwrap_or(b);
     let join = if !cont.is_empty() || !slots.is_empty() {
@@ -852,9 +860,9 @@ fn lower_branch(
         None
     };
 
-    // Arm bodies. Live arms jump to the join (when one exists) passing each
-    // param's value as produced by that arm; dead arms yield every slot's
-    // missing value directly, bypassing the join.
+    // Arm bodies. Live arms jump to the join when one exists. They pass each
+    // param's value as produced by that arm. Dead arms yield every slot's
+    // missing value directly and bypass the join.
     let mut arms = Vec::with_capacity(arm_masks.len());
     for (k, mask) in arm_masks.iter().enumerate() {
         let mut arm_env = env.clone();
@@ -906,7 +914,7 @@ fn lower_branch(
         });
     }
 
-    // Consume the region; deferred nodes stay pending and read the exports.
+    // Consume the region. Deferred nodes stay pending and read the exports.
     for n in r_all.iter() {
         if !deferred.contains(n) {
             pending.remove(n);
@@ -933,8 +941,8 @@ fn lower_branch(
     Ok(())
 }
 
-/// The atom arm `k` passes for the join param merging input `(n, i)`: the
-/// value of the arm-local source feeding it, or `missing` when this arm
+/// The atom an arm passes for the join param merging input `(n, i)`. It is
+/// the value of the arm-local source feeding it, or `missing` when this arm
 /// produces none.
 #[allow(clippy::too_many_arguments)]
 fn arm_param_arg(
@@ -948,7 +956,7 @@ fn arm_param_arg(
     missing: Atom,
 ) -> Result<Atom, LowerError> {
     // An inner branch within this arm may already have merged the input's
-    // in-arm sources into an export of its own; pass that through. A further
+    // in-arm sources into an export of its own. Pass that through. A further
     // direct alive source alongside it would need a second scalar slot.
     if let Some(&atom) = arm_env.inputs.get(&(n, i)) {
         let direct = input_sources(dag, n, i)

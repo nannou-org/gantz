@@ -1,13 +1,14 @@
 //! The canonical encoder from the typed tree to the abstract value model.
 //!
-//! Canonical form keeps stored GUI values minimal and stable, mirroring the
+//! Canonical form keeps stored GUI values minimal and stable. It mirrors the
 //! ext conventions elsewhere in gantz:
 //!
 //! - Tags and attribute names emit as identifiers.
-//! - Only attributes differing from the element's `Default` emit. Required
-//!   attributes (`cols` on `grid`) and positional arguments (`scope` and
-//!   `ref-gui` ids, `label` text) always emit.
-//! - Attributes emit in field declaration order with `key` last, and the
+//! - Only attributes that differ from the element's `Default` emit. Required
+//!   attributes such as `cols` on `grid` always emit. Positional arguments
+//!   always emit. Those are the `scope` and `ref-gui` ids and the `label`
+//!   text.
+//! - Attributes emit in field declaration order with `key` last. The
 //!   attribute block is omitted entirely when empty.
 //!
 //! For any tree that decodes without errors and without warnings,
@@ -18,10 +19,10 @@ use crate::sexpr::SExpr;
 
 /// Encode an element into the abstract value model in canonical form.
 ///
-/// Total. [`Element::Error`] encodes as `(error (@ (reason "...")))`, and
-/// since `error` is not a vocabulary tag it decodes back to an unknown-tag
-/// error element: error elements are decode artifacts that stay visible
-/// after a store and reload, they are excluded from the round trip law.
+/// Total. [`Element::Error`] encodes as `(error (@ (reason "...")))`.
+/// `error` is not a vocabulary tag, so it decodes back to an unknown-tag
+/// error element. Error elements are decode artifacts that stay visible
+/// after a store and reload. They are excluded from the round trip law.
 pub fn encode(elem: &Element) -> SExpr {
     match elem {
         Element::Col(e) => {
@@ -171,8 +172,8 @@ fn entry(name: &str, value: SExpr) -> SExpr {
     SExpr::List(vec![ident(name), value])
 }
 
-/// A node id as an integer. Ids never approach the `i64` range in practice,
-/// saturation keeps the encoder total regardless.
+/// A node id as an integer. Ids never approach the `i64` range in practice.
+/// Saturation keeps the encoder total regardless.
 fn node_id(id: usize) -> SExpr {
     SExpr::Int(i64::try_from(id).unwrap_or(i64::MAX))
 }

@@ -7,14 +7,14 @@ use std::hash::{Hash, Hasher};
 /// A number stored in state. Can be updated via the first input.
 ///
 /// Optional configuration:
-/// - `min`/`max` clamp every value (including input-socket values).
-/// - `precision` controls how many decimals the dialer shows/edits (display
-///   only).
+/// - `min` and `max` clamp every value, including input-socket values.
+/// - `precision` controls how many decimals the dialer shows and edits. It
+///   is display only.
 /// - `push_eval_on_edit` toggles whether editing the dialer fires downstream.
 ///
-/// Each field is serialized only when non-default, so a plain `number`
-/// keeps the original erased address, while any configured field becomes
-/// part of the node's identity so it persists and is undoable under the
+/// Each field is serialized only when non-default. A plain `number` keeps
+/// the original erased address. A configured field becomes part of the
+/// node's identity, so it persists and is undoable under the
 /// commit-on-change model.
 #[derive(Clone, Debug, Serialize, Deserialize, NodeTag)]
 pub struct Number {
@@ -52,22 +52,22 @@ impl Number {
         self.push_eval_on_edit
     }
 
-    /// Set the lower bound (content-address affecting).
+    /// Set the lower bound. This affects the content address.
     pub fn set_min(&mut self, min: Option<f64>) {
         self.min = min;
     }
 
-    /// Set the upper bound (content-address affecting).
+    /// Set the upper bound. This affects the content address.
     pub fn set_max(&mut self, max: Option<f64>) {
         self.max = max;
     }
 
-    /// Set the dialer display precision (UI-only).
+    /// Set the dialer display precision. This is UI only.
     pub fn set_precision(&mut self, precision: Option<u8>) {
         self.precision = precision;
     }
 
-    /// Set whether editing the dialer fires downstream (UI-only).
+    /// Set whether editing the dialer fires downstream. This is UI only.
     pub fn set_push_eval_on_edit(&mut self, push_eval_on_edit: bool) {
         self.push_eval_on_edit = push_eval_on_edit;
     }

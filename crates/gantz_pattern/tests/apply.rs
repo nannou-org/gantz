@@ -21,7 +21,7 @@ fn app_intersection_structure() {
     );
 }
 
-// Same actives, wholes carried from the left (the value pattern).
+// Same actives, wholes carried from the left, the value pattern.
 #[test]
 fn appl_left_structure() {
     assert_pinned(
@@ -33,7 +33,7 @@ fn appl_left_structure() {
     );
 }
 
-// Same actives, wholes carried from the right (the function pattern).
+// Same actives, wholes carried from the right, the function pattern.
 #[test]
 fn appr_right_structure() {
     assert_pinned(
@@ -45,7 +45,7 @@ fn appr_right_structure() {
     );
 }
 
-// The structure fn only applies when BOTH wholes are present: a
+// The structure fn only applies when both wholes are present. A
 // continuous function pattern degrades even appl's whole to #f.
 #[test]
 fn appl_against_signal_degrades_whole() {

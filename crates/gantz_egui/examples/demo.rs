@@ -10,8 +10,6 @@ use gantz_egui::node::DynNode;
 use gantz_egui::{HeadAccess, HeadDataMut};
 use std::collections::{BTreeMap, HashMap};
 
-// ----------------------------------------------
-
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
@@ -21,15 +19,13 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(name, options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
 }
 
-// ----------------------------------------------
 // Environment
-// ----------------------------------------------
 
 /// The type used to track mappings between node names, content addresses and
 /// graphs. Also provides access to the node registry. This can be thought of as
 /// a shared immutable input to all nodes.
 struct Environment {
-    /// The builtin (primitive) node palette as data.
+    /// The builtin node palette as data.
     builtins: gantz_core::Builtins,
     /// One reified builtin instance per palette entry, for introspection.
     instances: gantz_egui::node::UiBuiltins,
@@ -45,14 +41,14 @@ struct Environment {
 impl Environment {
     /// Look up a node by content address.
     fn node(&self, ca: &gantz_ca::ContentAddr) -> Option<&dyn gantz_core::Node> {
-        // Graph refs pin graph addresses: a graph in the registry IS a node.
+        // Graph refs pin graph addresses. A graph in the registry is a node.
         let graph_ca = gantz_ca::GraphAddr::from(*ca);
         self.reified
             .get(&graph_ca)
             .map(|g| g as &dyn gantz_core::Node)
     }
 
-    /// The graph address at the tip of the named line of history: the
+    /// The graph address at the tip of the named line of history. This is the
     /// address a `Ref` to the name should pin.
     fn head_graph_addr(&self, name: &gantz_ca::Name) -> Option<gantz_ca::GraphAddr> {
         let head_ca = self.registry.head(name)?;
@@ -66,7 +62,7 @@ impl Environment {
     }
 
     /// Bring the reified cache up to date with the registry, logging graphs
-    /// that fail to decode (they degrade like any missing node).
+    /// that fail to decode. They degrade like any missing node.
     fn ensure_reified(&mut self) {
         let codec = codec();
         let reify = |nd: &gantz_ca::NodeData| codec.reify_ui(nd).map(|inst| inst.node);
@@ -87,7 +83,7 @@ impl Environment {
     }
 }
 
-/// Registry of graphs (in erased data form), commits and branch names.
+/// Registry of graphs in erased data form, commits and branch names.
 type Registry = gantz_ca::Registry;
 
 impl Environment {
@@ -129,7 +125,8 @@ fn builtins() -> gantz_core::Builtins {
     ])
 }
 
-/// The value-level codec for the demo's node set: THE node-set manifest.
+/// The value-level codec for the demo's node set. This is the node-set
+/// manifest.
 fn codec() -> gantz_egui::node::NodeCodec {
     gantz_egui::ui_node_codec! {
         NodeSet {
@@ -149,8 +146,9 @@ fn codec() -> gantz_egui::node::NodeCodec {
     }
 }
 
-/// The `.gantz` keyword sugar carrier for the demo's node set: the
-/// `gantz_core`, `gantz_std` and `gantz_egui` node sugars (no bevy nodes here).
+/// The `.gantz` keyword sugar carrier for the demo's node set. It composes
+/// the `gantz_core`, `gantz_std` and `gantz_egui` node sugars. There are no
+/// bevy nodes here.
 struct NodeSet;
 
 impl gantz_format::NodeSugar for NodeSet {
@@ -163,17 +161,11 @@ impl gantz_format::NodeSugar for NodeSet {
     }
 }
 
-// ----------------------------------------------
-// Graph
-// ----------------------------------------------
-
 type Graph = gantz_core::node::graph::Graph<DynNode>;
 
-// ----------------------------------------------
 // HeadAccess
-// ----------------------------------------------
 
-/// Provides [`HeadAccess`] implementation for the demo app's Vec-based storage.
+/// The [`HeadAccess`] implementation for the demo app's Vec-based storage.
 struct DemoHeadAccess<'a> {
     /// Pre-collected heads for returning from `heads()`.
     head_keys: Vec<gantz_ca::Head>,
@@ -256,9 +248,10 @@ impl<'a> HeadAccess for DemoHeadAccess<'a> {
     }
 }
 
-/// The per-head artifacts of one compile attempt: the module artifact (kept
-/// even when steel rejected it, for display and span resolution), the
-/// rendered error chain on failure, and compile diagnostics.
+/// The per-head artifacts of one compile attempt. These are the module
+/// artifact, the rendered error chain on failure, and compile diagnostics.
+/// The module is kept even when steel rejected it, for display and span
+/// resolution.
 fn compile_results(
     result: Result<gantz_core::vm::Compiled, gantz_core::vm::CompileError>,
 ) -> (
@@ -277,20 +270,15 @@ fn compile_results(
     }
 }
 
-// ----------------------------------------------
-// Model
-// ----------------------------------------------
-
 struct App {
     state: State,
 }
 
 struct State {
-    /// The currently open graphs/heads.
-    /// Each entry is a head (branch or commit), its working graph (in its
-    /// stored data form), and view state.
+    /// The currently open heads. Each entry is a branch or commit head, its
+    /// working graph in stored data form, and view state.
     heads: Vec<(gantz_ca::Head, gantz_ca::DataGraph, gantz_egui::SceneView)>,
-    /// Per-head compiled modules, indexed to match `heads`.
+    /// Per-head compile errors, indexed to match `heads`.
     compile_errors: Vec<Option<String>>,
     /// Per-head module artifacts for span resolution, indexed to match `heads`.
     modules: Vec<Option<gantz_core::vm::Compiled>>,
@@ -302,32 +290,27 @@ struct State {
     instances: Vec<gantz_egui::node::NodeInstances>,
     /// Index of the currently focused head.
     focused_head: usize,
-    /// The compile config used for all heads (session-only, not persisted).
+    /// The compile config used for all heads. Session-only, not persisted.
     compile_config: gantz_core::compile::Config,
     logger: gantz_egui::widget::log_view::Logger,
     gantz: gantz_egui::widget::GantzState,
     env: Environment,
 }
 
-// ----------------------------------------------
-// Implementation
-// ----------------------------------------------
-
 impl App {
-    /// The key at which the gantz widget state is to be saved/loaded.
+    /// The key at which the gantz widget state is saved and loaded.
     const GANTZ_GUI_STATE_KEY: &str = "gantz-widget-state";
-    /// All known graph addresses.
+    /// The key for the list of known graph addresses.
     const GRAPH_ADDRS_KEY: &str = "graph-addrs";
-    /// All known graph addresses.
+    /// The key for the list of known commit addresses.
     const COMMIT_ADDRS_KEY: &str = "commit-addrs";
-    /// The key at which the registry's metadata sections (heads, views,
-    /// descriptions, demos) are stored.
+    /// The key at which the registry's metadata sections are stored. Those
+    /// are heads, views, descriptions and demos.
     const SECTIONS_KEY: &str = "registry-sections";
     /// The key at which the list of open heads is stored.
     const OPEN_HEADS_KEY: &str = "open-heads";
 
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // Setup logging.
         let logger = gantz_egui::widget::log_view::Logger::default();
         log::set_boxed_logger(Box::new(logger.clone())).unwrap();
         log::set_max_level(log::LevelFilter::Info);
@@ -362,8 +345,8 @@ impl App {
                 (Default::default(), vec![], Default::default())
             });
 
-        // Setup the environment that will be provided to all nodes, reifying
-        // the stored graphs through the demo's node set.
+        // Set up the environment provided to all nodes. Reify the stored
+        // graphs through the demo's node set.
         let builtins = builtins();
         let (instances, errs) = gantz_egui::node::UiBuiltins::reify(&builtins, &codec());
         for e in errs {
@@ -399,7 +382,7 @@ impl App {
             heads
         };
 
-        // Prune unused content: reachability is a pure data walk over the
+        // Prune unused content. Reachability is a pure data walk over the
         // stored graphs' refs columns.
         let live = {
             let seeds = heads
@@ -410,15 +393,15 @@ impl App {
         gantz_ca::prune(&mut env.registry, &live);
         env.reified.retain_live(&live);
 
-        // VM setup - initialize a VM for each open head.
+        // Initialize a VM for each open head.
         let compile_config = gantz_core::compile::Config::default();
         let mut vms = Vec::with_capacity(heads.len());
         let mut compile_errors = Vec::with_capacity(heads.len());
         let mut modules = Vec::with_capacity(heads.len());
         let mut diagnostics = Vec::with_capacity(heads.len());
         for (head, _, _) in &heads {
-            // Compile from the reified cache at the head's committed address
-            // (the working graph equals it).
+            // Compile from the reified cache at the head's committed address.
+            // The working graph equals it.
             let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
             let graph = env.head_graph(head).expect("head graph reified above");
             let eps = push_pull_entrypoints(&get_node, graph);
@@ -435,7 +418,6 @@ impl App {
         }
         let instances = heads.iter().map(|_| Default::default()).collect();
 
-        // GUI setup.
         let ctx = &cc.egui_ctx;
         ctx.set_fonts(egui::FontDefinitions::default());
 
@@ -463,11 +445,11 @@ impl eframe::App for App {
         let responses = gui(ui, &mut self.state);
 
         // Check for changes to each open graph and commit them.
-        // FIXME: Rather than checking changed CA to monitor changes, ideally
-        // `Gantz` widget can tell us this in a custom response.
+        // FIXME: Rather than comparing content addresses to detect changes,
+        // the `Gantz` widget could report this in a custom response.
         let mut committed_ixs = Vec::new();
         for (ix, (head, graph, _)) in self.state.heads.iter_mut().enumerate() {
-            // The working graph IS the stored form: address it directly.
+            // The working graph is the stored form. Address it directly.
             let new_graph_ca = gantz_ca::graph_addr(&*graph);
             let head_commit = self.state.env.registry.head_commit(head).unwrap();
             if head_commit.graph != new_graph_ca {
@@ -492,21 +474,20 @@ impl eframe::App for App {
             }
         }
 
-        // Recompile the committed heads (from the freshly reified cache) and
-        // propagate the edits to referrers (e.g. nested graph -> parent).
+        // Recompile the committed heads from the freshly reified cache and
+        // propagate the edits to referrers, such as a nested graph's parent.
         if !committed_ixs.is_empty() {
             self.state.env.ensure_reified();
             for &ix in &committed_ixs {
                 recompile_head(&mut self.state, ix);
             }
             resync_and_refresh(&mut self.state);
-            // Freshly compiled modules leave gui marker state stale; re-pull.
+            // Freshly compiled modules leave gui marker state stale. Re-pull.
             for ix in committed_ixs {
                 refresh_gui_markers(&mut self.state, ix);
             }
         }
 
-        // Process any pending response payloads generated from the UI.
         process_responses(&ctx, &mut self.state, responses);
     }
 
@@ -523,14 +504,12 @@ impl eframe::App for App {
 
         save_sections(storage, self.state.env.registry.sections());
 
-        // Save all open heads.
         let heads: Vec<_> = self.state.heads.iter().map(|(h, _, _)| h.clone()).collect();
         save_open_heads(storage, &heads);
 
         save_gantz_gui_state(storage, &self.state.gantz);
     }
 
-    // Persist GUI state.
     fn persist_egui_memory(&self) -> bool {
         true
     }
@@ -543,7 +522,6 @@ fn timestamp() -> std::time::Duration {
         .unwrap_or(std::time::Duration::ZERO)
 }
 
-/// Save the list of known graph addresses to storage.
 fn save_graph_addrs(storage: &mut dyn eframe::Storage, addrs: &[gantz_ca::GraphAddr]) {
     let graph_addrs_str = match ron::to_string(addrs) {
         Err(e) => {
@@ -556,7 +534,6 @@ fn save_graph_addrs(storage: &mut dyn eframe::Storage, addrs: &[gantz_ca::GraphA
     log::debug!("Successfully persisted known graph addresses");
 }
 
-/// Save the list of known commit addresses to storage.
 fn save_commit_addrs(storage: &mut dyn eframe::Storage, addrs: &[gantz_ca::CommitAddr]) {
     let commit_addrs_str = match ron::to_string(addrs) {
         Err(e) => {
@@ -569,7 +546,6 @@ fn save_commit_addrs(storage: &mut dyn eframe::Storage, addrs: &[gantz_ca::Commi
     log::debug!("Successfully persisted known commit addresses");
 }
 
-/// Save all graphs to storage, keyed via their content address.
 fn save_graphs(
     storage: &mut dyn eframe::Storage,
     graphs: &HashMap<gantz_ca::GraphAddr, gantz_ca::DataGraph>,
@@ -579,7 +555,6 @@ fn save_graphs(
     }
 }
 
-/// Save all commits to storage, keyed via their content address.
 fn save_commits(
     storage: &mut dyn eframe::Storage,
     commits: &HashMap<gantz_ca::CommitAddr, gantz_ca::Commit>,
@@ -589,7 +564,6 @@ fn save_commits(
     }
 }
 
-/// Save the given graph to storage.
 fn save_graph(
     storage: &mut dyn eframe::Storage,
     ca: gantz_ca::GraphAddr,
@@ -607,7 +581,6 @@ fn save_graph(
     log::debug!("Successfully persisted graph {key}");
 }
 
-/// Save the given commit to storage.
 fn save_commit(
     storage: &mut dyn eframe::Storage,
     ca: gantz_ca::CommitAddr,
@@ -625,7 +598,6 @@ fn save_commit(
     log::debug!("Successfully persisted commit {key}");
 }
 
-/// Save the registry's metadata sections to storage.
 fn save_sections(
     storage: &mut dyn eframe::Storage,
     sections: &BTreeMap<gantz_ca::SectionId, gantz_ca::Section>,
@@ -641,7 +613,6 @@ fn save_sections(
     log::debug!("Successfully persisted registry sections");
 }
 
-/// Save the gantz GUI state.
 fn save_gantz_gui_state(storage: &mut dyn eframe::Storage, state: &gantz_egui::widget::GantzState) {
     let gantz_str = match ron::to_string(state) {
         Err(e) => {
@@ -654,7 +625,6 @@ fn save_gantz_gui_state(storage: &mut dyn eframe::Storage, state: &gantz_egui::w
     log::debug!("Successfully persisted gantz GUI state");
 }
 
-/// Save all open heads to storage.
 fn save_open_heads(storage: &mut dyn eframe::Storage, heads: &[gantz_ca::Head]) {
     let heads_str = match ron::to_string(heads) {
         Err(e) => {
@@ -667,7 +637,6 @@ fn save_open_heads(storage: &mut dyn eframe::Storage, heads: &[gantz_ca::Head]) 
     log::debug!("Successfully persisted {} open heads", heads.len());
 }
 
-/// Load the graph addresses from storage.
 fn load_graph_addrs(storage: &dyn eframe::Storage) -> Vec<gantz_ca::GraphAddr> {
     let Some(graph_addrs_str) = storage.get_string(App::GRAPH_ADDRS_KEY) else {
         log::debug!("No existing graph address list to load");
@@ -685,7 +654,6 @@ fn load_graph_addrs(storage: &dyn eframe::Storage) -> Vec<gantz_ca::GraphAddr> {
     }
 }
 
-/// Load the commit addresses from storage.
 fn load_commit_addrs(storage: &dyn eframe::Storage) -> Vec<gantz_ca::CommitAddr> {
     let Some(commit_addrs_str) = storage.get_string(App::COMMIT_ADDRS_KEY) else {
         log::debug!("No existing commit address list to load");
@@ -703,8 +671,6 @@ fn load_commit_addrs(storage: &dyn eframe::Storage) -> Vec<gantz_ca::CommitAddr>
     }
 }
 
-/// Given access to storage and an iterator yielding known graph addresses, load
-/// those graphs into memory.
 fn load_graphs(
     storage: &dyn eframe::Storage,
     addrs: impl IntoIterator<Item = gantz_ca::GraphAddr>,
@@ -715,8 +681,6 @@ fn load_graphs(
         .collect()
 }
 
-/// Given access to storage and an iterator yielding known commit addresses,
-/// load those commits into memory.
 fn load_commits(
     storage: &dyn eframe::Storage,
     addrs: impl IntoIterator<Item = gantz_ca::CommitAddr>,
@@ -727,7 +691,6 @@ fn load_commits(
         .collect()
 }
 
-/// Load the graph with the given address from storage.
 fn load_graph(
     storage: &dyn eframe::Storage,
     ca: gantz_ca::GraphAddr,
@@ -749,7 +712,6 @@ fn load_graph(
     }
 }
 
-/// Load the commit with the given address from storage.
 fn load_commit(
     storage: &dyn eframe::Storage,
     ca: gantz_ca::CommitAddr,
@@ -771,7 +733,6 @@ fn load_commit(
     }
 }
 
-/// Load the registry's metadata sections from storage.
 fn load_sections(
     storage: &dyn eframe::Storage,
 ) -> BTreeMap<gantz_ca::SectionId, gantz_ca::Section> {
@@ -791,7 +752,6 @@ fn load_sections(
     }
 }
 
-/// Load all open heads from storage.
 fn load_open_heads(storage: &dyn eframe::Storage) -> Vec<gantz_ca::Head> {
     let Some(heads_str) = storage.get_string(App::OPEN_HEADS_KEY) else {
         log::debug!("No existing open heads to load");
@@ -809,7 +769,6 @@ fn load_open_heads(storage: &dyn eframe::Storage) -> Vec<gantz_ca::Head> {
     }
 }
 
-/// Load the state of the gantz GUI from storage.
 fn load_gantz_gui_state(storage: &dyn eframe::Storage) -> gantz_egui::widget::GantzState {
     storage
         .get_string(App::GANTZ_GUI_STATE_KEY)
@@ -833,12 +792,10 @@ fn load_gantz_gui_state(storage: &dyn eframe::Storage) -> gantz_egui::widget::Ga
         })
 }
 
-/// The key for a particular graph in storage.
 fn graph_key(ca: gantz_ca::GraphAddr) -> String {
     format!("{ca}")
 }
 
-/// The key for a particular commit in storage.
 fn commit_key(ca: gantz_ca::CommitAddr) -> String {
     format!("{ca}")
 }
@@ -850,7 +807,6 @@ fn tagged_head(state: &State, head: Option<gantz_ca::Head>) -> Option<(gantz_ca:
     Some((head, ix))
 }
 
-// Drain the response payloads emitted by the UI and process them.
 fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gantz_egui::Responses) {
     for (head, gantz_egui::EvalEntry(ep)) in responses.take() {
         let Some((_, ix)) = tagged_head(state, head) else {
@@ -1007,7 +963,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             &codec(),
         );
         // Re-register the full root graph so pasted nodes get their state
-        // initialized. Idempotent for existing nodes; registration reifies
+        // initialized. Idempotent for existing nodes. Registration reifies
         // the graph transiently.
         if pasted {
             let vm = &mut state.vms[ix];
@@ -1061,7 +1017,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             &codec(),
         );
         // Re-register the full root graph so the new nodes get their state
-        // initialized. Idempotent for existing nodes; registration reifies
+        // initialized. Idempotent for existing nodes. Registration reifies
         // the graph transiently.
         if duplicated {
             let vm = &mut state.vms[ix];
@@ -1138,17 +1094,18 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
                 navigate_head(ctx, state, &head, target);
             }
             gantz_egui::ops::MergeHeadOutcome::Merged { .. } => {
-                // The op already committed (with both parents), so the commit
-                // loop sees a clean graph; do its bookkeeping here: clear the
-                // redo stack, recompile (this also re-registers, initializing
-                // merged-in nodes' state), and bring referrers up to date.
+                // The op already committed with both parents, so the commit
+                // loop sees a clean graph. Do its bookkeeping here. Clear the
+                // redo stack, recompile, and bring referrers up to date. The
+                // recompile also re-registers, which initializes merged-in
+                // nodes' state.
                 state.gantz.migrate_head(&head, &head, true);
                 state.env.ensure_reified();
                 recompile_heads(state);
                 resync_and_refresh(state);
             }
             gantz_egui::ops::MergeHeadOutcome::Refused(reasons) => {
-                // Defensive: the UI disables conflicted/blocked candidates.
+                // Defensive. The UI disables conflicted and blocked candidates.
                 log::warn!(
                     "MergeHead: refused to merge '{source}': {}",
                     reasons.join("; ")
@@ -1281,11 +1238,11 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         }
     }
 
-    // Recorded VM-state writes exist for collaborative sessions (see
-    // `gantz_egui::StateWritten`); the demo has none, so drop them silently.
+    // Recorded VM-state writes exist for collaborative sessions. See
+    // `gantz_egui::StateWritten`. The demo has none, so drop them silently.
     responses.take::<gantz_egui::StateWritten>();
 
-    // Any remaining payloads are unhandled - report rather than silently drop.
+    // Any remaining payloads are unhandled. Report rather than silently drop.
     for name in responses.type_names() {
         log::warn!("unhandled response payload: {name}");
     }
@@ -1297,7 +1254,6 @@ fn gui(ui: &mut egui::Ui, state: &mut State) -> gantz_egui::Responses {
     let response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
         .show_inside(ui, |ui| {
-            // Create the head access adapter.
             let mut access = DemoHeadAccess::new(
                 &mut state.heads,
                 &state.modules,
@@ -1317,10 +1273,8 @@ fn gui(ui: &mut egui::Ui, state: &mut State) -> gantz_egui::Responses {
         })
         .inner;
 
-    // Update focused head from the widget's response.
     state.focused_head = response.focused_head;
 
-    // The given graph name was removed.
     if let Some(name) = response.graph_name_removed() {
         // Update any open heads that reference this name.
         for (head, _, _) in &mut state.heads {
@@ -1334,17 +1288,16 @@ fn gui(ui: &mut egui::Ui, state: &mut State) -> gantz_egui::Responses {
         state.env.registry.remove_head(&name);
     }
 
-    // Single click: replace the focused head with the selected one.
+    // A single click replaces the focused head with the selected one.
     if let Some(new_head) = response.graph_replaced() {
         replace_head(&ctx, state, new_head.clone());
     }
 
-    // Open as a new tab (or focus if already open).
+    // Open as a new tab, or focus if already open.
     if let Some(new_head) = response.graph_opened() {
         open_head(state, new_head.clone());
     }
 
-    // Close head.
     if let Some(head) = response.graph_closed() {
         close_head(state, head);
     }
@@ -1355,17 +1308,17 @@ fn gui(ui: &mut egui::Ui, state: &mut State) -> gantz_egui::Responses {
         open_head(state, new_head);
     }
 
-    // Handle closed heads from tab close buttons.
+    // Heads closed via tab close buttons.
     for closed_head in &response.closed_heads {
         close_head(state, closed_head);
     }
 
-    // Handle new branch created from tab double-click.
+    // A new branch created from a tab double-click.
     if let Some((original_head, new_name)) = response.new_branch() {
         create_branch_from_head(&ctx, state, original_head, new_name.clone());
     }
 
-    // Handle a graph description edit (keyed by the graph's name).
+    // A graph description edit, keyed by the graph's name.
     if let Some((gantz_ca::Head::Branch(name), description)) = &response.description_changed {
         gantz_egui::section::set_description(
             &mut state.env.registry,
@@ -1374,7 +1327,6 @@ fn gui(ui: &mut egui::Ui, state: &mut State) -> gantz_egui::Responses {
         );
     }
 
-    // Handle import button click.
     if response.import() {
         let ext = gantz_egui::export::FILE_EXTENSION;
         let dialog = rfd::AsyncFileDialog::new()
@@ -1386,13 +1338,12 @@ fn gui(ui: &mut egui::Ui, state: &mut State) -> gantz_egui::Responses {
         }
     }
 
-    // Handle file drops.
     for drop in response.file_drops {
         let open_head = drop.target == gantz_egui::widget::gantz::FileDropTarget::GraphScene;
         import_bytes(state, drop.bytes, open_head);
     }
 
-    // Handle compile config change: recompile all open heads.
+    // A compile config change recompiles all open heads.
     if let Some(cfg) = response.compile_config {
         state.compile_config = cfg;
         recompile_heads(state);
@@ -1434,18 +1385,14 @@ fn import_bytes(state: &mut State, bytes: Vec<u8>, open_head: bool) {
 }
 
 /// Open a head as a new tab, or focus it if already open.
-///
-/// This is only used when selecting from GraphSelect.
 fn open_head(state: &mut State, new_head: gantz_ca::Head) {
-    // Check if the head is already open.
     if let Some(ix) = state.heads.iter().position(|(h, _, _)| *h == new_head) {
-        // Just focus the existing tab.
         state.focused_head = ix;
         return;
     }
 
-    // Head is not open - add it as a new tab (the working graph is the
-    // stored data cloned from the registry).
+    // Add it as a new tab. The working graph is the stored data cloned from
+    // the registry.
     let new_graph = state.env.head_data_graph(&new_head).unwrap();
     let view = gantz_egui::SceneView::default();
 
@@ -1468,7 +1415,6 @@ fn open_head(state: &mut State, new_head: gantz_ca::Head) {
     state.diagnostics.push(diags);
     state.instances.push(Default::default());
 
-    // Initialize GUI state for the new head.
     state.gantz.open_heads.entry(new_head).or_default();
 }
 
@@ -1476,7 +1422,6 @@ fn open_head(state: &mut State, new_head: gantz_ca::Head) {
 ///
 /// If the new head is already open elsewhere, focuses that instead.
 fn replace_head(ctx: &egui::Context, state: &mut State, new_head: gantz_ca::Head) {
-    // If the new head is already open, just focus it.
     if let Some(ix) = state.heads.iter().position(|(h, _, _)| *h == new_head) {
         state.focused_head = ix;
         return;
@@ -1485,12 +1430,12 @@ fn replace_head(ctx: &egui::Context, state: &mut State, new_head: gantz_ca::Head
     let ix = state.focused_head;
     let old_head = state.heads[ix].0.clone();
 
-    // Load the new graph (the stored data cloned from the registry).
+    // The working graph is the stored data cloned from the registry.
     let new_graph = state.env.head_data_graph(&new_head).unwrap();
     let view = gantz_egui::SceneView::default();
 
-    // Replace at the focused index. The graph is replaced wholesale, so
-    // drop the cached instances to bound memory.
+    // The graph is replaced wholesale, so drop the cached instances to bound
+    // memory.
     state.heads[ix] = (new_head.clone(), new_graph, view);
     state.instances[ix].clear();
 
@@ -1563,13 +1508,13 @@ fn refresh_branch_head(state: &mut State) {
     state.diagnostics[ix] = diags;
 }
 
-/// Reload any open head whose commit moved (to its new registry graph) and
+/// Reload any open head whose commit moved to its new registry graph, and
 /// recompile. A no-op when there are no moves.
 fn apply_moves(state: &mut State, moves: &[gantz_egui::sync::Moved]) {
     if moves.is_empty() {
         return;
     }
-    // The moves committed fresh graphs: reify them before lookups.
+    // The moves committed fresh graphs. Reify them before lookups.
     state.env.ensure_reified();
     for m in moves {
         let Some(new_graph) = state
@@ -1592,7 +1537,7 @@ fn apply_moves(state: &mut State, moves: &[gantz_egui::sync::Moved]) {
     recompile_heads(state);
 }
 
-/// After committing edited heads, bring referrers up to date: resync all
+/// After committing edited heads, bring referrers up to date. Resync all
 /// sync-enabled `NamedRef`s, reload any open head whose commit moved, and
 /// recompile. This is how editing a nested graph propagates to its parents.
 fn resync_and_refresh(state: &mut State) {
@@ -1600,9 +1545,9 @@ fn resync_and_refresh(state: &mut State) {
     apply_moves(state, &moves);
 }
 
-/// Recompile every open head's graph into its existing VM (no commit).
+/// Recompile every open head's graph into its existing VM, without a commit.
 ///
-/// Used when the compile config changes: the graph content is unchanged, and
+/// Used when the compile config changes. The graph content is unchanged, and
 /// compiling into the existing VM preserves node state.
 fn recompile_heads(state: &mut State) {
     for ix in 0..state.heads.len() {
@@ -1614,18 +1559,18 @@ fn recompile_heads(state: &mut State) {
 }
 
 /// Re-pull every `gui` marker of the head at `ix`, refreshing the stored
-/// trees the GUI renders (the synchronous analogue of `bevy_gantz_egui`'s
-/// eager marker refresh). Called after push-kind evaluations and after
-/// (re)compiles.
+/// trees the GUI renders. This is the synchronous analogue of
+/// `bevy_gantz_egui`'s eager marker refresh. Called after push-kind
+/// evaluations and after compiles.
 ///
-/// Discovery is the shared pure data walk over the head's working graph
-/// (`gantz_egui::node::gui::marker_paths`).
+/// Discovery is the shared pure data walk over the head's working graph in
+/// `gantz_egui::node::gui::marker_paths`.
 fn refresh_gui_markers(state: &mut State, ix: usize) {
     let (_, graph, _) = &state.heads[ix];
     let markers = gantz_egui::node::gui::marker_paths(&state.env.registry, graph);
     for (path, n_inputs) in markers {
         // The compiled module holds a singleton pull entrypoint per marker
-        // instance (built from the node's actual input count).
+        // instance, built from the node's actual input count.
         let n = n_inputs.min(u8::MAX as usize) as u8;
         let ep = gantz_core::compile::entrypoint::pull(path, n);
         let fn_name = gantz_core::compile::entry_fn_name(&ep.id());
@@ -1635,8 +1580,9 @@ fn refresh_gui_markers(state: &mut State, ix: usize) {
     }
 }
 
-/// Recompile one head's graph - read from the reified cache at its committed
-/// address - into its existing VM (no commit), preserving node state.
+/// Recompile one head's graph into its existing VM without a commit,
+/// preserving node state. The graph is read from the reified cache at its
+/// committed address.
 fn recompile_head(state: &mut State, ix: usize) {
     let head = state.heads[ix].0.clone();
     let vm = &mut state.vms[ix];
@@ -1659,8 +1605,8 @@ fn recompile_head(state: &mut State, ix: usize) {
 ///
 /// Does nothing if the head is not open or if it's the last open head.
 fn close_head(state: &mut State, head: &gantz_ca::Head) {
-    // Don't close if it's the last open head.
-    // TODO: Consider opening default empty graph when closing last head.
+    // Never close the last open head.
+    // TODO: Open a default empty graph when closing the last head.
     if state.heads.len() <= 1 {
         return;
     }
@@ -1688,14 +1634,13 @@ fn create_branch_from_head(
     original_head: &gantz_ca::Head,
     new_name: String,
 ) {
-    // Get the commit CA from the original head.
     let Some(commit_ca) = state.env.registry.head_commit_ca(original_head) else {
         log::error!("Failed to get commit address for head: {:?}", original_head);
         return;
     };
 
     // Create a new commit pointing to the same graph so the new branch gets
-    // its own independent `CommitAddr` (and therefore its own view/layout).
+    // its own independent `CommitAddr`, and therefore its own view.
     let graph_addr = state.env.registry.commits()[&commit_ca].graph;
     let new_commit_ca =
         state
@@ -1705,7 +1650,6 @@ fn create_branch_from_head(
                 unreachable!("graph already exists in registry")
             });
 
-    // Insert the new branch name pointing to the fresh commit.
     let new_name: gantz_ca::Name = new_name.parse().expect("infallible");
     state.env.registry.set_head(new_name.clone(), new_commit_ca);
 
@@ -1716,7 +1660,6 @@ fn create_branch_from_head(
         }
     }
 
-    // Find the index of the original head and replace it.
     let new_head = gantz_ca::Head::Branch(new_name);
     if let Some(ix) = state.heads.iter().position(|(h, _, _)| h == original_head) {
         let old_head = state.heads[ix].0.clone();
@@ -1727,8 +1670,8 @@ fn create_branch_from_head(
         state.gantz.migrate_head(&old_head, &new_head, false);
     }
 
-    // Give the fork independent nested children, then (when a nested graph was
-    // renamed to a root name) repoint its parent's references to it.
+    // Give the fork independent nested children. Then, when a nested graph
+    // was renamed to a root name, repoint its parent's references to it.
     if let (gantz_ca::Head::Branch(old), gantz_ca::Head::Branch(new)) = (original_head, &new_head) {
         let ts = timestamp();
         let mut moves = gantz_egui::sync::fork_nested(&mut state.env.registry, ts, old, new);

@@ -1,4 +1,4 @@
-//! End-to-end tests for the `pmini` node: compile and evaluate.
+//! End-to-end compile and evaluate tests for the `pmini` node.
 
 use gantz_core::node::{self, Node, WithPushEval};
 use gantz_core::steel::SteelVal;
@@ -38,7 +38,7 @@ fn invalid_notation_fails_compile() {
     );
 }
 
-// push -> pmini -> query(span [0,1)) -> sink; two evals produce identical
+// A push, pmini, query and sink chain. Two evals produce identical
 // events.
 #[test]
 fn pm_compiles_and_evaluates() {
@@ -83,7 +83,7 @@ fn pm_compiles_and_evaluates() {
         "events flowed: {first:?}"
     );
 
-    // The pmini node is pure: no state slot exists for it.
+    // The pmini node is pure, so no state slot exists for it.
     let state: Option<SteelVal> =
         gantz_core::node::state::extract_value(&vm, &[pmini.index()]).unwrap();
     assert!(state.is_none(), "pmini must be stateless, got {state:?}");

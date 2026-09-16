@@ -36,10 +36,10 @@ where
     }
 }
 
-/// All of `g`'s nodes: the topological order where it exists, then any nodes on
-/// a directed cycle (which [`Topo`] never yields) appended in index order.
-/// Keeps acyclic traversal identical to a plain `Topo` walk while ensuring
-/// cyclic nodes are still produced, deterministically.
+/// All of `g`'s nodes. The topological order where it exists, then any nodes
+/// on a directed cycle appended in index order. [`Topo`] never yields the
+/// cyclic nodes. Acyclic traversal stays identical to a plain `Topo` walk
+/// while cyclic nodes are still produced deterministically.
 pub(crate) fn cycle_tolerant_topo_order<G>(g: G) -> Vec<G::NodeId>
 where
     G: IntoNodeIdentifiers + IntoNeighborsDirected + NodeIndexable + Visitable,
@@ -61,8 +61,8 @@ where
 }
 
 /// Visit all nodes in the graph in toposort order, and all nested nodes in
-/// depth-first order. Tolerates cycles - see `cycle_tolerant_topo_order`
-/// (order is irrelevant to the visitors, which key by path/id).
+/// depth-first order. Tolerates cycles. See `cycle_tolerant_topo_order`.
+/// Order is irrelevant to the visitors, which key by path and id.
 pub fn visit<'a, G>(
     get_node: node::GetNode<'a>,
     g: G,
@@ -150,13 +150,13 @@ where
     blobs
 }
 
-/// The outgoing content references of this graph for reachability: every
+/// The outgoing content references of this graph for reachability. Every
 /// node-reported required address as a graph reference, plus every blob
 /// reference.
 ///
-/// Addresses that are not graph addresses (e.g. builtin node addresses
-/// reported by function-value wrappers) simply fail to resolve during the
-/// walk and are ignored there.
+/// Addresses that are not graph addresses fail to resolve during the walk
+/// and are ignored there. Builtin node addresses reported by function-value
+/// wrappers are one example.
 pub fn out_refs<'a, G>(get_node: node::GetNode<'a>, g: G) -> gantz_ca::OutRefs
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
@@ -175,8 +175,8 @@ where
 /// Extract a subgraph containing only the selected nodes and edges between them.
 ///
 /// Nodes are visited in index order for determinism. Callers that need to
-/// correlate old/new indices can iterate selected nodes in the same sorted
-/// order alongside `subgraph.node_indices()`.
+/// correlate old and new indices can iterate selected nodes in the same
+/// sorted order alongside `subgraph.node_indices()`.
 pub fn extract_subgraph<N: Clone>(
     graph: &node::graph::Graph<N>,
     selected: &HashSet<node::graph::NodeIx>,
@@ -228,7 +228,7 @@ mod tests {
     use super::*;
     use crate::Edge;
 
-    /// Build a diamond graph: A -> B, A -> C, B -> D, C -> D.
+    /// Build a diamond graph with edges A to B, A to C, B to D and C to D.
     fn diamond_graph() -> (node::graph::Graph<&'static str>, [node::graph::NodeIx; 4]) {
         let mut g = node::graph::Graph::default();
         let a = g.add_node("A");
@@ -248,7 +248,8 @@ mod tests {
         let selected: HashSet<_> = [b, c, d].into_iter().collect();
         let sub = extract_subgraph(&g, &selected);
         assert_eq!(sub.node_count(), 3);
-        // Only edges where both endpoints are selected: B->D, C->D.
+        // Only edges where both endpoints are selected. That is B to D and C
+        // to D.
         assert_eq!(sub.edge_count(), 2);
         // Weights preserved.
         let weights: Vec<_> = sub.node_indices().map(|n| sub[n]).collect();
@@ -258,7 +259,7 @@ mod tests {
     #[test]
     fn extract_subgraph_excludes_external_edges() {
         let (g, [a, _b, _c, d]) = diamond_graph();
-        // Select only A and D — no direct edge between them.
+        // Select only A and D. There is no direct edge between them.
         let selected: HashSet<_> = [a, d].into_iter().collect();
         let sub = extract_subgraph(&g, &selected);
         assert_eq!(sub.node_count(), 2);
@@ -287,10 +288,10 @@ mod tests {
         assert_eq!(new.len(), 2);
         assert_eq!(target.node_count(), 3);
         assert_eq!(target.edge_count(), 1);
-        // New indices should be after the existing node.
+        // The new indices follow the existing node.
         assert_eq!(target[new[0]], "A");
         assert_eq!(target[new[1]], "B");
-        // Edge should connect the new nodes.
+        // The edge connects the new nodes.
         assert!(target.find_edge(new[0], new[1]).is_some());
     }
 }

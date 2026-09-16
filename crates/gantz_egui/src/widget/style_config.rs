@@ -1,14 +1,13 @@
-//! The "Style" settings subtab: the egui theme and style, plus the visual
+//! The "Style" settings subtab. The egui theme and style, plus the visual
 //! configuration of the graph scene.
 //!
 //! The theme preference and the per-theme [`egui::Style`] live in a
-//! [`StyleConfig`] on [`GantzState`][super::GantzState] (see [`crate::style`]);
-//! this only edits it, and [`crate::style::apply`] does the applying. The
-//! editor edits the selected theme's style.
+//! [`StyleConfig`] on [`GantzState`][super::GantzState]. See [`crate::style`].
+//! This subtab only edits the selected theme's style. [`crate::style::apply`]
+//! applies it.
 //!
-//! Also hosts the dot-grid controls (show/hide and base step). The grid step
-//! feeds snap-to-grid (see `Global > Snap`), so it stays editable even when the
-//! grid is hidden.
+//! The subtab also hosts the dot-grid controls. The grid step feeds
+//! snap-to-grid, so it stays editable even when the grid is hidden.
 
 use super::gantz::GridConfig;
 use crate::{
@@ -26,7 +25,7 @@ pub struct StyleConfigResponse {
 }
 
 /// Render the style configuration controls. `style` and `grid` are mutated in
-/// place; both apply to the whole UI, including all open heads.
+/// place. Both apply to the whole UI, including all open heads.
 pub fn style_config(
     style: &mut StyleConfig,
     grid: &mut GridConfig,
@@ -66,7 +65,7 @@ pub fn style_config(
     }
 
     // egui's own style editor, as seen in its demo. It edits a copy of the
-    // effective style; storing that back drops the override again if the user
+    // effective style. Storing that back drops the override again if the user
     // has hand-reverted every value.
     let mut edited = style_of(style, edit);
     edited.ui(ui);

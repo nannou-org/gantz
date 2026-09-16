@@ -1,29 +1,29 @@
 //! Audio sample data as a content-addressed asset.
 //!
 //! [`AudioAsset`] is the DSP domain's interpretation of the bytes in the
-//! [`BUFFER_SECTION`] blob store: canonical decoded PCM (interleaved `f32`
-//! samples plus a channel count and sample rate). Its
+//! [`BUFFER_SECTION`] blob store. It is canonical decoded PCM, interleaved
+//! `f32` samples plus a channel count and sample rate. Its
 //! [`encode`](AudioAsset::encode) produces a deterministic byte layout, so
 //! identical audio always yields the same [`gantz_ca::ContentAddr`]
-//! regardless of the source file format, and a stored blob is self-verifying
-//! (re-decoding then re-encoding reproduces the key). The bytes convert
+//! regardless of the source file format. A stored blob is self-verifying,
+//! since re-decoding then re-encoding reproduces the key. The bytes convert
 //! straight into a [`plyphon::Buffer`] for installation into the engine's
-//! buffer table - the engine itself never decodes anything.
+//! buffer table. The engine itself never decodes anything.
 //!
-//! The registry core stores opaque, codec-agnostic bytes (addressed as the
-//! raw blake3 of the encoding, per the blob addressing rule); the audio
-//! domain alone defines what those bytes mean, via [`AudioBuffers`] and the
-//! typed accessors here.
+//! The registry core stores opaque, codec-agnostic bytes, addressed as the
+//! raw blake3 of the encoding per the blob addressing rule. The audio domain
+//! alone defines what those bytes mean, via [`AudioBuffers`] and the typed
+//! accessors here.
 
 use gantz_ca::{BlobDecl, BlobLiveness, ContentAddr, Registry};
 use thiserror::Error;
 
-/// The audio-buffer blob section: the DSP domain's content-addressed store
+/// The audio-buffer blob section, the DSP domain's content-addressed store
 /// of canonically encoded PCM.
 ///
-/// Blobs are kept alive by content references (a `~playbuf` node's
-/// [`Node::required_blobs`](gantz_core::Node::required_blobs)), so export
-/// and prune carry exactly the buffers live graphs use.
+/// Blobs are kept alive by content references such as a `~playbuf` node's
+/// [`Node::required_blobs`](gantz_core::Node::required_blobs), so export and
+/// prune carry exactly the buffers live graphs use.
 pub struct AudioBuffers;
 
 /// The id of the audio-buffer blob section.
@@ -31,17 +31,17 @@ pub const BUFFER_SECTION: &str = "dsp.buffer";
 
 /// The canonical-encoding tag, bumped if the byte layout ever changes.
 const VERSION: u8 = 1;
-/// Bytes of fixed header before the sample data: version (1) + channels (4) +
-/// sample rate (8) + sample count (8).
+/// Bytes of fixed header before the sample data. A 1-byte version, 4-byte
+/// channel count, 8-byte sample rate and 8-byte sample count.
 const HEADER_LEN: usize = 1 + 4 + 8 + 8;
 
-/// Canonical decoded PCM: interleaved (frame-major) `f32` samples plus a channel
-/// count and the data's own sample rate.
+/// Canonical decoded PCM, frame-major interleaved `f32` samples plus a
+/// channel count and the data's own sample rate.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AudioAsset {
-    /// `num_frames * num_channels` samples, interleaved (frame-major).
+    /// `num_frames * num_channels` samples, interleaved frame-major.
     samples: Vec<f32>,
-    /// Number of channels (at least 1).
+    /// Number of channels, at least 1.
     num_channels: usize,
     /// The data's own sample rate in Hz.
     sample_rate: f64,
@@ -61,7 +61,7 @@ pub enum DecodeError {
 
 impl AudioAsset {
     /// Build an asset from interleaved samples. `num_channels` is clamped to at
-    /// least 1; any trailing partial frame is dropped so `samples.len()` is an
+    /// least 1. Any trailing partial frame is dropped so `samples.len()` is an
     /// exact multiple of the channel count.
     pub fn from_interleaved(samples: Vec<f32>, num_channels: usize, sample_rate: f64) -> Self {
         let num_channels = num_channels.max(1);
@@ -75,17 +75,17 @@ impl AudioAsset {
         }
     }
 
-    /// The interleaved samples (frame-major).
+    /// The frame-major interleaved samples.
     pub fn samples(&self) -> &[f32] {
         &self.samples
     }
 
-    /// The number of channels (at least 1).
+    /// The number of channels, at least 1.
     pub fn num_channels(&self) -> usize {
         self.num_channels
     }
 
-    /// The number of frames (samples per channel).
+    /// The number of frames, samples per channel.
     pub fn num_frames(&self) -> usize {
         self.samples.len() / self.num_channels
     }
@@ -95,8 +95,8 @@ impl AudioAsset {
         self.sample_rate
     }
 
-    /// Encode the asset into its canonical bytes (the bytes whose raw
-    /// blake3 hash is its content address).
+    /// Encode the asset into its canonical bytes, the bytes whose raw blake3
+    /// hash is its content address.
     pub fn encode(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(HEADER_LEN + self.samples.len() * 4);
         bytes.push(VERSION);
@@ -109,8 +109,8 @@ impl AudioAsset {
         bytes
     }
 
-    /// The asset's content address (the raw blake3 hash of its canonical
-    /// encoding).
+    /// The asset's content address, the raw blake3 hash of its canonical
+    /// encoding.
     pub fn addr(&self) -> ContentAddr {
         gantz_ca::blob_addr(&self.encode())
     }
@@ -158,8 +158,8 @@ impl From<AudioAsset> for plyphon::Buffer {
 }
 
 /// Insert the asset's canonical encoding into the registry's audio-buffer
-/// blob section, returning its content address. Idempotent: identical audio
-/// always lands at the same address.
+/// blob section, returning its content address. Idempotent, since identical
+/// audio always lands at the same address.
 pub fn add_audio_asset(reg: &mut Registry, asset: &AudioAsset) -> ContentAddr {
     reg.add_blob(AudioBuffers::ID, AudioBuffers::LIVENESS, asset.encode())
 }
@@ -191,7 +191,8 @@ mod tests {
         let a = asset();
         // Deterministic across re-encodes.
         assert_eq!(a.addr(), a.addr());
-        // A different sample rate is a different asset (metadata is in the hash).
+        // A different sample rate is a different asset, since metadata is in
+        // the hash.
         let b = AudioAsset::from_interleaved(a.samples().to_vec(), a.num_channels(), 48_000.0);
         assert_ne!(a.addr(), b.addr());
         // A different channel interpretation of the same samples differs too.
@@ -238,8 +239,8 @@ mod tests {
         let a = asset();
         let addr = add_audio_asset(&mut reg, &a);
         assert_eq!(addr, a.addr());
-        // The address is the raw blake3 of the canonical bytes (the blob
-        // addressing rule, kept iroh-compatible).
+        // The address is the raw blake3 of the canonical bytes, the
+        // iroh-compatible blob addressing rule.
         assert_eq!(addr, gantz_ca::blob_addr(&a.encode()));
         assert_eq!(audio_asset(&reg, &addr), Some(a));
         // Idempotent re-add.

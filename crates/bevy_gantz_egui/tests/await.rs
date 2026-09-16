@@ -16,7 +16,6 @@ use steel::steel_vm::engine::Engine;
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
-// A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }
@@ -44,8 +43,8 @@ fn state(vm: &Engine, ix: usize) -> SteelVal {
         .expect("state present")
 }
 
-/// The handle stashed in an await node's pending state pair, sharing the cell
-/// of the one in state (the driver polls through such a handle in place).
+/// The handle stashed in an await node's pending state pair. It shares the
+/// cell of the one in state, so the driver polls through it in place.
 fn stashed_handle(vm: &Engine, ix: usize) -> TaskHandle {
     await_::pending_handle(&state(vm, ix)).expect("await state should be a pending pair")
 }
@@ -65,10 +64,10 @@ fn pending_pair(task: GantzTask) -> (SteelVal, TaskHandle) {
     (pair, handle)
 }
 
-/// The whole state/branch protocol in a bare VM, under both compile configs:
-/// a received task is stashed and swallows the push; a driver-written value
-/// pair fires only the value output; an error pair only the error output; and
-/// a non-task input passes straight through.
+/// The whole state and branch protocol in a bare VM, under both compile
+/// configs. A received task is stashed and swallows the push. A driver-written
+/// value pair fires only the value output. An error pair fires only the error
+/// output. A non-task input passes straight through.
 #[test]
 fn await_delivers_value_error_and_passthrough() {
     for config in [
@@ -99,8 +98,8 @@ fn await_delivers_value_error_and_passthrough() {
         let (mut vm, _compiled) = gantz_core::vm::init(&no_lookup, &g, &eps, &config)
             .unwrap_or_else(|e| panic!("init: {}", gantz_core::vm::error_chain(&e)));
 
-        // Push a value through `sleep`: the task reaches `await`, which
-        // stashes it and swallows the evaluation - neither sink fires.
+        // Push a value through `sleep`. The task reaches `await`, which
+        // stashes it and swallows the evaluation. Neither sink fires.
         call(&mut vm, push_entry(&eps, &[push.index()]));
         assert_eq!(state(&vm, val_sink.index()), SteelVal::Void);
         assert_eq!(state(&vm, err_sink.index()), SteelVal::Void);
@@ -113,8 +112,8 @@ fn await_delivers_value_error_and_passthrough() {
             .expect("resolves ok");
         assert_eq!(result, SteelVal::IntV(7));
 
-        // Driver delivery: write the value pair, fire the await entry fn -
-        // only the value output fires.
+        // Driver delivery. Write the value pair and fire the await entry fn.
+        // Only the value output fires.
         node::state::update_value(&mut vm, &[await_n.index()], await_::value_pair(result))
             .expect("state write");
         call(&mut vm, push_entry(&eps, &[await_n.index()]));
@@ -141,8 +140,8 @@ fn await_delivers_value_error_and_passthrough() {
     }
 }
 
-/// The test app's `.gantz` sugar carrier (required by the codec macro; this
-/// test never parses text).
+/// The test app's `.gantz` sugar carrier. The codec macro requires it. This
+/// test never parses text.
 struct NodeSet;
 
 impl gantz_format::NodeSugar for NodeSet {
@@ -163,8 +162,8 @@ fn codec() -> gantz_egui::node::NodeCodec {
     }
 }
 
-/// A headless app with the gantz plugin, the test codec, and the `vm::sync` +
-/// `drive_awaits` systems - the minimal plumbing the await driver needs.
+/// A headless app with the gantz plugin, the test codec, and the `vm::sync`
+/// and `drive_awaits` systems. The minimal plumbing the await driver needs.
 fn task_test_app() -> bevy_app::App {
     use bevy_app::{App, TaskPoolPlugin, Update};
     use bevy_ecs::prelude::IntoScheduleConfigs;
@@ -201,9 +200,9 @@ fn refresh_app_cache(app: &mut bevy_app::App) {
         });
 }
 
-/// The full bevy plumbing, headless: `sleep -> await -> inspect` built in
-/// code, compiled by `vm::sync`, the sleep entrypoint fired, and the result
-/// delivered by `drive_awaits` once the duration elapses.
+/// The full bevy plumbing, headless. `sleep -> await -> inspect` is built in
+/// code and compiled by `vm::sync`. The sleep entrypoint fires. `drive_awaits`
+/// delivers the result once the duration elapses.
 #[test]
 fn driver_delivers_sleep_result_through_app() {
     use bevy_ecs::prelude::*;
@@ -212,7 +211,7 @@ fn driver_delivers_sleep_result_through_app() {
 
     let mut app = task_test_app();
 
-    // Build `sleep(0.05) -> await -> inspect` as stored (erased) data.
+    // Build `sleep(0.05) -> await -> inspect` as erased data.
     let mut sleep_node = Sleep::default();
     sleep_node.set_duration(0.05);
     let mut dg = gantz_ca::DataGraph::default();
@@ -233,23 +232,23 @@ fn driver_delivers_sleep_result_through_app() {
     app.world_mut()
         .trigger(head::OpenEvent(gantz_ca::Head::Commit(commit)));
 
-    // First update: `vm::sync` compiles the head's VM.
+    // The first update compiles the head's VM in `vm::sync`.
     app.update();
     let mut q = app
         .world_mut()
         .query_filtered::<Entity, With<head::OpenHead>>();
     let head_entity = q.single(app.world()).expect("one open head");
 
-    // Fire the sleep node: its task flows into `await`, which swallows the
-    // evaluation; `drive_awaits` polls it in place across updates.
+    // Fire the sleep node. Its task flows into `await`, which swallows the
+    // evaluation. `drive_awaits` polls it in place across updates.
     app.world_mut().trigger(bevy_gantz::vm::EvalEntryEvent {
         head: head_entity,
         entrypoint: gantz_core::compile::entrypoint::push(vec![sleep.index()], 1),
         time: None,
     });
 
-    // `sleep` forwards its (unconnected, so `'()`) input value once the
-    // duration elapses: the inspect sink's state flips from `Void` to `'()`.
+    // `sleep` forwards its unconnected input value `'()` once the duration
+    // elapses. The inspect sink's state flips from `Void` to `'()`.
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         app.update();
@@ -273,9 +272,9 @@ fn driver_delivers_sleep_result_through_app() {
     assert!(await_::pending_handle(&state(vm, await_n.index())).is_none());
 }
 
-/// Deleting a node reindexes its successors via swap-remove: the editor's
-/// delete flow (`remove_value` + `move_value`) must carry a pending task with
-/// the await node's state, and dropping an unmapped key must cancel its task.
+/// Deleting a node reindexes its successors via swap-remove. The editor's
+/// delete flow of `remove_value` and `move_value` must carry a pending task
+/// with the await node's state. Dropping an unmapped key must cancel its task.
 #[test]
 fn state_migration_carries_and_cancels_pending_tasks() {
     use std::cell::Cell;
@@ -300,8 +299,8 @@ fn state_migration_carries_and_cancels_pending_tasks() {
     node::state::update_value(&mut vm, &[2], pair).expect("state write");
     node::state::update_value(&mut vm, &[0], SteelVal::IntV(0)).expect("state write");
 
-    // The editor's delete flow: drop node 0's state, swap the last node (2)
-    // into its index.
+    // The editor's delete flow. Drop node 0's state and swap the last node,
+    // 2, into its index.
     node::state::remove_value(&mut vm, &[0]).expect("remove");
     node::state::move_value(&mut vm, &[2], &[0]).expect("move");
 
@@ -332,10 +331,10 @@ fn state_migration_carries_and_cancels_pending_tasks() {
     assert!(flag.get(), "dropped state should cancel the pending task");
 }
 
-/// Regression test for in-flight awaits surviving a reindexing graph change:
-/// replace the head with a child commit in which every node's index shifted
-/// (a leading node removed). `migrate_vm_state` remaps the node state - and
-/// with it the pending task - so the result still delivers at the new path.
+/// In-flight awaits survive a reindexing graph change. Replace the head with
+/// a child commit in which a leading node is removed, so every node's index
+/// shifts. `migrate_vm_state` remaps the node state and with it the pending
+/// task, so the result still delivers at the new path.
 #[test]
 fn pending_await_survives_reindexing_replace() {
     use bevy_ecs::prelude::*;
@@ -344,9 +343,9 @@ fn pending_await_survives_reindexing_replace() {
 
     let mut app = task_test_app();
 
-    // Base graph: `filler, sleep(0.5) -> await -> inspect`. The filler is a
-    // content-distinct sleep (the migration matcher pairs nodes by content
-    // address, so duplicates would match arbitrarily).
+    // Base graph is `filler, sleep(0.5) -> await -> inspect`. The filler is a
+    // content-distinct sleep. The migration matcher pairs nodes by content
+    // address, so duplicates would match arbitrarily.
     let mut filler_node = Sleep::default();
     filler_node.set_duration(9.0);
     let mut sleep_node = Sleep::default();
@@ -399,7 +398,7 @@ fn pending_await_survives_reindexing_replace() {
     }
 
     // Replace the head with the child commit while the task is pending. The
-    // chain-tracked matching remaps node state (await 2 -> 1, inspect 3 -> 2).
+    // chain-tracked matching remaps await from 2 to 1 and inspect from 3 to 2.
     let child_ca = gantz_ca::graph_addr(&child_dg);
     let child_commit = {
         let mut registry = app.world_mut().resource_mut::<Registry>();
@@ -409,7 +408,7 @@ fn pending_await_survives_reindexing_replace() {
     app.world_mut()
         .trigger(head::ReplaceEvent(gantz_ca::Head::Commit(child_commit)));
 
-    // The result must deliver to the inspect sink at its NEW index.
+    // The result must deliver to the inspect sink at its new index.
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         app.update();

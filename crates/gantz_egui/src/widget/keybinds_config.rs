@@ -1,21 +1,21 @@
-//! The "Keybinds" settings subtab: view and rebind the editor's command
-//! keyboard shortcuts (the [`Keymap`]).
+//! The "Keybinds" settings subtab. View and rebind the editor's command
+//! keyboard shortcuts, the [`Keymap`].
 //!
-//! Edits mutate the [`Keymap`] in place; it is persisted as part of
+//! Edits mutate the [`Keymap`] in place. It is persisted as part of
 //! [`crate::widget::GantzState`].
 //!
-//! Note: capturing a combo that is *already* bound to another command may be
-//! intercepted by that command's dispatch (panes share egui's input), so the
-//! combo won't register here. That case is a conflict anyway - free the combo
-//! from the other command first. Capturing any unbound combo works normally.
+//! Panes share egui's input, so a captured combo that is already bound to
+//! another command may be intercepted by that command's dispatch and never
+//! register here. That case is a conflict anyway. Free the combo from the
+//! other command first. Capturing any unbound combo works normally.
 
 use crate::{Action, Keymap};
 
 /// The outcome of polling input while capturing a new binding.
 enum Capture {
-    /// No key pressed yet; keep waiting.
+    /// No key pressed yet. Keep waiting.
     Waiting,
-    /// The user pressed Escape; cancel the capture.
+    /// The user pressed Escape. Cancel the capture.
     Cancelled,
     /// A combo was captured.
     Got(egui::KeyboardShortcut),
@@ -47,10 +47,9 @@ pub fn keybinds_config(keymap: &mut Keymap, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             for &action in Action::ALL {
                 // Right-clicking the command name or any of its bindings offers
-                // a reset; collected here and applied after the row is built.
+                // a reset. It is applied after the row is built.
                 let mut reset = false;
 
-                // Column 1: command name.
                 ui.add(egui::Label::new(action.label()).sense(egui::Sense::click()))
                     .on_hover_text(action.description())
                     .context_menu(|ui| {
@@ -60,7 +59,7 @@ pub fn keybinds_config(keymap: &mut Keymap, ui: &mut egui::Ui) {
                         }
                     });
 
-                // Column 2: the bindings, then an "add" capture button.
+                // The bindings, then an "add" capture button.
                 ui.horizontal(|ui| {
                     // Cloned so the map can be mutated while iterating.
                     let bindings = keymap.bindings(action).to_vec();

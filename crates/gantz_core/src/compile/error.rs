@@ -4,7 +4,7 @@ use crate::node;
 use std::fmt;
 use thiserror::Error;
 
-/// Too many connections for a node (exceeds [`node::Conns::MAX`]).
+/// Too many connections for a node. The count exceeds [`node::Conns::MAX`].
 #[derive(Debug, Error)]
 #[error("too many connections ({0}), max is {max}", max = node::Conns::MAX)]
 pub struct TooManyConns(pub usize);
@@ -91,11 +91,11 @@ pub enum LowerError {
     )]
     Entangled { branch: node::Id, node: node::Id },
     /// An input mixes branch-arm-varying sources with sources from other
-    /// scopes (or multiple sources within one arm), which the lowering does
-    /// not yet support.
+    /// scopes, or has multiple sources within one arm. The lowering does not
+    /// yet support this.
     #[error("node {node} input {input}: unsupported mix of input sources")]
     MixedInputSources { node: node::Id, input: usize },
-    /// Internal invariant breach: a value was needed but not in scope.
+    /// Internal invariant breach. A value was needed but not in scope.
     #[error(
         "internal: output {output} of node {node} unavailable resolving an input of {consumer}"
     )]
@@ -136,9 +136,10 @@ pub enum ModuleError {
     #[error(transparent)]
     NodeFnErrors(#[from] NodeFnErrors),
     /// The lowering produced IR violating the compiler's own invariants.
-    /// This is a bug in gantz, not in the compiled graph; validation runs on
-    /// every lowering (unless disabled via [`Config::validate_ir`][super::Config])
-    /// so it surfaces as a compile error rather than emitting malformed Steel.
+    /// This is a bug in gantz, not in the compiled graph. Validation runs on
+    /// every lowering unless [`Config::validate_ir`][super::Config] disables
+    /// it. With validation on, the bug surfaces as a compile error rather
+    /// than malformed Steel.
     #[error("internal compiler error: invalid IR for {}: {detail}", level(path))]
     InvalidIr { path: Vec<node::Id>, detail: String },
     /// A node declared a required Steel module under a name that cannot be

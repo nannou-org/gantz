@@ -1,5 +1,5 @@
-//! Tests for `dsp_graphs`/`is_dsp_graph` - the data-level DSP-graph
-//! discovery backing the `inline` ref-extension UI - and for the
+//! Tests for `dsp_graphs` and `is_dsp_graph`, the data-level DSP-graph
+//! discovery behind the `inline` ref-extension UI. Also tests the
 //! `DspRefExt`-driven lowering decision in `flatten_from_registry`.
 
 use gantz_ca::ContentAddr;
@@ -8,10 +8,10 @@ use gantz_core::node::graph::Graph;
 use gantz_core::node::{AsRefNode, ExprCtx, ExprResult, MetaCtx, Ref, parse_expr};
 use gantz_plyphon::{NodeDsp, ToNodeDsp, UnitNode, dsp_graphs, is_dsp_graph};
 
-/// A minimal node standing in for the app's node set: one DSP node, the
-/// reference node, boundary nodes and a non-DSP stand-in. Adjacent tagging
-/// keeps the serde a `type`-tagged map (what the erase codec requires) while
-/// admitting any variant payload shape.
+/// A minimal node standing in for the app's node set. It has one DSP node,
+/// the reference node, boundary nodes and a non-DSP stand-in. Adjacent
+/// tagging keeps the serde a `type`-tagged map, which the erase codec
+/// requires, while admitting any variant payload shape.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", content = "c")]
 enum N {
@@ -58,8 +58,8 @@ impl gantz_core::Node for N {
     }
 
     // Reference nodes report their target, so erasure populates the stored
-    // `NodeData::refs` column (as any real node set's dispatch does) - the
-    // column the data-level discovery follows.
+    // `NodeData::refs` column as any real node set's dispatch does. The
+    // data-level discovery follows that column.
     fn required_addrs(&self) -> Vec<ContentAddr> {
         match self {
             N::Ref(r) => vec![r.content_addr()],
@@ -68,8 +68,8 @@ impl gantz_core::Node for N {
     }
 }
 
-/// Commit `graph` (erased) under `name`, returning its graph address as a
-/// `ContentAddr` (the form `Ref::content_addr` reports).
+/// Erase and commit `graph` under `name`. Returns its graph address as a
+/// `ContentAddr`, the form `Ref::content_addr` reports.
 fn commit(registry: &mut gantz_ca::Registry, name: &str, graph: Graph<N>) -> ContentAddr {
     let now = std::time::Duration::from_secs(1);
     let (dg, addr) = gantz_core::data::erase_with_addr(&graph).expect("erase");
@@ -95,8 +95,8 @@ fn sinosc() -> N {
 }
 
 /// `dsp_graphs` finds directly-DSP graphs and graphs that only reach DSP
-/// transitively through references - a pure walk over the stored data, no
-/// typed cache - and excludes non-DSP graphs and references to missing
+/// transitively through references. It is a pure walk over the stored data
+/// with no typed cache. It excludes non-DSP graphs and references to missing
 /// addresses.
 #[test]
 fn dsp_graphs_discovers_direct_and_transitive() {
@@ -122,7 +122,7 @@ fn dsp_graphs_discovers_direct_and_transitive() {
     plain.add_node(N::Other);
     let plain_ca = commit(&mut registry, "plain", plain);
 
-    // A graph referencing a missing address (defensive: must not panic).
+    // A graph referencing a missing address. Discovery must not panic.
     let mut dangling: Graph<N> = Graph::default();
     dangling.add_node(ref_node(ContentAddr::from([9u8; 32])));
     let dangling_ca = commit(&mut registry, "dangling", dangling);
@@ -139,8 +139,8 @@ fn dsp_graphs_discovers_direct_and_transitive() {
     assert!(!is_dsp_graph(&registry, &plain_ca.into()));
 }
 
-/// Discovery follows `NamedRef`-tagged wrapper nodes (the form app node sets
-/// store references as): a hand-built data graph whose only node wraps a
+/// Discovery follows `NamedRef`-tagged wrapper nodes, the form app node sets
+/// store references as. A hand-built data graph whose only node wraps a
 /// reference to the DSP graph classifies as DSP, with no typed node set
 /// compiled in at all.
 #[test]
@@ -151,9 +151,9 @@ fn named_ref_tagged_data_nodes_are_followed() {
     dsp.add_node(sinosc());
     let dsp_ca = commit(&mut registry, "dsp", dsp);
 
-    // The wire shape `NamedRef` serde produces: a `ref_` field carrying the
-    // bare address (no ext), the target repeated in the structural `refs`
-    // column (its `Node::required_addrs`).
+    // The wire shape `NamedRef` serde produces. A `ref_` field carries the
+    // bare address with no ext. The target repeats in the structural `refs`
+    // column, from `Node::required_addrs`.
     let mut named = gantz_ca::NodeData::new(
         "NamedRef",
         gantz_ca::Datum::Map(vec![
@@ -171,9 +171,8 @@ fn named_ref_tagged_data_nodes_are_followed() {
 }
 
 /// The DSP ext flag on a reference is configuration, not classification
-/// evidence: a graph whose only node is a `DspRefExt`-flagged ref to an
-/// address absent from the registry classifies as non-DSP, exactly as the
-/// typed walk treated a reified-cache miss.
+/// evidence. A graph whose only node is a `DspRefExt`-flagged ref to an
+/// address absent from the registry classifies as non-DSP.
 #[test]
 fn ext_flagged_ref_to_absent_target_is_not_dsp() {
     use gantz_plyphon::{DSP_REF_EXT_KEY, DspRefExt};
@@ -191,10 +190,9 @@ fn ext_flagged_ref_to_absent_target_is_not_dsp() {
     assert!(!is_dsp_graph(&registry, &ga.into()));
 }
 
-/// The lowering decision in `flatten_from_registry`: a DSP-bearing child
-/// instances by default, its `DspRefExt { inline: true }` ext opts back into
-/// splicing, and non-DSP children (including pure wire children) always
-/// splice.
+/// The lowering decision in `flatten_from_registry`. A DSP-bearing child
+/// instances by default. Its `DspRefExt { inline: true }` ext opts back into
+/// splicing. Non-DSP children, including pure wire children, always splice.
 #[test]
 fn default_lowering_instances_dsp_refs_and_splices_the_rest() {
     use gantz_plyphon::{DSP_REF_EXT_KEY, DspRefExt, Flat};
@@ -206,14 +204,15 @@ fn default_lowering_instances_dsp_refs_and_splices_the_rest() {
     dsp.add_node(sinosc());
     let dsp_ca = commit(&mut registry, "dsp", dsp);
 
-    // A pure wire child: bridges signals but contains no DSP.
+    // A pure wire child. It bridges signals but contains no DSP.
     let mut wire: Graph<N> = Graph::default();
     let i = wire.add_node(N::Inlet);
     let o = wire.add_node(N::Outlet);
     wire.add_edge(i, o, gantz_core::Edge::new(0.into(), 0.into()));
     let wire_ca = commit(&mut registry, "wire", wire);
 
-    // The head: a default DSP ref, an inline-flagged DSP ref, a wire ref.
+    // The head has a default DSP ref, an inline-flagged DSP ref and a wire
+    // ref.
     let mut inline_ref = Ref::new(dsp_ca);
     inline_ref
         .set_ext(DSP_REF_EXT_KEY, &DspRefExt { inline: true })
@@ -234,7 +233,7 @@ fn default_lowering_instances_dsp_refs_and_splices_the_rest() {
         matches!(flat[markers[0]], Flat::Instance { child_ca, .. } if child_ca == dsp_ca),
         "the marker carries the DSP child's address",
     );
-    // The inline-flagged ref spliced its sine; the wire child dissolved.
+    // The inline-flagged ref spliced its sine. The wire child dissolved.
     let sines = flat
         .node_indices()
         .filter(|&n| {

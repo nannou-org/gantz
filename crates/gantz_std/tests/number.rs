@@ -1,5 +1,6 @@
-//! Tests for the number node's optional min/max bounds: a bounded `Number`
-//! clamps every value it stores, including a value pushed into its input.
+//! Tests for the number node's optional min and max bounds. A bounded
+//! `Number` clamps every value it stores, including a value pushed into its
+//! input.
 
 use gantz_core::{
     Edge, Node,
@@ -12,7 +13,6 @@ use std::fmt::Debug;
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
-// A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }
@@ -24,9 +24,9 @@ fn bounded(min: Option<f64>, max: Option<f64>) -> Number {
     n
 }
 
-// Push `value` into a `Number` configured with `min`/`max`, then assert against
-// the value it forwards downstream via `check` (an expression that panics if its
-// assertion fails). A successful fire proves the bounds were applied.
+// Push `value` into a `Number` configured with `min` and `max`. The `check`
+// expression asserts on the value forwarded downstream and panics on failure.
+// A successful fire proves the bounds were applied.
 fn assert_forwards(value: &str, min: Option<f64>, max: Option<f64>, check: &str) {
     let mut g = petgraph::graph::DiGraph::new();
     let push =

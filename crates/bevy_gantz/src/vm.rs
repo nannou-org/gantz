@@ -1,9 +1,9 @@
 //! VM utilities for evaluating and navigating gantz graphs.
 //!
-//! This module provides:
-//! - Evaluation events and observer (`EvalEntryEvent`, `on_eval_entry`)
-//! - The compile-input memo ([`CompiledInputs`]) driving the UI layer's
-//!   input-addressed VM synchronisation system (`bevy_gantz_egui::vm::sync`)
+//! This module provides the evaluation event [`EvalEntryEvent`] with its
+//! observer [`on_eval_entry`], and the compile-input memo [`CompiledInputs`]
+//! that drives the UI layer's VM synchronisation system
+//! `bevy_gantz_egui::vm::sync`.
 
 use crate::head;
 use crate::reg::Registry;
@@ -14,32 +14,28 @@ use gantz_core::{compile as core_compile, diagnostic};
 use std::time::Duration;
 
 /// Resource holding the [`core_compile::Config`] used whenever a head's graph
-/// is (re)compiled into its VM.
+/// is compiled into its VM.
 ///
-/// Defaults to the core defaults. Override (and trigger a recompile) to e.g.
-/// enable `emit_all_node_fns` when debugging codegen in the module view.
+/// Defaults to the core defaults. Override it and trigger a recompile to
+/// change codegen, for example to enable `emit_all_node_fns` when debugging
+/// codegen in the module view.
 #[derive(Default, Resource)]
 pub struct CompileConfig(pub core_compile::Config);
 
 /// Resource collecting the domain-provided [`SteelModule`]s registered on
 /// every freshly created head VM.
 ///
-/// Domain plugins contribute via `get_resource_or_init` + push (never
-/// `insert_resource`), so plugin order does not matter. `gantz_core`'s own
-/// modules are baked into engine creation (`gantz_core::vm::new_engine`)
-/// and need no entry here.
+/// Domain plugins contribute via `get_resource_or_init` and push, never via
+/// `insert_resource`, so plugin order does not matter. `gantz_core`'s own
+/// modules are baked into `gantz_core::vm::new_engine` and need no entry here.
 ///
-/// Contributions must land during plugin construction: an engine only sees
-/// the modules present when its head is first compiled, and the in-place
+/// Contributions must land during plugin construction. An engine only sees
+/// the modules present when its head is first compiled. The in-place
 /// recompile path never re-registers.
 ///
 /// [`SteelModule`]: gantz_core::vm::SteelModule
 #[derive(Default, Resource)]
 pub struct SteelModules(pub Vec<gantz_core::vm::SteelModule>);
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 /// The inputs that determine a head's compiled module.
 #[derive(Clone, Copy, PartialEq)]
@@ -50,23 +46,21 @@ pub struct Inputs {
     pub config: core_compile::Config,
 }
 
-/// The inputs of a head's last compile *attempt* (success or failure).
+/// The inputs of a head's last compile attempt, whether it succeeded or not.
 ///
-/// `None` = never attempted. The UI layer's `vm::sync` compares this against
-/// the current inputs (the head's committed graph CA + config) to decide when
-/// to (re)compile - there is no dirty flag to set or forget.
+/// `None` means never attempted. The UI layer's `vm::sync` compares this
+/// against the current inputs to decide when to compile. There is no dirty
+/// flag to set or forget.
 #[derive(Component, Default)]
 pub struct CompiledInputs(pub Option<Inputs>);
 
-/// When `true`, [`validate_committed`] hashes every open head's working graph
-/// each frame and warns if it differs from the head's committed graph CA - i.e.
-/// a system mutated the working graph without committing it, violating the
-/// [`WorkingGraph`](head::WorkingGraph) commit-before-return invariant. The UI
-/// layer also feeds this flag to its per-node change-tracking validator.
+/// When `true`, [`validate_committed`] checks the [`head::WorkingGraph`]
+/// commit-before-return invariant each frame. The UI layer also feeds this
+/// flag to its per-node change-tracking validator.
 ///
-/// Defaults to `true` in debug builds (the UI's node-instance cache would
-/// otherwise mask a missed `changed` flag rather than visibly dropping the
-/// edit) and `false` in release (no extra hashing). Toggleable at runtime.
+/// Defaults to `true` in debug builds, where the UI's node-instance cache
+/// would otherwise mask a missed `changed` flag. Defaults to `false` in
+/// release to avoid the extra hashing. Toggleable at runtime.
 #[derive(Resource)]
 pub struct ValidateCommitted(pub bool);
 
@@ -83,20 +77,21 @@ pub struct EvalEntryEvent {
     pub head: Entity,
     /// The entrypoint to evaluate.
     pub entrypoint: core_compile::Entrypoint,
-    /// The monotonic time (seconds, on the [`EvalEpoch`](crate::EvalEpoch))
-    /// this evaluation logically fires at, exposed to nodes as `%args`'s `time`.
+    /// The time in seconds on the [`crate::EvalEpoch`] at which this
+    /// evaluation logically fires. Nodes see it as the `time` field of
+    /// `%args`.
     ///
-    /// `None` means "now" - resolved to [`EvalEpoch::now_secs`](crate::EvalEpoch)
-    /// in [`on_eval_entry`]. A `tick!` passes `Some(t)` with each tick's exact
-    /// firing time so timed control updates schedule sample-accurately; one-shot
-    /// firings (`update!`, GUI pushes) leave it `None`.
+    /// `None` means now. [`on_eval_entry`] resolves it to
+    /// [`crate::EvalEpoch::now_secs`]. A `tick!` passes each tick's exact
+    /// firing time so timed control updates schedule sample-accurately.
+    /// One-shot firings such as `update!` and GUI pushes leave it `None`.
     pub time: Option<f64>,
 }
 
 /// Emitted after VM evaluation completes, for timing capture.
 ///
-/// This event allows UI layers (like `bevy_gantz_egui`) to observe VM execution
-/// timing without the core crate depending on UI-related types.
+/// UI layers observe VM execution timing through this event, so this crate
+/// does not depend on UI-related types.
 #[derive(Event)]
 pub struct EvalEntryComplete {
     /// The head entity that was evaluated.
@@ -105,18 +100,14 @@ pub struct EvalEntryComplete {
     pub duration: Duration,
 }
 
-// ---------------------------------------------------------------------------
-// Core VM utilities
-// ---------------------------------------------------------------------------
-
-/// The node-identity mapping for navigating a head from the `from` commit to
-/// the `to` commit: old node index -> new node index.
+/// The node-identity mapping from old node index to new node index for
+/// navigating a head from the `from` commit to the `to` commit.
 ///
-/// Prefers chain-tracked identity (see [`gantz_ca::diff::matching`]) in
-/// whichever direction has a first-parent chain - `to` descending from
-/// `from` (redo) or `from` descending from `to` (undo, inverted) - falling
-/// back to direct content matching for divergent navigation (e.g. across
-/// history-pane jumps). `None` only when an endpoint commit or graph is
+/// Prefers chain-tracked identity via [`gantz_ca::diff::matching`] in
+/// whichever direction has a first-parent chain. Redo has `to` descending
+/// from `from`. Undo has `from` descending from `to`, so the matching is
+/// inverted. Divergent navigation, such as a history-pane jump, falls back to
+/// direct content matching. `None` only when an endpoint commit or graph is
 /// missing from the registry.
 pub fn navigation_matching(
     registry: &ca::Registry,
@@ -127,8 +118,8 @@ pub fn navigation_matching(
     if ca::history::first_parent_chain_to(commits, to, from).is_some() {
         ca::diff::matching(registry, from, to)
     } else if ca::history::first_parent_chain_to(commits, from, to).is_some() {
-        // The chain runs the other way: track identity along it and invert
-        // (matchings are injective).
+        // The chain runs the other way. Track identity along it and invert.
+        // Matchings are injective.
         let matching = ca::diff::matching(registry, to, from)?;
         Some(matching.into_iter().map(|(t, f)| (f, t)).collect())
     } else {
@@ -139,12 +130,12 @@ pub fn navigation_matching(
 }
 
 /// Migrate a navigating head's VM node state from the `from` commit's graph
-/// to the `to` commit's, keeping the VM so that every node present on both
-/// sides retains its state (`vm::sync` re-registers the new graph over the
-/// kept VM, initialising only the nodes without state).
+/// to the `to` commit's graph. The VM is kept, so every node present on both
+/// sides retains its state. `vm::sync` re-registers the new graph over the
+/// kept VM and initialises only the nodes without state.
 ///
-/// The VM is dropped - falling back to a fresh init - only when no mapping
-/// can be derived or the state fails to remap.
+/// The VM is dropped for a fresh init only when no mapping can be derived or
+/// the state fails to remap.
 pub fn migrate_vm_state(
     registry: &ca::Registry,
     vms: &mut head::HeadVms,
@@ -172,13 +163,8 @@ pub fn migrate_vm_state(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Observers
-// ---------------------------------------------------------------------------
-
-/// Observer that handles evaluation events by calling the appropriate VM function.
-///
-/// Emits an `EvalEntryComplete` event with timing information for UI layers to observe.
+/// Observer for [`EvalEntryEvent`]. Calls the entrypoint's VM function, then
+/// emits an [`EvalEntryComplete`] with the timing.
 pub fn on_eval_entry(
     trigger: On<EvalEntryEvent>,
     epoch: Res<crate::EvalEpoch>,
@@ -189,8 +175,6 @@ pub fn on_eval_entry(
     let event = trigger.event();
     let fn_name = core_compile::entry_fn_name(&event.entrypoint.id());
     if let Some(vm) = vms.get_mut(&event.head) {
-        // Expose this firing's time to nodes via `%args` (e.g. DSP control inputs
-        // stamp queued values with it). `None` means "now".
         let time = event.time.unwrap_or_else(|| epoch.now_secs());
         vm.update_value(gantz_core::ARGS, gantz_core::args::time(time));
         let start = web_time::Instant::now();
@@ -216,19 +200,14 @@ pub fn on_eval_entry(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Systems
-// ---------------------------------------------------------------------------
-
-/// Commit a head's working graph to the registry when it has diverged from the
-/// head's current commit, updating the head and emitting a
+/// Commit a head's working graph to the registry when it has diverged from
+/// the head's current commit. Updates the head and emits a
 /// [`head::CommittedEvent`]. Returns `true` if a new commit was made.
 ///
-/// **Call this from any system that mutates a head's
-/// [`WorkingGraph`](head::WorkingGraph), before the system returns** - it is how
-/// the commit-before-return invariant (see `WorkingGraph`) is upheld, which in
-/// turn lets `vm::sync` recompile from the committed address without re-hashing.
-/// This is the single place a working graph is content-addressed.
+/// Call this from any system that mutates a head's [`head::WorkingGraph`],
+/// before the system returns. This upholds the commit-before-return invariant
+/// documented on `WorkingGraph`. This is the single place a working graph is
+/// content-addressed.
 pub fn commit_working_graph(
     registry: &mut Registry,
     cmds: &mut Commands,
@@ -236,8 +215,8 @@ pub fn commit_working_graph(
     head: &mut ca::Head,
     graph: &ca::DataGraph,
 ) -> bool {
-    // The working graph IS the stored form, so its registry address is
-    // computed directly - no erase step.
+    // The working graph is the stored form, so its registry address is
+    // computed directly.
     let graph_ca = ca::graph_addr(graph);
     let Some(head_commit) = registry.head_commit(head) else {
         return false;
@@ -258,14 +237,13 @@ pub fn commit_working_graph(
     true
 }
 
-/// Debug check for the [`WorkingGraph`](head::WorkingGraph) commit-before-return
-/// invariant.
+/// Debug check for the [`head::WorkingGraph`] commit-before-return invariant.
 ///
 /// When [`ValidateCommitted`] is enabled, hash every open head's working
-/// graph and warn if it differs from the head's committed graph CA - i.e. a
-/// system mutated the working graph without committing it. Every weight is
-/// also checked for canonicality (address computation assumes it). A no-op
-/// (no hashing) when disabled, which is the default.
+/// graph and warn if it differs from the head's committed graph CA. Such a
+/// difference means a system mutated the working graph without committing it.
+/// Every weight is also checked for canonicality, which address computation
+/// assumes. A no-op when disabled.
 pub fn validate_committed(
     validate: Res<ValidateCommitted>,
     registry: Res<Registry>,
@@ -327,8 +305,8 @@ mod tests {
         g
     }
 
-    /// A minimal registry: base `[10, 20, 30]`, then a child commit deleting
-    /// index 1 (swap-removal: `[10, 30]`).
+    /// A minimal registry. The base commit holds `[10, 20, 30]`. The child
+    /// commit swap-removes index 1 to give `[10, 30]`.
     fn base_and_child() -> (ca::Registry, ca::CommitAddr, ca::CommitAddr) {
         let mut reg = ca::Registry::default();
         let g = graph(&[10, 20, 30]);
@@ -343,7 +321,7 @@ mod tests {
     #[test]
     fn navigation_matching_tracks_redo_along_the_chain() {
         let (reg, base, child) = base_and_child();
-        // Redo direction: base -> child. Index 2 swap-moved to 1; 1 deleted.
+        // Redo direction. Index 2 swap-moved to 1. Index 1 was deleted.
         let m = navigation_matching(&reg, base, child).unwrap();
         assert_eq!(m, ca::Matching::from([(0, 0), (2, 1)]));
     }
@@ -351,8 +329,8 @@ mod tests {
     #[test]
     fn navigation_matching_inverts_for_undo() {
         let (reg, base, child) = base_and_child();
-        // Undo direction: child -> base. The chain runs the other way, so
-        // the tracked matching is inverted: child index 1 returns to 2.
+        // Undo direction. The chain runs the other way, so the tracked
+        // matching is inverted. Child index 1 returns to 2.
         let m = navigation_matching(&reg, child, base).unwrap();
         assert_eq!(m, ca::Matching::from([(0, 0), (1, 2)]));
     }
@@ -366,7 +344,7 @@ mod tests {
         let g = graph(&[9, 7]);
         let b_ca = ca::graph_addr(&g);
         let b = reg.commit_graph(Duration::from_secs(2), None, b_ca, || g);
-        // Unrelated commits: direct content matching pairs the equal node.
+        // Unrelated commits. Direct content matching pairs the equal node.
         let m = navigation_matching(&reg, a, b).unwrap();
         assert_eq!(m, ca::Matching::from([(0, 1)]));
     }

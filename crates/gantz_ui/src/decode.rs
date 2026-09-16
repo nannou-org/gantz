@@ -1,15 +1,13 @@
 //! The total decoder from the abstract value model to the typed tree.
 //!
 //! [`decode`] never fails. Malformed subtrees become inline
-//! [`Element::Error`] nodes at their slot in the tree so hosts render an
-//! error chip while siblings render normally, and recoverable issues become
-//! [`Warning`]s (see [`crate::diag`] for the boundary rule). Unknown
-//! attributes are ignored for forward compatibility, unknown tags are
-//! visible errors, never silently blank.
+//! [`Element::Error`] nodes. Recoverable issues become [`Warning`]s. See
+//! [`crate::diag`] for the boundary rule.
 //!
-//! One tolerance rule spans every codec: `Datum` has no symbol variant, so
-//! identifier positions (tags, attribute names, enum-like attribute values)
-//! also accept strings, and text positions also accept identifiers.
+//! One tolerance rule spans every codec. `Datum` has no symbol variant, so
+//! identifier positions also accept strings, and text positions also accept
+//! identifiers. Identifier positions are tags, attribute names and enum-like
+//! attribute values.
 
 use crate::diag::{ErrorReason, TreePath, Warning, WarningKind};
 use crate::elem::{
@@ -19,9 +17,9 @@ use crate::elem::{
 };
 use crate::sexpr::{self, SExpr};
 
-/// Caps bounding pathological computed trees. Generous by default: a
-/// hand-authored GUI never meets them, a runaway computed one stays visible
-/// as an inline error instead of stalling the host.
+/// Caps that bound pathological computed trees. The defaults are generous.
+/// A hand-authored GUI never meets them. A runaway computed one stays
+/// visible as an inline error instead of stalling the host.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Limits {
     /// The maximum nesting depth, with the root element at depth zero.
@@ -158,8 +156,8 @@ impl<'a, 'b> Attrs<'a, 'b> {
         self.take("bind", "a list of node ids", as_bind)
     }
 
-    /// The required `cols` attribute of `grid`: substitutes 1 with a warning
-    /// when absent.
+    /// The required `cols` attribute of `grid`. It substitutes 1 with a
+    /// warning when absent.
     fn cols(&mut self) -> u32 {
         if self.set.present("cols") {
             self.take("cols", "a positive integer", as_cols)
@@ -207,8 +205,8 @@ impl Default for Limits {
 
 /// Decode a UI tree from the abstract value model.
 ///
-/// Total: this never fails. Malformed subtrees become inline
-/// [`Element::Error`] nodes preserving their slot in the tree, recoverable
+/// Total. This never fails. Malformed subtrees become inline
+/// [`Element::Error`] nodes that keep their slot in the tree. Recoverable
 /// issues become [`Warning`]s and the element renders with documented
 /// defaults.
 pub fn decode(expr: SExpr, limits: &Limits) -> Decoded {
@@ -523,7 +521,7 @@ fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: SExpr) -> Elem
             warn_ignored(ctx, path, &tag, items.count());
             Element::RefGui(RefGui { id, key })
         }
-        // Unreachable: membership in KNOWN_TAGS is checked above.
+        // Unreachable. Membership in KNOWN_TAGS is checked above.
         _ => error_at(path, ErrorReason::UnknownTag(tag)),
     }
 }
@@ -565,8 +563,8 @@ fn is_attrs_marker(expr: &SExpr) -> bool {
     matches!(expr, SExpr::Ident(s) | SExpr::Str(s) if s == ATTRS_MARKER)
 }
 
-/// Parse the entries of an attribute block (marker included) into an
-/// [`AttrSet`], warning for malformed entries and duplicates.
+/// Parse the entries of an attribute block, marker included, into an
+/// [`AttrSet`]. Warn for malformed entries and duplicates.
 fn parse_attrs(ctx: &mut Ctx, path: &[usize], tag: &str, entries: Vec<SExpr>) -> AttrSet {
     let mut parsed: Vec<(String, Option<SExpr>)> = Vec::new();
     for entry in entries.into_iter().skip(1) {
@@ -634,7 +632,7 @@ fn warn_ignored(ctx: &mut Ctx, path: &[usize], tag: &str, count: usize) {
 
 /// The contents of an identifier or string.
 ///
-/// This is the tolerance rule in one place: identifier positions accept
+/// This is the tolerance rule in one place. Identifier positions accept
 /// strings and text positions accept identifiers, because `Datum` encodes
 /// identifiers as strings.
 fn text(expr: &SExpr) -> Option<String> {
@@ -664,7 +662,7 @@ fn as_u8(expr: &SExpr) -> Option<u8> {
     }
 }
 
-/// A grid column count: a positive integer.
+/// A grid column count, a positive integer.
 fn as_cols(expr: &SExpr) -> Option<u32> {
     match expr {
         SExpr::Int(i) if *i >= 1 => u32::try_from(*i).ok(),
@@ -687,7 +685,7 @@ fn as_key(expr: &SExpr) -> Option<Key> {
     }
 }
 
-/// A node id: a non-negative integer.
+/// A node id, a non-negative integer.
 fn as_node_id(expr: &SExpr) -> Option<usize> {
     match expr {
         SExpr::Int(i) => usize::try_from(*i).ok(),
@@ -695,7 +693,7 @@ fn as_node_id(expr: &SExpr) -> Option<usize> {
     }
 }
 
-/// A binding path: a list of node ids. Machine produced, so no bare integer
+/// A binding path, a list of node ids. Machine produced, so no bare integer
 /// sugar.
 fn as_bind(expr: &SExpr) -> Option<BindPath> {
     match expr {

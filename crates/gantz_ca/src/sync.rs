@@ -1,30 +1,31 @@
 //! Convergence primitives for synchronising commit DAGs between peers.
 //!
 //! Peers collaborating on a shared graph exchange commits and independently
-//! decide how to bring their local tip up to date with a remote one. For all
-//! peers to *converge* - identical tip [`CommitAddr`]s with no further
-//! exchange - every decision here is a pure, side-independent function of
-//! commit content:
+//! decide how to bring their local tip up to date with a remote one. Peers
+//! converge when they hold identical tip [`CommitAddr`]s with no further
+//! exchange. Every decision here is therefore a pure, side-independent
+//! function of commit content:
 //!
 //! - [`plan_sync_step`] classifies a `(local, remote)` tip pair. Diverged
-//!   tips whose commits point at the *same* graph are resolved by
-//!   deterministic adoption ([`SyncStep::Adopt`]): no merge commit is minted
-//!   for "twin" commits differing only in timestamp. Truly diverged graphs
-//!   are merged in *canonical orientation* ([`SyncStep::Merge`]): every peer
-//!   merges the same `(first, second)` pair, so the merged graph (whose node
-//!   order depends on orientation, see [`MergeOutcome::graph`]) and the
-//!   resulting merge commit are identical on every peer - see
-//!   [`Registry::commit_merge_canonical`].
+//!   tips whose commits point at the same graph are resolved by
+//!   deterministic adoption, [`SyncStep::Adopt`]. No merge commit is minted
+//!   for twin commits that differ only in timestamp. Truly diverged graphs
+//!   are merged in canonical orientation, [`SyncStep::Merge`]. Every peer
+//!   merges the same `(first, second)` pair, so the merged graph and the
+//!   resulting merge commit are identical on every peer. The merged graph's
+//!   node order depends on orientation. See [`MergeOutcome::graph`]. See
+//!   also [`Registry::commit_merge_canonical`].
 //! - [`Staged`] validates fetched commits and graphs against their claimed
 //!   addresses before they may touch a registry. Graph content is recomputed
-//!   and rejected on mismatch (see [`verify_graph`]) - the security-critical
-//!   check, as graphs compile to executed code. Commit chains apply
-//!   oldest-first under their claimed keys, preserving addresses that
-//!   [`Registry::add_commit`]'s parent-clearing would rewrite.
-//! - [`monotonic_timestamp`] guards locally *minted* commit timestamps so an
+//!   and rejected on mismatch. See [`verify_graph`]. This is the
+//!   security-critical check, as graphs compile to executed code. Commit
+//!   chains apply oldest-first under their claimed keys. This preserves
+//!   addresses that [`Registry::add_commit`]'s parent-clearing would
+//!   rewrite.
+//! - [`monotonic_timestamp`] guards locally minted commit timestamps. An
 //!   edit made after observing another commit always outranks it under
-//!   [`BothModified::KeepNewest`], without ever rewriting received content
-//!   (timestamps are part of the commit hash).
+//!   [`BothModified::KeepNewest`]. Received content is never rewritten,
+//!   since timestamps are part of the commit hash.
 //!
 //! [`MergeOutcome::graph`]: crate::merge::MergeOutcome::graph
 //! [`BothModified::KeepNewest`]: crate::merge::BothModified::KeepNewest
@@ -43,30 +44,30 @@ use std::{
 
 /// How a local tip is brought up to date with a remote one.
 ///
-/// Produced by [`plan_sync_step`]. Applying the step is the caller's job;
-/// every variant that moves the tip does so identically on all peers.
+/// Produced by [`plan_sync_step`]. Applying the step is the caller's job.
+/// Every variant that moves the tip does so identically on all peers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyncStep {
-    /// The remote tip is already in the local tip's ancestry (or is the local
-    /// tip itself): nothing to do.
+    /// The remote tip is already in the local tip's ancestry or is the local
+    /// tip itself. Nothing to do.
     UpToDate,
-    /// The local tip is an ancestor of the remote: move to the remote tip, no
-    /// commit required.
+    /// The local tip is an ancestor of the remote. Move to the remote tip. No
+    /// commit is required.
     FastForward(CommitAddr),
-    /// The tips diverged but their commits point at the same graph:
-    /// deterministically adopt the winner (max by `(timestamp, addr)`), no
-    /// commit required. When the winner is the local tip there is nothing to
-    /// do - the remote peer adopts ours.
+    /// The tips diverged but their commits point at the same graph. Adopt
+    /// the winner, the max by `(timestamp, addr)`. No commit is required.
+    /// When the winner is the local tip there is nothing to do. The remote
+    /// peer adopts ours.
     Adopt(CommitAddr),
-    /// The tips truly diverged: merge `(first, second)` in canonical
-    /// orientation (see `canonical_tips`) and commit the outcome via
+    /// The tips truly diverged. Merge `(first, second)` in canonical
+    /// orientation, see `canonical_tips`, and commit the outcome via
     /// [`Registry::commit_merge_canonical`].
     Merge {
         first: CommitAddr,
         second: CommitAddr,
     },
     /// The tips share no common ancestor. How to proceed is an application
-    /// decision (e.g. rename the local graph aside), never automatic.
+    /// decision, never automatic. For example, rename the local graph aside.
     Unrelated,
 }
 
@@ -98,8 +99,8 @@ pub enum VerifyError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ApplyError {
     /// A strictly staged commit references a parent that is neither in the
-    /// registry nor staged - a protocol violation for live deltas (snapshot
-    /// commits detach instead, see [`Applied::truncated`]).
+    /// registry nor staged. This is a protocol violation for live deltas.
+    /// Snapshot commits detach instead. See [`Applied::truncated`].
     MissingParent {
         commit: CommitAddr,
         parent: CommitAddr,
@@ -113,7 +114,7 @@ pub enum ApplyError {
 
 /// Objects still required before a tip's closure is complete.
 ///
-/// See [`Staged::missing`]. Both vecs are in discovery (breadth-first) order
+/// See [`Staged::missing`]. Both vecs are in breadth-first discovery order
 /// and free of duplicates.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Missing {
@@ -124,29 +125,30 @@ pub struct Missing {
 /// The result of applying a [`Staged`] set to a registry.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Applied {
-    /// The commits applied, oldest-first (parents before children).
+    /// The commits applied, oldest-first, so parents come before children.
     pub commits: Vec<CommitAddr>,
     /// The graphs applied.
     pub graphs: Vec<GraphAddr>,
     /// The blobs applied, as (section, address) pairs.
     pub blobs: Vec<(SectionId, ContentAddr)>,
     /// The number of snapshot commits whose absent parents were detached on
-    /// insert because the sender truncated history below them (the same
-    /// semantic a local [`prune`](crate::reach::prune) leaves behind).
+    /// insert because the sender truncated history below them. A local
+    /// [`prune`](crate::reach::prune) leaves the same semantic behind.
     pub truncated: usize,
 }
 
 /// A staging area validating fetched objects before they touch a registry.
 ///
-/// Live-delta commits are staged with [`insert_commit`](Self::insert_commit)
-/// (strict: content must hash to the claimed address); join-snapshot commits
-/// with [`insert_commit_grandfathered`](Self::insert_commit_grandfathered)
-/// (a mismatch is tolerated and recorded, as senders legitimately hold
-/// hash-inconsistent history after pruning). Graphs are always strict.
+/// Live-delta commits are staged with [`insert_commit`](Self::insert_commit).
+/// This is strict. Content must hash to the claimed address. Join-snapshot
+/// commits are staged with
+/// [`insert_commit_grandfathered`](Self::insert_commit_grandfathered). A
+/// mismatch is tolerated and recorded, as senders legitimately hold
+/// hash-inconsistent history after pruning. Graphs are always strict.
 ///
 /// [`missing`](Self::missing) drives a fetch loop until
-/// [`is_complete`](Self::is_complete), after which
-/// [`apply`](Self::apply) inserts everything oldest-first under claimed keys.
+/// [`is_complete`](Self::is_complete). Then [`apply`](Self::apply) inserts
+/// everything oldest-first under claimed keys.
 #[derive(Clone, Debug, Default)]
 pub struct Staged {
     commits: BTreeMap<CommitAddr, StagedCommit>,
@@ -155,15 +157,15 @@ pub struct Staged {
     grandfathered: Vec<CommitAddr>,
 }
 
-/// A staged commit alongside whether it arrived via a snapshot (tolerant
-/// validation) or a live delta (strict).
+/// A staged commit alongside whether it arrived via a snapshot, with tolerant
+/// validation, or a live delta, which is strict.
 #[derive(Clone, Debug)]
 struct StagedCommit {
     commit: Commit,
     snapshot: bool,
 }
 
-/// The smallest timestamp increment: used to derive strictly-newer
+/// The smallest timestamp increment. Used to derive strictly-newer
 /// deterministic timestamps.
 const NANO: Duration = Duration::from_nanos(1);
 
@@ -201,11 +203,11 @@ impl Staged {
 
     /// Stage a join-snapshot commit under its claimed address.
     ///
-    /// An address mismatch is tolerated and recorded (see
-    /// [`grandfathered`](Self::grandfathered)): a sender that has pruned
+    /// An address mismatch is tolerated and recorded. See
+    /// [`grandfathered`](Self::grandfathered). A sender that has pruned
     /// history legitimately holds commits whose parents were detached in
-    /// place under their original keys, so their content no longer re-hashes
-    /// to the key. This defends DAG bookkeeping only - content honesty is the
+    /// place under their original keys. Their content no longer re-hashes to
+    /// the key. This defends DAG bookkeeping only. Content honesty is the
     /// graph check, which is always strict.
     pub fn insert_commit_grandfathered(&mut self, claimed: CommitAddr, commit: Commit) {
         if commit_addr(&commit) != claimed {
@@ -219,14 +221,14 @@ impl Staged {
     }
 
     /// The staged commits whose content did not re-hash to their claimed
-    /// address (accepted via
-    /// [`insert_commit_grandfathered`](Self::insert_commit_grandfathered)).
+    /// address. They were accepted via
+    /// [`insert_commit_grandfathered`](Self::insert_commit_grandfathered).
     pub fn grandfathered(&self) -> &[CommitAddr] {
         &self.grandfathered
     }
 
-    /// The staged graphs, e.g. for computing wants beyond commit ancestry
-    /// (node-referenced commits).
+    /// The staged graphs. For example, for computing wants beyond commit
+    /// ancestry, such as node-referenced commits.
     pub fn graphs(&self) -> impl Iterator<Item = (&GraphAddr, &DataGraph)> {
         self.graphs.iter()
     }
@@ -241,13 +243,12 @@ impl Staged {
         self.blobs.keys()
     }
 
-    /// Stage a graph, verifying it against the claimed address (see
-    /// [`verify_graph`]).
+    /// Stage a graph, verifying it against the claimed address. See
+    /// [`verify_graph`].
     ///
-    /// Always strict: graph content is compiled to executed code, so a graph
-    /// that does not hash to the address it was requested under - or that
-    /// carries a non-canonical node, aliasing a logical node under a second
-    /// address - is rejected.
+    /// Always strict. Graph content is compiled to executed code. A graph
+    /// that does not hash to the address it was requested under is rejected.
+    /// So is a graph that carries a non-canonical node.
     pub fn insert_graph(
         &mut self,
         claimed: GraphAddr,
@@ -259,11 +260,11 @@ impl Staged {
     }
 
     /// Stage a blob for the given blob section, verifying that its raw
-    /// bytes hash to the claimed address. Always strict (blake3 of the
-    /// bytes is cheap).
+    /// bytes hash to the claimed address. Always strict, since blake3 of the
+    /// bytes is cheap.
     ///
     /// `liveness` stamps the section if the receiving registry does not
-    /// hold it yet (an existing section's stored liveness wins on apply).
+    /// hold it yet. An existing section's stored liveness wins on apply.
     pub fn insert_blob(
         &mut self,
         section: SectionId,
@@ -283,9 +284,9 @@ impl Staged {
     /// The commits and graphs still required to complete `tip`'s closure,
     /// walking ancestry through the staged set and the registry.
     ///
-    /// The walk stops at commits already in the registry, relying on the
-    /// registry invariant that its commits are parent-closed (absent parents
-    /// are detached on insert and prune) and graph-complete.
+    /// The walk stops at commits already in the registry. It relies on the
+    /// registry invariant that its commits are parent-closed and
+    /// graph-complete.
     pub fn missing(&self, reg: &Registry, tip: CommitAddr) -> Missing {
         let mut missing = Missing::default();
         let mut missing_graphs: HashSet<GraphAddr> = HashSet::new();
@@ -320,13 +321,13 @@ impl Staged {
         self.missing(reg, tip).is_empty()
     }
 
-    /// Apply the staged set to the registry: graphs first, then commits
-    /// oldest-first (parents before children), each under its claimed key.
+    /// Apply the staged set to the registry. Graphs go first, then commits
+    /// oldest-first, each under its claimed key.
     ///
     /// All validation happens before the registry is touched, so an `Err`
-    /// leaves it unchanged. Strict commits must have every parent present
-    /// (registry or staged); snapshot commits with absent parents are
-    /// detached on insert and counted in [`Applied::truncated`], mirroring
+    /// leaves it unchanged. Strict commits must have every parent present in
+    /// the registry or staged. Snapshot commits with absent parents are
+    /// detached on insert and counted in [`Applied::truncated`]. This mirrors
     /// the local post-prune semantic.
     pub fn apply(self, reg: &mut Registry) -> Result<Applied, ApplyError> {
         for (&ca, staged) in &self.commits {
@@ -348,8 +349,8 @@ impl Staged {
             reg.insert_graph_at(ga, graph);
             applied.graphs.push(ga);
         }
-        // Blobs are leaves with no referential invariants: apply alongside
-        // graphs, before any commit.
+        // Blobs are leaves with no referential invariants. Apply them
+        // alongside graphs, before any commit.
         for ((section, addr), (liveness, bytes)) in self.blobs {
             reg.insert_blob_at(section.clone(), liveness, addr, bytes);
             applied.blobs.push((section, addr));
@@ -424,11 +425,11 @@ impl fmt::Display for ApplyError {
 
 impl std::error::Error for ApplyError {}
 
-/// Verify a fetched graph against the address it was claimed under: canonical
-/// form of every node plus a strict content re-hash.
+/// Verify a fetched graph against the address it was claimed under. Every
+/// node must be canonical and the content must re-hash to the address.
 ///
-/// A non-canonical node hashes consistently with its own (non-canonical)
-/// form, so the address check alone would admit it - as an alias of the same
+/// A non-canonical node hashes consistently with its own form, so the
+/// address check alone would admit it. It would be an alias of the same
 /// logical node under a second network-wide address. Rejecting it keeps one
 /// logical node to exactly one address.
 pub fn verify_graph(claimed: GraphAddr, graph: &DataGraph) -> Result<(), VerifyError> {
@@ -445,12 +446,13 @@ pub fn verify_graph(claimed: GraphAddr, graph: &DataGraph) -> Result<(), VerifyE
     Ok(())
 }
 
-/// Order two diverged tips canonically: ascending by `(timestamp, addr)`.
+/// Order two diverged tips canonically, ascending by `(timestamp, addr)`.
 ///
-/// The order is a pure function of commit content, so every peer derives the
-/// same orientation for the same pair - the prerequisite for identical merge
-/// outcomes, as the merged graph's node order depends on which side plays
-/// "ours" (see [`MergeOutcome::graph`](crate::merge::MergeOutcome::graph)).
+/// The order is a pure function of commit content, so every peer derives
+/// the same orientation for the same pair. This is the prerequisite for
+/// identical merge outcomes, as the merged graph's node order depends on
+/// which side plays "ours". See
+/// [`MergeOutcome::graph`](crate::merge::MergeOutcome::graph).
 pub(crate) fn canonical_tips(
     commits: &Commits,
     a: CommitAddr,
@@ -460,12 +462,12 @@ pub(crate) fn canonical_tips(
     if key(a) <= key(b) { (a, b) } else { (b, a) }
 }
 
-/// The timestamp for a canonical merge commit: strictly newer than both tips
-/// (`max + 1ns`), and a pure function of the two tips so every peer mints the
-/// identical merge commit.
+/// The timestamp for a canonical merge commit. It is `max + 1ns`, strictly
+/// newer than both tips, and a pure function of the two tips, so every peer
+/// mints the identical merge commit.
 ///
-/// Being strictly newer also means chain-tracked edit times through the merge
-/// never tie against pre-merge edits.
+/// Being strictly newer also means chain-tracked edit times through the
+/// merge never tie against pre-merge edits.
 pub(crate) fn merge_timestamp(
     commits: &Commits,
     first: CommitAddr,
@@ -475,23 +477,24 @@ pub(crate) fn merge_timestamp(
     ts(first).max(ts(second)).saturating_add(NANO)
 }
 
-/// A locally minted commit's timestamp, guarded for session causality: at
-/// least one nanosecond newer than the newest commit observed in the session.
+/// A locally minted commit's timestamp, guarded for session causality. It
+/// is at least one nanosecond newer than the newest commit observed in the
+/// session.
 ///
-/// This keeps "last edit wins" honest under clock skew - an edit made *after*
-/// seeing a remote commit always outranks it - without touching received
-/// content. Truly concurrent blind edits still race wall clocks, which is
-/// exactly the case where last-edit-wins is arbitrary anyway.
+/// This keeps "last edit wins" honest under clock skew without touching
+/// received content. An edit made after seeing a remote commit always
+/// outranks it. Truly concurrent blind edits still race wall clocks, which
+/// is the case where last-edit-wins is arbitrary anyway.
 pub fn monotonic_timestamp(now: Timestamp, newest_seen: Timestamp) -> Timestamp {
     now.max(newest_seen.saturating_add(NANO))
 }
 
 /// Classify how the local tip should be brought up to date with a remote tip.
 ///
-/// Both tips (and the history connecting them to their base) are expected to
-/// be present in `commits` - i.e. the remote tip's closure has been fetched
-/// and applied. Every branch of the decision is a pure, side-independent
-/// function of commit content, so two peers planning opposite directions of
+/// Both tips and the history connecting them to their base must be present
+/// in `commits`. That is, the remote tip's closure has been fetched and
+/// applied. Every branch of the decision is a pure, side-independent
+/// function of commit content. Two peers planning opposite directions of
 /// the same pair reach complementary steps that converge on the same tip.
 pub fn plan_sync_step(commits: &Commits, local: CommitAddr, remote: CommitAddr) -> SyncStep {
     if local == remote {
@@ -504,9 +507,9 @@ pub fn plan_sync_step(commits: &Commits, local: CommitAddr, remote: CommitAddr) 
         MergeAnalysis::Diverged(_) => {
             let graph = |ca: CommitAddr| commits.get(&ca).map(|c| c.graph);
             match (graph(local), graph(remote)) {
-                // Twin commits: same graph reached independently (concurrent
-                // identical edits, concurrent resyncs). Adopt the winner
-                // rather than minting a pointless merge commit.
+                // Twin commits reached the same graph independently, for
+                // example concurrent identical edits or resyncs. Adopt the
+                // winner rather than mint a pointless merge commit.
                 (Some(gl), Some(gr)) if gl == gr => {
                     let key = |ca: CommitAddr| (commits.get(&ca).map(|c| c.timestamp), ca);
                     let winner = if key(local) >= key(remote) {
@@ -525,13 +528,13 @@ pub fn plan_sync_step(commits: &Commits, local: CommitAddr, remote: CommitAddr) 
     }
 }
 
-/// Topologically order the staged commits oldest-first (parents before
-/// children), following only parent edges within the staged set.
+/// Topologically order the staged commits oldest-first, following only
+/// parent edges within the staged set.
 ///
 /// Iteration over the `BTreeMap` keeps the order deterministic. A parent
-/// cycle (only forgeable via grandfathered claimed keys) cannot occur in
-/// honestly hashed content and degrades gracefully: the visited set breaks
-/// the cycle and the out-of-order parent is later detached on apply.
+/// cycle cannot occur in honestly hashed content. It is only forgeable via
+/// grandfathered claimed keys. It degrades gracefully. The visited set
+/// breaks the cycle and the out-of-order parent is later detached on apply.
 fn topo_order(staged: &BTreeMap<CommitAddr, StagedCommit>) -> Vec<CommitAddr> {
     let mut order = Vec::with_capacity(staged.len());
     let mut visited: HashSet<CommitAddr> = HashSet::new();
@@ -600,7 +603,7 @@ mod tests {
     fn canonical_tips_tie_breaks_on_addr() {
         let mut commits = Commits::default();
         let root = add(&mut commits, 1, None, 1);
-        // Same timestamp, different graphs: only the addr differentiates.
+        // Same timestamp, different graphs. Only the addr differentiates.
         let a = add(&mut commits, 2, Some(root), 2);
         let b = add(&mut commits, 2, Some(root), 3);
         let expected = if a < b { (a, b) } else { (b, a) };
@@ -658,7 +661,7 @@ mod tests {
         // Two peers independently commit the same graph at different times.
         let a = add(&mut commits, 2, Some(root), 2);
         let b = add(&mut commits, 3, Some(root), 2);
-        // Both directions adopt the same winner: the newer commit.
+        // Both directions adopt the same winner, the newer commit.
         assert_eq!(plan_sync_step(&commits, a, b), SyncStep::Adopt(b));
         assert_eq!(plan_sync_step(&commits, b, a), SyncStep::Adopt(b));
     }
@@ -700,7 +703,7 @@ mod tests {
         assert_eq!((a, b), (a_2, b_2));
         let merged = graph(&["base", "a", "b"]);
         let merged_ca = crate::graph_addr(&merged);
-        // Peer 1's head is on `a` and merges in `b`; peer 2 vice versa.
+        // Peer 1's head is on `a` and merges in `b`. Peer 2 does the reverse.
         let mut head_1 = Head::Commit(a);
         let mut head_2 = Head::Commit(b);
         let m_1 = reg_1.commit_merge_canonical(a, b, merged_ca, || merged.clone(), &mut head_1);
@@ -709,7 +712,7 @@ mod tests {
         assert_eq!(head_1, Head::Commit(m_1));
         assert_eq!(head_2, Head::Commit(m_1));
         let commit = &reg_1.commits()[&m_1];
-        // Canonical orientation: `a` (older) is the first parent on both.
+        // Canonical orientation. The older `a` is the first parent on both.
         assert_eq!(commit.parent, Some(a));
         assert_eq!(commit.merge_parents, vec![b]);
         assert_eq!(commit, &reg_2.commits()[&m_2]);
@@ -748,9 +751,6 @@ mod tests {
         staged.insert_graph(crate::graph_addr(&g), g).unwrap();
     }
 
-    /// A non-canonical node hashes consistently with its own form, so an
-    /// address check alone would admit it as an alias of the same logical
-    /// node under a second address. The graph check must reject it.
     #[test]
     fn staged_rejects_non_canonical_node() {
         let node = |entries: Vec<(&str, Datum)>| {
@@ -769,8 +769,7 @@ mod tests {
         assert!(!bad.is_canonical());
         let mut g = DataGraph::default();
         g.add_node(bad);
-        // The graph hashes consistently with its non-canonical form: the
-        // claimed address matches, yet the graph must still be rejected.
+        // The claimed address matches, yet the graph must still be rejected.
         let claimed = crate::graph_addr(&g);
 
         let mut staged = Staged::new();
@@ -790,8 +789,7 @@ mod tests {
     #[test]
     fn staged_grandfathered_accepts_and_records_mismatch() {
         let mut staged = Staged::new();
-        // A post-prune commit: parent detached in place under its original
-        // key, so the content no longer hashes to the key.
+        // A post-prune commit whose parent was detached in place.
         let parent = CommitAddr::from(ContentAddr::from([7; 32]));
         let original = Commit::new(Duration::from_secs(2), Some(parent), graph_addr_raw(1));
         let original_ca = commit_addr(&original);
@@ -814,10 +812,10 @@ mod tests {
         let root_ca = commit_addr(&root);
         let tip = Commit::new(Duration::from_secs(2), Some(root_ca), g_ca);
         let tip_ca = commit_addr(&tip);
-        // Nothing staged: the tip itself is missing.
+        // Nothing is staged, so the tip itself is missing.
         assert_eq!(staged.missing(&reg, tip_ca).commits, vec![tip_ca]);
         staged.insert_commit(tip_ca, tip).unwrap();
-        // The tip is staged: its parent and graph are missing.
+        // The tip is staged, so its parent and graph are missing.
         let missing = staged.missing(&reg, tip_ca);
         assert_eq!(missing.commits, vec![root_ca]);
         assert_eq!(missing.graphs, vec![g_ca]);
@@ -839,7 +837,7 @@ mod tests {
         let tip_ca = commit_addr(&tip);
         staged.insert_commit(tip_ca, tip).unwrap();
         staged.insert_graph(g_ca, g).unwrap();
-        // The parent is already in the registry: closure is complete.
+        // The parent is already in the registry, so the closure is complete.
         assert!(staged.is_complete(&reg, tip_ca));
     }
 
@@ -869,7 +867,7 @@ mod tests {
         let pos = |ca| applied.commits.iter().position(|&c| c == ca).unwrap();
         assert!(pos(root_ca) < pos(mid_ca));
         assert!(pos(mid_ca) < pos(tip_ca));
-        // Every commit re-hashes to its key: no address was rewritten.
+        // Every commit re-hashes to its key, so no address was rewritten.
         for (&ca, commit) in reg.commits() {
             assert_eq!(ca, commit_addr(commit));
         }
@@ -921,7 +919,7 @@ mod tests {
     #[test]
     fn apply_detaches_truncated_snapshot_parents() {
         // The oldest snapshot commit references a parent below the history
-        // depth cutoff: it applies detached, mirroring post-prune semantics.
+        // depth cutoff. It applies detached, mirroring post-prune semantics.
         let mut reg = Registry::default();
         let mut staged = Staged::new();
         let g = graph(&["a"]);

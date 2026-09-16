@@ -1,9 +1,10 @@
 //! `.gantz` keyword sugar for this crate's self-driven node set.
 //!
-//! [`BevySugar`] provides the keywords for the bevy nodes: bare `update-bang`
-//! and `(tick-bang [#:duration secs | #:rate hz])`. The `tick-bang` read/write
-//! logic lives with the node in [`crate::node::tick_bang`]. Compose it with
-//! [`gantz_format::CoreSugar`] (and the other crates' sugars) via
+//! [`BevySugar`] provides the keywords for the bevy nodes. `update-bang` and
+//! `await` are bare. `(tick-bang [#:duration secs | #:rate hz])` and `sleep`
+//! take arguments. Their read and write logic lives with each node in
+//! [`crate::node::tick_bang`] and [`crate::node::sleep`]. Compose it with
+//! [`gantz_format::CoreSugar`] and the other crates' sugars via
 //! [`gantz_format::Sugars`].
 
 use crate::node::{Await, Sleep, TickBang, UpdateBang, sleep, tick_bang};
@@ -14,7 +15,7 @@ use gantz_nodetag::NodeTag;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BevySugar;
 
-/// Sugar keyword -> node tag, for the bevy builtins that lower to a plain
+/// Sugar keyword to node tag, for the bevy builtins that lower to a plain
 /// serde object with no extra arguments.
 const KEYWORD_TAG: &[(&str, &str)] = &[
     ("update-bang", UpdateBang::TAG),
@@ -97,21 +98,21 @@ mod tests {
     fn tick_bang_config_round_trips() {
         let s = BevySugar;
 
-        // A bare (default-duration) tick! stays bare, read as keyword or spec.
+        // A bare default-duration tick! stays bare, read as keyword or spec.
         let bare = s.read_bare("tick-bang").expect("bare tick-bang");
         assert_eq!(
             s.write_spec("TickBang", &bare).as_deref(),
             Some("tick-bang")
         );
 
-        // A custom duration round-trips via the `#:duration` keyword (seconds).
+        // A custom duration in seconds round-trips via the `#:duration` keyword.
         let d = read_spec("(tick-bang #:duration 0.5)").expect("duration");
         assert_eq!(
             s.write_spec("TickBang", &d).as_deref(),
             Some("(tick-bang #:duration 0.5)"),
         );
 
-        // A rate round-trips via the `#:rate` keyword (Hz), stored exactly.
+        // A rate in Hz round-trips via the `#:rate` keyword, stored exactly.
         let r = read_spec("(tick-bang #:rate 60)").expect("rate");
         assert_eq!(
             s.write_spec("TickBang", &r).as_deref(),
@@ -146,11 +147,11 @@ mod tests {
     fn sleep_config_round_trips() {
         let s = BevySugar;
 
-        // A bare (default-duration) sleep stays bare, read as keyword or spec.
+        // A bare default-duration sleep stays bare, read as keyword or spec.
         let bare = s.read_bare("sleep").expect("bare sleep");
         assert_eq!(s.write_spec("Sleep", &bare).as_deref(), Some("sleep"));
 
-        // A custom duration round-trips via the `#:duration` keyword (seconds).
+        // A custom duration in seconds round-trips via the `#:duration` keyword.
         let d = read_spec("(sleep #:duration 0.5)").expect("duration");
         assert_eq!(
             s.write_spec("Sleep", &d).as_deref(),

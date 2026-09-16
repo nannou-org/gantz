@@ -13,12 +13,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Publish crates + create tags/GitHub releases when a release PR is merged.
+  # Publish crates and create tags and GitHub releases when a release PR merges.
   release:
     runs-on: ubuntu-latest
     permissions:
       contents: write # push tags, create releases
-      id-token: write # crates.io trusted publishing (OIDC)
+      id-token: write # crates.io trusted publishing via OIDC
     steps:
       - uses: actions/checkout@v5
         with:
@@ -34,7 +34,7 @@ jobs:
           GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
-  # Keep the version-bump + changelog PR up to date on every push to master.
+  # Keep the version-bump and changelog PR up to date on every push to master.
   release-pr:
     runs-on: ubuntu-latest
     permissions:

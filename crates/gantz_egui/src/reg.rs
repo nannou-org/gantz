@@ -1,8 +1,8 @@
 //! The concrete node environment the gantz_egui widgets and nodes read.
 //!
-//! Provides [`Env`] - a borrowed view combining the content-addressed
+//! Provides [`Env`], a borrowed view combining the content-addressed
 //! registry, the builtin palette, the app's node codec and the reified
-//! caches serving both as typed nodes.
+//! caches. The caches serve registry graphs and builtins as typed nodes.
 
 use crate::node::{NodeCodec, UiBuiltins};
 use gantz_ca as ca;
@@ -13,17 +13,16 @@ use petgraph::visit::{IntoNodeReferences, NodeRef};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-/// The environment the gantz_egui widgets and nodes read: every shared
+/// The environment the gantz_egui widgets and nodes read. Every shared
 /// immutable input to a GUI pass.
 ///
-/// The data side is concrete: [`registry`][Self::registry] exposes the
+/// The data side is concrete. [`registry`][Self::registry] exposes the
 /// content-addressed [`gantz_ca::Registry`] directly, and widgets read
 /// commits, heads and sections from it without indirection. The typed side
-/// combines the reified-graph cache serving the registry's graphs as typed
-/// nodes ([`graphs`][Self::graphs]), the builtin palette as data
-/// ([`builtins`][Self::builtins]) plus one reified instance per builtin
-/// ([`instances`][Self::instances]), and the app's value-level node codec
-/// ([`codec`][Self::codec]).
+/// has four parts. [`graphs`][Self::graphs] serves the registry's graphs as
+/// typed nodes. [`builtins`][Self::builtins] is the builtin palette as data.
+/// [`instances`][Self::instances] holds one reified instance per builtin.
+/// [`codec`][Self::codec] is the app's value-level node codec.
 #[derive(Clone, Copy)]
 pub struct Env<'a> {
     /// The content-addressed data registry.
@@ -44,8 +43,8 @@ pub type Names = BTreeMap<ca::Name, ca::CommitAddr>;
 impl Env<'_> {
     /// Look up a node by content address.
     ///
-    /// Checks reified registry graphs first (a graph in the registry IS a
-    /// node), then falls back to builtins.
+    /// Checks reified registry graphs first, since a graph in the registry is
+    /// a node. Then falls back to builtins.
     pub fn node(&self, ca: &ca::ContentAddr) -> Option<&dyn Node> {
         let graph_ca = ca::GraphAddr::from(*ca);
         if let Some(graph) = self.graphs.get(&graph_ca) {
@@ -56,9 +55,9 @@ impl Env<'_> {
 
     /// Create a node of the given type name, in its stored data form.
     ///
-    /// Checks registry names first (creating a [`crate::node::NamedRef`]
-    /// pinning the name's head graph), then falls back to the builtin's
-    /// stored data.
+    /// Checks registry names first and creates a [`crate::node::NamedRef`]
+    /// pinning the name's head graph. Then falls back to the builtin's stored
+    /// data.
     pub fn create_node(&self, node_type: &str) -> Option<ca::NodeData> {
         let name: ca::Name = node_type.parse().expect("infallible");
         head_graph_addr(self.registry, &name)
@@ -93,8 +92,8 @@ impl Env<'_> {
         self.node(ca).is_some()
     }
 
-    /// Names of nodes that can be used with `Fn`.
-    /// Filters to: stateless, branchless, single-output nodes.
+    /// Names of nodes that can be used with `Fn`. Only stateless, branchless,
+    /// single-output nodes qualify.
     ///
     /// Required by [`crate::node::FnNamedRef`]'s UI dropdown.
     pub fn fn_node_names(&self) -> Vec<String> {
@@ -126,7 +125,6 @@ impl Env<'_> {
     /// Provides the list of node type names available for creation via the
     /// node palette. Actual node creation is handled via [`crate::CreateNode`].
     pub fn node_types(&self) -> Vec<&'_ str> {
-        // The reserved nested-graph entry replaces the old `graph` builtin.
         let mut types = vec![crate::widget::gantz::NESTED_GRAPH_TYPE];
         for name in self.builtins.names() {
             types.push(name);
@@ -156,8 +154,8 @@ impl Env<'_> {
     }
 
     /// Whether referencing the graph named `target` from the graph named
-    /// `editing` would create a reference cycle (see
-    /// [`crate::cycle::would_cycle`]).
+    /// `editing` would create a reference cycle. See
+    /// [`crate::cycle::would_cycle`].
     ///
     /// Used by the node palette to hide node types that would form a cycle.
     pub fn would_ref_cycle(&self, target: &str, editing: &str) -> bool {
@@ -168,7 +166,6 @@ impl Env<'_> {
 
     /// Get the demo graph name associated with the graph of the given name.
     pub fn demo_graph(&self, name: &str) -> Option<String> {
-        // Demo associations live in the registry's demo section, keyed by name.
         let parsed: ca::Name = name.parse().expect("infallible");
         crate::section::demo(self.registry, &parsed)
     }
@@ -176,18 +173,16 @@ impl Env<'_> {
     /// The [`crate::SocketDoc`] for the given socket of the graph referenced
     /// by `ca`.
     ///
-    /// Lets a referencing node (e.g. [`crate::node::NamedRef`]) surface the
-    /// referenced graph's inlet/outlet docs: the referenced graph is resolved
-    /// and the relevant `Inlet`/`Outlet` marker's own doc read, so docs live
-    /// on the nodes rather than in side-metadata.
+    /// Lets a referencing node such as [`crate::node::NamedRef`] surface the
+    /// referenced graph's inlet and outlet docs. The referenced graph is
+    /// resolved and the relevant `Inlet` or `Outlet` marker's own doc is read.
+    /// Docs live on the nodes rather than in side-metadata.
     pub fn socket_doc(
         &self,
         ca: &ca::ContentAddr,
         kind: crate::SocketKind,
         ix: usize,
     ) -> Option<crate::SocketDoc> {
-        // Resolve the referenced graph and read the ix-th inlet/outlet marker's
-        // own doc (docs live on the `Inlet`/`Outlet` nodes).
         let graph_ca = ca::GraphAddr::from(*ca);
         let graph = self.graphs.get(&graph_ca)?;
         let get_node = |c: &ca::ContentAddr| self.node(c);
@@ -200,7 +195,8 @@ impl Env<'_> {
             })
             .nth(ix)?;
         let marker = node_ref.weight();
-        // An inlet exposes its doc on its output socket; an outlet on its input.
+        // An inlet exposes its doc on its output socket. An outlet uses its
+        // input.
         let marker_kind = match kind {
             crate::SocketKind::Input => crate::SocketKind::Output,
             crate::SocketKind::Output => crate::SocketKind::Input,
@@ -210,7 +206,7 @@ impl Env<'_> {
 
     /// Display-ready documentation for the creatable node type named `name`.
     ///
-    /// Combines the node's description with its derived input/output
+    /// Combines the node's description with its derived input and output
     /// [`crate::SocketDoc`]s. Shown beside the highlighted entry in the node
     /// palette and as hover documentation in the "Graphs" select widget.
     pub fn command_info(&self, name: &str) -> crate::CommandInfo {
@@ -240,8 +236,8 @@ impl Env<'_> {
 
         let parsed: ca::Name = name.parse().expect("infallible");
         if let Some(graph_addr) = head_graph_addr(self.registry, &parsed) {
-            // A named graph: socket docs resolved from the referenced graph's
-            // inlet/outlet markers.
+            // A named graph. Socket docs resolve from the referenced graph's
+            // inlet and outlet markers.
             if let Some(graph) = self.graphs.get(&graph_addr) {
                 let ca: ca::ContentAddr = graph_addr.into();
                 let socket = |kind: SocketKind, ix: usize| self.socket_doc(&ca, kind, ix);
@@ -253,7 +249,7 @@ impl Env<'_> {
             .content_addr(name)
             .and_then(|ca| self.instances.get(&ca))
         {
-            // A builtin: introspect its stored instance.
+            // A builtin. Introspect its stored instance.
             let socket = |kind: SocketKind, ix: usize| builtin.socket_doc(self, kind, ix);
             info.inputs = collect(builtin.n_inputs(meta_ctx), SocketKind::Input, &socket);
             info.outputs = collect(builtin.n_outputs(meta_ctx), SocketKind::Output, &socket);
@@ -265,10 +261,10 @@ impl Env<'_> {
     /// The `gui` markers declared by the graph referenced by `ca`, in index
     /// order.
     ///
-    /// Read straight from the stored graph data (see
-    /// [`crate::node::gui::markers`]), so markers resolve even when the
-    /// graph contains foreign nodes the codec cannot reify. Call sites
-    /// resolve a duplicate role as first-in-index-order.
+    /// Read straight from the stored graph data via
+    /// [`crate::node::gui::markers`], so markers resolve even when the graph
+    /// contains foreign nodes the codec cannot reify. Call sites resolve a
+    /// duplicate role as first-in-index-order.
     pub fn gui_markers(&self, ca: &ca::ContentAddr) -> Vec<(node::Id, crate::node::Gui)> {
         let graph_ca = ca::GraphAddr::from(*ca);
         self.registry
@@ -278,8 +274,8 @@ impl Env<'_> {
     }
 
     /// The graph address pinned by the node `id` within the graph referenced
-    /// by `ca` - one reference-stand-in hop (see
-    /// [`crate::node::gui::ref_target_of`]).
+    /// by `ca`. This is one reference-stand-in hop. See
+    /// [`crate::node::gui::ref_target_of`].
     pub fn ref_target(&self, ca: &ca::ContentAddr, id: node::Id) -> Option<ca::ContentAddr> {
         let graph_ca = ca::GraphAddr::from(*ca);
         let g = self.registry.graph(&graph_ca)?;
@@ -288,8 +284,8 @@ impl Env<'_> {
 
     /// The typed node at `rel_path` within the graph referenced by `ca`.
     ///
-    /// Non-terminal path segments hop one reference stand-in each (see
-    /// [`ref_target`][Self::ref_target]); the terminal node resolves through
+    /// Non-terminal path segments hop one reference stand-in each via
+    /// [`ref_target`][Self::ref_target]. The terminal node resolves through
     /// the reified cache, so a leaf graph the codec cannot reify yields
     /// `None`.
     pub fn node_at(&self, ca: &ca::ContentAddr, rel_path: &[node::Id]) -> Option<&dyn Node> {
@@ -304,8 +300,8 @@ impl Env<'_> {
     }
 
     /// Dry-run the merge of the branch named `source` into `ours` under the
-    /// given conflict resolutions (see [`crate::merge::merge_preview`]), for
-    /// hover previews in the merge row.
+    /// given conflict resolutions, for hover previews in the merge row. See
+    /// [`crate::merge::merge_preview`].
     pub fn merge_preview(
         &self,
         ours: &ca::Head,
@@ -317,7 +313,7 @@ impl Env<'_> {
 
     /// A concise description of the creatable node type `name`, for inline
     /// display in the node palette. Lighter than
-    /// [`command_info`](Self::command_info) (it derives no input/output docs).
+    /// [`command_info`](Self::command_info), since it derives no socket docs.
     pub fn node_description(&self, name: &str) -> Option<Cow<'static, str>> {
         if name == crate::widget::gantz::NESTED_GRAPH_TYPE {
             return Some(Cow::Borrowed(
@@ -336,14 +332,14 @@ impl Env<'_> {
     }
 }
 
-/// The graph address at the tip of the named line of history: the address a
-/// [`Ref`](gantz_core::node::Ref) to the name should pin.
+/// The graph address at the tip of the named line of history. This is the
+/// address a [`Ref`](gantz_core::node::Ref) to the name should pin.
 pub fn head_graph_addr(reg: &ca::Registry, name: &ca::Name) -> Option<ca::GraphAddr> {
     let head_ca = reg.head(name)?;
     reg.commits().get(&head_ca).map(|commit| commit.graph)
 }
 
-/// All name -> head commit pairs, in name order.
+/// All name and head commit pairs, in name order.
 pub fn names(reg: &ca::Registry) -> Vec<(ca::Name, ca::CommitAddr)> {
     reg.heads().map(|(name, ca)| (name.clone(), ca)).collect()
 }

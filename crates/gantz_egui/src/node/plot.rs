@@ -1,24 +1,24 @@
 //! A Plot node for visualising numeric values flowing through the graph.
 //!
-//! The node body is intentionally minimal - just a plot - while its appearance
-//! and behaviour are configured through the node inspector and context menu.
+//! The node body is minimal, just a plot. Its appearance and behaviour are
+//! configured through the node inspector and context menu.
 //!
 //! Two modes are supported:
-//! - [`PlotMode::Scope`]: accumulate a bounded, scrolling history and plot it
-//!   like an oscilloscope. Each pushed number is appended; a pushed list or vector
-//!   extends the history with its numeric elements; a pushed list of channels (see
-//!   below) accumulates one history per channel.
-//! - [`PlotMode::Signal`]: plot the incoming value directly (a list or vector as a
-//!   series, a single number as one bar), replacing it on each evaluation.
+//! - [`PlotMode::Scope`] accumulates a bounded, scrolling history and plots it
+//!   like an oscilloscope. Each pushed number is appended. A pushed list or
+//!   vector extends the history with its numeric elements. A pushed list of
+//!   channels accumulates one history per channel.
+//! - [`PlotMode::Signal`] plots the incoming value directly and replaces it on
+//!   each evaluation. A list or vector is a series. A single number is one bar.
 //!
-//! In both modes a list or vector *of lists/vectors* (a list of channels, e.g.
-//! `~scopeout`'s per-channel rings) is drawn as one stacked sub-plot per channel.
+//! In both modes a list or vector of lists or vectors is a list of channels. It
+//! is drawn as one stacked sub-plot per channel.
 //!
-//! Steel lists ([`SteelVal::ListV`]) and vectors ([`SteelVal::VectorV`]) are accepted
-//! interchangeably throughout; the scope history is stored as a vector.
+//! Steel lists ([`SteelVal::ListV`]) and vectors ([`SteelVal::VectorV`]) are
+//! accepted interchangeably throughout. The scope history is stored as a vector.
 //!
-//! In both modes the node is a pass-through: its output forwards the input
-//! value unchanged (like [`super::Inspect`]), so a value can be observed without
+//! In both modes the node is a pass-through like [`super::Inspect`]. Its output
+//! forwards the input value unchanged, so a value can be observed without
 //! breaking the chain it flows through.
 
 use super::size_sync::{self, fitted_size};
@@ -37,8 +37,8 @@ use steel::gc::Gc;
 use steel::steel_vm::register_fn::RegisterFn;
 use steel::{SteelVal, Vector};
 
-/// An `f32` that participates in `Hash` via its bit pattern, letting
-/// float-valued config keep [`Plot`]'s `Hash` derive (`f32` is not `Hash`).
+/// An `f32` that participates in `Hash` via its bit pattern. `f32` is not
+/// `Hash`, so this lets float-valued config keep [`Plot`]'s `Hash` derive.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct F32(pub f32);
@@ -58,7 +58,7 @@ impl std::hash::Hash for F32 {
 /// How the plot interprets and accumulates its input.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub enum PlotMode {
-    /// Accumulate a bounded scrolling history (numbers appended, lists extend).
+    /// Accumulate a bounded scrolling history. Numbers append, lists extend.
     Scope,
     /// Plot the incoming value directly, replacing the prior.
     Signal,
@@ -67,7 +67,7 @@ pub enum PlotMode {
 /// How the series is drawn.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub enum PlotStyle {
-    /// Contiguous bars (the default).
+    /// Contiguous bars. The default.
     Bars,
     /// A connected line.
     Line,
@@ -75,12 +75,11 @@ pub enum PlotStyle {
 
 /// A node that plots the numeric values it receives.
 ///
-/// Every field feeds the content address (none are `#[serde(skip)]`), so each
-/// inspector edit is a real, persisted, undoable change rather than transient
-/// view state.
+/// Every field feeds the content address, so each inspector edit is a real,
+/// undoable change. See the `changed` contract on [`crate::NodeUi`].
 #[derive(Clone, Debug, Hash, Deserialize, Serialize, NodeTag)]
 pub struct Plot {
-    /// Scope (scalar history) or Signal (plot the value directly).
+    /// Scope or Signal. See [`PlotMode`].
     mode: PlotMode,
     /// Bars or line.
     style: PlotStyle,
@@ -90,16 +89,16 @@ pub struct Plot {
     width: u16,
     /// Persisted body height.
     height: u16,
-    /// Line/bar colour. `None` follows the theme's strong text colour.
+    /// Line or bar colour. `None` follows the theme's strong text colour.
     color: Option<[u8; 4]>,
     /// Whether to draw the background grid.
     show_grid: bool,
     /// Whether to draw the axes.
     show_axes: bool,
     /// When on, hovering shows a crosshair and the value beneath it. The plot
-    /// never pans or zooms regardless - the node drags and right-clicks as usual.
+    /// never pans or zooms regardless. The node drags and right-clicks as usual.
     interactive: bool,
-    /// When on, the plot is inset within the node frame's regular margin; when
+    /// When on, the plot is inset within the node frame's regular margin. When
     /// off the data fills the frame.
     margin: bool,
     /// A fixed lower bound for the value axis when `Some`.
@@ -134,31 +133,32 @@ impl Default for Plot {
     }
 }
 
-/// Append `val` to the scope history `state`, dropping oldest entries so the result
-/// holds at most `cap` items. Registered on the VM as `plot-push` and called from the
-/// generated [`PlotMode::Scope`] expression.
+/// Append `val` to the scope history `state`, dropping the oldest entries so the
+/// result holds at most `cap` items. Registered on the VM as `plot-push` and called
+/// from the generated [`PlotMode::Scope`] expression.
 ///
-/// A numeric `val` is appended; a list *or vector* `val` extends the history with its
-/// numeric elements; a container *of containers* (e.g. `~scopeout`'s per-channel
-/// rings) extends one history per inner container - the state becomes a vector of
-/// per-channel vectors (the shape [`split_channels`] renders as stacked sub-plots),
-/// each capped at `cap` independently. Anything else is ignored. The history follows
-/// the incoming shape: a prior state of the other shape (flat vs per-channel) is
-/// discarded. `cap` is passed as an argument (not captured) so a single shared
-/// `plot-push` serves every plot node with its own, always-current capacity.
+/// A numeric `val` is appended. A list or vector `val` extends the history with its
+/// numeric elements. A container of containers extends one history per inner
+/// container. The state then becomes a vector of per-channel vectors, the shape
+/// [`split_channels`] renders as stacked sub-plots. Each channel is capped at `cap`
+/// independently. Anything else is ignored. The history follows the incoming shape.
+/// A prior state of the other shape, flat or per-channel, is discarded. `cap` is
+/// passed as an argument rather than captured, so a single shared `plot-push` serves
+/// every plot node with its own current capacity.
 ///
-/// Histories are kept as persistent vectors ([`SteelVal::VectorV`], an `im_rc::Vector`)
-/// rather than lists: `push_back`/`pop_front` are O(1) amortised (vs a steel list's O(n)
-/// `push_back`), so a whole incoming `~scopeout` window can be appended sample-by-sample
-/// cheaply - no full rebuild, and the single-sample scope push is O(log n) instead of O(n).
+/// Histories are kept as persistent vectors rather than lists. [`SteelVal::VectorV`]
+/// is an `im_rc::Vector`, so `push_back` and `pop_front` are O(1) amortised. A steel
+/// list's `push_back` is O(n). A whole incoming `~scopeout` window can therefore be
+/// appended sample by sample with no full rebuild. The single-sample scope push is
+/// O(log n) instead of O(n).
 fn plot_push(state: SteelVal, val: SteelVal, cap: SteelVal) -> SteelVal {
     let cap = match cap {
         SteelVal::IntV(n) if n > 0 => n as usize,
         _ => 0,
     };
 
-    // Per-channel data: each inner container extends its own channel's history,
-    // reusing the prior history where the state is already per-channel.
+    // Per-channel data. Each inner container extends its own channel's history.
+    // The prior history is reused where the state is already per-channel.
     if let Some(chans) = per_channel_elems(&val) {
         let old: Vec<SteelVal> = match &state {
             SteelVal::VectorV(v) if v.iter().any(is_container) => v.iter().cloned().collect(),
@@ -176,7 +176,7 @@ fn plot_push(state: SteelVal, val: SteelVal, cap: SteelVal) -> SteelVal {
         return SteelVal::VectorV(Gc::new(channels).into());
     }
 
-    // Flat numeric scope: append to the one shared history.
+    // Flat numeric scope. Append to the one shared history.
     let history = push_capped(history_of(Some(&state)), &val, cap);
     SteelVal::VectorV(Gc::new(history).into())
 }
@@ -186,9 +186,8 @@ fn is_num(v: &SteelVal) -> bool {
     matches!(v, SteelVal::NumV(_) | SteelVal::IntV(_))
 }
 
-/// The top-level elements of a container-of-containers `val` (per-channel data,
-/// e.g. `~scopeout`'s rings); `None` for a flat container, a number, or anything
-/// else.
+/// The top-level elements of a container-of-containers `val`, which is per-channel
+/// data. `None` for a flat container, a number, or anything else.
 fn per_channel_elems(val: &SteelVal) -> Option<Vec<SteelVal>> {
     let elems: Vec<SteelVal> = match val {
         SteelVal::ListV(list) => list.iter().cloned().collect(),
@@ -198,10 +197,10 @@ fn per_channel_elems(val: &SteelVal) -> Option<Vec<SteelVal>> {
     elems.iter().any(is_container).then_some(elems)
 }
 
-/// One channel's existing scope history: the prior vector (a structural, O(1)
-/// clone) or a prior *flat numeric* list's numbers (e.g. after a signal->scope
-/// switch); a per-channel vector (containers inside) or absent value is empty -
-/// the history follows the incoming shape.
+/// One channel's existing scope history. It is the prior vector, a structural O(1)
+/// clone, or a prior flat numeric list's numbers, for example after a switch from
+/// signal to scope. A per-channel vector or an absent value gives an empty history.
+/// The history follows the incoming shape.
 fn history_of(state: Option<&SteelVal>) -> Vector<SteelVal> {
     match state {
         Some(SteelVal::VectorV(v)) if !v.iter().any(is_container) => (**v).clone(),
@@ -210,9 +209,9 @@ fn history_of(state: Option<&SteelVal>) -> Vector<SteelVal> {
     }
 }
 
-/// Append the incoming value's numeric samples to `history` and cap it: a list or
-/// vector contributes its numeric elements; a lone number contributes itself;
-/// anything else nothing.
+/// Append the incoming value's numeric samples to `history` and cap it. A list or
+/// vector contributes its numeric elements. A lone number contributes itself.
+/// Anything else contributes nothing.
 fn push_capped(mut history: Vector<SteelVal>, val: &SteelVal, cap: usize) -> Vector<SteelVal> {
     match val {
         SteelVal::ListV(items) => {
@@ -234,9 +233,7 @@ fn push_capped(mut history: Vector<SteelVal>, val: &SteelVal, cap: usize) -> Vec
     history
 }
 
-/// Read the node's stored series as per-channel `f64`s (see [`split_channels`]): a
-/// list or vector yields its numeric elements; a lone number a single sample; anything
-/// else is empty.
+/// Read the node's stored series as per-channel `f64`s. See [`split_channels`].
 fn series(ctx: &NodeCtx) -> Vec<Vec<f64>> {
     match ctx.extract_value() {
         Ok(Some(val)) => split_channels(&val),
@@ -258,11 +255,11 @@ impl gantz_core::Node for Plot {
     }
 
     fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
-        // The node forwards its input unchanged (pass-through) while capturing
-        // the series to plot into `state`.
+        // The node forwards its input unchanged while capturing the series to
+        // plot into `state`.
         let expr = match ctx.inputs().get(0) {
             Some(Some(val)) => match self.mode {
-                // Append the incoming number (or list elements) to the history;
+                // Append the incoming number or list elements to the history.
                 // `plot-push` ignores anything non-numeric.
                 PlotMode::Scope => format!(
                     "(begin (set! state (plot-push state {val} {cap})) {val})",
@@ -271,8 +268,8 @@ impl gantz_core::Node for Plot {
                 // Store the incoming value directly.
                 PlotMode::Signal => format!("(begin (set! state {val}) {val})"),
             },
-            // No input connected: nothing to capture or forward; yield the
-            // stored series (mirrors `inspect`'s unconnected behaviour).
+            // No input connected, so nothing to capture or forward. Yield the
+            // stored series, as `inspect` does when unconnected.
             _ => "(begin state)".to_string(),
         };
         node::parse_expr(&expr)
@@ -284,12 +281,11 @@ impl gantz_core::Node for Plot {
             SteelVal::VectorV(std::iter::empty::<SteelVal>().collect())
         })
         .unwrap();
-        // Register the shared `plot-push` helper, but only if absent. Steel's
-        // `register_fn` allocates a *new* global slot and shadows the previous
-        // binding rather than overwriting it, so re-registering on every
-        // recompile (the engine persists across them) would leak the old
-        // closure - a slow memory leak as the plot is edited. One binding is
-        // shared by every plot node.
+        // Register the shared `plot-push` helper only if absent. Steel's
+        // `register_fn` allocates a new global slot and shadows the previous
+        // binding rather than overwriting it. The engine persists across
+        // recompiles, so re-registering on each one would leak the old
+        // closure. One binding is shared by every plot node.
         if ctx.vm().extract_value("plot-push").is_err() {
             ctx.vm().register_fn("plot-push", plot_push);
         }
@@ -298,8 +294,8 @@ impl gantz_core::Node for Plot {
 
 impl Plot {
     /// The plot's fragment, bound to its own state, with attrs baked from
-    /// the weight. `size` is the resolved body size (the resize container's
-    /// inner size); `None` fills the available space (the detached view).
+    /// the weight. `size` is the resolved body size, the resize container's
+    /// inner size. `None` fills the available space, as in the detached view.
     fn fragment(&self, id: node::Id, size: Option<egui::Vec2>) -> gantz_ui::Element {
         gantz_ui::Element::Plot(gantz_ui::Plot {
             bind: Some(gantz_ui::BindPath(vec![id])),
@@ -334,15 +330,16 @@ impl NodeUi for Plot {
     }
 
     fn ui(&mut self, mut ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
-        // Set when a settled resize commits a new (CA-affecting) body size.
+        // Set when a settled resize commits a new body size.
         let mut changed = false;
 
         let style = uictx.style();
         let interaction = uictx.interaction();
 
-        // A minimal extreme-bg frame. The `margin` toggle controls whether the
-        // data is inset by the frame's regular margin (with rounded corners) or
-        // fills it edge-to-edge (with square corners, so nothing is clipped).
+        // A minimal extreme-bg frame. With `margin` on, the data is inset by
+        // the frame's regular margin with rounded corners. With it off, the
+        // data fills the frame edge-to-edge with square corners, so nothing is
+        // clipped.
         let mut frame = egui_graph::node::default_frame(style, interaction);
         frame.fill = style.visuals.extreme_bg_color;
         if !self.margin {
@@ -371,8 +368,8 @@ impl NodeUi for Plot {
                 .with_stroke(false);
             let resize = if push_external {
                 // One-frame push of the committed size into the displayed
-                // resize state (see `node::size_sync`): overrides persisted
-                // state and cancels any in-flight drag - external wins.
+                // resize state. See `node::size_sync`. It overrides persisted
+                // state and cancels any in-flight drag. External wins.
                 ui.ctx().request_repaint();
                 let w = (self.width as f32).max(min_size.x);
                 let h = (self.height as f32).max(min_size.y);
@@ -389,10 +386,10 @@ impl NodeUi for Plot {
                 let avail = ui.available_size();
 
                 // `size` is part of the content address, so it is written
-                // only on a settled corner-drag release - never mid-drag
-                // (a commit per drag frame), and never merely because the
-                // rendered size differs (which would clobber external
-                // changes from undo/collab sync and mint spurious commits).
+                // only on a settled corner-drag release. Writing mid-drag
+                // would commit per drag frame. Writing because the rendered
+                // size differs would clobber external changes from undo or
+                // collab sync and mint spurious commits.
                 let fitted = fitted_size(avail.x.max(min_size.x), avail.y.max(min_size.y));
                 if drag_released && [self.width, self.height] != fitted {
                     [self.width, self.height] = fitted;
@@ -428,11 +425,11 @@ impl NodeUi for Plot {
     }
 
     fn view_ui(&mut self, mut ctx: NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
-        // The detached view fills the pane (the fragment omits w/h). Unlike
-        // the in-graph body it has no resize handle and never writes back
-        // the node's CA-affecting `width`/`height` (so `changed` stays
-        // false). The root id is derived from `ui` (scoped per pane by the
-        // caller), keeping it distinct from the in-graph plot's id.
+        // The detached view fills the pane, so the fragment omits w and h.
+        // Unlike the in-graph body it has no resize handle and never writes
+        // back `width` or `height`, so `changed` stays false. The root id
+        // derives from `ui`, which the caller scopes per pane. That keeps it
+        // distinct from the in-graph plot's id.
         let (&id, prefix) = ctx.path().split_last().expect("a node path is never empty");
         let tree = self.fragment(id, None);
         let r = UiTree::new(ui.id().with("gui"))
@@ -452,7 +449,7 @@ impl NodeUi for Plot {
         let row_h = node_inspector::table_row_h(body.ui_mut());
         let mut changed = false;
 
-        // A summarised replacement for the (suppressed) default state row - the
+        // A summarised replacement for the suppressed default state row. The
         // raw history would be a huge list.
         let chans = series(ctx);
         let total: usize = chans.iter().map(Vec::len).sum();
@@ -580,9 +577,9 @@ impl NodeUi for Plot {
             });
         });
 
-        // Min and max are two columns of one grid row (hover text says which is
-        // which), so the max controls stay put as the min dialer's value width
-        // changes (the dialers have a fixed width).
+        // Min and max are two columns of one grid row. Hover text says which is
+        // which. The dialers have a fixed width, so the max controls stay put
+        // as the min dialer's value width changes.
         body.row(row_h, |mut row| {
             row.col(|ui| {
                 ui.label("range");
@@ -637,7 +634,7 @@ impl NodeUi for Plot {
             .on_hover_text("empty the plotted series")
             .clicked()
         {
-            // VM runtime state, not content-addressed: do not mark changed.
+            // VM runtime state, not content-addressed, so do not mark changed.
             ctx.update_value(SteelVal::VectorV(std::iter::empty::<SteelVal>().collect()))
                 .ok();
             ui.close();
@@ -657,7 +654,7 @@ impl NodeUi for Plot {
     }
 
     fn show_state(&self) -> bool {
-        // The raw history is a long list; the inspector summarises it instead.
+        // The raw history is a long list. The inspector summarises it instead.
         false
     }
 }
@@ -673,7 +670,6 @@ mod tests {
     };
     use steel::steel_vm::engine::Engine;
 
-    // A node lookup is unnecessary for these self-contained graphs.
     fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
         None
     }
@@ -717,7 +713,8 @@ mod tests {
         }
     }
 
-    // Build `src -> plot`, returning the graph and the two node indices.
+    // Build a graph with `src` wired into `plot`. Returns the graph and both
+    // node indices.
     fn graph_with(
         src: Box<dyn Node>,
         plot: Plot,
@@ -762,7 +759,7 @@ mod tests {
     }
 
     // A pushed list at least as long as the capacity keeps only its last `cap`
-    // samples - the bulk fast path drops the prior history without reading it.
+    // samples.
     #[test]
     fn scope_list_over_capacity_keeps_tail() {
         let src = gantz_core::node::expr("(list 1 2 3 4 5)")
@@ -777,13 +774,13 @@ mod tests {
         let mut vm = vm_for(&g);
         fire(&mut vm, &g, s, 1);
         assert_eq!(samples_of(&vm, p), vec![3.0, 4.0, 5.0]);
-        // A second identical window still yields just its last 3 (history dropped).
+        // A second identical window still yields just its last 3.
         fire(&mut vm, &g, s, 1);
         assert_eq!(samples_of(&vm, p), vec![3.0, 4.0, 5.0]);
     }
 
-    // A pushed list *of channels* (e.g. `~scopeout`'s per-channel rings) accumulates
-    // one capped history per channel - the stacked-sub-plot state shape.
+    // A pushed list of channels accumulates one capped history per channel. That
+    // is the stacked-sub-plot state shape.
     #[test]
     fn scope_accumulates_per_channel_histories() {
         let src = gantz_core::node::expr("(list (list 1 2) (list -1 -2))")
@@ -796,7 +793,7 @@ mod tests {
         };
         let (g, s, p) = graph_with(Box::new(src) as Box<dyn Node>, plot);
         let mut vm = vm_for(&g);
-        // Two windows of 2 samples with capacity 3: each channel keeps its last 3.
+        // Two windows of 2 samples with capacity 3. Each channel keeps its last 3.
         fire(&mut vm, &g, s, 2);
         let state = node::state::extract_value(&vm, &[p]).unwrap().unwrap();
         assert_eq!(
@@ -805,26 +802,26 @@ mod tests {
         );
     }
 
-    // The history follows the incoming shape: a flat history is discarded when
-    // per-channel data arrives (and vice versa), rather than mixing shapes.
+    // The history follows the incoming shape. A flat history is discarded when
+    // per-channel data arrives, and the reverse. Shapes never mix.
     #[test]
     fn scope_shape_switch_discards_prior_history() {
         let num = |n: f64| SteelVal::NumV(n);
         let list = |vals: Vec<SteelVal>| SteelVal::ListV(vals.into_iter().collect());
         let cap = SteelVal::IntV(8);
 
-        // Flat history + per-channel value: the flat samples are discarded.
+        // A flat history then a per-channel value discards the flat samples.
         let flat = plot_push(SteelVal::Void, num(1.0), cap.clone());
         let chans = plot_push(flat, list(vec![list(vec![num(2.0)])]), cap.clone());
         assert_eq!(split_channels(&chans), vec![vec![2.0]]);
 
-        // Per-channel history + flat value: the channel histories are discarded.
+        // A per-channel history then a flat value discards the channel histories.
         let flat_again = plot_push(chans, num(3.0), cap);
         assert_eq!(split_channels(&flat_again), vec![vec![3.0]]);
     }
 
-    // When a pushed list overflows the *remaining* capacity, the oldest history is
-    // trimmed so history-tail + new totals `cap`.
+    // When a pushed list overflows the remaining capacity, the oldest history is
+    // trimmed so the history tail plus the new samples total `cap`.
     #[test]
     fn scope_list_trims_oldest_to_cap() {
         let src = gantz_core::node::expr("(list 1 2 3)")
@@ -842,9 +839,9 @@ mod tests {
         assert_eq!(samples_of(&vm, p), vec![3.0, 1.0, 2.0, 3.0]);
     }
 
-    // `plot_push` accepts a vector input, accumulating its numeric elements into the
-    // vector-backed scope history and capping at `cap`. (A vector-emitting Steel expr
-    // isn't available under `new_base`, so exercise the fn directly.)
+    // `plot_push` accepts a vector input. It accumulates the numeric elements into
+    // the vector-backed scope history and caps at `cap`. A vector-emitting Steel
+    // expr is not available under `new_base`, so the test calls the fn directly.
     #[test]
     fn plot_push_accepts_vector() {
         let num = |n: f64| SteelVal::NumV(n);
@@ -882,7 +879,7 @@ mod tests {
         assert_eq!(samples_of(&vm, p), vec![1.0, 2.0, 3.0]);
     }
 
-    // Signal mode also accepts a single number (drawn as one bar).
+    // Signal mode also accepts a single number, drawn as one bar.
     #[test]
     fn signal_stores_scalar() {
         let src = gantz_core::node::expr("7").unwrap().with_push_eval();
@@ -893,13 +890,14 @@ mod tests {
         let (g, s, p) = graph_with(Box::new(src) as Box<dyn Node>, plot);
         let mut vm = vm_for(&g);
         fire(&mut vm, &g, s, 1);
-        // Stored as a lone number; `series` reads it as a single sample.
+        // Stored as a lone number. `series` reads it as a single sample.
         let state = node::state::extract_value(&vm, &[p]).unwrap().unwrap();
         assert!(matches!(state, SteelVal::IntV(7)));
     }
 
     // The fragment bakes every render-relevant weight field, the bind id,
-    // and the resolved body size (absent for the fill-the-pane view).
+    // and the resolved body size. The size is absent for the fill-the-pane
+    // view.
     #[test]
     fn fragment_bakes_weight_attrs_and_bind() {
         let plot = Plot {
@@ -936,10 +934,9 @@ mod tests {
         assert_eq!((p.w, p.h), (None, None));
     }
 
-    // Registering the graph again on the same engine (as a recompile does) must
-    // keep `plot-push` working - the registration guard must not skip the first
-    // registration, and must not break on the second. (The guard also prevents a
-    // leaked global binding per recompile.)
+    // Registering the graph again on the same engine, as a recompile does, must
+    // keep `plot-push` working. The registration guard must not skip the first
+    // registration and must not break on the second.
     #[test]
     fn re_registration_keeps_plot_push_working() {
         let src = gantz_core::node::expr("5").unwrap().with_push_eval();

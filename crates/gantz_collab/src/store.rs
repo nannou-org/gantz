@@ -1,24 +1,22 @@
 //! The served session content, owned by the network runtime.
 //!
-//! Each session serves a plain [`gantz_ca::Registry`]: graphs sit at rest in
-//! their erased data form ([`gantz_ca::DataGraph`]), which any peer can
-//! re-hash and walk without the application's node types compiled in. The
-//! application mirrors each session's scoped closure (commits, graphs,
-//! heads) into the store via [`Command::Register`](crate::Command::Register)
-//! and [`Command::Update`](crate::Command::Update); the runtime's request
-//! handler answers peers from it synchronously, serializing graphs to the
-//! wire with [`proto::encode_graph`]. Content-addressed keys make every
-//! insert idempotent, so updates may be re-sent freely.
+//! Each session serves a plain [`gantz_ca::Registry`]. Graphs sit at rest in
+//! their erased data form, [`gantz_ca::DataGraph`], which any peer can re-hash
+//! and walk without the application's node types compiled in. The application
+//! mirrors each session's scoped closure of commits, graphs and heads into the
+//! store via [`crate::Command::Register`] and [`crate::Command::Update`]. The
+//! runtime's request handler answers peers from it synchronously. It
+//! serializes graphs to the wire with [`proto::encode_graph`].
+//! Content-addressed keys make every insert idempotent, so updates may be
+//! re-sent freely.
 //!
-//! The store VERIFIES the graphs it accepts: every graph offered to
-//! [`merge`] is re-hashed against its claimed address and checked for node
-//! canonicality (see [`gantz_ca::verify_graph`]), so tampered or aliased
-//! content is rejected at the store boundary rather than trusted under a
-//! claimed address. Receiving peers still re-verify everything through the
-//! [`gantz_ca::sync::Staged`] path on their own side. Holding decodable data
-//! graphs also means a serving peer can answer reachability questions
-//! itself (see [`gantz_ca::closure`]) - e.g. for future served-store GC -
-//! which the old opaque-bytes relay store could not.
+//! The store verifies the graphs it accepts. Every graph offered to [`merge`]
+//! is re-hashed against its claimed address and checked for node canonicality.
+//! See [`gantz_ca::verify_graph`]. Tampered or aliased content is rejected at
+//! the store boundary rather than trusted under a claimed address. Receiving
+//! peers still re-verify everything through the [`gantz_ca::sync::Staged`]
+//! path on their own side. Holding decodable data graphs also means a serving
+//! peer can answer reachability questions itself. See [`gantz_ca::closure`].
 
 use crate::{
     proto::{self, Object, ObjectRef, Objects, Want},
@@ -45,8 +43,8 @@ pub struct SessionEntry {
 }
 
 /// The state shared between the runtime's driver and its request-serving
-/// tasks. Internal: the application mutates it only through the ordered,
-/// non-blocking command channel, so it never takes (or waits on) this lock.
+/// tasks. The application mutates it only through the ordered, non-blocking
+/// command channel, so it never takes or waits on this lock.
 #[derive(Debug, Default)]
 pub(crate) struct SharedState {
     pub sessions: HashMap<SessionId, SessionEntry>,
@@ -54,9 +52,9 @@ pub(crate) struct SharedState {
 
 /// A cheaply clonable handle to the [`SharedState`].
 ///
-/// Lock hold times must stay short (lookups, inserts and response clones
-/// only), and every holder runs on the runtime's own thread (native) or the
-/// single browser thread (wasm) - contention never involves the
+/// Lock hold times must stay short. Only lookups, inserts and response clones
+/// happen under it. Every holder runs on the runtime's own thread on native
+/// or the single browser thread on wasm, so contention never involves the
 /// application's frame loop.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Shared(Arc<Mutex<SharedState>>);
@@ -72,25 +70,25 @@ impl SessionEntry {
 }
 
 impl Shared {
-    /// Lock the shared state. A poisoned lock (a panicked peer thread) still
-    /// yields the data: content-addressed state cannot be half-written into
+    /// Lock the shared state. A lock poisoned by a panicked peer thread still
+    /// yields the data. Content-addressed state cannot be half-written into
     /// an invalid shape.
     pub(crate) fn lock(&self) -> MutexGuard<'_, SharedState> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
-/// Merge served content into the store: content-addressed commit/graph/blob
-/// inserts (idempotent), per-name head upserts (an incoming tip wins,
-/// reported) and section entries applied per the section's merge policy
-/// (see [`gantz_ca::Registry::merge`]).
+/// Merge served content into the store. Commit, graph and blob inserts are
+/// content-addressed and idempotent. Per-name head upserts let an incoming
+/// tip win and report it. Section entries apply per the section's merge
+/// policy. See [`gantz_ca::Registry::merge`].
 ///
 /// Every graph and blob is verified against its claimed address before
-/// anything is merged (graphs: strict re-hash plus node canonicality, see
-/// [`gantz_ca::verify_graph`]; blobs: [`gantz_ca::blob_addr`] re-hash): an
-/// `Err` leaves the store untouched, so tampered or aliased content can
-/// never be served. Section entries are advisory metadata with no address
-/// to verify.
+/// anything is merged. Graphs get a strict re-hash plus a node canonicality
+/// check via [`gantz_ca::verify_graph`]. Blobs get a [`gantz_ca::blob_addr`]
+/// re-hash. An `Err` leaves the store untouched, so tampered or aliased
+/// content is never served. Section entries are advisory metadata with no
+/// address to verify.
 pub fn merge(
     store: &mut SessionRegistry,
     heads: impl IntoIterator<Item = (Name, CommitAddr)>,
@@ -125,11 +123,11 @@ pub fn merge(
     Ok(store.merge(incoming))
 }
 
-/// The requested objects, where present. Absent objects are skipped: the
+/// The requested objects, where present. Absent objects are skipped. The
 /// requester re-requests from another peer or re-heals on the next announce.
 ///
-/// Every answered commit carries its commit-keyed section entries along
-/// (e.g. the commit's stored scene view): a requester cannot know which
+/// Every answered commit carries its commit-keyed section entries along, for
+/// example the commit's stored scene view. A requester cannot know which
 /// entries exist, so they piggyback on the commit they describe.
 pub fn objects(store: &SessionRegistry, want: &Want) -> Objects {
     let mut objects = Vec::new();
@@ -171,8 +169,8 @@ pub fn objects(store: &SessionRegistry, want: &Want) -> Objects {
     Objects { objects }
 }
 
-/// The whole store as a join snapshot: every head, commit, graph, blob and
-/// non-head section entry (heads travel in the dedicated head list).
+/// The whole store as a join snapshot. Every head, commit, graph, blob and
+/// non-head section entry. Heads travel in the dedicated head list.
 pub fn snapshot(store: &SessionRegistry) -> (Vec<(Name, CommitAddr)>, Objects) {
     let heads = store.heads().map(|(n, ca)| (n.clone(), ca)).collect();
     let mut objects = Vec::new();
@@ -294,10 +292,8 @@ mod tests {
         assert_eq!(store.head(&name("jam")), Some(root_ca));
     }
 
-    /// The trust-model flip: a graph offered under a claimed address whose
-    /// content does not re-hash to it is rejected outright, and the store is
-    /// left untouched. The old opaque-bytes relay store could not re-verify
-    /// and served whatever it was handed.
+    /// A graph offered under a claimed address whose content does not re-hash
+    /// to it is rejected outright, and the store is left untouched.
     #[test]
     fn merge_rejects_tampered_graph_content() {
         let (mut store, _root_ca, _tip_ca, ga1) = test_store();
@@ -305,8 +301,8 @@ mod tests {
             .heads()
             .map(|(n, ca)| (n.clone(), ca))
             .collect::<Vec<_>>();
-        // Honest content for `ga1`, then tampered: an extra node the claimed
-        // address does not cover.
+        // Honest content for `ga1`, then tampered with an extra node the
+        // claimed address does not cover.
         let mut tampered = store.graph(&ga1).unwrap().clone();
         tampered.add_node(NodeData::new("evil", Datum::Map(vec![])));
         let actual = gantz_ca::graph_addr(&tampered);
@@ -328,7 +324,7 @@ mod tests {
                 actual,
             }
         );
-        // Nothing was merged: no new commit, head unmoved.
+        // Nothing was merged. No new commit, head unmoved.
         assert!(!store.commits().contains_key(&commit_ca));
         assert_eq!(
             store
@@ -340,7 +336,7 @@ mod tests {
     }
 
     /// A graph whose nodes are not in canonical form aliases the same
-    /// logical content under a second address: rejected likewise.
+    /// logical content under a second address. It is rejected likewise.
     #[test]
     fn merge_rejects_non_canonical_graph() {
         let (mut store, _root_ca, _tip_ca, _ga1) = test_store();
@@ -352,7 +348,7 @@ mod tests {
                 ("a".to_string(), Datum::Bool(true)),
             ]),
         ));
-        // The non-canonical form hashes consistently with itself: the
+        // The non-canonical form hashes consistently with itself. The
         // canonicality check, not the hash, must reject it.
         let claimed = gantz_ca::graph_addr(&g);
         let err = merge(&mut store, [], [], [(claimed, g)], [], []).unwrap_err();
@@ -442,7 +438,7 @@ mod tests {
         let section = store.section(&id).unwrap();
         assert_eq!(section.policy, policy);
         assert_eq!(section.liveness, liveness);
-        // KeepExisting: a differing incoming entry does not clobber.
+        // With KeepExisting a differing incoming entry does not clobber.
         let differing = Value::Datum(Datum::Bool(false));
         merge(
             &mut store,
@@ -539,8 +535,8 @@ mod tests {
         );
     }
 
-    /// A wanted commit carries its commit-keyed section entries along: the
-    /// requester cannot know which entries exist.
+    /// A wanted commit carries its commit-keyed section entries along. See
+    /// [`objects`].
     #[test]
     fn objects_piggybacks_commit_sections() {
         let (mut store, root_ca, tip_ca, _ga1) = test_store();

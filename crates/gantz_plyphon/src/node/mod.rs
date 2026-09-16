@@ -1,10 +1,10 @@
 //! The DSP node types.
 //!
-//! Each node implements [`gantz_core::Node`] (a placeholder, since DSP nodes are
-//! inert in the Steel world), [`NodeDsp`](crate::NodeDsp) (the audio behaviour)
-//! and [`ToNodeDsp`](crate::ToNodeDsp) (discovery). Their `gantz_egui::NodeUi`
-//! impls live in `crate::egui` (`egui` feature). The `~` keyword-name prefix
-//! marks them as dsp nodes.
+//! Each node implements [`gantz_core::Node`] as a placeholder, since DSP nodes
+//! are inert in the Steel world. [`NodeDsp`](crate::NodeDsp) gives the audio
+//! behaviour and [`ToNodeDsp`](crate::ToNodeDsp) the discovery. Their
+//! `gantz_egui::NodeUi` impls live in `crate::egui` behind the `egui` feature.
+//! The `~` keyword-name prefix marks them as dsp nodes.
 
 pub use bus::Bus;
 pub use out::Out;

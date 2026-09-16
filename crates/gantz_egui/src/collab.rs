@@ -1,8 +1,9 @@
-//! Display and configuration types for collaborative sessions (#286).
+//! Display and configuration types for collaborative sessions.
 //!
-//! `gantz_egui` renders session UI from these plain types; the networking
-//! layer (e.g. `bevy_gantz_collab`) fills them each frame. No network types
-//! leak in here, keeping this crate framework- and transport-agnostic.
+//! `gantz_egui` renders session UI from these plain types. The networking
+//! layer fills them each frame. `bevy_gantz_collab` is one such layer. No
+//! network types leak in here, which keeps this crate framework-agnostic and
+//! transport-agnostic.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -10,22 +11,23 @@ use std::collections::HashMap;
 /// User-editable collaboration configuration, persisted with the GUI state.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct CollabConfig {
-    /// The username shared with session peers (empty = anonymous).
+    /// The username shared with session peers. An empty string means
+    /// anonymous.
     #[serde(default)]
     pub username: String,
     /// A custom relay server URL routing this peer's traffic. `None` uses
-    /// iroh's default (n0's public relays). Applied when the collab runtime
-    /// starts, i.e. a change takes effect on app restart.
+    /// iroh's default, the n0 public relays. Applied when the collab runtime
+    /// starts, so a change takes effect on app restart.
     #[serde(default)]
     pub custom_relay: Option<String>,
     /// The minimum interval in milliseconds between live-action sends per
-    /// node path (0 = every frame). Values written faster than this batch
-    /// into one message and replay in order on peers (see the
-    /// `bevy_gantz_collab::action` module docs).
+    /// node path. `0` sends every frame. Values written faster than this
+    /// batch into one message and replay in order on peers. See the
+    /// `bevy_gantz_collab::action` module docs.
     #[serde(default = "default_action_rate_ms")]
     pub action_rate_ms: u64,
     /// Whether to show session peers' live pointers over shared graphs.
-    /// Display-side only: this peer's own pointer broadcasts regardless.
+    /// Display-side only. This peer's own pointer broadcasts regardless.
     #[serde(default = "default_true")]
     pub show_pointers: bool,
 }
@@ -45,10 +47,10 @@ fn default_true() -> bool {
     true
 }
 
-/// The [`CollabConfig::action_rate_ms`] default: ~16ms sends roughly every
-/// frame at 60 Hz, keeping peer interaction smooth on fast (e.g. LAN)
-/// links. Raise it to cut the message rate on slow links - values batch
-/// either way, so no step is ever lost.
+/// The [`CollabConfig::action_rate_ms`] default. 16ms sends roughly every
+/// frame at 60 Hz, which keeps peer interaction smooth on fast links. Raise
+/// it to cut the message rate on slow links. Values batch either way, so no
+/// step is ever lost.
 fn default_action_rate_ms() -> u64 {
     16
 }
@@ -60,8 +62,8 @@ pub struct CollabUiState {
     pub peer_id: Option<String>,
     /// Active sessions, keyed by the shared graph's name.
     pub sessions: HashMap<gantz_ca::Name, SessionDisplay>,
-    /// The endpoint's home relay(s) and their connection state (empty until
-    /// the runtime starts).
+    /// The endpoint's home relays and their connection state. Empty until
+    /// the runtime starts.
     pub relays: Vec<(String, bool)>,
 }
 
@@ -72,11 +74,11 @@ pub struct SessionDisplay {
     pub is_host: bool,
     /// The connection lifecycle.
     pub conn: SessionConn,
-    /// Whether the join is still showing its empty placeholder graph, i.e. the
-    /// initial snapshot has not yet arrived. Drives the connecting overlay,
-    /// which outlives `conn` reaching [`SessionConn::Live`] (a peer connects
-    /// before the graph finishes syncing). Always false for a host, which
-    /// never shows a placeholder.
+    /// Whether the join is still showing its empty placeholder graph because
+    /// the initial snapshot has not yet arrived. Drives the connecting
+    /// overlay. The overlay outlives `conn` reaching [`SessionConn::Live`],
+    /// since a peer connects before the graph finishes syncing. Always false
+    /// for a host, which never shows a placeholder.
     pub awaiting_snapshot: bool,
     /// Connected collaborators.
     pub peers: Vec<PeerDisplay>,
@@ -84,30 +86,30 @@ pub struct SessionDisplay {
     pub ticket: Option<String>,
     /// Conflicts auto-resolved by the session policy so far.
     pub conflicts: usize,
-    /// The most recent session error (e.g. a failed join), cleared once the
-    /// session progresses.
+    /// The most recent session error, cleared once the session progresses. A
+    /// failed join is one example.
     pub error: Option<String>,
-    /// Peers' live pointer positions over this session's graph (presence
-    /// cursors), filled by the networking layer with expiry applied.
+    /// Peers' live pointer positions over this session's graph. The
+    /// networking layer fills them with expiry applied.
     pub pointers: Vec<PointerDisplay>,
 }
 
 /// One peer's live pointer over a shared graph, ready to render.
 #[derive(Clone, Debug)]
 pub struct PointerDisplay {
-    /// The pointer position in graph-space coordinates (the scene maps them
-    /// through the head's camera).
+    /// The pointer position in graph-space coordinates. The scene maps them
+    /// through the head's camera.
     pub pos: egui::Pos2,
     /// The peer's username or short id.
     pub label: String,
-    /// A stable per-peer colour (derived from the peer's identity).
+    /// A stable per-peer colour derived from the peer's identity.
     pub color: egui::Color32,
 }
 
 impl PointerDisplay {
-    /// Build a display pointer from raw parts: a graph-space position, the
-    /// peer's label and their full identity bytes (for the stable colour) -
-    /// so networking layers need no egui types.
+    /// Build a display pointer from raw parts. The parts are a graph-space
+    /// position, the peer's label and the full identity bytes for the stable
+    /// colour. Networking layers need no egui types.
     pub fn new(pos: (f32, f32), label: String, peer: &[u8; 32]) -> Self {
         Self {
             pos: egui::pos2(pos.0, pos.1),
@@ -117,7 +119,7 @@ impl PointerDisplay {
     }
 }
 
-/// A stable per-peer colour: a hue derived deterministically from the
+/// A stable per-peer colour. The hue derives deterministically from the
 /// peer's identity bytes, so every viewer colours a given peer identically.
 pub fn peer_color(peer: &[u8; 32]) -> egui::Color32 {
     let hue = u16::from_le_bytes([peer[0], peer[1]]) as f32 / u16::MAX as f32;
@@ -132,7 +134,7 @@ pub enum SessionConn {
     Connecting,
     /// At least one peer is connected.
     Live,
-    /// No peers reachable; local edits continue and re-heal on reconnect.
+    /// No peers reachable. Local edits continue and re-heal on reconnect.
     Degraded,
 }
 
@@ -156,7 +158,7 @@ impl SessionDisplay {
         }
     }
 
-    /// A hover summary: the connection state and connected peers.
+    /// A hover summary of the connection state and connected peers.
     pub fn hover_text(&self) -> String {
         let mut text = format!("shared session: {}", self.conn.label());
         if self.peers.is_empty() {

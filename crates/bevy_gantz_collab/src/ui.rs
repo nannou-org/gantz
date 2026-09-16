@@ -1,5 +1,6 @@
-//! The GUI bridge: payload dispatchers, the Settings > Collab subtab
-//! provider, the per-frame display mirror and presence/pointer broadcasts.
+//! The GUI bridge. It holds the payload dispatchers, the Settings > Collab
+//! subtab provider, the per-frame display mirror and the presence and
+//! pointer broadcasts.
 
 use crate::{
     CollabIdentity, CollabRuntime, CollabSessions, JoinSessionEvent, LeaveSessionEvent, SessionRef,
@@ -17,10 +18,8 @@ use std::time::Duration;
 #[derive(Message)]
 pub struct CollabSettingsChanged(pub gantz_egui::collab::CollabConfig);
 
-/// Dispatch a [`CollabConfig`][gantz_egui::collab::CollabConfig] payload
-/// emitted by the Settings > Collab subtab as a buffered
-/// [`CollabSettingsChanged`] message (registered via
-/// `RegisterResponseExt::register_response_with`).
+/// Dispatch a [`gantz_egui::collab::CollabConfig`] payload from the
+/// Settings > Collab subtab as a buffered [`CollabSettingsChanged`] message.
 pub(crate) fn dispatch_collab_settings(
     _entity: Option<Entity>,
     payload: gantz_egui::DynResponse,
@@ -32,9 +31,9 @@ pub(crate) fn dispatch_collab_settings(
 }
 
 /// Apply any pending configuration change to the persisted GUI state, then
-/// provide this frame's Collab settings tab: a fresh snapshot of the config
-/// plus the displayable identity (see `bevy_gantz_egui::SettingsTabs` for
-/// the First/PreUpdate schedule contract).
+/// provide this frame's Collab settings tab. The tab is a fresh snapshot of
+/// the config plus the displayable identity. See
+/// `bevy_gantz_egui::SettingsTabs` for the schedule contract.
 pub(crate) fn sync_collab_settings(
     mut msgs: MessageReader<CollabSettingsChanged>,
     mut gui_state: ResMut<bevy_gantz_egui::GuiState>,
@@ -100,7 +99,7 @@ pub fn update_collab_ui(
     mut ui: ResMut<bevy_gantz_egui::CollabUi>,
 ) {
     let state = &mut ui.0;
-    // The full-hex public key, for copying/allowlisting.
+    // The full-hex public key, for copying and allowlisting.
     state.peer_id = identity.map(|i| {
         i.0.peer_id()
             .0
@@ -109,7 +108,7 @@ pub fn update_collab_ui(
             .collect::<String>()
     });
     state.relays = sessions.relays.clone();
-    // Recompute cheaply each frame: session counts are tiny.
+    // Session counts are tiny, so recompute each frame.
     state.sessions.clear();
     for session_state in sessions.sessions.values() {
         let display = gantz_egui::collab::SessionDisplay {
@@ -150,8 +149,8 @@ pub fn update_collab_ui(
     }
 }
 
-/// Broadcast presence (and the configured username) whenever it changes or a
-/// peer joins, so newcomers learn who we are.
+/// Broadcast presence and the configured username whenever either changes or
+/// a peer joins, so newcomers learn this peer's name.
 pub fn broadcast_presence(
     runtime: Res<CollabRuntime>,
     identity: Option<Res<CollabIdentity>>,
@@ -183,15 +182,15 @@ pub fn broadcast_presence(
     }
 }
 
-/// How long a received pointer stays displayable without an update; the
-/// sender keepalive below refreshes well within it.
+/// How long a received pointer stays displayable without an update. The
+/// sender keepalive refreshes well within it.
 pub(crate) const POINTER_TTL: Duration = Duration::from_secs(3);
 
-/// How often a resting (unmoved, still hovering) pointer re-announces, so
-/// receiver expiry never hides a live cursor.
+/// How often a resting pointer re-announces, so receiver expiry never hides
+/// a live cursor.
 const POINTER_KEEPALIVE: Duration = Duration::from_secs(1);
 
-/// Per-branch pointer send bookkeeping (see [`broadcast_pointers`]).
+/// Per-branch pointer send bookkeeping for [`broadcast_pointers`].
 #[derive(Default)]
 pub(crate) struct PointerSendState {
     seq: u64,
@@ -202,9 +201,9 @@ pub(crate) struct PointerSendState {
 /// Broadcast this peer's live pointer over each session's shared graph.
 ///
 /// The position is read from the branch head's scene interaction state in
-/// graph-space coordinates (camera-independent). Movement coalesces to the
-/// newest position at the configured action rate; leaving the scene sends
-/// one final `pos: None` immediately; a keepalive re-announces a resting
+/// camera-independent graph-space coordinates. Movement coalesces to the
+/// newest position at the configured action rate. Leaving the scene sends
+/// one final `pos: None` immediately. A keepalive re-announces a resting
 /// pointer so receiver expiry never hides it.
 pub(crate) fn broadcast_pointers(
     runtime: Res<CollabRuntime>,
@@ -229,11 +228,11 @@ pub(crate) fn broadcast_pointers(
             .and_then(|s| s.scene.interaction.live_pointer)
             .map(|p| (p.x, p.y));
         let send = match state.last.get(&name).copied() {
-            // Never announced: only a live position is worth starting with.
+            // Never announced. Only a live position is worth starting with.
             None => pos.is_some(),
             Some((prev, at)) => {
                 if pos != prev {
-                    // Leaving announces immediately; movement coalesces to
+                    // Leaving announces immediately. Movement coalesces to
                     // the newest position at the configured rate.
                     pos.is_none() || now.duration_since(at) >= rate
                 } else {

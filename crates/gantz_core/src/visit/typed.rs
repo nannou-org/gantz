@@ -12,7 +12,7 @@ use std::marker::PhantomData;
 /// A visitor that receives concrete `&N` instead of `&dyn Node`.
 ///
 /// Implement this trait to handle only nodes of a specific concrete type
-/// during traversal. Nodes that don't match `N` are silently skipped.
+/// during traversal. Nodes that do not match `N` are silently skipped.
 pub trait TypedVisitor<N> {
     /// Called prior to traversing nested nodes.
     fn visit_pre(&mut self, _ctx: Ctx<'_, '_>, _node: &N) {}

@@ -1,9 +1,8 @@
-//! The "Global" sidebar tab: globally relevant configuration.
+//! The "Global" settings subtab. Globally relevant configuration.
 //!
-//! Hosts the global compile config toggles (moved here from the per-head Graph
-//! Config pane), the global auto-layout parameters, the drag snapping /
-//! snap-align options, and a button to reset all demo graphs to their initial
-//! state.
+//! Hosts the global compile config toggles, the global auto-layout
+//! parameters, the drag snapping and snap-align options, and a button to
+//! reset all demo graphs to their initial state.
 
 use super::gantz::{AlignConfig, LayoutConfig, SnapConfig, SnapMode, request_clear_egui_memory};
 
@@ -12,7 +11,7 @@ use super::gantz::{AlignConfig, LayoutConfig, SnapConfig, SnapMode, request_clea
 pub struct GlobalConfigResponse {
     /// The global compile config was changed via the compile toggles.
     pub compile_config: Option<gantz_core::compile::Config>,
-    /// The change-tracking validation toggle was changed (its new value).
+    /// The change-tracking validation toggle was changed. Holds the new value.
     pub validate_change_tracking: Option<bool>,
     /// The "Reset all demos" button was clicked.
     pub reset_all_demos: bool,
@@ -20,12 +19,12 @@ pub struct GlobalConfigResponse {
 
 /// Render the global configuration controls.
 ///
-/// `compile_config` is the current global config; when `Some` the compile
-/// toggles are shown. `validate_change_tracking` is the current state of the
-/// change-tracking validation toggle; when `Some` the toggle is shown.
+/// `compile_config` is the current global config. The compile toggles show
+/// when it is `Some`. `validate_change_tracking` is the current state of the
+/// change-tracking validation toggle. The toggle shows when it is `Some`.
 /// `layout_config` holds the global auto-layout parameters, `snap` the drag
-/// snapping mode and `align` the drag-time snap-align options (all mutated in
-/// place). The config applies to all open heads.
+/// snapping mode and `align` the drag-time snap-align options. All three are
+/// mutated in place. The config applies to all open heads.
 pub fn global_config(
     compile_config: Option<gantz_core::compile::Config>,
     validate_change_tracking: Option<bool>,
@@ -81,8 +80,8 @@ pub fn global_config(
         ui.separator();
     }
 
-    // Auto-layout parameters (the non-flow `egui_graph` layout params; flow is
-    // per-head, in the Graph Config pane). Applied on the next auto-layout.
+    // The non-flow `egui_graph` layout params, applied on the next
+    // auto-layout. Flow is per-head, in the Graph Config pane.
     ui.strong("Layout");
     let gap = |ui: &mut egui::Ui, label: &str, value: &mut f32, hover: &str| {
         ui.horizontal(|ui| {
@@ -122,8 +121,8 @@ pub fn global_config(
         );
     ui.separator();
 
-    // Drag snapping. Point snaps to unit points (effectively free); Grid snaps
-    // to a fraction of the dot grid (the grid step is set in Style).
+    // Point snaps to unit points, which is effectively free. Grid snaps to a
+    // fraction of the dot grid. The grid step is set in Style.
     ui.strong("Snap");
     ui.horizontal(|ui| {
         ui.radio_value(&mut snap.mode, SnapMode::Point, "Point")
@@ -147,8 +146,7 @@ pub fn global_config(
     });
     ui.separator();
 
-    // Drag-time snap-align: snap a dragged node to its neighbours' edges /
-    // centres and draw guides.
+    // Snap a dragged node to its neighbours' edges or centres and draw guides.
     ui.strong("Snap-align");
     ui.checkbox(&mut align.enabled, "Align to neighbours")
         .on_hover_text(
@@ -163,9 +161,8 @@ pub fn global_config(
     });
     ui.separator();
 
-    // Maintenance: a recovery tool to drop egui's persisted UI memory if it
-    // accumulates stale state (e.g. tile-layout snapshots from old builds),
-    // without touching the graph registry.
+    // A recovery tool that drops egui's persisted UI memory when it has
+    // accumulated stale state. It never touches the graph registry.
     ui.strong("Maintenance");
     if ui
         .button("Clear egui memory")

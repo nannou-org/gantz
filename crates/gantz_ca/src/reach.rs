@@ -1,19 +1,20 @@
-//! The one reachability walk: liveness for prune, closure for export, and
+//! The one reachability walk. Liveness for prune, closure for export and
 //! want-lists for sync all derive from here.
 //!
 //! Edge rules:
 //! - A commit contributes its parents and its graph.
-//! - A graph contributes its nodes' structural reference columns (see
-//!   [`data_graph_out`]): nested graph references and blob references.
+//! - A graph contributes its nodes' structural reference columns. See
+//!   [`data_graph_out`]. These are nested graph references and blob
+//!   references.
 //! - Blobs and section values are leaves.
 //!
-//! Roots are the entries of `Root`-liveness sections (the `heads` section
-//! at minimum) plus any extra seeds the caller supplies.
+//! Roots are the entries of `Root`-liveness sections, at minimum the `heads`
+//! section, plus any extra seeds the caller supplies.
 //!
-//! Section entry liveness is NOT part of [`LiveSet`]: it is a pure function
+//! Section entry liveness is not part of [`LiveSet`]. It is a pure function
 //! of the surviving content, so [`export`] and [`prune`] apply each
-//! section's stored [`Liveness`] rule against the filtered
-//! registry directly.
+//! section's stored [`Liveness`] rule against the filtered registry
+//! directly.
 
 use crate::{
     BlobLiveness, CommitAddr, ContentAddr, DataGraph, GraphAddr, Liveness, Registry, SectionId,
@@ -24,14 +25,14 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 /// The outgoing content references of a single graph.
 #[derive(Clone, Debug, Default)]
 pub struct OutRefs {
-    /// Nested graph references (e.g. `Ref` nodes).
+    /// Nested graph references. For example, from `Ref` nodes.
     pub graphs: Vec<GraphAddr>,
     /// Blob references, tagged with their blob section.
     pub blobs: Vec<(SectionId, ContentAddr)>,
 }
 
-/// The live content of a registry: the closure of the roots (and any extra
-/// seeds) over the edge rules above.
+/// The live content of a registry. The closure of the roots and any extra
+/// seeds over the edge rules above.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LiveSet {
     pub commits: HashSet<CommitAddr>,
@@ -46,9 +47,9 @@ impl LiveSet {
     }
 }
 
-/// The outgoing references of a stored data graph: the union of its nodes'
-/// structural [`refs`](crate::NodeData::refs)/[`blobs`](crate::NodeData::blobs)
-/// columns, sorted and deduplicated.
+/// The outgoing references of a stored data graph. The union of its nodes'
+/// structural [`refs`](crate::NodeData::refs) and
+/// [`blobs`](crate::NodeData::blobs) columns, sorted and deduplicated.
 ///
 /// A pure data walk, so any peer can compute reachability without the node
 /// types compiled in.
@@ -71,9 +72,9 @@ pub fn data_graph_out(g: &DataGraph) -> OutRefs {
 /// The live closure of `reg` from its `Root`-liveness sections plus the
 /// given extra commit seeds.
 ///
-/// Dangling seeds and references are tolerated and simply not walked.
+/// Dangling seeds and references are tolerated and not walked.
 pub fn closure(reg: &Registry, extra_commits: impl IntoIterator<Item = CommitAddr>) -> LiveSet {
-    // Roots: every commit-valued entry of every Root-liveness section.
+    // Roots are every commit-valued entry of every Root-liveness section.
     let roots = reg
         .sections()
         .values()
@@ -87,7 +88,7 @@ pub fn closure(reg: &Registry, extra_commits: impl IntoIterator<Item = CommitAdd
     closure_from(reg, roots.into_iter().chain(extra_commits))
 }
 
-/// The live closure of `reg` from ONLY the given commit seeds, ignoring the
+/// The live closure of `reg` from the given commit seeds alone, ignoring the
 /// registry's own roots.
 ///
 /// For minimal exports of a specific head set. [`closure`] is this plus the
@@ -122,7 +123,7 @@ pub fn closure_from(reg: &Registry, seeds: impl IntoIterator<Item = CommitAddr>)
         }
     }
 
-    // Blobs referenced by live section entries (Value::Blob indirections).
+    // Blobs referenced by live section entries via `Value::Blob`.
     for section in reg.sections().values() {
         for (key, value) in &section.entries {
             if !entry_live(reg, section.liveness, key, &live) {
@@ -150,28 +151,28 @@ pub fn closure_from(reg: &Registry, seeds: impl IntoIterator<Item = CommitAddr>)
     live
 }
 
-/// Export the live subset of the registry: content filtered by `live`,
-/// section entries filtered by their stored liveness against the exported
-/// content. Heads whose commit falls outside the export are dropped, and
-/// their `WithName` metadata with them.
+/// Export the live subset of the registry. Content is filtered by `live`.
+/// Section entries are filtered by their stored liveness against the
+/// exported content. Heads whose commit falls outside the export are
+/// dropped, and their `WithName` metadata with them.
 pub fn export(reg: &Registry, live: &LiveSet) -> Registry {
     let mut exported = reg.clone();
     prune(&mut exported, live);
     exported
 }
 
-/// Prune the registry down to the live set: dead content is removed, heads
-/// pointing outside the live set are dropped, each section's entries are
-/// filtered by its stored liveness rule against the surviving state, and
-/// invalid commit parents are detached. Emptied sections and blob stores
+/// Prune the registry down to the live set. Dead content is removed. Heads
+/// pointing outside the live set are dropped. Each section's entries are
+/// filtered by its stored liveness rule against the surviving state.
+/// Invalid commit parents are detached. Emptied sections and blob stores
 /// are removed.
 pub fn prune(reg: &mut Registry, live: &LiveSet) {
     reg.retain_live(live);
 }
 
-/// Whether a section entry is live against the given registry + live set.
-/// Used by [`closure`]'s blob-reference pass. `Root` entries are treated
-/// conservatively as live (their commit values were the walk's seeds).
+/// Whether a section entry is live against the given registry and live set.
+/// Used by [`closure`]'s blob-reference pass. `Root` entries are treated as
+/// live, since their commit values were the walk's seeds.
 fn entry_live(reg: &Registry, liveness: Liveness, key: &crate::Key, live: &LiveSet) -> bool {
     use crate::Key;
     match liveness {
@@ -420,7 +421,7 @@ mod tests {
         assert_eq!(section.liveness, Liveness::Pinned);
     }
 
-    /// The full walk over stored data graphs: nested graphs and blobs stay
+    /// The full walk over stored data graphs. Nested graphs and blobs stay
     /// live purely through the structural refs columns.
     #[test]
     fn data_graph_closure_is_a_pure_data_walk() {

@@ -1,29 +1,28 @@
 //! Peer-to-peer collaborative session networking for gantz.
 //!
-//! A *session* shares one named graph (and its registry dependency closure)
+//! A session shares one named graph and its registry dependency closure
 //! between peers over [iroh]. This crate owns everything network-shaped and
-//! nothing node-shaped: graphs sit in the served [`SessionRegistry`] in
-//! their erased data form ([`gantz_ca::DataGraph`]) and cross the wire as
-//! RON blobs ([`proto::encode_graph`]), so the crate stays agnostic of the
-//! application's node types while still re-hashing and verifying every
-//! graph it serves. Merging and applying received content is the
-//! application layer's job, built on `gantz_ca::sync`.
+//! nothing node-shaped. Graphs sit in the served [`SessionRegistry`] in their
+//! erased data form, [`gantz_ca::DataGraph`], and cross the wire as RON blobs
+//! via [`proto::encode_graph`]. So the crate stays agnostic of the
+//! application's node types while it re-hashes and verifies every graph it
+//! serves. Merging and applying received content is the application layer's
+//! job, built on `gantz_ca::sync`.
 //!
-//! Two planes:
+//! There are two planes:
 //!
-//! - **Gossip** ([`GossipMsg`], per-session topic): tip announcements,
+//! - Gossip, via [`GossipMsg`] on a per-session topic. Tip announcements,
 //!   anti-entropy digests and presence. Small, broadcast, unordered.
-//! - **Requests** ([`SYNC_ALPN`], one request per QUIC bi-stream): join
-//!   snapshots, head listings and object fetches ([`SyncRequest`] /
-//!   [`SyncResponse`]), served from the session's [`SessionRegistry`] and
+//! - Requests, via [`SYNC_ALPN`] with one request per QUIC bi-stream. Join
+//!   snapshots, head listings and object fetches as [`SyncRequest`] and
+//!   [`SyncResponse`]. Served from the session's [`SessionRegistry`] and
 //!   gated by its [`Access`] allowlist.
 //!
-//! The [`runtime`] drives an iroh endpoint on a dedicated thread (native) or
-//! the browser's event loop (wasm), bridged to the application through plain
-//! [`Command`]/[`Event`] channels. The channels are unbounded and the served
-//! stores are runtime-owned, so the application side never blocks on a lock:
-//! store content rides ordered [`Command::Register`]/[`Command::Update`]
-//! sends.
+//! The [`runtime`] drives an iroh endpoint on a dedicated thread on native or
+//! the browser's event loop on wasm. Plain [`Command`] and [`Event`] channels
+//! bridge it to the application. The channels are unbounded and the runtime
+//! owns the served stores, so the application never blocks on a lock. Store
+//! content rides ordered [`Command::Register`] and [`Command::Update`] sends.
 //!
 //! [iroh]: https://docs.rs/iroh
 

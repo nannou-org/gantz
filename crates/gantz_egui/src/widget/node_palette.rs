@@ -4,9 +4,9 @@ use egui::{Align2, Key, NumExt as _};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 
-/// Trait that must be implemented by command types
+/// The trait a palette command type implements.
 pub trait Command: Copy + Sized {
-    /// The text used for display and fuzzy matching
+    /// The text used for display and fuzzy matching.
     fn text(&self) -> &str;
     /// A concise description shown inline, right of the name. Default none.
     fn description(&self) -> Option<Cow<'static, str>> {
@@ -15,7 +15,7 @@ pub trait Command: Copy + Sized {
     /// Detailed information for this command, rendered within the per-entry
     /// hover tooltip. Default renders nothing.
     fn info_ui(&self, _ui: &mut egui::Ui) {}
-    /// Optional keyboard shortcut for the command
+    /// Optional keyboard shortcut for the command.
     fn formatted_kb_shortcut(&self, _ctx: &egui::Context) -> Option<String> {
         None
     }
@@ -25,8 +25,9 @@ pub trait Command: Copy + Sized {
 pub struct NodePalette {
     visible: bool,
     query: String,
-    /// The highlighted entry, or `None` when nothing is highlighted (the
-    /// just-opened, browse-and-click state). Set by typing or arrow navigation.
+    /// The highlighted entry, or `None` when nothing is highlighted. Nothing is
+    /// highlighted in the just-opened browse-and-click state. Typing or arrow
+    /// navigation sets it.
     selected_alternative: Option<usize>,
 }
 
@@ -41,7 +42,8 @@ impl NodePalette {
 
     /// Show the node palette, if it is visible.
     ///
-    /// `area` is the rect the palette is centered over (e.g. the graph scene).
+    /// `area` is the rect the palette is centered over, for example the graph
+    /// scene.
     #[must_use = "Returns the command that was selected"]
     pub fn show<T, I>(
         &mut self,
@@ -59,10 +61,9 @@ impl NodePalette {
             return None;
         }
 
-        // Collect commands early since we'll need them multiple times
         let commands: Vec<T> = commands.into_iter().collect();
 
-        // A modest widening to fit each entry's inline description; the full
+        // A modest widening fits each entry's inline description. The full
         // details remain available via the entry's hover tooltip.
         let width = 400.0.at_most(area.width());
         let max_height = 320.0.at_most(area.height());
@@ -84,8 +85,8 @@ impl NodePalette {
             });
 
         // Close on a click outside the palette. `clicked_elsewhere` tests the
-        // window's rect geometrically, so interacting with inner widgets (the
-        // text field, list items, scrollbar) never reads as an outside click.
+        // window's rect geometrically, so interacting with inner widgets never
+        // reads as an outside click.
         if let Some(ref resp) = window_response {
             if resp.response.clicked_elsewhere() {
                 self.visible = false;
@@ -98,7 +99,7 @@ impl NodePalette {
     }
 
     fn window_content_ui<T: Command>(&mut self, ui: &mut egui::Ui, commands: &[T]) -> Option<T> {
-        // Check _before_ we add the `TextEdit`, so it doesn't steal it.
+        // Consume Enter before adding the `TextEdit`, so it does not steal it.
         let enter_pressed = ui.input_mut(|i| i.consume_key(Default::default(), Key::Enter));
 
         let text_response = ui.add(
@@ -109,8 +110,9 @@ impl NodePalette {
         text_response.request_focus();
         let mut scroll_to_selected_alternative = false;
         if text_response.changed() {
-            // Highlight the top match while filtering (so Enter works), but show
-            // no highlight for an empty query - it's a browse-and-click list.
+            // Highlight the top match while filtering so Enter works. Show no
+            // highlight for an empty query, since that is a browse-and-click
+            // list.
             self.selected_alternative = (!self.query.is_empty()).then_some(0);
             scroll_to_selected_alternative = self.selected_alternative.is_some();
         }
@@ -129,8 +131,8 @@ impl NodePalette {
         selected_command
     }
 
-    /// Render the matching entries. Returns the command chosen by click/Enter
-    /// (which closes the palette).
+    /// Render the matching entries. Returns the command chosen by click or
+    /// Enter, which closes the palette.
     fn alternatives_ui<T: Command>(
         &mut self,
         ui: &mut egui::Ui,
@@ -151,9 +153,9 @@ impl NodePalette {
 
         let matches = commands_that_match(&query, commands);
 
-        // Align descriptions into a single column just past the widest name (so
-        // names align at the left and descriptions align at `desc_x`), capped so
-        // the description always keeps at least ~half the row.
+        // Align descriptions into a single column just past the widest name, so
+        // names align at the left and descriptions align at `desc_x`. The cap
+        // keeps at least about half the row for the description.
         let row_width = ui.available_width();
         let name_col_w = matches
             .iter()
@@ -181,7 +183,7 @@ impl NodePalette {
 
             let response = response.on_hover_ui(|ui| {
                 // Re-assert the wrap width every frame so the tooltip widens as
-                // content grows (see the note in `graph_scene::socket_hover`).
+                // content grows. See the note in `graph_scene::socket_hover`.
                 let max_width = ui.spacing().tooltip_width;
                 ui.set_max_width(max_width);
                 command.info_ui(ui);
@@ -233,8 +235,8 @@ impl NodePalette {
             );
 
             // The description, aligned in its own column right of the name and
-            // dimmed. Overflow is clipped by the scroll area; the hover tooltip
-            // carries the full text.
+            // dimmed. The scroll area clips overflow. The hover tooltip carries
+            // the full text.
             if let Some(desc) = command.description() {
                 ui.painter().text(
                     egui::pos2(rect.left() + desc_x, rect.center().y),
@@ -256,8 +258,8 @@ impl NodePalette {
             ui.weak("No matching results");
         }
 
-        // Move up/down in the list. From no highlight, the first arrow press
-        // starts at the top; otherwise step and keep the highlight in range.
+        // Move up or down in the list. From no highlight, the first arrow press
+        // starts at the top. Otherwise step and keep the highlight in range.
         let up = ui.input_mut(|i| i.count_and_consume_key(Default::default(), Key::ArrowUp));
         let down = ui.input_mut(|i| i.count_and_consume_key(Default::default(), Key::ArrowDown));
         self.selected_alternative = if num_alternatives == 0 {

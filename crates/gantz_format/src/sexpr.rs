@@ -1,12 +1,11 @@
 //! A small S-expression toolkit shared by the format and its extenders.
 //!
-//! The document is read with Steel's own reader
-//! ([`steel::parser::parser::Parser::parse_without_lowering`]) so tokenisation
-//! (strings, keywords, numbers, identifiers like `->` and `$l`, and arbitrary
-//! embedded Steel) matches Steel exactly and special forms stay plain lists.
-//! Numbers are read from their verbatim source slice (via the datum's span), so
-//! callers that parse [`Form`](crate::Form) text pass that form's own `raw` as
-//! `src`.
+//! The document is read with Steel's own reader,
+//! [`steel::parser::parser::Parser::parse_without_lowering`]. Tokenisation of
+//! strings, keywords, numbers, identifiers like `->` and `$l`, and embedded
+//! Steel matches Steel exactly, and special forms stay plain lists. Numbers
+//! are read from their verbatim source slice via the datum's span. Callers
+//! that parse [`crate::Form`] text pass that form's own `raw` as `src`.
 
 use crate::error::{ErrorKind, FormatError, Span};
 pub use steel::parser::ast::ExprKind;
@@ -62,8 +61,8 @@ pub fn as_keyword(e: &ExprKind) -> Option<String> {
 
 /// The source span of a datum.
 pub fn span(e: &ExprKind) -> Option<Span> {
-    // steel 0.8's `ExprKind::span` returns a plain `Span`; every datum we read
-    // comes from real source text, so it is always present.
+    // `ExprKind::span` returns a plain `Span`. Every datum read here comes
+    // from real source text, so a span is always present.
     let s = e.span();
     Some(Span::new(s.start as usize, s.end as usize))
 }

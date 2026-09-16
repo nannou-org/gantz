@@ -12,11 +12,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 /// A node-set hook exposing the underlying [`Ref`] when a node is
-/// transparently a reference to another graph (a bare [`Ref`], or a wrapper
-/// such as gantz_egui's `NamedRef`).
+/// transparently a reference to another graph. That is a bare [`Ref`] or a
+/// wrapper such as gantz_egui's `NamedRef`.
 ///
-/// Deliberately *not* implemented by function-value wrappers
-/// ([`Fn`](crate::node::Fn)), which reference a graph without standing in for
+/// Deliberately not implemented by function-value wrappers such as
+/// [`Fn`](crate::node::Fn). They reference a graph without standing in for
 /// it within their parent.
 pub trait AsRefNode {
     /// The underlying [`Ref`], if this node is transparently a reference.
@@ -25,24 +25,23 @@ pub trait AsRefNode {
 
 /// A node that refers to another node in the environment by content address.
 ///
-/// Reference identity is CONTENT identity: a reference to another graph
-/// pins that graph's `GraphAddr`, so a referencing graph's own address
+/// Reference identity is content identity. A reference to another graph
+/// pins that graph's `GraphAddr`. A referencing graph's own address thus
 /// depends only on the content it references, never on commit history or
-/// timestamps. (The address may also be a builtin node's content address -
-/// resolution decides, via the environment's node lookup.)
+/// timestamps. The address may also be a builtin node's content address.
+/// Resolution decides via the environment's node lookup.
 ///
-/// A reference optionally carries domain-extension data in `ext`: canonical
-/// [`Datum`]s keyed by a domain-prefixed string (e.g. `"plyphon.dsp-ref"`).
-/// Ext data serializes and content-addresses with the node, losslessly even
-/// in applications that do not know the owning domain. Conventions for ext
-/// entries (see [`Ref::set_ext`]):
+/// A reference optionally carries domain-extension data in `ext`. These are
+/// canonical [`Datum`]s keyed by a domain-prefixed string, for example
+/// `"plyphon.dsp-ref"`. Ext data serializes and content-addresses with the
+/// node, losslessly even in applications that do not know the owning domain.
+/// Conventions for ext entries follow. See [`Ref::set_ext`].
 ///
 /// - Store only non-default data, so a default-configured reference keeps the
 ///   address it would have without the entry.
 /// - One value type per key, owned by one domain.
-/// - Ext data must not carry graph references: dependency collection
-///   ([`Node::required_addrs`], clipboard export) cannot see inside ext, so a
-///   smuggled content address would dangle.
+/// - Ext data must not carry graph references. Dependency collection cannot
+///   see inside ext, so a smuggled content address would dangle.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, NodeTag)]
 pub struct Ref {
     addr: gantz_ca::ContentAddr,
@@ -63,10 +62,11 @@ impl Ref {
         self.addr
     }
 
-    /// The same reference (including its ext data) pointing at `addr`.
+    /// The same reference, including its ext data, pointing at `addr`.
     ///
-    /// For repointing operations where the referenced content is equivalent
-    /// (e.g. forking a reference to a new name), so domain flags still apply.
+    /// For repointing operations where the referenced content is equivalent,
+    /// for example forking a reference to a new name. Domain flags still
+    /// apply.
     pub fn retarget(&self, addr: gantz_ca::ContentAddr) -> Self {
         Self {
             addr,
@@ -81,9 +81,9 @@ impl Ref {
 
     /// Decode the extension value stored under `key` as a `T`.
     ///
-    /// `None` when no entry exists or the datum does not decode as `T` (by
+    /// `None` when no entry exists or the datum does not decode as `T`. By
     /// convention a key holds one value type, so a mismatch means the entry
-    /// is not the caller's).
+    /// is not the caller's.
     pub fn ext_as<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
         self.ext
             .get(key)
@@ -111,7 +111,7 @@ impl Ref {
     }
 }
 
-/// The ext-carrying inner wire form: an explicit map of `addr` + `ext`.
+/// The ext-carrying inner wire form. An explicit map of `addr` and `ext`.
 struct ExtMap<'a>(&'a Ref);
 
 impl Serialize for ExtMap<'_> {
@@ -123,12 +123,12 @@ impl Serialize for ExtMap<'_> {
     }
 }
 
-// Hand-written serde keeps the ext-free wire form byte-identical to the
-// previous newtype derive (a bare address, `(("hex"))` in RON, a string datum
-// in the `Datum` codec). An ext-carrying reference wraps a map of
-// `addr` + `ext` in the same newtype, so both forms parse through one entry
-// point (RON is not self-describing at the top level; the newtype is where
-// its parser branches).
+// Hand-written serde keeps the ext-free wire form identical to the original
+// newtype derive, so stored references keep their content addresses. That
+// form is a bare address, `(("hex"))` in RON and a string datum in the
+// `Datum` codec. An ext-carrying reference wraps a map of `addr` and `ext` in
+// the same newtype, so both forms parse through one entry point. RON is not
+// self-describing at the top level. The newtype is where its parser branches.
 impl Serialize for Ref {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         if self.ext.is_empty() {
@@ -244,10 +244,8 @@ impl Node for Ref {
     }
 
     fn register(&self, ctx: node::RegCtx<'_, '_>) {
-        // Check if node exists first, then decompose context to pass to nested register.
         if ctx.node(&self.addr).is_some() {
             let (get_node, path, vm) = ctx.into_parts();
-            // Safe to unwrap since we checked above.
             let n = (get_node)(&self.addr).unwrap();
             n.register(node::RegCtx::new(get_node, path, vm));
         }
@@ -297,9 +295,9 @@ mod tests {
         alpha: u32,
     }
 
-    /// Both wire shapes round-trip through the Datum codec: ext-free stays
-    /// the bare address string, ext-carrying takes the map form. The stored
-    /// canonical form survives (struct field order does not leak).
+    /// Both wire shapes round-trip through the Datum codec. Ext-free stays
+    /// the bare address string. Ext-carrying takes the map form. The stored
+    /// canonical form survives, so struct field order does not leak.
     #[test]
     fn ref_roundtrips_through_datum_codec() {
         let plain = test_ref();
@@ -344,7 +342,7 @@ mod tests {
         );
     }
 
-    /// serde_json coverage for the second self-describing format: both
+    /// serde_json coverage for the second self-describing format. Both
     /// shapes round-trip exactly.
     #[test]
     fn ref_roundtrips_through_json() {

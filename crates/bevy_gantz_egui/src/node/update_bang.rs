@@ -1,11 +1,11 @@
 //! A node that triggers push evaluation every update, outputting delta time.
 //!
 //! All `UpdateBang` nodes in a graph are combined into a single multi-source
-//! entrypoint via [`entrypoints()`]. Evaluation is driven by the
-//! [`drive_update_bangs`] Bevy system rather than from the node's `ui()` method,
-//! so it continues even when the graph tab is not visible.
+//! entrypoint by [`entrypoints()`]. The [`drive_update_bangs`] Bevy system
+//! drives evaluation, not the node's `ui()` method, so it continues when the
+//! graph tab is not visible.
 //!
-//! Note this bangs once per *update*, not once per rendered frame. Under
+//! This bangs once per update, not once per rendered frame. Under
 //! presentation modes like Mailbox, updates can occur more frequently than
 //! frames are presented.
 
@@ -19,14 +19,10 @@ use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 use steel::SteelVal;
 
-// ---------------------------------------------------------------------------
-// UpdateBang node
-// ---------------------------------------------------------------------------
-
 /// A node that drives continuous evaluation every update.
 ///
 /// Outputs the update's delta time in seconds as `f64`. This fires once per
-/// *update*, which may be more frequent than rendered frames under presentation
+/// update, which may be more frequent than rendered frames under presentation
 /// modes like Mailbox.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag)]
 pub struct UpdateBang;
@@ -89,12 +85,8 @@ impl gantz_egui::NodeUi for UpdateBang {
     }
 }
 
-// ---------------------------------------------------------------------------
-// UpdateBangCollector
-// ---------------------------------------------------------------------------
-
-/// Collects paths to all [`UpdateBang`] nodes found during graph traversal,
-/// discovered by [`Any`](std::any::Any) downcast within the erased UI node.
+/// Collects the path of every [`UpdateBang`] node in the graph, found by
+/// [`Any`](std::any::Any) downcast of the erased UI node.
 struct UpdateBangCollector {
     pub paths: Vec<Vec<usize>>,
 }
@@ -110,10 +102,6 @@ impl visit::TypedVisitor<DynNode> for UpdateBangCollector {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Entrypoints
-// ---------------------------------------------------------------------------
 
 /// Collect all `UpdateBang` nodes in the graph and return a single multi-source
 /// entrypoint covering all of them.
@@ -135,17 +123,13 @@ pub fn entrypoints(
     vec![gantz_core::compile::entrypoint::from_sources(sources)]
 }
 
-// ---------------------------------------------------------------------------
-// Bevy system
-// ---------------------------------------------------------------------------
-
 /// Drives `update!` nodes every update, independent of GUI visibility.
 ///
-/// For each open head, traverses the head's committed graph - read from the
-/// reified cache, which the working graph equals by the `WorkingGraph`
-/// invariant - to find all `UpdateBang` nodes, updates their state to the
-/// current update delta time, and triggers a single push evaluation for all
-/// of them.
+/// For each open head, walks the head's committed graph to find all
+/// `UpdateBang` nodes. Sets their state to the current update delta time and
+/// triggers a single push evaluation for all of them. The committed graph is
+/// read from the reified cache. It equals the working graph, see
+/// [`bevy_gantz::head::WorkingGraph`].
 pub fn drive_update_bangs(
     time: Res<Time>,
     registry: Res<crate::Registry>,
@@ -167,7 +151,6 @@ pub fn drive_update_bangs(
         let get_node =
             |ca: &gantz_ca::ContentAddr| crate::lookup_node(&cache, &builtins.instances, ca);
 
-        // Collect all UpdateBang paths.
         let mut collector = UpdateBangCollector { paths: vec![] };
         gantz_core::graph::visit_typed(&get_node, graph, &[], &mut collector);
 
@@ -175,7 +158,6 @@ pub fn drive_update_bangs(
             continue;
         }
 
-        // Update state for each UpdateBang.
         let Some(vm) = vms.get_mut(&entity) else {
             continue;
         };
@@ -185,7 +167,6 @@ pub fn drive_update_bangs(
             }
         }
 
-        // Trigger a single eval for all UpdateBangs combined.
         let sources = collector
             .paths
             .into_iter()

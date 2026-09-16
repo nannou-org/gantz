@@ -1,20 +1,20 @@
 //! Pluggable keyword sugar for the `.gantz` text format.
 //!
-//! Sugar is the layer of human-friendly node keywords (`expr`, `inlet`, ...)
-//! over the universal generic form `(node "Tag" (field datum)...)`. The format
-//! *core* reserves `ref`/`fn-ref` (references), `graph` (inline nesting) and
-//! `node` (the generic fallback) - those need format or `gantz_core` context and
-//! are never pluggable. Everything else is provided by a [`Sugar`]: [`CoreSugar`]
-//! carries `gantz_core`'s own node set, and each downstream crate implements
-//! `Sugar` for its nodes and composes them via [`Sugars`].
+//! Sugar is the layer of human-friendly node keywords such as `expr` and
+//! `inlet` over the generic form `(node "Tag" (field datum)...)`. The format
+//! core reserves `ref`, `fn-ref` and `node`. Those need format or `gantz_core`
+//! context and are never pluggable. A [`Sugar`] provides everything else.
+//! [`CoreSugar`] carries `gantz_core`'s own node set. Each downstream crate
+//! implements `Sugar` for its nodes and composes them via [`Sugars`].
 //!
-//! A `Sugar` only ever deals in tag *strings* and serde [`Datum`]s (read through
-//! [`SugarArgs`] and built with [`node_datum`]), so it adds no dependency on the
-//! concrete node crates and never sees the raw s-expression AST.
+//! A `Sugar` only deals in tag strings and serde [`Datum`]s. It reads them
+//! through [`SugarArgs`] and builds them with [`node_datum`]. So it adds no
+//! dependency on the concrete node crates and never sees the raw s-expression
+//! AST.
 //!
 //! Which sugars an application uses is a static property of its node-type
-//! universe: [`NodeSugar`] ties a top-level node type to its composite, and the
-//! convenience entry points read it via `N::sugar()`.
+//! universe. [`NodeSugar`] ties a top-level node type to its composite, and
+//! the convenience entry points read it via `N::sugar()`.
 
 use crate::datum::{Datum, node_datum};
 use crate::error::{ErrorKind, FormatError};
@@ -34,8 +34,8 @@ pub struct SugarArgs<'a> {
 impl<'a> SugarArgs<'a> {
     /// Wrap a slice of argument datums and the source they were read from.
     ///
-    /// The format builds this for [`Sugar::read_spec`]; it is also exposed so a
-    /// `Sugar` can be unit-tested in isolation (read args with [`crate::sexpr`]).
+    /// The format builds this for [`Sugar::read_spec`]. It is also exposed so a
+    /// `Sugar` can be unit-tested in isolation. Read args with [`crate::sexpr`].
     pub fn new(args: &'a [ExprKind], src: &'a str) -> Self {
         SugarArgs { args, src }
     }
@@ -85,8 +85,8 @@ impl<'a> SugarArgs<'a> {
         }
     }
 
-    /// Find a `#:<key>` keyword and return the following symbol (e.g. a mode
-    /// like `#:rate kr`).
+    /// Find a `#:<key>` keyword and return the following symbol, for example
+    /// the `kr` in `#:rate kr`.
     pub fn keyword_symbol(&self, key: &str) -> Result<Option<String>, FormatError> {
         match self.keyword_at(key) {
             Some((i, kw)) => Ok(Some(self.args.get(i + 1).and_then(as_symbol).ok_or_else(
@@ -136,7 +136,7 @@ impl<'a> SugarArgs<'a> {
         self.args.get(n).and_then(as_string)
     }
 
-    /// The `n`-th positional argument as a symbol (e.g. a log level).
+    /// The `n`-th positional argument as a symbol, for example a log level.
     pub fn symbol_at(&self, n: usize) -> Option<String> {
         self.args.get(n).and_then(as_symbol)
     }
@@ -153,15 +153,15 @@ impl<'a> SugarArgs<'a> {
 
     /// The verbatim source slice of the `n`-th argument.
     ///
-    /// The load-bearing primitive for code-carrying forms (`expr`/`branch`):
-    /// embedded Steel is captured byte-for-byte so node `src` strings - and the
-    /// content addresses that hash them - are preserved exactly.
+    /// The load-bearing primitive for code-carrying forms such as `expr` and
+    /// `branch`. Embedded Steel is captured byte-for-byte, so node `src`
+    /// strings and the content addresses that hash them are preserved exactly.
     pub fn verbatim_at(&self, n: usize) -> Option<&'a str> {
         self.args.get(n).and_then(|e| span_src(e, self.src))
     }
 
-    /// A malformed-form error located at the `n`-th argument (unlocated if the
-    /// argument is absent).
+    /// A malformed-form error located at the `n`-th argument. Unlocated if the
+    /// argument is absent.
     pub fn malformed_at(&self, n: usize, msg: impl Into<String>) -> FormatError {
         match self.args.get(n) {
             Some(e) => err_at(e, self.src, ErrorKind::Malformed(msg.into())),
@@ -181,38 +181,39 @@ impl<'a> SugarArgs<'a> {
 
 /// A set of keyword sugars layered over the generic `(node "Tag" ...)` form.
 ///
-/// Reading tries [`Sugar::read_spec`]/[`Sugar::read_bare`]; writing tries
-/// [`Sugar::write_spec`], falling back to the generic form. The reserved core
-/// heads (`ref`/`fn-ref`/`graph`/`node`) are matched by the reader *before* any
+/// Reading tries [`Sugar::read_spec`] and [`Sugar::read_bare`]. Writing tries
+/// [`Sugar::write_spec`] and falls back to the generic form. The reader
+/// matches the reserved core heads `ref`, `fn-ref` and `node` before any
 /// sugar, so a sugar cannot shadow them.
 pub trait Sugar {
     /// Read a list-headed sugar form `(<head> <args>...)` into a node datum.
-    /// `Ok(None)` means this sugar does not recognise `head` (try the next).
+    /// `Ok(None)` means this sugar does not recognise `head`, so the next
+    /// sugar is tried.
     fn read_spec(&self, head: &str, args: SugarArgs<'_>) -> Result<Option<Datum>, FormatError>;
 
-    /// Read a bare keyword (a unit node, e.g. `inlet`) into a node datum.
+    /// Read a bare unit-node keyword such as `inlet` into a node datum.
     fn read_bare(&self, keyword: &str) -> Option<Datum>;
 
-    /// Write a node datum (whose `type` is `tag`) as a sugared form. `None`
+    /// Write a node datum whose `type` is `tag` as a sugared form. `None`
     /// falls back to the generic `(node "Tag" ...)` form.
     fn write_spec(&self, tag: &str, node: &Datum) -> Option<String>;
 
-    /// The label stem to generate for a node with this tag (e.g. `inlet`); used
-    /// when naming nodes during serialization.
+    /// The label stem to generate for a node with this tag, for example
+    /// `inlet`. Used when naming nodes during serialization.
     fn keyword_for_tag(&self, tag: &str) -> Option<&str>;
 
     /// The label stem for a concrete `node` datum with this tag. Defaults to
-    /// [`keyword_for_tag`](Self::keyword_for_tag); a sugar whose one tag
-    /// covers many keywords (e.g. the plyphon `"Unit"` node, whose keyword
-    /// depends on its `unit` field) overrides this to pick the stem from the
-    /// datum.
+    /// [`Self::keyword_for_tag`]. A sugar whose one tag covers many keywords
+    /// overrides this to pick the stem from the datum. For example, the
+    /// plyphon `"Unit"` node's keyword depends on its `unit` field.
     fn label_stem(&self, tag: &str, node: &Datum) -> Option<&str> {
         let _ = node;
         self.keyword_for_tag(tag)
     }
 }
 
-/// Treat a reference to a sugar as a sugar, so `&S`/`&dyn Sugar` compose freely.
+/// Treat a reference to a sugar as a sugar, so `&S` and `&dyn Sugar` compose
+/// freely.
 impl<S: Sugar + ?Sized> Sugar for &S {
     fn read_spec(&self, head: &str, args: SugarArgs<'_>) -> Result<Option<Datum>, FormatError> {
         (**self).read_spec(head, args)
@@ -235,8 +236,8 @@ impl<S: Sugar + ?Sized> Sugar for &S {
     }
 }
 
-/// An ordered composition of sugars; for each query the first sugar to handle it
-/// wins, so earlier entries take precedence.
+/// An ordered composition of sugars. For each query the first sugar to handle
+/// it wins, so earlier entries take precedence.
 pub struct Sugars<'a>(pub Vec<&'a dyn Sugar>);
 
 impl Sugar for Sugars<'_> {
@@ -262,31 +263,31 @@ impl Sugar for Sugars<'_> {
     }
 
     fn label_stem(&self, tag: &str, node: &Datum) -> Option<&str> {
-        // Forwarded (not defaulted) so each member's own override applies.
+        // Forwarded rather than defaulted, so each member's own override applies.
         self.0.iter().find_map(|s| s.label_stem(tag, node))
     }
 }
 
 /// The composite keyword sugar for a node-type universe.
 ///
-/// Implemented once on an application's top-level `Box<dyn Node>` to select which
-/// [`Sugar`]s its node set uses; the convenience entry points
-/// ([`from_str`](crate::from_str)/[`to_string`](crate::to_string)) read it via
-/// `N::sugar()`. Use the `_with` variants to pass a sugar explicitly instead.
+/// Implemented once on an application's top-level `Box<dyn Node>` to select
+/// which [`Sugar`]s its node set uses. The convenience entry points
+/// [`crate::from_str`] and [`crate::to_string`] read it via `N::sugar()`. Use
+/// the `_with` variants to pass a sugar explicitly instead.
 pub trait NodeSugar {
     /// The composed sugar for this node set.
     fn sugar() -> Sugars<'static>;
 }
 
-/// The keyword sugars for `gantz_core`'s built-in node set: `inlet`, `outlet`,
-/// `apply`, `delay`, `id`, `expr` and `branch`. Downstream crates provide a
-/// [`Sugar`] for their own nodes and compose via [`Sugars`].
+/// The keyword sugars for `gantz_core`'s built-in node set. Those are `inlet`,
+/// `outlet`, `apply`, `delay`, `id`, `expr` and `branch`. Downstream crates
+/// provide a [`Sugar`] for their own nodes and compose via [`Sugars`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CoreSugar;
 
-/// Sugar keyword -> node tag, for the `gantz_core` builtins that lower to a
-/// plain serde object with no extra arguments. Order is the canonical display
-/// order.
+/// The node tag of each sugar keyword, for the `gantz_core` builtins that lower
+/// to a plain serde object with no extra arguments. Order is the canonical
+/// display order.
 const KEYWORD_TAG: &[(&str, &str)] = &[
     ("inlet", <gantz_core::node::graph::Inlet as NodeTag>::TAG),
     ("outlet", <gantz_core::node::graph::Outlet as NodeTag>::TAG),
@@ -344,11 +345,10 @@ impl Sugar for CoreSugar {
     }
 }
 
-// -- built-in reading --------------------------------------------------------
-
-/// Read an `(inlet [ty [description]])` / `(outlet ...)` form: two optional
-/// string args carrying the socket's hover-doc type label and description.
-/// Empty strings are omitted so they serialize as the struct's defaults.
+/// Read an `(inlet [ty [description]])` or `(outlet ...)` form. The two
+/// optional string args carry the socket's hover-doc type label and
+/// description. Empty strings are omitted so they serialize as the struct's
+/// defaults.
 fn inlet_outlet_spec(tag: &str, args: SugarArgs<'_>) -> Datum {
     let mut fields = Vec::new();
     if let Some(ty) = args.str_at(0).filter(|s| !s.is_empty()) {
@@ -398,8 +398,6 @@ fn branch_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     ))
 }
 
-// -- built-in writing --------------------------------------------------------
-
 fn write_expr(node: &Datum) -> String {
     let src = node.get("src").and_then(Datum::as_str).unwrap_or("'()");
     let requires = node
@@ -434,8 +432,8 @@ fn write_branch(node: &Datum) -> String {
     format!("(branch {src} {masks})")
 }
 
-/// Write an `Inlet`/`Outlet` as a bare keyword when it carries no socket docs,
-/// else as `(inlet ty [description])` so the hover docs round-trip.
+/// Write an `Inlet` or `Outlet` as a bare keyword when it carries no socket
+/// docs, else as `(inlet ty [description])` so the hover docs round-trip.
 fn write_inlet_outlet(keyword: &str, node: &Datum) -> String {
     let ty = node.get("ty").and_then(Datum::as_str).unwrap_or("");
     let desc = node
@@ -448,8 +446,6 @@ fn write_inlet_outlet(keyword: &str, node: &Datum) -> String {
         (_, false) => format!("({keyword} {} {})", quote(ty), quote(desc)),
     }
 }
-
-// -- helpers -----------------------------------------------------------------
 
 fn parse_int(e: &ExprKind, src: &str) -> Result<i64, FormatError> {
     sexpr::as_i64(e, src)
@@ -465,7 +461,8 @@ fn parse_f64(e: &ExprKind, src: &str) -> Result<f64, FormatError> {
 mod tests {
     use super::*;
 
-    /// A custom sugar for a hypothetical node set: `(gain <db>)` and bare `mute`.
+    /// A custom sugar for a hypothetical node set with `(gain <db>)` and bare
+    /// `mute`.
     struct GainSugar;
 
     impl Sugar for GainSugar {
@@ -510,8 +507,9 @@ mod tests {
             .expect("read_spec")
     }
 
-    /// `keyword_symbol` reads a `#:<key> <symbol>` pair: present -> the symbol,
-    /// absent -> `None`, a non-symbol value -> a malformed error.
+    /// `keyword_symbol` reads a `#:<key> <symbol>` pair. A present pair gives
+    /// the symbol. An absent one gives `None`. A non-symbol value gives a
+    /// malformed error.
     #[test]
     fn keyword_symbol_reads_a_mode() {
         fn with_args<T>(text: &str, f: impl FnOnce(SugarArgs<'_>) -> T) -> T {
@@ -534,8 +532,8 @@ mod tests {
     }
 
     /// `(expr <code> [#:out n] [#:require "name"]...)` round-trips the
-    /// requires: repeated occurrences read in order, a non-string value
-    /// errors, and a `#:require` nested inside the code slice is ignored.
+    /// requires. Repeated occurrences read in order. A non-string value
+    /// errors. A `#:require` nested inside the code slice is ignored.
     #[test]
     fn expr_requires_round_trip() {
         let s = CoreSugar;
@@ -575,7 +573,7 @@ mod tests {
             Some(r#"(expr (list (f $x) (g $x)) #:out 2 #:require "b/mod" #:require "a/mod")"#),
         );
 
-        // No requires: the field is absent and the written form unchanged.
+        // With no requires the field is absent and the written form is unchanged.
         let d = read_spec(&s, "(expr (+ 1 2))").expect("recognised");
         assert!(d.get("requires").is_none());
         assert_eq!(s.write_spec("Expr", &d).as_deref(), Some("(expr (+ 1 2))"));
@@ -592,7 +590,7 @@ mod tests {
                 .is_err()
         );
 
-        // A keyword inside the code s-expression is not a require: the
+        // A keyword inside the code s-expression is not a require. The
         // keyword scan only covers top-level args.
         let d = read_spec(&s, r#"(expr (foo #:require "x"))"#).expect("recognised");
         assert!(d.get("requires").is_none());
@@ -636,9 +634,9 @@ mod tests {
 
     #[test]
     fn custom_only_sugar_falls_through_to_generic() {
-        // A custom-only sugar that does not know the built-ins: reads return
-        // None (so the reader would reject the keyword) and writes return None
-        // (so the writer emits the generic `(node ...)` form).
+        // A custom-only sugar that does not know the built-ins. Reads return
+        // None, so the reader would reject the keyword. Writes return None,
+        // so the writer emits the generic `(node ...)` form.
         let s = GainSugar;
         assert!(
             s.read_spec("expr", SugarArgs::new(&[], ""))
@@ -684,7 +682,7 @@ mod tests {
             Some(r#"(outlet "list" "the reversed list")"#),
         );
 
-        // A bare (undocumented) inlet still writes as the bare keyword.
+        // An undocumented inlet still writes as the bare keyword.
         let bare = s.read_bare("inlet").expect("bare inlet");
         assert_eq!(s.write_spec("Inlet", &bare).as_deref(), Some("inlet"));
     }

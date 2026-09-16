@@ -10,14 +10,14 @@ pub struct HeadNameEditResponse {
 
 /// Show a validated name-editing `TextEdit` for the given head.
 ///
-/// Text is red when the name is empty, already exists (excluding the head's own
-/// current name), or contains the reserved nested-graph separator `:`. Returns
-/// a valid `new_branch` when a rename is committed via Enter or focus loss.
+/// Text is red when the name is empty, already exists or contains the reserved
+/// nested-graph separator `:`. The head's own current name does not count as
+/// existing. Returns a valid `new_branch` when Enter or focus loss commits a
+/// rename.
 ///
-/// `:` is reserved for the `parent:child` nesting convention and is only ever
-/// produced by creating a nested graph - so renaming always targets a plain
-/// (root) name. For a nested graph, that effectively saves it as a new root
-/// graph copy.
+/// `:` is reserved for the `parent:child` nesting convention. Only creating a
+/// nested graph produces it, so a rename always targets a plain root name.
+/// For a nested graph, that saves it as a new root graph copy.
 pub fn head_name_edit(
     head: &gantz_ca::Head,
     name: &mut String,

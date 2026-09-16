@@ -1,6 +1,6 @@
-//! Structured diagnostics extracted from compile and runtime errors, for
-//! frontends to surface against the graph (e.g. highlighting the offending
-//! node) and the emitted module source (e.g. highlighting the error span).
+//! Structured diagnostics extracted from compile and runtime errors.
+//! Frontends surface them against the graph and the emitted module source.
+//! For example, a frontend highlights the offending node and the error span.
 
 use crate::{
     compile::ModuleError,
@@ -23,14 +23,14 @@ pub enum Severity {
 /// emitted module source.
 #[derive(Clone, Debug)]
 pub struct Diagnostic {
-    /// Full path of the implicated node; empty means the graph as a whole.
+    /// Full path of the implicated node. Empty means the graph as a whole.
     pub path: Vec<node::Id>,
-    /// Implicated input indices on the node (e.g. an edge referencing an
-    /// invalid input), for edge-level attribution.
+    /// Implicated input indices on the node, for edge-level attribution. For
+    /// example, an edge referencing an invalid input.
     pub inputs: Vec<usize>,
     /// Implicated output indices on the node.
     pub outputs: Vec<usize>,
-    /// Byte range into the compiled module source ([`vm::Compiled::src`]).
+    /// Byte range into the compiled module source. See [`vm::Compiled::src`].
     pub span: Option<Range<usize>>,
     /// Human-readable description.
     pub message: String,
@@ -52,7 +52,7 @@ impl Diagnostic {
     }
 }
 
-/// Diagnostics for a [`vm::CompileError`] from [`vm::compile`]/[`vm::init`].
+/// Diagnostics for a [`vm::CompileError`] from [`vm::compile`] or [`vm::init`].
 pub fn from_compile_error(err: &vm::CompileError) -> Vec<Diagnostic> {
     match err {
         vm::CompileError::Module(err) => from_module_error(err),
@@ -101,8 +101,8 @@ pub fn from_module_error(err: &ModuleError) -> Vec<Diagnostic> {
     }
 }
 
-/// The diagnostic for a steel error raised evaluating the compiled module
-/// (typically from an entrypoint call).
+/// The diagnostic for a steel error raised evaluating the compiled module,
+/// typically from an entrypoint call.
 pub fn from_eval_error(err: &SteelErr, vm: &Engine, compiled: &vm::Compiled) -> Diagnostic {
     let span = vm::steel_err_span(err, vm, compiled);
     let path = span

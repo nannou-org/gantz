@@ -8,17 +8,17 @@ use thiserror::Error;
 /// A node that conditionally activates different subsets of its outputs.
 ///
 /// Like [`super::Expr`], the expression uses `$var` placeholders for inputs.
-/// Unlike `Expr`, the expression **must** return `(list branch-index value(s))`
-/// where `branch-index` selects which branch's outputs are activated.
+/// Unlike `Expr`, the expression must return `(list branch-index values)`.
+/// `branch-index` selects which branch's outputs are activated.
 ///
 /// Each branch is a [`Conns`] bitmask specifying which outputs are active when
 /// that branch is selected. The number of outputs is inferred from the `Conns`
-/// length (all branches must have the same length).
+/// length. All branches must have the same length.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, NodeTag)]
 pub struct Branch {
     src: String,
     branches: Vec<Conns>,
-    /// Unique `$` variable names in order of first appearance (cached).
+    /// Cached unique `$` variable names in order of first appearance.
     /// Skipped during serialization and recomputed on deserialization.
     #[serde(skip)]
     vars: Vec<String>,
@@ -78,7 +78,7 @@ pub enum BranchNewError {
     /// No branches provided.
     #[error("branches must have at least 1 entry, got 0")]
     NoBranches,
-    /// Output count (Conns length) is out of range.
+    /// Output count, the Conns length, is out of range.
     #[error("output count must be in 1..=16, got {0}")]
     InvalidOutputs(usize),
     /// Branches have inconsistent Conns lengths.
@@ -93,10 +93,10 @@ pub enum BranchNewError {
 impl Branch {
     /// Construct a `Branch` node.
     ///
-    /// - `src` is a Steel expression that must return `(list branch-index value(s))`.
+    /// - `src` is a Steel expression that must return `(list branch-index values)`.
     /// - `branches` defines the output activation mask for each branch. All
-    ///   entries must have the same `Conns` length (1-16), which determines the
-    ///   number of outputs.
+    ///   entries must have the same `Conns` length, which determines the
+    ///   number of outputs. The length must be in 1..=16.
     ///
     /// Returns an `Err` if validation fails or the expression cannot be parsed.
     pub fn new(src: impl Into<String>, branches: Vec<Conns>) -> Result<Self, BranchNewError> {
@@ -137,8 +137,8 @@ impl Branch {
 
     /// The unique `$` variable names, in order of first appearance.
     ///
-    /// Each name maps to the input at the same index, including the `$` or
-    /// `$?` (optional) prefix.
+    /// Each name maps to the input at the same index. The name includes the
+    /// `$` or optional `$?` prefix.
     pub fn vars(&self) -> &[String] {
         &self.vars
     }
@@ -261,7 +261,7 @@ impl Node for Branch {
         self.src().contains("state")
     }
 
-    /// Registers a state slot just in case `state` is referenced by the expr.
+    /// Registers a state slot in case the expr references `state`.
     fn register(&self, ctx: node::RegCtx<'_, '_>) {
         let (_, path, vm) = ctx.into_parts();
         node::state::init_value_if_absent(vm, path, || steel::SteelVal::Void).unwrap();
@@ -389,7 +389,7 @@ mod tests {
         for conns in b.branch_conns() {
             assert_eq!(conns.len(), 3);
         }
-        // First branch: [true, false] -> [true, false, false]
+        // The first branch grows from [true, false] to [true, false, false].
         assert_eq!(b.branch_conns()[0].get(0), Some(true));
         assert_eq!(b.branch_conns()[0].get(1), Some(false));
         assert_eq!(b.branch_conns()[0].get(2), Some(false));
@@ -454,7 +454,7 @@ mod tests {
         let ctx = node::MetaCtx::new(&|_| None);
         assert_eq!(b.n_inputs(ctx), 1);
 
-        // Verify expr with unconnected optional input produces (None).
+        // Verify expr with unconnected optional input produces `(None)`.
         let outputs = Conns::try_from([true, false]).unwrap();
         let expr_ctx = node::ExprCtx::new(&|_| None, &[0], &[None], &outputs);
         let expr = b.expr(expr_ctx).unwrap();

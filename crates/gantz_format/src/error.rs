@@ -23,9 +23,9 @@ impl Span {
 pub enum ErrorKind {
     /// The underlying Steel reader rejected the input.
     Read(String),
-    /// A form was malformed (wrong shape or arity).
+    /// A form had the wrong shape or arity.
     Malformed(String),
-    /// An unrecognised top-level form (not `graph`/`layout`/`commits`/`names`/`demo`).
+    /// An unrecognised top-level form.
     UnknownForm(String),
     /// An unrecognised node keyword.
     UnknownNodeKeyword(String),
@@ -33,7 +33,7 @@ pub enum ErrorKind {
     UnknownNode(String),
     /// A node label was declared more than once in the same graph.
     DuplicateNode(String),
-    /// A port index exceeded a node's input/output count.
+    /// A port index exceeded a node's input or output count.
     PortOutOfRange {
         /// The node label.
         node: String,
@@ -53,7 +53,7 @@ pub enum ErrorKind {
         /// The serde error message.
         msg: String,
     },
-    /// A referenced commit/graph was not present in the file.
+    /// A referenced commit or graph was not present in the file.
     MissingDependency(String),
 }
 
@@ -78,16 +78,15 @@ impl FormatError {
         }
     }
 
-    /// Construct an [`ErrorKind::Malformed`] error (wrong shape or arity) with no
-    /// source location - the constructor an out-of-crate [`Sugar`](crate::Sugar)
-    /// uses to report a malformed form.
+    /// Construct an [`ErrorKind::Malformed`] error with no source location. An
+    /// out-of-crate [`crate::Sugar`] uses it to report a malformed form.
     pub fn malformed(msg: impl Into<String>) -> Self {
         Self::new(ErrorKind::Malformed(msg.into()))
     }
 
-    /// Construct a [`ErrorKind::NodeDeserialize`] error for node `tag` - the
-    /// constructor an out-of-crate [`Normalize`](crate::Normalize)
-    /// implementation uses to report a node that failed its codec.
+    /// Construct an [`ErrorKind::NodeDeserialize`] error for node `tag`. An
+    /// out-of-crate [`crate::Normalize`] implementation uses it to report a
+    /// node that failed its codec.
     pub fn node_deserialize(tag: impl Into<String>, msg: impl Into<String>) -> Self {
         Self::new(ErrorKind::NodeDeserialize {
             tag: tag.into(),

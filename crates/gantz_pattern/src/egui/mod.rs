@@ -8,7 +8,7 @@ use std::hash::{Hash, Hasher};
 /// The buffered edit state for a [`Pmini`] node's notation editor, held in
 /// egui temp memory so keystrokes do not commit a new content address
 /// each frame. The buffer flushes when the edit settles, the editor
-/// loses focus or the node is deselected - so a mid-edit invalid
+/// loses focus or the node is deselected. So a mid-edit invalid
 /// notation never raises its compile diagnostic per keystroke.
 #[derive(Clone, Default)]
 struct PminiEditState {
@@ -45,8 +45,8 @@ impl NodeUi for Pmini {
                 .memory_mut(|m| m.data.remove_temp(state_id))
                 .unwrap_or_default();
 
-            // Resync the buffer when the node changed externally (undo,
-            // collab, a flushed edit elsewhere).
+            // Resync the buffer when the node changed externally, for
+            // example by undo or collab.
             let src_hash = hash_str(self.src());
             if src_hash != state.src_hash {
                 state.src_hash = src_hash;
@@ -55,7 +55,7 @@ impl NodeUi for Pmini {
 
             let font_id = egui::FontSelection::from(egui::TextStyle::Monospace).resolve(ui.style());
 
-            // Size the editor to the live buffer like the expr node: a
+            // Size the editor to the live buffer like the expr node. A
             // TextEdit lays its text out within `desired_width` minus its
             // horizontal margin, so measure the unwrapped galley and add
             // the margin back, plus 1px for sub-pixel rounding. The hint's
@@ -87,7 +87,7 @@ impl NodeUi for Pmini {
             let timed_out = buffer_dirty && (time - state.last_edit_time >= FLUSH_TIMEOUT);
             let deselected = state.was_selected && !selected;
             state.was_selected = selected;
-            // An invalid buffer still commits: the in-place recompile
+            // An invalid buffer still commits. The in-place recompile
             // keeps the previous module evaluable, so the last valid
             // pattern keeps playing while the node glows with the
             // compile diagnostic. The flush timing above keeps that

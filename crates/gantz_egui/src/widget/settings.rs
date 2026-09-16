@@ -1,6 +1,6 @@
-//! The "Settings" sidebar tab: globally-relevant configuration grouped into
-//! Global / Style / Keybinds / Panes subtabs, plus any application-supplied
-//! extension subtabs (see [`SettingsTab`]).
+//! The "Settings" sidebar tab. Globally relevant configuration grouped into
+//! the Global, Style, Keybinds and Panes subtabs, plus any application-supplied
+//! extension subtabs. See [`SettingsTab`].
 
 use super::gantz::{LayoutConfig, SceneConfig, ViewToggles};
 use crate::{Keymap, Responses, StyleConfig};
@@ -37,27 +37,27 @@ enum SubTab {
 /// Response from [`settings`].
 #[derive(Default)]
 pub struct SettingsResponse {
-    /// The global compile config was changed (Global subtab).
+    /// The global compile config was changed on the Global subtab.
     pub compile_config: Option<gantz_core::compile::Config>,
-    /// The change-tracking validation toggle was changed (Global subtab).
+    /// The change-tracking validation toggle was changed on the Global subtab.
     pub validate_change_tracking: Option<bool>,
-    /// The "Reset all demos" button was clicked (Global subtab).
+    /// The "Reset all demos" button on the Global subtab was clicked.
     pub reset_all_demos: bool,
-    /// The "Export" style button was clicked (Style subtab).
+    /// The "Export" button on the Style subtab was clicked.
     pub export_style: bool,
-    /// The "Import" style button was clicked (Style subtab).
+    /// The "Import" button on the Style subtab was clicked.
     pub import_style: bool,
-    /// The "reset all" layout button was clicked (Panes subtab).
+    /// The "reset all" layout button on the Panes subtab was clicked.
     pub reset_layout: bool,
     /// Payloads emitted by extension subtabs.
     pub responses: Responses,
 }
 
-/// Render the Settings pane: a subtab selector over Global / Style / Keybinds /
-/// Panes and any supplied extension subtabs.
+/// Render the Settings pane. A subtab selector over Global, Style, Keybinds
+/// and Panes plus any supplied extension subtabs.
 ///
 /// `ext_panes` lists the supplied extension panes for the Panes subtab's
-/// visibility checkboxes (see [`panes_config`][super::panes_config()]).
+/// visibility checkboxes. See [`panes_config`][super::panes_config()].
 pub fn settings(
     view: &mut ViewToggles,
     compile_config: Option<gantz_core::compile::Config>,
@@ -73,15 +73,15 @@ pub fn settings(
     let id = ui.id().with("settings_subtab");
     let mut tab = ui.data(|d| d.get_temp::<SubTab>(id)).unwrap_or_default();
 
-    // A previously selected extension subtab may no longer be supplied.
+    // An extension subtab stays selected only while the app supplies it.
     if let SubTab::Ext(ref name) = tab {
         if !ext_tabs.iter().any(|t| t.title() == name) {
             tab = SubTab::Global;
         }
     }
 
-    // Subtab selector rendered like the shared tab widget: plain labels (no
-    // box), the active tab in the strong text colour and the rest dim.
+    // The subtab selector matches the shared tab widget. Plain labels with no
+    // box, the active tab in the strong text colour and the rest dim.
     ui.horizontal(|ui| {
         let mut tab_label = |ui: &mut egui::Ui, this: SubTab, label: &str| {
             let color = if tab == this {
@@ -115,7 +115,7 @@ pub fn settings(
     let mut res = SettingsResponse::default();
     match tab {
         SubTab::Panes => {
-            // Pin "reset all" to the bottom; the toggles scroll above it.
+            // Pin "reset all" to the bottom. The toggles scroll above it.
             // `Frame::NONE` keeps the inner margin matching the other subtabs,
             // which render directly in the pane's central panel.
             egui::Panel::bottom(id.with("reset"))

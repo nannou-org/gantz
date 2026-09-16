@@ -1,19 +1,19 @@
 //! A per-head cache of reified working-graph node instances.
 //!
 //! The working graph stores nodes as [`NodeData`]. Rendering needs the typed
-//! form, so each pass reifies node weights through the app's
-//! [`NodeCodec`] - a datum clone, a serde decode and a box allocation per
-//! node. [`NodeInstances`] retains those instances between passes so the
+//! form, so each pass reifies node weights through the app's [`NodeCodec`].
+//! That costs a datum clone, a serde decode and a box allocation per node.
+//! [`NodeInstances`] retains those instances between passes, so the
 //! steady-state cost per node is one structural equality check.
 //!
-//! Correctness rests on the [`NodeUi`](crate::NodeUi) contract: an instance
-//! is a pure function of the `NodeData` it was reified from (all non-CA
-//! state lives in the VM or egui memory), so reusing a cached instance is
-//! indistinguishable from a fresh reify. Each entry therefore carries the
-//! `NodeData` it was reified from as its validity witness: the entry is
-//! valid exactly while the stored weight equals that witness. External
-//! mutations of the graph (undo, paste, collab edits, checkout) need no
-//! hooks - a rewritten weight simply misses and reifies fresh.
+//! Correctness rests on the [`crate::NodeUi`] contract. An instance is a
+//! pure function of the `NodeData` it was reified from. All non-CA state
+//! lives in the VM or egui memory. Reusing a cached instance is therefore
+//! indistinguishable from a fresh reify. Each entry carries the `NodeData`
+//! it was reified from as its validity witness. The entry is valid exactly
+//! while the stored weight equals that witness. External mutations of the
+//! graph such as undo, paste, collab edits or checkout need no hooks. A
+//! rewritten weight misses and reifies fresh.
 
 use crate::node::{NodeCodec, NodeUiInstance};
 use gantz_ca::NodeData;
@@ -22,9 +22,9 @@ use std::collections::HashMap;
 
 /// A cached reified instance paired with the weight it was reified from.
 pub struct InstanceEntry {
-    /// The `NodeData` this instance was reified from - the validity witness.
-    /// After an edit, set this to the newly erased data before
-    /// [`put`](NodeInstances::put)ting the entry back.
+    /// The `NodeData` this instance was reified from. It is the validity
+    /// witness. After an edit, set this to the newly erased data before the
+    /// entry goes back through [`NodeInstances::put`].
     pub src: NodeData,
     /// The reified instance and its eraser.
     pub inst: NodeUiInstance,
@@ -34,24 +34,24 @@ pub struct InstanceEntry {
 /// node index.
 ///
 /// An entry is valid exactly while the stored weight equals its
-/// [`src`](InstanceEntry::src) witness. Index-keyed like the other per-node
-/// working-graph state (VM state, layout, selection), it must be migrated
-/// through the same [`Reindex`](crate::ops::Reindex) replay on node removal -
-/// see [`apply_reindex`](Self::apply_reindex). A missed migration is safe
-/// (the witness check catches it) but wastes a reify.
+/// [`InstanceEntry::src`] witness. The cache is index-keyed like the other
+/// per-node working-graph state such as VM state, layout and selection. It
+/// must be migrated through the same [`crate::ops::Reindex`] replay on node
+/// removal. See [`NodeInstances::apply_reindex`]. A missed migration is safe
+/// because the witness check catches it, but it wastes a reify.
 #[derive(Default)]
 pub struct NodeInstances {
     entries: HashMap<usize, InstanceEntry>,
 }
 
 impl NodeInstances {
-    /// Remove and return the entry for the node at index `n_ix`: the cached
-    /// entry when its witness equals `data`, otherwise a freshly reified one
-    /// (with `src` cloned from `data`). Any stale entry is dropped either
-    /// way.
+    /// Remove and return the entry for the node at index `n_ix`. It is the
+    /// cached entry when its witness equals `data`. Otherwise it is a
+    /// freshly reified one with `src` cloned from `data`. Any stale entry is
+    /// dropped either way.
     ///
-    /// `Err` is the codec's decode failure (e.g. an unknown tag) - the
-    /// caller's placeholder path. No entry is retained on failure.
+    /// `Err` is the codec's decode failure, for example an unknown tag. That
+    /// is the caller's placeholder path. No entry is retained on failure.
     pub fn take(
         &mut self,
         codec: &NodeCodec,
@@ -71,23 +71,23 @@ impl NodeInstances {
     }
 
     /// Restore an entry after its pass, making it available to the next
-    /// [`take`](Self::take).
+    /// [`NodeInstances::take`].
     pub fn put(&mut self, n_ix: usize, entry: InstanceEntry) {
         self.entries.insert(n_ix, entry);
     }
 
-    /// A read-only lookup that hits only on a valid cached entry: `None` on
-    /// miss or stale witness. For probes that should not pay a reify - the
+    /// A read-only lookup that hits only on a valid cached entry. `None` on
+    /// a miss or a stale witness. For probes that must not pay a reify. The
     /// caller decides whether to fall back to a transient one.
     pub fn peek(&self, n_ix: usize, data: &NodeData) -> Option<&NodeUiInstance> {
         let entry = self.entries.get(&n_ix)?;
         (entry.src == *data).then_some(&entry.inst)
     }
 
-    /// Replay a [`remove_nodes`](crate::ops::remove_nodes) reindex onto the
-    /// cache keys: removed nodes' entries are dropped and swapped nodes'
-    /// entries follow them to their new index, mirroring
-    /// [`Reindex::apply_to_index`](crate::ops::Reindex::apply_to_index).
+    /// Replay a [`crate::ops::remove_nodes`] reindex onto the cache keys.
+    /// Removed nodes' entries are dropped. Swapped nodes' entries follow them
+    /// to their new index. This mirrors
+    /// [`crate::ops::Reindex::apply_to_index`].
     pub fn apply_reindex(&mut self, reindex: &crate::ops::Reindex) {
         for op in &reindex.0 {
             self.entries.remove(&op.removed);
@@ -99,8 +99,9 @@ impl NodeInstances {
         }
     }
 
-    /// Drop all entries. The next pass reifies every node fresh - use when
-    /// the whole graph is replaced (e.g. head checkout) to bound memory.
+    /// Drop all entries. The next pass reifies every node fresh. Use it when
+    /// the whole graph is replaced, for example on head checkout, to bound
+    /// memory.
     pub fn clear(&mut self) {
         self.entries.clear();
     }
@@ -129,8 +130,9 @@ mod tests {
         gantz_core::data::erase_node_typed(&gantz_core::node::Expr::new(src).unwrap()).unwrap()
     }
 
-    /// The cached instance's heap address - stable across `Box` moves, so it
-    /// witnesses whether a take returned the same instance or a fresh one.
+    /// The cached instance's heap address. It is stable across `Box` moves,
+    /// so it witnesses whether a take returned the same instance or a fresh
+    /// one.
     fn inst_ptr(entry: &InstanceEntry) -> *const () {
         &*entry.inst.node as *const dyn crate::NodeUi as *const ()
     }
@@ -159,10 +161,11 @@ mod tests {
         let mut cache = NodeInstances::default();
         let entry = cache.take(&codec, 0, &old).unwrap();
         cache.put(0, entry);
-        // Simulates any external mutation (undo, paste, collab, checkout):
-        // the stored weight changed out-of-band, no hooks involved. The
-        // fresh reify is witnessed semantically (the dropped stale box's
-        // address may be reused, so pointer inequality would be flaky).
+        // Simulates an external mutation such as undo, paste, collab or
+        // checkout. The stored weight changed out-of-band with no hooks
+        // involved. The fresh reify is witnessed semantically. The dropped
+        // stale box's address may be reused, so pointer inequality would be
+        // flaky.
         let entry = cache.take(&codec, 0, &new).unwrap();
         assert_eq!(entry.inst.erase().unwrap(), new);
         assert_eq!(entry.src, new);
@@ -170,7 +173,7 @@ mod tests {
         assert_eq!(cache.len(), 1);
     }
 
-    // An unknown tag fails without retaining anything; the slot still works
+    // An unknown tag fails without retaining anything. The slot still works
     // for a later known tag.
     #[test]
     fn take_err_retains_nothing() {
@@ -200,7 +203,7 @@ mod tests {
         assert!(cache.is_empty());
     }
 
-    // The edit path: erase to new data, update the witness, put. The entry
+    // The edit path is erase to new data, update the witness, put. The entry
     // then hits on the new data and misses on the old.
     #[test]
     fn edit_updates_witness() {
@@ -218,9 +221,9 @@ mod tests {
         let entry = cache.take(&codec, 0, &new).unwrap();
         assert_eq!(inst_ptr(&entry), ptr);
         cache.put(0, entry);
-        // Misses on the old data: the fresh reify erases back to `old`,
-        // whereas the (now dropped) cached instance would have erased to
-        // `new`. Pointer inequality would be flaky under allocator reuse.
+        // Misses on the old data. The fresh reify erases back to `old`. The
+        // dropped cached instance would have erased to `new`. Pointer
+        // inequality would be flaky under allocator reuse.
         let entry = cache.take(&codec, 0, &old).unwrap();
         assert_eq!(entry.inst.erase().unwrap(), old);
     }
@@ -241,8 +244,8 @@ mod tests {
         assert_eq!(cache.len(), 1);
     }
 
-    // Reindex replay: the removed slot's entry is dropped and the swapped
-    // node's entry follows it down, consistent with `Reindex::apply_to_index`.
+    // Reindex replay drops the removed slot's entry. The swapped node's entry
+    // follows it down, consistent with `Reindex::apply_to_index`.
     #[test]
     fn apply_reindex_migrates_entries() {
         let codec = codec();
@@ -257,7 +260,7 @@ mod tests {
             ptrs.push(inst_ptr(&entry));
             cache.put(i, entry);
         }
-        // Remove index 1 from a 3-node graph: node 2 swaps down into slot 1.
+        // Remove index 1 from a 3-node graph. Node 2 swaps down into slot 1.
         let reindex = Reindex(vec![RemoveOp {
             removed: 1,
             moved_from: Some(2),

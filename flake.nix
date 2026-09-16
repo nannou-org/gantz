@@ -38,9 +38,9 @@
         };
         serve-gantz-website = final.callPackage ./pkgs/serve-gantz-website.nix { };
         wasm-bindgen-cli = prev.callPackage ./pkgs/wasm-bindgen-cli.nix { };
-        # Nightly wasm toolchain for the AudioWorklet website build: `-Z build-std`
-        # (recompiling `std` with atomics for WASM threads) is nightly-only, and
-        # `rust-src` supplies the `std` sources it rebuilds from.
+        # Nightly wasm toolchain for the AudioWorklet website build. The build
+        # recompiles `std` with atomics for WASM threads via `-Z build-std`, which
+        # is nightly-only. `rust-src` supplies the `std` sources it rebuilds from.
         rustToolchainWasmNightly = final.rust-bin.selectLatestNightlyWith (
           toolchain:
           toolchain.default.override {

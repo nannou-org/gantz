@@ -1,21 +1,20 @@
-//! The `await` node: receive a gantz task, swallow evaluation, and fire a
+//! The `await` node receives a gantz task, swallows evaluation, and fires a
 //! push evaluation with the task's result once it resolves.
 //!
 //! On receiving a [`TaskHandle`] the node stashes it in its state and selects
 //! a dead branch arm, so evaluation stops at the node. The [`drive_awaits`]
-//! Bevy system polls the stashed task in place each update, and on completion
+//! Bevy system polls the stashed task in place each update. On completion it
 //! writes the result pair into the node's state and triggers the node's push
-//! entrypoint - the value output fires on success, the error output on
+//! entrypoint. The value output fires on success, the error output on
 //! failure. A non-task input value passes straight through the value output
 //! in the same evaluation.
 //!
-//! Pending tasks never leave the node's VM state, so the state-maintenance
-//! machinery carries in-flight work everywhere the node goes: editor deletes
-//! reindex it via `remove_value`/`move_value`, and head navigation, merges and
-//! collab sync migrate it via `remap_root` (dropping - and thereby cancelling
-//! - the tasks of deleted nodes). The one corner where a pending task is
-//! deliberately dropped is nesting, which removes rather than relocates the
-//! nested nodes' state.
+//! Pending tasks never leave the node's VM state, so state maintenance
+//! carries in-flight work everywhere the node goes. Editor deletes reindex
+//! it with `remove_value` and `move_value`. Head navigation, merges and
+//! collab sync migrate it with `remap_root`. Dropping the state of a deleted
+//! node cancels its tasks. Nesting removes the nested nodes' state rather
+//! than relocating it, so nesting drops a pending task.
 
 use bevy_ecs::prelude::*;
 use bevy_egui::egui;
@@ -34,24 +33,20 @@ const VALUE_ARM: isize = 0;
 /// The branch arm firing the error output on task failure.
 const ERROR_ARM: isize = 1;
 
-/// The dead branch arm selected while a task is pending: no output fires.
+/// The dead branch arm selected while a task is pending. No output fires.
 const PENDING_ARM: isize = 2;
-
-// ---------------------------------------------------------------------------
-// Await node
-// ---------------------------------------------------------------------------
 
 /// A node that awaits a gantz task received on its input.
 ///
-/// Receiving a task swallows the evaluation (nothing fires downstream) until
-/// the task resolves, at which point [`drive_awaits`] fires the node's push
-/// entrypoint: output 0 carries the resolved value, output 1 the error string
-/// if the task failed. Any non-task input value passes straight through
-/// output 0 in the same evaluation.
+/// Receiving a task swallows the evaluation until the task resolves. Then
+/// [`drive_awaits`] fires the node's push entrypoint. Output 0 carries the
+/// resolved value. Output 1 carries the error string if the task failed. A
+/// non-task input value passes straight through output 0 in the same
+/// evaluation.
 ///
-/// The node's state is always a `(list arm payload)` branch pair: the pending
-/// arm holding the stashed task (or nothing), or the value/error arm written
-/// by the driver just before it fires the entrypoint.
+/// The node's state is always a `(list arm payload)` branch pair. It is the
+/// pending arm holding the stashed task or nothing, or the value or error
+/// arm written by the driver just before it fires the entrypoint.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, NodeTag)]
 pub struct Await;
 
@@ -61,13 +56,13 @@ impl gantz_core::Node for Await {
     }
 
     fn n_outputs(&self, _ctx: MetaCtx) -> usize {
-        // Output 0 = the resolved value; output 1 = the error string.
+        // Output 0 is the resolved value. Output 1 is the error string.
         2
     }
 
     fn branches(&self, _ctx: MetaCtx) -> Vec<EvalConf> {
-        // Arm 0 fires the value output, arm 1 the error output, arm 2 neither
-        // (a task was received or is still pending - evaluation stops here).
+        // Arm 0 fires the value output, arm 1 the error output, arm 2 neither.
+        // Arm 2 is selected while a task is pending, so evaluation stops here.
         vec![
             EvalConf::Set(Conns::try_from([true, false]).unwrap()),
             EvalConf::Set(Conns::try_from([false, true]).unwrap()),
@@ -86,11 +81,11 @@ impl gantz_core::Node for Await {
 
     fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
         let expr = match ctx.inputs().first() {
-            // A value arrived: stash tasks in state for the driver and select
-            // the dead arm; pass anything else straight through the value
-            // output. Any pending predecessor is cancelled explicitly (latest
-            // wins) - relying on the replaced pair being dropped would be
-            // best-effort timing, since steel heap-boxes `set!` state.
+            // A value arrived. Stash a task in state for the driver and select
+            // the dead arm. Pass anything else straight through the value
+            // output. Any pending predecessor is cancelled explicitly, so the
+            // latest task wins. Steel heap-boxes `set!` state, so the drop of
+            // the replaced pair is not a reliable cancel.
             Some(Some(input)) => format!(
                 "(if ({TASK_PREDICATE} {input}) \
                      (begin \
@@ -99,8 +94,8 @@ impl gantz_core::Node for Await {
                          (list {PENDING_ARM} '())) \
                      (list {VALUE_ARM} {input}))"
             ),
-            // Entered via the push entry fn: the driver wrote the result pair
-            // into state, which is exactly the branch pair to return.
+            // Entered via the push entry fn. The driver wrote the result pair
+            // into state, which is the branch pair to return.
             _ => "(begin state)".to_string(),
         };
         node::parse_expr(&expr)
@@ -163,11 +158,7 @@ impl gantz_egui::NodeUi for Await {
     }
 }
 
-// ---------------------------------------------------------------------------
-// State pairs
-// ---------------------------------------------------------------------------
-
-/// The state pair while no result is pending delivery: the dead arm with an
+/// The state pair while no result is pending delivery. The dead arm with an
 /// empty payload.
 pub fn dead_pair() -> SteelVal {
     pair(PENDING_ARM, SteelVal::ListV(Default::default()))
@@ -192,8 +183,8 @@ fn pair(arm: isize, payload: SteelVal) -> SteelVal {
 /// holding one.
 ///
 /// The returned handle shares the cell of the one in state, so checking it
-/// polls the task in place. A dead pair's `'()` payload simply fails the
-/// handle conversion.
+/// polls the task in place. A dead pair's `'()` payload fails the handle
+/// conversion.
 pub fn pending_handle(state: &SteelVal) -> Option<TaskHandle> {
     let SteelVal::ListV(list) = state else {
         return None;
@@ -208,12 +199,8 @@ pub fn pending_handle(state: &SteelVal) -> Option<TaskHandle> {
     TaskHandle::from_steelval(payload).ok()
 }
 
-// ---------------------------------------------------------------------------
-// AwaitCollector
-// ---------------------------------------------------------------------------
-
-/// Collects the path of every [`Await`] node found during graph traversal,
-/// discovered by [`Any`](std::any::Any) downcast within the erased UI node.
+/// Collects the path of every [`Await`] node in the graph, found by
+/// [`Any`](std::any::Any) downcast of the erased UI node.
 struct AwaitCollector {
     pub paths: Vec<Vec<usize>>,
 }
@@ -227,21 +214,17 @@ impl visit::TypedVisitor<DynNode> for AwaitCollector {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Bevy system
-// ---------------------------------------------------------------------------
-
 /// Drives `await` nodes every update, independent of GUI visibility.
 ///
 /// For each open head and each `await` node whose state is a pending pair,
 /// checks the stashed task in place. On completion it writes the result pair
-/// into the node's state - overwriting the pair releases the handle - and
-/// triggers the node's push entrypoint.
+/// into the node's state and triggers the node's push entrypoint.
+/// Overwriting the pair releases the handle.
 ///
 /// Pending tasks live entirely in node state, so nothing here needs pruning
-/// or remapping: deleting a node, closing a head, or navigating to a graph
-/// without the node drops the state (cancelling the task), while reindexing
-/// edits and head navigation migrate it with the node.
+/// or remapping. Deleting a node, closing a head, or navigating to a graph
+/// without the node drops the state and cancels the task. Reindexing edits
+/// and head navigation migrate it with the node.
 pub fn drive_awaits(
     registry: Res<crate::Registry>,
     cache: Res<crate::GraphCache>,
@@ -251,8 +234,8 @@ pub fn drive_awaits(
     mut cmds: Commands,
 ) {
     for (entity, head_ref) in heads.iter() {
-        // The head's committed graph, read from the reified cache (the
-        // working graph equals it by the `WorkingGraph` invariant).
+        // The head's committed graph, read from the reified cache. It equals
+        // the working graph, see `bevy_gantz::head::WorkingGraph`.
         let Some(graph_ca) = registry.head_commit(&head_ref.0).map(|c| c.graph) else {
             continue;
         };
@@ -298,9 +281,8 @@ pub fn drive_awaits(
             }
             let n_outputs = 2;
             let entrypoint = gantz_core::compile::entrypoint::push(path, n_outputs);
-            // Guard against delivering through an entry fn the current module
-            // no longer compiles (e.g. the task resolved in the same update
-            // as a graph edit).
+            // The current module may not compile this entry fn. For example,
+            // the task resolved in the same update as a graph edit.
             let fn_name = gantz_core::compile::entry_fn_name(&entrypoint.id());
             if vm.extract_value(&fn_name).is_err() {
                 bevy_log::debug!("await eval skipped: entry fn {fn_name} not compiled");

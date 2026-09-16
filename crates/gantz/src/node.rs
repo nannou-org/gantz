@@ -1,6 +1,5 @@
-/// The `.gantz` keyword sugar carrier for the app's node set: the
-/// `gantz_core`, `gantz_std`, `gantz_egui`, `bevy_gantz_egui` and
-/// `gantz_plyphon` node sugars composed.
+/// The `.gantz` keyword sugar carrier for the app's node set. It composes
+/// every domain's node sugar.
 pub struct NodeSet;
 
 impl gantz_format::NodeSugar for NodeSet {
@@ -16,12 +15,13 @@ impl gantz_format::NodeSugar for NodeSet {
     }
 }
 
-/// The value-level codec for the app's node set: typed nodes to/from the
-/// registry's erased `NodeData` form, plus the set's `.gantz` sugar.
+/// The value-level codec for the app's node set. It maps typed nodes to and
+/// from the registry's erased `NodeData` form and carries the set's `.gantz`
+/// sugar.
 ///
-/// This list is the app's wire-format manifest: adding a node type to the
-/// app is one line here (the `codec_covers_every_node_set_case` and
-/// `node_set_addr_pins` gate tests enforce it).
+/// This list is the app's wire-format manifest. Adding a node type to the app
+/// is one line here. The `codec_covers_every_node_set_case` and
+/// `node_set_addr_pins` gate tests enforce it.
 pub fn codec() -> gantz_egui::node::NodeCodec {
     gantz_egui::ui_node_codec! {
         NodeSet {
@@ -58,7 +58,8 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
     }
 }
 
-/// The app's full builtin node set: every domain's builtin specs composed.
+/// The app's full builtin node set, composed from every domain's builtin
+/// specs.
 pub fn builtins() -> gantz_core::Builtins {
     gantz_core::Builtins::from_specs(
         gantz_core::node::builtins()
@@ -93,7 +94,7 @@ pub fn push_plain_domains(app: &mut bevy::app::App) {
 mod tests {
     use gantz_egui::node::DynNode;
 
-    /// The data registry: graphs stored erased.
+    /// The data registry, which stores graphs erased.
     type DataReg = gantz_ca::Registry;
     /// The typed cache serving the registry's graphs as the app's node set.
     type Reified = gantz_core::data::ReifiedGraphs<DynNode>;
@@ -159,7 +160,7 @@ mod tests {
         gantz_core::data::erase_node_typed(node).expect("erase")
     }
 
-    /// A data graph over the given stored node weights (no edges).
+    /// A data graph over the given stored node weights, with no edges.
     fn data_graph(nodes: impl IntoIterator<Item = gantz_ca::NodeData>) -> gantz_ca::DataGraph {
         let mut g = gantz_ca::DataGraph::default();
         for nd in nodes {
@@ -168,8 +169,8 @@ mod tests {
         g
     }
 
-    /// Commit `graph` under `name`, returning the new commit and the graph's
-    /// address (the registry's identity for the graph).
+    /// Commit `graph` under `name`. Returns the new commit and the graph's
+    /// address.
     fn commit_to_name(
         reg: &mut DataReg,
         ts: std::time::Duration,
@@ -181,7 +182,7 @@ mod tests {
         (ca, ga)
     }
 
-    /// Fire the push entrypoint of the node at `node_ix` (a flat-graph index).
+    /// Fire the push entrypoint of the flat-graph node at `node_ix`.
     fn fire_push(
         vm: &mut gantz_core::steel::steel_vm::engine::Engine,
         eps: &[gantz_core::compile::Entrypoint],
@@ -199,11 +200,11 @@ mod tests {
             .expect("push entrypoint");
     }
 
-    /// Gate test for the app's builtin palette: the set composed from the
+    /// Gate test for the app's builtin palette. The set composed from the
     /// per-domain `builtins()` lists must match the full expected name set.
-    /// A builtin dropped from (or added to) any domain list fails here. The
-    /// `~` set is the bespoke DSP nodes plus one entry per plyphon unit
-    /// descriptor row (whose own gate tests cover the table's contents).
+    /// A builtin dropped from or added to any domain list fails here. The `~`
+    /// set is the bespoke DSP nodes plus one entry per plyphon unit descriptor
+    /// row. The table's own gate tests cover its contents.
     #[test]
     fn builtins_match_expected_name_set() {
         let mut expected = vec![
@@ -242,8 +243,8 @@ mod tests {
         assert_eq!(names, expected);
     }
 
-    /// Build the marker-lookup test registry: `child` declares body + view
-    /// `gui` markers, `parent` references `child`.
+    /// Build the marker-lookup test registry. `child` declares body and view
+    /// `gui` markers. `parent` references `child`.
     fn gui_marker_registry() -> DataReg {
         use std::time::Duration;
         let text = "\
@@ -264,8 +265,8 @@ mod tests {
             .into()
     }
 
-    /// `Env::gui_markers` reads a referenced graph's markers (with their
-    /// roles) from its stored node data.
+    /// `Env::gui_markers` reads a referenced graph's markers and their roles
+    /// from its stored node data.
     #[test]
     fn gui_markers_resolve_roles() {
         use gantz_egui::node::{Gui, GuiRole};
@@ -311,13 +312,14 @@ mod tests {
             gantz_egui::reg::n_outputs_at(&reg, &parent, &[0, 0]),
             Some(1)
         );
-        // A terminal ref segment resolves transparently: the child graph has
+        // A terminal ref segment resolves transparently. The child graph has
         // no outlets, so the ref node reports 0 outputs.
         assert_eq!(gantz_egui::reg::n_outputs_at(&reg, &parent, &[0]), Some(0));
     }
 
-    /// `Env::ref_target` hops exactly one reference stand-in; non-ref nodes
-    /// and `Fn` nodes (a function value, not a stand-in) never resolve.
+    /// `Env::ref_target` hops exactly one reference stand-in. Non-ref nodes
+    /// never resolve. `Fn` nodes are function values, not stand-ins, so they
+    /// never resolve either.
     #[test]
     fn ref_target_resolves_named_ref() {
         let registry = gui_marker_registry();
@@ -330,9 +332,9 @@ mod tests {
         assert_eq!(reg.ref_target(&parent, 0), Some(child));
         // The number in the child is not a ref.
         assert_eq!(reg.ref_target(&child, 0), None);
-        // An `Fn`-wrapped ref erases under its own tag, which the data
-        // walk's reference rule deliberately does not match - even though
-        // the ref is still carried structurally for reachability.
+        // An `Fn`-wrapped ref erases under its own tag, which the data walk's
+        // reference rule does not match by design. The ref is still carried
+        // structurally for reachability.
         let named =
             gantz_egui::node::NamedRef::new(name("child"), gantz_core::node::Ref::new(child));
         let nd = erased(&gantz_core::node::Fn(named));
@@ -340,7 +342,7 @@ mod tests {
         assert_eq!(nd.refs, vec![child]);
     }
 
-    /// `reg::resolve_ref_chain` folds ref hops (possibly none) and finds the
+    /// `reg::resolve_ref_chain` folds zero or more ref hops and finds the
     /// leaf graph's body marker.
     #[test]
     fn resolve_ref_chain_finds_leaf_body_marker() {
@@ -364,10 +366,9 @@ mod tests {
         assert_eq!(gantz_egui::reg::resolve_ref_chain(&reg, parent, &[]), None);
     }
 
-    /// Gate test for the builtin data <-> typed instance seam: every composed
+    /// Gate test for the builtin data to typed instance seam. Every composed
     /// builtin's stored `NodeData` reifies through the app codec and
-    /// re-erases to the identical `NodeData` (same canonical form, same
-    /// content address).
+    /// re-erases to the identical `NodeData` with the same content address.
     #[test]
     fn builtins_round_trip_through_codec() {
         let codec = super::codec();
@@ -520,9 +521,9 @@ mod tests {
             node_datum("Out", vec![]),
             node_datum("ScopeOut", vec![]),
             node_datum("ScopeOut", vec![("size", Datum::U64(64))]),
-            // Legacy: pre-channel-group `~scopeout` data carries a `channels`
-            // field; serde ignores the unknown field so old registries still load
-            // (the count is inferred from the input signal's width now).
+            // Legacy: older `~scopeout` data carries a `channels` field. serde
+            // ignores the unknown field, so old registries still load. The
+            // count is inferred from the input signal's width.
             node_datum(
                 "ScopeOut",
                 vec![("channels", Datum::U64(3)), ("size", Datum::U64(64))],
@@ -537,10 +538,10 @@ mod tests {
         ]
     }
 
-    /// The stored form of one hand-authored wire datum: split the `"type"`
-    /// tag out and round-trip the fields through the codec's typed node,
-    /// recomputing the canonical form and the refs/blobs columns (mirrors
-    /// the `.gantz` parse path's normalization).
+    /// The stored form of one hand-authored wire datum. Split the `"type"`
+    /// tag out and round-trip the fields through the codec's typed node. This
+    /// recomputes the canonical form and the refs and blobs columns, as the
+    /// `.gantz` parse path does.
     fn node_data_of(datum: gantz_format::Datum) -> gantz_ca::NodeData {
         let gantz_format::Datum::Map(mut entries) = datum else {
             panic!("node datum is not a map");
@@ -558,7 +559,7 @@ mod tests {
             .unwrap_or_else(|e| panic!("`{}` failed to normalize: {e}", nd.tag))
     }
 
-    /// Every manifest case decodes through the codec: a type authored in the
+    /// Every manifest case decodes through the codec. A type authored in the
     /// wire cases but missing from `ui_node_codec!` fails here.
     #[test]
     fn codec_covers_every_node_set_case() {
@@ -572,8 +573,8 @@ mod tests {
     }
 
     /// A `Unit` datum naming a unit outside the descriptor table fails to
-    /// reify - the same UX as an unknown node type tag, rather than a
-    /// half-alive node whose sockets cannot be enumerated.
+    /// reify, like an unknown node type tag. It must not become a half-alive
+    /// node whose sockets cannot be enumerated.
     #[test]
     fn unknown_unit_name_fails_to_reify() {
         use gantz_format::Datum;
@@ -594,8 +595,8 @@ mod tests {
         );
     }
 
-    /// The stored instances the erased-representation gate runs over: every
-    /// wire case above, plus types without hand-authored cases.
+    /// The stored instances the erased-representation gate runs over. That is
+    /// every wire case above, plus types without hand-authored cases.
     fn node_set_data() -> Vec<gantz_ca::NodeData> {
         let mut nodes: Vec<gantz_ca::NodeData> =
             node_set_cases().into_iter().map(node_data_of).collect();
@@ -614,11 +615,11 @@ mod tests {
         nodes
     }
 
-    /// Gate test for the registry's erased representation: every node in the
+    /// Gate test for the registry's erased representation. Every node in the
     /// set must erase to canonical `NodeData` whose typed round-trip through
-    /// the codec is a fixpoint (a stable content address), with structural
-    /// refs matching the graph-level reachability reporting. A node type with
-    /// order- or shape-unstable serde fails here.
+    /// the codec is a fixpoint with a stable content address. Structural refs
+    /// must match the graph-level reachability reporting. A node type with
+    /// order-unstable or shape-unstable serde fails here.
     #[test]
     fn node_set_erases_canonically() {
         fn no_node(_: &gantz_ca::ContentAddr) -> Option<&'static dyn gantz_core::Node> {
@@ -658,11 +659,11 @@ mod tests {
         }
     }
 
-    /// Pin every node type's canonical content address (the first
-    /// `node_set_instances` case per tag): erased node addresses are
-    /// wire-stability-critical, so any serde change that shifts one - e.g.
-    /// emitting a defaulted field, renaming a field, reordering an enum -
-    /// fails here loudly and must be a deliberate decision.
+    /// Pin every node type's canonical content address, taken from the first
+    /// `node_set_data` case per tag. Erased node addresses are
+    /// wire-stability-critical. Any serde change that shifts one fails here
+    /// and must be a deliberate decision. Examples are emitting a defaulted
+    /// field, renaming a field or reordering an enum.
     #[test]
     fn node_set_addr_pins() {
         let mut seen = std::collections::BTreeMap::new();
@@ -799,8 +800,8 @@ mod tests {
     }
 
     /// `PlyphonSugar` is composed into the app's `NodeSugar`, so the DSP nodes
-    /// serialize as their `~`-prefixed keyword forms (not the generic
-    /// `(node "SinOsc" ...)` fallback). Guards that the sugar stays wired in.
+    /// serialize as their `~`-prefixed keyword forms rather than the generic
+    /// `(node ...)` fallback. Guards that the sugar stays wired in.
     #[test]
     fn dsp_nodes_use_plyphon_keyword_sugar() {
         use gantz_format::Sugar;
@@ -845,9 +846,9 @@ mod tests {
         }
     }
 
-    /// The DSP nodes are inert in the control-rate Steel world (they emit
-    /// placeholder exprs and declare no entrypoints), so a `~sinosc -> ~out` graph
-    /// still compiles through the VM without error - and the app's `ToNodeDsp`
+    /// The DSP nodes are inert in the control-rate Steel world. They emit
+    /// placeholder exprs and declare no entrypoints, so a `~sinosc` to `~out`
+    /// graph compiles through the VM without error. The app's `ToNodeDsp`
     /// impl lets a synthdef derive from the same graph. This guards the
     /// two-independent-backends design end to end.
     #[test]
@@ -858,9 +859,9 @@ mod tests {
         type G = Graph<DynNode>;
 
         // Two sines packed into one 2-wide edge, across a `~bus`, unpacked,
-        // channel 1 to the out - covering the whole dsp node set including the
-        // routing pair and the boundary (which the single-def `derive_synthdef`
-        // fuses to a plain wire).
+        // channel 1 to the out. This covers the whole dsp node set, including
+        // the routing pair and the boundary. The single-def `derive_synthdef`
+        // fuses the boundary to a plain wire.
         let sinosc = || gantz_plyphon::UnitNode::from_unit("SinOsc").expect("SinOsc row");
         let mut g: G = Graph::default();
         let s0 = g.add_node(Box::new(sinosc()) as DynNode);
@@ -875,15 +876,15 @@ mod tests {
         g.add_edge(bus, up, Edge::new(0.into(), 0.into()));
         g.add_edge(up, o, Edge::new(1.into(), 0.into()));
 
-        // Steel-inert: compiles through the control-rate VM (no entrypoints, no
-        // error) even though it is a pure-dsp graph.
+        // A pure-dsp graph compiles through the control-rate VM with no
+        // entrypoints and no error.
         let get_node = |_: &gantz_ca::ContentAddr| -> Option<&dyn gantz_core::Node> { None };
         let config = gantz_core::compile::Config::default();
         gantz_core::vm::init(&get_node, &g, &[], &config)
             .expect("DSP graph must compile in the Steel VM");
 
-        // The `~out` sink is discoverable via `ToNodeDsp` and a synthdef derives;
-        // the routing pair emits no units.
+        // The `~out` sink is discoverable via `ToNodeDsp` and a synthdef
+        // derives. The routing pair emits no units.
         let derived = derive_synthdef(&g, 2, "test").expect("derive");
         assert_eq!(
             derived.def.units.len(),
@@ -892,10 +893,10 @@ mod tests {
         );
     }
 
-    /// A head graph with `~sinosc -> ~out` plus unconnected `inlet`/`outlet`
-    /// nodes flattens correctly (root-level boundaries stay as inert non-DSP
-    /// markers) and derives a sounding synthdef. Regression guard for the
-    /// GUI's `flatten_from_registry` path with `DynNode`.
+    /// A head graph with `~sinosc` to `~out` plus unconnected `inlet` and
+    /// `outlet` nodes flattens correctly and derives a sounding synthdef.
+    /// Root-level boundaries stay as inert non-DSP markers. Guards the GUI's
+    /// `flatten_from_registry` path with `DynNode`.
     #[test]
     fn head_graph_with_unconnected_inlets_derives_sound() {
         use std::time::Duration;
@@ -912,8 +913,8 @@ mod tests {
         let graph = head_graph(&reified, &registry, &head).expect("head graph");
 
         let flat = gantz_plyphon::flatten_from_registry(graph, &reified).expect("flatten");
-        // Root inlet/outlet survive as markers (the head graph's interface);
-        // they are non-DSP, so derivation ignores them.
+        // The root inlet and outlet survive as markers of the head graph's
+        // interface. They are non-DSP, so derivation ignores them.
         assert_eq!(
             flat.node_count(),
             4,
@@ -948,21 +949,19 @@ mod tests {
         );
     }
 
-    /// A nested graph of DSP nodes lowers through the instancing pass: the
-    /// ref stays an instance marker, the child's `~lag` derives into the
-    /// shared child def, and the resolved part's binding carries the lag's
-    /// ABSOLUTE nested path - which reaches the node's live param state in
-    /// the VM, exactly the contract the audio driver's param sync relies on.
-    /// Guards the whole nested-DSP pipeline (registry ref resolution,
-    /// flattening, template derivation, VM state bridge) end to end with the
-    /// app's real node type.
+    /// A nested graph of DSP nodes lowers through the instancing pass. The
+    /// ref stays an instance marker. The child's `~lag` derives into the
+    /// shared child def. The resolved part's binding carries the lag's
+    /// absolute nested path, which reaches the node's live param state in the
+    /// VM. The audio driver's param sync relies on that contract. Guards the
+    /// whole nested-DSP pipeline end to end with the app's real node type.
     #[test]
     fn nested_dsp_graph_flattens_derives_and_bridges_state() {
         use gantz_plyphon::ToNodeDsp;
         use std::time::Duration;
 
-        // child `env:1`: inlet -> ~lag -> outlet, nested into
-        // parent `env`: ~sinosc -> ref -> ~out.
+        // The child `env:1` chains inlet, ~lag and outlet. The parent `env`
+        // chains ~sinosc, ref and ~out.
         let text = "\
 (graph env:1
   (i inlet) (l ~lag) (o outlet)
@@ -980,8 +979,8 @@ mod tests {
         let parent = head_graph(&reified, &registry, &parent_head).expect("env graph");
         let child = head_graph(&reified, &registry, &child_head).expect("env:1 graph");
 
-        // The indices the flattened path must carry: the ref within the parent,
-        // the lag within the child (its only dsp node).
+        // The flattened path must carry the ref index within the parent and
+        // the lag index within the child.
         let ref_ix = parent
             .node_indices()
             .find(|&n| as_named_ref(&parent[n]).is_some())
@@ -1013,7 +1012,7 @@ mod tests {
             .expect("a param binding keyed by the lag's nested path");
 
         // The binding's path reaches the nested lag's live param state in a VM
-        // compiled from the same (un-flattened) graph.
+        // compiled from the same un-flattened graph.
         let builtins = builtins_with_instances();
         let codec = super::codec();
         let reg_env = env(&registry, &reified, &builtins, &codec);
@@ -1037,10 +1036,11 @@ mod tests {
         assert!(pending.is_empty());
     }
 
-    /// Two references to one DSP child share a single derived variant: one
-    /// `DefCache` entry, both resolved parts naming the same content-hashed
-    /// def, with per-instance absolute binding paths. Guards the install-once
-    /// spawn-many contract end to end with the app's real node type.
+    /// Two references to one DSP child share a single derived variant. There
+    /// is one `DefCache` entry. Both resolved parts name the same
+    /// content-hashed def, with per-instance absolute binding paths. Guards
+    /// the install-once spawn-many contract end to end with the app's real
+    /// node type.
     #[test]
     fn instanced_refs_share_one_variant() {
         use std::time::Duration;
@@ -1077,8 +1077,8 @@ mod tests {
     }
 
     /// `~unpack`'s placeholder expr honours the multi-output contract for any
-    /// `count`: a single value for one output, a list of values otherwise. A
-    /// wrong shape (e.g. `(list 0)` for count 1) fails `vm::init`'s compile.
+    /// `count`. It is a single value for one output and a list of values
+    /// otherwise. A wrong shape fails `vm::init`'s compile.
     #[test]
     fn unpack_expr_is_steel_inert_for_any_count() {
         use gantz_core::edge::Edge;
@@ -1106,10 +1106,11 @@ mod tests {
         }
     }
 
-    /// A control input on a DSP node: connecting a `number` to `~sinosc`'s freq
-    /// socket and pushing the number writes the number's value into `~sinosc`'s VM
-    /// state (which the dsp driver then applies via `set_control`). Guards the
-    /// ctrl/dsp bridge end to end on the Steel side.
+    /// A control input on a DSP node. Connecting a `number` to `~sinosc`'s
+    /// freq socket and pushing the number writes the number's value into
+    /// `~sinosc`'s VM state. The dsp driver then applies it via
+    /// `set_control`. Guards the control to dsp bridge end to end on the
+    /// Steel side.
     #[test]
     fn control_input_writes_dsp_node_state() {
         use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
@@ -1118,7 +1119,8 @@ mod tests {
         use gantz_core::steel::SteelVal;
         type G = Graph<DynNode>;
 
-        // number (a push source) -> ~sinosc.freq (control input at index 0).
+        // The number is a push source. It feeds ~sinosc.freq, the control
+        // input at index 0.
         let mut g: G = Graph::default();
         let sinosc = gantz_plyphon::UnitNode::from_unit("SinOsc").expect("SinOsc row");
         let num = g.add_node(Box::new(gantz_std::Number::default()) as DynNode);
@@ -1146,8 +1148,8 @@ mod tests {
         vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
             .expect("push number");
 
-        // A non-draining peek reports the queued-update count (the state-row summary
-        // the inspector shows) - it must NOT drain the queue.
+        // A non-draining peek reports the queued-update count the inspector
+        // shows. It must not drain the queue.
         let queued = gantz_core::node::state::extract_value(&vm, &[sine.index()])
             .expect("extract ~sinosc state")
             .expect("~sinosc state present");
@@ -1157,8 +1159,8 @@ mod tests {
             "pending_len_total must count the queued update without draining",
         );
 
-        // The control value landed in ~sinosc's freq param: the current value is
-        // updated, and the timestamped update is queued for the dsp driver.
+        // The control value landed in ~sinosc's freq param. The current value
+        // is updated, and the timestamped update is queued for the dsp driver.
         let (value, pending) =
             gantz_plyphon::param::drain_param_keyed(&mut vm, &[sine.index()], "freq")
                 .expect("~sinosc param state present");
@@ -1170,11 +1172,11 @@ mod tests {
         );
     }
 
-    /// The hybrid side of `~sinosc`'s freq input: a *dsp* source pushed through
-    /// it must NOT touch the param state - dsp placeholder outputs are
-    /// non-numeric by contract, so the `number?` guard skips the write. (The
+    /// The hybrid side of `~sinosc`'s freq input. A dsp source pushed through
+    /// it must not touch the param state. Dsp placeholder outputs are
+    /// non-numeric by contract, so the `number?` guard skips the write. The
     /// derived def reads the wire instead, so a queued update would have no
-    /// param to drain into and `pending` would grow unboundedly.)
+    /// param to drain into and `pending` would grow without bound.
     #[test]
     fn dsp_wire_into_freq_leaves_param_state_untouched() {
         use gantz_core::compile::push_pull_entrypoints;
@@ -1183,8 +1185,9 @@ mod tests {
         use gantz_core::steel::SteelVal;
         type G = Graph<DynNode>;
 
-        // number -> ~lag (dsp input) -> ~sinosc.freq: pushing the number fires
-        // the whole chain, so the lag's placeholder reaches the freq input.
+        // The number feeds ~lag's dsp input, which feeds ~sinosc.freq. Pushing
+        // the number fires the whole chain, so the lag's placeholder reaches
+        // the freq input.
         let unit = |name: &str| gantz_plyphon::UnitNode::from_unit(name).expect("table row");
         let mut g: G = Graph::default();
         let num = g.add_node(Box::new(gantz_std::Number::default()) as DynNode);
@@ -1217,13 +1220,13 @@ mod tests {
         );
     }
 
-    /// `~scopeout`'s control side: firing its trigger input outputs the per-channel
-    /// ring-buffer state (which the dsp driver fills) as a list of rings on
-    /// output 0, and the channel count - the number of rings - on output 1. Here
-    /// the rings are seeded directly (standing in for the driver's `push_ring`), a
-    /// `number` pushes the trigger, and the outputs land downstream in `inspect`
-    /// nodes. Guards the dsp->control read-out path + the two-output `branches`
-    /// contract on the Steel side.
+    /// `~scopeout`'s control side. Firing its trigger input outputs the
+    /// per-channel ring-buffer state the dsp driver fills as a list of rings
+    /// on output 0, and the channel count on output 1. Here the rings are
+    /// seeded directly in place of the driver's `push_ring`. A `number`
+    /// pushes the trigger, and the outputs land downstream in `inspect`
+    /// nodes. Guards the dsp to control read-out path and the two-output
+    /// `branches` contract on the Steel side.
     #[test]
     fn scopeout_trigger_outputs_rings_and_channels() {
         use gantz_core::compile::push_pull_entrypoints;
@@ -1232,8 +1235,8 @@ mod tests {
         use gantz_core::steel::SteelVal;
         type G = Graph<DynNode>;
 
-        // number -> ~scopeout.trigger (input 1, after the dsp input); output 0 ->
-        // inspect_samples, output 1 -> inspect_channels.
+        // The number feeds ~scopeout's trigger, input 1 after the dsp input.
+        // Output 0 feeds `samples` and output 1 feeds `chans`.
         let mut g: G = Graph::default();
         let num = g.add_node(Box::new(gantz_std::Number::default()) as DynNode);
         let tap = g.add_node(Box::new(gantz_plyphon::ScopeOut::default()) as DynNode);
@@ -1263,9 +1266,9 @@ mod tests {
             }
         };
 
-        // Seed the tap with one ring of known samples (as the dsp driver would),
-        // then fire the number's push entrypoint: it triggers the tap, which fires
-        // both outputs (branch 0) into the inspect nodes.
+        // Seed the tap with one ring of known samples, as the dsp driver
+        // would. Then fire the number's push entrypoint. It triggers the tap,
+        // which fires both outputs into the inspect nodes.
         let rings = SteelVal::ListV(vec![ring(&[1.0, 2.0, 3.0])].into_iter().collect());
         gantz_core::node::state::update_value(&mut vm, &[tap.index()], rings.clone())
             .expect("seed rings");
@@ -1280,7 +1283,8 @@ mod tests {
         // Output 1: the channel count is the number of rings.
         assert_eq!(channel_count(&vm), 1.0, "one ring -> channel count 1");
 
-        // A second, wider write (a stereo tap after a rewire): the count follows.
+        // A second, wider write, as for a stereo tap after a rewire. The count
+        // follows.
         let rings = SteelVal::ListV(
             vec![ring(&[1.0, 2.0]), ring(&[-1.0, -2.0])]
                 .into_iter()
@@ -1292,9 +1296,10 @@ mod tests {
         assert_eq!(channel_count(&vm), 2.0, "two rings -> channel count 2");
     }
 
-    /// A push arriving through `~scopeout`'s *dsp* input (not the control trigger)
-    /// must NOT surface the buffer - the node's `branches` gates the outlets on the
-    /// trigger, so a plot downstream does not update on an inert dsp-edge push.
+    /// A push arriving through `~scopeout`'s dsp input rather than the control
+    /// trigger must not surface the buffer. The node's `branches` gates the
+    /// outlets on the trigger, so a plot downstream does not update on an
+    /// inert dsp-edge push.
     #[test]
     fn scopeout_suppresses_output_without_trigger() {
         use gantz_core::edge::Edge;
@@ -1302,8 +1307,9 @@ mod tests {
         use gantz_core::steel::SteelVal;
         type G = Graph<DynNode>;
 
-        // number -> ~scopeout.dsp (input 0); output 0 -> inspect. Firing the number
-        // pushes the dsp input, leaving the trigger (input 1) inactive.
+        // The number feeds ~scopeout's dsp input 0. Output 0 feeds the
+        // inspect. Firing the number pushes the dsp input and leaves trigger
+        // input 1 inactive.
         let mut g: G = Graph::default();
         let num = g.add_node(Box::new(gantz_std::Number::default()) as DynNode);
         let tap = g.add_node(Box::new(gantz_plyphon::ScopeOut::default()) as DynNode);
@@ -1327,8 +1333,8 @@ mod tests {
 
         fire_push(&mut vm, &eps, num.index());
 
-        // The inspect node was never fed (output suppressed): its state stays the
-        // initial `Void`, not the ring list.
+        // The output was suppressed, so the inspect node's state stays the
+        // initial `Void`.
         let got = gantz_core::node::state::extract_value(&vm, &[inspect.index()])
             .expect("extract inspect state")
             .expect("inspect state present");
@@ -1338,11 +1344,11 @@ mod tests {
         );
     }
 
-    /// Lowering a hand-authored `mul` (declared in base.gantz's index order)
-    /// must reproduce base.gantz's `mul` `GraphAddr`, proving verbatim `src`
-    /// capture, declaration-order indexing, and the load path all agree with the
-    /// content-addressed registry. The expected address is recomputed from
-    /// base.gantz's own graph rather than its (possibly stale) stored key.
+    /// Lowering a hand-authored `mul` declared in base.gantz's index order
+    /// must reproduce base.gantz's `mul` `GraphAddr`. This proves verbatim
+    /// `src` capture, declaration-order indexing and the load path all agree
+    /// with the content-addressed registry. The expected address is
+    /// recomputed from base.gantz's own graph rather than its stored key.
     #[test]
     fn lower_mul_matches_base_graph_addr() {
         use std::time::Duration;
@@ -1368,9 +1374,9 @@ mod tests {
         assert_eq!(my_addr, base_addr, "lowered mul graph addr must match base");
     }
 
-    /// Round-tripping a consistent export (text -> Export -> text -> Export)
-    /// must preserve every name, commit address and graph address. Exercises a
-    /// cross-graph `ref` and the `(commits ...)`/`(names ...)` tables.
+    /// Round-tripping a consistent export through text twice must preserve
+    /// every name, commit address and graph address. Exercises a cross-graph
+    /// `ref` and the `(commits ...)` and `(names ...)` tables.
     #[test]
     fn text_roundtrip_preserves_addrs() {
         use std::collections::BTreeSet;
@@ -1415,9 +1421,9 @@ mod tests {
         }
     }
 
-    /// base.gantz (now consistent `.gantz` text) loads, re-serializes and
-    /// reloads, preserving its names and the head commit address exactly (no
-    /// healing needed - it is internally consistent).
+    /// base.gantz loads, re-serializes and reloads. Its names and head commit
+    /// addresses are preserved exactly, because it is internally consistent
+    /// and needs no healing.
     #[test]
     fn base_gantz_loads_and_reserializes() {
         use std::collections::BTreeSet;
@@ -1437,7 +1443,6 @@ mod tests {
             "names preserved\n--- text ---\n{text}"
         );
 
-        // base.gantz is consistent: addresses survive the round-trip exactly.
         for (name, head) in base.heads() {
             assert_eq!(
                 Some(head),
@@ -1447,9 +1452,9 @@ mod tests {
         }
     }
 
-    /// Nested graphs are now ordinary named graphs referenced by `(ref ...)`,
-    /// so a parent referencing a `<parent>:<n>` child round-trips: both graph
-    /// addresses are preserved through text -> Export -> text -> Export.
+    /// Nested graphs are ordinary named graphs referenced by `(ref ...)`, so
+    /// a parent referencing a `<parent>:<n>` child round-trips. Both graph
+    /// addresses are preserved through two text round-trips.
     #[test]
     fn nested_graph_roundtrips() {
         use std::time::Duration;
@@ -1483,8 +1488,8 @@ mod tests {
         }
     }
 
-    /// The serializer's output is reader-valid Steel: Steel's own parser accepts
-    /// every form. This is the property the whole format design rests on.
+    /// The serializer's output is reader-valid Steel. Steel's own parser
+    /// accepts every form. The whole format design rests on this property.
     #[test]
     fn output_is_valid_steel() {
         use std::time::Duration;
@@ -1505,11 +1510,12 @@ mod tests {
             .unwrap_or_else(|e| panic!("output is not valid Steel: {e}\n--- output ---\n{out}"));
     }
 
-    /// A `tick!` node compiles to valid, runnable Steel. `base.gantz` doesn't use
-    /// `tick!`, so this is the only coverage of its constant-duration expr, its
-    /// stateful accumulator slot, and the per-node push entrypoint registered by
-    /// `tick_bang::entrypoints` (which `push_pull_entrypoints` does NOT discover,
-    /// since `tick!` is driven externally rather than via `Node::push_eval`).
+    /// A `tick!` node compiles to valid, runnable Steel. `base.gantz` does not
+    /// use `tick!`, so this is the only coverage of its constant-duration
+    /// expr, its stateful accumulator slot, and the per-node push entrypoint
+    /// registered by `tick_bang::entrypoints`. `push_pull_entrypoints` does
+    /// not discover that entrypoint, because `tick!` is driven externally
+    /// rather than via `Node::push_eval`.
     #[test]
     fn tick_node_compiles() {
         use std::time::Duration;
@@ -1555,7 +1561,7 @@ mod tests {
     }
 
     /// Importing a commit whose parent is not present in the file records that
-    /// commit as a root (the parent is cleared, with a warning).
+    /// commit as a root. The parent is cleared with a warning.
     #[test]
     fn import_clears_absent_parent() {
         use std::time::Duration;
@@ -1571,9 +1577,8 @@ mod tests {
         assert_eq!(commit.parent, None, "absent parent must be cleared to None");
     }
 
-    /// The Export-level format (gantz_egui over gantz_format) round-trips
-    /// `(layout ...)` view state: node positions and the camera survive
-    /// text -> Export -> text -> Export.
+    /// The Export-level format round-trips `(layout ...)` view state. Node
+    /// positions and the camera survive two text round-trips.
     #[test]
     fn layout_roundtrips() {
         use std::time::Duration;
@@ -1618,8 +1623,8 @@ mod tests {
         assert_eq!(view2.camera, view.camera);
     }
 
-    /// The legacy `(scene min-x min-y max-x max-y)` view form (pre-camera) still
-    /// parses: it maps to a camera centred on the rect at the default zoom.
+    /// The legacy `(scene min-x min-y max-x max-y)` view form still parses.
+    /// It maps to a camera centred on the rect at the default zoom.
     #[test]
     fn legacy_scene_form_parses_to_camera() {
         use std::time::Duration;
@@ -1644,9 +1649,9 @@ mod tests {
         assert_eq!(view.camera.zoom, 1.0);
     }
 
-    /// A clipboard payload round-trips through the `.gantz` text format: the
-    /// copied subgraph, its node positions and edges survive copy -> text ->
-    /// paste, and the serialized payload is reader-valid Steel.
+    /// A clipboard payload round-trips through the `.gantz` text format. The
+    /// copied subgraph, its node positions and edges survive copy, text and
+    /// paste. The serialized payload is reader-valid Steel.
     #[test]
     fn clipboard_round_trips_through_gantz_text() {
         use bevy_egui::egui;
@@ -1691,8 +1696,8 @@ mod tests {
         );
     }
 
-    /// Editing a nested child commits it to a new address; [`sync::resync`] must
-    /// then propagate that up to its parent, recommitting the parent so its
+    /// Editing a nested child commits it to a new address. `sync::resync` must
+    /// then propagate that up to its parent and recommit the parent, so its
     /// `NamedRef` references the child's new graph.
     #[test]
     fn resync_propagates_child_edit_to_parent() {
@@ -1741,9 +1746,9 @@ mod tests {
         );
     }
 
-    /// Forking a graph with a nested child gives the fork its *own* child:
-    /// [`sync::fork_nested`] copies the `parent:*` subtree to the fork and
-    /// rewrites its references, leaving the original's children untouched.
+    /// Forking a graph with a nested child gives the fork its own child.
+    /// `sync::fork_nested` copies the `parent:*` subtree to the fork and
+    /// rewrites its references. The original's children are untouched.
     #[test]
     fn fork_nested_gives_independent_children() {
         use gantz_core::node::{Identity, Ref};
@@ -1762,14 +1767,14 @@ mod tests {
         ))]);
         commit_to_name(&mut registry, ts, parent, &name("A"));
 
-        // Fork "A" -> "B": a fresh commit over A's graph (as `on_branch_head` does),
-        // so "B" initially references A's child "A:1".
+        // Fork A to B with a fresh commit over A's graph, as `on_branch_head`
+        // does. B initially references A's child A:1.
         let a_commit = registry.head(&name("A")).unwrap();
         let a_graph = registry.commits()[&a_commit].graph;
         let b_commit = registry.commit_graph(ts, Some(a_commit), a_graph, || unreachable!());
         registry.set_head(name("B"), b_commit);
 
-        // Cascade: give "B" its own nested child "B:1".
+        // Cascade to give B its own nested child B:1.
         let moves = gantz_egui::sync::fork_nested(&mut registry, ts, &name("A"), &name("B"));
         assert!(
             moves.iter().any(|m| m.name == name("B:1")),
@@ -1780,7 +1785,7 @@ mod tests {
             "B's root should be rewritten: {moves:?}"
         );
 
-        // B references its own child B:1's graph; A:1 is untouched.
+        // B references its own child B:1's graph. A:1 is untouched.
         let b1: gantz_ca::ContentAddr = registry.named_commit(&name("B:1")).unwrap().graph.into();
         let b_new = registry.head(&name("B")).unwrap();
         let reified = reify_all(&registry);
@@ -1798,9 +1803,9 @@ mod tests {
     }
 
     /// Copying a node that references a nested graph and pasting it must keep
-    /// the reference. The reference pins the nested graph's content (graph
-    /// address), which the clipboard payload carries along with the naming
-    /// head, so the pasted `NamedRef` must still resolve rather than vanish.
+    /// the reference. The reference pins the nested graph's address. The
+    /// clipboard payload carries it along with the naming head, so the pasted
+    /// `NamedRef` must still resolve.
     #[test]
     fn clipboard_round_trips_nested_ref() {
         use gantz_core::node::{Identity, Ref};
@@ -1811,21 +1816,20 @@ mod tests {
 
         let mut registry = DataReg::default();
 
-        // Nested graph "A:1", committed twice so its head commit has a parent
-        // (the format does not preserve the parent chain).
+        // Nested graph A:1, committed twice so its head commit has a parent.
+        // The format does not preserve the parent chain.
         let v1 = data_graph([erased(&Identity)]);
         commit_to_name(&mut registry, Duration::from_secs(1), v1, &name("A:1"));
         let v2 = data_graph([erased(&Identity), erased(&Identity)]);
         let (_, v2_addr) = commit_to_name(&mut registry, Duration::from_secs(2), v2, &name("A:1"));
 
-        // A graph (in data form) holding a synced NamedRef to "A:1"'s head
-        // graph.
+        // A data graph holding a synced NamedRef to A:1's head graph.
         let mut graph = gantz_ca::DataGraph::default();
         let named = NamedRef::with_sync(name("A:1"), Ref::new(v2_addr.into()));
         let nref = graph.add_node(gantz_core::data::erase_node_typed(&named).expect("erase"));
         let selected: HashSet<_> = [nref].into_iter().collect();
 
-        // Copy -> clipboard text -> paste.
+        // Copy, then clipboard text, then paste.
         let copied = export::copy(&registry, &graph, &selected, &egui_graph::Layout::default());
         let text = export::copied_to_string(&copied, &super::codec()).expect("copied to text");
         let back: export::Copied =
@@ -1840,9 +1844,9 @@ mod tests {
         assert!(kept, "the pasted node must still be a NamedRef to A:1");
     }
 
-    /// Renaming a nested graph to a root name promotes it: every reference in
-    /// the parent (there may be several instances, each with its own state) is
-    /// repointed to the new name, and the orphaned nested name is dropped.
+    /// Renaming a nested graph to a root name promotes it. Every reference in
+    /// the parent is repointed to the new name, and the orphaned nested name
+    /// is dropped. There may be several instances, each with its own state.
     #[test]
     fn promote_nested_repoints_all_parent_instances() {
         use gantz_core::node::{Identity, Ref};
@@ -1856,13 +1860,13 @@ mod tests {
         let child = data_graph([erased(&Identity)]);
         let (a1, child_addr) = commit_to_name(&mut registry, ts, child, &name("A:1"));
 
-        // Parent "A" with THREE instances of the nested graph.
+        // Parent A with three instances of the nested graph.
         let named = NamedRef::with_sync(name("A:1"), Ref::new(child_addr.into()));
         let parent = data_graph(std::iter::repeat_n(erased(&named), 3));
         commit_to_name(&mut registry, ts, parent, &name("A"));
 
-        // Simulate "rename A:1 -> B": a root "B" copy of A:1's graph (as the
-        // fork does), then promote.
+        // Simulate renaming A:1 to B. Make a root B copy of A:1's graph, as
+        // the fork does, then promote.
         let a1_graph = registry.commits()[&a1].graph;
         let b = registry.commit_graph(ts, Some(a1), a1_graph, || unreachable!());
         registry.set_head(name("B"), b);
@@ -1892,18 +1896,18 @@ mod tests {
         assert_eq!(to_b, 3, "all instances must be repointed to B");
     }
 
-    /// Every named graph shipped in `base.gantz` - all primitives, the `demo-*`
-    /// graphs, and the unconnected `demo-all` catalog - must compile to a valid
-    /// Steel module under the same `Engine::new_base()` the runtime uses. This
-    /// guards against authoring a graph that relies on a prelude-only binding
-    /// (`map`, `and`, `cond`, `min`, ...) or otherwise emits invalid Steel,
-    /// which the base engine (no prelude) rejects. Mirrors the live compile path
-    /// in `bevy_gantz::vm` (`push_pull_entrypoints` + `vm::init`).
+    /// Every named graph shipped in `base.gantz` must compile to a valid Steel
+    /// module under the same `Engine::new_base()` the runtime uses. That
+    /// includes all primitives, the `demo-*` graphs and the unconnected
+    /// `demo-all` catalog. This guards against authoring a graph that relies
+    /// on a prelude-only binding such as `map` or `cond`, or otherwise emits
+    /// invalid Steel, which the base engine rejects. Mirrors the live compile
+    /// path in `bevy_gantz::vm`.
     ///
-    /// Compiled under both configs: the default (node fns emitted on demand) and
-    /// `emit_all_node_fns` (the app's "inspect every node's code" toggle, which
-    /// emits each node's all-connected variant - the case that exercises the
-    /// `demo-all` catalog's otherwise-unconnected `ref` nodes).
+    /// Compiled under both configs. The default emits node fns on demand.
+    /// `emit_all_node_fns` is the app's toggle to inspect every node's code.
+    /// It emits each node's all-connected variant, which exercises the
+    /// `demo-all` catalog's otherwise-unconnected `ref` nodes.
     #[test]
     fn base_graphs_all_compile() {
         let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &super::codec())
@@ -1942,10 +1946,10 @@ mod tests {
         }
     }
 
-    /// The full app pipeline for `#:require`: a `.gantz` snippet declaring a
+    /// The full app pipeline for `#:require`. A `.gantz` snippet declaring a
     /// steel module dep on an expr parses through the app codec, compiles via
-    /// `vm::init` (which registers `gantz/option`), emits the `(require ...)`
-    /// and evaluates the module's bindings.
+    /// `vm::init`, emits the `(require ...)` and evaluates the module's
+    /// bindings. `vm::init` registers `gantz/option`.
     #[test]
     fn expr_require_sugar_compiles_and_evaluates() {
         use std::time::Duration;
@@ -1984,11 +1988,11 @@ mod tests {
             .expect("the required binding evaluates");
     }
 
-    /// Every `ref` in `base.gantz` is auto-syncing, so the demos track the latest
-    /// primitive commits automatically. Verified through a load + re-serialize
-    /// round-trip (the `update-base` export path): a loaded `NamedRef` whose
-    /// `sync` was set re-emits `#:sync`, so the re-serialized text carries one
-    /// `#:sync` per `ref`.
+    /// Every `ref` in `base.gantz` is auto-syncing, so the demos track the
+    /// latest primitive commits. Verified through a load and re-serialize
+    /// round-trip, the `update-base` export path. A loaded `NamedRef` whose
+    /// `sync` was set re-emits `#:sync`, so the re-serialized text carries
+    /// one `#:sync` per `ref`.
     #[test]
     fn base_refs_are_synced() {
         let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &super::codec())
@@ -2003,12 +2007,12 @@ mod tests {
         );
     }
 
-    /// A `NamedRef`'s `sync` flag is part of its content address. This is what
-    /// lets `base_refs_are_synced` hold in practice: toggling `sync` in the
-    /// inspector must change the node's address so the edit rides the normal
-    /// commit + export pipeline rather than being silently dropped by the
-    /// registry's content-addressed dedup. Guards against re-adding
-    /// `#[serde(skip)]` to `NamedRef::sync`.
+    /// A `NamedRef`'s `sync` flag is part of its content address. This lets
+    /// `base_refs_are_synced` hold in practice. Toggling `sync` in the
+    /// inspector must change the node's address, so the edit rides the normal
+    /// commit and export pipeline rather than being dropped by the registry's
+    /// content-addressed dedup. Guards against adding `#[serde(skip)]` to
+    /// `NamedRef::sync`.
     #[test]
     fn named_ref_sync_affects_content_addr() {
         use gantz_egui::node::NamedRef;
@@ -2024,14 +2028,14 @@ mod tests {
         );
     }
 
-    /// A node's erased (data-layer) content address.
+    /// A node's erased content address.
     fn erased_addr(named: &gantz_egui::node::NamedRef) -> gantz_ca::ContentAddr {
         gantz_core::data::erase_node_typed(named)
             .unwrap()
             .content_addr()
     }
 
-    /// The ext-free `NamedRef` erased address must never change: it is the
+    /// The ext-free `NamedRef` erased address must never change. It is the
     /// address every existing graph's references already hash to.
     #[test]
     fn named_ref_ext_free_content_addr_is_pinned() {
@@ -2045,9 +2049,9 @@ mod tests {
         );
     }
 
-    /// Ref ext data participates in the `NamedRef` address, and survives every
-    /// repointing operation: rename cascades, resync, and node forking (which
-    /// deliberately still resets `sync`).
+    /// Ref ext data participates in the `NamedRef` address and survives every
+    /// repointing operation. Those are rename cascades, resync and node
+    /// forking. Forking still resets `sync` by design.
     #[test]
     fn named_ref_ext_survives_repointing_and_fork() {
         use gantz_egui::node::NamedRef;
@@ -2065,11 +2069,11 @@ mod tests {
         named.set_ext(key, &ext).unwrap();
         assert_ne!(erased_addr(&named), plain_ca);
 
-        // Rename cascade repoints - ext rides.
+        // A rename cascade repoints. Ext rides.
         named.rename(name("mul2"), gantz_ca::ContentAddr::from([1u8; 32]));
         assert_eq!(named.ext_as::<TestExt>(key), Some(TestExt { inline: true }));
 
-        // Resync repoints - ext rides.
+        // Resync repoints. Ext rides.
         let mut synced = NamedRef::with_sync(name("mul"), gantz_core::node::Ref::new(ca));
         synced.set_ext(key, &ext).unwrap();
         let latest = gantz_ca::ContentAddr::from([2u8; 32]);
@@ -2086,7 +2090,7 @@ mod tests {
         let child = gantz_ca::DataGraph::default();
         let (_, child_addr) = commit_to_name(&mut registry, now, child, &name("child"));
 
-        // The working graph is data: the ext-carrying `NamedRef` erases in.
+        // The working graph is data, so the ext-carrying `NamedRef` erases in.
         let mut graph = gantz_ca::DataGraph::default();
         let mut named =
             NamedRef::with_sync(name("child"), gantz_core::node::Ref::new(child_addr.into()));
@@ -2109,8 +2113,8 @@ mod tests {
             Some(TestExt { inline: true }),
             "fork must carry ext over - the forked content is identical",
         );
-        // Whole-node identity: name, sync reset (a fork pins) and ext all
-        // land as an ext-carrying `NamedRef::new` of the fork's graph.
+        // Whole-node identity. The name, the sync reset and the ext all land
+        // as an ext-carrying `NamedRef::new` of the fork's graph. A fork pins.
         assert!(registry.head(&name("fork")).is_some(), "fork name");
         let mut expected =
             NamedRef::new(name("fork"), gantz_core::node::Ref::new(child_addr.into()));
@@ -2121,10 +2125,10 @@ mod tests {
         );
     }
 
-    /// An ext-carrying reference round-trips through the `.gantz` text format:
-    /// the `#:ext` tail survives, and so does the graph's commit address
-    /// (ext is CA-relevant, so a lossy round-trip would heal to a different
-    /// address).
+    /// An ext-carrying reference round-trips through the `.gantz` text format.
+    /// The `#:ext` tail survives, and so does the graph's commit address. Ext
+    /// is CA-relevant, so a lossy round-trip would heal to a different
+    /// address.
     #[test]
     fn ext_text_roundtrip_preserves_addr_and_ext() {
         use std::time::Duration;
@@ -2176,8 +2180,8 @@ mod tests {
     }
 
     /// An ext-carrying `NamedRef` round-trips through the node codec with its
-    /// stored form (and thus its content address) intact - ext-free output is
-    /// unchanged, as the addr pins verify.
+    /// stored form and content address intact. The addr pins verify that
+    /// ext-free output is unchanged.
     #[test]
     fn ext_roundtrips_through_codec() {
         use gantz_egui::node::NamedRef;
@@ -2202,16 +2206,17 @@ mod tests {
         );
     }
 
-    /// Every base-primitive socket carries a hover doc (type + description), and
-    /// those docs resolve through a `ref` to the referenced graph's inlet/outlet
-    /// markers - exactly the path the GUI uses for a `NamedRef`'s socket tooltip.
+    /// Every base-primitive socket carries a hover doc with a type and a
+    /// description. Those docs resolve through a `ref` to the referenced
+    /// graph's inlet and outlet markers. This is the path the GUI uses for a
+    /// `NamedRef`'s socket tooltip.
     #[test]
     fn base_socket_docs() {
         use gantz_egui::SocketKind;
         let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &super::codec())
             .expect("parse base");
 
-        // Completeness: no primitive socket serializes as a bare `inlet`/`outlet`.
+        // No primitive socket serializes as a bare `inlet` or `outlet`.
         let text = gantz_egui::format::to_string(&base, &super::codec()).expect("to_string");
         let bare = text.matches(" inlet)").count() + text.matches(" outlet)").count();
         assert_eq!(
@@ -2219,7 +2224,7 @@ mod tests {
             "every base socket must be documented\n--- text ---\n{text}"
         );
 
-        // Resolution: a `ref add` exposes `add`'s socket docs.
+        // A `ref add` exposes `add`'s socket docs.
         let builtins = builtins_with_instances();
         let reified = reify_all(&base);
         let codec = super::codec();
@@ -2241,15 +2246,16 @@ mod tests {
         );
     }
 
-    /// End-to-end check of every `demo-*` graph: firing its `bang` must evaluate
-    /// all ops without a runtime error *or panic*, with default inputs. The bang
-    /// feeds every interactive input, so all of an op's inputs are active in one
-    /// push (guarding the "single input active" failure). It also guards two
-    /// integer-op gotchas: `number` outputs floats, so `list-ref`/`mod` coerce
-    /// via `(exact (round ...))`, and `mod` must stay *total* - Steel's `modulo`
-    /// panics (aborts) on a zero divisor, which `mod` avoids by returning the
-    /// dividend, so firing `demo-arithmetic` with its default `0`/`0` inputs no
-    /// longer crashes the process.
+    /// End-to-end check of every `demo-*` graph. Firing its `bang` must
+    /// evaluate all ops with default inputs without a runtime error or panic.
+    /// The bang feeds every interactive input, so all of an op's inputs are
+    /// active in one push. This guards the single-input-active failure.
+    ///
+    /// It also guards two integer-op gotchas. `number` outputs floats, so
+    /// `list-ref` and `mod` coerce via `(exact (round ...))`. `mod` must stay
+    /// total. Steel's `modulo` aborts the process on a zero divisor. `mod`
+    /// avoids that by returning the dividend, so firing `demo-arithmetic`
+    /// with its default `0` inputs must not crash.
     #[test]
     fn demos_evaluate() {
         use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
@@ -2302,11 +2308,11 @@ mod tests {
         }
     }
 
-    /// Partial evals over demo-pattern stay silent: the tick entrypoint
-    /// interleaved with the cps number node's push entrypoint (the dial),
-    /// whose cone reaches the pattern nodes without their pattern inputs.
-    /// Pinned against the not-a-procedure application errors this produced
-    /// before the pattern module guarded its invocation sites.
+    /// Partial evals over demo-pattern stay silent. The tick entrypoint is
+    /// interleaved with the cps number node's push entrypoint. That push's
+    /// cone reaches the pattern nodes without their pattern inputs. The
+    /// pattern module guards its invocation sites against not-a-procedure
+    /// application errors.
     #[test]
     fn demo_pattern_partial_evals_are_silent() {
         use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
@@ -2408,12 +2414,12 @@ mod tests {
     }
 
     /// Resetting a demo re-parses the base and merges the demo's commit subset
-    /// back in. Because the base's hand-authored graphs are stamped at a fixed
-    /// [`bevy_gantz_egui::base::BASE_TIMESTAMP`], the re-parse reproduces the
-    /// primitive commit addresses loaded at startup, so the reset demo's `ref`s
-    /// still resolve and it recompiles. (With a wall-clock timestamp the
-    /// re-parsed demo would reference fresh primitive commits absent from the
-    /// registry, failing with "node has 0 outputs".)
+    /// back in. The base's hand-authored graphs are stamped at the fixed
+    /// `bevy_gantz_egui::base::BASE_TIMESTAMP`, so the re-parse reproduces
+    /// the primitive commit addresses loaded at startup. The reset demo's
+    /// `ref`s still resolve and it recompiles. With a wall-clock timestamp
+    /// the re-parsed demo would reference fresh primitive commits absent from
+    /// the registry.
     #[test]
     fn reset_then_reopen_demo_recompiles() {
         use gantz_core::compile::{Config, push_pull_entrypoints};
@@ -2428,8 +2434,8 @@ mod tests {
             reg.heads().map(|(n, ca)| (n.clone(), ca)).collect()
         };
 
-        // Parsing the base at the fixed timestamp is reproducible: every name
-        // maps to the same commit both times - what lets a reset agree with the
+        // Parsing the base at the fixed timestamp is reproducible. Every name
+        // maps to the same commit both times, so a reset agrees with the
         // registry loaded at startup.
         let startup = parse();
         let reparse = parse();
@@ -2439,7 +2445,7 @@ mod tests {
             "base commit addresses must be reproducible across parses",
         );
 
-        // Simulate `on_reset_base_graph`: re-export the demo's reachable
+        // Simulate `on_reset_base_graph`. Re-export the demo's reachable
         // subset from a fresh parse and merge it into the startup registry.
         let mut registry = startup;
         let demo = name("demo-arithmetic");
@@ -2449,7 +2455,7 @@ mod tests {
         subset.set_head(demo.clone(), demo_commit);
         registry.merge(subset);
 
-        // Reopen: the reset demo must still compile, i.e. every `ref` resolves.
+        // The reset demo must still compile, so every `ref` resolves.
         let builtins = builtins_with_instances();
         let reified = reify_all(&registry);
         let codec = super::codec();
@@ -2466,8 +2472,8 @@ mod tests {
         });
     }
 
-    /// A `~playbuf`'s buffer reference wires audio blobs into reachability:
-    /// prune and export keep exactly the buffers live graphs reference, and
+    /// A `~playbuf`'s buffer reference wires audio blobs into reachability.
+    /// Prune and export keep exactly the buffers live graphs reference and
     /// drop the rest.
     #[test]
     fn playbuf_buffers_ride_reachability() {
@@ -2506,11 +2512,11 @@ mod tests {
         assert!(gantz_plyphon::audio_asset(&registry, &unused_addr).is_none());
     }
 
-    /// The inline-name base export (`format::to_string_named`) names every graph
-    /// inline, drops the `(commits ...)`/`(names ...)` tables and the pinned ref
-    /// addresses, and is *stable*: re-exporting an unchanged base produces byte
-    /// -identical text (no churning addresses), which is the whole point - a
-    /// cleaner, hand-editable `base.gantz`.
+    /// The inline-name base export `format::to_string_named` names every
+    /// graph inline and drops the `(commits ...)` and `(names ...)` tables
+    /// and the pinned ref addresses. It is stable. Re-exporting an unchanged
+    /// base produces byte-identical text with no churning addresses, which
+    /// keeps `base.gantz` hand-editable.
     #[test]
     fn base_named_export_is_stable() {
         use std::collections::BTreeSet;
@@ -2533,7 +2539,8 @@ mod tests {
             "refs resolve by name, no pinned address:\n{text}",
         );
 
-        // Stable: reload the simplified text and re-serialize - byte-identical.
+        // Reload the simplified text and re-serialize. The result is
+        // byte-identical.
         let back: DataReg =
             gantz_egui::format::from_str(&text, Duration::from_secs(0), &super::codec())
                 .expect("from_str");
@@ -2547,7 +2554,7 @@ mod tests {
         assert_eq!(n1, n2, "names preserved");
     }
 
-    /// The plyphon base source is exactly the writer's canonical form: the
+    /// The plyphon base source is exactly the writer's canonical form. The
     /// file re-exports byte-identically, so `update-base` write-backs never
     /// churn it.
     #[test]
@@ -2564,8 +2571,8 @@ mod tests {
         );
     }
 
-    /// Every graph across ALL base sources compiles in the merged registry -
-    /// the registry every app assembles at startup. DSP graphs are
+    /// Every graph across all base sources compiles in the merged registry,
+    /// which is the registry every app assembles at startup. DSP graphs are
     /// Steel-inert, so they compile like any other graph.
     #[test]
     fn merged_base_sources_all_compile() {
@@ -2597,7 +2604,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("`{n}` has no head graph"));
             let entrypoints = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
             let config = gantz_core::compile::Config::default();
-            // `init_with_modules` mirrors the app path: the pattern domain's
+            // `init_with_modules` mirrors the app path. The pattern domain's
             // module must be registered for the pattern graphs' requires.
             gantz_core::vm::init_with_modules(
                 &get_node,
@@ -2615,7 +2622,7 @@ mod tests {
         }
     }
 
-    /// The pattern base source is exactly the writer's canonical form: the
+    /// The pattern base source is exactly the writer's canonical form. The
     /// file re-exports byte-identically, so `update-base` write-backs never
     /// churn it.
     #[test]
@@ -2632,8 +2639,8 @@ mod tests {
         );
     }
 
-    /// The pattern source parses reproducibly at BASE_TIMESTAMP (the
-    /// invariant demo reset relies on, per source).
+    /// The pattern source parses reproducibly at `BASE_TIMESTAMP`. Demo reset
+    /// relies on this invariant per source.
     #[test]
     fn pattern_base_parses_reproducibly() {
         let parse = || -> DataReg {
@@ -2651,9 +2658,9 @@ mod tests {
         assert_eq!(ca_a, ca_b, "reset must resolve the startup commit address");
     }
 
-    /// The plyphon source parses reproducibly at BASE_TIMESTAMP: startup and
-    /// demo-reset parses agree on the demo's commit address (the invariant
-    /// reset relies on, per source).
+    /// The plyphon source parses reproducibly at `BASE_TIMESTAMP`. Startup
+    /// and demo-reset parses agree on the demo's commit address. Demo reset
+    /// relies on this invariant per source.
     #[test]
     fn plyphon_base_parses_reproducibly() {
         let parse = || -> DataReg {
@@ -2673,10 +2680,10 @@ mod tests {
         }
     }
 
-    /// A domain base source can reference another source's graphs: the parse
-    /// fails unseeded, resolves when seeded with the other source's names,
-    /// the merged registry compiles, and the source's own export keeps the
-    /// foreign ref by name WITHOUT embedding the foreign graph.
+    /// A domain base source can reference another source's graphs. The parse
+    /// fails unseeded and resolves when seeded with the other source's names.
+    /// The merged registry compiles. The source's own export keeps the
+    /// foreign ref by name without embedding the foreign graph.
     #[test]
     fn cross_source_base_refs_resolve_via_seed() {
         use std::collections::BTreeMap;
@@ -2685,8 +2692,8 @@ mod tests {
         let core: DataReg =
             gantz_egui::export::parse_export_at(gantz_base::BYTES, ts, &super::codec())
                 .expect("parse core");
-        // Externally-known name -> head graph associations, the form the
-        // seeded parse resolves foreign refs through.
+        // The name to head graph associations the seeded parse resolves
+        // foreign refs through.
         let seed: BTreeMap<String, gantz_ca::GraphAddr> = core
             .heads()
             .filter_map(|(n, ca)| Some((n.to_string(), core.commits().get(&ca)?.graph)))
@@ -2699,7 +2706,7 @@ mod tests {
   (add0 (ref add #:sync))
   (-> a (add0 0)) (-> b (add0 1)) (-> add0 out))";
 
-        // Unseeded: the foreign name cannot resolve.
+        // Unseeded, the foreign name cannot resolve.
         match gantz_egui::export::parse_export_at(text.as_bytes(), ts, &super::codec()) {
             Err(gantz_egui::export::ParseExportError::Format(e)) => assert!(
                 matches!(&e.kind, gantz_format::ErrorKind::MissingDependency(n) if n == "add"),
@@ -2709,7 +2716,7 @@ mod tests {
             Ok(_) => panic!("must not resolve unseeded"),
         }
 
-        // Seeded with the core source's names: resolves to the core content.
+        // Seeded with the core source's names, it resolves to the core content.
         let domain: DataReg =
             gantz_egui::export::parse_export_seeded_at(text.as_bytes(), ts, &seed, &super::codec())
                 .expect("seeded parse");

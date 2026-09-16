@@ -2,8 +2,8 @@
 //! associations and per-commit scene views.
 //!
 //! Each section is declared via [`gantz_ca::SectionDecl`], so the data rides
-//! the registry through merge, prune, export and the `.gantz` text format
-//! (see [`crate::format`] for the friendly text forms).
+//! the registry through merge, prune, export and the `.gantz` text format.
+//! See [`crate::format`] for the friendly text forms.
 
 use crate::SceneView;
 use gantz_ca::{
@@ -16,11 +16,12 @@ pub struct Descriptions;
 
 /// Demo associations: a graph name mapped to its demo graph's name.
 ///
-/// Keyed by name (rather than commit) so the association survives an edit:
-/// editing a graph mints a new commit but keeps the name.
+/// Keyed by name rather than commit so the association survives an edit.
+/// Editing a graph mints a new commit but keeps the name.
 pub struct Demos;
 
-/// Persisted scene views (camera + node layout), keyed by commit.
+/// Persisted scene views, keyed by commit. A view is a camera plus a node
+/// layout.
 pub struct Views;
 
 /// The id of the [`Descriptions`] section.

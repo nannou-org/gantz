@@ -1,10 +1,10 @@
 //! Developer tool for authoring base nodes.
 //!
-//! Starts with the registry populated from `base/base.gantz`. GUI state
-//! (open heads, egui memory) is persisted under a separate
-//! `PkvStore` so it never collides with the main gantz binary's storage.
-//! On every debounced input event, named graphs are exported back to
-//! `base/base.gantz` and GUI state is saved.
+//! Starts with the registry populated from the domains' `base.gantz` files.
+//! GUI state is persisted under a separate `PkvStore`, so it never collides
+//! with the main gantz binary's storage. On every debounced input event,
+//! named graphs are exported back to their `base.gantz` files and GUI state
+//! is saved.
 //!
 //! Usage: `cargo run -p gantz --bin update-base`
 
@@ -24,28 +24,30 @@ mod storage;
 
 fn main() {
     let mut app = App::new();
-    // Domains with no bevy plugin (the pattern domain's steel module and
-    // base source).
+    // Domains with no bevy plugin, such as the pattern domain.
     node::push_plain_domains(&mut app);
     app.add_plugins(GantzPlugin)
         .add_plugins(GantzEguiPlugin::default().base_immutable(false))
-        // The DSP plugin contributes the plyphon base source, and lets DSP
+        // The DSP plugin contributes the plyphon base source and lets DSP
         // demos be heard while they are edited.
         .add_plugins(bevy_gantz_plyphon::PlyphonPlugin::default())
+        // A builtin that fails to reify is a node-set composition error, so
+        // fail loudly at startup.
         .insert_resource({
             let (builtins, errs) = BuiltinNodes::reify(node::builtins(), &node::codec());
             assert!(errs.is_empty(), "builtins failed to reify: {errs:?}");
             builtins
         })
-        // The app's value-level node codec, for the `.gantz` parse/export
-        // paths (base load, import/export, clipboard, write-back).
+        // The app's node codec is the node-set manifest for the reify and
+        // erase seam and the `.gantz` parse and export paths.
         .insert_resource(bevy_gantz_egui::NodeCodecRes(node::codec()))
         .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::<DebouncedInputEvent>::new(0.25))
         .insert_resource(Pkv::new(PkvStore::new("nannou-org", "gantz-update-base")))
         // Each base source writes back to its own crate's file. Graphs
-        // created in this session (no recorded source) land in the core file.
+        // created in this session have no recorded source and land in the
+        // core file.
         .insert_resource(bevy_gantz_egui::base::ExportPaths {
             paths: [
                 (
@@ -78,8 +80,8 @@ fn main() {
         .add_systems(
             Update,
             (bevy_gantz_egui::base::export_to_file, persist_state)
-                // After `settle_layout` so a layout commit settled this frame
-                // (and its seeded view) is exported/saved in the same pass.
+                // After `settle_layout`, so a layout commit settled this frame
+                // and its seeded view are exported in the same pass.
                 .after(bevy_gantz_egui::settle_layout)
                 .run_if(on_message::<DebouncedInputEvent>),
         )
@@ -89,9 +91,9 @@ fn main() {
 fn log_plugin() -> bevy::log::LogPlugin {
     bevy::log::LogPlugin {
         custom_layer: move |app| {
-            // `get_resource_or_init`: this closure runs while `DefaultPlugins`
-            // builds, and `GantzEguiPlugin`s later idempotent `init_resource`
-            // shares the instance - so plugin order does not matter.
+            // `get_resource_or_init` shares the instance with
+            // `GantzEguiPlugin`'s `init_resource`, so plugin order does not
+            // matter.
             let capture = app.world_mut().get_resource_or_init::<TraceCapture>();
             Some(Box::new(capture.0.clone().layer()))
         },
@@ -131,9 +133,9 @@ fn setup_open(
     let loaded = bevy_gantz_egui::storage::load_open(&*storage, &mut *registry, timestamp());
     let focused_head = bevy_gantz::storage::load_focused_head(&*storage);
 
-    // `OpenHead`'s required components cover the compile outcome, `GraphView`'s
-    // the rest of the per-head GUI state. `vm::sync` initializes the VMs on
-    // the first `Update`.
+    // `OpenHead`'s required components cover the compile outcome. `GraphView`'s
+    // cover the rest of the per-head GUI state. `vm::sync` initializes the VMs
+    // on the first `Update`.
     for (head, graph, head_view) in loaded {
         let is_focused = focused_head.as_ref() == Some(&head);
         let entity = cmds
@@ -165,7 +167,6 @@ fn persist_state(
     focused: Res<FocusedHead>,
     heads_query: Query<OpenHeadDataReadOnly, With<OpenHead>>,
 ) {
-    // Save all open heads in tab order.
     let heads: Vec<_> = tab_order
         .iter()
         .filter_map(|&entity| {
@@ -176,15 +177,12 @@ fn persist_state(
         })
         .collect();
     bevy_gantz::storage::save_open_heads(&mut *storage, &heads);
-    // Save the focused head.
     if let Some(focused_entity) = **focused {
         if let Ok(data) = heads_query.get(focused_entity) {
             bevy_gantz::storage::save_focused_head(&mut *storage, &**data.head_ref);
         }
     }
-    // Save GUI state.
     bevy_gantz_egui::storage::save_gui_state(&mut *storage, &gui_state);
-    // Save egui memory (widget states, tile layouts).
     if let Ok(ctx) = ctxs.ctx_mut() {
         bevy_gantz_egui::storage::save_egui_memory(&mut *storage, ctx);
     }

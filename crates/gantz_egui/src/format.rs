@@ -1,11 +1,12 @@
 //! The GUI layer of the `.gantz` format.
 //!
 //! [`gantz_format`] owns the layout-agnostic registry format. This module
-//! renders the GUI's registry sections (see [`crate::section`]) as friendly
-//! forms - `(descriptions ...)`, `(layout ...)` and `(demo ...)` - using the
-//! format's [`sexpr`] toolkit and the resolution context returned by
-//! [`gantz_format::from_str`]/[`gantz_format::to_string`], and applies those
-//! forms back into the registry's sections on parse.
+//! renders the GUI's registry sections from [`crate::section`] as friendly
+//! forms. The forms are `(descriptions ...)`, `(layout ...)` and
+//! `(demo ...)`. It uses the format's [`sexpr`] toolkit and the resolution
+//! context returned by [`gantz_format::from_str`] and
+//! [`gantz_format::to_string`]. On parse it applies those forms back into the
+//! registry's sections.
 
 use crate::node::NodeCodec;
 use gantz_ca::{Datum, GraphAddr, Name, NodeData, Registry, Timestamp};
@@ -14,19 +15,19 @@ use gantz_format::{Addr, Form, GraphLabels, Loaded};
 
 pub use gantz_format::FormatError;
 
-/// The section ids this module renders itself as friendly forms (passed as
-/// `claimed` to [`gantz_format::to_string`], which then skips their generic
-/// `(section ...)` output).
+/// The section ids this module renders itself as friendly forms. They are
+/// passed as `claimed` to [`gantz_format::to_string`], which then skips their
+/// generic `(section ...)` output.
 const CLAIMED: &[&str] = &[
     crate::section::DESCRIPTIONS_ID,
     crate::section::VIEWS_ID,
     crate::section::DEMOS_ID,
 ];
 
-/// The [`gantz_format::Normalize`] implementation backed by a [`NodeCodec`]:
-/// split the parsed datum's `"type"` tag out and round-trip the fields
-/// through the codec's typed node ([`NodeCodec::normalize`]), recomputing the
-/// canonical form and the refs/blobs columns.
+/// The [`gantz_format::Normalize`] implementation backed by a [`NodeCodec`].
+/// Splits the parsed datum's `"type"` tag out and round-trips the fields
+/// through the codec's typed node via [`NodeCodec::normalize`]. This
+/// recomputes the canonical form and the refs and blobs columns.
 fn normalize_datum(codec: &NodeCodec, datum: Datum) -> Result<NodeData, FormatError> {
     let Datum::Map(mut entries) = datum else {
         return Err(FormatError::malformed("node datum is not a map"));
@@ -43,17 +44,17 @@ fn normalize_datum(codec: &NodeCodec, datum: Datum) -> Result<NodeData, FormatEr
         .map_err(|e| FormatError::node_deserialize(tag, e.to_string()))
 }
 
-/// Parse a `.gantz` document into a registry, applying the GUI-layer friendly
-/// forms (`descriptions`, `layout`, `demo`) into its sections.
+/// Parse a `.gantz` document into a registry. Applies the GUI-layer friendly
+/// forms `descriptions`, `layout` and `demo` into its sections.
 ///
-/// `now` provides the timestamp for any graph the document does not commit
-/// explicitly (hand-authored graphs).
+/// `now` provides the timestamp for any hand-authored graph the document does
+/// not commit explicitly.
 pub fn from_str(text: &str, now: Timestamp, codec: &NodeCodec) -> Result<Registry, FormatError> {
     from_str_seeded(text, now, &std::collections::BTreeMap::new(), codec)
 }
 
-/// [`from_str`], resolving names the document does not define through `seed`
-/// (externally-known name -> head graph associations). See
+/// [`from_str`], resolving names the document does not define through `seed`.
+/// The seed maps externally-known names to head graphs. See
 /// [`gantz_format::from_str_seeded`].
 pub fn from_str_seeded(
     text: &str,
@@ -67,7 +68,7 @@ pub fn from_str_seeded(
     Ok(registry_from_loaded(loaded))
 }
 
-/// Apply the GUI-layer extra forms (`descriptions`, `layout`, `demo`) to a
+/// Apply the GUI-layer extra forms `descriptions`, `layout` and `demo` to a
 /// loaded registry's sections.
 fn registry_from_loaded(mut loaded: Loaded) -> Registry {
     let extra = std::mem::take(&mut loaded.extra);
@@ -86,7 +87,7 @@ fn registry_from_loaded(mut loaded: Loaded) -> Registry {
 /// node set's keyword [`gantz_format::Sugar`] for the graph forms.
 pub fn to_string(registry: &Registry, codec: &NodeCodec) -> Result<String, FormatError> {
     let dumped = gantz_format::to_string_with(registry, &codec.sugars(), CLAIMED)?;
-    // Each top-level block is a section; they are joined with a blank line.
+    // Each top-level block is a section. Blank lines join them.
     let mut sections = vec![dumped.text.trim_end().to_string()];
 
     // `(descriptions ...)`, in name order.
@@ -112,11 +113,12 @@ pub fn to_string(registry: &Registry, codec: &NodeCodec) -> Result<String, Forma
     Ok(result)
 }
 
-/// Serialize a registry in the inline-name format (see
-/// [`gantz_format::to_string_named`]): graphs named inline, no commits/names
-/// tables, references by name. The `(layout ...)` and `(demo ...)` forms are
-/// emitted in graph-name order so the output is stable across address changes -
-/// suited to a hand-editable, git-friendly base file.
+/// Serialize a registry in the inline-name format. See
+/// [`gantz_format::to_string_named`]. Graphs are named inline, there are no
+/// commits or names tables, and references are by name. The `(layout ...)`
+/// and `(demo ...)` forms are emitted in graph-name order so the output is
+/// stable across address changes. This suits a hand-editable, git-friendly
+/// base file.
 pub fn to_string_named(registry: &Registry, codec: &NodeCodec) -> Result<String, FormatError> {
     let dumped = gantz_format::to_string_named_with(registry, &codec.sugars(), CLAIMED)?;
     let mut sections = vec![dumped.text.trim_end().to_string()];
@@ -146,8 +148,6 @@ pub fn to_string_named(registry: &Registry, codec: &NodeCodec) -> Result<String,
     result.push('\n');
     Ok(result)
 }
-
-// -- descriptions -------------------------------------------------------------
 
 fn apply_descriptions(form: &Form, loaded: &mut Loaded) {
     let src = &form.raw;
@@ -187,8 +187,6 @@ fn descriptions_text(registry: &Registry) -> Option<String> {
     Some(s)
 }
 
-// -- layout --------------------------------------------------------------------
-
 fn apply_layout(form: &Form, loaded: &mut Loaded) {
     let src = &form.raw;
     let Ok(forms) = sexpr::read(src) else { return };
@@ -227,9 +225,9 @@ fn apply_layout(form: &Form, loaded: &mut Loaded) {
                 };
             }
         } else if head_sym == "scene" {
-            // Legacy: a visible-region rect (pre-camera format). Recover the
-            // centre at the default zoom; the exact zoom can't be reconstructed
-            // without the viewport the rect was captured against.
+            // Legacy: a visible-region rect from the pre-camera format. Recover
+            // the centre at the default zoom. The exact zoom cannot be
+            // reconstructed without the viewport the rect was captured against.
             let f: Vec<f32> = eargs[1..]
                 .iter()
                 .filter_map(|n| sexpr::as_f32(n, src))
@@ -255,10 +253,11 @@ fn apply_layout(form: &Form, loaded: &mut Loaded) {
     crate::section::set_view(&mut loaded.registry, head, &view);
 }
 
-/// `bare_id` writes the graph id as a bare symbol (the inline-name format, where
-/// the graph itself is `(graph <name> ...)`); otherwise it is quoted (the
-/// address-based format, `(graph "<hex>" ...)`). The id must round-trip to the
-/// same `Addr` kind as the graph, or the layout fails to resolve on load.
+/// `bare_id` writes the graph id as a bare symbol for the inline-name format,
+/// where the graph itself is `(graph <name> ...)`. Otherwise the id is quoted
+/// for the address-based format, `(graph "<hex>" ...)`. The id must round-trip
+/// to the same `Addr` kind as the graph, or the layout fails to resolve on
+/// load.
 fn layout_text(labels: &GraphLabels, view: &crate::SceneView, bare_id: bool) -> String {
     let mut positions: Vec<(String, f32, f32)> = view
         .layout
@@ -295,8 +294,6 @@ fn layout_text(labels: &GraphLabels, view: &crate::SceneView, bare_id: bool) -> 
     s
 }
 
-// -- demos -------------------------------------------------------------------
-
 fn apply_demo(form: &Form, loaded: &mut Loaded) {
     let src = &form.raw;
     let Ok(forms) = sexpr::read(src) else { return };
@@ -317,9 +314,7 @@ fn apply_demo(form: &Form, loaded: &mut Loaded) {
     }
 }
 
-// -- helpers -----------------------------------------------------------------
-
-/// Read an [`Addr`] from a datum: a string is concrete, a symbol is a label.
+/// Read an [`Addr`] from a datum. A string is concrete and a symbol is a label.
 fn addr_of(e: &sexpr::ExprKind) -> Option<Addr> {
     sexpr::as_string(e)
         .map(Addr::Concrete)
@@ -337,8 +332,8 @@ mod tests {
         s.parse().unwrap()
     }
 
-    /// A registry with a `leaf` expr graph, a `root` graph referencing it,
-    /// and a description, demo and view attached to `root`.
+    /// A registry with a `leaf` expr graph and a `root` graph referencing it.
+    /// A description, demo and view are attached to `root`.
     fn test_registry() -> (Registry, CommitAddr) {
         let mut reg = Registry::default();
 
@@ -403,7 +398,7 @@ mod tests {
         assert_sections_survive(&parsed);
     }
 
-    /// The same survives the inline-name format, where commits are
+    /// The same sections survive the inline-name format, where commits are
     /// synthesized on load.
     #[test]
     fn sections_round_trip_through_named_text() {

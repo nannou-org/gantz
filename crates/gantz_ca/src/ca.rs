@@ -89,7 +89,7 @@ where
     }
 }
 
-/// Deserialize a `ContentAddress`.
+/// Deserialize a `ContentAddr`.
 fn deserialize<'de, D>(d: D) -> Result<[u8; 32], D::Error>
 where
     D: Deserializer<'de>,

@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 /// A simple node that logs whatever value is received at a given log level.
 ///
-/// The emitted expression passes the node's own path so the log entry's
-/// target identifies the emitting node (see [`log_target`]).
+/// The emitted expression passes the node's own path. The log entry's target
+/// then identifies the emitting node. See [`log_target`].
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag)]
 pub struct Log {
     pub level: log::Level,
@@ -67,10 +67,10 @@ impl gantz_core::Node for Log {
         fn trace(path: SteelVal, val: SteelVal) {
             log_val(log::Level::Trace, &path, &val);
         }
-        // Register the helpers only if absent. Steel's `register_fn` allocates a
-        // new global slot and shadows the previous binding rather than
-        // overwriting it, so re-registering on every recompile (the engine
-        // persists across them) would leak the old closures.
+        // Register the helpers only if absent. Steel's `register_fn` allocates
+        // a new global slot and shadows the previous binding. The engine
+        // persists across recompiles, so re-registering would leak the old
+        // closures.
         if ctx.vm().extract_value("log/info").is_err() {
             ctx.vm().register_fn("log/error", error);
             ctx.vm().register_fn("log/warn", warn);
@@ -81,7 +81,8 @@ impl gantz_core::Node for Log {
     }
 }
 
-/// The log target identifying the node at the given path, e.g. `gantz:0:3:2`.
+/// The log target identifying the node at the given path. For example
+/// `gantz:0:3:2`.
 pub fn log_target(path: &[node::Id]) -> String {
     let path: Vec<String> = path.iter().map(ToString::to_string).collect();
     format!("gantz:{}", path.join(":"))
@@ -93,7 +94,7 @@ pub fn parse_log_target(target: &str) -> Option<Vec<node::Id>> {
     path.split(':').map(|id| id.parse().ok()).collect()
 }
 
-/// The node path carried in a log fn's first argument (a quoted id list).
+/// The node path carried in a log fn's first argument, a quoted id list.
 fn path_from_val(val: &SteelVal) -> Vec<node::Id> {
     match val {
         SteelVal::ListV(ids) => ids

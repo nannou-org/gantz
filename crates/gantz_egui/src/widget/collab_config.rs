@@ -1,6 +1,6 @@
-//! The "Settings > Collab" subtab: identity, username, action rate and
-//! relay configuration. Joining a session lives with the graphs it creates:
-//! the Graphs pane's join button.
+//! The Collab settings subtab. Identity, username, action rate and relay
+//! configuration. Joining a session lives with the graphs it creates, in the
+//! Graphs pane's join button.
 
 use crate::Responses;
 use crate::collab::{CollabConfig, SessionConn};
@@ -11,25 +11,25 @@ pub struct CollabSettings<'a> {
     pub config: &'a mut CollabConfig,
     /// This user's public identity, once generated.
     pub peer_id: Option<&'a str>,
-    /// The endpoint's home relay(s) and their connection state (empty until
-    /// the collab runtime starts).
+    /// The endpoint's home relays and their connection state. Empty until the
+    /// collab runtime starts.
     pub relays: &'a [(String, bool)],
 }
 
-/// The Collab settings subtab: identity, username, action rate and relay
+/// The Collab settings subtab. Identity, username, action rate and relay
 /// configuration.
 ///
 /// Holds a per-frame snapshot of the persisted [`CollabConfig`] plus the
 /// user's displayable identity and relay status. Edits apply to the snapshot
-/// in place, and the full updated [`CollabConfig`] is emitted as a payload
-/// for the collab layer to apply.
+/// in place. The full updated [`CollabConfig`] is emitted as a payload for
+/// the collab layer to apply.
 #[derive(Clone, Debug, Default)]
 pub struct CollabSettingsTab {
     /// The editable configuration snapshot.
     pub config: CollabConfig,
-    /// This user's public identity, as a displayable string, once minted.
+    /// This user's public identity as a displayable string, once minted.
     pub peer_id: Option<String>,
-    /// The endpoint's home relay(s) and their connection state.
+    /// The endpoint's home relays and their connection state.
     pub relays: Vec<(String, bool)>,
 }
 
@@ -58,8 +58,8 @@ impl crate::widget::SettingsTab for CollabSettingsTab {
     }
 }
 
-/// Render the collab configuration: the user's identity, their shared
-/// username, the live-action send rate and the relay configuration/status.
+/// Render the collab configuration. The user's identity, their shared
+/// username, the live-action send rate and the relay configuration and status.
 pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) {
     let CollabSettings {
         config,
@@ -71,7 +71,7 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) {
         .num_columns(2)
         .spacing([8.0, 6.0])
         .show(ui, |ui| {
-            // The public identity peers see (and can allowlist).
+            // The public identity that peers see and can allowlist.
             ui.label("identity");
             match peer_id {
                 Some(id) => {
@@ -127,8 +127,8 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) {
                 );
             ui.end_row();
 
-            // The relay server assisting (and, for browser peers, carrying)
-            // connections. Empty = iroh's default n0 public relays.
+            // The relay server that assists connections and carries them for
+            // browser peers. Empty means iroh's default n0 public relays.
             ui.label("relay");
             let relay_id = ui.id().with("collab_relay");
             let mut relay = ui
@@ -160,8 +160,8 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) {
             ui.data_mut(|d| d.insert_temp(relay_id, relay));
             ui.end_row();
 
-            // Live relay status, once the collab runtime is up: who this
-            // peer is routed through.
+            // Live relay status once the collab runtime is up. It shows who
+            // this peer is routed through.
             if !relays.is_empty() {
                 ui.label("");
                 ui.vertical(|ui| {

@@ -1,6 +1,7 @@
-//! Converging a head with another tip: local branch merges ([`merge_head`])
-//! and session remote-tip syncs ([`sync_remote_tip`]), plus the shared
-//! VM-state/layout/selection migration through a merge outcome.
+//! Converging a head with another tip. [`merge_head`] handles local branch
+//! merges and [`sync_remote_tip`] handles session remote-tip syncs. Both
+//! share the VM-state, layout and selection migration through a merge
+//! outcome.
 
 use super::{cascade_pos, node_id};
 use crate::widget::graph_scene::NodeIndex;
@@ -10,20 +11,20 @@ use gantz_core::node;
 use steel::steel_vm::engine::Engine;
 
 /// Migrate a head's index-keyed VM state, layout and selection through a
-/// merge outcome's node provenance, seeding layout for merged-in nodes from
-/// the other side's persisted view (typically read from the registry's view
-/// section; falling back to placement near the view centre - positions are
-/// compatible because both sides share the base's coordinates).
+/// merge outcome's node provenance. Seeds layout for merged-in nodes from
+/// the other side's persisted view, typically read from the registry's view
+/// section. Falls back to placement near the view centre. Positions are
+/// compatible because both sides share the base's coordinates.
 ///
-/// `local_side` is the side the head's working graph played in the merge:
-/// [`gantz_ca::Side::Ours`] for a branch merge into the head
-/// ([`merge_head`]); sessions pass whichever side the local tip landed on
-/// after canonical orientation ([`sync_remote_tip`]). `other_view` is the
-/// opposite side's commit's stored view, if any.
+/// `local_side` is the side the head's working graph played in the merge.
+/// A branch merge into the head via [`merge_head`] passes
+/// [`gantz_ca::Side::Ours`]. Sessions pass whichever side the local tip
+/// landed on after canonical orientation via [`sync_remote_tip`].
+/// `other_view` is the opposite side's commit's stored view, if any.
 ///
 /// Returns the mapping from pre-merge working-graph indices to merged
-/// indices (identity whenever the other side removed no nodes), for any
-/// remaining index-keyed data of the caller's.
+/// indices, for any remaining index-keyed data of the caller's. It is the
+/// identity whenever the other side removed no nodes.
 pub(crate) fn apply_merge_migration(
     node_srcs: &[gantz_ca::merge::NodeSrc],
     local_side: gantz_ca::merge::Side,
@@ -32,7 +33,7 @@ pub(crate) fn apply_merge_migration(
     head_view: &mut crate::SceneView,
     selection: &mut crate::widget::graph_scene::Selection,
 ) -> gantz_ca::Matching {
-    // Where each pre-merge (local) node ended up, and where each node that
+    // Where each pre-merge local node ended up, and where each node that
     // exists only on the other side ended up.
     let sides = |src: &gantz_ca::merge::NodeSrc| match local_side {
         gantz_ca::merge::Side::Ours => (src.ours, src.theirs),
@@ -81,43 +82,45 @@ pub(crate) fn apply_merge_migration(
 /// The result of a [`merge_head`] call.
 #[derive(Debug)]
 pub enum MergeHeadOutcome {
-    /// Ours had no changes since the merge base: nothing was mutated and no
+    /// Ours had no changes since the merge base. Nothing was mutated and no
     /// commit was made. The caller navigates the head to this commit, which
     /// reloads the working graph and views.
     FastForward(CommitAddr),
     /// The merge was applied to the working graph and committed with two
-    /// parents; `head` has been advanced. `mapping` records where each of the
-    /// pre-merge graph's nodes ended up (old index to new index; absent =
-    /// removed), for any remaining index-keyed data of the caller's. The
-    /// caller re-registers the graph with the VM (merged-in nodes need their
-    /// state initialized) and fires its committed/resync machinery.
+    /// parents. `head` has been advanced. `mapping` records where each of the
+    /// pre-merge graph's nodes ended up, from old index to new index. An
+    /// absent node was removed. It serves any remaining index-keyed data of
+    /// the caller's. The caller re-registers the graph with the VM, since
+    /// merged-in nodes need their state initialized, and fires its committed
+    /// and resync machinery.
     Merged {
         new_commit: CommitAddr,
         mapping: gantz_ca::Matching,
     },
-    /// Conflicts (without `auto_resolve`) or hard blockers refused the merge;
-    /// nothing was mutated. Carries the rendered reasons.
+    /// Conflicts without `auto_resolve`, or hard blockers, refused the merge.
+    /// Nothing was mutated. Carries the rendered reasons.
     Refused(Vec<String>),
-    /// Nothing to do: unknown source, unrelated histories, or already up to
-    /// date.
+    /// Nothing to do. The source is unknown, the histories are unrelated, or
+    /// the head is already up to date.
     Noop,
 }
 
 /// Merge the branch named `source` into `head`, applying the result to the
-/// head's working `graph` in place (see [`gantz_ca::merge_commits`]).
+/// head's working `graph` in place. See [`gantz_ca::merge_commits`].
 ///
 /// On a true merge this migrates the index-keyed VM state, layout and
-/// selection through the merged graph's node mapping (an identity mapping
-/// whenever the source branch removed no nodes), seeds layout for merged-in
-/// nodes from the source branch's persisted view in the registry's view
-/// section (falling back to placement near the view centre), and commits the
-/// result with two parents via
-/// [`gantz_ca::Registry::commit_merge_to_head`] - upholding the
+/// selection through the merged graph's node mapping. The mapping is the
+/// identity whenever the source branch removed no nodes. Layout for
+/// merged-in nodes seeds from the source branch's persisted view in the
+/// registry's view section, falling back to placement near the view centre.
+/// The result is committed with two parents via
+/// [`gantz_ca::Registry::commit_merge_to_head`]. This upholds the
 /// committed-working-graph invariant, so callers must not commit again.
 ///
 /// Conflicts refuse the merge unless `auto_resolve` accepts the given
-/// `resolutions`; hard blockers (a merged-in reference cycle) always refuse.
-/// Fast-forwards mutate nothing - the caller navigates the head instead.
+/// `resolutions`. Hard blockers such as a merged-in reference cycle always
+/// refuse. Fast-forwards mutate nothing. The caller navigates the head
+/// instead.
 #[allow(clippy::too_many_arguments)]
 pub fn merge_head(
     registry: &mut gantz_ca::Registry,
@@ -162,8 +165,8 @@ pub fn merge_head(
     }
 
     // Migrate the index-keyed VM state, layout and selection through the
-    // merged indices; the head's working graph plays the ours side (by the
-    // committed-working-graph invariant it *is* ours' tip graph). Layout for
+    // merged indices. The head's working graph plays the ours side. By the
+    // committed-working-graph invariant it is ours' tip graph. Layout for
     // merged-in nodes seeds from the source branch's persisted view.
     let theirs_view = crate::section::view(registry, &theirs_tip);
     let ours_map = apply_merge_migration(
@@ -196,53 +199,55 @@ pub fn merge_head(
 /// The result of a [`sync_remote_tip`] call.
 #[derive(Debug)]
 pub enum SyncTipOutcome {
-    /// The local tip already contains the remote tip; nothing was mutated.
+    /// The local tip already contains the remote tip. Nothing was mutated.
     UpToDate,
-    /// No commit was minted: the caller navigates the head to this commit
-    /// (a fast-forward, or the deterministic winner of a same-graph "twin"
-    /// adoption - see [`gantz_ca::SyncStep::Adopt`]).
+    /// No commit was minted. The caller navigates the head to this commit.
+    /// It is a fast-forward, or the deterministic winner of a same-graph
+    /// twin adoption. See [`gantz_ca::SyncStep::Adopt`].
     Moved(CommitAddr),
-    /// A canonical merge commit was minted and `head` advanced; the merged
+    /// A canonical merge commit was minted and `head` advanced. The merged
     /// graph was swapped into the working graph. As with
     /// [`MergeHeadOutcome::Merged`], the caller re-registers the graph with
-    /// the VM and fires its committed/resync machinery. Session conflicts
-    /// are auto-resolved by the session's resolutions; `conflicts` carries
-    /// the count for surfacing.
+    /// the VM and fires its committed and resync machinery. Session
+    /// conflicts are auto-resolved by the session's resolutions. `conflicts`
+    /// carries the count for surfacing.
     Merged {
         new_commit: CommitAddr,
         mapping: gantz_ca::Matching,
         conflicts: usize,
     },
-    /// Hard blockers (a merged-in reference cycle) or missing registry
-    /// content refused the merge; nothing was mutated.
+    /// Hard blockers such as a merged-in reference cycle, or missing
+    /// registry content, refused the merge. Nothing was mutated.
     Blocked(Vec<String>),
-    /// The tips share no common ancestor: surfaced to the app (e.g. rename
-    /// the local graph aside), never resolved automatically.
+    /// The tips share no common ancestor. This is surfaced to the app and
+    /// never resolved automatically. The app may rename the local graph
+    /// aside.
     Unrelated,
 }
 
-/// Bring `head` up to date with a `remote` tip received from a session peer,
-/// applying [`gantz_ca::plan_sync_step`]'s decision to the head's working
+/// Bring `head` up to date with a `remote` tip received from a session peer.
+/// Applies [`gantz_ca::plan_sync_step`]'s decision to the head's working
 /// `graph` in place.
 ///
 /// The session analogue of [`merge_head`], driven by a commit address rather
-/// than a branch name. Diverged graphs merge in *canonical orientation* via
-/// [`gantz_ca::Registry::commit_merge_canonical`] (no timestamp parameter:
-/// it is derived from the tips), so every peer merging the same pair mints
-/// the identical commit. VM state, layout and selection migrate through the
-/// merged indices for whichever side the local tip played; conflicts are
-/// auto-resolved per `resolutions` (the fixed session policy) and surfaced
-/// as a count.
+/// than a branch name. Diverged graphs merge in canonical orientation via
+/// [`gantz_ca::Registry::commit_merge_canonical`], so every peer merging the
+/// same pair mints the identical commit. That fn takes no timestamp, since
+/// it derives one from the tips. VM state, layout and selection migrate
+/// through the merged indices for whichever side the local tip played.
+/// Conflicts are auto-resolved per `resolutions`, the fixed session policy,
+/// and surfaced as a count.
 ///
-/// The remote tip's closure must already be in the registry (fetched and
-/// applied via [`gantz_ca::sync::Staged`]). On [`SyncTipOutcome::Merged`]
-/// the committed-working-graph invariant is upheld - callers must not commit
+/// The remote tip's closure must already be in the registry, fetched and
+/// applied via [`gantz_ca::sync::Staged`]. On [`SyncTipOutcome::Merged`] the
+/// committed-working-graph invariant is upheld. Callers must not commit
 /// again.
 ///
 /// `adopt_unrelated` adopts a remote tip that shares no local history
-/// instead of surfacing [`SyncTipOutcome::Unrelated`]: the join flow's
-/// placeholder head (an empty graph minted so the session's tab opens
-/// immediately) is deliberately unrelated to the session content it awaits.
+/// instead of surfacing [`SyncTipOutcome::Unrelated`]. The join flow's
+/// placeholder head is deliberately unrelated to the session content it
+/// awaits. It is an empty graph minted so the session's tab opens
+/// immediately.
 #[allow(clippy::too_many_arguments)]
 pub fn sync_remote_tip(
     registry: &mut gantz_ca::Registry,
@@ -272,7 +277,7 @@ pub fn sync_remote_tip(
     };
     let outcome = match gantz_ca::merge_commits(registry, first, second, resolutions) {
         // The plan and the merge read the same commits, so these arms are
-        // unreachable in practice; hold the plan's meaning if they change.
+        // unreachable in practice. Hold the plan's meaning if they change.
         Ok(gantz_ca::MergeResolution::AlreadyUpToDate) => return SyncTipOutcome::UpToDate,
         Ok(gantz_ca::MergeResolution::FastForward) => return SyncTipOutcome::Moved(remote),
         Err(e) => {
@@ -354,8 +359,9 @@ mod tests {
         )
     }
 
-    // Ours edited a node while theirs added one: the merge keeps ours' indices
-    // (identity mapping), applies theirs' addition, and commits two parents.
+    // Ours edited a node while theirs added one. The merge keeps ours' indices
+    // as an identity mapping, applies theirs' addition, and commits two
+    // parents.
     #[test]
     fn merge_head_applies_theirs_and_commits_two_parents() {
         let (mut reg, mut head) = diverged_registry(&[1, 2], &[1, 20], &[1, 2, 3]);
@@ -385,8 +391,8 @@ mod tests {
         // The merged graph keeps ours' nodes in place and appends theirs' add.
         let weights: Vec<u32> = graph.node_weights().map(value).collect();
         assert_eq!(weights, vec![1, 20, 3]);
-        // Ours' layout and selection are untouched; the merged-in node has a
-        // (fallback) layout entry.
+        // Ours' layout and selection are untouched. The merged-in node has a
+        // fallback layout entry.
         assert_eq!(view.layout.get(&node_id(1)), Some(&egui::pos2(1.0, 0.0)));
         assert!(view.layout.contains_key(&node_id(2)));
         assert!(selection.nodes.contains(&NodeIx::new(1)));
@@ -397,8 +403,8 @@ mod tests {
         assert_eq!(reg.head_commit_ca(&head), Some(new_commit));
     }
 
-    // Theirs removed a node: ours' surviving state/layout/selection migrate
-    // through the returned mapping.
+    // Theirs removed a node. Ours' surviving state, layout and selection
+    // migrate through the returned mapping.
     #[test]
     fn merge_head_migrates_state_layout_selection_on_removal() {
         let (mut reg, mut head) = diverged_registry(&[1, 2], &[1, 2], &[2]);
@@ -425,7 +431,7 @@ mod tests {
             panic!("expected Merged, got {outcome:?}");
         };
 
-        // Node 2 (ours ix 1) survives at merged ix 0.
+        // Node 2, ours ix 1, survives at merged ix 0.
         assert_eq!(mapping, gantz_ca::Matching::from([(1, 0)]));
         let weights: Vec<u32> = graph.node_weights().map(value).collect();
         assert_eq!(weights, vec![2]);
@@ -440,7 +446,7 @@ mod tests {
         );
     }
 
-    // Conflicting edits refuse the merge (mutating nothing) unless the caller
+    // Conflicting edits refuse the merge and mutate nothing unless the caller
     // opts into the default resolutions.
     #[test]
     fn merge_head_refuses_conflicts_unless_auto_resolve() {
@@ -468,7 +474,7 @@ mod tests {
         assert_eq!(reg.head_commit_ca(&head), Some(ours_tip));
         assert_eq!(graph.node_weights().map(value).collect::<Vec<_>>(), [1, 20]);
 
-        // Opting in applies the default resolution (ours wins).
+        // Opting in applies the default resolution, so ours wins.
         let outcome = run_merge(
             &mut reg,
             &mut head,
@@ -510,7 +516,7 @@ mod tests {
             panic!("expected FastForward, got {outcome:?}");
         };
         assert_eq!(target, theirs_ca);
-        // Nothing mutated: navigation is the caller's job.
+        // Nothing mutated. Navigation is the caller's job.
         assert_eq!(reg.head(&"alpha".parse().unwrap()), Some(base_ca));
         assert_eq!(graph.node_count(), 1);
     }
@@ -573,16 +579,17 @@ mod tests {
             session_resolutions(),
             true,
         );
-        // Navigation is the caller's job: the outcome names the target.
+        // Navigation is the caller's job. The outcome names the target.
         assert!(matches!(outcome, SyncTipOutcome::Moved(t) if t == foreign));
     }
 
     // Two peers of the same session merge the same diverged pair from
-    // opposite sides: each migrates its own side's indices, and both mint
-    // the *identical* canonical merge commit.
+    // opposite sides. Each migrates its own side's indices, and both mint
+    // the identical canonical merge commit.
     #[test]
     fn sync_remote_tip_merges_canonically_from_either_side() {
-        // Peer 1: head on alpha (ours-canonical, older), remote = beta tip.
+        // Peer 1 has its head on alpha, the older and ours-canonical tip. The
+        // remote is the beta tip.
         let (mut reg_1, mut head_1) = diverged_registry(&[1, 2], &[1, 20], &[1, 2, 3]);
         let alpha_tip = reg_1.head_commit_ca(&head_1).unwrap();
         let beta_tip = reg_1.head(&"beta".parse().unwrap()).unwrap();
@@ -609,14 +616,15 @@ mod tests {
         };
         let weights: Vec<u32> = graph_1.node_weights().map(value).collect();
         assert_eq!(weights, vec![1, 20, 3]);
-        // Canonical orientation: alpha (older) is the first parent even
+        // Canonical orientation. The older alpha is the first parent even
         // though it is also the local tip here.
         let commit = &reg_1.commits()[&commit_1];
         assert_eq!(commit.parent, Some(alpha_tip));
         assert_eq!(commit.merge_parents, vec![beta_tip]);
 
-        // Peer 2: identical registry, but head on beta with alpha remote -
-        // the local tip plays the theirs side after canonicalization.
+        // Peer 2 has an identical registry, but its head is on beta with
+        // alpha as the remote. The local tip plays the theirs side after
+        // canonicalization.
         let (mut reg_2, _) = diverged_registry(&[1, 2], &[1, 20], &[1, 2, 3]);
         let mut head_2 = gantz_ca::Head::Branch("beta".parse().unwrap());
         let mut graph_2 = test_graph(&[1, 2, 3]);
@@ -648,8 +656,8 @@ mod tests {
         assert_eq!(commit_1, commit_2);
         let weights: Vec<u32> = graph_2.node_weights().map(value).collect();
         assert_eq!(weights, vec![1, 20, 3]);
-        // Peer 2's local (theirs-side) indices happen to be preserved here;
-        // its state/layout/selection followed the mapping.
+        // Peer 2's local theirs-side indices happen to be preserved here. Its
+        // state, layout and selection followed the mapping.
         assert_eq!(mapping, gantz_ca::Matching::from([(0, 0), (1, 1), (2, 2)]));
         let state = node::state::extract_value(&vm_2, &[2]).unwrap();
         assert_eq!(state, Some(SteelVal::IntV(7)));
@@ -657,9 +665,9 @@ mod tests {
         assert!(selection_2.nodes.contains(&NodeIx::new(2)));
     }
 
-    // Twin commits (same graph, independent mints) adopt the deterministic
-    // winner instead of merging; the loser side moves, the winner side is
-    // already up to date.
+    // Twin commits are independent mints of the same graph. They adopt the
+    // deterministic winner instead of merging. The loser side moves. The
+    // winner side is already up to date.
     #[test]
     fn sync_remote_tip_adopts_newer_twin() {
         let secs = |s| std::time::Duration::from_secs(s);
@@ -690,7 +698,7 @@ mod tests {
             panic!("expected Moved, got {outcome:?}");
         };
         assert_eq!(target, twin_b, "the newer twin wins");
-        // Navigation is the caller's job: nothing mutated yet.
+        // Navigation is the caller's job. Nothing mutated yet.
         assert_eq!(reg.head(&"alpha".parse().unwrap()), Some(twin_a));
 
         // From the winner's side the same pair is already settled.

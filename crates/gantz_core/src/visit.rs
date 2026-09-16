@@ -27,7 +27,7 @@ pub struct Ctx<'env, 'data> {
     get_node: node::GetNode<'env>,
     /// The path at which this node is nested relative to the root.
     path: &'data [node::Id],
-    /// A slice with an element for every input, `Some` if connected.
+    /// See [`Ctx::inputs`].
     inputs: &'data [(node::Id, Edge)],
 }
 
@@ -47,7 +47,7 @@ pub(crate) struct RequiredAddrs<'a> {
 
 /// Visitor that collects all required blob references from nodes.
 pub(crate) struct RequiredBlobs<'a> {
-    /// The set of collected (blob section, address) pairs.
+    /// The set of collected `(blob section, address)` pairs.
     pub blobs: &'a mut HashSet<(gantz_ca::SectionId, gantz_ca::ContentAddr)>,
 }
 
@@ -76,14 +76,14 @@ impl<'env, 'data> Ctx<'env, 'data> {
         self.path
     }
 
-    /// The ID associated with this node within its graph
+    /// The ID associated with this node within its graph.
     ///
     /// This is equivalent to the last element of the path.
     pub fn id(&self) -> node::Id {
         *self.path.last().expect("path cannot be empty")
     }
 
-    /// A slice with an element for every input, `Some` if connected.
+    /// The connected inputs as `(source node, edge)` pairs.
     pub fn inputs(&self) -> &'data [(node::Id, Edge)] {
         self.inputs
     }
@@ -94,7 +94,7 @@ impl<'env, 'data> Ctx<'env, 'data> {
     }
 }
 
-/// The `Register` visitor just calls `register` for each node, prior to
+/// The `Register` visitor calls `register` for each node, prior to
 /// traversing its nested nodes.
 impl Visitor for Register<'_> {
     fn visit_pre(&mut self, ctx: Ctx<'_, '_>, node: &dyn Node) {

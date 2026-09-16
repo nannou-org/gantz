@@ -1,19 +1,19 @@
-//! The wire protocol: gossip messages and request/response types.
+//! The wire protocol. Gossip messages and request and response types.
 //!
-//! Everything here is plain serde encoded with [postcard] (compact,
-//! non-self-describing; `gantz_ca` addresses serialize as raw bytes and
-//! names as strings). Graphs and section values are the exception: erased
-//! node data ([`DataGraph`]) and section [`Value`]s are self-describing, so
-//! they travel inside [`Objects`] as RON blobs
-//! ([`encode_graph`]/[`decode_graph`], [`encode_value`]/[`decode_value`]) -
-//! the same encoding as the persisted registry (`bevy_gantz::storage`), so
-//! wire and persistence cannot drift. A received graph only applies if its
-//! decoded content re-verifies against the announced address (see
-//! [`gantz_ca::verify_graph`]). The human-facing `.gantz` text format is
-//! deliberately not used here: it is a name-resolving projection for
-//! import/export (its round-trip re-seeds names and re-roots commits),
-//! while sync ships bare address-keyed graphs and moves names only through
-//! the convergence rules.
+//! Everything here is plain serde encoded with [postcard], which is compact
+//! and non-self-describing. `gantz_ca` addresses serialize as raw bytes and
+//! names as strings. Graphs and section values are the exception. Erased
+//! node data, [`DataGraph`], and section [`Value`]s are self-describing, so
+//! they travel inside [`Objects`] as RON blobs. See [`encode_graph`] and
+//! [`encode_value`]. That is the same encoding as the persisted registry in
+//! `bevy_gantz::storage`, so wire and persistence cannot drift. A received
+//! graph only applies if its decoded content re-verifies against the
+//! announced address. See [`gantz_ca::verify_graph`].
+//!
+//! The human-facing `.gantz` text format is deliberately not used here. It
+//! is a name-resolving projection for import and export, and its round-trip
+//! re-seeds names and re-roots commits. Sync ships bare address-keyed graphs
+//! and moves names only through the convergence rules.
 //!
 //! [postcard]: https://docs.rs/postcard
 
@@ -26,26 +26,30 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// A message broadcast on a session's gossip topic.
 ///
-/// Must stay well under iroh-gossip's message-size limit (4 KiB by default):
-/// anything bulky moves over the request plane instead.
+/// Must stay well under iroh-gossip's message-size limit of 4 KiB by default.
+/// Anything bulky moves over the request plane instead.
+///
+/// Variant order is part of the wire format. Postcard discriminants follow
+/// declaration order, so append new variants at the end.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum GossipMsg {
     /// Scoped names whose tips changed on the announcing peer, with the tips'
-    /// graph addresses (so receivers can pre-check twin adoptions cheaply).
+    /// graph addresses. Receivers use those to pre-check twin adoptions
+    /// cheaply.
     Tips {
         origin: PeerId,
-        /// Per-origin sequence number, for stale-drop only: convergence
+        /// Per-origin sequence number, for stale-drop only. Convergence
         /// never depends on delivery order.
         seq: u64,
         changed: Vec<(Name, CommitAddr, GraphAddr)>,
     },
-    /// Anti-entropy: a digest of the announcing peer's scoped heads (see
-    /// [`heads_digest`]).
+    /// An anti-entropy digest of the announcing peer's scoped heads. See
+    /// [`heads_digest`].
     ///
-    /// Reserved: nothing broadcasts digests yet, and receivers do not pull
-    /// [`SyncRequest::Heads`] on mismatch (the server already answers it).
-    /// Today a peer that misses a `Tips` broadcast re-heals on the next
-    /// announcement; this variant is the wire slot for the planned
+    /// Reserved. Nothing broadcasts digests yet, and receivers do not pull
+    /// [`SyncRequest::Heads`] on mismatch, though the server already answers
+    /// it. A peer that misses a `Tips` broadcast re-heals on the next
+    /// announcement. This variant is the wire slot for the planned
     /// digest-triggered pull.
     Digest {
         origin: PeerId,
@@ -58,53 +62,51 @@ pub enum GossipMsg {
         origin: PeerId,
         name: Option<String>,
     },
-    /// An ephemeral node-interaction action (a live widget gesture or an
-    /// eval trigger), application-encoded. Fire-and-forget: never persisted,
-    /// no convergence obligation - the commit plane is unaffected when these
-    /// drop. Appended after the existing variants so their postcard
-    /// discriminants are unchanged.
+    /// An ephemeral application-encoded node-interaction action, such as a
+    /// live widget gesture or an eval trigger. Fire-and-forget. It is never
+    /// persisted and has no convergence obligation, so the commit plane is
+    /// unaffected when these drop.
     Action {
         origin: PeerId,
         /// Per-origin sequence number, for stale-drop only.
         seq: u64,
-        /// Sender wall-clock milliseconds since the epoch: the cross-origin
+        /// Sender wall-clock milliseconds since the epoch. The cross-origin
         /// last-write-wins tiebreak for value-shaped actions, and history
         /// display.
         timestamp: u64,
-        /// The scoped name (branch) the action's head was on.
+        /// The scoped branch name the action's head was on.
         name: Name,
         /// The graph address the action was issued against. Node-index
-        /// paths are only meaningful relative to a specific graph:
-        /// receivers apply an action only while their tip holds the
+        /// paths are only meaningful relative to a specific graph.
+        /// Receivers apply an action only while their tip holds the
         /// identical graph, and drop it otherwise.
         graph: GraphAddr,
-        /// The application-encoded action (opaque here, like graph blobs -
-        /// an undecodable or unknown action drops alone without poisoning
-        /// the envelope).
+        /// The application-encoded action, opaque here like graph blobs. An
+        /// undecodable or unknown action drops alone without poisoning the
+        /// envelope.
         data: Vec<u8>,
     },
-    /// An ephemeral pointer position over a shared graph (a presence
-    /// cursor). Fire-and-forget: receivers expire stale entries, and a lost
-    /// message is corrected by the next movement. Appended after the
-    /// existing variants so their postcard discriminants are unchanged.
+    /// An ephemeral pointer position over a shared graph, a presence cursor.
+    /// Fire-and-forget. Receivers expire stale entries, and the next
+    /// movement corrects a lost message.
     Pointer {
         origin: PeerId,
-        /// Per-origin sequence number, for stale-drop only: gossip may
+        /// Per-origin sequence number, for stale-drop only. Gossip may
         /// reorder, and a cursor jumping backwards would be visible.
         seq: u64,
-        /// The scoped name (branch) the pointer is over.
+        /// The scoped branch name the pointer is over.
         name: Name,
-        /// The pointer position in graph-space coordinates
-        /// (camera-independent, so every peer renders it correctly
-        /// regardless of viewport). `None` = the pointer left the scene.
+        /// The pointer position in graph-space coordinates. Those are
+        /// camera-independent, so every peer renders it correctly regardless
+        /// of viewport. `None` means the pointer left the scene.
         pos: Option<(f32, f32)>,
     },
 }
 
 /// The size cap for [`GossipMsg::Action`]'s application-encoded `data`.
 ///
-/// Keeps the whole message comfortably inside iroh-gossip's 4 KiB limit;
-/// senders drop (with a warning) rather than truncate an oversized action.
+/// Keeps the whole message comfortably inside iroh-gossip's 4 KiB limit.
+/// Senders drop an oversized action with a warning rather than truncate it.
 pub const MAX_ACTION_DATA: usize = 2048;
 
 /// A kind-tagged reference to one content-addressed object.
@@ -112,12 +114,12 @@ pub const MAX_ACTION_DATA: usize = 2048;
 pub enum ObjectRef {
     Commit(CommitAddr),
     Graph(GraphAddr),
-    /// A blob in the named blob section (the wire slot for asset transfer).
+    /// A blob in the named blob section. The wire slot for asset transfer.
     Blob {
         section: SectionId,
         addr: ContentAddr,
     },
-    /// A metadata section entry (e.g. a stored scene view).
+    /// A metadata section entry, for example a stored scene view.
     Section {
         id: SectionId,
         key: Key,
@@ -128,7 +130,7 @@ pub enum ObjectRef {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Object {
     Commit(CommitAddr, WireCommit),
-    /// A graph as a RON-serialized [`DataGraph`] blob (see [`encode_graph`]).
+    /// A graph as a RON-serialized [`DataGraph`] blob. See [`encode_graph`].
     Graph(GraphAddr, Vec<u8>),
     /// Raw blob bytes, with the store liveness that stamps the section if
     /// the receiver does not hold it yet.
@@ -138,12 +140,11 @@ pub enum Object {
         addr: ContentAddr,
         bytes: Vec<u8>,
     },
-    /// A metadata section entry. The section's stamped semantics ride along
-    /// (the same pattern as [`Object::Blob`]'s `liveness`) so a receiver
-    /// without the owning domain compiled in still stamps the section
-    /// correctly. The value is a RON blob (see [`encode_value`]): section
-    /// values can hold [`gantz_ca::Datum`]s, which only self-describing
-    /// formats can decode.
+    /// A metadata section entry. The section's stamped semantics ride along,
+    /// as [`Object::Blob`]'s `liveness` does, so a receiver without the
+    /// owning domain compiled in still stamps the section correctly. The
+    /// value is a RON blob. See [`encode_value`]. Section values can hold
+    /// [`gantz_ca::Datum`]s, which only self-describing formats can decode.
     Section {
         id: SectionId,
         policy: MergePolicy,
@@ -153,7 +154,7 @@ pub enum Object {
     },
 }
 
-/// Objects a peer is missing (the wire form of `gantz_ca::sync::Missing`).
+/// Objects a peer is missing. The wire form of `gantz_ca::sync::Missing`.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Want {
     pub refs: Vec<ObjectRef>,
@@ -161,7 +162,7 @@ pub struct Want {
 
 /// Fetched session content.
 ///
-/// Order carries no meaning: receivers validate and topologically apply via
+/// Order carries no meaning. Receivers validate and topologically apply via
 /// `gantz_ca::sync::Staged`.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Objects {
@@ -170,10 +171,10 @@ pub struct Objects {
 
 /// [`Commit`] mirrored without serde field-skipping.
 ///
-/// `Commit` deliberately omits an empty `merge_parents` from its serialized
-/// form (persisted-registry compatibility), which desynchronises
-/// non-self-describing readers like postcard - the reader cannot tell the
-/// field is absent. The wire carries this faithful mirror instead.
+/// `Commit` omits an empty `merge_parents` from its serialized form for
+/// persisted-registry compatibility. That desynchronises non-self-describing
+/// readers like postcard, since the reader cannot tell the field is absent.
+/// The wire carries this faithful mirror instead.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct WireCommit {
     pub timestamp: gantz_ca::Timestamp,
@@ -182,15 +183,15 @@ pub struct WireCommit {
     pub merge_parents: Vec<CommitAddr>,
 }
 
-/// A request over the [`SYNC_ALPN`](crate::SYNC_ALPN) plane; one request per
-/// QUIC bi-stream.
+/// A request over the [`crate::SYNC_ALPN`] plane. One request per QUIC
+/// bi-stream.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum SyncRequest {
     /// Protocol negotiation and access check.
     Hello { session: SessionId, proto: u32 },
-    /// The full served store: a joiner's initial sync.
+    /// The full served store, for a joiner's initial sync.
     Snapshot { session: SessionId },
-    /// The scoped `name -> tip` map, for anti-entropy pulls.
+    /// The scoped name to tip map, for anti-entropy pulls.
     Heads { session: SessionId },
     /// Specific missing objects.
     Want { session: SessionId, want: Want },
@@ -248,7 +249,7 @@ impl From<WireCommit> for Commit {
 
 /// Encode a wire value with postcard.
 pub fn encode<T: Serialize>(value: &T) -> Vec<u8> {
-    // Postcard serialization of our plain enums/structs cannot fail short of
+    // Postcard serialization of plain enums and structs cannot fail short of
     // allocation failure.
     postcard::to_allocvec(value).unwrap_or_default()
 }
@@ -258,7 +259,7 @@ pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, postcard::Error> {
     postcard::from_bytes(bytes)
 }
 
-/// Encode a graph as its wire blob: RON of the erased [`DataGraph`], the
+/// Encode a graph as its wire blob. RON of the erased [`DataGraph`], the
 /// same self-describing encoding as the persisted registry.
 pub fn encode_graph(graph: &DataGraph) -> Vec<u8> {
     // RON serialization of plain data cannot fail short of allocation
@@ -266,39 +267,40 @@ pub fn encode_graph(graph: &DataGraph) -> Vec<u8> {
     ron::to_string(graph).unwrap_or_default().into_bytes()
 }
 
-/// Decode a graph wire blob (see [`encode_graph`]).
+/// Decode a graph wire blob. See [`encode_graph`].
 ///
-/// Decoding proves nothing: the caller must verify the decoded graph
-/// against the address it was announced under (see
-/// [`gantz_ca::verify_graph`]).
+/// Decoding proves nothing. The caller must verify the decoded graph
+/// against the address it was announced under. See
+/// [`gantz_ca::verify_graph`].
 pub fn decode_graph(bytes: &[u8]) -> Result<DataGraph, ron::de::SpannedError> {
     ron::de::from_bytes(bytes)
 }
 
-/// Encode a section value as its wire blob: RON of the [`Value`], the same
+/// Encode a section value as its wire blob. RON of the [`Value`], the same
 /// self-describing encoding as the persisted registry. Self-description is
-/// required: [`Value::Datum`] cannot ride a non-self-describing format like
-/// postcard.
+/// required, since [`Value::Datum`] cannot ride a non-self-describing format
+/// like postcard.
 pub fn encode_value(value: &Value) -> Vec<u8> {
     // RON serialization of plain data cannot fail short of allocation
     // failure.
     ron::to_string(value).unwrap_or_default().into_bytes()
 }
 
-/// Decode a section value wire blob (see [`encode_value`]).
+/// Decode a section value wire blob. See [`encode_value`].
 ///
 /// Section entries are advisory metadata with no content address to verify
-/// against: receivers skip entries that fail to decode.
+/// against. Receivers skip entries that fail to decode.
 pub fn decode_value(bytes: &[u8]) -> Result<Value, ron::de::SpannedError> {
     ron::de::from_bytes(bytes)
 }
 
-/// The digest of a `name -> tip` head map, for [`GossipMsg::Digest`]
-/// anti-entropy: blake3 over the `(name, tip)` pairs in iteration order.
+/// The digest of a name to tip head map, for [`GossipMsg::Digest`]
+/// anti-entropy. It is blake3 over the `(name, tip)` pairs in iteration
+/// order.
 ///
-/// Callers must supply a name-ordered iteration (e.g.
-/// `gantz_ca::Registry::heads`) so peers holding equal heads derive equal
-/// digests. Heads-only for now: a whole-sections digest would need a
+/// Callers must supply a name-ordered iteration, such as
+/// `gantz_ca::Registry::heads`, so peers holding equal heads derive equal
+/// digests. Only heads are digested. A whole-sections digest would need a
 /// canonical section byte encoding, which the registry does not define yet.
 pub fn heads_digest<'a>(heads: impl IntoIterator<Item = (&'a Name, CommitAddr)>) -> [u8; 32] {
     let mut hasher = gantz_ca::Hasher::new();
@@ -396,8 +398,8 @@ mod tests {
         assert_eq!(graph, ga);
         assert_eq!(data, vec![1, 2, 3]);
 
-        // The new trailing variant must not shift the existing postcard
-        // discriminants: a pre-action Tips encoding still starts with tag 0.
+        // The trailing variant must not shift the existing postcard
+        // discriminants. A Tips encoding still starts with tag 0.
         let tips = GossipMsg::Tips {
             origin: PeerId([1; 32]),
             seq: 0,
@@ -434,8 +436,8 @@ mod tests {
         assert_eq!(n, name("main"));
         assert_eq!(pos, Some((1.5, -2.0)));
 
-        // Appended after `Action`, so its discriminant follows Action's and
-        // Action's own is unchanged.
+        // `Pointer` follows `Action`, so its discriminant is one higher and
+        // `Action`'s is unchanged.
         let action = GossipMsg::Action {
             origin: PeerId([1; 32]),
             seq: 0,
@@ -450,9 +452,9 @@ mod tests {
 
     #[test]
     fn objects_round_trip_ordinary_commits() {
-        // Regression: `Commit`'s skip-when-empty `merge_parents` cannot ride
-        // postcard directly - the wire mirror must round-trip an ordinary
-        // (merge-parent-free) commit faithfully.
+        // `Commit`'s skip-when-empty `merge_parents` cannot ride postcard
+        // directly. The wire mirror must round-trip an ordinary commit with
+        // no merge parents faithfully.
         let ga = GraphAddr::from(gantz_ca::ContentAddr::from([4; 32]));
         let commit = Commit::new(std::time::Duration::from_secs(5), None, ga);
         let ca = gantz_ca::commit_addr(&commit);
@@ -479,9 +481,9 @@ mod tests {
         assert_eq!(decoded, objects);
     }
 
-    /// Regression: a `Value::Datum` cannot decode from a non-self-describing
-    /// format (`Datum` deserializes via `deserialize_any`), so section
-    /// values must travel as RON blobs inside the postcard envelope.
+    /// A `Value::Datum` cannot decode from a non-self-describing format,
+    /// since `Datum` deserializes via `deserialize_any`. So section values
+    /// must travel as RON blobs inside the postcard envelope.
     #[test]
     fn section_values_round_trip_as_ron_not_postcard() {
         let value = Value::Datum(gantz_ca::Datum::Map(vec![(

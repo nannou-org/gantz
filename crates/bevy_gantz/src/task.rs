@@ -1,18 +1,17 @@
 //! Opaque task values for asynchronous work in gantz graphs.
 //!
-//! A [`GantzTask`] represents work whose result arrives at some unknown later
-//! time (a network response, a DB query, a timer). Producer nodes construct
-//! one (usually via [`GantzTask::spawn`]) and emit it wrapped in a
-//! [`TaskHandle`] as an opaque steel value. An `await` node downstream stashes
-//! the handle in its state, and a driver system polls it in place each frame
-//! via [`TaskHandle::check`], delivering the result back into the graph with a
-//! push evaluation. Keeping the pending task inside node state means the
-//! state-migration machinery (editor deletes, undo/redo, merges) carries
-//! in-flight work wherever its node goes.
+//! A [`GantzTask`] represents work whose result arrives at some later time.
+//! Examples are a network response, a DB query or a timer. Producer nodes
+//! construct one, usually via [`GantzTask::spawn`], and emit it wrapped in a
+//! [`TaskHandle`] as an opaque steel value. An `await` node downstream stores
+//! the handle in its state. A driver system polls it in place each frame via
+//! [`TaskHandle::check`] and delivers the result back into the graph with a
+//! push evaluation. The pending task lives inside node state, so the
+//! state-migration machinery carries in-flight work wherever its node goes.
 //!
 //! Steel values are not `Send`, so a spawned task's future must produce a
 //! `Send` output. The conversion to a [`SteelVal`] happens on the main thread
-//! when the task completes, via a closure that may itself capture non-`Send`
+//! when the task completes. The conversion closure may capture non-`Send`
 //! steel values.
 
 use bevy_tasks::{AsyncComputeTaskPool, Task, TaskPool};
@@ -26,9 +25,9 @@ use steel::{
 
 /// A unit of asynchronous work resolving to a steel value or an error string.
 ///
-/// Dropping a `GantzTask` cancels it: a task spawned via [`GantzTask::spawn`]
-/// detaches from its pool and stops, and a [`GantzTask::poll_fn`] closure is
-/// simply never called again.
+/// Dropping a `GantzTask` cancels it. A task spawned via [`GantzTask::spawn`]
+/// detaches from its pool and stops. A [`GantzTask::poll_fn`] closure is
+/// never called again.
 pub struct GantzTask {
     kind: Kind,
 }
@@ -37,12 +36,11 @@ pub struct GantzTask {
 /// storage in node state or transfer along graph edges as an opaque
 /// [`SteelVal`].
 ///
-/// Cloning shares the underlying cell: steel's `FromSteelVal` for custom
+/// Cloning shares the underlying cell. Steel's `FromSteelVal` for custom
 /// types clones, so a handle extracted from the VM still refers to the same
-/// task. The result is delivered exactly once: [`TaskHandle::check`] consumes
-/// the underlying result on completion, so when several holders share the
-/// cell (e.g. one task value wired into several `await` nodes) only the first
-/// holder checked after completion delivers, and the rest observe `None`.
+/// task. The result is delivered exactly once. [`TaskHandle::check`] consumes
+/// the result on completion. When several holders share the cell, only the
+/// first holder checked after completion delivers. The rest observe `None`.
 /// [`TaskHandle::take`] and [`TaskHandle::cancel`] remove the task from every
 /// clone at once.
 #[derive(Clone)]
@@ -60,21 +58,21 @@ enum Kind {
     Poll(Box<dyn FnMut() -> Option<Result<SteelVal, String>>>),
 }
 
-/// The name under which the [`TaskHandle`] type predicate is registered in
-/// node VMs, allowing generated code to test `(gantz-task? x)`.
+/// The name of the [`TaskHandle`] type predicate registered in node VMs.
+/// Generated code tests `(gantz-task? x)`.
 pub const TASK_PREDICATE: &str = "gantz-task?";
 
-/// The name of the registered fn cancelling a pending task, allowing
-/// generated code to call `(gantz-task-cancel! x)` where `x` is a task handle
-/// or a list whose second element is one (the `await` node's state pair).
+/// The name of the registered fn that cancels a pending task. Generated code
+/// calls `(gantz-task-cancel! x)`. `x` is a task handle or the `await` node's
+/// state pair, a list whose second element is a handle.
 pub const TASK_CANCEL_FN: &str = "gantz-task-cancel!";
 
 impl GantzTask {
     /// Spawn the given future on the async compute task pool.
     ///
-    /// The future's output is converted to a steel value by `convert`, which
-    /// runs on the main thread once the task completes and so may capture
-    /// non-`Send` values (including [`SteelVal`]s).
+    /// `convert` turns the future's output into a steel value. It runs on the
+    /// main thread once the task completes, so it may capture non-`Send`
+    /// values such as [`SteelVal`]s.
     pub fn spawn<T, F, C>(fut: F, convert: C) -> Self
     where
         T: Send + 'static,
@@ -105,13 +103,12 @@ impl GantzTask {
         Self::spawn(fut, |t| t.into_steelval().map_err(|e| e.to_string()))
     }
 
-    /// A task backed by a closure checked once per frame by the driver,
-    /// rather than a future running on an executor.
+    /// A task backed by a closure that the driver checks once per frame.
     ///
-    /// Suited to work that only needs the passage of frames (e.g. timers):
-    /// an executor-driven future would need to wake itself to be re-polled,
-    /// busy-spinning a pool thread, whereas the driver checks this closure
-    /// each update anyway.
+    /// Suited to work such as timers that only needs the passage of frames.
+    /// An executor-driven future would need to wake itself to be re-polled
+    /// and would busy-spin a pool thread. The driver checks this closure each
+    /// update anyway.
     pub fn poll_fn<F>(f: F) -> Self
     where
         F: FnMut() -> Option<Result<SteelVal, String>> + 'static,
@@ -151,7 +148,7 @@ impl TaskHandle {
     /// Check the contained task in place, leaving it in the handle.
     ///
     /// Returns `None` while pending, after the result has been delivered, or
-    /// when the handle is empty (taken or cancelled).
+    /// when the handle was taken or cancelled.
     pub fn check(&self) -> Option<Result<SteelVal, String>> {
         self.0.borrow_mut().as_mut()?.check()
     }
@@ -177,8 +174,8 @@ impl Custom for TaskHandle {
 /// Register the [`TaskHandle`] type, its [`TASK_PREDICATE`] predicate and the
 /// [`TASK_CANCEL_FN`] fn in the given VM if not already present.
 ///
-/// Guarded so that repeated registration (e.g. on every recompile) doesn't
-/// leak fresh global slots.
+/// The guard stops repeated registration on every recompile from leaking
+/// fresh global slots.
 pub fn register_task_type(vm: &mut Engine) {
     if vm.extract_value(TASK_PREDICATE).is_err() {
         vm.register_type::<TaskHandle>(TASK_PREDICATE);
@@ -186,19 +183,18 @@ pub fn register_task_type(vm: &mut Engine) {
     }
 }
 
-/// Cancel the task in `val`, a task handle or a list whose second element is
-/// one (the `await` node's state pair). No-op on anything else.
+/// Cancel the task in `val`. See [`TASK_CANCEL_FN`] for the accepted forms.
+/// No-op on anything else.
 ///
 /// Returns whether a task was present to cancel. Cancellation must be
-/// explicit rather than relying on the replaced value being dropped: steel
-/// heap-boxes `set!`-mutated state, so a superseded value may linger until
-/// its slot is recycled.
+/// explicit. Steel heap-boxes `set!`-mutated state, so a superseded value may
+/// linger until its slot is recycled.
 fn cancel_task_value(val: SteelVal) -> bool {
     task_handle_of(&val).is_some_and(|handle| handle.cancel())
 }
 
-/// The task handle in `val`: either `val` itself, or the second element of a
-/// list (the `await` node's `(list arm payload)` state pair).
+/// The task handle in `val`, either `val` itself or the second element of the
+/// `await` node's `(list arm payload)` state pair.
 fn task_handle_of(val: &SteelVal) -> Option<TaskHandle> {
     if let Ok(handle) = TaskHandle::from_steelval(val) {
         return Some(handle);
@@ -291,10 +287,8 @@ mod tests {
         });
         let handle = TaskHandle::new(task);
         let clone = handle.clone();
-        // Still pending: the task stays in the handle for the next check.
         assert_eq!(clone.check(), None);
         assert_eq!(handle.check(), Some(Ok(SteelVal::IntV(4))));
-        // Delivered: the task remains but yields nothing further.
         assert_eq!(clone.check(), None);
     }
 
@@ -321,11 +315,9 @@ mod tests {
         );
         vm.register_value("p", pair);
         vm.register_value("n", SteelVal::IntV(1));
-        // A non-pair, non-handle value is a no-op.
         let res = vm.run(format!("({TASK_CANCEL_FN} n)")).unwrap();
         assert_eq!(res.last(), Some(&SteelVal::BoolV(false)));
         assert!(!flag.get());
-        // A pending pair's task is dropped.
         let res = vm.run(format!("({TASK_CANCEL_FN} p)")).unwrap();
         assert_eq!(res.last(), Some(&SteelVal::BoolV(true)));
         assert!(flag.get());

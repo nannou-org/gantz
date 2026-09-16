@@ -1,26 +1,22 @@
-//! Base nodes - pre-composed graphs that ship with the binary.
+//! Base nodes are pre-composed graphs that ship with the binary.
 //!
-//! Base nodes are named graphs authored as `.gantz` files and embedded at
-//! compile time via `include_bytes!`. Each domain contributes its file as a
-//! [`BaseSource`] pushed into [`BaseSources`] from its plugin's `build`
-//! (`GantzEguiPlugin` contributes the core `gantz_base` source). On every
-//! startup, [`load`] deserializes each source in order and merges it into
-//! the user's registry so base nodes are always available. Because the merge
-//! replaces existing names, base nodes are authoritative - they reset to
-//! their original form on each launch. Users who want to customize a base
-//! node should duplicate it under a new name.
+//! Each base node is a named graph authored as a `.gantz` file and embedded
+//! at compile time with `include_bytes!`. Each domain plugin pushes its file
+//! as a [`BaseSource`] into [`BaseSources`] from `Plugin::build`. On every
+//! startup, [`load`] parses each source and merges it into the user's
+//! registry. The merge replaces existing names, so base nodes reset to their
+//! shipped form on each launch. To customize a base node, duplicate it under
+//! a new name.
 //!
-//! A source may reference names another source defines: loading runs to a
-//! fixpoint, parsing each source seeded with the names loaded so far (see
-//! [`load`]), so e.g. a domain's base graph can compose the core source's
-//! graphs. Its file writes those refs by name without embedding the foreign
-//! graphs (see [`export_to_file`]).
+//! A source may reference names another source defines. [`load`] runs to a
+//! fixpoint, so a domain's base graph can compose the core source's graphs.
+//! [`export_to_file`] writes such refs by name without embedding the foreign
+//! graphs.
 //!
-//! The set of base node names is tracked in [`BaseNames`] so the UI can
-//! distinguish them (e.g. `[base]` prefix, no delete button), and each
-//! name's owning source in [`BaseNameSources`] so `update-base` can write
-//! every source back to its own file and demo reset can re-parse the right
-//! source.
+//! [`BaseNames`] tracks the set of base node names so the UI can mark them.
+//! [`BaseNameSources`] tracks each name's owning source so `update-base`
+//! writes every source back to its own file and demo reset re-parses the
+//! right source.
 
 use crate::reg::{GraphCache, refresh_cache};
 use bevy_ecs::prelude::*;
@@ -33,64 +29,61 @@ use crate::{BaseNames, NodeCodecRes};
 
 /// One domain's baked-in base `.gantz` export.
 pub struct BaseSource {
-    /// Identifies the source (e.g. `"gantz"`, `"plyphon"`) in logs, name
-    /// attribution ([`BaseNameSources`]) and `update-base` write-back routing.
+    /// The source name, for example `"gantz"`. Used in logs, in
+    /// [`BaseNameSources`] and for `update-base` write-back routing.
     pub name: &'static str,
-    /// The `.gantz` bytes (an `include_bytes!` of the domain's base file).
+    /// The `.gantz` bytes of the domain's base file.
     pub bytes: &'static [u8],
 }
 
 /// The base sources to load, in load order.
 ///
-/// Domain plugins contribute their source via `get_resource_or_init` + push
-/// from `Plugin::build`, so plugin order does not matter for correctness
-/// (name collisions across sources are resolved last-wins, loudly - see
-/// [`load`]).
+/// Domain plugins push their source from `Plugin::build`. Plugin order does
+/// not matter for correctness. [`load`] resolves name collisions across
+/// sources last-wins and warns.
 #[derive(Default, Resource)]
 pub struct BaseSources(pub Vec<BaseSource>);
 
-/// Which source each base name came from (name to [`BaseSource::name`]),
-/// recorded by [`load`].
+/// The [`BaseSource::name`] each base name came from, recorded by [`load`].
 ///
 /// `update-base` uses it to write each source's names back to that source's
-/// own file, and demo reset uses it to re-parse the owning source.
+/// own file. Demo reset uses it to re-parse the owning source.
 #[derive(Default, Resource)]
 pub struct BaseNameSources(pub HashMap<String, &'static str>);
 
-/// Paths to write each base source back to (a [`BaseSource::name`] to file
-/// path map), plus the source that receives names with no recorded
-/// attribution (graphs created during the session).
+/// The file path to write each base source back to, keyed by
+/// [`BaseSource::name`], plus the source that receives names with no
+/// recorded attribution.
 ///
 /// Used by [`export_to_file`]. The paths typically point at each source
 /// crate's `base.gantz` file so that edits land back in the repo. This lives
-/// in the developer tool's configuration, not on [`BaseSource`]: shipped
+/// in the developer tool's configuration, not on [`BaseSource`]. Shipped
 /// binaries must not bake dev-tree write paths.
 #[derive(Resource)]
 pub struct ExportPaths {
-    /// Where each source's names are written ([`BaseSource::name`] to path).
+    /// The write path for each source's names, keyed by [`BaseSource::name`].
     pub paths: HashMap<&'static str, &'static str>,
-    /// The source that receives unattributed (session-created) names.
+    /// The source that receives names with no recorded attribution, such as
+    /// graphs created during the session.
     pub default_source: &'static str,
 }
 
-/// Fixed timestamp used to stamp the base's hand-authored (uncommitted) graphs.
+/// The fixed timestamp used to stamp the base's hand-authored graphs.
 ///
-/// Every base source is parsed at startup *and* again on demo reset; both must
-/// agree on the synthesized commit addresses, otherwise a reset demo's `ref`s
-/// point at commits that are absent from the already-loaded registry (its
-/// primitives were stamped at startup). A constant makes those addresses
-/// reproducible.
+/// Every base source is parsed at startup and again on demo reset. Both must
+/// agree on the synthesized commit addresses. Otherwise a reset demo's `ref`s
+/// point at commits absent from the loaded registry. A constant makes those
+/// addresses reproducible.
 pub const BASE_TIMESTAMP: gantz_ca::Timestamp = std::time::Duration::ZERO;
 
-/// Startup system that deserializes each embedded base source and merges it
-/// into the registry, populating [`BaseNames`] and [`BaseNameSources`].
+/// Startup system that parses each embedded base source and merges it into
+/// the registry. Populates [`BaseNames`] and [`BaseNameSources`].
 ///
 /// A source may reference names another source defines, so loading runs to a
-/// fixpoint: each round parses every still-pending source seeded with the
-/// names loaded so far, deferring sources whose references do not resolve
-/// yet. Push order therefore does not matter - sources load in dependency
-/// order. A source whose references never resolve (or that fails to parse
-/// outright) is logged and dropped.
+/// fixpoint. Each round parses every pending source seeded with the names
+/// loaded so far. Sources whose references do not resolve yet are deferred.
+/// Push order does not matter. A source whose references never resolve, or
+/// that fails to parse, is logged and dropped.
 pub fn load(
     sources: Res<BaseSources>,
     mut registry: ResMut<Registry>,
@@ -112,7 +105,7 @@ pub fn load(
             ) {
                 Ok(e) => e,
                 // An unresolved reference may resolve once another
-                // source loads - retry next round.
+                // source loads. Retry next round.
                 Err(gantz_egui::export::ParseExportError::Format(e))
                     if matches!(e.kind, gantz_format::ErrorKind::MissingDependency(_)) =>
                 {
@@ -136,15 +129,14 @@ pub fn load(
                 name_sources.0.insert(display, source.name);
                 base_names.0.insert(name.clone(), ca);
             }
-            // The base's GUI metadata (demos, views) must win over the user's
-            // persisted entries: the demo/view sections merge KeepExisting, so
-            // reinsert the parsed entries explicitly after the merge.
+            // The base's GUI metadata must win over the user's persisted
+            // entries. The demo and view sections merge KeepExisting, so
+            // reinsert the parsed entries after the merge.
             let demos: Vec<_> = gantz_egui::section::demos(&parsed).collect();
             let views: Vec<_> = gantz_egui::section::views(&parsed).collect();
-            // NOTE: the merge's `heads_replaced` is deliberately not logged -
-            // base names replacing a user's persisted edits on launch is the
-            // by-design authoritative reset, not a collision. Source-vs-source
-            // collisions are the ones worth warning about, caught above.
+            // The merge's `heads_replaced` is not logged. Base names replacing
+            // a user's persisted edits on launch is the intended reset, not a
+            // collision. Source-vs-source collisions are warned above.
             registry.merge(parsed);
             for (name, demo) in demos {
                 gantz_egui::section::set_demo(&mut registry.0, name, demo);
@@ -153,7 +145,7 @@ pub fn load(
                 gantz_egui::section::set_view(&mut registry.0, ca, &view);
             }
         }
-        // Done, or stuck: no deferred source can make progress once a full
+        // Done, or stuck. No deferred source can make progress once a full
         // round loads nothing new.
         if deferred.is_empty() {
             break;
@@ -181,8 +173,8 @@ pub fn load(
     refresh_cache(&registry, &mut cache, &codec.0);
 }
 
-/// System that exports every named graph back to its owning source's file
-/// (see [`ExportPaths`] and [`BaseNameSources`]).
+/// System that exports every named graph back to its owning source's file.
+/// See [`ExportPaths`] and [`BaseNameSources`].
 ///
 /// Intended for the `update-base` developer binary. Pair with
 /// `DebouncedInputEvent` so it runs on save.
@@ -203,9 +195,9 @@ pub fn export_to_file(
             );
             continue;
         };
-        // Exactly this source's names, with refs into other sources written
-        // by name only (no transitive closure) - loading resolves them via
-        // the seeded parse.
+        // Only this source's names. Refs into other sources are written by
+        // name, with no transitive closure. Loading resolves them with the
+        // seeded parse.
         let names: Vec<String> = names.iter().map(|name| name.to_string()).collect();
         match gantz_egui::export::export_names_sexpr_named(&registry, &names, &codec.0) {
             Ok(text) => {
@@ -218,9 +210,9 @@ pub fn export_to_file(
     }
 }
 
-/// The name -> head graph address seed for a seeded base parse: each known
-/// base name resolved to its head commit's graph in the given registry (see
-/// [`gantz_egui::export::parse_export_seeded_at`]).
+/// The name to head graph address seed for a seeded base parse. Each known
+/// base name resolves to its head commit's graph in the given registry. See
+/// [`gantz_egui::export::parse_export_seeded_at`].
 pub fn seed_graph_addrs(
     names: &gantz_egui::reg::Names,
     registry: &gantz_ca::Registry,
@@ -236,11 +228,10 @@ pub fn seed_graph_addrs(
 
 /// Partition base names by their owning source for per-source write-back.
 ///
-/// A nested name (`parent:child`) with no recorded source follows its
-/// parent's attribution, recursing to the outermost prefix - a nested graph
-/// belongs in the same file as the graph that nests it. Other unrecorded
-/// names (e.g. graphs created during an `update-base` session) are attributed
-/// to `default_source`.
+/// A nested name like `parent:child` with no recorded source follows its
+/// parent's attribution, up to the outermost prefix. A nested graph belongs
+/// in the same file as the graph that nests it. Other unrecorded names go to
+/// `default_source`.
 pub fn partition_names<'a>(
     names: impl IntoIterator<Item = &'a Name>,
     name_sources: &BaseNameSources,

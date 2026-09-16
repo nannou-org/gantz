@@ -22,9 +22,9 @@ pub struct FileDrop {
 /// Which pane received the file drop.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileDropTarget {
-    /// Graphs pane: merge registry + views only.
+    /// The Graphs pane. Merge the registry and views only.
     Graphs,
-    /// GraphScene pane: merge + open the root graph if unique.
+    /// The GraphScene pane. Merge, then open the root graph if unique.
     GraphScene,
 }
 
@@ -39,7 +39,7 @@ pub const NESTED_GRAPH_TYPE: &str = "graph";
 pub struct Gantz<'a> {
     env: &'a Env<'a>,
     /// The value-level codec through which working-graph nodes reify for
-    /// their UI passes (and erase back on change).
+    /// their UI passes and erase back on change.
     codec: &'a NodeCodec,
     base_names: &'a crate::reg::Names,
     log_source: Option<LogSource>,
@@ -55,13 +55,13 @@ pub struct Gantz<'a> {
     base_sources: Option<BaseSourcesCtx<'a>>,
     pane_window_mode: PaneWindowMode,
     collab: Option<&'a crate::collab::CollabUiState>,
-    /// A host-provided clipboard reader for widget paste affordances (egui
-    /// alone cannot read the clipboard); `None` hides them.
+    /// A host-provided clipboard reader for widget paste affordances, since
+    /// egui alone cannot read the clipboard. `None` hides them.
     clipboard: Option<&'a dyn Fn() -> Option<String>>,
 }
 
 /// Base-source authoring context for the graph config pane's "source"
-/// dropdown (see [`widget::GraphConfig::base_sources`]). Supplied only by
+/// dropdown. See [`widget::GraphConfig::base_sources`]. Supplied only by
 /// base-authoring hosts like `update-base`, where the per-source write-back
 /// makes an association change durable.
 #[derive(Clone, Copy)]
@@ -70,7 +70,8 @@ pub struct BaseSourcesCtx<'a> {
     pub sources: &'a [&'a str],
     /// Each base name's owning source.
     pub name_sources: &'a HashMap<String, &'static str>,
-    /// The source an unattributed (session-created) name is written to.
+    /// The source an unattributed name is written to. Session-created names
+    /// are unattributed.
     pub default_source: &'a str,
 }
 
@@ -81,9 +82,9 @@ pub enum PaneWindowMode {
     /// web, in the eframe demo, and as the native fallback. The default.
     #[default]
     EguiWindow,
-    /// The host owns real OS windows and renders each windowed pane itself (via
-    /// [`Gantz::render_windowed_pane`]); the widget only reports the windowed set
-    /// via [`GantzResponse::windowed_panes`].
+    /// The host owns real OS windows and renders each windowed pane itself via
+    /// [`Gantz::render_windowed_pane`]. The widget only reports the windowed
+    /// set via [`GantzResponse::windowed_panes`].
     HostNative,
 }
 
@@ -105,40 +106,43 @@ pub struct GantzState {
     pub view_toggles: ViewToggles,
     #[serde(default, alias = "command_palette")]
     pub node_palette: widget::NodePalette,
-    /// Global auto-layout parameters (the non-flow `egui_graph` layout params;
-    /// flow stays per-head in [`OpenHeadState::layout_flow`]).
+    /// Global auto-layout parameters. These are the non-flow `egui_graph`
+    /// layout params. Flow stays per-head in [`OpenHeadState::layout_flow`].
     #[serde(default)]
     pub layout_config: LayoutConfig,
-    /// Global interactive-scene parameters: dot grid, drag snapping, and
-    /// snap-align. Mirror the per-frame `egui_graph::Graph` builder options and
-    /// apply to every open head.
+    /// Global interactive-scene parameters for the dot grid, drag snapping
+    /// and snap-align. They mirror the per-frame `egui_graph::Graph` builder
+    /// options and apply to every open head.
     #[serde(default)]
     pub scene_config: SceneConfig,
     /// The egui theme preference and per-theme style overrides, applied to
-    /// every gantz context (see [`crate::style`]); edited in Settings -> Style.
+    /// every gantz context. See [`crate::style`]. Edited in the Settings
+    /// Style subtab.
     #[serde(default)]
     pub style: crate::StyleConfig,
     /// The command keyboard shortcuts. The single source of truth for editor
-    /// command bindings (see [`crate::keybind`]); edited in Settings -> Keybinds.
+    /// command bindings. See [`crate::keybind`]. Edited in the Settings
+    /// Keybinds subtab.
     #[serde(default)]
     pub keymap: Keymap,
-    /// User-editable collaboration configuration (Settings -> Collab).
+    /// User-editable collaboration configuration, edited in the Settings
+    /// Collab subtab.
     #[serde(default)]
     pub collab: crate::collab::CollabConfig,
-    /// How graph merges resolve conflicts; edited via the merge row's "⛭"
+    /// How graph merges resolve conflicts. Edited via the merge row's "⛭"
     /// menu in the Graph Config pane.
     #[serde(default)]
     pub merge_resolutions: gantz_ca::merge::Resolutions,
-    /// Per-head redo stacks for undo/redo support.
+    /// Per-head redo stacks for undo and redo.
     #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub redo_stacks: HashMap<gantz_ca::Head, Vec<gantz_ca::CommitAddr>>,
-    /// Per-head stepping state for session (revert-commit) undo/redo (see
-    /// [`crate::ops::session_undo`]). Lives and migrates beside
+    /// Per-head stepping state for session undo and redo by revert commit.
+    /// See [`crate::ops::session_undo`]. Lives and migrates beside
     /// [`Self::redo_stacks`].
     #[serde(default, serialize_with = "gantz_ca::serde_sorted::serialize_map")]
     pub undo_cursors: HashMap<gantz_ca::Head, crate::ops::RevertCursor>,
-    /// The sidebar's pixel width, maintained across window resizes (fixed, not
-    /// proportional). Updated when the user drags the divider.
+    /// The sidebar width in pixels. It is fixed, not proportional, so it
+    /// survives window resizes. Dragging the divider updates it.
     #[serde(default = "default_sidebar_width")]
     pub sidebar_width: f32,
     /// The bottom tray's pixel height, maintained across window resizes.
@@ -146,8 +150,8 @@ pub struct GantzState {
     pub tray_height: f32,
     /// Last-seen size of each pane popped out into its own OS window, keyed by
     /// [`pane_key`], so a native host can restore it across sessions. Only the
-    /// native window backend populates this (web `egui::Window`s persist their
-    /// own geometry in egui memory).
+    /// native window backend populates this. Web `egui::Window`s persist
+    /// their own geometry in egui memory.
     #[serde(default)]
     pub windowed_geometry: HashMap<String, PaneWindowGeometry>,
 }
@@ -159,12 +163,10 @@ pub struct PaneWindowGeometry {
     pub height: f32,
 }
 
-/// The default fixed sidebar width, in points.
 fn default_sidebar_width() -> f32 {
     270.0
 }
 
-/// The default fixed bottom-tray height, in points.
 fn default_tray_height() -> f32 {
     300.0
 }
@@ -195,8 +197,8 @@ impl Default for OpenHeadState {
 }
 
 /// Global auto-layout parameters, mirroring the non-flow fields of
-/// [`egui_graph::LayoutParams`]. Flow stays per-head (see
-/// [`OpenHeadState::layout_flow`]); these apply to every head's auto-layout.
+/// [`egui_graph::LayoutParams`]. Flow stays per-head. See
+/// [`OpenHeadState::layout_flow`]. These apply to every head's auto-layout.
 #[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
 pub struct LayoutConfig {
     /// The gap between adjacent layers along the flow direction.
@@ -252,9 +254,9 @@ impl LayoutConfig {
     }
 }
 
-/// Global interactive-scene configuration: the dot grid, drag snapping and
-/// snap-align. Mirrors the per-frame snap/grid/align options on
-/// [`egui_graph::Graph`] and applies to every open head (like [`LayoutConfig`]).
+/// Global interactive-scene configuration for the dot grid, drag snapping and
+/// snap-align. It mirrors the per-frame options on [`egui_graph::Graph`] and
+/// applies to every open head, like [`LayoutConfig`].
 #[derive(Clone, Copy, Default, serde::Deserialize, serde::Serialize)]
 pub struct SceneConfig {
     #[serde(default)]
@@ -265,7 +267,7 @@ pub struct SceneConfig {
     pub align: AlignConfig,
 }
 
-/// The dot grid drawn behind the graph (see [`egui_graph::Graph::dot_grid`]).
+/// The dot grid drawn behind the graph. See [`egui_graph::Graph::dot_grid`].
 #[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
 pub struct GridConfig {
     /// Whether the dot grid is drawn.
@@ -296,21 +298,22 @@ impl Default for GridConfig {
 /// How a dragged node's position is snapped.
 #[derive(Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub enum SnapMode {
-    /// Snap to the nearest unit point (`snap_step = 1.0`); effectively free.
+    /// Snap to the nearest unit point, which is effectively free.
     #[default]
     Point,
-    /// Snap to a relative fraction of the dot grid (see [`SnapConfig::grid_ratio`]).
+    /// Snap to a relative fraction of the dot grid. See
+    /// [`SnapConfig::grid_ratio`].
     Grid,
 }
 
-/// Drag snapping configuration (see [`egui_graph::Graph::snap`]).
+/// Drag snapping configuration. See [`egui_graph::Graph::snap`].
 #[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
 pub struct SnapConfig {
     #[serde(default)]
     pub mode: SnapMode,
-    /// In [`SnapMode::Grid`], the snap step relative to the grid step:
+    /// In [`SnapMode::Grid`], the snap step relative to the grid step, so
     /// `snap_step = grid.step * grid_ratio`. `1.0` snaps to the full grid,
-    /// `0.5` to half, `0.25` to quarter, and so on.
+    /// `0.5` to half and `0.25` to quarter.
     #[serde(default = "default_grid_ratio")]
     pub grid_ratio: f32,
 }
@@ -328,7 +331,7 @@ impl Default for SnapConfig {
     }
 }
 
-/// Drag-time snap-align configuration (see [`egui_graph::Graph::align`]).
+/// Drag-time snap-align configuration. See [`egui_graph::Graph::align`].
 #[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
 pub struct AlignConfig {
     /// Whether a dragged node snap-aligns to its neighbours.
@@ -366,18 +369,18 @@ impl Default for AlignConfig {
 
 impl SceneConfig {
     /// Apply the grid, snap and align options onto an [`egui_graph::Graph`]
-    /// builder. The snap step is derived from the mode: [`SnapMode::Point`]
-    /// snaps to unit points, [`SnapMode::Grid`] to a fraction of the grid.
+    /// builder. The snap step derives from the mode. [`SnapMode::Point`]
+    /// snaps to unit points and [`SnapMode::Grid`] to a fraction of the grid.
     pub fn apply(self, graph: egui_graph::Graph) -> egui_graph::Graph {
         let snap_step = match self.snap.mode {
             SnapMode::Point => 1.0,
             SnapMode::Grid => self.grid.step * self.snap.grid_ratio,
         };
         graph
-            // gantz owns zoom persistence (the camera stores centre + zoom, and
-            // the scene rect is rebuilt from it each frame against the live
-            // viewport). Use `MaintainView` so `egui_graph` does not *also*
-            // rescale the rect on resize and double-adjust the zoom.
+            // gantz owns zoom persistence. The camera stores centre and zoom,
+            // and the scene rect is rebuilt from it each frame against the
+            // live viewport. Use `MaintainView` so `egui_graph` does not
+            // rescale the rect on resize as well and double-adjust the zoom.
             .resize_behavior(egui_graph::ResizeBehavior::MaintainView)
             .dot_grid(self.grid.show)
             .dot_grid_step(self.grid.step)
@@ -394,8 +397,8 @@ impl SceneConfig {
 /// A pane within the outer tree.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum Pane {
-    /// An application-supplied pane, identified by its provider's stable key
-    /// (see [`ExtPane::key`][widget::ExtPane::key]). Renders a placeholder
+    /// An application-supplied pane, identified by its provider's stable key.
+    /// See [`ExtPane::key`][widget::ExtPane::key]. Renders a placeholder
     /// while no provider supplies the key.
     Ext(String),
     GraphConfig,
@@ -410,27 +413,26 @@ pub enum Pane {
     Logs,
     NodeInspector,
     /// A node detached from a graph via the "open view" action, rendered via
-    /// [`NodeUi::view_ui`] for monitoring. A data-carrying pane (unlike the
-    /// singleton variants), so any number can be opened and freely placed
-    /// anywhere in the top-level tree.
+    /// [`NodeUi::view_ui`] for monitoring. Unlike the singleton variants it
+    /// carries data, so any number can be opened and freely placed anywhere
+    /// in the top-level tree.
     NodeView(NodeViewPane),
-    /// Globally relevant configuration grouped into Panes / Style / Global
-    /// subtabs (pane visibility, style, compile options, reset all demos).
+    /// Globally relevant configuration grouped into subtabs.
     Settings,
     Steel,
     VmPerf,
 }
 
-/// A pane within the inner graph tree.
-/// Contains the head (branch or commit) that this pane displays.
+/// A pane within the inner graph tree. Contains the head that this pane
+/// displays.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 struct GraphPane(gantz_ca::Head);
 
-/// The payload of a [`Pane::NodeView`]: one detached node view, identified by
-/// its `head` and `path` within that head's graph. `ty_name` is the node's type
-/// name ([`NodeUi::name`]), cached at open-time so the tab title is stable even
-/// while the head is closed (the node type never changes; only its index does,
-/// and that is migrated by `migrate_node_view_paths`).
+/// The payload of a [`Pane::NodeView`]. One detached node view, identified by
+/// its `head` and `path` within that head's graph. `ty_name` is the node's
+/// type name from [`NodeUi::name`], cached at open time so the tab title is
+/// stable while the head is closed. The node type never changes. Only its
+/// index does, and `migrate_node_view_paths` migrates that.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct NodeViewPane {
     head: gantz_ca::Head,
@@ -443,25 +445,25 @@ const GRAPH_TREE_ID: &str = "gantz-graph-tiles-tree";
 
 /// Load a value persisted in egui memory as a RON `String`.
 ///
-/// Values are stored as a RON `String` rather than typed: a `String`'s `TypeId`
-/// is stable across recompiles, whereas many of our types' `TypeId`s (e.g.
-/// `Tree<Pane>`, `Vec<Pane>`) change whenever this crate is rebuilt. Storing the
-/// typed value would leave a stale copy behind in egui's per-type persisted map
-/// on every dev build (egui never evicts entries of a type the running build no
-/// longer uses), bloating the persisted memory without bound.
+/// Values are stored as a RON `String` rather than typed. A `String`'s
+/// `TypeId` is stable across recompiles, whereas the `TypeId` of a type like
+/// `Tree<Pane>` changes whenever this crate is rebuilt. Storing the typed
+/// value would leave a stale copy behind in egui's per-type persisted map on
+/// every dev build. egui never evicts entries of a type the running build no
+/// longer uses. The persisted memory would bloat without bound.
 fn load_ron<T: serde::de::DeserializeOwned>(ctx: &egui::Context, id: egui::Id) -> Option<T> {
     let ron = ctx.memory_mut(|m| m.data.get_persisted::<String>(id))?;
     ron::from_str(&ron).ok()
 }
 
-/// Persist a value to egui memory as a RON `String` (see [`load_ron`]).
+/// Persist a value to egui memory as a RON `String`. See [`load_ron`].
 fn store_ron<T: serde::Serialize>(ctx: &egui::Context, id: egui::Id, value: &T) {
     if let Ok(ron) = ron::to_string(value) {
         ctx.memory_mut(|m| m.data.insert_persisted(id, ron));
     }
 }
 
-/// Load a tile tree from egui's persisted memory (see [`load_ron`]).
+/// Load a tile tree from egui's persisted memory. See [`load_ron`].
 fn load_tree<P: serde::de::DeserializeOwned>(
     ctx: &egui::Context,
     id: egui::Id,
@@ -469,7 +471,7 @@ fn load_tree<P: serde::de::DeserializeOwned>(
     load_ron(ctx, id)
 }
 
-/// Persist a tile tree to egui memory as a RON `String` (see [`load_ron`]).
+/// Persist a tile tree to egui memory as a RON `String`. See [`load_ron`].
 fn store_tree<P: serde::Serialize>(ctx: &egui::Context, id: egui::Id, tree: &egui_tiles::Tree<P>) {
     store_ron(ctx, id, tree)
 }
@@ -482,11 +484,11 @@ fn clear_egui_memory_id() -> egui::Id {
 /// Request that egui's persisted memory be cleared at the start of the next
 /// `Gantz::show`.
 ///
-/// A recovery tool (exposed in Global settings) for when egui's persisted memory
-/// accumulates stale state: it discards the UI memory (panel layout, widget
-/// state) but leaves the graph registry and other app storage untouched.
-/// Deferring to the next frame keeps the clear deterministic - it runs before
-/// any persisted UI state is loaded, rather than racing this frame's widgets.
+/// A recovery tool for when egui's persisted memory accumulates stale state.
+/// It discards the UI memory but leaves the graph registry and other app
+/// storage untouched. Deferring to the next frame keeps the clear
+/// deterministic. It runs before any persisted UI state is loaded, rather
+/// than racing this frame's widgets.
 pub fn request_clear_egui_memory(ctx: &egui::Context) {
     ctx.data_mut(|d| d.insert_temp(clear_egui_memory_id(), true));
 }
@@ -507,7 +509,6 @@ pub fn update_graph_pane_head(
     let Some(mut tree) = load_tree::<GraphPane>(ctx, graph_tree_id) else {
         return;
     };
-    // Find and update the pane with the old head.
     let mut changed = false;
     for (_, tile) in tree.tiles.iter_mut() {
         if let egui_tiles::Tile::Pane(GraphPane(head)) = tile {
@@ -524,11 +525,12 @@ pub fn update_graph_pane_head(
 }
 
 /// Migrate the [`Pane::NodeView`] panes for `head` after a node removal
-/// reindexed its graph, mirroring the state/layout/selection migration in
-/// [`crate::ops::remove_nodes`]: a view whose node was removed is dropped; a view
-/// whose node was swapped to a new index has its path rewritten. This keeps a
-/// detached view pointing at the same node across deletions, with no staleness
-/// guard. Operates on the top-level `tree` (where node views live as tiles).
+/// reindexed its graph. This mirrors the state, layout and selection
+/// migration in [`crate::ops::remove_nodes`]. A view whose node was removed
+/// is dropped. A view whose node was swapped to a new index has its path
+/// rewritten. This keeps a detached view pointing at the same node across
+/// deletions, with no staleness guard. Operates on the top-level `tree`,
+/// where node views live as tiles.
 fn migrate_node_view_paths(
     tree: &mut egui_tiles::Tree<Pane>,
     head: &gantz_ca::Head,
@@ -560,8 +562,8 @@ fn migrate_node_view_paths(
 /// The data a single pane needs to render, independent of where the pane lives.
 ///
 /// Extracted from [`TreeBehaviour`] so the same [`render_pane`] can draw a pane
-/// as a tile in the tree, as a floating `egui::Window` (web / fallback), or (on
-/// a native host) into its own OS window.
+/// as a tile in the tree, as a floating `egui::Window`, or into a native
+/// host's own OS window.
 struct PaneCtx<'a, 's, Access>
 where
     Access: HeadAccess,
@@ -592,25 +594,27 @@ where
 
 /// Response from the top-level gantz widget.
 ///
-/// Whole-widget outcomes (focus, tab management, file drops, config) are
-/// plain fields; operations emitted from deeper within the widget tree
-/// (node UIs, context menus, shortcuts) arrive as dynamic payloads in
-/// [`responses`][Self::responses] for the application to drain and handle.
+/// Whole-widget outcomes such as focus, tab management, file drops and config
+/// are plain fields. Operations emitted from deeper within the widget tree
+/// arrive as dynamic payloads in [`responses`][Self::responses] for the
+/// application to drain and handle.
 #[derive(Debug)]
 pub struct GantzResponse {
-    /// The focused head index (may have changed due to user interaction).
+    /// The focused head index. User interaction may have changed it.
     pub focused_head: usize,
     pub graph_select: Option<widget::graph_select::GraphSelectResponse>,
     /// Heads that were closed via the tab close button.
     pub closed_heads: Vec<gantz_ca::Head>,
-    /// New branch created from tab double-click: (original_head, new_branch_name).
+    /// A new branch created from a tab double-click, as the original head and
+    /// the new branch name.
     pub new_branch: Option<(gantz_ca::Head, String)>,
     /// Files dropped onto gantz panes.
     pub file_drops: Vec<FileDrop>,
-    /// Demo graph association changed: (head, Some(demo_name) | None).
+    /// The demo graph association changed, as the head and the new demo name
+    /// or `None`.
     pub demo_changed: Option<(gantz_ca::Head, Option<String>)>,
-    /// A named graph's description was edited: (head, new_description). An empty
-    /// string clears the description.
+    /// A named graph's description was edited, as the head and the new
+    /// description. An empty string clears the description.
     pub description_changed: Option<(gantz_ca::Head, String)>,
     /// A base graph should be reset to its original state.
     pub reset_base_graph: Option<gantz_ca::Head>,
@@ -618,28 +622,30 @@ pub struct GantzResponse {
     pub reset_all_demos: bool,
     /// The global compile config was changed via the Graph Config pane.
     pub compile_config: Option<gantz_core::compile::Config>,
-    /// The change-tracking validation toggle was changed (its new value).
+    /// The change-tracking validation toggle was changed. Holds the new value.
     pub validate_change_tracking: Option<bool>,
     /// The graph's base source association was changed via the graph config
-    /// pane (see [`Gantz::base_sources`]).
+    /// pane. See [`Gantz::base_sources`].
     pub base_source_changed: Option<(gantz_ca::Head, String)>,
-    /// Heads whose graph had a CA-affecting edit this frame (from a node UI, an
-    /// inspector edit, or a structural scene edit). Lets the application
-    /// commit/recompile only the changed heads instead of re-hashing every open
-    /// graph each frame. May contain duplicates; treat membership as a set.
+    /// Heads whose graph had a CA-affecting edit this frame from a node UI,
+    /// an inspector edit or a structural scene edit. Lets the application
+    /// commit and recompile only the changed heads instead of re-hashing
+    /// every open graph each frame. May contain duplicates. Treat membership
+    /// as a set.
     pub changed_heads: Vec<gantz_ca::Head>,
     /// Dynamic payloads emitted from within the widget tree, tagged with the
     /// emitting head. See [`crate::response`] for the handling contract.
     pub responses: Responses,
-    /// Panes currently popped out into windows, reported every frame. Populated
-    /// in both [`PaneWindowMode`]s; under [`PaneWindowMode::HostNative`] a host
-    /// diffs this to create / title / destroy its OS windows and renders each
-    /// via [`Gantz::render_windowed_pane`].
+    /// Panes currently popped out into windows, reported every frame.
+    /// Populated in both [`PaneWindowMode`]s. Under
+    /// [`PaneWindowMode::HostNative`] a host diffs this to create, title and
+    /// destroy its OS windows and renders each via
+    /// [`Gantz::render_windowed_pane`].
     pub windowed_panes: Vec<WindowedPane>,
     /// Per-head node index remappings from this frame's deletions, collected
     /// during traversal and applied to the top-level tree's [`Pane::NodeView`]
-    /// paths by `Gantz::show` after layout. Internal scratch - drained before
-    /// the response is returned, so applications can ignore it.
+    /// paths by `Gantz::show` after layout. Internal scratch that is drained
+    /// before the response is returned, so applications can ignore it.
     pub(crate) node_view_reindexes: Vec<(gantz_ca::Head, crate::ops::Reindex)>,
 }
 
@@ -647,10 +653,10 @@ pub struct GantzResponse {
 /// [`GantzResponse::windowed_panes`].
 #[derive(Clone, Debug)]
 pub struct WindowedPane {
-    /// The pane's identity and payload; pass back to
+    /// The pane's identity and payload. Pass it back to
     /// [`Gantz::render_windowed_pane`] to draw it into the host's window.
     pub pane: Pane,
-    /// The pane's display title (the same text as its tab).
+    /// The pane's display title, the same text as its tab.
     pub title: String,
 }
 
@@ -661,14 +667,14 @@ struct TabEditState {
     editing_tile_id: Option<egui_tiles::TileId>,
     /// The text being edited.
     edit_text: String,
-    /// Whether we need to request focus on the next frame.
+    /// Whether to request focus on the next frame.
     request_focus: bool,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct ViewToggles {
-    /// Whether the sidebar (left column) is open. Toggled by the hamburger.
+    /// Whether the sidebar is open. The hamburger toggles it.
     pub sidebar_open: bool,
     pub graphs: bool,
     pub history: bool,
@@ -681,7 +687,7 @@ pub struct ViewToggles {
     pub gui_debug: bool,
     pub graph_config: bool,
     /// Per-[`Pane::Ext`] visibility, keyed by the provider key. A missing
-    /// entry means hidden (matching the tray panes' default). Keys of
+    /// entry means hidden, matching the tray panes' default. Keys of
     /// long-gone providers linger harmlessly.
     pub ext: BTreeMap<String, bool>,
 }
@@ -767,7 +773,8 @@ impl GantzResponse {
             .and_then(|g| g.name_removed.clone())
     }
 
-    /// New branch created from tab double-click: (original_head, new_branch_name).
+    /// A new branch created from a tab double-click, as the original head and
+    /// the new branch name.
     pub fn new_branch(&self) -> Option<&(gantz_ca::Head, String)> {
         self.new_branch.as_ref()
     }
@@ -806,29 +813,29 @@ impl<'a> Gantz<'a> {
     }
 
     /// Provide the collaborative-session display state so the Graph Config
-    /// pane shows the collab row for shared (or shareable) graphs.
+    /// pane shows the collab row for shared or shareable graphs.
     pub fn collab(mut self, collab: &'a crate::collab::CollabUiState) -> Self {
         self.collab = Some(collab);
         self
     }
 
-    /// Provide a clipboard reader for widget paste affordances (e.g. the
-    /// join popup's right-click paste). Ctrl+V works through egui's own
+    /// Provide a clipboard reader for widget paste affordances, for example
+    /// the join popup's right-click paste. Ctrl+V works through egui's own
     /// event path regardless.
     pub fn clipboard(mut self, clipboard: &'a dyn Fn() -> Option<String>) -> Self {
         self.clipboard = Some(clipboard);
         self
     }
 
-    /// Choose whether the widget draws popped-out panes as `egui::Window`s
-    /// (the default) or leaves them to the host as native OS windows.
+    /// Choose whether the widget draws popped-out panes as `egui::Window`s,
+    /// the default, or leaves them to the host as native OS windows.
     pub fn pane_window_mode(mut self, mode: PaneWindowMode) -> Self {
         self.pane_window_mode = mode;
         self
     }
 
     /// Provide the current compile config so the Graph Config pane shows
-    /// the compile toggles. The config is global: it applies to all open
+    /// the compile toggles. The config is global. It applies to all open
     /// heads, and a change is reported via [`GantzResponse::compile_config`].
     pub fn compile_config(mut self, config: gantz_core::compile::Config) -> Self {
         self.compile_config = Some(config);
@@ -839,16 +846,16 @@ impl<'a> Gantz<'a> {
     /// Global pane shows its toggle. A change is reported via
     /// [`GantzResponse::validate_change_tracking`].
     ///
-    /// When not provided, validation defaults on in debug builds (the node
-    /// instance cache would otherwise mask a missed `changed` flag) and off
-    /// in release.
+    /// When not provided, validation defaults on in debug builds and off in
+    /// release. The node instance cache would otherwise mask a missed
+    /// `changed` flag.
     pub fn validate_change_tracking(mut self, enabled: bool) -> Self {
         self.validate_change_tracking = Some(enabled);
         self
     }
 
-    /// Provide extension settings subtabs (see
-    /// [`SettingsTab`][widget::SettingsTab]). One subtab appears per entry,
+    /// Provide extension settings subtabs. See
+    /// [`SettingsTab`][widget::SettingsTab]. One subtab appears per entry,
     /// and any payloads a tab emits are reported via
     /// [`GantzResponse::responses`].
     pub fn settings_tabs(mut self, tabs: &'a mut [&'a mut dyn widget::SettingsTab]) -> Self {
@@ -856,7 +863,7 @@ impl<'a> Gantz<'a> {
         self
     }
 
-    /// Provide extension top-level panes (see [`ExtPane`][widget::ExtPane]).
+    /// Provide extension top-level panes. See [`ExtPane`][widget::ExtPane].
     /// One tray tile appears per entry, and any payloads a pane emits are
     /// reported via [`GantzResponse::responses`] tagged with the focused head.
     pub fn ext_panes(mut self, panes: &'a mut [&'a mut dyn widget::ExtPane]) -> Self {
@@ -864,17 +871,17 @@ impl<'a> Gantz<'a> {
         self
     }
 
-    /// Provide domain extensions for the `NamedRef` node inspector (see
-    /// [`RefExtUi`][crate::node::RefExtUi]). Each applicable extension's rows
+    /// Provide domain extensions for the `NamedRef` node inspector. See
+    /// [`RefExtUi`][crate::node::RefExtUi]. Each applicable extension's rows
     /// are appended after the ref's own inspector rows.
     pub fn ref_ext_uis(mut self, uis: &'a [&'a dyn crate::node::RefExtUi]) -> Self {
         self.ref_ext_uis = uis;
         self
     }
 
-    /// Provide domain edge stylers for the graph scenes (see
-    /// [`EdgeStyle`][widget::EdgeStyle]). Each edge is styled by the first
-    /// styler returning `Some`; unclaimed edges keep the default styling.
+    /// Provide domain edge stylers for the graph scenes. See
+    /// [`EdgeStyle`][widget::EdgeStyle]. The first styler returning `Some`
+    /// styles each edge. Unclaimed edges keep the default styling.
     pub fn edge_styles(mut self, styles: &'a [&'a dyn widget::EdgeStyle]) -> Self {
         self.edge_styles = styles;
         self
@@ -916,11 +923,11 @@ impl<'a> Gantz<'a> {
         self
     }
 
-    /// Whether base node graphs should be immutable (view-only).
+    /// Whether base node graphs should be immutable.
     ///
-    /// When `true` (the default), graphs for heads whose branch name
-    /// appears in `base_names` are shown in immutable mode - navigation
-    /// and selection work, but structural edits are disabled.
+    /// When `true`, the default, graphs for heads whose branch name appears
+    /// in `base_names` are shown in immutable mode. Navigation and selection
+    /// work, but structural edits are disabled.
     ///
     /// Set to `false` for developer tools like `update-base` that need
     /// to edit base nodes.
@@ -934,7 +941,7 @@ impl<'a> Gantz<'a> {
     /// The `access` parameter provides access to all open heads and their data.
     /// The `focused_head` is the index of the currently focused head.
     ///
-    /// Returns a response containing the (possibly updated) focused head index.
+    /// Returns a response containing the possibly updated focused head index.
     pub fn show<'s, Access>(
         mut self,
         state: &'s mut GantzState,
@@ -946,8 +953,8 @@ impl<'a> Gantz<'a> {
         's: 'a,
         Access: HeadAccess,
     {
-        // Honour a pending "clear egui memory" request (from Global settings)
-        // before loading any persisted UI state this frame.
+        // Honour a pending "clear egui memory" request before loading any
+        // persisted UI state this frame.
         if ui
             .ctx()
             .data(|d| d.get_temp::<bool>(clear_egui_memory_id()))
@@ -959,11 +966,10 @@ impl<'a> Gantz<'a> {
         crate::style::apply(ui.ctx(), &state.style);
 
         // The persisted outer tree. The version suffix invalidates any tree
-        // persisted before the latest default-layout change (v4: perf panes
-        // side by side at half height), forcing a rebuild via `create_tree`.
+        // persisted before the latest default-layout change, forcing a
+        // rebuild via `create_tree`.
         let tree_id = egui::Id::new("gantz-tiles-tree-storage-v4");
 
-        // Retrieve the tree from persistent storage, or load the default.
         let mut tree: egui_tiles::Tree<Pane> =
             load_tree(ui.ctx(), tree_id).unwrap_or_else(create_tree);
 
@@ -974,8 +980,8 @@ impl<'a> Gantz<'a> {
         let ext_keys: Vec<&str> = self.ext_panes.iter().map(|p| p.key()).collect();
         sync_ext_panes(&mut tree, &ext_keys);
 
-        // Ensure the GUI Debug pane has a tile (trees persisted before it
-        // existed).
+        // Ensure the GUI Debug pane has a tile. Trees persisted before it
+        // existed lack one.
         sync_singleton_pane(&mut tree, Pane::GuiDebug);
 
         // Check the `view_toggles` match the pane visibility.
@@ -984,17 +990,14 @@ impl<'a> Gantz<'a> {
         // Simplify the tree, and ensure tabs are where they should be.
         simplify_tree(&mut tree, ui.ctx());
 
-        // Maintain a fixed sidebar width / tray height across window resizes by
-        // imposing the stored pixel sizes on the share splits before layout.
+        // Maintain a fixed sidebar width and tray height across window resizes
+        // by imposing the stored pixel sizes on the share splits before layout.
         // `available_rect_before_wrap` matches the root rect `Tree::ui` uses.
         let widget_area = ui.available_rect_before_wrap();
         impose_fixed_sizes(&mut tree, state, widget_area);
 
-        // Initialise the response.
-        // We'll collect it during traversal of the tree of tiles.
         let mut response = GantzResponse::new(focused_head);
 
-        // The context for traversing the tree of tiles.
         let base_names = self.base_names;
         let mut behaviour = TreeBehaviour {
             gantz: &mut self,
@@ -1007,31 +1010,30 @@ impl<'a> Gantz<'a> {
         };
         tree.ui(&mut behaviour, ui);
 
-        // Update the response with the final focused head.
         response.focused_head = behaviour.focused_head;
 
-        // Capture the sidebar width / tray height from the laid-out tree (which
-        // reflects any manual divider drag) to re-impose next frame.
+        // Capture the sidebar width and tray height from the laid-out tree,
+        // which reflects any manual divider drag, to re-impose next frame.
         capture_fixed_sizes(&tree, state, widget_area);
 
-        // Detect .gantz file drops globally (not per-pane, since pointer
-        // position may be unavailable during OS file drags on some platforms).
+        // Detect .gantz file drops globally rather than per pane, since the
+        // pointer position may be unavailable during OS file drags on some
+        // platforms.
         response.file_drops = collect_gantz_file_drops(ui.ctx());
 
         // Apply payloads that only affect the widget's own state, so
-        // applications never see them: node palette toggling and resetting
-        // the tile layout to its default arrangement.
+        // applications never see them. These are node palette toggling and
+        // resetting the tile layout to its default arrangement.
         for _ in response.responses.take::<OpenNodePalette>() {
             state.node_palette.toggle();
         }
         for _ in response.responses.take::<ResetTilesLayout>() {
             tree = create_tree();
-            // Restore the default sidebar width / tray height too.
+            // Restore the default sidebar width and tray height too.
             state.sidebar_width = default_sidebar_width();
             state.tray_height = default_tray_height();
-            // Restore default pane visibility (e.g. the perf panes turn off),
-            // but keep the sidebar's open/closed state since the user just
-            // acted from within it.
+            // Restore default pane visibility, but keep the sidebar's open
+            // state since the user just acted from within it.
             let sidebar_open = state.view_toggles.sidebar_open;
             state.view_toggles = ViewToggles::default();
             state.view_toggles.sidebar_open = sidebar_open;
@@ -1039,14 +1041,15 @@ impl<'a> Gantz<'a> {
         for _ in response.responses.take::<OpenLogs>() {
             state.view_toggles.logs = true;
         }
-        // Migrate node-view tiles past this frame's node deletions (collected
-        // during traversal, since the live top-level tree wasn't reachable then).
+        // Migrate node-view tiles past this frame's node deletions. They were
+        // collected during traversal, since the live top-level tree was not
+        // reachable then.
         for (head, reindex) in &response.node_view_reindexes {
             migrate_node_view_paths(&mut tree, head, reindex);
             migrate_windowed_node_views(&mut windowed, head, reindex);
         }
-        // "open view": add (or focus) a node-view tile in the top-level tree.
-        // The node's head is the payload's head tag.
+        // Add or focus a node-view tile in the top-level tree. The node's head
+        // is the payload's head tag.
         for (head, view) in response.responses.take::<OpenNodeView>() {
             let Some(head) = head else { continue };
             // Skip if this view is already popped out into a window.
@@ -1059,20 +1062,21 @@ impl<'a> Gantz<'a> {
             add_node_view_pane(&mut tree, head, view.path, view.ty_name);
         }
 
-        // Reconcile the windowed set: a singleton whose toggle was turned back
-        // on (e.g. via Settings -> Panes) re-docks, so drop it here. Node views
-        // stay windowed until their window is closed.
+        // Reconcile the windowed set. A singleton whose toggle was turned back
+        // on re-docks, so drop it here. Node views stay windowed until their
+        // window is closed.
         windowed
             .retain(|p| matches!(p, Pane::NodeView(_)) || !pane_is_visible(&state.view_toggles, p));
 
-        // Redock / close intents queued by a native host between frames (its
-        // OS-window buttons call `redock_windowed_pane` / `close_windowed_pane`).
+        // Redock and close intents queued by a native host between frames.
+        // Its OS-window buttons call `redock_windowed_pane` and
+        // `close_windowed_pane`.
         let mut redock: Vec<Pane> = drain_pending(ui.ctx(), pending_redock_id());
         let close: Vec<Pane> = drain_pending(ui.ctx(), pending_close_id());
 
         // In the egui-window backend, draw each windowed pane as a floating
-        // `egui::Window`; its title-bar close returns the pane to the tile tree.
-        // Under `HostNative` the host draws them as OS windows instead.
+        // `egui::Window`. Its title-bar close returns the pane to the tile
+        // tree. Under `HostNative` the host draws them as OS windows instead.
         if self.pane_window_mode == PaneWindowMode::EguiWindow {
             for pane in &mut windowed {
                 let title = pane_title(&self, &*access, focused_head, pane);
@@ -1082,7 +1086,7 @@ impl<'a> Gantz<'a> {
                     .open(&mut open)
                     .show(ui.ctx(), |ui| {
                         // Namespace child ids so a windowed pane never collides
-                        // with its (briefly still-visible) docked instance.
+                        // with its briefly still-visible docked instance.
                         ui.push_id(("gantz-windowed", pane_key(pane)), |ui| {
                             let mut cx = PaneCtx {
                                 gantz: &mut self,
@@ -1101,8 +1105,8 @@ impl<'a> Gantz<'a> {
             }
         }
 
-        // Apply redocks (return to the tree) and closes (destroy node views;
-        // singletons have no destroy, so re-dock them).
+        // Apply redocks, which return to the tree, and closes, which destroy
+        // node views. Singletons have no destroy, so re-dock them.
         for pane in redock {
             let key = pane_key(&pane);
             windowed.retain(|p| pane_key(p) != key);
@@ -1125,19 +1129,18 @@ impl<'a> Gantz<'a> {
             })
             .collect();
 
-        // Persist the tree and the windowed set.
         store_tree(ui.ctx(), tree_id, &tree);
         store_ron(ui.ctx(), windowed_panes_id(), &windowed);
 
         response
     }
 
-    /// Render a single popped-out pane into `ui` - typically a native host's
+    /// Render a single popped-out pane into `ui`, typically a native host's
     /// OS-window egui context under [`PaneWindowMode::HostNative`].
     ///
-    /// Mirrors [`Self::show`]'s per-pane rendering. The returned [`GantzResponse`]
-    /// carries this pane's `changed_heads` and payloads; apply it exactly as you
-    /// apply `show`'s response.
+    /// Mirrors [`Self::show`]'s per-pane rendering. The returned
+    /// [`GantzResponse`] carries this pane's `changed_heads` and payloads.
+    /// Apply it exactly like `show`'s response.
     pub fn render_windowed_pane<'s, Access>(
         mut self,
         state: &'s mut GantzState,
@@ -1169,8 +1172,8 @@ impl<'a> Gantz<'a> {
 impl GantzState {
     pub const DEFAULT_DIRECTION: egui::Direction = egui::Direction::TopDown;
 
-    /// Shorthand for initialising graph state, with no intial layout so that on
-    /// the first pass, the layout is automatically determined.
+    /// Shorthand for initialising graph state with no initial layout, so the
+    /// first pass determines the layout automatically.
     pub fn new() -> Self {
         Self::from_open_heads(Default::default())
     }
@@ -1196,9 +1199,10 @@ impl GantzState {
 
     /// Migrate GUI state when a head's identity changes.
     ///
-    /// Moves `open_heads` entry from old to new key. When `clear_redo` is
-    /// true (new edit commit), removes redo stacks for both keys. Otherwise
-    /// migrates the redo stack to the new key.
+    /// Moves the `open_heads` entry from the old to the new key. When
+    /// `clear_redo` is true, removes redo stacks for both keys, since a new
+    /// edit commit invalidates them. Otherwise migrates the redo stack to the
+    /// new key.
     pub fn migrate_head(&mut self, old: &gantz_ca::Head, new: &gantz_ca::Head, clear_redo: bool) {
         if let Some(state) = self.open_heads.remove(old) {
             self.open_heads.insert(new.clone(), state);
@@ -1208,9 +1212,9 @@ impl GantzState {
     }
 }
 
-/// Migrate one per-head map entry across a head-identity change: cleared for
-/// both keys when `clear` (a new edit invalidates it), otherwise moved to
-/// the new key.
+/// Migrate one per-head map entry across a head-identity change. When
+/// `clear`, a new edit invalidates it, so it is cleared for both keys.
+/// Otherwise it moves to the new key.
 fn migrate_or_clear<V>(
     map: &mut HashMap<gantz_ca::Head, V>,
     old: &gantz_ca::Head,
@@ -1239,8 +1243,8 @@ where
         tile_id: egui_tiles::TileId,
         button_response: egui::Response,
     ) -> egui::Response {
-        // Right-click a tab for pane actions: hide (hideable panes) and/or pop
-        // out into a window (any pane but the graph scene).
+        // Right-click a tab for pane actions. Hideable panes offer hide. Any
+        // pane but the graph scene offers pop out into a window.
         let pane = match tiles.get(tile_id) {
             Some(egui_tiles::Tile::Pane(pane))
                 if pane_is_hideable(pane) || pane_is_poppable(pane) =>
@@ -1273,7 +1277,7 @@ where
         tiles: &egui_tiles::Tiles<Pane>,
         tile_id: egui_tiles::TileId,
     ) -> bool {
-        // The tray panes and detached node views get a close button; the rest
+        // The tray panes and detached node views get a close button. The rest
         // are toggled via the Panes settings or the tab right-click menu.
         matches!(
             tiles.get_pane(&tile_id),
@@ -1287,9 +1291,9 @@ where
         tile_id: egui_tiles::TileId,
     ) -> bool {
         match tiles.get_pane(&tile_id) {
-            // Node views are user-created tiles: closing removes them entirely.
+            // Node views are user-created tiles. Closing removes them entirely.
             Some(Pane::NodeView(_)) => true,
-            // Hide other panes via their toggle (so they can be reopened) rather
+            // Hide other panes via their toggle so they can be reopened, rather
             // than letting egui_tiles remove the tile from the tree.
             Some(pane) => {
                 let pane = pane.clone();
@@ -1308,8 +1312,8 @@ where
         tile_id: egui_tiles::TileId,
         state: &egui_tiles::TabState,
     ) -> egui::Response {
-        // Render with the shared `Tab` widget so the sidebar/tray tabs (and
-        // their small close button) match the graph tabs.
+        // Render with the shared `Tab` widget so the sidebar and tray tabs and
+        // their small close button match the graph tabs.
         let title = self.tab_title_for_tile(tiles, tile_id);
         let res = widget::Tab::new(title, id)
             .active(state.active)
@@ -1348,7 +1352,7 @@ where
     }
 
     fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
-        // We will manually simplify before calling `tree.ui`. See `simplify_tree`.
+        // The tree is simplified manually before `tree.ui`. See `simplify_tree`.
         egui_tiles::SimplificationOptions::OFF
     }
 
@@ -1367,8 +1371,8 @@ where
             response: &mut *self.gantz_response,
         };
         render_pane(&mut cx, ui, pane);
-        // Propagate a focus change made while rendering (the graph scene changes
-        // focus on graph-tab clicks).
+        // Propagate a focus change made while rendering. The graph scene
+        // changes focus on graph-tab clicks.
         self.focused_head = cx.focused_head;
         egui_tiles::UiResponse::None
     }
@@ -1376,9 +1380,9 @@ where
 
 /// Render a single pane into `ui`.
 ///
-/// Shared by the tile tree ([`TreeBehaviour::pane_ui`]), floating `egui::Window`s
-/// (the web / fallback backend), and a native host's OS windows - so a pane
-/// looks and behaves identically wherever it is shown.
+/// Shared by the tile tree in [`TreeBehaviour::pane_ui`], floating
+/// `egui::Window`s and a native host's OS windows, so a pane looks and
+/// behaves identically wherever it is shown.
 fn render_pane<Access>(cx: &mut PaneCtx<'_, '_, Access>, ui: &mut egui::Ui, pane: &mut Pane)
 where
     Access: HeadAccess,
@@ -1394,8 +1398,8 @@ where
     match pane {
         Pane::Ext(key) => {
             let focused = access.heads().get(*focused_head).cloned();
-            // The focused head's selection, as sorted root-level node ids
-            // (mirroring the Steel pane's span-highlight input).
+            // The focused head's selection as sorted root-level node ids,
+            // mirroring the Steel pane's span-highlight input.
             let mut selection: Vec<node::Id> = focused
                 .as_ref()
                 .and_then(|h| state.open_heads.get(h))
@@ -1454,7 +1458,7 @@ where
                     _ => None,
                 };
 
-                // The graph's current description (named graphs only).
+                // The graph's current description. Only named graphs have one.
                 let current_description = match &head {
                     gantz_ca::Head::Branch(name) => {
                         crate::section::description(gantz.env.registry, name)
@@ -1477,7 +1481,7 @@ where
                         .current_description(current_description.as_deref())
                         .merge_env(gantz.env, merge_resolutions);
                     // The base source dropdown, when authoring context was
-                    // supplied (see `Gantz::base_sources`).
+                    // supplied. See `Gantz::base_sources`.
                     if let (Some(ctx), gantz_ca::Head::Branch(name)) = (&gantz.base_sources, &head)
                     {
                         let current = ctx
@@ -1533,18 +1537,16 @@ where
         Pane::GraphScene => {
             paint_gantz_file_hover_overlay(ui);
 
-            // We'll use this to position the floating sidebar toggle.
+            // The rect positions the floating sidebar toggle.
             let rect = ui.available_rect_before_wrap();
 
             // Extension-pane toggle entries for the graph-area context menu.
             let ext_panes = ext_pane_entries(gantz);
 
-            // Retrieve the inner graph tree from persistent storage, or create empty.
             let graph_tree_id = egui::Id::new(GRAPH_TREE_ID);
             let mut graph_tree: egui_tiles::Tree<GraphPane> =
                 load_tree(ui.ctx(), graph_tree_id).unwrap_or_else(create_empty_graph_tree);
 
-            // Sync the graph tree panes with the heads list.
             sync_graph_panes(&mut graph_tree, access.heads());
 
             // Activate the tab corresponding to the focused head.
@@ -1556,7 +1558,6 @@ where
                 });
             }
 
-            // Render the inner tree.
             let mut graph_behaviour = GraphTreeBehaviour {
                 env: gantz.env,
                 codec: gantz.codec,
@@ -1583,10 +1584,10 @@ where
             };
             graph_tree.ui(&mut graph_behaviour, ui);
 
-            // Persist the inner tree.
             store_tree(ui.ctx(), graph_tree_id, &graph_tree);
 
-            // Show the node palette once (not per-pane), operating on the focused head.
+            // Show the node palette once rather than per pane, operating on
+            // the focused head.
             if let Some(fh) = access.heads().get(*focused_head).cloned() {
                 let focused_immutable = head_immutable(&fh, gantz.base_immutable, base_names);
 
@@ -1602,7 +1603,6 @@ where
                             .responses
                             .push(Some(fh.clone()), CopyNodes(nodes));
                     }
-                    // New graph.
                     if keymap.consume(ui, Action::NewGraph) {
                         let gs = gantz_response
                             .graph_select
@@ -1611,9 +1611,9 @@ where
                     }
                     // Paste, undo, redo are gated by immutable.
                     if !focused_immutable {
-                        // Detect paste: an `Event::Paste` (eframe/web) or the
-                        // Paste shortcut (bevy_egui desktop sends `Event::Text`
-                        // instead of `Event::Paste`).
+                        // Detect paste from an `Event::Paste` or the Paste
+                        // shortcut. eframe and web send `Event::Paste`.
+                        // bevy_egui desktop sends `Event::Text` instead.
                         let paste_text = ui.input(|i| {
                             i.events.iter().find_map(|e| match e {
                                 egui::Event::Paste(s) => Some(s.clone()),
@@ -1627,9 +1627,9 @@ where
                             };
                             gantz_response.responses.push(Some(fh.clone()), paste);
                         }
-                        // Redo before Undo: `consume_shortcut` matches
+                        // Redo before Undo. `consume_shortcut` matches
                         // modifiers logically, so `Cmd+Z` also matches a
-                        // `Cmd+Shift+Z` event - check (and consume) the more
+                        // `Cmd+Shift+Z` event. Check and consume the more
                         // specific binding first.
                         if keymap.consume(ui, Action::Redo) {
                             gantz_response.responses.push(Some(fh.clone()), Redo);
@@ -1637,14 +1637,13 @@ where
                         if keymap.consume(ui, Action::Undo) {
                             gantz_response.responses.push(Some(fh.clone()), Undo);
                         }
-                        // Cut: copy the selection, then remove it.
+                        // Cut copies the selection, then removes it.
                         if keymap.consume(ui, Action::Cut) {
                             let nodes = head_state.scene.interaction.selection.nodes.clone();
                             gantz_response
                                 .responses
                                 .push(Some(fh.clone()), CutNodes(nodes));
                         }
-                        // Duplicate the selection in place.
                         if keymap.consume(ui, Action::Duplicate) {
                             let nodes = head_state.scene.interaction.selection.nodes.clone();
                             gantz_response
@@ -1661,9 +1660,9 @@ where
                         _ => None,
                     };
                     let editing = editing_name.as_deref();
-                    // The pointer position over the focused head's scene
-                    // (graph coords) recorded this frame; new nodes are placed
-                    // here. `Copy`, so no borrow is held across the call.
+                    // The pointer position over the focused head's scene in
+                    // graph coords recorded this frame. New nodes are placed
+                    // here. It is `Copy`, so no borrow is held across the call.
                     let pointer_pos = head_state.scene.interaction.last_pointer_pos;
                     let created = node_palette(
                         gantz.env,
@@ -1687,7 +1686,7 @@ where
             }
 
             // Floating hamburger over the bottom-left corner of the graph
-            // scene that opens/closes the sidebar (left column).
+            // scene that opens and closes the sidebar.
             let space = ui.style().interaction.interact_radius * 3.0;
             let anchor = rect.left_bottom() + egui::vec2(space, -space);
             sidebar_toggle(ui.ctx(), anchor, &mut state.view_toggles.sidebar_open);
@@ -1741,7 +1740,7 @@ where
             None => (),
             Some(LogSource::Logger(logger)) => {
                 // Resolve labels for entries emitted by nodes of the
-                // focused head (the target encodes the node's path).
+                // focused head. The target encodes the node's path.
                 let focused = access.heads().get(*focused_head).cloned();
                 let mut labels: HashMap<Vec<node::Id>, String> = HashMap::new();
                 if let Some(fh) = &focused {
@@ -1755,8 +1754,8 @@ where
                         let codec = gantz.codec;
                         access.with_head_mut(fh, |data| {
                             for path in paths {
-                                // Log targets are state paths; only root-level
-                                // (single-segment) ones name a node in this graph.
+                                // Log targets are state paths. Only root-level
+                                // single-segment ones name a node in this graph.
                                 let [ix] = path[..] else { continue };
                                 let Some(weight) =
                                     data.graph.node_weight(graph_scene::NodeIndex::new(ix))
@@ -1773,8 +1772,8 @@ where
                 }
                 let res = log_view(logger, &labels, ui);
                 // Clicking an entry selects its node. Only root-level nodes
-                // live in the focused head; entries from a nested graph
-                // (deeper path) are skipped until name-based navigation lands.
+                // live in the focused head, so entries from a nested graph
+                // are skipped.
                 if let (Some(path), Some(fh)) = (res.inner.clicked_path, focused) {
                     if let [node_id] = path[..] {
                         let head_state = state.open_heads.entry(fh.clone()).or_default();
@@ -1790,7 +1789,6 @@ where
             }
         },
         Pane::NodeInspector => {
-            // Use the focused head for the node inspector.
             if let Some(fh) = access.heads().get(*focused_head).cloned() {
                 let immutable = head_immutable(&fh, gantz.base_immutable, base_names);
                 let head_state = state.open_heads.entry(fh.clone()).or_default();
@@ -1820,11 +1818,11 @@ where
             }
         }
         Pane::NodeView(view) => {
-            // A detached node view: render the node's `view_ui` against its
-            // head's live graph + VM (a mirror sharing state with the
-            // in-graph node). A `CentralPanel` gives it the same background
-            // as the other panes; no-margin views (e.g. plot) drop the pane
-            // margin so they fill edge-to-edge. A placeholder shows when the
+            // A detached node view renders the node's `view_ui` against its
+            // head's live graph and VM, as a mirror sharing state with the
+            // in-graph node. A `CentralPanel` gives it the same background as
+            // the other panes. No-margin views such as plot drop the pane
+            // margin so they fill edge to edge. A placeholder shows when the
             // head is closed.
             let head = view.head.clone();
             let path = view.path.clone();
@@ -1860,8 +1858,8 @@ where
                     let env = gantz.env;
                     // VM-state writes recorded by the node's `NodeCtx`.
                     let mut writes = Vec::new();
-                    // Scope child widget ids by (head, path) so views never share
-                    // ids with each other or the in-graph node.
+                    // Scope child widget ids by head and path so views never
+                    // share ids with each other or the in-graph node.
                     let result = ui
                         .push_id((&head, &path), |ui| {
                             access.with_head_mut(&head, |data| {
@@ -1871,11 +1869,11 @@ where
                                 let (inlets, outlets) = crate::inlet_outlet_ids(env, data.graph);
                                 let n_id = graph_scene::NodeIndex::new(n_ix);
                                 let weight = data.graph.node_weight(n_id)?;
-                                // Take the one node's cached instance (see
-                                // `graph_scene::nodes` - panes render
-                                // sequentially, so each take/put pair
-                                // completes within its site); erase back iff
-                                // changed, updating the witness.
+                                // Take the one node's cached instance. See
+                                // `graph_scene::nodes`. Panes render
+                                // sequentially, so each take and put pair
+                                // completes within its site. Erase back only
+                                // when changed, updating the witness.
                                 let mut entry = data.instances.take(codec, n_ix, weight).ok()?;
                                 let ctx = NodeCtx::new(
                                     env,
@@ -1917,8 +1915,9 @@ where
                                 .extend(Some(&head), crate::action::state_written(&mut writes));
                         }
                         _ => {
-                            // Head open but node missing at `path` (e.g. removed
-                            // this frame, before migration drops the view).
+                            // Head open but node missing at `path`, for example
+                            // removed this frame before migration drops the
+                            // view.
                             ui.centered_and_justified(|ui| {
                                 ui.weak("node not found");
                             });
@@ -1928,7 +1927,7 @@ where
         }
         Pane::Steel => {
             // Use the focused head's compiled module, highlighting the
-            // selected nodes' emitted fns/call sites and any diagnostic
+            // selected nodes' emitted fns and call sites and any diagnostic
             // spans. A failed compile's error renders above the code.
             let focused = access.heads().get(*focused_head).cloned();
             let compile_error = focused.as_ref().and_then(|h| access.compile_error(h));
@@ -1958,7 +1957,7 @@ where
                         .collect();
                     selected.sort_unstable();
                     for &ix in &selected {
-                        // A node at this (root) level has the single-element
+                        // A node at this root level has the single-element
                         // path `[ix]` in the compiled module's source map.
                         let spans = module.map.node_spans(&[ix]);
                         highlights.extend(spans.defs);
@@ -1985,7 +1984,7 @@ where
             );
         }
         Pane::GuiDebug => {
-            // Mode selector: the focused graph's own marker tree (default),
+            // Mode selector. The focused graph's own marker tree by default,
             // or the scratch editor for vocabulary experiments.
             let scratch_id = egui::Id::new("gantz-gui-debug-scratch-mode");
             let mut scratch: bool = ui
@@ -2014,9 +2013,9 @@ where
                 .data_mut(|d| d.insert_persisted(scratch_id, scratch));
 
             if scratch {
-                // The editor (plus its eval error and decode warnings) on the
-                // left, the interpreted tree on the right, rendered against
-                // the focused head's live VM: bindings resolve into its node
+                // The editor with its eval error and decode warnings on the
+                // left, the interpreted tree on the right. It renders against
+                // the focused head's live VM. Bindings resolve into its node
                 // state and pushes fire its entrypoints.
                 let cache = egui::Panel::left(egui::Id::new("gui-debug-editor-panel"))
                     .resizable(true)
@@ -2059,10 +2058,10 @@ where
                     });
                 });
             } else {
-                // Marker mode: the raw stored tree of one of the focused
+                // Marker mode. The raw stored tree of one of the focused
                 // graph's own gui markers as text on the left, the decoded
                 // tree rendered live on the right. Bindings are correct by
-                // construction here - the tree IS this graph's GUI.
+                // construction here, since the tree is this graph's GUI.
                 let Some(head) = access.heads().get(*focused_head).cloned() else {
                     ui.weak("no focused graph");
                     return;
@@ -2219,27 +2218,29 @@ where
     focused_head: &'a mut usize,
     /// Heads closed via the tab close button.
     closed_heads: &'a mut Vec<gantz_ca::Head>,
-    /// New branch created from tab double-click: (original_head, new_branch_name).
+    /// A new branch created from a tab double-click, as the original head and
+    /// the new branch name.
     new_branch: &'a mut Option<(gantz_ca::Head, String)>,
     /// Dynamic payloads emitted from within the graph scenes.
     responses: &'a mut Responses,
     /// Heads whose graph had a CA-affecting edit this frame.
     changed_heads: &'a mut Vec<gantz_ca::Head>,
     /// Per-head node index remappings from this frame's deletions, applied to
-    /// the top-level tree's node views after layout (see `migrate_node_view_paths`).
+    /// the top-level tree's node views after layout. See
+    /// `migrate_node_view_paths`.
     reindexes: &'a mut Vec<(gantz_ca::Head, crate::ops::Reindex)>,
     base_names: &'a crate::reg::Names,
     base_immutable: bool,
-    /// Whether the per-node change-tracking validator is enabled (see
-    /// [`GraphScene::validate_change_tracking`]).
+    /// Whether the per-node change-tracking validator is enabled. See
+    /// [`GraphScene::validate_change_tracking`].
     validate_change_tracking: bool,
-    /// Extension-pane toggle entries for the scene's "Panes" context submenu
-    /// (see [`ext_pane_entries`]).
+    /// Extension-pane toggle entries for the scene's "Panes" context submenu.
+    /// See [`ext_pane_entries`].
     ext_panes: &'a [widget::ExtPaneEntry],
-    /// Domain edge stylers for the graph scenes (see [`widget::EdgeStyle`]).
+    /// Domain edge stylers for the graph scenes. See [`widget::EdgeStyle`].
     edge_styles: &'a [&'a dyn widget::EdgeStyle],
-    /// Collaborative-session display state, when a collab layer is wired:
-    /// drives the per-tab session dot and the connecting/error overlay.
+    /// Collaborative-session display state, when a collab layer is wired. It
+    /// drives the per-tab session dot and the connecting and error overlay.
     collab: Option<&'a crate::collab::CollabUiState>,
 }
 
@@ -2287,7 +2288,7 @@ where
         _tiles: &egui_tiles::Tiles<GraphPane>,
         _tile_id: egui_tiles::TileId,
     ) -> bool {
-        // Allow closing tabs if there's more than one head open.
+        // Allow closing tabs if there is more than one head open.
         self.access.heads().len() > 1
     }
 
@@ -2296,7 +2297,6 @@ where
         tiles: &mut egui_tiles::Tiles<GraphPane>,
         tile_id: egui_tiles::TileId,
     ) -> bool {
-        // Get the head from the pane being closed.
         if let Some(GraphPane(head)) = tiles.get_pane(&tile_id).cloned() {
             self.closed_heads.push(head);
         }
@@ -2312,7 +2312,6 @@ where
         tile_id: egui_tiles::TileId,
         state: &egui_tiles::TabState,
     ) -> egui::Response {
-        // Load tab edit state from temp memory.
         let edit_state_id = egui::Id::new("tab_edit_state");
         let mut edit_state: TabEditState = ui
             .memory_mut(|m| m.data.get_temp(edit_state_id))
@@ -2335,7 +2334,6 @@ where
             let Some(name_res) = name_res else {
                 edit_state.editing_tile_id = None;
                 edit_state.edit_text.clear();
-                // Store edit state back to temp memory.
                 ui.memory_mut(|m| m.data.insert_temp(edit_state_id, edit_state));
                 return ui.label("");
             };
@@ -2346,7 +2344,7 @@ where
                 edit_state.request_focus = false;
             }
 
-            // head_name_edit resets the text on commit/cancel, so detect
+            // head_name_edit resets the text on commit or cancel, so detect
             // focus loss or escape to clear the tab editing state.
             let editing_ended =
                 name_res.response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Escape));
@@ -2360,7 +2358,6 @@ where
 
             name_res.response
         } else {
-            // Render the tab using our custom widget.
             // Append a filled circle if this head is focused.
             let mut title = self.tab_title_for_tile(tiles, tile_id).text().to_string();
             let mut session = None;
@@ -2386,7 +2383,6 @@ where
             // Handle double-click to enter edit mode.
             if res.tab.double_clicked() {
                 if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
-                    // Initialize edit text based on head type.
                     let initial_text = match head {
                         gantz_ca::Head::Branch(name) => name.to_string(),
                         gantz_ca::Head::Commit(_) => String::new(),
@@ -2416,7 +2412,6 @@ where
             res.tab
         };
 
-        // Store edit state back to temp memory.
         ui.memory_mut(|m| m.data.insert_temp(edit_state_id, edit_state));
 
         response
@@ -2430,7 +2425,7 @@ where
     ) -> egui_tiles::UiResponse {
         let GraphPane(pane_head) = pane;
 
-        // Find the index of this head (for updating focused_head).
+        // Find the index of this head, for updating `focused_head`.
         let ix = self
             .access
             .heads()
@@ -2441,9 +2436,9 @@ where
         let immutable = head_immutable(pane_head, self.base_immutable, self.base_names);
         let diagnostics = self.access.diagnostics(pane_head).to_vec();
 
-        // Global layout params (Copy) combined with this head's flow.
+        // Global layout params combined with this head's flow.
         let layout_config = self.state.layout_config;
-        // Global grid/snap/align options (Copy), applied to every head.
+        // Global grid, snap and align options, applied to every head.
         let scene_config = self.state.scene_config;
         let head_state = self.state.open_heads.entry(pane_head.clone()).or_default();
         let layout_params = layout_config.to_params(head_state.layout_flow);
@@ -2453,12 +2448,12 @@ where
         // Disjoint borrow for the scene-level Select-all shortcut.
         let keymap = &self.state.keymap;
 
-        // We'll use this for positioning the fixed path labels window.
+        // The rect positions the floating breadcrumb window.
         let rect = ui.available_rect_before_wrap();
 
         // Get mutable access to this head's data and render the graph scene.
-        // The camera rides out for overlays that map graph-space positions
-        // (e.g. peer pointers) to the pane.
+        // The camera rides out for overlays that map graph-space positions to
+        // the pane, such as peer pointers.
         let (graph_response, camera) = match self.access.with_head_mut(pane_head, |data| {
             let camera = data.view.camera;
             let res = graph_scene(
@@ -2496,9 +2491,9 @@ where
             if response.changed {
                 self.changed_heads.push(pane_head.clone());
             }
-            // Collect this frame's deletions; `Gantz::show` migrates the
-            // top-level tree's node-view paths past them after layout (the live
-            // top-level tree isn't reachable here, mid-traversal).
+            // Collect this frame's deletions. `Gantz::show` migrates the
+            // top-level tree's node-view paths past them after layout, since
+            // the live top-level tree is not reachable here mid-traversal.
             if !response.reindex.is_empty() {
                 self.reindexes.push((pane_head.clone(), response.reindex));
             }
@@ -2510,8 +2505,8 @@ where
         let crumbs = name_breadcrumb(rect, pane_head, ui);
         self.responses.extend(Some(&*pane_head), crumbs);
 
-        // A collab-session overlay: while a join is still connecting (or has
-        // failed) the pane's graph is only a placeholder - dim the scene and
+        // A collab-session overlay. While a join is still connecting or has
+        // failed, the pane's graph is only a placeholder, so dim the scene and
         // say what is happening. Peers' live pointers paint beneath it.
         if let (Some(collab), gantz_ca::Head::Branch(name)) = (self.collab, &*pane_head) {
             if let Some(display) = collab.sessions.get(name) {
@@ -2531,12 +2526,12 @@ where
     }
 }
 
-/// Paint session peers' live pointers (presence cursors) over the pane.
+/// Paint session peers' live pointers over the pane.
 ///
-/// Positions arrive in graph-space coordinates; the head's camera maps them
+/// Positions arrive in graph-space coordinates. The head's camera maps them
 /// to screen space, so cursors land on the right nodes regardless of either
 /// peer's viewport. Painted on a foreground layer for the same reason as
-/// [`paint_session_overlay`]: the scene's sublayer background would hide a
+/// [`paint_session_overlay`]. The scene's sublayer background would hide a
 /// plain `ui.painter()` overlay.
 fn paint_peer_pointers(
     rect: egui::Rect,
@@ -2549,8 +2544,8 @@ fn paint_peer_pointers(
     painter.set_clip_rect(rect);
     for pointer in pointers {
         let screen = rect.center() + (pointer.pos - camera.center) * camera.zoom;
-        // Skip cursors far outside the viewport (the clip rect would hide
-        // them anyway; this skips the label layout too).
+        // Skip cursors far outside the viewport. The clip rect would hide
+        // them anyway, and this skips the label layout too.
         if !rect.expand(24.0).contains(screen) {
             continue;
         }
@@ -2572,8 +2567,8 @@ fn paint_peer_pointers(
 
 /// Dim a joining session's still-empty scene with its sync progress, or the
 /// error when the join failed. Painted only while the join placeholder is
-/// shown (`awaiting_snapshot`); once the snapshot arrives - or for a host,
-/// which never shows a placeholder - the graph renders unobscured.
+/// shown, that is while `awaiting_snapshot`. Once the snapshot arrives the
+/// graph renders unobscured. A host never shows a placeholder.
 fn paint_session_overlay(rect: egui::Rect, display: &crate::collab::SessionDisplay, ui: &egui::Ui) {
     use crate::collab::SessionConn;
     // Only ever cover the empty placeholder scene. Once the graph has loaded a
@@ -2589,7 +2584,7 @@ fn paint_session_overlay(rect: egui::Rect, display: &crate::collab::SessionDispl
             SessionConn::Degraded.color(),
         )
     } else {
-        // Animated ellipsis while we wait.
+        // Animated ellipsis while waiting.
         let dots = 1 + (ui.input(|i| i.time) * 2.0) as usize % 3;
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(250));
@@ -2625,9 +2620,9 @@ fn paint_session_overlay(rect: egui::Rect, display: &crate::collab::SessionDispl
     }
 }
 
-/// The tab title for a node-view pane: `<head>:<path>` with the final path
-/// segment rendered as `<index>-<ty_name>` (e.g. `main:3-plot`, or for a nested
-/// path `main:2:5-plot`). Intermediate segments are shown as raw indices.
+/// The tab title for a node-view pane. `<head>:<path>` with the final path
+/// segment rendered as `<index>-<ty_name>`, for example `main:3-plot`.
+/// Intermediate segments are shown as raw indices.
 fn node_view_title(pane: &NodeViewPane) -> String {
     use std::fmt::Write;
     let mut s = format!("{}", pane.head);
@@ -2642,9 +2637,9 @@ fn node_view_title(pane: &NodeViewPane) -> String {
     s
 }
 
-/// The display title for a pane, shared by the tab bar, floating windows, and
-/// the `windowed_panes` report. Panes tied to the focused head (graph config,
-/// node inspector, Steel) suffix it, e.g. `Steel - main`.
+/// The display title for a pane, shared by the tab bar, floating windows and
+/// the `windowed_panes` report. Panes tied to the focused head suffix it,
+/// for example `Steel - main`.
 fn pane_title<Access>(
     gantz: &Gantz<'_>,
     access: &Access,
@@ -2722,6 +2717,7 @@ impl Default for GantzState {
 ///
 /// Roughly something like this:
 ///
+/// ```text
 /// -----------------------------------------
 /// |grs/hist/settings |scene               |
 /// |------------------|                     |
@@ -2731,15 +2727,16 @@ impl Default for GantzState {
 /// |------------------|          |          |
 /// |insp              |          |          |
 /// -----------------------------------------
+/// ```
 ///
-/// The active tab of each tab container defaults to its first child (see
-/// `egui_tiles::Tabs::new`), so child ordering picks the default tabs.
+/// The active tab of each tab container defaults to its first child. See
+/// `egui_tiles::Tabs::new`. Child ordering picks the default tabs.
 fn create_tree() -> egui_tiles::Tree<Pane> {
     let mut tiles = egui_tiles::Tiles::default();
 
-    // The leaf panes. The GUI Debug pane is not created here: it joins the
-    // tray via `sync_singleton_pane` (the same path that serves persisted
-    // trees predating it).
+    // The leaf panes. The GUI Debug pane is not created here. It joins the
+    // tray via `sync_singleton_pane`, the same path that serves persisted
+    // trees predating it.
     let graph_config = tiles.insert_pane(Pane::GraphConfig);
     let graph_scene = tiles.insert_pane(Pane::GraphScene);
     let graphs = tiles.insert_pane(Pane::Graphs);
@@ -2751,13 +2748,13 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
     let steel = tiles.insert_pane(Pane::Steel);
     let vm_perf = tiles.insert_pane(Pane::VmPerf);
 
-    // Sidebar tab containers (first child is the default-active tab).
+    // Sidebar tab containers. The first child is the default-active tab.
     let graphs_history_settings = tiles.insert_tab_tile(vec![graphs, history, settings]);
     // VM Perf and GUI Perf sit side by side rather than as tabs, so both plots
     // are visible at once.
     let perf = tiles.insert_horizontal_tile(vec![vm_perf, gui_perf]);
 
-    // The left column (sidebar).
+    // The sidebar column.
     let mut shares = egui_tiles::Shares::default();
     shares.set_share(graphs_history_settings, 0.30);
     shares.set_share(perf, 0.05);
@@ -2772,16 +2769,16 @@ fn create_tree() -> egui_tiles::Tree<Pane> {
     // Logs and steel code in bottom "tray".
     let tray = tiles.insert_horizontal_tile(vec![logs, steel]);
 
-    // The right column with main area (graph scene above logs and steel code).
+    // The right column with the graph scene above the tray.
     let right_column = tiles.insert_container(egui_tiles::Linear::new_binary(
         egui_tiles::LinearDir::Vertical,
         [graph_scene, tray],
         0.7,
     ));
 
-    // The root with both columns. The split here is only a fallback; the
-    // sidebar normally has a fixed pixel width maintained across window resizes
-    // (see `impose_fixed_sizes` / `default_sidebar_width`).
+    // The root with both columns. The split here is only a fallback. The
+    // sidebar normally has a fixed pixel width maintained across window
+    // resizes. See `impose_fixed_sizes` and `default_sidebar_width`.
     let root = tiles.insert_container(egui_tiles::Linear::new_binary(
         egui_tiles::LinearDir::Horizontal,
         [left_column, right_column],
@@ -2797,17 +2794,17 @@ fn create_empty_graph_tree() -> egui_tiles::Tree<GraphPane> {
 }
 
 /// Insert a [`Pane::NodeView`] for `(head, path)` into the top-level `tree`, or
-/// activate the existing one (deduped by head + path). `ty_name` is the node's
-/// type name used for the tab title. New views land in the tray - a layout-safe
-/// default (opaque to the fixed-size anchors); the user can then drag them
-/// anywhere in the tree.
+/// activate the existing one. Views are deduped by head and path. `ty_name`
+/// is the node's type name used for the tab title. New views land in the
+/// tray, a layout-safe default that is opaque to the fixed-size anchors. The
+/// user can then drag them anywhere in the tree.
 fn add_node_view_pane(
     tree: &mut egui_tiles::Tree<Pane>,
     head: gantz_ca::Head,
     path: Vec<node::Id>,
     ty_name: String,
 ) {
-    // Dedupe: if a view for this (head, path) already exists, just focus it.
+    // If a view for this head and path already exists, focus it.
     let existing = tree.tiles.iter().find_map(|(id, tile)| match tile {
         egui_tiles::Tile::Pane(Pane::NodeView(p)) if p.head == head && p.path == path => Some(*id),
         _ => None,
@@ -2825,7 +2822,7 @@ fn add_node_view_pane(
 }
 
 /// Insert a new tile for `pane`, defaulting to the tray and falling back to
-/// the root if the layout isn't canonical.
+/// the root if the layout is not canonical.
 fn insert_tray_pane(tree: &mut egui_tiles::Tree<Pane>, pane: Pane) {
     let pane_id = tree.tiles.insert_pane(pane);
     let container = layout_anchors(tree).map(|a| a.tray).or_else(|| tree.root());
@@ -2836,9 +2833,10 @@ fn insert_tray_pane(tree: &mut egui_tiles::Tree<Pane>, pane: Pane) {
 }
 
 /// Ensure a [`Pane::Ext`] tile exists for each supplied provider key, adding
-/// missing ones to the tray (hidden until toggled, like Logs/Steel). Tiles
-/// whose provider is absent are left in place: they render a placeholder and
-/// keep their spot in the layout for when the provider returns.
+/// missing ones to the tray. They stay hidden until toggled, like Logs and
+/// Steel. Tiles whose provider is absent are left in place. They render a
+/// placeholder and keep their spot in the layout for when the provider
+/// returns.
 fn sync_ext_panes(tree: &mut egui_tiles::Tree<Pane>, keys: &[&str]) {
     for &key in keys {
         let exists = tree
@@ -2852,7 +2850,7 @@ fn sync_ext_panes(tree: &mut egui_tiles::Tree<Pane>, keys: &[&str]) {
 }
 
 /// Ensure a tile exists for the given singleton pane, adding it to the tray
-/// when missing (a tree persisted before the pane existed).
+/// when missing. A tree persisted before the pane existed lacks it.
 fn sync_singleton_pane(tree: &mut egui_tiles::Tree<Pane>, pane: Pane) {
     let exists = tree
         .tiles
@@ -2869,7 +2867,6 @@ fn sync_singleton_pane(tree: &mut egui_tiles::Tree<Pane>, pane: Pane) {
 fn sync_graph_panes(tree: &mut egui_tiles::Tree<GraphPane>, heads: &[gantz_ca::Head]) {
     use std::collections::HashSet;
 
-    // Collect existing heads in panes.
     let existing: HashSet<gantz_ca::Head> = tree
         .tiles
         .iter()
@@ -2879,25 +2876,20 @@ fn sync_graph_panes(tree: &mut egui_tiles::Tree<GraphPane>, heads: &[gantz_ca::H
         })
         .collect();
 
-    // Collect current heads.
     let current: HashSet<gantz_ca::Head> = heads.iter().cloned().collect();
 
-    // Add missing panes for heads that don't have a pane yet.
     for head in heads {
         if !existing.contains(head) {
             let pane_id = tree.tiles.insert_pane(GraphPane(head.clone()));
-            // Add to root container, or set as root if tree is empty.
             if let Some(root_id) = tree.root() {
                 tree.move_tile_to_container(pane_id, root_id, usize::MAX, true);
             } else {
-                // Tree is empty, create a tabs container as root.
                 let root = tree.tiles.insert_tab_tile(vec![pane_id]);
                 tree.root = Some(root);
             }
         }
     }
 
-    // Remove panes for heads that no longer exist.
     let orphaned: Vec<egui_tiles::TileId> = tree
         .tiles
         .iter()
@@ -2925,7 +2917,6 @@ fn simplify_tree(tree: &mut egui_tiles::Tree<Pane>, ctx: &egui::Context) {
     if tree.dragged_id(ctx).is_some() {
         return;
     }
-    // Otherwise, find the graph scene ID.
     let Some(graph_scene_id) = tree.tiles.find_pane(&Pane::GraphScene) else {
         return;
     };
@@ -2944,29 +2935,29 @@ fn simplify_tree(tree: &mut egui_tiles::Tree<Pane>, ctx: &egui::Context) {
     }
 }
 
-/// The gap between sibling tiles, in points. Must match the (unoverridden)
-/// default `egui_tiles::Behavior::gap_width`, so imposed pixel sizes are exact
-/// and don't drift when re-imposed each frame.
+/// The gap between sibling tiles, in points. It must match the default
+/// `egui_tiles::Behavior::gap_width`, which is not overridden, so imposed
+/// pixel sizes are exact and do not drift when re-imposed each frame.
 const TILE_GAP: f32 = 1.0;
 
-/// The minimum sidebar width / tray height, in points.
+/// The minimum sidebar width and tray height, in points.
 const MIN_PANE_SIZE: f32 = 80.0;
 
 /// The tiles whose Linear share splits hold the sidebar width and tray height,
 /// when the tree has its default top-level shape.
 struct LayoutAnchors {
-    /// Root horizontal Linear: `[left_column | right_column]`.
+    /// The root horizontal Linear, `[left_column | right_column]`.
     root: egui_tiles::TileId,
     left_column: egui_tiles::TileId,
-    /// Right column vertical Linear: `[graph_scene / tray]`.
+    /// The right column vertical Linear, `[graph_scene / tray]`.
     right_column: egui_tiles::TileId,
     graph_scene: egui_tiles::TileId,
     tray: egui_tiles::TileId,
 }
 
-/// Identify the layout anchors, or `None` if the tree isn't in its default
-/// top-level shape (mid-drag, or after the user rearranged panes), in which
-/// case the proportional layout is left untouched.
+/// Identify the layout anchors, or `None` if the tree is not in its default
+/// top-level shape, for example mid-drag or after the user rearranged panes.
+/// In that case the proportional layout is left untouched.
 fn layout_anchors(tree: &egui_tiles::Tree<Pane>) -> Option<LayoutAnchors> {
     let graph_scene = tree.tiles.find_pane(&Pane::GraphScene)?;
     let right_column = tree.tiles.parent_of(graph_scene)?;
@@ -3026,15 +3017,15 @@ fn set_linear_shares(
     }
 }
 
-/// Impose the stored sidebar width / tray height (in points) on the tree's
+/// Impose the stored sidebar width and tray height in points on the tree's
 /// share splits so they stay fixed as the window resizes. Call after
-/// `simplify_tree`, before `tree.ui`.
+/// `simplify_tree` and before `tree.ui`.
 fn impose_fixed_sizes(tree: &mut egui_tiles::Tree<Pane>, state: &GantzState, area: egui::Rect) {
     let Some(anchors) = layout_anchors(tree) else {
         return;
     };
     // Both columns span the full height, so the tray's available height is the
-    // area height less the gap; the sidebar's available width likewise.
+    // area height less the gap. The sidebar's available width likewise.
     if state.view_toggles.sidebar_open {
         let avail = area.width() - TILE_GAP;
         let width = state
@@ -3065,20 +3056,20 @@ fn impose_fixed_sizes(tree: &mut egui_tiles::Tree<Pane>, state: &GantzState, are
     }
 }
 
-/// Capture the sidebar width / tray height (in points) from the laid-out tree,
-/// so they can be re-imposed next frame (including after manual divider drags).
-/// Call after `tree.ui`.
+/// Capture the sidebar width and tray height in points from the laid-out
+/// tree, so they can be re-imposed next frame, including after manual divider
+/// drags. Call after `tree.ui`.
 ///
-/// This reads the post-layout *shares* rather than the cached rects: a resize
-/// drag updates the shares during `tree.ui`, but the rects it computes reflect
-/// the pre-drag split, so reading rects would never see the drag.
+/// This reads the post-layout shares rather than the cached rects. A resize
+/// drag updates the shares during `tree.ui`, but the rects it computes
+/// reflect the pre-drag split, so reading rects would never see the drag.
 fn capture_fixed_sizes(tree: &egui_tiles::Tree<Pane>, state: &mut GantzState, area: egui::Rect) {
     let Some(anchors) = layout_anchors(tree) else {
         return;
     };
-    // Gate on the *laid-out* visibility, not `sidebar_open`: the hamburger can
+    // Gate on the laid-out visibility, not `sidebar_open`. The hamburger can
     // flip `sidebar_open` mid-frame, but `set_tile_visibility` only runs at the
-    // frame start, so the layout (and thus the captured share) reflects the
+    // frame start, so the layout and the captured share reflect the
     // visibility from frame start. Capturing against a stale layout would
     // compute the column's size against the wrong set of visible siblings.
     if tree.is_visible(anchors.left_column) {
@@ -3108,7 +3099,7 @@ fn capture_fixed_sizes(tree: &egui_tiles::Tree<Pane>, state: &mut GantzState, ar
 }
 
 /// The points a Linear child currently occupies, derived from its share of the
-/// visible children (mirroring `egui_tiles::Shares::split`).
+/// visible children, mirroring `egui_tiles::Shares::split`.
 fn linear_child_points(
     tree: &egui_tiles::Tree<Pane>,
     container: egui_tiles::TileId,
@@ -3127,10 +3118,9 @@ fn linear_child_points(
     (total > 0.0).then(|| available * l.shares[child] / total)
 }
 
-/// The supplied extension panes' checkbox entries - the single source both
-/// pane-toggle UIs (Settings -> Panes and the graph-area context menu's
-/// "panes" submenu) render from, so a new pane cannot appear in one and not
-/// the other.
+/// The supplied extension panes' checkbox entries. Both pane-toggle UIs
+/// render from this single source, so a new pane cannot appear in one and
+/// not the other.
 fn ext_pane_entries(gantz: &Gantz) -> Vec<widget::ExtPaneEntry> {
     gantz
         .ext_panes
@@ -3144,7 +3134,7 @@ fn ext_pane_entries(gantz: &Gantz) -> Vec<widget::ExtPaneEntry> {
 }
 
 /// Whether a tab's pane can be hidden via its right-click menu. The main graph
-/// scene is not hideable; node views are closed (removed), not hidden.
+/// scene is not hideable. Node views are closed and removed, not hidden.
 fn pane_is_hideable(pane: &Pane) -> bool {
     !matches!(pane, Pane::GraphScene | Pane::NodeView(_))
 }
@@ -3165,13 +3155,14 @@ fn set_pane_visible(view: &mut ViewToggles, pane: &Pane, visible: bool) {
         Pane::Logs => view.logs = visible,
         Pane::Steel => view.steel = visible,
         Pane::GuiDebug => view.gui_debug = visible,
-        // No visibility toggle: always-visible scene / closable node views.
+        // No visibility toggle. The scene is always visible and node views
+        // are closable.
         Pane::GraphScene | Pane::NodeView(_) => {}
     }
 }
 
 /// Whether a pane's visibility toggle is currently on. Panes without a toggle
-/// (the graph scene and node views) are always considered visible.
+/// are always considered visible.
 fn pane_is_visible(view: &ViewToggles, pane: &Pane) -> bool {
     match pane {
         Pane::Ext(key) => view.ext.get(key).copied().unwrap_or(false),
@@ -3190,16 +3181,16 @@ fn pane_is_visible(view: &ViewToggles, pane: &Pane) -> bool {
 }
 
 /// Whether a pane may be popped out into a window. Every pane but the graph
-/// scene (which hosts the inner graph tile tree) qualifies.
+/// scene qualifies, since it hosts the inner graph tile tree.
 fn pane_is_poppable(pane: &Pane) -> bool {
     !matches!(pane, Pane::GraphScene)
 }
 
 /// A stable identity for a pane, used to key its window and to dedupe the
-/// windowed set. Singletons key on their variant; a node view keys on its
-/// `(head, path)` - the same identity `add_node_view_pane` dedupes on. Public so
-/// a native host can key a pop-out window's persisted geometry
-/// ([`GantzState::windowed_geometry`]) by the same identity.
+/// windowed set. Singletons key on their variant. A node view keys on its
+/// `(head, path)`, the same identity `add_node_view_pane` dedupes on. Public
+/// so a native host can key a pop-out window's persisted geometry in
+/// [`GantzState::windowed_geometry`] by the same identity.
 pub fn pane_key(pane: &Pane) -> String {
     match pane {
         Pane::Ext(key) => format!("ext:{key}"),
@@ -3225,20 +3216,20 @@ pub fn pane_key(pane: &Pane) -> String {
     }
 }
 
-/// egui-memory id under which the set of windowed (popped-out) panes persists,
-/// stored as a RON `String` alongside the tile tree (see [`load_ron`]).
+/// egui-memory id under which the set of windowed panes persists, stored as a
+/// RON `String` alongside the tile tree. See [`load_ron`].
 fn windowed_panes_id() -> egui::Id {
     egui::Id::new("gantz-windowed-panes-storage-v1")
 }
 
 /// egui-memory id for panes a host has requested be re-docked before the next
-/// `Gantz::show` (see [`redock_windowed_pane`]).
+/// `Gantz::show`. See [`redock_windowed_pane`].
 fn pending_redock_id() -> egui::Id {
     egui::Id::new("gantz-pending-redock")
 }
 
-/// egui-memory id for node views a host has requested be closed before the next
-/// `Gantz::show` (see [`close_windowed_pane`]).
+/// egui-memory id for node views a host has requested be closed before the
+/// next `Gantz::show`. See [`close_windowed_pane`].
 fn pending_close_id() -> egui::Id {
     egui::Id::new("gantz-pending-close")
 }
@@ -3260,17 +3251,17 @@ fn enqueue_pending(ctx: &egui::Context, id: egui::Id, pane: &Pane) {
 }
 
 /// Request that a popped-out pane return to the tile tree, from outside a
-/// [`Gantz::show`] call (e.g. a native host's OS-window close button).
+/// [`Gantz::show`] call, for example a native host's OS-window close button.
 ///
 /// The request is queued in egui memory and applied on the next `show`, so it
-/// works from any egui context. A no-op if the pane isn't windowed.
+/// works from any egui context. A no-op if the pane is not windowed.
 pub fn redock_windowed_pane(ctx: &egui::Context, pane: &Pane) {
     enqueue_pending(ctx, pending_redock_id(), pane);
 }
 
-/// Request that a popped-out node view be closed (destroyed) rather than
-/// re-docked. Queued and applied like [`redock_windowed_pane`]. Singletons have
-/// no destructive close, so they are re-docked instead.
+/// Request that a popped-out node view be closed and destroyed rather than
+/// re-docked. Queued and applied like [`redock_windowed_pane`]. Singletons
+/// have no destructive close, so they are re-docked instead.
 pub fn close_windowed_pane(ctx: &egui::Context, pane: &Pane) {
     enqueue_pending(ctx, pending_close_id(), pane);
 }
@@ -3286,9 +3277,9 @@ fn push_windowed(windowed: &mut Vec<Pane>, pane: Pane) {
 
 /// Pop a pane out of the tile tree into a window.
 ///
-/// Node views are real tiles, so the tile is removed; singletons stay in the
-/// tree but hidden (their window shows them instead). Either way the pane joins
-/// the windowed set.
+/// Node views are real tiles, so the tile is removed. Singletons stay in the
+/// tree but hidden, since their window shows them instead. Either way the
+/// pane joins the windowed set.
 fn detach_pane(
     view: &mut ViewToggles,
     windowed: &mut Vec<Pane>,
@@ -3305,8 +3296,9 @@ fn detach_pane(
     push_windowed(windowed, pane.clone());
 }
 
-/// Return a windowed pane to the tile tree: a node view re-enters as a tray
-/// tile, a singleton just becomes visible again (its tile stayed in the tree).
+/// Return a windowed pane to the tile tree. A node view re-enters as a tray
+/// tile. A singleton just becomes visible again, since its tile stayed in the
+/// tree.
 fn redock_pane(view: &mut ViewToggles, tree: &mut egui_tiles::Tree<Pane>, pane: Pane) {
     match pane {
         Pane::NodeView(p) => add_node_view_pane(tree, p.head, p.path, p.ty_name),
@@ -3315,8 +3307,8 @@ fn redock_pane(view: &mut ViewToggles, tree: &mut egui_tiles::Tree<Pane>, pane: 
 }
 
 /// Migrate windowed [`Pane::NodeView`] entries for `head` after a node removal,
-/// mirroring [`migrate_node_view_paths`] for the windowed set: a view of a
-/// removed node is dropped; a view of a swapped node has its path rewritten.
+/// mirroring [`migrate_node_view_paths`] for the windowed set. A view of a
+/// removed node is dropped. A view of a swapped node has its path rewritten.
 fn migrate_windowed_node_views(
     windowed: &mut Vec<Pane>,
     head: &gantz_ca::Head,
@@ -3349,10 +3341,8 @@ fn migrate_windowed_node_views(
 fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
     let ids: Vec<_> = tree.tiles.tile_ids().collect();
     let open = view.sidebar_open;
-    // Set visibility for panes. Sidebar content panes are gated by both the
-    // sidebar being open and their individual toggle; the Settings control
-    // pane is gated only by the sidebar being open; the tray panes
-    // (Logs/Steel) are independent of the sidebar.
+    // Sidebar panes are gated by both the sidebar being open and their
+    // individual toggle. The tray panes are independent of the sidebar.
     for &id in &ids {
         if let Some(pane) = tree.tiles.get_pane(&id) {
             match pane {
@@ -3368,12 +3358,12 @@ fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
                 Pane::Logs => tree.set_visible(id, view.logs),
                 Pane::Steel => tree.set_visible(id, view.steel),
                 Pane::GuiDebug => tree.set_visible(id, view.gui_debug),
-                // Always visible: a node view is removed by closing, not hiding.
+                // Always visible. A node view is removed by closing, not hiding.
                 Pane::NodeView(_) => tree.set_visible(id, true),
             }
         }
     }
-    // Set visibility for containers.
+    // A container is visible when any child is.
     for &id in &ids {
         if let Some(container) = tree.tiles.get_container(id) {
             let has_visible_child = container.children().any(|&id| tree.is_visible(id));
@@ -3387,9 +3377,9 @@ const GRAPHS_PANE_RECT_ID: &str = "gantz-graphs-pane-rect";
 
 /// Paint a hover overlay when `.gantz` files are being dragged over this pane.
 ///
-/// The overlay is best-effort: it only appears when the pointer position is
-/// available and within the pane (some platforms don't track the pointer
-/// during OS file drags).
+/// The overlay is best-effort. It only appears when the pointer position is
+/// available and within the pane. Some platforms do not track the pointer
+/// during OS file drags.
 fn paint_gantz_file_hover_overlay(ui: &mut egui::Ui) {
     let rect = ui.max_rect();
     let latest_pos = ui.ctx().input(|i| i.pointer.latest_pos());
@@ -3417,17 +3407,16 @@ fn paint_gantz_file_hover_overlay(ui: &mut egui::Ui) {
 /// Detect `.gantz` file drops from egui's raw input.
 ///
 /// Called from [`Gantz::show`] after the tile tree renders, so that detection
-/// is independent of pointer position (which may be unavailable during OS
-/// file drags on some platforms). The target pane is determined by checking
-/// the pointer against the stored Graphs pane rect when available, defaulting
-/// to [`FileDropTarget::GraphScene`].
+/// is independent of pointer position, which may be unavailable during OS
+/// file drags on some platforms. The target pane is Graphs when the pointer
+/// is over the stored Graphs pane rect, and [`FileDropTarget::GraphScene`]
+/// otherwise.
 fn collect_gantz_file_drops(ctx: &egui::Context) -> Vec<FileDrop> {
     let dropped = ctx.input(|i| i.raw.dropped_files.clone());
     if dropped.is_empty() {
         return Vec::new();
     }
 
-    // Determine target: Graphs if pointer is over the Graphs pane, else GraphScene.
     let graphs_rect: Option<egui::Rect> =
         ctx.memory(|m| m.data.get_temp(egui::Id::new(GRAPHS_PANE_RECT_ID)));
     let latest_pos = ctx.input(|i| i.pointer.latest_pos());
@@ -3449,10 +3438,10 @@ fn collect_gantz_file_drops(ctx: &egui::Context) -> Vec<FileDrop> {
         .collect()
 }
 
-/// Render a decoded tree against a head's live VM: the GuiDebug pane's
-/// central-panel body, shared by the marker and scratch modes. Bindings
-/// resolve into the head's node state both ways, and the returned payloads
-/// carry the tree's push evaluations and state writes.
+/// Render a decoded tree against a head's live VM. This is the GuiDebug
+/// pane's central-panel body, shared by the marker and scratch modes.
+/// Bindings resolve into the head's node state both ways. The returned
+/// payloads carry the tree's push evaluations and state writes.
 #[allow(clippy::too_many_arguments)]
 fn gui_debug_tree(
     env: &Env<'_>,
@@ -3465,9 +3454,9 @@ fn gui_debug_tree(
     ui: &mut egui::Ui,
 ) -> Vec<crate::response::DynResponse> {
     let (inlets, outlets) = crate::inlet_outlet_ids(env, graph);
-    // The focused head's committed graph address: resolver hops into
-    // instances go through the registry (instances always resolve committed
-    // children).
+    // The focused head's committed graph address. Resolver hops into
+    // instances go through the registry, since instances always resolve
+    // committed children.
     let head_ca: Option<gantz_ca::ContentAddr> = env
         .registry
         .head_commit(head)
@@ -3522,12 +3511,12 @@ fn pane_ui<R>(ui: &mut egui::Ui, pane: impl FnOnce(&mut egui::Ui) -> R) -> egui:
     egui::CentralPanel::default().show_inside(ui, |ui| pane(ui))
 }
 
-/// The size of the floating sidebar toggle glyph, also used to offset the
-/// nested-graph breadcrumb to its right (they share the scene's bottom-left
-/// corner).
+/// The size of the floating sidebar toggle glyph. It also offsets the
+/// nested-graph breadcrumb to its right, since they share the scene's
+/// bottom-left corner.
 const SIDEBAR_TOGGLE_ICON_SIZE: f32 = 18.0;
 
-/// A floating hamburger button that toggles the sidebar open/closed.
+/// A floating hamburger button that toggles the sidebar.
 ///
 /// Anchored to the given bottom-left position over the graph scene, so it
 /// tracks the scene's corner rather than the whole window.
@@ -3539,10 +3528,10 @@ fn sidebar_toggle(ctx: &egui::Context, anchor_pos: egui::Pos2, open: &mut bool) 
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             egui::Frame::NONE.show(ui, |ui| {
-                // A hamburger that toggles the sidebar. Idle, it matches the
-                // faint colour of egui_graph's dot grid; on hover it brightens a
-                // little to signal it's interactive (no selection colour when
-                // open). Laid out manually so the colour can depend on hover.
+                // Idle, the hamburger matches the faint colour of egui_graph's
+                // dot grid. On hover it brightens a little to signal it is
+                // interactive. There is no selection colour when open. Laid
+                // out manually so the colour can depend on hover.
                 let font = egui::FontId::proportional(SIDEBAR_TOGGLE_ICON_SIZE);
                 let galley =
                     ui.painter()
@@ -3635,12 +3624,13 @@ fn graph_scene(
     vm: &mut Engine,
     ui: &mut egui::Ui,
 ) -> Option<graph_scene::GraphSceneResponse> {
-    // A head shows exactly its root graph (nested graphs are separate heads).
+    // A head shows exactly its root graph. Nested graphs are separate heads.
     let id = egui::Id::new(head);
 
-    // Select-all: replace the selection with every node. Handled here (not the
-    // outer command block) because this is where the graph is in scope. Gated
-    // like other command shortcuts so it does not fire while typing.
+    // Select-all replaces the selection with every node. Handled here rather
+    // than the outer command block because this is where the graph is in
+    // scope. Gated like other command shortcuts so it does not fire while
+    // typing.
     if !ui.ctx().egui_wants_keyboard_input() && keymap.consume(ui, Action::SelectAll) {
         head_state.scene.interaction.selection.nodes = graph.node_indices().collect();
         head_state.scene.interaction.selection.edges.clear();
@@ -3648,7 +3638,7 @@ fn graph_scene(
 
     // Seed the node layout the first time this graph is shown, and centre the
     // camera on it at zoom 1. Without an explicit camera the scene would fall
-    // back to egui's fit-to-bounds, zooming out to frame every node; a freshly
+    // back to egui's fit-to-bounds, zooming out to frame every node. A freshly
     // opened graph should instead sit at its natural 1:1 zoom.
     if head_view.layout.is_empty() {
         head_view.layout =
@@ -3681,9 +3671,8 @@ fn graph_scene(
 }
 
 /// Floating name breadcrumb over the bottom-left corner of the scene, shown
-/// when viewing a nested graph (a `parent:child` head). Each crumb is a
-/// `:`-separated name segment; the prefix it represents is the head it
-/// navigates to.
+/// when viewing a nested `parent:child` graph. Each crumb is a `:`-separated
+/// name segment. The prefix it represents is the head it navigates to.
 ///
 /// Returns the [`ReplaceHead`] payloads emitted by clicked crumbs, which
 /// navigate the focused tab to an ancestor level in place.
@@ -3725,8 +3714,9 @@ fn name_breadcrumb(
                     for (i, seg) in segs.iter().enumerate() {
                         let is_current = i + 1 == segs.len();
                         let prefix = segs[..=i].join(&sep_str);
-                        // The crumbs are tiny: the root is `R` (its name is too
-                        // big to fit), and each nested level is its short leaf.
+                        // The crumbs are tiny. The root is `R` since its name
+                        // is too big to fit, and each nested level is its
+                        // short leaf.
                         let (label, hover) = if i == 0 {
                             ("R".to_string(), format!("navigate to {seg} root"))
                         } else {
@@ -3750,13 +3740,13 @@ fn name_breadcrumb(
 enum PaletteChoice {
     /// Create an ordinary node of the given type.
     Node(CreateNode),
-    /// Create a new nested graph (the reserved [`NESTED_GRAPH_TYPE`] entry).
+    /// Create a new nested graph via the reserved [`NESTED_GRAPH_TYPE`] entry.
     NestedGraph(CreateNestedGraph),
 }
 
 /// Returns a node-creation payload when a node type is chosen.
 ///
-/// `editing` is the focused head's name (when it is a branch), used to hide node
+/// `editing` is the focused head's name when it is a branch. It hides node
 /// types whose reference would cycle back to the graph being edited.
 fn node_palette(
     env: &Env<'_>,
@@ -3782,7 +3772,7 @@ fn node_palette(
 
     // The chosen node type becomes a creation payload. The reserved
     // `NESTED_GRAPH_TYPE` routes to the registry-aware nested-graph op. The
-    // palette is centered over the graph scene (this `ui`'s rect).
+    // palette is centered over the graph scene, which is this `ui`'s rect.
     let scene_rect = ui.max_rect();
     node_palette.show(ui.ctx(), scene_rect, cmds).map(|cmd| {
         // The placement position is filled in by the caller, which has access to
@@ -3824,8 +3814,8 @@ fn trace_view(
 /// Whether the given head should be treated as immutable.
 ///
 /// A head is immutable when `base_immutable` is enabled and the head is a base
-/// graph that is not a demo (demo base graphs are always mutable so users can
-/// experiment).
+/// graph that is not a demo. Demo base graphs are always mutable so users can
+/// experiment.
 fn head_immutable(
     head: &gantz_ca::Head,
     base_immutable: bool,
@@ -3860,12 +3850,11 @@ fn node_inspector<'a>(
             .show(ui, |ui| {
                 let graph = &mut *root;
                 let ids: Vec<_> = graph.node_identifiers().collect();
-                // Collect the inlets and outlets.
                 let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
                 // The rect of the first selected node, used to scroll to it.
                 let mut selected_rect: Option<egui::Rect> = None;
-                // VM-state writes recorded by each node's `NodeCtx` (drained
-                // per node into `StateWritten` payloads).
+                // VM-state writes recorded by each node's `NodeCtx`. They
+                // drain per node into `StateWritten` payloads.
                 let mut writes = Vec::new();
                 for id in ids {
                     let mut frame = egui::Frame::group(ui.style());
@@ -3878,10 +3867,10 @@ fn node_inspector<'a>(
                             return;
                         };
                         let ix = id.index();
-                        // Take the node's cached instance (see
-                        // `graph_scene::nodes`); erase back below iff changed,
-                        // updating the witness. An unknown tag shows a weak
-                        // placeholder row.
+                        // Take the node's cached instance. See
+                        // `graph_scene::nodes`. Erase back below only when
+                        // changed, updating the witness. An unknown tag shows
+                        // a weak placeholder row.
                         let Ok(mut entry) = instances.take(codec, ix, weight) else {
                             ui.weak(format!("{} (unknown node type)", weight.tag));
                             return;
@@ -3991,9 +3980,9 @@ fn steel_view(
 mod tests {
     use super::*;
 
-    /// The fixed sidebar width must be imposed on the sidebar (left column),
-    /// not the main area, and the anchors must identify the sidebar as the
-    /// column that does not contain the graph scene.
+    /// The fixed sidebar width must be imposed on the sidebar, not the main
+    /// area. The anchors must identify the sidebar as the column that does
+    /// not contain the graph scene.
     #[test]
     fn impose_sets_sidebar_width_on_left_column() {
         let mut tree = create_tree();
@@ -4017,13 +4006,13 @@ mod tests {
             panic!("root is not a linear container");
         };
         let avail = 1000.0 - TILE_GAP;
-        // The sidebar gets the fixed width; the main area gets the remainder.
+        // The sidebar gets the fixed width. The main area gets the remainder.
         assert!((root.shares[anchors.left_column] - 240.0).abs() < 0.01);
         assert!((root.shares[anchors.right_column] - (avail - 240.0)).abs() < 0.01);
     }
 
     /// `capture_fixed_sizes` must recover the same width `impose_fixed_sizes`
-    /// set, so a sidebar that isn't dragged doesn't drift frame to frame.
+    /// set, so a sidebar that is not dragged does not drift frame to frame.
     #[test]
     fn capture_round_trips_imposed_sidebar_width() {
         let mut tree = create_tree();
@@ -4038,15 +4027,15 @@ mod tests {
 
     /// Reopening the sidebar must not inflate its width. On the open-transition
     /// frame `sidebar_open` is already true but the layout still has the left
-    /// column hidden; capturing then would size it against the wrong siblings.
+    /// column hidden. Capturing then would size it against the wrong siblings.
     #[test]
     fn capture_skips_while_sidebar_laid_out_hidden() {
         let mut tree = create_tree();
         let anchors = layout_anchors(&tree).unwrap();
-        // Layout state: sidebar hidden (as at frame start)...
+        // The layout has the sidebar hidden, as at frame start.
         tree.set_visible(anchors.left_column, false);
         let mut state = GantzState::new();
-        // ...but `sidebar_open` was just toggled on mid-frame.
+        // `sidebar_open` was just toggled on mid-frame.
         state.view_toggles.sidebar_open = true;
         state.sidebar_width = 240.0;
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
@@ -4063,7 +4052,7 @@ mod tests {
     }
 
     /// Pane identity keys are stable per pane and independent of a node view's
-    /// `ty_name` (two views of the same node are the same identity).
+    /// `ty_name`. Two views of the same node are the same identity.
     #[test]
     fn pane_key_identity() {
         assert_eq!(pane_key(&Pane::Logs), "logs");
@@ -4080,8 +4069,8 @@ mod tests {
         assert_ne!(pane_key(&plot), pane_key(&node_view("other", &[3])));
     }
 
-    /// `push_windowed` dedupes by pane identity, so a repeated pop-out (or a
-    /// same-node view with a different `ty_name`) does not add a second entry.
+    /// `push_windowed` dedupes by pane identity, so a repeated pop-out or a
+    /// same-node view with a different `ty_name` does not add a second entry.
     #[test]
     fn push_windowed_dedupes() {
         let mut windowed = Vec::new();
@@ -4100,19 +4089,20 @@ mod tests {
     }
 
     /// After a node removal, a windowed view of the removed node is dropped and a
-    /// view of a swapped node has its path rewritten; other heads and non-view
+    /// view of a swapped node has its path rewritten. Other heads and non-view
     /// panes are untouched.
     #[test]
     fn migrate_windowed_node_views_drops_and_rewrites() {
         let head = gantz_ca::Head::Branch("main".parse().unwrap());
         let mut windowed = vec![
-            node_view("main", &[1]),  // removed node -> dropped
-            node_view("main", &[3]),  // swapped 3 -> 1
+            node_view("main", &[1]),  // removed node, dropped
+            node_view("main", &[3]),  // swapped from 3 to 1
             node_view("main", &[2]),  // unaffected
-            node_view("other", &[1]), // different head -> untouched
-            Pane::Logs,               // non-view -> untouched
+            node_view("other", &[1]), // different head, untouched
+            Pane::Logs,               // non-view, untouched
         ];
-        // Node 1 removed; the node that was at index 3 swapped down into slot 1.
+        // Node 1 is removed. The node that was at index 3 swaps down into
+        // slot 1.
         let reindex = crate::ops::Reindex(vec![crate::ops::RemoveOp {
             removed: 1,
             moved_from: Some(3),

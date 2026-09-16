@@ -42,7 +42,7 @@ fn span_intersect() {
         "#f",
         "(pin-span (pat/span-intersect (pat/span 0 1/4) (pat/span 3/4 1)))",
     );
-    // A degenerate (zero-length) span intersects nothing.
+    // A zero-length span intersects nothing.
     assert_pinned(
         "#f",
         "(pin-span (pat/span-intersect (pat/span 1/2 1/2) (pat/span 0 1)))",
@@ -98,18 +98,17 @@ fn event_representation() {
     );
 }
 
-// Steel 0.8.2's `equal?` is broken for rationals nested in containers
-// (its recursive equality visitor lacks a Rational arm). The pin-*
+// Steel 0.8.2's `equal?` is broken for rationals nested in containers.
+// Its recursive equality visitor lacks a Rational arm. The pin-*
 // projection helpers exist because of this. If a steel upgrade fixes it,
-// this canary flags that the projections could be simplified away.
+// this canary flags that the projections can go.
 #[test]
 fn nested_rational_equal_canary() {
     assert_steel_true("(equal? #f (equal? (list 1/2) (list 1/2)))");
 }
 
 // Events print deterministically as a transparent struct, stable across
-// repeated renders (the previous hashmap representation printed its
-// fields in arbitrary order).
+// repeated renders.
 #[test]
 fn event_prints_deterministically() {
     for _ in 0..2 {

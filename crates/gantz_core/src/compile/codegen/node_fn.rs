@@ -38,7 +38,6 @@ struct NodeFns<'a> {
 }
 
 impl<'a> NodeFns<'a> {
-    /// Initialise the `NodeFns` visitor.
     fn new(tree: &'a RoseTree<NodeConfs>) -> Self {
         Self {
             tree,
@@ -49,10 +48,10 @@ impl<'a> NodeFns<'a> {
 }
 
 impl Visitor for NodeFns<'_> {
-    // We use `visit_post` so that the nested are generated before parents.
+    // `visit_post` generates nested node fns before their parents.
     fn visit_post(&mut self, ctx: visit::Ctx<'_, '_>, node: &dyn Node) {
-        // Skip generating node functions for inlet and outlet nodes - their
-        // values are handled directly by nested_expr bindings.
+        // Inlet and outlet nodes get no node fn. Their values resolve as
+        // bindings.
         let meta_ctx = node::MetaCtx::new(ctx.get_node());
         if node.inlet(meta_ctx) || node.outlet(meta_ctx) {
             return;
@@ -116,7 +115,6 @@ pub(crate) fn node_fn<'a>(
         format!("input{i}")
     }
 
-    // Create function parameters for graph state and inputs
     let mut input_args = conns
         .inputs
         .iter()
@@ -124,7 +122,6 @@ pub(crate) fn node_fn<'a>(
         .filter_map(|(i, b)| b.then(|| input_name(i)))
         .collect::<Vec<_>>();
 
-    // Create input expressions for the node's expr method
     let input_exprs: Vec<Option<String>> = conns
         .inputs
         .iter()
@@ -132,12 +129,9 @@ pub(crate) fn node_fn<'a>(
         .map(|(i, b)| b.then(|| input_name(i)))
         .collect();
 
-    // Get the node's expression
     let ctx = node::ExprCtx::new(get_node, node_path, &input_exprs, &conns.outputs);
     let node_expr = node.expr(ctx)?;
 
-    // Construct the full function definition
-    // FIXME: Remove this when switching to `flow::NodeConf`.
     let fn_name = node_fn_name(node_path, &conns.inputs, &conns.outputs);
     let meta_ctx = node::MetaCtx::new(get_node);
     let fn_body = if node.stateful(meta_ctx) {

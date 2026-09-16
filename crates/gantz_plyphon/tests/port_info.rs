@@ -1,5 +1,5 @@
-//! Tests for `root_port_info` - the root-level DSP port classification
-//! behind DSP edge styling (#300).
+//! Tests for `root_port_info`, the root-level DSP port classification
+//! behind DSP edge styling.
 
 use gantz_ca::ContentAddr;
 use gantz_core::Edge;
@@ -10,7 +10,7 @@ use gantz_plyphon::{NodeDsp, Out, PortShape, PortShapes, ToNodeDsp, UnitNode, ro
 use plyphon::Rate;
 
 /// A minimal node standing in for the app's node set. Adjacent tagging keeps
-/// the serde a `type`-tagged map (what the erase codec requires) while
+/// the serde a `type`-tagged map, which the erase codec requires, while
 /// admitting any variant payload shape.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", content = "c")]
@@ -20,7 +20,7 @@ enum N {
     Ref(Ref),
     Inlet,
     Outlet,
-    /// A non-DSP control node (e.g. a slider) with one output.
+    /// A non-DSP control node with one output. For example, a slider.
     Other,
 }
 
@@ -74,8 +74,8 @@ impl gantz_core::Node for N {
     }
 }
 
-/// Commit `graph` (erased), returning its graph address as a `ContentAddr`
-/// (the form `Ref::content_addr` reports).
+/// Erase and commit `graph`. Returns its graph address as a `ContentAddr`,
+/// the form `Ref::content_addr` reports.
 fn commit(registry: &mut gantz_ca::Registry, graph: Graph<N>) -> ContentAddr {
     let now = std::time::Duration::from_secs(1);
     let (dg, addr) = gantz_core::data::erase_with_addr(&graph).expect("erase");
@@ -110,7 +110,7 @@ fn shapes<const M: usize>(entries: [(&[usize], usize, PortShape); M]) -> PortSha
         .collect()
 }
 
-/// Concrete DSP nodes classify their leading dsp ports; control inputs
+/// Concrete DSP nodes classify their leading dsp ports. Control inputs
 /// beyond `n_dsp_inputs` and non-DSP nodes stay unclassified.
 #[test]
 fn flat_graph_classifies_dsp_ports() {
@@ -121,7 +121,8 @@ fn flat_graph_classifies_dsp_ports() {
     let slider = g.add_node(N::Other);
     let slider2 = g.add_node(N::Other);
     g.add_edge(sin, out, Edge::new(0.into(), 0.into()));
-    // Control connections: `~out`'s gain (input 1) and `~sinosc`'s hybrid freq.
+    // Control connections into the `~out` gain input 1 and the `~sinosc`
+    // hybrid freq.
     g.add_edge(slider, out, Edge::new(0.into(), 1.into()));
     g.add_edge(slider2, sin, Edge::new(0.into(), 0.into()));
 
@@ -131,8 +132,8 @@ fn flat_graph_classifies_dsp_ports() {
     // `~sinosc`'s hybrid input and `~out`'s signal input are signal inputs.
     let sins: Vec<_> = info.signal_inputs.iter().copied().collect();
     assert_eq!(sins, vec![(sin.index(), 0), (out.index(), 0)]);
-    // Only `~sinosc`'s output is a signal output (`~out` has no dsp outputs),
-    // carrying its recorded shape. The sliders are unclassified.
+    // Only the `~sinosc` output is a signal output, carrying its recorded
+    // shape. `~out` has no dsp outputs. The sliders are unclassified.
     let souts: Vec<_> = info.signal_outputs.iter().collect();
     assert_eq!(
         souts,
@@ -146,7 +147,7 @@ fn flat_graph_classifies_dsp_ports() {
 fn ref_ports_classify_through_child() {
     let mut registry = gantz_ca::Registry::default();
 
-    // Child: inlet -> ~lag -> outlet.
+    // The child is `inlet -> ~lag -> outlet`.
     let mut child: Graph<N> = Graph::default();
     let i = child.add_node(N::Inlet);
     let l = child.add_node(lag());
@@ -155,7 +156,7 @@ fn ref_ports_classify_through_child() {
     child.add_edge(l, o, Edge::new(0.into(), 0.into()));
     let ca = commit(&mut registry, child);
 
-    // Root: ~sinosc -> ref -> ~out.
+    // The root is `~sinosc -> ref -> ~out`.
     let mut g: Graph<N> = Graph::default();
     let sin = g.add_node(sinosc());
     let r = g.add_node(N::Ref(Ref::new(ca)));
@@ -178,8 +179,9 @@ fn ref_ports_classify_through_child() {
     );
 }
 
-/// A signal-classified reference output with no recorded shape (e.g. the
-/// head derived silent) still classifies, with an unknown shape.
+/// A signal-classified reference output with no recorded shape still
+/// classifies, with an unknown shape. For example, when the head derived
+/// silent.
 #[test]
 fn ref_output_without_recorded_shape_is_signal_with_none() {
     let mut registry = gantz_ca::Registry::default();
@@ -202,21 +204,22 @@ fn ref_output_without_recorded_shape_is_signal_with_none() {
 fn nested_ref_paths_compose() {
     let mut registry = gantz_ca::Registry::default();
 
-    // Inner: ~sinosc -> outlet.
+    // The inner graph is `~sinosc -> outlet`.
     let mut inner: Graph<N> = Graph::default();
     let s = inner.add_node(sinosc());
     let o = inner.add_node(N::Outlet);
     inner.add_edge(s, o, Edge::new(0.into(), 0.into()));
     let inner_ca = commit(&mut registry, inner);
 
-    // Outer: ref(inner) -> outlet.
+    // The outer graph is `ref(inner) -> outlet`.
     let mut outer: Graph<N> = Graph::default();
     let ri = outer.add_node(N::Ref(Ref::new(inner_ca)));
     let oo = outer.add_node(N::Outlet);
     outer.add_edge(ri, oo, Edge::new(0.into(), 0.into()));
     let outer_ca = commit(&mut registry, outer);
 
-    // Root: ref(outer) at index 0. The sine's absolute path is [0, 0, 0].
+    // The root holds `ref(outer)` at index 0. The sine's absolute path is
+    // `[0, 0, 0]`.
     let mut g: Graph<N> = Graph::default();
     let r = g.add_node(N::Ref(Ref::new(outer_ca)));
 
@@ -228,10 +231,10 @@ fn nested_ref_paths_compose() {
     );
 }
 
-/// Root-level boundary nodes forward classification: an inlet feeding a
-/// signal input classifies as a signal source, and an outlet fed by a
-/// signal output classifies as a signal consumer (nested views style their
-/// interface edges).
+/// Root-level boundary nodes forward classification, so nested views style
+/// their interface edges. An inlet feeding a signal input classifies as a
+/// signal source. An outlet fed by a signal output classifies as a signal
+/// consumer.
 #[test]
 fn root_boundaries_forward_classification() {
     let registry = gantz_ca::Registry::default();
@@ -247,7 +250,7 @@ fn root_boundaries_forward_classification() {
     assert!(info.signal_inputs.contains(&(l.index(), 0)));
     assert!(info.signal_inputs.contains(&(o.index(), 0)));
 
-    // A pure inlet -> outlet wire carries no DSP: neither side classifies.
+    // A pure `inlet -> outlet` wire carries no DSP. Neither side classifies.
     let mut wire: Graph<N> = Graph::default();
     let wi = wire.add_node(N::Inlet);
     let wo = wire.add_node(N::Outlet);
@@ -271,13 +274,13 @@ fn dangling_ref_is_control() {
     assert!(!info.signal_outputs.contains_key(&(r.index(), 0)));
 }
 
-/// A multi-fed reference outlet sums its sources' shapes: the width is the
-/// widest summand and audio rate dominates (mirroring derivation).
+/// A multi-fed reference outlet sums its sources' shapes as derivation does.
+/// The width is the widest summand and audio rate dominates.
 #[test]
 fn multi_fed_ref_outlet_sums_shapes() {
     let mut registry = gantz_ca::Registry::default();
 
-    // Child: two sources feeding the one outlet.
+    // The child has two sources feeding the one outlet.
     let mut child: Graph<N> = Graph::default();
     let a = child.add_node(sinosc());
     let b = child.add_node(lag());

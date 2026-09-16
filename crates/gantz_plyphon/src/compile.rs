@@ -21,97 +21,98 @@ use crate::dsp::{
 /// An error deriving a synthdef from a graph.
 #[derive(Debug, thiserror::Error)]
 pub enum DeriveError {
-    /// The graph has no dsp *sink* (no `~out` output and no `~scopeout` monitor), so
-    /// there is nothing to root a synthdef at.
+    /// The graph has no dsp sink, neither an `~out` output nor a `~scopeout`
+    /// monitor, so there is nothing to root a synthdef at.
     #[error("no dsp sink (no `~out` output and no `~scopeout` monitor)")]
     NoSink,
-    /// The `~bus` boundaries form a cycle between regions, so there is no
-    /// writer-before-reader order to derive (or run) them in. Deliberate
-    /// cross-region feedback (an `InFeedback`-based bus) is a planned follow-up.
+    /// The `~bus` or instance boundaries form a cycle between parts, so there
+    /// is no writer-before-reader order to derive or run them in. See the
+    /// [`instance`](crate::instance) module docs.
     #[error("`~bus`/instance boundaries form a cycle between parts")]
     BusCycle,
     /// An instanced reference's target graph could not be resolved.
     #[error("unresolved instanced reference: {0}")]
     Unresolved(gantz_ca::ContentAddr),
-    /// Instanced references form a cycle (a graph transitively instancing
-    /// itself), so there is no finite template to derive.
+    /// Instanced references form a cycle, a graph transitively instancing
+    /// itself, so there is no finite template to derive.
     #[error("instanced references form a cycle through {0}")]
     RefCycle(gantz_ca::ContentAddr),
 }
 
-/// One side of a `~bus` boundary within a region's def: the bus unit whose
-/// input 0 (the bus channel index) is a no-lag control param the driver sets to
-/// a driver-allocated private bus via `set_control` after spawning (no def
-/// mutation, so [`structural_sig`] stays stable across allocations).
+/// One side of a `~bus` boundary within a region's def. The bus unit's input
+/// 0, the bus channel index, is a no-lag control param the driver sets to a
+/// driver-allocated private bus via `set_control` after spawning. No def
+/// mutation is involved, so [`structural_sig`] stays stable across
+/// allocations.
 #[derive(Clone, Debug)]
 pub struct BusBinding {
-    /// The `~bus` node's path - the driver's bus-allocation key. Consecutive
-    /// buses alias (a `~bus` fed directly by another `~bus` shares the upstream
-    /// bus), so reads name the *effective* upstream node's path.
+    /// The `~bus` node's path, the driver's bus-allocation key. Consecutive
+    /// buses alias, so a `~bus` fed directly by another `~bus` shares the
+    /// upstream bus and reads name the effective upstream node's path.
     ///
-    /// For an implicit endpoint bus (see [`output`](Self::output)) this is the
-    /// endpoint *source* node's path instead.
+    /// For an implicit endpoint bus this is the endpoint source node's path
+    /// instead. See [`output`](Self::output).
     pub node_path: Vec<usize>,
-    /// The bus's channel count - the boundary signal's width.
+    /// The bus's channel count, the boundary signal's width.
     pub channels: usize,
-    /// The index within the def's `units` of the bus `Out` (write side) or `In`
-    /// (read side) whose input 0 is the bus-index param.
+    /// The index within the def's `units` of the bus `Out` on the write side
+    /// or `In` on the read side. Its input 0 is the bus-index param.
     pub unit: usize,
     /// The no-lag control param the driver sets to the allocated bus channel
     /// via `set_control` after spawning.
     pub param: usize,
-    /// `None` for a classic single-writer `~bus` (keyed by the effective bus
-    /// node). `Some(port)` for an *implicit endpoint bus*: when a boundary's
-    /// source chain fans out (several summands feed it), the `~bus` keeps only
-    /// its cut role and each transitive endpoint gets its own single-writer
-    /// bus, keyed by the endpoint source's path + output port. Readers emit
-    /// one `In` per endpoint and sum them.
+    /// `None` for a classic single-writer `~bus`, keyed by the effective bus
+    /// node. `Some(port)` for an implicit endpoint bus. When several summands
+    /// feed a boundary, the `~bus` keeps only its cut role. Each transitive
+    /// endpoint gets its own single-writer bus, keyed by the endpoint source's
+    /// path and output port. Readers emit one `In` per endpoint and sum them.
     pub output: Option<usize>,
 }
 
-/// A cross-region bus identity within [`derive_synthdefs`]: a classic
-/// single-writer `~bus` chain (keyed by the effective bus node), or an
-/// implicit per-endpoint bus where the chain fans out (keyed by the endpoint
-/// source node + output port). See [`BusBinding::output`].
+/// A cross-region bus identity within [`derive_synthdefs`]. A classic
+/// single-writer `~bus` chain is keyed by the effective bus node. An implicit
+/// per-endpoint bus is keyed by the endpoint source node and output port
+/// where the chain fans out. See [`BusBinding::output`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum RegionBus {
     Bus(NodeIx),
     Src(NodeIx, usize),
 }
 
-/// One region of a boundary-cut graph: its derived synthdef + bindings, plus
-/// the buses its def writes and reads. Produced by [`derive_synthdefs`] in
-/// region-DAG topological order (bus writers before their readers - the order
-/// their synths must also take in the node tree).
+/// One region of a boundary-cut graph. It holds the derived synthdef with its
+/// bindings, plus the buses its def writes and reads. [`derive_synthdefs`]
+/// produces regions in region-DAG topological order, bus writers before their
+/// readers. Their synths must take the same order in the node tree.
 pub struct RegionDerived {
-    /// A stable identity across re-derives: a hash of the region's sink and
+    /// A stable identity across re-derives, hashed from the region's sink and
     /// boundary node paths. The driver matches old and new regions by key for
     /// its per-region keep/replace decision.
     pub key: u64,
-    /// The region's synthdef + param/monitor/gain bindings.
+    /// The region's synthdef and its bindings.
     pub derived: Derived,
-    /// The buses this region's def writes (`Out` with a patchable bus input).
+    /// The buses this region's def writes through patchable `Out` units.
     pub bus_writes: Vec<BusBinding>,
-    /// The buses this region's def reads (`In` with a patchable bus input).
+    /// The buses this region's def reads through patchable `In` units.
     pub bus_reads: Vec<BusBinding>,
 }
 
-/// The output of [`derive_synthdef`]: the synthdef plus the bindings the audio
-/// driver uses to bridge dsp node state and the running synth - [`ParamBinding`]s
-/// (push each dsp node's live value to a synth param via `set_control`) and
-/// [`ScopeOutBinding`]s (route each monitor's `/tr`s back into node state).
+/// The output of [`derive_synthdef`]. It holds the synthdef plus the bindings
+/// the audio driver uses to bridge dsp node state and the running synth. A
+/// [`ParamBinding`] pushes a dsp node's live value to a synth param via
+/// `set_control`. A [`ScopeOutBinding`] routes a monitor's samples back into
+/// node state.
 pub struct Derived {
     /// The compiled synth definition.
     pub def: SynthDef,
     /// One binding per control param, in param-index order.
     pub params: Vec<ParamBinding>,
-    /// One binding per monitor (`~scopeout`), in `SendTrig`-id order.
+    /// One binding per `~scopeout` monitor.
     pub monitors: Vec<ScopeOutBinding>,
-    /// The params that gate the def's whole output (e.g. `~out`'s gain), which
-    /// the driver fades through on a crossfaded replacement.
+    /// The fade gains that gate the def's whole output. The driver ramps them
+    /// on a crossfaded replacement.
     pub gains: Vec<GainRef>,
-    /// One binding per buffer reference (`~playbuf`), so the driver can make
-    /// each asset resident and wire the node's `bufnum`/`rate` params.
+    /// One binding per `~playbuf` buffer reference. The driver makes each
+    /// asset resident and wires the node's `bufnum` and `rate` params.
     pub buffers: Vec<BufferBinding>,
     /// The width and rate each dsp output port carried, for diagnostics.
     pub shapes: PortShapes,
@@ -120,51 +121,48 @@ pub struct Derived {
 /// Derive a [`SynthDef`] named `name` from a graph's DSP subgraph, fanning the
 /// output across `out_channels` channels.
 ///
-/// A dsp port carries a whole channel group ([`Signal`]): an edge delivers its
-/// source port's full group to the destination input, so channel width flows
-/// *forward* through the derivation - nodes see their input widths and size
-/// their output groups accordingly (no `gantz_core` graph or edge involvement).
+/// A dsp port carries a whole channel group, a [`Signal`]. An edge delivers
+/// its source port's full group to the destination input, so channel width
+/// flows forward through the derivation. Nodes see their input widths and
+/// size their output groups accordingly.
 ///
-/// A graph's dsp *sinks* are its `~out` outputs ([`is_output`](crate::NodeDsp::is_output))
-/// and its `~scopeout` monitors ([`is_monitor`](crate::NodeDsp::is_monitor)). A graph
-/// may have several of each (e.g. an output plus a couple of taps of interior
-/// signals). Every sink seeds a pull over its *dsp* inputs in gantz_core's
-/// pull-eval order ([`pull_eval_order`]) - the same order Steel uses - and the
-/// per-sink orders are merged, first-occurrence wins. That merge preserves a
-/// valid topological order of the whole DSP subgraph: within each order a node
-/// precedes its dependents, so the earliest occurrence of any source still
-/// precedes the earliest occurrence of its consumer. Each node then emits its
-/// UGens via [`NodeDsp::ugens`](crate::NodeDsp::ugens) once, threading its outputs
-/// into its consumers' inputs, so a signal feeding both `~out` and a `~scopeout`
-/// compiles into one shared unit chain.
+/// A graph's dsp sinks are its `~out` outputs and its `~scopeout` monitors,
+/// see [`is_output`](crate::NodeDsp::is_output) and
+/// [`is_monitor`](crate::NodeDsp::is_monitor). A graph may have several of
+/// each. Every sink seeds a pull over its dsp inputs in gantz_core's
+/// [`pull_eval_order`], the same order Steel uses. The per-sink orders merge,
+/// first occurrence wins. The merge preserves a valid topological order of
+/// the whole DSP subgraph. Each node then emits its UGens via
+/// [`NodeDsp::ugens`](crate::NodeDsp::ugens) once, threading its outputs into
+/// its consumers' inputs. A signal feeding both `~out` and a `~scopeout`
+/// therefore compiles into one shared unit chain.
 ///
-/// Seeding each sink's pull with its `n_dsp_inputs` (not `n_inputs`) means a
-/// control edge at a higher input index (e.g. `~out`'s gain, `~scopeout`'s trigger)
-/// falls outside the traversal - it is a Steel/state concern, not part of the dsp
-/// signal graph. The same rule applies at *interior* nodes: only nodes that feed a
-/// sink transitively through dsp inputs contribute units, so a dsp chain wired into
-/// a control input emits nothing rather than dead units whose params the driver
-/// would drive and whose presence would force spurious respawns (they'd land in
-/// [`structural_sig`]). A *hybrid* dsp input (e.g. `~sinosc`'s freq, see
-/// [`NodeDsp::n_dsp_inputs`](crate::NodeDsp::n_dsp_inputs)) IS part of the
-/// traversal: a dsp chain wired into it emits units and drives the input
-/// directly (audio-rate FM), and the input's fallback param is only baked while
-/// no dsp source is connected.
+/// Each sink's pull is seeded with its `n_dsp_inputs`, not `n_inputs`. A
+/// control edge at a higher input index, such as `~out`'s gain, falls outside
+/// the traversal. It is a Steel/state concern, not part of the dsp signal
+/// graph. The same rule applies at interior nodes. Only nodes that feed a
+/// sink transitively through dsp inputs contribute units, so a dsp chain
+/// wired into a control input emits nothing. Dead units would add params the
+/// driver drives and would churn [`structural_sig`]. A hybrid dsp input, see
+/// [`NodeDsp::n_dsp_inputs`](crate::NodeDsp::n_dsp_inputs), is part of the
+/// traversal. A dsp chain wired into it emits units and drives the input
+/// directly. Its fallback param is only baked while no dsp source is
+/// connected.
 ///
-/// Nested graphs are supported via a pre-derivation pass: [`flatten`](crate::flatten())
-/// resolves graph refs and splices their nodes into a single flat graph (each
-/// carrying its original nested path via [`ToNodeDsp::node_path`]) before
-/// derivation runs.
+/// Nested graphs derive through a pre-derivation pass.
+/// [`flatten`](crate::flatten()) resolves graph refs and splices their nodes
+/// into a single flat graph. Each node carries its original nested path via
+/// [`ToNodeDsp::node_path`].
 ///
-/// Multiple edges into one dsp input *sum*: the input's value is the
-/// unity-gain mix of every incoming edge ([`sum_signals`]) - the result is as
-/// wide as the widest summand, a mono summand broadcasts across every channel
-/// and a narrower one contributes silence past its own width. Summands take a
-/// canonical order (sorted by source node path + output port), so the derived
-/// def is independent of edge insertion order. A single edge passes through
-/// unit-free.
+/// Multiple edges into one dsp input sum. The input's value is the unity-gain
+/// mix of every incoming edge via [`sum_signals`]. The result is as wide as
+/// the widest summand, a mono summand broadcasts across every channel and a
+/// narrower one contributes silence past its own width. Summands sort by
+/// source node path and output port, so the derived def is independent of
+/// edge insertion order. A single edge passes through unit-free.
 ///
-/// Phase-1 limitation: acyclic graphs only (no feedback).
+/// Feedback cycles are not supported. See the [`instance`](crate::instance)
+/// module docs.
 pub fn derive_synthdef<N>(
     graph: &Graph<N>,
     out_channels: usize,
@@ -181,8 +179,7 @@ where
     let sources = resolved_sources(graph, &reachable);
 
     // Merge each sink's dsp-only pull-eval order into one topological order,
-    // keeping only dsp-reachable nodes and the first occurrence of each (see the
-    // fn docs).
+    // keeping only dsp-reachable nodes and the first occurrence of each.
     let order = merged_pull_order(graph, &sinks, |n| reachable.contains(&n));
 
     let mut builder = DspBuilder::new(out_channels);
@@ -202,9 +199,10 @@ where
                     .iter()
                     .filter_map(|&(s, port)| outputs.get(&s).and_then(|o| o.get(port)).cloned())
                     .collect();
-                // `None` iff no summand materialized a signal (unconnected, or
-                // e.g. a dangling `~unpack` port), so hybrid inputs fall back
-                // to their param exactly when the Steel side keeps it driven.
+                // `None` iff no summand materialized a signal, for example an
+                // unconnected input or a dangling `~unpack` port. Hybrid inputs
+                // then fall back to their param, exactly when the Steel side
+                // keeps it driven.
                 (!sigs.is_empty()).then(|| sum_signals(&mut builder, &sigs))
             })
             .collect();
@@ -236,7 +234,8 @@ where
     })
 }
 
-/// Every dsp sink of `graph`: an audio output (`~out`) or a monitor (`~scopeout`).
+/// Every dsp sink of `graph`, that is every `~out` output and `~scopeout`
+/// monitor.
 pub(crate) fn dsp_sinks<N: ToNodeDsp>(graph: &Graph<N>) -> Vec<NodeIx> {
     graph
         .node_indices()
@@ -248,10 +247,11 @@ pub(crate) fn dsp_sinks<N: ToNodeDsp>(graph: &Graph<N>) -> Vec<NodeIx> {
         .collect()
 }
 
-/// The dsp-reachable set: dsp nodes that feed a sink transitively through *dsp*
-/// inputs only. `pull_eval_order` masks only the seed's inputs - interior nodes
-/// are traversed over ALL incoming edges - so derivation intersects its merged
-/// orders with this set to keep control-input feeds out of the defs.
+/// The dsp-reachable set, the dsp nodes that feed a sink transitively through
+/// dsp inputs only. `pull_eval_order` masks only the seed's inputs and
+/// traverses interior nodes over every incoming edge. Derivation intersects
+/// its merged orders with this set to keep control-input feeds out of the
+/// defs.
 fn dsp_reachable<N: ToNodeDsp>(graph: &Graph<N>, sinks: &[NodeIx]) -> HashSet<NodeIx> {
     let mut reachable: HashSet<NodeIx> = sinks.iter().copied().collect();
     let mut stack: Vec<NodeIx> = sinks.to_vec();
@@ -270,10 +270,10 @@ fn dsp_reachable<N: ToNodeDsp>(graph: &Graph<N>, sinks: &[NodeIx]) -> HashSet<No
 }
 
 /// The summand `(source node, output port)`s per dsp input of every reachable
-/// node: only reachable dsp sources contribute, every edge into an input is a
-/// summand (an empty list = unconnected), and summands take a canonical order
-/// (sorted by source node path + output port, duplicates kept) so the derived
-/// def is independent of edge insertion order.
+/// node. Only reachable dsp sources contribute. Every edge into an input is a
+/// summand and an empty list is an unconnected input. Summands sort by source
+/// node path and output port with duplicates kept, so the derived def is
+/// independent of edge insertion order.
 #[allow(clippy::type_complexity)]
 fn resolved_sources<N: ToNodeDsp>(
     graph: &Graph<N>,
@@ -301,8 +301,8 @@ fn resolved_sources<N: ToNodeDsp>(
 }
 
 /// Merge each sink's dsp-only pull-eval order into one topological order over
-/// the nodes selected by `keep`, first occurrence wins (a filtered subsequence
-/// of a topological order remains topological for the kept subgraph).
+/// the nodes selected by `keep`. First occurrence wins. A filtered subsequence
+/// of a topological order remains topological for the kept subgraph.
 pub(crate) fn merged_pull_order<N: ToNodeDsp>(
     graph: &Graph<N>,
     seeds: &[NodeIx],
@@ -322,31 +322,31 @@ pub(crate) fn merged_pull_order<N: ToNodeDsp>(
     order
 }
 
-/// Derive one [`SynthDef`] per boundary-cut *region* of the graph's DSP
-/// subgraph, in region-DAG topological order (bus writers before readers).
+/// Derive one [`SynthDef`] per boundary-cut region of the graph's DSP
+/// subgraph, in region-DAG topological order, bus writers before readers.
 ///
-/// Where [`derive_synthdef`] fuses the whole DSP subgraph into a single def
-/// (boundary nodes lower as plain wires), this splits it at every cutting
-/// `~bus` ([`is_boundary`](crate::NodeDsp::is_boundary)): regions are the
-/// connected components of the dsp-reachable subgraph over non-boundary edges,
-/// and a boundary between two regions lowers to an `Out` to a private bus in
-/// the writer's def and an `In` in each reader's - both with a no-lag
-/// bus-index control param the driver sets via `set_control` after spawning
-/// (see [`BusBinding`]). The point: each
-/// region carries its own [`structural_sig`], so an edit respawns only its own
-/// region's synth and every other region's unit state survives untouched.
+/// [`derive_synthdef`] fuses the whole DSP subgraph into a single def and
+/// lowers boundary nodes as plain wires. This splits it at every cutting
+/// `~bus` instead, see [`is_boundary`](crate::NodeDsp::is_boundary). Regions
+/// are the connected components of the dsp-reachable subgraph over
+/// non-boundary edges. A boundary between two regions lowers to an `Out` to
+/// a private bus in the writer's def and an `In` in each reader's. Both carry
+/// a no-lag bus-index control param the driver sets via `set_control` after
+/// spawning, see [`BusBinding`]. Each region carries its own
+/// [`structural_sig`], so an edit respawns only its own region's synth and
+/// every other region's unit state survives untouched.
 ///
 /// A boundary whose two sides share a region lowers to a plain wire. A
-/// boundary fed directly by another boundary *aliases* it (no relay def, no
-/// extra latency). An unconnected boundary reads as mono silence. A boundary
-/// fed by *several* summands keeps only its cut role: each transitive endpoint
-/// writes its own implicit single-writer bus ([`BusBinding::output`]) and
-/// every reader emits one `In` per endpoint, summing after the reads
-/// ([`sum_signals`] - so mono-broadcast reconciles on materialized signals). A
-/// region is derived only if it feeds a sink transitively. Bus writes are
-/// lifted to audio rate ([`DspBuilder::ensure_audio`]) and fade-gained (the
-/// crossfade lever, [`DspBuilder::push_fade_gain`]). Widths flow forward
-/// across boundaries - hence the topological derivation order. Defs are named
+/// boundary fed directly by another boundary aliases it with no relay def
+/// and no extra latency. An unconnected boundary contributes no summand. A
+/// boundary fed by several summands keeps only its cut role. Each transitive
+/// endpoint writes its own implicit single-writer bus. See
+/// [`BusBinding::output`]. Every reader emits one `In` per endpoint and sums
+/// them via [`sum_signals`], so mono broadcast reconciles on materialized
+/// signals. A region is derived only if it feeds a sink transitively. Bus
+/// writes are lifted to audio rate via [`DspBuilder::ensure_audio`] and
+/// fade-gained via [`DspBuilder::push_fade_gain`]. Widths flow forward across
+/// boundaries, hence the topological derivation order. Defs are named
 /// `<name_prefix>-<region key>`.
 pub fn derive_synthdefs<N>(
     graph: &Graph<N>,
@@ -365,8 +365,8 @@ where
     let is_boundary =
         |n: NodeIx| -> bool { graph[n].to_node_dsp().is_some_and(|d| d.is_boundary()) };
 
-    // Regions: connected components of the reachable NON-boundary nodes over
-    // their dsp edges (edges into or out of a boundary never join).
+    // Regions are connected components of the reachable non-boundary nodes
+    // over their dsp edges. Edges into or out of a boundary never join.
     let mut comp: HashMap<NodeIx, usize> = HashMap::new();
     let mut n_comps = 0;
     for start in graph.node_indices() {
@@ -378,13 +378,13 @@ where
         comp.insert(start, id);
         let mut stack = vec![start];
         while let Some(n) = stack.pop() {
-            // Upstream: this node's summand sources.
+            // Upstream, this node's summand sources.
             for &(s, _) in sources[&n].iter().flatten() {
                 if !is_boundary(s) && comp.insert(s, id).is_none() {
                     stack.push(s);
                 }
             }
-            // Downstream: reachable non-boundary consumers with this node
+            // Downstream, reachable non-boundary consumers with this node
             // among that input's summands.
             for e in graph.edges_directed(n, Direction::Outgoing) {
                 let t = e.target();
@@ -403,14 +403,14 @@ where
         }
     }
 
-    // Boundary lowering. A *pure* single-summand chain of boundaries keeps the
-    // classic single-writer bus identity: consecutive buses alias, keyed by the
-    // *effective* (top-most) bus node. A boundary whose chain fans out keeps
-    // only its cut role: each transitive non-boundary endpoint gets its own
-    // implicit single-writer bus and readers sum after their `In`s (width
-    // reconciliation needs locally materialized signals - a writer cannot know
-    // the sum's final width at its own derive time). A pure boundary cycle
-    // degrades to an unsourced (silent) bus.
+    // Boundary lowering. A pure single-summand chain of boundaries keeps the
+    // classic single-writer bus identity. Consecutive buses alias, keyed by
+    // the effective, top-most bus node. A boundary whose chain fans out keeps
+    // only its cut role. Each transitive non-boundary endpoint gets its own
+    // implicit single-writer bus and readers sum after their `In`s. Width
+    // reconciliation needs locally materialized signals, since a writer
+    // cannot know the sum's final width at its own derive time. A pure
+    // boundary cycle degrades to an unsourced, silent bus.
     let boundaries: Vec<NodeIx> = graph
         .node_indices()
         .filter(|&n| reachable.contains(&n) && is_boundary(n))
@@ -426,17 +426,17 @@ where
         }
         cur
     };
-    // The classic case: the effective bus's lone summand is a non-boundary
-    // source (every hop of the chain had exactly one). `None` = the chain fans
-    // out somewhere, is unsourced, or is a pure bus cycle.
+    // The classic case. The effective bus's lone summand is a non-boundary
+    // source and every hop of the chain had exactly one. `None` means the
+    // chain fans out somewhere, is unsourced, or is a pure bus cycle.
     let classic_source = |b: NodeIx| -> Option<(NodeIx, usize)> {
         match sources[&effective(b)].first().map(|v| v.as_slice()) {
             Some(&[(s, port)]) if !is_boundary(s) => Some((s, port)),
             _ => None,
         }
     };
-    // Every transitive non-boundary endpoint feeding `b`, canonical order,
-    // duplicates kept (each is a summand). Empty = unsourced (silence).
+    // Every transitive non-boundary endpoint feeding `b`, in canonical order.
+    // Duplicates are kept since each is a summand. Empty means unsourced.
     let bus_endpoints = |b: NodeIx| -> Vec<(NodeIx, usize)> {
         let mut endpoints = Vec::new();
         let mut visited = HashSet::new();
@@ -466,8 +466,8 @@ where
         }
     };
 
-    // Cross-region reads - (reader component, bus), from every boundary
-    // summand whose bus originates in another component - and each bus's
+    // Cross-region reads as (reader component, bus) pairs, from every boundary
+    // summand whose bus originates in another component, plus each bus's
     // writing source.
     let mut cross_reads: HashSet<(usize, RegionBus)> = HashSet::new();
     let mut bus_writer: HashMap<RegionBus, (NodeIx, usize)> = HashMap::new();
@@ -488,7 +488,7 @@ where
         }
     }
 
-    // Needed components: those holding sinks, plus (transitively) the writers
+    // Needed components are those holding sinks, plus transitively the writers
     // of every bus a needed component reads.
     let mut needed: HashSet<usize> = sinks.iter().map(|s| comp[s]).collect();
     loop {
@@ -504,9 +504,10 @@ where
         }
     }
 
-    // Region DAG (writer -> reader) over needed components. Kahn's algorithm
-    // yields the derivation (and node-tree) order, or reports a bus cycle.
-    let mut deps: HashMap<usize, HashSet<usize>> = HashMap::new(); // reader -> writers
+    // The region DAG from writers to readers over needed components. Kahn's
+    // algorithm yields the derivation and node-tree order, or reports a bus
+    // cycle.
+    let mut deps: HashMap<usize, HashSet<usize>> = HashMap::new(); // readers to writers
     for &(reader, bus) in &cross_reads {
         if !needed.contains(&reader) {
             continue;
@@ -538,13 +539,14 @@ where
         }
     }
 
-    // Derive each region in topo order; widths flow forward via `bus_width`.
+    // Derive each region in topo order. Widths flow forward via `bus_width`.
     let mut regions = Vec::with_capacity(topo.len());
     let mut bus_width: HashMap<RegionBus, usize> = HashMap::new();
     for c in topo {
-        // The region's roots: its sinks, plus the sources of the buses it
-        // writes (a bus sourced here and read from another needed component).
-        // Boundary node-index order keeps the write order deterministic.
+        // The region's roots are its sinks plus the sources of the buses it
+        // writes, that is buses sourced here and read from another needed
+        // component. Boundary node-index order keeps the write order
+        // deterministic.
         let mut writes: Vec<(RegionBus, (NodeIx, usize))> = Vec::new();
         for &b in &boundaries {
             for (bus, src) in region_buses(b) {
@@ -578,8 +580,8 @@ where
             let Some(dsp) = graph[n].to_node_dsp() else {
                 continue;
             };
-            // Each input sums its summands: a plain summand wires directly, a
-            // boundary summand lowers to its buses - in-region wires or `In`s.
+            // Each input sums its summands. A plain summand wires directly. A
+            // boundary summand lowers to its buses, in-region wires or `In`s.
             let mut inputs: Vec<Option<Signal>> = Vec::with_capacity(sources[&n].len());
             for summands in &sources[&n] {
                 let mut sigs: Vec<Signal> = Vec::new();
@@ -625,10 +627,10 @@ where
                         }
                     }
                 }
-                // `None` iff no summand materialized a signal (unconnected, an
-                // unsourced boundary, or a dangling port), so hybrid inputs
-                // fall back to their param exactly when the Steel side keeps
-                // it driven.
+                // `None` iff no summand materialized a signal, whether
+                // unconnected, an unsourced boundary or a dangling port. Hybrid
+                // inputs then fall back to their param, exactly when the Steel
+                // side keeps it driven.
                 inputs.push((!sigs.is_empty()).then(|| sum_signals(&mut builder, &sigs)));
             }
             let path = graph[n].node_path(n.index());
@@ -642,9 +644,8 @@ where
             outputs.insert(n, outs);
         }
 
-        // Emit the region's bus writes: lift each channel to audio, apply the
-        // driver's fade gain (one per param path), and write to a bus-index
-        // param.
+        // Emit the region's bus writes. Lift each channel to audio, apply one
+        // driver fade gain per param path and write to a bus-index param.
         let mut fades: HashMap<Vec<usize>, u32> = HashMap::new();
         let mut bus_writes = Vec::with_capacity(writes.len());
         for (bus, (src, port)) in writes {
@@ -684,9 +685,9 @@ where
             bus_width.insert(bus, sig.width());
         }
 
-        // A stable region identity: its sink and boundary roles + node paths
-        // (an endpoint bus also hashes its output port; a classic bus hashes
-        // nothing extra, so pre-summing region keys survive).
+        // A stable region identity from its sink and boundary roles and node
+        // paths. An endpoint bus also hashes its output port. A classic bus
+        // hashes nothing extra, so its region key is stable.
         let mut h = DefaultHasher::new();
         for s in &region_sinks {
             (0u8, graph[*s].node_path(s.index())).hash(&mut h);
@@ -730,10 +731,10 @@ where
     Ok(regions)
 }
 
-/// The param path, label and endpoint port of a region bus: a classic bus is
-/// keyed by the effective `~bus` node with the plain `"bus"` label, an
-/// endpoint bus by its source node with a port-suffixed `"bus{port}"` label
-/// (matching the instancing pipeline's `Src` convention).
+/// The param path, label and endpoint port of a region bus. A classic bus is
+/// keyed by the effective `~bus` node with the plain `"bus"` label. An
+/// endpoint bus is keyed by its source node with a port-suffixed `"bus{port}"`
+/// label, matching the instancing pipeline's `Src` convention.
 fn bus_param_at<N: ToNodeDsp>(
     graph: &Graph<N>,
     bus: RegionBus,
@@ -750,22 +751,22 @@ fn bus_param_at<N: ToNodeDsp>(
 
 /// The content-addressed name for a def with the given [`structural_sig`].
 ///
-/// Purely a function of the def's structure - no head or region prefix - so
-/// structurally identical defs derived from different heads (or from many
-/// instances of one referenced child graph) collide by design, and the audio
-/// driver's per-name install refcounting shares one installed def between
-/// them. Names change exactly when the structure does.
+/// It is purely a function of the def's structure, with no head or region
+/// prefix. Structurally identical defs derived from different heads, or from
+/// many instances of one child graph, collide by design. The audio driver's
+/// per-name install refcounting then shares one installed def between them.
+/// Names change exactly when the structure does.
 pub fn content_def_name(sig: u64) -> String {
     format!("gantz-def-{sig:016x}")
 }
 
-/// A hash of a synthdef's *structure* - everything except parameter values.
+/// A hash of a synthdef's structure, everything except parameter values.
 ///
-/// Two synthdefs that differ only in their [`Param`] defaults (the settable
-/// values) share a signature, so the audio driver can `set_control` those values
-/// on the running synth rather than respawning it (preserving phase). A change to
-/// the unit graph, the wiring, a baked constant, or a param's name/rate/lag *does*
-/// change the signature, forcing a respawn.
+/// Two synthdefs that differ only in their settable [`Param`] defaults share
+/// a signature. The audio driver can then `set_control` those values on the
+/// running synth rather than respawn it, which preserves phase. A change to
+/// the unit graph, the wiring, a baked constant, or a param's name, rate or
+/// lag changes the signature and forces a respawn.
 pub fn structural_sig(def: &SynthDef) -> u64 {
     let mut h = DefaultHasher::new();
     def.units.len().hash(&mut h);
@@ -808,8 +809,9 @@ fn hash_input(h: &mut DefaultHasher, i: &InputRef) {
     }
 }
 
-/// Hash a param's structure - name, rate, trigger flag and lag - but NOT its
-/// default value (which the driver sets live via `set_control`).
+/// Hash a param's structure, that is its name, rate, trigger flag and lag.
+/// The default value is excluded since the driver sets it live via
+/// `set_control`.
 fn hash_param_struct(h: &mut DefaultHasher, p: &Param) {
     p.name.hash(h);
     rate_tag(p.rate).hash(h);

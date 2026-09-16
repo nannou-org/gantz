@@ -1,17 +1,18 @@
 //! Hierarchical names for heads (branches) and name-keyed metadata.
 //!
 //! A [`Name`] is a non-empty sequence of segments, displayed joined by
-//! [`SEP`] (`:`). Nesting is structural rather than a substring convention:
-//! `synth:filter` is the child segment `filter` under the root `synth`.
+//! [`SEP`], which is `:`. Nesting is structural rather than a substring
+//! convention. `synth:filter` is the child segment `filter` under the root
+//! `synth`.
 
 use crate::{CaHash, Hasher};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, str};
 
-/// A hierarchical name: one or more segments, displayed joined by [`SEP`].
+/// A hierarchical name. One or more segments, displayed joined by [`SEP`].
 ///
 /// Ordering is segment-wise, so all of a name's descendants sort directly
-/// after it (`["a"] < ["a", "b"] < ["ab"]`).
+/// after it. For example, `["a"] < ["a", "b"] < ["ab"]`.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Name(Vec<String>);
 
@@ -24,7 +25,7 @@ impl Name {
         Self(vec![segment.into()])
     }
 
-    /// The name's segments (always at least one).
+    /// The name's segments. There is always at least one.
     pub fn segments(&self) -> &[String] {
         &self.0
     }
@@ -41,12 +42,12 @@ impl Name {
         (self.0.len() > 1).then(|| Self(self.0[..self.0.len() - 1].to_vec()))
     }
 
-    /// Nesting depth: `0` for a root name.
+    /// Nesting depth. `0` for a root name.
     pub fn depth(&self) -> usize {
         self.0.len() - 1
     }
 
-    /// Whether the name is nested (has a parent).
+    /// Whether the name has a parent.
     pub fn is_nested(&self) -> bool {
         self.0.len() > 1
     }
@@ -78,8 +79,8 @@ impl fmt::Display for Name {
 
 impl From<Vec<String>> for Name {
     /// Constructs the name from raw segments. An empty vec becomes the name
-    /// with a single empty segment, preserving the "at least one segment"
-    /// invariant totally.
+    /// with a single empty segment. This keeps the at-least-one-segment
+    /// invariant without a failure case.
     fn from(segments: Vec<String>) -> Self {
         if segments.is_empty() {
             Self(vec![String::new()])
@@ -91,8 +92,8 @@ impl From<Vec<String>> for Name {
 
 impl str::FromStr for Name {
     type Err = std::convert::Infallible;
-    /// Splits on [`SEP`]. Total: every string is a valid name (an empty
-    /// string is the root name with one empty segment).
+    /// Splits on [`SEP`]. Every string is a valid name. An empty string is
+    /// the root name with one empty segment.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self(s.split(SEP).map(str::to_string).collect()))
     }

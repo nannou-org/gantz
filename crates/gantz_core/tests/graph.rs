@@ -35,11 +35,9 @@ fn node_number() -> node::Expr {
     .unwrap()
 }
 
-// Helper trait for debugging the graph.
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
-// A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }
@@ -71,14 +69,12 @@ fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
 fn test_graph_push_eval() {
     let mut g = petgraph::graph::DiGraph::new();
 
-    // Instantiate the nodes.
     let push = node_push();
     let one = node_int(1);
     let add = node_add();
     let two = node_int(2);
     let assert_eq = node_assert_eq();
 
-    // Add the nodes to the project.
     let push = g.add_node(Box::new(push) as Box<dyn DebugNode>);
     let one = g.add_node(Box::new(one) as Box<_>);
     let add = g.add_node(Box::new(add) as Box<_>);
@@ -93,20 +89,16 @@ fn test_graph_push_eval() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
 
-    // Generate the module, which should have just one top-level expr for `push`.
     let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
     // Function per node alongside the single push eval function.
     assert_eq!(module.len(), g.node_count() + 1);
 
-    // Create the VM.
     let mut vm = Engine::new_base();
 
-    // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
-    // Register the functions, then call push_eval.
     for f in module {
         vm.run(format!("{f}")).unwrap();
     }
@@ -117,8 +109,9 @@ fn test_graph_push_eval() {
 
 // A `0`-var `expr` exposes a single trigger input whose value is ignored. A push
 // into that input still forces the expression to evaluate. Here two constant
-// exprs are fired via their trigger inputs and compared, proving the
-// connected-but-unreferenced trigger param compiles and the constants propagate.
+// exprs fire through their trigger inputs and are compared. This proves the
+// connected but unreferenced trigger param compiles and the constants
+// propagate.
 #[test]
 fn test_expr_trigger_input() {
     let mut g = petgraph::graph::DiGraph::new();
@@ -177,13 +170,11 @@ fn test_expr_trigger_input() {
 fn test_graph_pull_eval() {
     let mut g = petgraph::graph::DiGraph::new();
 
-    // Instantiate the nodes.
     let one = node_int(1);
     let add = node_add();
     let two = node_int(2);
     let assert_eq = node_assert_eq().with_pull_eval();
 
-    // Add the nodes to the project.
     let one = g.add_node(Box::new(one) as Box<dyn DebugNode>);
     let add = g.add_node(Box::new(add) as Box<_>);
     let two = g.add_node(Box::new(two) as Box<_>);
@@ -195,23 +186,18 @@ fn test_graph_pull_eval() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
 
-    // Generate the steel module.
     let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
 
-    // Prepare the VM.
     let mut vm = Engine::new_base();
 
-    // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
-    // Prepare the eval fn.
     for expr in module {
         vm.run(expr.to_pretty(100)).unwrap();
     }
 
-    // Call the eval fn.
     let ep = entrypoint::pull(vec![assert_eq.index()], g[assert_eq].n_inputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
@@ -274,7 +260,6 @@ fn test_graph_push_cond_eval() {
 
     let mut g = petgraph::graph::DiGraph::new();
 
-    // Instantiate the nodes.
     let push_0 = node_int(0).with_push_eval();
     let push_1 = node_int(1).with_push_eval();
     let select = Select;
@@ -282,7 +267,6 @@ fn test_graph_push_cond_eval() {
     let seven = node_int(7);
     let number = node_number();
 
-    // Create the graph.
     let push_0 = g.add_node(Box::new(push_0) as Box<dyn DebugNode>);
     let push_1 = g.add_node(Box::new(push_1) as Box<_>);
     let select = g.add_node(Box::new(select) as Box<_>);
@@ -298,25 +282,20 @@ fn test_graph_push_cond_eval() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
 
-    // Generate the module.
     let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
     // Function per node alongside the two push eval functions.
     assert_eq!(module.len(), g.node_count() + 2);
 
-    // Create the VM.
     let mut vm = Engine::new_base();
 
-    // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
-    // Register the functions, then call push_eval.
     for f in module {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // First, call `push_0` and check the result is `6`.
     let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
         .unwrap();
@@ -325,7 +304,6 @@ fn test_graph_push_cond_eval() {
         .expect("number state was `None`");
     assert_eq!(number_state, 6);
 
-    // First, call `push_1` and check the result is `7`.
     let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
         .unwrap();
@@ -335,10 +313,9 @@ fn test_graph_push_cond_eval() {
     assert_eq!(number_state, 7);
 }
 
-// Verify that the conditional eval codegen does not duplicate the join
-// node's function call in the generated Scheme. The "number" node sits
-// after a branch-and-join and should appear exactly once in each entry
-// function body.
+// The conditional eval codegen must not duplicate the join node's function
+// call in the generated Scheme. The "number" node sits after a
+// branch-and-join and must appear exactly once in each entry function body.
 #[test]
 fn test_graph_cond_eval_no_join_duplication() {
     #[derive(Debug)]
@@ -383,8 +360,8 @@ fn test_graph_cond_eval_no_join_duplication() {
         gantz_core::compile::entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
     let module = gantz_core::compile::module(&no_lookup, &g, &[ep], &Default::default()).unwrap();
 
-    // The number node's function name contains its index (5).
-    // Count how many times it appears across all generated expressions.
+    // The number node's function name contains its index. Count its
+    // occurrences across all generated expressions.
     let module_str = module
         .iter()
         .map(|e| format!("{e}"))
@@ -392,8 +369,9 @@ fn test_graph_cond_eval_no_join_duplication() {
         .join("\n");
     let number_fn_prefix = format!("node-fn-{}", number.index());
     let count = module_str.matches(&number_fn_prefix).count();
-    // Once in the node function definition, once in the entry fn body call.
-    // If the join is duplicated, the entry fn body would contain 2+ calls.
+    // Once in the node function definition and once in the entry fn body
+    // call. A duplicated join would put two or more calls in the entry fn
+    // body.
     assert!(
         count <= 2,
         "number node fn '{}' appears {} times - join is duplicated!\nGenerated module:\n{}",
@@ -403,8 +381,8 @@ fn test_graph_cond_eval_no_join_duplication() {
     );
 }
 
-// Edge case: one branch goes *directly* to the join node (no intermediate
-// nodes), while the other branch goes through an intermediate node first.
+// One branch goes directly to the join node with no intermediate nodes. The
+// other branch goes through an intermediate node first.
 //
 //    ---------- ----------
 //    | push_0 | | push_1 |
@@ -424,8 +402,8 @@ fn test_graph_cond_eval_no_join_duplication() {
 //    | number  |
 //    -----------
 //
-// Branch 0 (left): select's output 0 goes directly to number (the join).
-// Branch 1 (right): select's output 1 goes through seven, then to number.
+// On branch 0, select's output 0 goes directly to number, the join. On
+// branch 1, select's output 1 goes through seven, then to number.
 #[test]
 fn test_graph_branch_target_is_join() {
     #[derive(Debug)]
@@ -446,7 +424,7 @@ fn test_graph_branch_target_is_join() {
         }
         fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
             let x = ctx.inputs()[0].as_deref().expect("must have one input");
-            // Branch 0: pass 6 as the value. Branch 1: pass input through.
+            // Branch 0 passes 6 as the value. Branch 1 passes the input through.
             node::parse_expr(&format!("(if (equal? 0 {x}) (list 0 6) (list 1 {x}))"))
         }
     }
@@ -475,7 +453,7 @@ fn test_graph_branch_target_is_join() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Push 0: select goes left, passes 6 directly to number.
+    // Push 0 sends select left and passes 6 directly to number.
     let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
         .unwrap();
@@ -484,7 +462,7 @@ fn test_graph_branch_target_is_join() {
         .expect("state was None");
     assert_eq!(state, 6);
 
-    // Push 1: select goes right, through seven (constant 7) to number.
+    // Push 1 sends select right, through seven to number.
     let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
         .unwrap();
@@ -493,7 +471,7 @@ fn test_graph_branch_target_is_join() {
         .expect("state was None");
     assert_eq!(state, 7);
 
-    // Verify no join duplication in the generated code.
+    // The generated code must not duplicate the join.
     let module_str = module
         .iter()
         .map(|e| format!("{e}"))
@@ -509,12 +487,14 @@ fn test_graph_branch_target_is_join() {
     );
 }
 
-/// Both branch outputs feed the same target input - phi_set_stmts must
-/// reference the correct output variable for each arm.
+/// Both branch outputs feed the same target input. The join must bind the
+/// correct output variable for each arm.
 ///
+/// ```text
 ///   push_0 --\          /-- output 0 --\
 ///              select --<               number
 ///   push_1 --/          \-- output 1 --/
+/// ```
 #[test]
 fn test_graph_branch_both_outputs_same_target() {
     #[derive(Debug)]
@@ -562,7 +542,7 @@ fn test_graph_branch_both_outputs_same_target() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Push 0 -> arm 0 -> number receives 42.
+    // Push 0 takes arm 0, so number receives 42.
     let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
         .unwrap();
@@ -571,7 +551,7 @@ fn test_graph_branch_both_outputs_same_target() {
         .expect("number was None");
     assert_eq!(val, 42);
 
-    // Push 1 -> arm 1 -> number receives 99.
+    // Push 1 takes arm 1, so number receives 99.
     let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
         .unwrap();
@@ -581,7 +561,7 @@ fn test_graph_branch_both_outputs_same_target() {
     assert_eq!(val, 99);
 }
 
-// Nested diamond: outer branch contains an inner branch, both with
+// A nested diamond. The outer branch contains an inner branch. Both have
 // distinct reconvergence points.
 //
 //    ----------   ----------
@@ -610,9 +590,10 @@ fn test_graph_branch_both_outputs_same_target() {
 //    |  outer_result  |
 //    ------------------
 //
-// Push 0 -> outer-left -> inner-right (since select_inner gets '()
-// which != 0) -> seven(7) -> inner_result(7) -> outer_result(7).
-// Push 1 -> outer-right -> eight(8) -> outer_result(8).
+// Push 0 takes the outer left arm. select_inner receives '(), which is not
+// 0, so it takes the inner right arm. seven feeds inner_result and
+// outer_result with 7. Push 1 takes the outer right arm. eight feeds
+// outer_result with 8.
 #[test]
 fn test_graph_nested_diamond() {
     #[derive(Debug)]
@@ -673,8 +654,8 @@ fn test_graph_nested_diamond() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Push 0: outer-left -> inner-right (since '() != 0) -> seven(7)
-    // -> inner_result stores 7, outer_result stores 7.
+    // Push 0 takes outer left then inner right, since '() is not 0. seven
+    // gives 7, so inner_result and outer_result store 7.
     let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
         .unwrap();
@@ -687,8 +668,8 @@ fn test_graph_nested_diamond() {
         .expect("outer_result state was None");
     assert_eq!(outer, 7);
 
-    // Push 1: outer-right -> eight(8) -> outer_result stores 8.
-    // inner_result is not evaluated, stays at 7.
+    // Push 1 takes outer right. eight gives 8, so outer_result stores 8.
+    // inner_result is not evaluated and stays at 7.
     let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
         .unwrap();
@@ -701,7 +682,7 @@ fn test_graph_nested_diamond() {
         .expect("outer_result state was None");
     assert_eq!(outer, 8);
 
-    // Verify neither join node's function call is duplicated.
+    // Neither join node's function call may be duplicated.
     let module_str = module
         .iter()
         .map(|e| format!("{e}"))
@@ -720,7 +701,7 @@ fn test_graph_nested_diamond() {
     }
 }
 
-// Lattice: both outer branch targets share the same inner branching
+// A lattice. Both outer branch targets share the same inner branching
 // structure. The post-dominator approach finds number as the reconvergence.
 //
 //      ----------       ----------
@@ -752,8 +733,9 @@ fn test_graph_nested_diamond() {
 //            |   number   |  join - all paths converge here
 //            --------------
 //
-// Push 0 -> outer-left -> sel_L -> right (since '() != 0) -> seven(7) -> number(7).
-// Push 1 -> outer-right -> sel_R -> right (since '() != 0) -> seven(7) -> number(7).
+// Push 0 takes outer left to sel_L. sel_L takes right since '() is not 0, so
+// seven gives number 7. Push 1 takes outer right to sel_R. sel_R takes right
+// as well, so number gets 7 again.
 #[test]
 fn test_graph_lattice_reconvergence() {
     #[derive(Debug)]
@@ -816,7 +798,7 @@ fn test_graph_lattice_reconvergence() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Push 0: outer-left -> sel_L -> right (default) -> seven(7) -> number(7).
+    // Push 0 takes outer left. sel_L defaults right, so seven gives number 7.
     let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
         .unwrap();
@@ -825,7 +807,7 @@ fn test_graph_lattice_reconvergence() {
         .expect("state was None");
     assert_eq!(state, 7);
 
-    // Push 1: outer-right -> sel_R -> right (default) -> seven(7) -> number(7).
+    // Push 1 takes outer right. sel_R defaults right, so seven gives number 7.
     let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
         .unwrap();
@@ -834,7 +816,7 @@ fn test_graph_lattice_reconvergence() {
         .expect("state was None");
     assert_eq!(state, 7);
 
-    // Verify number's fn call is not duplicated per outer branch.
+    // number's fn call must not be duplicated per outer branch.
     let module_str = module
         .iter()
         .map(|e| format!("{e}"))
@@ -870,12 +852,10 @@ fn test_graph_lattice_reconvergence() {
 fn test_graph_eval_should_panic() {
     let mut g = petgraph::graph::DiGraph::new();
 
-    // Instantiate the nodes.
     let one = node_int(1);
     let add = node_add();
     let assert_eq = node_assert_eq().with_pull_eval();
 
-    // Add the nodes to the project.
     let one = g.add_node(Box::new(one) as Box<dyn DebugNode>);
     let add = g.add_node(Box::new(add) as Box<_>);
     let assert_eq = g.add_node(Box::new(assert_eq) as Box<_>);
@@ -886,18 +866,14 @@ fn test_graph_eval_should_panic() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
 
-    // Generate the steel module.
     let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
 
-    // Prepare the VM.
     let mut vm = Engine::new_base();
 
-    // Initialise the node state.
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
-    // Run the module.
     for expr in module {
         vm.run(expr.to_pretty(100)).unwrap();
     }
@@ -906,7 +882,7 @@ fn test_graph_eval_should_panic() {
         .unwrap();
 }
 
-// Test for pushing evaluation with a subset of outputs enabled
+// Push evaluation with a subset of outputs enabled.
 #[test]
 #[ignore = "Originally attempted to get this working with push/pull eval \
     configurations, but realising it would be cleaner to get general conditional \
@@ -920,7 +896,6 @@ fn test_graph_push_eval_subset() {
 
     impl Node for Src {
         fn push_eval(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
-            // Generate 3 push eval fns.
             vec![
                 // Push only the first output.
                 node::EvalConf::Set([true, false].try_into().unwrap()),
@@ -954,49 +929,41 @@ fn test_graph_push_eval_subset() {
     let store_a = node::expr("(begin (set! state $x) state)").unwrap();
     let store_b = node::expr("(begin (set! state $x) state)").unwrap();
 
-    // Add nodes to the graph.
     let source = g.add_node(Box::new(source) as Box<dyn DebugNode>);
     let store_a = g.add_node(Box::new(store_a) as Box<_>);
     let store_b = g.add_node(Box::new(store_b) as Box<_>);
 
-    // Connect outputs to store nodes
     g.add_edge(source, store_a, Edge::from((0, 0)));
     g.add_edge(source, store_b, Edge::from((1, 0)));
 
-    // Generate the module
     let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
 
-    // Create the VM
     let mut vm = Engine::new_base();
 
-    // Initialize the state
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
     gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
 
-    // Register all functions
     for f in module {
         vm.run(f.to_pretty(100)).unwrap();
     }
 
-    // Call the push_eval function - should only evaluate the first output path
     let ep = &eps[0]; // first push eval conf: only first output
     vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 
-    // Check the state of each store node
     let store_a_val = node::state::extract::<i32>(&vm, &[store_a.index()]).unwrap();
     let store_b_val = node::state::extract::<i32>(&vm, &[store_b.index()]).unwrap();
 
-    // First output was enabled for push, so its state should be 6
+    // The first output was enabled for push, so its state is 6.
     assert_eq!(store_a_val, Some(6));
 
-    // Second output was not enabled for push, so its state should be None
-    // (never evaluated)
+    // The second output was not enabled for push, so it was never evaluated
+    // and its state is None.
     assert_eq!(store_b_val, None);
 }
 
-// Test that a multi-source entrypoint combines two push nodes into one eval fn.
+// A multi-source entrypoint combines two push nodes into one eval fn.
 //
 //    ----------   ----------
 //    | push_a |   | push_b |
@@ -1029,7 +996,6 @@ fn test_graph_multi_source_push() {
 
     let ctx = node::MetaCtx::new(&no_lookup);
 
-    // Build a single combined entrypoint from both push nodes.
     let combined = entrypoint::from_sources([
         push_source(vec![push_a.index()], g[push_a].n_outputs(ctx) as u8),
         push_source(vec![push_b.index()], g[push_b].n_outputs(ctx) as u8),
@@ -1046,7 +1012,7 @@ fn test_graph_multi_source_push() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Calling the combined entrypoint should evaluate BOTH chains.
+    // Calling the combined entrypoint evaluates both chains.
     let fn_name = entry_fn_name(&combined.id());
     vm.call_function_by_name_with_args(&fn_name, vec![])
         .unwrap();
@@ -1061,8 +1027,8 @@ fn test_graph_multi_source_push() {
     assert_eq!(b, 7);
 }
 
-// Verify that push_entrypoint produces the same EntrypointId as
-// push_pull_entrypoints for the same node, confirming naming consistency.
+// `entrypoint::push` must produce the same EntrypointId as
+// `push_pull_entrypoints` for the same node.
 #[test]
 fn test_entrypoint_naming_consistency() {
     let mut g = petgraph::graph::DiGraph::new();
@@ -1075,8 +1041,8 @@ fn test_entrypoint_naming_consistency() {
     let eps = push_pull_entrypoints(&no_lookup, &g);
     let manual = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
 
-    // The default planner should produce a singleton push entrypoint for
-    // the push node. Its ID should match a manually-constructed one.
+    // The default planner produces a singleton push entrypoint for the push
+    // node. Its id must match a manually constructed one.
     let default_ep = eps
         .iter()
         .find(|ep| ep.0.iter().any(|s| s.path == vec![push.index()]))
@@ -1085,16 +1051,16 @@ fn test_entrypoint_naming_consistency() {
     assert_eq!(entry_fn_name(&default_ep.id()), entry_fn_name(&manual.id()));
 }
 
-// A 2-output expr node returns `(values 6 7)`. Each output is wired to a
-// separate stateful store node. After push evaluation, each store should hold
-// the corresponding value.
+// A 2-output expr node returns `(list 6 7)`. Each output is wired to a
+// separate stateful store node. After push evaluation, each store holds the
+// corresponding value.
 //
 //    --------
 //    | push |
 //    --------
 //       |
 //    ----------
-//    | pair   |  outputs=2, expr: (begin $push (values 6 7))
+//    | pair   |  outputs=2, expr: (begin $push (list 6 7))
 //    ----------
 //     |      |
 //     o0     o1
@@ -1145,10 +1111,8 @@ fn test_graph_multi_output_expr() {
     assert_eq!(b, 7);
 }
 
-// Test that nodes with 0 outputs (side-effect-only nodes like Log) work
-// correctly even when multiple appear in the same evaluation path.
-//
-// The graph:
+// Nodes with 0 outputs, such as side-effect-only Log nodes, must work when
+// multiple appear in the same evaluation path.
 //
 //    ----------
 //    | push   |  (push_eval, 1 output)
@@ -1159,13 +1123,13 @@ fn test_graph_multi_output_expr() {
 //    |effect1|  |effect2|  (each: 1 input, 0 outputs)
 //    --------  ---------
 //
-// Both effect nodes end up in the same basic block. The first one
-// is NOT last in the block, so destructure_node_outputs_stmt is
-// called on it. With 0 outputs this must be a no-op, not an
-// invalid (define-values () node-X) referencing an undefined binding.
+// Both effect nodes end up in the same basic block. The first one is not
+// last in the block, so the emitter destructures its outputs. With 0 outputs
+// this must be a no-op. It must not emit a binding that references an
+// undefined value.
 #[test]
 fn test_graph_zero_output_leaf_nodes() {
-    /// A node with 1 input and 0 outputs (pure side-effect).
+    /// A node with 1 input and 0 outputs. It is a pure side effect.
     #[derive(Debug)]
     struct Effect;
 
@@ -1198,22 +1162,23 @@ fn test_graph_zero_output_leaf_nodes() {
         vm.run(f.to_pretty(100)).unwrap();
     }
 
-    // Execute the push entrypoint - should not crash.
+    // The push entrypoint must not crash.
     let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
 
-/// Test using the `Branch` node type in a graph with push evaluation.
+/// The `Branch` node type in a graph with push evaluation.
 ///
-/// Graph layout:
-///
+/// ```text
 ///   push_0 (emits 0) ---\
 ///                         branch --- out0 -> six -> number
 ///   push_1 (emits 1) ---/       \-- out1 -> seven -> number
+/// ```
 ///
-/// When push_0 fires (input=0), branch selects index 0 -> six -> number stores 6.
-/// When push_1 fires (input=1), branch selects index 1 -> seven -> number stores 7.
+/// When push_0 fires with input 0, branch selects index 0. six feeds number,
+/// which stores 6. When push_1 fires with input 1, branch selects index 1.
+/// seven feeds number, which stores 7.
 #[test]
 fn test_graph_branch_node() {
     let branch = node::Branch::new(
@@ -1253,7 +1218,7 @@ fn test_graph_branch_node() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Push 0 -> branch takes index 0 -> six -> number stores 6.
+    // Push 0 makes branch take index 0, so number stores 6.
     let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
         .unwrap();
@@ -1262,7 +1227,7 @@ fn test_graph_branch_node() {
         .expect("was None");
     assert_eq!(val, 6);
 
-    // Push 1 -> branch takes index 1 -> seven -> number stores 7.
+    // Push 1 makes branch take index 1, so number stores 7.
     let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
         .unwrap();
@@ -1272,7 +1237,7 @@ fn test_graph_branch_node() {
     assert_eq!(val, 7);
 }
 
-// Test that multiple unconditional edges to the same input produce a list.
+// Multiple unconditional edges to the same input produce a list.
 //
 //    --------
 //    | push |
@@ -1304,13 +1269,11 @@ fn test_graph_multi_edge_input_list() {
     let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
     let three = g.add_node(Box::new(node_int(3)) as Box<_>);
     let four = g.add_node(Box::new(node_int(4)) as Box<_>);
-    // Sum all elements in the input list.
     let sum = g.add_node(Box::new(node::expr("(apply + $x)").unwrap()) as Box<_>);
     let store = g.add_node(Box::new(node_number()) as Box<_>);
 
     g.add_edge(push, three, Edge::from((0, 0)));
     g.add_edge(push, four, Edge::from((0, 0)));
-    // Both connect to sum's input 0.
     g.add_edge(three, sum, Edge::from((0, 0)));
     g.add_edge(four, sum, Edge::from((0, 0)));
     g.add_edge(sum, store, Edge::from((0, 0)));
@@ -1319,7 +1282,7 @@ fn test_graph_multi_edge_input_list() {
     let eps = push_pull_entrypoints(&no_lookup, &g);
     let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
 
-    // Verify the generated code contains a list binding.
+    // The generated code must contain a list binding.
     let module_str = module
         .iter()
         .map(|e| format!("{e}"))
@@ -1345,18 +1308,18 @@ fn test_graph_multi_edge_input_list() {
     let val = node::state::extract::<u32>(&vm, &[store.index()])
         .expect("failed to extract")
         .expect("was None");
-    // 3 + 4 = 7 (not just 4 from last-write-wins).
+    // 3 + 4 = 7, not just 4 from last-write-wins.
     assert_eq!(val, 7);
 }
 
-/// Test branching to independent terminal nodes (no reconvergence).
+/// Branching to independent terminal nodes with no reconvergence. There is
+/// no join and no shared variables.
 ///
-/// Exercises the code-duplication fallback in `flow_node_stmts` directly,
-/// with `in_scope` cloned per arm and no join or phi variables.
-///
+/// ```text
 ///   push_0 (emits 0) ---\              /--- store_a (stateful leaf)
 ///                         select -----<
 ///   push_1 (emits 1) ---/              \--- store_b (stateful leaf)
+/// ```
 #[test]
 fn test_graph_branch_divergent_terminal() {
     #[derive(Debug)]
@@ -1404,7 +1367,7 @@ fn test_graph_branch_divergent_terminal() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Push 0 -> arm 0 -> store_a receives 42.
+    // Push 0 takes arm 0, so store_a receives 42.
     let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
         .unwrap();
@@ -1412,13 +1375,13 @@ fn test_graph_branch_divergent_terminal() {
         .expect("failed to extract")
         .expect("store_a was None");
     assert_eq!(val_a, 42);
-    // store_b should be untouched (still void/initial).
+    // store_b is untouched and still holds its initial value.
     let val_b = node::state::extract::<u32>(&vm, &[store_b.index()])
         .ok()
         .flatten();
     assert!(val_b.is_none(), "store_b should not have been evaluated");
 
-    // Push 1 -> arm 1 -> store_b receives 99, store_a unchanged.
+    // Push 1 takes arm 1, so store_b receives 99 and store_a is unchanged.
     let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
         .unwrap();
@@ -1432,15 +1395,16 @@ fn test_graph_branch_divergent_terminal() {
     assert_eq!(val_b, 99);
 }
 
-/// Test multi-edge list binding within a branch arm.
+/// Multi-edge list binding within a branch arm. Inside arm 0, `three` and
+/// `four` both feed `sum`'s single input. This must produce a `(list ...)`
+/// binding that uses only in-scope sources. Arm 1 takes a separate path
+/// through `eight`.
 ///
-/// Inside arm 0, two nodes (`three` and `four`) both feed `sum`'s single
-/// input, which should produce a `(list ...)` binding using only in-scope
-/// sources. Arm 1 takes a separate path through `eight`.
-///
+/// ```text
 ///   push_0 ---\              /--arm0--> three \
 ///               select -----<            four  +--> sum --\
 ///   push_1 ---/              \--arm1--> eight ------------ number
+/// ```
 #[test]
 fn test_graph_multi_edge_in_branch_arm() {
     #[derive(Debug)]
@@ -1479,13 +1443,13 @@ fn test_graph_multi_edge_in_branch_arm() {
 
     g.add_edge(push_0, select, Edge::from((0, 0)));
     g.add_edge(push_1, select, Edge::from((0, 0)));
-    // Arm 0: select output 0 fans out to three and four.
+    // On arm 0, select output 0 fans out to three and four.
     g.add_edge(select, three, Edge::from((0, 0)));
     g.add_edge(select, four, Edge::from((0, 0)));
-    // Both feed sum's input 0 (multi-edge list within the arm).
+    // Both feed sum's input 0 as a multi-edge list within the arm.
     g.add_edge(three, sum, Edge::from((0, 0)));
     g.add_edge(four, sum, Edge::from((0, 0)));
-    // Arm 1: select output 1 to eight.
+    // On arm 1, select output 1 goes to eight.
     g.add_edge(select, eight, Edge::from((1, 0)));
     // Both arms converge at number.
     g.add_edge(sum, number, Edge::from((0, 0)));
@@ -1502,7 +1466,8 @@ fn test_graph_multi_edge_in_branch_arm() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Push 0 -> arm 0 -> sum receives (list 3 4) -> (apply + ...) = 7 -> number stores 7.
+    // Push 0 takes arm 0. sum receives (list 3 4) and yields 7, so number
+    // stores 7.
     let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
         .unwrap();
@@ -1511,7 +1476,7 @@ fn test_graph_multi_edge_in_branch_arm() {
         .expect("was None");
     assert_eq!(val, 7);
 
-    // Push 1 -> arm 1 -> eight = 8 -> number stores 8.
+    // Push 1 takes arm 1. eight gives 8, so number stores 8.
     let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
         .unwrap();
@@ -1521,15 +1486,15 @@ fn test_graph_multi_edge_in_branch_arm() {
     assert_eq!(val, 8);
 }
 
-/// Test an Expr node with an optional input ($?var).
+/// An Expr node with an optional `$?var` input.
 ///
+/// ```text
 ///   push ----> add_opt ----> store
+/// ```
 ///
 /// `add_opt` uses `(if (Some? $?b) (Some->value $?b) 0)` to default to 0
-/// when `$?b` is unconnected.
-///
-/// When `$?b` is unconnected, `(None)` is substituted, `(Some? (None))`
-/// is false, so the result is `5 + 0 = 5`.
+/// when `$?b` is unconnected. When `$?b` is unconnected, `(None)` is
+/// substituted. `(Some? (None))` is false, so the result is `5 + 0 = 5`.
 #[test]
 fn test_graph_optional_input_unconnected() {
     let mut g = petgraph::graph::DiGraph::new();
@@ -1540,7 +1505,7 @@ fn test_graph_optional_input_unconnected() {
     ) as Box<_>);
     let store = g.add_node(Box::new(node_number()) as Box<_>);
 
-    // Only connect $a (input 0). $?b (input 1) is left unconnected.
+    // Only connect $a at input 0. $?b at input 1 stays unconnected.
     g.add_edge(push, add_opt, Edge::from((0, 0)));
     g.add_edge(add_opt, store, Edge::from((0, 0)));
 
@@ -1566,12 +1531,14 @@ fn test_graph_optional_input_unconnected() {
     assert_eq!(val, 5);
 }
 
-/// Test an Expr node with an optional input ($?var) that IS connected.
+/// An Expr node with an optional `$?var` input that is connected.
 ///
+/// ```text
 ///   push ----> three ----> add_opt ----> store
 ///                    \--/
+/// ```
 ///
-/// When `$?b` is connected, `(Some 3)` is substituted, `(Some? (Some 3))`
+/// When `$?b` is connected, `(Some 3)` is substituted. `(Some? (Some 3))`
 /// is true, so the result is `5 + 3 = 8`.
 #[test]
 fn test_graph_optional_input_connected() {
@@ -1584,7 +1551,6 @@ fn test_graph_optional_input_connected() {
     ) as Box<_>);
     let store = g.add_node(Box::new(node_number()) as Box<_>);
 
-    // Connect both $a and $?b.
     g.add_edge(push, add_opt, Edge::from((0, 0)));
     g.add_edge(push, three, Edge::from((0, 0)));
     g.add_edge(three, add_opt, Edge::from((0, 1)));
@@ -1612,14 +1578,14 @@ fn test_graph_optional_input_connected() {
     assert_eq!(val, 8);
 }
 
-/// Test a three-way branch with reconvergence.
+/// A three-way branch with reconvergence. The other branch tests use 2-arm
+/// branches. This exercises the branch loop and join handling with 3 arms.
 ///
-/// All existing branch tests use binary (2-arm) branches. This exercises
-/// the generality of the branch loop and phi handling with 3 arms.
-///
+/// ```text
 ///   push_0 ---\                 /--arm0--> six   \
 ///   push_1 ----+-- select3 ---<---arm1--> seven  +--> number
 ///   push_2 ---/                 \--arm2--> eight /
+/// ```
 #[test]
 fn test_graph_three_way_branch() {
     #[derive(Debug)]
@@ -1680,7 +1646,7 @@ fn test_graph_three_way_branch() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Push 0 -> arm 0 -> six -> number stores 6.
+    // Push 0 takes arm 0, so number stores 6.
     let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
         .unwrap();
@@ -1689,7 +1655,7 @@ fn test_graph_three_way_branch() {
         .expect("was None");
     assert_eq!(val, 6);
 
-    // Push 1 -> arm 1 -> seven -> number stores 7.
+    // Push 1 takes arm 1, so number stores 7.
     let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
         .unwrap();
@@ -1698,7 +1664,7 @@ fn test_graph_three_way_branch() {
         .expect("was None");
     assert_eq!(val, 7);
 
-    // Push 2 -> arm 2 -> eight -> number stores 8.
+    // Push 2 takes arm 2, so number stores 8.
     let ep_2 = entrypoint::push(vec![push_2.index()], g[push_2].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_2.id()), vec![])
         .unwrap();
@@ -1708,17 +1674,18 @@ fn test_graph_three_way_branch() {
     assert_eq!(val, 8);
 }
 
-/// Branch with 1 output, 2 branches: branch 0 active, branch 1 dead.
+/// Branch with 1 output and 2 branches. Branch 0 is active and branch 1 is
+/// dead. When branch 1 is taken at runtime, evaluation must terminate at the
+/// branch node. Downstream `number` must not execute.
 ///
-/// When branch 1 is taken at runtime, evaluation should terminate at the
-/// branch node - downstream `number` should not execute.
-///
+/// ```text
 ///   push_0 (emits 0) ---\
 ///                         branch ---(out 0, branch 0)--> number
 ///   push_1 (emits 1) ---/
+/// ```
 ///
-/// Branch 0: [true]  -> output 0 active, downstream runs.
-/// Branch 1: [false] -> output 0 dead, downstream does NOT run.
+/// Branch 0 is `[true]`, so output 0 is active and downstream runs. Branch 1
+/// is `[false]`, so output 0 is dead and downstream does not run.
 #[test]
 fn test_graph_branch_single_output_dead_branch() {
     let branch = node::Branch::new(
@@ -1752,7 +1719,7 @@ fn test_graph_branch_single_output_dead_branch() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Push 0 -> branch index 0 (active) -> number stores 42.
+    // Push 0 takes the active branch 0, so number stores 42.
     let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
         .unwrap();
@@ -1761,7 +1728,7 @@ fn test_graph_branch_single_output_dead_branch() {
         .expect("was None");
     assert_eq!(val, 42);
 
-    // Push 1 -> branch index 1 (dead) -> number should NOT be updated.
+    // Push 1 takes the dead branch 1, so number is not updated.
     let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
         .unwrap();
@@ -1774,14 +1741,17 @@ fn test_graph_branch_single_output_dead_branch() {
     );
 }
 
-/// Branch with 2 outputs, 2 branches: branch 0 fully active, branch 1 fully dead.
+/// Branch with 2 outputs and 2 branches. Branch 0 is fully active and branch
+/// 1 is fully dead.
 ///
+/// ```text
 ///   push_0 (emits 0) ---\                /---(out 0)--> store_a
 ///                         branch --------<
 ///   push_1 (emits 1) ---/                \---(out 1)--> store_b
+/// ```
 ///
-/// Branch 0: [true, true]   -> both outputs active.
-/// Branch 1: [false, false] -> both outputs dead - evaluation terminates.
+/// Branch 0 is `[true, true]`, so both outputs are active. Branch 1 is
+/// `[false, false]`, so both outputs are dead and evaluation terminates.
 #[test]
 fn test_graph_branch_two_outputs_one_dead() {
     let branch = node::Branch::new(
@@ -1817,7 +1787,7 @@ fn test_graph_branch_two_outputs_one_dead() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Push 0 -> branch 0 (active) -> store_a=42, store_b=43.
+    // Push 0 takes the active branch 0, so store_a is 42 and store_b is 43.
     let ep_0 = entrypoint::push(vec![push_0.index()], g[push_0].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_0.id()), vec![])
         .unwrap();
@@ -1830,7 +1800,7 @@ fn test_graph_branch_two_outputs_one_dead() {
         .expect("was None");
     assert_eq!(val_b, 43);
 
-    // Push 1 -> branch 1 (dead) -> stores should remain unchanged.
+    // Push 1 takes the dead branch 1, so the stores remain unchanged.
     let ep_1 = entrypoint::push(vec![push_1.index()], g[push_1].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_1.id()), vec![])
         .unwrap();
@@ -1844,17 +1814,19 @@ fn test_graph_branch_two_outputs_one_dead() {
     assert_eq!(val_b, 43, "store_b should be unchanged after dead branch");
 }
 
-/// Branch where ALL branches have zero active outputs.
+/// Branch where all branches have zero active outputs. The branch node's
+/// expression still evaluates, so side effects such as state updates run.
+/// Nothing propagates downstream.
 ///
-/// The branch node's expression still evaluates (side effects like state
-/// updates run), but nothing propagates downstream.
-///
+/// ```text
 ///   push ----> branch ---x---> number (should never run)
+/// ```
 ///
-/// Branch 0: [false], Branch 1: [false] -> both dead.
+/// Branch 0 and branch 1 are both `[false]`, so both are dead.
 #[test]
 fn test_graph_branch_all_dead() {
-    // Stateful branch: stores the value in state, then returns branch info.
+    // A stateful branch. It stores the value in state, then returns branch
+    // info.
     let branch = node::Branch::new(
         "(begin (set! state $x) (if (equal? 0 $x) (list 0 '()) (list 1 '())))",
         vec![
@@ -1884,18 +1856,19 @@ fn test_graph_branch_all_dead() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Push -> branch evaluates (stores 42 in state), but number is unreachable.
+    // The push makes the branch evaluate and store 42 in state, but number is
+    // unreachable.
     let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 
-    // Branch's own state should have been updated.
+    // The branch's own state is updated.
     let branch_state = node::state::extract::<u32>(&vm, &[branch_ix.index()])
         .expect("failed to extract")
         .expect("branch state was None");
     assert_eq!(branch_state, 42);
 
-    // number should never have been evaluated.
+    // number is never evaluated.
     let number_state = node::state::extract::<u32>(&vm, &[number.index()])
         .ok()
         .flatten();
@@ -1905,23 +1878,24 @@ fn test_graph_branch_all_dead() {
     );
 }
 
-/// Pd-style `+` node: hot left inlet triggers output, cold right inlet only
-/// updates state. Uses `$?var` optional input + Branch to achieve this.
+/// A Pd-style `+` node. The hot left inlet triggers output. The cold right
+/// inlet only updates state. It uses a `$?var` optional input and a Branch.
 ///
+/// ```text
 ///   push_hot (5) ----> [hot_inlet] +_node [cold_inlet] <---- push_cold (3)
 ///                                    |
 ///                                  number (stores result)
+/// ```
 ///
-/// The `+` node uses a Branch: when the hot inlet fires, it adds state
-/// (cold value) and emits; when the cold inlet fires, it stores the new
-/// value in state but does NOT emit.
+/// When the hot inlet fires, the node adds the stored cold value and emits.
+/// When the cold inlet fires, it stores the new value in state but does not
+/// emit.
 #[test]
 fn test_graph_branch_optional_input_pd_add() {
-    // Pd-style +: hot inlet ($a) is required, cold inlet ($?b) is optional.
-    // When hot fires ($a is a number), update state from $?b if present, then
-    // emit $a + state on branch 0.
-    // When cold fires ($a is unconnected = '()), update state from $?b, then
-    // take branch 1 (dead - no output).
+    // The hot inlet `$a` is required and the cold inlet `$?b` is optional.
+    // When `$a` is a number, update state from `$?b` if present, then emit
+    // `$a` + state on branch 0. Otherwise `$a` is '(), so update state from
+    // `$?b` and take the dead branch 1.
     let pd_add = node::Branch::new(
         "(begin \
            (if (Some? $?b) (set! state (Some->value $?b)) '()) \
@@ -1942,11 +1916,10 @@ fn test_graph_branch_optional_input_pd_add() {
     let pd_add_ix = g.add_node(Box::new(pd_add) as Box<_>);
     let number = g.add_node(Box::new(node_number()) as Box<_>);
 
-    // Cold inlet -> input 0 ($?b appears first in expression).
+    // The cold inlet is input 0 since `$?b` appears first in the expression.
     g.add_edge(push_cold, pd_add_ix, Edge::from((0, 0)));
-    // Hot inlet -> input 1 ($a appears second in expression).
+    // The hot inlet is input 1 since `$a` appears second.
     g.add_edge(push_hot, pd_add_ix, Edge::from((0, 1)));
-    // Output 0 -> number.
     g.add_edge(pd_add_ix, number, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
@@ -1960,7 +1933,7 @@ fn test_graph_branch_optional_input_pd_add() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // First: push cold (3) to set state. Number should NOT be updated.
+    // Push cold 3 to set state. number is not updated.
     let ep_cold = entrypoint::push(vec![push_cold.index()], g[push_cold].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_cold.id()), vec![])
         .unwrap();
@@ -1972,7 +1945,7 @@ fn test_graph_branch_optional_input_pd_add() {
         "number should not run on cold inlet push"
     );
 
-    // Then: push hot (5). pd_add should compute 5 + 3 = 8 and emit.
+    // Push hot 5. pd_add computes 5 + 3 = 8 and emits.
     let ep_hot = entrypoint::push(vec![push_hot.index()], g[push_hot].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep_hot.id()), vec![])
         .unwrap();

@@ -11,7 +11,7 @@ use steel::{
     steel_vm::engine::Engine,
 };
 
-/// A wrapper around a **Node** that adds some persistent state.
+/// A wrapper around a `Node` that adds some persistent state.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct State<N, S> {
     /// The node being wrapped with state.
@@ -21,8 +21,8 @@ pub struct State<N, S> {
 }
 
 /// Types that may be used as state for a [`Node`].
-// FIXME: Does `derive(Steel)` already do all this? Is there a trait for this?
-// TODO: If not, we should add a `derive` for this and its `impl`.
+// FIXME: Check whether `derive(Steel)` already covers this trait. If not, add
+// a `derive` for it.
 pub trait NodeState: Default + FromSteelVal + IntoSteelVal {
     /// The name of the state type.
     const NAME: &str;
@@ -37,8 +37,9 @@ pub trait NodeState: Default + FromSteelVal + IntoSteelVal {
     }
 }
 
-/// A trait implemented for all **Node** types allowing to add some state accessible to its
-/// expression. This is particularly useful for adding state to **Expr** nodes.
+/// A trait implemented for all `Node` types allowing to add some state
+/// accessible to its expression. This is particularly useful for adding state
+/// to `Expr` nodes.
 pub trait WithStateType: Node + Sized {
     /// Consume `self` and return a `Node` that has state of type `state_type`.
     fn with_state_type<S: NodeState>(self) -> State<Self, S> {
@@ -47,7 +48,7 @@ pub trait WithStateType: Node + Sized {
 }
 
 impl<N, S> State<N, S> {
-    /// Given some node, return a **State** node enabling access to state of the
+    /// Given some node, return a `State` node enabling access to state of the
     /// given type.
     pub fn new(node: N) -> Self
     where
@@ -116,20 +117,19 @@ where
 
     fn register(&self, ctx: node::RegCtx<'_, '_>) {
         let (get_node, path, vm) = ctx.into_parts();
-        // Register the state type + its fns only once. Steel's `register_value`/
-        // `register_fn` allocate a new global slot and shadow the previous
-        // binding rather than overwriting it, so re-running this on every
-        // recompile (the engine persists across them) would leak. `register_type`
-        // binds the predicate under `S::NAME`, so its presence means `S` is set up.
+        // Register the state type and its fns only once. Steel's
+        // `register_value` and `register_fn` allocate a new global slot and
+        // shadow the previous binding rather than overwriting it. The engine
+        // persists across recompiles, so re-running this on every recompile
+        // would leak. `register_type` binds the predicate under `S::NAME`, so
+        // its presence means `S` is set up.
         if vm.extract_value(S::NAME).is_err() {
             S::register(vm);
         }
-        // Only initialize state if not already present.
         if extract_value(vm, path).ok().flatten().is_none() {
             let val = default_node_state_steel_val::<S>();
             update(vm, path, val).unwrap();
         }
-        // Register the inner node.
         self.node.register(node::RegCtx::new(get_node, path, vm));
     }
 
@@ -195,7 +195,6 @@ pub fn update_value(vm: &mut Engine, node_path: &[usize], val: SteelVal) -> Resu
 }
 
 /// Sets the given node's state to the given value.
-// TODO: Change `node_id: usize` to `node_path: &[usize]` to support nesting.
 pub fn update<S: IntoSteelVal>(
     vm: &mut Engine,
     node_path: &[usize],
@@ -209,7 +208,7 @@ pub fn update<S: IntoSteelVal>(
 /// For a path like `[5]`, removes key `5` from `%root-state`.
 /// For a path like `[5, 3]`, traverses into `%root-state[5]` and removes key `3`.
 ///
-/// No-op if the key doesn't exist or if `ROOT_STATE` hasn't been initialized.
+/// No-op if the key does not exist or if `ROOT_STATE` is not initialized.
 pub fn remove_value(vm: &mut Engine, node_path: &[usize]) -> Result<(), SteelErr> {
     let root_val = match vm.extract_value(ROOT_STATE) {
         Ok(val) => val,
@@ -263,7 +262,7 @@ pub fn remove_value(vm: &mut Engine, node_path: &[usize]) -> Result<(), SteelErr
 /// The moved value carries any nested subtree with it, so this rekeys a whole
 /// node's state in one step. A no-op if there is no value at `from`. Used to
 /// migrate the swapped node after a plain `petgraph::Graph` swap-remove keeps
-/// node indices contiguous (see [`crate::node::graph::Graph`]).
+/// node indices contiguous. See [`crate::node::graph::Graph`].
 pub fn move_value(vm: &mut Engine, from: &[usize], to: &[usize]) -> Result<(), SteelErr> {
     if let Some(val) = extract_value(vm, from)? {
         update_value(vm, to, val)?;
@@ -272,14 +271,14 @@ pub fn move_value(vm: &mut Engine, from: &[usize], to: &[usize]) -> Result<(), S
     Ok(())
 }
 
-/// Re-key the root graph's per-node state through `mapping` (old node index to
-/// new node index) in a single pass.
+/// Re-key the root graph's per-node state through `mapping` in a single pass.
+/// The mapping is from old node index to new node index.
 ///
 /// Each moved value carries its nested subtree with it. State for indices
 /// absent from the mapping is dropped. Unlike repeated [`move_value`] calls,
 /// an arbitrary permutation cannot collide with itself here. Used when a whole
-/// graph is rebuilt with a known node correspondence (e.g. merging a diverged
-/// branch). A no-op if `ROOT_STATE` hasn't been initialized.
+/// graph is rebuilt with a known node correspondence, for example merging a
+/// diverged branch. A no-op if `ROOT_STATE` is not initialized.
 pub fn remap_root(
     vm: &mut Engine,
     mapping: &std::collections::BTreeMap<usize, usize>,
@@ -298,7 +297,7 @@ pub fn remap_root(
     let mut remapped = steel::HashMap::new();
     for (key, val) in root_state.iter() {
         let &SteelVal::IntV(old) = key else {
-            // Non-index keys shouldn't exist at the root; keep them as-is.
+            // Non-index keys are not expected at the root. Keep them as-is.
             remapped = remapped.update(key.clone(), val.clone());
             continue;
         };
@@ -372,7 +371,8 @@ pub fn exists<S: FromSteelVal>(vm: &Engine, path: &[node::Id]) -> Result<bool, S
 
 /// Initialize state with a raw `SteelVal` only if no state is currently present.
 ///
-/// Ensures registration is idempotent - calling it multiple times won't reset existing state.
+/// Ensures registration is idempotent. Calling it multiple times does not
+/// reset existing state.
 pub fn init_value_if_absent(
     vm: &mut Engine,
     path: &[node::Id],

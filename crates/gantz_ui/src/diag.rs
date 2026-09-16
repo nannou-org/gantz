@@ -1,15 +1,14 @@
 //! Decode diagnostics.
 //!
-//! Decoding is total and never silently blank. Issues fall on one of two
-//! sides of a single boundary rule:
+//! Issues fall on one of two sides of the boundary rule in the crate doc.
 //!
-//! - An **error element** ([`ErrorReason`], carried by
-//!   [`crate::elem::ErrorElem`]) means the subtree cannot render
-//!   meaningfully. The element's slot in the tree is preserved so a host can
-//!   render an inline error chip while siblings render normally.
-//! - A **warning** ([`Warning`]) means the element still renders after
-//!   recovering, for example by ignoring an unknown attribute or falling
-//!   back to a documented default.
+//! - An [`ErrorReason`], carried by [`crate::elem::ErrorElem`], means the
+//!   subtree cannot render meaningfully. The element keeps its slot in the
+//!   tree so a host can render an inline error chip while siblings render
+//!   normally.
+//! - A [`Warning`] means the element still renders after recovering, for
+//!   example by ignoring an unknown attribute or falling back to a
+//!   documented default.
 
 use thiserror::Error;
 

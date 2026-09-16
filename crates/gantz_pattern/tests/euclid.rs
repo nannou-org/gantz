@@ -83,7 +83,7 @@ fn bjorklund_table() {
     }
 }
 
-// euclid 3 8: onsets at slots 0, 3 and 6, each one slot long.
+// euclid 3 8 has onsets at slots 0, 3 and 6, each one slot long.
 #[test]
 fn euclid_3_8_events() {
     assert_pinned(

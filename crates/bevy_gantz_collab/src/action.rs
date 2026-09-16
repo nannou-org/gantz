@@ -1,27 +1,25 @@
 //! Capture and broadcast of ephemeral node-interaction actions.
 //!
-//! Durable actions are commits and ride the tips/fetch machinery; this
-//! module handles the fire-and-forget rest (see [`gantz_egui::action`]):
-//! live VM-state writes and eval triggers on session heads, mirrored to
-//! peers as [`GossipMsg::Action`]s so a dialer drag or a `bang` click is
-//! seen live everywhere.
+//! Durable actions are commits and ride the tips and fetch machinery. This
+//! module handles the fire-and-forget rest described in
+//! [`gantz_egui::action`]. Live VM-state writes and eval triggers on session
+//! heads are mirrored to peers as [`GossipMsg::Action`]s, so a dialer drag or
+//! a `bang` click is seen live everywhere.
 //!
-//! Capture happens by overriding two payload dispatchers (last registration
-//! wins; `CollabPlugin` is added after `GantzEguiPlugin`):
-//! [`gantz_egui::StateWritten`] (recorded by `NodeCtx::update_value` - all
-//! nodes, builtin or custom, are covered with zero per-node work) and
-//! [`gantz_egui::EvalEntry`] (which keeps its local behaviour byte-for-byte
-//! and additionally captures). Only heads carrying a [`SessionRef`] are
-//! captured; everything else stays local.
+//! Capture overrides two payload dispatchers. The last registration wins, and
+//! `CollabPlugin` is added after `GantzEguiPlugin`.
+//! [`gantz_egui::StateWritten`] is recorded by `NodeCtx::update_value`, so
+//! every node is covered with no per-node work. [`gantz_egui::EvalEntry`]
+//! keeps its local behaviour and also captures. Only heads that carry a
+//! [`SessionRef`] are captured. Everything else stays local.
 //!
-//! The outbox fuses a state write with the push-eval it triggered in the
-//! same frame (atomic set-then-evaluate remotely) and rate-limits value
-//! sends per node path. Rate limiting BATCHES, it never drops: every value
-//! written within a window ships (oldest first) and replays step-by-step
-//! on peers, so accumulative downstream state (e.g. a scope plot sampling
-//! per evaluation) stays in step with the emitting peer, and the final
-//! drag value always ships on the trailing edge. Evals bypass the limit:
-//! every click ships.
+//! The outbox fuses a state write with the push-eval it triggered in the same
+//! frame, so peers set then evaluate atomically. It rate-limits value sends
+//! per node path. Rate limiting batches and never drops. Every value written
+//! within a window ships oldest first and replays step by step on peers, so
+//! accumulative downstream state stays in step with the emitting peer. The
+//! final drag value always ships on the trailing edge. Evals bypass the
+//! limit. Every click ships.
 
 use crate::{CollabIdentity, CollabRuntime, CollabSessions, SessionRef};
 use bevy_ecs::prelude::*;
@@ -40,34 +38,28 @@ use std::time::Duration;
 use web_time::Instant;
 
 // The minimum interval between value sends for one node path is the
-// user-configurable `CollabConfig::action_rate_ms` (default ~16ms: roughly
-// every frame at 60 Hz). The pending slot batches the window's values
-// meanwhile and flushes when the window elapses, so every step (and thus
-// the final value) always ships regardless of the window length.
+// user-configurable `CollabConfig::action_rate_ms`. The pending slot batches
+// the window's values and flushes when the window elapses, so every step
+// ships whatever the window length.
 
-/// How long a received action waits for its graph anchor (a tip likely still
-/// in flight) before it is dropped.
+/// How long a received action waits for its graph anchor before it is
+/// dropped. The anchor is usually a tip still in flight.
 const RETRY_DEADLINE: Duration = Duration::from_secs(1);
 
-/// The most values one pending slot batches; beyond it the OLDEST drops
-/// (degrading gracefully to coalescing). A backstop for pathological frame
-/// hitches - at the default rate a 60 Hz drag batches roughly one value
-/// per window, a few more at slower configured rates - that also keeps the
-/// encoded action far below [`proto::MAX_ACTION_DATA`] for the value
-/// shapes interactive nodes write.
+/// The most values one pending slot batches. Beyond it the oldest drops, so
+/// the slot degrades to coalescing. This is a backstop for pathological
+/// frame hitches. At the default rate a 60 Hz drag batches about one value
+/// per window. The bound also keeps the encoded action far below
+/// [`proto::MAX_ACTION_DATA`] for the value shapes interactive nodes write.
 const MAX_BATCHED_WRITES: usize = 64;
 
-/// The received-action queue bound; a backstop, not a working limit.
+/// The received-action queue bound. A backstop, not a working limit.
 const INBOX_CAP: usize = 1024;
 
 /// The action-history ring-buffer capacity.
 const LOG_CAP: usize = 256;
 
-// ----------------------------------------------------------------------------
-// Capture events
-// ----------------------------------------------------------------------------
-
-/// A node UI on `head` wrote VM state this frame (dispatcher-captured).
+/// A node UI on `head` wrote VM state this frame.
 #[derive(Debug, Event)]
 pub struct CaptureWrite {
     pub head: Entity,
@@ -81,45 +73,41 @@ pub struct CaptureEval {
     pub entrypoint: Entrypoint,
 }
 
-// ----------------------------------------------------------------------------
-// Resources
-// ----------------------------------------------------------------------------
-
 /// The key addressing one node's pending value within a session.
 type PathKey = (SessionId, ca::Name, Vec<node::Id>);
 
 /// The fused, not-yet-sent state writes of one node's send window.
 #[derive(Default)]
 struct PendingWrite {
-    /// Every value written this window, oldest first (bounded by
-    /// [`MAX_BATCHED_WRITES`]).
+    /// Every value written this window, oldest first. Bounded by
+    /// [`MAX_BATCHED_WRITES`].
     values: Vec<Value>,
     /// The push-eval fused with these writes, when the node triggered one.
     eval: Option<Source>,
 }
 
-/// Outbound ephemeral actions: per-path fusion, batching and rate state.
+/// Outbound ephemeral actions with per-path fusion, batching and rate state.
 #[derive(Default, Resource)]
 pub struct ActionOutbox {
     /// The unsent values per node path, oldest first.
     pending: HashMap<PathKey, PendingWrite>,
     /// When each path last shipped, for rate limiting.
     last_sent: HashMap<PathKey, Instant>,
-    /// Standalone evals; all flushed every pass.
+    /// Standalone evals. All are flushed every pass.
     evals: Vec<(SessionId, ca::Name, Vec<Source>)>,
     /// Per-session action sequence counters.
     seq: HashMap<SessionId, u64>,
 }
 
-/// A received action awaiting application (or its graph anchor).
+/// A received action awaiting application or its graph anchor.
 #[derive(Clone, Debug)]
 pub struct InboundAction {
     pub session: SessionId,
     pub origin: PeerId,
-    /// Per-origin sequence number. Carried for debugging/future use: values
-    /// converge via last-write-wins and evals apply per delivery
-    /// (iroh-gossip dedups a broadcast, so duplicates are effectively
-    /// absent), so no seq-based stale-drop is needed.
+    /// Per-origin sequence number, carried for debugging. Values converge
+    /// via last-write-wins and evals apply per delivery, so no seq-based
+    /// stale-drop is needed. iroh-gossip dedups a broadcast, so duplicates
+    /// are effectively absent.
     pub seq: u64,
     /// Sender wall-clock milliseconds since the epoch.
     pub timestamp: u64,
@@ -136,14 +124,14 @@ pub struct InboundAction {
 #[derive(Default, Resource)]
 pub struct ActionInbox {
     queue: Vec<InboundAction>,
-    /// Last-write-wins: the newest applied `(timestamp, origin)` per node
-    /// path, so reordered or concurrent value writes converge on the newest
-    /// (ties broken by origin id).
+    /// The newest applied `(timestamp, origin)` per node path. Reordered or
+    /// concurrent value writes converge on the newest. Ties break by origin
+    /// id.
     last_applied: HashMap<PathKey, (u64, PeerId)>,
 }
 
 impl ActionInbox {
-    /// Queue a received action for application (bounded backstop).
+    /// Queue a received action for application. The queue is bounded.
     pub(crate) fn receive(&mut self, inbound: InboundAction) {
         if self.queue.len() >= INBOX_CAP {
             log::warn!("session action inbox full; dropping oldest");
@@ -159,7 +147,7 @@ pub struct ActionLogEntry {
     /// Wall-clock milliseconds since the epoch.
     pub timestamp: u64,
     pub session: SessionId,
-    /// The originating peer; `None` = this peer.
+    /// The originating peer. `None` means this peer.
     pub peer: Option<PeerId>,
     /// The scoped name the action applied to.
     pub name: ca::Name,
@@ -167,11 +155,11 @@ pub struct ActionLogEntry {
     pub summary: String,
 }
 
-/// The session action history: a bounded ring buffer of sent and received
+/// The session action history, a bounded ring buffer of sent and received
 /// ephemeral actions, oldest first.
 ///
-/// Maintained for a future dedicated activity widget; every entry is also
-/// emitted as a `log::debug!` line so the Logs pane picks actions up today.
+/// Every entry is also emitted as a `log::debug!` line, so the Logs pane
+/// shows actions.
 #[derive(Resource)]
 pub struct ActionLog {
     entries: VecDeque<ActionLogEntry>,
@@ -186,7 +174,7 @@ impl Default for ActionLog {
 }
 
 impl ActionLog {
-    /// Record an entry (also emitted as a `log::debug!` line).
+    /// Record an entry and emit it as a `log::debug!` line.
     pub fn push(&mut self, entry: ActionLogEntry) {
         let who = match &entry.peer {
             Some(peer) => format!("{peer}"),
@@ -205,14 +193,13 @@ impl ActionLog {
     }
 }
 
-// ----------------------------------------------------------------------------
-// Dispatcher overrides (capture)
-// ----------------------------------------------------------------------------
+// Dispatcher overrides
 
-/// Dispatch a [`gantz_egui::StateWritten`] payload: forward it for capture.
+/// Dispatch a [`gantz_egui::StateWritten`] payload by forwarding it for
+/// capture.
 ///
-/// Overrides `bevy_gantz_egui`'s no-op registration (last registration
-/// wins). Non-session heads are filtered at the observer.
+/// Overrides `bevy_gantz_egui`'s no-op registration. The observer filters
+/// out non-session heads.
 pub(crate) fn dispatch_state_written(
     entity: Option<Entity>,
     payload: DynResponse,
@@ -225,9 +212,9 @@ pub(crate) fn dispatch_state_written(
     cmds.trigger(CaptureWrite { head, write });
 }
 
-/// Dispatch a [`gantz_egui::EvalEntry`] payload: trigger the evaluation
-/// exactly as `bevy_gantz_egui`'s own dispatcher would, and additionally
-/// forward it for capture.
+/// Dispatch a [`gantz_egui::EvalEntry`] payload. Trigger the evaluation
+/// exactly as `bevy_gantz_egui`'s own dispatcher would, then forward it for
+/// capture.
 pub(crate) fn dispatch_eval_entry(
     entity: Option<Entity>,
     payload: DynResponse,
@@ -241,19 +228,18 @@ pub(crate) fn dispatch_eval_entry(
     cmds.trigger(EvalEntryEvent {
         head,
         entrypoint: entrypoint.clone(),
-        // A user-driven push fires "now" (mirrors the wrapped dispatcher).
+        // A user-driven push fires now, as in the wrapped dispatcher.
         time: None,
     });
     cmds.trigger(CaptureEval { head, entrypoint });
 }
 
-// ----------------------------------------------------------------------------
 // Capture observers
-// ----------------------------------------------------------------------------
 
 /// Resolve the session and scoped name a captured head belongs to.
 ///
-/// `None` for non-session heads (nothing is captured) and non-branch heads.
+/// `None` for non-session heads and non-branch heads. Nothing is captured
+/// for them.
 fn session_name(
     head: Entity,
     heads: &Query<(&head::HeadRef, &SessionRef)>,
@@ -265,8 +251,8 @@ fn session_name(
     Some((session_ref.0, name.clone()))
 }
 
-/// When an entrypoint is a single push source, its source (for fusion with
-/// the state write that triggered it).
+/// The source of an entrypoint that is a single push source, for fusion with
+/// the state write that triggered it.
 fn single_push_source(ep: &Entrypoint) -> Option<Source> {
     if ep.0.len() != 1 {
         return None;
@@ -276,9 +262,9 @@ fn single_push_source(ep: &Entrypoint) -> Option<Source> {
         .then(|| Source::from(src.clone()))
 }
 
-/// Record a captured state write into the outbox, fusing with a standalone
-/// eval already queued for the same node this pass (payload order within a
-/// frame is not guaranteed - the eval may have been captured first).
+/// Record a captured state write into the outbox. A standalone eval already
+/// queued for the same node this pass is fused back in, because payload
+/// order within a frame is not guaranteed.
 pub fn on_capture_write(
     trigger: On<CaptureWrite>,
     mut outbox: ResMut<ActionOutbox>,
@@ -288,9 +274,6 @@ pub fn on_capture_write(
     let Some((session, name)) = session_name(ev.head, &heads) else {
         return;
     };
-    // A standalone push-eval already queued for the same node belongs to
-    // this write: fuse it back in (payload order within a frame is not
-    // guaranteed - the eval may have been captured first).
     let mut rescued = None;
     if let Some(ix) = outbox.evals.iter().position(|(s, n, sources)| {
         *s == session
@@ -301,11 +284,10 @@ pub fn on_capture_write(
         let (_, _, mut sources) = outbox.evals.remove(ix);
         rescued = sources.pop();
     }
-    // The slot updates in place: the window's earlier values stay batched
-    // (rate limiting must never drop a step) and an eval fused earlier in
-    // the window is retained. Nothing carries across flushes (shipping
-    // removes the slot), so a window without a push-eval can never re-fire
-    // an already-shipped eval.
+    // The slot updates in place. The window's earlier values stay batched,
+    // because rate limiting must never drop a step. An eval fused earlier in
+    // the window is retained. Shipping removes the slot, so a window without
+    // a push-eval can never re-fire an already-shipped eval.
     let key = (session, name, ev.write.path.clone());
     let pending = outbox.pending.entry(key).or_default();
     pending.values.push(ev.write.value.clone());
@@ -318,9 +300,9 @@ pub fn on_capture_write(
     }
 }
 
-/// Record a captured evaluation into the outbox: fused into the pending
-/// write for the same node when one exists (the dialer's set-then-evaluate),
-/// standalone otherwise (a bang).
+/// Record a captured evaluation into the outbox. It fuses into the pending
+/// write for the same node when one exists, as in a dialer's
+/// set-then-evaluate. Otherwise it is standalone, as in a bang.
 pub fn on_capture_eval(
     trigger: On<CaptureEval>,
     mut outbox: ResMut<ActionOutbox>,
@@ -341,13 +323,11 @@ pub fn on_capture_eval(
     outbox.evals.push((session, name, sources));
 }
 
-// ----------------------------------------------------------------------------
 // Broadcast
-// ----------------------------------------------------------------------------
 
-/// Broadcast the outbox: evals immediately, pending values when their
-/// rate-limit window allows (the newest value per path always ships
-/// eventually). Runs after `VmSet` beside the tip announce.
+/// Broadcast the outbox. Evals ship immediately. Pending values ship when
+/// their rate-limit window allows. Runs after `VmSet` beside the tip
+/// announce.
 pub fn broadcast_actions(
     runtime: Res<CollabRuntime>,
     identity: Option<Res<CollabIdentity>>,
@@ -364,13 +344,13 @@ pub fn broadcast_actions(
     };
     let origin = identity.0.peer_id();
 
-    // Drop entries for sessions that no longer exist.
+    // Drop entries for sessions that have ended.
     let live = |s: &SessionId| sessions.sessions.contains_key(s);
     outbox.pending.retain(|(s, ..), _| live(s));
     outbox.last_sent.retain(|(s, ..), _| live(s));
     outbox.evals.retain(|(s, ..)| live(s));
 
-    // The anchor: the committed graph addr the action was issued against.
+    // The anchor is the committed graph addr the action was issued against.
     let anchor = |name: &ca::Name| {
         registry
             .head_commit(&ca::Head::Branch(name.clone()))
@@ -397,9 +377,8 @@ pub fn broadcast_actions(
         );
     }
 
-    // Pending value batches ship when their window allows (the window is
-    // the user-configurable send rate; batching means no step is lost
-    // however long it is).
+    // Pending value batches ship when their window allows. The window is the
+    // user-configurable send rate.
     let rate = Duration::from_millis(gui_state.0.collab.action_rate_ms);
     let now = Instant::now();
     let due: Vec<PathKey> = outbox
@@ -439,9 +418,9 @@ pub fn broadcast_actions(
             eval: eval.clone(),
         };
         if !send_fits(&action) {
-            // Degrade to the newest value alone rather than losing the
-            // window outright (large `Str`/`List` values can overflow the
-            // envelope even uncoalesced; that final drop keeps its warning).
+            // Degrade to the newest value alone rather than lose the window.
+            // A large `Str` or `List` value can overflow the envelope even
+            // alone. That final drop keeps its warning.
             log::debug!("session write batch oversized; coalescing to the newest value");
             action = Action::SetState {
                 path,
@@ -470,7 +449,7 @@ fn send_fits(action: &Action) -> bool {
     proto::encode(action).len() <= proto::MAX_ACTION_DATA
 }
 
-/// Encode and broadcast one action; returns whether it shipped.
+/// Encode and broadcast one action. Returns whether it shipped.
 #[allow(clippy::too_many_arguments)]
 fn send(
     handle: &gantz_collab::Handle,
@@ -514,25 +493,22 @@ fn send(
     true
 }
 
-// ----------------------------------------------------------------------------
 // Remote application
-// ----------------------------------------------------------------------------
 
 /// Apply received actions to the matching open heads' VMs.
 ///
-/// Runs after `poll_collab_events` and before
-/// `VmSet`, so writes land before evaluation systems observe the frame. The
-/// apply path uses `gantz_core::node::state::update_value` and
-/// `EvalEntryEvent` directly - never a `NodeCtx`, never the payload bus - so
-/// nothing here can re-broadcast (the capture and apply channels are
-/// physically disjoint).
+/// Runs after `poll_collab_events` and before `VmSet`, so writes land before
+/// evaluation systems observe the frame. The apply path uses
+/// `gantz_core::node::state::update_value` and `EvalEntryEvent` directly. It
+/// never uses a `NodeCtx` or the payload bus, so nothing here can
+/// re-broadcast. The capture and apply channels are disjoint.
 ///
-/// Each action applies only while the local tip holds the IDENTICAL graph it
-/// was issued against: anchor equality guarantees node-index identity, which
-/// is what makes bare index paths safe (`state::update_value` would happily
-/// create state at any path on a diverged graph). A mismatch is usually a
-/// tip in flight, so actions retry briefly before dropping; an action for a
-/// just-deleted node expires the same way (deletion moved the anchor).
+/// Each action applies only while the local tip holds the identical graph it
+/// was issued against. Anchor equality guarantees node-index identity, which
+/// makes bare index paths safe. `state::update_value` would create state at
+/// any path on a diverged graph. A mismatch is usually a tip in flight, so
+/// actions retry briefly before dropping. An action for a just-deleted node
+/// expires the same way, because deletion moved the anchor.
 pub fn apply_remote_actions(
     identity: Option<Res<CollabIdentity>>,
     registry: Res<Registry>,
@@ -550,7 +526,7 @@ pub fn apply_remote_actions(
     let mut retry = Vec::new();
     let queue = std::mem::take(&mut inbox.queue);
     for inbound in queue {
-        // Gossip broadcasts don't self-deliver; guard anyway.
+        // Gossip broadcasts do not self-deliver. Guard anyway.
         if Some(inbound.origin) == self_id {
             continue;
         }
@@ -567,7 +543,7 @@ pub fn apply_remote_actions(
             }
             continue;
         }
-        // An ephemeral action for a closed tab is meaningless: no VM runs it.
+        // No VM runs an ephemeral action for a closed tab.
         let Some(entity) = open
             .iter()
             .find(|(_, hr)| hr.0 == head)
@@ -591,9 +567,7 @@ pub fn apply_remote_actions(
                 let Some(last) = values.last() else {
                     continue;
                 };
-                // Last-write-wins per path on the batch's stamp:
-                // reordered/concurrent batches converge on the newest,
-                // origin id breaking ties.
+                // Last-write-wins per path on the batch's stamp.
                 let key = (inbound.session, inbound.name.clone(), path.clone());
                 let stamp = (inbound.timestamp, inbound.origin);
                 if inbox
@@ -604,8 +578,8 @@ pub fn apply_remote_actions(
                     continue;
                 }
                 // Anchor equality already guarantees the path came from a
-                // real node of this exact graph; bound-check the root index
-                // as defense-in-depth against the lazy-map hazard.
+                // real node of this graph. The root index bound-check is
+                // defense in depth.
                 if path
                     .first()
                     .zip(node_count)
@@ -625,12 +599,12 @@ pub fn apply_remote_actions(
                 let entrypoint = eval
                     .map(|src| gantz_egui::action::entrypoint([src]))
                     .filter(|ep| entry_fn_exists(vm, ep));
-                // Replay the batch through the command queue: writes as
-                // queued world closures, evals as triggers. FIFO command
-                // application interleaves them w1,e1,w2,e2,... so each eval
-                // observes its own step's value - a direct write here would
-                // land before ANY deferred eval fired, collapsing every
-                // step onto the final value.
+                // Replay the batch through the command queue. Writes are
+                // queued world closures and evals are triggers. FIFO command
+                // application interleaves them, so each eval observes its own
+                // step's value. A direct write here would land before every
+                // deferred eval fired and collapse every step onto the final
+                // value.
                 for value in values {
                     let path = path.clone();
                     cmds.queue(move |world: &mut World| {
@@ -645,8 +619,8 @@ pub fn apply_remote_actions(
                         }
                     });
                     if let Some(ep) = &entrypoint {
-                        // A remote push fires "now" on this peer's clock
-                        // (matching local user-driven pushes).
+                        // A remote push fires now on this peer's clock, like
+                        // a local push.
                         cmds.trigger(EvalEntryEvent {
                             head: entity,
                             entrypoint: ep.clone(),
@@ -684,10 +658,9 @@ pub fn apply_remote_actions(
     inbox.queue = retry;
 }
 
-/// Whether the entrypoint's generated entry fn exists in the VM: a
-/// config-divergent peer (e.g. `emit_all_node_fns` differences) logs one
-/// debug line instead of pushing a spurious runtime diagnostic through the
-/// eval error path.
+/// Whether the entrypoint's generated entry fn exists in the VM. A
+/// config-divergent peer logs one debug line instead of pushing a spurious
+/// runtime diagnostic through the eval error path.
 fn entry_fn_exists(vm: &steel::steel_vm::engine::Engine, entrypoint: &Entrypoint) -> bool {
     let fn_name = gantz_core::compile::entry_fn_name(&entrypoint.id());
     let exists = vm.extract_value(&fn_name).is_ok();
@@ -697,9 +670,8 @@ fn entry_fn_exists(vm: &steel::steel_vm::engine::Engine, entrypoint: &Entrypoint
     exists
 }
 
-/// Trigger an entrypoint evaluation iff its generated entry fn exists in
-/// the VM (see [`entry_fn_exists`]). Returns whether the eval was
-/// triggered.
+/// Trigger an entrypoint evaluation only if [`entry_fn_exists`]. Returns
+/// whether the eval was triggered.
 fn trigger_guarded_eval(
     vm: &steel::steel_vm::engine::Engine,
     head: Entity,
@@ -709,8 +681,7 @@ fn trigger_guarded_eval(
     if !entry_fn_exists(vm, &entrypoint) {
         return false;
     }
-    // A remote push fires "now" on this peer's clock (matching local
-    // user-driven pushes).
+    // A remote push fires now on this peer's clock, like a local push.
     cmds.trigger(EvalEntryEvent {
         head,
         entrypoint,
@@ -719,7 +690,7 @@ fn trigger_guarded_eval(
     true
 }
 
-/// A compact display form for a value (log/history lines).
+/// A compact display form for a value in log and history lines.
 pub(crate) fn value_summary(value: &Value) -> String {
     match value {
         Value::Unit => "()".to_string(),
@@ -733,7 +704,7 @@ pub(crate) fn value_summary(value: &Value) -> String {
     }
 }
 
-/// A compact display form for eval sources (log/history lines).
+/// A compact display form for eval sources in log and history lines.
 pub(crate) fn sources_summary(sources: &[Source]) -> String {
     let paths: Vec<String> = sources.iter().map(|s| format!("{:?}", s.path)).collect();
     paths.join(" ")
@@ -744,7 +715,7 @@ mod tests {
     use super::*;
     use gantz_core::compile::entrypoint::{Entrypoint, EvalKind, EvalSource};
 
-    /// A capture world with one open session head; returns the world, the
+    /// A capture world with one open session head. Returns the world, the
     /// head entity and the outbox key parts.
     fn capture_world() -> (World, Entity, SessionId, ca::Name) {
         let mut world = World::new();
@@ -778,20 +749,19 @@ mod tests {
         }
     }
 
-    // Regression: during a drag, rate limiting can hold an unshipped pending
-    // while the next frame's payloads arrive eval-first (payload order
-    // within a frame is not guaranteed). The eval fuses into the held
-    // pending; the frame's write must keep both the fused eval and the
-    // earlier values - otherwise the flushed `SetState` ships without the
-    // eval (the remote value updates but downstream never re-evaluates) or
-    // with steps missing (accumulative downstream state drifts).
+    // During a drag, rate limiting can hold an unshipped pending while the
+    // next frame's payloads arrive eval-first. The eval fuses into the held
+    // pending. The frame's write must keep both the fused eval and the
+    // earlier values. Otherwise the flushed `SetState` ships without the
+    // eval or with steps missing.
     #[test]
     fn writes_batch_and_keep_the_fused_eval_in_either_order() {
         let (mut world, head, session, name) = capture_world();
         let path = vec![0usize];
         let entrypoint = push_entrypoint(&path);
 
-        // Frame 1: write + eval -> fused pending, held by the rate limit.
+        // Frame 1. The write and eval fuse into a pending held by the rate
+        // limit.
         world.trigger(CaptureWrite {
             head,
             write: write(&path, 1.0),
@@ -800,8 +770,8 @@ mod tests {
             head,
             entrypoint: entrypoint.clone(),
         });
-        // Frame 2, hazardous order: the eval fuses into the held pending
-        // before the frame's own write lands.
+        // Frame 2 in the hazardous order. The eval fuses into the held
+        // pending before the frame's own write lands.
         world.trigger(CaptureEval {
             head,
             entrypoint: entrypoint.clone(),
@@ -826,8 +796,8 @@ mod tests {
         assert!(outbox.evals.is_empty(), "no standalone eval may leak");
     }
 
-    // The batch bound degrades gracefully to coalescing: the OLDEST value
-    // drops, so the final value always ships.
+    // The batch bound drops the oldest value, so the final value always
+    // ships.
     #[test]
     fn batch_cap_drops_the_oldest_value() {
         let (mut world, head, session, name) = capture_world();

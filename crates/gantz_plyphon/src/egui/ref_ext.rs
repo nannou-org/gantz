@@ -1,5 +1,5 @@
-//! The reference inspector's DSP extension: the `inline` toggle over the
-//! [`DspRefExt`] data (see [`crate::ref_ext`] for the headless half).
+//! The reference inspector's DSP extension. It is the `inline` toggle over
+//! the [`DspRefExt`] data. The headless half lives in [`crate::ref_ext`].
 
 use crate::ref_ext::{DSP_REF_EXT_KEY, DspRefExt};
 use gantz_ca::ContentAddr;
@@ -9,12 +9,13 @@ use gantz_egui::{InspectorRowsResponse, NodeCtx};
 use std::collections::HashSet;
 use std::sync::Arc;
 
-/// The DSP domain's [`NamedRef`] inspector extension: an `inline` toggle for
-/// references whose graph contains DSP nodes (directly or transitively).
+/// The DSP domain's [`NamedRef`] inspector extension. It is an `inline`
+/// toggle for references whose graph contains DSP nodes, directly or
+/// transitively.
 #[derive(Debug, Default)]
 pub struct DspRefExtUi {
     /// The graph addresses of DSP graphs, precomputed from the stored
-    /// registry data (see [`dsp_graphs`](crate::dsp_graphs)).
+    /// registry data. See [`dsp_graphs`](crate::dsp_graphs).
     pub dsp_graphs: Arc<HashSet<ContentAddr>>,
 }
 

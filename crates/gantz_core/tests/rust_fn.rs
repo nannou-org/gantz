@@ -1,4 +1,4 @@
-//! Integration tests for `node::rust` - writing Node expressions as Rust fns.
+//! Integration tests for `node::rust`. It writes Node expressions as Rust fns.
 
 use gantz_core::{
     Edge, ROOT_STATE,
@@ -8,11 +8,9 @@ use gantz_core::{
 use std::fmt::Debug;
 use steel::{SteelVal, steel_vm::engine::Engine};
 
-// Helper trait for debugging the graph.
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
-// A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }
@@ -21,10 +19,6 @@ fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
 fn node_push() -> node::Push<node::Expr> {
     node::expr("'()").unwrap().with_push_eval()
 }
-
-// ---------------------------------------------------------------------------
-// Stateless: 2-input add
-// ---------------------------------------------------------------------------
 
 /// A Rust fn that adds two integer values.
 fn rust_add(a: SteelVal, b: SteelVal) -> SteelVal {
@@ -57,8 +51,10 @@ impl Node for RustAdd {
     }
 }
 
-/// Build a graph: push -> [one, one] -> add -> assert_eq(result, 2.0)
+/// Push feeds one. One feeds both add inputs. assert_eq checks the result
+/// against two.
 ///
+/// ```text
 ///    --------
 ///    | push |
 ///    -+------
@@ -78,6 +74,7 @@ impl Node for RustAdd {
 ///    -+------------+-
 ///    |  assert_eq   |
 ///    ----------------
+/// ```
 #[test]
 fn test_stateless_rust_add() {
     let mut g = petgraph::graph::DiGraph::new();
@@ -117,10 +114,6 @@ fn test_stateless_rust_add() {
         .unwrap();
 }
 
-// ---------------------------------------------------------------------------
-// Stateful: counter
-// ---------------------------------------------------------------------------
-
 /// A Rust fn that increments an integer state, returning the new count.
 fn rust_counter(_trigger: SteelVal, state: &mut SteelVal) -> SteelVal {
     match state {
@@ -159,7 +152,7 @@ impl Node for RustCounter {
     }
 }
 
-/// Build: push -> counter, call push 3 times, verify state = 3.
+/// Push feeds counter. Call push 3 times and verify the state is 3.
 #[test]
 fn test_stateful_rust_counter() {
     let mut g = petgraph::graph::DiGraph::new();
@@ -183,7 +176,6 @@ fn test_stateful_rust_counter() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Push 3 times.
     let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
     let fn_name = entry_fn_name(&ep.id());
     for _ in 0..3 {
@@ -191,16 +183,11 @@ fn test_stateful_rust_counter() {
             .unwrap();
     }
 
-    // Verify counter state is 3.
     let val = node::state::extract_value(&vm, &[counter.index()])
         .unwrap()
         .unwrap();
     assert_eq!(val, SteelVal::IntV(3));
 }
-
-// ---------------------------------------------------------------------------
-// Zero-arg stateless fn
-// ---------------------------------------------------------------------------
 
 /// A Rust fn that takes no arguments and returns a constant.
 fn rust_forty_two() -> SteelVal {
@@ -226,7 +213,7 @@ impl Node for RustFortyTwo {
     }
 }
 
-/// Build: forty_two -> assert_eq <- literal_42, pull eval from assert_eq.
+/// forty_two and a literal 42 feed assert_eq. Pull eval from assert_eq.
 #[test]
 fn test_zero_arg_stateless() {
     use gantz_core::node::WithPullEval;
@@ -262,11 +249,7 @@ fn test_zero_arg_stateless() {
         .unwrap();
 }
 
-// ---------------------------------------------------------------------------
-// State-only fn (no positional args)
-// ---------------------------------------------------------------------------
-
-/// A Rust fn with state only (no positional inputs).
+/// A Rust fn with state only and no positional inputs.
 fn rust_tick(state: &mut SteelVal) -> SteelVal {
     match state {
         SteelVal::IntV(n) => {
@@ -301,7 +284,7 @@ impl Node for RustTick {
     }
 }
 
-/// Build: tick (pull eval), call 5 times, verify state = 5.
+/// Pull eval through tick 5 times and verify the state is 5.
 #[test]
 fn test_state_only_fn() {
     use gantz_core::node::WithPullEval;
@@ -342,11 +325,7 @@ fn test_state_only_fn() {
     assert_eq!(val, SteelVal::IntV(5));
 }
 
-// ---------------------------------------------------------------------------
-// Stateful: typed counter (isize state, no SteelVal matching)
-// ---------------------------------------------------------------------------
-
-/// A Rust fn with typed `isize` state - no manual `SteelVal` matching needed.
+/// A Rust fn with typed `isize` state. No manual `SteelVal` matching is needed.
 fn rust_typed_counter(_trigger: SteelVal, state: &mut isize) -> isize {
     *state += 1;
     *state
@@ -379,7 +358,7 @@ impl Node for RustTypedCounter {
     }
 }
 
-/// Build: push -> typed_counter, call push 3 times, verify state = 3.
+/// Push feeds typed_counter. Call push 3 times and verify the state is 3.
 #[test]
 fn test_stateful_typed_counter() {
     let mut g = petgraph::graph::DiGraph::new();
@@ -403,7 +382,6 @@ fn test_stateful_typed_counter() {
         vm.run(format!("{f}")).unwrap();
     }
 
-    // Push 3 times.
     let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
     let fn_name = entry_fn_name(&ep.id());
     for _ in 0..3 {
@@ -411,18 +389,13 @@ fn test_stateful_typed_counter() {
             .unwrap();
     }
 
-    // Verify counter state is 3.
     let val = node::state::extract_value(&vm, &[counter.index()])
         .unwrap()
         .unwrap();
     assert_eq!(val, SteelVal::IntV(3));
 }
 
-// ---------------------------------------------------------------------------
-// Closure with captured state
-// ---------------------------------------------------------------------------
-
-/// Test that closures with captured variables work with `register`.
+/// Closures with captured variables work with `register`.
 #[test]
 fn test_closure_with_capture() {
     use gantz_core::node::WithPullEval;
@@ -475,7 +448,7 @@ fn test_closure_with_capture() {
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
 
-    // Register the closure externally (captures `multiplier`).
+    // Register the closure externally. It captures `multiplier`.
     node::rust::register(&mut vm, "rust-mul", move |x: SteelVal| -> SteelVal {
         match x {
             SteelVal::IntV(v) => SteelVal::IntV(v * multiplier),

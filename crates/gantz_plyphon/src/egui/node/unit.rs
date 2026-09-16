@@ -18,7 +18,7 @@ impl NodeUi for UnitNode {
     }
 
     fn ui(&mut self, _ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
-        // The body shows just the node name; params are edited in the inspector.
+        // The body shows only the node name. Params are edited in the inspector.
         let keyword = self.desc().keyword;
         let framed =
             uictx.framed(|ui, _sockets| ui.add(egui::Label::new(keyword).selectable(false)));
@@ -26,8 +26,8 @@ impl NodeUi for UnitNode {
     }
 
     fn show_state(&self) -> bool {
-        // A summarised "N queued" state row (in `inspector_rows`) replaces the
-        // raw keyed state dump.
+        // The summarised "N queued" row in `inspector_rows` replaces the raw
+        // keyed state dump.
         false
     }
 
@@ -44,9 +44,9 @@ impl NodeUi for UnitNode {
         }
         for entry in desc.inputs {
             match entry {
-                // Param values live in keyed VM state (a value edit must NOT
-                // change the content address); lags live in the weight (a lag
-                // edit is structural).
+                // Param values live in keyed VM state. A value edit must never
+                // change the content address. Lags live in the weight. A lag
+                // edit is structural.
                 In::Param {
                     name,
                     default,
@@ -70,7 +70,7 @@ impl NodeUi for UnitNode {
                     let (value_changed, lag_changed) = param_row(body, name, dv, &mut lag);
                     if value_changed {
                         // Preserve the other params and any queued `pending`
-                        // updates; only this value changes.
+                        // updates. Only this value changes.
                         let prev = state.unwrap_or_else(|| {
                             let defaults: Vec<(&str, f64)> =
                                 desc.hybrid_params().map(|(n, d)| (n, d as f64)).collect();
@@ -83,8 +83,8 @@ impl NodeUi for UnitNode {
                         resp.mark_changed();
                     }
                 }
-                // Init-only values are structural: they are baked into the
-                // def as constants, so an edit re-derives (respawns).
+                // Init-only values are baked into the def as constants, so an
+                // edit is structural and re-derives.
                 In::Init { name, .. } => {
                     let mut value = self.init_value(name);
                     let dv = egui::DragValue::new(&mut value).speed(0.001);

@@ -1,9 +1,9 @@
 //! `.gantz` keyword sugar for this crate's GUI node set.
 //!
-//! [`EguiSugar`] provides the keywords for the egui nodes: `(comment <text> [w
-//! h])`, `(gui [<role>] [#:display <d>])` and bare `inspect`/`gui`. Compose it
-//! with [`gantz_format::CoreSugar`] (and the other crates' sugars) via
-//! [`gantz_format::Sugars`].
+//! [`EguiSugar`] provides the keywords for the egui nodes. They are
+//! `(comment <text> [w h])`, `(gui [<role>] [#:display <d>])` and bare
+//! `inspect` and `gui`. Compose it with [`gantz_format::CoreSugar`] and the
+//! other crates' sugars via [`gantz_format::Sugars`].
 
 use crate::node::{Comment, Gui, GuiDisplay, GuiRole, Inspect};
 use gantz_format::sexpr::quote;
@@ -14,9 +14,9 @@ use gantz_nodetag::NodeTag;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EguiSugar;
 
-/// Sugar keyword -> node tag, for the egui builtins whose bare keyword lowers
-/// to a default node. Non-default `Comment`/`Gui` forms are handled by
-/// explicit `read_spec`/`write_spec` arms.
+/// Sugar keyword to node tag, for the egui builtins whose bare keyword lowers
+/// to a default node. Explicit `read_spec` and `write_spec` arms handle
+/// non-default `Comment` and `Gui` forms.
 const KEYWORD_TAG: &[(&str, &str)] = &[
     ("inspect", Inspect::TAG),
     ("comment", Comment::TAG),
@@ -56,8 +56,8 @@ impl Sugar for EguiSugar {
     fn write_spec(&self, tag: &str, node: &Datum) -> Option<String> {
         match tag {
             "Comment" => Some(write_comment(node)),
-            // Must precede the bare-keyword fallback: a non-default `Gui`
-            // written as bare `gui` would silently drop its role/display.
+            // Must precede the bare-keyword fallback. A non-default `Gui`
+            // written as bare `gui` would silently drop its role and display.
             "Gui" => Some(write_gui(node)),
             other => keyword_for_tag(other).map(str::to_string),
         }
@@ -68,8 +68,8 @@ impl Sugar for EguiSugar {
     }
 }
 
-/// Read a `(comment <text> [w h])` form: required text plus an optional `[w h]`
-/// size, defaulting to `[100 40]`.
+/// Read a `(comment <text> [w h])` form. The text is required. The `[w h]`
+/// size is optional and defaults to `[100 40]`.
 fn comment_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let text = args
         .str_at(0)
@@ -97,8 +97,9 @@ fn write_comment(node: &Datum) -> String {
     format!("(comment {} {w} {h})", quote(text))
 }
 
-/// Read a `(gui [<role>] [#:display <d>])` form: optional positional role
-/// symbol (default `body`) and optional display keyword (default `full`).
+/// Read a `(gui [<role>] [#:display <d>])` form. The positional role symbol
+/// is optional and defaults to `body`. The display keyword is optional and
+/// defaults to `full`.
 fn gui_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let role = match args.symbol_at(0) {
         Some(s) => GuiRole::from_str(&s)
@@ -119,9 +120,10 @@ fn gui_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     ))
 }
 
-/// Write the canonical `gui` form: bare when all-default, `(gui <role>)` when
-/// only the role differs, and the role always written (even `body`) when a
-/// display follows so the positional slot stays unambiguous.
+/// Write the canonical `gui` form. It is bare when all-default, and
+/// `(gui <role>)` when only the role differs. When a display follows, the
+/// role is always written, even `body`, so the positional slot stays
+/// unambiguous.
 fn write_gui(node: &Datum) -> String {
     let default_role = GuiRole::default().as_str();
     let default_display = GuiDisplay::default().as_str();

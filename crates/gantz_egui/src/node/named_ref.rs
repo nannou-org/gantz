@@ -27,7 +27,7 @@ pub fn missing_color() -> egui::Color32 {
 /// A node that references another node by name and content address.
 ///
 /// Similar to [`gantz_core::node::Ref`], but also stores the human-readable
-/// name associated with the reference. This allows for detecting when the
+/// name associated with the reference. This lets the editor detect when the
 /// name's current commit differs from the stored reference.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag)]
 pub struct NamedRef {
@@ -37,9 +37,9 @@ pub struct NamedRef {
     name: Name,
     /// Whether to automatically sync to the latest commit.
     ///
-    /// Part of the content address: toggling it is a genuine edit, so the
-    /// change rides the normal commit + export pipeline and persists (rather
-    /// than being silently dropped by the registry's content-addressed dedup).
+    /// Part of the content address. Toggling it is a genuine edit, so the
+    /// change rides the normal commit and export pipeline and persists. The
+    /// registry's content-addressed dedup would otherwise drop it silently.
     #[serde(default, skip_serializing_if = "is_default")]
     pub(crate) sync: bool,
 }
@@ -49,7 +49,7 @@ fn is_default<T: Default + PartialEq>(t: &T) -> bool {
 }
 
 impl NamedRef {
-    /// Construct a `NamedRef` node (auto-sync disabled).
+    /// Construct a `NamedRef` node with auto-sync disabled.
     pub fn new(name: Name, ref_: gantz_core::node::Ref) -> Self {
         Self {
             ref_,
@@ -75,10 +75,10 @@ impl NamedRef {
         &self.name
     }
 
-    /// Whether this reference names a nested graph (`parent:child`).
+    /// Whether this reference names a nested graph, written `parent:child`.
     ///
     /// A `NamedRef` naming a nested graph is hidden from the root
-    /// graph-select list and its `sync` toggle is forced on so edits to the
+    /// graph-select list. Its `sync` toggle is forced on so edits to the
     /// child always propagate back to its parent.
     pub fn is_nested(&self) -> bool {
         self.name.is_nested()
@@ -100,7 +100,7 @@ impl NamedRef {
     }
 
     /// Decode the extension value stored under `key` on the underlying
-    /// [`Ref`](gantz_core::node::Ref). See [`gantz_core::node::Ref::ext_as`].
+    /// [`gantz_core::node::Ref`]. See [`gantz_core::node::Ref::ext_as`].
     pub fn ext_as<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
         self.ref_.ext_as(key)
     }
@@ -121,10 +121,9 @@ impl NamedRef {
         self.ref_.remove_ext(key)
     }
 
-    /// Re-point this reference at a renamed target: change the stored name and
-    /// repoint at the renamed graph's head graph address. Used by the rename
-    /// cascade so a renamed parent keeps referencing its (also-renamed)
-    /// children.
+    /// Re-point this reference at a renamed target. Change the stored name and
+    /// repoint at the renamed graph's head graph address. The rename cascade
+    /// uses it so a renamed parent keeps referencing its renamed children.
     pub fn rename(&mut self, name: Name, ca: gantz_ca::ContentAddr) {
         self.name = name;
         self.ref_ = self.ref_.retarget(ca);
@@ -238,19 +237,19 @@ impl NodeUi for NamedRef {
         let mut changed = false;
 
         // Nested graphs always sync so parents follow their children's edits.
-        // Flipping the (CA-relevant) `sync` flag on is a genuine edit.
+        // `sync` is part of the CA, so flipping it on is a genuine edit.
         if self.is_nested() && !self.sync {
             self.sync = true;
             changed = true;
         }
 
-        // Auto-sync if enabled and the name points at newer content. This is a
-        // silent mutation (no widget touched) that still changes the node's CA.
+        // Auto-sync when enabled and the name points at newer content. No
+        // widget is touched, but this silent mutation still changes the CA.
         if self.resync(|name| registry.name_ca(&name.to_string())) {
             changed = true;
         }
 
-        // Recalculate after potential sync.
+        // Recalculate after a possible sync.
         let name_str = self.name.to_string();
         let ref_ca = self.ref_.content_addr();
         let is_missing = !registry.node_exists(&ref_ca);
@@ -260,8 +259,8 @@ impl NodeUi for NamedRef {
                 .map(|ca| ca != ref_ca)
                 .unwrap_or(false);
 
-        // A healthy reference renders its marker tree (per the resolved
-        // display mode) in place of the name label.
+        // A healthy reference renders its marker tree in place of the name
+        // label, per the resolved display mode.
         let tree = (!is_missing && !is_outdated)
             .then(|| body_tree(self, registry, &ctx))
             .flatten();
@@ -301,12 +300,12 @@ impl NodeUi for NamedRef {
         resp.payloads.extend(payloads);
 
         // Enter the referenced graph on double-click. A nested graph is entered
-        // *in place* (the focused tab navigates to it; the breadcrumb returns to
-        // the parent); a reference to a root graph opens as a new tab. Either
-        // way, the scene's "open in new tab" context-menu action (see
-        // `nav_head`) opens it as a separate tab. Clicks consumed by marker
-        // body widgets never reach this node-area response, so double-clicking
-        // e.g. a dialer edits it rather than navigating.
+        // in place. The focused tab navigates to it and the breadcrumb returns
+        // to the parent. A reference to a root graph opens as a new tab.
+        // Either way, the scene's open-in-new-tab context-menu action opens it
+        // as a separate tab. See `nav_head`. Clicks consumed by marker body
+        // widgets never reach this node-area response, so double-clicking a
+        // dialer edits it rather than navigating.
         if resp.framed.inner.response.double_clicked() {
             let head = gantz_ca::Head::Branch(self.name.clone());
             if self.is_nested() {
@@ -344,7 +343,7 @@ impl NodeUi for NamedRef {
 
     fn inspector_ui(&mut self, mut ctx: NodeCtx, ui: &mut egui::Ui) -> InspectorUiResponse {
         // The inspector marker tree renders after the default table. State
-        // writes and pushes ride the payload channel; never `changed`.
+        // writes and pushes ride the payload channel, never `changed`.
         let registry = ctx.env();
         let ref_ca = self.ref_.content_addr();
         let marker = marker_of(&registry.gui_markers(&ref_ca), GuiRole::Inspector);
@@ -374,7 +373,6 @@ impl NodeUi for NamedRef {
         let registry = ctx.env();
         let path = ctx.path().to_vec();
 
-        // Whether the referenced CA exists in the registry.
         let is_missing = !registry.node_exists(&self.ref_.content_addr());
 
         // CA row.
@@ -388,7 +386,7 @@ impl NodeUi for NamedRef {
             });
         });
 
-        // Sync toggle row. Forced on (and disabled) for nested graphs.
+        // Sync toggle row. Forced on and disabled for nested graphs.
         let nested = self.is_nested();
         if nested && !self.sync {
             self.sync = true;
@@ -426,7 +424,7 @@ impl NodeUi for NamedRef {
                     ui.label(err_text);
                 });
             });
-        // Status row for an outdated reference - sync/fork to resolve it.
+        // Status row for an outdated reference. Sync or fork resolves it.
         } else if let Some(latest_ca) = outdated_latest(self, registry) {
             body.row(row_h, |mut row| {
                 row.col(|ui| {
@@ -448,8 +446,8 @@ impl NodeUi for NamedRef {
 
         // GUI display override row, shown when the referenced graph declares
         // a body marker. `auto` follows the graph's definition default and is
-        // stored as *absence*; an explicit pick is stored even when it equals
-        // the default (the user chose it). Ext writes are CA edits.
+        // stored as absence. An explicit pick is stored even when it equals
+        // the default, because the user chose it. Ext writes are CA edits.
         if marker_of(
             &registry.gui_markers(&self.ref_.content_addr()),
             GuiRole::Body,
@@ -501,9 +499,9 @@ impl NodeUi for NamedRef {
             });
         }
 
-        // Domain extension rows (see `RefExtUi`). Read out of the ctx first
-        // (the accessor returns the ctx's own lifetime) so the ctx can be
-        // passed down to each extension.
+        // Domain extension rows. See `RefExtUi`. Read them out of the ctx
+        // first, since the accessor returns the ctx's own lifetime. The ctx
+        // can then be passed down to each extension.
         let ext_uis = ctx.ref_ext_uis();
         for ext_ui in ext_uis {
             let inner = ext_ui.inspector_rows(self, ctx, body);
@@ -534,8 +532,8 @@ impl NodeUi for NamedRef {
     }
 }
 
-/// The display mode an instance renders with: the per-instance ext override,
-/// else the body marker's definition default, else `Label` when the
+/// The display mode an instance renders with. The per-instance ext override
+/// wins. Else the body marker's definition default. Else `Label` when the
 /// referenced graph declares no body marker.
 fn resolved_display(ext: Option<GuiRefExt>, body_display: Option<GuiDisplay>) -> GuiDisplay {
     match ext {
@@ -551,8 +549,9 @@ fn marker_of(markers: &[(node::Id, Gui)], role: GuiRole) -> Option<(node::Id, Gu
 
 /// Read and decode the stored tree of the marker at `ctx.path() ++ [ix]`.
 ///
-/// `None` when the marker has no stored tree yet (unregistered, `Void`, or a
-/// failed read) - callers fall back to their default rendering.
+/// `None` when the marker has no stored tree yet. That is when it is
+/// unregistered, `Void`, or the read failed. Callers fall back to their
+/// default rendering.
 fn marker_tree(ctx: &NodeCtx, ix: node::Id) -> Option<gantz_ui::Decoded> {
     let path: Vec<node::Id> = ctx.path().iter().copied().chain(Some(ix)).collect();
     match ctx.extract_value_at(&path) {
@@ -586,7 +585,7 @@ fn body_tree(
 }
 
 /// The interpreter resolvers for an instance of the graph at `ca` rendered at
-/// `path`: output counts and ref-gui chains resolve through the environment
+/// `path`. Output counts and ref-gui chains resolve through the environment
 /// relative to the referenced graph.
 fn resolvers<'a>(
     registry: &'a crate::Env<'a>,
@@ -607,9 +606,9 @@ fn resolvers<'a>(
     (n_outputs, ref_gui)
 }
 
-/// The name's current head graph CA when this reference is *outdated*: it
-/// exists, auto-sync is off, and the name now points at different content.
-/// `None` otherwise (missing, synced, or already up to date).
+/// The name's current head graph CA when this reference is outdated. Outdated
+/// means it exists, auto-sync is off, and the name points at different
+/// content. `None` when missing, synced, or already up to date.
 fn outdated_latest(named: &NamedRef, registry: &crate::Env<'_>) -> Option<gantz_ca::ContentAddr> {
     if named.sync {
         return None;
@@ -628,17 +627,17 @@ fn outdated_latest(named: &NamedRef, registry: &crate::Env<'_>) -> Option<gantz_
 enum SyncForkAction {
     /// Neither button was clicked.
     None,
-    /// `sync` was clicked: the reference was repointed (a CA-affecting edit).
+    /// `sync` was clicked. The reference was repointed, a CA-affecting edit.
     Synced,
-    /// `fork` was clicked: emit this [`BranchNode`] payload.
+    /// `fork` was clicked. Emit this [`BranchNode`] payload.
     Forked(BranchNode),
 }
 
 /// Render the `sync` and `fork` buttons for an outdated reference. `sync`
-/// repoints the reference at `latest` (mutating `named`); `fork` produces a
-/// [`BranchNode`] pinning a fresh name at the current (outdated) commit. Shared
-/// by the inspector and the node context menu, which apply the returned
-/// [`SyncForkAction`] to their own response (`changed` / emitted payload).
+/// repoints the reference at `latest` by mutating `named`. `fork` produces a
+/// [`BranchNode`] pinning a fresh name at the current outdated commit. The
+/// inspector and the node context menu share it. Each applies the returned
+/// [`SyncForkAction`] to its own response.
 fn sync_fork_buttons(
     named: &mut NamedRef,
     path: &[node::Id],
@@ -679,12 +678,12 @@ mod tests {
             resolved_display(ext(GuiDisplay::Label), Some(GuiDisplay::Full)),
             GuiDisplay::Label,
         );
-        // No ext: the body marker's definition default.
+        // With no ext, the body marker's definition default.
         assert_eq!(
             resolved_display(None, Some(GuiDisplay::Compact)),
             GuiDisplay::Compact,
         );
-        // No body marker at all: the label.
+        // With no body marker at all, the label.
         assert_eq!(resolved_display(None, None), GuiDisplay::Label);
         // An ext override applies even without a marker default.
         assert_eq!(
@@ -693,8 +692,8 @@ mod tests {
         );
     }
 
-    /// A reference into an empty registry (missing graph, no markers) renders
-    /// no marker tree: the body falls back to the label.
+    /// A reference into an empty registry has a missing graph and no markers.
+    /// It renders no marker tree, so the body falls back to the label.
     #[test]
     fn missing_ref_keeps_label() {
         let registry = gantz_ca::Registry::default();
@@ -720,9 +719,9 @@ mod tests {
     }
 
     /// An explicit display choice stores as ext even when it equals the
-    /// definition default (`auto` is absence, not default-pruning), and the
-    /// ext write changes the node's stored (erased) address, reverting on
-    /// removal.
+    /// definition default. `auto` is absence, not default-pruning. The ext
+    /// write changes the node's stored erased address, and removal reverts
+    /// it.
     #[test]
     fn explicit_display_override_round_trips_through_ext() {
         let addr = |named: &NamedRef| {

@@ -14,7 +14,7 @@ use petgraph::visit::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Represents a high-level representation of a gantz graph.
+/// A high-level representation of a gantz graph.
 ///
 /// This is produced as the first stage of code-generation and acts as a
 /// high-level overview of the gantz graph that can be used for faster
@@ -26,19 +26,19 @@ pub struct Meta {
     pub branches: BTreeMap<node::Id, Vec<node::Conns>>,
     /// The set of nodes that require access to state.
     pub stateful: BTreeSet<node::Id>,
-    /// The set of nodes that act as inlets (for nested graphs).
+    /// The set of nodes that act as inlets of a nested graph.
     pub inlets: BTreeSet<node::Id>,
-    /// The set of nodes that act as outlets (for nested graphs).
+    /// The set of nodes that act as outlets of a nested graph.
     pub outlets: BTreeSet<node::Id>,
-    /// The set of unit-delay nodes (evaluation never propagates through
-    /// them; cycles containing one are legal).
+    /// The set of unit-delay nodes. Evaluation never propagates through
+    /// them. Cycles containing one are legal.
     pub delays: BTreeSet<node::Id>,
-    /// The total number of inputs on node (whether or not they're connected).
+    /// The total number of inputs on each node, connected or not.
     pub inputs: BTreeMap<node::Id, usize>,
-    /// The total number of outputs on node (whether or not they're connected).
+    /// The total number of outputs on each node, connected or not.
     pub outputs: BTreeMap<node::Id, usize>,
     /// The names of the registered Steel modules required by this graph's
-    /// nodes (see [`Node::required_modules`]).
+    /// nodes. See [`Node::required_modules`].
     pub requires: BTreeSet<String>,
 }
 
@@ -52,10 +52,10 @@ pub enum EdgeKind {
     Conditional,
 }
 
-/// Represents a single flow graph.
+/// The graph of a single level.
 ///
-/// Note that we use a `Vec<Edge>` in order to represent multiple edges
-/// between the same two nodes.
+/// The edge weight is a `Vec` so that multiple edges between the same two
+/// nodes are represented.
 pub type MetaGraph = petgraph::graphmap::DiGraphMap<node::Id, Vec<(Edge, EdgeKind)>>;
 
 /// A rose tree of [`Meta`] with error accumulation during visitation.
@@ -99,10 +99,8 @@ impl Meta {
         node: &dyn Node,
         inputs: impl IntoIterator<Item = (node::Id, Edge)>,
     ) -> Result<(), NodeConnsError> {
-        // Add the node.
         self.graph.add_node(id);
 
-        // Add edges for inputs.
         for (n, edge) in inputs {
             let n_branches = self.branches.get(&n).map(|bs| &bs[..]);
             // Skip edges from outputs that are unreachable through all branches.
@@ -116,7 +114,6 @@ impl Meta {
             }
         }
 
-        // Register whether the node has inputs or outputs.
         let inputs = node.n_inputs(ctx);
         let outputs = node.n_outputs(ctx);
         if inputs > 0 {
@@ -126,7 +123,6 @@ impl Meta {
             self.outputs.insert(id, outputs);
         }
 
-        // Track node branching.
         let branches = node.branches(ctx);
         if !branches.is_empty() {
             self.branches.insert(
@@ -155,17 +151,14 @@ impl Meta {
     }
 }
 
-/// Allow for constructing a rose-tree of `Meta`s (one for each graph) using
-/// the `Node::visit` implementation.
+/// Constructs a rose-tree of `Meta`s, one for each graph, via the visitor.
 impl Visitor for MetaTree {
     fn visit_pre(&mut self, ctx: visit::Ctx<'_, '_>, node: &dyn Node) {
         let node_path = ctx.path();
 
-        // Ensure the plan for the graph owning this node exists, retrieve it.
         let tree_path = &node_path[..node_path.len() - 1];
         let tree = self.tree.tree_mut(tree_path);
 
-        // Insert the node.
         let id = ctx.id();
         let meta_ctx = node::MetaCtx::new(ctx.get_node());
         if let Err(error) = tree

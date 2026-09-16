@@ -1,5 +1,5 @@
-//! Tests for the bang node's trigger input: a `Bang` ignores its input value
-//! and emits a bang (`'()`) downstream when pushed.
+//! Tests for the bang node's trigger input. A `Bang` ignores its input value
+//! and emits a bang, `'()`, downstream when pushed.
 
 use gantz_core::{
     Edge, Node,
@@ -11,7 +11,6 @@ use std::fmt::Debug;
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
-// A no-op node lookup function for tests that don't need it.
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }
@@ -28,7 +27,6 @@ fn bang_trigger_input_emits_bang() {
     let val = g.add_node(Box::new(node::expr("42").unwrap()) as Box<_>);
     // The bang ignores `val`'s output and emits `'()`.
     let bang = g.add_node(Box::new(gantz_std::Bang::default()) as Box<_>);
-    // Assert the bang emitted an empty list.
     let check = g.add_node(Box::new(node::expr("(assert! (equal? $b '()))").unwrap()) as Box<_>);
     g.add_edge(push, val, Edge::from((0, 0)));
     g.add_edge(val, bang, Edge::from((0, 0)));

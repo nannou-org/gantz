@@ -1,9 +1,10 @@
 //! Export/import helpers for sharing node sets between gantz instances.
 //!
-//! An export is a [`gantz_ca::Registry`] subset: all GUI metadata (views,
-//! demos, descriptions) rides the registry's sections, so no side-band bundle
-//! type is needed. Serialization uses the `.gantz` S-expression text format
-//! (see [`crate::format`]) under the `.gantz` file extension.
+//! An export is a [`gantz_ca::Registry`] subset. All GUI metadata rides the
+//! registry's sections, so no side-band bundle type is needed. Views, demos
+//! and descriptions are that metadata. Serialization uses the `.gantz`
+//! S-expression text format from [`crate::format`] under the `.gantz` file
+//! extension.
 
 use crate::node::NodeCodec;
 use gantz_ca::{DataGraph, GraphAddr, Name};
@@ -11,7 +12,7 @@ use gantz_core::node;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-/// File extension for gantz export files (without the leading dot).
+/// File extension for gantz export files, without the leading dot.
 pub const FILE_EXTENSION: &str = "gantz";
 
 /// An error produced when parsing the raw bytes of a `.gantz` file.
@@ -42,10 +43,10 @@ impl std::error::Error for ParseExportError {
 
 /// Parse the raw bytes of a `.gantz` file into a registry.
 ///
-/// The file is the `.gantz` S-expression text format (see [`crate::format`]).
-/// Graphs the document does not commit explicitly (hand-authored graphs with no
-/// `(commits ...)` entry) are stamped with the current time. Use
-/// [`parse_export_at`] to stamp them with a fixed timestamp instead.
+/// The file is the `.gantz` S-expression text format from [`crate::format`].
+/// Hand-authored graphs with no `(commits ...)` entry are stamped with the
+/// current time. Use [`parse_export_at`] to stamp them with a fixed timestamp
+/// instead.
 pub fn parse_export(
     bytes: &[u8],
     codec: &NodeCodec,
@@ -53,13 +54,13 @@ pub fn parse_export(
     parse_export_at(bytes, now(), codec)
 }
 
-/// Like [`parse_export`], but stamps uncommitted (hand-authored) graphs with the
-/// given timestamp rather than the current time.
+/// Like [`parse_export`], but stamps hand-authored graphs with the given
+/// timestamp rather than the current time.
 ///
 /// A fixed timestamp makes the resulting commit addresses reproducible across
 /// loads. This matters for content that is re-parsed and whose commits should
-/// line up with an already-loaded registry - e.g. the baked-in base, which is
-/// parsed both at startup and on demo reset.
+/// line up with an already-loaded registry. The baked-in base is one example.
+/// It is parsed both at startup and on demo reset.
 pub fn parse_export_at(
     bytes: &[u8],
     now: gantz_ca::Timestamp,
@@ -69,9 +70,9 @@ pub fn parse_export_at(
     crate::format::from_str(text, now, codec).map_err(ParseExportError::Format)
 }
 
-/// Like [`parse_export_at`], resolving names the document does not define
-/// through `seed` (externally-known name -> head graph associations). Lets a
-/// base source reference graphs another source defines - see
+/// Like [`parse_export_at`], but resolves names the document does not define
+/// through `seed`. The seed maps externally-known names to head graphs. This
+/// lets a base source reference graphs another source defines. See
 /// [`gantz_format::from_str_seeded`].
 pub fn parse_export_seeded_at(
     bytes: &[u8],
@@ -83,7 +84,8 @@ pub fn parse_export_seeded_at(
     crate::format::from_str_seeded(text, now, seed, codec).map_err(ParseExportError::Format)
 }
 
-/// The current time as a [`gantz_ca::Timestamp`] (duration since the Unix epoch).
+/// The current time as a [`gantz_ca::Timestamp`], the duration since the Unix
+/// epoch.
 fn now() -> gantz_ca::Timestamp {
     web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)
@@ -93,8 +95,8 @@ fn now() -> gantz_ca::Timestamp {
 /// The unique root name of an exported registry, if it has exactly one.
 ///
 /// A name is "root" when no stored graph's [`gantz_ca::NodeData::refs`]
-/// column points at the name's head graph: a pure data walk, so no node
-/// lookups are needed.
+/// column points at the name's head graph. This is a pure data walk, so no
+/// node lookups are needed.
 pub fn unique_root_name(registry: &gantz_ca::Registry) -> Option<Name> {
     let referenced: HashSet<GraphAddr> = registry
         .graphs()
@@ -112,9 +114,9 @@ pub fn unique_root_name(registry: &gantz_ca::Registry) -> Option<Name> {
     roots.next().is_none().then(|| root.0.clone())
 }
 
-/// The registry subset transitively reachable from ONLY the given heads,
-/// walked over the stored graphs' structural refs/blobs columns (a pure data
-/// walk, no node lookups).
+/// The registry subset transitively reachable from only the given heads. The
+/// walk reads the stored graphs' structural refs and blobs columns. It is a
+/// pure data walk with no node lookups.
 fn export_heads_registry(
     registry: &gantz_ca::Registry,
     heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
@@ -128,7 +130,7 @@ fn export_heads_registry(
 
 /// Serialize an export for the given heads as `.gantz` text.
 ///
-/// Covers both export-head and export-all-named: the export contains the heads'
+/// Covers both export-head and export-all-named. The export contains the heads'
 /// transitively required content along with their views, demos and
 /// descriptions. File IO stays with the caller.
 pub fn export_heads_sexpr(
@@ -140,10 +142,9 @@ pub fn export_heads_sexpr(
     crate::format::to_string(&export_registry, codec)
 }
 
-/// As [`export_heads_sexpr`], but serializes in the inline-name format (see
-/// [`crate::format::to_string_named`]): graphs named inline, no commits/names
-/// tables, references by name. Used for the baked-in base so its file stays
-/// hand-editable and free of churning addresses.
+/// As [`export_heads_sexpr`], but serializes in the inline-name format. See
+/// [`crate::format::to_string_named`]. Used for the baked-in base so its file
+/// stays hand-editable and free of churning addresses.
 pub fn export_heads_sexpr_named(
     registry: &gantz_ca::Registry,
     heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
@@ -153,13 +154,13 @@ pub fn export_heads_sexpr_named(
     crate::format::to_string_named(&export_registry, codec)
 }
 
-/// As [`export_heads_sexpr_named`], but exports EXACTLY the given names with
-/// no transitive dependency closure: references to graphs outside the set are
+/// As [`export_heads_sexpr_named`], but exports exactly the given names with
+/// no transitive dependency closure. References to graphs outside the set are
 /// written by name only, without their `(graph ...)` blocks.
 ///
 /// Used for per-source base write-back, where a source's file must contain
-/// only its own graphs - refs into other sources stay by name, and loading
-/// resolves them through the seeded parse (see [`parse_export_seeded_at`]).
+/// only its own graphs. Refs into other sources stay by name. Loading
+/// resolves them through the seeded parse in [`parse_export_seeded_at`].
 pub fn export_names_sexpr_named(
     registry: &gantz_ca::Registry,
     names: impl IntoIterator<Item = impl AsRef<str>>,
@@ -181,10 +182,10 @@ pub fn export_names_sexpr_named(
         live.graphs.insert(commit.graph);
     }
     let mut export_registry = gantz_ca::export(registry, &live);
-    // The export keeps every head whose commit survives - identical graphs
+    // The export keeps every head whose commit survives. Identical graphs
     // across sources share commits, so a foreign name could ride along.
-    // Restrict to exactly the requested names (their `WithName` metadata,
-    // descriptions included, drops with them).
+    // Restrict to exactly the requested names. Their `WithName` metadata,
+    // descriptions included, drops with them.
     let extra: Vec<Name> = export_registry
         .heads()
         .filter(|(name, _)| !requested.contains(name))
@@ -214,15 +215,16 @@ pub fn is_gantz_path(path: &std::path::Path) -> bool {
 
 /// Check if an optional path is a `.gantz` file.
 ///
-/// Returns `true` when the path is absent (e.g. on web) so that files without
-/// a known path are accepted speculatively.
+/// Returns `true` when the path is absent, as on web, so that files without a
+/// known path are accepted speculatively.
 pub fn is_maybe_gantz(path: Option<&std::path::Path>) -> bool {
     path.map(is_gantz_path).unwrap_or(true)
 }
 
 /// Read bytes from an [`egui::DroppedFile`].
 ///
-/// Tries `file.bytes` first (web), then `std::fs::read` from `file.path` (desktop).
+/// Tries `file.bytes` first for web, then `std::fs::read` from `file.path` for
+/// desktop.
 pub fn read_dropped_file(file: &egui::DroppedFile) -> Option<Vec<u8>> {
     if let Some(ref bytes) = file.bytes {
         return Some(bytes.to_vec());
@@ -234,7 +236,7 @@ pub fn read_dropped_file(file: &egui::DroppedFile) -> Option<Vec<u8>> {
 }
 
 /// Reserved registry name under which a copied subgraph travels inside a
-/// clipboard `.gantz` document (see [`copied_to_string`]).
+/// clipboard `.gantz` document. See [`copied_to_string`].
 const CLIPBOARD_NAME: &str = "clipboard";
 
 /// An error produced when parsing a clipboard payload.
@@ -267,8 +269,8 @@ impl std::error::Error for ParseCopiedError {
 /// A clipboard payload for copied graph nodes.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Copied {
-    /// Registry dependencies referenced by copied nodes (e.g. Ref nodes),
-    /// along with the heads (and their metadata) naming them.
+    /// Registry dependencies referenced by copied nodes, such as Ref nodes,
+    /// along with the heads and metadata naming them.
     pub registry: gantz_ca::Registry,
     /// The subgraph of selected nodes and their internal edges, in the
     /// stored data form.
@@ -280,9 +282,9 @@ pub struct Copied {
 /// Build a [`Copied`] payload from the selected nodes in a graph.
 ///
 /// The payload registry carries the transitive closure of the graphs the
-/// selected nodes reference, plus the heads (and `WithName`/`WithCommit`
-/// metadata) whose tips point at those graphs, so pasting into another
-/// registry restores names and views.
+/// selected nodes reference. It also carries the heads whose tips point at
+/// those graphs, with their `WithName` and `WithCommit` metadata. Pasting
+/// into another registry then restores names and views.
 pub fn copy(
     registry: &gantz_ca::Registry,
     graph: &DataGraph,
@@ -291,8 +293,8 @@ pub fn copy(
 ) -> Copied {
     let subgraph = gantz_core::graph::extract_subgraph(graph, selected);
 
-    // Build positions: iterate selected nodes in sorted order (matching
-    // extract_subgraph's deterministic order) alongside new node indices.
+    // Iterate selected nodes in sorted order alongside new node indices. This
+    // matches `extract_subgraph`'s deterministic order.
     let mut positions = egui_graph::Layout::default();
     let sorted: std::collections::BTreeSet<_> = selected.iter().copied().collect();
     for (old_ix, new_ix) in sorted.iter().zip(subgraph.node_indices()) {
@@ -303,11 +305,11 @@ pub fn copy(
         }
     }
 
-    // Collect registry deps transitively: the graphs the selected nodes
-    // reference, and the graphs *those* graphs reference in turn (a nested
-    // graph that itself contains nested graphs), so the whole subtree travels
-    // with the clipboard. Blob references ride along likewise. The stored
-    // refs/blobs columns cover the whole walk - pure data, no node lookups.
+    // Collect registry deps transitively. Include the graphs the selected
+    // nodes reference, and the graphs those graphs reference in turn, so the
+    // whole subtree travels with the clipboard. Blob references ride along
+    // likewise. The stored refs and blobs columns cover the whole walk with
+    // no node lookups.
     let mut live = gantz_ca::LiveSet::default();
     let mut stack: Vec<GraphAddr> = subgraph
         .node_weights()
@@ -336,9 +338,9 @@ pub fn copy(
         }
     }
 
-    // Include each collected graph's naming heads (tip commits), so
-    // paste-merge restores names and the text format's commits table still
-    // describes the named graphs.
+    // Include each collected graph's naming heads, so paste-merge restores
+    // names and the text format's commits table still describes the named
+    // graphs.
     live.commits.extend(
         registry
             .heads()
@@ -360,7 +362,7 @@ pub fn copy(
 
 /// Paste a [`Copied`] payload into a target graph.
 ///
-/// Merges registry dependencies, adds the subgraph nodes/edges, and maps
+/// Merges registry dependencies, adds the subgraph nodes and edges, and maps
 /// positions with the given offset. Returns the new node indices in the
 /// target graph.
 pub fn paste(
@@ -387,10 +389,10 @@ pub fn paste(
 
 /// Serialize a [`Copied`] payload as a `.gantz` document.
 ///
-/// The copied subgraph rides as a graph named `clipboard` - its positions
-/// stored as the clipboard commit's view section entry - alongside the
-/// registry dependencies, so the whole payload is one ordinary `.gantz`
-/// document. [`copied_from_str`] reverses this.
+/// The copied subgraph rides as a graph named `clipboard` alongside the
+/// registry dependencies. Its positions are stored as the clipboard commit's
+/// view section entry. The whole payload is one ordinary `.gantz` document.
+/// [`copied_from_str`] reverses this.
 pub fn copied_to_string(
     copied: &Copied,
     codec: &NodeCodec,
@@ -420,7 +422,7 @@ pub fn copied_to_string(
 
 /// Parse a clipboard payload produced by [`copied_to_string`].
 ///
-/// Splits the `clipboard` graph (and its positions) back out from the registry
+/// Splits the `clipboard` graph and its positions back out from the registry
 /// dependencies.
 pub fn copied_from_str(text: &str, codec: &NodeCodec) -> Result<Copied, ParseCopiedError> {
     let registry = crate::format::from_str(text, now(), codec).map_err(ParseCopiedError::Format)?;
@@ -438,8 +440,8 @@ pub fn copied_from_str(text: &str, codec: &NodeCodec) -> Result<Copied, ParseCop
         .unwrap_or_default();
 
     // Everything reachable outside the clipboard commit is a dependency. The
-    // export filters heads (and views) to the kept commits, so the
-    // `clipboard` name and its view entry drop out with it.
+    // export filters heads and views to the kept commits, so the `clipboard`
+    // name and its view entry drop out with it.
     let dep_commits: Vec<gantz_ca::CommitAddr> = registry
         .commits()
         .keys()
@@ -512,7 +514,7 @@ mod tests {
         crate::section::set_view(&mut incoming, ca, &crate::SceneView::default());
         registry.merge(incoming);
 
-        // Existing view (with 1 layout entry) is preserved, not replaced.
+        // The existing view with one layout entry is preserved, not replaced.
         let view = crate::section::view(&registry, &ca).unwrap();
         assert_eq!(view.layout.len(), 1);
     }
@@ -544,8 +546,8 @@ mod tests {
     }
 
     /// Copying a `NamedRef` carries the referenced graph, its naming head
-    /// and `WithName` metadata through the clipboard text round-trip, with
-    /// positions riding the clipboard commit's view section entry.
+    /// and `WithName` metadata through the clipboard text round-trip.
+    /// Positions ride the clipboard commit's view section entry.
     #[test]
     fn clipboard_round_trip_carries_positions_and_deps() {
         use crate::test_node::{TestGraph, codec, commit_named, expr, named_ref};
@@ -556,8 +558,8 @@ mod tests {
         let (_, leaf_ga) = commit_named(&mut reg, Duration::from_secs(1), &leaf_g, &name("leaf"));
         crate::section::set_description(&mut reg, name("leaf"), "a leaf".to_string());
 
-        // The working graph (in data form): a ref to `leaf` plus a plain
-        // expr node.
+        // The working graph in data form. A ref to `leaf` plus a plain expr
+        // node.
         let mut typed = TestGraph::default();
         let a = typed.add_node(named_ref("leaf", leaf_ga));
         let b = typed.add_node(expr("(+ 2 2)"));
@@ -616,7 +618,7 @@ mod tests {
     }
 
     /// Exporting heads as text carries transitive deps and sections through
-    /// a parse + merge into a fresh registry.
+    /// a parse and merge into a fresh registry.
     #[test]
     fn export_heads_text_round_trip() {
         use crate::test_node::{TestGraph, codec, commit_named, expr, named_ref};

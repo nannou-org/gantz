@@ -13,7 +13,7 @@ pub struct Pull<N> {
 
 /// A trait implemented for all `Node` types allowing to enable pull evaluation.
 pub trait WithPullEval: Sized + Node {
-    /// Consume `self` and return a `Node` that has push evaluation enabled.
+    /// Consume `self` and return a `Node` that has pull evaluation enabled.
     fn with_pull_eval_conf(self, conf: node::EvalConf) -> Pull<Self>;
     /// Consume `self` and return a `Node` that has pull evaluation enabled.
     fn with_pull_eval(self) -> Pull<Self> {
@@ -23,21 +23,19 @@ pub trait WithPullEval: Sized + Node {
 
 impl<N: Node> Pull<N> {
     /// Given some node, return a `Pull` node enabling pull evaluation across
-    /// all outputs.
+    /// all inputs.
     pub fn all(node: N) -> Self {
         Pull::new(node, node::EvalConf::All)
     }
 
     /// Given some node, return a `Pull` node enabling pull evaluation across
-    /// some subset of the outputs.
+    /// some subset of the inputs.
     pub fn new(node: N, conf: node::EvalConf) -> Self {
         Pull { node, conf }
     }
 }
 
 impl<N: Node> WithPullEval for N {
-    /// Consume `self` and return an equivalent node with pull evaluation
-    /// enabled.
     fn with_pull_eval_conf(self, conf: node::EvalConf) -> Pull<Self> {
         Pull::new(self, conf)
     }

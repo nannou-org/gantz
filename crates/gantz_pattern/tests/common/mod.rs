@@ -1,13 +1,13 @@
 //! Shared test harness. A fresh engine with the `gantz/pattern` module
 //! plus the pin-projection helpers.
 //!
-//! Steel 0.8.2's `equal?` cannot compare rationals nested in containers,
-//! see the canary test in `span.rs`, so expected values are compared via
+//! Steel 0.8.2's `equal?` cannot compare rationals nested in containers.
+//! See the canary test in `span.rs`. So expected values are compared via
 //! pinned projections. Every exact number becomes a numerator and
 //! denominator list, spans become 2-lists and events become value,
 //! active and whole lists. Pinned forms contain only ints, floats, bools
 //! and symbols, which `equal?` handles, and they also pin exactness. An
-//! accidental float shows up as e.g. `0.5` instead of `(1 2)`.
+//! accidental float shows up as `0.5` instead of `(1 2)`.
 
 // Each integration test binary compiles this module separately and uses
 // only a subset of the helpers.
@@ -16,7 +16,7 @@
 use gantz_core::steel::SteelVal;
 use gantz_core::steel::steel_vm::engine::Engine;
 
-/// Steel source prepended to every test snippet: the module require plus
+/// Steel source prepended to every test snippet. The module require plus
 /// the pin helpers. Kept here rather than in the module so runtime code
 /// never depends on the test-only projection format.
 pub const PIN: &str = r#"
@@ -55,7 +55,7 @@ pub fn eval_in(vm: &mut Engine, snippet: &str) -> SteelVal {
         .clone()
 }
 
-/// Evaluate a snippet (with the pin preamble) on a fresh pattern engine,
+/// Evaluate a snippet with the pin preamble on a fresh pattern engine,
 /// returning the final value.
 pub fn eval(snippet: &str) -> SteelVal {
     eval_in(&mut new_pin_engine(), snippet)

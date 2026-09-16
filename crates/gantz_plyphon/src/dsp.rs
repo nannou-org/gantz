@@ -6,13 +6,14 @@ use plyphon::Rate;
 use plyphon::synthdef::{InputRef, Param, SynthDef, UnitSpec};
 use serde::{Deserialize, Serialize};
 
-/// A dsp node's ugen rate: audio (`ar`, one value per sample) or control (`kr`,
-/// one value per block - cheaper, for modulators). Structural: it sets the
-/// emitted [`UnitSpec`]'s rate, so a change respawns the synth.
+/// A dsp node's ugen rate. Audio rate (`ar`) is one value per sample. Control
+/// rate (`kr`) is one value per block, cheaper and suited to modulators. The
+/// rate is structural. It sets the emitted [`UnitSpec`]'s rate, so a change
+/// respawns the synth.
 ///
-/// A consumer reading a control-rate wire at audio rate holds the value for the
-/// whole block. Audio *sinks* (whose units read inputs strictly as audio, like
-/// `Out`) lift control wires explicitly via [`DspBuilder::ensure_audio`].
+/// A consumer reading a control-rate wire at audio rate holds the value for
+/// the whole block. Audio sinks such as `Out` read inputs strictly as audio,
+/// so they lift control wires explicitly via [`DspBuilder::ensure_audio`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NodeRate {
     /// Audio rate (`ar`): one value per sample.
@@ -33,7 +34,7 @@ impl NodeRate {
         }
     }
 
-    /// The display / sugar token: `"ar"` or `"kr"`.
+    /// The display and sugar token, `"ar"` or `"kr"`.
     pub fn token(self) -> &'static str {
         match self {
             NodeRate::Audio => "ar",
@@ -42,14 +43,15 @@ impl NodeRate {
     }
 }
 
-/// A channel group: the mono wires a single dsp port carries.
+/// A channel group, the mono wires a single dsp port carries.
 ///
-/// A gantz signal edge is a channel-*group* wire (like SC's array signals, Max's
-/// MC cords or VCV's poly cables): one edge carries [`width`](Self::width)
-/// channels, lowered by the synthdef compiler to plyphon's strictly mono-wire
-/// unit inputs (one [`InputRef`] per channel). A `Signal` is never empty -
-/// silence is one channel of constant `0.0`, not a zero-channel group (plyphon
-/// units reject empty input lists at synth-build time).
+/// A gantz signal edge is a channel-group wire, like SC's array signals,
+/// Max's MC cords or VCV's poly cables. One edge carries
+/// [`width`](Self::width) channels. The synthdef compiler lowers them to
+/// plyphon's mono-wire unit inputs, one [`InputRef`] per channel. A `Signal`
+/// is never empty. Silence is one channel of constant `0.0`, not a
+/// zero-channel group, since plyphon units reject empty input lists at
+/// synth-build time.
 #[derive(Clone, Debug)]
 pub struct Signal(Vec<InputRef>);
 
@@ -59,12 +61,12 @@ impl Signal {
         Signal(vec![input])
     }
 
-    /// `n` channels of silence (constant `0.0`). `n` is clamped to at least 1.
+    /// `n` channels of silence, constant `0.0`. `n` is clamped to at least 1.
     pub fn silent(n: usize) -> Self {
         Signal(vec![InputRef::Constant(0.0); n.max(1)])
     }
 
-    /// The number of channels this signal carries (always at least 1).
+    /// The number of channels this signal carries, always at least 1.
     pub fn width(&self) -> usize {
         self.0.len()
     }
@@ -79,8 +81,8 @@ impl Signal {
         self.0.iter().copied()
     }
 
-    /// Concatenate channel groups into one wide group (width = the sum of the
-    /// input widths). An empty iterator concatenates to mono silence.
+    /// Concatenate channel groups into one wide group whose width is the sum
+    /// of the input widths. An empty iterator concatenates to mono silence.
     pub fn concat(signals: impl IntoIterator<Item = Signal>) -> Self {
         signals.into_iter().flat_map(|s| s.0).collect()
     }
@@ -88,7 +90,7 @@ impl Signal {
 
 impl FromIterator<InputRef> for Signal {
     /// Collect per-channel wires into a group. An empty iterator collects to
-    /// mono silence (a `Signal` is never empty).
+    /// mono silence, since a `Signal` is never empty.
     fn from_iter<I: IntoIterator<Item = InputRef>>(iter: I) -> Self {
         let channels: Vec<InputRef> = iter.into_iter().collect();
         match channels.is_empty() {
@@ -99,138 +101,140 @@ impl FromIterator<InputRef> for Signal {
 }
 
 /// The channel width and rate a dsp output port's [`Signal`] carried at derive
-/// time (see [`PortShapes`]).
+/// time. See [`PortShapes`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PortShape {
     /// The number of channels the port carries.
     pub width: usize,
-    /// The port's rate (see [`signal_rate`]).
+    /// The port's rate. See [`signal_rate`].
     pub rate: Rate,
 }
 
 /// Per-port shapes recorded during derivation, keyed by
 /// `(node path, dsp output port)`.
 ///
-/// Covers exactly the ports derivation materialized a [`Signal`] for
-/// (dsp-reachable nodes) - a port with no entry contributed nothing to the
-/// derived program. A `BTreeMap` keeps any rendering of it deterministic.
+/// Covers exactly the ports of dsp-reachable nodes that derivation
+/// materialized a [`Signal`] for. A port with no entry contributed nothing to
+/// the derived program. A `BTreeMap` keeps any rendering of it deterministic.
 pub type PortShapes = std::collections::BTreeMap<(Vec<usize>, usize), PortShape>;
 
 /// A gantz node that contributes one or more plyphon UGens to a synthdef.
 ///
-/// This is the audio/DSP analogue of [`gantz_core::Node`]: where `Node::expr`
-/// emits control-rate Steel, [`NodeDsp::ugens`] emits plyphon [`UnitSpec`]s into
-/// the synthdef under construction. A node is "DSP" simply by implementing this
-/// trait (and being discoverable via [`ToNodeDsp`]). The same gantz graph is
-/// compiled by both backends independently.
+/// This is the DSP analogue of [`gantz_core::Node`]. Where `Node::expr` emits
+/// control-rate Steel, [`NodeDsp::ugens`] emits plyphon [`UnitSpec`]s into the
+/// synthdef under construction. A node is DSP by implementing this trait and
+/// being discoverable via [`ToNodeDsp`]. Both backends compile the same gantz
+/// graph independently.
 ///
-/// **Steel placeholder contract:** a dsp node's `Node::expr` output for a dsp
-/// output port must not evaluate to a number (use `'()` or similar). Hybrid
-/// control inputs ([`control_input_expr`](crate::param::control_input_expr))
-/// distinguish a control value from an inert dsp edge with a `number?` guard, so
-/// a numeric placeholder would be mistaken for a control value and stomp the
-/// downstream node's param state. Nodes with no dsp outputs (e.g. `~scopeout`)
-/// are exempt - their Steel outputs never feed a dsp edge.
+/// The Steel placeholder contract. A dsp node's `Node::expr` output for a dsp
+/// output port must never evaluate to a number. Use `'()` or similar. Hybrid
+/// control inputs, see [`control_input_expr`](crate::param::control_input_expr),
+/// distinguish a control value from an inert dsp edge with a `number?` guard.
+/// A numeric placeholder would be mistaken for a control value and stomp the
+/// downstream node's param state. Nodes with no dsp outputs, such as
+/// `~scopeout`, are exempt. Their Steel outputs never feed a dsp edge.
 pub trait NodeDsp {
-    /// The number of DSP (signal) input *ports* - the leading inputs that carry
-    /// signals, wired into the synthdef. A node's [`gantz_core::Node::n_inputs`]
-    /// may exceed this: any inputs at indices `>= n_dsp_inputs` are *control*
-    /// inputs, a purely Steel/state concern (a connected control value is written
-    /// into the node's param state by its `expr`), and are ignored by the
-    /// synthdef compiler.
+    /// The number of DSP signal input ports, the leading inputs that carry
+    /// signals wired into the synthdef. A node's
+    /// [`gantz_core::Node::n_inputs`] may exceed this. Inputs at indices
+    /// `>= n_dsp_inputs` are control inputs, a purely Steel/state concern. The
+    /// node's `expr` writes a connected control value into its param state and
+    /// the synthdef compiler ignores it.
     ///
-    /// A dsp input may also be *hybrid*: backed by a control param it falls
-    /// back to when no dsp source is connected (e.g. `~sinosc`'s freq). The two
-    /// sides compose without coordination: the synthdef compiler only wires dsp
-    /// sources (a connected number materializes no signal, so
-    /// [`ugens`](Self::ugens) sees `None` and bakes the param), while the
-    /// node's Steel `expr` ([`control_input_expr`](crate::param::control_input_expr))
-    /// writes connected numbers into the param state and ignores dsp
-    /// placeholders via its `number?` guard.
+    /// A dsp input may also be hybrid. It is backed by a control param it
+    /// falls back to when no dsp source is connected, for example `~sinosc`'s
+    /// freq. The two sides compose without coordination. The synthdef
+    /// compiler only wires dsp sources. A connected number materializes no
+    /// signal, so [`ugens`](Self::ugens) sees `None` and bakes the param. The
+    /// node's Steel `expr`, see
+    /// [`control_input_expr`](crate::param::control_input_expr), writes
+    /// connected numbers into the param state and ignores dsp placeholders via
+    /// its `number?` guard.
     fn n_dsp_inputs(&self) -> usize {
         0
     }
 
-    /// The number of DSP (signal) output *ports*. Each port carries a whole
-    /// channel group ([`Signal`]) - this counts ports, not channels. May differ
-    /// from [`gantz_core::Node::n_outputs`] (e.g. `~scopeout` has two Steel
-    /// outputs but no dsp outputs).
+    /// The number of DSP signal output ports. Each port carries a whole
+    /// channel group, a [`Signal`], so this counts ports, not channels. It may
+    /// differ from [`gantz_core::Node::n_outputs`]. For example `~scopeout`
+    /// has two Steel outputs but no dsp outputs.
     fn n_dsp_outputs(&self) -> usize {
         1
     }
 
-    /// Whether this node is a synthdef *sink* (e.g. `~out`) that the compiler
+    /// Whether this node is a synthdef sink, such as `~out`, that the compiler
     /// uses as a root when deriving a synthdef.
     fn is_output(&self) -> bool {
         false
     }
 
-    /// Whether this node is a synthdef *monitor* (e.g. `~scopeout`) - a sink that
-    /// reads its dsp input back to the control world rather than to the speakers.
-    /// Like [`is_output`](Self::is_output) it roots a synthdef pull, but instead
-    /// of an `Out` it emits a `ScopeOut` (via [`DspBuilder::push_monitor`]) whose
-    /// samples the audio driver streams into the node's VM state.
+    /// Whether this node is a synthdef monitor, such as `~scopeout`. A monitor
+    /// is a sink that reads its dsp input back to the control world rather
+    /// than to the speakers. Like [`is_output`](Self::is_output) it roots a
+    /// synthdef pull. Instead of an `Out` it emits a `ScopeOut`, recorded via
+    /// [`DspBuilder::push_monitor`], whose samples the audio driver streams
+    /// into the node's VM state.
     fn is_monitor(&self) -> bool {
         false
     }
 
-    /// Whether this node is a synthdef *boundary* (e.g. `~bus`): the multi-def
-    /// compiler ([`derive_synthdefs`](crate::derive_synthdefs)) cuts the graph
-    /// into per-region synthdefs here, lowering the boundary to a private-bus
+    /// Whether this node is a synthdef boundary, such as `~bus`. The multi-def
+    /// compiler [`derive_synthdefs`](crate::derive_synthdefs) cuts the graph
+    /// into per-region synthdefs here and lowers the boundary to a private-bus
     /// `Out`/`In` pair. Boundary nodes must have exactly one dsp input and one
     /// dsp output. Their [`ugens`](Self::ugens) is only invoked when both sides
-    /// land in the same region (no cut) and should pass the signal through.
+    /// land in the same region, and must pass the signal through.
     fn is_boundary(&self) -> bool {
         false
     }
 
     /// Emit this node's UGens into `b`, given the resolved [`Signal`] for each
-    /// DSP input port, returning one [`Signal`] per DSP output port (so
-    /// downstream nodes can reference them).
+    /// DSP input port. Returns one [`Signal`] per DSP output port for
+    /// downstream nodes to reference.
     ///
-    /// `path` is the node's path within the graph (e.g. `[2]` for the node at
-    /// index 2 of a flat graph). Use it to name any control [`Param`]s
-    /// uniquely within the synthdef (see [`param_name`](crate::param::param_name)).
+    /// `path` is the node's path within the graph, for example `[2]` for the
+    /// node at index 2 of a flat graph. Use it to name control [`Param`]s
+    /// uniquely within the synthdef via [`param_name`](crate::param::param_name).
     /// `inputs` has length [`n_dsp_inputs`](Self::n_dsp_inputs). A connected
-    /// input arrives pre-summed as `Some` (a multi-edge input is the unity-gain
-    /// mix of its summands, [`sum_signals`]). `None` means no dsp summand
-    /// materialized a signal: the input is unconnected, or fed only by
-    /// signal-less sources (e.g. a dangling `~unpack` port). A node may treat
-    /// `None` as mono silence ([`input_or_silent`]) or fall back to a control
-    /// param (a *hybrid* input). Params should broadcast across an input's
-    /// channels (e.g. `~lag` emits one `Lag` unit per channel, all sharing the
-    /// one `dur` param).
+    /// input arrives pre-summed as `Some`. A multi-edge input is the
+    /// unity-gain mix of its summands, see [`sum_signals`]. `None` means no
+    /// dsp summand materialized a signal. The input is unconnected, or fed
+    /// only by signal-less sources such as a dangling `~unpack` port. A
+    /// non-hybrid node reads `None` as silence via [`input_or_silent`]. A
+    /// hybrid input falls back to a control param instead. Params must
+    /// broadcast across an input's channels. For example `~lag` emits one
+    /// `Lag` unit per channel, all sharing the one `dur` param.
     fn ugens(&self, path: &[usize], inputs: &[Option<Signal>], b: &mut DspBuilder) -> Vec<Signal>;
 }
 
 /// A downcast hook so the synthdef compiler and the audio driver can find
-/// [`NodeDsp`] nodes inside an erased node type (e.g. the erased UI node,
-/// `gantz_egui::node::DynNode`).
+/// [`NodeDsp`] nodes inside an erased node type such as
+/// `gantz_egui::node::DynNode`.
 ///
-/// Implemented per concrete DSP node type (returning `Some(self)`), and for
-/// the erased UI node by trying each known DSP node type via [`node_dsp_of`]
-/// (see the `egui` module). (A blanket `impl<T: NodeDsp>` is deliberately
-/// avoided so the erased-node impl does not collide with it.)
+/// Each concrete DSP node type implements it by returning `Some(self)`. The
+/// erased UI node implements it by trying each known DSP node type via
+/// [`node_dsp_of`]. There is no blanket `impl<T: NodeDsp>`, so the erased-node
+/// impl does not collide with one.
 pub trait ToNodeDsp {
     /// This value as a [`NodeDsp`], if it is one.
     fn to_node_dsp(&self) -> Option<&dyn NodeDsp>;
 
     /// The node's path, used to name control [`Param`]s, key driver bindings
-    /// (see [`ParamBinding::node_path`]) and hash region keys. `ix` is the
+    /// such as [`ParamBinding::node_path`] and hash region keys. `ix` is the
     /// node's index within the graph being derived.
     ///
     /// Defaults to `[ix]`, correct for a flat graph. The flattening pass
-    /// (see [`flatten`](crate::flatten())) overrides this on its
+    /// [`flatten`](crate::flatten()) overrides this on its
     /// [`Flat`](crate::flatten::Flat) wrapper to return the node's original
-    /// path within the nested structure, so params keep bridging to the
+    /// path within the nested structure. Params then keep bridging to the
     /// node's VM state and identities stay stable across re-derives.
     fn node_path(&self, ix: usize) -> Vec<usize> {
         vec![ix]
     }
 }
 
-// References probe through to the referent, letting borrowed graphs (e.g. the
-// flattening pass's `Flat<&N>` weights) derive without cloning nodes.
+// References probe through to the referent, so borrowed graphs such as the
+// flattening pass's `Flat<&N>` weights derive without cloning nodes.
 impl<T: ToNodeDsp + ?Sized> ToNodeDsp for &T {
     fn to_node_dsp(&self) -> Option<&dyn NodeDsp> {
         (**self).to_node_dsp()
@@ -245,52 +249,54 @@ impl<T: ToNodeDsp + ?Sized> ToNodeDsp for &T {
 /// map a node's live state value to the right synth param index.
 #[derive(Clone, Debug)]
 pub struct ParamBinding {
-    /// The dsp node's path within the graph (e.g. `[2]` for a flat graph).
+    /// The dsp node's path within the graph, for example `[2]` in a flat
+    /// graph.
     pub node_path: Vec<usize>,
-    /// Which of the node's params feeds this synth param: `None` for the *bare*
-    /// single-param state shape, `Some(name)` for a sub-map of *keyed* state
-    /// (see the [`param`](crate::param) module docs on the two shapes).
+    /// Which of the node's params feeds this synth param. `None` for the bare
+    /// single-param state shape, `Some(name)` for a sub-map of keyed state.
+    /// The [`param`](crate::param) module docs describe the two shapes.
     pub key: Option<String>,
     /// The param's index within the synthdef's `params`.
     pub index: usize,
 }
 
-/// The smoothing lag (seconds) of a driver-controlled fade gain - the ramp time
-/// of each half of a crossfaded synth replacement. Long enough that the
-/// `LagControl`'s per-control-tick steps stay small (no zipper), short enough
-/// that edits feel immediate.
+/// The smoothing lag in seconds of a driver-controlled fade gain, the ramp
+/// time of each half of a crossfaded synth replacement. It is long enough
+/// that the `LagControl`'s per-tick steps stay small and do not zipper, and
+/// short enough that edits feel immediate.
 pub const FADE_LAG: f32 = 0.05;
 
-/// Records a synthdef *fade gain* - a driver-owned param scaling a sink's whole
-/// output - so the audio driver can fade the synth in and out across a
-/// crossfaded replacement (the respawn de-click). The default is baked at
-/// `0.0` so the synth spawns silent without any def mutation, and the driver
-/// ramps it via the param's own `LagControl` - to `1.0` once the synth is up,
-/// to `0.0` ahead of a deferred free. [`structural_sig`](crate::structural_sig)
-/// excludes defaults, so the baked `0.0` does not churn the sig. Fade gains
-/// have NO [`ParamBinding`]: no node state feeds them, the driver alone drives
-/// them.
+/// Records a synthdef fade gain, a driver-owned param scaling a sink's whole
+/// output. The audio driver fades the synth in and out across a crossfaded
+/// replacement to de-click the respawn. The default is baked at `0.0` so the
+/// synth spawns silent without any def mutation. The driver ramps it via the
+/// param's own `LagControl`, to `1.0` once the synth is up and to `0.0` ahead
+/// of a deferred free. [`structural_sig`](crate::structural_sig) excludes
+/// defaults, so the baked `0.0` does not churn the sig. Fade gains have no
+/// [`ParamBinding`]. No node state feeds them, the driver alone drives them.
 #[derive(Clone, Copy, Debug)]
 pub struct GainRef {
     /// The param's index within the synthdef's `params`.
     pub index: usize,
-    /// The param's smoothing lag in seconds - the fade's ramp time.
+    /// The param's smoothing lag in seconds, the fade's ramp time.
     pub lag: f32,
 }
 
-/// Records a monitor (`~scopeout`) node's `ScopeOut`, so the audio driver can cue a live
-/// scope stream and route its samples into the right node's ring-buffer state,
-/// capped at `size`. The `ScopeOut`'s `bufnum` is a no-lag control param in the
-/// derived def; the driver allocates a globally-unique cued index and sets it
-/// via `set_control` after spawning (no def mutation).
+/// Records a `~scopeout` monitor node's `ScopeOut`, so the audio driver can
+/// cue a live scope stream and route its samples into the right node's
+/// ring-buffer state, capped at `size`. The `ScopeOut`'s `bufnum` is a no-lag
+/// control param in the derived def. The driver allocates a globally-unique
+/// cued index and sets it via `set_control` after spawning, with no def
+/// mutation.
 #[derive(Clone, Debug)]
 pub struct ScopeOutBinding {
-    /// The monitor node's path within the graph (where its ring state lives).
+    /// The monitor node's path within the graph, where its ring state lives.
     pub node_path: Vec<usize>,
-    /// The ring buffer length (frames) the driver caps each per-channel ring at.
+    /// The ring buffer length in frames the driver caps each per-channel ring
+    /// at.
     pub size: usize,
-    /// The number of channels the `ScopeOut` streams (`cue_scope`'s width) -
-    /// the width of the monitored input [`Signal`], inferred at derive time.
+    /// The number of channels the `ScopeOut` streams, the width of the
+    /// monitored input [`Signal`] inferred at derive time.
     pub channels: usize,
     /// The index within the def's `units` of this monitor's `ScopeOut`.
     pub scope_unit: usize,
@@ -299,21 +305,22 @@ pub struct ScopeOutBinding {
     pub bufnum_param: usize,
 }
 
-/// Records a buffer-playing node's (`~playbuf`) asset reference, so the audio
-/// driver can make the referenced [`AssetAddr`](gantz_ca::ContentAddr) resident,
-/// allocate a bufnum, install the buffer, and set the node's `bufnum`/`rate`
-/// params after spawning.
+/// Records a `~playbuf` node's asset reference. The audio driver makes the
+/// referenced [`gantz_ca::ContentAddr`] resident, allocates a bufnum,
+/// installs the buffer, and sets the node's `bufnum` and `rate` params after
+/// spawning.
 ///
-/// The buffer analogue of [`ScopeOutBinding`], but where a scope stream is
-/// per-synth read-back, a resident buffer is shared read-only across every
-/// synth referencing the same asset (loaded once, refcounted). `bufnum_param`
-/// and `rate_param` are no-lag control params (see
-/// [`push_control_param`](DspBuilder::push_control_param)) the driver sets via
-/// `set_control` after spawning (no def mutation) - the rate to
-/// `sample_rate / engine_sample_rate` so `PlayBuf` advances at the right pitch.
+/// This is the buffer analogue of [`ScopeOutBinding`]. Where a scope stream
+/// is per-synth read-back, a resident buffer is loaded once, refcounted and
+/// shared read-only across every synth referencing the same asset.
+/// `bufnum_param` and `rate_param` are no-lag control params, see
+/// [`push_control_param`](DspBuilder::push_control_param), the driver sets via
+/// `set_control` after spawning. The rate is set to
+/// `sample_rate / engine_sample_rate` so `PlayBuf` advances at the right
+/// pitch.
 #[derive(Clone, Debug)]
 pub struct BufferBinding {
-    /// The buffer node's path within the graph (where its state lives).
+    /// The buffer node's path within the graph, where its state lives.
     pub node_path: Vec<usize>,
     /// The content-addressed audio asset the node plays.
     pub asset: gantz_ca::ContentAddr,
@@ -332,19 +339,19 @@ pub struct Finished {
     pub def: SynthDef,
     /// One binding per control param, in param-index order.
     pub params: Vec<ParamBinding>,
-    /// One binding per monitor (`~scopeout`).
+    /// One binding per `~scopeout` monitor.
     pub monitors: Vec<ScopeOutBinding>,
-    /// The params gating the def's whole output (fade gains).
+    /// The fade gains gating the def's whole output.
     pub gains: Vec<GainRef>,
-    /// One binding per buffer reference (`~playbuf`).
+    /// One binding per `~playbuf` buffer reference.
     pub buffers: Vec<BufferBinding>,
 }
 
 /// Accumulates the [`UnitSpec`]s and [`Param`]s of a synthdef as nodes emit them.
 ///
-/// Also carries the engine's output-channel count so a sink node (`~out`) can
-/// fan a mono signal across every output channel, and records a [`ParamBinding`]
-/// per pushed param.
+/// Also carries the engine's output-channel count so a sink node such as
+/// `~out` can fan a mono signal across every output channel. Records a
+/// [`ParamBinding`] per pushed param.
 pub struct DspBuilder {
     units: Vec<UnitSpec>,
     params: Vec<Param>,
@@ -379,8 +386,8 @@ impl DspBuilder {
     /// Declare a control parameter belonging to the dsp node at `path`, returning
     /// its index for [`InputRef::Param`] and recording its [`ParamBinding`].
     ///
-    /// The node's *whole* VM state is the param's `{ value, pending }` map (the
-    /// bare shape) - see [`push_param_keyed`](Self::push_param_keyed) for nodes
+    /// The node's whole VM state is the param's `{ value, pending }` map, the
+    /// bare shape. See [`push_param_keyed`](Self::push_param_keyed) for nodes
     /// with several params.
     pub fn push_param(&mut self, path: &[usize], param: Param) -> u32 {
         let index = self.params.len();
@@ -393,9 +400,9 @@ impl DspBuilder {
         index as u32
     }
 
-    /// Declare a control parameter fed by the `key`d sub-map of the *keyed* VM
-    /// state of the dsp node at `path` (see the [`param`](crate::param) module
-    /// docs), returning its index for [`InputRef::Param`] and recording its
+    /// Declare a control parameter fed by the `key`d sub-map of the keyed VM
+    /// state of the dsp node at `path`. See the [`param`](crate::param) module
+    /// docs. Returns its index for [`InputRef::Param`] and records its
     /// [`ParamBinding`].
     pub fn push_param_keyed(&mut self, path: &[usize], key: &str, param: Param) -> u32 {
         let index = self.params.len();
@@ -408,11 +415,11 @@ impl DspBuilder {
         index as u32
     }
 
-    /// Declare a driver-owned, no-lag control param (no [`ParamBinding`]),
-    /// returning its index for [`InputRef::Param`]. Used for per-instance
-    /// wiring - bus indices, scope bufnums - that the driver sets via
-    /// `set_control` after spawning. No lag, since a lagged bus index would
-    /// glide through wrong buses; the default is `0.0`.
+    /// Declare a driver-owned, no-lag control param with no [`ParamBinding`].
+    /// Returns its index for [`InputRef::Param`]. Used for per-instance wiring
+    /// such as bus indices and scope bufnums that the driver sets via
+    /// `set_control` after spawning. A lagged bus index would glide through
+    /// wrong buses, hence no lag. The default is `0.0`.
     pub fn push_control_param(&mut self, path: &[usize], label: &str) -> u32 {
         let index = self.params.len();
         self.params
@@ -420,13 +427,11 @@ impl DspBuilder {
         index as u32
     }
 
-    /// Declare a driver-controlled *fade gain* for the sink at `path`: a lagged
-    /// param (default `0.0`, [`FADE_LAG`] ramp) that must scale the sink's whole
-    /// output, recorded as a [`GainRef`] but with NO [`ParamBinding`] - node
-    /// state never feeds it. The default is baked at `0.0` so the synth spawns
-    /// silent; the driver ramps it to `1.0` via `set_control` once the synth is
-    /// up (and to `0.0` ahead of a deferred free). Returns the param's index
-    /// for [`InputRef::Param`].
+    /// Declare a driver-controlled fade gain for the sink at `path`. It is a
+    /// lagged param with a `0.0` default and a [`FADE_LAG`] ramp that must
+    /// scale the sink's whole output. It is recorded as a [`GainRef`] with no
+    /// [`ParamBinding`]. See [`GainRef`] for how the driver ramps it. Returns
+    /// the param's index for [`InputRef::Param`].
     pub fn push_fade_gain(&mut self, path: &[usize]) -> u32 {
         let index = self.params.len();
         self.params.push(Param::lag(
@@ -441,12 +446,13 @@ impl DspBuilder {
         index as u32
     }
 
-    /// Declare a monitor for the dsp node at `path`, recording its [`ScopeOutBinding`]
-    /// so the driver can cue a `channels`-wide scope stream and route its samples into
-    /// the node's ring state (capped at `size` frames). `scope_unit` is the index of the
-    /// node's `ScopeOut` unit (from [`push_unit`](Self::push_unit)); `bufnum_param` is
-    /// the no-lag control param the driver sets to the cued scope-stream index via
-    /// `set_control` after spawning.
+    /// Declare a monitor for the dsp node at `path`, recording its
+    /// [`ScopeOutBinding`]. The driver cues a `channels`-wide scope stream and
+    /// routes its samples into the node's ring state, capped at `size` frames.
+    /// `scope_unit` is the index of the node's `ScopeOut` unit from
+    /// [`push_unit`](Self::push_unit). `bufnum_param` is the no-lag control
+    /// param the driver sets to the cued scope-stream index via `set_control`
+    /// after spawning.
     pub fn push_monitor(
         &mut self,
         path: &[usize],
@@ -465,10 +471,10 @@ impl DspBuilder {
     }
 
     /// Declare a buffer reference for the dsp node at `path`, recording a
-    /// [`BufferBinding`] so the driver can make `asset` resident and set the
-    /// node's `bufnum`/`rate` params after spawning. `bufnum_param` and
-    /// `rate_param` are no-lag control params (from
-    /// [`push_control_param`](Self::push_control_param)); `sample_rate` is the
+    /// [`BufferBinding`]. The driver makes `asset` resident and sets the
+    /// node's `bufnum` and `rate` params after spawning. `bufnum_param` and
+    /// `rate_param` are no-lag control params from
+    /// [`push_control_param`](Self::push_control_param). `sample_rate` is the
     /// asset's own rate, which the driver divides by the engine rate to set
     /// `rate`.
     pub fn push_buffer(
@@ -493,8 +499,8 @@ impl DspBuilder {
         self.out_channels
     }
 
-    /// The rate of the wire behind `input`: a unit output takes its unit's rate,
-    /// a param its param rate, and a constant literal is scalar.
+    /// The rate of the wire behind `input`. A unit output takes its unit's
+    /// rate, a param its param rate, and a constant literal is scalar.
     pub fn input_rate(&self, input: &InputRef) -> Rate {
         match input {
             InputRef::Constant(_) => Rate::Scalar,
@@ -503,13 +509,14 @@ impl DspBuilder {
         }
     }
 
-    /// Lift `ch` to an audio-rate wire: the identity for an audio wire or a
-    /// constant literal (consumers fold constants natively), else a `K2A`
-    /// (control-to-audio conversion, ramping from the previous block's value).
+    /// Lift `ch` to an audio-rate wire. An audio wire or a constant literal
+    /// passes through, since consumers fold constants natively. Anything else
+    /// gets a `K2A`, a control-to-audio conversion that ramps from the
+    /// previous block's value.
     ///
-    /// Audio *sinks* need it: a unit that reads its inputs strictly as audio
-    /// (`Out`'s channels, for example) sees a control- or scalar-rate wire as
-    /// SILENCE, not a held value.
+    /// Audio sinks need it. A unit that reads its inputs strictly as audio,
+    /// such as `Out`, sees a control-rate or scalar-rate wire as silence, not
+    /// a held value.
     pub fn ensure_audio(&mut self, ch: InputRef) -> InputRef {
         match ch {
             InputRef::Constant(_) => ch,
@@ -542,9 +549,9 @@ impl DspBuilder {
 /// Find the [`NodeDsp`] within a type-erased node, trying each of this crate's
 /// DSP node types.
 ///
-/// Node-set types (e.g. an app's `Box<dyn Node>`) can implement [`ToNodeDsp`]
-/// by delegating to this fn. Sets composing additional DSP node types chain
-/// their own downcasts via `.or_else(..)`.
+/// Node-set types such as an app's `Box<dyn Node>` can implement
+/// [`ToNodeDsp`] by delegating to this fn. Sets composing additional DSP node
+/// types chain their own downcasts via `.or_else(..)`.
 ///
 /// Keep the probe list in step with `crate::ref_ext`'s data-level DSP tag
 /// set, which classifies the same types by wire tag.
@@ -563,8 +570,9 @@ pub fn node_dsp_of(any: &dyn std::any::Any) -> Option<&dyn NodeDsp> {
 }
 
 /// The signal at dsp input `i` of a [`NodeDsp::ugens`] `inputs` slice, or mono
-/// silence when no signal materialized there - the common fallback for a
-/// non-hybrid input.
+/// silence when no signal materialized there. This is the fallback for every
+/// non-hybrid input. An unconnected input, a dangling port and an unsourced
+/// boundary all read as one channel of constant `0.0`.
 pub fn input_or_silent(inputs: &[Option<Signal>], i: usize) -> Signal {
     inputs
         .get(i)
@@ -573,9 +581,9 @@ pub fn input_or_silent(inputs: &[Option<Signal>], i: usize) -> Signal {
         .unwrap_or_else(|| Signal::silent(1))
 }
 
-/// The rate of a channel group: audio if any channel is audio, else control
-/// if any is control, else scalar (a constant-only signal, e.g. baked
-/// silence).
+/// The rate of a channel group. Audio if any channel is audio, else control
+/// if any is control, else scalar for a constant-only signal such as baked
+/// silence.
 pub fn signal_rate(b: &DspBuilder, sig: &Signal) -> Rate {
     let any = |rate: Rate| sig.channels().any(|ch| b.input_rate(&ch) == rate);
     if any(Rate::Audio) {
@@ -587,8 +595,8 @@ pub fn signal_rate(b: &DspBuilder, sig: &Signal) -> Rate {
     }
 }
 
-/// Record one [`PortShape`] per output port of the node at `path` (with output
-/// [`Signal`]s `outs`) into `shapes`.
+/// Record one [`PortShape`] per output [`Signal`] in `outs` of the node at
+/// `path` into `shapes`.
 pub(crate) fn record_port_shapes(
     shapes: &mut PortShapes,
     b: &DspBuilder,
@@ -606,14 +614,14 @@ pub(crate) fn record_port_shapes(
     shapes.extend(entries);
 }
 
-/// Sum channel groups into one group: the unity-gain mix of every summand.
+/// Sum channel groups into one group, the unity-gain mix of every summand.
 ///
 /// The result's width is the widest summand's. A mono summand broadcasts its
-/// single channel into every result channel. A wider-but-narrower summand
+/// single channel into every result channel. A narrower multi-channel summand
 /// contributes silence past its own width. Constant channels fold at derive
-/// time (so silent placeholders vanish). No summands sum to mono silence, and
-/// a lone summand passes through untouched (zero units), keeping a
-/// single-edge input's derive byte-identical to a direct wire.
+/// time, so silent placeholders vanish. No summands sum to mono silence. A
+/// lone summand passes through with zero units, so a single-edge input
+/// derives byte-identical to a direct wire.
 pub fn sum_signals(b: &mut DspBuilder, signals: &[Signal]) -> Signal {
     match signals {
         [] => Signal::silent(1),
@@ -625,10 +633,10 @@ pub fn sum_signals(b: &mut DspBuilder, signals: &[Signal]) -> Signal {
     }
 }
 
-/// The wire carrying channel `ch` of the sum of `signals`: each summand
+/// The wire carrying channel `ch` of the sum of `signals`. Each summand
 /// contributes its channel `ch`, a mono summand its broadcast channel `0`, a
-/// wider-but-narrower summand nothing. Constant contributions fold into one
-/// trailing term, dropped when zero and other wires remain.
+/// narrower multi-channel summand nothing. Constant contributions fold into
+/// one trailing term, dropped when zero and other wires remain.
 fn sum_channel(b: &mut DspBuilder, signals: &[Signal], ch: usize) -> InputRef {
     let mut constant = 0.0;
     let mut wires = Vec::new();
@@ -648,11 +656,11 @@ fn sum_channel(b: &mut DspBuilder, signals: &[Signal], ch: usize) -> InputRef {
     sum_wires(b, wires)
 }
 
-/// Sum a non-empty list of mono wires, tiling plyphon's summing units: one
-/// wire passes through, two add via a `BinaryOpUGen`, three or four via
-/// `Sum3`/`Sum4` (strict arity - `SumCtor` rejects a padded input list), and
-/// more tile as a `Sum4` over the first four fed back as the leading summand
-/// of the rest.
+/// Sum a non-empty list of mono wires, tiling plyphon's summing units. One
+/// wire passes through. Two add via a `BinaryOpUGen`. Three or four add via
+/// `Sum3` or `Sum4`, which have strict arity since `SumCtor` rejects a padded
+/// input list. More tile as a `Sum4` over the first four, fed back as the
+/// leading summand of the rest.
 fn sum_wires(b: &mut DspBuilder, mut wires: Vec<InputRef>) -> InputRef {
     while wires.len() > 4 {
         let head: Vec<InputRef> = wires.drain(..4).collect();
@@ -665,9 +673,9 @@ fn sum_wires(b: &mut DspBuilder, mut wires: Vec<InputRef>) -> InputRef {
     }
 }
 
-/// Emit one summing unit over `inputs` (2 -> `BinaryOpUGen` add, 3 -> `Sum3`,
-/// 4 -> `Sum4`): audio rate if any input is audio, else control rate. Each
-/// input is still read at its own rate.
+/// Emit one summing unit over `inputs`. Two inputs emit a `BinaryOpUGen` add,
+/// three a `Sum3` and four a `Sum4`. The unit runs at audio rate if any input
+/// is audio, else control rate. Each input is still read at its own rate.
 fn push_sum_unit(b: &mut DspBuilder, inputs: Vec<InputRef>) -> InputRef {
     let audio = inputs
         .iter()
@@ -708,7 +716,7 @@ mod tests {
         check::<crate::Unpack>();
         check::<crate::Bus>();
         check::<crate::PlayBuf>();
-        // `UnitNode` has no `Default`; every table row probes through the one
+        // `UnitNode` has no `Default`. Every table row probes through the one
         // type.
         let unit = crate::UnitNode::from_unit("SinOsc").expect("SinOsc row");
         assert!(node_dsp_of(&unit).is_some());
@@ -725,7 +733,7 @@ mod tests {
         b.units[from..].iter().map(|u| u.name.clone()).collect()
     }
 
-    /// `InputRef` derives no `PartialEq`; compare wires via `Debug`.
+    /// `InputRef` derives no `PartialEq`, so compare wires via `Debug`.
     fn wire_eq(a: &InputRef, b: &InputRef) -> bool {
         format!("{a:?}") == format!("{b:?}")
     }
@@ -770,8 +778,8 @@ mod tests {
             let sum = sum_signals(&mut b, &signals);
             assert_eq!(sum.width(), 1);
             assert_eq!(unit_names(&b, before), expected, "n = {n}");
-            // An add is special_index 0 (a `BinaryOpUGen` selector, unset on
-            // `Sum3`/`Sum4`).
+            // An add is `BinaryOpUGen` selector 0. `Sum3` and `Sum4` leave it
+            // unset.
             assert!(b.units[before..].iter().all(|u| u.special_index == 0));
         }
     }
@@ -808,15 +816,16 @@ mod tests {
         let before = b.units.len();
         let sum = sum_signals(&mut b, &[stereo, wide]);
         assert_eq!(sum.width(), 3);
-        // Channels 0 and 1 sum a pair; channel 2 is the wide summand's own
-        // wire passed through (the stereo summand contributes nothing there).
+        // Channels 0 and 1 sum a pair. Channel 2 is the wide summand's own
+        // wire passed through, since the stereo summand contributes nothing
+        // there.
         assert_eq!(unit_names(&b, before), vec!["BinaryOpUGen", "BinaryOpUGen"]);
         assert!(wire_eq(&sum.channel(2).unwrap(), &w2));
     }
 
     #[test]
     fn constants_fold_at_derive_time() {
-        // Silence + a wire: the zero constant vanishes, the wire passes
+        // Silence plus a wire. The zero constant vanishes, the wire passes
         // through, no units.
         let mut b = DspBuilder::new(2);
         let w = wire(&mut b, Rate::Audio);

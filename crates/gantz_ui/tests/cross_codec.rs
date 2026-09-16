@@ -1,4 +1,4 @@
-//! Both codecs agree: one tree, two runtimes, the same decode.
+//! Both codecs agree. One tree, two runtimes, the same decode.
 
 #![cfg(all(feature = "steel", feature = "datum"))]
 

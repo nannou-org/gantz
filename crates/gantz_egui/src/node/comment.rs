@@ -7,11 +7,9 @@ use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
-/// Temporary editing state stored in egui memory to buffer text edits.
-///
-/// This prevents every keystroke from mutating the node's text (and thus
-/// triggering a new content-addressed commit). The buffer is flushed to
-/// the node on focus loss.
+/// Buffered text edits stored in egui memory. Flushing per keystroke would
+/// mint a commit per keystroke, so the buffer flushes to the node on focus
+/// loss. See [`NodeUi`] for the `changed` contract.
 #[derive(Clone, Default)]
 struct CommentEditState {
     text_hash: u64,
@@ -28,9 +26,9 @@ fn text_hash(text: &str) -> u64 {
 
 /// A transparent comment node for documenting graphs.
 ///
-/// Both `text` and `size` are part of the content address: editing the note or
-/// resizing it are genuine edits that produce a new commit (and ride the export
-/// pipeline), so a resize is undoable just like a text edit.
+/// Both `text` and `size` are part of the content address. Editing the note or
+/// resizing it produces a new commit, so a resize is undoable just like a text
+/// edit.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag)]
 pub struct Comment {
     text: String,
@@ -55,7 +53,6 @@ impl Default for Comment {
 }
 
 impl gantz_core::Node for Comment {
-    // Comments have no inputs or outputs - they're purely for documentation
     fn n_inputs(&self, _ctx: MetaCtx) -> usize {
         0
     }
@@ -64,9 +61,7 @@ impl gantz_core::Node for Comment {
         0
     }
 
-    // Comments don't evaluate to anything
     fn expr(&self, _ctx: ExprCtx<'_, '_>) -> ExprResult {
-        // Return void/empty expression since comments don't compute anything
         node::parse_expr("void")
     }
 }
@@ -81,15 +76,14 @@ impl NodeUi for Comment {
     }
 
     fn ui(&mut self, _ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
-        // Set when a CA-affecting edit settles this frame: a flushed text change
-        // or a settled resize (see the writes inside the closure below).
+        // Set when a flushed text change or a settled resize lands this frame.
         let mut changed = false;
-        // Get interaction state
         let interaction = uictx.interaction();
         let style = uictx.style();
-        // Match the regular node selection outline: a thin stroke at the node's
-        // edge. The large draggable band lives in the (invisible) inner margin
-        // below, so the border stays subtle while the node remains easy to grab.
+        // Match the regular node selection outline with a thin stroke at the
+        // node's edge. The large draggable band lives in the invisible inner
+        // margin below, so the border stays subtle while the node remains easy
+        // to grab.
         let stroke_w = style.visuals.selection.stroke.width;
         let stroke_color = if interaction.selected {
             style.visuals.selection.stroke.color
@@ -100,16 +94,15 @@ impl NodeUi for Comment {
         };
         let stroke = egui::Stroke::new(stroke_w, stroke_color);
 
-        // Use a custom, transparent frame for comment nodes. The window margin
-        // becomes an inner margin: an invisible band around the text that is the
-        // node's only draggable region (the text itself captures the pointer).
+        // Use a custom, transparent frame. The window margin becomes an inner
+        // margin. That invisible band around the text is the node's only
+        // draggable region, since the text itself captures the pointer.
         let frame = egui::Frame::new()
             .fill(egui::Color32::TRANSPARENT)
             .inner_margin(style.spacing.window_margin)
             .corner_radius(style.visuals.window_corner_radius)
             .stroke(stroke);
 
-        // Use a transparent frame with resizable content
         let node_egui_id = uictx.egui_id();
         let resize_id = node_egui_id.with("resize");
         let size_sync_id = node_egui_id.with("size_sync");
@@ -127,19 +120,20 @@ impl NodeUi for Comment {
                 .with_stroke(false);
             let resize = if push_external {
                 // One-frame push of the committed size into the displayed
-                // resize state: `fixed_size` sets min == max == the size, and
-                // egui clamps the *stored* state through min/max on `begin`
-                // and stores it back on `end`, so this overrides persisted
-                // state. It also leaves the corner unregistered this frame,
-                // cancelling any in-flight drag (external changes win).
+                // resize state. `fixed_size` sets min and max to the size.
+                // egui clamps the stored state through min and max on
+                // `begin` and stores it back on `end`, so this overrides
+                // persisted state. It also leaves the corner unregistered
+                // this frame, which cancels any in-flight drag. External
+                // changes win.
                 ui.ctx().request_repaint();
                 let w = (self.size[0] as f32).max(min_resize.x);
                 let h = (self.size[1] as f32).max(min_resize.y);
                 resize.fixed_size(egui::vec2(w, h))
             } else {
-                // Width is user-resizable (and persists). Height auto-fits the
-                // text - except while the corner is actively dragged, when it
-                // follows the cursor and snaps back to fit on release.
+                // Width is user-resizable and persists. Height auto-fits the
+                // text. While the corner is dragged it follows the cursor
+                // instead, then snaps back to fit on release.
                 resize
                     .resizable(egui::Vec2b::new(
                         interaction.selected,
@@ -149,18 +143,18 @@ impl NodeUi for Comment {
                     .min_size(min_resize)
             };
             let inner = resize.show(ui, |ui| {
-                // The width the user has dragged to; the height auto-fits the
-                // text below (so we don't read it from `available_size`).
+                // The width the user has dragged to. The height auto-fits the
+                // text below, so it is not read from `available_size`.
                 let width = ui.available_width();
 
                 let text_id = node_egui_id.with("comment_text");
 
-                // Load or initialize the editing state.
                 let mut state: CommentEditState = ui
                     .memory_mut(|m| m.data.remove_temp(text_id))
                     .unwrap_or_default();
 
-                // Sync from node if the node's text changed externally (undo, etc.).
+                // Sync from the node when its text changed externally, for
+                // example by undo.
                 let current_hash = text_hash(&self.text);
                 if current_hash != state.text_hash {
                     state.text_hash = current_hash;
@@ -169,7 +163,7 @@ impl NodeUi for Comment {
 
                 // Render the TextEdit against the buffered string. With
                 // auto-height the box always fits its text, so no scroll
-                // area is needed - the TextEdit reports its wrapped height.
+                // area is needed. The TextEdit reports its wrapped height.
                 let response = ui.add(
                     egui::TextEdit::multiline(&mut state.text)
                         .desired_rows(1)
@@ -178,19 +172,15 @@ impl NodeUi for Comment {
                         .desired_width(f32::INFINITY),
                 );
 
-                // Track when the buffer was last edited.
                 let time = ui.input(|i| i.time);
                 if response.changed() {
                     state.last_edit_time = time;
                 }
 
-                // Determine whether the buffer has uncommitted changes.
                 let buffer_dirty = text_hash(&state.text) != state.text_hash;
 
-                // Flush conditions:
-                // 1. Focus lost (existing)
-                // 2. 5+ seconds since last edit with dirty buffer
-                // 3. Any mouse activity with dirty buffer
+                // Flush on focus loss, after 5 seconds without an edit, or on
+                // any mouse activity while the buffer is dirty.
                 let timed_out = buffer_dirty && (time - state.last_edit_time >= 5.0);
                 let mouse_active = buffer_dirty
                     && ui.input(|i| {
@@ -216,22 +206,20 @@ impl NodeUi for Comment {
                     }
                 }
 
-                // Persist the editing state.
                 ui.memory_mut(|m| m.data.insert_temp(text_id, state));
 
-                // The fitted size: the dragged width and the content height
-                // the box auto-fits to. `size` is part of the content
-                // address, so it is written ONLY by genuine local
-                // interaction: (a) a flushed text change (the auto-fit
-                // height rides along), or (b) a settled corner-drag
-                // release. External changes (undo, collab sync) instead
-                // pushed into the resize state above, and a locally
-                // drifting auto-fit height (fonts, DPI, rounding) must
-                // never "correct" the committed value - that would mint
-                // spurious commits and loop between collaborating peers.
-                // The displayed height still auto-fits every frame; the
-                // committed height merely goes advisory-stale until the
-                // next genuine edit.
+                // The fitted size is the dragged width and the content
+                // height the box auto-fits to. `size` is part of the content
+                // address, so only genuine local interaction writes it. That
+                // is a flushed text change, where the auto-fit height rides
+                // along, or a settled corner-drag release. External changes
+                // such as undo or collab sync are pushed into the resize
+                // state above instead. A locally drifting auto-fit height
+                // from fonts, DPI or rounding must never correct the
+                // committed value. That would mint spurious commits and loop
+                // between collaborating peers. The displayed height still
+                // auto-fits every frame. The committed height goes stale
+                // until the next genuine edit.
                 let fitted = fitted_size(width, ui.min_rect().height());
                 let text_committed = text_flushed && !resizing && !push_external;
                 if (text_committed || drag_released) && self.size != fitted {
@@ -281,9 +269,8 @@ mod tests {
             .content_addr()
     }
 
-    /// `size` is now part of the content address, so a resize is a genuine edit
-    /// (this is what lets the `changed` signal at a settled resize map to a real
-    /// commit). Identical fields still produce an identical address.
+    /// `size` is part of the content address, so a resize is a genuine edit.
+    /// Identical fields produce an identical address.
     #[test]
     fn size_is_part_of_content_address() {
         let a = Comment {
@@ -302,7 +289,7 @@ mod tests {
         assert_eq!(content_addr(&a), content_addr(&c));
     }
 
-    /// Text remains part of the content address.
+    /// Text is part of the content address.
     #[test]
     fn text_is_part_of_content_address() {
         let a = Comment {

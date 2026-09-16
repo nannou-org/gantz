@@ -1,6 +1,6 @@
 //! Tests that `flatten` splices nested graphs into a flat graph derivation
-//! understands: boundary bridging, original-path preservation, error cases and
-//! an offline render of a nested graph through the real engine.
+//! understands. Covers boundary bridging, original-path preservation, error
+//! cases and an offline render of a nested graph through the real engine.
 
 use std::collections::HashMap;
 
@@ -19,9 +19,9 @@ use plyphon::{Options, World, engine};
 
 const SR: f32 = 48_000.0;
 
-/// A minimal erased node enum, standing in for the app's `Box<dyn Node>`:
-/// the DSP nodes plus the nesting machinery (`Inlet`/`Outlet`/`Ref`) and a
-/// non-DSP `Other` stand-in.
+/// A minimal erased node enum, standing in for the app's `Box<dyn Node>`.
+/// It has the DSP nodes, the nesting nodes `Inlet`, `Outlet` and `Ref`, and
+/// a non-DSP `Other` stand-in.
 #[derive(Clone)]
 enum N {
     Unit(UnitNode),
@@ -31,7 +31,7 @@ enum N {
     Inlet,
     Outlet,
     Ref(ContentAddr),
-    /// A DSP-aware ref: the child CA + the `inline` flag.
+    /// A DSP-aware ref carrying the child CA and the `inline` flag.
     DspRef(ContentAddr, bool),
     Other,
 }
@@ -74,8 +74,8 @@ fn lag() -> N {
     N::Unit(UnitNode::from_unit("Lag").expect("Lag row"))
 }
 
-/// A `Resolve` closure over a map of committed graphs: `Ref` nodes resolve
-/// (missing entries surface as `Unresolved`), everything else is concrete.
+/// A `Resolve` closure over a map of committed graphs. `Ref` nodes resolve
+/// and missing entries surface as `Unresolved`. Everything else is concrete.
 fn resolver<'g>(
     map: &'g HashMap<ContentAddr, Graph<N>>,
 ) -> impl Fn(&N) -> Option<(ContentAddr, RefKind, Option<&'g Graph<N>>)> + 'g {
@@ -140,7 +140,7 @@ fn lag_child() -> Graph<N> {
     g
 }
 
-/// A child graph `inlet -> outlet` (a pure pass-through wire).
+/// A child graph `inlet -> outlet`, a pure pass-through wire.
 fn wire_child() -> Graph<N> {
     let mut g = Graph::<N>::default();
     let i = g.add_node(N::Inlet);
@@ -151,8 +151,8 @@ fn wire_child() -> Graph<N> {
 
 #[test]
 fn flat_graph_flattens_to_identity() {
-    // No refs: every node is copied with its flat path and every edge kept, and
-    // the derived def is structurally identical to deriving the raw graph.
+    // No refs. Every node is copied with its flat path and every edge is kept.
+    // The derived def is structurally identical to deriving the raw graph.
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
     let other = g.add_node(N::Other);
@@ -175,9 +175,9 @@ fn flat_graph_flattens_to_identity() {
 
 #[test]
 fn splices_a_nested_child() {
-    // parent: sin -> ref -> out, child: inlet -> lag -> outlet. The lag splices
-    // in carrying its nested path, boundary edges bridge to direct edges, and
-    // its dur param is named and bound by that path.
+    // The parent is `sin -> ref -> out` and the child `inlet -> lag -> outlet`.
+    // The lag splices in carrying its nested path. Boundary edges bridge to
+    // direct edges. The dur param is named and bound by that path.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
@@ -210,8 +210,8 @@ fn splices_a_nested_child() {
 
 #[test]
 fn inlet_fans_out_to_every_consumer() {
-    // child: one inlet feeding two lags. The one parent edge into the ref
-    // becomes an edge to each consumer.
+    // The child has one inlet feeding two lags. The one parent edge into the
+    // ref becomes an edge to each consumer.
     let mut child = Graph::<N>::default();
     let i = child.add_node(N::Inlet);
     let l0 = child.add_node(lag());
@@ -232,7 +232,8 @@ fn inlet_fans_out_to_every_consumer() {
 
 #[test]
 fn pass_through_wire_dissolves() {
-    // child: inlet -> outlet. The ref dissolves into a direct parent edge.
+    // The child is `inlet -> outlet`. The ref dissolves into a direct parent
+    // edge.
     let map = HashMap::from([(ca(1), wire_child())]);
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
@@ -248,9 +249,9 @@ fn pass_through_wire_dissolves() {
 
 #[test]
 fn two_levels_splice_and_pass_through() {
-    // grandchild: inlet -> lag -> outlet. child: inlet -> ref(grandchild) ->
-    // outlet. The lag carries its two-level path and the double boundary
-    // bridges to direct edges.
+    // The grandchild is `inlet -> lag -> outlet`. The child is
+    // `inlet -> ref(grandchild) -> outlet`. The lag carries its two-level path
+    // and the double boundary bridges to direct edges.
     let mut child = Graph::<N>::default();
     let i = child.add_node(N::Inlet);
     let r = child.add_node(N::Ref(ca(1)));
@@ -274,8 +275,8 @@ fn two_levels_splice_and_pass_through() {
 
 #[test]
 fn unconnected_boundaries_dissolve_to_silence() {
-    // The ref's input is unconnected (the child lag's input dissolves to
-    // nothing) and a second ref has no outlet to source the out's input from.
+    // The ref's input is unconnected, so the child lag's input dissolves to
+    // nothing. A second ref has no outlet to source the out's input from.
     // Both sides resolve to no edge, deferring to derivation's silence.
     let mut no_outlet = Graph::<N>::default();
     no_outlet.add_node(N::Inlet);
@@ -298,8 +299,8 @@ fn unconnected_boundaries_dissolve_to_silence() {
 
 #[test]
 fn multi_instance_refs_are_independent() {
-    // The same committed child spliced twice: two lags with distinct paths and
-    // independent param bindings.
+    // The same committed child spliced twice yields two lags with distinct
+    // paths and independent param bindings.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
@@ -326,7 +327,8 @@ fn multi_instance_refs_are_independent() {
 
 #[test]
 fn ref_cycle_and_unresolved_are_errors() {
-    // a refs b refs a: a cycle. A ref to an uncommitted address: unresolved.
+    // `a` refs `b` and `b` refs `a`, a cycle. A ref to an uncommitted address
+    // is unresolved.
     let mut a = Graph::<N>::default();
     a.add_node(N::Ref(ca(2)));
     let mut b = Graph::<N>::default();
@@ -364,9 +366,9 @@ fn flatten_error_displays_readably() {
 
 #[test]
 fn boundary_wiring_cycle_dissolves() {
-    // Two pass-through refs wired into a loop (sharing one committed child -
-    // no *ref* cycle). Resolution terminates and the consumer dissolves
-    // unconnected rather than looping.
+    // Two pass-through refs wired into a loop. They share one committed child,
+    // so there is no ref cycle. Resolution terminates and the consumer
+    // dissolves unconnected rather than looping.
     let map = HashMap::from([(ca(1), wire_child())]);
     let mut g = Graph::<N>::default();
     let r1 = g.add_node(N::Ref(ca(1)));
@@ -383,8 +385,8 @@ fn boundary_wiring_cycle_dissolves() {
 
 #[test]
 fn every_edge_bridges_across_a_boundary() {
-    // Two sources feed the ref's one input: BOTH chains bridge (oldest first),
-    // so derivation sums them - no edge is dropped at the boundary.
+    // Two sources feed the ref's one input. Both chains bridge, oldest first,
+    // so derivation sums them. No edge is dropped at the boundary.
     let map = HashMap::from([(ca(1), wire_child())]);
     let mut g = Graph::<N>::default();
     let s_old = g.add_node(sinosc());
@@ -402,7 +404,7 @@ fn every_edge_bridges_across_a_boundary() {
         "both sources feed the consumer",
     );
 
-    // Derivation sums the bridged summands: one add ties both sines into
+    // Derivation sums the bridged summands. One add ties both sines into
     // the out.
     let def = derive_synthdef(&flat, 1, "t").expect("derive").def;
     assert_eq!(def.units.iter().filter(|u| u.name == "SinOsc").count(), 2);
@@ -416,9 +418,9 @@ fn every_edge_bridges_across_a_boundary() {
 
 #[test]
 fn duplicate_chains_bridge_as_two_summands() {
-    // A child whose inlet fans to its outlet twice: both chains resolve to
-    // the same source, and both bridge - two distinct wires deliberately sum
-    // the signal twice (doubling), the honest reading of the patch.
+    // A child whose inlet fans to its outlet twice. Both chains resolve to
+    // the same source and both bridge. Two distinct wires sum the signal
+    // twice, which doubles it. That is the honest reading of the patch.
     let mut child = Graph::<N>::default();
     let i = child.add_node(N::Inlet);
     let o = child.add_node(N::Outlet);
@@ -443,9 +445,9 @@ fn duplicate_chains_bridge_as_two_summands() {
 
 #[test]
 fn nested_sinks_and_buses_derive_with_stable_keys() {
-    // A nested `~bus` cuts regions exactly as a flat one would, with bindings
-    // and keys carrying the full nested path, and an unrelated parent addition
-    // keeps every region key (no spurious respawns).
+    // A nested `~bus` cuts regions exactly as a flat one would. Bindings and
+    // keys carry the full nested path. An unrelated parent addition keeps
+    // every region key, so nothing respawns.
     let mut child = Graph::<N>::default();
     let i = child.add_node(N::Inlet);
     let b = child.add_node(N::Bus(Bus::default()));
@@ -467,7 +469,8 @@ fn nested_sinks_and_buses_derive_with_stable_keys() {
     assert_eq!(regions[0].bus_writes[0].node_path, vec![1, 1]);
     assert_eq!(regions[1].bus_reads[0].node_path, vec![1, 1]);
 
-    // An unrelated appended node re-flattens with every path (hence key) intact.
+    // An unrelated appended node re-flattens with every path, and so every
+    // key, intact.
     let keys: Vec<u64> = regions.iter().map(|r| r.key).collect();
     g.add_node(N::Other);
     let flat = flatten_with(&g, &map);
@@ -478,8 +481,8 @@ fn nested_sinks_and_buses_derive_with_stable_keys() {
 
 #[test]
 fn nested_scopeout_binds_by_nested_path() {
-    // A monitor inside the child roots a synthdef pull and its binding names
-    // the nested path (where the driver streams the ring state to).
+    // A monitor inside the child roots a synthdef pull. Its binding names the
+    // nested path, where the driver streams the ring state to.
     let mut child = Graph::<N>::default();
     let i = child.add_node(N::Inlet);
     let t = child.add_node(N::ScopeOut(ScopeOut::default()));
@@ -499,7 +502,7 @@ fn nested_scopeout_binds_by_nested_path() {
 
 #[test]
 fn nested_synth_plays_expected_tone() {
-    // The whole pipeline end to end: a sine committed inside a child graph
+    // The whole pipeline end to end. A sine committed inside a child graph
     // sounds through the parent's `~out` when rendered by the real engine.
     let mut child = Graph::<N>::default();
     let s = child.add_node(sinosc());
@@ -539,7 +542,7 @@ fn nested_synth_plays_expected_tone() {
     );
 }
 
-/// Goertzel magnitude estimate at `freq` (Hz) over mono `samples` sampled at [`SR`].
+/// Goertzel magnitude estimate at `freq` in Hz over mono `samples` sampled at [`SR`].
 fn goertzel(samples: &[f32], freq: f32) -> f32 {
     let n = samples.len();
     let k = (0.5 + n as f32 * freq / SR).floor();
@@ -574,10 +577,10 @@ fn flat_kind<'a>(flat: &'a Graph<Flat<&'a N>>, path: &[usize]) -> &'a Flat<&'a N
 
 #[test]
 fn instanced_ref_stays_an_opaque_marker() {
-    // parent: sin -> dsp-ref(child, inline=false) -> out. The ref is NOT
-    // spliced: it survives as a single `Flat::Instance` marker carrying the
-    // child's CA, with parent edges into/out of it preserved (the child's
-    // nodes do not appear in the flat graph).
+    // The parent is `sin -> dsp-ref(child, inline=false) -> out`. The ref is
+    // not spliced. It survives as a single `Flat::Instance` marker carrying
+    // the child's CA, with the parent edges into and out of it preserved. The
+    // child's nodes do not appear in the flat graph.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
@@ -587,7 +590,7 @@ fn instanced_ref_stays_an_opaque_marker() {
     g.add_edge(r, o, Edge::new(0.into(), 0.into()));
 
     let flat = flatten_with(&g, &map);
-    // sin + the instance marker + out. The child's lag is NOT spliced.
+    // The flat graph is the sine, the instance marker and the out.
     assert_eq!(flat.node_count(), 3, "the instanced ref is not spliced");
     assert_eq!(edges_into(&flat, &[2]), vec![(vec![1], 0, 0)]);
     assert!(
@@ -599,7 +602,7 @@ fn instanced_ref_stays_an_opaque_marker() {
 #[test]
 fn inlined_dsp_ref_splices_as_a_plain_ref() {
     // The same topology with `inline: true` splices the child's lag, matching
-    // the plain `Ref` behaviour: the marker is gone and the lag carries its
+    // the plain `Ref` behaviour. The marker is gone and the lag carries its
     // nested path.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
@@ -620,9 +623,9 @@ fn inlined_dsp_ref_splices_as_a_plain_ref() {
 
 #[test]
 fn instance_marker_preserves_multiport_edges() {
-    // An instanced ref with two inlets and two outlets: parent edges into each
-    // input and out of each output are kept on the marker (input i / output j
-    // positional), so `derive_template` sees a node with the ref's arity.
+    // An instanced ref with two inlets and two outlets. Parent edges into each
+    // input and out of each output are kept on the marker by position, so
+    // `derive_template` sees a node with the ref's arity.
     let mut child = Graph::<N>::default();
     let i0 = child.add_node(N::Inlet);
     let i1 = child.add_node(N::Inlet);
@@ -637,19 +640,20 @@ fn instance_marker_preserves_multiport_edges() {
     let s1 = g.add_node(sinosc());
     let r = g.add_node(N::DspRef(ca(2), false));
     let pk = g.add_node(N::Out(Out::default()));
-    // Two inputs into the ref (input 0 and 1), two outputs out (0 and 1 - the
-    // second into the out's gain input to keep it distinct).
+    // Two edges into ref inputs 0 and 1, and two edges out of ref outputs 0
+    // and 1. The second output feeds the out's gain input to keep it distinct.
     g.add_edge(s0, r, Edge::new(0.into(), 0.into()));
     g.add_edge(s1, r, Edge::new(0.into(), 1.into()));
     g.add_edge(r, pk, Edge::new(0.into(), 0.into()));
     g.add_edge(r, pk, Edge::new(1.into(), 1.into()));
 
     let flat = flatten_with(&g, &map);
-    // The marker is at path [2]; both input edges and both output edges survive.
+    // The marker is at path `[2]`. Both input edges and both output edges
+    // survive.
     let mut ins = edges_into(&flat, &[2]);
     ins.sort();
     assert_eq!(ins, vec![(vec![0], 0, 0), (vec![1], 0, 1)]);
-    // Output 0 -> out input 0; output 1 -> out input 1.
+    // Output 0 feeds out input 0 and output 1 feeds out input 1.
     let mut outs: Vec<_> = flat
         .edges_directed(at(&flat, &[2]), Direction::Outgoing)
         .map(|e| (e.weight().output.0, e.weight().input.0))
@@ -660,10 +664,10 @@ fn instance_marker_preserves_multiport_edges() {
 
 #[test]
 fn root_boundaries_kept_as_markers() {
-    // Root-level inlets/outlets are the flat graph's own interface: they stay
-    // as `Flat::Inlet`/`Flat::Outlet` markers with positional indices, and
-    // their edges survive (inlet feeding a consumer, source feeding an
-    // outlet). Nested boundaries keep dissolving (covered elsewhere).
+    // Root-level inlets and outlets are the flat graph's own interface. They
+    // stay as `Flat::Inlet` and `Flat::Outlet` markers with positional
+    // indices. Their edges survive, both an inlet feeding a consumer and a
+    // source feeding an outlet. Nested boundaries dissolve as before.
     let mut g = Graph::<N>::default();
     let i0 = g.add_node(N::Inlet);
     let l = g.add_node(lag());

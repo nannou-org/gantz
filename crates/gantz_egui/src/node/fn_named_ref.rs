@@ -9,7 +9,7 @@ use crate::{
 /// A function node wrapping a named reference.
 pub type FnNamedRef = gantz_core::node::Fn<NamedRef>;
 
-// Declared on the wrapped type: the orphan rule forbids implementing
+// Declared on the wrapped type. The orphan rule forbids implementing
 // `NodeTag` for the foreign `Fn<NamedRef>` here directly.
 impl gantz_core::node::FnNodeTag for NamedRef {
     const FN_TAG: &'static str = "FnNamedRef";
@@ -25,15 +25,14 @@ impl NodeUi for FnNamedRef {
         let name_str = self.0.name().to_string();
         let ref_ca = self.0.content_addr();
 
-        // Check if the referenced CA exists in registry.
         let is_missing = !registry.node_exists(&ref_ca);
 
-        // Check if outdated (name points to different CA).
+        // Outdated when the name points to a different CA.
         let current_ca = registry.name_ca(&name_str);
         let is_outdated = !is_missing && current_ca.map(|ca| ca != ref_ca).unwrap_or(false);
 
-        // Auto-sync if enabled and outdated (skip if missing). A silent
-        // mutation that changes the node's CA.
+        // Auto-sync when enabled and outdated. A missing target is skipped.
+        // This is a silent mutation that changes the node's CA.
         let mut changed = false;
         if self.0.sync && is_outdated {
             if let Some(ca) = current_ca {
@@ -43,7 +42,7 @@ impl NodeUi for FnNamedRef {
             }
         }
 
-        // Recalculate after potential sync.
+        // Recalculate after a possible sync.
         let ref_ca = self.0.content_addr();
         let is_missing = !registry.node_exists(&ref_ca);
         let is_outdated = !is_missing

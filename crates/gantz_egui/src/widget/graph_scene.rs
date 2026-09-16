@@ -21,16 +21,15 @@ pub struct GraphSceneResponse {
     pub scene: egui::Response,
     /// Responses from each node, keyed by node index.
     pub nodes: Vec<(NodeIndex, NodeResponse)>,
-    /// Whether anything CA-affecting changed about the graph this frame: a node
-    /// reported a change (see [`NodeUi`]), or the scene itself edited the graph
-    /// structure (added/removed an edge, deleted a node). Lets the application
-    /// detect edits without re-hashing the whole graph each frame.
+    /// Whether any node reported a change. See the `changed` contract on
+    /// [`crate::NodeUi`]. Also set when the scene itself edited the graph
+    /// structure.
     pub changed: bool,
-    /// Dynamic payloads emitted within the scene (node UIs, context menus),
-    /// to be handled by the application after the pass.
+    /// Dynamic payloads emitted within the scene, for the application to
+    /// handle after the pass.
     pub responses: Vec<DynResponse>,
     /// The index changes from any node deletions this frame, so callers can
-    /// migrate their own index-keyed data (e.g. detached node views).
+    /// migrate their own index-keyed data, for example detached node views.
     pub reindex: crate::ops::Reindex,
 }
 
@@ -43,7 +42,7 @@ impl GraphSceneResponse {
         self.nodes.iter().any(|(_, r)| r.clicked())
     }
 
-    /// Returns true if any node is being interacted with (clicked, dragged, changed, etc).
+    /// Returns true if any node was clicked, dragged or changed.
     pub fn any_node_interacted(&self) -> bool {
         self.nodes
             .iter()
@@ -57,7 +56,7 @@ pub type NodeIndex = petgraph::graph::NodeIndex<usize>;
 /// A widget used for presenting a graph scene for viewing and manipulating a
 /// gantz graph.
 ///
-/// Operates on the graph's stored data form: each node weight is reified to
+/// Operates on the graph's stored data form. Each node weight is reified to
 /// a typed [`crate::node::NodeUiInstance`] through the `codec` for the
 /// duration of its UI pass and erased back only when a response marks a
 /// CA-affecting change. Instances are retained between passes in the head's
@@ -76,18 +75,18 @@ pub struct GraphScene<'a> {
     scene_config: crate::widget::gantz::SceneConfig,
     immutable: bool,
     /// When set, nodes whose responses were all unchanged this pass are
-    /// erased anyway and their address compared against the stored weight,
-    /// making unmarked weight mutations (which would otherwise drop
-    /// silently) loud. See [`GraphScene::validate_change_tracking`].
+    /// erased anyway and their address compared against the stored weight.
+    /// This makes unmarked weight mutations loud instead of dropping them
+    /// silently. See [`GraphScene::validate_change_tracking`].
     validate: bool,
     /// When set, the background context menu gains a "Panes" submenu of
     /// pane-visibility checkboxes.
     view_toggles: Option<&'a mut crate::widget::gantz::ViewToggles>,
-    /// The supplied extension panes, for the "Panes" submenu's checkboxes
-    /// (see [`panes_config`][super::panes_config()]).
+    /// The supplied extension panes, for the "Panes" submenu's checkboxes.
+    /// See [`panes_config`][super::panes_config()].
     ext_panes: &'a [crate::widget::ExtPaneEntry],
     /// The supplied domain edge stylers along with the viewed head they key
-    /// their styling by (see [`EdgeStyle`][crate::widget::EdgeStyle]).
+    /// their styling by. See [`EdgeStyle`][crate::widget::EdgeStyle].
     edge_styles: Option<(&'a gantz_ca::Head, &'a [&'a dyn crate::widget::EdgeStyle])>,
 }
 
@@ -105,8 +104,8 @@ pub struct GraphSceneState {
     #[serde(default, skip)]
     pub pending_center_view: bool,
     /// One-shot request to align the current selection, set by the node context
-    /// menu and consumed by [`GraphScene::show`] on the next pass. The feature
-    /// (`AlignBy`) chooses min-edge / centre / max-edge; orientation is inferred.
+    /// menu and consumed by [`GraphScene::show`] on the next pass. `AlignBy`
+    /// chooses the min edge, centre or max edge. Orientation is inferred.
     #[serde(default, skip)]
     pub pending_align: Option<egui_graph::AlignBy>,
 }
@@ -116,18 +115,18 @@ pub struct Interaction {
     pub selection: Selection,
     #[serde(default, skip)]
     pub edge_in_progress: Option<(NodeIndex, SocketKind, usize)>,
-    /// Position where an edge context menu was opened (in graph coordinates).
+    /// The position in graph coordinates where an edge context menu opened.
     #[serde(default, skip)]
     pub edge_context_menu_pos: Option<egui::Pos2>,
     /// Latest pointer position over the scene, in graph coordinates. Updated
-    /// each frame the scene is hovered; used to place palette-created nodes
+    /// each frame the scene is hovered. Used to place palette-created nodes
     /// under the pointer.
     #[serde(default, skip)]
     pub last_pointer_pos: Option<egui::Pos2>,
-    /// The pointer position over the scene THIS frame, in graph
-    /// coordinates - `None` whenever the pointer is elsewhere (unlike
-    /// [`last_pointer_pos`][Self::last_pointer_pos], which is retained).
-    /// Read by presence layers (e.g. collab peer cursors).
+    /// The pointer position over the scene this frame, in graph coordinates.
+    /// `None` whenever the pointer is elsewhere, unlike
+    /// [`last_pointer_pos`][Self::last_pointer_pos], which is retained.
+    /// Presence layers such as collab peer cursors read it.
     #[serde(default, skip)]
     pub live_pointer: Option<egui::Pos2>,
 }
@@ -139,8 +138,9 @@ pub struct Selection {
 }
 
 impl<'a> GraphScene<'a> {
-    /// Create a graph scene for the given graph (a head's root graph; nested
-    /// graphs are separate heads) and its cache of reified node instances.
+    /// Create a graph scene for the given graph and its cache of reified node
+    /// instances. The graph is a head's root graph. Nested graphs are
+    /// separate heads.
     pub fn new(
         registry: &'a Env<'a>,
         codec: &'a NodeCodec,
@@ -163,13 +163,14 @@ impl<'a> GraphScene<'a> {
         }
     }
 
-    /// Enable the per-node change-tracking validator: nodes whose responses
+    /// Enable the per-node change-tracking validator. Nodes whose responses
     /// were all unchanged are erased anyway and warn when their content
-    /// address differs from the stored weight's - i.e. a node mutated
-    /// CA-affecting state without marking its response changed (see
-    /// [`crate::NodeUi`]), an edit that now drops rather than committing.
+    /// address differs from the stored weight's. Such a node mutated
+    /// CA-affecting state without marking its response changed, so the edit
+    /// drops rather than committing. See the `changed` contract on
+    /// [`crate::NodeUi`].
     ///
-    /// Default: `false` (no extra erasure).
+    /// Defaults to `false`.
     pub fn validate_change_tracking(mut self, validate: bool) -> Self {
         self.validate = validate;
         self
@@ -177,16 +178,17 @@ impl<'a> GraphScene<'a> {
 
     /// Use the given ID for the graph scene.
     ///
-    /// Default: `egui::Id::new("gantz-graph-scene")`
+    /// Defaults to `egui::Id::new("gantz-graph-scene")`.
     pub fn with_id(mut self, id: egui::Id) -> Self {
         self.id = id;
         self
     }
 
-    /// The parameters used when auto-layout is invoked (one-shot, via the
-    /// pending request flags on [`GraphSceneState`]).
+    /// The parameters used when a one-shot auto-layout runs via the pending
+    /// request flags on [`GraphSceneState`].
     ///
-    /// Default: [`egui_graph::LayoutParams::new`] with [`egui::Direction::TopDown`].
+    /// Defaults to [`egui_graph::LayoutParams::new`] with
+    /// [`egui::Direction::TopDown`].
     pub fn layout_params(mut self, params: egui_graph::LayoutParams) -> Self {
         self.layout_params = params;
         self
@@ -194,42 +196,43 @@ impl<'a> GraphScene<'a> {
 
     /// The global dot-grid, snapping and snap-align options to apply.
     ///
-    /// Default: [`crate::widget::gantz::SceneConfig::default`].
+    /// Defaults to [`crate::widget::gantz::SceneConfig::default`].
     pub fn scene_config(mut self, scene_config: crate::widget::gantz::SceneConfig) -> Self {
         self.scene_config = scene_config;
         self
     }
 
-    /// Set immutable (view-only) mode.
+    /// Set immutable mode.
     ///
-    /// When `true`, prevents structural changes (node dragging, edge
-    /// creation/deletion, node deletion, content editing) while preserving
-    /// navigation and selection.
+    /// When `true`, structural changes such as node dragging, edge edits,
+    /// node deletion and content editing are prevented. Navigation and
+    /// selection still work.
     ///
-    /// Default: `false`
+    /// Defaults to `false`.
     pub fn immutable(mut self, immutable: bool) -> Self {
         self.immutable = immutable;
         self
     }
 
     /// Provide the pane-visibility toggles, adding a "Panes" submenu to the
-    /// background (graph-area) context menu. Available even in immutable mode.
+    /// background context menu. Available even in immutable mode.
     pub fn view_toggles(mut self, view_toggles: &'a mut crate::widget::gantz::ViewToggles) -> Self {
         self.view_toggles = Some(view_toggles);
         self
     }
 
     /// Provide the extension-pane entries so the "Panes" context submenu
-    /// lists them alongside the built-in panes, matching Settings -> Panes.
+    /// lists them alongside the built-in panes, matching the Settings Panes
+    /// subtab.
     pub fn ext_panes(mut self, ext_panes: &'a [crate::widget::ExtPaneEntry]) -> Self {
         self.ext_panes = ext_panes;
         self
     }
 
     /// Provide the domain edge stylers, along with the viewed head whose
-    /// root graph this scene shows (the stylers key their styling by it).
+    /// root graph this scene shows. The stylers key their styling by it.
     ///
-    /// Each edge is styled by the first styler returning `Some` - see
+    /// The first styler returning `Some` styles each edge. See
     /// [`EdgeStyle`][crate::widget::EdgeStyle]. Edges no styler claims keep
     /// the default egui-visuals styling.
     pub fn edge_styles(
@@ -253,21 +256,20 @@ impl<'a> GraphScene<'a> {
     ) -> GraphSceneResponse {
         // Materialise the viewport-dependent `egui_graph::View` from the
         // viewport-independent camera. The viewport must match the size
-        // `egui_graph` reads (`available_rect_before_wrap`) so the fit
-        // reproduces the camera's zoom exactly. The camera is recovered after
-        // the pass (see `restore_egui` below).
+        // `egui_graph` reads from `available_rect_before_wrap` so the fit
+        // reproduces the camera's zoom exactly. `restore_egui` recovers the
+        // camera after the pass.
         let viewport = ui.available_rect_before_wrap().size();
         let mut egui_view = scene_view.take_egui(viewport);
         let view = &mut egui_view;
-        // Consume one-shot layout/center requests (set by buttons and context
-        // menus). A request raised during this pass (e.g. by a context menu)
-        // is applied on the next pass.
+        // Consume one-shot layout and center requests. A request raised
+        // during this pass applies on the next pass.
         let do_layout = std::mem::take(&mut state.pending_auto_layout);
         let do_center = std::mem::take(&mut state.pending_center_view);
         if do_layout {
             // Lay out the selection, or the whole graph when nothing is
-            // selected. The whole-graph case centers at the origin; a subset is
-            // aligned to its prior bounding-box centre.
+            // selected. The whole-graph case centers at the origin. A subset
+            // is aligned to its prior bounding-box centre.
             let target: HashSet<NodeIndex> = if state.interaction.selection.nodes.is_empty() {
                 self.graph.node_indices().collect()
             } else {
@@ -286,9 +288,9 @@ impl<'a> GraphScene<'a> {
                 whole,
             );
         }
-        // One-shot align of the current selection (set by the node context
-        // menu). Only the selected nodes move; orientation is inferred from
-        // their spread. Selection-only: needs at least two nodes.
+        // One-shot align of the current selection. Only the selected nodes
+        // move. Orientation is inferred from their spread. It needs at least
+        // two nodes.
         if let Some(by) = std::mem::take(&mut state.pending_align) {
             let target = &state.interaction.selection.nodes;
             if target.len() > 1 {
@@ -298,7 +300,7 @@ impl<'a> GraphScene<'a> {
         let mut node_responses = Vec::new();
         let mut responses: Vec<DynResponse> = Vec::new();
         // Deferred node deletes, applied after the scene releases its `view`
-        // borrow (removal must migrate index-keyed state + layout).
+        // borrow, since removal must migrate index-keyed state and layout.
         let mut to_delete: Vec<NodeIndex> = Vec::new();
         // Set if a node or the scene makes a CA-affecting edit this pass.
         let mut changed = false;
@@ -360,8 +362,8 @@ impl<'a> GraphScene<'a> {
 
         // Apply deferred deletes now the scene no longer borrows `view`. Removal
         // swap-removes nodes, so this migrates the swapped node's state, layout
-        // and selection (see `crate::ops::remove_nodes`). The returned reindex is
-        // surfaced so callers can migrate their own index-keyed data too.
+        // and selection. See `crate::ops::remove_nodes`. The returned reindex
+        // is surfaced so callers can migrate their own index-keyed data too.
         let reindex = crate::ops::remove_nodes(
             self.graph,
             vm,
@@ -374,12 +376,12 @@ impl<'a> GraphScene<'a> {
             changed = true;
         }
 
-        // Track the latest pointer position over the scene (in graph space) so a
+        // Track the latest pointer position over the scene in graph space so a
         // node added via the node palette lands under the pointer. While the
         // palette window covers the scene, `contains_pointer` is false, so this
         // retains the pre-open position. `live_pointer` is the un-retained
-        // counterpart (None whenever the pointer is off the scene), for
-        // presence broadcasts.
+        // counterpart for presence broadcasts. It is None whenever the pointer
+        // is off the scene.
         state.interaction.live_pointer = None;
         if graph_response.response.contains_pointer() {
             let layer_id = graph_response.response.layer_id;
@@ -393,8 +395,9 @@ impl<'a> GraphScene<'a> {
             }
         }
 
-        // Background context menu: graph actions (when mutable) plus a "panes"
-        // submenu for toggling pane visibility (available even when immutable).
+        // Background context menu. Graph actions when mutable, plus a "panes"
+        // submenu for toggling pane visibility that is available even when
+        // immutable.
         let immutable = self.immutable;
         let view_toggles = self.view_toggles;
         let ext_panes = self.ext_panes;
@@ -465,9 +468,9 @@ impl<'a> GraphScene<'a> {
             responses.push(DynResponse::new(ResetTilesLayout));
         }
 
-        // Recover the viewport-independent camera (centre + zoom) from the
-        // `egui_graph` view (which `egui` may have panned/zoomed this pass) and
-        // write back the possibly-relaid-out node layout.
+        // Recover the viewport-independent camera from the `egui_graph` view,
+        // which egui may have panned or zoomed this pass, and write back the
+        // possibly relaid-out node layout.
         scene_view.restore_egui(egui_view, viewport);
 
         GraphSceneResponse {
@@ -487,13 +490,13 @@ impl Selection {
     }
 }
 
-/// Produce the layout for the given graph (or a `subset` of its nodes).
+/// Produce the layout for the given graph, or for a `subset` of its nodes.
 ///
-/// The `graph_id` is used to scope node IDs so that nodes with the same index
-/// in different graphs don't share egui memory state. When `subset` is `Some`,
+/// The `graph_id` scopes node IDs so that nodes with the same index in
+/// different graphs do not share egui memory state. When `subset` is `Some`,
 /// only those nodes and the edges between them are laid out. The result's
-/// bounding box is centred on the origin (see [`apply_auto_layout`] for
-/// selection-relative placement).
+/// bounding box is centred on the origin. See [`apply_auto_layout`] for
+/// selection-relative placement.
 pub fn layout(
     registry: &Env<'_>,
     codec: &NodeCodec,
@@ -507,11 +510,11 @@ pub fn layout(
     if !graph.node_indices().any(included) {
         return Default::default();
     }
-    // Describe each node's sockets (count + padding) and each edge's actual
-    // source/destination socket so the (socket-aware) layout can order sockets
-    // and minimise edge crossings, matching how the nodes are rendered. Nodes
-    // reify transiently through the codec; an unknown tag falls back to the
-    // placeholder's edge-derived socket counts.
+    // Describe each node's socket count and padding and each edge's actual
+    // source and destination socket. The socket-aware layout can then order
+    // sockets and minimise edge crossings, matching how the nodes render.
+    // Nodes reify transiently through the codec. An unknown tag falls back to
+    // the placeholder's edge-derived socket counts.
     let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
     let meta_ctx = gantz_core::node::MetaCtx::new(&get_node);
     let socket_padding = egui_graph::socket_padding(&ctx.global_style());
@@ -562,7 +565,7 @@ pub fn layout(
 /// Apply a one-shot auto-layout to `view`, laying out `target` and merging the
 /// result back into `view.layout`.
 ///
-/// When `whole` (the target is the entire graph), the result is used as-is -
+/// When `whole`, the target is the entire graph and the result is used as-is,
 /// centred on the origin. Otherwise the result's bounding box is translated to
 /// match the centre of `target`'s current bounding box, so a selection lays out
 /// in place rather than snapping toward the origin. Nodes outside `target` are
@@ -612,8 +615,8 @@ pub fn apply_auto_layout(
 }
 
 /// The centre of the bounding box of `target`'s nodes in `layout`, using full
-/// node rects (top-left position + size). Returns `None` when no target node
-/// has a position in `layout`.
+/// node rects from the top-left position and size. Returns `None` when no
+/// target node has a position in `layout`.
 fn bbox_centre(
     target: &HashSet<NodeIndex>,
     layout: &egui_graph::Layout,
@@ -634,10 +637,10 @@ fn bbox_centre(
 }
 
 /// Apply a one-shot align to `view`, moving `target`'s nodes onto a common line
-/// via [`egui_graph::align_nodes`]. The feature (`by`) selects the min-edge /
-/// centre / max-edge; the orientation (row vs column) is inferred from the
-/// selection's spread. Nodes outside `target` are left untouched. The result is
-/// written raw - rendering re-snaps every node to the grid.
+/// via [`egui_graph::align_nodes`]. `by` selects the min edge, centre or max
+/// edge. The row or column orientation is inferred from the selection's
+/// spread. Nodes outside `target` are left untouched. The result is written
+/// raw. Rendering re-snaps every node to the grid.
 pub fn apply_align(
     graph_id: egui::Id,
     ctx: &egui::Context,
@@ -645,8 +648,8 @@ pub fn apply_align(
     target: &HashSet<NodeIndex>,
     by: egui_graph::AlignBy,
 ) {
-    // Node sizes, consulted by `align_nodes` for `AlignBy::Center`/`Max` (a
-    // missing node is treated as zero-sized).
+    // Node sizes, consulted by `align_nodes` for `AlignBy::Center` and `Max`.
+    // A missing node is treated as zero-sized.
     let sizes: HashMap<egui_graph::NodeId, egui::Vec2> =
         egui_graph::with_graph_memory(ctx, graph_id, |gmem| {
             let node_sizes = gmem.node_sizes();
@@ -683,7 +686,6 @@ fn nodes(
     validate: bool,
     ui: &mut egui::Ui,
 ) -> Vec<(NodeIndex, NodeResponse)> {
-    // Create meta context using registry for proper node lookup.
     let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
     let meta_ctx = gantz_core::node::MetaCtx::new(&get_node);
     let node_ids: Vec<_> = graph.node_identifiers().collect();
@@ -692,16 +694,16 @@ fn nodes(
     let mut nodes_to_reset = Vec::new();
     let mut request_layout = false;
     let mut request_align: Option<egui_graph::AlignBy> = None;
-    // VM-state writes recorded by each node's `NodeCtx` (drained per node
-    // into `StateWritten` payloads).
+    // VM-state writes recorded by each node's `NodeCtx`. They drain per node
+    // into `StateWritten` payloads.
     let mut writes = Vec::new();
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node_id = egui_graph::NodeId::from_u64(n_ix as u64);
-        // Take the node's cached instance (or reify fresh when the stored
-        // weight differs from the cache entry's witness) for the duration of
-        // the iteration. An unknown tag renders as an opaque placeholder
-        // whose weight round-trips untouched - selection, movement, deletion
+        // Take the node's cached instance for the duration of the iteration.
+        // It reifies fresh when the stored weight differs from the cache
+        // entry's witness. An unknown tag renders as an opaque placeholder
+        // whose weight round-trips untouched. Selection, movement, deletion
         // and edge edits still work.
         let mut instance = instances.take(codec, n_ix, &graph[n_id]).ok();
         let (inputs, outputs, flow) = match &instance {
@@ -715,8 +717,8 @@ fn nodes(
                 (inputs, outputs, egui::Direction::TopDown)
             }
         };
-        // Whether any of this node's responses marked a CA-affecting change
-        // (its UI or its context menu) - the erase-back-into-the-weight signal.
+        // Whether this node's UI or context menu marked a CA-affecting change.
+        // See the `changed` contract on `NodeUi`.
         let mut node_changed = false;
         let response = egui_graph::node::Node::from_id(node_id)
             .inputs(inputs)
@@ -725,7 +727,7 @@ fn nodes(
             .max_width(f32::INFINITY)
             .show(nctx, ui, |nui_ctx| match instance.as_mut() {
                 Some(entry) => {
-                    // A node at this (root) level has the single-element state
+                    // A node at this root level has the single-element state
                     // path `[n_ix]`.
                     let node_path = [n_ix];
                     let node_ctx = crate::NodeCtx::new(
@@ -746,8 +748,8 @@ fn nodes(
             });
 
         // Attach on-hover docs to each socket. Each node describes its own
-        // sockets (markers read their stored docs; references resolve the
-        // referenced graph's marker docs via the registry).
+        // sockets. Markers read their stored docs. References resolve the
+        // referenced graph's marker docs via the registry.
         if let Some(entry) = &instance {
             for (ix, sock) in response.sockets().inputs() {
                 if let Some(doc) = entry.inst.node.socket_doc(registry, SocketKind::Input, ix) {
@@ -762,21 +764,18 @@ fn nodes(
         }
 
         if response.changed() {
-            // Check for an edge event.
             if let Some(ev) = response.edge_event() {
                 match ev {
                     EdgeEvent::Started { kind, index } => {
                         state.interaction.edge_in_progress = Some((n_id, kind, index));
                     }
                     EdgeEvent::Ended { kind, index } => {
-                        // Create the edge.
                         if let Some((src, _, ix)) = state.interaction.edge_in_progress.take() {
                             let (index, ix) = (index as u16, ix as u16);
                             let (a, b, w) = match kind {
                                 SocketKind::Input => (src, n_id, Edge::from((ix, index))),
                                 SocketKind::Output => (n_id, src, Edge::from((index, ix))),
                             };
-                            // Check that this edge doesn't already exist.
                             if !graph.edges(a).any(|e| e.target() == b && *e.weight() == w) {
                                 graph.add_edge(a, b, w);
                                 *changed = true;
@@ -795,9 +794,9 @@ fn nodes(
             }
         }
 
-        // Node context menu. Reborrowed shared so the stateful probe below
-        // can peek other nodes' cached instances (the mutable uses - take
-        // above, put below - sit outside this borrow).
+        // Node context menu. `instances` is reborrowed shared so the stateful
+        // probe below can peek other nodes' cached instances. The mutable take
+        // above and put below sit outside this borrow.
         let instances_ref: &NodeInstances = instances;
         response.context_menu(|ui| {
             let selected = &state.interaction.selection.nodes;
@@ -806,8 +805,8 @@ fn nodes(
             } else {
                 HashSet::from([n_id])
             };
-            // Whether the action target is a multi-node selection (this node is
-            // part of a selection of >1). Captured before `target` may be moved.
+            // Whether the action target is a multi-node selection. Captured
+            // before `target` may be moved.
             let multi = target.len() > 1;
             if ui.button("copy").clicked() {
                 responses.push(DynResponse::new(CopyNodes(target.clone())));
@@ -838,10 +837,10 @@ fn nodes(
                         ui.close();
                     }
                 }
-                // "open view": detach the right-clicked node's UI into a tile in
-                // the Node Views pane (a live mirror, sharing VM state). Always
-                // available, even for immutable graphs - it only observes the
-                // node.
+                // Detach the right-clicked node's UI into a tile in the Node
+                // Views pane as a live mirror sharing VM state. Always
+                // available, even for immutable graphs, since it only observes
+                // the node.
                 if ui
                     .button("open view")
                     .on_hover_text("open this node's view in the Node Views pane")
@@ -857,7 +856,7 @@ fn nodes(
             }
             if !immutable {
                 // Nest the selected nodes into a new nested graph. Only
-                // meaningful for a multi-node selection (a real subgraph).
+                // meaningful for a multi-node selection.
                 if multi
                     && ui
                         .button("nest")
@@ -867,10 +866,10 @@ fn nodes(
                     responses.push(DynResponse::new(NestNodes(target.clone())));
                     ui.close();
                 }
-                // The reset target may include other selected nodes; peek
-                // each one's cached instance to ask whether any is stateful,
-                // reifying transiently on a miss (e.g. this node's own entry,
-                // taken out for the duration of the iteration).
+                // The reset target may include other selected nodes. Peek each
+                // one's cached instance to ask whether any is stateful. A miss
+                // reifies transiently. This node's own entry always misses,
+                // since it is taken out for the duration of the iteration.
                 let stateful = target.iter().any(|&n| {
                     graph
                         .node_weight(n)
@@ -894,7 +893,8 @@ fn nodes(
                     nodes_to_delete.extend(target);
                     ui.close();
                 }
-                // Auto-layout the selection (only meaningful for >1 node).
+                // Auto-layout the selection. Only meaningful for more than one
+                // node.
                 if multi
                     && ui
                         .button("auto-layout")
@@ -904,8 +904,8 @@ fn nodes(
                     request_layout = true;
                     ui.close();
                 }
-                // Align the selection onto a common row or column (inferred
-                // from the spread). Selection-only, so >1 node.
+                // Align the selection onto a common row or column, inferred
+                // from the spread. Selection-only, so more than one node.
                 if multi {
                     ui.menu_button("align", |ui| {
                         let mut item = |ui: &mut egui::Ui, label, hover, by| {
@@ -935,7 +935,7 @@ fn nodes(
                     });
                 }
             }
-            // Node-specific items (e.g. the log node's "open logs").
+            // Node-specific items, for example the log node's "open logs".
             if let Some(entry) = instance.as_mut() {
                 let node_path = [n_ix];
                 let mut node_ctx = crate::NodeCtx::new(
@@ -953,11 +953,11 @@ fn nodes(
             }
         });
 
-        // Return the instance to the cache, erasing it back into the weight
-        // iff a response marked a CA-affecting change (the commit signal -
-        // see `NodeUi`). The entry's witness is updated in the same breath,
+        // Return the instance to the cache. Erase it back into the weight only
+        // when a response marked a CA-affecting change. See the `changed`
+        // contract on `NodeUi`. The entry's witness updates in the same breath,
         // so the cache hits exactly while the stored weight is untouched.
-        // Non-CA state lives in VM/egui memory by contract.
+        // Non-CA state lives in VM or egui memory by contract.
         if let Some(mut entry) = instance {
             if node_changed {
                 *changed = true;
@@ -968,17 +968,16 @@ fn nodes(
                         instances.put(n_ix, entry);
                     }
                     Err(e) => {
-                        // Dropping the entry restores the uncached semantics:
-                        // the edit is lost and the next pass reifies from the
+                        // Dropping the entry restores the uncached semantics.
+                        // The edit is lost and the next pass reifies from the
                         // unchanged stored weight.
                         log::error!("node {n_ix}: failed to erase edited node, edit dropped: {e}");
                     }
                 }
             } else if validate {
-                // Change-tracking validator: an unmarked weight mutation
-                // would otherwise persist invisibly in the cached instance -
-                // make it loud, and evict so the mutation drops exactly as
-                // it would uncached.
+                // An unmarked weight mutation would otherwise persist
+                // invisibly in the cached instance. Warn and evict, so the
+                // mutation drops exactly as it would uncached.
                 match entry.inst.erase() {
                     Ok(node_data) => {
                         if node_data.content_addr() != graph[n_id].content_addr() {
@@ -1004,11 +1003,6 @@ fn nodes(
         node_responses.push((n_id, response));
     }
 
-    // Deletes (keyboard + context menu) are collected into `nodes_to_delete` and
-    // applied by the caller via `ops::remove_nodes` once the scene's borrow on
-    // the view (and thus its layout) is released - removal must migrate the
-    // swapped node's index-keyed state and layout.
-
     // Reset state by removing it, then re-registering the graph.
     // Registration is idempotent and re-initialises any missing state.
     // Registration needs typed nodes, so the graph reifies transiently.
@@ -1024,8 +1018,8 @@ fn nodes(
         }
     }
 
-    // A node-menu "auto-layout"/"align" click is applied on the next pass by
-    // `show` (node sizes are then known).
+    // A node-menu auto-layout or align click applies on the next pass by
+    // `show`, when node sizes are known.
     if request_layout {
         state.pending_auto_layout = true;
     }
@@ -1036,10 +1030,10 @@ fn nodes(
     node_responses
 }
 
-/// The socket counts an opaque placeholder (unknown-tag) node presents:
-/// derived from its incident edges over the data graph, so every existing
+/// The socket counts an opaque unknown-tag placeholder node presents. They
+/// derive from its incident edges over the data graph, so every existing
 /// connection stays visible and editable. A node may have more sockets than
-/// its edges reach; those become visible again once the tag's domain is
+/// its edges reach. Those become visible again once the tag's domain is
 /// available.
 fn placeholder_socket_counts(graph: &DataGraph, n: NodeIndex) -> (usize, usize) {
     let inputs = graph
@@ -1056,9 +1050,9 @@ fn placeholder_socket_counts(graph: &DataGraph, n: NodeIndex) -> (usize, usize) 
 }
 
 /// Render the opaque placeholder for a node whose tag is unknown to the
-/// codec: the tag as a title in the missing colour over a weak one-line
-/// datum readout. No `NodeUi` calls are involved and the weight round-trips
-/// untouched.
+/// codec. It shows the tag as a title in the missing colour over a weak
+/// one-line datum readout. No `NodeUi` calls are involved and the weight
+/// round-trips untouched.
 fn placeholder_ui(
     weight: &NodeData,
     nui_ctx: egui_graph::NodeCtx,
@@ -1084,16 +1078,15 @@ fn placeholder_ui(
     })
 }
 
-/// Show a socket's doc as a hover tooltip (type label in bold, description
-/// below).
+/// Show a socket's doc as a hover tooltip, with the type label in bold and
+/// the description below.
 fn socket_hover(resp: &egui::Response, doc: &SocketDoc) {
     resp.clone().on_hover_ui(|ui| {
         // Re-assert the wrap width every frame. The tooltip's `Area` caches the
-        // width it first rendered at (e.g. tiny, just fitting a bare "input"),
-        // and wrapped text keeps "fitting" that stale width - so docs added to a
-        // referenced graph later never widen it until egui memory is cleared
-        // (an app restart). Forcing the max width breaks that feedback loop
-        // while still letting short tooltips stay narrow.
+        // width it first rendered at, and wrapped text keeps fitting that stale
+        // width. Docs added to a referenced graph later would never widen it
+        // until egui memory is cleared. Forcing the max width breaks that
+        // feedback loop while still letting short tooltips stay narrow.
         let max_width = ui.spacing().tooltip_width;
         ui.set_max_width(max_width);
         if !doc.ty.is_empty() {
@@ -1116,11 +1109,10 @@ fn edges(
 ) {
     // Track whether any edge has a context menu open this frame.
     let mut any_context_menu_open = false;
-    // Deferred edge deletes: the loop snapshots edge indices, but `remove_edge`
+    // Deferred edge deletes. The loop snapshots edge indices, but `remove_edge`
     // swap-removes, so deleting mid-loop would invalidate a later snapshot index.
     let mut to_delete: Vec<EdgeIndex> = Vec::new();
 
-    // Instantiate all edges.
     for e in graph.edge_indices().collect::<Vec<_>>() {
         let (na, nb) = graph.edge_endpoints(e).unwrap();
         let edge = *graph.edge_weight(e).unwrap();
@@ -1129,7 +1121,7 @@ fn edges(
         let b = egui_graph::NodeId::from_u64(nb.index() as u64);
         let mut selected = state.interaction.selection.edges.contains(&e);
 
-        // Ask the domain stylers for this edge's styling (first `Some` wins).
+        // Ask the domain stylers for this edge's styling. The first `Some` wins.
         let styling = edge_styles.and_then(|(head, styles)| {
             let ctx =
                 crate::widget::EdgeStyleCtx::new(head, (na.index(), output), (nb.index(), input));
@@ -1157,11 +1149,10 @@ fn edges(
             }
         }
 
-        // Context menu for edges - must be called every frame to keep menu open.
-        // Only store position on the FIRST frame the context menu opens.
-        // If we already have a position stored, don't overwrite it (the pointer
-        // may have moved to the context menu popup, causing closest_point to
-        // become invalid).
+        // The context menu must be called every frame to keep it open. Store
+        // the position only on the first frame it opens. After that the
+        // pointer may move onto the popup, which makes `closest_point`
+        // invalid.
         let context_menu_open = response.context_menu_opened();
         if context_menu_open {
             any_context_menu_open = true;
@@ -1183,8 +1174,8 @@ fn edges(
             }
         });
         // Apply the deletion after the closure releases its borrows. Same effect
-        // as the keyboard `deleted()` path above; `changed` propagates to the
-        // head's commit so it persists and joins the undo/redo chain.
+        // as the keyboard `deleted()` path above. `changed` propagates to the
+        // head's commit so it persists and joins the undo chain.
         if delete_edge {
             graph.remove_edge(e);
             state.interaction.selection.edges.remove(&e);
@@ -1192,8 +1183,8 @@ fn edges(
         }
     }
 
-    // Apply deferred edge deletes. `remove_edge` swap-removes (the former-last
-    // edge adopts the removed index), so go descending and remap the swapped
+    // Apply deferred edge deletes. `remove_edge` swap-removes, so the former
+    // last edge adopts the removed index. Go descending and remap the swapped
     // edge in the selection.
     if !to_delete.is_empty() {
         to_delete.sort_unstable_by_key(|e| std::cmp::Reverse(e.index()));
@@ -1215,7 +1206,7 @@ fn edges(
         }
     }
 
-    // Clear the stored position if no context menu is open (user dismissed it).
+    // Clear the stored position once no context menu is open.
     if !any_context_menu_open {
         state.interaction.edge_context_menu_pos = None;
     }
@@ -1226,30 +1217,31 @@ fn edges(
     }
 }
 
-/// The most parallel strands a styled edge paints: a wider channel count
-/// still draws this many strands (the full band width), overlaid with
-/// diagonal wrap stripes reading as a thick bound bundle rather than adding
+/// The most parallel strands a styled edge paints. A wider channel count
+/// still draws this many strands at the full band width. Diagonal wrap
+/// stripes overlay them so they read as a thick bound bundle rather than
 /// ever-thinner strands. The exact count is left to the hover tooltip.
 const STRAND_CAP: usize = 4;
 
 /// Extra width the notch overlay adds over the base stroke so its opaque core
-/// swallows the base line's anti-aliased edge (see [`EdgeStyling::notch`]).
+/// swallows the base line's anti-aliased edge. See [`EdgeStyling::notch`].
 /// Without it, a continuous base line and the dashed overlay rasterize onto
 /// slightly different pixels at some sub-pixel positions, leaving a faint
 /// fringe of the base colour beside each notch.
 const NOTCH_COVER: f32 = 1.0;
 
-/// The wrap stripes marking a bundle wider than [`STRAND_CAP`]: their spacing
-/// along the edge, how far each stripe overshoots the band (total, split
-/// across both sides, so it reads as wrapping around) and their lean off
-/// perpendicular (radians, a forward diagonal), all in graph units.
+/// The wrap stripes that mark a bundle wider than [`STRAND_CAP`].
+/// `WRAP_SPACING` is their spacing along the edge. `WRAP_OVERHANG` is their
+/// total overshoot of the band, split across both sides so it reads as
+/// wrapping around. `WRAP_LEAN` is their lean off perpendicular in radians, a
+/// forward diagonal. All in graph units.
 const WRAP_SPACING: f32 = 7.0;
 const WRAP_OVERHANG: f32 = 4.0;
 const WRAP_LEAN: f32 = 0.7;
 
 /// Paint one edge according to its domain-supplied styling.
 ///
-/// The custom colour applies to the default state only - hovered and
+/// The custom colour applies to the default state only. Hovered and
 /// selected edges keep the theme strokes resolved by the widget so those
 /// affordances read the same on every edge. The width multiplier, strand
 /// layout and notches apply in every state so an edge keeps its look when
@@ -1267,17 +1259,17 @@ fn paint_styled_edge(
     }
     stroke.width *= styling.width_scale;
     let spacing = stroke.width + 1.5;
-    // A wider channel count still draws the full `STRAND_CAP` band; the wrap
+    // A wider channel count still draws the full `STRAND_CAP` band. The wrap
     // stripes below mark it as a larger bundle.
     let strands = styling.strands.max(1).min(STRAND_CAP);
     let strand_lines = egui_graph::paint::parallel_polylines(pctx.points, strands, spacing);
     for points in &strand_lines {
         paint_strand(ui, points, stroke, styling.dash);
     }
-    // Notched-cord texture: even dashes overpainted in the theme's extreme
+    // Notched-cord texture. Even dashes overpainted in the theme's extreme
     // background colour, so each strand reads as regularly notched. The
-    // overlay is a hair wider than the base ([`NOTCH_COVER`]) so it fully
-    // covers the base line's anti-aliased edge.
+    // overlay is `NOTCH_COVER` wider than the base so it fully covers the
+    // base line's anti-aliased edge.
     if let Some(notch) = styling.notch {
         let notch_stroke = egui::Stroke {
             width: stroke.width + NOTCH_COVER,
@@ -1318,9 +1310,9 @@ fn paint_strand(
 
 /// Diagonal stripe segments crossing `points` every `spacing` graph units,
 /// each `length` long, centred on the path and leaning `lean` radians off
-/// perpendicular (toward the direction of travel). Used to "wrap" a
-/// multi-strand band into one bundle. The first stripe sits half a `spacing`
-/// in, so stripes never crowd the sockets.
+/// perpendicular toward the direction of travel. Used to wrap a multi-strand
+/// band into one bundle. The first stripe sits half a `spacing` in, so
+/// stripes never crowd the sockets.
 fn wrap_stripes(
     points: &[egui::Pos2],
     spacing: f32,
@@ -1343,7 +1335,7 @@ fn wrap_stripes(
             continue;
         }
         let dir = seg / seg_len;
-        // The path normal (90 deg CCW), leaned toward the travel direction.
+        // The path normal, 90 degrees CCW, leaned toward the travel direction.
         let perp = egui::vec2(-dir.y, dir.x);
         let stripe = perp * cos + dir * sin;
         while next <= acc + seg_len {
@@ -1356,18 +1348,17 @@ fn wrap_stripes(
     stripes
 }
 
-/// The id of the node to flag at the viewed level for a diagnostic path: the
-/// next id under the level, so diagnostics within nested graphs flag the
-/// enclosing graph node. `None` when the path is empty or lies outside the
-/// level.
+/// The id of the node to flag at the viewed level for a diagnostic path. It
+/// is the next id under the level, so diagnostics within nested graphs flag
+/// the enclosing graph node. `None` when the path is empty or lies outside
+/// the level.
 fn diagnostic_node_at_level(diag_path: &[node::Id], level: &[node::Id]) -> Option<node::Id> {
     diag_path.strip_prefix(level)?.first().copied()
 }
 
 /// Paint a glow and hover message over the nodes implicated by diagnostics,
 /// and tint the scene border when any diagnostic cannot be attributed to a
-/// node visible at this level (e.g. a whole-graph error, or one in a level
-/// not currently viewed).
+/// node visible at this level, for example a whole-graph error.
 pub fn paint_diagnostics(
     diagnostics: &[gantz_core::Diagnostic],
     level: &[node::Id],
@@ -1393,17 +1384,17 @@ pub fn paint_diagnostics(
         };
         // Paint on the node's own layer so the scene transform applies.
         // Everything the painter receives must be in layer-local
-        // coordinates: egui maps a transformed layer's clip rects through
-        // its transform at tessellation, so the pane's (global) clip is
+        // coordinates. egui maps a transformed layer's clip rects through
+        // its transform at tessellation, so the pane's global clip is
         // mapped into local space rather than intersected as-is.
         let to_global = ui
             .ctx()
             .layer_transform_to_global(node_response.layer_id)
             .unwrap_or(egui::emath::TSTransform::IDENTITY);
         let inv = to_global.inverse();
-        // The tessellator snaps each rect to physical pixels independently
-        // (`round_rects_to_pixels`), which at fractional transforms lets the
-        // rings land +-1px off the frame's own snapped edges. Snap the frame
+        // The tessellator's `round_rects_to_pixels` snaps each rect to
+        // physical pixels independently. At fractional transforms the rings
+        // can land one pixel off the frame's own snapped edges. Snap the frame
         // rect the same way the frame's shape will be, derive the rings from
         // it, and disable their re-rounding so the gap stays even.
         let ppp = ui.ctx().pixels_per_point();
@@ -1411,9 +1402,9 @@ pub fn paint_diagnostics(
         let mut painter = ui.ctx().layer_painter(node_response.layer_id);
         let local_clip = inv.mul_rect(ui.clip_rect());
         painter.set_clip_rect(local_clip.intersect(frame.expand(16.0)));
-        // A soft glow: thin rings hugging the frame, fading quickly. Ring
-        // corners grow from the node frame's radius (`Frame::window`, see
-        // `egui_graph::node::default_frame`) so the arcs stay concentric.
+        // A soft glow of thin rings hugging the frame and fading quickly. Ring
+        // corners grow from the node frame's radius so the arcs stay
+        // concentric. See `egui_graph::node::default_frame`.
         let frame_radius = ui.visuals().window_corner_radius;
         let rings = [(1.0f32, 1.5, 0.45), (3.0, 2.0, 0.16), (5.5, 2.5, 0.06)];
         for (expand, width, alpha) in rings {
@@ -1445,15 +1436,15 @@ mod tests {
 
     #[test]
     fn wrap_stripes_space_and_span() {
-        // A rightward band, length 30. First stripe at spacing/2 = 5, then
-        // every 10, so at 5, 15, 25 - three stripes, each `length` across.
+        // A rightward band, length 30. The first stripe is at spacing/2 = 5,
+        // then every 10, so three stripes at 5, 15 and 25.
         let pts = [egui::pos2(0.0, 0.0), egui::pos2(30.0, 0.0)];
         let stripes = wrap_stripes(&pts, 10.0, 8.0, 0.0);
         assert_eq!(stripes.len(), 3);
         for (i, [a, b]) in stripes.iter().enumerate() {
             let x = 5.0 + i as f32 * 10.0;
-            // A square stripe (lean 0) is perpendicular here: vertical,
-            // centred on the path, `length` tall.
+            // A stripe with lean 0 is perpendicular here. It is vertical,
+            // centred on the path and `length` tall.
             assert!((a.x - x).abs() < 1e-4 && (b.x - x).abs() < 1e-4);
             assert!(((b.y - a.y).abs() - 8.0).abs() < 1e-4);
         }
@@ -1474,7 +1465,7 @@ mod tests {
         // Viewing inside the nested graph flags the inner node.
         assert_eq!(diagnostic_node_at_level(&[3, 2, 1], &[3]), Some(2));
         assert_eq!(diagnostic_node_at_level(&[3, 2, 1], &[3, 2]), Some(1));
-        // Outside the viewed level or empty: unattributable.
+        // Outside the viewed level or empty paths are unattributable.
         assert_eq!(diagnostic_node_at_level(&[3, 2], &[4]), None);
         assert_eq!(diagnostic_node_at_level(&[], &[]), None);
         assert_eq!(diagnostic_node_at_level(&[3], &[3]), None);

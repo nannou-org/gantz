@@ -5,13 +5,13 @@ use std::time::Duration;
 
 const DEFAULT_MAX_SAMPLES: usize = 500;
 
-/// Format a millisecond value as a Duration debug string (e.g. "231µs", "1.2ms").
+/// Format a millisecond value as a Duration debug string, for example "1.2ms".
 fn format_ms(ms: f64) -> String {
     let duration = Duration::from_secs_f64(ms.max(0.0) / 1000.0);
     format!("{duration:?}")
 }
 
-/// Capture of timing samples. All on main thread, no sync needed.
+/// A capture of timing samples. It lives on the main thread and needs no sync.
 pub struct PerfCapture {
     samples: VecDeque<Duration>,
     max_samples: usize,
@@ -78,16 +78,13 @@ impl<'a> PerfView<'a> {
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        // Load state for context menu.
         let state_id = self.id.with("state");
         let mut max_samples = ui
             .memory(|m| m.data.get_temp::<usize>(state_id))
             .unwrap_or(self.capture.max_samples());
 
-        // Get text color for the line.
         let text_color = ui.visuals().text_color();
 
-        // Convert samples to plot points (index, duration_ms).
         let points: egui_plot::PlotPoints = self
             .capture
             .samples()
@@ -123,7 +120,6 @@ impl<'a> PerfView<'a> {
                 plot_ui.line(line);
             });
 
-            // Context menu for configuration.
             plot_response.response.context_menu(|ui| {
                 ui.label("Max Samples");
                 ui.horizontal(|ui| {
@@ -141,7 +137,6 @@ impl<'a> PerfView<'a> {
             });
         });
 
-        // Store state.
         ui.memory_mut(|m| m.data.insert_temp(state_id, max_samples));
     }
 }

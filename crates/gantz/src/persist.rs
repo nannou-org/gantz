@@ -2,14 +2,13 @@
 //!
 //! [`PersistPlugin`] wires up the whole thing. On a debounced input the persist
 //! systems serialize the current state into a `(key, value)` batch on the main
-//! thread and hand it to a [`Persister`]; on native a background [`IoTaskPool`]
-//! worker does the fsync'd writes off the render thread, on wasm they're written
-//! inline (no threads, no fsync). On exit the worker is flushed and joined so
-//! nothing is lost.
+//! thread and hand it to a [`Persister`]. On native a background [`IoTaskPool`]
+//! worker does the fsync'd writes off the render thread. On wasm they are
+//! written inline with no threads and no fsync. On exit the worker is flushed
+//! and joined so nothing is lost.
 //!
-//! This is deliberately self-contained: the goal is to eventually lift it into a
-//! reusable "sync-friendly persistence" crate so downstream gantz apps don't
-//! reimplement this boilerplate.
+//! This is self-contained by design, so it can later lift into a reusable
+//! persistence crate for downstream gantz apps.
 
 use crate::storage::Pkv;
 use crate::window;
@@ -28,22 +27,22 @@ use bevy::tasks::{IoTaskPool, Task, block_on};
 /// Registers off-thread, debounced persistence of the app's state.
 ///
 /// Expects the [`Pkv`] resource and a `DebouncedInputPlugin<DebouncedInputEvent>`
-/// to already be present (the latter also drives layout settling, so it lives in
-/// the app, not here).
+/// to be present. The latter also drives layout settling, so it lives in the
+/// app.
 pub struct PersistPlugin;
 
 impl Plugin for PersistPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(DebouncedInputPlugin::<PersistEguiMemory>::new(0.3))
-            // Spawn the background writer once the store is populated. No ordering
-            // vs the load systems is needed: the worker only locks the store when
-            // draining a batch, which can't happen until the first `Update`.
+            // No ordering against the load systems is needed. The worker only
+            // locks the store when draining a batch, which cannot happen before
+            // the first `Update`.
             .add_systems(Startup, setup_persister)
             .add_systems(
                 Update,
                 persist_resources
-                    // After `settle_layout` so a layout commit settled this frame
-                    // (and its seeded view) is saved in the same pass.
+                    // After `settle_layout`, so a layout commit settled this frame
+                    // and its seeded view are saved in the same pass.
                     .after(bevy_gantz_egui::settle_layout)
                     .run_if(on_message::<DebouncedInputEvent>),
             )
@@ -51,19 +50,18 @@ impl Plugin for PersistPlugin {
                 Update,
                 persist_egui_memory.run_if(on_message::<PersistEguiMemory>),
             );
-        // Flush the worker before the process exits (native only; wasm writes
-        // inline, and the World is consumed by the runner so this can't run after
-        // `run()`).
+        // Native only. Wasm writes inline, and the runner consumes the World, so
+        // this cannot run after `run()`.
         #[cfg(not(target_arch = "wasm32"))]
         app.add_systems(Last, flush_on_exit);
     }
 }
 
-/// Hands persistence batches to a background writer (native) or writes them
-/// inline on the main thread (wasm - localStorage, no fsync, no threads).
+/// Hands persistence batches to a background writer on native, or writes
+/// them inline on the main thread on wasm.
 ///
-/// The native/wasm split is encapsulated here so the persist systems stay
-/// platform-agnostic: they build a batch and call [`submit`](Self::submit).
+/// The platform split lives here, so the persist systems stay
+/// platform-agnostic. They build a batch and call [`Self::submit`].
 #[derive(Resource)]
 struct Persister {
     #[cfg(not(target_arch = "wasm32"))]
@@ -77,8 +75,8 @@ struct Persister {
 impl Persister {
     /// Hand a batch of `(key, value)` writes off for persistence.
     ///
-    /// Non-blocking on native (the worker does the fsync'd writes); inline on
-    /// wasm.
+    /// Non-blocking on native, where the worker does the fsync'd writes.
+    /// Inline on wasm.
     fn submit(&mut self, batch: Vec<(String, String)>) {
         if batch.is_empty() {
             return;
@@ -101,7 +99,7 @@ impl Persister {
     /// Flush the worker's queue and join it before the process exits.
     ///
     /// `close` lets the worker drain queued batches before `recv` errors, so the
-    /// FIFO-final batch is written; `block_on` waits for that drain. Native only.
+    /// final batch is written. `block_on` waits for that drain.
     #[cfg(not(target_arch = "wasm32"))]
     fn shutdown(&mut self) {
         self.tx.close();
@@ -131,7 +129,7 @@ fn spawn_persister(pkv: Pkv) -> Persister {
     }
 }
 
-/// Create the [`Persister`]; on wasm it writes inline (no worker).
+/// Create the [`Persister`]. On wasm it writes inline with no worker.
 #[cfg(target_arch = "wasm32")]
 fn spawn_persister(pkv: Pkv) -> Persister {
     Persister { store: pkv }
@@ -142,12 +140,12 @@ fn setup_persister(pkv: Res<Pkv>, mut cmds: Commands) {
     cmds.insert_resource(spawn_persister(pkv.clone()));
 }
 
-/// Collect the registry/heads/gui/window into a `(key, value)` batch to
-/// persist. Views, demos and descriptions ride the registry's sections.
+/// Collect the registry, heads, gui and window into a `(key, value)` batch
+/// to persist. Views, demos and descriptions ride the registry's sections.
 ///
-/// Registry writes dedup against `persisted` (pass a fresh
-/// [`PersistedRegistry`](bevy_gantz::storage::PersistedRegistry) to force a
-/// complete write); everything else is written each call.
+/// Registry writes dedup against `persisted`. Pass a fresh
+/// [`bevy_gantz::storage::PersistedRegistry`] to force a complete write.
+/// Everything else is written each call.
 fn collect_batch_to_persist(
     registry: &Registry,
     persisted: &mut bevy_gantz::storage::PersistedRegistry,
@@ -158,9 +156,7 @@ fn collect_batch_to_persist(
     window: Option<&Window>,
 ) -> Vec<(String, String)> {
     let mut batch = bevy_gantz::storage::BatchWriter::default();
-    // Registry: only newly-seen content and any changed sections.
     bevy_gantz::storage::save_registry_incremental(&mut batch, registry, persisted);
-    // Open heads in tab order.
     let heads: Vec<_> = tab_order
         .iter()
         .filter_map(|&entity| {
@@ -171,15 +167,12 @@ fn collect_batch_to_persist(
         })
         .collect();
     bevy_gantz::storage::save_open_heads(&mut batch, &heads);
-    // Focused head.
     if let Some(focused_entity) = **focused {
         if let Ok(data) = heads_query.get(focused_entity) {
             bevy_gantz::storage::save_focused_head(&mut batch, &**data.head_ref);
         }
     }
-    // GUI state.
     bevy_gantz_egui::storage::save_gui_state(&mut batch, gui_state);
-    // Native window size (no-op on web).
     if let Some(window) = window {
         window::save(&mut batch, window);
     }
@@ -208,7 +201,6 @@ fn persist_resources(
         window,
     );
     let writes = batch.len();
-    // Hand the writes to the worker; the fsync'd writes happen off-thread.
     persister.submit(batch);
     debug!(
         "persisted state ({:?}, {writes} writes, {} graphs, {} commits on disk)",
@@ -218,8 +210,9 @@ fn persist_resources(
     );
 }
 
-/// Debounced event driving egui-memory persistence, on a slower cadence than
-/// the registry/views persist so the two don't fsync on the same frame.
+/// Debounced event driving egui-memory persistence. It runs on a slower
+/// cadence than the registry persist, so the two do not fsync on the same
+/// frame.
 #[derive(Message)]
 struct PersistEguiMemory;
 
@@ -229,8 +222,7 @@ impl DebouncedEvent for PersistEguiMemory {
     }
 }
 
-/// Persist egui memory (widget state) on the slower debounce, so it doesn't
-/// fsync on the same frame as the registry/views persist.
+/// Persist egui memory on the [`PersistEguiMemory`] debounce.
 fn persist_egui_memory(mut persister: ResMut<Persister>, mut ctxs: EguiContexts) {
     let start = web_time::Instant::now();
     let mut batch = bevy_gantz::storage::BatchWriter::default();
@@ -243,10 +235,10 @@ fn persist_egui_memory(mut persister: ResMut<Persister>, mut ctxs: EguiContexts)
 
 /// On exit, write the full current state and drain the worker before quitting.
 ///
-/// A fresh tracker forces a complete registry write as a backstop for any
-/// blob optimistically tracked as persisted but not yet drained by the worker;
-/// FIFO + `shutdown` guarantee it lands last. egui memory is left to the
-/// worker's normal drain (best-effort widget state).
+/// A fresh tracker forces a complete registry write. This is a backstop for
+/// any blob tracked as persisted but not yet drained by the worker. FIFO
+/// order and `shutdown` guarantee it lands last. egui memory is left to the
+/// worker's normal drain.
 #[cfg(not(target_arch = "wasm32"))]
 fn flush_on_exit(
     mut exit: MessageReader<AppExit>,
