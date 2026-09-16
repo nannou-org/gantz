@@ -6,17 +6,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::dsp::{DspBuilder, NodeDsp, Signal, ToNodeDsp, input_or_silent};
 
-/// Split a channel group into `count` mono outputs (like Max's `mc.unpack~` or
-/// a VCV split): output `i` carries the input's channel `i`, or silence past
-/// the input's width.
+/// Split a channel group into `count` mono outputs, like Max's `mc.unpack~`
+/// or a VCV split. Output `i` carries the input's channel `i`, or silence
+/// past the input's width.
 ///
-/// A routing node: it emits no UGens, it only re-groups wires at
-/// synthdef-derivation time (and is Steel-inert like the other dsp nodes).
+/// A routing node. It emits no UGens and only re-groups wires at
+/// synthdef-derivation time. It is Steel-inert like the other dsp nodes.
 ///
 /// Shrinking `count` while edges hang off the removed outputs leaves those
-/// edges dangling: the Steel compile surfaces an error diagnostic until they
-/// are deleted (the same contract as `Expr`'s `#:out`), while synthdef
-/// derivation silently ignores them.
+/// edges dangling. The Steel compile surfaces an error diagnostic until they
+/// are deleted, the same contract as `Expr`'s `#:out`. Synthdef derivation
+/// silently ignores them.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, NodeTag)]
 pub struct Unpack {
     #[serde(default = "default_count", skip_serializing_if = "is_default_count")]
@@ -32,8 +32,8 @@ impl Unpack {
         self.count
     }
 
-    /// Set the output count (content-address affecting; structural - it changes
-    /// the node's output sockets).
+    /// Set the output count. It is structural and affects the content
+    /// address, since it changes the node's output sockets.
     pub fn set_count(&mut self, count: usize) {
         self.count = count.max(1);
     }
@@ -58,10 +58,10 @@ impl gantz_core::Node for Unpack {
     }
 
     fn expr(&self, _ctx: ExprCtx<'_, '_>) -> ExprResult {
-        // Steel-inert: the splitting happens at synthdef derivation. Non-numeric
-        // placeholder outputs feed the inert dsp output edges (see the `NodeDsp`
-        // docs) - a single value for one output, a list of values otherwise (the
-        // multi-output expr contract).
+        // Steel-inert. The splitting happens at synthdef derivation.
+        // Non-numeric placeholder outputs feed the inert dsp output edges, see
+        // the `NodeDsp` docs. A single value for one output, a list of values
+        // otherwise, per the multi-output expr contract.
         let src = match self.count {
             1 => "'()".to_string(),
             n => format!("(list {})", vec!["'()"; n].join(" ")),
@@ -85,8 +85,8 @@ impl NodeDsp for Unpack {
         inputs: &[Option<Signal>],
         _b: &mut DspBuilder,
     ) -> Vec<Signal> {
-        // Pure re-grouping: no units, output `i` = the input's channel `i` (or
-        // mono silence past the input's width).
+        // Pure re-grouping with no units. Output `i` is the input's channel
+        // `i`.
         let signal = input_or_silent(inputs, 0);
         (0..self.count)
             .map(|i| {

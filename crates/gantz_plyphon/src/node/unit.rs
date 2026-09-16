@@ -14,40 +14,40 @@ use crate::param::{control_inputs_expr, param_name, params_state, plyphon_param}
 use crate::units::{In, UnitDesc, unit_desc};
 
 /// A node wrapping one plyphon unit generator, driven entirely by its
-/// [`UnitDesc`] descriptor row (see [`units`](crate::units)): the descriptor
-/// declares the sockets, hybrid control params, init-only values and outputs;
-/// this type provides the one `Node`/`NodeDsp` implementation shared by every
+/// [`UnitDesc`] descriptor row, see [`units`](crate::units). The descriptor
+/// declares the sockets, hybrid control params, init-only values and outputs.
+/// This type provides the one `Node`/`NodeDsp` implementation shared by every
 /// wrapped unit.
 ///
-/// Hybrid param *values* live in the node's keyed VM state (see
-/// [`param`](crate::param)), so editing them does not churn the graph's
+/// Hybrid param values live in the node's keyed VM state, see
+/// [`param`](crate::param), so editing them does not churn the graph's
 /// content address. The `rate`, per-param smoothing `lags` and init-only
-/// `init` values are structural (they change the derived synthdef) and live in
-/// the node weight.
+/// `init` values are structural, since they change the derived synthdef, and
+/// live in the node weight.
 ///
-/// Deserialization validates the `unit` name against the descriptor table -
-/// an unknown unit fails to reify, like an unknown node type tag.
+/// Deserialization validates the `unit` name against the descriptor table.
+/// An unknown unit fails to reify, like an unknown node type tag.
 #[derive(Clone, Debug, Serialize, Deserialize, NodeTag)]
 #[tag("Unit")]
 #[serde(try_from = "UnitNodeWire")]
 pub struct UnitNode {
-    /// The plyphon unit name (the descriptor-table key), e.g. `"LPF"`.
+    /// The plyphon unit name, the descriptor-table key, for example `"LPF"`.
     unit: String,
-    /// The ugen rate (`ar`/`kr`) the unit runs at.
+    /// The ugen rate, `ar` or `kr`, the unit runs at.
     #[serde(default, skip_serializing_if = "crate::node::is_default")]
     rate: NodeRate,
     /// Per-hybrid-param smoothing lags in seconds, keyed by param name.
-    /// Absent means `0.0` (no smoothing); entries never hold `0.0`.
+    /// Absent means `0.0`, no smoothing. Entries never hold `0.0`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     lags: BTreeMap<String, f32>,
     /// Init-only structural values, keyed by name. Absent means the
-    /// descriptor default; entries never hold the default.
+    /// descriptor default. Entries never hold the default.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     init: BTreeMap<String, f32>,
 }
 
-/// The wire mirror of [`UnitNode`], deserialized then validated/normalised
-/// via `TryFrom` (serde `try_from`).
+/// The wire mirror of [`UnitNode`], deserialized then validated and
+/// normalised via serde's `try_from`.
 #[derive(Deserialize)]
 struct UnitNodeWire {
     unit: String,
@@ -59,8 +59,8 @@ struct UnitNodeWire {
     init: BTreeMap<String, f32>,
 }
 
-/// A [`UnitNode`] failed to deserialize: an unknown unit name, or a lag/init
-/// key naming no such param in the unit's descriptor.
+/// A [`UnitNode`] failed to deserialize. Either an unknown unit name, or a
+/// lag or init key naming no such param in the unit's descriptor.
 #[derive(Debug)]
 pub struct InvalidUnitNode(String);
 
@@ -99,8 +99,8 @@ impl TryFrom<UnitNodeWire> for UnitNode {
                 )));
             }
         }
-        // Normalise: entries at their defaults are represented by absence, so
-        // hand-authored data can't land on a non-canonical content address.
+        // Normalise. Entries at their defaults are represented by absence, so
+        // hand-authored data cannot land on a non-canonical content address.
         let lags = lags.into_iter().filter(|(_, lag)| *lag != 0.0).collect();
         let init = init
             .into_iter()
@@ -135,7 +135,7 @@ impl UnitNode {
         unit_desc(unit).map(Self::from_desc)
     }
 
-    /// The plyphon unit name this node wraps, e.g. `"LPF"`.
+    /// The plyphon unit name this node wraps, for example `"LPF"`.
     pub fn unit(&self) -> &str {
         &self.unit
     }
@@ -145,24 +145,24 @@ impl UnitNode {
         unit_desc(&self.unit).expect("a `UnitNode`'s unit is validated at construction")
     }
 
-    /// The ugen rate (`ar`/`kr`) the unit runs at.
+    /// The ugen rate, `ar` or `kr`, the unit runs at.
     pub fn rate(&self) -> NodeRate {
         self.rate
     }
 
-    /// Set the ugen rate (content-address affecting; structural).
+    /// Set the ugen rate. It is structural and affects the content address.
     pub fn set_rate(&mut self, rate: NodeRate) {
         self.rate = rate;
     }
 
-    /// The `name`d hybrid param's smoothing lag in seconds (`0.0` = none).
+    /// The `name`d hybrid param's smoothing lag in seconds. `0.0` is none.
     pub fn lag(&self, name: &str) -> f32 {
         self.lags.get(name).copied().unwrap_or(0.0)
     }
 
-    /// Set the `name`d hybrid param's smoothing lag (content-address
-    /// affecting; structural - it bakes a `LagControl` into the synthdef).
-    /// `0.0` removes the entry (the canonical no-lag form).
+    /// Set the `name`d hybrid param's smoothing lag. It is structural and
+    /// affects the content address, since it bakes a `LagControl` into the
+    /// synthdef. `0.0` removes the entry, the canonical no-lag form.
     pub fn set_lag(&mut self, name: &str, lag: f32) {
         if lag == 0.0 {
             self.lags.remove(name);
@@ -171,7 +171,7 @@ impl UnitNode {
         }
     }
 
-    /// The `name`d init-only value (the descriptor default when unset).
+    /// The `name`d init-only value, or the descriptor default when unset.
     pub fn init_value(&self, name: &str) -> f32 {
         self.init
             .get(name)
@@ -180,9 +180,9 @@ impl UnitNode {
             .unwrap_or(0.0)
     }
 
-    /// Set the `name`d init-only value (content-address affecting;
-    /// structural - it is baked into the def as a constant). The descriptor
-    /// default removes the entry (the canonical form).
+    /// Set the `name`d init-only value. It is structural and affects the
+    /// content address, since it is baked into the def as a constant. The
+    /// descriptor default removes the entry, the canonical form.
     pub fn set_init(&mut self, name: &str, value: f32) {
         match self.desc().init_default(name) {
             Some(default) if default.to_bits() == value.to_bits() => {
@@ -191,13 +191,13 @@ impl UnitNode {
             Some(_) => {
                 self.init.insert(name.to_string(), value);
             }
-            // No such init entry: nothing to set.
+            // No such init entry, nothing to set.
             None => (),
         }
     }
 
-    /// The Steel placeholder this node's expr evaluates to: one non-numeric
-    /// value per dsp output (the multi-output expr contract).
+    /// The Steel placeholder this node's expr evaluates to, one non-numeric
+    /// value per dsp output per the multi-output expr contract.
     fn output_placeholder(&self) -> String {
         match self.desc().outputs.len() {
             1 => "'()".to_string(),
@@ -245,7 +245,7 @@ impl gantz_core::Node for UnitNode {
     }
 
     fn stateful(&self, _ctx: MetaCtx) -> bool {
-        // Hybrid param values live in (keyed) VM state.
+        // Hybrid param values live in keyed VM state.
         self.desc().hybrid_params().next().is_some()
     }
 
@@ -264,18 +264,18 @@ impl gantz_core::Node for UnitNode {
     }
 
     fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
-        // Steel-inert bar the hybrid inputs: a connected *number* is written
-        // into the param's keyed state (the audio driver applies it via
-        // `set_control`), while a dsp source's non-numeric placeholder is
-        // ignored by the `number?` guard. See `control_inputs_expr`.
+        // Steel-inert bar the hybrid inputs. A connected number is written
+        // into the param's keyed state and the audio driver applies it via
+        // `set_control`. The `number?` guard ignores a dsp source's
+        // non-numeric placeholder. See `control_inputs_expr`.
         let hybrids: Vec<(usize, &str)> = self.desc().hybrid_sockets().collect();
         control_inputs_expr(&ctx, &hybrids, &self.output_placeholder())
     }
 }
 
-/// Channel `c`'s wire of a connected input: mono broadcasts its only channel
-/// across the whole group; a narrower multi-channel signal contributes
-/// silence past its width (the [`Signal`] group conventions).
+/// Channel `c`'s wire of a connected input. Mono broadcasts its only channel
+/// across the whole group. A narrower multi-channel signal contributes
+/// silence past its width, per the [`Signal`] group conventions.
 fn channel_select(signal: &Signal, c: usize) -> InputRef {
     match signal.width() {
         1 => signal.channel(0).expect("a `Signal` is never empty"),
@@ -283,21 +283,21 @@ fn channel_select(signal: &Signal, c: usize) -> InputRef {
     }
 }
 
-/// How one plyphon input of the emitted units is fed, resolved once per node
-/// (params are shared across the channel group; wires select per channel).
+/// How one plyphon input of the emitted units is fed, resolved once per node.
+/// Params are shared across the channel group. Wires select per channel.
 enum Feed {
     /// A connected socket's signal.
     Wire(Signal),
     /// An unconnected hybrid input's shared control param.
     Param(u32),
-    /// A constant: an unconnected pure signal input (silence), a baked value
-    /// or an init-only value.
+    /// A constant. Either an unconnected pure signal input as silence, a
+    /// baked value or an init-only value.
     Const(f32),
 }
 
 impl NodeDsp for UnitNode {
     fn n_dsp_inputs(&self) -> usize {
-        // Every socket is dsp-capable (pure signal or hybrid).
+        // Every socket is dsp-capable, pure signal or hybrid.
         self.desc().n_sockets()
     }
 
@@ -307,17 +307,17 @@ impl NodeDsp for UnitNode {
 
     fn ugens(&self, path: &[usize], inputs: &[Option<Signal>], b: &mut DspBuilder) -> Vec<Signal> {
         let desc = self.desc();
-        // The channel-group width: one unit per channel of the widest
-        // connected input (or a single unit when nothing is connected).
+        // The channel-group width, one unit per channel of the widest
+        // connected input, or a single unit when nothing is connected.
         let width = inputs
             .iter()
             .flatten()
             .map(Signal::width)
             .max()
             .unwrap_or(1);
-        // Resolve each plyphon input's feed once: connected sockets keep
-        // their signal, unconnected hybrids get one shared control param
-        // (broadcast across the group), everything else is a constant.
+        // Resolve each plyphon input's feed once. Connected sockets keep their
+        // signal. Unconnected hybrids get one shared control param, broadcast
+        // across the group. Everything else is a constant.
         let mut sockets = 0..;
         let feeds: Vec<Feed> = desc
             .inputs
@@ -418,12 +418,12 @@ mod tests {
     #[test]
     fn defaulted_entries_normalise_to_absence() {
         // A zero lag and a default init value are non-canonical spellings of
-        // "unset": deserialization must land on the canonical node.
+        // unset. Deserialization must land on the canonical node.
         let node: UnitNode =
             ron::from_str(r#"(unit: "CombC", lags: {"delay": 0.0}, init: {"maxdelay": 0.2})"#)
                 .expect("deserialize");
         assert_eq!(node, UnitNode::from_unit("CombC").expect("CombC row"));
-        // And the setters keep the same invariant.
+        // The setters keep the same invariant.
         let mut node = UnitNode::from_unit("CombC").expect("CombC row");
         node.set_lag("delay", 0.02);
         node.set_lag("delay", 0.0);

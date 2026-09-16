@@ -1,24 +1,25 @@
 //! The [`Backend`] seam between derived synthdefs and a running synth engine.
 //!
-//! [`Embedded`] drives an in-process [`plyphon::Controller`] directly (no OSC,
-//! no sockets). A future `Remote` backend could serialise the same operations to
-//! OSC for a networked scsynth/plyphon - the compiler and nodes are unaffected.
+//! [`Embedded`] drives an in-process [`plyphon::Controller`] directly, with
+//! no OSC and no sockets. A `Remote` backend could serialise the same
+//! operations to OSC for a networked engine. The compiler and nodes would be
+//! unaffected.
 
 use plyphon::synthdef::SynthDef;
 use plyphon::{CommandTime, Controller};
 
 pub use plyphon::{AddAction, ROOT_GROUP_ID};
 
-/// A sink for installing synthdefs and controlling synths, abstracting over an
-/// in-process engine ([`Embedded`]) or, in future, a networked one.
+/// A sink for installing synthdefs and controlling synths. It abstracts over
+/// an in-process engine such as [`Embedded`] or a networked one.
 pub trait Backend {
-    /// Install (or replace) a synth definition by name.
+    /// Install or replace a synth definition by name.
     fn install_synthdef(&mut self, def: SynthDef) -> Result<(), BackendError>;
     /// Free a previously installed synth definition by name.
     fn free_synthdef(&mut self, name: &str) -> Result<(), BackendError>;
-    /// Spawn a synth from the named def at `action` relative to the node (or
-    /// group) `target`, returning its node id. Placement matters across
-    /// synthdef boundaries: a bus reader hears only writers computed *earlier*
+    /// Spawn a synth from the named def at `action` relative to the node or
+    /// group `target`, returning its node id. Placement matters across
+    /// synthdef boundaries. A bus reader hears only writers computed earlier
     /// in the node tree this block, so writers must precede their readers.
     fn spawn(
         &mut self,
@@ -26,17 +27,19 @@ pub trait Backend {
         target: i32,
         action: AddAction,
     ) -> Result<i32, BackendError>;
-    /// Free a running synth (or group) by node id.
+    /// Free a running synth or group by node id.
     fn free_node(&mut self, node: i32) -> Result<(), BackendError>;
-    /// Set control parameter `param` (by index) of `node` to `value`, immediately.
+    /// Set control parameter `param`, by index, of `node` to `value`
+    /// immediately.
     fn set_control(&mut self, node: i32, param: usize, value: f32) -> Result<(), BackendError>;
 
-    /// Set control parameter `param` of `node` to `value`, scheduled to take effect
-    /// at the absolute OSC/NTP time `time_osc` on the engine's clock timeline.
+    /// Set control parameter `param` of `node` to `value`, scheduled to take
+    /// effect at the absolute OSC/NTP time `time_osc` on the engine's clock
+    /// timeline.
     ///
-    /// This is how timestamped control automation (e.g. a `tick!`-driven chain)
-    /// lands sample-accurately. The default applies it immediately. A backend with
-    /// a scheduling clock (like [`Embedded`]) overrides it.
+    /// This is how timestamped control automation such as a `tick!`-driven
+    /// chain lands sample-accurately. The default applies it immediately. A
+    /// backend with a scheduling clock such as [`Embedded`] overrides it.
     fn set_control_at(
         &mut self,
         node: i32,
@@ -54,7 +57,8 @@ pub trait Backend {
 pub enum BackendError {
     /// The backend's command queue is full.
     QueueFull,
-    /// A synth could not be spawned (e.g. unknown or invalid def).
+    /// A synth could not be spawned, for example from an unknown or invalid
+    /// def.
     Spawn(String),
 }
 
@@ -95,8 +99,8 @@ impl Backend for Embedded<'_> {
         self.controller
             .synth_new(def_name, target, action)
             .map_err(|e| match e {
-                // Transient: the ring drains within a block, so the caller can
-                // retry next frame rather than treating the spawn as broken.
+                // Transient. The ring drains within a block, so the caller can
+                // retry next frame rather than treat the spawn as broken.
                 plyphon::SynthNewError::QueueFull => BackendError::QueueFull,
                 e => BackendError::Spawn(format!("{e:?}")),
             })

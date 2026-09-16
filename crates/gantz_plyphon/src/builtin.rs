@@ -3,8 +3,8 @@
 use crate::node::{Bus, Out, Pack, PlayBuf, ScopeOut, Sum, UnitNode, Unpack};
 use gantz_core::Builtin;
 
-/// Builtin specs for the DSP node set: the bespoke nodes plus one entry per
-/// descriptor-table row (see [`crate::units`]).
+/// Builtin specs for the DSP node set, the bespoke nodes plus one entry per
+/// [`crate::units`] descriptor-table row.
 pub fn builtins() -> Vec<Builtin> {
     let bespoke = [
         Builtin::new("~bus", &Bus::default()),

@@ -11,31 +11,32 @@ use serde::{Deserialize, Serialize};
 
 use crate::dsp::{DspBuilder, NodeDsp, Signal, ToNodeDsp};
 
-/// Play a content-addressed audio buffer back through plyphon's `PlayBuf`
-/// (scsynth's sampler), looping, one output channel per buffer channel.
+/// Play a content-addressed audio buffer back through plyphon's `PlayBuf`,
+/// scsynth's sampler, looping, one output channel per buffer channel.
 ///
-/// The node holds only the asset's *address* plus a cache of its channel count
-/// and sample rate - enough to size the output group and set the playback rate
-/// without decoding the PCM. The samples themselves live in the content-addressed
-/// asset store; the audio driver makes the referenced asset resident, allocates
-/// a bufnum, installs the buffer, and sets this node's driver-owned `bufnum` and
-/// `rate` control params after spawning (see [`BufferBinding`](crate::BufferBinding)).
+/// The node holds only the asset's address plus a cache of its channel count
+/// and sample rate. That is enough to size the output group and set the
+/// playback rate without decoding the PCM. The samples themselves live in
+/// the content-addressed asset store. The audio driver makes the referenced
+/// asset resident, allocates a bufnum, installs the buffer, and sets this
+/// node's driver-owned `bufnum` and `rate` control params after spawning.
+/// See [`BufferBinding`](crate::BufferBinding).
 ///
-/// An unassigned node (no asset) reads a guaranteed-missing buffer, so it is
-/// silent until an asset is set. Steel-inert like the other dsp nodes.
+/// An unassigned node reads a guaranteed-missing buffer, so it is silent
+/// until an asset is set. Steel-inert like the other dsp nodes.
 #[derive(Clone, Debug, Serialize, Deserialize, NodeTag)]
 pub struct PlayBuf {
     /// The audio asset to play, or `None` until one is assigned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     asset: Option<ContentAddr>,
-    /// The asset's channel count (cached metadata; sizes the output group).
+    /// The asset's cached channel count. It sizes the output group.
     #[serde(
         default = "default_channels",
         skip_serializing_if = "is_default_channels"
     )]
     num_channels: usize,
-    /// The asset's own sample rate in Hz (cached metadata; the driver divides
-    /// it by the engine rate to set the playback `rate`).
+    /// The asset's own cached sample rate in Hz. The driver divides it by the
+    /// engine rate to set the playback `rate`.
     #[serde(default, skip_serializing_if = "crate::node::is_default")]
     sample_rate: f64,
 }
@@ -59,7 +60,7 @@ impl PlayBuf {
         self.asset
     }
 
-    /// The cached channel count (at least 1).
+    /// The cached channel count, at least 1.
     pub fn num_channels(&self) -> usize {
         self.num_channels.max(1)
     }
@@ -69,8 +70,8 @@ impl PlayBuf {
         self.sample_rate
     }
 
-    /// Assign `asset` and its metadata (content-address affecting; the channel
-    /// count is structural - it resizes the output group).
+    /// Assign `asset` and its metadata. It affects the content address. The
+    /// channel count is structural, since it resizes the output group.
     pub fn set_asset(&mut self, asset: ContentAddr, num_channels: usize, sample_rate: f64) {
         self.asset = Some(asset);
         self.num_channels = num_channels.max(1);
@@ -116,9 +117,9 @@ impl gantz_core::Node for PlayBuf {
     }
 
     fn expr(&self, _ctx: ExprCtx<'_, '_>) -> ExprResult {
-        // Steel-inert: playback happens in the audio engine. A non-numeric
-        // placeholder output feeds the inert dsp output edge (see the `NodeDsp`
-        // docs).
+        // Steel-inert. Playback happens in the audio engine. A non-numeric
+        // placeholder output feeds the inert dsp output edge, see the `NodeDsp`
+        // docs.
         gantz_core::node::parse_expr("'()")
     }
 
@@ -141,10 +142,11 @@ impl NodeDsp for PlayBuf {
 
     fn ugens(&self, path: &[usize], _inputs: &[Option<Signal>], b: &mut DspBuilder) -> Vec<Signal> {
         let channels = self.num_channels();
-        // `bufnum`/`rate` are driver-owned no-lag control params set after spawn
-        // (like scope bufnums / bus indices), so an assigned node makes its asset
-        // resident via a `BufferBinding`. An unassigned node instead reads a
-        // guaranteed-missing buffer (`-1`), which `PlayBuf` renders as silence.
+        // `bufnum` and `rate` are driver-owned no-lag control params set after
+        // spawn, like scope bufnums and bus indices. An assigned node makes its
+        // asset resident via a `BufferBinding`. An unassigned node instead
+        // reads the guaranteed-missing buffer `-1`, which `PlayBuf` renders as
+        // silence.
         let (bufnum, rate) = match self.asset {
             Some(asset) => {
                 let bufnum = b.push_control_param(path, "bufnum");
@@ -154,8 +156,9 @@ impl NodeDsp for PlayBuf {
             }
             None => (InputRef::Constant(-1.0), InputRef::Constant(1.0)),
         };
-        // PlayBuf.ar(bufnum, rate, trig, startPos, loop, doneAction), one output
-        // per buffer channel. The slice bakes loop on, no retrigger, no done action.
+        // `PlayBuf.ar(bufnum, rate, trig, startPos, loop, doneAction)`, one
+        // output per buffer channel. The inputs bake loop on, no retrigger and
+        // no done action.
         let inputs = vec![
             bufnum,
             rate,
@@ -219,7 +222,7 @@ mod tests {
             .iter()
             .find(|u| u.name == "PlayBuf")
             .expect("PlayBuf unit");
-        // A missing-buffer bufnum (`-1`), read by `PlayBuf` as silence.
+        // The missing-buffer bufnum `-1`, read by `PlayBuf` as silence.
         assert!(matches!(playbuf.inputs[0], InputRef::Constant(v) if v == -1.0));
     }
 

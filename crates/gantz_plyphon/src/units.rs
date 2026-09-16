@@ -1,44 +1,44 @@
-//! The descriptor table behind [`UnitNode`](crate::UnitNode): one
+//! The descriptor table behind [`UnitNode`](crate::UnitNode), one
 //! [`UnitDesc`] row per wrapped plyphon unit generator.
 //!
-//! plyphon's [`Unit`](plyphon::Unit)/[`UnitDef`](plyphon::UnitDef) traits
-//! expose no metadata - a unit's arity, input roles and defaults live only in
-//! its docs - so this table is where gantz declares each wrapped unit's
-//! signature: its palette/sugar keyword, its inputs in plyphon order (and how
-//! each is fed - see [`In`]) and its outputs. Adding a plyphon unit as a gantz
-//! node is one new row.
+//! plyphon's [`Unit`](plyphon::Unit) and [`UnitDef`](plyphon::UnitDef) traits
+//! expose no metadata. A unit's arity, input roles and defaults live only in
+//! its docs. This table is where gantz declares each wrapped unit's
+//! signature. A row holds the palette and sugar keyword, the inputs in
+//! plyphon order with how each is fed, see [`In`], and the outputs. Adding a
+//! plyphon unit as a gantz node is one new row.
 //!
 //! The operator-selector units `BinaryOpUGen` and `UnaryOpUGen` get one row
 //! per operator. Such a row carries a [`Special`] override naming the real
 //! emitted unit and its `special_index`, while its [`unit`](UnitDesc::unit)
 //! field holds a unique per-operator identity such as `"Mul"` or `"TanH"`.
 //!
-//! Excluded for now: buffer-reading units, variable-arity units (`EnvGen`,
-//! `Klang`), demand-rate, FFT/PV and IO/routing (covered by the bespoke
-//! nodes).
+//! The table excludes buffer-reading units, variable-arity units such as
+//! `EnvGen` and `Klang`, demand-rate units, FFT/PV units and IO/routing
+//! units. The bespoke nodes cover IO and routing.
 
 /// How one plyphon input of a wrapped unit is fed.
 ///
-/// `Signal` and `Param` entries are *sockets* (dsp input ports, in entry
-/// order); `Baked` and `Init` entries are socket-less constants. Entry order
-/// matches the unit's plyphon input order.
+/// `Signal` and `Param` entries are sockets, dsp input ports in entry order.
+/// `Baked` and `Init` entries are socket-less constants. Entry order matches
+/// the unit's plyphon input order.
 #[derive(Clone, Copy, Debug)]
 pub enum In {
-    /// A pure dsp input: a socket carrying a signal, mono silence when
-    /// unconnected.
+    /// A pure dsp input, a socket carrying a signal. Unconnected, it reads as
+    /// [`input_or_silent`](crate::dsp::input_or_silent).
     Signal {
-        /// The input's name (socket docs).
+        /// The input's name, for socket docs.
         name: &'static str,
         /// The socket's doc line.
         doc: &'static str,
     },
-    /// A *hybrid* input (see [`NodeDsp::n_dsp_inputs`](crate::NodeDsp)): a
-    /// socket whose connected signal drives the input directly, falling back
-    /// to a settable control param otherwise. The param's *value* lives in the
-    /// node's keyed VM state (see [`param`](crate::param)); its smoothing lag
-    /// lives in the node weight.
+    /// A hybrid input, see [`NodeDsp::n_dsp_inputs`](crate::NodeDsp). A
+    /// connected signal drives the socket directly. Otherwise it falls back
+    /// to a settable control param. The param's value lives in the node's
+    /// keyed VM state, see [`param`](crate::param). Its smoothing lag lives in
+    /// the node weight.
     Param {
-        /// The param's name: its VM-state key, inspector label and sugar stem.
+        /// The param's name, its VM-state key, inspector label and sugar stem.
         name: &'static str,
         /// The value a fresh node starts at.
         default: f32,
@@ -46,21 +46,21 @@ pub enum In {
         min: f32,
         /// The inspector's drag range maximum.
         max: f32,
-        /// The inspector's unit suffix (e.g. `" Hz"`), possibly empty.
+        /// The inspector's unit suffix such as `" Hz"`, possibly empty.
         suffix: &'static str,
-        /// The socket/param doc line.
+        /// The socket and param doc line.
         doc: &'static str,
     },
-    /// A fixed constant with no socket (e.g. an initial phase the node does
-    /// not expose).
+    /// A fixed constant with no socket, for example an initial phase the node
+    /// does not expose.
     Baked(f32),
-    /// An *init-only* structural value with no socket, baked into the def as
-    /// a constant from the node weight. For inputs plyphon requires to be
-    /// compile-time constants (a delay's `maxdelay` sizes its delay line, a
-    /// limiter's `dur` its look-ahead buffer) or latches at unit init (`Line`).
-    /// Editing one re-derives the synthdef.
+    /// An init-only structural value with no socket, baked into the def as a
+    /// constant from the node weight. It is for inputs plyphon requires to be
+    /// compile-time constants, such as a delay's `maxdelay` that sizes its
+    /// delay line, or latches at unit init, such as `Line`. Editing one
+    /// re-derives the synthdef.
     Init {
-        /// The value's name: its inspector label and sugar keyword.
+        /// The value's name, its inspector label and sugar keyword.
         name: &'static str,
         /// The value a fresh node starts at.
         default: f32,
@@ -70,7 +70,7 @@ pub enum In {
 }
 
 impl In {
-    /// The entry's socket/inspector name, if it has one (`Baked` does not).
+    /// The entry's socket or inspector name. `Baked` has none.
     pub fn name(&self) -> Option<&'static str> {
         match self {
             In::Signal { name, .. } | In::Param { name, .. } | In::Init { name, .. } => Some(name),
@@ -78,7 +78,7 @@ impl In {
         }
     }
 
-    /// Whether this entry is a socket (a dsp input port).
+    /// Whether this entry is a socket, a dsp input port.
     pub fn is_socket(&self) -> bool {
         matches!(self, In::Signal { .. } | In::Param { .. })
     }
@@ -97,16 +97,15 @@ pub struct Special {
     pub index: i16,
 }
 
-/// One wrapped plyphon unit generator: the descriptor a
-/// [`UnitNode`](crate::UnitNode) (identified by [`unit`](Self::unit)) is
-/// driven by.
+/// One wrapped plyphon unit generator, the descriptor that drives a
+/// [`UnitNode`](crate::UnitNode). The node names it by [`unit`](Self::unit).
 #[derive(Clone, Copy, Debug)]
 pub struct UnitDesc {
-    /// The `.gantz` keyword and palette name, e.g. `"~lpf"`.
+    /// The `.gantz` keyword and palette name, for example `"~lpf"`.
     pub keyword: &'static str,
-    /// The row's unique identity and the node's stored `unit` field, e.g.
-    /// `"LPF"`. Unless [`special`](Self::special) overrides it, this is also
-    /// the emitted [`UnitSpec`](plyphon::synthdef::UnitSpec) name.
+    /// The row's unique identity and the node's stored `unit` field, for
+    /// example `"LPF"`. Unless [`special`](Self::special) overrides it, this
+    /// is also the emitted [`UnitSpec`](plyphon::synthdef::UnitSpec) name.
     pub unit: &'static str,
     /// The emission override for operator-selector rows. `None` means
     /// [`unit`](Self::unit) is itself the emitted plyphon name.
@@ -137,7 +136,7 @@ impl UnitDesc {
         }
     }
 
-    /// The socketed entries (`Signal`/`Param`) in socket order.
+    /// The `Signal` and `Param` entries in socket order.
     pub fn sockets(&self) -> impl Iterator<Item = &'static In> + '_ {
         self.inputs.iter().filter(|i| i.is_socket())
     }
@@ -192,7 +191,7 @@ pub fn unit_desc(unit: &str) -> Option<&'static UnitDesc> {
     UNITS.iter().find(|d| d.unit == unit)
 }
 
-/// The descriptor with the given `.gantz` keyword (e.g. `"~lpf"`), if any.
+/// The descriptor with the given `.gantz` keyword such as `"~lpf"`, if any.
 pub fn unit_desc_by_keyword(keyword: &str) -> Option<&'static UnitDesc> {
     UNITS.iter().find(|d| d.keyword == keyword)
 }
@@ -202,7 +201,7 @@ const fn sig(name: &'static str, doc: &'static str) -> In {
     In::Signal { name, doc }
 }
 
-/// A [`In::Param`] (hybrid) row entry.
+/// A hybrid [`In::Param`] row entry.
 const fn par(
     name: &'static str,
     default: f32,
@@ -296,9 +295,9 @@ const fn freq(default: f32, doc: &'static str) -> In {
 }
 
 /// The wrapped plyphon units, grouped by family. Signatures follow the
-/// published plyphon crate the workspace pins (SC-conventional arg order).
+/// plyphon crate the workspace pins, in SC-conventional arg order.
 pub static UNITS: &[UnitDesc] = &[
-    // --- Oscillators (band-limited + LF) ---
+    // Oscillators
     u(
         "~saw",
         "Saw",
@@ -463,7 +462,7 @@ pub static UNITS: &[UnitDesc] = &[
         &["unipolar pulse signal"],
         "Non-band-limited pulse oscillator/LFO (unipolar)",
     ),
-    // --- Noise ---
+    // Noise
     u(
         "~whitenoise",
         "WhiteNoise",
@@ -562,7 +561,7 @@ pub static UNITS: &[UnitDesc] = &[
         &["random +/-1 steps"],
         "Clipped step noise: random +/-1 values at a frequency",
     ),
-    // --- Filters ---
+    // Filters
     u(
         "~lpf",
         "LPF",
@@ -847,7 +846,7 @@ pub static UNITS: &[UnitDesc] = &[
         &["attack-decay envelope signal"],
         "Attack-decay integrator (smoothed impulse envelopes)",
     ),
-    // --- Delays ---
+    // Delays
     u(
         "~delayn",
         "DelayN",
@@ -1010,7 +1009,7 @@ pub static UNITS: &[UnitDesc] = &[
         &["all-passed signal"],
         "All-pass (phase-dispersing feedback) delay, cubic interpolation",
     ),
-    // --- Lines ---
+    // Lines
     u(
         "~line",
         "Line",
@@ -1051,7 +1050,7 @@ pub static UNITS: &[UnitDesc] = &[
         &["exponential ramp signal"],
         "Exponential ramp from start to end (values latch when the synth spawns)",
     ),
-    // --- Dynamics ---
+    // Dynamics
     u(
         "~limiter",
         "Limiter",
@@ -1093,7 +1092,7 @@ pub static UNITS: &[UnitDesc] = &[
         &["amplitude envelope"],
         "Amplitude (envelope) follower",
     ),
-    // --- Pan / mix ---
+    // Pan and mix
     u(
         "~pan2",
         "Pan2",
@@ -1186,7 +1185,7 @@ pub static UNITS: &[UnitDesc] = &[
         &["rotated x", "rotated y"],
         "Rotate a two-channel sound field",
     ),
-    // --- Math / range ---
+    // Math and range
     u(
         "~muladd",
         "MulAdd",
@@ -1258,10 +1257,9 @@ pub static UNITS: &[UnitDesc] = &[
         &["folded signal"],
         "Fold (mirror) a signal into [lo, hi]",
     ),
-    // --- Operators (BinaryOpUGen / UnaryOpUGen) ---
-    // One row per operator in plyphon's dispatch tables, which follow SC's
-    // operator indices. Defaults for `b` are 1 for multiplicative operators
-    // and 0 otherwise.
+    // Operators. One row per operator in plyphon's dispatch tables, which
+    // follow SC's operator indices. Defaults for `b` are 1 for multiplicative
+    // operators and 0 otherwise.
     bop!(
         "~add",
         "Add",

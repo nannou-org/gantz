@@ -1,49 +1,49 @@
 //! A pre-derivation flattening pass for nested graphs.
 //!
-//! Nesting (committing a subgraph with `Inlet`/`Outlet` boundaries and reusing
-//! it as a single ref node) is gantz's primary abstraction. The control (Steel)
-//! compiler supports it call-based: each nested level becomes a function the
-//! parent calls. A synthdef is a flat unit list with no notion of calling a
-//! sub-synthdef, so the DSP compiler lowers a ref one of two ways: *instance*
-//! it (the default for DSP-bearing children) - keep an opaque marker that
-//! `derive_template` (crate::instance) turns into a shared synthdef spawned
-//! per instance - or *inline* it: splice the referenced graph's nodes into
-//! one flat graph, dissolving the `Inlet`/`Outlet` boundary nodes into the
-//! surrounding edges. The spliced result derives via
-//! [`derive_synthdef`](crate::derive_synthdef) or
+//! Nesting is gantz's primary abstraction. A subgraph with `Inlet` and
+//! `Outlet` boundaries is committed and reused as a single ref node. The
+//! Steel compiler supports it call-based. Each nested level becomes a
+//! function the parent calls. A synthdef is a flat unit list with no notion
+//! of calling a sub-synthdef, so the DSP compiler lowers a ref one of two
+//! ways. It instances the ref by default for DSP-bearing children. An opaque
+//! marker stays in the graph and
+//! [`derive_template`](crate::instance::derive_template) turns it into a
+//! shared synthdef spawned per instance. Otherwise it inlines the ref. The
+//! referenced graph's nodes splice into one flat graph and the
+//! `Inlet`/`Outlet` boundary nodes dissolve into the surrounding edges. The
+//! spliced result derives via [`derive_synthdef`](crate::derive_synthdef) or
 //! [`derive_synthdefs`](crate::derive_synthdefs) unchanged.
 //!
 //! Every spliced node carries its original path within the nested structure
-//! (a [`Flat`] weight, surfaced through [`ToNodeDsp::node_path`]). Paths are
-//! load-bearing: params are named by path, the audio driver bridges param and
+//! as a [`Flat`] weight, surfaced through [`ToNodeDsp::node_path`]. Paths are
+//! load-bearing. Params are named by path, the audio driver bridges param and
 //! scope state to the VM by path, buses are allocated by path and region keys
-//! hash paths. Keeping original paths means a node's identity survives
-//! re-derivation regardless of where it lands in the flat graph.
+//! hash paths. A node's identity therefore survives re-derivation regardless
+//! of where it lands in the flat graph.
 //!
 //! Not every ref splices. A ref resolved as [`RefKind::Instance`] stays an
-//! opaque [`Flat::Instance`] marker for
-//! `derive_template` (crate::instance) to lower into a
-//! shared synthdef spawned per instance. Root-level `Inlet`/`Outlet` nodes are
-//! likewise kept as markers ([`Flat::Inlet`]/[`Flat::Outlet`]): they are the
-//! flattened graph's own interface, which template derivation lowers to the
-//! shared def's bus reads and writes. All markers are non-DSP
-//! (`to_node_dsp()` is `None`), so [`derive_synthdef`](crate::derive_synthdef)
-//! and [`derive_synthdefs`](crate::derive_synthdefs) ignore them.
+//! opaque [`Flat::Instance`] marker for template derivation. Root-level
+//! `Inlet` and `Outlet` nodes are likewise kept as [`Flat::Inlet`] and
+//! [`Flat::Outlet`] markers. They are the flattened graph's own interface,
+//! which template derivation lowers to the shared def's bus reads and writes.
+//! Every marker is non-DSP, its `to_node_dsp()` is `None`, so
+//! [`derive_synthdef`](crate::derive_synthdef) and
+//! [`derive_synthdefs`](crate::derive_synthdefs) ignore them.
 //!
 //! # Edge bridging
 //!
 //! An edge into a ref's input `i` belongs to every consumer of the referenced
-//! graph's `i`-th inlet, and an edge from a ref's output `j` re-sources from
-//! the edges feeding the referenced graph's `j`-th outlet (inlets and
-//! outlets map positionally by ascending node index, the same "input i to
-//! inlet i" contract the control compiler uses). Bridging resolves through
-//! arbitrarily deep chains of boundaries (a pure `inlet -> outlet` wire
-//! dissolves entirely). *Every* resolving chain bridges as its own flat edge
-//! - derivation sums a multi-fed input, so a boundary fanned in by several
-//! sources delivers every summand (two distinct chains reaching the same
-//! source deliberately sum it twice). An unresolvable chain (an unconnected
-//! inlet or outlet along the way) produces no edge, so the consumer's input
-//! falls back to derivation's usual mono silence.
+//! graph's `i`-th inlet. An edge from a ref's output `j` re-sources from the
+//! edges feeding the referenced graph's `j`-th outlet. Inlets and outlets map
+//! positionally by ascending node index, the same "input i to inlet i"
+//! contract the control compiler uses. Bridging resolves through arbitrarily
+//! deep chains of boundaries. A pure `inlet -> outlet` wire dissolves
+//! entirely. Every resolving chain bridges as its own flat edge. Derivation
+//! sums a multi-fed input, so a boundary fanned in by several sources
+//! delivers every summand. Two distinct chains reaching the same source sum
+//! it twice by design. An unresolvable chain, one with an unconnected inlet
+//! or outlet along the way, produces no edge. The consumer's input is then
+//! unconnected.
 
 use std::collections::HashMap;
 
@@ -59,10 +59,11 @@ use crate::dsp::{NodeDsp, ToNodeDsp};
 
 pub use gantz_core::node::AsRefNode;
 
-/// A vertex of the flattened graph: a node spliced out of the nested
+/// A vertex of the flattened graph. Either a node spliced out of the nested
 /// structure, an opaque instanced-reference marker, or a root-level boundary
-/// marker. Every variant carries its original path (e.g. `[3, 2]` for the
-/// node at index 2 within the graph referenced by the root node at index 3).
+/// marker. Every variant carries its original path, for example `[3, 2]` for
+/// the node at index 2 within the graph referenced by the root node at index
+/// 3.
 #[derive(Clone, Debug)]
 pub enum Flat<N> {
     /// A concrete node spliced into the flat graph.
@@ -72,31 +73,32 @@ pub enum Flat<N> {
         /// The node itself.
         node: N,
     },
-    /// An instanced nested-graph ref: opaque to derivation, resolved by
-    /// `derive_template` (crate::instance) into a shared
-    /// synthdef variant wired per instance.
+    /// An instanced nested-graph ref, opaque to derivation.
+    /// [`derive_template`](crate::instance::derive_template) resolves it into
+    /// a shared synthdef variant wired per instance.
     Instance {
         /// The ref node's original path within the nested structure.
         path: Vec<usize>,
         /// The referenced child graph's content address.
         child_ca: ContentAddr,
-        /// The ref's inlet count (the child graph's `Inlet` count), for
+        /// The ref's inlet count, the child graph's `Inlet` count, for
         /// instance-aware reachability and edge bridging.
         n_inlets: usize,
-        /// The ref's outlet count (the child graph's `Outlet` count).
+        /// The ref's outlet count, the child graph's `Outlet` count.
         n_outlets: usize,
     },
-    /// A root-level `Inlet`, kept as a marker: it is the flattened graph's own
+    /// A root-level `Inlet`, kept as a marker. It is the flattened graph's own
     /// interface, which template derivation lowers to a shared-def bus read.
-    /// (Nested inlets dissolve into the surrounding edges as before.)
+    /// Nested inlets dissolve into the surrounding edges.
     Inlet {
-        /// The inlet node's path (`[ix]` - root markers are never nested).
+        /// The inlet node's path. Root markers are never nested, so it is
+        /// `[ix]`.
         path: Vec<usize>,
         /// The inlet's position among the root's inlets in ascending node
-        /// index order (the "input i to inlet i" contract).
+        /// index order, the "input i to inlet i" contract.
         index: usize,
     },
-    /// A root-level `Outlet` marker (see [`Flat::Inlet`]).
+    /// A root-level `Outlet` marker. See [`Flat::Inlet`].
     Outlet {
         /// The outlet node's path.
         path: Vec<usize>,
@@ -119,12 +121,12 @@ impl<N> Flat<N> {
 
 /// An error flattening a nested graph.
 ///
-/// Both cases are defensive: the editor refuses to create ref cycles and the
-/// registry holds a committed graph for every ref it hands out, so neither
-/// should be reachable through the application.
+/// Both cases are defensive. The editor refuses to create ref cycles and the
+/// registry holds a committed graph for every ref it hands out, so neither is
+/// reachable through the application.
 #[derive(Debug, thiserror::Error)]
 pub enum FlattenError {
-    /// A graph ref (transitively) resolves through itself.
+    /// A graph ref transitively resolves through itself.
     #[error("graph reference resolves through itself: {0}")]
     RefCycle(ContentAddr),
     /// A graph ref whose target graph could not be found.
@@ -134,52 +136,52 @@ pub enum FlattenError {
 
 /// How a nested-graph ref lowers during flattening.
 ///
-/// `Inline` splices the referenced graph's nodes into the flat graph (the
-/// classic behaviour). `Instance` leaves an opaque [`Flat::Instance`] marker,
-/// deferring the child's DSP to a shared synthdef derived once and wired per
-/// instance (see `derive_template` (crate::instance)).
+/// `Inline` splices the referenced graph's nodes into the flat graph.
+/// `Instance` leaves an opaque [`Flat::Instance`] marker and defers the
+/// child's DSP to a shared synthdef derived once and wired per instance. See
+/// [`derive_template`](crate::instance::derive_template).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RefKind {
     /// Splice the referenced graph's nodes into the flat graph.
     Inline,
-    /// Leave an opaque instance marker; the child's DSP is derived once into a
-    /// shared synthdef and wired per instance.
+    /// Leave an opaque instance marker. The child's DSP is derived once into
+    /// a shared synthdef and wired per instance.
     Instance,
 }
 
 /// Resolves a node to the committed graph it references, if any, and how it
 /// lowers.
 ///
-/// - `None`: not a graph ref. The node is copied into the flat graph as-is.
-/// - `Some((ca, RefKind::Inline, Some(graph)))`: an inlined graph ref. The
+/// - `None` is not a graph ref. The node is copied into the flat graph as-is.
+/// - `Some((ca, RefKind::Inline, Some(graph)))` is an inlined graph ref. The
 ///   referenced graph is spliced in place of the node, with `ca` keying the
 ///   ref-cycle guard.
-/// - `Some((ca, RefKind::Instance, _))`: an instanced graph ref. An opaque
-///   [`Flat::Instance`] marker carrying `ca` is emitted in place of the node;
-///   the child graph is not resolved at flatten time (it may be `None`).
-/// - `Some((_, RefKind::Inline, None))`: a graph ref whose target is missing,
-///   an [`FlattenError::Unresolved`] error.
+/// - `Some((ca, RefKind::Instance, _))` is an instanced graph ref. An opaque
+///   [`Flat::Instance`] marker carrying `ca` is emitted in place of the node.
+///   The child graph is not resolved at flatten time, so it may be `None`.
+/// - `Some((_, RefKind::Inline, None))` is a graph ref whose target is
+///   missing, an [`FlattenError::Unresolved`] error.
 pub type Resolve<'g, N> = dyn Fn(&N) -> Option<(ContentAddr, RefKind, Option<&'g Graph<N>>)> + 'g;
 
-/// One level of the nested structure: a graph, where it hangs off its parent,
-/// and where each of its nodes went during splicing. Bridging resolves edge
-/// sources through this table.
+/// One level of the nested structure. It holds a graph, where it hangs off
+/// its parent, and where each of its nodes went during splicing. Bridging
+/// resolves edge sources through this table.
 struct Level<'g, N> {
     graph: &'g Graph<N>,
     /// The parent level's index and the ref node there, `None` at the root.
     parent: Option<(usize, NodeIx)>,
-    /// Inlet nodes in ascending index order (the "input i to inlet i" contract).
+    /// Inlet nodes in ascending index order, the "input i to inlet i" contract.
     inlets: Vec<NodeIx>,
     /// Outlet nodes in ascending index order.
     outlets: Vec<NodeIx>,
-    /// Copied nodes: original index to flat-graph index.
+    /// Copied nodes, original index to flat-graph index.
     kept: HashMap<NodeIx, NodeIx>,
-    /// Resolved refs: ref node index to the child's index in the level table.
+    /// Resolved refs, ref node index to the child's index in the level table.
     child: HashMap<NodeIx, usize>,
 }
 
-/// An edge-source endpoint (level, node, output port), tracked on a stack
-/// during source resolution to guard against pure boundary wiring cycles.
+/// An edge-source endpoint as level, node and output port. Source resolution
+/// tracks them on a stack to guard against pure boundary wiring cycles.
 type SrcKey = (usize, NodeIx, usize);
 
 impl<N: ToNodeDsp> ToNodeDsp for Flat<N> {
@@ -195,15 +197,15 @@ impl<N: ToNodeDsp> ToNodeDsp for Flat<N> {
     }
 }
 
-/// Flatten `graph`, splicing every nested level (per `resolve`) into one flat
+/// Flatten `graph`, splicing every nested level per `resolve` into one flat
 /// graph and dissolving `Inlet`/`Outlet` boundary nodes into the surrounding
-/// edges (see the module docs).
+/// edges. See the module docs.
 ///
 /// `get_node` backs the [`MetaCtx`] used to identify inlets and outlets via
-/// the [`gantz_core::Node::inlet`]/[`outlet`](gantz_core::Node::outlet)
-/// predicates (so identification agrees with the control compiler, including
-/// through refs). Nodes that are neither graph refs nor boundaries are copied
-/// as-is. Non-DSP nodes ride along harmlessly, derivation ignores them.
+/// the [`gantz_core::Node::inlet`] and [`outlet`](gantz_core::Node::outlet)
+/// predicates, so identification agrees with the control compiler, including
+/// through refs. Nodes that are neither graph refs nor boundaries are copied
+/// as-is. Non-DSP nodes ride along and derivation ignores them.
 pub fn flatten<'g, N>(
     get_node: GetNode<'_>,
     graph: &'g Graph<N>,
@@ -231,15 +233,15 @@ where
 }
 
 /// [`flatten`] resolving [`AsRefNode`] nodes through the content-addressed
-/// registry (a reference's content address is the referenced graph's
-/// `GraphAddr`).
+/// registry. A reference's content address is the referenced graph's
+/// `GraphAddr`.
 ///
-/// How each ref lowers is decided here: a ref whose child (transitively)
-/// contains DSP nodes lowers as [`RefKind::Instance`] by default - its child
-/// derives once into shared synthdefs spawned per instance - unless its
-/// [`DspRefExt`](crate::ref_ext::DspRefExt) ext datum sets `inline`, which
-/// opts back into splicing. Refs to non-DSP children (including pure
-/// `inlet -> outlet` wires) always splice: they carry structure, not sound,
+/// How each ref lowers is decided here. A ref whose child transitively
+/// contains DSP nodes lowers as [`RefKind::Instance`] by default. Its child
+/// derives once into shared synthdefs spawned per instance. A
+/// [`DspRefExt`](crate::ref_ext::DspRefExt) ext datum with `inline` set opts
+/// back into splicing. Refs to non-DSP children, including pure
+/// `inlet -> outlet` wires, always splice. They carry structure, not sound,
 /// and must dissolve.
 pub fn flatten_from_registry<'g, N>(
     graph: &'g Graph<N>,
@@ -272,10 +274,10 @@ where
     flatten(&get_node, graph, &resolve)
 }
 
-/// Flatten every child graph `flat` (transitively) instances, so template
+/// Flatten every child graph `flat` transitively instances, so template
 /// derivation's resolver can hand out `&Graph<Flat<N>>` per child content
-/// address. Walks [`Flat::Instance`] markers to a fixpoint: only children an
-/// instanced ref actually reaches are flattened.
+/// address. Walks [`Flat::Instance`] markers to a fixpoint. Only children an
+/// instanced ref reaches are flattened.
 pub fn flatten_instance_children<'g, N>(
     flat: &Graph<Flat<&N>>,
     reified: &'g gantz_core::data::ReifiedGraphs<N>,
@@ -307,10 +309,10 @@ where
     Ok(out)
 }
 
-/// Phase 1: recursively copy `graph`'s concrete nodes into `out` (paths
-/// prefixed by `prefix`), recording each level's boundary nodes and resolved
-/// refs in `levels` for [`bridge`] to resolve edges through. Returns the
-/// level's index within `levels`.
+/// The first pass. Recursively copy `graph`'s concrete nodes into `out` with
+/// paths prefixed by `prefix`. Record each level's boundary nodes and
+/// resolved refs in `levels` for [`bridge`] to resolve edges through. Returns
+/// the level's index within `levels`.
 #[allow(clippy::too_many_arguments)]
 fn splice<'g, N>(
     ctx: MetaCtx,
@@ -343,10 +345,11 @@ where
         };
         if let Some((ca, kind, child_graph)) = resolve(node) {
             match kind {
-                // An instanced ref: emit an opaque marker carrying the child
-                // CA and do NOT splice (no recursion, no cycle check - an
-                // instance never resolves its child at flatten time). The
-                // marker behaves as a kept node with the ref's inputs/outputs.
+                // An instanced ref emits an opaque marker carrying the child
+                // CA and never splices. There is no recursion and no cycle
+                // check, since an instance never resolves its child at flatten
+                // time. The marker behaves as a kept node with the ref's
+                // inputs and outputs.
                 RefKind::Instance => {
                     let n_inlets = node.n_inputs(ctx);
                     let n_outlets = node.n_outputs(ctx);
@@ -380,7 +383,7 @@ where
             }
         } else if node.inlet(ctx) {
             levels[id].inlets.push(ix);
-            // A root-level inlet is the flat graph's own interface: keep it
+            // A root-level inlet is the flat graph's own interface, so keep it
             // as a marker for template derivation. Nested inlets dissolve.
             if parent.is_none() {
                 let index = levels[id].inlets.len() - 1;
@@ -408,12 +411,12 @@ where
     Ok(id)
 }
 
-/// Phase 2: emit the flat edges. Only edges whose target was kept are
-/// considered (each concrete input's feeds are enumerated exactly once, at
-/// the level where the target lives), with each source resolved through the
-/// boundary chain via [`resolve_src`] - one flat edge per resolving chain
-/// (derivation sums a multi-fed input). Levels are visited in splice order
-/// and edges in creation (age) order, so a kept input's flat edges keep their
+/// The second pass. It emits the flat edges. Only edges whose target was kept
+/// are considered, so each concrete input's feeds are enumerated exactly
+/// once, at the level where the target lives. Each source resolves through
+/// the boundary chain via [`resolve_src`], one flat edge per resolving chain
+/// since derivation sums a multi-fed input. Levels are visited in splice
+/// order and edges in creation order, so a kept input's flat edges keep their
 /// original relative age and the flat graph matches an equivalent
 /// hand-flattened one.
 fn bridge<'g, N>(levels: &[Level<'g, N>], out: &mut Graph<Flat<&'g N>>) {
@@ -433,10 +436,10 @@ fn bridge<'g, N>(levels: &[Level<'g, N>], out: &mut Graph<Flat<&'g N>>) {
 }
 
 /// Resolve the source endpoint `(s, sp)` at level `lvl` to every kept flat
-/// node output its boundary chains reach, following ref outputs down into
-/// their child's outlet and inlet outputs up into the parent's edges. Empty
-/// when every chain dead-ends (an unconnected boundary) or revisits an
-/// endpoint on `stack` (a pure boundary wiring cycle).
+/// node output its boundary chains reach. Ref outputs are followed down into
+/// their child's outlet, inlet outputs up into the parent's edges. Empty when
+/// every chain dead-ends at an unconnected boundary or revisits an endpoint
+/// on `stack`, a pure boundary wiring cycle.
 fn resolve_src<N>(
     levels: &[Level<'_, N>],
     lvl: usize,
@@ -468,8 +471,8 @@ fn resolve_src<N>(
             .map(|(p, r)| resolve_via_input(levels, p, r, i, stack))
             .unwrap_or_default()
     } else {
-        // An outlet as a source (outlets have no outputs) or a node dropped
-        // by an earlier error path: nothing to wire.
+        // An outlet as a source, though outlets have no outputs, or a node
+        // dropped by an earlier error path. Nothing to wire.
         Vec::new()
     };
     stack.pop();
@@ -477,7 +480,7 @@ fn resolve_src<N>(
 }
 
 /// Resolve every source feeding `node`'s `input` at level `lvl`, oldest edge
-/// first (`edges_directed` iterates newest-first, hence the reversal) - each
+/// first. `edges_directed` iterates newest-first, hence the reversal. Each
 /// resolving chain is a summand of the consumer's input.
 fn resolve_via_input<N>(
     levels: &[Level<'_, N>],
@@ -500,13 +503,13 @@ fn resolve_via_input<N>(
 }
 
 /// Whether the reified graph at `ga` contains a DSP node, directly or
-/// transitively through references: the lowering decision behind
+/// transitively through references. This is the lowering decision behind
 /// [`RefKind::Instance`].
 ///
 /// This is the typed twin of the data-level
-/// [`is_dsp_graph`](crate::ref_ext::is_dsp_graph) (which classifies stored
-/// registry data by wire tag): only the reified cache is in scope during a
-/// flatten, so the probe stays typed - keep the two classifications in step.
+/// [`is_dsp_graph`](crate::ref_ext::is_dsp_graph), which classifies stored
+/// registry data by wire tag. Only the reified cache is in scope during a
+/// flatten, so the probe stays typed. Keep the two classifications in step.
 /// Memoized in `memo` so repeated probes over one flatten stay linear
 /// overall. Graphs missing from the cache classify as non-DSP.
 fn is_dsp_graph<N>(
@@ -521,9 +524,9 @@ where
     is_dsp(reified, ga, memo, &mut stack)
 }
 
-/// The recursive half of [`is_dsp_graph`]: reference cycles are treated as
-/// non-DSP at the point of re-entry (a cycle cannot introduce a DSP node
-/// that its members do not already contain).
+/// The recursive half of [`is_dsp_graph`]. Reference cycles are treated as
+/// non-DSP at the point of re-entry. A cycle cannot introduce a DSP node that
+/// its members do not already contain.
 fn is_dsp<N>(
     reified: &gantz_core::data::ReifiedGraphs<N>,
     ga: GraphAddr,

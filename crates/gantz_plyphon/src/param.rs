@@ -1,21 +1,21 @@
-//! Reusable helpers for DSP node parameters: building a plyphon control param,
-//! naming it uniquely within a synthdef and folding its smoothing lag into a
-//! content address. The inspector rows over this state live in `crate::egui`
-//! (`egui` feature).
+//! Helpers for DSP node parameters. They build a plyphon control param, name
+//! it uniquely within a synthdef and fold its smoothing lag into a content
+//! address. The inspector rows over this state live in `crate::egui` behind
+//! the `egui` feature.
 //!
-//! A DSP param's *value* lives in the node's VM state (path-keyed, like `number`),
-//! so editing it does not churn the graph's content address. Its *lag* lives in
-//! the node weight, because lag is structural (it bakes a `LagControl` into the
-//! synthdef and so respawns on change).
+//! A DSP param's value lives in the node's VM state, path-keyed like
+//! `number`, so editing it does not churn the graph's content address. Its
+//! lag lives in the node weight, because lag is structural. It bakes a
+//! `LagControl` into the synthdef and so respawns on change.
 //!
-//! Two state shapes exist:
-//! - *bare*: the node's whole state is one `{ value, pending }` map - the
-//!   original single-param shape (e.g. `~out`'s gain).
-//! - *keyed*: the node's state maps param names to `{ value, pending }`
-//!   sub-maps (e.g. `{ 'freq { .. }, 'width { .. } }`), for nodes with several
-//!   params. The `*_keyed` helpers and [`control_inputs_expr`] operate on this
-//!   shape, and a [`ParamBinding`](crate::ParamBinding) records which shape
-//!   feeds each synth param via its `key`.
+//! Two state shapes exist.
+//! - Bare. The node's whole state is one `{ value, pending }` map, the
+//!   single-param shape. `~out`'s gain uses it.
+//! - Keyed. The node's state maps param names to `{ value, pending }`
+//!   sub-maps, for example `{ 'freq { .. }, 'width { .. } }`, for nodes with
+//!   several params. The `*_keyed` helpers and [`control_inputs_expr`]
+//!   operate on this shape. A [`ParamBinding`](crate::ParamBinding) records
+//!   which shape feeds each synth param via its `key`.
 
 use gantz_core::node::{ExprCtx, ExprResult};
 use gantz_core::steel::gc::Gc;
@@ -23,15 +23,17 @@ use gantz_core::steel::steel_vm::engine::Engine;
 use gantz_core::steel::{HashMap, SteelVal};
 use plyphon::synthdef::Param;
 
-/// The `value` key of a DSP param's structured VM state: the current scalar value
-/// (the inspector reads/writes it. The driver uses it as the immediate fallback).
+/// The `value` key of a DSP param's structured VM state, the current scalar
+/// value. The inspector reads and writes it. The driver uses it as the
+/// immediate fallback.
 const VALUE: &str = "value";
-/// The `pending` key: a list of `(time value)` updates a connected control input
-/// has queued since the last frame, drained and scheduled by the audio driver.
+/// The `pending` key, a list of `(time value)` updates a connected control
+/// input has queued since the last frame. The audio driver drains and
+/// schedules them.
 const PENDING: &str = "pending";
 
 /// The plyphon control [`Param`] named `name` with the given default value and
-/// optional one-pole smoothing `lag` (seconds, `0.0` = a plain control).
+/// one-pole smoothing `lag` in seconds. A `lag` of `0.0` is a plain control.
 pub fn plyphon_param(name: impl Into<String>, default: f32, lag: f32) -> Param {
     if lag > 0.0 {
         Param::lag(name, default, lag)
@@ -42,30 +44,30 @@ pub fn plyphon_param(name: impl Into<String>, default: f32, lag: f32) -> Param {
 
 /// Build a single-param DSP node's Steel `expr`.
 ///
-/// If the node's *control input* at `control_ix` is connected, the incoming value
-/// is, guarded by `number?`: (1) queued onto the param state's `pending` list,
-/// tagged with this evaluation's firing time (`(hash-ref %args 'time)`), and (2)
-/// written to the param's current `value`. The audio driver drains `pending` each
-/// frame and *schedules* each `(time value)` ahead of the audio clock, so a
-/// `tick!`-driven chain animates the param sample-accurately rather than bunched at
-/// the frame boundary. `value` is the driver's immediate fallback for direct
-/// inspector edits. The expr always evaluates to `output`: the node's placeholder
-/// dsp output (`"state"` for a source like `~sinosc`, `"'()"` for a sink like
-/// `~out`). DSP nodes are otherwise Steel-inert.
+/// When the node's control input at `control_ix` is connected, a numeric
+/// incoming value is queued onto the param state's `pending` list, tagged
+/// with this evaluation's firing time from `(hash-ref %args 'time)`, and
+/// written to the param's current `value`. The audio driver drains `pending`
+/// each frame and schedules each `(time value)` ahead of the audio clock. A
+/// `tick!`-driven chain therefore animates the param sample-accurately rather
+/// than bunched at the frame boundary. `value` is the driver's immediate
+/// fallback for direct inspector edits. The expr always evaluates to
+/// `output`, the node's placeholder dsp output. That is `"state"` for a
+/// source like `~sinosc` and `"'()"` for a sink like `~out`. DSP nodes are
+/// otherwise Steel-inert.
 ///
 /// A non-empty list of 2-element numeric `(time value)` lists, the shape
-/// `pat/events->secs` emits, is queued as a pre-timestamped *batch* instead,
-/// with `value` taking the batch's last value. A whole pattern window lands
+/// `pat/events->secs` emits, is queued as a pre-timestamped batch instead.
+/// `value` takes the batch's last value. A whole pattern window then lands
 /// sample-accurately from a single eval.
 ///
-/// The `number?` guard is what makes a *hybrid* input work (a dsp input that
-/// falls back to a control param, e.g. `~sinosc`'s freq - see
-/// [`NodeDsp::n_dsp_inputs`](crate::NodeDsp::n_dsp_inputs)): a connected dsp
-/// source's placeholder output is non-numeric by contract and is ignored here,
-/// as is the list of bare values a multi-edge input evaluates to (its head is
-/// not a `(time value)` pair). So while any dsp wire shares the input the wire
-/// wins - numbers are not queued, matching the derived def, where the param is
-/// absent and nothing would drain the queue.
+/// The `number?` guard is what makes a hybrid input work, see
+/// [`NodeDsp::n_dsp_inputs`](crate::NodeDsp::n_dsp_inputs). A connected dsp
+/// source's placeholder output is non-numeric by contract and is ignored
+/// here. So is the list of bare values a multi-edge input evaluates to, since
+/// its head is not a `(time value)` pair. While any dsp wire shares the input
+/// the wire wins. Numbers are not queued, matching the derived def, where the
+/// param is absent and nothing would drain the queue.
 pub fn control_input_expr(ctx: &ExprCtx<'_, '_>, control_ix: usize, output: &str) -> ExprResult {
     let expr = match ctx.inputs().get(control_ix) {
         Some(Some(val)) => {
@@ -118,14 +120,14 @@ fn guarded_queue_expr(val: &str, single: &str, batch: &str) -> String {
     )
 }
 
-/// Build a multi-param DSP node's Steel `expr` over *keyed* state.
+/// Build a multi-param DSP node's Steel `expr` over keyed state.
 ///
-/// The keyed analogue of [`control_input_expr`]: `inputs` pairs each hybrid
-/// control input's index with its param name, and each *connected* input
-/// queues/writes into the `{ value, pending }` sub-map at its name within the
-/// node's keyed state (see the module docs). Unconnected inputs emit nothing.
-/// The same `number?` guard and timestamped `pending` queue semantics apply
-/// per input. The expr always evaluates to `output`.
+/// The keyed analogue of [`control_input_expr`]. `inputs` pairs each hybrid
+/// control input's index with its param name. Each connected input queues and
+/// writes into the `{ value, pending }` sub-map at its name within the node's
+/// keyed state, see the module docs. Unconnected inputs emit nothing. The
+/// same `number?` guard and timestamped `pending` queue semantics apply per
+/// input. The expr always evaluates to `output`.
 pub fn control_inputs_expr(
     ctx: &ExprCtx<'_, '_>,
     inputs: &[(usize, &str)],
@@ -164,7 +166,7 @@ pub fn control_inputs_expr(
 }
 
 /// A synthdef parameter name unique to a node's parameter within a synthdef,
-/// e.g. `"2/freq"` for the `freq` param of the node at path `[2]`.
+/// for example `"2/freq"` for the `freq` param of the node at path `[2]`.
 pub fn param_name(path: &[usize], param: &str) -> String {
     let prefix = path
         .iter()
@@ -174,11 +176,11 @@ pub fn param_name(path: &[usize], param: &str) -> String {
     format!("{prefix}/{param}")
 }
 
-/// The structured VM state of a DSP param: a hashmap `{ value, pending }`.
+/// The structured VM state of a DSP param, a hashmap `{ value, pending }`.
 ///
-/// `value` is the current scalar (seeded with `default`). `pending` starts as an
-/// empty list of `(time value)` updates a control input will queue. Seed it from a
-/// node's `register` (mirrors `~sinosc`).
+/// `value` is the current scalar, seeded with `default`. `pending` starts as
+/// an empty list of `(time value)` updates a control input will queue. Seed
+/// it from a node's `register`.
 pub fn param_state(default: f64) -> SteelVal {
     let map = HashMap::new()
         .update(sym(VALUE), SteelVal::NumV(default))
@@ -186,9 +188,9 @@ pub fn param_state(default: f64) -> SteelVal {
     SteelVal::HashMapV(Gc::new(map).into())
 }
 
-/// The *keyed* VM state of a multi-param DSP node: a hashmap from param name to
-/// a [`param_state`] sub-map, one entry per `(name, default)`. Seed it from the
-/// node's `register`.
+/// The keyed VM state of a multi-param DSP node, a hashmap from param name to
+/// a [`param_state`] sub-map, one entry per `(name, default)`. Seed it from
+/// the node's `register`.
 pub fn params_state(defaults: &[(&str, f64)]) -> SteelVal {
     let map = defaults
         .iter()
@@ -202,12 +204,12 @@ pub fn params_state(defaults: &[(&str, f64)]) -> SteelVal {
 pub fn param_value(state: &SteelVal) -> Option<f64> {
     match state {
         SteelVal::HashMapV(map) => map.get(&sym(VALUE)).and_then(steel_num),
-        // Tolerate a bare scalar (e.g. older state) as the value.
+        // Tolerate a bare scalar as the value.
         other => steel_num(other),
     }
 }
 
-/// Read the `name`d param's current `value` from a node's *keyed* state.
+/// Read the `name`d param's current `value` from a node's keyed state.
 pub fn param_value_keyed(state: &SteelVal, name: &str) -> Option<f64> {
     let SteelVal::HashMapV(map) = state else {
         return None;
@@ -215,9 +217,9 @@ pub fn param_value_keyed(state: &SteelVal, name: &str) -> Option<f64> {
     map.get(&sym(name)).and_then(param_value)
 }
 
-/// The number of queued `pending` control updates in a DSP param's state, WITHOUT
-/// draining them (a non-mutating peek for a UI readout). `0` for a bare scalar, a
-/// missing queue, or an empty one.
+/// The number of queued `pending` control updates in a DSP param's state,
+/// without draining them. This is a non-mutating peek for a UI readout. `0`
+/// for a bare scalar, a missing queue, or an empty one.
 pub fn pending_len(state: &SteelVal) -> usize {
     match state {
         SteelVal::HashMapV(map) => match map.get(&sym(PENDING)) {
@@ -228,8 +230,8 @@ pub fn pending_len(state: &SteelVal) -> usize {
     }
 }
 
-/// The total queued `pending` updates across every param of a node's *keyed*
-/// state (the non-mutating peek for a UI readout, summed over sub-maps).
+/// The total queued `pending` updates across every param of a node's keyed
+/// state, summed over sub-maps without draining them.
 pub fn pending_len_total(state: &SteelVal) -> usize {
     let SteelVal::HashMapV(map) = state else {
         return 0;
@@ -237,8 +239,8 @@ pub fn pending_len_total(state: &SteelVal) -> usize {
     map.values().map(pending_len).sum()
 }
 
-/// Set a DSP param's `value`, preserving its `pending` queue. Used by the inspector
-/// on a direct edit (the value is not content-addressed).
+/// Set a DSP param's `value`, preserving its `pending` queue. The inspector
+/// uses it on a direct edit. The value is not content-addressed.
 pub fn with_value(state: SteelVal, value: f64) -> SteelVal {
     let map = match state {
         SteelVal::HashMapV(map) => map.update(sym(VALUE), SteelVal::NumV(value)),
@@ -249,14 +251,14 @@ pub fn with_value(state: SteelVal, value: f64) -> SteelVal {
     SteelVal::HashMapV(Gc::new(map).into())
 }
 
-/// Set the `name`d param's `value` within a node's *keyed* state, preserving
+/// Set the `name`d param's `value` within a node's keyed state, preserving
 /// every other param and the `name`d param's `pending` queue. A missing or
 /// non-map state grows the keyed shape around the edit.
 pub fn with_param_value(state: SteelVal, name: &str, value: f64) -> SteelVal {
     let map = match state {
         SteelVal::HashMapV(map) => {
             let sub = map.get(&sym(name)).cloned().unwrap_or_else(|| {
-                // A fresh sub-map (no queue yet) for a param absent from state.
+                // A fresh sub-map with no queue for a param absent from state.
                 param_state(value)
             });
             map.update(sym(name), with_value(sub, value))
@@ -266,9 +268,9 @@ pub fn with_param_value(state: SteelVal, name: &str, value: f64) -> SteelVal {
     SteelVal::HashMapV(Gc::new(map).into())
 }
 
-/// Read a DSP param's `value` and drain its `pending` queue from VM state, clearing
-/// `pending` (writing the cleared state back). Returns `None` if the node has no
-/// state. Drained updates are returned oldest-first.
+/// Read a DSP param's `value` and drain its `pending` queue from VM state,
+/// writing the cleared state back. Returns `None` if the node has no state.
+/// Drained updates are returned oldest-first.
 pub fn drain_param(vm: &mut Engine, path: &[usize]) -> Option<(f64, Vec<(f64, f64)>)> {
     let state = gantz_core::node::state::extract_value(vm, path)
         .ok()
@@ -280,9 +282,10 @@ pub fn drain_param(vm: &mut Engine, path: &[usize]) -> Option<(f64, Vec<(f64, f6
     Some((value, pending))
 }
 
-/// The keyed analogue of [`drain_param`]: read the `name`d param's `value` and
-/// drain its `pending` queue from a node's *keyed* VM state, clearing only that
-/// param's queue. Returns `None` if the node has no state or no such param.
+/// The keyed analogue of [`drain_param`]. Read the `name`d param's `value`
+/// and drain its `pending` queue from a node's keyed VM state, clearing only
+/// that param's queue. Returns `None` if the node has no state or no such
+/// param.
 pub fn drain_param_keyed(
     vm: &mut Engine,
     path: &[usize],
@@ -306,9 +309,10 @@ pub fn drain_param_keyed(
     Some((value, pending))
 }
 
-/// Read one `{ value, pending }` sub-map: the current value, the queued updates
-/// (oldest-first) and, when any were queued, the sub-map with its queue cleared
-/// (for the caller to write back). A bare scalar yields its value, no queue.
+/// Read one `{ value, pending }` sub-map. Returns the current value, the
+/// queued updates oldest-first and, when any were queued, the sub-map with
+/// its queue cleared for the caller to write back. A bare scalar yields its
+/// value and no queue.
 fn drain_sub(sub: &SteelVal) -> Option<(f64, Vec<(f64, f64)>, Option<SteelVal>)> {
     let SteelVal::HashMapV(map) = sub else {
         return steel_num(sub).map(|v| (v, Vec::new(), None));
@@ -329,24 +333,25 @@ fn drain_sub(sub: &SteelVal) -> Option<(f64, Vec<(f64, f64)>, Option<SteelVal>)>
             .collect(),
         _ => Vec::new(),
     };
-    // The queue is built by prepending (latest first). Return oldest-first.
+    // The queue is built by prepending, latest first. Return oldest-first.
     pending.reverse();
     let cleared = (!pending.is_empty())
         .then(|| SteelVal::HashMapV(Gc::new(map.update(sym(PENDING), empty_list())).into()));
     Some((value, pending, cleared))
 }
 
-/// A symbol [`SteelVal`] for a state key (matching the Steel `'value`/`'pending`).
+/// A symbol [`SteelVal`] for a state key, matching the Steel `'value` and
+/// `'pending`.
 fn sym(name: &str) -> SteelVal {
     SteelVal::SymbolV(name.into())
 }
 
-/// An empty Steel list - the initial `pending` queue.
+/// An empty Steel list, the initial `pending` queue.
 fn empty_list() -> SteelVal {
     SteelVal::ListV(Default::default())
 }
 
-/// Convert a numeric [`SteelVal`] to `f64` (handles `NumV` and `IntV`).
+/// Convert a `NumV` or `IntV` [`SteelVal`] to `f64`.
 fn steel_num(val: &SteelVal) -> Option<f64> {
     match val {
         SteelVal::NumV(f) => Some(*f),
@@ -365,9 +370,9 @@ mod tests {
     }
 
     /// Evaluate a bare-state control-input expr whose input binding is the
-    /// given steel expression, mirroring the codegen's stateful wrapper
-    /// (a local `state` binding written back after the expr), then drain.
-    /// The eval time is 7.0.
+    /// given steel expression, then drain. It mirrors the codegen's stateful
+    /// wrapper, a local `state` binding written back after the expr. The eval
+    /// time is 7.0.
     fn eval_control_input(input_expr: &str) -> (f64, Vec<(f64, f64)>) {
         let mut vm = Engine::new_base();
         vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
@@ -398,7 +403,7 @@ mod tests {
         assert_eq!(pending, vec![(7.0, 42.0)]);
     }
 
-    /// A batch of `(time value)` pairs (the `pat/events->secs` shape) is
+    /// A batch of `(time value)` pairs, the `pat/events->secs` shape, is
     /// queued whole, draining oldest-first, with `value` taking the last.
     #[test]
     fn control_input_batch_queues_all_pairs() {
@@ -409,7 +414,7 @@ mod tests {
     }
 
     /// Multi-edge lists of bare values, empty lists and non-numeric values
-    /// are all ignored: no queue, value untouched.
+    /// are all ignored. Nothing is queued and the value is untouched.
     #[test]
     fn control_input_ignores_non_batches() {
         for ignored in ["(list 1.0 2.0)", "(list)", "'sym", "(list (list 'x 1.0))"] {
@@ -450,8 +455,8 @@ mod tests {
         assert_eq!(pending, vec![]);
     }
 
-    /// A param sub-map with the given queue (stored newest-first, as the expr
-    /// prepends).
+    /// A param sub-map with the given queue, stored newest-first as the expr
+    /// prepends.
     fn with_pending(sub: SteelVal, newest_first: &[(f64, f64)]) -> SteelVal {
         let SteelVal::HashMapV(map) = sub else {
             panic!("param sub-map expected");
@@ -494,12 +499,12 @@ mod tests {
         assert_eq!(pending_len_total(&state), 3);
         gantz_core::node::state::update_value(&mut vm, &path, state).unwrap();
 
-        // Draining `freq` yields its value + queue oldest-first...
+        // Draining `freq` yields its value and queue oldest-first.
         let (value, pending) = drain_param_keyed(&mut vm, &path, "freq").unwrap();
         assert_eq!(value, 220.0);
         assert_eq!(pending, vec![(0.5, 300.0), (1.0, 330.0)]);
 
-        // ...clearing only `freq`'s queue.
+        // It clears only `freq`'s queue.
         let state = gantz_core::node::state::extract_value(&vm, &path)
             .unwrap()
             .unwrap();

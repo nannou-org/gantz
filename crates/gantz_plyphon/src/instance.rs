@@ -1,64 +1,60 @@
 //! Recursive synthdef template derivation for nested-graph instance
-//! composition (#295).
+//! composition.
 //!
-//! A flat graph (the output of [`flatten`](crate::flatten::flatten)) may
-//! contain [`Flat::Instance`] markers - opaque references to child graphs
-//! whose DSP is derived once into shared synthdefs and wired per instance via
-//! buses - plus root [`Flat::Inlet`]/[`Flat::Outlet`] markers describing the
-//! graph's own interface. This module's [`derive_template`] produces a
-//! [`GraphTemplate`]: a topologically ordered list of [`Part`]s (regions and
-//! instances) plus the bus wiring connecting them. [`instantiate`] splices a
-//! template (and, recursively, its instances' child templates) into a flat
-//! [`ResolvedPart`] list with absolute paths - the input the audio driver
-//! consumes.
+//! A flat graph, the output of [`flatten`](crate::flatten::flatten), may
+//! contain [`Flat::Instance`] markers. Each marker is an opaque reference to a
+//! child graph whose DSP derives once into shared synthdefs and is wired per
+//! instance via buses. The flat graph may also contain root [`Flat::Inlet`]
+//! and [`Flat::Outlet`] markers that describe its own interface.
+//! [`derive_template`] produces a [`GraphTemplate`], a topologically ordered
+//! list of [`Part`]s plus the bus wiring between them. [`instantiate`] splices
+//! a template and its child templates into a flat [`ResolvedPart`] list with
+//! absolute paths. That list is the audio driver's input.
 //!
 //! # Def reuse
 //!
-//! One template is derived per [`VariantKey`] - a content-addressed shape
-//! combining the child's content address, its connected-inlet widths
-//! (unconnected inlets bake mono silence), its consumed-outlet mask and the
-//! engine's output channel count. Every instance of the same child at the
-//! same shape, in any head, shares one [`GraphTemplate`] (memoised in a
-//! [`DefCache`]). Defs are named by structural content
-//! ([`content_def_name`]), so the driver's
-//! per-name install refcounting installs each shared def once and spawns it
-//! per instance, with per-synth wiring set live via `set_control`.
+//! One template is derived per [`VariantKey`]. The key combines the child's
+//! content address, its connected-inlet widths, its consumed-outlet mask and
+//! the engine's output channel count. Every instance of the same child at the
+//! same shape, in any head, shares one [`GraphTemplate`] memoised in a
+//! [`DefCache`]. Defs are named by structural content via
+//! [`content_def_name`]. The driver's per-name install refcounting installs
+//! each shared def once and spawns it per instance. Per-synth wiring is set
+//! live via `set_control`.
 //!
 //! # Composition
 //!
-//! Defs never reference defs. Composition lives entirely in the template's
-//! wiring metadata - [`BusKey`]s on region reads/writes and instance inlets -
-//! which the driver realises as buses. The child's body derives from the
-//! committed child graph with child-local param names, so
-//! [`structural_sig`] (and hence the def name) is
-//! stable across instances, while [`instantiate`] prefixes every binding path
-//! with the instance's absolute path for the driver's param/scope sync.
+//! Defs never reference defs. Composition lives in the template's wiring
+//! metadata, the [`BusKey`]s on region reads, region writes and instance
+//! inlets. The driver realises them as buses. The child's body derives from
+//! the committed child graph with child-local param names. That keeps
+//! [`structural_sig`] and the def name stable across instances.
+//! [`instantiate`] prefixes every binding path with the instance's absolute
+//! path for the driver's param and scope sync.
 //!
 //! # Staging
 //!
-//! An instance's def runs as its own synth, so a node feeding an instance
-//! must run *before* it and a node reading it *after*. A diamond such as
-//! `src -> instance -> mix` plus `src -> mix` therefore cannot fuse `src` and
-//! `mix` into one def. Each node is assigned a *stage* - the maximum over its
-//! summand sources, bumped when crossing an instance - and regions are the
-//! connected components *within a stage*. An edge crossing stages (or
-//! otherwise crossing regions) lowers to an implicit bus
-//! ([`BusKey::Src`]), costing one bus and no latency (writers run before
-//! readers within a block). Cycles *through an instance* have no such order
-//! and are rejected as [`DeriveError::BusCycle`] (deliberate feedback is
-//! planned to land with `InFeedback` lowering, #293).
+//! An instance's def runs as its own synth. A node that feeds an instance must
+//! run before it and a node that reads it must run after it. A diamond such
+//! as `src -> instance -> mix` plus `src -> mix` therefore cannot fuse `src`
+//! and `mix` into one def. Each node is assigned a stage, the maximum over its
+//! summand sources, bumped when crossing an instance. Regions are the
+//! connected components within a stage. An edge that crosses stages or
+//! regions lowers to an implicit [`BusKey::Src`] bus. It costs one bus and no
+//! latency, since writers run before readers within a block. A cycle through
+//! an instance has no such order and is rejected as [`DeriveError::BusCycle`].
+//! Feedback across parts is not supported. See #293.
 //!
 //! # Summing
 //!
-//! Multiple edges into one dsp input sum ([`sum_signals`]), exactly as in
-//! [`derive_synthdefs`]. Every summand of a consumed input is classified
-//! (a `Feed`) and the consumer sums the resolved signals - in-region wires
-//! and bus `In`s alike - after materializing them. A multi-fed instance
-//! *inlet* sums inside the child template (the summand widths are part of the
-//! [`VariantKey`], and each summand gets its own [`BusKey::IfaceIn`] bus). A
-//! multi-fed root *outlet* exports one bus per summand
-//! ([`GraphTemplate::outlets`]) and the enclosing reader sums after its
-//! per-summand `In`s ([`BusKey::InstOut`]).
+//! Multiple edges into one dsp input sum via [`sum_signals`], as in
+//! [`derive_synthdefs`]. Every summand of a consumed input is classified as a
+//! `Feed`. The consumer materializes the resolved signals, in-region wires and
+//! bus `In`s alike, then sums them. A multi-fed instance inlet sums inside the
+//! child template. The summand widths are part of the [`VariantKey`] and each
+//! summand gets its own [`BusKey::IfaceIn`] bus. A multi-fed root outlet
+//! exports one bus per summand in [`GraphTemplate::outlets`]. The enclosing
+//! reader sums after its per-summand [`BusKey::InstOut`] `In`s.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -85,46 +81,46 @@ use crate::flatten::Flat;
 /// graph.
 ///
 /// Every instance of the same child at the same inlet-width signature, outlet
-/// consumption mask and engine width shares one [`GraphTemplate`]. Unconnected
-/// inlets bake mono silence (part of the key, preserving derivation's constant
-/// folding); the outlet mask records which outlets are consumed downstream.
+/// consumption mask and engine width shares one [`GraphTemplate`]. An
+/// unconnected inlet is part of the key, so the child bakes its silence as a
+/// constant. The outlet mask records which outlets are consumed downstream.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct VariantKey {
     /// The referenced child graph's commit content address.
     pub child: ContentAddr,
-    /// One entry per inlet: the width of each summand feeding it, in canonical
-    /// order (empty = unconnected, baked silence). The child sums a multi-fed
+    /// Per inlet, the width of each summand feeding it, in canonical order.
+    /// An empty entry is an unconnected inlet. The child sums a multi-fed
     /// inlet's summands where the inlet is consumed.
     pub inlets: Vec<Vec<usize>>,
-    /// One entry per outlet: `true` if some downstream node consumes it.
+    /// Per outlet, `true` if some downstream node consumes it.
     pub outlets: Vec<bool>,
-    /// The engine's output channel count (baked into sinks).
+    /// The engine's output channel count. Sinks bake it in.
     pub out_channels: usize,
 }
 
 /// The identity of one bus within a template, on both its write and read
-/// sides. The driver allocates exactly one bus per distinct *absolute* key
-/// (see [`instantiate`]), so two sides naming the same key share a bus.
+/// sides. The driver allocates exactly one bus per distinct absolute key, so
+/// two sides naming the same key share a bus. [`instantiate`] makes keys
+/// absolute.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BusKey {
-    /// An explicit `~bus` boundary, keyed by the *effective* bus node's path
-    /// (consecutive `~bus` nodes alias, exactly as in
-    /// [`derive_synthdefs`]).
+    /// An explicit `~bus` boundary, keyed by the effective bus node's path.
+    /// Consecutive `~bus` nodes alias, as in [`derive_synthdefs`].
     Bus(Vec<usize>),
-    /// An implicit endpoint bus: the output `output` of the node at `path`,
-    /// written where a winning edge crosses a region boundary (a stage cut or
-    /// an instance-inlet feed).
+    /// An implicit endpoint bus carrying output `output` of the node at
+    /// `path`. It is written where an edge crosses a region boundary, either
+    /// a stage cut or an instance-inlet feed.
     Src {
         /// The source node's path.
         path: Vec<usize>,
         /// The source node's output port.
         output: usize,
     },
-    /// One summand of an instance's consumed outlet. Never allocated
-    /// directly: [`instantiate`] resolves it through the child template's
-    /// [`outlets`](GraphTemplate::outlets) table to the bus actually carrying
-    /// that summand's signal (falling back to an unwritten - silent - bus for
-    /// a sourceless outlet). A reader emits one `In` per summand and sums.
+    /// One summand of an instance's consumed outlet. Never allocated directly.
+    /// [`instantiate`] resolves it through the child template's
+    /// [`outlets`](GraphTemplate::outlets) table to the bus carrying that
+    /// summand's signal. A sourceless outlet falls back to an unwritten,
+    /// silent bus. A reader emits one `In` per summand and sums.
     InstOut {
         /// The instance marker's path.
         path: Vec<usize>,
@@ -138,55 +134,56 @@ pub enum BusKey {
     IfaceIn {
         /// The inlet's interface index.
         inlet: usize,
-        /// The summand's index within the inlet's feeds (canonical order,
-        /// matching [`VariantKey::inlets`]).
+        /// The summand's index within the inlet's feeds, in the canonical
+        /// order of [`VariantKey::inlets`].
         summand: usize,
     },
 }
 
-/// One side of a bus within a region's def: the `In`/`Out` unit and the no-lag
-/// bus-index control param the driver sets via `set_control` after spawning.
+/// One side of a bus within a region's def. It names the `In` or `Out` unit
+/// and the no-lag bus-index control param the driver sets via `set_control`
+/// after spawning.
 #[derive(Clone, Debug)]
 pub struct TemplateBus {
-    /// The bus's identity (template-relative paths).
+    /// The bus's identity, with template-relative paths.
     pub key: BusKey,
-    /// The bus's channel count (the boundary signal's width).
+    /// The bus's channel count, the boundary signal's width.
     pub channels: usize,
-    /// The index within the def's `units` of the bus `Out` (write side) or
-    /// `In` (read side) whose input 0 is the bus-index param.
+    /// The index within the def's `units` of the bus `Out` on the write side
+    /// or `In` on the read side. Its input 0 is the bus-index param.
     pub unit: usize,
     /// The no-lag control param the driver sets to the allocated bus channel.
     pub param: usize,
 }
 
-/// One region of a template: a connected component of DSP nodes within a
-/// stage, derived as its own synthdef, plus the buses its def writes and
-/// reads. Binding paths are template-relative; [`instantiate`] absolutizes
+/// One region of a template. A region is a connected component of DSP nodes
+/// within a stage, derived as its own synthdef, plus the buses its def writes
+/// and reads. Binding paths are template-relative. [`instantiate`] absolutizes
 /// them.
 pub struct TemplateRegion {
-    /// A stable template-relative identity across re-derives: a hash of the
-    /// region's sink paths and bus keys. Combined with the instance path
-    /// prefix by [`instantiate`] for the driver's keep/replace decision.
+    /// A stable template-relative identity across re-derives, hashed from the
+    /// region's sink paths and bus keys. [`instantiate`] combines it with the
+    /// instance path prefix for the driver's keep/replace decision.
     pub key: u64,
-    /// The def's [`structural_sig`] (its name is [`content_def_name`] of
-    /// this).
+    /// The def's [`structural_sig`]. The def name is [`content_def_name`] of
+    /// it.
     pub sig: u64,
     /// The region's synthdef, shared by every instance of the template.
     pub def: Arc<SynthDef>,
-    /// Param bindings (template-relative node paths, def-local indices).
+    /// Param bindings with template-relative node paths and def-local indices.
     pub params: Vec<ParamBinding>,
-    /// Monitor bindings (template-relative node paths).
+    /// Monitor bindings with template-relative node paths.
     pub monitors: Vec<ScopeOutBinding>,
     /// The def's driver-ramped fade gains.
     pub gains: Vec<GainRef>,
-    /// Buffer bindings (template-relative node paths).
+    /// Buffer bindings with template-relative node paths.
     pub buffers: Vec<BufferBinding>,
     /// The buses this region's def writes.
     pub bus_writes: Vec<TemplateBus>,
     /// The buses this region's def reads.
     pub bus_reads: Vec<TemplateBus>,
-    /// The width and rate each dsp output port carried (template-relative
-    /// node paths), for diagnostics.
+    /// The width and rate each dsp output port carried, keyed by
+    /// template-relative node path, for diagnostics.
     pub shapes: PortShapes,
 }
 
@@ -199,31 +196,31 @@ pub enum Part {
 }
 
 /// An instance's identity and wiring within its template. The child's own
-/// `In`/`Out` units live in the child template's regions; this records which
+/// `In`/`Out` units live in the child template's regions. This records which
 /// enclosing bus feeds each connected inlet.
 pub struct InstancePart {
-    /// The instance marker's template-relative path (its identity for
-    /// keep/replace and bus resolution).
+    /// The instance marker's template-relative path. It is the instance's
+    /// identity for keep/replace and bus resolution.
     pub path: Vec<usize>,
-    /// The variant this instance instantiates (keys the shared template).
+    /// The variant this instance instantiates. It keys the shared template.
     pub variant: VariantKey,
-    /// Per inlet: the template-relative key of the bus feeding each summand,
-    /// in canonical order (empty = unconnected, baked silence in the variant).
+    /// Per inlet, the template-relative key of the bus feeding each summand,
+    /// in canonical order. An empty entry is an unconnected inlet.
     pub inlet_keys: Vec<Vec<BusKey>>,
 }
 
-/// A derived template: its parts in topological order (bus writers before
-/// readers) and its own outlet table (for nesting into a parent).
+/// A derived template. Its parts are in topological order, bus writers before
+/// readers. Its outlet table lets a parent nest it.
 pub struct GraphTemplate {
     /// The parts, in bus-writer-before-reader topological order.
     pub parts: Vec<Part>,
-    /// One entry per outlet: the template-relative key + width of the bus
-    /// carrying each of the outlet's summands, in canonical order (empty =
-    /// unconsumed or sourceless). A parent's read of the instance's outlet
-    /// resolves through this table at [`instantiate`] time, so an outlet fed
-    /// by a nested instance or passed through from an inlet aliases the
-    /// underlying buses with no relay def. A multi-fed outlet exports one bus
-    /// per summand and the enclosing reader sums.
+    /// Per outlet, the template-relative key and width of the bus carrying
+    /// each of the outlet's summands, in canonical order. An empty entry is an
+    /// unconsumed or sourceless outlet. A parent's read of the instance's
+    /// outlet resolves through this table in [`instantiate`]. An outlet fed by
+    /// a nested instance or passed through from an inlet therefore aliases
+    /// the underlying buses with no relay def. A multi-fed outlet exports one
+    /// bus per summand and the enclosing reader sums.
     pub outlets: Vec<Vec<(BusKey, usize)>>,
 }
 
@@ -242,7 +239,7 @@ impl DefCache {
         self.0.get(key).cloned()
     }
 
-    /// Insert a derived template (the caller derives it, then caches).
+    /// Insert a derived template.
     pub fn insert(&mut self, key: VariantKey, t: Arc<GraphTemplate>) {
         self.0.insert(key, t);
     }
@@ -258,26 +255,26 @@ impl DefCache {
     }
 }
 
-/// Resolves a child content address to its committed graph (flattened), for
+/// Resolves a child content address to its committed, flattened graph for
 /// recursive [`derive_template`]. `None` surfaces as
 /// [`DeriveError::Unresolved`].
 pub type InstanceResolve<'g, N> = dyn Fn(&ContentAddr) -> Option<&'g Graph<Flat<N>>> + 'g;
 
-/// A part with its absolute path resolved - the driver's input.
+/// A part with its absolute path resolved. This is the driver's input.
 ///
-/// Produced by [`instantiate`]: instances dissolve into their child
-/// template's regions (spawned per instance from the shared def), so only
-/// region-flavoured parts remain, in global bus-writer-before-reader order.
+/// [`instantiate`] produces it. Instances dissolve into their child
+/// template's regions, spawned per instance from the shared def, so only
+/// region parts remain, in global bus-writer-before-reader order.
 pub struct ResolvedPart {
-    /// The part's keep/replace identity: the template region key combined
-    /// with the instance path prefix. Stable across re-derives while the
-    /// part's sinks and wiring shape stay put.
+    /// The part's keep/replace identity, the template region key combined
+    /// with the instance path prefix. It is stable across re-derives while
+    /// the part's sinks and wiring shape stay put.
     pub key: u64,
     /// The def's [`structural_sig`].
     pub sig: u64,
     /// The shared, content-named synthdef.
     pub def: Arc<SynthDef>,
-    /// Param bindings with ABSOLUTE node paths (def-local indices).
+    /// Param bindings with absolute node paths and def-local indices.
     pub params: Vec<ParamBinding>,
     /// Monitor bindings with absolute node paths.
     pub monitors: Vec<ScopeOutBinding>,
@@ -289,15 +286,15 @@ pub struct ResolvedPart {
     pub bus_writes: Vec<ResolvedBus>,
     /// The buses this part's synth reads (absolute keys).
     pub bus_reads: Vec<ResolvedBus>,
-    /// The width and rate each dsp output port carried (absolute node paths),
-    /// for diagnostics.
+    /// The width and rate each dsp output port carried, keyed by absolute
+    /// node path, for diagnostics.
     pub shapes: PortShapes,
 }
 
 /// A [`TemplateBus`] with its key made absolute.
 #[derive(Clone, Debug)]
 pub struct ResolvedBus {
-    /// The bus's absolute identity - the driver's allocation key.
+    /// The bus's absolute identity, the driver's allocation key.
     pub key: BusKey,
     /// The bus's channel count.
     pub channels: usize,
@@ -314,30 +311,30 @@ enum Kind {
     Plain,
     /// A `~bus` boundary.
     Boundary,
-    /// An instance marker (`n_inlets`, `n_outlets`).
+    /// An instance marker with its `n_inlets` and `n_outlets`.
     Instance(usize, usize),
-    /// A root inlet marker (its interface index).
+    /// A root inlet marker with its interface index.
     Inlet(usize),
-    /// A root outlet marker (its interface index).
+    /// A root outlet marker with its interface index.
     Outlet(usize),
 }
 
 /// Where a consumed input's signal comes from.
 enum Feed {
-    /// A same-region source: wire it directly.
+    /// A same-region source, wired directly.
     Wire(NodeIx, usize),
-    /// An external bus: an `In` keyed by `key`, whose write (if any) is owned
+    /// An external bus, an `In` keyed by `key`. Its write, if any, is owned
     /// by `writer`.
     Read {
         key: BusKey,
         writer: Option<PartId>,
-        /// For `Src`/`Bus` keys: the plain node + port whose output the
+        /// For `Src` and `Bus` keys, the plain node and port whose output the
         /// writer region must emit to the bus.
         demand: Option<(NodeIx, usize)>,
-        /// The param path + label of the read-side bus-index param.
+        /// The param path and label of the read-side bus-index param.
         param_at: (Vec<usize>, String),
     },
-    /// No source: mono silence.
+    /// No source. Reads silence.
     Silence,
 }
 
@@ -348,20 +345,19 @@ enum PartId {
     Instance(usize),
 }
 
-/// Per (instance path, outlet): the number of summand buses the derived child
-/// template exports for that outlet ([`GraphTemplate::outlets`]). Populated in
-/// part order (writers precede readers), so a reader's `InstOut` expansion
-/// sees its instance's counts.
+/// Per instance path and outlet, the number of summand buses the derived
+/// child template exports for that outlet in [`GraphTemplate::outlets`].
+/// Populated in part order, writers before readers, so a reader's `InstOut`
+/// expansion sees its instance's counts.
 type OutSummands = HashMap<(Vec<usize>, usize), usize>;
 
 /// Derive a [`GraphTemplate`] for `graph`, recursing into instance children
-/// per `resolve` (memoised in `cache`).
+/// per `resolve` and memoising them in `cache`.
 ///
-/// The head graph is the degenerate case: its interface (any root
-/// inlet/outlet markers) is all-unconnected, so stray boundaries lower to
-/// silence exactly as they always have. When the graph contains no markers at
-/// all, this delegates to [`derive_synthdefs`] (handling `~bus` boundaries
-/// exactly as today) and re-shapes its regions, renamed to content def names.
+/// The head graph is the degenerate case. Its root inlet and outlet markers
+/// are all unconnected, so stray boundaries lower to silence. When the graph
+/// contains no markers at all, this delegates to [`derive_synthdefs`] and
+/// re-shapes its regions, renamed to content def names.
 pub fn derive_template<N>(
     graph: &Graph<Flat<N>>,
     out_channels: usize,
@@ -400,9 +396,9 @@ fn iface_arity<N>(graph: &Graph<Flat<N>>) -> (usize, usize) {
     (n_in, n_out)
 }
 
-/// Whether the child committed at `ca` (transitively) contains a DSP sink -
-/// an instance of it is then itself a sink (it produces audio through the
-/// child's own `~out`/`~scopeout`, no parent wiring needed).
+/// Whether the child committed at `ca` transitively contains a DSP sink. An
+/// instance of such a child is itself a sink. It produces audio through the
+/// child's own `~out` or `~scopeout` with no parent wiring.
 fn child_has_sink<N>(
     ca: &ContentAddr,
     resolve: &InstanceResolve<'_, N>,
@@ -417,7 +413,7 @@ where
     }
     if stack.contains(ca) {
         // A ref cycle cannot introduce a sink its members do not already
-        // contain; the cycle itself errors if such an instance ever derives.
+        // contain. The cycle itself errors if such an instance ever derives.
         return Ok(false);
     }
     let graph = resolve(ca).ok_or(DeriveError::Unresolved(*ca))?;
@@ -438,10 +434,11 @@ where
     Ok(has)
 }
 
-/// The unified template derivation: classify, reach, stage, cut into
-/// per-stage regions, order the part DAG and derive each part with its bus
-/// wiring. `inlets`/`outlets_consumed` describe the interface shape the
-/// enclosing graph observes (all-unconnected/unconsumed for the head).
+/// The template derivation. It classifies vertices, computes reach, assigns
+/// stages, cuts per-stage regions, orders the part DAG and derives each part
+/// with its bus wiring. `inlets` and `outlets_consumed` describe the
+/// interface shape the enclosing graph observes. For the head they are all
+/// unconnected and unconsumed.
 #[allow(clippy::too_many_lines)]
 fn derive_parts<N>(
     graph: &Graph<Flat<N>>,
@@ -455,8 +452,8 @@ fn derive_parts<N>(
 where
     N: ToNodeDsp,
 {
-    // Fast path: no markers at all is exactly `derive_synthdefs` (the
-    // pre-instancing pipeline), re-shaped with content def names.
+    // Fast path. A graph with no markers is exactly `derive_synthdefs`,
+    // re-shaped with content def names.
     let any_marker = graph
         .node_indices()
         .any(|n| !matches!(&graph[n], Flat::Node { .. }));
@@ -546,7 +543,7 @@ where
             Some(Kind::Inlet(_)) | None => 0,
         }
     };
-    // Whether a vertex can source a signal (outlets never do).
+    // Whether a vertex can source a signal. Outlets never do.
     let is_source_kind = |n: NodeIx| -> bool {
         matches!(
             kind.get(&n),
@@ -597,9 +594,9 @@ where
         }
     }
 
-    // Summand sources per dsp input, reach-filtered: every edge into an input
-    // is a summand (empty = unconnected), canonically ordered (sorted by
-    // source path + output port) so derivation is independent of edge
+    // Summand sources per dsp input, reach-filtered. Every edge into an input
+    // is a summand and an empty list is an unconnected input. Summands sort by
+    // source path and output port, so derivation is independent of edge
     // insertion order.
     let srcs: HashMap<NodeIx, Vec<Vec<(NodeIx, usize)>>> = reach
         .iter()
@@ -620,10 +617,10 @@ where
         })
         .collect();
 
-    // Stages, via the SCC condensation of the winning-edge graph so cycles
-    // that were previously legal (pure `~bus` cycles, in-region node cycles)
-    // stay legal: an SCC's members share a stage, and only an SCC containing
-    // an instance - a cycle through an instance - is an error.
+    // Stages, via the SCC condensation of the winning-edge graph. An SCC's
+    // members share a stage, so pure `~bus` cycles and in-region node cycles
+    // stay legal. Only an SCC containing an instance, a cycle through an
+    // instance, is an error.
     let stage = {
         let mut temp = petgraph::graph::DiGraph::<NodeIx, (), usize>::default();
         let mut to_temp: HashMap<NodeIx, petgraph::graph::NodeIndex<usize>> = HashMap::new();
@@ -678,8 +675,8 @@ where
         stage
     };
 
-    // Regions: connected components of reachable Plain vertices over their
-    // winning dsp edges, within a stage (a cross-stage edge never joins).
+    // Regions are connected components of reachable Plain vertices over their
+    // winning dsp edges within a stage. A cross-stage edge never joins.
     let mut comp: HashMap<NodeIx, usize> = HashMap::new();
     let mut n_comps = 0;
     let plain = |n: NodeIx| kind.get(&n) == Some(&Kind::Plain);
@@ -729,10 +726,10 @@ where
         v
     };
 
-    // `~bus` aliasing + sourcing, exactly as `derive_synthdefs`: a *pure*
-    // single-summand chain of boundaries keeps the classic effective-bus
-    // identity, while a fanned-out chain lowers to its transitive endpoints
-    // (each a summand the consumer classifies as though wired directly).
+    // `~bus` aliasing and sourcing, as in `derive_synthdefs`. A pure
+    // single-summand chain of boundaries keeps the effective-bus identity. A
+    // fanned-out chain lowers to its transitive endpoints, each a summand the
+    // consumer classifies as though wired directly.
     let boundary = |n: NodeIx| kind.get(&n) == Some(&Kind::Boundary);
     let effective = |b: NodeIx| -> NodeIx {
         let mut cur = b;
@@ -745,17 +742,17 @@ where
         }
         cur
     };
-    // The classic case: the effective bus's lone summand is a non-boundary
-    // source (every hop of the chain had exactly one). `None` = the chain
-    // fans out somewhere, is unsourced, or is a pure bus cycle.
+    // The classic case. The effective bus's lone summand is a non-boundary
+    // source and every hop of the chain had exactly one. `None` means the
+    // chain fans out somewhere, is unsourced, or is a pure bus cycle.
     let classic_source = |b: NodeIx| -> Option<(NodeIx, usize)> {
         match srcs[&effective(b)].first().map(|v| v.as_slice()) {
             Some(&[(s, port)]) if !boundary(s) => Some((s, port)),
             _ => None,
         }
     };
-    // Every transitive non-boundary endpoint feeding `b`, canonical order,
-    // duplicates kept (each is a summand). Empty = unsourced (silence).
+    // Every transitive non-boundary endpoint feeding `b`, in canonical order.
+    // Duplicates are kept since each is a summand. Empty means unsourced.
     let bus_endpoints = |b: NodeIx| -> Vec<(NodeIx, usize)> {
         let mut endpoints = Vec::new();
         let mut visited = HashSet::new();
@@ -775,12 +772,12 @@ where
         endpoints
     };
 
-    // Classify one *direct* (non-boundary) source feeding a consumer. `at` is
-    // the consuming part (None for a root outlet or instance inlet, which
-    // belong to no part). An inlet source expands to one read per enclosing
-    // summand; an instance-outlet source to one read per exported summand
-    // (`out_summands` - a lone silent read before the child is derived or for
-    // a sourceless outlet, preserving the In-on-silent-bus shape).
+    // Classify one direct, non-boundary source feeding a consumer. `at` is the
+    // consuming part. It is `None` for a root outlet or instance inlet, which
+    // belong to no part. An inlet source expands to one read per enclosing
+    // summand. An instance-outlet source expands to one read per summand in
+    // `out_summands`. Before the child is derived, or for a sourceless outlet,
+    // that is a lone silent read, which keeps the In-on-silent-bus shape.
     let direct_feeds = |s: NodeIx,
                         port: usize,
                         at: Option<PartId>,
@@ -844,8 +841,8 @@ where
         }
     };
     // Classify every read a summand source lowers to. A boundary is
-    // transparent: a pure single-summand chain to a cross-region plain source
-    // keys the *bus* (its path is the user-facing identity); any other chain
+    // transparent. A pure single-summand chain to a cross-region plain source
+    // keys the bus, whose path is the user-facing identity. Any other chain
     // lowers to its endpoints, each classified as though wired directly.
     let feeds = |src: (NodeIx, usize),
                  at: Option<PartId>,
@@ -877,9 +874,10 @@ where
         }
     };
 
-    // Relations: per-part external reads (for the DAG + needed set) and
-    // per-region write demands. Reads are gathered from every reachable
-    // consumer: region nodes, instance inlets and consumed outlets.
+    // Relations. Per-part external reads feed the DAG and the needed set.
+    // Per-region write demands feed derivation. Reads are gathered from every
+    // reachable consumer, that is region nodes, instance inlets and consumed
+    // outlets.
     let mut reads: Vec<(Option<PartId>, BusKey, Option<PartId>)> = Vec::new();
     let mut demands: HashMap<usize, Vec<(BusKey, (NodeIx, usize))>> = HashMap::new();
     let mut demand = |writer: Option<PartId>, key: &BusKey, d: Option<(NodeIx, usize)>| {
@@ -891,8 +889,8 @@ where
         }
     };
     // Summand counts are unknown before derivation, so the DAG pass expands
-    // `InstOut` reads against an empty map (a single read - enough for the
-    // reader/writer relations, which are summand-agnostic).
+    // `InstOut` reads against an empty map. That yields a single read, enough
+    // for the summand-agnostic reader/writer relations.
     let no_summands = OutSummands::new();
     for (&n, inputs) in &srcs {
         let at = match kind.get(&n) {
@@ -904,8 +902,8 @@ where
                 }
                 None
             }
-            // Boundaries are transparent (resolved through their endpoints by
-            // their consumers); inlets consume nothing.
+            // Boundaries are transparent, their consumers resolve through
+            // their endpoints. Inlets consume nothing.
             _ => continue,
         };
         for summands in inputs.iter() {
@@ -926,9 +924,9 @@ where
         }
     }
 
-    // Needed parts: those holding seeds, grown through reads (a needed
-    // reader's writer is needed). A root outlet's reader is the enclosing
-    // graph (always needed, represented as `None`).
+    // Needed parts are those holding seeds, grown through reads. A needed
+    // reader's writer is needed. A root outlet's reader is the enclosing
+    // graph, represented as `None` and always needed.
     let mut needed: HashSet<PartId> = HashSet::new();
     for &s in &seeds {
         match kind.get(&s) {
@@ -961,9 +959,9 @@ where
         }
     }
 
-    // The part DAG (reader -> writers) over needed parts; Kahn's algorithm
-    // yields the derivation (and spawn) order, or reports a cycle through an
-    // instance boundary.
+    // The part DAG from readers to writers over needed parts. Kahn's
+    // algorithm yields the derivation and spawn order, or reports a cycle
+    // through an instance boundary.
     let mut deps: HashMap<PartId, HashSet<PartId>> = HashMap::new();
     for (at, _, writer) in &reads {
         if let (Some(r), Some(w)) = (at, writer) {
@@ -995,8 +993,8 @@ where
         }
     }
 
-    // Derive each part in topo order, flowing bus widths (and outlet summand
-    // counts) forward.
+    // Derive each part in topo order, flowing bus widths and outlet summand
+    // counts forward.
     let mut port_width: HashMap<BusKey, usize> = HashMap::new();
     let mut out_summands = OutSummands::new();
     for (i, ws) in inlets.iter().enumerate() {
@@ -1040,7 +1038,7 @@ where
         }
     }
 
-    // The template's own outlet table: the key + width of the bus carrying
+    // The template's own outlet table, the key and width of the bus carrying
     // each consumed outlet summand's signal.
     let outlets = (0..outlets_consumed.len())
         .map(|j| {
@@ -1064,7 +1062,7 @@ where
                         Some((key, w))
                     }
                     // An outlet has no part of its own, so a `Wire` feed is
-                    // unreachable (its source is always external to `None`).
+                    // unreachable. Its source is always external to `None`.
                     Feed::Wire(..) | Feed::Silence => None,
                 })
                 .collect()
@@ -1074,9 +1072,10 @@ where
     Ok(GraphTemplate { parts, outlets })
 }
 
-/// Derive one region's synthdef: its nodes in dsp pull order, `In` units for
-/// its external reads (each multi-summand input summed after materializing
-/// its wires and reads) and fade-gained `Out` units for its demanded writes.
+/// Derive one region's synthdef. It emits the nodes in dsp pull order, `In`
+/// units for the external reads and fade-gained `Out` units for the demanded
+/// writes. A multi-summand input sums after its wires and reads are
+/// materialized.
 #[allow(clippy::too_many_arguments)]
 fn derive_region<N>(
     graph: &Graph<Flat<N>>,
@@ -1168,9 +1167,9 @@ where
                     sigs.push(sig);
                 }
             }
-            // `None` iff no summand materialized a signal (e.g. an unconnected
-            // inlet), so hybrid inputs fall back to their param exactly when
-            // the Steel side keeps it driven.
+            // `None` iff no summand materialized a signal, for example an
+            // unconnected inlet. Hybrid inputs then fall back to their param,
+            // exactly when the Steel side keeps it driven.
             inputs.push((!sigs.is_empty()).then(|| sum_signals(&mut builder, &sigs)));
         }
         let outs = dsp.ugens(path, &inputs, &mut builder);
@@ -1183,8 +1182,8 @@ where
         outputs.insert(n, outs);
     }
 
-    // Emit the demanded bus writes: lift each channel to audio, apply a fade
-    // gain (one per source path) and write to a bus-index param.
+    // Emit the demanded bus writes. Lift each channel to audio, apply one fade
+    // gain per source path and write to a bus-index param.
     let mut fades: HashMap<Vec<usize>, u32> = HashMap::new();
     let mut bus_writes = Vec::with_capacity(writes.len());
     for (key, (src, port)) in writes {
@@ -1229,7 +1228,7 @@ where
         port_width.insert(key.clone(), sig.width());
     }
 
-    // A stable region identity: its sink paths and bus keys.
+    // A stable region identity from its sink paths and bus keys.
     let mut h = DefaultHasher::new();
     for s in &region_sinks {
         (0u8, graph[*s].path()).hash(&mut h);
@@ -1265,9 +1264,9 @@ where
     })
 }
 
-/// Derive one instance's part: build its [`VariantKey`] from the widths its
-/// inlet feeds carry and the outlets its consumers demand, recursively derive
-/// the child template (cached by variant) and record the inlet wiring.
+/// Derive one instance's part. Build its [`VariantKey`] from the widths its
+/// inlet feeds carry and the outlets its consumers demand. Recursively derive
+/// the child template, cached by variant, and record the inlet wiring.
 #[allow(clippy::too_many_arguments)]
 fn derive_instance<N>(
     graph: &Graph<Flat<N>>,
@@ -1296,8 +1295,8 @@ where
     let path = path.clone();
     let child_ca = *child_ca;
 
-    // Inlet feeds: the key of the bus feeding each inlet summand, and the
-    // width that bus carries (its writer derived earlier in topo order).
+    // Inlet feeds, the key of the bus feeding each inlet summand and the width
+    // that bus carries. Its writer derived earlier in topo order.
     let mut inlet_keys: Vec<Vec<BusKey>> = vec![Vec::new(); *n_inlets];
     let mut inlet_widths: Vec<Vec<usize>> = vec![Vec::new(); *n_inlets];
     for (i, summands) in srcs[&inst].iter().enumerate() {
@@ -1315,8 +1314,7 @@ where
         }
     }
 
-    // Consumed outlets: any reachable consumer whose winning source is this
-    // instance's outlet.
+    // An outlet is consumed when a reachable consumer sources from it.
     let mut outlets = vec![false; *n_outlets];
     for inputs in srcs.values() {
         for &(s, port) in inputs.iter().flatten() {
@@ -1335,8 +1333,8 @@ where
         out_channels,
     };
 
-    // Recursively derive the child template (cached by variant), guarding
-    // against a graph transitively instancing itself.
+    // Recursively derive the child template, cached by variant. Guard against
+    // a graph transitively instancing itself.
     let child = if let Some(t) = cache.get(&variant) {
         t
     } else {
@@ -1360,8 +1358,8 @@ where
         t
     };
 
-    // Continue the width flow: each consumed outlet summand's width and the
-    // outlet's summand count, from the child's outlet table.
+    // Continue the width flow with each consumed outlet summand's width and
+    // the outlet's summand count, from the child's outlet table.
     for (j, out) in child.outlets.iter().enumerate() {
         out_summands.insert((path.clone(), j), out.len());
         for (summand, &(_, w)) in out.iter().enumerate() {
@@ -1383,11 +1381,11 @@ where
     })
 }
 
-/// Splice `template` (and, recursively, its instances' cached child
-/// templates) into a flat [`ResolvedPart`] list in global topological order,
-/// with absolute binding paths and bus keys.
+/// Splice `template` and, recursively, its instances' cached child templates
+/// into a flat [`ResolvedPart`] list in global topological order, with
+/// absolute binding paths and bus keys.
 ///
-/// Instances dissolve: each contributes its child template's regions at the
+/// Instances dissolve. Each contributes its child template's regions at the
 /// instance's path prefix, so N instances of one child yield N spawns of the
 /// same shared defs with per-instance wiring. `cache` must be the cache the
 /// template derived against.
@@ -1397,8 +1395,8 @@ pub fn instantiate(template: &GraphTemplate, cache: &DefCache) -> Vec<ResolvedPa
     out
 }
 
-/// The recursive splice: returns this template's outlet table with keys made
-/// absolute (for the parent's `InstOut` resolution).
+/// The recursive splice. Returns this template's outlet table with absolute
+/// keys for the parent's `InstOut` resolution.
 fn instantiate_into(
     template: &GraphTemplate,
     cache: &DefCache,
@@ -1406,7 +1404,7 @@ fn instantiate_into(
     inlet_keys: &[Vec<BusKey>],
     out: &mut Vec<ResolvedPart>,
 ) -> Vec<Vec<(BusKey, usize)>> {
-    // Per template-local instance path: its child's absolutized outlet table.
+    // Per template-local instance path, its child's absolutized outlet table.
     let mut inst_outlets: HashMap<Vec<usize>, Vec<Vec<(BusKey, usize)>>> = HashMap::new();
 
     let prefixed = |p: &[usize]| -> Vec<usize> {
@@ -1415,9 +1413,9 @@ fn instantiate_into(
         abs
     };
     // Absolutize a template-local key. `InstOut` resolves through the named
-    // instance's child outlet table (writers precede readers in part order,
-    // so the entry exists by the time a reader needs it); a sourceless outlet
-    // falls back to a dedicated unwritten - silent - bus key.
+    // instance's child outlet table. Writers precede readers in part order,
+    // so the entry exists by the time a reader needs it. A sourceless outlet
+    // falls back to a dedicated unwritten, silent bus key.
     let abs_key =
         |key: &BusKey, inst_outlets: &HashMap<Vec<usize>, Vec<Vec<(BusKey, usize)>>>| -> BusKey {
             match key {
@@ -1526,9 +1524,9 @@ fn instantiate_into(
         .collect()
 }
 
-/// A per-summand bus param label: summand 0 keeps the bare `base` (def-sig
-/// stability for pre-summing single-summand shapes), later summands suffix
-/// their index.
+/// A per-summand bus param label. Summand 0 keeps the bare `base` so a
+/// single-summand shape keeps a stable def sig. Later summands suffix their
+/// index.
 fn summand_label(base: &str, summand: usize) -> String {
     match summand {
         0 => base.to_string(),

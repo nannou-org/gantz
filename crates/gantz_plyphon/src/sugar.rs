@@ -1,30 +1,30 @@
 //! `.gantz` keyword sugar for the DSP node set.
 //!
-//! [`PlyphonSugar`] provides the human-friendly keywords for this crate's nodes:
-//! bare `~out`/`~scopeout`/`~pack`/`~sum`/`~unpack`/`~bus`, with optional
-//! `(~out #:gain-lag s)`, `(~scopeout #:size n)` and `(~pack #:count n)`/
-//! `(~sum #:count n)`/`(~unpack #:count n)` forms carrying the structural
-//! smoothing lag / ring length / socket count. Every descriptor-table keyword
-//! (see [`crate::units`]) reads/writes the same way: bare `~sinosc`/`~lpf`,
-//! or `(~combc #:delay-lag s #:maxdelay v #:rate kr)` carrying the structural
-//! per-param lags, init-only values and ugen rate. Param *values* live in VM
-//! state (not the node weight), so they are not serialized and never appear
-//! here. Compose it with [`gantz_format::CoreSugar`] (and the other crates'
-//! sugars) via [`gantz_format::Sugars`].
+//! [`PlyphonSugar`] provides the keywords for this crate's nodes. The bespoke
+//! nodes read as bare `~out`, `~scopeout`, `~pack`, `~sum`, `~unpack` and
+//! `~bus`. The forms `(~out #:gain-lag s)`, `(~scopeout #:size n)`,
+//! `(~pack #:count n)`, `(~sum #:count n)` and `(~unpack #:count n)` carry
+//! the structural smoothing lag, ring length or socket count. Every
+//! [`crate::units`] descriptor-table keyword reads and writes the same way,
+//! bare as `~sinosc` or `~lpf`, or as
+//! `(~combc #:delay-lag s #:maxdelay v #:rate kr)` carrying the structural
+//! per-param lags, init-only values and ugen rate. Param values live in VM
+//! state, not the node weight, so they are not serialized and never appear
+//! here. Compose it with [`gantz_format::CoreSugar`] and the other crates'
+//! sugars via [`gantz_format::Sugars`].
 
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
 
-/// Keyword sugar for the plyphon DSP nodes: the bespoke set
-/// ([`Out`](crate::Out), [`ScopeOut`](crate::ScopeOut), [`Pack`](crate::Pack),
-/// [`Sum`](crate::Sum), [`Unpack`](crate::Unpack), [`Bus`](crate::Bus),
-/// `PlayBuf`) plus every [`UnitNode`](crate::UnitNode) descriptor-table
-/// keyword.
+/// Keyword sugar for the plyphon DSP nodes. It covers the bespoke
+/// [`Out`](crate::Out), [`ScopeOut`](crate::ScopeOut), [`Pack`](crate::Pack),
+/// [`Sum`](crate::Sum), [`Unpack`](crate::Unpack) and [`Bus`](crate::Bus)
+/// nodes plus every [`UnitNode`](crate::UnitNode) descriptor-table keyword.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlyphonSugar;
 
-/// Sugar keyword -> typetag tag, for the bespoke nodes (the descriptor-table
+/// Sugar keyword to typetag tag for the bespoke nodes. The descriptor-table
 /// keywords all map to the `"Unit"` tag and resolve through
-/// [`crate::units::unit_desc_by_keyword`]).
+/// [`crate::units::unit_desc_by_keyword`].
 const KEYWORD_TAG: &[(&str, &str)] = &[
     ("~out", "Out"),
     ("~scopeout", "ScopeOut"),
@@ -101,8 +101,8 @@ impl Sugar for PlyphonSugar {
 
     fn label_stem(&self, tag: &str, node: &Datum) -> Option<&str> {
         match tag {
-            // One tag, many keywords: the stem comes from the `unit` field
-            // (`~lpf0`, not `~unit0`).
+            // One tag, many keywords. The stem comes from the `unit` field, so
+            // `~lpf0`, not `~unit0`.
             "Unit" => node
                 .get("unit")
                 .and_then(Datum::as_str)
@@ -114,9 +114,10 @@ impl Sugar for PlyphonSugar {
 }
 
 /// Read a table keyword's `(<kw> [#:<param>-lag s]... [#:<init> v]...
-/// [#:rate ar|kr])` form into a `Unit` node datum, carrying each map/field
-/// only when its keyword is present (so a bare form stays bare). Fields are
-/// pushed in `UnitNode`'s serde order (unit, rate, lags, init).
+/// [#:rate ar|kr])` form into a `Unit` node datum. Each map or field is
+/// carried only when its keyword is present, so a bare form stays bare.
+/// Fields are pushed in `UnitNode`'s serde order, that is unit, rate, lags,
+/// init.
 fn unit_spec(desc: &'static crate::UnitDesc, args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let mut fields = vec![("unit", Datum::Str(desc.unit.into()))];
     push_rate(&mut fields, &args)?;
@@ -141,11 +142,12 @@ fn unit_spec(desc: &'static crate::UnitDesc, args: SugarArgs<'_>) -> Result<Datu
     Ok(node_datum("Unit", fields))
 }
 
-/// Write a `Unit` node datum: the bare keyword when everything is defaulted,
+/// Write a `Unit` node datum. The bare keyword when everything is defaulted,
 /// else `(<kw> [#:<param>-lag s]... [#:<init> v]... [#:rate kr])`. Stored
-/// values are `f32`s widened to `f64`; comparing and formatting them back as
-/// `f32` keeps the form exact and tidy (as [`write_lag`]). `None` (no such
-/// unit in the table) falls back to the generic `(node "Unit" ...)` form.
+/// values are `f32`s widened to `f64`. Comparing and formatting them back as
+/// `f32` keeps the form exact and tidy, as in [`write_lag`]. `None` means no
+/// such unit in the table, which falls back to the generic
+/// `(node "Unit" ...)` form.
 fn write_unit(node: &Datum) -> Option<String> {
     let desc = node
         .get("unit")
@@ -174,9 +176,9 @@ fn write_unit(node: &Datum) -> Option<String> {
     Some(write_form(desc.keyword, parts))
 }
 
-/// Read a `(<head> [#:<keyword> s] [#:rate ar|kr])` form into a node datum tagged
-/// `tag`, carrying the `field` lag / the ugen rate only when the keyword is
-/// present (so a bare form stays bare).
+/// Read a `(<head> [#:<keyword> s] [#:rate ar|kr])` form into a node datum
+/// tagged `tag`. The `field` lag and the ugen rate are carried only when
+/// their keyword is present, so a bare form stays bare.
 fn lag_spec(
     tag: &str,
     field: &str,
@@ -209,11 +211,11 @@ fn push_rate<'a>(
     Ok(())
 }
 
-/// Write a node carrying a smoothing `field` lag (and possibly a ugen rate): the
-/// bare keyword `kw` when everything is at its default, else
-/// `(<kw> [#:<keyword> <lag>] [#:rate kr])`. The stored lag is an `f32` widened
-/// to `f64`; comparing and formatting it back as `f32` keeps the form exact and
-/// tidy (e.g. `0.01`, not `0.00999999977648258`).
+/// Write a node carrying a smoothing `field` lag and possibly a ugen rate.
+/// The bare keyword `kw` when everything is at its default, else
+/// `(<kw> [#:<keyword> <lag>] [#:rate kr])`. The stored lag is an `f32`
+/// widened to `f64`. Comparing and formatting it back as `f32` keeps the form
+/// exact and tidy, for example `0.01` rather than `0.00999999977648258`.
 fn write_lag(kw: &str, field: &str, keyword: &str, default: f32, node: &Datum) -> String {
     let mut parts = Vec::new();
     if let Some(lag) = node.get(field).and_then(Datum::as_f64) {
@@ -241,8 +243,9 @@ fn write_form(kw: &str, parts: Vec<String>) -> String {
     }
 }
 
-/// Read a `(~scopeout [#:size n])` form into a `ScopeOut` node datum, carrying the ring
-/// `size` only when the keyword is present (so a bare form stays bare).
+/// Read a `(~scopeout [#:size n])` form into a `ScopeOut` node datum,
+/// carrying the ring `size` only when the keyword is present, so a bare form
+/// stays bare.
 fn size_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let mut fields = Vec::new();
     if let Some(size) = args.keyword_int("size")? {
@@ -251,8 +254,8 @@ fn size_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     Ok(node_datum("ScopeOut", fields))
 }
 
-/// Write a `ScopeOut`: the bare `~scopeout` when the ring `size` is at its default, else
-/// `(~scopeout #:size n)`.
+/// Write a `ScopeOut`. The bare `~scopeout` when the ring `size` is at its
+/// default, else `(~scopeout #:size n)`.
 fn write_size(node: &Datum) -> String {
     match node.get("size").and_then(Datum::as_i64) {
         Some(size) if size != crate::ScopeOut::DEFAULT_SIZE as i64 => {
@@ -262,8 +265,9 @@ fn write_size(node: &Datum) -> String {
     }
 }
 
-/// Read a `(<head> [#:count n])` form into a node datum tagged `tag`, carrying the
-/// socket `count` only when the keyword is present (so a bare form stays bare).
+/// Read a `(<head> [#:count n])` form into a node datum tagged `tag`,
+/// carrying the socket `count` only when the keyword is present, so a bare
+/// form stays bare.
 fn count_spec(tag: &str, args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let mut fields = Vec::new();
     if let Some(count) = args.keyword_int("count")? {
@@ -272,7 +276,7 @@ fn count_spec(tag: &str, args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     Ok(node_datum(tag, fields))
 }
 
-/// Write a `Pack`/`Unpack`: the bare keyword `kw` when the socket `count` is at
+/// Write a count node. The bare keyword `kw` when the socket `count` is at
 /// `default`, else `(<kw> #:count n)`.
 fn write_count(kw: &str, default: usize, node: &Datum) -> String {
     match node.get("count").and_then(Datum::as_i64) {
@@ -300,14 +304,14 @@ mod tests {
     fn sine_round_trips() {
         let s = PlyphonSugar;
         // A default `~sinosc` stays bare, read as a bare keyword or an empty
-        // spec (a table keyword: a `Unit` datum carrying the unit name).
+        // spec. A table keyword reads to a `Unit` datum carrying the unit name.
         let bare = s.read_bare("~sinosc").expect("bare");
         assert_eq!(bare.get("type").and_then(Datum::as_str), Some("Unit"));
         assert_eq!(bare.get("unit").and_then(Datum::as_str), Some("SinOsc"));
         assert_eq!(s.write_spec("Unit", &bare).as_deref(), Some("~sinosc"));
         let empty = read_spec("(~sinosc)").expect("empty");
         assert_eq!(s.write_spec("Unit", &empty).as_deref(), Some("~sinosc"));
-        // A non-default freq lag round-trips (as a `lags` map entry).
+        // A non-default freq lag round-trips as a `lags` map entry.
         let lagged = read_spec("(~sinosc #:freq-lag 0.5)").expect("lagged");
         assert_eq!(
             lagged
@@ -325,8 +329,9 @@ mod tests {
     #[test]
     fn out_round_trips() {
         let s = PlyphonSugar;
-        // A default `~out` stays bare - including a Datum carrying the default lag
-        // (the f32 round-trips through f64 without tripping the default check).
+        // A default `~out` stays bare, including a Datum carrying the default
+        // lag. The f32 round-trips through f64 without tripping the default
+        // check.
         let bare = s.read_bare("~out").expect("bare");
         assert_eq!(s.write_spec("Out", &bare).as_deref(), Some("~out"));
         let defaulted = node_datum(
@@ -360,7 +365,8 @@ mod tests {
     #[test]
     fn tap_round_trips() {
         let s = PlyphonSugar;
-        // A default `~scopeout` stays bare (read as a bare keyword or an empty spec).
+        // A default `~scopeout` stays bare, read as a bare keyword or an empty
+        // spec.
         let bare = s.read_bare("~scopeout").expect("bare");
         assert_eq!(bare.get("type").and_then(Datum::as_str), Some("ScopeOut"));
         assert_eq!(
@@ -393,8 +399,8 @@ mod tests {
     #[test]
     fn rate_round_trips() {
         let s = PlyphonSugar;
-        // `~sinosc`: bare stays bare (ar is the default, and an explicit `ar`
-        // writes bare); `kr` round-trips, alone or combined with a lag.
+        // For `~sinosc`, bare stays bare. `ar` is the default and an explicit
+        // `ar` writes bare. `kr` round-trips, alone or combined with a lag.
         let bare = read_spec("(~sinosc #:rate ar)").expect("ar");
         assert_eq!(s.write_spec("Unit", &bare).as_deref(), Some("~sinosc"));
         let kr = read_spec("(~sinosc #:rate kr)").expect("kr");
@@ -437,8 +443,8 @@ mod tests {
             ("~sum", "Sum", crate::Sum::DEFAULT_COUNT),
             ("~unpack", "Unpack", crate::Unpack::DEFAULT_COUNT),
         ] {
-            // A default count stays bare (read as a bare keyword or an empty spec),
-            // including a Datum explicitly carrying the default.
+            // A default count stays bare, read as a bare keyword or an empty
+            // spec, including a Datum explicitly carrying the default.
             let bare = s.read_bare(kw).expect("bare");
             assert_eq!(bare.get("type").and_then(Datum::as_str), Some(tag));
             assert_eq!(s.write_spec(tag, &bare).as_deref(), Some(kw));
@@ -462,7 +468,7 @@ mod tests {
         assert_eq!(bare.get("type").and_then(Datum::as_str), Some("Unit"));
         assert_eq!(bare.get("unit").and_then(Datum::as_str), Some("LPF"));
         assert_eq!(s.write_spec("Unit", &bare).as_deref(), Some("~lpf"));
-        // Structural args round-trip (written in lags/init/rate order).
+        // Structural args round-trip, written in lags, init, rate order.
         let form = "(~combc #:delay-lag 0.02 #:maxdelay 0.5 #:rate kr)";
         let combc = read_spec(form).expect("combc");
         assert_eq!(combc.get("unit").and_then(Datum::as_str), Some("CombC"));
@@ -541,7 +547,7 @@ mod tests {
 
     #[test]
     fn other_nodes_are_not_ours() {
-        // A non-plyphon node falls through (so composition tries the next sugar).
+        // A non-plyphon node falls through, so composition tries the next sugar.
         let exprs = sexpr::read("(number 5)").expect("read");
         let args = sexpr::list_args(&exprs[0]).expect("list");
         assert!(

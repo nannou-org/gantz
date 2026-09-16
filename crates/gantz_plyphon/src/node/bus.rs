@@ -6,22 +6,23 @@ use serde::{Deserialize, Serialize};
 
 use crate::dsp::{DspBuilder, NodeDsp, Signal, ToNodeDsp, input_or_silent};
 
-/// A synthdef *boundary*: drop it on a signal wire to cut the derived synthdef
+/// A synthdef boundary. Drop it on a signal wire to cut the derived synthdef
 /// there. The upstream region ends in an `Out` to a driver-allocated private
-/// bus and the downstream region begins with an `In` from it, so the two sides
-/// become separate synths - an edit then respawns only its own region, and the
-/// other side's unit state (oscillator phase, delay lines) survives untouched.
+/// bus and the downstream region begins with an `In` from it, so the two
+/// sides become separate synths. An edit then respawns only its own region.
+/// The other side's unit state, such as oscillator phase and delay lines,
+/// survives untouched.
 ///
-/// The bus carries the input signal's full channel group (width inferred, like
-/// `~scopeout`). A `~bus` whose two sides land in the same region anyway (an
-/// uncut path also connects them) costs nothing - it lowers to a plain wire.
-/// Cutting comes at a price on the wire itself: the write is lifted to audio
-/// rate and fade-gained (the crossfade lever), and cross-region feedback is not
-/// yet supported (a bus cycle fails derivation).
+/// The bus carries the input signal's full channel group. Its width is
+/// inferred, like `~scopeout`. A `~bus` whose two sides land in the same
+/// region anyway costs nothing and lowers to a plain wire. Cutting comes at a
+/// price on the wire itself. The write is lifted to audio rate and
+/// fade-gained for the crossfade. Cross-region feedback is not supported. A
+/// bus cycle fails derivation, see [`DeriveError`](crate::DeriveError).
 ///
-/// A `~bus` fed by several summands keeps only its cut role: each transitive
-/// source writes its own implicit single-writer bus and every reader emits one
-/// `In` per source, summing after the reads.
+/// A `~bus` fed by several summands keeps only its cut role. Each transitive
+/// source writes its own implicit single-writer bus and every reader emits
+/// one `In` per source, summing after the reads.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, Hash, NodeTag)]
 pub struct Bus {}
 
@@ -35,9 +36,9 @@ impl gantz_core::Node for Bus {
     }
 
     fn expr(&self, _ctx: ExprCtx<'_, '_>) -> ExprResult {
-        // Steel-inert: the boundary exists only at synthdef derivation. A
-        // non-numeric placeholder output feeds the inert dsp output edge (see
-        // the `NodeDsp` docs).
+        // Steel-inert. The boundary exists only at synthdef derivation. A
+        // non-numeric placeholder output feeds the inert dsp output edge, see
+        // the `NodeDsp` docs.
         gantz_core::node::parse_expr("'()")
     }
 }
@@ -61,9 +62,9 @@ impl NodeDsp for Bus {
         inputs: &[Option<Signal>],
         _b: &mut DspBuilder,
     ) -> Vec<Signal> {
-        // Only reached when both sides share a region (the boundary was not a
-        // cut): a plain wire. The cut case is lowered by the compiler itself
-        // (`derive_synthdefs`), which emits the bus `Out`/`In` pair.
+        // Only reached when both sides share a region, so the boundary was not
+        // a cut and lowers to a plain wire. `derive_synthdefs` lowers the cut
+        // case itself and emits the bus `Out`/`In` pair.
         vec![input_or_silent(inputs, 0)]
     }
 }

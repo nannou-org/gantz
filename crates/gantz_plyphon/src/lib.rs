@@ -1,22 +1,21 @@
 //! DSP nodes for gantz plus a compiler that derives [`plyphon`] synthdefs from
 //! connected subgraphs of [`NodeDsp`] nodes.
 //!
-//! The same gantz graph is compiled by two independent backends: the existing
-//! control-rate Steel VM (`gantz_core`), and - for nodes implementing
-//! [`NodeDsp`] - the plyphon audio engine via [`derive_synthdef`]. DSP nodes are
-//! inert in the Steel world (their [`Node::expr`](gantz_core::Node::expr) is a
-//! placeholder). An audio driver (see `bevy_gantz_plyphon`) installs and runs
+//! Two independent backends compile the same gantz graph. The control-rate
+//! Steel VM in `gantz_core` compiles every node. The plyphon audio engine
+//! compiles the [`NodeDsp`] nodes via [`derive_synthdef`]. DSP nodes are inert
+//! in the Steel world, so their [`Node::expr`](gantz_core::Node::expr) is a
+//! placeholder. An audio driver such as `bevy_gantz_plyphon` installs and runs
 //! the derived synthdefs through a [`Backend`].
 //!
 //! # Naming convention
 //!
-//! A DSP node's keyword mirrors the underlying plyphon UGen it emits:
-//! `~sinosc` -> `SinOsc`, `~lpf` -> `LPF`, `~scopeout`/[`ScopeOut`] ->
-//! `ScopeOut`, `~out`/[`Out`] -> `Out`. Plain unit wrappers are all the one
-//! [`UnitNode`] type driven by the [`units`] descriptor table. A node that
-//! composes *several* UGens into one gantz node - or emits none, like the
-//! `~pack`/`~unpack` channel-routing pair - gets its own bespoke type and
-//! descriptive name instead.
+//! A DSP node's keyword mirrors the plyphon UGen it emits. `~sinosc` emits
+//! `SinOsc` and `~lpf` emits `LPF`. The bespoke [`ScopeOut`] and [`Out`] nodes
+//! follow the same rule with `~scopeout` and `~out`. Plain unit wrappers share
+//! the one [`UnitNode`] type, driven by the [`units`] descriptor table. A node
+//! that composes several UGens, or emits none like the `~pack`/`~unpack` pair,
+//! gets its own type and a descriptive name.
 
 pub use asset::{
     AudioAsset, AudioBuffers, BUFFER_SECTION, DecodeError, add_audio_asset, audio_asset,
@@ -71,8 +70,8 @@ pub mod ref_ext;
 pub mod sugar;
 pub mod units;
 
-/// Raw bytes of the DSP domain's baked-in base `.gantz` export, embedded at
-/// compile time. Contributed as a base source by `bevy_gantz_plyphon`'s
-/// plugin; self-contained (its graphs compose builtin nodes, not refs into
-/// other sources).
+/// Raw bytes of the DSP domain's base `.gantz` export, embedded at compile
+/// time. The `bevy_gantz_plyphon` plugin contributes it as a base source. It
+/// is self-contained. Its graphs compose builtin nodes and never ref other
+/// sources.
 pub const BASE_BYTES: &[u8] = include_bytes!("../base.gantz");
