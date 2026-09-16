@@ -173,7 +173,6 @@ impl<'a> GraphConfig<'a> {
         egui::Grid::new(egui::Id::new("graph_config_grid").with(self.head))
             .num_columns(2)
             .spacing([8.0, 6.0])
-            .striped(true)
             .show(ui, |ui| {
                 // name
                 ui.label("name");
