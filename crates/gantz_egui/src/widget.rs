@@ -60,6 +60,27 @@ pub mod tab;
 #[cfg(feature = "tracing")]
 pub mod trace_view;
 
+/// Level label colours for the log and trace views.
+pub(crate) struct LevelColors {
+    pub error: egui::Color32,
+    pub warn: egui::Color32,
+    pub info: egui::Color32,
+    pub debug: egui::Color32,
+    pub trace: egui::Color32,
+}
+
+impl LevelColors {
+    pub(crate) fn from_visuals(visuals: &egui::Visuals) -> Self {
+        Self {
+            error: visuals.error_fg_color,
+            warn: visuals.warn_fg_color,
+            info: visuals.widgets.hovered.fg_stroke.color,
+            debug: egui::Color32::GRAY,
+            trace: egui::Color32::DARK_GRAY,
+        }
+    }
+}
+
 /// Convert a UTC datetime to the local timezone. Falls back to UTC when the
 /// local offset is unavailable.
 pub(crate) fn to_local_datetime(datetime: OffsetDateTime) -> OffsetDateTime {
@@ -92,6 +113,27 @@ pub(crate) fn format_local_time(system_time: std::time::SystemTime) -> String {
     format_local(system_time, "[hour]:[minute]:[second]")
 }
 
+/// A log row's message galley, wrapped at `width`. A count above one is
+/// prefixed as a dim `×count`.
+pub(crate) fn message_galley(
+    painter: &egui::Painter,
+    font: &egui::FontId,
+    width: f32,
+    color: egui::Color32,
+    count: usize,
+    message: &str,
+) -> std::sync::Arc<egui::Galley> {
+    use egui::text::{LayoutJob, TextFormat};
+    let mut job = LayoutJob::default();
+    job.wrap.max_width = width;
+    if count > 1 {
+        let format = TextFormat::simple(font.clone(), color.gamma_multiply(0.7));
+        job.append(&format!("×{count} "), 0.0, format);
+    }
+    job.append(message, 0.0, TextFormat::simple(font.clone(), color));
+    painter.layout_job(job)
+}
+
 /// Group consecutive slice elements that `eq` considers equal into runs.
 /// Returns `(index_of_first, count)` pairs in order.
 ///
@@ -114,6 +156,20 @@ pub(crate) fn group_runs<T>(items: &[T], eq: impl Fn(&T, &T) -> bool) -> Vec<(us
 /// Simple shorthand for viewing steel code without highlights.
 pub fn steel_view(ui: &mut egui::Ui, code: &str) {
     SteelView::new(code).show(ui);
+}
+
+/// A titled, full-width group. Settings tabs use it to separate sections.
+pub fn section<R>(
+    ui: &mut egui::Ui,
+    title: &str,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.group(|ui| {
+        ui.set_min_width(ui.available_width());
+        ui.strong(title);
+        add_contents(ui)
+    })
+    .inner
 }
 
 #[cfg(test)]

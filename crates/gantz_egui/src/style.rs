@@ -29,6 +29,21 @@ pub struct StyleConfig {
     /// The light style, when customised.
     #[serde(default)]
     pub light: Option<egui::Style>,
+    /// The pane separator colours.
+    #[serde(default)]
+    pub separator: SeparatorConfig,
+}
+
+/// The colour and width of the resize handle between panes.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct SeparatorConfig {
+    #[serde(default = "default_separator_color")]
+    pub color: VisualsColor,
+    /// While hovered or dragged. `None` uses `color`.
+    #[serde(default)]
+    pub hover: Option<VisualsColor>,
+    #[serde(default = "default_separator_width")]
+    pub width: f32,
 }
 
 impl Default for StyleConfig {
@@ -37,6 +52,17 @@ impl Default for StyleConfig {
             theme: default_theme(),
             dark: None,
             light: None,
+            separator: SeparatorConfig::default(),
+        }
+    }
+}
+
+impl Default for SeparatorConfig {
+    fn default() -> Self {
+        Self {
+            color: default_separator_color(),
+            hover: None,
+            width: default_separator_width(),
         }
     }
 }
@@ -44,6 +70,7 @@ impl Default for StyleConfig {
 impl PartialEq for StyleConfig {
     fn eq(&self, other: &Self) -> bool {
         self.theme == other.theme
+            && self.separator == other.separator
             && [egui::Theme::Dark, egui::Theme::Light]
                 .into_iter()
                 .all(|theme| match (slot(self, theme), slot(other, theme)) {
@@ -54,6 +81,66 @@ impl PartialEq for StyleConfig {
     }
 }
 
+/// A colour slot of [`egui::Visuals`], so gantz chrome follows the palette.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub enum VisualsColor {
+    ExtremeBg,
+    FaintBg,
+    PanelFill,
+    WindowFill,
+    NoninteractiveBgStroke,
+    WeakText,
+    Text,
+    HoveredFgStroke,
+    Hyperlink,
+    Selection,
+}
+
+impl VisualsColor {
+    pub const ALL: [Self; 10] = [
+        Self::ExtremeBg,
+        Self::FaintBg,
+        Self::PanelFill,
+        Self::WindowFill,
+        Self::NoninteractiveBgStroke,
+        Self::WeakText,
+        Self::Text,
+        Self::HoveredFgStroke,
+        Self::Hyperlink,
+        Self::Selection,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ExtremeBg => "Extreme background",
+            Self::FaintBg => "Faint background",
+            Self::PanelFill => "Panel fill",
+            Self::WindowFill => "Window fill",
+            Self::NoninteractiveBgStroke => "Noninteractive stroke",
+            Self::WeakText => "Weak text",
+            Self::Text => "Text",
+            Self::HoveredFgStroke => "Hovered text",
+            Self::Hyperlink => "Hyperlink",
+            Self::Selection => "Selection",
+        }
+    }
+
+    pub fn resolve(self, visuals: &egui::Visuals) -> egui::Color32 {
+        match self {
+            Self::ExtremeBg => visuals.extreme_bg_color,
+            Self::FaintBg => visuals.faint_bg_color,
+            Self::PanelFill => visuals.panel_fill,
+            Self::WindowFill => visuals.window_fill,
+            Self::NoninteractiveBgStroke => visuals.widgets.noninteractive.bg_stroke.color,
+            Self::WeakText => visuals.weak_text_color(),
+            Self::Text => visuals.text_color(),
+            Self::HoveredFgStroke => visuals.widgets.hovered.fg_stroke.color,
+            Self::Hyperlink => visuals.hyperlink_color,
+            Self::Selection => visuals.selection.bg_fill,
+        }
+    }
+}
+
 /// gantz's default theme preference.
 ///
 /// Dark rather than egui's `System`. gantz's remaining hand-picked colours are
@@ -61,6 +148,14 @@ impl PartialEq for StyleConfig {
 /// system would leave the app and the `gantz_egui` demo disagreeing.
 fn default_theme() -> egui::ThemePreference {
     egui::ThemePreference::Dark
+}
+
+fn default_separator_color() -> VisualsColor {
+    VisualsColor::ExtremeBg
+}
+
+fn default_separator_width() -> f32 {
+    2.0
 }
 
 /// The style `cfg` specifies for `theme`, or egui's default for it.
@@ -142,7 +237,20 @@ pub(crate) fn eq_style(a: &egui::Style, b: &egui::Style) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{StyleConfig, apply, eq_style, from_ron, set_style_of, style_of, to_ron};
+    use super::{
+        StyleConfig, VisualsColor, apply, eq_style, from_ron, set_style_of, style_of, to_ron,
+    };
+
+    #[test]
+    fn visuals_color_round_trips_through_ron() {
+        for color in VisualsColor::ALL {
+            let text = ron::to_string(&color).expect("serialize VisualsColor");
+            assert_eq!(
+                color,
+                ron::from_str(&text).expect("deserialize VisualsColor")
+            );
+        }
+    }
 
     /// A config with both themes customised, distinguishably.
     fn customised() -> StyleConfig {
@@ -152,6 +260,7 @@ mod tests {
             style.spacing.item_spacing.x = gap;
             set_style_of(&mut cfg, theme, style);
         }
+        cfg.separator.hover = Some(VisualsColor::Selection);
         cfg
     }
 

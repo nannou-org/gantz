@@ -5,6 +5,7 @@
 //! reset all demo graphs to their initial state.
 
 use super::gantz::{AlignConfig, LayoutConfig, SnapConfig, SnapMode, request_clear_egui_memory};
+use crate::widget::section;
 
 /// Response from [`global_config`].
 #[derive(Default)]
@@ -36,151 +37,147 @@ pub fn global_config(
     let mut changed_config = None;
     let mut changed_validate = None;
     if compile_config.is_some() || validate_change_tracking.is_some() {
-        ui.strong("Compile");
-    }
-    if let Some(mut cfg) = compile_config {
-        let mut changed = false;
-        changed |= ui
-            .checkbox(&mut cfg.validate_ir, "Validate IR")
-            .on_hover_text(
-                "Check the compiler's own IR invariants on every lowering. A \
-                 violation is a bug in gantz, never in your graph. Disable as \
-                 an optimisation. Applies to all open graphs.",
-            )
-            .changed();
-        changed |= ui
-            .checkbox(&mut cfg.emit_all_node_fns, "Emit all node fns")
-            .on_hover_text(
-                "Emit a node fn for every node, rather than only those called \
-                 by some evaluation, so any node's generated code can be \
-                 inspected in the Steel view. The extra definitions are never \
-                 called and do not affect evaluation. Applies to all open \
-                 graphs.",
-            )
-            .changed();
-        if changed {
-            changed_config = Some(cfg);
-        }
-    }
-    if let Some(mut v) = validate_change_tracking {
-        if ui
-            .checkbox(&mut v, "Validate change tracking")
-            .on_hover_text(
-                "Re-hash every open graph each frame and warn if one changed \
-                 without being reported - a way to catch a missed `changed` \
-                 signal. A debugging aid only; leave off in normal use as it \
-                 reinstates the per-frame hashing this avoids.",
-            )
-            .changed()
-        {
-            changed_validate = Some(v);
-        }
-    }
-    if compile_config.is_some() || validate_change_tracking.is_some() {
-        ui.separator();
+        section(ui, "Compile", |ui| {
+            if let Some(mut cfg) = compile_config {
+                let mut changed = false;
+                changed |= ui
+                    .checkbox(&mut cfg.validate_ir, "Validate IR")
+                    .on_hover_text(
+                        "Check the compiler's own IR invariants on every lowering. A \
+                         violation is a bug in gantz, never in your graph. Disable as \
+                         an optimisation. Applies to all open graphs.",
+                    )
+                    .changed();
+                changed |= ui
+                    .checkbox(&mut cfg.emit_all_node_fns, "Emit all node fns")
+                    .on_hover_text(
+                        "Emit a node fn for every node, rather than only those called \
+                         by some evaluation, so any node's generated code can be \
+                         inspected in the Steel view. The extra definitions are never \
+                         called and do not affect evaluation. Applies to all open \
+                         graphs.",
+                    )
+                    .changed();
+                if changed {
+                    changed_config = Some(cfg);
+                }
+            }
+            if let Some(mut v) = validate_change_tracking {
+                if ui
+                    .checkbox(&mut v, "Validate change tracking")
+                    .on_hover_text(
+                        "Re-hash every open graph each frame and warn if one changed \
+                         without being reported - a way to catch a missed `changed` \
+                         signal. A debugging aid only; leave off in normal use as it \
+                         reinstates the per-frame hashing this avoids.",
+                    )
+                    .changed()
+                {
+                    changed_validate = Some(v);
+                }
+            }
+        });
     }
 
     // The non-flow `egui_graph` layout params, applied on the next
     // auto-layout. Flow is per-head, in the Graph Config pane.
-    ui.strong("Layout");
-    let gap = |ui: &mut egui::Ui, label: &str, value: &mut f32, hover: &str| {
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::DragValue::new(value)
-                    .speed(0.5)
-                    .range(0.0..=500.0)
-                    .suffix(" px"),
-            )
-            .on_hover_text(hover);
-            ui.label(label);
-        });
-    };
-    gap(
-        ui,
-        "Layer gap",
-        &mut layout_config.layer_gap,
-        "Gap between adjacent layers along the flow direction.",
-    );
-    gap(
-        ui,
-        "Node gap",
-        &mut layout_config.node_gap,
-        "Gap between adjacent nodes within a layer.",
-    );
-    gap(
-        ui,
-        "Component gap",
-        &mut layout_config.component_gap,
-        "Gap between disconnected components of the graph.",
-    );
-    ui.checkbox(&mut layout_config.socket_aware, "Socket-aware")
-        .on_hover_text(
-            "Account for the socket each edge connects to when ordering nodes \
-             and minimising edge crossings. When off, edges anchor at node \
-             centres (classic node-size-only layout).",
+    section(ui, "Layout", |ui| {
+        let gap = |ui: &mut egui::Ui, label: &str, value: &mut f32, hover: &str| {
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::DragValue::new(value)
+                        .speed(0.5)
+                        .range(0.0..=500.0)
+                        .suffix(" px"),
+                )
+                .on_hover_text(hover);
+                ui.label(label);
+            });
+        };
+        gap(
+            ui,
+            "Layer gap",
+            &mut layout_config.layer_gap,
+            "Gap between adjacent layers along the flow direction.",
         );
-    ui.separator();
+        gap(
+            ui,
+            "Node gap",
+            &mut layout_config.node_gap,
+            "Gap between adjacent nodes within a layer.",
+        );
+        gap(
+            ui,
+            "Component gap",
+            &mut layout_config.component_gap,
+            "Gap between disconnected components of the graph.",
+        );
+        ui.checkbox(&mut layout_config.socket_aware, "Socket-aware")
+            .on_hover_text(
+                "Account for the socket each edge connects to when ordering nodes \
+                 and minimising edge crossings. When off, edges anchor at node \
+                 centres (classic node-size-only layout).",
+            );
+    });
 
     // Point snaps to unit points, which is effectively free. Grid snaps to a
     // fraction of the dot grid. The grid step is set in Style.
-    ui.strong("Snap");
-    ui.horizontal(|ui| {
-        ui.radio_value(&mut snap.mode, SnapMode::Point, "Point")
-            .on_hover_text("Snap to the nearest unit point - effectively free movement.");
-        ui.radio_value(&mut snap.mode, SnapMode::Grid, "Grid")
-            .on_hover_text("Snap to a fraction of the dot grid (set the grid step in Style).");
-    });
-    ui.add_enabled_ui(snap.mode == SnapMode::Grid, |ui| {
+    section(ui, "Snap", |ui| {
         ui.horizontal(|ui| {
-            ui.add(
-                egui::DragValue::new(&mut snap.grid_ratio)
-                    .speed(0.01)
-                    .range(0.0625..=8.0),
-            )
-            .on_hover_text(
-                "Snap step relative to the grid step: 1.0 full grid, 0.5 half, \
-                 0.25 quarter.",
-            );
-            ui.label("Grid ratio");
+            ui.radio_value(&mut snap.mode, SnapMode::Point, "Point")
+                .on_hover_text("Snap to the nearest unit point - effectively free movement.");
+            ui.radio_value(&mut snap.mode, SnapMode::Grid, "Grid")
+                .on_hover_text("Snap to a fraction of the dot grid (set the grid step in Style).");
+        });
+        ui.add_enabled_ui(snap.mode == SnapMode::Grid, |ui| {
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::DragValue::new(&mut snap.grid_ratio)
+                        .speed(0.01)
+                        .range(0.0625..=8.0),
+                )
+                .on_hover_text(
+                    "Snap step relative to the grid step: 1.0 full grid, 0.5 half, \
+                     0.25 quarter.",
+                );
+                ui.label("Grid ratio");
+            });
         });
     });
-    ui.separator();
 
     // Snap a dragged node to its neighbours' edges or centres and draw guides.
-    ui.strong("Snap-align");
-    ui.checkbox(&mut align.enabled, "Align to neighbours")
-        .on_hover_text(
-            "While dragging, align a node to its neighbours' edges or centres \
-             and draw guides. Hold Alt to suppress per drag.",
-        );
-    ui.add_enabled_ui(align.enabled, |ui| {
-        ui.checkbox(&mut align.edges, "Edges (sides)")
-            .on_hover_text("Align to neighbours' left/right/top/bottom edges.");
-        ui.checkbox(&mut align.centers, "Centres")
-            .on_hover_text("Align to neighbours' horizontal/vertical centres.");
+    section(ui, "Snap-align", |ui| {
+        ui.checkbox(&mut align.enabled, "Align to neighbours")
+            .on_hover_text(
+                "While dragging, align a node to its neighbours' edges or centres \
+                 and draw guides. Hold Alt to suppress per drag.",
+            );
+        ui.add_enabled_ui(align.enabled, |ui| {
+            ui.checkbox(&mut align.edges, "Edges (sides)")
+                .on_hover_text("Align to neighbours' left/right/top/bottom edges.");
+            ui.checkbox(&mut align.centers, "Centres")
+                .on_hover_text("Align to neighbours' horizontal/vertical centres.");
+        });
     });
-    ui.separator();
 
     // A recovery tool that drops egui's persisted UI memory when it has
     // accumulated stale state. It never touches the graph registry.
-    ui.strong("Maintenance");
-    if ui
-        .button("Clear egui memory")
-        .on_hover_text(
-            "Discard egui's persisted UI memory (panel layout, widget state) on \
-             the next frame. Recovers from accumulated or stale egui state \
-             without touching your graphs. The UI layout resets to default.",
-        )
-        .clicked()
-    {
-        request_clear_egui_memory(ui.ctx());
-    }
-    ui.separator();
-
-    let reset_all_demos = ui
-        .button("Reset all demos")
-        .on_hover_text("reset all demo graphs to their initial state")
-        .clicked();
+    let reset_all_demos = section(ui, "Maintenance", |ui| {
+        if ui
+            .button("Clear egui memory")
+            .on_hover_text(
+                "Discard egui's persisted UI memory (panel layout, widget state) on \
+                 the next frame. Recovers from accumulated or stale egui state \
+                 without touching your graphs. The UI layout resets to default.",
+            )
+            .clicked()
+        {
+            request_clear_egui_memory(ui.ctx());
+        }
+        ui.button("Reset all demos")
+            .on_hover_text("reset all demo graphs to their initial state")
+            .clicked()
+    });
 
     GlobalConfigResponse {
         compile_config: changed_config,

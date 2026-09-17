@@ -24,8 +24,6 @@ struct TraceViewState {
     /// Whether the Time, Level and Target columns are shown. Target defaults
     /// off since it is the least useful column for most entries.
     show_time: bool,
-    /// Whether the Time column includes the date rather than time-of-day only.
-    show_date: bool,
     show_level: bool,
     show_target: bool,
 }
@@ -55,13 +53,8 @@ struct MessageVisitor {
 }
 
 impl TraceEntry {
-    fn format_timestamp(&self, show_date: bool) -> String {
-        let system_time = crate::system_time_from_web(self.timestamp).expect("failed to convert");
-        if show_date {
-            crate::widget::format_local_datetime(system_time)
-        } else {
-            crate::widget::format_local_time(system_time)
-        }
+    fn system_time(&self) -> std::time::SystemTime {
+        crate::system_time_from_web(self.timestamp).expect("failed to convert")
     }
 
     fn freshness(&self) -> f32 {
@@ -128,7 +121,6 @@ impl TraceView {
                 text_filter: String::new(),
                 auto_scroll: true,
                 show_time: true,
-                show_date: true,
                 show_level: true,
                 show_target: false,
             });
@@ -153,11 +145,6 @@ impl TraceView {
                         ui.separator();
                         ui.label("Columns:");
                         ui.checkbox(&mut state.show_time, "Time");
-                        ui.add_enabled(
-                            state.show_time,
-                            egui::Checkbox::new(&mut state.show_date, "Date"),
-                        )
-                        .on_hover_text("include the date in the Time column");
                         ui.checkbox(&mut state.show_level, "Level");
                         ui.checkbox(&mut state.show_target, "Target");
                         ui.separator();
@@ -204,15 +191,13 @@ impl TraceView {
 
         // The Time, Level and Target columns are optional. Message is always
         // the trailing remainder column.
-        let (show_time, show_date, show_level, show_target) = (
-            state.show_time,
-            state.show_date,
-            state.show_level,
-            state.show_target,
-        );
-        let mut table = TableBuilder::new(ui).resizable(true);
+        let (show_time, show_level, show_target) =
+            (state.show_time, state.show_level, state.show_target);
+        let mut table = TableBuilder::new(ui)
+            .resizable(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::TOP));
         if show_time {
-            table = table.column(Column::auto().at_least(80.0)); // Timestamp
+            table = table.column(Column::auto()); // Timestamp
         }
         if show_level {
             table = table.column(Column::auto().at_least(50.0)); // Level
@@ -221,7 +206,7 @@ impl TraceView {
             table = table.column(Column::auto().at_least(80.0)); // Target
         }
         table
-            .column(Column::remainder().at_least(100.0)) // Message
+            .column(Column::remainder().at_least(100.0).clip(true)) // Message
             .header(20.0, |mut header| {
                 if show_time {
                     header.col(|ui| {
@@ -244,35 +229,54 @@ impl TraceView {
             })
             .body(|mut body| {
                 let row_h = 18.0;
-                let n_rows = runs.len();
                 let text_color = body.ui_mut().style().visuals.text_color();
-                body.rows(row_h, n_rows, |mut row| {
+                let level_colors =
+                    crate::widget::LevelColors::from_visuals(&body.ui_mut().style().visuals);
+                // Messages wrap at their column width. Each row's galley sets
+                // its height and is rendered as-is.
+                let msg_w = body.widths().last().copied().unwrap_or(0.0);
+                let font = egui::TextStyle::Body.resolve(body.ui_mut().style());
+                let rows: Vec<_> = runs
+                    .iter()
+                    .map(|&(idx, count)| {
+                        let entry = &entries[idx];
+                        let color =
+                            text_color.lerp_to_gamma(egui::Color32::WHITE, entry.freshness());
+                        let painter = body.ui_mut().painter();
+                        let galley = crate::widget::message_galley(
+                            painter,
+                            &font,
+                            msg_w,
+                            color,
+                            count,
+                            &entry.message,
+                        );
+                        (color, galley)
+                    })
+                    .collect();
+                let heights = rows.iter().map(|(_, galley)| galley.size().y.max(row_h));
+                body.heterogeneous_rows(heights, |mut row| {
                     let (idx, count) = runs[row.index()];
+                    let (text_color, galley) = &rows[row.index()];
+                    let text_color = *text_color;
                     let entry = &entries[idx];
-                    let freshness = entry.freshness();
-                    let fresh = freshness > 0.0;
-                    let text_color = if fresh {
-                        let hl_col = egui::Color32::WHITE;
-                        text_color.lerp_to_gamma(hl_col, freshness)
-                    } else {
-                        text_color
-                    };
 
                     if show_time {
                         row.col(|ui| {
-                            let text = entry.format_timestamp(show_date);
-                            ui.colored_label(text_color, text);
+                            let t = entry.system_time();
+                            ui.colored_label(text_color, crate::widget::format_local_time(t))
+                                .on_hover_text(crate::widget::format_local_datetime(t));
                         });
                     }
 
                     if show_level {
                         row.col(|ui| {
                             let (color, text) = match entry.level {
-                                Level::ERROR => (egui::Color32::from_rgb(255, 100, 100), "ERROR"),
-                                Level::WARN => (egui::Color32::from_rgb(255, 200, 100), "WARN"),
-                                Level::INFO => (egui::Color32::from_rgb(100, 200, 255), "INFO"),
-                                Level::DEBUG => (egui::Color32::GRAY, "DEBUG"),
-                                Level::TRACE => (egui::Color32::DARK_GRAY, "TRACE"),
+                                Level::ERROR => (level_colors.error, "ERROR"),
+                                Level::WARN => (level_colors.warn, "WARN"),
+                                Level::INFO => (level_colors.info, "INFO"),
+                                Level::DEBUG => (level_colors.debug, "DEBUG"),
+                                Level::TRACE => (level_colors.trace, "TRACE"),
                             };
                             ui.colored_label(color, text);
                         });
@@ -285,19 +289,13 @@ impl TraceView {
                     }
 
                     row.col(|ui| {
-                        ui.horizontal(|ui| {
-                            if count > 1 {
-                                ui.colored_label(
-                                    text_color.gamma_multiply(0.7),
-                                    format!("×{count}"),
-                                )
-                                .on_hover_text("occurrences collapsed (repeated log)");
-                            }
-                            ui.colored_label(text_color, &entry.message);
-                        });
+                        let res = ui.add(egui::Label::new(galley.clone()));
+                        if count > 1 {
+                            res.on_hover_text("occurrences collapsed (repeated log)");
+                        }
                     });
 
-                    if fresh {
+                    if entry.freshness() > 0.0 {
                         row.response().ctx.request_repaint();
                     }
                 });
