@@ -19,7 +19,10 @@
 //! the node's ring-buffer state, so the control world can scope a dsp signal.
 //!
 //! Mixing across heads is free. Every head's `~out` synth writes to output bus
-//! 0, and plyphon sums all synths on that bus.
+//! 0, and plyphon sums all synths on that bus. A head's tab can mute it. The
+//! driver holds the head's `~out` fade gains at zero while its
+//! [`OpenHeadState`](gantz_egui::widget::gantz::OpenHeadState) is muted.
+//! Private `~bus` writes are never muted, so scopes keep flowing.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU64;
@@ -36,7 +39,7 @@ use cpal::{FromSample, SizedSample};
 use gantz_ca as ca;
 use gantz_core::node::graph::Graph;
 use gantz_plyphon::{
-    AddAction, Backend, BusKey, DefCache, Embedded, GainRef, ROOT_GROUP_ID, ResolvedPart,
+    AddAction, Backend, BusKey, DefCache, Embedded, FadeSink, GainRef, ROOT_GROUP_ID, ResolvedPart,
     ToNodeDsp, derive_template, flatten_from_registry, flatten_instance_children, instantiate,
 };
 use plyphon::{Controller, Nrt, Options, StreamConsumer, World, engine};
@@ -57,7 +60,9 @@ type UnitRegistrar = Box<dyn Fn(&mut plyphon::UnitRegistry) + Send + Sync>;
 use bevy_gantz::head::{HeadRef, HeadVms, OpenHead};
 use bevy_gantz::{EntrypointSet, EvalEpoch, Registry, VmSet};
 use bevy_gantz_egui::GraphCache;
-use bevy_gantz_egui::{EdgeStyles, ExtPanes, RefExtUis, RegisterResponseExt, SettingsTabs};
+use bevy_gantz_egui::{
+    AudioHeads, EdgeStyles, ExtPanes, GuiState, RefExtUis, RegisterResponseExt, SettingsTabs,
+};
 use gantz_plyphon::{
     Config, DeriveStatus, DspEdgeStyle, DspPane, DspPaneHead, DspRefExtUi, DspSettingsTab,
     RootPortInfo, Status, describe_parts, root_port_info,
@@ -89,6 +94,9 @@ pub struct DspSettingsChanged(pub Config);
 pub struct DspHead {
     /// The most recent derivation's outcome.
     pub status: DeriveStatus,
+    /// The number of `~out` sinks across the derived parts, the fade gains a
+    /// tab mute holds at zero. Zero unless `status` is [`DeriveStatus::Ok`].
+    pub outputs: usize,
     /// The derived program rendered as text by [`describe_parts`], or the
     /// failure message.
     pub view: std::sync::Arc<str>,
@@ -206,6 +214,8 @@ impl Plugin for PlyphonPlugin {
             .init_resource::<ExtPanes>()
             .init_resource::<RefExtUis>()
             .init_resource::<EdgeStyles>()
+            .init_resource::<AudioHeads>()
+            .init_resource::<GuiState>()
             .add_message::<DspSettingsChanged>()
             .register_response_with::<Config>(dispatch_dsp_settings)
             .add_systems(
@@ -215,6 +225,7 @@ impl Plugin for PlyphonPlugin {
                     provide_dsp_pane,
                     provide_dsp_ref_ext,
                     provide_dsp_edge_style,
+                    provide_dsp_audio_heads,
                 ),
             );
         // The DSP domain's base graphs. See `bevy_gantz_egui::base`.
@@ -349,6 +360,9 @@ struct HeadParts {
     /// parts match by key, sig and wiring and are kept.
     retry: bool,
     parts: Vec<PartSynth>,
+    /// The mute currently applied to the parts' `~out` fade gains. The
+    /// driver's mute sync ramps them whenever the head's tab state differs.
+    muted: bool,
 }
 
 /// A run of consecutive private audio-bus channels.
@@ -693,6 +707,21 @@ fn provide_dsp_pane(
     }));
 }
 
+/// Provide this frame's audible heads, those whose [`DspHead`] derived an
+/// `~out`. Their tabs show the mute toggle. See [`AudioHeads`] for the
+/// schedule contract.
+fn provide_dsp_audio_heads(
+    heads: Query<(&HeadRef, Option<&DspHead>), With<OpenHead>>,
+    mut audio_heads: ResMut<AudioHeads>,
+) {
+    audio_heads.0.extend(
+        heads
+            .iter()
+            .filter(|(_, dsp)| dsp.is_some_and(|d| d.outputs > 0))
+            .map(|(head_ref, _)| head_ref.0.clone()),
+    );
+}
+
 /// Provide this frame's DSP `NamedRef` inspector extension. The `inline`
 /// toggle for references to DSP graphs. See [`RefExtUis`] for the schedule
 /// contract.
@@ -765,6 +794,8 @@ fn provide_dsp_edge_style(
 ///   sample-accurately. A direct inspector edit with no queue is applied
 ///   immediately. Either way the synth is not respawned, which preserves
 ///   phase. Value and automation edits do not change the graph address.
+/// - Mute sync, every frame. Hold the head's `~out` fade gains at zero while
+///   its tab is muted, else at unity. Only a change sends commands.
 /// - Scope sync, every frame. Drain each `~scopeout`'s scope stream and append
 ///   its samples into the node's ring state, capped at the tap's `size`.
 ///
@@ -774,6 +805,7 @@ fn drive_synths(
     reified: Res<GraphCache>,
     dsp: Option<NonSendMut<DspEngine>>,
     dsp_config: Res<DspConfig>,
+    gui_state: Res<GuiState>,
     mut enabled_applied: Local<Option<bool>>,
     state: NonSendMut<HeadSynths>,
     mut vms: NonSendMut<HeadVms>,
@@ -824,6 +856,11 @@ fn drive_synths(
         let Some(graph) = reified.get(&graph_ca) else {
             continue;
         };
+        let muted = gui_state
+            .0
+            .open_heads
+            .get(&head_ref.0)
+            .is_some_and(|s| s.muted);
 
         // Structural sync, only when the committed graph changed. Flattening
         // first splices any nested graphs, resolved through the registry, into
@@ -852,6 +889,7 @@ fn drive_synths(
                     &children,
                     out_channels,
                     sample_rate,
+                    muted,
                 ),
                 Err(e) => {
                     log::error!(
@@ -861,12 +899,17 @@ fn drive_synths(
                     park_head(state, entity, graph_ca);
                     DspHead {
                         status: DeriveStatus::FlattenError(e.to_string()),
+                        outputs: 0,
                         view: format!("{e} - keeping the previous synths").into(),
                         shapes: Default::default(),
                     }
                 }
             };
             cmds.entity(entity).insert(dsp_head);
+        }
+
+        if let Some(head) = state.heads.get_mut(&entity) {
+            sync_mute(&mut dsp.controller, head, muted);
         }
 
         // Param sync. Drain each param's queued control updates and schedule
@@ -1003,6 +1046,25 @@ fn expire_fades(fading: &mut Vec<FadingSynth>, now: Instant) -> Vec<FadingSynth>
     expired
 }
 
+/// Hold `head`'s `~out` fade gains at zero when `muted`, else at unity, and
+/// record it. A no-op when already applied. Fresh spawns already honour the
+/// mute, see [`spawn_part`], so the re-send to them is idempotent.
+fn sync_mute(controller: &mut Controller, head: &mut HeadParts, muted: bool) {
+    if head.muted == muted {
+        return;
+    }
+    let level = if muted { 0.0 } else { 1.0 };
+    let mut backend = Embedded::new(controller);
+    for synth in &head.parts {
+        for g in synth.gains.iter().filter(|g| g.sink == FadeSink::Output) {
+            if let Err(e) = backend.set_control(synth.node_id, g.index, level) {
+                log::error!("bevy_gantz_plyphon: mute set_control failed: {e:?}");
+            }
+        }
+    }
+    head.muted = muted;
+}
+
 /// Park `entity` at `graph_ca` without touching its running synths, so an
 /// unactionable commit, such as a flatten or derive error, is not retried and
 /// its error not re-logged every frame.
@@ -1016,6 +1078,7 @@ fn park_head(state: &mut HeadSynths, entity: Entity, graph_ca: ca::GraphAddr) {
                     graph: graph_ca,
                     retry: false,
                     parts: Vec::new(),
+                    muted: false,
                 },
             );
         }
@@ -1050,6 +1113,10 @@ fn buffer_blobs(reg: &ca::Registry) -> &BufferBlobs {
 /// computed earlier in the node tree. On install or spawn failure the old
 /// synth is left playing, which is better than going silent.
 ///
+/// A spawn while `muted` leaves its `~out` fades at their silent default.
+/// Kept synths keep the mute already applied to them, recorded on the head,
+/// and the driver's mute sync ramps them when the two differ.
+///
 /// Returns the sync's outcome as the head's [`DspHead`], for the GUI.
 fn structural_sync<N>(
     controller: &mut Controller,
@@ -1061,6 +1128,7 @@ fn structural_sync<N>(
     children: &HashMap<gantz_ca::ContentAddr, Graph<gantz_plyphon::Flat<N>>>,
     out_channels: usize,
     sample_rate: f64,
+    muted: bool,
 ) -> DspHead
 where
     N: ToNodeDsp,
@@ -1091,10 +1159,12 @@ where
                     graph: graph_ca,
                     retry: false,
                     parts: Vec::new(),
+                    muted,
                 },
             );
             return DspHead {
                 status: DeriveStatus::Silent,
+                outputs: 0,
                 view: "no dsp sink (`~out` / `~scopeout`) - silent".into(),
                 shapes: Default::default(),
             };
@@ -1108,6 +1178,7 @@ where
             park_head(state, entity, graph_ca);
             return DspHead {
                 status: DeriveStatus::DeriveError(e.to_string()),
+                outputs: 0,
                 view: format!("{e} - keeping the previous synths").into(),
                 shapes: Default::default(),
             };
@@ -1124,6 +1195,11 @@ where
             .collect(),
     );
     let n_parts = derived.len();
+    let outputs = derived
+        .iter()
+        .flat_map(|r| &r.gains)
+        .filter(|g| g.sink == FadeSink::Output)
+        .count();
 
     // Release bus runs whose keys are gone from the derivation.
     let live_buses: HashSet<BusKey> = derived
@@ -1149,11 +1225,9 @@ where
         Keep(PartSynth),
         Spawn(ResolvedPart, u64, Option<PartSynth>),
     }
-    let mut prev = state
-        .heads
-        .remove(&entity)
-        .map(|h| h.parts)
-        .unwrap_or_default();
+    let prev = state.heads.remove(&entity);
+    let prev_muted = prev.as_ref().map_or(muted, |h| h.muted);
+    let mut prev = prev.map(|h| h.parts).unwrap_or_default();
     let mut plans: Vec<Plan> = Vec::with_capacity(derived.len());
     for r in derived {
         let wiring = wiring_hash(&r);
@@ -1221,6 +1295,7 @@ where
                     wiring,
                     sample_rate,
                     anchor,
+                    muted,
                 ) {
                     Ok(synth) => {
                         // The replacement is live. Fade the old out, so the
@@ -1256,11 +1331,13 @@ where
             graph: graph_ca,
             retry: transient_failure,
             parts,
+            muted: prev_muted,
         },
     );
 
     DspHead {
         status: DeriveStatus::Ok { parts: n_parts },
+        outputs,
         view,
         shapes,
     }
@@ -1297,9 +1374,10 @@ fn wiring_hash(part: &ResolvedPart) -> u64 {
 /// present, else at the root group's tail. The synth spawns silent behind its
 /// fade gains' baked `0.0` defaults. Bus indices, scope bufnums and unbound
 /// fade-to-unity are then set via `set_control` in one command-ring drain,
-/// landing before the first audible block. Bound params re-send from node
-/// state via the same-frame param sync. On failure, cleans up after itself
-/// and reports whether retrying next frame can converge. See [`SpawnError`].
+/// landing before the first audible block. While `muted`, the `~out` fades
+/// stay at their silent default. Bound params re-send from node state via
+/// the same-frame param sync. On failure, cleans up after itself and reports
+/// whether retrying next frame can converge. See [`SpawnError`].
 fn spawn_part(
     controller: &mut Controller,
     state: &mut HeadSynths,
@@ -1309,6 +1387,7 @@ fn spawn_part(
     wiring: u64,
     sample_rate: f64,
     anchor: Option<i32>,
+    muted: bool,
 ) -> Result<PartSynth, SpawnError> {
     let now = Instant::now();
     let ResolvedPart {
@@ -1425,7 +1504,8 @@ fn spawn_part(
                 }
             }
             for g in &gains {
-                if !params.iter().any(|b| b.index == g.index) {
+                let held_muted = muted && g.sink == FadeSink::Output;
+                if !held_muted && !params.iter().any(|b| b.index == g.index) {
                     if let Err(e) = backend.set_control(node_id, g.index, 1.0) {
                         log::error!("bevy_gantz_plyphon: fade-gain restore failed: {e:?}");
                     }
@@ -2068,6 +2148,7 @@ mod tests {
             wiring,
             48_000.0,
             None,
+            false,
         )
         .expect("spawn_part");
         assert_eq!(synth.gains.len(), 1, "the out carries a fade gain");
@@ -2081,6 +2162,65 @@ mod tests {
             rms > 0.05,
             "sin -> out must sound via spawn_part: rms={rms}"
         );
+    }
+
+    /// A part spawned while its head is muted stays silent. Its `~out` fade
+    /// is left at the silent default. Ramping the fade to unity, as the mute
+    /// sync does on unmute, makes it sound.
+    #[test]
+    fn spawn_part_muted_is_silent_until_unmuted() {
+        use gantz_core::edge::Edge;
+        use gantz_core::node::graph::Graph;
+        use gantz_plyphon::flatten::{Flat, RefKind, flatten};
+
+        let mut g = Graph::<TestN>::default();
+        let s = g.add_node(sinosc());
+        let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
+        g.add_edge(s, o, Edge::new(0.into(), 0.into()));
+        let resolve =
+            |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
+        let flat: Graph<Flat<&TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
+
+        let mut cache = DefCache::new();
+        let template = derive_template(&flat, 1, &|_| None, &mut cache).expect("derive");
+        let part = instantiate(&template, &cache).into_iter().next().unwrap();
+        let wiring = wiring_hash(&part);
+
+        let (mut controller, _nrt, mut world) = plyphon::engine(plyphon::Options {
+            sample_rate: 48_000.0,
+            output_channels: 1,
+            ..plyphon::Options::default()
+        });
+        let mut state = HeadSynths::default();
+        let assets = BufferBlobs::default();
+        let entity = entities(1)[0];
+        let synth = spawn_part(
+            &mut controller,
+            &mut state,
+            &assets,
+            entity,
+            part,
+            wiring,
+            48_000.0,
+            None,
+            true,
+        )
+        .expect("spawn_part");
+        let gain = synth.gains[0];
+        assert_eq!(
+            gain.sink,
+            FadeSink::Output,
+            "the out's fade is an output gain"
+        );
+
+        let rms = render_rms(&mut world, 48_000 / 2);
+        assert!(rms < 1e-3, "a muted spawn must be silent: rms={rms}");
+
+        Embedded::new(&mut controller)
+            .set_control(synth.node_id, gain.index, 1.0)
+            .expect("set_control");
+        let rms = render_rms(&mut world, 48_000 / 2);
+        assert!(rms > 0.05, "unmuted, the part must sound: rms={rms}");
     }
 
     /// End-to-end for the descriptor-table nodes. A `~saw -> ~lpf -> ~out`
@@ -2127,6 +2267,7 @@ mod tests {
             wiring,
             48_000.0,
             None,
+            false,
         )
         .expect("spawn_part");
 
@@ -2213,6 +2354,7 @@ mod tests {
             wiring,
             48_000.0,
             None,
+            false,
         )
         .expect("spawn_part");
         // The asset was made resident with a single refcount, held by this synth.
@@ -2270,6 +2412,7 @@ mod tests {
             &HashMap::new(),
             1,
             48_000.0,
+            false,
         );
         let mut out = vec![0.0f32; 48_000 / 4];
         for block in out.chunks_mut(64) {
@@ -2298,6 +2441,7 @@ mod tests {
             &HashMap::new(),
             1,
             48_000.0,
+            false,
         );
         // Render past the crossfade. The respawn fades in over FADE_LAG.
         let mut out = vec![0.0f32; 48_000 / 2];
@@ -2306,6 +2450,114 @@ mod tests {
         }
         let rms2 = (out.iter().map(|v| v * v).sum::<f32>() / out.len() as f32).sqrt();
         assert!(rms2 > 0.05, "frame 2 (with inlets) must sound: rms={rms2}");
+    }
+
+    /// A head muted across structural syncs stays silent. A respawn leaves
+    /// its `~out` fade at the silent default, and a sync with the mute lifted
+    /// keeps the recorded mute on the kept parts. Lifting it is the mute
+    /// sync's job, keyed off that record, and it ramps the parts audible.
+    #[test]
+    fn structural_sync_muted_respawn_stays_silent_until_mute_sync() {
+        use gantz_core::edge::Edge;
+        use gantz_core::node::graph::Graph;
+        use gantz_plyphon::flatten::{Flat, RefKind, flatten};
+
+        fn flatten_no_refs(g: &Graph<TestN>) -> Graph<Flat<&TestN>> {
+            let resolve =
+                |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> {
+                    None
+                };
+            flatten(&|_| None, g, &resolve).expect("flatten")
+        }
+
+        let (mut controller, _nrt, mut world) = plyphon::engine(plyphon::Options {
+            sample_rate: 48_000.0,
+            output_channels: 1,
+            ..plyphon::Options::default()
+        });
+        let mut state = HeadSynths::default();
+        let entity = entities(1)[0];
+
+        // Frame 1 is `~sinosc -> ~out`, muted from the start.
+        let mut g1 = Graph::<TestN>::default();
+        let s = g1.add_node(sinosc());
+        let o = g1.add_node(TestN::Out(gantz_plyphon::Out::default()));
+        g1.add_edge(s, o, Edge::new(0.into(), 0.into()));
+        let ca1 = graph_addr(&g1);
+        let flat1 = flatten_no_refs(&g1);
+        let head = structural_sync(
+            &mut controller,
+            &mut state,
+            &Default::default(),
+            entity,
+            ca1,
+            &flat1,
+            &HashMap::new(),
+            1,
+            48_000.0,
+            true,
+        );
+        assert_eq!(head.outputs, 1, "one `~out`");
+        assert!(
+            state.heads[&entity].muted,
+            "the mute is recorded as applied"
+        );
+        let rms1 = render_rms(&mut world, 48_000 / 4);
+        assert!(rms1 < 1e-3, "muted frame 1 must be silent: rms={rms1}");
+
+        // Frame 2 adds an unconnected `inlet`, a different graph address, so
+        // the part respawns. Still muted.
+        let mut g2 = Graph::<TestN>::default();
+        let s = g2.add_node(sinosc());
+        let o = g2.add_node(TestN::Out(gantz_plyphon::Out::default()));
+        let _i = g2.add_node(TestN::Inlet);
+        g2.add_edge(s, o, Edge::new(0.into(), 0.into()));
+        let ca2 = graph_addr(&g2);
+        assert_ne!(ca1, ca2, "adding a node changes the graph address");
+        let flat2 = flatten_no_refs(&g2);
+        structural_sync(
+            &mut controller,
+            &mut state,
+            &Default::default(),
+            entity,
+            ca2,
+            &flat2,
+            &HashMap::new(),
+            1,
+            48_000.0,
+            true,
+        );
+        let rms2 = render_rms(&mut world, 48_000 / 2);
+        assert!(rms2 < 1e-3, "muted respawn must be silent: rms={rms2}");
+
+        // Frame 3 lifts the mute with no structural change. The part is kept
+        // and keeps its applied mute. The mute sync then ramps it audible.
+        structural_sync(
+            &mut controller,
+            &mut state,
+            &Default::default(),
+            entity,
+            ca2,
+            &flat2,
+            &HashMap::new(),
+            1,
+            48_000.0,
+            false,
+        );
+        let head = state.heads.get_mut(&entity).expect("head parts");
+        assert!(head.muted, "a kept part keeps the mute applied to it");
+        sync_mute(&mut controller, head, false);
+        assert!(!head.muted);
+        let rms3 = render_rms(&mut world, 48_000 / 2);
+        assert!(rms3 > 0.05, "unmuted, the kept part must sound: rms={rms3}");
+
+        // And back to silence.
+        let head = state.heads.get_mut(&entity).expect("head parts");
+        sync_mute(&mut controller, head, true);
+        // Skip the fade-out ramp before measuring.
+        render_rms(&mut world, 48_000 / 4);
+        let rms4 = render_rms(&mut world, 48_000 / 4);
+        assert!(rms4 < 1e-3, "muted again, it must fall silent: rms={rms4}");
     }
 
     /// A structural edit within a stable-key region re-installs the def and
@@ -2354,6 +2606,7 @@ mod tests {
             &HashMap::new(),
             1,
             48_000.0,
+            false,
         );
         let mut out = vec![0.0f32; 48_000 / 8];
         for block in out.chunks_mut(64) {
@@ -2382,6 +2635,7 @@ mod tests {
             &HashMap::new(),
             1,
             48_000.0,
+            false,
         );
         let mut out = vec![0.0f32; 48_000 / 2];
         for block in out.chunks_mut(64) {
@@ -2594,6 +2848,7 @@ mod tests {
             &children,
             1,
             48_000.0,
+            false,
         );
         let rms_one = render_rms(&mut world, 48_000 / 2);
         assert!(rms_one > 0.05, "one instance must sound: rms={rms_one}");
@@ -2615,6 +2870,7 @@ mod tests {
             &children,
             1,
             48_000.0,
+            false,
         );
         assert_eq!(state.heads[&entity].parts.len(), 2, "two instance spawns");
         assert_eq!(
@@ -2677,6 +2933,7 @@ mod tests {
             &children,
             1,
             48_000.0,
+            false,
         );
         let before: HashMap<u64, i32> = state.heads[&entity]
             .parts
@@ -2697,6 +2954,7 @@ mod tests {
             &children,
             1,
             48_000.0,
+            false,
         );
         let after: HashMap<u64, i32> = state.heads[&entity]
             .parts
@@ -2757,6 +3015,7 @@ mod tests {
             &children,
             1,
             48_000.0,
+            false,
         );
         let rms1 = render_rms(&mut world, 48_000 / 4);
         assert!(rms1 > 0.05, "instanced lowering sounds: rms={rms1}");
@@ -2779,6 +3038,7 @@ mod tests {
             &children,
             1,
             48_000.0,
+            false,
         );
         // Render across the crossfade. The tone stays audible throughout.
         let rms2 = render_rms(&mut world, 48_000 / 2);
@@ -2816,6 +3076,7 @@ mod tests {
             &children,
             1,
             48_000.0,
+            false,
         );
         let rms_both = render_rms(&mut world, 48_000 / 2);
 
