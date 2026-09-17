@@ -18,7 +18,7 @@ use bevy_log as log;
 use gantz_ca as ca;
 use gantz_egui::{DynResponse, HeadDataMut, ResponseData};
 use std::any::TypeId;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 
 pub mod base;
@@ -142,6 +142,7 @@ impl Plugin for GantzEguiPlugin {
             .init_resource::<ExtPanes>()
             .init_resource::<RefExtUis>()
             .init_resource::<EdgeStyles>()
+            .init_resource::<AudioHeads>()
             // GUI state observers
             .add_observer(on_head_opened)
             .add_observer(on_head_changed)
@@ -228,11 +229,13 @@ fn clear_ui_providers(
     mut ext_panes: ResMut<ExtPanes>,
     mut ref_ext_uis: ResMut<RefExtUis>,
     mut edge_styles: ResMut<EdgeStyles>,
+    mut audio_heads: ResMut<AudioHeads>,
 ) {
     tabs.0.clear();
     ext_panes.0.clear();
     ref_ext_uis.0.clear();
     edge_styles.0.clear();
+    audio_heads.0.clear();
 }
 
 /// Per-head GUI state component.
@@ -375,6 +378,14 @@ pub struct RefExtUis(pub Vec<Box<dyn gantz_egui::node::RefExtUi + Send + Sync>>)
 /// concrete node types.
 #[derive(Default, Resource)]
 pub struct EdgeStyles(pub Vec<Box<dyn gantz_egui::widget::EdgeStyle + Send + Sync>>);
+
+/// The open heads whose domain runtime derives an audio output this frame.
+/// Their tabs show the speaker that toggles the head's mute. See
+/// [`OpenHeadState::muted`][gantz_egui::widget::gantz::OpenHeadState::muted].
+///
+/// Same contract as [`SettingsTabs`].
+#[derive(Default, Resource)]
+pub struct AudioHeads(pub HashSet<ca::Head>);
 
 /// A GUI response payload targeting an open-head entity.
 ///
@@ -2026,7 +2037,7 @@ pub fn update(
         mut settings_tabs,
         mut ext_panes,
         ref_ext_uis,
-        edge_styles,
+        (edge_styles, audio_heads),
         mut requested,
         host_native,
         export_paths,
@@ -2043,7 +2054,7 @@ pub fn update(
         ResMut<SettingsTabs>,
         ResMut<ExtPanes>,
         Res<RefExtUis>,
-        Res<EdgeStyles>,
+        (Res<EdgeStyles>, Res<AudioHeads>),
         ResMut<WindowedPanesRequested>,
         Option<Res<HostNativePaneWindows>>,
         Option<Res<base::ExportPaths>>,
@@ -2146,7 +2157,8 @@ pub fn update(
                 .settings_tabs(&mut tabs)
                 .ext_panes(&mut panes)
                 .ref_ext_uis(&exts)
-                .edge_styles(&stylers);
+                .edge_styles(&stylers)
+                .audio_heads(&audio_heads.0);
             // Base-source authoring context. Present only where the per-source
             // write-back runs, since `update-base` inserts ExportPaths. The
             // main app never shows a non-durable source dropdown.
