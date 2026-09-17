@@ -461,7 +461,7 @@ fn separator_stroke(
             cfg.hover.unwrap_or(cfg.color)
         }
     };
-    egui::Stroke::new(2.0, color.resolve(&style.visuals))
+    egui::Stroke::new(cfg.width, color.resolve(&style.visuals))
 }
 
 /// Load a value persisted in egui memory as a RON `String`.
@@ -1367,6 +1367,10 @@ where
         resize_state: egui_tiles::ResizeState,
     ) -> egui::Stroke {
         separator_stroke(self.state.style.separator, style, resize_state)
+    }
+
+    fn gap_width(&self, _style: &egui::Style) -> f32 {
+        self.state.style.separator.width
     }
 
     fn tab_outline_stroke(
@@ -2294,6 +2298,10 @@ where
         resize_state: egui_tiles::ResizeState,
     ) -> egui::Stroke {
         separator_stroke(self.state.style.separator, style, resize_state)
+    }
+
+    fn gap_width(&self, _style: &egui::Style) -> f32 {
+        self.state.style.separator.width
     }
 
     fn tab_outline_stroke(

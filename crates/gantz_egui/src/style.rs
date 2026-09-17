@@ -34,14 +34,16 @@ pub struct StyleConfig {
     pub separator: SeparatorConfig,
 }
 
-/// The colour of the resize handle between panes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+/// The colour and width of the resize handle between panes.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct SeparatorConfig {
     #[serde(default = "default_separator_color")]
     pub color: VisualsColor,
     /// While hovered or dragged. `None` uses `color`.
     #[serde(default)]
     pub hover: Option<VisualsColor>,
+    #[serde(default = "default_separator_width")]
+    pub width: f32,
 }
 
 impl Default for StyleConfig {
@@ -60,6 +62,7 @@ impl Default for SeparatorConfig {
         Self {
             color: default_separator_color(),
             hover: None,
+            width: default_separator_width(),
         }
     }
 }
@@ -149,6 +152,10 @@ fn default_theme() -> egui::ThemePreference {
 
 fn default_separator_color() -> VisualsColor {
     VisualsColor::ExtremeBg
+}
+
+fn default_separator_width() -> f32 {
+    2.0
 }
 
 /// The style `cfg` specifies for `theme`, or egui's default for it.
