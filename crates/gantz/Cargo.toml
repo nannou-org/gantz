@@ -33,6 +33,9 @@ serde.workspace = true
 steel-core.workspace = true
 web-time.workspace = true
 
+[dev-dependencies]
+gantz_ui.workspace = true
+
 [features]
 # cpal's AudioWorklet backend on the web - audio on a dedicated Web Audio thread, off the
 # deprecated main-thread ScriptProcessor host. Enabled by default (the shipped website is the

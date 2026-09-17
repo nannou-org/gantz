@@ -3802,6 +3802,7 @@ dependencies = [
  "gantz_pattern",
  "gantz_plyphon",
  "gantz_std",
+ "gantz_ui",
  "serde",
  "steel-core",
  "web-time",
