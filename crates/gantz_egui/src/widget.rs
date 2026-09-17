@@ -113,6 +113,27 @@ pub(crate) fn format_local_time(system_time: std::time::SystemTime) -> String {
     format_local(system_time, "[hour]:[minute]:[second]")
 }
 
+/// A log row's message galley, wrapped at `width`. A count above one is
+/// prefixed as a dim `×count`.
+pub(crate) fn message_galley(
+    painter: &egui::Painter,
+    font: &egui::FontId,
+    width: f32,
+    color: egui::Color32,
+    count: usize,
+    message: &str,
+) -> std::sync::Arc<egui::Galley> {
+    use egui::text::{LayoutJob, TextFormat};
+    let mut job = LayoutJob::default();
+    job.wrap.max_width = width;
+    if count > 1 {
+        let format = TextFormat::simple(font.clone(), color.gamma_multiply(0.7));
+        job.append(&format!("×{count} "), 0.0, format);
+    }
+    job.append(message, 0.0, TextFormat::simple(font.clone(), color));
+    painter.layout_job(job)
+}
+
 /// Group consecutive slice elements that `eq` considers equal into runs.
 /// Returns `(index_of_first, count)` pairs in order.
 ///

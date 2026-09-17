@@ -193,9 +193,11 @@ impl TraceView {
         // the trailing remainder column.
         let (show_time, show_level, show_target) =
             (state.show_time, state.show_level, state.show_target);
-        let mut table = TableBuilder::new(ui).resizable(true);
+        let mut table = TableBuilder::new(ui)
+            .resizable(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::TOP));
         if show_time {
-            table = table.column(Column::auto().at_least(80.0)); // Timestamp
+            table = table.column(Column::auto()); // Timestamp
         }
         if show_level {
             table = table.column(Column::auto().at_least(50.0)); // Level
@@ -227,21 +229,37 @@ impl TraceView {
             })
             .body(|mut body| {
                 let row_h = 18.0;
-                let n_rows = runs.len();
                 let text_color = body.ui_mut().style().visuals.text_color();
                 let level_colors =
                     crate::widget::LevelColors::from_visuals(&body.ui_mut().style().visuals);
-                body.rows(row_h, n_rows, |mut row| {
+                // Messages wrap at their column width. Each row's galley sets
+                // its height and is rendered as-is.
+                let msg_w = body.widths().last().copied().unwrap_or(0.0);
+                let font = egui::TextStyle::Body.resolve(body.ui_mut().style());
+                let rows: Vec<_> = runs
+                    .iter()
+                    .map(|&(idx, count)| {
+                        let entry = &entries[idx];
+                        let color =
+                            text_color.lerp_to_gamma(egui::Color32::WHITE, entry.freshness());
+                        let painter = body.ui_mut().painter();
+                        let galley = crate::widget::message_galley(
+                            painter,
+                            &font,
+                            msg_w,
+                            color,
+                            count,
+                            &entry.message,
+                        );
+                        (color, galley)
+                    })
+                    .collect();
+                let heights = rows.iter().map(|(_, galley)| galley.size().y.max(row_h));
+                body.heterogeneous_rows(heights, |mut row| {
                     let (idx, count) = runs[row.index()];
+                    let (text_color, galley) = &rows[row.index()];
+                    let text_color = *text_color;
                     let entry = &entries[idx];
-                    let freshness = entry.freshness();
-                    let fresh = freshness > 0.0;
-                    let text_color = if fresh {
-                        let hl_col = egui::Color32::WHITE;
-                        text_color.lerp_to_gamma(hl_col, freshness)
-                    } else {
-                        text_color
-                    };
 
                     if show_time {
                         row.col(|ui| {
@@ -271,19 +289,13 @@ impl TraceView {
                     }
 
                     row.col(|ui| {
-                        ui.horizontal(|ui| {
-                            if count > 1 {
-                                ui.colored_label(
-                                    text_color.gamma_multiply(0.7),
-                                    format!("×{count}"),
-                                )
-                                .on_hover_text("occurrences collapsed (repeated log)");
-                            }
-                            ui.colored_label(text_color, &entry.message);
-                        });
+                        let res = ui.add(egui::Label::new(galley.clone()));
+                        if count > 1 {
+                            res.on_hover_text("occurrences collapsed (repeated log)");
+                        }
                     });
 
-                    if fresh {
+                    if entry.freshness() > 0.0 {
                         row.response().ctx.request_repaint();
                     }
                 });
