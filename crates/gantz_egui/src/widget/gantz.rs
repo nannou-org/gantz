@@ -5,6 +5,7 @@ use crate::{
     export,
     node::NodeCodec,
     response::{DynResponse, Responses},
+    style::SeparatorConfig,
     widget::{self, GraphScene, GraphSceneState, graph_scene},
 };
 use gantz_core::node;
@@ -447,6 +448,21 @@ pub struct NodeViewPane {
 
 /// The egui ID used to store the inner graph tree.
 const GRAPH_TREE_ID: &str = "gantz-graph-tiles-tree";
+
+/// The `egui_tiles::Behavior::resize_stroke` shared by both tile trees.
+fn separator_stroke(
+    cfg: SeparatorConfig,
+    style: &egui::Style,
+    resize_state: egui_tiles::ResizeState,
+) -> egui::Stroke {
+    let color = match resize_state {
+        egui_tiles::ResizeState::Idle => cfg.color,
+        egui_tiles::ResizeState::Hovering | egui_tiles::ResizeState::Dragging => {
+            cfg.hover.unwrap_or(cfg.color)
+        }
+    };
+    egui::Stroke::new(2.0, color.resolve(&style.visuals))
+}
 
 /// Load a value persisted in egui memory as a RON `String`.
 ///
@@ -1348,10 +1364,9 @@ where
     fn resize_stroke(
         &self,
         style: &egui::Style,
-        _resize_state: egui_tiles::ResizeState,
+        resize_state: egui_tiles::ResizeState,
     ) -> egui::Stroke {
-        let w = 2.0;
-        egui::Stroke::new(w, style.visuals.extreme_bg_color)
+        separator_stroke(self.state.style.separator, style, resize_state)
     }
 
     fn tab_outline_stroke(
@@ -2276,10 +2291,9 @@ where
     fn resize_stroke(
         &self,
         style: &egui::Style,
-        _resize_state: egui_tiles::ResizeState,
+        resize_state: egui_tiles::ResizeState,
     ) -> egui::Stroke {
-        let w = 2.0;
-        egui::Stroke::new(w, style.visuals.extreme_bg_color)
+        separator_stroke(self.state.style.separator, style, resize_state)
     }
 
     fn tab_outline_stroke(

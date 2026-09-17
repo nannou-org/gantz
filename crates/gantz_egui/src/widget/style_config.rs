@@ -6,13 +6,13 @@
 //! This subtab only edits the selected theme's style. [`crate::style::apply`]
 //! applies it.
 //!
-//! The subtab also hosts the dot-grid controls. The grid step feeds
-//! snap-to-grid, so it stays editable even when the grid is hidden.
+//! The subtab also hosts the dot-grid and pane separator controls. The grid
+//! step feeds snap-to-grid, so it stays editable even when the grid is hidden.
 
 use super::gantz::GridConfig;
 use crate::{
     StyleConfig,
-    style::{eq_style, reset_theme, set_style_of, style_of},
+    style::{VisualsColor, eq_style, reset_theme, set_style_of, style_of},
 };
 
 /// Response from [`style_config`].
@@ -94,6 +94,35 @@ pub fn style_config(
              when the grid is hidden.",
         );
         ui.label("Grid step");
+    });
+    ui.separator();
+
+    ui.strong("Pane separator");
+    let separator = &mut style.separator;
+    ui.horizontal(|ui| {
+        egui::ComboBox::from_id_salt("separator_color")
+            .selected_text(separator.color.label())
+            .show_ui(ui, |ui| {
+                for color in VisualsColor::ALL {
+                    ui.selectable_value(&mut separator.color, color, color.label());
+                }
+            })
+            .response
+            .on_hover_text("The palette colour of the border between panes.");
+        ui.label("Colour");
+    });
+    ui.horizontal(|ui| {
+        egui::ComboBox::from_id_salt("separator_hover")
+            .selected_text(separator.hover.map_or("Same", VisualsColor::label))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut separator.hover, None, "Same");
+                for color in VisualsColor::ALL {
+                    ui.selectable_value(&mut separator.hover, Some(color), color.label());
+                }
+            })
+            .response
+            .on_hover_text("The border colour while hovered or dragged.");
+        ui.label("Hover colour");
     });
 
     res
