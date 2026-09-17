@@ -40,7 +40,6 @@ pub mod global_config;
 pub mod graph_config;
 pub mod graph_scene;
 pub mod graph_select;
-pub mod gui_debug;
 pub mod head_name_edit;
 pub mod head_row;
 pub mod history_view;
