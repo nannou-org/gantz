@@ -206,7 +206,7 @@ impl TraceView {
             table = table.column(Column::auto().at_least(80.0)); // Target
         }
         table
-            .column(Column::remainder().at_least(100.0)) // Message
+            .column(Column::remainder().at_least(100.0).clip(true)) // Message
             .header(20.0, |mut header| {
                 if show_time {
                     header.col(|ui| {
