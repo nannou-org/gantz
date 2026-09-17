@@ -211,6 +211,46 @@
   (-> ref38 inspect42)
   (-> bang28 expr44))
 
+(graph demo-gui
+  (bang0 bang)
+  (number1 number)
+  (number2 number)
+  (ref3 (ref add #:sync))
+  (inspect4 inspect)
+  (expr5 (expr (quote (col
+    (frame (@ (title "adder"))
+      (row (dialer (@ (bind (1)) (label "a")))
+           (dialer (@ (bind (2)) (label "b"))))
+      (button (@ (bind (0)) (label "add")))
+      (row (label "a + b =") (value (@ (bind (4))))))))))
+  (gui6 gui)
+  (gui7 (gui view))
+  (comment8 (comment "A `gui` node declares the tree wired into it as this graph's GUI for a role.\nOpen the GUI Debug pane to see the stored tree and a live render.\nReference this graph from another graph to see the body GUI in place of the node." 440 45))
+  (comment9 (comment "Bindings are node indices in this graph. `(bind (1))` is `number1`.\nA dialer writes its number and pushes it. The button pushes the bang." 380 30))
+  (-> bang0 number1)
+  (-> bang0 number2)
+  (-> number1 ref3)
+  (-> number2 (ref3 1))
+  (-> ref3 inspect4)
+  (-> expr5 gui6)
+  (-> expr5 gui7))
+
+(graph demo-gui-compose
+  (bang0 bang)
+  (ref1 (ref demo-gui #:sync))
+  (ref2 (ref demo-gui #:sync))
+  (number3 (number #:min 0 #:max 1))
+  (expr4 (expr (list 'col
+    (list 'label (if (> $t 0.5) "t is high" "t is low"))
+    '(dialer (@ (bind (3)) (label "t") (min 0.0) (max 1.0)))
+    '(row (ref-gui 1) (ref-gui 2)))))
+  (gui5 gui)
+  (comment6 (comment "Each ref to `demo-gui` renders its body GUI in place of the label, bound to that instance's own state.\nThe inspector's display row switches an instance to compact or label." 520 30))
+  (comment7 (comment "This graph's own GUI is a computed value. The expr rebuilds the tree from `t` on every push.\n`(ref-gui n)` embeds the GUI of the instance at node index n." 500 30))
+  (-> bang0 number3)
+  (-> number3 expr4)
+  (-> expr4 gui5))
+
 (graph demo-list
   (comment0 (comment "Bang to push the list into the nodes below." 140 30))
   (bang1 bang)
@@ -576,6 +616,8 @@
   (demo-all "Demo: a tour of the base nodes")
   (demo-arithmetic "Demo: arithmetic operations")
   (demo-comparison "Demo: comparison operators")
+  (demo-gui "Demo: declare a graph's GUI with a gui marker")
+  (demo-gui-compose "Demo: compose GUIs across graph instances")
   (demo-list "Demo: list operations")
   (demo-logic "Demo: boolean logic")
   (demo-predicate "Demo: type predicates")
@@ -751,6 +793,30 @@
   (ref5 0 -214)
   (ref8 160 -214)
   (camera 444.5813 -158.21045 1))
+
+(layout demo-gui
+  (bang0 0 -120)
+  (comment8 0 -270)
+  (comment9 0 -200)
+  (expr5 320 -50)
+  (gui6 260 110)
+  (gui7 400 110)
+  (inspect4 0 110)
+  (number1 -80 -50)
+  (number2 80 -50)
+  (ref3 0 30)
+  (camera 120 -60 1))
+
+(layout demo-gui-compose
+  (bang0 0 -150)
+  (comment6 0 -310)
+  (comment7 0 -240)
+  (expr4 0 20)
+  (gui5 0 120)
+  (number3 0 -70)
+  (ref1 -320 0)
+  (ref2 320 0)
+  (camera 0 -70 1))
 
 (layout demo-list
   (bang1 212 323)
