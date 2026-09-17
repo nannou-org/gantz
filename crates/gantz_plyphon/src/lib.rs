@@ -29,8 +29,9 @@ pub use compile::{
 pub use config::{Config, DeriveStatus, Status};
 pub use describe::describe_parts;
 pub use dsp::{
-    BufferBinding, DspBuilder, FADE_LAG, Finished, GainRef, NodeDsp, NodeRate, ParamBinding,
-    PortShape, PortShapes, ScopeOutBinding, Signal, ToNodeDsp, node_dsp_of, signal_rate,
+    BufferBinding, DspBuilder, FADE_LAG, FadeSink, Finished, GainRef, NodeDsp, NodeRate,
+    ParamBinding, PortShape, PortShapes, ScopeOutBinding, Signal, ToNodeDsp, node_dsp_of,
+    signal_rate,
 };
 pub use flatten::{
     AsRefNode, Flat, FlattenError, RefKind, flatten, flatten_from_registry,

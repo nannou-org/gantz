@@ -72,8 +72,8 @@ use crate::compile::{
     DeriveError, content_def_name, derive_synthdefs, dsp_sinks, merged_pull_order, structural_sig,
 };
 use crate::dsp::{
-    BufferBinding, DspBuilder, Finished, GainRef, ParamBinding, PortShapes, ScopeOutBinding,
-    Signal, ToNodeDsp, record_port_shapes, sum_signals,
+    BufferBinding, DspBuilder, FadeSink, Finished, GainRef, ParamBinding, PortShapes,
+    ScopeOutBinding, Signal, ToNodeDsp, record_port_shapes, sum_signals,
 };
 use crate::flatten::Flat;
 
@@ -1201,7 +1201,7 @@ where
         };
         let fade = *fades
             .entry(fade_path.clone())
-            .or_insert_with(|| builder.push_fade_gain(&fade_path));
+            .or_insert_with(|| builder.push_fade_gain(&fade_path, FadeSink::Bus));
         let (p_path, p_label) = &param_at;
         let bus_param = builder.push_control_param(p_path, p_label);
         let mut out_inputs = vec![InputRef::Param(bus_param)];

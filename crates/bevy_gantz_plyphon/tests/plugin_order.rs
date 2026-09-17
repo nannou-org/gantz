@@ -27,6 +27,11 @@ fn plugin_order_is_insensitive() {
     }
     assert!(app.world().contains_resource::<DspConfig>());
     assert!(
+        app.world()
+            .contains_resource::<bevy_gantz_egui::AudioHeads>(),
+        "the tab mute provider is initialised without the egui plugin",
+    );
+    assert!(
         app.world().contains_resource::<DspStatus>(),
         "DspStatus is inserted at finish regardless of device presence",
     );

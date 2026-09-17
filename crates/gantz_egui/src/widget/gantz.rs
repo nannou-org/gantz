@@ -9,7 +9,7 @@ use crate::{
 };
 use gantz_core::node;
 use petgraph::visit::IntoNodeIdentifiers;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use steel::steel_vm::engine::Engine;
 
 /// A file dropped onto a gantz pane.
@@ -58,6 +58,7 @@ pub struct Gantz<'a> {
     /// A host-provided clipboard reader for widget paste affordances, since
     /// egui alone cannot read the clipboard. `None` hides them.
     clipboard: Option<&'a dyn Fn() -> Option<String>>,
+    audio_heads: Option<&'a HashSet<gantz_ca::Head>>,
 }
 
 /// Base-source authoring context for the graph config pane's "source"
@@ -181,6 +182,9 @@ pub struct OpenHeadState {
     /// The per-head flow direction used when auto-layout is invoked.
     #[serde(default = "default_layout_flow")]
     pub layout_flow: egui::Direction,
+    /// Whether the head's audio output is muted.
+    #[serde(default)]
+    pub muted: bool,
 }
 
 fn default_layout_flow() -> egui::Direction {
@@ -192,6 +196,7 @@ impl Default for OpenHeadState {
         Self {
             scene: GraphSceneState::default(),
             layout_flow: GantzState::DEFAULT_DIRECTION,
+            muted: false,
         }
     }
 }
@@ -809,7 +814,15 @@ impl<'a> Gantz<'a> {
             pane_window_mode: PaneWindowMode::default(),
             collab: None,
             clipboard: None,
+            audio_heads: None,
         }
+    }
+
+    /// Provide the open heads whose graph produces audio. Their tabs show a
+    /// speaker that toggles [`OpenHeadState::muted`].
+    pub fn audio_heads(mut self, heads: &'a HashSet<gantz_ca::Head>) -> Self {
+        self.audio_heads = Some(heads);
+        self
     }
 
     /// Provide the collaborative-session display state so the Graph Config
@@ -1581,6 +1594,7 @@ where
                 ext_panes: &ext_panes,
                 edge_styles: gantz.edge_styles,
                 collab: gantz.collab,
+                audio_heads: gantz.audio_heads,
             };
             graph_tree.ui(&mut graph_behaviour, ui);
 
@@ -2242,6 +2256,8 @@ where
     /// Collaborative-session display state, when a collab layer is wired. It
     /// drives the per-tab session dot and the connecting and error overlay.
     collab: Option<&'a crate::collab::CollabUiState>,
+    /// See [`Gantz::audio_heads`].
+    audio_heads: Option<&'a HashSet<gantz_ca::Head>>,
 }
 
 impl<'a, Access> egui_tiles::Behavior<GraphPane> for GraphTreeBehaviour<'a, Access>
@@ -2361,6 +2377,7 @@ where
             // Append a filled circle if this head is focused.
             let mut title = self.tab_title_for_tile(tiles, tile_id).text().to_string();
             let mut session = None;
+            let mut audio = None;
             if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
                 let heads = self.access.heads();
                 if crate::head_is_focused(heads, *self.focused_head, head) {
@@ -2370,6 +2387,9 @@ where
                 if let (Some(collab), gantz_ca::Head::Branch(name)) = (self.collab, head) {
                     session = collab.sessions.get(name);
                 }
+                if self.audio_heads.is_some_and(|heads| heads.contains(head)) {
+                    audio = Some(self.state.open_heads.get(head).is_some_and(|s| s.muted));
+                }
             }
             let mut tab = widget::Tab::new(title, id)
                 .active(state.active)
@@ -2378,7 +2398,17 @@ where
             if let Some(display) = session {
                 tab = tab.status_dot(display.conn.color(), display.hover_text());
             }
+            if let Some(muted) = audio {
+                tab = tab.audio(muted);
+            }
             let res = tab.show(ui);
+
+            if res.audio.as_ref().is_some_and(|r| r.clicked()) {
+                if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
+                    let head_state = self.state.open_heads.entry(head.clone()).or_default();
+                    head_state.muted = !head_state.muted;
+                }
+            }
 
             // Handle double-click to enter edit mode.
             if res.tab.double_clicked() {

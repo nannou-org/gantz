@@ -266,6 +266,16 @@ pub struct ParamBinding {
 /// short enough that edits feel immediate.
 pub const FADE_LAG: f32 = 0.05;
 
+/// The write a fade gain gates. A head mute holds the `Output` gains at
+/// zero. `Bus` gains are never muted, so bus-fed scopes keep flowing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FadeSink {
+    /// An `~out` write to the output bus.
+    Output,
+    /// A private bus write between parts.
+    Bus,
+}
+
 /// Records a synthdef fade gain, a driver-owned param scaling a sink's whole
 /// output. The audio driver fades the synth in and out across a crossfaded
 /// replacement to de-click the respawn. The default is baked at `0.0` so the
@@ -280,6 +290,8 @@ pub struct GainRef {
     pub index: usize,
     /// The param's smoothing lag in seconds, the fade's ramp time.
     pub lag: f32,
+    /// The write this gain gates.
+    pub sink: FadeSink,
 }
 
 /// Records a `~scopeout` monitor node's `ScopeOut`, so the audio driver can
@@ -432,7 +444,7 @@ impl DspBuilder {
     /// scale the sink's whole output. It is recorded as a [`GainRef`] with no
     /// [`ParamBinding`]. See [`GainRef`] for how the driver ramps it. Returns
     /// the param's index for [`InputRef::Param`].
-    pub fn push_fade_gain(&mut self, path: &[usize]) -> u32 {
+    pub fn push_fade_gain(&mut self, path: &[usize], sink: FadeSink) -> u32 {
         let index = self.params.len();
         self.params.push(Param::lag(
             crate::param::param_name(path, "fade"),
@@ -442,6 +454,7 @@ impl DspBuilder {
         self.gains.push(GainRef {
             index,
             lag: FADE_LAG,
+            sink,
         });
         index as u32
     }
