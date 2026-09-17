@@ -4,7 +4,7 @@
 use gantz_core::edge::Edge;
 use gantz_core::node::graph::Graph;
 use gantz_plyphon::{
-    Bus, DeriveError, NodeDsp, Out, Pack, ScopeOut, ToNodeDsp, UnitNode, derive_synthdef,
+    Bus, DeriveError, FadeSink, NodeDsp, Out, Pack, ScopeOut, ToNodeDsp, UnitNode, derive_synthdef,
     derive_synthdefs, structural_sig,
 };
 use plyphon::synthdef::InputRef;
@@ -86,6 +86,11 @@ fn sine_bus_out_splits_two_regions() {
             .any(|p| p.index == writer.derived.gains[0].index),
         "the fade has no node binding",
     );
+    assert_eq!(
+        writer.derived.gains[0].sink,
+        FadeSink::Bus,
+        "a bus write gain is never muted",
+    );
 
     // The reader is `In(0) -> level mul(1) -> channel mul(2) -> Out(3)`.
     let rdef = &reader.derived.def;
@@ -98,6 +103,16 @@ fn sine_bus_out_splits_two_regions() {
     assert_eq!(rdef.units[r.unit].name, "In");
     assert_eq!(rdef.units[r.unit].num_outputs, 1);
     assert!(matches!(rdef.units[r.unit].inputs[0], InputRef::Param(p) if p == r.param as u32));
+    assert_eq!(
+        reader
+            .derived
+            .gains
+            .iter()
+            .map(|g| g.sink)
+            .collect::<Vec<_>>(),
+        vec![FadeSink::Output],
+        "the `~out` gain is the one a head mute holds at zero",
+    );
 }
 
 #[test]

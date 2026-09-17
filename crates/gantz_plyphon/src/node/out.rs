@@ -8,7 +8,7 @@ use plyphon::Rate;
 use plyphon::synthdef::{InputRef, UnitSpec};
 use serde::{Deserialize, Serialize};
 
-use crate::dsp::{DspBuilder, NodeDsp, Signal, ToNodeDsp, input_or_silent};
+use crate::dsp::{DspBuilder, FadeSink, NodeDsp, Signal, ToNodeDsp, input_or_silent};
 use crate::param::{control_input_expr, param_name, param_state, plyphon_param};
 
 /// The audio output sink. Applies a master `gain` to its input signal and
@@ -121,7 +121,7 @@ impl NodeDsp for Out {
             path,
             plyphon_param(param_name(path, "gain"), Self::DEFAULT_GAIN, self.gain_lag),
         );
-        let fade = b.push_fade_gain(path);
+        let fade = b.push_fade_gain(path, FadeSink::Output);
         let level = b.push_unit(UnitSpec {
             name: "BinaryOpUGen".to_string(),
             rate: Rate::Control,

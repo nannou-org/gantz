@@ -14,8 +14,8 @@ use gantz_core::node::Conns;
 use gantz_core::node::graph::{Graph, NodeIx};
 
 use crate::dsp::{
-    BufferBinding, DspBuilder, Finished, GainRef, ParamBinding, PortShapes, ScopeOutBinding,
-    Signal, ToNodeDsp, record_port_shapes, sum_signals,
+    BufferBinding, DspBuilder, FadeSink, Finished, GainRef, ParamBinding, PortShapes,
+    ScopeOutBinding, Signal, ToNodeDsp, record_port_shapes, sum_signals,
 };
 
 /// An error deriving a synthdef from a graph.
@@ -657,7 +657,7 @@ where
             let (path, label, output) = bus_param_at(graph, bus);
             let fade = *fades
                 .entry(path.clone())
-                .or_insert_with(|| builder.push_fade_gain(&path));
+                .or_insert_with(|| builder.push_fade_gain(&path, FadeSink::Bus));
             let bus_param = builder.push_control_param(&path, &label);
             let mut out_inputs = vec![InputRef::Param(bus_param)];
             for ch in sig.channels() {
