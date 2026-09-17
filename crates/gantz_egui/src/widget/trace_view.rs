@@ -246,6 +246,8 @@ impl TraceView {
                 let row_h = 18.0;
                 let n_rows = runs.len();
                 let text_color = body.ui_mut().style().visuals.text_color();
+                let level_colors =
+                    crate::widget::LevelColors::from_visuals(&body.ui_mut().style().visuals);
                 body.rows(row_h, n_rows, |mut row| {
                     let (idx, count) = runs[row.index()];
                     let entry = &entries[idx];
@@ -268,11 +270,11 @@ impl TraceView {
                     if show_level {
                         row.col(|ui| {
                             let (color, text) = match entry.level {
-                                Level::ERROR => (egui::Color32::from_rgb(255, 100, 100), "ERROR"),
-                                Level::WARN => (egui::Color32::from_rgb(255, 200, 100), "WARN"),
-                                Level::INFO => (egui::Color32::from_rgb(100, 200, 255), "INFO"),
-                                Level::DEBUG => (egui::Color32::GRAY, "DEBUG"),
-                                Level::TRACE => (egui::Color32::DARK_GRAY, "TRACE"),
+                                Level::ERROR => (level_colors.error, "ERROR"),
+                                Level::WARN => (level_colors.warn, "WARN"),
+                                Level::INFO => (level_colors.info, "INFO"),
+                                Level::DEBUG => (level_colors.debug, "DEBUG"),
+                                Level::TRACE => (level_colors.trace, "TRACE"),
                             };
                             ui.colored_label(color, text);
                         });

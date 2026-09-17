@@ -275,6 +275,8 @@ impl<'a> LogView<'a> {
                 let row_h = 18.0;
                 let n_rows = runs.len();
                 let text_color = body.ui_mut().style().visuals.text_color();
+                let level_colors =
+                    crate::widget::LevelColors::from_visuals(&body.ui_mut().style().visuals);
                 body.rows(row_h, n_rows, |mut row| {
                     let (idx, count) = runs[row.index()];
                     let entry = &entries[idx];
@@ -297,11 +299,11 @@ impl<'a> LogView<'a> {
                     if show_level {
                         row.col(|ui| {
                             let (color, text) = match entry.level {
-                                Level::Error => (egui::Color32::from_rgb(255, 100, 100), "ERROR"),
-                                Level::Warn => (egui::Color32::from_rgb(255, 200, 100), "WARN"),
-                                Level::Info => (egui::Color32::from_rgb(100, 200, 255), "INFO"),
-                                Level::Debug => (egui::Color32::GRAY, "DEBUG"),
-                                Level::Trace => (egui::Color32::DARK_GRAY, "TRACE"),
+                                Level::Error => (level_colors.error, "ERROR"),
+                                Level::Warn => (level_colors.warn, "WARN"),
+                                Level::Info => (level_colors.info, "INFO"),
+                                Level::Debug => (level_colors.debug, "DEBUG"),
+                                Level::Trace => (level_colors.trace, "TRACE"),
                             };
                             ui.colored_label(color, text);
                         });

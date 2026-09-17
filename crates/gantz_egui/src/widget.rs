@@ -60,6 +60,27 @@ pub mod tab;
 #[cfg(feature = "tracing")]
 pub mod trace_view;
 
+/// Level label colours for the log and trace views.
+pub(crate) struct LevelColors {
+    pub error: egui::Color32,
+    pub warn: egui::Color32,
+    pub info: egui::Color32,
+    pub debug: egui::Color32,
+    pub trace: egui::Color32,
+}
+
+impl LevelColors {
+    pub(crate) fn from_visuals(visuals: &egui::Visuals) -> Self {
+        Self {
+            error: visuals.error_fg_color,
+            warn: visuals.warn_fg_color,
+            info: visuals.widgets.hovered.fg_stroke.color,
+            debug: egui::Color32::GRAY,
+            trace: egui::Color32::DARK_GRAY,
+        }
+    }
+}
+
 /// Convert a UTC datetime to the local timezone. Falls back to UTC when the
 /// local offset is unavailable.
 pub(crate) fn to_local_datetime(datetime: OffsetDateTime) -> OffsetDateTime {
