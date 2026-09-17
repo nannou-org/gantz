@@ -137,6 +137,20 @@ pub fn steel_view(ui: &mut egui::Ui, code: &str) {
     SteelView::new(code).show(ui);
 }
 
+/// A titled, full-width group. Settings tabs use it to separate sections.
+pub fn section<R>(
+    ui: &mut egui::Ui,
+    title: &str,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.group(|ui| {
+        ui.set_min_width(ui.available_width());
+        ui.strong(title);
+        add_contents(ui)
+    })
+    .inner
+}
+
 #[cfg(test)]
 mod tests {
     use super::group_runs;
