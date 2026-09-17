@@ -34,8 +34,6 @@ struct LogViewState {
     /// Whether the Time, Level and Target columns are shown. Target defaults
     /// off since it is the least useful column for most entries.
     show_time: bool,
-    /// Whether the Time column includes the date rather than time-of-day only.
-    show_date: bool,
     show_level: bool,
     show_target: bool,
 }
@@ -49,13 +47,8 @@ pub struct LogEntry {
 }
 
 impl LogEntry {
-    fn format_timestamp(&self, show_date: bool) -> String {
-        let system_time = crate::system_time_from_web(self.timestamp).expect("failed to convert");
-        if show_date {
-            crate::widget::format_local_datetime(system_time)
-        } else {
-            crate::widget::format_local_time(system_time)
-        }
+    fn system_time(&self) -> std::time::SystemTime {
+        crate::system_time_from_web(self.timestamp).expect("failed to convert")
     }
 
     fn freshness(&self) -> f32 {
@@ -151,7 +144,6 @@ impl<'a> LogView<'a> {
                 text_filter: String::new(),
                 auto_scroll: true,
                 show_time: true,
-                show_date: true,
                 show_level: true,
                 show_target: false,
             });
@@ -189,11 +181,6 @@ impl<'a> LogView<'a> {
                         ui.separator();
                         ui.label("Columns:");
                         ui.checkbox(&mut state.show_time, "Time");
-                        ui.add_enabled(
-                            state.show_time,
-                            egui::Checkbox::new(&mut state.show_date, "Date"),
-                        )
-                        .on_hover_text("include the date in the Time column");
                         ui.checkbox(&mut state.show_level, "Level");
                         ui.checkbox(&mut state.show_target, "Target");
                         ui.separator();
@@ -233,12 +220,8 @@ impl<'a> LogView<'a> {
 
         // The Time, Level and Target columns are optional. Message is always
         // the trailing remainder column.
-        let (show_time, show_date, show_level, show_target) = (
-            state.show_time,
-            state.show_date,
-            state.show_level,
-            state.show_target,
-        );
+        let (show_time, show_level, show_target) =
+            (state.show_time, state.show_level, state.show_target);
         let mut table = TableBuilder::new(ui).resizable(true);
         if show_time {
             table = table.column(Column::auto().at_least(80.0)); // Timestamp
@@ -291,8 +274,9 @@ impl<'a> LogView<'a> {
 
                     if show_time {
                         row.col(|ui| {
-                            let text = entry.format_timestamp(show_date);
-                            ui.colored_label(text_color, text);
+                            let t = entry.system_time();
+                            ui.colored_label(text_color, crate::widget::format_local_time(t))
+                                .on_hover_text(crate::widget::format_local_datetime(t));
                         });
                     }
 
