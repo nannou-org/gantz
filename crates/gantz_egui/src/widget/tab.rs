@@ -1,7 +1,8 @@
 //! A custom tab widget shared by the inner graph tree and the outer pane tree.
 //!
 //! It renders a tab as plain text coloured by state, with no background box
-//! and a small close button, so all tabs look consistent.
+//! and a small close button, so all tabs look consistent. An optional
+//! speaker leads the title as a mute toggle.
 
 /// Response from the [`Tab`] widget.
 pub struct TabResponse {
@@ -9,6 +10,8 @@ pub struct TabResponse {
     pub tab: egui::Response,
     /// The response for the close button, if present.
     pub close: Option<egui::Response>,
+    /// The response for the speaker, if present. A click toggles the mute.
+    pub audio: Option<egui::Response>,
 }
 
 /// A tab widget displaying a title with an optional close button.
@@ -21,6 +24,8 @@ pub struct Tab {
     hint: Option<egui::WidgetText>,
     /// Optional painted status dot after the title, as colour and hover text.
     status: Option<(egui::Color32, egui::WidgetText)>,
+    /// Optional painted speaker before the title, as whether it is muted.
+    audio: Option<bool>,
 }
 
 impl Tab {
@@ -32,7 +37,15 @@ impl Tab {
             id,
             hint: None,
             status: None,
+            audio: None,
         }
+    }
+
+    /// Show a small painted speaker before the title, struck through when
+    /// `muted`. A click on it is reported via [`TabResponse::audio`].
+    pub fn audio(mut self, muted: bool) -> Self {
+        self.audio = Some(muted);
+        self
     }
 
     /// Show a small painted status dot after the title with the given hover
@@ -71,6 +84,7 @@ impl Tab {
             id,
             hint,
             status,
+            audio,
         } = self;
 
         let font_id = egui::TextStyle::Button.resolve(ui.style());
@@ -87,9 +101,14 @@ impl Tab {
         } else {
             0.0
         };
+        let audio_width = if audio.is_some() {
+            ui.spacing().icon_width
+        } else {
+            0.0
+        };
 
         let desired_size = egui::vec2(
-            galley.size().x + 2.0 * x_margin + dot_width + close_btn_width,
+            galley.size().x + 2.0 * x_margin + audio_width + dot_width + close_btn_width,
             ui.available_height(),
         );
 
@@ -103,6 +122,7 @@ impl Tab {
         }
 
         let mut close_response = None;
+        let mut audio_response = None;
 
         if ui.is_rect_visible(rect) {
             // Only the text colour responds to state. There is no background.
@@ -114,9 +134,41 @@ impl Tab {
                 ui.visuals().weak_text_color()
             };
 
-            // Draw the title, leaving space for the dot and close areas.
+            // Draw the speaker in the leading slot.
+            if let Some(muted) = audio {
+                let audio_rect = egui::Rect::from_min_max(
+                    egui::pos2(rect.left() + x_margin, rect.top()),
+                    egui::pos2(rect.left() + x_margin + audio_width, rect.bottom()),
+                );
+                let hover = if muted {
+                    "click to unmute"
+                } else {
+                    "click to mute"
+                };
+                let audio_res = ui
+                    .interact(audio_rect, id.with("audio"), egui::Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::Default)
+                    .on_hover_text(hover);
+                let color = if audio_res.hovered() {
+                    ui.visuals().strong_text_color()
+                } else {
+                    ui.visuals().weak_text_color()
+                };
+                paint_speaker(
+                    ui.painter(),
+                    audio_rect,
+                    color,
+                    muted,
+                    ui.visuals().panel_fill,
+                );
+                audio_response = Some(audio_res);
+            }
+
+            // Draw the title, leaving space for the speaker, dot and close
+            // areas.
             let text_rect = rect
                 .shrink2(egui::vec2(x_margin, 0.0))
+                .with_min_x(rect.left() + x_margin + audio_width)
                 .with_max_x(rect.right() - close_btn_width - dot_width);
             let text_pos = egui::Align2::LEFT_CENTER
                 .align_size_within_rect(galley.size(), text_rect)
@@ -166,6 +218,40 @@ impl Tab {
         TabResponse {
             tab: tab_response,
             close: close_response,
+            audio: audio_response,
         }
+    }
+}
+
+/// Paint a speaker centred in `rect`. When `muted`, a diagonal strike crosses
+/// it. The strike is cut from the speaker in `gap`, the tab bar's fill, so it
+/// reads at any size. Painted rather than a glyph for the same reason as the
+/// status dot.
+fn paint_speaker(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    color: egui::Color32,
+    muted: bool,
+    gap: egui::Color32,
+) {
+    let s = rect.width().min(rect.height()) * 0.6;
+    let c = rect.center();
+    let body = egui::Rect::from_min_max(
+        egui::pos2(c.x - s * 0.5, c.y - s * 0.2),
+        egui::pos2(c.x - s * 0.15, c.y + s * 0.2),
+    );
+    painter.rect_filled(body, 0.0, color);
+    let cone = vec![
+        egui::pos2(c.x - s * 0.15, c.y - s * 0.2),
+        egui::pos2(c.x + s * 0.35, c.y - s * 0.5),
+        egui::pos2(c.x + s * 0.35, c.y + s * 0.5),
+        egui::pos2(c.x - s * 0.15, c.y + s * 0.2),
+    ];
+    painter.add(egui::Shape::convex_polygon(cone, color, egui::Stroke::NONE));
+    if muted {
+        let a = egui::pos2(c.x - s * 0.5, c.y + s * 0.5);
+        let b = egui::pos2(c.x + s * 0.5, c.y - s * 0.5);
+        painter.line_segment([a, b], egui::Stroke::new(s * 0.3, gap));
+        painter.line_segment([a, b], egui::Stroke::new(s * 0.12, color));
     }
 }
