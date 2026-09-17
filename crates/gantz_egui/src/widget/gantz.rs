@@ -58,8 +58,6 @@ pub struct Gantz<'a> {
     /// A host-provided clipboard reader for widget paste affordances, since
     /// egui alone cannot read the clipboard. `None` hides them.
     clipboard: Option<&'a dyn Fn() -> Option<String>>,
-    /// The open heads whose domain runtime produces audio. See
-    /// [`Gantz::audio_heads`].
     audio_heads: Option<&'a HashSet<gantz_ca::Head>>,
 }
 
@@ -184,9 +182,7 @@ pub struct OpenHeadState {
     /// The per-head flow direction used when auto-layout is invoked.
     #[serde(default = "default_layout_flow")]
     pub layout_flow: egui::Direction,
-    /// Whether the head's audio output is muted. The tab's speaker toggles
-    /// it. The domain audio runtime reads it and silences the head's output
-    /// sinks.
+    /// Whether the head's audio output is muted.
     #[serde(default)]
     pub muted: bool,
 }
@@ -822,8 +818,8 @@ impl<'a> Gantz<'a> {
         }
     }
 
-    /// Provide the open heads whose domain runtime produces audio. Their tabs
-    /// show a speaker that toggles [`OpenHeadState::muted`].
+    /// Provide the open heads whose graph produces audio. Their tabs show a
+    /// speaker that toggles [`OpenHeadState::muted`].
     pub fn audio_heads(mut self, heads: &'a HashSet<gantz_ca::Head>) -> Self {
         self.audio_heads = Some(heads);
         self
@@ -2260,7 +2256,7 @@ where
     /// Collaborative-session display state, when a collab layer is wired. It
     /// drives the per-tab session dot and the connecting and error overlay.
     collab: Option<&'a crate::collab::CollabUiState>,
-    /// The heads whose tabs show the mute toggle. See [`Gantz::audio_heads`].
+    /// See [`Gantz::audio_heads`].
     audio_heads: Option<&'a HashSet<gantz_ca::Head>>,
 }
 
@@ -2391,7 +2387,6 @@ where
                 if let (Some(collab), gantz_ca::Head::Branch(name)) = (self.collab, head) {
                     session = collab.sessions.get(name);
                 }
-                // The head's mute, when its graph produces audio.
                 if self.audio_heads.is_some_and(|heads| heads.contains(head)) {
                     audio = Some(self.state.open_heads.get(head).is_some_and(|s| s.muted));
                 }
@@ -2408,7 +2403,6 @@ where
             }
             let res = tab.show(ui);
 
-            // Toggle the mute when the speaker is clicked.
             if res.audio.as_ref().is_some_and(|r| r.clicked()) {
                 if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
                     let head_state = self.state.open_heads.entry(head.clone()).or_default();

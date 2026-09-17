@@ -19,10 +19,8 @@
 //! the node's ring-buffer state, so the control world can scope a dsp signal.
 //!
 //! Mixing across heads is free. Every head's `~out` synth writes to output bus
-//! 0, and plyphon sums all synths on that bus. A head's tab can mute it. The
-//! driver holds the head's `~out` fade gains at zero while its
-//! [`OpenHeadState`](gantz_egui::widget::gantz::OpenHeadState) is muted.
-//! Private `~bus` writes are never muted, so scopes keep flowing.
+//! 0, and plyphon sums all synths on that bus. A muted tab holds its head's
+//! `~out` fade gains at zero, see [`FadeSink`].
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU64;
@@ -94,8 +92,8 @@ pub struct DspSettingsChanged(pub Config);
 pub struct DspHead {
     /// The most recent derivation's outcome.
     pub status: DeriveStatus,
-    /// The number of `~out` sinks across the derived parts, the fade gains a
-    /// tab mute holds at zero. Zero unless `status` is [`DeriveStatus::Ok`].
+    /// The number of `~out` sinks derived. Zero unless `status` is
+    /// [`DeriveStatus::Ok`].
     pub outputs: usize,
     /// The derived program rendered as text by [`describe_parts`], or the
     /// failure message.
@@ -360,8 +358,7 @@ struct HeadParts {
     /// parts match by key, sig and wiring and are kept.
     retry: bool,
     parts: Vec<PartSynth>,
-    /// The mute currently applied to the parts' `~out` fade gains. The
-    /// driver's mute sync ramps them whenever the head's tab state differs.
+    /// The mute applied to the parts' `~out` fade gains.
     muted: bool,
 }
 
@@ -707,9 +704,7 @@ fn provide_dsp_pane(
     }));
 }
 
-/// Provide this frame's audible heads, those whose [`DspHead`] derived an
-/// `~out`. Their tabs show the mute toggle. See [`AudioHeads`] for the
-/// schedule contract.
+/// Provide this frame's heads with an `~out`. See [`AudioHeads`].
 fn provide_dsp_audio_heads(
     heads: Query<(&HeadRef, Option<&DspHead>), With<OpenHead>>,
     mut audio_heads: ResMut<AudioHeads>,
@@ -794,8 +789,7 @@ fn provide_dsp_edge_style(
 ///   sample-accurately. A direct inspector edit with no queue is applied
 ///   immediately. Either way the synth is not respawned, which preserves
 ///   phase. Value and automation edits do not change the graph address.
-/// - Mute sync, every frame. Hold the head's `~out` fade gains at zero while
-///   its tab is muted, else at unity. Only a change sends commands.
+/// - Mute sync, every frame. See [`sync_mute`].
 /// - Scope sync, every frame. Drain each `~scopeout`'s scope stream and append
 ///   its samples into the node's ring state, capped at the tap's `size`.
 ///
@@ -1047,8 +1041,8 @@ fn expire_fades(fading: &mut Vec<FadingSynth>, now: Instant) -> Vec<FadingSynth>
 }
 
 /// Hold `head`'s `~out` fade gains at zero when `muted`, else at unity, and
-/// record it. A no-op when already applied. Fresh spawns already honour the
-/// mute, see [`spawn_part`], so the re-send to them is idempotent.
+/// record it. A no-op when already applied. Spawns honour the mute on their
+/// own, so a re-send to them is harmless.
 fn sync_mute(controller: &mut Controller, head: &mut HeadParts, muted: bool) {
     if head.muted == muted {
         return;
@@ -1113,9 +1107,8 @@ fn buffer_blobs(reg: &ca::Registry) -> &BufferBlobs {
 /// computed earlier in the node tree. On install or spawn failure the old
 /// synth is left playing, which is better than going silent.
 ///
-/// A spawn while `muted` leaves its `~out` fades at their silent default.
-/// Kept synths keep the mute already applied to them, recorded on the head,
-/// and the driver's mute sync ramps them when the two differ.
+/// A spawn while `muted` stays silent. Kept synths keep the mute recorded on
+/// the head until [`sync_mute`] ramps them.
 ///
 /// Returns the sync's outcome as the head's [`DspHead`], for the GUI.
 fn structural_sync<N>(
@@ -2164,9 +2157,7 @@ mod tests {
         );
     }
 
-    /// A part spawned while its head is muted stays silent. Its `~out` fade
-    /// is left at the silent default. Ramping the fade to unity, as the mute
-    /// sync does on unmute, makes it sound.
+    /// A part spawned muted is silent until its `~out` fade ramps to unity.
     #[test]
     fn spawn_part_muted_is_silent_until_unmuted() {
         use gantz_core::edge::Edge;
@@ -2452,10 +2443,8 @@ mod tests {
         assert!(rms2 > 0.05, "frame 2 (with inlets) must sound: rms={rms2}");
     }
 
-    /// A head muted across structural syncs stays silent. A respawn leaves
-    /// its `~out` fade at the silent default, and a sync with the mute lifted
-    /// keeps the recorded mute on the kept parts. Lifting it is the mute
-    /// sync's job, keyed off that record, and it ramps the parts audible.
+    /// A muted head stays silent across a respawn. A sync that lifts the mute
+    /// keeps the recorded mute on kept parts until `sync_mute` ramps them.
     #[test]
     fn structural_sync_muted_respawn_stays_silent_until_mute_sync() {
         use gantz_core::edge::Edge;
@@ -2478,7 +2467,7 @@ mod tests {
         let mut state = HeadSynths::default();
         let entity = entities(1)[0];
 
-        // Frame 1 is `~sinosc -> ~out`, muted from the start.
+        // Frame 1 is `~sinosc -> ~out`, muted.
         let mut g1 = Graph::<TestN>::default();
         let s = g1.add_node(sinosc());
         let o = g1.add_node(TestN::Out(gantz_plyphon::Out::default()));
@@ -2505,8 +2494,7 @@ mod tests {
         let rms1 = render_rms(&mut world, 48_000 / 4);
         assert!(rms1 < 1e-3, "muted frame 1 must be silent: rms={rms1}");
 
-        // Frame 2 adds an unconnected `inlet`, a different graph address, so
-        // the part respawns. Still muted.
+        // Frame 2 adds an `inlet`, so the part respawns. Still muted.
         let mut g2 = Graph::<TestN>::default();
         let s = g2.add_node(sinosc());
         let o = g2.add_node(TestN::Out(gantz_plyphon::Out::default()));
@@ -2530,8 +2518,8 @@ mod tests {
         let rms2 = render_rms(&mut world, 48_000 / 2);
         assert!(rms2 < 1e-3, "muted respawn must be silent: rms={rms2}");
 
-        // Frame 3 lifts the mute with no structural change. The part is kept
-        // and keeps its applied mute. The mute sync then ramps it audible.
+        // Frame 3 lifts the mute. The kept part keeps its recorded mute until
+        // the mute sync ramps it.
         structural_sync(
             &mut controller,
             &mut state,

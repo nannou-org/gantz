@@ -266,10 +266,8 @@ pub struct ParamBinding {
 /// short enough that edits feel immediate.
 pub const FADE_LAG: f32 = 0.05;
 
-/// The write a fade gain gates. The audio driver mutes a head by holding its
-/// [`Output`](FadeSink::Output) gains at zero. [`Bus`](FadeSink::Bus) gains
-/// are never muted, so private bus reads such as a `~scopeout` monitor keep
-/// flowing while the head is muted.
+/// The write a fade gain gates. A head mute holds the `Output` gains at
+/// zero. `Bus` gains are never muted, so bus-fed scopes keep flowing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FadeSink {
     /// An `~out` write to the output bus.
@@ -444,9 +442,8 @@ impl DspBuilder {
     /// Declare a driver-controlled fade gain for the sink at `path`. It is a
     /// lagged param with a `0.0` default and a [`FADE_LAG`] ramp that must
     /// scale the sink's whole output. It is recorded as a [`GainRef`] with no
-    /// [`ParamBinding`]. See [`GainRef`] for how the driver ramps it and
-    /// [`FadeSink`] for which gains a head mute holds at zero. Returns the
-    /// param's index for [`InputRef::Param`].
+    /// [`ParamBinding`]. See [`GainRef`] for how the driver ramps it. Returns
+    /// the param's index for [`InputRef::Param`].
     pub fn push_fade_gain(&mut self, path: &[usize], sink: FadeSink) -> u32 {
         let index = self.params.len();
         self.params.push(Param::lag(

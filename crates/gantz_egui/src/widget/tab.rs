@@ -10,7 +10,7 @@ pub struct TabResponse {
     pub tab: egui::Response,
     /// The response for the close button, if present.
     pub close: Option<egui::Response>,
-    /// The response for the speaker, if present. A click toggles the mute.
+    /// The response for the speaker, if present.
     pub audio: Option<egui::Response>,
 }
 
@@ -42,7 +42,7 @@ impl Tab {
     }
 
     /// Show a small painted speaker before the title, struck through when
-    /// `muted`. A click on it is reported via [`TabResponse::audio`].
+    /// `muted`. Its click is reported via [`TabResponse::audio`].
     pub fn audio(mut self, muted: bool) -> Self {
         self.audio = Some(muted);
         self
@@ -134,7 +134,6 @@ impl Tab {
                 ui.visuals().weak_text_color()
             };
 
-            // Draw the speaker in the leading slot.
             if let Some(muted) = audio {
                 let audio_rect = egui::Rect::from_min_max(
                     egui::pos2(rect.left() + x_margin, rect.top()),
@@ -223,10 +222,8 @@ impl Tab {
     }
 }
 
-/// Paint a speaker centred in `rect`. When `muted`, a diagonal strike crosses
-/// it. The strike is cut from the speaker in `gap`, the tab bar's fill, so it
-/// reads at any size. Painted rather than a glyph for the same reason as the
-/// status dot.
+/// Paint a speaker centred in `rect`, struck through when `muted`. The strike
+/// is cut in `gap`, the tab bar fill, so it reads at any size.
 fn paint_speaker(
     painter: &egui::Painter,
     rect: egui::Rect,

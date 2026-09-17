@@ -379,11 +379,8 @@ pub struct RefExtUis(pub Vec<Box<dyn gantz_egui::node::RefExtUi + Send + Sync>>)
 #[derive(Default, Resource)]
 pub struct EdgeStyles(pub Vec<Box<dyn gantz_egui::widget::EdgeStyle + Send + Sync>>);
 
-/// The open heads whose domain runtime derives an audio output this frame.
-/// Their tabs show the speaker that toggles the head's mute. See
-/// [`OpenHeadState::muted`][gantz_egui::widget::gantz::OpenHeadState::muted].
-///
-/// Same contract as [`SettingsTabs`].
+/// The open heads whose graph produces audio, so their tabs show the mute
+/// toggle. Same contract as [`SettingsTabs`].
 #[derive(Default, Resource)]
 pub struct AudioHeads(pub HashSet<ca::Head>);
 
