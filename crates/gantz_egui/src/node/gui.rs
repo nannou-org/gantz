@@ -229,7 +229,7 @@ impl NodeUi for Gui {
     }
 
     fn description(&self) -> Option<&'static str> {
-        Some("Declares the wired tree as this graph's GUI for a role")
+        Some("Declares the wired tree as this graph's GUI for a role. See the demo-gui graph")
     }
 
     fn ui(&mut self, _ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {

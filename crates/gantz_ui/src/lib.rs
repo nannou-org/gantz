@@ -150,7 +150,8 @@
 //!   decodes to the identical tree.
 //!
 //! With no features enabled the crate is the pure model: [`SExpr`],
-//! [`Element`], [`decode()`] and [`encode()`].
+//! [`Element`], [`decode()`], [`encode()`] and the [`pretty()`] printer that
+//! renders any [`SExpr`] as indented scheme text.
 //!
 //! The canonical encoding ([`encode()`]) emits the minimal form. Only
 //! attributes that differ from an element's `Default` emit. Required
@@ -165,7 +166,7 @@ pub use elem::{
     Sep, Space, Toggle, Value,
 };
 pub use encode::encode;
-pub use sexpr::{SExpr, summary};
+pub use sexpr::{SExpr, flat, pretty, summary};
 
 pub mod codec;
 pub mod decode;

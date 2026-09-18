@@ -56,7 +56,7 @@ eframe = { version = "0.34", default-features = false, features = [
 ] }
 egui = { version = "0.34", default-features = false, features = ["serde", "persistence"] }
 egui_extras = { version = "0.34", default-features = false, features = ["syntect"] }
-egui_graph = "0.16.2"
+egui_graph = "0.16.3"
 egui_plot = "0.35"
 egui_tiles = "0.15"
 env_logger = { version = "0.11", default-features = false }

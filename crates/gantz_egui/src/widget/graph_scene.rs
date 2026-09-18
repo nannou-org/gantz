@@ -1080,7 +1080,7 @@ fn placeholder_ui(
 
 /// Show a socket's doc as a hover tooltip, with the type label in bold and
 /// the description below.
-fn socket_hover(resp: &egui::Response, doc: &SocketDoc) {
+pub(crate) fn socket_hover(resp: &egui::Response, doc: &SocketDoc) {
     resp.clone().on_hover_ui(|ui| {
         // Re-assert the wrap width every frame. The tooltip's `Area` caches the
         // width it first rendered at, and wrapped text keeps fitting that stale

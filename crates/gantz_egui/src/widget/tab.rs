@@ -2,7 +2,8 @@
 //!
 //! It renders a tab as plain text coloured by state, with no background box
 //! and a small close button, so all tabs look consistent. An optional
-//! speaker leads the title as a mute toggle.
+//! speaker leads the title as a mute toggle. An optional badge follows it
+//! as a small clickable text, for a per-tab picker.
 
 /// Response from the [`Tab`] widget.
 pub struct TabResponse {
@@ -12,6 +13,8 @@ pub struct TabResponse {
     pub close: Option<egui::Response>,
     /// The response for the speaker, if present.
     pub audio: Option<egui::Response>,
+    /// The response for the badge, if present.
+    pub badge: Option<egui::Response>,
 }
 
 /// A tab widget displaying a title with an optional close button.
@@ -26,6 +29,8 @@ pub struct Tab {
     status: Option<(egui::Color32, egui::WidgetText)>,
     /// Optional painted speaker before the title, as whether it is muted.
     audio: Option<bool>,
+    /// Optional clickable text after the title.
+    badge: Option<egui::WidgetText>,
 }
 
 impl Tab {
@@ -38,6 +43,7 @@ impl Tab {
             hint: None,
             status: None,
             audio: None,
+            badge: None,
         }
     }
 
@@ -45,6 +51,14 @@ impl Tab {
     /// `muted`. Its click is reported via [`TabResponse::audio`].
     pub fn audio(mut self, muted: bool) -> Self {
         self.audio = Some(muted);
+        self
+    }
+
+    /// Show a small clickable text after the title, coloured like the close
+    /// button. Its click is reported via [`TabResponse::badge`]. Use it for
+    /// a per-tab picker that opens a menu on the response.
+    pub fn badge(mut self, text: impl Into<egui::WidgetText>) -> Self {
+        self.badge = Some(text.into());
         self
     }
 
@@ -85,10 +99,13 @@ impl Tab {
             hint,
             status,
             audio,
+            badge,
         } = self;
 
         let font_id = egui::TextStyle::Button.resolve(ui.style());
-        let galley = text.into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, font_id);
+        let wrap = Some(egui::TextWrapMode::Extend);
+        let galley = text.into_galley(ui, wrap, f32::INFINITY, font_id.clone());
+        let badge_galley = badge.map(|b| b.into_galley(ui, wrap, f32::INFINITY, font_id));
 
         let x_margin = ui.spacing().button_padding.x;
         let close_btn_width = if closable {
@@ -106,9 +123,15 @@ impl Tab {
         } else {
             0.0
         };
+        let badge_width = badge_galley.as_ref().map_or(0.0, |g| g.size().x + x_margin);
 
         let desired_size = egui::vec2(
-            galley.size().x + 2.0 * x_margin + audio_width + dot_width + close_btn_width,
+            galley.size().x
+                + 2.0 * x_margin
+                + audio_width
+                + badge_width
+                + dot_width
+                + close_btn_width,
             ui.available_height(),
         );
 
@@ -123,6 +146,7 @@ impl Tab {
 
         let mut close_response = None;
         let mut audio_response = None;
+        let mut badge_response = None;
 
         if ui.is_rect_visible(rect) {
             // Only the text colour responds to state. There is no background.
@@ -163,18 +187,42 @@ impl Tab {
                 audio_response = Some(audio_res);
             }
 
-            // Draw the title, leaving space for the speaker, dot and close
-            // areas.
+            // Draw the title, leaving space for the speaker, badge, dot and
+            // close areas.
             let text_rect = rect
                 .shrink2(egui::vec2(x_margin, 0.0))
                 .with_min_x(rect.left() + x_margin + audio_width)
-                .with_max_x(rect.right() - close_btn_width - dot_width);
+                .with_max_x(rect.right() - close_btn_width - dot_width - badge_width);
             let text_pos = egui::Align2::LEFT_CENTER
                 .align_size_within_rect(galley.size(), text_rect)
                 .min;
             ui.painter().galley(text_pos, galley, text_color);
 
-            // Draw the status dot between the title and the close button.
+            // Draw the badge between the title and the status dot.
+            if let Some(badge_galley) = badge_galley {
+                let badge_rect = egui::Rect::from_min_max(
+                    egui::pos2(
+                        rect.right() - close_btn_width - dot_width - badge_width,
+                        rect.top(),
+                    ),
+                    egui::pos2(rect.right() - close_btn_width - dot_width, rect.bottom()),
+                );
+                let badge_res = ui
+                    .interact(badge_rect, id.with("badge"), egui::Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::Default);
+                let color = if badge_res.hovered() {
+                    ui.visuals().strong_text_color()
+                } else {
+                    ui.visuals().weak_text_color()
+                };
+                let pos = egui::Align2::RIGHT_CENTER
+                    .align_size_within_rect(badge_galley.size(), badge_rect)
+                    .min;
+                ui.painter().galley(pos, badge_galley, color);
+                badge_response = Some(badge_res);
+            }
+
+            // Draw the status dot between the badge and the close button.
             if let Some((color, hover)) = status {
                 let dot_rect = egui::Rect::from_min_max(
                     egui::pos2(rect.right() - close_btn_width - dot_width, rect.top()),
@@ -218,6 +266,7 @@ impl Tab {
             tab: tab_response,
             close: close_response,
             audio: audio_response,
+            badge: badge_response,
         }
     }
 }

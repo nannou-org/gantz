@@ -2246,7 +2246,7 @@ mod tests {
         );
     }
 
-    /// End-to-end check of every `demo-*` graph. Firing its `bang` must
+    /// End-to-end check of every `demo-*` graph. Firing its first `bang` must
     /// evaluate all ops with default inputs without a runtime error or panic.
     /// The bang feeds every interactive input, so all of an op's inputs are
     /// active in one push. This guards the single-input-active failure.
@@ -2272,6 +2272,8 @@ mod tests {
         let demos = [
             "demo-arithmetic",
             "demo-comparison",
+            "demo-gui",
+            "demo-gui-compose",
             "demo-logic",
             "demo-list",
             "demo-predicate",
@@ -2281,7 +2283,7 @@ mod tests {
             let graph =
                 head_graph(&reified, &base, &head).unwrap_or_else(|| panic!("{demo} graph"));
 
-            // The single `bang` node drives every pipeline in the demo.
+            // The first `bang` node drives every pipeline in the demo.
             let go = graph
                 .node_indices()
                 .find(|&ix| {
@@ -2306,6 +2308,87 @@ mod tests {
             vm.call_function_by_name_with_args(&entry_fn_name(&go_ep.id()), vec![])
                 .unwrap_or_else(|e| panic!("firing {demo} bang errored: {e}"));
         }
+    }
+
+    /// Every `gui` marker reachable from a `base.gantz` graph stores a tree
+    /// that decodes with no error element and no warning. Markers are
+    /// collected through instance hops, so an instance of a graph with a GUI
+    /// is checked at its nested path. The first `bang` fires before the
+    /// pulls, so a computed tree sees pushed inputs.
+    #[test]
+    fn base_gui_markers_decode_clean() {
+        use gantz_core::compile::{EvalKind, entry_fn_name, entrypoint, push_pull_entrypoints};
+
+        fn has_error(elem: &gantz_ui::Element) -> bool {
+            matches!(elem, gantz_ui::Element::Error(_)) || elem.children().iter().any(has_error)
+        }
+
+        let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &super::codec())
+            .expect("parse base");
+        let reified = reify_all(&base);
+        let builtins = builtins_with_instances();
+        let codec = super::codec();
+        let reg_env = env(&base, &reified, &builtins, &codec);
+        let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
+        let config = gantz_core::compile::Config::default();
+
+        let mut checked = 0;
+        for (name, _) in base.heads() {
+            let head = gantz_ca::Head::Branch(name.clone());
+            let data_graph = base
+                .head_commit(&head)
+                .and_then(|commit| base.graph(&commit.graph))
+                .unwrap_or_else(|| panic!("{name} has no stored graph"));
+            let markers = gantz_egui::node::gui::marker_paths(&base, data_graph);
+            if markers.is_empty() {
+                continue;
+            }
+            let graph =
+                head_graph(&reified, &base, &head).unwrap_or_else(|| panic!("{name} graph"));
+            let eps = push_pull_entrypoints(&get_node, graph);
+            let (mut vm, _compiled) = gantz_core::vm::init(&get_node, graph, &eps, &config)
+                .unwrap_or_else(|e| panic!("init {name}: {}", gantz_core::vm::error_chain(&e)));
+
+            let go = graph.node_indices().find(|&ix| {
+                (&*graph[ix] as &dyn std::any::Any)
+                    .downcast_ref::<gantz_std::Bang>()
+                    .is_some()
+            });
+            if let Some(go) = go.map(|ix| ix.index()) {
+                let go_ep = eps
+                    .iter()
+                    .find(|ep| {
+                        ep.0.iter()
+                            .any(|s| s.kind == EvalKind::Push && s.path == [go])
+                    })
+                    .unwrap_or_else(|| panic!("{name} bang entrypoint"));
+                vm.call_function_by_name_with_args(&entry_fn_name(&go_ep.id()), vec![])
+                    .unwrap_or_else(|e| panic!("firing {name} bang errored: {e}"));
+            }
+
+            for (path, n_inputs) in markers {
+                let n = n_inputs.min(u8::MAX as usize) as u8;
+                let ep = entrypoint::pull(path.clone(), n);
+                vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+                    .unwrap_or_else(|e| panic!("pulling {name} marker {path:?} errored: {e}"));
+                let val = gantz_core::node::state::extract_value(&vm, &path)
+                    .expect("marker state")
+                    .unwrap_or_else(|| panic!("{name} marker {path:?} has no state"));
+                let decoded = gantz_ui::codec::steel::decode(&val, &gantz_ui::Limits::default());
+                assert!(
+                    decoded.warnings.is_empty(),
+                    "{name} marker {path:?} decoded with warnings: {:?}",
+                    decoded.warnings,
+                );
+                assert!(
+                    !has_error(&decoded.root),
+                    "{name} marker {path:?} decoded with an error element: {:?}",
+                    decoded.root,
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "base.gantz declares no gui markers");
     }
 
     /// Partial evals over demo-pattern stay silent. The tick entrypoint is
