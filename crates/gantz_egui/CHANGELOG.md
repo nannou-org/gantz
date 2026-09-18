@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.6.1...gantz_egui-v0.7.0) - 2026-09-18
+
+### Added
+
+- *(gantz_egui)* render the body preview as a static node
+- *(gantz_egui)* preview body GUIs inside the node chrome
+- *(gantz_egui)* pick the gui role from a badge on the pane tab
+- *(gantz_egui)* split GUI Debug into GUI Preview and GUI Tree panes
+- *(gantz_egui)* wrap log messages and shrink the Time column
+- *(gantz_egui)* add a pane separator width
+- *(gantz_egui)* make the pane separator colour configurable
+- *(gantz_egui)* show log time only, date on hover
+- *(gantz_egui)* add a per-tab mute toggle to graph tabs
+- *(gantz_egui)* export/import the style from the demo host
+- *(gantz_egui)* egui style editor in Settings -> Style
+- *(gantz_egui)* add StyleConfig and per-context style application
+
+### Fixed
+
+- *(gantz_egui)* frame the GUI Preview and GUI Tree panes like the rest
+- *(gantz_egui)* let the log message column shrink
+- *(egui)* disable table and grid row striping
+- *(gantz_egui)* edit the selected theme's style directly
+- *(gantz_egui)* make egui's "Reset style" button theme-aware
+
+### Other
+
+- *(gantz_egui)* drop the GUI Debug scratch mode
+- group settings sections with ui.group
+- *(gantz_egui)* colour log and trace levels from the palette
+- trim the per-tab mute comments
+- apply review fixes to the comment cleanup
+- *(gantz_egui)* simplify comments in ops, response, actions and demo
+- *(gantz_ui)* simplify comments and dedupe the UI tree model docs
+- *(gantz_egui)* simplify and prune widget comments
+- *(gantz_egui)* strong headings without colons in settings
+- *(gantz_egui)* cover style application against a real context
+
 ## [0.6.1](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.6.0...gantz_egui-v0.6.1) - 2026-08-26
 
 ### Added

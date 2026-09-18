@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/nannou-org/gantz/compare/gantz_collab-v0.2.0...gantz_collab-v0.2.1) - 2026-09-18
+
+### Other
+
+- fix residual wording in graph index and heads digest docs
+- *(gantz_format)* simplify and prune comments in format, collab, pattern
+
 ## [0.2.0](https://github.com/nannou-org/gantz/compare/gantz_collab-v0.1.0...gantz_collab-v0.2.0) - 2026-07-23
 
 ### Added

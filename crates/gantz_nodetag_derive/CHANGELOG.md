@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/nannou-org/gantz/compare/gantz_nodetag_derive-v0.1.1...gantz_nodetag_derive-v0.1.2) - 2026-09-18
+
+### Other
+
+- *(gantz_ca)* simplify and prune comments in ca, nodetag and std
+
 ## [0.1.1](https://github.com/nannou-org/gantz/compare/gantz_nodetag_derive-v0.1.0...gantz_nodetag_derive-v0.1.1) - 2026-07-12
 
 ### Other

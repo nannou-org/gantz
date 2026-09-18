@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.3.0...gantz_plyphon-v0.4.0) - 2026-09-18
+
+### Added
+
+- *(gantz_plyphon)* tag fade gains by the write they gate
+
+### Other
+
+- group settings sections with ui.group
+- trim the per-tab mute comments
+- apply review fixes to the comment cleanup
+- *(gantz_plyphon)* simplify comments in tests and egui nodes
+- *(gantz_plyphon)* simplify and prune src comments
+- *(gantz_plyphon)* strong headings without colons in DSP settings
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.2.0...gantz_plyphon-v0.3.0) - 2026-08-26
 
 ### Added
