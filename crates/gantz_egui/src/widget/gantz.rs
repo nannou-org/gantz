@@ -2057,14 +2057,25 @@ where
             let codec = gantz.codec;
             let payloads = pane_ui(ui, |ui| {
                 access.with_head_mut(&head, |data| {
-                    let val = gui_marker_tree(&head, data.graph, data.vm, ui)?;
+                    let (role, val) = gui_marker_tree(&head, data.graph, data.vm, ui)?;
                     let decoded =
                         gantz_ui::codec::steel::decode(&val, &gantz_ui::Limits::default());
-                    let payloads = egui::ScrollArea::both()
-                        .show(ui, |ui| {
-                            gui_preview_tree(env, codec, &head, data.graph, data.vm, &decoded, ui)
-                        })
-                        .inner;
+                    let payloads = match role {
+                        // The node-body surfaces preview inside the node
+                        // chrome, as a reference to this graph shows them.
+                        crate::node::GuiRole::Body | crate::node::GuiRole::Compact => {
+                            gui_preview_node(env, codec, &head, data.graph, data.vm, &decoded, ui)
+                        }
+                        crate::node::GuiRole::View | crate::node::GuiRole::Inspector => {
+                            egui::ScrollArea::both()
+                                .show(ui, |ui| {
+                                    gui_preview_tree(
+                                        env, codec, &head, data.graph, data.vm, &decoded, ui,
+                                    )
+                                })
+                                .inner
+                        }
+                    };
                     Some(payloads)
                 })
             })
@@ -2082,7 +2093,7 @@ where
             };
             pane_ui(ui, |ui| {
                 access.with_head_mut(&head, |data| {
-                    let Some(val) = gui_marker_tree(&head, data.graph, data.vm, ui) else {
+                    let Some((_, val)) = gui_marker_tree(&head, data.graph, data.vm, ui) else {
                         return;
                     };
                     let text =
@@ -3485,8 +3496,8 @@ fn gui_role_badge<Access: HeadAccess>(
     Some((head, roles, role))
 }
 
-/// The stored tree of the head's `gui` marker for the picked role. See
-/// [`picked_gui_role`].
+/// The picked role and the stored tree of the head's `gui` marker for it.
+/// See [`picked_gui_role`].
 ///
 /// `None` when the graph has no marker or the marker has no stored tree
 /// yet. Both cases show a hint in place of the content.
@@ -3495,7 +3506,7 @@ fn gui_marker_tree(
     graph: &gantz_ca::DataGraph,
     vm: &Engine,
     ui: &mut egui::Ui,
-) -> Option<steel::SteelVal> {
+) -> Option<(crate::node::GuiRole, steel::SteelVal)> {
     let markers = crate::node::gui::markers(graph);
     let Some(role) = picked_gui_role(ui.ctx(), head, &markers) else {
         ui.weak("add a `gui` node to this graph to define its GUI");
@@ -3513,7 +3524,79 @@ fn gui_marker_tree(
     if val.is_none() {
         ui.weak("the marker has no stored tree yet");
     }
-    val
+    Some((role, val?))
+}
+
+/// Render a decoded body tree inside the node chrome a reference to `head`
+/// has in a scene: the node frame with the graph's inlet and outlet sockets
+/// and their docs. A one-node `egui_graph` scene hosts the chrome, since
+/// the frame and sockets are only drawn through it. The scene stays
+/// centred on the node and never scales it up, so the preview reads at its
+/// natural size. The returned payloads are the tree's, see
+/// [`gui_preview_tree`].
+fn gui_preview_node(
+    env: &Env<'_>,
+    codec: &crate::node::NodeCodec,
+    head: &gantz_ca::Head,
+    graph: &gantz_ca::DataGraph,
+    vm: &mut Engine,
+    decoded: &gantz_ui::Decoded,
+    ui: &mut egui::Ui,
+) -> Vec<crate::response::DynResponse> {
+    let scene_id = egui::Id::new(("gantz-gui-preview-scene", head));
+    let node_id = egui_graph::NodeId(0);
+    // The scene's view persists so the centred rect carries between frames.
+    let mut view: egui_graph::View =
+        ui.ctx()
+            .data(|d| d.get_temp(scene_id))
+            .unwrap_or_else(|| egui_graph::View {
+                scene_rect: ui.max_rect(),
+                layout: [(node_id, egui::Pos2::ZERO)].into_iter().collect(),
+            });
+    let (inlets, outlets) = crate::inlet_outlet_ids(env, graph);
+    let head_ca: Option<gantz_ca::ContentAddr> = env
+        .registry
+        .head_commit(head)
+        .map(|commit| commit.graph.into());
+    let mut payloads = Vec::new();
+    // Not immutable, since that disables the widgets inside the frame.
+    // Dragging the node only moves the throwaway layout, and centring
+    // refits the view around it each frame.
+    let _ = egui_graph::Graph::from_id(scene_id)
+        .background(false)
+        .dot_grid(false)
+        .center_view(true)
+        .zoom_range(egui::Rangef::new(0.1, 1.0))
+        .show(&mut view, ui, |ui, show| {
+            let _ = show.nodes(ui, |nctx, ui| {
+                let mut resp = egui_graph::node::Node::from_id(node_id)
+                    .inputs(inlets.len())
+                    .outputs(outlets.len())
+                    .flow(egui::Direction::TopDown)
+                    .max_width(f32::INFINITY)
+                    .show(nctx, ui, |uictx| {
+                        uictx.framed(|ui, _sockets| {
+                            gui_preview_tree(env, codec, head, graph, vm, decoded, ui)
+                        })
+                    });
+                payloads = std::mem::take(resp.inner_mut());
+                // The sockets carry the graph's marker docs, as they do on a
+                // reference node in a scene.
+                let Some(ca) = head_ca else { return };
+                for (ix, sock) in resp.sockets().inputs() {
+                    if let Some(doc) = env.socket_doc(&ca, crate::SocketKind::Input, ix) {
+                        super::graph_scene::socket_hover(sock, &doc);
+                    }
+                }
+                for (ix, sock) in resp.sockets().outputs() {
+                    if let Some(doc) = env.socket_doc(&ca, crate::SocketKind::Output, ix) {
+                        super::graph_scene::socket_hover(sock, &doc);
+                    }
+                }
+            });
+        });
+    ui.ctx().data_mut(|d| d.insert_temp(scene_id, view));
+    payloads
 }
 
 /// Render a decoded tree against a head's live VM. This is the GUI Preview
