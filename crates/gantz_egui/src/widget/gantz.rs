@@ -411,10 +411,13 @@ pub enum Pane {
     /// Contains the inner graph tree with all open graph tabs.
     GraphScene,
     Graphs,
-    /// An editable GUI tree literal rendered live through the
-    /// [`ui_tree`][crate::ui_tree] interpreter against the focused head's VM.
-    GuiDebug,
     GuiPerf,
+    /// The focused head's GUI, rendered live through the
+    /// [`ui_tree`][crate::ui_tree] interpreter from its `gui` marker tree.
+    GuiPreview,
+    /// The focused head's stored `gui` marker tree as scheme text, with its
+    /// decode warnings.
+    GuiTree,
     History,
     Logs,
     NodeInspector,
@@ -705,7 +708,8 @@ pub struct ViewToggles {
     pub perf_gui: bool,
     pub perf_vm: bool,
     pub steel: bool,
-    pub gui_debug: bool,
+    pub gui_preview: bool,
+    pub gui_tree: bool,
     pub graph_config: bool,
     /// Per-[`Pane::Ext`] visibility, keyed by the provider key. A missing
     /// entry means hidden, matching the tray panes' default. Keys of
@@ -729,7 +733,8 @@ impl Default for ViewToggles {
             perf_gui: false,
             perf_vm: false,
             steel: false,
-            gui_debug: false,
+            gui_preview: false,
+            gui_tree: false,
             graph_config: true,
             ext: BTreeMap::new(),
         }
@@ -997,7 +1002,7 @@ impl<'a> Gantz<'a> {
         // The persisted outer tree. The version suffix invalidates any tree
         // persisted before the latest default-layout change, forcing a
         // rebuild via `create_tree`.
-        let tree_id = egui::Id::new("gantz-tiles-tree-storage-v4");
+        let tree_id = egui::Id::new("gantz-tiles-tree-storage-v5");
 
         let mut tree: egui_tiles::Tree<Pane> =
             load_tree(ui.ctx(), tree_id).unwrap_or_else(create_tree);
@@ -1009,9 +1014,10 @@ impl<'a> Gantz<'a> {
         let ext_keys: Vec<&str> = self.ext_panes.iter().map(|p| p.key()).collect();
         sync_ext_panes(&mut tree, &ext_keys);
 
-        // Ensure the GUI Debug pane has a tile. Trees persisted before it
-        // existed lack one.
-        sync_singleton_pane(&mut tree, Pane::GuiDebug);
+        // Ensure the GUI Preview and GUI Tree panes have tiles. Trees
+        // persisted before they existed lack them.
+        sync_singleton_pane(&mut tree, Pane::GuiPreview);
+        sync_singleton_pane(&mut tree, Pane::GuiTree);
 
         // Check the `view_toggles` match the pane visibility.
         set_tile_visibility(&mut tree, &state.view_toggles);
@@ -1310,7 +1316,7 @@ where
         // are toggled via the Panes settings or the tab right-click menu.
         matches!(
             tiles.get_pane(&tile_id),
-            Some(Pane::Logs | Pane::Steel | Pane::NodeView(_))
+            Some(Pane::Logs | Pane::Steel | Pane::GuiPreview | Pane::GuiTree | Pane::NodeView(_))
         )
     }
 
@@ -2016,12 +2022,10 @@ where
                 ui,
             );
         }
-        Pane::GuiDebug => {
-            // The focused graph's own gui marker tree. The raw stored tree of
-            // one marker per role as text on the left, the decoded tree
-            // rendered live against the head's VM on the right. Bindings are
-            // correct by construction here, since the tree is this graph's
-            // GUI.
+        Pane::GuiPreview => {
+            // The focused graph's own GUI, rendered live against the head's
+            // VM. Bindings are correct by construction here, since the tree
+            // is this graph's GUI.
             let Some(head) = access.heads().get(*focused_head).cloned() else {
                 ui.weak("no focused graph");
                 return;
@@ -2029,88 +2033,37 @@ where
             let env = gantz.env;
             let codec = gantz.codec;
             let payloads = access.with_head_mut(&head, |data| {
-                let markers = crate::node::gui::markers(data.graph);
-                let decoded = egui::Panel::left(egui::Id::new("gui-debug-marker-panel"))
-                    .resizable(true)
-                    .show_inside(ui, |ui| {
-                        egui::ScrollArea::vertical()
-                            .show(ui, |ui| {
-                                if markers.is_empty() {
-                                    ui.weak("add a `gui` node to this graph to define its GUI");
-                                    return None;
-                                }
-                                // Role picker over the roles that exist,
-                                // remembered per head.
-                                let role_id = egui::Id::new(("gantz-gui-debug-role", &head));
-                                let role = ui
-                                    .ctx()
-                                    .data(|d| d.get_temp::<crate::node::GuiRole>(role_id))
-                                    .filter(|r| markers.iter().any(|(_, g)| g.role == *r))
-                                    .unwrap_or_else(|| {
-                                        markers
-                                            .iter()
-                                            .map(|&(_, g)| g.role)
-                                            .find(|&r| r == crate::node::GuiRole::Body)
-                                            .unwrap_or(markers[0].1.role)
-                                    });
-                                let mut role = role;
-                                ui.horizontal(|ui| {
-                                    for r in crate::node::GuiRole::ALL {
-                                        if markers.iter().any(|(_, g)| g.role == r)
-                                            && ui.selectable_label(role == r, r.as_str()).clicked()
-                                        {
-                                            role = r;
-                                        }
-                                    }
-                                });
-                                ui.ctx().data_mut(|d| d.insert_temp(role_id, role));
-
-                                // First marker of the role, in index order.
-                                let &(ix, _) = markers
-                                    .iter()
-                                    .find(|(_, g)| g.role == role)
-                                    .expect("role picked from existing markers");
-                                let val = node::state::extract_value(data.vm, &[ix])
-                                    .ok()
-                                    .flatten()
-                                    .filter(|v| !matches!(v, steel::SteelVal::Void));
-                                let Some(val) = val else {
-                                    ui.weak("the marker has no stored tree yet");
-                                    return None;
-                                };
-                                ui.separator();
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(format!("{val}")).monospace(),
-                                    )
-                                    .selectable(true),
-                                );
-                                let decoded = gantz_ui::codec::steel::decode(
-                                    &val,
-                                    &gantz_ui::Limits::default(),
-                                );
-                                gui_debug_warnings(&decoded, ui);
-                                Some(decoded)
-                            })
-                            .inner
+                let val = gui_marker_tree(&head, data.graph, data.vm, ui)?;
+                let decoded = gantz_ui::codec::steel::decode(&val, &gantz_ui::Limits::default());
+                let payloads = egui::ScrollArea::both()
+                    .show(ui, |ui| {
+                        gui_preview_tree(env, codec, &head, data.graph, data.vm, &decoded, ui)
                     })
                     .inner;
-                let mut payloads = Vec::new();
-                egui::CentralPanel::default().show_inside(ui, |ui| {
-                    let Some(decoded) = &decoded else {
-                        ui.weak("nothing to render");
-                        return;
-                    };
-                    egui::ScrollArea::both().show(ui, |ui| {
-                        payloads =
-                            gui_debug_tree(env, codec, &head, data.graph, data.vm, decoded, ui);
-                    });
-                });
-                payloads
+                Some(payloads)
             });
-            if let Some(payloads) = payloads {
+            if let Some(payloads) = payloads.flatten() {
                 gantz_response.responses.extend(Some(&head), payloads);
             }
+        }
+        Pane::GuiTree => {
+            // The stored tree of the focused graph's gui marker as scheme
+            // text, with its decode warnings below.
+            let Some(head) = access.heads().get(*focused_head).cloned() else {
+                ui.weak("no focused graph");
+                return;
+            };
+            access.with_head_mut(&head, |data| {
+                let Some(val) = gui_marker_tree(&head, data.graph, data.vm, ui) else {
+                    return;
+                };
+                let text = gantz_ui::pretty(&gantz_ui::codec::steel::lower(&val), GUI_TREE_WIDTH);
+                let decoded = gantz_ui::codec::steel::decode(&val, &gantz_ui::Limits::default());
+                egui::ScrollArea::both().show(ui, |ui| {
+                    widget::SteelView::new(&text).show(ui);
+                    gui_tree_warnings(&decoded, ui);
+                });
+            });
         }
         Pane::VmPerf => {
             if let Some(ref mut capture) = gantz.perf_vm {
@@ -2648,7 +2601,8 @@ where
         Pane::NodeInspector => with_head("Node Inspector"),
         Pane::NodeView(p) => node_view_title(p),
         Pane::Steel => with_head("Steel"),
-        Pane::GuiDebug => with_head("GUI Debug"),
+        Pane::GuiPreview => with_head("GUI Preview"),
+        Pane::GuiTree => with_head("GUI Tree"),
         Pane::VmPerf => "VM Perf".to_string(),
     }
 }
@@ -2709,9 +2663,9 @@ impl Default for GantzState {
 fn create_tree() -> egui_tiles::Tree<Pane> {
     let mut tiles = egui_tiles::Tiles::default();
 
-    // The leaf panes. The GUI Debug pane is not created here. It joins the
-    // tray via `sync_singleton_pane`, the same path that serves persisted
-    // trees predating it.
+    // The leaf panes. The GUI Preview and GUI Tree panes are not created
+    // here. They join the tray via `sync_singleton_pane`, the same path that
+    // serves persisted trees predating them.
     let graph_config = tiles.insert_pane(Pane::GraphConfig);
     let graph_scene = tiles.insert_pane(Pane::GraphScene);
     let graphs = tiles.insert_pane(Pane::Graphs);
@@ -3015,7 +2969,11 @@ fn impose_fixed_sizes(tree: &mut egui_tiles::Tree<Pane>, state: &GantzState, are
             (avail - width).max(1.0),
         );
     }
-    if state.view_toggles.logs || state.view_toggles.steel || state.view_toggles.gui_debug {
+    if state.view_toggles.logs
+        || state.view_toggles.steel
+        || state.view_toggles.gui_preview
+        || state.view_toggles.gui_tree
+    {
         let avail = area.height() - TILE_GAP;
         let height = state
             .tray_height
@@ -3129,7 +3087,8 @@ fn set_pane_visible(view: &mut ViewToggles, pane: &Pane, visible: bool) {
         Pane::GuiPerf => view.perf_gui = visible,
         Pane::Logs => view.logs = visible,
         Pane::Steel => view.steel = visible,
-        Pane::GuiDebug => view.gui_debug = visible,
+        Pane::GuiPreview => view.gui_preview = visible,
+        Pane::GuiTree => view.gui_tree = visible,
         // No visibility toggle. The scene is always visible and node views
         // are closable.
         Pane::GraphScene | Pane::NodeView(_) => {}
@@ -3150,7 +3109,8 @@ fn pane_is_visible(view: &ViewToggles, pane: &Pane) -> bool {
         Pane::GuiPerf => view.perf_gui,
         Pane::Logs => view.logs,
         Pane::Steel => view.steel,
-        Pane::GuiDebug => view.gui_debug,
+        Pane::GuiPreview => view.gui_preview,
+        Pane::GuiTree => view.gui_tree,
         Pane::GraphScene | Pane::NodeView(_) => true,
     }
 }
@@ -3172,7 +3132,8 @@ pub fn pane_key(pane: &Pane) -> String {
         Pane::GraphConfig => "graph-config".to_string(),
         Pane::GraphScene => "graph-scene".to_string(),
         Pane::Graphs => "graphs".to_string(),
-        Pane::GuiDebug => "gui-debug".to_string(),
+        Pane::GuiPreview => "gui-preview".to_string(),
+        Pane::GuiTree => "gui-tree".to_string(),
         Pane::GuiPerf => "gui-perf".to_string(),
         Pane::History => "history".to_string(),
         Pane::Logs => "logs".to_string(),
@@ -3194,7 +3155,7 @@ pub fn pane_key(pane: &Pane) -> String {
 /// egui-memory id under which the set of windowed panes persists, stored as a
 /// RON `String` alongside the tile tree. See [`load_ron`].
 fn windowed_panes_id() -> egui::Id {
-    egui::Id::new("gantz-windowed-panes-storage-v1")
+    egui::Id::new("gantz-windowed-panes-storage-v2")
 }
 
 /// egui-memory id for panes a host has requested be re-docked before the next
@@ -3332,7 +3293,8 @@ fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
                 Pane::VmPerf => tree.set_visible(id, open && view.perf_vm),
                 Pane::Logs => tree.set_visible(id, view.logs),
                 Pane::Steel => tree.set_visible(id, view.steel),
-                Pane::GuiDebug => tree.set_visible(id, view.gui_debug),
+                Pane::GuiPreview => tree.set_visible(id, view.gui_preview),
+                Pane::GuiTree => tree.set_visible(id, view.gui_tree),
                 // Always visible. A node view is removed by closing, not hiding.
                 Pane::NodeView(_) => tree.set_visible(id, true),
             }
@@ -3413,7 +3375,7 @@ fn collect_gantz_file_drops(ctx: &egui::Context) -> Vec<FileDrop> {
         .collect()
 }
 
-/// The output count of every node in `g`. It backs the GuiDebug tree's
+/// The output count of every node in `g`. It backs the GUI Preview tree's
 /// push-eval resolver, since a push entry fn's identity covers the count.
 ///
 /// Nodes reify transiently through the codec. A weight with an unknown tag
@@ -3435,11 +3397,73 @@ fn node_output_counts(
         .collect()
 }
 
-/// Render a decoded tree against a head's live VM. This is the GuiDebug
-/// pane's central-panel body. Bindings resolve into the head's node state
-/// both ways. The returned payloads carry the tree's push evaluations and
-/// state writes.
-fn gui_debug_tree(
+/// The column the GUI Tree pane wraps the printed tree at.
+const GUI_TREE_WIDTH: usize = 80;
+
+/// The stored tree of one of the head's own `gui` markers, chosen by the
+/// role picker this renders at the top of the pane. The picked role is
+/// remembered per head in one memory slot shared by the GUI Preview and GUI
+/// Tree panes, so both panes follow the same role.
+///
+/// `None` when the graph has no marker or the picked marker has no stored
+/// tree yet. Both cases show a hint in place of the content.
+fn gui_marker_tree(
+    head: &gantz_ca::Head,
+    graph: &gantz_ca::DataGraph,
+    vm: &Engine,
+    ui: &mut egui::Ui,
+) -> Option<steel::SteelVal> {
+    use crate::node::GuiRole;
+    let markers = crate::node::gui::markers(graph);
+    if markers.is_empty() {
+        ui.weak("add a `gui` node to this graph to define its GUI");
+        return None;
+    }
+    // Roles that no longer exist fall back to the body, else the first
+    // marker.
+    let role_id = egui::Id::new(("gantz-gui-role", head));
+    let mut role = ui
+        .ctx()
+        .data(|d| d.get_temp::<GuiRole>(role_id))
+        .filter(|r| markers.iter().any(|(_, g)| g.role == *r))
+        .unwrap_or_else(|| {
+            markers
+                .iter()
+                .map(|&(_, g)| g.role)
+                .find(|&r| r == GuiRole::Body)
+                .unwrap_or(markers[0].1.role)
+        });
+    ui.horizontal(|ui| {
+        for r in GuiRole::ALL {
+            if markers.iter().any(|(_, g)| g.role == r)
+                && ui.selectable_label(role == r, r.as_str()).clicked()
+            {
+                role = r;
+            }
+        }
+    });
+    ui.ctx().data_mut(|d| d.insert_temp(role_id, role));
+    ui.separator();
+
+    // First marker of the role, in index order.
+    let &(ix, _) = markers
+        .iter()
+        .find(|(_, g)| g.role == role)
+        .expect("role picked from existing markers");
+    let val = node::state::extract_value(vm, &[ix])
+        .ok()
+        .flatten()
+        .filter(|v| !matches!(v, steel::SteelVal::Void));
+    if val.is_none() {
+        ui.weak("the marker has no stored tree yet");
+    }
+    val
+}
+
+/// Render a decoded tree against a head's live VM. This is the GUI Preview
+/// pane's body. Bindings resolve into the head's node state both ways. The
+/// returned payloads carry the tree's push evaluations and state writes.
+fn gui_preview_tree(
     env: &Env<'_>,
     codec: &crate::node::NodeCodec,
     head: &gantz_ca::Head,
@@ -3470,7 +3494,7 @@ fn gui_debug_tree(
     };
     let mut writes = Vec::new();
     let mut node_ctx = NodeCtx::new(env, &[], &inlets, &outlets, &[], vm, &mut writes);
-    let root_id = egui::Id::new(("gantz-gui-debug", head));
+    let root_id = egui::Id::new(("gantz-gui-preview", head));
     let r = crate::ui_tree::UiTree::new(root_id)
         .n_outputs(&resolver)
         .ref_gui(&ref_gui)
@@ -3484,8 +3508,8 @@ fn gui_debug_tree(
     payloads
 }
 
-/// The GuiDebug pane's collapsible decode-warnings list.
-fn gui_debug_warnings(decoded: &gantz_ui::Decoded, ui: &mut egui::Ui) {
+/// The GUI Tree pane's collapsible decode-warnings list.
+fn gui_tree_warnings(decoded: &gantz_ui::Decoded, ui: &mut egui::Ui) {
     if decoded.warnings.is_empty() {
         return;
     }
@@ -4051,6 +4075,8 @@ mod tests {
     fn pane_key_identity() {
         assert_eq!(pane_key(&Pane::Logs), "logs");
         assert_ne!(pane_key(&Pane::Logs), pane_key(&Pane::Steel));
+        assert_eq!(pane_key(&Pane::GuiPreview), "gui-preview");
+        assert_eq!(pane_key(&Pane::GuiTree), "gui-tree");
 
         let plot = node_view("main", &[3]);
         let same_node_number = Pane::NodeView(NodeViewPane {

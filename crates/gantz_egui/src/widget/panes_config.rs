@@ -65,8 +65,10 @@ pub fn panes_config(view: &mut ViewToggles, ext: &[super::ExtPaneEntry], ui: &mu
         .on_hover_text("Log output from the running graphs.");
     ui.checkbox(&mut view.steel, "Steel")
         .on_hover_text("The compiled Steel code for the focused graph.");
-    ui.checkbox(&mut view.gui_debug, "GUI Debug")
-        .on_hover_text("The focused graph's gui marker tree, as stored and as rendered live.");
+    ui.checkbox(&mut view.gui_preview, "GUI Preview")
+        .on_hover_text("The focused graph's GUI, rendered live from its gui marker.");
+    ui.checkbox(&mut view.gui_tree, "GUI Tree")
+        .on_hover_text("The stored gui marker tree as scheme text, with decode warnings.");
     for entry in ext {
         let on = view.ext.entry(entry.key.clone()).or_insert(false);
         ui.checkbox(on, entry.title.as_str())
