@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.2.1...bevy_gantz_plyphon-v0.3.0) - 2026-09-18
+
+### Added
+
+- *(bevy_gantz_plyphon)* mute a head's out writes from its tab
+
+### Fixed
+
+- *(bevy_gantz_plyphon)* anchor web audio clock to the eval epoch
+
+### Other
+
+- trim the per-tab mute comments
+- apply review fixes to the comment cleanup
+- *(bevy_gantz_egui)* simplify comments in bevy egui and plyphon crates
+
 ## [0.2.1](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.2.0...bevy_gantz_plyphon-v0.2.1) - 2026-08-26
 
 ### Fixed

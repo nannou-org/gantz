@@ -1,6 +1,6 @@
 [package]
 name = "bevy_gantz_collab"
-version = "0.1.1"
+version = "0.1.2"
 description = "Bevy integration of gantz's peer-to-peer collaborative sessions."
 authors.workspace = true
 edition.workspace = true

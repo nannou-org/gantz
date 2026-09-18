@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/nannou-org/gantz/compare/gantz_core-v0.6.0...gantz_core-v0.6.1) - 2026-09-18
+
+### Other
+
+- apply review fixes to the comment cleanup
+- fix residual wording in graph index and heads digest docs
+- *(gantz_core)* simplify and prune test comments
+- *(gantz_core)* simplify and prune src comments
+
 ## [0.6.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.5.0...gantz_core-v0.6.0) - 2026-08-26
 
 ### Added

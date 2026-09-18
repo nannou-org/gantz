@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/nannou-org/gantz/compare/gantz_ca-v0.4.0...gantz_ca-v0.4.1) - 2026-09-18
+
+### Other
+
+- apply review fixes to the comment cleanup
+- *(gantz_ca)* simplify and prune comments in ca, nodetag and std
+
 ## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_ca-v0.3.0...gantz_ca-v0.4.0) - 2026-07-23
 
 ### Added

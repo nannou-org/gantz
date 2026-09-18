@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.6.0...bevy_gantz_egui-v0.7.0) - 2026-09-18
+
+### Added
+
+- *(bevy_gantz_egui)* provide the audible heads to the tab bar
+- *(bevy_gantz_egui)* handle style export/import
+
+### Other
+
+- trim the per-tab mute comments
+- apply review fixes to the comment cleanup
+- *(bevy_gantz_egui)* simplify comments in bevy egui and plyphon crates
+
 ## [0.6.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.5.0...bevy_gantz_egui-v0.6.0) - 2026-08-26
 
 ### Added
