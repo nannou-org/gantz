@@ -1350,10 +1350,33 @@ where
         // Render with the shared `Tab` widget so the sidebar and tray tabs and
         // their small close button match the graph tabs.
         let title = self.tab_title_for_tile(tiles, tile_id);
-        let res = widget::Tab::new(title, id)
+        let mut tab = widget::Tab::new(title, id)
             .active(state.active)
-            .closable(state.closable)
-            .show(ui);
+            .closable(state.closable);
+        // The GUI panes pick the `gui` role they show from a badge on their
+        // tab, so their bodies stay free of controls.
+        let badge = match tiles.get_pane(&tile_id) {
+            Some(Pane::GuiPreview | Pane::GuiTree) => {
+                gui_role_badge(self.access, self.focused_head, ui.ctx())
+            }
+            _ => None,
+        };
+        if let Some((_, _, role)) = &badge {
+            tab = tab.badge(format!("[{}]", role.as_str()));
+        }
+        let res = tab.show(ui);
+        if let (Some((head, roles, role)), Some(badge_res)) = (badge, &res.badge) {
+            egui::Popup::menu(badge_res)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| {
+                    for r in roles {
+                        if ui.selectable_label(r == role, r.as_str()).clicked() {
+                            set_gui_role(ui.ctx(), &head, r);
+                            ui.close();
+                        }
+                    }
+                });
+        }
         if res.close.is_some_and(|r| r.clicked()) && self.on_tab_close(tiles, tile_id) {
             tiles.remove(tile_id);
         }
@@ -3408,51 +3431,76 @@ fn node_output_counts(
 /// The column the GUI Tree pane wraps the printed tree at.
 const GUI_TREE_WIDTH: usize = 80;
 
-/// The stored tree of one of the head's own `gui` markers, chosen by the
-/// role picker this renders at the top of the pane. The picked role is
-/// remembered per head in one memory slot shared by the GUI Preview and GUI
-/// Tree panes, so both panes follow the same role.
+/// The egui memory slot holding the picked `gui` role for `head`. The GUI
+/// Preview and GUI Tree panes and their tab badges share it, so one pick
+/// drives both panes.
+fn gui_role_id(head: &gantz_ca::Head) -> egui::Id {
+    egui::Id::new(("gantz-gui-role", head))
+}
+
+/// The role the GUI panes show for `head`, given its markers in index
+/// order. The picked role when a marker of it exists, else the body, else
+/// the first marker's role. `None` when the graph has no marker.
+fn picked_gui_role(
+    ctx: &egui::Context,
+    head: &gantz_ca::Head,
+    markers: &[(node::Id, crate::node::Gui)],
+) -> Option<crate::node::GuiRole> {
+    use crate::node::GuiRole;
+    let has = |r: GuiRole| markers.iter().any(|(_, g)| g.role == r);
+    ctx.data(|d| d.get_temp::<GuiRole>(gui_role_id(head)))
+        .filter(|&r| has(r))
+        .or_else(|| has(GuiRole::Body).then_some(GuiRole::Body))
+        .or_else(|| markers.first().map(|&(_, g)| g.role))
+}
+
+/// Pick the `gui` role the GUI panes show for `head`.
+fn set_gui_role(ctx: &egui::Context, head: &gantz_ca::Head, role: crate::node::GuiRole) {
+    ctx.data_mut(|d| d.insert_temp(gui_role_id(head), role));
+}
+
+/// The role badge for a GUI pane's tab, as the focused head, its marker
+/// roles in [`GuiRole::ALL`][crate::node::GuiRole::ALL] order and the picked
+/// role. `None` unless the head declares at least two roles, since a single
+/// role needs no picker.
+fn gui_role_badge<Access: HeadAccess>(
+    access: &mut Access,
+    focused_head: usize,
+    ctx: &egui::Context,
+) -> Option<(
+    gantz_ca::Head,
+    Vec<crate::node::GuiRole>,
+    crate::node::GuiRole,
+)> {
+    let head = access.heads().get(focused_head).cloned()?;
+    let markers = access.with_head_mut(&head, |data| crate::node::gui::markers(data.graph))?;
+    let roles: Vec<_> = crate::node::GuiRole::ALL
+        .into_iter()
+        .filter(|&r| markers.iter().any(|(_, g)| g.role == r))
+        .collect();
+    if roles.len() < 2 {
+        return None;
+    }
+    let role = picked_gui_role(ctx, &head, &markers)?;
+    Some((head, roles, role))
+}
+
+/// The stored tree of the head's `gui` marker for the picked role. See
+/// [`picked_gui_role`].
 ///
-/// `None` when the graph has no marker or the picked marker has no stored
-/// tree yet. Both cases show a hint in place of the content.
+/// `None` when the graph has no marker or the marker has no stored tree
+/// yet. Both cases show a hint in place of the content.
 fn gui_marker_tree(
     head: &gantz_ca::Head,
     graph: &gantz_ca::DataGraph,
     vm: &Engine,
     ui: &mut egui::Ui,
 ) -> Option<steel::SteelVal> {
-    use crate::node::GuiRole;
     let markers = crate::node::gui::markers(graph);
-    if markers.is_empty() {
+    let Some(role) = picked_gui_role(ui.ctx(), head, &markers) else {
         ui.weak("add a `gui` node to this graph to define its GUI");
         return None;
-    }
-    // Roles that no longer exist fall back to the body, else the first
-    // marker.
-    let role_id = egui::Id::new(("gantz-gui-role", head));
-    let mut role = ui
-        .ctx()
-        .data(|d| d.get_temp::<GuiRole>(role_id))
-        .filter(|r| markers.iter().any(|(_, g)| g.role == *r))
-        .unwrap_or_else(|| {
-            markers
-                .iter()
-                .map(|&(_, g)| g.role)
-                .find(|&r| r == GuiRole::Body)
-                .unwrap_or(markers[0].1.role)
-        });
-    ui.horizontal(|ui| {
-        for r in GuiRole::ALL {
-            if markers.iter().any(|(_, g)| g.role == r)
-                && ui.selectable_label(role == r, r.as_str()).clicked()
-            {
-                role = r;
-            }
-        }
-    });
-    ui.ctx().data_mut(|d| d.insert_temp(role_id, role));
-    ui.separator();
-
+    };
     // First marker of the role, in index order.
     let &(ix, _) = markers
         .iter()
