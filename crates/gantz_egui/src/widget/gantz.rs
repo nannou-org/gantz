@@ -2027,21 +2027,25 @@ where
             // VM. Bindings are correct by construction here, since the tree
             // is this graph's GUI.
             let Some(head) = access.heads().get(*focused_head).cloned() else {
-                ui.weak("no focused graph");
+                pane_ui(ui, |ui| ui.weak("no focused graph"));
                 return;
             };
             let env = gantz.env;
             let codec = gantz.codec;
-            let payloads = access.with_head_mut(&head, |data| {
-                let val = gui_marker_tree(&head, data.graph, data.vm, ui)?;
-                let decoded = gantz_ui::codec::steel::decode(&val, &gantz_ui::Limits::default());
-                let payloads = egui::ScrollArea::both()
-                    .show(ui, |ui| {
-                        gui_preview_tree(env, codec, &head, data.graph, data.vm, &decoded, ui)
-                    })
-                    .inner;
-                Some(payloads)
-            });
+            let payloads = pane_ui(ui, |ui| {
+                access.with_head_mut(&head, |data| {
+                    let val = gui_marker_tree(&head, data.graph, data.vm, ui)?;
+                    let decoded =
+                        gantz_ui::codec::steel::decode(&val, &gantz_ui::Limits::default());
+                    let payloads = egui::ScrollArea::both()
+                        .show(ui, |ui| {
+                            gui_preview_tree(env, codec, &head, data.graph, data.vm, &decoded, ui)
+                        })
+                        .inner;
+                    Some(payloads)
+                })
+            })
+            .inner;
             if let Some(payloads) = payloads.flatten() {
                 gantz_response.responses.extend(Some(&head), payloads);
             }
@@ -2050,18 +2054,22 @@ where
             // The stored tree of the focused graph's gui marker as scheme
             // text, with its decode warnings below.
             let Some(head) = access.heads().get(*focused_head).cloned() else {
-                ui.weak("no focused graph");
+                pane_ui(ui, |ui| ui.weak("no focused graph"));
                 return;
             };
-            access.with_head_mut(&head, |data| {
-                let Some(val) = gui_marker_tree(&head, data.graph, data.vm, ui) else {
-                    return;
-                };
-                let text = gantz_ui::pretty(&gantz_ui::codec::steel::lower(&val), GUI_TREE_WIDTH);
-                let decoded = gantz_ui::codec::steel::decode(&val, &gantz_ui::Limits::default());
-                egui::ScrollArea::both().show(ui, |ui| {
-                    widget::SteelView::new(&text).show(ui);
-                    gui_tree_warnings(&decoded, ui);
+            pane_ui(ui, |ui| {
+                access.with_head_mut(&head, |data| {
+                    let Some(val) = gui_marker_tree(&head, data.graph, data.vm, ui) else {
+                        return;
+                    };
+                    let text =
+                        gantz_ui::pretty(&gantz_ui::codec::steel::lower(&val), GUI_TREE_WIDTH);
+                    let decoded =
+                        gantz_ui::codec::steel::decode(&val, &gantz_ui::Limits::default());
+                    egui::ScrollArea::both().show(ui, |ui| {
+                        widget::SteelView::new(&text).show(ui);
+                        gui_tree_warnings(&decoded, ui);
+                    });
                 });
             });
         }
