@@ -1,5 +1,6 @@
 //! A minimal node set for the format and export round-trip paths in unit
-//! tests. It has an `Expr` leaf plus `NamedRef` for graph references.
+//! tests. It has `Expr` and `Bang` leaves plus `NamedRef` for graph
+//! references.
 
 use crate::node::NamedRef;
 use dyn_clone::DynClone;
@@ -13,12 +14,14 @@ pub type TestGraph = Graph<Box<dyn TestNode>>;
 dyn_clone::clone_trait_object!(TestNode);
 
 impl TestNode for gantz_core::node::Expr {}
+impl TestNode for gantz_std::Bang {}
 impl TestNode for NamedRef {}
 impl TestNode for Box<dyn TestNode> {}
 
 gantz_format::impl_node_set_serde! {
     dyn TestNode {
         gantz_core::node::Expr,
+        gantz_std::Bang,
         crate::node::NamedRef,
     }
 }
@@ -35,6 +38,7 @@ pub fn codec() -> crate::node::NodeCodec {
     crate::ui_node_codec! {
         Box<dyn TestNode> {
             gantz_core::node::Expr,
+            gantz_std::Bang,
             crate::node::NamedRef,
         }
     }

@@ -38,6 +38,7 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_std::Number,
             gantz_egui::node::FnNamedRef,
             gantz_egui::node::NamedRef,
+            gantz_egui::node::Bind,
             gantz_egui::node::Comment,
             bevy_gantz_egui::node::UpdateBang,
             bevy_gantz_egui::node::TickBang,
@@ -212,6 +213,7 @@ mod tests {
             "apply",
             "await",
             "bang",
+            "bind",
             "branch",
             "comment",
             "delay",
@@ -409,6 +411,8 @@ mod tests {
             node_datum("Identity", vec![]),
             node_datum("Bang", vec![]),
             node_datum("Inspect", vec![]),
+            node_datum("Bind", vec![]),
+            node_datum("Bind", vec![("path", Datum::Seq(vec![Datum::U64(3)]))]),
             node_datum(
                 "Pmini",
                 vec![("src", Datum::Str("bd(3,8) ~ [sn sn]".into()))],
@@ -688,6 +692,10 @@ mod tests {
             (
                 "Bang",
                 "ac2f4e3d47c7b69a188da461568e9c9c013d1458f68a259ad3c64c3e4055c825",
+            ),
+            (
+                "Bind",
+                "0ea35386b3931e735fc8f25d3c50743bf5562218b52d3b23b079152594b36373",
             ),
             (
                 "Branch",

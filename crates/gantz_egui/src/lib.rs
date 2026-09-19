@@ -253,6 +253,10 @@ pub trait NodeUi: gantz_core::Node + Send + Sync {
     /// shown. Adding to the given `body` by providing an implementation of this
     /// method will append extra rows. Mark the returned response
     /// [`changed`](InspectorRowsResponse::mark_changed) on CA-affecting edits.
+    ///
+    /// The inspector pane draws every node's rows inside a child ui with the
+    /// same id. A widget that keeps popup state, such as a `ComboBox`, must
+    /// salt its id with [`NodeCtx::path`] or its state is shared across nodes.
     fn inspector_rows(
         &mut self,
         _ctx: &mut NodeCtx,
@@ -389,6 +393,7 @@ pub(crate) fn default_view_ui(ctx: &NodeCtx, ui: &mut egui::Ui) -> NodeViewRespo
 /// stay local.
 pub struct NodeCtx<'a> {
     env: &'a Env<'a>,
+    graph: &'a gantz_ca::DataGraph,
     path: &'a [node::Id],
     inlets: &'a [node::Id],
     outlets: &'a [node::Id],
@@ -675,6 +680,7 @@ impl_node_ui_for_ptr!(Box);
 impl<'a> NodeCtx<'a> {
     pub fn new(
         env: &'a Env<'a>,
+        graph: &'a gantz_ca::DataGraph,
         path: &'a [node::Id],
         inlets: &'a [node::Id],
         outlets: &'a [node::Id],
@@ -684,6 +690,7 @@ impl<'a> NodeCtx<'a> {
     ) -> Self {
         Self {
             env,
+            graph,
             path,
             inlets,
             outlets,
@@ -696,6 +703,13 @@ impl<'a> NodeCtx<'a> {
     /// Provide access to the node environment.
     pub fn env(&self) -> &'a Env<'a> {
         self.env
+    }
+
+    /// The stored graph this node sits in, that is the level at the parent
+    /// of [`Self::path`]. Lets a node describe its siblings, for example to
+    /// pick one by name.
+    pub fn graph(&self) -> &'a gantz_ca::DataGraph {
+        self.graph
     }
 
     /// The node's full path into the state tree.

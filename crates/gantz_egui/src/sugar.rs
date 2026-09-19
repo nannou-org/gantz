@@ -1,16 +1,17 @@
 //! `.gantz` keyword sugar for this crate's GUI node set.
 //!
 //! [`EguiSugar`] provides the keywords for the egui nodes. They are
-//! `(comment <text> [w h])`, `(gui [<role>] [#:display <d>])` and bare
+//! `(bind <id>...)`, `(comment <text> [w h])`,
+//! `(gui [<role>] [#:display <d>])` and bare `bind`,
 //! `inspect` and `gui`. Compose it with [`gantz_format::CoreSugar`] and the
 //! other crates' sugars via [`gantz_format::Sugars`].
 
-use crate::node::{Comment, Gui, GuiDisplay, GuiRole, Inspect};
+use crate::node::{Bind, Comment, Gui, GuiDisplay, GuiRole, Inspect};
 use gantz_format::sexpr::quote;
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
 use gantz_nodetag::NodeTag;
 
-/// Keyword sugar for [`Comment`], [`Gui`] and [`Inspect`].
+/// Keyword sugar for [`Bind`], [`Comment`], [`Gui`] and [`Inspect`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EguiSugar;
 
@@ -18,6 +19,7 @@ pub struct EguiSugar;
 /// to a default node. Explicit `read_spec` and `write_spec` arms handle
 /// non-default `Comment` and `Gui` forms.
 const KEYWORD_TAG: &[(&str, &str)] = &[
+    ("bind", Bind::TAG),
     ("inspect", Inspect::TAG),
     ("comment", Comment::TAG),
     ("gui", Gui::TAG),
@@ -42,6 +44,7 @@ fn keyword_for_tag(tag: &str) -> Option<&'static str> {
 impl Sugar for EguiSugar {
     fn read_spec(&self, head: &str, args: SugarArgs<'_>) -> Result<Option<Datum>, FormatError> {
         let datum = match head {
+            "bind" => bind_spec(args)?,
             "comment" => comment_spec(args)?,
             "gui" => gui_spec(args)?,
             _ => return Ok(None),
@@ -55,6 +58,7 @@ impl Sugar for EguiSugar {
 
     fn write_spec(&self, tag: &str, node: &Datum) -> Option<String> {
         match tag {
+            "Bind" => Some(write_bind(node)),
             "Comment" => Some(write_comment(node)),
             // Must precede the bare-keyword fallback. A non-default `Gui`
             // written as bare `gui` would silently drop its role and display.
@@ -65,6 +69,41 @@ impl Sugar for EguiSugar {
 
     fn keyword_for_tag(&self, tag: &str) -> Option<&str> {
         keyword_for_tag(tag)
+    }
+}
+
+/// Read a `(bind <id>...)` form. Every positional is a node index. A bare
+/// `(bind)` is the empty path.
+fn bind_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
+    let mut path = Vec::new();
+    while let Some(id) = args.int_at(path.len())? {
+        let id = u64::try_from(id)
+            .map_err(|_| args.malformed_at(path.len(), "bind ids must be non-negative"))?;
+        path.push(Datum::U64(id));
+    }
+    let fields = match path.is_empty() {
+        true => vec![],
+        false => vec![("path", Datum::Seq(path))],
+    };
+    Ok(node_datum("Bind", fields))
+}
+
+/// Write a `Bind` as a bare `bind` when it has no target, else
+/// `(bind <id>...)`.
+fn write_bind(node: &Datum) -> String {
+    let ids: Vec<String> = node
+        .get("path")
+        .and_then(Datum::as_seq)
+        .map(|seq| {
+            seq.iter()
+                .filter_map(Datum::as_i64)
+                .map(|i| i.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    match ids.is_empty() {
+        true => "bind".to_string(),
+        false => format!("(bind {})", ids.join(" ")),
     }
 }
 
@@ -164,6 +203,37 @@ mod tests {
         assert_eq!(
             EguiSugar.write_spec("Inspect", &bare).as_deref(),
             Some("inspect")
+        );
+    }
+
+    #[test]
+    fn bind_round_trips() {
+        let s = EguiSugar;
+
+        // A bind with no target is bare, read as a keyword or as `(bind)`.
+        let bare = s.read_bare("bind").expect("bare bind");
+        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("Bind"));
+        assert!(bare.get("path").is_none());
+        assert_eq!(s.write_spec("Bind", &bare).as_deref(), Some("bind"));
+        let empty = read_spec("(bind)").expect("empty bind");
+        assert_eq!(s.write_spec("Bind", &empty).as_deref(), Some("bind"));
+
+        // A path of one or more ids round-trips.
+        let one = read_spec("(bind 1)").expect("bind 1");
+        assert_eq!(
+            one.get("path").and_then(Datum::as_seq).map(|s| s.len()),
+            Some(1)
+        );
+        assert_eq!(s.write_spec("Bind", &one).as_deref(), Some("(bind 1)"));
+        let two = read_spec("(bind 1 2)").expect("bind 1 2");
+        assert_eq!(s.write_spec("Bind", &two).as_deref(), Some("(bind 1 2)"));
+
+        // A negative id is malformed.
+        let exprs = sexpr::read("(bind -1)").expect("read");
+        let args = sexpr::list_args(&exprs[0]).expect("list");
+        assert!(
+            s.read_spec("bind", SugarArgs::new(&args[1..], "(bind -1)"))
+                .is_err()
         );
     }
 

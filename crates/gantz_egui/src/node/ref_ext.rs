@@ -80,6 +80,7 @@ mod tests {
         );
         let exts: [&dyn RefExtUi; 1] = [&StubExt];
         let mut writes = Vec::new();
+        let graph = gantz_ca::DataGraph::default();
 
         let mut merged = InspectorRowsResponse::default();
         egui::__run_test_ui(|ui| {
@@ -89,6 +90,7 @@ mod tests {
                 .body(|mut body| {
                     let mut ctx = crate::NodeCtx::new(
                         &env,
+                        &graph,
                         &[0][..],
                         &[],
                         &[],

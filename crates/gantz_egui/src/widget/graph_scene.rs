@@ -732,6 +732,7 @@ fn nodes(
                     let node_path = [n_ix];
                     let node_ctx = crate::NodeCtx::new(
                         registry,
+                        graph,
                         &node_path,
                         &inlets,
                         &outlets,
@@ -940,6 +941,7 @@ fn nodes(
                 let node_path = [n_ix];
                 let mut node_ctx = crate::NodeCtx::new(
                     registry,
+                    graph,
                     &node_path,
                     &inlets,
                     &outlets,

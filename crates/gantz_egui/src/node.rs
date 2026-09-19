@@ -2,6 +2,7 @@
 //!
 //! Also re-exports some `gantz_core::node` items for convenience.
 
+pub use bind::Bind;
 pub use comment::Comment;
 pub use dyn_node::{DynNode, NodeCodec, NodeUiInstance, NormalizeNodeError, UiBuiltins};
 pub use fn_named_ref::FnNamedRef;
@@ -14,6 +15,7 @@ pub use named_ref::{NamedRef, missing_color, outdated_color};
 pub use plot::{Plot, PlotMode, PlotStyle};
 pub use ref_ext::RefExtUi;
 
+pub mod bind;
 pub mod comment;
 pub mod dyn_node;
 pub mod fn_named_ref;
@@ -37,6 +39,7 @@ pub fn builtins() -> Vec<gantz_core::Builtin> {
     let name = gantz_core::node::IDENTITY_NAME.parse().expect("infallible");
     let named_ref = NamedRef::new(name, gantz_core::node::Ref::new(identity_ca));
     vec![
+        Builtin::new("bind", &Bind::default()),
         Builtin::new("comment", &Comment::default()),
         Builtin::new("fn", &gantz_core::node::Fn::new(named_ref)),
         Builtin::new("gui", &Gui::default()),

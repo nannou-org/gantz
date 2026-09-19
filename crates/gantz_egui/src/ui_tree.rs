@@ -867,7 +867,9 @@ mod tests {
         let mut f = f;
         egui::__run_test_ui(|ui| {
             let mut writes = Vec::new();
-            let mut ctx = crate::NodeCtx::new(&env, &[][..], &[], &[], &[], &mut vm, &mut writes);
+            let graph = gantz_ca::DataGraph::default();
+            let mut ctx =
+                crate::NodeCtx::new(&env, &graph, &[][..], &[], &[], &[], &mut vm, &mut writes);
             f(&mut ctx, ui);
         });
     }

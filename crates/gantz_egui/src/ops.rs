@@ -465,7 +465,8 @@ impl Reindex {
 }
 
 /// Remove `nodes` from `graph`, migrating the per-node state, layout,
-/// selection and cached instances that are keyed by node index.
+/// selection, cached instances and `bind` node targets that are keyed by
+/// node index.
 ///
 /// `petgraph::Graph::remove_node` swap-removes. The former-last node adopts
 /// the removed index, so exactly one surviving node changes index per
@@ -525,7 +526,43 @@ pub fn remove_nodes(
     }
     let reindex = Reindex(ops);
     instances.apply_reindex(&reindex);
+    retarget_binds(graph, &reindex);
     reindex
+}
+
+/// Replay `reindex` onto the target of every `bind` node in `graph`. Only
+/// the first path segment lives at this level. A bind whose target was
+/// removed is emptied, which its expr reports as a compile diagnostic.
+fn retarget_binds(graph: &mut DataGraph, reindex: &Reindex) {
+    use gantz_nodetag::NodeTag;
+    if reindex.is_empty() {
+        return;
+    }
+    for ix in graph.node_indices() {
+        let nd = &graph[ix];
+        if nd.tag != crate::node::Bind::TAG {
+            continue;
+        }
+        let Ok(mut bind) = gantz_core::data::reify_node_concrete::<crate::node::Bind>(nd) else {
+            continue;
+        };
+        let Some(&first) = bind.path().first() else {
+            continue;
+        };
+        let path = match reindex.apply_to_index(first) {
+            Some(new) if new == first => continue,
+            Some(new) => {
+                let mut path = bind.path().to_vec();
+                path[0] = new;
+                path
+            }
+            None => vec![],
+        };
+        bind.set_path(path);
+        if let Ok(nd) = gantz_core::data::erase_node_typed(&bind) {
+            graph[ix] = nd;
+        }
+    }
 }
 
 /// Cut. Serialize `nodes` to a `.gantz` clipboard payload, then remove them.
@@ -965,6 +1002,43 @@ mod tests {
         assert!(instances.peek(1, &datas[4]).is_some());
         assert!(instances.peek(1, &datas[1]).is_none());
         assert!(instances.peek(4, &datas[4]).is_none());
+    }
+
+    // A removal re-targets every `bind` node: a target that swapped down
+    // follows, a target that was removed leaves the path empty.
+    #[test]
+    fn remove_nodes_retargets_binds() {
+        let bind = |ix: usize| {
+            gantz_core::data::erase_node_typed(&crate::node::Bind::new(vec![ix, 7])).unwrap()
+        };
+        let mut graph = DataGraph::default();
+        graph.add_node(nd(10)); // 0
+        graph.add_node(nd(11)); // 1, removed
+        graph.add_node(bind(4)); // 2, targets the node that swaps into 1
+        graph.add_node(bind(1)); // 3, targets the removed node
+        graph.add_node(nd(14)); // 4, swaps into 1
+        let mut layout = egui_graph::Layout::default();
+        let mut selection = Selection::default();
+        let mut vm = Engine::new_base();
+        let mut instances = crate::node::NodeInstances::default();
+
+        remove_nodes(
+            &mut graph,
+            &mut vm,
+            &mut layout,
+            &mut selection,
+            &mut instances,
+            [NodeIx::new(1)],
+        );
+
+        let path_of = |ix: usize| {
+            gantz_core::data::reify_node_concrete::<crate::node::Bind>(&graph[NodeIx::new(ix)])
+                .unwrap()
+                .path()
+                .to_vec()
+        };
+        assert_eq!(path_of(2), vec![1, 7]);
+        assert_eq!(path_of(3), Vec::<usize>::new());
     }
 
     // carry_layout maps live positions through the navigation matching, keeps
