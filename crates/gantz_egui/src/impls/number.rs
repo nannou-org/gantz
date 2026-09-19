@@ -155,8 +155,9 @@ impl NodeUi for Number {
 
     fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         Some(match kind {
-            SocketKind::Input => SocketDoc::ty("number")
-                .with_description("new value to store; if unconnected the stored value is reused"),
+            SocketKind::Input => SocketDoc::ty("number").with_description(
+                "new value to store. When unconnected the stored value is reused",
+            ),
             SocketKind::Output => {
                 SocketDoc::ty("number").with_description("the current stored value")
             }

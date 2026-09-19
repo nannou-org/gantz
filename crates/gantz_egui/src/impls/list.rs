@@ -46,7 +46,7 @@ impl NodeUi for List {
         match kind {
             SocketKind::Input => Some(
                 SocketDoc::ty("any")
-                    .with_description(format!("item {ix}; skipped when unconnected")),
+                    .with_description(format!("item {ix}. Skipped when unconnected")),
             ),
             SocketKind::Output => Some(
                 SocketDoc::ty("list")

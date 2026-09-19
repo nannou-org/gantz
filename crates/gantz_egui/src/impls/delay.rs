@@ -21,7 +21,7 @@ impl NodeUi for gantz_core::node::Delay {
                 SocketDoc::ty("any").with_description("value stored for the next evaluation")
             }
             SocketKind::Output => SocketDoc::ty("any").with_description(
-                "value from the previous evaluation (initially '()); enables feedback cycles",
+                "value from the previous evaluation, initially '(). Enables feedback cycles",
             ),
         })
     }

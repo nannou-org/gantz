@@ -301,7 +301,7 @@ pub static UNITS: &[UnitDesc] = &[
     u(
         "~saw",
         "Saw",
-        &[freq(220.0, "frequency; a wire drives it directly")],
+        &[freq(220.0, "frequency. A wire drives it directly")],
         &["sawtooth signal"],
         "Band-limited sawtooth oscillator",
     ),
@@ -309,7 +309,7 @@ pub static UNITS: &[UnitDesc] = &[
         "~pulse",
         "Pulse",
         &[
-            freq(220.0, "frequency; a wire drives it directly"),
+            freq(220.0, "frequency. A wire drives it directly"),
             par("width", 0.5, 0.0, 1.0, "", "pulse width duty cycle"),
         ],
         &["pulse signal"],
@@ -384,7 +384,10 @@ pub static UNITS: &[UnitDesc] = &[
     u(
         "~sinosc",
         "SinOsc",
-        &[freq(220.0, "frequency; a wire drives it (FM)"), baked(0.0)],
+        &[
+            freq(220.0, "frequency. A wire drives it for FM"),
+            baked(0.0),
+        ],
         &["sine signal"],
         "Sine oscillator (audio or control rate)",
     ),
@@ -855,7 +858,7 @@ pub static UNITS: &[UnitDesc] = &[
             init(
                 "maxdelay",
                 0.2,
-                "max delay time (sizes the delay line; re-derives)",
+                "max delay time. Sizes the delay line and re-derives",
             ),
             par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
         ],
@@ -870,7 +873,7 @@ pub static UNITS: &[UnitDesc] = &[
             init(
                 "maxdelay",
                 0.2,
-                "max delay time (sizes the delay line; re-derives)",
+                "max delay time. Sizes the delay line and re-derives",
             ),
             par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
         ],
@@ -885,7 +888,7 @@ pub static UNITS: &[UnitDesc] = &[
             init(
                 "maxdelay",
                 0.2,
-                "max delay time (sizes the delay line; re-derives)",
+                "max delay time. Sizes the delay line and re-derives",
             ),
             par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
         ],
@@ -900,7 +903,7 @@ pub static UNITS: &[UnitDesc] = &[
             init(
                 "maxdelay",
                 0.2,
-                "max delay time (sizes the delay line; re-derives)",
+                "max delay time. Sizes the delay line and re-derives",
             ),
             par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
             par(
@@ -923,7 +926,7 @@ pub static UNITS: &[UnitDesc] = &[
             init(
                 "maxdelay",
                 0.2,
-                "max delay time (sizes the delay line; re-derives)",
+                "max delay time. Sizes the delay line and re-derives",
             ),
             par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
             par(
@@ -946,7 +949,7 @@ pub static UNITS: &[UnitDesc] = &[
             init(
                 "maxdelay",
                 0.2,
-                "max delay time (sizes the delay line; re-derives)",
+                "max delay time. Sizes the delay line and re-derives",
             ),
             par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
             par(
@@ -969,7 +972,7 @@ pub static UNITS: &[UnitDesc] = &[
             init(
                 "maxdelay",
                 0.2,
-                "max delay time (sizes the delay line; re-derives)",
+                "max delay time. Sizes the delay line and re-derives",
             ),
             par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
             par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
@@ -985,7 +988,7 @@ pub static UNITS: &[UnitDesc] = &[
             init(
                 "maxdelay",
                 0.2,
-                "max delay time (sizes the delay line; re-derives)",
+                "max delay time. Sizes the delay line and re-derives",
             ),
             par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
             par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
@@ -1001,7 +1004,7 @@ pub static UNITS: &[UnitDesc] = &[
             init(
                 "maxdelay",
                 0.2,
-                "max delay time (sizes the delay line; re-derives)",
+                "max delay time. Sizes the delay line and re-derives",
             ),
             par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
             par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
@@ -1014,12 +1017,12 @@ pub static UNITS: &[UnitDesc] = &[
         "~line",
         "Line",
         &[
-            init("start", 0.0, "start value (latched at spawn; re-derives)"),
-            init("end", 1.0, "end value (latched at spawn; re-derives)"),
+            init("start", 0.0, "start value. Latched at spawn and re-derives"),
+            init("end", 1.0, "end value. Latched at spawn and re-derives"),
             init(
                 "dur",
                 1.0,
-                "ramp duration in seconds (latched at spawn; re-derives)",
+                "ramp duration in seconds. Latched at spawn and re-derives",
             ),
             baked(0.0),
         ],
@@ -1033,17 +1036,17 @@ pub static UNITS: &[UnitDesc] = &[
             init(
                 "start",
                 1.0,
-                "start value, nonzero (latched at spawn; re-derives)",
+                "start value, nonzero. Latched at spawn and re-derives",
             ),
             init(
                 "end",
                 2.0,
-                "end value, same sign (latched at spawn; re-derives)",
+                "end value, same sign. Latched at spawn and re-derives",
             ),
             init(
                 "dur",
                 1.0,
-                "ramp duration in seconds (latched at spawn; re-derives)",
+                "ramp duration in seconds. Latched at spawn and re-derives",
             ),
             baked(0.0),
         ],
@@ -1060,7 +1063,7 @@ pub static UNITS: &[UnitDesc] = &[
             init(
                 "dur",
                 0.01,
-                "look-ahead time (sizes the buffer; re-derives)",
+                "look-ahead time. Sizes the buffer and re-derives",
             ),
         ],
         &["limited signal"],
@@ -1075,7 +1078,7 @@ pub static UNITS: &[UnitDesc] = &[
             init(
                 "dur",
                 0.01,
-                "look-ahead time (sizes the buffer; re-derives)",
+                "look-ahead time. Sizes the buffer and re-derives",
             ),
         ],
         &["normalized signal"],

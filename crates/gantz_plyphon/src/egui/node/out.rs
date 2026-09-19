@@ -65,7 +65,7 @@ impl NodeUi for Out {
                 device channel, wider signals write channel i to bus i",
             )),
             (SocketKind::Input, 1) => Some(SocketDoc::ty("number").with_description(
-                "master gain control; overrides the inspector value while connected",
+                "master gain control. Overrides the inspector value while connected",
             )),
             _ => None,
         }

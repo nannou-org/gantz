@@ -40,7 +40,7 @@ impl NodeUi for Pack {
     fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
         match kind {
             SocketKind::Input => Some(SocketDoc::ty("signal").with_description(format!(
-                "signal {ix} to pack (any channel width; silence when unconnected)"
+                "signal {ix} to pack, of any channel width. Silence when unconnected"
             ))),
             SocketKind::Output => Some(SocketDoc::ty("signal").with_description(
                 "every input's channels concatenated (width = the sum of input widths)",
