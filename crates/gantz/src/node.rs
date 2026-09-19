@@ -33,6 +33,7 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_core::node::graph::Inlet,
             gantz_core::node::graph::Outlet,
             gantz_std::Bang,
+            gantz_std::List,
             gantz_std::Log,
             gantz_std::Number,
             gantz_egui::node::FnNamedRef,
@@ -220,6 +221,7 @@ mod tests {
             "id",
             "inlet",
             "inspect",
+            "list",
             "log",
             "number",
             "outlet",
@@ -438,6 +440,8 @@ mod tests {
                 )],
             ),
             node_datum("Number", vec![]),
+            node_datum("List", vec![]),
+            node_datum("List", vec![("count", Datum::U64(3))]),
             node_datum("Expr", vec![("src", Datum::Str("(* $l $r)".into()))]),
             node_datum(
                 "Comment",
@@ -724,6 +728,10 @@ mod tests {
             (
                 "Inspect",
                 "f33771875aa2d1e58ba6d0b78508d3fbefb67bb9cea450a58c661f0c1f8c94ad",
+            ),
+            (
+                "List",
+                "f20aafcedb7d1c3ceb69ac6a7cb65e614c440aa448390fd5cd64f07ca2ca17b4",
             ),
             (
                 "Log",

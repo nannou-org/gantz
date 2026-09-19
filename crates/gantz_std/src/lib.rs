@@ -1,11 +1,13 @@
 //! A library of standard plugins for gantz.
 
 pub use bang::Bang;
+pub use list::List;
 pub use log::Log;
 pub use number::Number;
 pub use sugar::StdSugar;
 
 pub mod bang;
+pub mod list;
 pub mod log;
 pub mod number;
 pub mod sugar;
@@ -15,6 +17,7 @@ pub fn builtins() -> Vec<gantz_core::Builtin> {
     use gantz_core::Builtin;
     vec![
         Builtin::new("bang", &Bang::default()),
+        Builtin::new("list", &List::default()),
         Builtin::new("log", &Log::default()),
         Builtin::new("number", &Number::default()),
     ]
