@@ -2432,6 +2432,18 @@ mod tests {
                     "{name} marker {path:?} decoded with an error element: {:?}",
                     decoded.root,
                 );
+                // The node-built demo tree pins the element base nodes'
+                // output. Both markers of `demo-gui` receive the same tree.
+                if name.to_string() == "demo-gui" {
+                    let flat = gantz_ui::sexpr::flat(&gantz_ui::encode(&decoded.root));
+                    assert_eq!(
+                        flat,
+                        "(col (row (dialer (@ (bind (1)) (label \"a\"))) \
+                         (dialer (@ (bind (2)) (label \"b\")))) \
+                         (button (@ (bind (0)) (label \"add\"))) \
+                         (row (label \"a + b =\") (value (@ (bind (4))))))",
+                    );
+                }
                 checked += 1;
             }
         }
