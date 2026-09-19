@@ -32,6 +32,26 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph button
+  (expr0 (expr (ui-elem 'button '() (list (list 'bind $?bind) (list 'label $?label)) (None)) #:require "gantz/ui"))
+  (inlet1 (inlet "path" "path of the node to push-eval on press"))
+  (inlet2 (inlet "string" "button text"))
+  (outlet3 (outlet "element" "button element"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph col
+  (expr0 (expr (ui-elem 'col '() (list (list 'gap $?gap) (list 'align $?align)) $?children) #:require "gantz/ui"))
+  (inlet1 (inlet "list" "child elements, or one element"))
+  (inlet2 (inlet "number" "space between children"))
+  (inlet3 (inlet "symbol" "cross-axis alignment: start, center or end"))
+  (outlet4 (outlet "element" "col element"))
+  (-> inlet1 (expr0 2))
+  (-> inlet2 expr0)
+  (-> inlet3 (expr0 1))
+  (-> expr0 outlet4))
+
 (graph cons
   (expr0 (expr (cons $head $tail)))
   (inlet1 (inlet "value" "new first element"))
@@ -75,7 +95,22 @@
   (comment30 (comment "Predicates" 110 15))
   (ref31 (ref number? #:sync))
   (ref32 (ref string? #:sync))
-  (ref33 (ref list? #:sync)))
+  (ref33 (ref list? #:sync))
+  (comment34 (comment "GUI" 110 15))
+  (ref35 (ref button #:sync))
+  (ref36 (ref col #:sync))
+  (ref37 (ref dialer #:sync))
+  (ref38 (ref frame #:sync))
+  (ref39 (ref grid #:sync))
+  (ref40 (ref label #:sync))
+  (ref41 (ref matrix #:sync))
+  (ref42 (ref plot #:sync))
+  (ref43 (ref ref-gui #:sync))
+  (ref44 (ref row #:sync))
+  (ref45 (ref sep #:sync))
+  (ref46 (ref space #:sync))
+  (ref47 (ref toggle #:sync))
+  (ref48 (ref value #:sync)))
 
 (graph demo-arithmetic
   (comment0 (comment "Arithmetic operations.\nChange `a` and `b` below.\nPress `!` to evaluate." 150 45))
@@ -424,6 +459,25 @@
   (-> expr4 ref13)
   (-> ref13 inspect14))
 
+(graph dialer
+  (expr0 (expr (ui-elem 'dialer '() (list (list 'bind $?bind) (list 'min $?min) (list 'max $?max) (list 'step $?step) (list 'precision (ui-int $?precision)) (list 'label $?label) (list 'push $?push)) (None)) #:require "gantz/ui"))
+  (inlet1 (inlet "path" "path of the number node to edit"))
+  (inlet2 (inlet "number" "lower bound"))
+  (inlet3 (inlet "number" "upper bound"))
+  (inlet4 (inlet "number" "drag step"))
+  (inlet5 (inlet "number" "decimal places shown"))
+  (inlet6 (inlet "string" "inline label"))
+  (inlet7 (inlet "boolean" "push-eval on edit, default #t"))
+  (outlet8 (outlet "element" "dialer element"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> inlet4 (expr0 3))
+  (-> inlet5 (expr0 4))
+  (-> inlet6 (expr0 5))
+  (-> inlet7 (expr0 6))
+  (-> expr0 outlet8))
+
 (graph div
   (expr0 (expr (/ $l $r)))
   (inlet1 (inlet "number" "left operand"))
@@ -456,6 +510,26 @@
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
+(graph frame
+  (expr0 (expr (ui-elem 'frame '() (list (list 'title $?title)) $?children) #:require "gantz/ui"))
+  (inlet1 (inlet "list" "child elements, or one element"))
+  (inlet2 (inlet "string" "group box title"))
+  (outlet3 (outlet "element" "frame element"))
+  (-> inlet1 (expr0 1))
+  (-> inlet2 expr0)
+  (-> expr0 outlet3))
+
+(graph grid
+  (expr0 (expr (ui-elem 'grid '() (list (list 'cols (ui-int $?cols)) (list 'gap $?gap)) $?children) #:require "gantz/ui"))
+  (inlet1 (inlet "list" "child elements, filled row-major"))
+  (inlet2 (inlet "number" "number of columns"))
+  (inlet3 (inlet "number" "space between cells"))
+  (outlet4 (outlet "element" "grid element"))
+  (-> inlet1 (expr0 2))
+  (-> inlet2 expr0)
+  (-> inlet3 (expr0 1))
+  (-> expr0 outlet4))
+
 (graph gt
   (expr0 (expr (> $l $r)))
   (inlet1 (inlet "number" "left operand"))
@@ -473,6 +547,17 @@
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
+
+(graph label
+  (expr0 (expr (ui-elem 'label (list $?text) (list (list 'size $?size) (list 'color $?color)) (None)) #:require "gantz/ui"))
+  (inlet1 (inlet "string" "text to display"))
+  (inlet2 (inlet "number" "font size"))
+  (inlet3 (inlet "string" "text colour as #rrggbb or #rrggbbaa"))
+  (outlet4 (outlet "element" "label element"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
 
 (graph length
   (expr0 (expr (length $list)))
@@ -514,6 +599,17 @@
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
+
+(graph matrix
+  (expr0 (expr (ui-elem 'matrix '() (list (list 'bind $?bind) (list 'cell-size $?cell-size) (list 'push $?push)) (None)) #:require "gantz/ui"))
+  (inlet1 (inlet "path" "path of the node whose rows of cells to edit"))
+  (inlet2 (inlet "number" "cell size in points"))
+  (inlet3 (inlet "boolean" "push-eval on edit, default #t"))
+  (outlet4 (outlet "element" "matrix element"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
 
 (graph mod
   (expr0 (expr (let
@@ -575,6 +671,40 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph plot
+  (expr0 (expr (ui-elem 'plot '() (list (list 'bind $?bind) (list 'mode $?mode) (list 'style $?style) (list 'color $?color) (list 'grid $?grid) (list 'axes $?axes) (list 'interactive $?interactive) (list 'y-min $?y-min) (list 'y-max $?y-max) (list 'w $?w) (list 'h $?h)) (None)) #:require "gantz/ui"))
+  (inlet1 (inlet "path" "path of the node whose state to plot"))
+  (inlet2 (inlet "symbol" "scope or signal"))
+  (inlet3 (inlet "symbol" "bars or line"))
+  (inlet4 (inlet "string" "plot colour as #rrggbb"))
+  (inlet5 (inlet "boolean" "show the grid"))
+  (inlet6 (inlet "boolean" "show the axes"))
+  (inlet7 (inlet "boolean" "allow zoom and pan"))
+  (inlet8 (inlet "number" "lower y bound"))
+  (inlet9 (inlet "number" "upper y bound"))
+  (inlet10 (inlet "number" "width"))
+  (inlet11 (inlet "number" "height"))
+  (outlet12 (outlet "element" "plot element"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> inlet4 (expr0 3))
+  (-> inlet5 (expr0 4))
+  (-> inlet6 (expr0 5))
+  (-> inlet7 (expr0 6))
+  (-> inlet8 (expr0 7))
+  (-> inlet9 (expr0 8))
+  (-> inlet10 (expr0 9))
+  (-> inlet11 (expr0 10))
+  (-> expr0 outlet12))
+
+(graph ref-gui
+  (expr0 (expr (ui-elem 'ref-gui (list (ui-id $?node)) '() (None)) #:require "gantz/ui"))
+  (inlet1 (inlet "path" "path of the instance whose GUI to embed"))
+  (outlet2 (outlet "element" "ref-gui element"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
 (graph rest
   (expr0 (expr (cdr $list)))
   (inlet1 (inlet "list" "input list"))
@@ -589,6 +719,17 @@
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
+(graph row
+  (expr0 (expr (ui-elem 'row '() (list (list 'gap $?gap) (list 'align $?align)) $?children) #:require "gantz/ui"))
+  (inlet1 (inlet "list" "child elements, or one element"))
+  (inlet2 (inlet "number" "space between children"))
+  (inlet3 (inlet "symbol" "cross-axis alignment: start, center or end"))
+  (outlet4 (outlet "element" "row element"))
+  (-> inlet1 (expr0 2))
+  (-> inlet2 expr0)
+  (-> inlet3 (expr0 1))
+  (-> expr0 outlet4))
+
 (graph select
   (expr0 (expr (if $cond $then $else)))
   (inlet1 (inlet "boolean" "condition"))
@@ -599,6 +740,18 @@
   (-> inlet2 (expr0 1))
   (-> inlet3 (expr0 2))
   (-> expr0 outlet4))
+
+(graph sep
+  (expr0 (expr (quote (sep))))
+  (outlet1 (outlet "element" "sep element"))
+  (-> expr0 outlet1))
+
+(graph space
+  (expr0 (expr (ui-elem 'space (list $?amount) '() (None)) #:require "gantz/ui"))
+  (inlet1 (inlet "number" "amount of space"))
+  (outlet2 (outlet "element" "space element"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
 
 (graph string?
   (expr0 (expr (string? $x)))
@@ -616,11 +769,33 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph toggle
+  (expr0 (expr (ui-elem 'toggle '() (list (list 'bind $?bind) (list 'label $?label) (list 'push $?push)) (None)) #:require "gantz/ui"))
+  (inlet1 (inlet "path" "path of the node whose boolean state to edit"))
+  (inlet2 (inlet "string" "inline label"))
+  (inlet3 (inlet "boolean" "push-eval on edit, default #t"))
+  (outlet4 (outlet "element" "toggle element"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
+
+(graph value
+  (expr0 (expr (ui-elem 'value '() (list (list 'bind $?bind) (list 'wrap $?wrap)) (None)) #:require "gantz/ui"))
+  (inlet1 (inlet "path" "path of the node whose state to show"))
+  (inlet2 (inlet "boolean" "wrap long output"))
+  (outlet3 (outlet "element" "value element"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (descriptions
   (abs "Absolute value of a number")
   (add "Add two numbers")
   (and "Logical AND of two booleans")
   (append "Concatenate two lists")
+  (button "GUI: a button that push-evals a node")
+  (col "GUI: stack children vertically")
   (cons "Prepend an item to a list")
   (demo-all "Demo: a tour of the base nodes")
   (demo-arithmetic "Demo: arithmetic operations")
@@ -630,17 +805,22 @@
   (demo-list "Demo: list operations")
   (demo-logic "Demo: boolean logic")
   (demo-predicate "Demo: type predicates")
+  (dialer "GUI: a dialer editing a number node")
   (div "Divide one number by another")
   (empty? "Whether a list is empty")
   (eq "Whether two values are equal")
   (first "The first item of a list")
+  (frame "GUI: a titled group box around children")
+  (grid "GUI: lay children out in columns")
   (gt "Whether the left is greater than the right")
   (gte "Whether the left is greater than or equal to the right")
+  (label "GUI: a text label")
   (length "The number of items in a list")
   (list-ref "The list item at an index")
   (list? "Whether a value is a list")
   (lt "Whether the left is less than the right")
   (lte "Whether the left is less than or equal to the right")
+  (matrix "GUI: a grid of cells editing a node's rows")
   (mod "Remainder after division")
   (mul "Multiply two numbers")
   (neg "Negate a number")
@@ -648,11 +828,18 @@
   (not "Logical NOT of a boolean")
   (number? "Whether a value is a number")
   (or "Logical OR of two booleans")
+  (plot "GUI: plot a node's state")
+  (ref-gui "GUI: embed an instance's GUI")
   (rest "A list without its first item")
   (reverse "Reverse a list")
+  (row "GUI: lay children out horizontally")
   (select "Choose between two values by a condition")
+  (sep "GUI: a separator line")
+  (space "GUI: empty space")
   (string? "Whether a value is a string")
-  (sub "Subtract one number from another"))
+  (sub "Subtract one number from another")
+  (toggle "GUI: a checkbox editing a boolean node")
+  (value "GUI: show a node's state"))
 
 (layout abs
   (expr0 -15.608376 13.40625)
@@ -681,6 +868,21 @@
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
 
+(layout button
+  (expr0 -39.625 13.40625)
+  (inlet1 -39.625 -75.78125)
+  (inlet2 60.002 -75.78125)
+  (outlet3 -39.625 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout col
+  (expr0 -89.4385 13.40625)
+  (inlet1 -89.4385 -75.78125)
+  (inlet2 10.1885 -75.78125)
+  (inlet3 109.815 -75.78125)
+  (outlet4 -89.4385 106.59375)
+  (camera 26.5 26.5 1))
+
 (layout cons
   (expr0 -54.8115 13.40625)
   (inlet1 -54.8115 -75.78125)
@@ -694,6 +896,7 @@
   (comment16 354 -32)
   (comment21 534 -32)
   (comment30 714 -32)
+  (comment34 894 -32)
   (comment9 174 -32)
   (ref10 180 30)
   (ref11 180 90)
@@ -718,7 +921,21 @@
   (ref31 720 30)
   (ref32 720 90)
   (ref33 720 150)
+  (ref35 900 30)
+  (ref36 900 90)
+  (ref37 900 150)
+  (ref38 900 210)
+  (ref39 900 270)
   (ref4 0 150)
+  (ref40 900 330)
+  (ref41 900 390)
+  (ref42 900 450)
+  (ref43 900 510)
+  (ref44 900 570)
+  (ref45 900 630)
+  (ref46 900 690)
+  (ref47 900 750)
+  (ref48 900 810)
   (ref5 0 210)
   (ref6 0 270)
   (ref7 0 330)
@@ -933,6 +1150,18 @@
   (ref8 203 50)
   (camera 324.4428 -13.956268 1))
 
+(layout dialer
+  (expr0 -288.692 13.40625)
+  (inlet1 -288.692 -75.78125)
+  (inlet2 -189.065 -75.78125)
+  (inlet3 -89.438 -75.78125)
+  (inlet4 10.189 -75.78125)
+  (inlet5 109.816 -75.78125)
+  (inlet6 209.443 -75.78125)
+  (inlet7 309.07 -75.78125)
+  (outlet8 -288.692 106.59375)
+  (camera 26.5 26.5 1))
+
 (layout div
   (expr0 -39.625 13.40625)
   (inlet1 -39.625 -75.78125)
@@ -959,6 +1188,21 @@
   (outlet2 -27.21775 106.59375)
   (camera 26.500002 26.5 1))
 
+(layout frame
+  (expr0 -39.625 13.40625)
+  (inlet1 -39.625 -75.78125)
+  (inlet2 60.002 -75.78125)
+  (outlet3 -39.625 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout grid
+  (expr0 -89.4385 13.40625)
+  (inlet1 -89.4385 -75.78125)
+  (inlet2 10.1885 -75.78125)
+  (inlet3 109.815 -75.78125)
+  (outlet4 -89.4385 106.59375)
+  (camera 26.5 26.5 1))
+
 (layout gt
   (expr0 -39.625 13.40625)
   (inlet1 -39.625 -75.78125)
@@ -971,6 +1215,14 @@
   (inlet1 -39.625 -75.78125)
   (inlet2 60.002007 -75.78125)
   (outlet3 -39.625 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout label
+  (expr0 -89.4385 13.40625)
+  (inlet1 -89.4385 -75.78125)
+  (inlet2 10.1885 -75.78125)
+  (inlet3 109.815 -75.78125)
+  (outlet4 -89.4385 106.59375)
   (camera 26.5 26.5 1))
 
 (layout length
@@ -1004,6 +1256,14 @@
   (inlet1 -39.625 -75.78125)
   (inlet2 60.002007 -75.78125)
   (outlet3 -39.625 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout matrix
+  (expr0 -89.4385 13.40625)
+  (inlet1 -89.4385 -75.78125)
+  (inlet2 10.1885 -75.78125)
+  (inlet3 109.815 -75.78125)
+  (outlet4 -89.4385 106.59375)
   (camera 26.5 26.5 1))
 
 (layout mod
@@ -1052,6 +1312,28 @@
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
 
+(layout plot
+  (expr0 -487.947 13.40625)
+  (inlet1 -487.947 -75.78125)
+  (inlet10 408.696 -75.78125)
+  (inlet11 508.323 -75.78125)
+  (inlet2 -388.32 -75.78125)
+  (inlet3 -288.693 -75.78125)
+  (inlet4 -189.066 -75.78125)
+  (inlet5 -89.439 -75.78125)
+  (inlet6 10.188 -75.78125)
+  (inlet7 109.815 -75.78125)
+  (inlet8 209.442 -75.78125)
+  (inlet9 309.069 -75.78125)
+  (outlet12 -487.947 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout ref-gui
+  (expr0 10.1885 13.40625)
+  (inlet1 10.1885 -75.78125)
+  (outlet2 10.1885 106.59375)
+  (camera 26.5 26.5 1))
+
 (layout rest
   (expr0 -27.21775 13.40625)
   (inlet1 -27.21775 -75.78125)
@@ -1064,6 +1346,14 @@
   (outlet2 -43.21775 106.59375)
   (camera 26.5 26.5 1))
 
+(layout row
+  (expr0 -89.4385 13.40625)
+  (inlet1 -89.4385 -75.78125)
+  (inlet2 10.1885 -75.78125)
+  (inlet3 109.815 -75.78125)
+  (outlet4 -89.4385 106.59375)
+  (camera 26.5 26.5 1))
+
 (layout select
   (expr0 -89.4385 13.40625)
   (inlet1 -89.4385 -75.78125)
@@ -1071,6 +1361,17 @@
   (inlet3 109.815506 -75.78125)
   (outlet4 -89.4385 106.59375)
   (camera 26.499996 26.499996 1))
+
+(layout sep
+  (expr0 10.1885 13.40625)
+  (outlet1 10.1885 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout space
+  (expr0 10.1885 13.40625)
+  (inlet1 10.1885 -75.78125)
+  (outlet2 10.1885 106.59375)
+  (camera 26.5 26.5 1))
 
 (layout string?
   (expr0 -31.21775 13.40625)
@@ -1085,6 +1386,21 @@
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
 
+(layout toggle
+  (expr0 -89.4385 13.40625)
+  (inlet1 -89.4385 -75.78125)
+  (inlet2 10.1885 -75.78125)
+  (inlet3 109.815 -75.78125)
+  (outlet4 -89.4385 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout value
+  (expr0 -39.625 13.40625)
+  (inlet1 -39.625 -75.78125)
+  (inlet2 60.002 -75.78125)
+  (outlet3 -39.625 106.59375)
+  (camera 26.5 26.5 1))
+
 (demo abs "demo-arithmetic")
 
 (demo add "demo-arithmetic")
@@ -1093,7 +1409,13 @@
 
 (demo append "demo-list")
 
+(demo button "demo-gui")
+
+(demo col "demo-gui")
+
 (demo cons "demo-list")
+
+(demo dialer "demo-gui")
 
 (demo div "demo-arithmetic")
 
@@ -1103,9 +1425,15 @@
 
 (demo first "demo-list")
 
+(demo frame "demo-gui")
+
+(demo grid "demo-gui")
+
 (demo gt "demo-comparison")
 
 (demo gte "demo-comparison")
+
+(demo label "demo-gui")
 
 (demo length "demo-list")
 
@@ -1116,6 +1444,8 @@
 (demo lt "demo-comparison")
 
 (demo lte "demo-comparison")
+
+(demo matrix "demo-gui")
 
 (demo mul "demo-arithmetic")
 
@@ -1129,12 +1459,26 @@
 
 (demo or "demo-logic")
 
+(demo plot "demo-gui")
+
+(demo ref-gui "demo-gui")
+
 (demo rest "demo-list")
 
 (demo reverse "demo-list")
 
+(demo row "demo-gui")
+
 (demo select "demo-logic")
+
+(demo sep "demo-gui")
+
+(demo space "demo-gui")
 
 (demo string? "demo-predicate")
 
 (demo sub "demo-arithmetic")
+
+(demo toggle "demo-gui")
+
+(demo value "demo-gui")

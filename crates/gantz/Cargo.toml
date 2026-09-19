@@ -29,12 +29,10 @@ gantz_nodetag.workspace = true
 gantz_pattern = { workspace = true, features = ["egui"] }
 gantz_plyphon = { workspace = true, features = ["egui"] }
 gantz_std.workspace = true
+gantz_ui.workspace = true
 serde.workspace = true
 steel-core.workspace = true
 web-time.workspace = true
-
-[dev-dependencies]
-gantz_ui.workspace = true
 
 [features]
 # cpal's AudioWorklet backend on the web - audio on a dedicated Web Audio thread, off the

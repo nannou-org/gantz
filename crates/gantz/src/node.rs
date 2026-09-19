@@ -74,15 +74,27 @@ pub fn builtins() -> gantz_core::Builtins {
     )
 }
 
+/// The Steel modules every head's engine registers, beyond the core set.
+/// Base graphs `(require ...)` these, so any VM that compiles them, in the
+/// app or in tests, registers the same list.
+pub fn steel_modules() -> Vec<gantz_core::vm::SteelModule> {
+    gantz_ui::modules()
+        .iter()
+        .chain(gantz_pattern::modules())
+        .copied()
+        .collect()
+}
+
 /// Contribute the domains that have no bevy plugin of their own.
 ///
-/// The pattern domain is a steel module and a base source with no
-/// systems, so the app pushes its contributions directly.
+/// The ui and pattern domains are steel modules, and the pattern domain a
+/// base source, with no systems, so the app pushes its contributions
+/// directly.
 pub fn push_plain_domains(app: &mut bevy::app::App) {
     app.world_mut()
         .get_resource_or_init::<bevy_gantz::vm::SteelModules>()
         .0
-        .extend(gantz_pattern::modules().iter().copied());
+        .extend(steel_modules());
     app.world_mut()
         .get_resource_or_init::<bevy_gantz_egui::base::BaseSources>()
         .0
@@ -1951,7 +1963,14 @@ mod tests {
                 .unwrap_or_else(|| panic!("`{name}` has no head graph"));
             let entrypoints = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
             for config in &configs {
-                gantz_core::vm::init(&get_node, graph, &entrypoints, config).unwrap_or_else(|e| {
+                gantz_core::vm::init_with_modules(
+                    &get_node,
+                    graph,
+                    &entrypoints,
+                    config,
+                    &super::steel_modules(),
+                )
+                .unwrap_or_else(|e| {
                     panic!(
                         "base graph `{name}` failed to compile (emit_all_node_fns={}):\n{}",
                         config.emit_all_node_fns,
@@ -2311,8 +2330,14 @@ mod tests {
                 .unwrap_or_else(|| panic!("{demo} has a bang"));
 
             let eps = push_pull_entrypoints(&get_node, graph);
-            let (mut vm, _compiled) = gantz_core::vm::init(&get_node, graph, &eps, &config)
-                .unwrap_or_else(|e| panic!("init {demo}: {}", gantz_core::vm::error_chain(&e)));
+            let (mut vm, _compiled) = gantz_core::vm::init_with_modules(
+                &get_node,
+                graph,
+                &eps,
+                &config,
+                &super::steel_modules(),
+            )
+            .unwrap_or_else(|e| panic!("init {demo}: {}", gantz_core::vm::error_chain(&e)));
 
             let go_ep = eps
                 .iter()
@@ -2362,8 +2387,14 @@ mod tests {
             let graph =
                 head_graph(&reified, &base, &head).unwrap_or_else(|| panic!("{name} graph"));
             let eps = push_pull_entrypoints(&get_node, graph);
-            let (mut vm, _compiled) = gantz_core::vm::init(&get_node, graph, &eps, &config)
-                .unwrap_or_else(|e| panic!("init {name}: {}", gantz_core::vm::error_chain(&e)));
+            let (mut vm, _compiled) = gantz_core::vm::init_with_modules(
+                &get_node,
+                graph,
+                &eps,
+                &config,
+                &super::steel_modules(),
+            )
+            .unwrap_or_else(|e| panic!("init {name}: {}", gantz_core::vm::error_chain(&e)));
 
             let go = graph.node_indices().find(|&ix| {
                 (&*graph[ix] as &dyn std::any::Any)
@@ -2446,7 +2477,7 @@ mod tests {
             graph,
             &eps,
             &config,
-            gantz_pattern::modules(),
+            &super::steel_modules(),
         )
         .unwrap_or_else(|e| panic!("init: {}", gantz_core::vm::error_chain(&e)));
 
@@ -2563,7 +2594,14 @@ mod tests {
         let head = gantz_ca::Head::Branch(demo);
         let graph = head_graph(&reified, &registry, &head).expect("demo graph");
         let eps = push_pull_entrypoints(&get_node, graph);
-        gantz_core::vm::init(&get_node, graph, &eps, &Config::default()).unwrap_or_else(|e| {
+        gantz_core::vm::init_with_modules(
+            &get_node,
+            graph,
+            &eps,
+            &Config::default(),
+            &super::steel_modules(),
+        )
+        .unwrap_or_else(|e| {
             panic!(
                 "recompile after reset failed: {}",
                 gantz_core::vm::error_chain(&e)
@@ -2703,14 +2741,14 @@ mod tests {
                 .unwrap_or_else(|| panic!("`{n}` has no head graph"));
             let entrypoints = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
             let config = gantz_core::compile::Config::default();
-            // `init_with_modules` mirrors the app path. The pattern domain's
-            // module must be registered for the pattern graphs' requires.
+            // `init_with_modules` mirrors the app path. The ui and pattern
+            // modules must be registered for the base graphs' requires.
             gantz_core::vm::init_with_modules(
                 &get_node,
                 graph,
                 &entrypoints,
                 &config,
-                gantz_pattern::modules(),
+                &super::steel_modules(),
             )
             .unwrap_or_else(|e| {
                 panic!(
