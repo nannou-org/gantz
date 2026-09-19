@@ -148,6 +148,10 @@
 //!   over `gantz_core::datum::Datum`. `Datum` has no symbol variant, so
 //!   identifiers normalize to strings on a store and reload. The result
 //!   decodes to the identical tree.
+//! - `steel` also provides the `gantz/ui` Steel module, see [`modules()`].
+//!   Its `ui-elem` builds an element from optional inputs, dropping absent
+//!   attributes and positionals, so base graphs can compose trees from
+//!   nodes with one expr each.
 //!
 //! With no features enabled the crate is the pure model: [`SExpr`],
 //! [`Element`], [`decode()`], [`encode()`] and the [`pretty()`] printer that
@@ -174,3 +178,21 @@ pub mod diag;
 pub mod elem;
 pub mod encode;
 pub mod sexpr;
+
+/// The `gantz/ui` Steel module.
+///
+/// Register via `gantz_core::vm::new_engine` or the app's steel-module
+/// collection, then `(require "gantz/ui")` to use. It provides `ui-elem`,
+/// `ui-int` and `ui-id`, the helpers the element base graphs are built on.
+#[cfg(feature = "steel")]
+pub const MODULE: gantz_core::vm::SteelModule = gantz_core::vm::SteelModule {
+    name: "gantz/ui",
+    src: include_str!("ui.scm"),
+};
+
+/// The Steel modules provided by this crate.
+#[cfg(feature = "steel")]
+pub fn modules() -> &'static [gantz_core::vm::SteelModule] {
+    const MODULES: &[gantz_core::vm::SteelModule] = &[MODULE];
+    MODULES
+}
