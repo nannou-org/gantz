@@ -460,8 +460,11 @@ fn key_edit(ui: &mut egui::Ui, id: egui::Id, key: &mut String) -> bool {
     if changed {
         *key = buf.clone();
     }
+    // Read before `data_mut`. It holds the context lock, which `has_focus`
+    // also takes, and the lock is not re-entrant.
+    let focused = resp.has_focus();
     ui.data_mut(|d| {
-        if resp.has_focus() {
+        if focused {
             d.insert_temp(id, buf);
         } else {
             d.remove::<String>(id);
@@ -606,6 +609,30 @@ mod tests {
         };
         assert_eq!(leaf("n"), Leaf::Num(2.0));
         assert_eq!(leaf("s"), Leaf::Label("bd".into()));
+    }
+
+    // The keys editor draws a key colour line without deadlocking the egui
+    // context. It runs on a thread so a deadlock fails the test, not hangs it.
+    #[test]
+    fn keys_edit_draws_without_deadlock() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let ctx = egui::Context::default();
+            let mut kcs = vec![KeyColor {
+                key: String::new(),
+                color: [1, 2, 3, 255],
+            }];
+            for _ in 0..2 {
+                let _ = ctx.run(Default::default(), |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        keys_edit(ui, egui::Id::new("keys"), &mut kcs, None);
+                    });
+                });
+            }
+            tx.send(()).ok();
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(10))
+            .expect("keys editor deadlocked");
     }
 
     // A fixed count is clamped. A fit derives the count from the body width,
