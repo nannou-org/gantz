@@ -2281,10 +2281,12 @@ mod tests {
         );
     }
 
-    /// End-to-end check of every `demo-*` graph. Firing its first `bang` must
-    /// evaluate all ops with default inputs without a runtime error or panic.
-    /// The bang feeds every interactive input, so all of an op's inputs are
-    /// active in one push. This guards the single-input-active failure.
+    /// End-to-end check of every bang-driven `demo-*` graph. Firing its first
+    /// `bang` must evaluate all ops with default inputs without a runtime
+    /// error or panic. The bang feeds every interactive input, so all of an
+    /// op's inputs are active in one push. This guards the single-input-active
+    /// failure. Demos driven only by a `gui` pull, e.g. `demo-gui-compose`,
+    /// are covered by `base_gui_markers_decode_clean`.
     ///
     /// It also guards two integer-op gotchas. `number` outputs floats, so
     /// `list-ref` and `mod` coerce via `(exact (round ...))`. `mod` must stay
@@ -2308,7 +2310,6 @@ mod tests {
             "demo-arithmetic",
             "demo-comparison",
             "demo-gui",
-            "demo-gui-compose",
             "demo-logic",
             "demo-list",
             "demo-predicate",
