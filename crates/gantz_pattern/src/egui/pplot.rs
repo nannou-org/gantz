@@ -30,10 +30,20 @@ pub struct Pplot {
     /// The end of the plotted span in cycles, when no span is connected.
     end: Ratio<i64>,
     /// The number of slices a continuous signal is sampled over.
-    resolution: u16,
+    res: Res,
     /// The body appearance, shared with the `plot` node.
     #[serde(flatten)]
     look: PlotLook,
+}
+
+/// How many slices a continuous signal is sampled over.
+#[derive(Clone, Copy, Debug, Hash, Deserialize, Serialize)]
+pub enum Res {
+    /// A fixed slice count.
+    Fixed(u16),
+    /// One slice per this many points of the committed body width, so the
+    /// sampling fits the plot as it is resized.
+    Fit(F32),
 }
 
 /// The decoded plot state.
@@ -56,11 +66,37 @@ struct Segment {
     onset: bool,
 }
 
-impl Pplot {
-    /// The default signal resolution.
-    pub const DEFAULT_RESOLUTION: u16 = 128;
-    /// The maximum signal resolution.
-    const MAX_RESOLUTION: u16 = 4096;
+/// The stroke width of an event segment, in points.
+const SEGMENT_WIDTH: f32 = 2.0;
+/// The radius of an onset dot, in points.
+const ONSET_RADIUS: f32 = 3.0;
+/// The space kept between the data and each fitted plot edge, in points.
+/// It fits an onset dot plus a point of anti-aliasing.
+const EDGE_PAD: f32 = ONSET_RADIUS + 1.0;
+
+impl Res {
+    /// The default fixed slice count.
+    pub const DEFAULT_FIXED: u16 = 128;
+    /// The default points per slice when fitting.
+    pub const DEFAULT_FIT: f32 = 2.0;
+    /// The maximum slice count.
+    const MAX: u16 = 4096;
+    /// The range of points per slice when fitting.
+    const FIT_RANGE: std::ops::RangeInclusive<f32> = 0.5..=64.0;
+
+    /// The slice count for a body `width` points wide.
+    fn slices(self, width: u16) -> u16 {
+        let n = match self {
+            Res::Fixed(n) => n,
+            Res::Fit(pts) => {
+                let pts = pts
+                    .get()
+                    .clamp(*Self::FIT_RANGE.start(), *Self::FIT_RANGE.end());
+                (f32::from(width) / pts).ceil() as u16
+            }
+        };
+        n.clamp(1, Self::MAX)
+    }
 }
 
 impl Default for Pplot {
@@ -68,7 +104,7 @@ impl Default for Pplot {
         Self {
             start: Ratio::from_integer(0),
             end: Ratio::from_integer(1),
-            resolution: Self::DEFAULT_RESOLUTION,
+            res: Res::Fixed(Res::DEFAULT_FIXED),
             look: PlotLook::default(),
         }
     }
@@ -98,7 +134,7 @@ impl gantz_core::Node for Pplot {
                 };
                 format!(
                     "(begin (set! state (pat/plot-data {p} {span} {res})) {p})",
-                    res = self.resolution,
+                    res = self.res.slices(self.look.width),
                 )
             }
             _ => "(begin state)".to_string(),
@@ -186,17 +222,12 @@ impl NodeUi for Pplot {
 
         body.row(row_h, |mut row| {
             row.col(|ui| {
-                ui.label("resolution");
+                ui.label("res");
             });
             row.col(|ui| {
-                changed |= ui
-                    .add(
-                        egui::DragValue::new(&mut self.resolution)
-                            .range(1..=Self::MAX_RESOLUTION)
-                            .speed(1.0),
-                    )
-                    .on_hover_text("slices a continuous signal is sampled over")
-                    .changed();
+                ui.horizontal(|ui| {
+                    changed |= res_edit(ui, &mut self.res);
+                });
             });
         });
 
@@ -256,6 +287,48 @@ fn span_edit(ui: &mut egui::Ui, start: &mut Ratio<i64>, end: &mut Ratio<i64>) ->
     changed
 }
 
+/// Edit the signal resolution. A mode toggle picks a fixed slice count or a
+/// fit to the body width, then a dialer edits that mode's value. Switching
+/// mode starts from the mode's default. Returns whether it changed.
+fn res_edit(ui: &mut egui::Ui, res: &mut Res) -> bool {
+    let mut changed = false;
+    let fixed = matches!(res, Res::Fixed(_));
+    if ui
+        .selectable_label(fixed, "fixed")
+        .on_hover_text("sample a signal over a fixed number of slices")
+        .clicked()
+        && !fixed
+    {
+        *res = Res::Fixed(Res::DEFAULT_FIXED);
+        changed = true;
+    }
+    if ui
+        .selectable_label(!fixed, "fit")
+        .on_hover_text("sample a signal once per this many points of the plot width")
+        .clicked()
+        && fixed
+    {
+        *res = Res::Fit(F32(Res::DEFAULT_FIT));
+        changed = true;
+    }
+    changed |= match res {
+        Res::Fixed(n) => ui
+            .add(egui::DragValue::new(n).range(1..=Res::MAX).speed(1.0))
+            .on_hover_text("slices a signal is sampled over")
+            .changed(),
+        Res::Fit(F32(pts)) => ui
+            .add(
+                egui::DragValue::new(pts)
+                    .range(Res::FIT_RANGE)
+                    .speed(0.1)
+                    .suffix(" pt"),
+            )
+            .on_hover_text("points of plot width per signal slice")
+            .changed(),
+    };
+    changed
+}
+
 fn to_f64(r: Ratio<i64>) -> f64 {
     *r.numer() as f64 / *r.denom() as f64
 }
@@ -275,21 +348,23 @@ fn draw(
         .iter()
         .map(|s| s.value)
         .chain(data.points.iter().map(|p| p[1]));
-    let (ylo, yhi) = y_bounds(
-        values,
-        false,
-        look.y_min.map(F32::get),
-        look.y_max.map(F32::get),
-    );
+    // Fitted edges are padded so onset dots at the extremes draw whole.
+    // Fixed value bounds stay exact.
+    let (ylo, yhi) = y_bounds(values, false, None, None);
+    let ypad = edge_pad(ylo, yhi, size.y);
+    let ylo = look.y_min.map_or(ylo - ypad, |v| f64::from(v.get()));
+    let yhi = look.y_max.map_or(yhi + ypad, |v| f64::from(v.get()));
     let [xlo, xhi] = data.span;
-    let bounds = ([xlo, ylo], [xhi.max(xlo + f64::EPSILON), yhi]);
+    let xhi = xhi.max(xlo + f64::EPSILON);
+    let xpad = edge_pad(xlo, xhi, size.x);
+    let bounds = ([xlo - xpad, ylo], [xhi + xpad, yhi]);
     show_plot(frame, plot_id, size, bounds, ui, |plot_ui| {
         for s in &data.segments {
             let pts = vec![[s.start, s.value], [s.end, s.value]];
             plot_ui.line(
                 egui_plot::Line::new("", pts)
                     .color(color)
-                    .width(2.0)
+                    .width(SEGMENT_WIDTH)
                     .allow_hover(frame.interactive),
             );
         }
@@ -303,7 +378,7 @@ fn draw(
             plot_ui.points(
                 egui_plot::Points::new("", onsets)
                     .color(color)
-                    .radius(3.0)
+                    .radius(ONSET_RADIUS)
                     .filled(true)
                     .allow_hover(frame.interactive),
             );
@@ -316,6 +391,18 @@ fn draw(
             );
         }
     })
+}
+
+/// The padding in plot units, on each side of `lo..hi` drawn over `len`
+/// points, that leaves [`EDGE_PAD`] points between the data and each edge.
+/// Zero when `len` leaves no room for it.
+fn edge_pad(lo: f64, hi: f64, len: f32) -> f64 {
+    let room = f64::from(len) - 2.0 * f64::from(EDGE_PAD);
+    if room > 0.0 {
+        f64::from(EDGE_PAD) * (hi - lo) / room
+    } else {
+        0.0
+    }
 }
 
 /// Read and decode the node's stored plot data. Empty when absent or
@@ -463,6 +550,31 @@ mod tests {
     fn connected_junk_span_falls_back() {
         let (g, plot) = graph(Pplot::default(), Some("\"x\""));
         assert_eq!(eval(&g, plot).span, [0.0, 1.0]);
+    }
+
+    // A fixed count is clamped. A fit derives the count from the body width,
+    // rounding up.
+    #[test]
+    fn res_slices() {
+        assert_eq!(Res::Fixed(64).slices(120), 64);
+        assert_eq!(Res::Fixed(0).slices(120), 1);
+        assert_eq!(Res::Fixed(u16::MAX).slices(120), Res::MAX);
+        assert_eq!(Res::Fit(F32(2.0)).slices(120), 60);
+        assert_eq!(Res::Fit(F32(7.0)).slices(120), 18);
+        // Out-of-range densities clamp to the fit range.
+        assert_eq!(Res::Fit(F32(0.0)).slices(120), 240);
+        assert_eq!(Res::Fit(F32(1000.0)).slices(120), 2);
+    }
+
+    // The pad leaves `EDGE_PAD` points at each edge. With no room for it,
+    // there is none.
+    #[test]
+    fn edge_pad_fits_onset_dots() {
+        let len = 100.0;
+        let pad = edge_pad(0.0, 1.0, len);
+        let pts_per_unit = f64::from(len) / (1.0 + 2.0 * pad);
+        assert!((pad * pts_per_unit - f64::from(EDGE_PAD)).abs() < 1e-9);
+        assert_eq!(edge_pad(0.0, 1.0, 2.0 * EDGE_PAD), 0.0);
     }
 
     // Decoding rejects a malformed state and skips malformed entries.

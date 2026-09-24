@@ -436,7 +436,10 @@ mod tests {
                 vec![
                     ("start", Datum::Seq(vec![Datum::I64(1), Datum::I64(4)])),
                     ("end", Datum::Seq(vec![Datum::I64(2), Datum::I64(1)])),
-                    ("resolution", Datum::U64(64)),
+                    (
+                        "res",
+                        Datum::Map(vec![("Fit".to_string(), Datum::F64(4.0))]),
+                    ),
                     ("width", Datum::U64(160)),
                     ("height", Datum::U64(90)),
                     ("color", Datum::Null),
@@ -810,7 +813,7 @@ mod tests {
             ),
             (
                 "Pplot",
-                "f9b64516c4f5fff8cb5ff3ff5cd06d5696e8df902b7c693c5802d5e16fdfc43a",
+                "6f616cb788219df3b95a9fbbfeaad7fb4ae9fdd3e4cbb3ae29198831bbba7ee5",
             ),
             (
                 "ScopeOut",
