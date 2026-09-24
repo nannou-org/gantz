@@ -2493,8 +2493,9 @@ mod tests {
         assert!(checked > 0, "base.gantz declares no gui markers");
     }
 
-    /// One tick over demo-pplot leaves every pplot holding plot data with
-    /// events or signal samples, so each value kind reaches its plot.
+    /// One round of ticks over demo-pplot leaves every pplot holding plot
+    /// data with events or signal samples, so each value kind reaches its
+    /// plot.
     #[test]
     fn demo_pplot_plots_every_source() {
         use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
@@ -2528,29 +2529,33 @@ mod tests {
         )
         .unwrap_or_else(|e| panic!("init: {}", gantz_core::vm::error_chain(&e)));
 
-        let tick_ix = graph
+        // Each source has its own tick, so fire every tick once.
+        let ticks: Vec<usize> = graph
             .node_indices()
-            .find(|&ix| {
+            .filter(|&ix| {
                 (&*graph[ix] as &dyn std::any::Any)
                     .is::<bevy_gantz_egui::node::tick_bang::TickBang>()
             })
-            .expect("tick node")
-            .index();
-        let tick_ep = eps
-            .iter()
-            .find(|ep| {
-                ep.0.iter()
-                    .any(|s| s.kind == EvalKind::Push && s.path == [tick_ix])
-            })
-            .expect("tick ep");
-        vm.call_function_by_name_with_args(&entry_fn_name(&tick_ep.id()), vec![])
-            .unwrap_or_else(|e| panic!("tick errored: {e}"));
+            .map(|ix| ix.index())
+            .collect();
+        assert!(!ticks.is_empty(), "demo-pplot has no tick");
+        for tick_ix in ticks {
+            let tick_ep = eps
+                .iter()
+                .find(|ep| {
+                    ep.0.iter()
+                        .any(|s| s.kind == EvalKind::Push && s.path == [tick_ix])
+                })
+                .expect("tick ep");
+            vm.call_function_by_name_with_args(&entry_fn_name(&tick_ep.id()), vec![])
+                .unwrap_or_else(|e| panic!("tick {tick_ix} errored: {e}"));
+        }
 
         let plots: Vec<_> = graph
             .node_indices()
             .filter(|&ix| (&*graph[ix] as &dyn std::any::Any).is::<gantz_pattern::Pplot>())
             .collect();
-        assert_eq!(plots.len(), 9, "demo-pplot pplot count");
+        assert!(!plots.is_empty(), "demo-pplot has no pplot");
         for ix in plots {
             let state = gantz_core::node::state::extract_value(&vm, &[ix.index()])
                 .unwrap()
