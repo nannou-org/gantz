@@ -264,7 +264,7 @@ fn int(toks: &[Tok]) -> Option<(i64, &[Tok])> {
 
 /// Parse a word as an exact ratio. An integer, an `n/d` rational, or a
 /// float snapped to the 1/1920 grid, mirroring `pat/rationalize`.
-fn parse_number(word: &str) -> Option<Ratio<i64>> {
+pub(crate) fn parse_number(word: &str) -> Option<Ratio<i64>> {
     if let Ok(i) = word.parse::<i64>() {
         return Some(Ratio::from_integer(i));
     }

@@ -11,6 +11,7 @@
 
 mod data;
 mod draw;
+pub(crate) mod sugar;
 
 use data::{PlotData, plot_data};
 use draw::DrawConf;
