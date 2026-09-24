@@ -1,6 +1,10 @@
 //! The egui surface for the pattern node set. Only egui-flavoured items
 //! live here, so the crate's `egui` feature holds with a single cfg gate.
 
+mod pplot;
+
+pub use pplot::Pplot;
+
 use crate::Pmini;
 use gantz_egui::{Env, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind};
 use std::hash::{Hash, Hasher};

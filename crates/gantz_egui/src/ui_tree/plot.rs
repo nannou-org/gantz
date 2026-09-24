@@ -249,7 +249,7 @@ fn channel_numerics(val: &SteelVal) -> Vec<f64> {
 }
 
 /// Convert a numeric [`SteelVal`] to `f64`.
-pub(crate) fn steel_num(val: &SteelVal) -> Option<f64> {
+pub fn steel_num(val: &SteelVal) -> Option<f64> {
     match val {
         SteelVal::NumV(f) => Some(*f),
         SteelVal::IntV(i) => Some(*i as f64),

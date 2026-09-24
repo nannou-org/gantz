@@ -17,6 +17,8 @@ serde.workspace = true
 egui = { workspace = true, optional = true }
 egui_graph = { workspace = true, optional = true }
 gantz_egui = { workspace = true, optional = true }
+egui_extras = { workspace = true, optional = true }
+egui_plot = { workspace = true, optional = true }
 
 [dev-dependencies]
 petgraph.workspace = true
@@ -26,4 +28,10 @@ gantz_ca.workspace = true
 # The egui-flavoured impls (`NodeUi` for the pattern nodes). Without it
 # the crate is headless.
 default = ["egui"]
-egui = ["dep:egui", "dep:egui_graph", "dep:gantz_egui"]
+egui = [
+  "dep:egui",
+  "dep:egui_extras",
+  "dep:egui_graph",
+  "dep:egui_plot",
+  "dep:gantz_egui",
+]

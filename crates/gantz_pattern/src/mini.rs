@@ -276,10 +276,14 @@ fn parse_number(word: &str) -> Option<Ratio<i64>> {
         return Some(Ratio::new(n, d));
     }
     let f = word.parse::<f64>().ok()?;
-    if !f.is_finite() {
-        return None;
-    }
-    Some(Ratio::new((f * 1920.0).round() as i64, 1920))
+    snap(f)
+}
+
+/// Snap a float to the nearest 1/1920 of a cycle, mirroring
+/// `pat/rationalize`. `None` for a non-finite float.
+pub(crate) fn snap(f: f64) -> Option<Ratio<i64>> {
+    f.is_finite()
+        .then(|| Ratio::new((f * 1920.0).round() as i64, 1920))
 }
 
 #[cfg(test)]

@@ -56,6 +56,7 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_plyphon::Bus,
             gantz_plyphon::PlayBuf,
             gantz_pattern::Pmini,
+            gantz_pattern::Pplot,
         }
     }
 }
@@ -241,6 +242,7 @@ mod tests {
             "outlet",
             "plot",
             "pmini",
+            "pplot",
             "sleep",
             "tick!",
             "update!",
@@ -428,6 +430,23 @@ mod tests {
             node_datum(
                 "Pmini",
                 vec![("src", Datum::Str("bd(3,8) ~ [sn sn]".into()))],
+            ),
+            node_datum(
+                "Pplot",
+                vec![
+                    ("start", Datum::Seq(vec![Datum::I64(1), Datum::I64(4)])),
+                    ("end", Datum::Seq(vec![Datum::I64(2), Datum::I64(1)])),
+                    ("resolution", Datum::U64(64)),
+                    ("width", Datum::U64(160)),
+                    ("height", Datum::U64(90)),
+                    ("color", Datum::Null),
+                    ("show_grid", Datum::Bool(true)),
+                    ("show_axes", Datum::Bool(false)),
+                    ("interactive", Datum::Bool(false)),
+                    ("margin", Datum::Bool(true)),
+                    ("y_min", Datum::Null),
+                    ("y_max", Datum::F64(2.0)),
+                ],
             ),
             node_datum("Gui", vec![]),
             node_datum(
@@ -788,6 +807,10 @@ mod tests {
             (
                 "Pmini",
                 "84670e8d51c15a952187697e06d022ce46e243038fc7d7cb0f2a07925a1d1d6c",
+            ),
+            (
+                "Pplot",
+                "f9b64516c4f5fff8cb5ff3ff5cd06d5696e8df902b7c693c5802d5e16fdfc43a",
             ),
             (
                 "ScopeOut",
