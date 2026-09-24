@@ -23,7 +23,7 @@
 
 use super::size_sync::{self, fitted_size};
 use crate::ui_tree::UiTree;
-use crate::ui_tree::plot::{is_container, resolve_color, split_channels};
+use crate::ui_tree::plot::{PlotFrame, is_container, resolve_color, split_channels};
 use crate::widget::node_inspector;
 use crate::widget::node_inspector::radio_option;
 use crate::{
@@ -44,7 +44,7 @@ use steel::{SteelVal, Vector};
 pub struct F32(pub f32);
 
 impl F32 {
-    fn get(self) -> f32 {
+    pub fn get(self) -> f32 {
         self.0
     }
 }
@@ -73,6 +73,35 @@ pub enum PlotStyle {
     Line,
 }
 
+/// The appearance of a plot node body, shared by every plot-like node.
+///
+/// Every field feeds the embedding node's content address, so each inspector
+/// edit is a real, undoable change. See the `changed` contract on
+/// [`crate::NodeUi`].
+#[derive(Clone, Debug, Hash, Deserialize, Serialize)]
+pub struct PlotLook {
+    /// Persisted body width.
+    pub width: u16,
+    /// Persisted body height.
+    pub height: u16,
+    /// Line or bar colour. `None` follows the theme's strong text colour.
+    pub color: Option<[u8; 4]>,
+    /// Whether to draw the background grid.
+    pub show_grid: bool,
+    /// Whether to draw the axes.
+    pub show_axes: bool,
+    /// When on, hovering shows a crosshair and the value beneath it. The plot
+    /// never pans or zooms regardless. The node drags and right-clicks as usual.
+    pub interactive: bool,
+    /// When on, the plot is inset within the node frame's regular margin. When
+    /// off the data fills the frame.
+    pub margin: bool,
+    /// A fixed lower bound for the value axis when `Some`.
+    pub y_min: Option<F32>,
+    /// A fixed upper bound for the value axis when `Some`.
+    pub y_max: Option<F32>,
+}
+
 /// A node that plots the numeric values it receives.
 ///
 /// Every field feeds the content address, so each inspector edit is a real,
@@ -85,41 +114,25 @@ pub struct Plot {
     style: PlotStyle,
     /// The maximum number of samples retained in [`PlotMode::Scope`].
     capacity: u32,
-    /// Persisted body width.
-    width: u16,
-    /// Persisted body height.
-    height: u16,
-    /// Line or bar colour. `None` follows the theme's strong text colour.
-    color: Option<[u8; 4]>,
-    /// Whether to draw the background grid.
-    show_grid: bool,
-    /// Whether to draw the axes.
-    show_axes: bool,
-    /// When on, hovering shows a crosshair and the value beneath it. The plot
-    /// never pans or zooms regardless. The node drags and right-clicks as usual.
-    interactive: bool,
-    /// When on, the plot is inset within the node frame's regular margin. When
-    /// off the data fills the frame.
-    margin: bool,
-    /// A fixed lower bound for the value axis when `Some`.
-    y_min: Option<F32>,
-    /// A fixed upper bound for the value axis when `Some`.
-    y_max: Option<F32>,
+    /// The body appearance. Flattened, so the encoded fields and the hashed
+    /// field sequence match a flat layout.
+    #[serde(flatten)]
+    look: PlotLook,
+}
+
+impl PlotLook {
+    /// The default body size, `[width, height]`.
+    pub const DEFAULT_SIZE: [u16; 2] = [120, 80];
 }
 
 impl Plot {
-    /// The default body size, `[width, height]`.
-    pub const DEFAULT_SIZE: [u16; 2] = [120, 80];
     /// The default scope history capacity.
     pub const DEFAULT_CAPACITY: u32 = 256;
 }
 
-impl Default for Plot {
+impl Default for PlotLook {
     fn default() -> Self {
         Self {
-            mode: PlotMode::Scope,
-            style: PlotStyle::Bars,
-            capacity: Self::DEFAULT_CAPACITY,
             width: Self::DEFAULT_SIZE[0],
             height: Self::DEFAULT_SIZE[1],
             color: None,
@@ -129,6 +142,17 @@ impl Default for Plot {
             margin: true,
             y_min: None,
             y_max: None,
+        }
+    }
+}
+
+impl Default for Plot {
+    fn default() -> Self {
+        Self {
+            mode: PlotMode::Scope,
+            style: PlotStyle::Bars,
+            capacity: Self::DEFAULT_CAPACITY,
+            look: PlotLook::default(),
         }
     }
 }
@@ -292,54 +316,35 @@ impl gantz_core::Node for Plot {
     }
 }
 
-impl Plot {
-    /// The plot's fragment, bound to its own state, with attrs baked from
-    /// the weight. `size` is the resolved body size, the resize container's
-    /// inner size. `None` fills the available space, as in the detached view.
-    fn fragment(&self, id: node::Id, size: Option<egui::Vec2>) -> gantz_ui::Element {
-        gantz_ui::Element::Plot(gantz_ui::Plot {
-            bind: Some(gantz_ui::BindPath(vec![id])),
-            mode: Some(match self.mode {
-                PlotMode::Scope => gantz_ui::PlotMode::Scope,
-                PlotMode::Signal => gantz_ui::PlotMode::Signal,
-            }),
-            style: Some(match self.style {
-                PlotStyle::Bars => gantz_ui::PlotStyle::Bars,
-                PlotStyle::Line => gantz_ui::PlotStyle::Line,
-            }),
-            color: self.color.map(gantz_ui::Rgba),
+impl PlotLook {
+    /// The render frame for the plot area.
+    pub fn frame(&self) -> PlotFrame {
+        PlotFrame {
             grid: self.show_grid,
             axes: self.show_axes,
             interactive: self.interactive,
-            y_min: self.y_min.map(F32::get),
-            y_max: self.y_max.map(F32::get),
-            w: size.map(|s| s.x),
-            h: size.map(|s| s.y),
-            key: None,
-        })
-    }
-}
-
-impl NodeUi for Plot {
-    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
-        "plot".into()
+        }
     }
 
-    fn description(&self) -> Option<&'static str> {
-        Some("Plot incoming values as a scrolling scope or a signal/array")
-    }
-
-    fn ui(&mut self, mut ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
+    /// The resizable node body. `content` draws the plot filling the `ui`
+    /// it receives and returns its response. The look passed to `content`
+    /// holds any size committed this frame.
+    ///
+    /// The frame is a minimal extreme-bg frame. With `margin` on, the data is
+    /// inset by the frame's regular margin with rounded corners. With it off,
+    /// the data fills the frame edge-to-edge with square corners, so nothing
+    /// is clipped.
+    pub fn body_ui(
+        &mut self,
+        uictx: egui_graph::NodeCtx,
+        content: impl FnOnce(&mut egui::Ui, &PlotLook) -> egui::Response,
+    ) -> NodeUiResponse {
         // Set when a settled resize commits a new body size.
         let mut changed = false;
 
         let style = uictx.style();
         let interaction = uictx.interaction();
 
-        // A minimal extreme-bg frame. With `margin` on, the data is inset by
-        // the frame's regular margin with rounded corners. With it off, the
-        // data fills the frame edge-to-edge with square corners, so nothing is
-        // clipped.
         let mut frame = egui_graph::node::default_frame(style, interaction);
         frame.fill = style.visuals.extreme_bg_color;
         if !self.margin {
@@ -349,13 +354,10 @@ impl NodeUi for Plot {
 
         let node_egui_id = uictx.egui_id();
         let resize_id = node_egui_id.with("resize");
-        let root_id = node_egui_id.with("gui");
+        let size_sync_id = node_egui_id.with("size_sync");
         let min_size = egui::Vec2::splat(style.interaction.interact_radius * 2.0);
         let default_size = egui::vec2(self.width as f32, self.height as f32);
 
-        let (&id, prefix) = ctx.path().split_last().expect("a node path is never empty");
-
-        let size_sync_id = node_egui_id.with("size_sync");
         let framed = uictx.framed_with(frame, |ui, _sockets| {
             let size_sync::Decisions {
                 resizing,
@@ -396,11 +398,7 @@ impl NodeUi for Plot {
                     changed = true;
                 }
 
-                let tree = self.fragment(id, Some(avail));
-                let r = UiTree::new(root_id)
-                    .instance_prefix(prefix)
-                    .show(&tree, &mut ctx, ui);
-                r.inner.unwrap_or_else(|| ui.response())
+                content(ui, self)
             });
 
             size_sync::store(
@@ -419,6 +417,158 @@ impl NodeUi for Plot {
         resp
     }
 
+    /// The margin, colour, range and display inspector rows. Returns whether
+    /// any row changed the look.
+    pub fn inspector_rows(&mut self, body: &mut egui_extras::TableBody) -> bool {
+        let row_h = node_inspector::table_row_h(body.ui_mut());
+        let mut changed = false;
+
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("margin");
+            });
+            row.col(|ui| {
+                changed |= ui
+                    .checkbox(&mut self.margin, "")
+                    .on_hover_text(
+                        "inset the data within the node frame's margin (rounded corners)",
+                    )
+                    .changed();
+            });
+        });
+
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("colour");
+            });
+            row.col(|ui| {
+                ui.horizontal(|ui| {
+                    let mut col = resolve_color(self.color, ui);
+                    if ui
+                        .color_edit_button_srgba(&mut col)
+                        .on_hover_text("the line/bar colour")
+                        .changed()
+                    {
+                        self.color = Some([col.r(), col.g(), col.b(), col.a()]);
+                        changed = true;
+                    }
+                    if self.color.is_some()
+                        && ui
+                            .button("theme")
+                            .on_hover_text("follow the theme's strong text colour")
+                            .clicked()
+                    {
+                        self.color = None;
+                        changed = true;
+                    }
+                });
+            });
+        });
+
+        // Min and max are two columns of one grid row. Hover text says which is
+        // which. The dialers have a fixed width, so the max controls stay put
+        // as the min dialer's value width changes.
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("range");
+            });
+            row.col(|ui| {
+                egui::Grid::new("plot_range").num_columns(2).show(ui, |ui| {
+                    let mut y_min = self.y_min.map(F32::get);
+                    if node_inspector::bound_col(ui, "minimum", &mut y_min) {
+                        self.y_min = y_min.map(F32);
+                        changed = true;
+                    }
+                    let mut y_max = self.y_max.map(F32::get);
+                    if node_inspector::bound_col(ui, "maximum", &mut y_max) {
+                        self.y_max = y_max.map(F32);
+                        changed = true;
+                    }
+                    ui.end_row();
+                });
+            });
+        });
+
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("display");
+            });
+            row.col(|ui| {
+                ui.horizontal(|ui| {
+                    changed |= ui
+                        .checkbox(&mut self.show_grid, "grid")
+                        .on_hover_text("draw the background grid")
+                        .changed();
+                    changed |= ui
+                        .checkbox(&mut self.show_axes, "axes")
+                        .on_hover_text("draw the axes")
+                        .changed();
+                    changed |= ui
+                        .checkbox(&mut self.interactive, "interactive")
+                        .on_hover_text("show a crosshair and value readout on hover")
+                        .changed();
+                });
+            });
+        });
+
+        changed
+    }
+}
+
+/// The plot's fragment, bound to its own state `id`, with attrs baked from the
+/// weight. `size` is the resolved body size, the resize container's inner size.
+/// `None` fills the available space, as in the detached view.
+fn fragment(
+    mode: PlotMode,
+    style: PlotStyle,
+    look: &PlotLook,
+    id: node::Id,
+    size: Option<egui::Vec2>,
+) -> gantz_ui::Element {
+    gantz_ui::Element::Plot(gantz_ui::Plot {
+        bind: Some(gantz_ui::BindPath(vec![id])),
+        mode: Some(match mode {
+            PlotMode::Scope => gantz_ui::PlotMode::Scope,
+            PlotMode::Signal => gantz_ui::PlotMode::Signal,
+        }),
+        style: Some(match style {
+            PlotStyle::Bars => gantz_ui::PlotStyle::Bars,
+            PlotStyle::Line => gantz_ui::PlotStyle::Line,
+        }),
+        color: look.color.map(gantz_ui::Rgba),
+        grid: look.show_grid,
+        axes: look.show_axes,
+        interactive: look.interactive,
+        y_min: look.y_min.map(F32::get),
+        y_max: look.y_max.map(F32::get),
+        w: size.map(|s| s.x),
+        h: size.map(|s| s.y),
+        key: None,
+    })
+}
+
+impl NodeUi for Plot {
+    fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
+        "plot".into()
+    }
+
+    fn description(&self) -> Option<&'static str> {
+        Some("Plot incoming values as a scrolling scope or a signal/array")
+    }
+
+    fn ui(&mut self, mut ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
+        let root_id = uictx.egui_id().with("gui");
+        let (&id, prefix) = ctx.path().split_last().expect("a node path is never empty");
+        let (mode, style) = (self.mode, self.style);
+        self.look.body_ui(uictx, |ui, look| {
+            let tree = fragment(mode, style, look, id, Some(ui.available_size()));
+            let r = UiTree::new(root_id)
+                .instance_prefix(prefix)
+                .show(&tree, &mut ctx, ui);
+            r.inner.unwrap_or_else(|| ui.response())
+        })
+    }
+
     fn view_no_margin(&self) -> bool {
         // The plot fills its pane edge-to-edge, with no surrounding margin.
         true
@@ -431,7 +581,7 @@ impl NodeUi for Plot {
         // derives from `ui`, which the caller scopes per pane. That keeps it
         // distinct from the in-graph plot's id.
         let (&id, prefix) = ctx.path().split_last().expect("a node path is never empty");
-        let tree = self.fragment(id, None);
+        let tree = fragment(self.mode, self.style, &self.look, id, None);
         let r = UiTree::new(ui.id().with("gui"))
             .instance_prefix(prefix)
             .show(&tree, &mut ctx, ui);
@@ -532,96 +682,7 @@ impl NodeUi for Plot {
             });
         });
 
-        body.row(row_h, |mut row| {
-            row.col(|ui| {
-                ui.label("margin");
-            });
-            row.col(|ui| {
-                if ui
-                    .checkbox(&mut self.margin, "")
-                    .on_hover_text(
-                        "inset the data within the node frame's margin (rounded corners)",
-                    )
-                    .changed()
-                {
-                    changed = true;
-                }
-            });
-        });
-
-        body.row(row_h, |mut row| {
-            row.col(|ui| {
-                ui.label("colour");
-            });
-            row.col(|ui| {
-                ui.horizontal(|ui| {
-                    let mut col = resolve_color(self.color, ui);
-                    if ui
-                        .color_edit_button_srgba(&mut col)
-                        .on_hover_text("the line/bar colour")
-                        .changed()
-                    {
-                        self.color = Some([col.r(), col.g(), col.b(), col.a()]);
-                        changed = true;
-                    }
-                    if self.color.is_some()
-                        && ui
-                            .button("theme")
-                            .on_hover_text("follow the theme's strong text colour")
-                            .clicked()
-                    {
-                        self.color = None;
-                        changed = true;
-                    }
-                });
-            });
-        });
-
-        // Min and max are two columns of one grid row. Hover text says which is
-        // which. The dialers have a fixed width, so the max controls stay put
-        // as the min dialer's value width changes.
-        body.row(row_h, |mut row| {
-            row.col(|ui| {
-                ui.label("range");
-            });
-            row.col(|ui| {
-                egui::Grid::new("plot_range").num_columns(2).show(ui, |ui| {
-                    let mut y_min = self.y_min.map(F32::get);
-                    if node_inspector::bound_col(ui, "minimum", &mut y_min) {
-                        self.y_min = y_min.map(F32);
-                        changed = true;
-                    }
-                    let mut y_max = self.y_max.map(F32::get);
-                    if node_inspector::bound_col(ui, "maximum", &mut y_max) {
-                        self.y_max = y_max.map(F32);
-                        changed = true;
-                    }
-                    ui.end_row();
-                });
-            });
-        });
-
-        body.row(row_h, |mut row| {
-            row.col(|ui| {
-                ui.label("display");
-            });
-            row.col(|ui| {
-                ui.horizontal(|ui| {
-                    changed |= ui
-                        .checkbox(&mut self.show_grid, "grid")
-                        .on_hover_text("draw the background grid")
-                        .changed();
-                    changed |= ui
-                        .checkbox(&mut self.show_axes, "axes")
-                        .on_hover_text("draw the axes")
-                        .changed();
-                    changed |= ui
-                        .checkbox(&mut self.interactive, "interactive")
-                        .on_hover_text("show a crosshair and value readout on hover")
-                        .changed();
-                });
-            });
-        });
+        changed |= self.look.inspector_rows(body);
 
         let mut resp = InspectorRowsResponse::default();
         resp.set_changed(changed);
@@ -900,9 +961,7 @@ mod tests {
     // view.
     #[test]
     fn fragment_bakes_weight_attrs_and_bind() {
-        let plot = Plot {
-            mode: PlotMode::Signal,
-            style: PlotStyle::Line,
+        let look = PlotLook {
             color: Some([1, 2, 3, 4]),
             show_grid: true,
             show_axes: true,
@@ -911,6 +970,7 @@ mod tests {
             y_max: Some(F32(1.0)),
             ..Default::default()
         };
+        let (mode, style) = (PlotMode::Signal, PlotStyle::Line);
         let expected = gantz_ui::Element::Plot(gantz_ui::Plot {
             bind: Some(gantz_ui::BindPath(vec![4])),
             mode: Some(gantz_ui::PlotMode::Signal),
@@ -925,10 +985,13 @@ mod tests {
             h: Some(80.0),
             key: None,
         });
-        assert_eq!(plot.fragment(4, Some(egui::vec2(120.0, 80.0))), expected);
+        assert_eq!(
+            fragment(mode, style, &look, 4, Some(egui::vec2(120.0, 80.0))),
+            expected
+        );
 
         // The view fragment omits w/h to fill the pane.
-        let gantz_ui::Element::Plot(p) = plot.fragment(4, None) else {
+        let gantz_ui::Element::Plot(p) = fragment(mode, style, &look, 4, None) else {
             panic!("plot fragment is a plot element");
         };
         assert_eq!((p.w, p.h), (None, None));

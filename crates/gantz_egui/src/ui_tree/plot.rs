@@ -3,9 +3,21 @@
 //! Draws per-channel numeric series with `egui_plot`. [`PlotParams`]
 //! parameterizes it, so the same code renders both the `Plot` node and the
 //! interpreter's `plot` element. The node takes its params from its weight.
-//! The element takes them from its attrs.
+//! The element takes them from its attrs. [`show_plot`] is the plot area
+//! beneath both, for plot-like nodes that draw their own items.
 
 use steel::SteelVal;
+
+/// The plot area's grid, axes and hover behaviour.
+#[derive(Clone, Copy, Debug)]
+pub struct PlotFrame {
+    /// Whether a grid draws behind the data.
+    pub grid: bool,
+    /// Whether axes draw.
+    pub axes: bool,
+    /// Whether hovering the data shows a crosshair and value readout.
+    pub interactive: bool,
+}
 
 /// The resolved rendering parameters of one plot.
 pub(crate) struct PlotParams {
@@ -13,12 +25,8 @@ pub(crate) struct PlotParams {
     pub style: gantz_ui::PlotStyle,
     /// Plot colour, theme default when absent.
     pub color: Option<[u8; 4]>,
-    /// Whether a grid draws behind the samples.
-    pub grid: bool,
-    /// Whether axes draw.
-    pub axes: bool,
-    /// Whether hovering the samples shows a value readout.
-    pub interactive: bool,
+    /// The plot area.
+    pub frame: PlotFrame,
     /// A fixed lower value axis bound.
     pub y_min: Option<f32>,
     /// A fixed upper value axis bound.
@@ -66,55 +74,73 @@ fn plot_channel(
     ui: &mut egui::Ui,
 ) -> egui::Response {
     let color = resolve_color(params.color, ui);
-    let plot_style = params.style;
-    let interactive = params.interactive;
-    let bounds = value_bounds(ys, plot_style, params.y_min, params.y_max);
+    let interactive = params.frame.interactive;
+    let bounds = value_bounds(ys, params.style, params.y_min, params.y_max);
+    show_plot(
+        params.frame,
+        plot_id,
+        size,
+        bounds,
+        ui,
+        |plot_ui| match params.style {
+            gantz_ui::PlotStyle::Bars => {
+                let bars = ys
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &y)| {
+                        egui_plot::Bar::new(i as f64, y)
+                            .width(1.0)
+                            .fill(color)
+                            .stroke(egui::Stroke::NONE)
+                    })
+                    .collect();
+                plot_ui.bar_chart(egui_plot::BarChart::new("", bars).allow_hover(interactive));
+            }
+            gantz_ui::PlotStyle::Line => {
+                let points = egui_plot::PlotPoints::from_ys_f64(ys);
+                plot_ui.line(
+                    egui_plot::Line::new("", points)
+                        .color(color)
+                        .allow_hover(interactive),
+                );
+            }
+        },
+    )
+}
 
+/// Render a plot area filling `size` with the view fixed to `bounds`, given as
+/// `([x_min, y_min], [x_max, y_max])`. `draw` adds the plot items. Items should
+/// pass `frame.interactive` to their `allow_hover`, so a non-interactive plot
+/// shows no value readout.
+///
+/// Pan and zoom are always off. The plot senses hover only, so the node frame
+/// beneath still captures drags and right-clicks.
+pub fn show_plot(
+    frame: PlotFrame,
+    plot_id: egui::Id,
+    size: egui::Vec2,
+    bounds: ([f64; 2], [f64; 2]),
+    ui: &mut egui::Ui,
+    draw: impl FnOnce(&mut egui_plot::PlotUi),
+) -> egui::Response {
     let mut plot = egui_plot::Plot::new(plot_id)
         .width(size.x)
         .height(size.y)
         .show_background(false)
-        .show_axes(egui::Vec2b::new(params.axes, params.axes))
-        .show_grid(egui::Vec2b::new(params.grid, params.grid))
-        // Pan/zoom are always off. `Sense::hover` lets the node frame beneath
-        // capture drags and right-clicks, so the node moves and its context
-        // menu opens as usual.
+        .show_axes(egui::Vec2b::new(frame.axes, frame.axes))
+        .show_grid(egui::Vec2b::new(frame.grid, frame.grid))
         .allow_drag(false)
         .allow_zoom(false)
         .allow_scroll(false)
         .allow_boxed_zoom(false)
         .sense(egui::Sense::hover());
-    if !interactive {
-        // Purely visual, so hide the crosshair. `allow_hover(false)` below
-        // also suppresses the value readout.
+    if !frame.interactive {
         plot = plot.cursor_color(egui::Color32::TRANSPARENT);
     }
 
     let plot_resp = plot
         .show(ui, |plot_ui| {
-            match plot_style {
-                gantz_ui::PlotStyle::Bars => {
-                    let bars = ys
-                        .iter()
-                        .enumerate()
-                        .map(|(i, &y)| {
-                            egui_plot::Bar::new(i as f64, y)
-                                .width(1.0)
-                                .fill(color)
-                                .stroke(egui::Stroke::NONE)
-                        })
-                        .collect();
-                    plot_ui.bar_chart(egui_plot::BarChart::new("", bars).allow_hover(interactive));
-                }
-                gantz_ui::PlotStyle::Line => {
-                    let points = egui_plot::PlotPoints::from_ys_f64(ys);
-                    plot_ui.line(
-                        egui_plot::Line::new("", points)
-                            .color(color)
-                            .allow_hover(interactive),
-                    );
-                }
-            }
+            draw(plot_ui);
             // Drive the view from the data and config. The plot never pans,
             // so live updates and min/max apply.
             let ([xlo, ylo], [xhi, yhi]) = bounds;
@@ -126,7 +152,7 @@ fn plot_channel(
     // egui_plot sets a crosshair mouse cursor on hover. When not interactive,
     // restore the default arrow so the plot reads as a static node. The
     // resize corner sets its own cursor after this, so it is unaffected.
-    if !interactive && plot_resp.hovered() {
+    if !frame.interactive && plot_resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
     }
     plot_resp
@@ -142,45 +168,43 @@ fn value_bounds(
     y_max: Option<f32>,
 ) -> ([f64; 2], [f64; 2]) {
     let n = ys.len() as f64;
-    let (xlo, xhi) = match style {
-        gantz_ui::PlotStyle::Bars => (-0.5, (n - 0.5).max(0.5)),
-        gantz_ui::PlotStyle::Line => (0.0, (n - 1.0).max(1.0)),
+    let (xlo, xhi, baseline) = match style {
+        gantz_ui::PlotStyle::Bars => (-0.5, (n - 0.5).max(0.5), true),
+        gantz_ui::PlotStyle::Line => (0.0, (n - 1.0).max(1.0), false),
     };
+    let (ylo, yhi) = y_bounds(ys.iter().copied(), baseline, y_min, y_max);
+    ([xlo, ylo], [xhi, yhi])
+}
 
-    let (dmin, dmax) = ys
-        .iter()
-        .copied()
+/// Compute `(y_min, y_max)` for the view from `values` and optional fixed
+/// bounds. With `baseline`, `0` stays in view. A flat range is padded by `1`
+/// either side. No values give `0..1`. Fixed bounds replace the computed ones.
+pub fn y_bounds(
+    values: impl IntoIterator<Item = f64>,
+    baseline: bool,
+    y_min: Option<f32>,
+    y_max: Option<f32>,
+) -> (f64, f64) {
+    let (dmin, dmax) = values
+        .into_iter()
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
             (lo.min(v), hi.max(v))
         });
-    let (mut ylo, mut yhi) = if dmin <= dmax {
-        match style {
-            // Bars draw from the baseline, so keep `0` in view.
-            gantz_ui::PlotStyle::Bars => (dmin.min(0.0), dmax.max(0.0)),
-            gantz_ui::PlotStyle::Line => (dmin, dmax),
-        }
-    } else {
-        (0.0, 1.0)
+    let (mut ylo, mut yhi) = match (dmin <= dmax, baseline) {
+        (true, true) => (dmin.min(0.0), dmax.max(0.0)),
+        (true, false) => (dmin, dmax),
+        (false, _) => (0.0, 1.0),
     };
     if (yhi - ylo).abs() < 1e-9 {
         ylo -= 1.0;
         yhi += 1.0;
     }
-
-    // Fixed overrides are exact.
-    if let Some(v) = y_min {
-        ylo = v as f64;
-    }
-    if let Some(v) = y_max {
-        yhi = v as f64;
-    }
-
-    ([xlo, ylo], [xhi, yhi])
+    (y_min.map_or(ylo, f64::from), y_max.map_or(yhi, f64::from))
 }
 
 /// Resolve the configured colour, falling back to the theme's strong text
 /// colour when unset.
-pub(crate) fn resolve_color(color: Option<[u8; 4]>, ui: &egui::Ui) -> egui::Color32 {
+pub fn resolve_color(color: Option<[u8; 4]>, ui: &egui::Ui) -> egui::Color32 {
     match color {
         Some([r, g, b, a]) => egui::Color32::from_rgba_unmultiplied(r, g, b, a),
         None => ui.visuals().strong_text_color(),

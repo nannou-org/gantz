@@ -38,7 +38,7 @@ use crate::{NodeCtx, node, response::DynResponse};
 use gantz_ui::{Align, BindPath, Button, Dialer, Element, Key, Matrix, Rgba, Toggle};
 use steel::{SteelVal, Vector, gc::Gc};
 
-pub(crate) mod plot;
+pub mod plot;
 
 /// The outcome of interpreting a UI tree for one frame.
 ///
@@ -505,9 +505,11 @@ impl Walk<'_> {
         let params = plot::PlotParams {
             style: p.style.unwrap_or(gantz_ui::PlotStyle::Bars),
             color: p.color.map(|Rgba(c)| c),
-            grid: p.grid,
-            axes: p.axes,
-            interactive: p.interactive,
+            frame: plot::PlotFrame {
+                grid: p.grid,
+                axes: p.axes,
+                interactive: p.interactive,
+            },
             y_min: p.y_min,
             y_max: p.y_max,
         };
