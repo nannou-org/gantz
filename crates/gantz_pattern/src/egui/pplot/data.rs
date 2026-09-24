@@ -151,15 +151,16 @@ pub(super) fn channels_of(val: &SteelVal) -> Vec<(ChannelKey, Leaf)> {
 }
 
 /// Classify a single value. Containers are opaque here, so only the top level
-/// of an event value splits into channels.
+/// of an event value splits into channels. A non-finite number is opaque, as
+/// it has no place on the value axis.
 pub(super) fn leaf(val: &SteelVal) -> Leaf {
     match val {
         SteelVal::BoolV(b) => Leaf::Num(if *b { 1.0 } else { 0.0 }),
         SteelVal::StringV(s) | SteelVal::SymbolV(s) => Leaf::Label(s.to_string()),
         SteelVal::CharV(c) => Leaf::Label(c.to_string()),
         other => match num(other) {
-            Some(n) => Leaf::Num(n),
-            None => Leaf::Opaque(other.to_string()),
+            Some(n) if n.is_finite() => Leaf::Num(n),
+            _ => Leaf::Opaque(other.to_string()),
         },
     }
 }
@@ -236,6 +237,8 @@ mod tests {
         );
         assert_eq!(leaf(&SteelVal::CharV('x')), Leaf::Label("x".into()));
         assert!(matches!(leaf(&SteelVal::Void), Leaf::Opaque(_)));
+        assert!(matches!(leaf(&num_v(f64::INFINITY)), Leaf::Opaque(_)));
+        assert!(matches!(leaf(&num_v(f64::NAN)), Leaf::Opaque(_)));
         // A nested container is opaque.
         assert!(matches!(leaf(&list_v(vec![num_v(1.0)])), Leaf::Opaque(_)));
     }

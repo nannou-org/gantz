@@ -192,7 +192,8 @@ fn value_bounds(
 
 /// Compute `(y_min, y_max)` for the view from `values` and optional fixed
 /// bounds. With `baseline`, `0` stays in view. A flat range is padded by `1`
-/// either side. No values give `0..1`. Fixed bounds replace the computed ones.
+/// either side. Non-finite values are ignored. No values give `0..1`. Fixed
+/// bounds replace the computed ones.
 pub fn y_bounds(
     values: impl IntoIterator<Item = f64>,
     baseline: bool,
@@ -201,6 +202,7 @@ pub fn y_bounds(
 ) -> (f64, f64) {
     let (dmin, dmax) = values
         .into_iter()
+        .filter(|v| v.is_finite())
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
             (lo.min(v), hi.max(v))
         });
@@ -364,6 +366,11 @@ mod tests {
         // Fixed overrides are exact.
         let ([_, ylo], [_, yhi]) = value_bounds(&[1.0, 2.0], Line, Some(-1.0), Some(1.0));
         assert_eq!((ylo, yhi), (-1.0, 1.0));
+
+        // Non-finite values do not affect the fit.
+        let ([_, ylo], [_, yhi]) =
+            value_bounds(&[1.0, f64::INFINITY, f64::NAN, 3.0], Line, None, None);
+        assert_eq!((ylo, yhi), (1.0, 3.0));
 
         // No data gives a unit default window.
         let ([xlo, ylo], [xhi, yhi]) = value_bounds(&[], Bars, None, None);
