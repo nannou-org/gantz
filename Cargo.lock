@@ -3950,6 +3950,7 @@ dependencies = [
  "gantz_format",
  "gantz_nodetag",
  "num-rational",
+ "num-traits",
  "petgraph",
  "serde",
 ]

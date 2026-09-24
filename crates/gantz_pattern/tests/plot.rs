@@ -45,16 +45,16 @@ fn stacked_signal_and_events() {
     );
 }
 
-// Bools plot as 1 and 0. Other non-numeric values are dropped.
+// Non-numeric values pass through for the plotter to classify.
 #[test]
-fn values_map_to_floats() {
+fn values_pass_through() {
     assert_pinned(
-        "(0.0 1.0 ((0.0 0.5 1.0 #t) (0.5 1.0 0.0 #t)) ())",
+        "(0.0 1.0 ((0.0 0.5 #t #t) (0.5 1.0 #f #t)) ())",
         "(pat/plot-data (pat/fastcat (list (pat/pure #t) (pat/pure #f))) (pat/span 0 1) 4)",
     );
     assert_pinned(
-        "(0.0 1.0 ((0.5 1.0 2.0 #t)) ())",
-        "(pat/plot-data (pat/fastcat (list (pat/pure \"a\") (pat/pure 2))) (pat/span 0 1) 4)",
+        "(0.0 1.0 ((0.0 0.5 \"a\" #t) (0.5 1.0 bd #t)) ())",
+        "(pat/plot-data (pat/fastcat (list (pat/pure \"a\") (pat/pure 'bd))) (pat/span 0 1) 4)",
     );
 }
 
@@ -78,4 +78,14 @@ fn as_span_coerces_or_falls_back() {
     assert_pinned("d", "(pat/as-span (cons 1 0) 'd)");
     assert_pinned("d", "(pat/as-span 0 'd)");
     assert_pinned("d", "(pat/as-span (list 0 1) 'd)");
+}
+
+// Map values pass through whole. The base engine builds them with `hash`.
+#[test]
+fn map_values_pass_through() {
+    assert_pinned(
+        "(bd 2)",
+        "(let ((v (car (cdr (cdr (car (car (cdr (cdr (pat/plot-data (pat/pure (hash 's 'bd 'n 2)) (pat/span 0 1) 4))))))))))
+           (list (hash-ref v 's) (hash-ref v 'n)))",
+    );
 }

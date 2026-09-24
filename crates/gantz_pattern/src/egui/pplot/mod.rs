@@ -2,15 +2,23 @@
 //!
 //! Each evaluation queries the input pattern with `pat/plot-data` and
 //! stores the result as node state. The body draws that state against
-//! cycle time and never calls into the VM. Discrete events draw as
-//! horizontal segments at their values, with a dot at each onset.
-//! Continuous signals draw as a line sampled across the span.
+//! cycle time and never calls into the VM. Numeric values draw as
+//! horizontal segments with a dot at each onset. Continuous signals draw as
+//! a line sampled across the span. Other values draw as boxes over their
+//! active spans, labelled for strings and symbols. Map and list values split
+//! into one channel per key or index, stacked in one plot or expanded into
+//! one plot each.
 
+mod data;
+mod draw;
+
+use data::{PlotData, plot_data};
+use draw::DrawConf;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_core::steel::SteelVal;
 use gantz_egui::node::{F32, PlotLook};
-use gantz_egui::ui_tree::plot::{resolve_color, show_plot, steel_num, y_bounds};
-use gantz_egui::widget::node_inspector;
+use gantz_egui::ui_tree::plot::resolve_color;
+use gantz_egui::widget::node_inspector::{self, radio_option};
 use gantz_egui::{
     Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, NodeViewResponse, SocketDoc,
     SocketKind,
@@ -31,6 +39,11 @@ pub struct Pplot {
     end: Ratio<i64>,
     /// The number of slices a continuous signal is sampled over.
     res: Res,
+    /// How map and list value channels are laid out.
+    layout: ValueLayout,
+    /// Colours for channels by key text, or by decimal index for lists.
+    /// Other channels use the look's colour.
+    key_colors: Vec<KeyColor>,
     /// The body appearance, shared with the `plot` node.
     #[serde(flatten)]
     look: PlotLook,
@@ -46,33 +59,24 @@ pub enum Res {
     Fit(F32),
 }
 
-/// The decoded plot state.
-#[derive(Debug, Default, PartialEq)]
-struct PlotData {
-    /// The plotted span, `[start, end]`, in cycles.
-    span: [f64; 2],
-    /// One per discrete event.
-    segments: Vec<Segment>,
-    /// The `[x, y]` samples of continuous signals.
-    points: Vec<[f64; 2]>,
+/// How the channels of map and list values are laid out.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
+pub enum ValueLayout {
+    /// Every channel in one plot.
+    #[default]
+    Stack,
+    /// One plot per channel, in key order.
+    Expand,
 }
 
-/// A discrete event's active part.
-#[derive(Debug, PartialEq)]
-struct Segment {
-    start: f64,
-    end: f64,
-    value: f64,
-    onset: bool,
+/// A colour for the channel whose key text matches `key`.
+#[derive(Clone, Debug, Hash, PartialEq, Deserialize, Serialize)]
+pub struct KeyColor {
+    /// A map key's text, or a list index in decimal.
+    pub key: String,
+    /// The channel colour.
+    pub color: [u8; 4],
 }
-
-/// The stroke width of an event segment, in points.
-const SEGMENT_WIDTH: f32 = 2.0;
-/// The radius of an onset dot, in points.
-const ONSET_RADIUS: f32 = 3.0;
-/// The space kept between the data and each fitted plot edge, in points.
-/// It fits an onset dot plus a point of anti-aliasing.
-const EDGE_PAD: f32 = ONSET_RADIUS + 1.0;
 
 impl Res {
     /// The default fixed slice count.
@@ -99,12 +103,24 @@ impl Res {
     }
 }
 
+impl Pplot {
+    fn draw_conf(&self) -> DrawConf<'_> {
+        DrawConf {
+            look: &self.look,
+            layout: self.layout,
+            key_colors: &self.key_colors,
+        }
+    }
+}
+
 impl Default for Pplot {
     fn default() -> Self {
         Self {
             start: Ratio::from_integer(0),
             end: Ratio::from_integer(1),
             res: Res::Fixed(Res::DEFAULT_FIXED),
+            layout: ValueLayout::default(),
+            key_colors: vec![],
             look: PlotLook::default(),
         }
     }
@@ -165,9 +181,15 @@ impl NodeUi for Pplot {
     fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
         let plot_id = uictx.egui_id().with("pplot");
         let data = plot_data_of(&ctx);
+        let (layout, key_colors) = (self.layout, &self.key_colors);
         self.look.body_ui(uictx, |ui, look| {
+            let conf = DrawConf {
+                look,
+                layout,
+                key_colors,
+            };
             let size = ui.available_size();
-            draw(look, &data, plot_id, size, ui)
+            draw::draw(conf, &data, plot_id, size, ui)
         })
     }
 
@@ -180,7 +202,8 @@ impl NodeUi for Pplot {
         // The id derives from `ui`, which the caller scopes per pane.
         let data = plot_data_of(&ctx);
         let size = ui.available_size();
-        let r = draw(&self.look, &data, ui.id().with("pplot"), size, ui);
+        let plot_id = ui.id().with("pplot");
+        let r = draw::draw(self.draw_conf(), &data, plot_id, size, ui);
         let mut out = NodeViewResponse::default();
         out.inner = Some(r);
         out
@@ -196,9 +219,9 @@ impl NodeUi for Pplot {
 
         // A summary in place of the suppressed default state row.
         let data = plot_data_of(ctx);
-        let mut summary = format!("{} events", data.segments.len());
-        if !data.points.is_empty() {
-            summary.push_str(&format!(" · {} signal samples", data.points.len()));
+        let mut summary = format!("{} events", data.n_events());
+        if data.channels.len() > 1 {
+            summary.push_str(&format!(" · {} channels", data.channels.len()));
         }
         body.row(row_h, |mut row| {
             row.col(|ui| {
@@ -228,6 +251,43 @@ impl NodeUi for Pplot {
                 ui.horizontal(|ui| {
                     changed |= res_edit(ui, &mut self.res);
                 });
+            });
+        });
+
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("values");
+            });
+            row.col(|ui| {
+                ui.horizontal(|ui| {
+                    changed |= radio_option(
+                        ui,
+                        &mut self.layout,
+                        ValueLayout::Stack,
+                        "stack",
+                        "plot map and list channels together",
+                    );
+                    changed |= radio_option(
+                        ui,
+                        &mut self.layout,
+                        ValueLayout::Expand,
+                        "expand",
+                        "plot each map key or list index on its own",
+                    );
+                });
+            });
+        });
+
+        // One line per key colour, plus the add button.
+        let keys_h = row_h * (self.key_colors.len() + 1) as f32;
+        let keys_id = egui::Id::new("pplot_keys").with(ctx.path());
+        let base = self.look.color;
+        body.row(keys_h, |mut row| {
+            row.col(|ui| {
+                ui.label("keys");
+            });
+            row.col(|ui| {
+                changed |= keys_edit(ui, keys_id, &mut self.key_colors, base);
             });
         });
 
@@ -329,81 +389,88 @@ fn res_edit(ui: &mut egui::Ui, res: &mut Res) -> bool {
     changed
 }
 
+/// Edit the key colours. Each line has a key, a colour and a remove button.
+/// A final button adds a line in the look's colour. Returns whether any
+/// changed.
+fn keys_edit(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    key_colors: &mut Vec<KeyColor>,
+    base: Option<[u8; 4]>,
+) -> bool {
+    let mut changed = false;
+    let mut remove = None;
+    ui.vertical(|ui| {
+        for (i, kc) in key_colors.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                changed |= key_edit(ui, id.with(i), &mut kc.key);
+                let [r, g, b, a] = kc.color;
+                let mut col = egui::Color32::from_rgba_unmultiplied(r, g, b, a);
+                if ui
+                    .color_edit_button_srgba(&mut col)
+                    .on_hover_text("the channel colour")
+                    .changed()
+                {
+                    kc.color = [col.r(), col.g(), col.b(), col.a()];
+                    changed = true;
+                }
+                if ui
+                    .small_button("x")
+                    .on_hover_text("remove this key colour")
+                    .clicked()
+                {
+                    remove = Some(i);
+                }
+            });
+        }
+        if ui
+            .small_button("+")
+            .on_hover_text("colour a map key or list index")
+            .clicked()
+        {
+            let col = resolve_color(base, ui);
+            key_colors.push(KeyColor {
+                key: String::new(),
+                color: [col.r(), col.g(), col.b(), col.a()],
+            });
+            changed = true;
+        }
+    });
+    if let Some(i) = remove {
+        key_colors.remove(i);
+        changed = true;
+    }
+    changed
+}
+
+/// Edit a key colour's key. The text is buffered in egui temp memory while
+/// focused and commits when focus is lost, so a keystroke does not commit a
+/// content address. Returns whether the key changed.
+fn key_edit(ui: &mut egui::Ui, id: egui::Id, key: &mut String) -> bool {
+    let mut buf = ui
+        .data_mut(|d| d.get_temp::<String>(id))
+        .unwrap_or_else(|| key.clone());
+    let resp = ui.add(
+        egui::TextEdit::singleline(&mut buf)
+            .desired_width(48.0)
+            .hint_text("key"),
+    );
+    let changed = resp.lost_focus() && buf != *key;
+    if changed {
+        *key = buf.clone();
+    }
+    ui.data_mut(|d| {
+        if resp.has_focus() {
+            d.insert_temp(id, buf);
+        } else {
+            d.remove::<String>(id);
+        }
+    });
+    changed
+}
+
 fn to_f64(r: Ratio<i64>) -> f64 {
     *r.numer() as f64 / *r.denom() as f64
-}
-
-/// Draw the plot data filling `size`.
-fn draw(
-    look: &PlotLook,
-    data: &PlotData,
-    plot_id: egui::Id,
-    size: egui::Vec2,
-    ui: &mut egui::Ui,
-) -> egui::Response {
-    let color = resolve_color(look.color, ui);
-    let frame = look.frame();
-    let values = data
-        .segments
-        .iter()
-        .map(|s| s.value)
-        .chain(data.points.iter().map(|p| p[1]));
-    // Fitted edges are padded so onset dots at the extremes draw whole.
-    // Fixed value bounds stay exact.
-    let (ylo, yhi) = y_bounds(values, false, None, None);
-    let ypad = edge_pad(ylo, yhi, size.y);
-    let ylo = look.y_min.map_or(ylo - ypad, |v| f64::from(v.get()));
-    let yhi = look.y_max.map_or(yhi + ypad, |v| f64::from(v.get()));
-    let [xlo, xhi] = data.span;
-    let xhi = xhi.max(xlo + f64::EPSILON);
-    let xpad = edge_pad(xlo, xhi, size.x);
-    let bounds = ([xlo - xpad, ylo], [xhi + xpad, yhi]);
-    show_plot(frame, plot_id, size, bounds, ui, |plot_ui| {
-        for s in &data.segments {
-            let pts = vec![[s.start, s.value], [s.end, s.value]];
-            plot_ui.line(
-                egui_plot::Line::new("", pts)
-                    .color(color)
-                    .width(SEGMENT_WIDTH)
-                    .allow_hover(frame.interactive),
-            );
-        }
-        let onsets: Vec<[f64; 2]> = data
-            .segments
-            .iter()
-            .filter(|s| s.onset)
-            .map(|s| [s.start, s.value])
-            .collect();
-        if !onsets.is_empty() {
-            plot_ui.points(
-                egui_plot::Points::new("", onsets)
-                    .color(color)
-                    .radius(ONSET_RADIUS)
-                    .filled(true)
-                    .allow_hover(frame.interactive),
-            );
-        }
-        if !data.points.is_empty() {
-            plot_ui.line(
-                egui_plot::Line::new("", data.points.clone())
-                    .color(color)
-                    .allow_hover(frame.interactive),
-            );
-        }
-    })
-    .response
-}
-
-/// The padding in plot units, on each side of `lo..hi` drawn over `len`
-/// points, that leaves [`EDGE_PAD`] points between the data and each edge.
-/// Zero when `len` leaves no room for it.
-fn edge_pad(lo: f64, hi: f64, len: f32) -> f64 {
-    let room = f64::from(len) - 2.0 * f64::from(EDGE_PAD);
-    if room > 0.0 {
-        f64::from(EDGE_PAD) * (hi - lo) / room
-    } else {
-        0.0
-    }
 }
 
 /// Read and decode the node's stored plot data. Empty when absent or
@@ -415,52 +482,9 @@ fn plot_data_of(ctx: &NodeCtx) -> PlotData {
     }
 }
 
-/// Decode `pat/plot-data` output. `None` unless the value is the expected
-/// `(start end segments points)` list. Malformed entries are skipped.
-fn plot_data(val: &SteelVal) -> Option<PlotData> {
-    let [start, end, segments, points] = list_n(val)?;
-    let span = [steel_num(&start)?, steel_num(&end)?];
-    let segments = list(&segments)?
-        .iter()
-        .filter_map(|seg| {
-            let [start, end, value, onset] = list_n(seg)?;
-            Some(Segment {
-                start: steel_num(&start)?,
-                end: steel_num(&end)?,
-                value: steel_num(&value)?,
-                onset: matches!(onset, SteelVal::BoolV(true)),
-            })
-        })
-        .collect();
-    let points = list(&points)?
-        .iter()
-        .filter_map(|pt| {
-            let [x, y] = list_n(pt)?;
-            Some([steel_num(&x)?, steel_num(&y)?])
-        })
-        .collect();
-    Some(PlotData {
-        span,
-        segments,
-        points,
-    })
-}
-
-/// The elements of a list value.
-fn list(val: &SteelVal) -> Option<Vec<SteelVal>> {
-    match val {
-        SteelVal::ListV(l) => Some(l.iter().cloned().collect()),
-        _ => None,
-    }
-}
-
-/// The elements of a list value of exactly `N` elements.
-fn list_n<const N: usize>(val: &SteelVal) -> Option<[SteelVal; N]> {
-    list(val)?.try_into().ok()
-}
-
 #[cfg(test)]
 mod tests {
+    use super::data::{ChannelKey, Leaf, Seg};
     use super::*;
     use gantz_core::Edge;
     use gantz_core::compile::{entry_fn_name, push_pull_entrypoints};
@@ -506,13 +530,17 @@ mod tests {
         plot_data(&state).expect("plot data")
     }
 
-    fn seg(start: f64, end: f64, value: f64, onset: bool) -> Segment {
-        Segment {
+    fn seg(start: f64, end: f64, value: f64, onset: bool) -> Seg {
+        Seg {
             start,
             end,
-            value,
+            leaf: Leaf::Num(value),
             onset,
         }
+    }
+
+    fn whole(data: &PlotData) -> &[Seg] {
+        &data.channels[&ChannelKey::Whole].segments
     }
 
     // An unconnected span input plots the node's own span.
@@ -525,8 +553,8 @@ mod tests {
         let (g, plot) = graph(pplot, None);
         let data = eval(&g, plot);
         assert_eq!(data.span, [0.5, 1.0]);
-        assert_eq!(data.segments, vec![seg(0.5, 1.0, 2.0, true)]);
-        assert!(data.points.is_empty());
+        assert_eq!(whole(&data), [seg(0.5, 1.0, 2.0, true)]);
+        assert!(data.channels[&ChannelKey::Whole].points.is_empty());
     }
 
     // A connected number plots from 0 to that many cycles.
@@ -536,8 +564,8 @@ mod tests {
         let data = eval(&g, plot);
         assert_eq!(data.span, [0.0, 2.0]);
         assert_eq!(
-            data.segments,
-            vec![
+            whole(&data),
+            [
                 seg(0.0, 0.5, 1.0, true),
                 seg(0.5, 1.0, 2.0, true),
                 seg(1.0, 1.5, 1.0, true),
@@ -553,6 +581,32 @@ mod tests {
         assert_eq!(eval(&g, plot).span, [0.0, 1.0]);
     }
 
+    // A map-valued pattern plots one channel per key, each with its leaves.
+    #[test]
+    fn map_values_split_by_key() {
+        let mut g = Graph::new();
+        let src = node::expr("(pat/pure (hash 's 'bd 'n 2))")
+            .unwrap()
+            .with_requires(["gantz/pattern"])
+            .with_push_eval();
+        let src = g.add_node(Box::new(src));
+        let plot = g.add_node(Box::new(Pplot::default()));
+        g.add_edge(src, plot, Edge::from((0, 0)));
+        let data = eval(&g, plot.index());
+        let keys: Vec<_> = data.channels.keys().cloned().collect();
+        assert_eq!(
+            keys,
+            [ChannelKey::Key("n".into()), ChannelKey::Key("s".into())]
+        );
+        let leaf = |k: &str| {
+            data.channels[&ChannelKey::Key(k.into())].segments[0]
+                .leaf
+                .clone()
+        };
+        assert_eq!(leaf("n"), Leaf::Num(2.0));
+        assert_eq!(leaf("s"), Leaf::Label("bd".into()));
+    }
+
     // A fixed count is clamped. A fit derives the count from the body width,
     // rounding up.
     #[test]
@@ -565,42 +619,5 @@ mod tests {
         // Out-of-range densities clamp to the fit range.
         assert_eq!(Res::Fit(F32(0.0)).slices(120), 240);
         assert_eq!(Res::Fit(F32(1000.0)).slices(120), 2);
-    }
-
-    // The pad leaves `EDGE_PAD` points at each edge. With no room for it,
-    // there is none.
-    #[test]
-    fn edge_pad_fits_onset_dots() {
-        let len = 100.0;
-        let pad = edge_pad(0.0, 1.0, len);
-        let pts_per_unit = f64::from(len) / (1.0 + 2.0 * pad);
-        assert!((pad * pts_per_unit - f64::from(EDGE_PAD)).abs() < 1e-9);
-        assert_eq!(edge_pad(0.0, 1.0, 2.0 * EDGE_PAD), 0.0);
-    }
-
-    // Decoding rejects a malformed state and skips malformed entries.
-    #[test]
-    fn plot_data_decodes_totally() {
-        let num = |n: f64| SteelVal::NumV(n);
-        let list = |xs: Vec<SteelVal>| SteelVal::ListV(xs.into_iter().collect());
-        assert_eq!(plot_data(&list(vec![])), None);
-        assert_eq!(plot_data(&num(1.0)), None);
-        let state = list(vec![
-            num(0.0),
-            num(1.0),
-            list(vec![
-                list(vec![num(0.0), num(1.0), num(3.0), SteelVal::BoolV(true)]),
-                list(vec![num(0.0)]),
-            ]),
-            list(vec![list(vec![num(0.5), num(0.25)]), num(9.0)]),
-        ]);
-        assert_eq!(
-            plot_data(&state),
-            Some(PlotData {
-                span: [0.0, 1.0],
-                segments: vec![seg(0.0, 1.0, 3.0, true)],
-                points: vec![[0.5, 0.25]],
-            }),
-        );
     }
 }

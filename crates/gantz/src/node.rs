@@ -440,6 +440,22 @@ mod tests {
                         "res",
                         Datum::Map(vec![("Fit".to_string(), Datum::F64(4.0))]),
                     ),
+                    ("layout", Datum::Str("Expand".into())),
+                    (
+                        "key_colors",
+                        Datum::Seq(vec![Datum::Map(vec![
+                            ("key".to_string(), Datum::Str("s".into())),
+                            (
+                                "color".to_string(),
+                                Datum::Seq(vec![
+                                    Datum::U64(200),
+                                    Datum::U64(100),
+                                    Datum::U64(50),
+                                    Datum::U64(255),
+                                ]),
+                            ),
+                        ])]),
+                    ),
                     ("width", Datum::U64(160)),
                     ("height", Datum::U64(90)),
                     ("color", Datum::Null),
@@ -813,7 +829,7 @@ mod tests {
             ),
             (
                 "Pplot",
-                "6f616cb788219df3b95a9fbbfeaad7fb4ae9fdd3e4cbb3ae29198831bbba7ee5",
+                "119aca31f290bbb848b66dc8f5130c7a21757b425e061596ea4940b7d93c22ba",
             ),
             (
                 "ScopeOut",

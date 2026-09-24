@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 gantz_core.workspace = true
 num-rational.workspace = true
+num-traits.workspace = true
 gantz_format.workspace = true
 gantz_nodetag.workspace = true
 serde.workspace = true

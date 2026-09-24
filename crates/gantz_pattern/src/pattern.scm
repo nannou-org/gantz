@@ -675,12 +675,10 @@
                (if (number? x) (cons 0 (pat/rationalize x)) #f))))
     (if s (if (< (car s) (cdr s)) s default) default)))
 
-;; An event value as a plottable float. `#t` and `#f` plot as 1 and 0, so
-;; euclid masks show. Any other non-number gives #f.
+;; An event value for plotting. A number becomes inexact. Any other value
+;; passes through for the plotter to classify.
 (define (pat//plot-value v)
-  (if (number? v)
-      (exact->inexact v)
-      (if (equal? v #t) 1.0 (if (equal? v #f) 0.0 #f))))
+  (if (number? v) (exact->inexact v) v))
 
 ;; The `i`th of `n` equal slices of `span`.
 (define (pat//span-slice span i n)
@@ -701,36 +699,37 @@
        (pat//rev-append
         (pat//fold
          (lambda (pts e)
-           (let ((y (pat//plot-value (pat/event-value e)))
-                 (a (pat/event-active e)))
-             (if (if y (not (pat/event-whole e)) #f)
-                 (cons (list (exact->inexact (/ (+ (car a) (cdr a)) 2)) y) pts)
-                 pts)))
+           (let ((a (pat/event-active e)))
+             (if (pat/event-whole e)
+                 pts
+                 (cons (list (exact->inexact (/ (+ (car a) (cdr a)) 2))
+                             (pat//plot-value (pat/event-value e)))
+                       pts))))
          '()
          (pat//events p (pat//span-slice span i n)))
         acc))))
 
 ;; Query `p` over `span` for plotting. Returns
-;; `(list start end segments points)` with every number inexact.
+;; `(list start end segments points)`. Times and top-level numeric values
+;; are inexact. Other values pass through.
 ;;
 ;; `segments` holds one `(start end value onset?)` per discrete event,
 ;; spanning its active part. `points` holds `(x value)` samples of any
 ;; continuous signal, taken over `res` equal slices of the span. Signals
 ;; are only sampled when the full query holds a signal event, so a
-;; discrete pattern costs one query. Events with non-plottable values are
-;; dropped. A non-pattern `p` gives no segments and no points.
+;; discrete pattern costs one query. A non-pattern `p` gives no segments
+;; and no points.
 (define (pat/plot-data p span res)
   (let ((events (pat/query p span)))
     (list (exact->inexact (pat/span-start span))
           (exact->inexact (pat/span-end span))
           (pat//fold
            (lambda (segs e)
-             (let ((y (pat//plot-value (pat/event-value e)))
-                   (a (pat/event-active e)))
-               (if (if y (pat/event-whole e) #f)
+             (let ((a (pat/event-active e)))
+               (if (pat/event-whole e)
                    (cons (list (exact->inexact (car a))
                                (exact->inexact (cdr a))
-                               y
+                               (pat//plot-value (pat/event-value e))
                                (pat/event-onset? e))
                          segs)
                    segs)))
