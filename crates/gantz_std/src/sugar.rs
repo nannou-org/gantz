@@ -1,15 +1,16 @@
 //! `.gantz` keyword sugar for the standard node set.
 //!
 //! [`StdSugar`] provides the keywords for this crate's nodes. These are a
-//! bare `bang`, `(number [#:min m] [#:max m] [#:precision n] [#:no-push-eval])`
+//! bare `bang`, `(list [#:count n])`,
+//! `(number [#:min m] [#:max m] [#:precision n] [#:no-push-eval])`
 //! and `(log [level])`. Compose it with [`gantz_format::CoreSugar`] and the
 //! other crates' sugars via [`gantz_format::Sugars`].
 
-use crate::{Bang, Log, Number};
+use crate::{Bang, List, Log, Number};
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
 use gantz_nodetag::NodeTag;
 
-/// Keyword sugar for [`Bang`], [`Number`] and [`Log`].
+/// Keyword sugar for [`Bang`], [`List`], [`Number`] and [`Log`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StdSugar;
 
@@ -17,6 +18,7 @@ pub struct StdSugar;
 /// to a plain serde object with no extra arguments.
 const KEYWORD_TAG: &[(&str, &str)] = &[
     ("bang", Bang::TAG),
+    ("list", List::TAG),
     ("number", Number::TAG),
     ("log", Log::TAG),
 ];
@@ -40,6 +42,7 @@ fn keyword_for_tag(tag: &str) -> Option<&'static str> {
 impl Sugar for StdSugar {
     fn read_spec(&self, head: &str, args: SugarArgs<'_>) -> Result<Option<Datum>, FormatError> {
         let datum = match head {
+            "list" => list_spec(args)?,
             "number" => number_spec(args)?,
             "log" => log_spec(args)?,
             _ => return Ok(None),
@@ -60,6 +63,7 @@ impl Sugar for StdSugar {
 
     fn write_spec(&self, tag: &str, node: &Datum) -> Option<String> {
         match tag {
+            "List" => Some(write_list(node)),
             "Number" => Some(write_number(node)),
             "Log" => Some(write_log(node)),
             other => keyword_for_tag(other).map(str::to_string),
@@ -88,6 +92,26 @@ fn number_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
         fields.push(("push_eval_on_edit", Datum::Bool(false)));
     }
     Ok(node_datum("Number", fields))
+}
+
+/// Read a `(list [#:count n])` form. The count is emitted only when given,
+/// so a bare `list` stays bare.
+fn list_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
+    let mut fields = Vec::new();
+    if let Some(count) = args.keyword_int("count")? {
+        let count = (count.max(1) as usize).min(List::MAX_COUNT);
+        fields.push(("count", Datum::U64(count as u64)));
+    }
+    Ok(node_datum("List", fields))
+}
+
+/// Write a `List` as a bare `list` at the default count, else
+/// `(list #:count n)`.
+fn write_list(node: &Datum) -> String {
+    match node.get("count").and_then(Datum::as_i64) {
+        Some(count) if count != List::DEFAULT_COUNT as i64 => format!("(list #:count {count})"),
+        _ => "list".to_string(),
+    }
 }
 
 /// Read a `(log [level])` form, mapping the level symbol to the serde string.
@@ -171,6 +195,30 @@ mod tests {
         let bare = StdSugar.read_bare("bang").expect("bare bang");
         assert_eq!(bare.get("type").and_then(Datum::as_str), Some("Bang"));
         assert_eq!(StdSugar.write_spec("Bang", &bare).as_deref(), Some("bang"));
+    }
+
+    #[test]
+    fn list_count_round_trips() {
+        let s = StdSugar;
+
+        // A default list stays bare, whether read as a keyword or spec.
+        let bare = s.read_bare("list").expect("bare list");
+        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("List"));
+        assert_eq!(s.write_spec("List", &bare).as_deref(), Some("list"));
+        let empty = read_spec("(list)").expect("empty spec");
+        assert_eq!(s.write_spec("List", &empty).as_deref(), Some("list"));
+        let default = read_spec("(list #:count 2)").expect("default count");
+        assert_eq!(s.write_spec("List", &default).as_deref(), Some("list"));
+
+        // A non-default count round-trips, clamped into range.
+        let three = read_spec("(list #:count 3)").expect("count");
+        assert_eq!(three.get("count").and_then(Datum::as_i64), Some(3));
+        assert_eq!(
+            s.write_spec("List", &three).as_deref(),
+            Some("(list #:count 3)"),
+        );
+        let zero = read_spec("(list #:count 0)").expect("count");
+        assert_eq!(zero.get("count").and_then(Datum::as_i64), Some(1));
     }
 
     #[test]

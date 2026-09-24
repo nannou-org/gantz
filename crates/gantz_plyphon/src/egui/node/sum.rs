@@ -40,10 +40,10 @@ impl NodeUi for Sum {
     fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
         match kind {
             SocketKind::Input => Some(SocketDoc::ty("signal").with_description(format!(
-                "signal {ix} to sum (any channel width; silence when unconnected)"
+                "signal {ix} to sum, of any channel width. Silence when unconnected"
             ))),
             SocketKind::Output => Some(SocketDoc::ty("signal").with_description(
-                "the channel-wise sum (width = the widest input; mono inputs broadcast)",
+                "the channel-wise sum. Its width is the widest input. Mono inputs broadcast",
             )),
         }
     }

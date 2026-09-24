@@ -78,7 +78,7 @@ impl gantz_egui::NodeUi for UpdateBang {
         match kind {
             gantz_egui::SocketKind::Output => Some(
                 gantz_egui::SocketDoc::ty("number")
-                    .with_description("update delta time in seconds; emitted every update"),
+                    .with_description("update delta time in seconds, emitted every update"),
             ),
             gantz_egui::SocketKind::Input => None,
         }

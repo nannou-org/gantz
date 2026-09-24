@@ -714,7 +714,8 @@ mod tests {
             gantz_core::node::Ref::new([0u8; 32].into()),
         );
         let mut writes = Vec::new();
-        let ctx = crate::NodeCtx::new(&env, &[0][..], &[], &[], &[], &mut vm, &mut writes);
+        let graph = gantz_ca::DataGraph::default();
+        let ctx = crate::NodeCtx::new(&env, &graph, &[0][..], &[], &[], &[], &mut vm, &mut writes);
         assert!(body_tree(&named, &env, &ctx).is_none());
     }
 

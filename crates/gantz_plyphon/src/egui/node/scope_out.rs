@@ -13,7 +13,7 @@ impl NodeUi for ScopeOut {
     }
 
     fn description(&self) -> Option<&'static str> {
-        Some("Scope a signal into per-channel ring buffers; read them out on a trigger")
+        Some("Scope a signal into per-channel ring buffers. Read them out on a trigger")
     }
 
     fn ui(&mut self, _ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {

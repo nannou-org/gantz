@@ -324,7 +324,7 @@ impl gantz_egui::NodeUi for TickBang {
         match kind {
             gantz_egui::SocketKind::Output => Some(
                 gantz_egui::SocketDoc::ty("number")
-                    .with_description("tick duration in seconds; emitted once per elapsed tick"),
+                    .with_description("tick duration in seconds, emitted once per elapsed tick"),
             ),
             gantz_egui::SocketKind::Input => None,
         }

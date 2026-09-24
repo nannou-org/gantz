@@ -7,6 +7,7 @@ mod delay;
 mod expr;
 mod identity;
 mod inlet;
+mod list;
 mod log;
 mod number;
 mod outlet;

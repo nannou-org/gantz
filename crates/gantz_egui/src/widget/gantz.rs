@@ -1939,6 +1939,7 @@ where
                                 let mut entry = data.instances.take(codec, n_ix, weight).ok()?;
                                 let ctx = NodeCtx::new(
                                     env,
+                                    data.graph,
                                     &path,
                                     &inlets,
                                     &outlets,
@@ -3619,7 +3620,7 @@ fn gui_preview_tree(
         Some(marker)
     };
     let mut writes = Vec::new();
-    let mut node_ctx = NodeCtx::new(env, &[], &inlets, &outlets, &[], vm, &mut writes);
+    let mut node_ctx = NodeCtx::new(env, graph, &[], &inlets, &outlets, &[], vm, &mut writes);
     let root_id = egui::Id::new(("gantz-gui-preview", head));
     let r = crate::ui_tree::UiTree::new(root_id)
         .n_outputs(&resolver)
@@ -4022,6 +4023,7 @@ fn node_inspector<'a>(
                         let path = [ix];
                         let ctx = NodeCtx::new(
                             registry,
+                            graph,
                             &path[..],
                             &inlets,
                             &outlets,

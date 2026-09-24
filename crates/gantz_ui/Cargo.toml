@@ -10,7 +10,7 @@ repository.workspace = true
 
 [features]
 default = ["steel"]
-steel = ["dep:steel-core"]
+steel = ["dep:steel-core", "dep:gantz_core"]
 datum = ["dep:gantz_core"]
 
 [dependencies]

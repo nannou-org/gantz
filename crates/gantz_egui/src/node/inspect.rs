@@ -59,7 +59,7 @@ impl NodeUi for Inspect {
     fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         Some(match kind {
             SocketKind::Input => {
-                SocketDoc::ty("any").with_description("value to display; stored and passed through")
+                SocketDoc::ty("any").with_description("value to display. Stored and passed through")
             }
             SocketKind::Output => {
                 SocketDoc::ty("any").with_description("the input value, unchanged")

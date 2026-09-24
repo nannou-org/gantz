@@ -645,7 +645,7 @@ impl NodeUi for Plot {
     fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         Some(match kind {
             SocketKind::Input => SocketDoc::ty("number or list").with_description(
-                "scope: a number (or list) appended to the history; signal: the value to plot",
+                "scope mode appends a number or list to the history. signal mode plots the value",
             ),
             SocketKind::Output => {
                 SocketDoc::ty("any").with_description("the input value, unchanged")
