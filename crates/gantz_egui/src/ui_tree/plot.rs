@@ -56,6 +56,10 @@ pub(crate) fn plot_body(
 /// Stack `n` rows vertically, splitting the height of `size` evenly. `row`
 /// draws row `i` filling the given size. Returns the union of the row
 /// responses. With `n` of zero, one row is drawn.
+///
+/// The rows and the item spacing between them never exceed `size`. A
+/// `Resize` parent grows to fit content larger than itself, so any excess
+/// would grow the node body on every frame.
 pub fn stacked(
     n: usize,
     size: egui::Vec2,
@@ -63,7 +67,9 @@ pub fn stacked(
     mut row: impl FnMut(usize, egui::Vec2, &mut egui::Ui) -> egui::Response,
 ) -> egui::Response {
     let n = n.max(1);
-    let sub_size = egui::vec2(size.x, size.y / n as f32);
+    let gaps = ui.spacing().item_spacing.y * (n - 1) as f32;
+    let row_h = ((size.y - gaps) / n as f32).floor().max(0.0);
+    let sub_size = egui::vec2(size.x, row_h);
     ui.vertical(|ui| {
         (0..n)
             .map(|i| row(i, sub_size, ui))
@@ -310,6 +316,31 @@ mod tests {
             ])),
             expected,
         );
+    }
+
+    // Stacked rows and the spacing between them fit within the given height,
+    // so a resizable parent never grows to fit them.
+    #[test]
+    fn stacked_fits_height() {
+        let ctx = egui::Context::default();
+        let size = egui::vec2(100.0, 101.0);
+        for n in 0..=6 {
+            let mut used = egui::Vec2::ZERO;
+            let _ = ctx.run(Default::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    used = ui
+                        .scope(|ui| {
+                            stacked(n, size, ui, |_, s, ui| {
+                                ui.allocate_exact_size(s, egui::Sense::hover()).1
+                            })
+                        })
+                        .response
+                        .rect
+                        .size();
+                });
+            });
+            assert!(used.y <= size.y, "{n} rows use {} of {}", used.y, size.y);
+        }
     }
 
     #[test]
