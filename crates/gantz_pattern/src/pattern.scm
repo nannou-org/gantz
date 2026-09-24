@@ -717,10 +717,10 @@
 ;; spanning its active part. `points` holds `(x value)` samples of any
 ;; continuous signal, taken over `res` equal slices of the span. Signals
 ;; are only sampled when the full query holds a signal event, so a
-;; discrete pattern costs one query. A non-pattern `p` gives no segments
-;; and no points.
+;; discrete pattern costs one query. Events are not sorted, as the plotter
+;; needs no order. A non-pattern `p` gives no segments and no points.
 (define (pat/plot-data p span res)
-  (let ((events (pat/query p span)))
+  (let ((events (pat//events p span)))
     (list (exact->inexact (pat/span-start span))
           (exact->inexact (pat/span-end span))
           (pat//fold
