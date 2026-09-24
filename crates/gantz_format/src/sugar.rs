@@ -102,6 +102,27 @@ impl<'a> SugarArgs<'a> {
         }
     }
 
+    /// Find a `#:<key>` keyword and return the verbatim source of the
+    /// following value, for values with a syntax of their own such as exact
+    /// rationals.
+    pub fn keyword_verbatim(&self, key: &str) -> Result<Option<&'a str>, FormatError> {
+        match self.keyword_at(key) {
+            Some((i, kw)) => Ok(Some(
+                self.args
+                    .get(i + 1)
+                    .and_then(|v| span_src(v, self.src))
+                    .ok_or_else(|| {
+                        err_at(
+                            kw,
+                            self.src,
+                            ErrorKind::Malformed(format!("#:{key} requires a value")),
+                        )
+                    })?,
+            )),
+            None => Ok(None),
+        }
+    }
+
     /// Find every `#:<key>` keyword and return the string value following
     /// each occurrence.
     ///

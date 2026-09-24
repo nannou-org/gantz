@@ -264,7 +264,7 @@ fn int(toks: &[Tok]) -> Option<(i64, &[Tok])> {
 
 /// Parse a word as an exact ratio. An integer, an `n/d` rational, or a
 /// float snapped to the 1/1920 grid, mirroring `pat/rationalize`.
-fn parse_number(word: &str) -> Option<Ratio<i64>> {
+pub(crate) fn parse_number(word: &str) -> Option<Ratio<i64>> {
     if let Ok(i) = word.parse::<i64>() {
         return Some(Ratio::from_integer(i));
     }
@@ -276,10 +276,14 @@ fn parse_number(word: &str) -> Option<Ratio<i64>> {
         return Some(Ratio::new(n, d));
     }
     let f = word.parse::<f64>().ok()?;
-    if !f.is_finite() {
-        return None;
-    }
-    Some(Ratio::new((f * 1920.0).round() as i64, 1920))
+    snap(f)
+}
+
+/// Snap a float to the nearest 1/1920 of a cycle, mirroring
+/// `pat/rationalize`. `None` for a non-finite float.
+pub(crate) fn snap(f: f64) -> Option<Ratio<i64>> {
+    f.is_finite()
+        .then(|| Ratio::new((f * 1920.0).round() as i64, 1920))
 }
 
 #[cfg(test)]

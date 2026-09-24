@@ -61,7 +61,11 @@ impl gantz_core::Node for Pmini {
 
 /// The builtin node specs provided by this domain.
 pub fn builtins() -> Vec<gantz_core::Builtin> {
-    vec![gantz_core::Builtin::new("pmini", &Pmini::default())]
+    vec![
+        gantz_core::Builtin::new("pmini", &Pmini::default()),
+        #[cfg(feature = "egui")]
+        gantz_core::Builtin::new("pplot", &crate::Pplot::default()),
+    ]
 }
 
 #[cfg(test)]

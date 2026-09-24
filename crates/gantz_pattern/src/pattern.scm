@@ -58,7 +58,9 @@
          pat/event-onset?
          pat/window
          pat/events->secs
-         pat/euclid-with)
+         pat/euclid-with
+         pat/as-span
+         pat/plot-data)
 
 (define (pat//max2 a b) (if (< a b) b a))
 (define (pat//min2 a b) (if (< b a) b a))
@@ -659,3 +661,80 @@
 ;; mask's onsets, values from `p`.
 (define (pat/euclid-with p k n off)
   (pat/appr p (pat/map (lambda (b) (lambda (v) v)) (pat/euclid-off k n off))))
+
+;; Coerce `x` to a query span for plotting. A pair of numbers passes
+;; through rationalized. A number `n` is the span from 0 to `n`. Anything
+;; else, or a span that does not move forward, gives `default`.
+(define (pat/as-span x default)
+  (let ((s (if (pair? x)
+               (if (number? (car x))
+                   (if (number? (cdr x))
+                       (cons (pat/rationalize (car x)) (pat/rationalize (cdr x)))
+                       #f)
+                   #f)
+               (if (number? x) (cons 0 (pat/rationalize x)) #f))))
+    (if s (if (< (car s) (cdr s)) s default) default)))
+
+;; An event value for plotting. A number becomes inexact. Any other value
+;; passes through for the plotter to classify.
+(define (pat//plot-value v)
+  (if (number? v) (exact->inexact v) v))
+
+;; The `i`th of `n` equal slices of `span`.
+(define (pat//span-slice span i n)
+  (let ((start (pat/span-start span))
+        (len (pat/span-len span)))
+    (pat/span (+ start (/ (* len i) n)) (+ start (/ (* len (+ i 1)) n)))))
+
+;; The `(x value)` samples of the signal events in `p` over `n` slices of
+;; `span`. `x` is the midpoint of each sampled event's active span.
+(define (pat//signal-points p span n)
+  (pat//signal-points-loop p span n (- n 1) '()))
+
+(define (pat//signal-points-loop p span n i acc)
+  (if (< i 0)
+      acc
+      (pat//signal-points-loop
+       p span n (- i 1)
+       (pat//rev-append
+        (pat//fold
+         (lambda (pts e)
+           (let ((a (pat/event-active e)))
+             (if (pat/event-whole e)
+                 pts
+                 (cons (list (exact->inexact (/ (+ (car a) (cdr a)) 2))
+                             (pat//plot-value (pat/event-value e)))
+                       pts))))
+         '()
+         (pat//events p (pat//span-slice span i n)))
+        acc))))
+
+;; Query `p` over `span` for plotting. Returns
+;; `(list start end segments points)`. Times and top-level numeric values
+;; are inexact. Other values pass through.
+;;
+;; `segments` holds one `(start end value onset?)` per discrete event,
+;; spanning its active part. `points` holds `(x value)` samples of any
+;; continuous signal, taken over `res` equal slices of the span. Signals
+;; are only sampled when the full query holds a signal event, so a
+;; discrete pattern costs one query. Events are not sorted, as the plotter
+;; needs no order. A non-pattern `p` gives no segments and no points.
+(define (pat/plot-data p span res)
+  (let ((events (pat//events p span)))
+    (list (exact->inexact (pat/span-start span))
+          (exact->inexact (pat/span-end span))
+          (pat//fold
+           (lambda (segs e)
+             (let ((a (pat/event-active e)))
+               (if (pat/event-whole e)
+                   (cons (list (exact->inexact (car a))
+                               (exact->inexact (cdr a))
+                               (pat//plot-value (pat/event-value e))
+                               (pat/event-onset? e))
+                         segs)
+                   segs)))
+           '()
+           (reverse events))
+          (if (pat//fold (lambda (any e) (if any any (not (pat/event-whole e)))) #f events)
+              (pat//signal-points p span res)
+              '()))))

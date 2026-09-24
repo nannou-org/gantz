@@ -1,4 +1,4 @@
-/// The `.gantz` keyword sugar carrier for the app's node set. It composes
+/// The `.ga.fi.filter(|&ix| (&*graph[ix] as &dyn std::any::Any).is::<gantz_pattern::Pplot>())d(|&ix| (&*graph[ix] as &dyn std::any::Any).is::<bevy_gantz_egui::node::tick_bang::TickBang>())tz` keyword sugar carrier for the app's node set. It composes
 /// every domain's node sugar.
 pub struct NodeSet;
 
@@ -56,6 +56,7 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_plyphon::Bus,
             gantz_plyphon::PlayBuf,
             gantz_pattern::Pmini,
+            gantz_pattern::Pplot,
         }
     }
 }
@@ -241,6 +242,7 @@ mod tests {
             "outlet",
             "plot",
             "pmini",
+            "pplot",
             "sleep",
             "tick!",
             "update!",
@@ -428,6 +430,42 @@ mod tests {
             node_datum(
                 "Pmini",
                 vec![("src", Datum::Str("bd(3,8) ~ [sn sn]".into()))],
+            ),
+            node_datum(
+                "Pplot",
+                vec![
+                    ("start", Datum::Seq(vec![Datum::I64(1), Datum::I64(4)])),
+                    ("end", Datum::Seq(vec![Datum::I64(2), Datum::I64(1)])),
+                    (
+                        "res",
+                        Datum::Map(vec![("Fit".to_string(), Datum::F64(4.0))]),
+                    ),
+                    ("layout", Datum::Str("Expand".into())),
+                    (
+                        "key_colors",
+                        Datum::Seq(vec![Datum::Map(vec![
+                            ("key".to_string(), Datum::Str("s".into())),
+                            (
+                                "color".to_string(),
+                                Datum::Seq(vec![
+                                    Datum::U64(200),
+                                    Datum::U64(100),
+                                    Datum::U64(50),
+                                    Datum::U64(255),
+                                ]),
+                            ),
+                        ])]),
+                    ),
+                    ("width", Datum::U64(160)),
+                    ("height", Datum::U64(90)),
+                    ("color", Datum::Null),
+                    ("show_grid", Datum::Bool(true)),
+                    ("show_axes", Datum::Bool(false)),
+                    ("interactive", Datum::Bool(false)),
+                    ("margin", Datum::Bool(true)),
+                    ("y_min", Datum::Null),
+                    ("y_max", Datum::F64(2.0)),
+                ],
             ),
             node_datum("Gui", vec![]),
             node_datum(
@@ -788,6 +826,10 @@ mod tests {
             (
                 "Pmini",
                 "84670e8d51c15a952187697e06d022ce46e243038fc7d7cb0f2a07925a1d1d6c",
+            ),
+            (
+                "Pplot",
+                "119aca31f290bbb848b66dc8f5130c7a21757b425e061596ea4940b7d93c22ba",
             ),
             (
                 "ScopeOut",
@@ -2449,6 +2491,86 @@ mod tests {
             }
         }
         assert!(checked > 0, "base.gantz declares no gui markers");
+    }
+
+    /// One round of ticks over demo-pplot leaves every pplot holding plot
+    /// data with events or signal samples, so each value kind reaches its
+    /// plot.
+    #[test]
+    fn demo_pplot_plots_every_source() {
+        use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
+        use gantz_core::steel::SteelVal;
+
+        let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
+        let mut merged = DataReg::default();
+        for bytes in [gantz_base::BYTES, gantz_pattern::BASE_BYTES] {
+            let export: DataReg =
+                gantz_egui::export::parse_export_at(bytes, ts, &super::codec()).expect("parse");
+            merged.merge(export);
+        }
+        let reified = reify_all(&merged);
+        let builtins = builtins_with_instances();
+        let codec = super::codec();
+        let reg_env = env(&merged, &reified, &builtins, &codec);
+        let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
+        let head = gantz_ca::Head::Branch(name("demo-pplot"));
+        let graph = head_graph(&reified, &merged, &head).expect("demo-pplot graph");
+
+        let mut eps = push_pull_entrypoints(&get_node, graph);
+        eps.extend(bevy_gantz_egui::node::tick_bang::entrypoints(
+            &get_node, graph,
+        ));
+        let (mut vm, _c) = gantz_core::vm::init_with_modules(
+            &get_node,
+            graph,
+            &eps,
+            &gantz_core::compile::Config::default(),
+            &super::steel_modules(),
+        )
+        .unwrap_or_else(|e| panic!("init: {}", gantz_core::vm::error_chain(&e)));
+
+        // Each source has its own tick, so fire every tick once.
+        let ticks: Vec<usize> = graph
+            .node_indices()
+            .filter(|&ix| {
+                (&*graph[ix] as &dyn std::any::Any)
+                    .is::<bevy_gantz_egui::node::tick_bang::TickBang>()
+            })
+            .map(|ix| ix.index())
+            .collect();
+        assert!(!ticks.is_empty(), "demo-pplot has no tick");
+        for tick_ix in ticks {
+            let tick_ep = eps
+                .iter()
+                .find(|ep| {
+                    ep.0.iter()
+                        .any(|s| s.kind == EvalKind::Push && s.path == [tick_ix])
+                })
+                .expect("tick ep");
+            vm.call_function_by_name_with_args(&entry_fn_name(&tick_ep.id()), vec![])
+                .unwrap_or_else(|e| panic!("tick {tick_ix} errored: {e}"));
+        }
+
+        let plots: Vec<_> = graph
+            .node_indices()
+            .filter(|&ix| (&*graph[ix] as &dyn std::any::Any).is::<gantz_pattern::Pplot>())
+            .collect();
+        assert!(!plots.is_empty(), "demo-pplot has no pplot");
+        for ix in plots {
+            let state = gantz_core::node::state::extract_value(&vm, &[ix.index()])
+                .unwrap()
+                .unwrap_or_else(|| panic!("pplot {} has no state", ix.index()));
+            let SteelVal::ListV(parts) = state else {
+                panic!("pplot {} state is not plot data", ix.index());
+            };
+            let non_empty =
+                |i: usize| matches!(parts.get(i), Some(SteelVal::ListV(l)) if !l.is_empty());
+            assert!(
+                non_empty(2) || non_empty(3),
+                "pplot {} plotted nothing",
+                ix.index(),
+            );
+        }
     }
 
     /// Partial evals over demo-pattern stay silent. The tick entrypoint is

@@ -18,6 +18,8 @@ pub mod sugar;
 #[cfg(feature = "egui")]
 pub mod egui;
 
+#[cfg(feature = "egui")]
+pub use self::egui::Pplot;
 pub use node::{Pmini, builtins};
 pub use sugar::PatternSugar;
 

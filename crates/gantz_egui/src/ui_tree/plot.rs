@@ -1,11 +1,23 @@
 //! The shared plot leaf renderer.
 //!
-//! Draws per-channel numeric series with `egui_plot`. [`PlotParams`]
+//! Draws per-channel numeric series with `egui_plot`. `PlotParams`
 //! parameterizes it, so the same code renders both the `Plot` node and the
 //! interpreter's `plot` element. The node takes its params from its weight.
-//! The element takes them from its attrs.
+//! The element takes them from its attrs. [`show_plot`] is the plot area
+//! beneath both, for plot-like nodes that draw their own items.
 
 use steel::SteelVal;
+
+/// The plot area's grid, axes and hover behaviour.
+#[derive(Clone, Copy, Debug)]
+pub struct PlotFrame {
+    /// Whether a grid draws behind the data.
+    pub grid: bool,
+    /// Whether axes draw.
+    pub axes: bool,
+    /// Whether hovering the data shows a crosshair and value readout.
+    pub interactive: bool,
+}
 
 /// The resolved rendering parameters of one plot.
 pub(crate) struct PlotParams {
@@ -13,12 +25,8 @@ pub(crate) struct PlotParams {
     pub style: gantz_ui::PlotStyle,
     /// Plot colour, theme default when absent.
     pub color: Option<[u8; 4]>,
-    /// Whether a grid draws behind the samples.
-    pub grid: bool,
-    /// Whether axes draw.
-    pub axes: bool,
-    /// Whether hovering the samples shows a value readout.
-    pub interactive: bool,
+    /// The plot area.
+    pub frame: PlotFrame,
     /// A fixed lower value axis bound.
     pub y_min: Option<f32>,
     /// A fixed upper value axis bound.
@@ -40,18 +48,33 @@ pub(crate) fn plot_body(
         let ys = channels.first().map(Vec::as_slice).unwrap_or(&[]);
         return plot_channel(params, ys, plot_id, size, ui);
     }
-    // Stack one sub-plot per channel, splitting the height evenly.
-    let sub_h = size.y / channels.len() as f32;
+    stacked(channels.len(), size, ui, |i, sub_size, ui| {
+        plot_channel(params, &channels[i], plot_id.with(i), sub_size, ui)
+    })
+}
+
+/// Stack `n` rows vertically, splitting the height of `size` evenly. `row`
+/// draws row `i` filling the given size. Returns the union of the row
+/// responses. With `n` of zero, one row is drawn.
+///
+/// The rows and the item spacing between them never exceed `size`. A
+/// `Resize` parent grows to fit content larger than itself, so any excess
+/// would grow the node body on every frame.
+pub fn stacked(
+    n: usize,
+    size: egui::Vec2,
+    ui: &mut egui::Ui,
+    mut row: impl FnMut(usize, egui::Vec2, &mut egui::Ui) -> egui::Response,
+) -> egui::Response {
+    let n = n.max(1);
+    let gaps = ui.spacing().item_spacing.y * (n - 1) as f32;
+    let row_h = ((size.y - gaps) / n as f32).floor().max(0.0);
+    let sub_size = egui::vec2(size.x, row_h);
     ui.vertical(|ui| {
-        let mut resp: Option<egui::Response> = None;
-        for (i, ch) in channels.iter().enumerate() {
-            let r = plot_channel(params, ch, plot_id.with(i), egui::vec2(size.x, sub_h), ui);
-            resp = Some(match resp.take() {
-                Some(prev) => prev.union(r),
-                None => r,
-            });
-        }
-        resp.expect("at least two channels")
+        (0..n)
+            .map(|i| row(i, sub_size, ui))
+            .reduce(|a, b| a.union(b))
+            .expect("at least one row")
     })
     .inner
 }
@@ -66,67 +89,84 @@ fn plot_channel(
     ui: &mut egui::Ui,
 ) -> egui::Response {
     let color = resolve_color(params.color, ui);
-    let plot_style = params.style;
-    let interactive = params.interactive;
-    let bounds = value_bounds(ys, plot_style, params.y_min, params.y_max);
+    let interactive = params.frame.interactive;
+    let bounds = value_bounds(ys, params.style, params.y_min, params.y_max);
+    show_plot(
+        params.frame,
+        plot_id,
+        size,
+        bounds,
+        ui,
+        |plot_ui| match params.style {
+            gantz_ui::PlotStyle::Bars => {
+                let bars = ys
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &y)| {
+                        egui_plot::Bar::new(i as f64, y)
+                            .width(1.0)
+                            .fill(color)
+                            .stroke(egui::Stroke::NONE)
+                    })
+                    .collect();
+                plot_ui.bar_chart(egui_plot::BarChart::new("", bars).allow_hover(interactive));
+            }
+            gantz_ui::PlotStyle::Line => {
+                let points = egui_plot::PlotPoints::from_ys_f64(ys);
+                plot_ui.line(
+                    egui_plot::Line::new("", points)
+                        .color(color)
+                        .allow_hover(interactive),
+                );
+            }
+        },
+    )
+    .response
+}
 
+/// Render a plot area filling `size` with the view fixed to `bounds`, given as
+/// `([x_min, y_min], [x_max, y_max])`. `draw` adds the plot items. Items should
+/// pass `frame.interactive` to their `allow_hover`, so a non-interactive plot
+/// shows no value readout.
+///
+/// Pan and zoom are always off. The plot senses hover only, so the node frame
+/// beneath still captures drags and right-clicks.
+pub fn show_plot(
+    frame: PlotFrame,
+    plot_id: egui::Id,
+    size: egui::Vec2,
+    bounds: ([f64; 2], [f64; 2]),
+    ui: &mut egui::Ui,
+    draw: impl FnOnce(&mut egui_plot::PlotUi),
+) -> egui_plot::PlotResponse<()> {
     let mut plot = egui_plot::Plot::new(plot_id)
         .width(size.x)
         .height(size.y)
         .show_background(false)
-        .show_axes(egui::Vec2b::new(params.axes, params.axes))
-        .show_grid(egui::Vec2b::new(params.grid, params.grid))
-        // Pan/zoom are always off. `Sense::hover` lets the node frame beneath
-        // capture drags and right-clicks, so the node moves and its context
-        // menu opens as usual.
+        .show_axes(egui::Vec2b::new(frame.axes, frame.axes))
+        .show_grid(egui::Vec2b::new(frame.grid, frame.grid))
         .allow_drag(false)
         .allow_zoom(false)
         .allow_scroll(false)
         .allow_boxed_zoom(false)
         .sense(egui::Sense::hover());
-    if !interactive {
-        // Purely visual, so hide the crosshair. `allow_hover(false)` below
-        // also suppresses the value readout.
+    if !frame.interactive {
         plot = plot.cursor_color(egui::Color32::TRANSPARENT);
     }
 
-    let plot_resp = plot
-        .show(ui, |plot_ui| {
-            match plot_style {
-                gantz_ui::PlotStyle::Bars => {
-                    let bars = ys
-                        .iter()
-                        .enumerate()
-                        .map(|(i, &y)| {
-                            egui_plot::Bar::new(i as f64, y)
-                                .width(1.0)
-                                .fill(color)
-                                .stroke(egui::Stroke::NONE)
-                        })
-                        .collect();
-                    plot_ui.bar_chart(egui_plot::BarChart::new("", bars).allow_hover(interactive));
-                }
-                gantz_ui::PlotStyle::Line => {
-                    let points = egui_plot::PlotPoints::from_ys_f64(ys);
-                    plot_ui.line(
-                        egui_plot::Line::new("", points)
-                            .color(color)
-                            .allow_hover(interactive),
-                    );
-                }
-            }
-            // Drive the view from the data and config. The plot never pans,
-            // so live updates and min/max apply.
-            let ([xlo, ylo], [xhi, yhi]) = bounds;
-            plot_ui.set_plot_bounds_x(xlo..=xhi);
-            plot_ui.set_plot_bounds_y(ylo..=yhi);
-        })
-        .response;
+    let plot_resp = plot.show(ui, |plot_ui| {
+        draw(plot_ui);
+        // Drive the view from the data and config. The plot never pans,
+        // so live updates and min/max apply.
+        let ([xlo, ylo], [xhi, yhi]) = bounds;
+        plot_ui.set_plot_bounds_x(xlo..=xhi);
+        plot_ui.set_plot_bounds_y(ylo..=yhi);
+    });
 
     // egui_plot sets a crosshair mouse cursor on hover. When not interactive,
     // restore the default arrow so the plot reads as a static node. The
     // resize corner sets its own cursor after this, so it is unaffected.
-    if !interactive && plot_resp.hovered() {
+    if !frame.interactive && plot_resp.response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
     }
     plot_resp
@@ -142,45 +182,45 @@ fn value_bounds(
     y_max: Option<f32>,
 ) -> ([f64; 2], [f64; 2]) {
     let n = ys.len() as f64;
-    let (xlo, xhi) = match style {
-        gantz_ui::PlotStyle::Bars => (-0.5, (n - 0.5).max(0.5)),
-        gantz_ui::PlotStyle::Line => (0.0, (n - 1.0).max(1.0)),
+    let (xlo, xhi, baseline) = match style {
+        gantz_ui::PlotStyle::Bars => (-0.5, (n - 0.5).max(0.5), true),
+        gantz_ui::PlotStyle::Line => (0.0, (n - 1.0).max(1.0), false),
     };
+    let (ylo, yhi) = y_bounds(ys.iter().copied(), baseline, y_min, y_max);
+    ([xlo, ylo], [xhi, yhi])
+}
 
-    let (dmin, dmax) = ys
-        .iter()
-        .copied()
+/// Compute `(y_min, y_max)` for the view from `values` and optional fixed
+/// bounds. With `baseline`, `0` stays in view. A flat range is padded by `1`
+/// either side. Non-finite values are ignored. No values give `0..1`. Fixed
+/// bounds replace the computed ones.
+pub fn y_bounds(
+    values: impl IntoIterator<Item = f64>,
+    baseline: bool,
+    y_min: Option<f32>,
+    y_max: Option<f32>,
+) -> (f64, f64) {
+    let (dmin, dmax) = values
+        .into_iter()
+        .filter(|v| v.is_finite())
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| {
             (lo.min(v), hi.max(v))
         });
-    let (mut ylo, mut yhi) = if dmin <= dmax {
-        match style {
-            // Bars draw from the baseline, so keep `0` in view.
-            gantz_ui::PlotStyle::Bars => (dmin.min(0.0), dmax.max(0.0)),
-            gantz_ui::PlotStyle::Line => (dmin, dmax),
-        }
-    } else {
-        (0.0, 1.0)
+    let (mut ylo, mut yhi) = match (dmin <= dmax, baseline) {
+        (true, true) => (dmin.min(0.0), dmax.max(0.0)),
+        (true, false) => (dmin, dmax),
+        (false, _) => (0.0, 1.0),
     };
     if (yhi - ylo).abs() < 1e-9 {
         ylo -= 1.0;
         yhi += 1.0;
     }
-
-    // Fixed overrides are exact.
-    if let Some(v) = y_min {
-        ylo = v as f64;
-    }
-    if let Some(v) = y_max {
-        yhi = v as f64;
-    }
-
-    ([xlo, ylo], [xhi, yhi])
+    (y_min.map_or(ylo, f64::from), y_max.map_or(yhi, f64::from))
 }
 
 /// Resolve the configured colour, falling back to the theme's strong text
 /// colour when unset.
-pub(crate) fn resolve_color(color: Option<[u8; 4]>, ui: &egui::Ui) -> egui::Color32 {
+pub fn resolve_color(color: Option<[u8; 4]>, ui: &egui::Ui) -> egui::Color32 {
     match color {
         Some([r, g, b, a]) => egui::Color32::from_rgba_unmultiplied(r, g, b, a),
         None => ui.visuals().strong_text_color(),
@@ -225,7 +265,7 @@ fn channel_numerics(val: &SteelVal) -> Vec<f64> {
 }
 
 /// Convert a numeric [`SteelVal`] to `f64`.
-pub(crate) fn steel_num(val: &SteelVal) -> Option<f64> {
+pub fn steel_num(val: &SteelVal) -> Option<f64> {
     match val {
         SteelVal::NumV(f) => Some(*f),
         SteelVal::IntV(i) => Some(*i as f64),
@@ -280,6 +320,29 @@ mod tests {
         );
     }
 
+    // Stacked rows and the spacing between them fit within the given height,
+    // so a resizable parent never grows to fit them.
+    #[test]
+    fn stacked_fits_height() {
+        let ctx = egui::Context::default();
+        let size = egui::vec2(100.0, 101.0);
+        for n in 0..=6 {
+            let mut used = egui::Vec2::ZERO;
+            let _ = ctx.run_ui(Default::default(), |ui| {
+                used = ui
+                    .scope(|ui| {
+                        stacked(n, size, ui, |_, s, ui| {
+                            ui.allocate_exact_size(s, egui::Sense::hover()).1
+                        })
+                    })
+                    .response
+                    .rect
+                    .size();
+            });
+            assert!(used.y <= size.y, "{n} rows use {} of {}", used.y, size.y);
+        }
+    }
+
     #[test]
     fn value_bounds_by_style() {
         use gantz_ui::PlotStyle::{Bars, Line};
@@ -301,6 +364,11 @@ mod tests {
         // Fixed overrides are exact.
         let ([_, ylo], [_, yhi]) = value_bounds(&[1.0, 2.0], Line, Some(-1.0), Some(1.0));
         assert_eq!((ylo, yhi), (-1.0, 1.0));
+
+        // Non-finite values do not affect the fit.
+        let ([_, ylo], [_, yhi]) =
+            value_bounds(&[1.0, f64::INFINITY, f64::NAN, 3.0], Line, None, None);
+        assert_eq!((ylo, yhi), (1.0, 3.0));
 
         // No data gives a unit default window.
         let ([xlo, ylo], [xhi, yhi]) = value_bounds(&[], Bars, None, None);
