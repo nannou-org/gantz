@@ -48,18 +48,27 @@ pub(crate) fn plot_body(
         let ys = channels.first().map(Vec::as_slice).unwrap_or(&[]);
         return plot_channel(params, ys, plot_id, size, ui);
     }
-    // Stack one sub-plot per channel, splitting the height evenly.
-    let sub_h = size.y / channels.len() as f32;
+    stacked(channels.len(), size, ui, |i, sub_size, ui| {
+        plot_channel(params, &channels[i], plot_id.with(i), sub_size, ui)
+    })
+}
+
+/// Stack `n` rows vertically, splitting the height of `size` evenly. `row`
+/// draws row `i` filling the given size. Returns the union of the row
+/// responses. With `n` of zero, one row is drawn.
+pub fn stacked(
+    n: usize,
+    size: egui::Vec2,
+    ui: &mut egui::Ui,
+    mut row: impl FnMut(usize, egui::Vec2, &mut egui::Ui) -> egui::Response,
+) -> egui::Response {
+    let n = n.max(1);
+    let sub_size = egui::vec2(size.x, size.y / n as f32);
     ui.vertical(|ui| {
-        let mut resp: Option<egui::Response> = None;
-        for (i, ch) in channels.iter().enumerate() {
-            let r = plot_channel(params, ch, plot_id.with(i), egui::vec2(size.x, sub_h), ui);
-            resp = Some(match resp.take() {
-                Some(prev) => prev.union(r),
-                None => r,
-            });
-        }
-        resp.expect("at least two channels")
+        (0..n)
+            .map(|i| row(i, sub_size, ui))
+            .reduce(|a, b| a.union(b))
+            .expect("at least one row")
     })
     .inner
 }
@@ -106,6 +115,7 @@ fn plot_channel(
             }
         },
     )
+    .response
 }
 
 /// Render a plot area filling `size` with the view fixed to `bounds`, given as
@@ -122,7 +132,7 @@ pub fn show_plot(
     bounds: ([f64; 2], [f64; 2]),
     ui: &mut egui::Ui,
     draw: impl FnOnce(&mut egui_plot::PlotUi),
-) -> egui::Response {
+) -> egui_plot::PlotResponse<()> {
     let mut plot = egui_plot::Plot::new(plot_id)
         .width(size.x)
         .height(size.y)
@@ -138,21 +148,19 @@ pub fn show_plot(
         plot = plot.cursor_color(egui::Color32::TRANSPARENT);
     }
 
-    let plot_resp = plot
-        .show(ui, |plot_ui| {
-            draw(plot_ui);
-            // Drive the view from the data and config. The plot never pans,
-            // so live updates and min/max apply.
-            let ([xlo, ylo], [xhi, yhi]) = bounds;
-            plot_ui.set_plot_bounds_x(xlo..=xhi);
-            plot_ui.set_plot_bounds_y(ylo..=yhi);
-        })
-        .response;
+    let plot_resp = plot.show(ui, |plot_ui| {
+        draw(plot_ui);
+        // Drive the view from the data and config. The plot never pans,
+        // so live updates and min/max apply.
+        let ([xlo, ylo], [xhi, yhi]) = bounds;
+        plot_ui.set_plot_bounds_x(xlo..=xhi);
+        plot_ui.set_plot_bounds_y(ylo..=yhi);
+    });
 
     // egui_plot sets a crosshair mouse cursor on hover. When not interactive,
     // restore the default arrow so the plot reads as a static node. The
     // resize corner sets its own cursor after this, so it is unaffected.
-    if !frame.interactive && plot_resp.hovered() {
+    if !frame.interactive && plot_resp.response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
     }
     plot_resp

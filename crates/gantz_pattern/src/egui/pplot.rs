@@ -391,6 +391,7 @@ fn draw(
             );
         }
     })
+    .response
 }
 
 /// The padding in plot units, on each side of `lo..hi` drawn over `len`
