@@ -29,7 +29,7 @@ pub(crate) fn read_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
         p.end = end;
     }
     if let Some(n) = args.keyword_int("fixed")? {
-        p.res = Res::Fixed(u16::try_from(n).unwrap_or(Res::MAX).clamp(1, Res::MAX));
+        p.res = Res::Fixed(n.clamp(1, i64::from(Res::MAX)) as u16);
     }
     if let Some(pts) = args.keyword_f64("fit")? {
         p.res = Res::Fit(F32(pts as f32));
@@ -38,10 +38,10 @@ pub(crate) fn read_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
         p.layout = ValueLayout::Expand;
     }
     if let Some(w) = args.keyword_int("width")? {
-        p.look.width = u16::try_from(w).unwrap_or(u16::MAX);
+        p.look.width = w.clamp(0, i64::from(u16::MAX)) as u16;
     }
     if let Some(h) = args.keyword_int("height")? {
-        p.look.height = u16::try_from(h).unwrap_or(u16::MAX);
+        p.look.height = h.clamp(0, i64::from(u16::MAX)) as u16;
     }
     tagged(&p).ok_or_else(|| FormatError::malformed("pplot does not encode"))
 }
@@ -141,6 +141,16 @@ mod tests {
         assert_eq!(write_spec(&read(text)).as_deref(), Some(text));
         let text = "(pplot #:fixed 64)";
         assert_eq!(write_spec(&read(text)).as_deref(), Some(text));
+    }
+
+    // Out-of-range integers clamp to the nearest valid setting.
+    #[test]
+    fn out_of_range_keywords_clamp() {
+        let p: Pplot = from_datum(read("(pplot #:fixed -5 #:width -1 #:height 99999)")).unwrap();
+        assert!(matches!(p.res, Res::Fixed(1)));
+        assert_eq!((p.look.width, p.look.height), (0, u16::MAX));
+        let p: Pplot = from_datum(read("(pplot #:fixed 99999)")).unwrap();
+        assert!(matches!(p.res, Res::Fixed(Res::MAX)));
     }
 
     // A setting without a keyword falls back to the generic form.
