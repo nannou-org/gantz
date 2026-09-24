@@ -1,6 +1,6 @@
 //! The shared plot leaf renderer.
 //!
-//! Draws per-channel numeric series with `egui_plot`. [`PlotParams`]
+//! Draws per-channel numeric series with `egui_plot`. `PlotParams`
 //! parameterizes it, so the same code renders both the `Plot` node and the
 //! interpreter's `plot` element. The node takes its params from its weight.
 //! The element takes them from its attrs. [`show_plot`] is the plot area
