@@ -1924,6 +1924,49 @@ fn lfgauss_bakes_loop_and_done_action() {
     );
 }
 
+/// `Pluck` takes its excitation and trigger as wires, bakes the build-constant
+/// `maxdelay` between them, and keeps its remaining controls as params.
+#[test]
+fn pluck_bakes_maxdelay_and_takes_wires() {
+    let mut g = Graph::<N>::default();
+    let noise = g.add_node(N::Unit(UnitNode::from_unit("WhiteNoise").expect("row")));
+    let imp = g.add_node(N::Unit(UnitNode::from_unit("Impulse").expect("row")));
+    let pluck = g.add_node(N::Unit(UnitNode::from_unit("Pluck").expect("row")));
+    let o = g.add_node(N::Out(Out::default()));
+    g.add_edge(noise, pluck, Edge::new(0.into(), 0.into()));
+    g.add_edge(imp, pluck, Edge::new(0.into(), 1.into()));
+    g.add_edge(pluck, o, Edge::new(0.into(), 0.into()));
+    let derived = derive_synthdef(&g, 1, "t").expect("derive");
+    let unit = derived
+        .def
+        .units
+        .iter()
+        .find(|u| u.name == "Pluck")
+        .expect("Pluck unit");
+    assert_eq!(unit.inputs.len(), 6);
+    assert!(matches!(unit.inputs[0], InputRef::Unit { .. }), "in");
+    assert!(matches!(unit.inputs[1], InputRef::Unit { .. }), "trig");
+    assert!(
+        matches!(unit.inputs[2], InputRef::Constant(c) if c == 0.2),
+        "maxdelay"
+    );
+    for (ix, name) in [(3, "delay"), (4, "decay"), (5, "coef")] {
+        assert!(matches!(unit.inputs[ix], InputRef::Param(_)), "{name}");
+    }
+}
+
+/// A multi-output row yields one signal per unit output and asks plyphon for
+/// that many outputs.
+#[test]
+fn multi_output_rows_expose_every_output() {
+    for (unit, outputs) in [("Hilbert", 2), ("FreeVerb2", 2)] {
+        let node = UnitNode::from_unit(unit).expect("row");
+        assert_eq!(node.n_dsp_outputs(), outputs, "{unit}");
+        let (_, spec) = wired_row_unit(node);
+        assert_eq!(spec.num_outputs, outputs, "{unit}");
+    }
+}
+
 /// An unconnected `UnitNode` bakes each hybrid as one keyed control param.
 #[test]
 fn unit_node_pushes_keyed_params() {
