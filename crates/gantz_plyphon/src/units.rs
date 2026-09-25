@@ -342,6 +342,19 @@ const fn freq(default: f32, doc: &'static str) -> In {
     par("freq", default, 0.0, 20_000.0, " Hz", doc)
 }
 
+/// A chaotic map's iteration frequency. SC's default is half the sample
+/// rate, so the range runs past the audio band.
+const fn chaos_freq() -> In {
+    par(
+        "freq",
+        22_050.0,
+        0.0,
+        48_000.0,
+        " Hz",
+        "iteration frequency. The value is held between iterations",
+    )
+}
+
 /// The wrapped plyphon units, grouped by family. Signatures follow the
 /// plyphon crate the workspace pins, in SC-conventional arg order.
 pub static UNITS: &[UnitDesc] = &[
@@ -706,6 +719,84 @@ pub static UNITS: &[UnitDesc] = &[
         ],
         &["bit-reduced signal"],
         "Keep only the top mantissa bits (bit-crushing decimation)",
+    ),
+    // Chaos. Non-interpolating chaotic maps. The seeds are read once on the
+    // first block, so they are init-only.
+    u(
+        "~cuspn",
+        "CuspN",
+        &[
+            chaos_freq(),
+            par("a", 1.0, -10.0, 10.0, "", "map coefficient a"),
+            par("b", 1.9, -10.0, 10.0, "", "map coefficient b"),
+            init("xi", 0.0, "initial x. Re-derives"),
+        ],
+        &["cusp map signal"],
+        "Cusp map: x = a - b * sqrt(|x|)",
+    ),
+    u(
+        "~quadn",
+        "QuadN",
+        &[
+            chaos_freq(),
+            par("a", 1.0, -10.0, 10.0, "", "map coefficient a"),
+            par("b", -1.0, -10.0, 10.0, "", "map coefficient b"),
+            par("c", -0.75, -10.0, 10.0, "", "map coefficient c"),
+            init("xi", 0.0, "initial x. Re-derives"),
+        ],
+        &["quadratic map signal"],
+        "Quadratic map: x = a * x^2 + b * x + c",
+    ),
+    u(
+        "~lincongn",
+        "LinCongN",
+        &[
+            chaos_freq(),
+            par("a", 1.1, -10.0, 10.0, "", "multiplier"),
+            par("c", 0.13, -10.0, 10.0, "", "increment"),
+            par("m", 1.0, -10.0, 10.0, "", "modulus"),
+            init("xi", 0.0, "initial x. Re-derives"),
+        ],
+        &["linear congruential signal"],
+        "Linear congruential generator scaled to [-1, 1)",
+    ),
+    u(
+        "~gbmann",
+        "GbmanN",
+        &[
+            chaos_freq(),
+            init("xi", 1.2, "initial x. Re-derives"),
+            init("yi", 2.1, "initial y. Re-derives"),
+        ],
+        &["gingerbreadman map signal"],
+        "Gingerbreadman map",
+    ),
+    u(
+        "~standardn",
+        "StandardN",
+        &[
+            chaos_freq(),
+            par("k", 1.0, 0.0, 10.0, "", "perturbation amount"),
+            init("xi", 0.5, "initial x. Re-derives"),
+            init("yi", 0.0, "initial y. Re-derives"),
+        ],
+        &["standard map signal"],
+        "Standard (kicked rotor) map scaled to [-1, 1)",
+    ),
+    u(
+        "~latoocarfiann",
+        "LatoocarfianN",
+        &[
+            chaos_freq(),
+            par("a", 1.0, -10.0, 10.0, "", "map coefficient a"),
+            par("b", 3.0, -10.0, 10.0, "", "map coefficient b"),
+            par("c", 0.5, -10.0, 10.0, "", "map coefficient c"),
+            par("d", 0.5, -10.0, 10.0, "", "map coefficient d"),
+            init("xi", 0.5, "initial x. Re-derives"),
+            init("yi", 0.5, "initial y. Re-derives"),
+        ],
+        &["latoocarfian map signal"],
+        "Latoocarfian map",
     ),
     // Filters
     u(
