@@ -1908,6 +1908,22 @@ fn median_bakes_length_as_a_constant() {
     );
 }
 
+/// `LFGauss` loops forever and never fires a done action, since gantz owns
+/// the synth's lifecycle. Both are baked constants after the three params.
+#[test]
+fn lfgauss_bakes_loop_and_done_action() {
+    let (_, unit) = wired_row_unit(UnitNode::from_unit("LFGauss").expect("LFGauss row"));
+    assert_eq!(unit.inputs.len(), 5);
+    assert!(
+        matches!(unit.inputs[3], InputRef::Constant(c) if c == 1.0),
+        "loop"
+    );
+    assert!(
+        matches!(unit.inputs[4], InputRef::Constant(c) if c == 0.0),
+        "doneAction"
+    );
+}
+
 /// An unconnected `UnitNode` bakes each hybrid as one keyed control param.
 #[test]
 fn unit_node_pushes_keyed_params() {

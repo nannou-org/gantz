@@ -612,6 +612,101 @@ pub static UNITS: &[UnitDesc] = &[
         &["random +/-1 steps"],
         "Clipped step noise: random +/-1 values at a frequency",
     ),
+    u(
+        "~lfdnoise0",
+        "LFDNoise0",
+        &[freq(
+            500.0,
+            "value-change frequency. Audio-rate modulation is honoured",
+        )],
+        &["stepped random signal"],
+        "Dynamic step noise: transitions land off the sample grid",
+    ),
+    u(
+        "~lfdnoise1",
+        "LFDNoise1",
+        &[freq(
+            500.0,
+            "value-change frequency. Audio-rate modulation is honoured",
+        )],
+        &["ramped random signal"],
+        "Dynamic ramp noise: linearly interpolated random values",
+    ),
+    u(
+        "~lfdnoise3",
+        "LFDNoise3",
+        &[freq(
+            500.0,
+            "value-change frequency. Audio-rate modulation is honoured",
+        )],
+        &["cubic random signal"],
+        "Dynamic cubic noise: smoothly interpolated random values",
+    ),
+    u(
+        "~lfdclipnoise",
+        "LFDClipNoise",
+        &[freq(
+            500.0,
+            "value-change frequency. Audio-rate modulation is honoured",
+        )],
+        &["random +/-1 steps"],
+        "Dynamic clipped step noise: random +/-1 values off the sample grid",
+    ),
+    u(
+        "~lfgauss",
+        "LFGauss",
+        &[
+            par(
+                "duration",
+                1.0,
+                0.0,
+                60.0,
+                " s",
+                "length of one gaussian cycle",
+            ),
+            par("width", 0.1, 0.001, 1.0, "", "relative width of the bump"),
+            par("iphase", 0.0, -1.0, 1.0, "", "initial phase offset"),
+            baked(1.0),
+            baked(0.0),
+        ],
+        &["gaussian bump signal"],
+        "Looping gaussian-shaped envelope or LFO",
+    ),
+    u(
+        "~logistic",
+        "Logistic",
+        &[
+            par(
+                "chaos",
+                3.0,
+                0.0,
+                4.0,
+                "",
+                "growth parameter (chaotic above ~3.57)",
+            ),
+            freq(1000.0, "iteration frequency"),
+            init("init", 0.5, "starting value in (0, 1). Re-derives"),
+        ],
+        &["logistic map signal"],
+        "Logistic map iterated at a frequency",
+    ),
+    u(
+        "~hasher",
+        "Hasher",
+        &[sig("in", "signal to hash")],
+        &["pseudo-random value per input sample"],
+        "Deterministic hash of each input sample into [-1, 1)",
+    ),
+    u(
+        "~mantissamask",
+        "MantissaMask",
+        &[
+            sig("in", "signal to quantise"),
+            par("bits", 3.0, 0.0, 23.0, "", "mantissa bits to keep"),
+        ],
+        &["bit-reduced signal"],
+        "Keep only the top mantissa bits (bit-crushing decimation)",
+    ),
     // Filters
     u(
         "~lpf",
