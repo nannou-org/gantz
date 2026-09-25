@@ -14,7 +14,7 @@ use gantz_core::node::Conns;
 use gantz_core::node::graph::{Graph, NodeIx};
 
 use crate::dsp::{
-    BufferBinding, DspBuilder, FadeSink, Finished, GainRef, ParamBinding, PortShapes,
+    BufferBinding, DspBuilder, FadeSink, Finished, GainRef, NodeDsp, ParamBinding, PortShapes,
     ScopeOutBinding, Signal, ToNodeDsp, record_port_shapes, sum_signals,
 };
 
@@ -192,20 +192,25 @@ where
         let Some(dsp) = graph[n].to_node_dsp() else {
             continue;
         };
-        let inputs: Vec<Option<Signal>> = sources[&n]
-            .iter()
-            .map(|summands| {
-                let sigs: Vec<Signal> = summands
-                    .iter()
-                    .filter_map(|&(s, port)| outputs.get(&s).and_then(|o| o.get(port)).cloned())
-                    .collect();
-                // `None` iff no summand materialized a signal, for example an
-                // unconnected input or a dangling `~unpack` port. Hybrid inputs
-                // then fall back to their param, exactly when the Steel side
-                // keeps it driven.
-                (!sigs.is_empty()).then(|| sum_signals(&mut builder, &sigs))
-            })
-            .collect();
+        let mut inputs: Vec<Option<Signal>> = Vec::with_capacity(sources[&n].len());
+        for (input_ix, summands) in sources[&n].iter().enumerate() {
+            if dsp.is_buffer_input(input_ix) {
+                let feed = buffer_feed(graph, n, input_ix);
+                inputs.push(feed.and_then(|src| {
+                    emit_local(graph, src, &mut builder, &mut outputs, &mut shapes)
+                }));
+                continue;
+            }
+            let sigs: Vec<Signal> = summands
+                .iter()
+                .filter_map(|&(s, port)| outputs.get(&s).and_then(|o| o.get(port)).cloned())
+                .collect();
+            // `None` iff no summand materialized a signal, for example an
+            // unconnected input or a dangling `~unpack` port. Hybrid inputs
+            // then fall back to their param, exactly when the Steel side
+            // keeps it driven.
+            inputs.push((!sigs.is_empty()).then(|| sum_signals(&mut builder, &sigs)));
+        }
         let path = graph[n].node_path(n.index());
         let outs = dsp.ugens(&path, &inputs, &mut builder);
         debug_assert_eq!(
@@ -234,17 +239,86 @@ where
     })
 }
 
-/// Every dsp sink of `graph`, that is every `~out` output and `~scopeout`
-/// monitor.
+/// Whether `d` roots a synthdef pull: an output, a monitor or a buffer writer.
+pub(crate) fn is_sink(d: &dyn NodeDsp) -> bool {
+    d.is_output() || d.is_monitor() || d.is_writer()
+}
+
+/// Every dsp sink of `graph`, that is every `~out` output, `~scopeout`
+/// monitor and buffer writer. Writers come first, so that in one def a
+/// buffer write runs before the reads that follow it.
 pub(crate) fn dsp_sinks<N: ToNodeDsp>(graph: &Graph<N>) -> Vec<NodeIx> {
-    graph
+    let (mut writers, others): (Vec<NodeIx>, Vec<NodeIx>) = graph
         .node_indices()
-        .filter(|&n| {
-            graph[n]
-                .to_node_dsp()
-                .is_some_and(|d| d.is_output() || d.is_monitor())
-        })
-        .collect()
+        .filter(|&n| graph[n].to_node_dsp().is_some_and(is_sink))
+        .partition(|&n| graph[n].to_node_dsp().is_some_and(|d| d.is_writer()));
+    writers.extend(others);
+    writers
+}
+
+/// Whether dsp input `input` of `n` takes a bufnum wire. See
+/// [`NodeDsp::is_buffer_input`].
+pub(crate) fn is_buffer_input<N: ToNodeDsp>(graph: &Graph<N>, n: NodeIx, input: usize) -> bool {
+    graph[n]
+        .to_node_dsp()
+        .is_some_and(|d| d.is_buffer_input(input))
+}
+
+/// Whether `n` is a local buffer source. See [`NodeDsp::is_buffer_source`].
+pub(crate) fn is_buffer_source<N: ToNodeDsp>(graph: &Graph<N>, n: NodeIx) -> bool {
+    graph[n].to_node_dsp().is_some_and(|d| d.is_buffer_source())
+}
+
+/// The buffer source port that feeds buffer input `input` of `n`. The feed
+/// can pass through a chain of `~bus` nodes. A buffer wire never becomes a
+/// bus, so the source is emitted on the reading side instead. `None` unless
+/// exactly one edge feeds each step of the chain and the chain ends at a
+/// buffer source.
+pub(crate) fn buffer_feed<N: ToNodeDsp>(
+    graph: &Graph<N>,
+    n: NodeIx,
+    input: usize,
+) -> Option<(NodeIx, usize)> {
+    let mut target = (n, input);
+    let mut visited = HashSet::new();
+    loop {
+        let mut edges = graph
+            .edges_directed(target.0, Direction::Incoming)
+            .filter(|e| e.weight().input.0 as usize == target.1);
+        let e = edges.next()?;
+        if edges.next().is_some() {
+            return None;
+        }
+        let s = e.source();
+        let dsp = graph[s].to_node_dsp()?;
+        if dsp.is_buffer_source() {
+            return Some((s, e.weight().output.0 as usize));
+        }
+        if !dsp.is_boundary() || !visited.insert(s) {
+            return None;
+        }
+        target = (s, 0);
+    }
+}
+
+/// The signal at output `port` of buffer source `s` in the def under
+/// construction. The source is emitted on its first use in a def and its
+/// outputs are cached in `outputs` for later uses.
+pub(crate) fn emit_local<N: ToNodeDsp>(
+    graph: &Graph<N>,
+    (s, port): (NodeIx, usize),
+    builder: &mut DspBuilder,
+    outputs: &mut HashMap<NodeIx, Vec<Signal>>,
+    shapes: &mut PortShapes,
+) -> Option<Signal> {
+    if !outputs.contains_key(&s) {
+        let dsp = graph[s].to_node_dsp()?;
+        let path = graph[s].node_path(s.index());
+        let outs = dsp.ugens(&path, &[], builder);
+        record_port_shapes(shapes, builder, &path, &outs);
+        outputs.insert(s, outs);
+    }
+    outputs.get(&s).and_then(|o| o.get(port)).cloned()
 }
 
 /// The dsp-reachable set, the dsp nodes that feed a sink transitively through
@@ -252,17 +326,24 @@ pub(crate) fn dsp_sinks<N: ToNodeDsp>(graph: &Graph<N>) -> Vec<NodeIx> {
 /// traverses interior nodes over every incoming edge. Derivation intersects
 /// its merged orders with this set to keep control-input feeds out of the
 /// defs.
+///
+/// Buffer inputs and buffer sources are left out. A buffer source is emitted
+/// on demand per def instead, see [`emit_local`], so it never joins a region.
 fn dsp_reachable<N: ToNodeDsp>(graph: &Graph<N>, sinks: &[NodeIx]) -> HashSet<NodeIx> {
     let mut reachable: HashSet<NodeIx> = sinks.iter().copied().collect();
     let mut stack: Vec<NodeIx> = sinks.to_vec();
     while let Some(n) = stack.pop() {
         let n_dsp_in = graph[n].to_node_dsp().map_or(0, |d| d.n_dsp_inputs());
         for e in graph.edges_directed(n, Direction::Incoming) {
-            if (e.weight().input.0 as usize) < n_dsp_in
-                && graph[e.source()].to_node_dsp().is_some()
-                && reachable.insert(e.source())
+            let input_ix = e.weight().input.0 as usize;
+            let s = e.source();
+            if input_ix < n_dsp_in
+                && !is_buffer_input(graph, n, input_ix)
+                && graph[s].to_node_dsp().is_some()
+                && !is_buffer_source(graph, s)
+                && reachable.insert(s)
             {
-                stack.push(e.source());
+                stack.push(s);
             }
         }
     }
@@ -273,7 +354,8 @@ fn dsp_reachable<N: ToNodeDsp>(graph: &Graph<N>, sinks: &[NodeIx]) -> HashSet<No
 /// node. Only reachable dsp sources contribute. Every edge into an input is a
 /// summand and an empty list is an unconnected input. Summands sort by source
 /// node path and output port with duplicates kept, so the derived def is
-/// independent of edge insertion order.
+/// independent of edge insertion order. A buffer input always has an empty
+/// list. Its feed resolves through [`buffer_feed`].
 #[allow(clippy::type_complexity)]
 fn resolved_sources<N: ToNodeDsp>(
     graph: &Graph<N>,
@@ -287,7 +369,10 @@ fn resolved_sources<N: ToNodeDsp>(
             for e in graph.edges_directed(n, Direction::Incoming) {
                 let input_ix = e.weight().input.0 as usize;
                 let s = e.source();
-                if input_ix < n_dsp_in && reachable.contains(&s) && graph[s].to_node_dsp().is_some()
+                if input_ix < n_dsp_in
+                    && !is_buffer_input(graph, n, input_ix)
+                    && reachable.contains(&s)
+                    && graph[s].to_node_dsp().is_some()
                 {
                     inputs[input_ix].push((s, e.weight().output.0 as usize));
                 }
@@ -583,7 +668,14 @@ where
             // Each input sums its summands. A plain summand wires directly. A
             // boundary summand lowers to its buses, in-region wires or `In`s.
             let mut inputs: Vec<Option<Signal>> = Vec::with_capacity(sources[&n].len());
-            for summands in &sources[&n] {
+            for (input_ix, summands) in sources[&n].iter().enumerate() {
+                if dsp.is_buffer_input(input_ix) {
+                    let feed = buffer_feed(graph, n, input_ix);
+                    inputs.push(feed.and_then(|src| {
+                        emit_local(graph, src, &mut builder, &mut outputs, &mut shapes)
+                    }));
+                    continue;
+                }
                 let mut sigs: Vec<Signal> = Vec::new();
                 for &(s, port) in summands {
                     let lowered: Vec<(Option<RegionBus>, (NodeIx, usize))> = match is_boundary(s) {

@@ -69,7 +69,8 @@ use gantz_ca::ContentAddr;
 use gantz_core::node::graph::{Graph, NodeIx};
 
 use crate::compile::{
-    DeriveError, content_def_name, derive_synthdefs, dsp_sinks, merged_pull_order, structural_sig,
+    DeriveError, buffer_feed, content_def_name, derive_synthdefs, dsp_sinks, emit_local,
+    is_buffer_input, is_sink, merged_pull_order, structural_sig,
 };
 use crate::dsp::{
     BufferBinding, DspBuilder, FadeSink, Finished, GainRef, ParamBinding, PortShapes,
@@ -312,6 +313,10 @@ enum Kind {
     Plain,
     /// A `~bus` boundary.
     Boundary,
+    /// A buffer source. It joins no region and sources no summand. Each
+    /// region that reads it emits it on demand, see
+    /// [`NodeDsp::is_buffer_source`](crate::NodeDsp::is_buffer_source).
+    Local,
     /// An instance marker with its `n_inlets` and `n_outlets`.
     Instance(usize, usize),
     /// A root inlet marker with its interface index.
@@ -509,6 +514,8 @@ where
                 if let Some(dsp) = node.to_node_dsp() {
                     let k = if dsp.is_boundary() {
                         Kind::Boundary
+                    } else if dsp.is_buffer_source() {
+                        Kind::Local
                     } else {
                         Kind::Plain
                     };
@@ -541,8 +548,13 @@ where
             },
             Some(Kind::Instance(n_in, _)) => *n_in,
             Some(Kind::Outlet(_)) => 1,
-            Some(Kind::Inlet(_)) | None => 0,
+            Some(Kind::Inlet(_)) | Some(Kind::Local) | None => 0,
         }
+    };
+    // Whether dsp input `ix` of `n` is a buffer input. Its feed resolves per
+    // region through `buffer_feed`, never through reach or summands.
+    let buffer_in = |n: NodeIx, ix: usize| -> bool {
+        kind.get(&n) == Some(&Kind::Plain) && is_buffer_input(graph, n, ix)
     };
     // Whether a vertex can source a signal. Outlets never do.
     let is_source_kind = |n: NodeIx| -> bool {
@@ -586,7 +598,9 @@ where
     while let Some(n) = stack.pop() {
         let n_in = n_dsp_in(n);
         for e in graph.edges_directed(n, Direction::Incoming) {
-            if (e.weight().input.0 as usize) < n_in
+            let input_ix = e.weight().input.0 as usize;
+            if input_ix < n_in
+                && !buffer_in(n, input_ix)
                 && is_source_kind(e.source())
                 && reach.insert(e.source())
             {
@@ -607,7 +621,11 @@ where
             for e in graph.edges_directed(n, Direction::Incoming) {
                 let input_ix = e.weight().input.0 as usize;
                 let s = e.source();
-                if input_ix < n_in && reach.contains(&s) && is_source_kind(s) {
+                if input_ix < n_in
+                    && !buffer_in(n, input_ix)
+                    && reach.contains(&s)
+                    && is_source_kind(s)
+                {
                     inputs[input_ix].push((s, e.weight().output.0 as usize));
                 }
             }
@@ -1093,16 +1111,13 @@ where
     N: ToNodeDsp,
 {
     let at = Some(PartId::Region(c));
-    let region_sinks: Vec<NodeIx> = graph
+    // The region's sinks, writers first, as in `dsp_sinks`.
+    let (mut region_sinks, others): (Vec<NodeIx>, Vec<NodeIx>) = graph
         .node_indices()
         .filter(|n| comp.get(n) == Some(&c))
-        .filter(|&n| match &graph[n] {
-            Flat::Node { node, .. } => node
-                .to_node_dsp()
-                .is_some_and(|d| d.is_output() || d.is_monitor()),
-            _ => false,
-        })
-        .collect();
+        .filter(|&n| graph[n].to_node_dsp().is_some_and(is_sink))
+        .partition(|&n| graph[n].to_node_dsp().is_some_and(|d| d.is_writer()));
+    region_sinks.extend(others);
     let seeds: Vec<NodeIx> = region_sinks
         .iter()
         .copied()
@@ -1128,7 +1143,14 @@ where
         let path = graph[n].path();
         // Each input sums its summands' resolved signals.
         let mut inputs: Vec<Option<Signal>> = Vec::with_capacity(srcs[&n].len());
-        for summands in &srcs[&n] {
+        for (input_ix, summands) in srcs[&n].iter().enumerate() {
+            if dsp.is_buffer_input(input_ix) {
+                let feed = buffer_feed(graph, n, input_ix);
+                inputs.push(feed.and_then(|src| {
+                    emit_local(graph, src, &mut builder, &mut outputs, &mut shapes)
+                }));
+                continue;
+            }
             let mut sigs: Vec<Signal> = Vec::new();
             for &src in summands {
                 for f in feeds(src, at, out_summands) {

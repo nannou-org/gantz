@@ -188,6 +188,38 @@ pub trait NodeDsp {
         false
     }
 
+    /// Whether this node is a buffer source, such as `~sample` or `~buffer`.
+    /// A buffer source has no dsp inputs and emits a bufnum wire.
+    ///
+    /// Buffer sources are local to each synthdef. They never join a region
+    /// and never cross a bus. The compiler emits a source again, on demand,
+    /// in each def that reads it, and feeds it only into buffer inputs, see
+    /// [`is_buffer_input`](Self::is_buffer_input). Each emission pushes its
+    /// own bufnum param with the same node path, so the driver binds one
+    /// buffer to all of them.
+    fn is_buffer_source(&self) -> bool {
+        false
+    }
+
+    /// Whether dsp input `input` takes a bufnum wire from a buffer source.
+    /// Such an input receives a signal only when exactly one buffer source
+    /// feeds it, directly or through a chain of `~bus` nodes. Any other
+    /// wiring reads as unconnected. Other inputs never receive a buffer
+    /// source's wire.
+    fn is_buffer_input(&self, input: usize) -> bool {
+        let _ = input;
+        false
+    }
+
+    /// Whether this node is a synthdef sink that writes to a buffer, such as
+    /// `RecordBuf`. Like [`is_output`](Self::is_output) it roots a pull, so
+    /// it runs even when nothing consumes it. In one synthdef, writers come
+    /// before the other sinks, so a reader in the same def sees the write in
+    /// the same block.
+    fn is_writer(&self) -> bool {
+        false
+    }
+
     /// Emit this node's UGens into `b`, given the resolved [`Signal`] for each
     /// DSP input port. Returns one [`Signal`] per DSP output port for
     /// downstream nodes to reference.
