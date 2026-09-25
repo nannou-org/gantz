@@ -49,7 +49,7 @@ pub use units::{Emit, In, RateScale, UNITS, UnitDesc, UnitRate, unit_desc, unit_
 // `self::` disambiguates from the extern `egui` crate at the crate root.
 #[cfg(feature = "egui")]
 pub use self::egui::{
-    DSP_PANE_KEY, DspEdgeStyle, DspPane, DspPaneHead, DspRefExtUi, DspSettingsTab,
+    DSP_PANE_KEY, DspEdgeStyle, DspPane, DspPaneHead, DspRefExtUi, DspSettingsTab, LoadSample,
 };
 
 pub mod asset;

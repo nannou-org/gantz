@@ -6,6 +6,15 @@ use gantz_egui::{
 };
 use std::borrow::Cow;
 
+/// A request to load a WAV file into the `~sample` node at `path`. The node's
+/// inspector emits it. The audio driver shows a file dialog, stores the
+/// decoded audio as an asset and assigns it to the node.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoadSample {
+    /// The node's path within the head's graph.
+    pub path: Vec<gantz_core::node::Id>,
+}
+
 impl NodeUi for Sample {
     fn name(&self, _: &Env<'_>) -> Cow<'_, str> {
         Cow::Borrowed("~sample")
@@ -23,7 +32,7 @@ impl NodeUi for Sample {
 
     fn inspector_rows(
         &mut self,
-        _ctx: &mut NodeCtx,
+        ctx: &mut NodeCtx,
         body: &mut egui_extras::TableBody,
     ) -> InspectorRowsResponse {
         let summary = match self.asset() {
@@ -40,15 +49,30 @@ impl NodeUi for Sample {
             None => "none".to_string(),
         };
         let row_h = gantz_egui::widget::node_inspector::table_row_h(body.ui_mut());
+        let mut load = false;
         body.row(row_h, |mut row| {
             row.col(|ui| {
                 ui.label("asset");
             });
             row.col(|ui| {
-                ui.label(summary);
+                ui.horizontal(|ui| {
+                    load = ui
+                        .button("Load…")
+                        .on_hover_text("load a WAV file into this sample")
+                        .clicked();
+                    ui.label(summary);
+                });
             });
         });
-        InspectorRowsResponse::default()
+        // The load is asynchronous. The driver edits and commits the node
+        // when the file is decoded, so this is not a change yet.
+        let mut resp = InspectorRowsResponse::default();
+        if load {
+            resp.emit(LoadSample {
+                path: ctx.path().to_vec(),
+            });
+        }
+        resp
     }
 
     fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
