@@ -36,6 +36,7 @@ use cpal::{FromSample, SizedSample};
 
 use gantz_ca as ca;
 use gantz_core::node::graph::Graph;
+use gantz_core::steel::steel_vm::engine::Engine;
 use gantz_plyphon::{
     AddAction, Backend, BufferSource, BusKey, DefCache, Embedded, FadeSink, GainRef, ROOT_GROUP_ID,
     ResolvedPart, ToNodeDsp, derive_template, flatten_from_registry, flatten_instance_children,
@@ -536,6 +537,10 @@ enum BufferKey {
 struct HeldBuffer {
     bufnum: usize,
     refcount: usize,
+    /// True when the table of the scratch buffer source must be written into
+    /// the buffer. Set for a new scratch buffer and when a new table arrives.
+    /// See [`write_tables`].
+    table_pending: bool,
 }
 
 /// The outcome of [`resolve_buffer`].
@@ -1021,6 +1026,15 @@ fn drive_synths(
                 }
             }
         }
+
+        // Table sync. Write each new table of a `~buffer` into its buffers.
+        write_tables(
+            &mut dsp.controller,
+            &mut state.held,
+            entity,
+            vm,
+            sample_rate,
+        );
     }
 
     if sched_dropped > 0 {
@@ -1720,6 +1734,7 @@ fn resolve_buffer(
         HeldBuffer {
             bufnum,
             refcount: 1,
+            table_pending: matches!(key, BufferKey::Scratch { .. }),
         },
     );
     part_buffers.push(key);
@@ -1743,6 +1758,72 @@ fn free_buffers(
                 let _ = controller.buffer_free(bufnum);
                 state.bufnum_alloc.free(bufnum, now);
             }
+        }
+    }
+}
+
+/// Write the table of each `~buffer` in `head` into its scratch buffers. A
+/// buffer takes the table when a new table arrives and when the buffer is
+/// new, for example after a shape change. A node with no table keeps its
+/// buffer contents. A full command ring keeps the write pending for the next
+/// frame.
+fn write_tables(
+    controller: &mut Controller,
+    held: &mut HashMap<BufferKey, HeldBuffer>,
+    head: Entity,
+    vm: &mut Engine,
+    sample_rate: f64,
+) {
+    // Take the dirty flag of each node once. A node holds more than one
+    // buffer while a shape change crossfades, and each buffer takes the table.
+    let dirty: Vec<Vec<usize>> = held
+        .keys()
+        .filter_map(|key| match key {
+            BufferKey::Scratch { head: h, path, .. } if *h == head => Some(path),
+            _ => None,
+        })
+        .filter(|path| gantz_plyphon::node::buffer::take_dirty(vm, path))
+        .cloned()
+        .collect();
+    for (key, buffer) in held.iter_mut() {
+        let BufferKey::Scratch {
+            head: h,
+            path,
+            frames,
+            channels,
+            wavetable,
+        } = key
+        else {
+            continue;
+        };
+        if *h != head {
+            continue;
+        }
+        buffer.table_pending |= dirty.contains(path);
+        if !buffer.table_pending {
+            continue;
+        }
+        let table = match gantz_plyphon::node::buffer::table(vm, path) {
+            Ok(table) => table,
+            Err(e) => {
+                log::error!("bevy_gantz_plyphon: the table of `~buffer` {path:?} is invalid: {e}");
+                buffer.table_pending = false;
+                continue;
+            }
+        };
+        if table.is_empty() {
+            buffer.table_pending = false;
+            continue;
+        }
+        let samples =
+            gantz_plyphon::node::buffer::table_samples(&table, *frames, *channels, *wavetable);
+        let src = plyphon::Buffer::from_interleaved(samples, *channels, sample_rate);
+        match controller.buffer_write_region(buffer.bufnum, 0, Box::new(src)) {
+            Ok(()) => buffer.table_pending = false,
+            Err(e) => log::warn!(
+                "bevy_gantz_plyphon: table write for `~buffer` {path:?} failed ({e:?}), \
+                 retrying next frame"
+            ),
         }
     }
 }
@@ -2662,6 +2743,166 @@ mod tests {
         let tail = &out[out.len() / 2..];
         let rms = (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt();
         assert!(rms > 0.05, "the recorded sine must play back: rms={rms}");
+    }
+
+    /// A `~buffer` that feeds the table socket of the `reader` unit into
+    /// `~out`, spawned into a fresh engine. Returns the engine, the driver state, the head, the path of
+    /// the `~buffer` and a VM with an empty root state.
+    fn table_head(
+        buffer: gantz_plyphon::Buffer,
+        reader: &str,
+    ) -> (
+        Controller,
+        Nrt,
+        plyphon::World,
+        HeadSynths,
+        Entity,
+        Vec<usize>,
+        Engine,
+    ) {
+        use gantz_core::edge::Edge;
+        use gantz_core::node::graph::Graph;
+        use gantz_plyphon::flatten::{Flat, RefKind, flatten};
+
+        let mut g = Graph::<TestN>::default();
+        let buf = g.add_node(TestN::Buffer(buffer));
+        let index = g.add_node(unit(reader));
+        let out = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
+        g.add_edge(buf, index, Edge::new(0.into(), 0.into()));
+        g.add_edge(index, out, Edge::new(0.into(), 0.into()));
+        let resolve =
+            |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
+        let flat: Graph<Flat<&TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
+        let mut cache = DefCache::new();
+        let template = derive_template(&flat, 1, &|_| None, &mut cache).expect("derive");
+        let (mut controller, nrt, world) = test_engine();
+        let mut state = HeadSynths::default();
+        let entity = entities(1)[0];
+        for part in instantiate(&template, &cache) {
+            let wiring = wiring_hash(&part);
+            spawn_part(
+                &mut controller,
+                &mut state,
+                &EMPTY_BUFFERS,
+                entity,
+                part,
+                wiring,
+                48_000.0,
+                None,
+                false,
+            )
+            .expect("spawn_part");
+        }
+        let mut vm = Engine::new_base();
+        vm.register_value(
+            gantz_core::ROOT_STATE,
+            gantz_core::steel::SteelVal::empty_hashmap(),
+        );
+        let path = vec![buf.index()];
+        (controller, nrt, world, state, entity, path, vm)
+    }
+
+    /// Set the table state of the node at `path` to `table`, as the `expr`
+    /// of a `~buffer` does.
+    fn set_table(vm: &mut Engine, path: &[usize], table: &str, dirty: bool) {
+        let [ix] = path else {
+            panic!("a root path");
+        };
+        let src = format!(
+            "(set! {root} (hash-insert {root} {ix} (hash 'table {table} 'dirty {dirty})))",
+            root = gantz_core::ROOT_STATE,
+            dirty = if dirty { "#t" } else { "#f" },
+        );
+        vm.run(src).expect("set table state");
+    }
+
+    /// A quarter second of output. The `~out` gain scales it.
+    fn render(world: &mut plyphon::World) -> Vec<f32> {
+        let mut out = vec![0.0f32; 12_032];
+        for block in out.chunks_mut(64) {
+            world.fill(block, 1);
+        }
+        out
+    }
+
+    /// The last sample of a quarter second of output, after the fade-in of
+    /// the part.
+    fn render_last(world: &mut plyphon::World) -> f32 {
+        render(world).last().copied().unwrap_or(0.0)
+    }
+
+    /// A new table reaches a running `~buffer` and `~index` reads it. The
+    /// write happens only once per table.
+    #[test]
+    fn a_new_table_is_written_into_the_buffer() {
+        let (mut controller, _nrt, mut world, mut state, entity, path, mut vm) =
+            table_head(gantz_plyphon::Buffer::new(4, 1), "Index");
+        write_tables(&mut controller, &mut state.held, entity, &mut vm, 48_000.0);
+        assert_eq!(render_last(&mut world), 0.0, "no table, a zeroed buffer");
+        assert!(state.held.values().all(|h| !h.table_pending));
+
+        set_table(&mut vm, &path, "(list 0.5 0.25)", true);
+        write_tables(&mut controller, &mut state.held, entity, &mut vm, 48_000.0);
+        let v = render_last(&mut world);
+        let gain = gantz_plyphon::Out::DEFAULT_GAIN;
+        assert!(
+            (v - 0.5 * gain).abs() < 1e-3,
+            "index 0 reads the table: {v}"
+        );
+        assert!(
+            !gantz_plyphon::node::buffer::take_dirty(&mut vm, &path),
+            "the driver took the dirty flag",
+        );
+    }
+
+    /// A new buffer of a node, for example after a shape change, takes the
+    /// table that the node already holds.
+    #[test]
+    fn a_new_buffer_takes_the_existing_table() {
+        let (mut controller, _nrt, mut world, mut state, entity, path, mut vm) =
+            table_head(gantz_plyphon::Buffer::new(4, 1), "Index");
+        set_table(&mut vm, &path, "(list 0.75)", false);
+        write_tables(&mut controller, &mut state.held, entity, &mut vm, 48_000.0);
+        let v = render_last(&mut world);
+        let gain = gantz_plyphon::Out::DEFAULT_GAIN;
+        assert!(
+            (v - 0.75 * gain).abs() < 1e-3,
+            "index 0 reads the table: {v}"
+        );
+    }
+
+    /// An invalid table is logged and not written, and not retried.
+    #[test]
+    fn an_invalid_table_is_not_written() {
+        let (mut controller, _nrt, mut world, mut state, entity, path, mut vm) =
+            table_head(gantz_plyphon::Buffer::new(4, 1), "Index");
+        set_table(&mut vm, &path, "(list 0.5 'x)", true);
+        write_tables(&mut controller, &mut state.held, entity, &mut vm, 48_000.0);
+        assert_eq!(render_last(&mut world), 0.0);
+        assert!(state.held.values().all(|h| !h.table_pending));
+    }
+
+    /// A sine table in a wavetable `~buffer` makes `~osc` play a sine. Without
+    /// the conversion, `~osc` would read the plain samples as `(a, b)` pairs.
+    #[test]
+    fn a_wavetable_table_plays_through_osc() {
+        let buffer = gantz_plyphon::Buffer::new(1_024, 1).with_wavetable(true);
+        let (mut controller, _nrt, mut world, mut state, entity, path, mut vm) =
+            table_head(buffer, "Osc");
+        let sine: Vec<String> = (0..512)
+            .map(|i| (std::f64::consts::TAU * i as f64 / 512.0).sin().to_string())
+            .collect();
+        let table = format!("(list {})", sine.join(" "));
+        set_table(&mut vm, &path, &table, true);
+        write_tables(&mut controller, &mut state.held, entity, &mut vm, 48_000.0);
+        let out = render(&mut world);
+        let tail = &out[out.len() / 2..];
+        let rms = (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt();
+        let expected = std::f32::consts::FRAC_1_SQRT_2 * gantz_plyphon::Out::DEFAULT_GAIN;
+        assert!(
+            (rms - expected).abs() < 1e-2,
+            "a full-scale sine: rms={rms}, expected={expected}",
+        );
     }
 
     /// End-to-end delay tap. A sine writes a `~buffer` delay line through
