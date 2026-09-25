@@ -1,10 +1,13 @@
 //! `.gantz` keyword sugar for the DSP node set.
 //!
 //! [`PlyphonSugar`] provides the keywords for this crate's nodes. The bespoke
-//! nodes read as bare `~out`, `~scopeout`, `~pack`, `~sum`, `~unpack` and
-//! `~bus`. The forms `(~out #:gain-lag s)`, `(~scopeout #:size n)`,
-//! `(~pack #:count n)`, `(~sum #:count n)` and `(~unpack #:count n)` carry
-//! the structural smoothing lag, ring length or socket count. Every
+//! nodes read as bare `~out`, `~scopeout`, `~pack`, `~sum`, `~unpack`,
+//! `~bus`, `~buffer` and `~sample`. The forms `(~out #:gain-lag s)`,
+//! `(~scopeout #:size n)`, `(~pack #:count n)`, `(~sum #:count n)`,
+//! `(~unpack #:count n)` and `(~buffer #:frames n #:channels c)` carry the
+//! structural smoothing lag, ring length, socket count or buffer shape. A
+//! `~sample` with an asset has no keyword form and writes as a generic node,
+//! so its address survives. Every
 //! [`crate::units`] descriptor-table keyword reads and writes the same way.
 //! A bare form is `~sinosc` or `~lpf`. A full form such as
 //! `(~combc #:delay-lag s #:maxdelay v #:rate kr)` carries the structural
@@ -20,8 +23,9 @@ use crate::units::UnitRate;
 
 /// Keyword sugar for the plyphon DSP nodes. It covers the bespoke
 /// [`Out`](crate::Out), [`ScopeOut`](crate::ScopeOut), [`Pack`](crate::Pack),
-/// [`Sum`](crate::Sum), [`Unpack`](crate::Unpack) and [`Bus`](crate::Bus)
-/// nodes plus every [`UnitNode`](crate::UnitNode) descriptor-table keyword.
+/// [`Sum`](crate::Sum), [`Unpack`](crate::Unpack), [`Bus`](crate::Bus),
+/// [`Buffer`](crate::Buffer) and [`Sample`](crate::Sample) nodes plus every
+/// [`UnitNode`](crate::UnitNode) descriptor-table keyword.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlyphonSugar;
 
@@ -35,6 +39,8 @@ const KEYWORD_TAG: &[(&str, &str)] = &[
     ("~sum", "Sum"),
     ("~unpack", "Unpack"),
     ("~bus", "Bus"),
+    ("~buffer", "Buffer"),
+    ("~sample", "Sample"),
 ];
 
 /// The typetag tag for a sugar keyword.
@@ -62,6 +68,8 @@ impl Sugar for PlyphonSugar {
             "~sum" => count_spec("Sum", args)?,
             "~unpack" => count_spec("Unpack", args)?,
             "~bus" => node_datum("Bus", vec![]),
+            "~buffer" => buffer_spec(args)?,
+            "~sample" => node_datum("Sample", vec![]),
             other => match crate::units::unit_desc_by_keyword(other) {
                 Some(desc) => unit_spec(desc, args)?,
                 None => return Ok(None),
@@ -92,6 +100,10 @@ impl Sugar for PlyphonSugar {
             "Pack" => Some(write_count("~pack", crate::Pack::DEFAULT_COUNT, node)),
             "Sum" => Some(write_count("~sum", crate::Sum::DEFAULT_COUNT, node)),
             "Unpack" => Some(write_count("~unpack", crate::Unpack::DEFAULT_COUNT, node)),
+            "Buffer" => Some(write_buffer(node)),
+            // An assigned sample falls through to the generic form, which
+            // keeps its asset address.
+            "Sample" => node.get("asset").is_none().then(|| "~sample".to_string()),
             // An unknown unit name falls through to the generic form.
             "Unit" => write_unit(node),
             other => keyword_for_tag(other).map(str::to_string),
@@ -292,6 +304,39 @@ fn count_spec(tag: &str, args: SugarArgs<'_>) -> Result<Datum, FormatError> {
         fields.push(("count", Datum::U64(count.max(1) as u64)));
     }
     Ok(node_datum(tag, fields))
+}
+
+/// Read a `(~buffer [#:frames n] [#:channels c])` form into a `Buffer` node
+/// datum. Each field is carried only when its keyword is present, so a bare
+/// form stays bare.
+fn buffer_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
+    let mut fields = Vec::new();
+    if let Some(frames) = args.keyword_int("frames")? {
+        let frames = (frames.max(1) as usize).min(crate::Buffer::MAX_FRAMES);
+        fields.push(("frames", Datum::U64(frames as u64)));
+    }
+    if let Some(channels) = args.keyword_int("channels")? {
+        let channels = (channels.max(1) as usize).min(crate::Buffer::MAX_CHANNELS);
+        fields.push(("channels", Datum::U64(channels as u64)));
+    }
+    Ok(node_datum("Buffer", fields))
+}
+
+/// Write a `Buffer`. The bare `~buffer` when its shape is the default, else
+/// `(~buffer [#:frames n] [#:channels c])`.
+fn write_buffer(node: &Datum) -> String {
+    let mut parts = Vec::new();
+    if let Some(frames) = node.get("frames").and_then(Datum::as_i64) {
+        if frames != crate::Buffer::DEFAULT_FRAMES as i64 {
+            parts.push(format!("#:frames {frames}"));
+        }
+    }
+    if let Some(channels) = node.get("channels").and_then(Datum::as_i64) {
+        if channels != crate::Buffer::DEFAULT_CHANNELS as i64 {
+            parts.push(format!("#:channels {channels}"));
+        }
+    }
+    write_form("~buffer", parts)
 }
 
 /// Write a count node. The bare keyword `kw` when the socket `count` is at
@@ -588,6 +633,22 @@ mod tests {
         );
         assert_eq!(s.write_spec("Unit", &mul).as_deref(), Some(form));
         assert_eq!(s.label_stem("Unit", &mul), Some("~mul"));
+    }
+
+    #[test]
+    fn buffer_and_sample_round_trip() {
+        let s = PlyphonSugar;
+        let bare = s.read_bare("~buffer").expect("bare");
+        assert_eq!(s.write_spec("Buffer", &bare).as_deref(), Some("~buffer"));
+        let form = "(~buffer #:frames 1024 #:channels 2)";
+        let shaped = read_spec(form).expect("shaped");
+        assert_eq!(shaped.get("frames").and_then(Datum::as_i64), Some(1024));
+        assert_eq!(s.write_spec("Buffer", &shaped).as_deref(), Some(form));
+        // An unassigned sample is bare. An assigned one keeps the generic form.
+        let sample = s.read_bare("~sample").expect("bare");
+        assert_eq!(s.write_spec("Sample", &sample).as_deref(), Some("~sample"));
+        let assigned = node_datum("Sample", vec![("asset", Datum::Str("ab".into()))]);
+        assert_eq!(s.write_spec("Sample", &assigned), None);
     }
 
     #[test]

@@ -6,19 +6,23 @@
 //! `gantz_egui::NodeUi` impls live in `crate::egui` behind the `egui` feature.
 //! The `~` keyword-name prefix marks them as dsp nodes.
 
+pub use buffer::Buffer;
 pub use bus::Bus;
 pub use out::Out;
 pub use pack::Pack;
 pub use play_buf::PlayBuf;
+pub use sample::Sample;
 pub use scope_out::ScopeOut;
 pub use sum::Sum;
 pub use unit::{InvalidUnitNode, UnitNode};
 pub use unpack::Unpack;
 
+pub mod buffer;
 pub mod bus;
 pub mod out;
 pub mod pack;
 pub mod play_buf;
+pub mod sample;
 pub mod scope_out;
 pub mod sum;
 pub mod unit;

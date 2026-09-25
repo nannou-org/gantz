@@ -55,6 +55,8 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_plyphon::Unpack,
             gantz_plyphon::Bus,
             gantz_plyphon::PlayBuf,
+            gantz_plyphon::Sample,
+            gantz_plyphon::Buffer,
             gantz_pattern::Pmini,
             gantz_pattern::Pplot,
         }
@@ -210,10 +212,12 @@ mod tests {
             "sleep",
             "tick!",
             "update!",
+            "~buffer",
             "~bus",
             "~out",
             "~pack",
             "~playbuf",
+            "~sample",
             "~scopeout",
             "~sum",
             "~unpack",
@@ -634,6 +638,13 @@ mod tests {
             2,
             48_000.0,
         )));
+        nodes.push(erased(&gantz_plyphon::Sample::new(
+            gantz_ca::ContentAddr([3; 32]),
+            2,
+            48_000,
+            48_000.0,
+        )));
+        nodes.push(erased(&gantz_plyphon::Buffer::new(1024, 2)));
         nodes
     }
 
@@ -716,6 +727,10 @@ mod tests {
                 "dfd6ba15af40df9e11f89d8b89e895154ef8dc52249797399b326430c4f2f4e2",
             ),
             (
+                "Buffer",
+                "ea7bab6ba5b0acbd5f07b16b3e1cd1da636d24552cbeca6f5722a41f28df6344",
+            ),
+            (
                 "Bus",
                 "10ac84d365f318b5116af46dec6c5b400ebcbd3bff1751113096e43e766d791b",
             ),
@@ -796,6 +811,10 @@ mod tests {
                 "119aca31f290bbb848b66dc8f5130c7a21757b425e061596ea4940b7d93c22ba",
             ),
             (
+                "Sample",
+                "92a1cf270d69e1d782ec83778359d7897d572d0b523f42c7a05be3438c0863c5",
+            ),
+            (
                 "ScopeOut",
                 "f52e55d37ad94f3c6bd37c78f55282f8b8e934c8f26e075cd1afb32a5eee133c",
             ),
@@ -851,7 +870,7 @@ mod tests {
 
         let unit = |name: &str| gantz_plyphon::UnitNode::from_unit(name).expect("table row");
         let sugar = super::codec().sugars();
-        let cases: [(gantz_ca::NodeData, &str, &str); 9] = [
+        let cases: [(gantz_ca::NodeData, &str, &str); 11] = [
             (erased(&unit("SinOsc")), "Unit", "~sinosc"),
             (erased(&unit("Lag")), "Unit", "~lag"),
             (erased(&unit("LPF")), "Unit", "~lpf"),
@@ -869,6 +888,16 @@ mod tests {
                 "~unpack",
             ),
             (erased(&gantz_plyphon::Bus::default()), "Bus", "~bus"),
+            (
+                erased(&gantz_plyphon::Buffer::default()),
+                "Buffer",
+                "~buffer",
+            ),
+            (
+                erased(&gantz_plyphon::Sample::default()),
+                "Sample",
+                "~sample",
+            ),
         ];
         for (nd, tag, expected) in cases {
             let datum = tagged_datum(&nd);
