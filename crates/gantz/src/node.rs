@@ -1,4 +1,4 @@
-/// The `.ga.fi.filter(|&ix| (&*graph[ix] as &dyn std::any::Any).is::<gantz_pattern::Pplot>())d(|&ix| (&*graph[ix] as &dyn std::any::Any).is::<bevy_gantz_egui::node::tick_bang::TickBang>())tz` keyword sugar carrier for the app's node set. It composes
+/// The `.gantz` keyword sugar carrier composing
 /// every domain's node sugar.
 pub struct NodeSet;
 
@@ -107,12 +107,11 @@ pub fn push_plain_domains(app: &mut bevy::app::App) {
 
 #[cfg(test)]
 mod tests {
+    use crate::headless::{Reified, builtins_with_instances, env, head_graph};
     use gantz_egui::node::DynNode;
 
     /// The data registry, which stores graphs erased.
     type DataReg = gantz_ca::Registry;
-    /// The typed cache serving the registry's graphs as the app's node set.
-    type Reified = gantz_core::data::ReifiedGraphs<DynNode>;
 
     fn name(s: &str) -> gantz_ca::Name {
         s.parse().expect("infallible")
@@ -125,46 +124,11 @@ mod tests {
         (n as &dyn std::any::Any).downcast_ref()
     }
 
-    /// Reify the whole registry column into a typed cache through the codec.
+    /// Reify the whole registry column, asserting every graph reifies.
     fn reify_all(reg: &DataReg) -> Reified {
-        let mut reified = Reified::new();
-        let codec = super::codec();
-        let errs = reified.ensure_all_with(reg, |nd| codec.reify_ui(nd).map(|inst| inst.node));
+        let (reified, errs) = crate::headless::reify_all(reg, &super::codec());
         assert!(errs.is_empty(), "{errs:?}");
         reified
-    }
-
-    /// The composed builtin palette plus one reified instance per builtin.
-    fn builtins_with_instances() -> (gantz_core::Builtins, gantz_egui::node::UiBuiltins) {
-        let builtins = super::builtins();
-        let (instances, errs) = gantz_egui::node::UiBuiltins::reify(&builtins, &super::codec());
-        assert!(errs.is_empty(), "{errs:?}");
-        (builtins, instances)
-    }
-
-    /// The [`gantz_egui::Env`] over the given borrowed parts.
-    fn env<'a>(
-        registry: &'a DataReg,
-        reified: &'a Reified,
-        builtins: &'a (gantz_core::Builtins, gantz_egui::node::UiBuiltins),
-        codec: &'a gantz_egui::node::NodeCodec,
-    ) -> gantz_egui::Env<'a> {
-        gantz_egui::Env {
-            registry,
-            builtins: &builtins.0,
-            codec,
-            graphs: reified,
-            instances: &builtins.1,
-        }
-    }
-
-    /// The typed graph at the given head's tip, if reified.
-    fn head_graph<'a>(
-        reified: &'a Reified,
-        reg: &DataReg,
-        head: &gantz_ca::Head,
-    ) -> Option<&'a gantz_core::node::graph::Graph<DynNode>> {
-        reified.get(&reg.head_commit(head)?.graph)
     }
 
     /// Erase a typed node to its stored data form via its own tag + serde.
@@ -2848,20 +2812,20 @@ mod tests {
     /// Steel-inert, so they compile like any other graph.
     #[test]
     fn merged_base_sources_all_compile() {
-        let mut merged = DataReg::default();
-        for bytes in [
-            gantz_base::BYTES,
-            gantz_plyphon::BASE_BYTES,
-            gantz_pattern::BASE_BYTES,
-        ] {
-            let export: DataReg = gantz_egui::export::parse_export_at(
-                bytes,
-                bevy_gantz_egui::base::BASE_TIMESTAMP,
-                &super::codec(),
-            )
-            .expect("parse source");
-            merged.merge(export);
+        let loaded = crate::headless::load_sources(
+            &crate::headless::base_sources(),
+            bevy_gantz_egui::base::BASE_TIMESTAMP,
+            &super::codec(),
+        );
+        for (source, parsed) in crate::headless::base_sources().iter().zip(&loaded.parsed) {
+            assert!(
+                parsed.is_ok(),
+                "{}: {:?}",
+                source.label,
+                parsed.as_ref().err()
+            );
         }
+        let merged = loaded.registry;
         let builtins = builtins_with_instances();
         let reified = reify_all(&merged);
         let codec = super::codec();
@@ -2874,18 +2838,7 @@ mod tests {
             let head = gantz_ca::Head::Branch(n.clone());
             let graph = head_graph(&reified, &merged, &head)
                 .unwrap_or_else(|| panic!("`{n}` has no head graph"));
-            let entrypoints = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
-            let config = gantz_core::compile::Config::default();
-            // `init_with_modules` mirrors the app path. The ui and pattern
-            // modules must be registered for the base graphs' requires.
-            gantz_core::vm::init_with_modules(
-                &get_node,
-                graph,
-                &entrypoints,
-                &config,
-                &super::steel_modules(),
-            )
-            .unwrap_or_else(|e| {
+            crate::headless::init(&get_node, graph).unwrap_or_else(|e| {
                 panic!(
                     "merged base graph `{n}` failed to compile:\n{}",
                     gantz_core::vm::error_chain(&e),
@@ -3010,9 +2963,7 @@ mod tests {
         let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
         let head = gantz_ca::Head::Branch(name("wrap-add"));
         let graph = head_graph(&reified, &merged, &head).expect("wrap-add graph");
-        let entrypoints = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
-        let config = gantz_core::compile::Config::default();
-        gantz_core::vm::init(&get_node, graph, &entrypoints, &config).unwrap_or_else(|e| {
+        crate::headless::init(&get_node, graph).unwrap_or_else(|e| {
             panic!(
                 "wrap-add failed to compile:\n{}",
                 gantz_core::vm::error_chain(&e),

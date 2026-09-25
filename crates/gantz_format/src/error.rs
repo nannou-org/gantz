@@ -139,7 +139,7 @@ impl fmt::Display for ErrorKind {
 }
 
 /// Compute a 1-based `(line, column)` for a byte offset within `src`.
-fn line_col(src: &str, offset: usize) -> (usize, usize) {
+pub fn line_col(src: &str, offset: usize) -> (usize, usize) {
     let offset = offset.min(src.len());
     let mut line = 1;
     let mut col = 1;

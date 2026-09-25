@@ -12,6 +12,10 @@ use bevy_gantz_egui::{BuiltinNodes, GantzEguiPlugin, TraceCapture};
 use bevy_pkv::PkvStore;
 use storage::Pkv;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod cli;
+#[cfg(not(target_arch = "wasm32"))]
+mod headless;
 mod node;
 mod persist;
 mod storage;
@@ -23,6 +27,11 @@ fn main() {
     // main browser thread.
     if bevy_gantz_plyphon::on_worklet_thread() {
         return;
+    }
+    // Subcommands run headless and exit. No subcommand boots the GUI.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(command) = cli::parse() {
+        std::process::exit(cli::run(command));
     }
     let mut app = App::new();
     // Domains with no bevy plugin, such as the pattern domain.
