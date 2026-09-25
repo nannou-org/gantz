@@ -349,31 +349,51 @@ pub struct ScopeOutBinding {
     pub bufnum_param: usize,
 }
 
-/// Records a `~playbuf` node's asset reference. The audio driver makes the
-/// referenced [`gantz_ca::ContentAddr`] resident, allocates a bufnum,
-/// installs the buffer, and sets the node's `bufnum` and `rate` params after
-/// spawning.
+/// Where the buffer behind a [`BufferBinding`] comes from.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum BufferSource {
+    /// A content-addressed audio asset. The driver installs it once and
+    /// shares it read-only across every synth that references it.
+    Asset(gantz_ca::ContentAddr),
+    /// A zeroed scratch buffer of `frames` frames, owned by the node path.
+    /// Units can write to it.
+    Scratch {
+        /// The number of frames.
+        frames: usize,
+    },
+}
+
+/// What a unit does with the buffer behind a buffer input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BufferAccess {
+    /// The unit only reads the buffer. Any source is allowed.
+    Read,
+    /// The unit writes the buffer. Only a [`BufferSource::Scratch`] is
+    /// allowed, so a writer never changes a shared asset.
+    Write,
+}
+
+/// Records a buffer source node's buffer, so the audio driver can install
+/// it and set the node's bufnum param after spawning.
 ///
-/// This is the buffer analogue of [`ScopeOutBinding`]. Where a scope stream
-/// is per-synth read-back, a resident buffer is loaded once, refcounted and
-/// shared read-only across every synth referencing the same asset.
-/// `bufnum_param` and `rate_param` are no-lag control params, see
-/// [`push_control_param`](DspBuilder::push_control_param), the driver sets via
-/// `set_control` after spawning. The rate is set to
-/// `sample_rate / engine_sample_rate` so `PlayBuf` advances at the right
-/// pitch.
+/// This is the buffer analogue of [`ScopeOutBinding`]. `bufnum_param` is a
+/// no-lag control param, see
+/// [`push_control_param`](DspBuilder::push_control_param). The driver sets
+/// it via `set_control` after spawning, in the same command drain as the
+/// spawn, so unit init already sees it. A source that feeds several defs
+/// pushes one binding in each, all with the same `node_path`. The driver
+/// binds them all to one buffer.
 #[derive(Clone, Debug)]
 pub struct BufferBinding {
-    /// The buffer node's path within the graph, where its state lives.
+    /// The source node's path within the graph.
     pub node_path: Vec<usize>,
-    /// The content-addressed audio asset the node plays.
-    pub asset: gantz_ca::ContentAddr,
-    /// The no-lag control param the driver sets to the resident bufnum.
+    /// Where the buffer comes from.
+    pub source: BufferSource,
+    /// The buffer's channel count. It sizes the output group of a unit that
+    /// outputs one channel per buffer channel.
+    pub channels: usize,
+    /// The no-lag control param the driver sets to the bufnum.
     pub bufnum_param: usize,
-    /// The no-lag control param the driver sets to the playback rate.
-    pub rate_param: usize,
-    /// The asset's own sample rate, for the driver's rate correction.
-    pub sample_rate: f64,
 }
 
 /// The finished output of a [`DspBuilder`]: the compiled synthdef plus the
@@ -387,7 +407,7 @@ pub struct Finished {
     pub monitors: Vec<ScopeOutBinding>,
     /// The fade gains gating the def's whole output.
     pub gains: Vec<GainRef>,
-    /// One binding per `~playbuf` buffer reference.
+    /// One binding per buffer source emitted in the def.
     pub buffers: Vec<BufferBinding>,
 }
 
@@ -515,28 +535,75 @@ impl DspBuilder {
         });
     }
 
-    /// Declare a buffer reference for the dsp node at `path`, recording a
-    /// [`BufferBinding`]. The driver makes `asset` resident and sets the
-    /// node's `bufnum` and `rate` params after spawning. `bufnum_param` and
-    /// `rate_param` are no-lag control params from
-    /// [`push_control_param`](Self::push_control_param). `sample_rate` is the
-    /// asset's own rate, which the driver divides by the engine rate to set
-    /// `rate`.
-    pub fn push_buffer(
-        &mut self,
-        path: &[usize],
-        asset: gantz_ca::ContentAddr,
-        bufnum_param: u32,
-        rate_param: u32,
-        sample_rate: f64,
-    ) {
+    /// Declare the buffer of the buffer source node at `path`. Push its
+    /// no-lag `bufnum` param, record a [`BufferBinding`] and return the
+    /// bufnum wire. The driver installs the buffer and sets the param after
+    /// spawning.
+    pub fn push_buffer(&mut self, path: &[usize], source: BufferSource, channels: usize) -> Signal {
+        let bufnum_param = self.push_control_param(path, "bufnum");
         self.buffers.push(BufferBinding {
             node_path: path.to_vec(),
-            asset,
+            source,
+            channels: channels.max(1),
             bufnum_param: bufnum_param as usize,
-            rate_param: rate_param as usize,
-            sample_rate,
         });
+        Signal::mono(InputRef::Param(bufnum_param))
+    }
+
+    /// The bufnum wire and binding behind a buffer input, if `input` is a
+    /// buffer source's wire that allows `access`. A write access rejects an
+    /// asset, so a writer never changes shared data.
+    pub fn buffer_input(
+        &self,
+        input: Option<&Signal>,
+        access: BufferAccess,
+    ) -> Option<(InputRef, &BufferBinding)> {
+        let signal = input?;
+        if signal.width() != 1 {
+            return None;
+        }
+        let wire = signal.channel(0)?;
+        let InputRef::Param(param) = wire else {
+            return None;
+        };
+        let binding = self
+            .buffers
+            .iter()
+            .find(|b| b.bufnum_param == param as usize)?;
+        match (access, &binding.source) {
+            (BufferAccess::Write, BufferSource::Asset(_)) => None,
+            _ => Some((wire, binding)),
+        }
+    }
+
+    /// `rate` scaled by `BufRateScale.kr(bufnum)`, the buffer's sample rate
+    /// over the engine's. A playback rate of 1 then plays the buffer at its
+    /// own pitch at any engine sample rate.
+    pub fn rate_scaled(&mut self, bufnum: InputRef, rate: InputRef) -> InputRef {
+        let scale = self.push_unit(UnitSpec::new(
+            "BufRateScale",
+            Rate::Control,
+            vec![bufnum],
+            1,
+        ));
+        let rate_of = match self.input_rate(&rate) {
+            Rate::Audio => Rate::Audio,
+            _ => Rate::Control,
+        };
+        let unit = self.push_unit(UnitSpec {
+            name: "BinaryOpUGen".to_string(),
+            rate: rate_of,
+            inputs: vec![
+                rate,
+                InputRef::Unit {
+                    unit: scale,
+                    output: 0,
+                },
+            ],
+            num_outputs: 1,
+            special_index: 2,
+        });
+        InputRef::Unit { unit, output: 0 }
     }
 
     /// The number of output-bus channels a sink should fan its signal across.
@@ -743,7 +810,7 @@ mod tests {
     use plyphon::Rate;
     use plyphon::synthdef::{InputRef, UnitSpec};
 
-    use super::{DspBuilder, Signal, node_dsp_of, sum_signals};
+    use super::{BufferAccess, BufferSource, DspBuilder, Signal, node_dsp_of, sum_signals};
 
     /// Every DSP node type in this crate must be found by [`node_dsp_of`], so
     /// a probe arm forgotten when adding a node fails here rather than in
@@ -927,5 +994,26 @@ mod tests {
         let before = b.units.len();
         sum_signals(&mut b, &[Signal::mono(k), Signal::mono(a)]);
         assert_eq!(b.units[before].rate, Rate::Audio);
+    }
+
+    /// A buffer input resolves only to a source's bufnum wire. Write access
+    /// rejects an asset, so a writer never changes shared data.
+    #[test]
+    fn buffer_input_checks_the_wire_and_the_access() {
+        let mut b = DspBuilder::new(1);
+        let addr = gantz_ca::blob_addr(b"asset");
+        let asset = b.push_buffer(&[0], BufferSource::Asset(addr), 2);
+        let scratch = b.push_buffer(&[1], BufferSource::Scratch { frames: 64 }, 1);
+        let (_, binding) = b.buffer_input(Some(&asset), BufferAccess::Read).unwrap();
+        assert_eq!(binding.channels, 2);
+        assert!(b.buffer_input(Some(&asset), BufferAccess::Write).is_none());
+        assert!(
+            b.buffer_input(Some(&scratch), BufferAccess::Write)
+                .is_some()
+        );
+        // A wire that is not a source's bufnum does not resolve.
+        let other = Signal::mono(InputRef::Constant(3.0));
+        assert!(b.buffer_input(Some(&other), BufferAccess::Read).is_none());
+        assert!(b.buffer_input(None, BufferAccess::Read).is_none());
     }
 }

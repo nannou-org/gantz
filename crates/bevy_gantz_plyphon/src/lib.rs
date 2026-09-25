@@ -37,8 +37,9 @@ use cpal::{FromSample, SizedSample};
 use gantz_ca as ca;
 use gantz_core::node::graph::Graph;
 use gantz_plyphon::{
-    AddAction, Backend, BusKey, DefCache, Embedded, FadeSink, GainRef, ROOT_GROUP_ID, ResolvedPart,
-    ToNodeDsp, derive_template, flatten_from_registry, flatten_instance_children, instantiate,
+    AddAction, Backend, BufferSource, BusKey, DefCache, Embedded, FadeSink, GainRef, ROOT_GROUP_ID,
+    ResolvedPart, ToNodeDsp, derive_template, flatten_from_registry, flatten_instance_children,
+    instantiate,
 };
 use plyphon::{Controller, Nrt, Options, StreamConsumer, World, engine};
 // `std::time::Instant` panics on `wasm32-unknown-unknown`. `web_time::Instant`
@@ -1380,8 +1381,7 @@ fn wiring_hash(part: &ResolvedPart) -> u64 {
         (1u8, &b.key, b.channels, b.param).hash(&mut h);
     }
     for b in &part.buffers {
-        let params = (b.bufnum_param, b.rate_param);
-        (2u8, &b.node_path, &b.asset, params, b.sample_rate.to_bits()).hash(&mut h);
+        (2u8, &b.node_path, &b.source, b.channels, b.bufnum_param).hash(&mut h);
     }
     h.finish()
 }
@@ -1463,23 +1463,21 @@ fn spawn_part(
     }
 
     // Make each referenced asset resident, shared and refcounted, and wire the
-    // node's driver-owned bufnum and rate. A missing or undecodable asset is
-    // wired to the missing buffer `-1` so the node plays silence rather than
-    // a wrong buffer.
+    // source's driver-owned bufnum. A missing or undecodable asset is wired to
+    // `-1`, which reads the always-empty slot 0, so the node plays silence
+    // rather than a wrong buffer. The def corrects the playback rate itself
+    // via `BufRateScale`.
     let mut part_assets: Vec<ca::ContentAddr> = Vec::new();
     for binding in &buffers {
-        match resolve_resident(controller, state, assets, &mut part_assets, binding.asset) {
-            Some(bufnum) => {
-                set_after_spawn.push((binding.bufnum_param, bufnum as f32));
-                let rate = if sample_rate > 0.0 {
-                    (binding.sample_rate / sample_rate) as f32
-                } else {
-                    1.0
-                };
-                set_after_spawn.push((binding.rate_param, rate));
+        let bufnum = match &binding.source {
+            BufferSource::Asset(asset) => {
+                resolve_resident(controller, state, assets, &mut part_assets, *asset)
             }
-            None => set_after_spawn.push((binding.bufnum_param, -1.0)),
-        }
+            // Scratch buffers are not allocated yet.
+            BufferSource::Scratch { .. } => None,
+        };
+        let value = bufnum.map_or(-1.0, |b| b as f32);
+        set_after_spawn.push((binding.bufnum_param, value));
     }
 
     let def_name = def.name.clone();

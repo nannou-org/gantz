@@ -9,18 +9,19 @@ use plyphon::Rate;
 use plyphon::synthdef::{InputRef, UnitSpec};
 use serde::{Deserialize, Serialize};
 
-use crate::dsp::{DspBuilder, NodeDsp, Signal, ToNodeDsp};
+use crate::dsp::{BufferSource, DspBuilder, NodeDsp, Signal, ToNodeDsp};
 
 /// Play a content-addressed audio buffer back through plyphon's `PlayBuf`,
 /// scsynth's sampler, looping, one output channel per buffer channel.
 ///
 /// The node holds only the asset's address plus a cache of its channel count
-/// and sample rate. That is enough to size the output group and set the
-/// playback rate without decoding the PCM. The samples themselves live in
-/// the content-addressed asset store. The audio driver makes the referenced
-/// asset resident, allocates a bufnum, installs the buffer, and sets this
-/// node's driver-owned `bufnum` and `rate` control params after spawning.
-/// See [`BufferBinding`](crate::BufferBinding).
+/// and sample rate. The channel count sizes the output group without decoding
+/// the PCM. The samples themselves live in the content-addressed asset store.
+/// The audio driver makes the referenced asset resident, allocates a bufnum,
+/// installs the buffer, and sets this node's driver-owned `bufnum` control
+/// param after spawning. See [`BufferBinding`](crate::BufferBinding).
+/// `BufRateScale` in the def corrects the playback rate for the asset's own
+/// sample rate.
 ///
 /// An unassigned node reads a guaranteed-missing buffer, so it is silent
 /// until an asset is set. Steel-inert like the other dsp nodes.
@@ -35,8 +36,7 @@ pub struct PlayBuf {
         skip_serializing_if = "is_default_channels"
     )]
     num_channels: usize,
-    /// The asset's own cached sample rate in Hz. The driver divides it by the
-    /// engine rate to set the playback `rate`.
+    /// The asset's own cached sample rate in Hz.
     #[serde(default, skip_serializing_if = "crate::node::is_default")]
     sample_rate: f64,
 }
@@ -142,17 +142,18 @@ impl NodeDsp for PlayBuf {
 
     fn ugens(&self, path: &[usize], _inputs: &[Option<Signal>], b: &mut DspBuilder) -> Vec<Signal> {
         let channels = self.num_channels();
-        // `bufnum` and `rate` are driver-owned no-lag control params set after
-        // spawn, like scope bufnums and bus indices. An assigned node makes its
-        // asset resident via a `BufferBinding`. An unassigned node instead
-        // reads the guaranteed-missing buffer `-1`, which `PlayBuf` renders as
-        // silence.
+        // `bufnum` is a driver-owned no-lag control param set after spawn,
+        // like scope bufnums and bus indices. An assigned node makes its
+        // asset resident via a `BufferBinding`, and `BufRateScale` corrects
+        // the rate for the asset's sample rate. An unassigned node reads the
+        // bufnum `-1`, which lands on the driver's always-empty slot 0 and
+        // renders as silence.
         let (bufnum, rate) = match self.asset {
             Some(asset) => {
-                let bufnum = b.push_control_param(path, "bufnum");
-                let rate = b.push_control_param(path, "rate");
-                b.push_buffer(path, asset, bufnum, rate, self.sample_rate);
-                (InputRef::Param(bufnum), InputRef::Param(rate))
+                let source = BufferSource::Asset(asset);
+                let bufnum = b.push_buffer(path, source, channels);
+                let bufnum = bufnum.channel(0).expect("a `Signal` is never empty");
+                (bufnum, b.rate_scaled(bufnum, InputRef::Constant(1.0)))
             }
             None => (InputRef::Constant(-1.0), InputRef::Constant(1.0)),
         };
@@ -203,10 +204,12 @@ mod tests {
         assert_eq!(outs.len(), 1);
         assert_eq!(outs[0].width(), 1);
         let finished = b.finish("t");
-        assert!(finished.def.units.iter().any(|u| u.name == "PlayBuf"));
+        let names: Vec<&str> = finished.def.units.iter().map(|u| u.name.as_str()).collect();
+        assert!(names.contains(&"PlayBuf"));
+        assert!(names.contains(&"BufRateScale"), "the def scales the rate");
         assert_eq!(finished.buffers.len(), 1);
-        assert_eq!(finished.buffers[0].asset, addr);
-        assert_eq!(finished.buffers[0].sample_rate, 44_100.0);
+        assert_eq!(finished.buffers[0].source, BufferSource::Asset(addr));
+        assert_eq!(finished.buffers[0].channels, 1);
     }
 
     #[test]
@@ -222,7 +225,7 @@ mod tests {
             .iter()
             .find(|u| u.name == "PlayBuf")
             .expect("PlayBuf unit");
-        // The missing-buffer bufnum `-1`, read by `PlayBuf` as silence.
+        // The bufnum `-1`, which reads the driver's empty slot 0 as silence.
         assert!(matches!(playbuf.inputs[0], InputRef::Constant(v) if v == -1.0));
     }
 

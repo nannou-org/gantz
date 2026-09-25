@@ -111,8 +111,8 @@ pub struct Derived {
     /// The fade gains that gate the def's whole output. The driver ramps them
     /// on a crossfaded replacement.
     pub gains: Vec<GainRef>,
-    /// One binding per `~playbuf` buffer reference. The driver makes each
-    /// asset resident and wires the node's `bufnum` and `rate` params.
+    /// One binding per buffer source emitted in the def. The driver installs
+    /// each buffer and wires the source's `bufnum` param.
     pub buffers: Vec<BufferBinding>,
     /// The width and rate each dsp output port carried, for diagnostics.
     pub shapes: PortShapes,
