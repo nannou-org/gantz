@@ -324,13 +324,14 @@ static EMPTY_BUFFERS: BufferBlobs = BufferBlobs::new();
 struct HeadSynths {
     heads: HashMap<Entity, HeadParts>,
     bus_alloc: BusAlloc,
-    /// Allocator of global buffer-table indices, for scope streams and
-    /// resident assets alike.
+    /// Allocator of global buffer-table indices, for scope streams and held
+    /// buffers alike.
     bufnum_alloc: BufnumAlloc,
-    /// Assets installed in the engine's buffer table, keyed by address and
-    /// shared read-only across every synth referencing them. Loaded once and
-    /// refcounted. Freed when the last reference retires.
-    resident: HashMap<ca::ContentAddr, ResidentBuffer>,
+    /// The buffers installed in the engine's buffer table, by key. Assets are
+    /// shared read-only across every synth that reads them. Scratch buffers
+    /// are owned by one source node in one head. Each is installed once,
+    /// refcounted per part, and freed when the last reference retires.
+    held: HashMap<BufferKey, HeldBuffer>,
     /// Installed synthdef names to `(refcount, structural_sig)`. A def is
     /// installed once per name and reused while its structure is unchanged.
     /// A structural edit with the same name and a different sig re-installs.
@@ -490,9 +491,10 @@ struct FadingSynth {
     deadline: Instant,
     /// The synth's cued scope streams, closed and freed only at `deadline`.
     scopes: Vec<ScopeSlot>,
-    /// The assets whose refcount this synth still holds. Released at `deadline`,
-    /// not at fade-out, so the buffer stays resident through the crossfade.
-    buffers: Vec<ca::ContentAddr>,
+    /// The buffers whose refcount this synth still holds. Released at
+    /// `deadline`, not at fade-out, so each buffer stays installed through the
+    /// crossfade and a scratch buffer keeps its contents across a respawn.
+    buffers: Vec<BufferKey>,
 }
 
 /// The size of the engine's buffer table, plyphon's `Options::max_buffers`.
@@ -506,15 +508,43 @@ const MAX_BUFFERS: usize = 1024;
 /// bus-run graveyard.
 const BUFFER_GRACE: Duration = Duration::from_millis(200);
 
-/// An asset installed in the engine's buffer table. The bufnum it occupies
-/// and how many live or fading synths still reference it. Freed at refcount 0.
-struct ResidentBuffer {
+/// A buffer the driver holds in the engine's buffer table.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum BufferKey {
+    /// A content-addressed asset, shared by every synth that reads it.
+    Asset(ca::ContentAddr),
+    /// A zeroed scratch buffer, owned by one buffer source node in one open
+    /// head. Paths are head-relative, so the key needs the head. The shape is
+    /// part of the key, so a shape change gives a new zeroed buffer and never
+    /// replaces a buffer that a running synth holds.
+    Scratch {
+        head: Entity,
+        path: Vec<usize>,
+        frames: usize,
+        channels: usize,
+    },
+}
+
+/// A buffer installed in the engine's buffer table. The bufnum it occupies
+/// and how many live or fading parts still reference it. Freed at refcount 0.
+struct HeldBuffer {
     bufnum: usize,
     refcount: usize,
 }
 
+/// The outcome of [`resolve_buffer`].
+enum Resolved {
+    /// The buffer is installed at this bufnum.
+    Bound(usize),
+    /// The buffer cannot be installed, for example a missing asset or a full
+    /// table. The part reads `-1`, an empty slot, and plays silence.
+    Missing,
+    /// The command ring was full. The spawn can retry next frame.
+    Retry,
+}
+
 /// Allocates indices in the engine's buffer table for scope streams and
-/// resident buffers, reusing freed ones. Both kinds share one allocator, since
+/// held buffers, reusing freed ones. Both kinds share one allocator, since
 /// plyphon addresses them in one table.
 ///
 /// Index 0 is never handed out. plyphon units read a bufnum as
@@ -610,12 +640,12 @@ struct PartSynth {
     /// The def's driver-owned fade gains, one per sink. Used to fade the synth
     /// in on spawn and out across a crossfaded replacement.
     gains: Vec<GainRef>,
-    /// The distinct assets this synth references, each holding one refcount on
-    /// its [`ResidentBuffer`]. Released only when the synth is finally freed.
+    /// The distinct buffers this synth references, each holding one refcount
+    /// on its [`HeldBuffer`]. Released only when the synth is finally freed.
     /// That is immediately if it has no fade, else at its [`FadingSynth`]
-    /// deadline. So a crossfade respawn keeps the buffer resident with no
-    /// reload flicker.
-    buffers: Vec<ca::ContentAddr>,
+    /// deadline. So a crossfade respawn keeps each buffer installed, with no
+    /// reload and no loss of scratch contents.
+    buffers: Vec<BufferKey>,
 }
 
 /// Binds one synth control param to a dsp node's VM state value.
@@ -1462,21 +1492,39 @@ fn spawn_part(
         }
     }
 
-    // Make each referenced asset resident, shared and refcounted, and wire the
-    // source's driver-owned bufnum. A missing or undecodable asset is wired to
-    // `-1`, which reads the always-empty slot 0, so the node plays silence
-    // rather than a wrong buffer. The def corrects the playback rate itself
-    // via `BufRateScale`.
-    let mut part_assets: Vec<ca::ContentAddr> = Vec::new();
+    // Install each referenced buffer, shared and refcounted, and wire the
+    // source's driver-owned bufnum. The install lands in the same command
+    // drain as the spawn, so unit init already sees the buffer. A buffer that
+    // cannot be installed is wired to `-1`, which reads the always-empty slot
+    // 0, so the node plays silence rather than a wrong buffer. The def
+    // corrects the playback rate itself via `BufRateScale`.
+    let mut part_buffers: Vec<BufferKey> = Vec::new();
     for binding in &buffers {
-        let bufnum = match &binding.source {
-            BufferSource::Asset(asset) => {
-                resolve_resident(controller, state, assets, &mut part_assets, *asset)
-            }
-            // Scratch buffers are not allocated yet.
-            BufferSource::Scratch { .. } => None,
+        let key = match &binding.source {
+            BufferSource::Asset(asset) => BufferKey::Asset(*asset),
+            BufferSource::Scratch { frames } => BufferKey::Scratch {
+                head: entity,
+                path: binding.node_path.clone(),
+                frames: *frames,
+                channels: binding.channels,
+            },
         };
-        let value = bufnum.map_or(-1.0, |b| b as f32);
+        let value = match resolve_buffer(
+            controller,
+            state,
+            assets,
+            &mut part_buffers,
+            key,
+            sample_rate,
+        ) {
+            Resolved::Bound(bufnum) => bufnum as f32,
+            Resolved::Missing => -1.0,
+            Resolved::Retry => {
+                free_scopes(controller, &mut state.bufnum_alloc, scopes, now);
+                free_buffers(controller, state, &part_buffers, now);
+                return Err(SpawnError::Transient);
+            }
+        };
         set_after_spawn.push((binding.bufnum_param, value));
     }
 
@@ -1495,7 +1543,7 @@ fn spawn_part(
             log::error!("bevy_gantz_plyphon: synthdef install failed: {e:?}");
             drop(backend);
             free_scopes(controller, &mut state.bufnum_alloc, scopes, now);
-            free_buffers(controller, state, &part_assets, now);
+            free_buffers(controller, state, &part_buffers, now);
             return Err(SpawnError::Permanent);
         }
     }
@@ -1548,7 +1596,7 @@ fn spawn_part(
                 params,
                 scopes,
                 gains,
-                buffers: part_assets,
+                buffers: part_buffers,
             })
         }
         Err(e) => {
@@ -1560,7 +1608,7 @@ fn spawn_part(
             drop(backend);
             release_def(controller, &mut state.shared_defs, &def_name);
             free_scopes(controller, &mut state.bufnum_alloc, scopes, now);
-            free_buffers(controller, state, &part_assets, now);
+            free_buffers(controller, state, &part_buffers, now);
             Err(spawn_err)
         }
     }
@@ -1619,69 +1667,84 @@ fn free_scopes(
     }
 }
 
-/// Ensure `asset` is resident, take a refcount for the spawning part, and
-/// return its bufnum. On first use its buffer is installed from the
-/// content-addressed blob. Returns `None` if the blob is missing or
-/// undecodable or installation failed. The caller then wires the node to a
-/// missing buffer so it plays silence.
+/// Ensure the buffer at `key` is installed, take a refcount for the spawning
+/// part, and return its bufnum. On first use an asset's buffer is decoded
+/// from its content-addressed blob, and a scratch buffer is created zeroed at
+/// the engine's `sample_rate`.
 ///
-/// `part_assets` records the distinct assets this part already holds a refcount
-/// for, so a part with two nodes playing the same asset shares one bufnum and
-/// takes one refcount, released once when the synth is freed.
-fn resolve_resident(
+/// `part_buffers` records the distinct buffers this part already holds a
+/// refcount for, so a part with two nodes reading the same buffer shares one
+/// bufnum and takes one refcount, released once when the synth is freed.
+fn resolve_buffer(
     controller: &mut Controller,
     state: &mut HeadSynths,
     assets: &BufferBlobs,
-    part_assets: &mut Vec<ca::ContentAddr>,
-    asset: ca::ContentAddr,
-) -> Option<usize> {
-    if let Some(rb) = state.resident.get(&asset) {
-        let bufnum = rb.bufnum;
-        if !part_assets.contains(&asset) {
-            state.resident.get_mut(&asset).unwrap().refcount += 1;
-            part_assets.push(asset);
+    part_buffers: &mut Vec<BufferKey>,
+    key: BufferKey,
+    sample_rate: f64,
+) -> Resolved {
+    if let Some(held) = state.held.get_mut(&key) {
+        let bufnum = held.bufnum;
+        if !part_buffers.contains(&key) {
+            held.refcount += 1;
+            part_buffers.push(key);
         }
-        return Some(bufnum);
+        return Resolved::Bound(bufnum);
     }
-    let Some(blob) = assets.get(&asset) else {
-        log::error!("bevy_gantz_plyphon: asset {asset} not in the registry; playing silence");
-        return None;
+    let buffer = match &key {
+        BufferKey::Asset(asset) => {
+            let Some(blob) = assets.get(asset) else {
+                log::error!(
+                    "bevy_gantz_plyphon: asset {asset} not in the registry; playing silence"
+                );
+                return Resolved::Missing;
+            };
+            match gantz_plyphon::AudioAsset::decode(blob.as_ref()) {
+                Ok(audio) => plyphon::Buffer::from(audio),
+                Err(e) => {
+                    log::error!("bevy_gantz_plyphon: asset {asset} decode failed: {e}");
+                    return Resolved::Missing;
+                }
+            }
+        }
+        BufferKey::Scratch {
+            frames, channels, ..
+        } => plyphon::Buffer::zeroed(*frames, *channels, sample_rate),
     };
-    let audio = gantz_plyphon::AudioAsset::decode(blob.as_ref())
-        .map_err(|e| log::error!("bevy_gantz_plyphon: asset {asset} decode failed: {e}"))
-        .ok()?;
-    let bufnum = state.bufnum_alloc.alloc()?;
-    if let Err(e) = controller.buffer_set(bufnum, Box::new(audio.into())) {
-        log::error!("bevy_gantz_plyphon: buffer_set failed for {asset}: {e:?}");
+    let Some(bufnum) = state.bufnum_alloc.alloc() else {
+        return Resolved::Missing;
+    };
+    if let Err(e) = controller.buffer_set(bufnum, Box::new(buffer)) {
+        log::error!("bevy_gantz_plyphon: buffer_set failed for {key:?}: {e:?}");
         state.bufnum_alloc.free(bufnum, Instant::now());
-        return None;
+        return Resolved::Retry;
     }
-    state.resident.insert(
-        asset,
-        ResidentBuffer {
+    state.held.insert(
+        key.clone(),
+        HeldBuffer {
             bufnum,
             refcount: 1,
         },
     );
-    part_assets.push(asset);
-    Some(bufnum)
+    part_buffers.push(key);
+    Resolved::Bound(bufnum)
 }
 
-/// Release each asset's refcount as a retired synth is freed. A buffer whose
+/// Release each buffer's refcount as a retired synth is freed. A buffer whose
 /// last reference is gone is freed from the engine and its bufnum quarantined
 /// before reuse. See [`BufnumAlloc::free`].
 fn free_buffers(
     controller: &mut Controller,
     state: &mut HeadSynths,
-    assets: &[ca::ContentAddr],
+    keys: &[BufferKey],
     now: Instant,
 ) {
-    for asset in assets {
-        if let Some(rb) = state.resident.get_mut(asset) {
-            rb.refcount -= 1;
-            if rb.refcount == 0 {
-                let bufnum = rb.bufnum;
-                state.resident.remove(asset);
+    for key in keys {
+        if let Some(held) = state.held.get_mut(key) {
+            held.refcount -= 1;
+            if held.refcount == 0 {
+                let bufnum = held.bufnum;
+                state.held.remove(key);
                 let _ = controller.buffer_free(bufnum);
                 state.bufnum_alloc.free(bufnum, now);
             }
@@ -1982,6 +2045,36 @@ mod tests {
         assert_eq!(a.alloc(), None);
     }
 
+    /// Resolve `key` for a part holding `refs`, at 48 kHz. The bufnum, or
+    /// `None` if the buffer is missing or must retry.
+    fn resolve(
+        controller: &mut Controller,
+        state: &mut HeadSynths,
+        assets: &BufferBlobs,
+        refs: &mut Vec<BufferKey>,
+        key: &BufferKey,
+    ) -> Option<usize> {
+        match resolve_buffer(controller, state, assets, refs, key.clone(), 48_000.0) {
+            Resolved::Bound(bufnum) => Some(bufnum),
+            Resolved::Missing | Resolved::Retry => None,
+        }
+    }
+
+    /// A scratch buffer key for the node at `path` in `head`.
+    fn scratch(head: Entity, path: &[usize], frames: usize, channels: usize) -> BufferKey {
+        BufferKey::Scratch {
+            head,
+            path: path.to_vec(),
+            frames,
+            channels,
+        }
+    }
+
+    /// The refcount held on `key`, if it is installed.
+    fn refcount(state: &HeadSynths, key: &BufferKey) -> Option<usize> {
+        state.held.get(key).map(|h| h.refcount)
+    }
+
     /// A scope stream and a resident asset get distinct indices, and neither
     /// takes the empty slot 0.
     #[test]
@@ -1991,8 +2084,8 @@ mod tests {
         let (assets, addr) = one_asset();
         let scope = state.bufnum_alloc.alloc().unwrap();
         let mut refs = Vec::new();
-        let bufnum =
-            resolve_resident(&mut controller, &mut state, &assets, &mut refs, addr).unwrap();
+        let key = BufferKey::Asset(addr);
+        let bufnum = resolve(&mut controller, &mut state, &assets, &mut refs, &key).unwrap();
         assert_ne!(scope, 0);
         assert_ne!(bufnum, 0);
         assert_ne!(scope, bufnum);
@@ -2005,54 +2098,130 @@ mod tests {
         let mut controller = test_controller();
         let mut state = HeadSynths::default();
         let (assets, addr) = one_asset();
+        let key = BufferKey::Asset(addr);
 
         let mut a_refs = Vec::new();
-        let bufnum =
-            resolve_resident(&mut controller, &mut state, &assets, &mut a_refs, addr).unwrap();
-        assert_eq!(a_refs, vec![addr]);
-        assert_eq!(state.resident.get(&addr).unwrap().refcount, 1);
+        let bufnum = resolve(&mut controller, &mut state, &assets, &mut a_refs, &key).unwrap();
+        assert_eq!(a_refs, vec![key.clone()]);
+        assert_eq!(refcount(&state, &key), Some(1));
 
         // A second synth shares the same bufnum and bumps the refcount.
         let mut b_refs = Vec::new();
-        let bufnum2 =
-            resolve_resident(&mut controller, &mut state, &assets, &mut b_refs, addr).unwrap();
+        let bufnum2 = resolve(&mut controller, &mut state, &assets, &mut b_refs, &key).unwrap();
         assert_eq!(bufnum2, bufnum);
-        assert_eq!(state.resident.get(&addr).unwrap().refcount, 2);
+        assert_eq!(refcount(&state, &key), Some(2));
 
         // Freeing the first keeps the buffer resident for the second.
         free_buffers(&mut controller, &mut state, &a_refs, Instant::now());
-        assert_eq!(state.resident.get(&addr).unwrap().refcount, 1);
+        assert_eq!(refcount(&state, &key), Some(1));
 
         // Freeing the last drops it and quarantines the bufnum.
         free_buffers(&mut controller, &mut state, &b_refs, Instant::now());
-        assert!(!state.resident.contains_key(&addr));
+        assert_eq!(refcount(&state, &key), None);
     }
 
     /// Two references to the same asset within one part take a single refcount.
     #[test]
-    fn resolve_resident_dedups_within_a_part() {
+    fn resolve_buffer_dedups_within_a_part() {
         let mut controller = test_controller();
         let mut state = HeadSynths::default();
         let (assets, addr) = one_asset();
+        let key = BufferKey::Asset(addr);
         let mut refs = Vec::new();
-        resolve_resident(&mut controller, &mut state, &assets, &mut refs, addr).unwrap();
-        resolve_resident(&mut controller, &mut state, &assets, &mut refs, addr).unwrap();
-        assert_eq!(refs, vec![addr]);
-        assert_eq!(state.resident.get(&addr).unwrap().refcount, 1);
+        resolve(&mut controller, &mut state, &assets, &mut refs, &key).unwrap();
+        resolve(&mut controller, &mut state, &assets, &mut refs, &key).unwrap();
+        assert_eq!(refs, vec![key.clone()]);
+        assert_eq!(refcount(&state, &key), Some(1));
     }
 
-    /// An asset absent from the store resolves to `None`. The node plays silence.
+    /// An asset absent from the store is missing. The node plays silence.
     #[test]
-    fn resolve_resident_missing_asset_is_none() {
+    fn resolve_buffer_missing_asset_is_missing() {
         let mut controller = test_controller();
         let mut state = HeadSynths::default();
         let (assets, _addr) = one_asset();
         let mut refs = Vec::new();
-        let missing = ca::blob_addr(b"absent");
-        assert!(
-            resolve_resident(&mut controller, &mut state, &assets, &mut refs, missing).is_none()
-        );
+        let missing = BufferKey::Asset(ca::blob_addr(b"absent"));
+        assert!(resolve(&mut controller, &mut state, &assets, &mut refs, &missing).is_none());
         assert!(refs.is_empty());
+    }
+
+    /// A respawn takes a reference to the scratch buffer before the old synth
+    /// releases its own, so the buffer and its contents survive.
+    #[test]
+    fn scratch_buffer_survives_respawn() {
+        let mut controller = test_controller();
+        let mut state = HeadSynths::default();
+        let head = entities(1)[0];
+        let key = scratch(head, &[4], 64, 1);
+        let mut old = Vec::new();
+        let bufnum = resolve(&mut controller, &mut state, &EMPTY_BUFFERS, &mut old, &key).unwrap();
+        let mut new = Vec::new();
+        let again = resolve(&mut controller, &mut state, &EMPTY_BUFFERS, &mut new, &key).unwrap();
+        assert_eq!(again, bufnum);
+        assert_eq!(refcount(&state, &key), Some(2));
+        free_buffers(&mut controller, &mut state, &old, Instant::now());
+        assert_eq!(refcount(&state, &key), Some(1));
+    }
+
+    /// Scratch buffers are per head and per node path. A new shape is a new
+    /// buffer, so a running synth never sees its buffer replaced.
+    #[test]
+    fn scratch_buffers_are_unique_per_head_path_and_shape() {
+        let mut controller = test_controller();
+        let mut state = HeadSynths::default();
+        let heads = entities(2);
+        let keys = [
+            scratch(heads[0], &[4], 64, 1),
+            scratch(heads[1], &[4], 64, 1),
+            scratch(heads[0], &[5], 64, 1),
+            scratch(heads[0], &[4], 128, 1),
+            scratch(heads[0], &[4], 64, 2),
+        ];
+        let mut refs = Vec::new();
+        let bufnums: HashSet<usize> = keys
+            .iter()
+            .map(|k| resolve(&mut controller, &mut state, &EMPTY_BUFFERS, &mut refs, k).unwrap())
+            .collect();
+        assert_eq!(bufnums.len(), keys.len());
+    }
+
+    /// A full buffer table reads as missing, so the node plays silence.
+    #[test]
+    fn full_buffer_table_is_missing() {
+        let mut controller = test_controller();
+        let mut state = HeadSynths {
+            bufnum_alloc: BufnumAlloc::new(2),
+            ..HeadSynths::default()
+        };
+        let head = entities(1)[0];
+        let mut refs = Vec::new();
+        let first = scratch(head, &[0], 64, 1);
+        let second = scratch(head, &[1], 64, 1);
+        assert_eq!(
+            resolve(
+                &mut controller,
+                &mut state,
+                &EMPTY_BUFFERS,
+                &mut refs,
+                &first
+            ),
+            Some(1)
+        );
+        assert!(
+            matches!(
+                resolve_buffer(
+                    &mut controller,
+                    &mut state,
+                    &EMPTY_BUFFERS,
+                    &mut refs,
+                    second,
+                    48_000.0
+                ),
+                Resolved::Missing
+            ),
+            "a full table is missing, not a retry",
+        );
     }
 
     /// Entries past their deadline drain. The rest stay, in order.
@@ -2413,8 +2582,9 @@ mod tests {
         )
         .expect("spawn_part");
         // The asset was made resident with a single refcount, held by this synth.
-        assert_eq!(state.resident.get(&addr).map(|r| r.refcount), Some(1));
-        assert_eq!(synth.buffers, vec![addr]);
+        let key = BufferKey::Asset(addr);
+        assert_eq!(state.held.get(&key).map(|h| h.refcount), Some(1));
+        assert_eq!(synth.buffers, vec![key]);
 
         let mut out = vec![0.0f32; 48_000 / 2];
         for block in out.chunks_mut(64) {
