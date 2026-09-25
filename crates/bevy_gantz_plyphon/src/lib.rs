@@ -314,18 +314,18 @@ type BufferBlobs = std::collections::BTreeMap<ca::ContentAddr, ca::Bytes>;
 /// The empty buffer store, for registries with no `dsp.buffer` section.
 static EMPTY_BUFFERS: BufferBlobs = BufferBlobs::new();
 
-/// Per-head synth bookkeeping, plus the allocator of global scope-stream
-/// indices for `~scopeout`s. Records which committed graph produced the
+/// Per-head synth bookkeeping, plus the global allocators of buffer-table
+/// indices and private buses. Records which committed graph produced the
 /// installed synthdef and running synth, so a re-derive happens only on
 /// change. A NonSend resource, since a `~scopeout`'s scope `StreamConsumer` is
 /// `Send` but not `Sync`.
 #[derive(Default)]
 struct HeadSynths {
     heads: HashMap<Entity, HeadParts>,
-    scope_alloc: ScopeAlloc,
     bus_alloc: BusAlloc,
-    /// Allocator of global buffer-table indices, or bufnums, for resident assets.
-    buffer_alloc: BufferAlloc,
+    /// Allocator of global buffer-table indices, for scope streams and
+    /// resident assets alike.
+    bufnum_alloc: BufnumAlloc,
     /// Assets installed in the engine's buffer table, keyed by address and
     /// shared read-only across every synth referencing them. Loaded once and
     /// refcounted. Freed when the last reference retires.
@@ -494,35 +494,15 @@ struct FadingSynth {
     buffers: Vec<ca::ContentAddr>,
 }
 
-/// Allocates globally-unique scope-stream indices for live `~scopeout`s. These
-/// are plyphon recording-slot ids. Freed ones are reused so a long editing
-/// session does not exhaust them.
-#[derive(Default)]
-struct ScopeAlloc {
-    free: Vec<usize>,
-    next: usize,
-}
+/// The size of the engine's buffer table, plyphon's `Options::max_buffers`.
+/// Scope streams and buffers share this one index space.
+const MAX_BUFFERS: usize = 1024;
 
-impl ScopeAlloc {
-    /// A free index. Reused if available, else a fresh one.
-    fn alloc(&mut self) -> usize {
-        self.free.pop().unwrap_or_else(|| {
-            let index = self.next;
-            self.next += 1;
-            index
-        })
-    }
-
-    /// Return an index for reuse.
-    fn free(&mut self, index: usize) {
-        self.free.push(index);
-    }
-}
-
-/// How long a freed bufnum is quarantined before reuse. A just-retired
-/// `PlayBuf`'s trailing blocks and its `buffer_free` command may still be in
-/// flight when the index is handed out again. A reuse must not `buffer_set`
-/// over an index a fading reader can still see. Mirrors the bus-run graveyard.
+/// How long a freed index is quarantined before reuse. A just-retired
+/// synth's trailing blocks and its free command may still be in flight when
+/// the index is handed out again. A reuse must not install a buffer or cue a
+/// stream over an index that a fading synth can still see. Mirrors the
+/// bus-run graveyard.
 const BUFFER_GRACE: Duration = Duration::from_millis(200);
 
 /// An asset installed in the engine's buffer table. The bufnum it occupies
@@ -532,26 +512,52 @@ struct ResidentBuffer {
     refcount: usize,
 }
 
-/// Allocates global buffer-table indices, or bufnums, for resident assets,
-/// reusing freed ones. A freed index is quarantined for [`BUFFER_GRACE`]
-/// before reuse, so a fading `PlayBuf` never reads a bufnum re-`buffer_set`
-/// under it.
-#[derive(Default)]
-struct BufferAlloc {
+/// Allocates indices in the engine's buffer table for scope streams and
+/// resident buffers, reusing freed ones. Both kinds share one allocator, since
+/// plyphon addresses them in one table.
+///
+/// Index 0 is never handed out. plyphon units read a bufnum as
+/// `max(0) as usize`, so `-1` and an unset bufnum param both read slot 0.
+/// Keeping it empty makes them read silence. A freed index is quarantined for
+/// [`BUFFER_GRACE`] before reuse, so a fading synth never sees a new buffer
+/// or stream under an index it still holds.
+struct BufnumAlloc {
     free: Vec<usize>,
     next: usize,
+    /// One past the highest valid index, the engine's table size.
+    cap: usize,
     /// Freed indices awaiting the end of their grace before returning to `free`.
     graveyard: Vec<(usize, Instant)>,
 }
 
-impl BufferAlloc {
-    /// A free bufnum. Reused if available, else a fresh one.
-    fn alloc(&mut self) -> usize {
-        self.free.pop().unwrap_or_else(|| {
-            let index = self.next;
-            self.next += 1;
-            index
-        })
+impl BufnumAlloc {
+    /// An allocator over indices `1..cap`.
+    fn new(cap: usize) -> Self {
+        BufnumAlloc {
+            free: Vec::new(),
+            next: 1,
+            cap,
+            graveyard: Vec::new(),
+        }
+    }
+
+    /// A free index, reused if available, else a fresh one. `None` when the
+    /// table is full.
+    fn alloc(&mut self) -> Option<usize> {
+        if let Some(index) = self.free.pop() {
+            return Some(index);
+        }
+        if self.next >= self.cap {
+            log::error!(
+                "bevy_gantz_plyphon: buffer table full ({} slots); a scope or buffer is \
+                 not installed",
+                self.cap
+            );
+            return None;
+        }
+        let index = self.next;
+        self.next += 1;
+        Some(index)
     }
 
     /// Quarantine `index` until `now + BUFFER_GRACE`, after which [`sweep`](Self::sweep)
@@ -569,6 +575,12 @@ impl BufferAlloc {
             }
             !due
         });
+    }
+}
+
+impl Default for BufnumAlloc {
+    fn default() -> Self {
+        BufnumAlloc::new(MAX_BUFFERS)
     }
 }
 
@@ -1010,11 +1022,16 @@ fn drive_synths(
     // and return quarantined bus runs whose grace has passed.
     for f in expire_fades(&mut state.fading, Instant::now()) {
         let _ = Embedded::new(&mut dsp.controller).free_node(f.node_id);
-        free_scopes(&mut dsp.controller, &mut state.scope_alloc, f.scopes);
+        free_scopes(
+            &mut dsp.controller,
+            &mut state.bufnum_alloc,
+            f.scopes,
+            Instant::now(),
+        );
         free_buffers(&mut dsp.controller, state, &f.buffers, Instant::now());
     }
     state.bus_alloc.sweep(Instant::now());
-    state.buffer_alloc.sweep(Instant::now());
+    state.bufnum_alloc.sweep(Instant::now());
 }
 
 /// Split the fade backlog. Drains and returns the entries due for freeing.
@@ -1412,9 +1429,13 @@ fn spawn_part(
         set_after_spawn.push((binding.param, run.start as f32));
     }
 
+    // A monitor that gets no index keeps its bufnum param at 0, the empty
+    // slot, so its `ScopeOut` writes nowhere.
     let mut scopes = Vec::new();
     for m in &monitors {
-        let index = state.scope_alloc.alloc();
+        let Some(index) = state.bufnum_alloc.alloc() else {
+            continue;
+        };
         let channels = m.channels.max(1);
         match controller.cue_scope(index, channels, sample_rate, CHUNK_FRAMES, NUM_CHUNKS) {
             Ok(consumer) => {
@@ -1429,7 +1450,7 @@ fn spawn_part(
             }
             Err(e) => {
                 log::error!("bevy_gantz_plyphon: cue_scope failed: {e:?}");
-                state.scope_alloc.free(index);
+                state.bufnum_alloc.free(index, now);
             }
         }
     }
@@ -1468,7 +1489,7 @@ fn spawn_part(
         if let Err(e) = backend.install_synthdef((*def).clone()) {
             log::error!("bevy_gantz_plyphon: synthdef install failed: {e:?}");
             drop(backend);
-            free_scopes(controller, &mut state.scope_alloc, scopes);
+            free_scopes(controller, &mut state.bufnum_alloc, scopes, now);
             free_buffers(controller, state, &part_assets, now);
             return Err(SpawnError::Permanent);
         }
@@ -1533,7 +1554,7 @@ fn spawn_part(
             };
             drop(backend);
             release_def(controller, &mut state.shared_defs, &def_name);
-            free_scopes(controller, &mut state.scope_alloc, scopes);
+            free_scopes(controller, &mut state.bufnum_alloc, scopes, now);
             free_buffers(controller, state, &part_assets, now);
             Err(spawn_err)
         }
@@ -1548,7 +1569,12 @@ fn spawn_part(
 fn fade_out(controller: &mut Controller, state: &mut HeadSynths, entity: Entity, synth: PartSynth) {
     if synth.gains.is_empty() {
         let _ = Embedded::new(controller).free_node(synth.node_id);
-        free_scopes(controller, &mut state.scope_alloc, synth.scopes);
+        free_scopes(
+            controller,
+            &mut state.bufnum_alloc,
+            synth.scopes,
+            Instant::now(),
+        );
         // No fade to ride through. Release the buffer refcounts now.
         free_buffers(controller, state, &synth.buffers, Instant::now());
         return;
@@ -1574,11 +1600,17 @@ fn fade_out(controller: &mut Controller, state: &mut HeadSynths, entity: Entity,
 }
 
 /// Close each scope stream's cued recording slot and return its index to the
-/// allocator for reuse. The `StreamConsumer`s drop with the vec.
-fn free_scopes(controller: &mut Controller, scope_alloc: &mut ScopeAlloc, scopes: Vec<ScopeSlot>) {
+/// allocator, quarantined until `now + BUFFER_GRACE`. The `StreamConsumer`s
+/// drop with the vec.
+fn free_scopes(
+    controller: &mut Controller,
+    bufnum_alloc: &mut BufnumAlloc,
+    scopes: Vec<ScopeSlot>,
+    now: Instant,
+) {
     for scope in scopes {
         let _ = controller.close_recording(scope.index);
-        scope_alloc.free(scope.index);
+        bufnum_alloc.free(scope.index, now);
     }
 }
 
@@ -1613,10 +1645,10 @@ fn resolve_resident(
     let audio = gantz_plyphon::AudioAsset::decode(blob.as_ref())
         .map_err(|e| log::error!("bevy_gantz_plyphon: asset {asset} decode failed: {e}"))
         .ok()?;
-    let bufnum = state.buffer_alloc.alloc();
+    let bufnum = state.bufnum_alloc.alloc()?;
     if let Err(e) = controller.buffer_set(bufnum, Box::new(audio.into())) {
         log::error!("bevy_gantz_plyphon: buffer_set failed for {asset}: {e:?}");
-        state.buffer_alloc.free(bufnum, Instant::now());
+        state.bufnum_alloc.free(bufnum, Instant::now());
         return None;
     }
     state.resident.insert(
@@ -1632,7 +1664,7 @@ fn resolve_resident(
 
 /// Release each asset's refcount as a retired synth is freed. A buffer whose
 /// last reference is gone is freed from the engine and its bufnum quarantined
-/// before reuse. See [`BufferAlloc::free`].
+/// before reuse. See [`BufnumAlloc::free`].
 fn free_buffers(
     controller: &mut Controller,
     state: &mut HeadSynths,
@@ -1646,7 +1678,7 @@ fn free_buffers(
                 let bufnum = rb.bufnum;
                 state.resident.remove(asset);
                 let _ = controller.buffer_free(bufnum);
-                state.buffer_alloc.free(bufnum, now);
+                state.bufnum_alloc.free(bufnum, now);
             }
         }
     }
@@ -1744,6 +1776,7 @@ fn build_dsp_engine(epoch: EvalEpoch, unit_registrars: &[UnitRegistrar]) -> Opti
     let options = Options {
         sample_rate,
         output_channels: channels,
+        max_buffers: MAX_BUFFERS,
         ..Options::default()
     };
     // Private bus channels sit after the hardware output + input banks.
@@ -1918,20 +1951,46 @@ mod tests {
     /// A freed bufnum is quarantined, not reused immediately, and only returns
     /// to the pool once its grace has passed.
     #[test]
-    fn buffer_alloc_quarantines_then_reuses() {
-        let mut a = BufferAlloc::default();
-        let b0 = a.alloc();
-        let _b1 = a.alloc();
+    fn bufnum_alloc_quarantines_then_reuses() {
+        let mut a = BufnumAlloc::default();
+        let b0 = a.alloc().unwrap();
+        let _b1 = a.alloc().unwrap();
         let base = Instant::now();
         a.free(b0, base);
         // Immediately, a fresh index is handed out, not the quarantined one.
-        assert_ne!(a.alloc(), b0);
+        assert_ne!(a.alloc(), Some(b0));
         // A sweep before the grace expires keeps it quarantined.
         a.sweep(base);
-        assert_ne!(a.alloc(), b0);
+        assert_ne!(a.alloc(), Some(b0));
         // After the grace, the freed index returns to the pool.
         a.sweep(base + BUFFER_GRACE + Duration::from_millis(1));
-        assert_eq!(a.alloc(), b0);
+        assert_eq!(a.alloc(), Some(b0));
+    }
+
+    /// Index 0 is never handed out, so a `-1` or unset bufnum reads an empty
+    /// slot. The allocator stops at its cap.
+    #[test]
+    fn bufnum_alloc_starts_at_one_and_caps() {
+        let mut a = BufnumAlloc::new(3);
+        assert_eq!(a.alloc(), Some(1));
+        assert_eq!(a.alloc(), Some(2));
+        assert_eq!(a.alloc(), None);
+    }
+
+    /// A scope stream and a resident asset get distinct indices, and neither
+    /// takes the empty slot 0.
+    #[test]
+    fn scope_and_resident_do_not_share_an_index() {
+        let mut controller = test_controller();
+        let mut state = HeadSynths::default();
+        let (assets, addr) = one_asset();
+        let scope = state.bufnum_alloc.alloc().unwrap();
+        let mut refs = Vec::new();
+        let bufnum =
+            resolve_resident(&mut controller, &mut state, &assets, &mut refs, addr).unwrap();
+        assert_ne!(scope, 0);
+        assert_ne!(bufnum, 0);
+        assert_ne!(scope, bufnum);
     }
 
     /// An asset shared by two synths is installed once, refcounted, and freed
