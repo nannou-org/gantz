@@ -519,14 +519,15 @@ enum BufferKey {
     /// A content-addressed asset, shared by every synth that reads it.
     Asset(ca::ContentAddr),
     /// A zeroed scratch buffer of one buffer source node in one open head.
-    /// Paths are head-relative, so the key needs the head. The shape is part
-    /// of the key, so a shape change gives a new buffer. A running synth
-    /// never sees its buffer replaced.
+    /// Paths are head-relative, so the key needs the head. The shape and the
+    /// table format are part of the key, so a change gives a new buffer. A
+    /// running synth never sees its buffer replaced.
     Scratch {
         head: Entity,
         path: Vec<usize>,
         frames: usize,
         channels: usize,
+        wavetable: bool,
     },
 }
 
@@ -1498,11 +1499,12 @@ fn spawn_part(
     for binding in &buffers {
         let key = match &binding.source {
             BufferSource::Asset(asset) => BufferKey::Asset(*asset),
-            BufferSource::Scratch { frames } => BufferKey::Scratch {
+            BufferSource::Scratch { frames, wavetable } => BufferKey::Scratch {
                 head: entity,
                 path: binding.node_path.clone(),
                 frames: *frames,
                 channels: binding.channels,
+                wavetable: *wavetable,
             },
         };
         let value = match resolve_buffer(
@@ -2060,6 +2062,7 @@ mod tests {
             path: path.to_vec(),
             frames,
             channels,
+            wavetable: false,
         }
     }
 
@@ -2646,6 +2649,7 @@ mod tests {
             path: vec![buf.index()],
             frames: 4_800,
             channels: 1,
+            wavetable: false,
         };
         assert_eq!(state.held.len(), 1, "one scratch buffer for both parts");
         assert_eq!(state.held.get(&key).map(|h| h.refcount), Some(2));

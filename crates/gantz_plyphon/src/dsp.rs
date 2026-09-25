@@ -352,10 +352,12 @@ pub enum BufferSource {
     /// shares it read-only.
     Asset(gantz_ca::ContentAddr),
     /// A zeroed scratch buffer that belongs to the node path. Units can write
-    /// to it.
+    /// to it, and the node can fill it from a table.
     Scratch {
         /// The number of frames.
         frames: usize,
+        /// True when the table is converted to the wavetable format.
+        wavetable: bool,
     },
 }
 
@@ -995,7 +997,14 @@ mod tests {
         let mut b = DspBuilder::new(1);
         let addr = gantz_ca::blob_addr(b"asset");
         let asset = b.push_buffer(&[0], BufferSource::Asset(addr), 2);
-        let scratch = b.push_buffer(&[1], BufferSource::Scratch { frames: 64 }, 1);
+        let scratch = b.push_buffer(
+            &[1],
+            BufferSource::Scratch {
+                frames: 64,
+                wavetable: false,
+            },
+            1,
+        );
         let (_, binding) = b.buffer_input(Some(&asset), BufferAccess::Read).unwrap();
         assert_eq!(binding.channels, 2);
         assert!(b.buffer_input(Some(&asset), BufferAccess::Write).is_none());

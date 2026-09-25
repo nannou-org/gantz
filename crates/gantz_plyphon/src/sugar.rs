@@ -4,11 +4,11 @@
 //! nodes read as bare `~out`, `~scopeout`, `~pack`, `~sum`, `~unpack`,
 //! `~bus`, `~buffer` and `~sample`. The forms `(~out #:gain-lag s)`,
 //! `(~scopeout #:size n)`, `(~pack #:count n)`, `(~sum #:count n)`,
-//! `(~unpack #:count n)` and `(~buffer #:frames n #:channels c)` carry the
-//! structural smoothing lag, ring length, socket count or buffer shape. A
-//! `~sample` with an asset writes as a generic node, which keeps its address.
-//! Every [`crate::units`] descriptor-table keyword reads and writes the same
-//! way.
+//! `(~unpack #:count n)` and `(~buffer #:frames n #:channels c #:wavetable)`
+//! carry the structural smoothing lag, ring length, socket count or buffer
+//! shape. A `~sample` with an asset writes as a generic node, which keeps its
+//! address. Every [`crate::units`] descriptor-table keyword reads and writes
+//! the same way.
 //! A bare form is `~sinosc` or `~lpf`. A full form such as
 //! `(~combc #:delay-lag s #:maxdelay v #:rate kr)` carries the structural
 //! per-param lags, init-only values and ugen rate. A fixed-rate row such as
@@ -306,7 +306,7 @@ fn count_spec(tag: &str, args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     Ok(node_datum(tag, fields))
 }
 
-/// Read a `(~buffer [#:frames n] [#:channels c])` form into a `Buffer` node
+/// Read a `(~buffer [#:frames n] [#:channels c] [#:wavetable])` form into a `Buffer` node
 /// datum. Each field is carried only when its keyword is present, so a bare
 /// form stays bare.
 fn buffer_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
@@ -319,11 +319,14 @@ fn buffer_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
         let channels = (channels.max(1) as usize).min(crate::Buffer::MAX_CHANNELS);
         fields.push(("channels", Datum::U64(channels as u64)));
     }
+    if args.has_flag("wavetable") {
+        fields.push(("wavetable", Datum::Bool(true)));
+    }
     Ok(node_datum("Buffer", fields))
 }
 
 /// Write a `Buffer`. The bare `~buffer` when its shape is the default, else
-/// `(~buffer [#:frames n] [#:channels c])`.
+/// `(~buffer [#:frames n] [#:channels c] [#:wavetable])`.
 fn write_buffer(node: &Datum) -> String {
     let mut parts = Vec::new();
     if let Some(frames) = node.get("frames").and_then(Datum::as_i64) {
@@ -335,6 +338,9 @@ fn write_buffer(node: &Datum) -> String {
         if channels != crate::Buffer::DEFAULT_CHANNELS as i64 {
             parts.push(format!("#:channels {channels}"));
         }
+    }
+    if node.get("wavetable").and_then(Datum::as_bool) == Some(true) {
+        parts.push("#:wavetable".to_string());
     }
     write_form("~buffer", parts)
 }
@@ -659,6 +665,10 @@ mod tests {
         let shaped = read_spec(form).expect("shaped");
         assert_eq!(shaped.get("frames").and_then(Datum::as_i64), Some(1024));
         assert_eq!(s.write_spec("Buffer", &shaped).as_deref(), Some(form));
+        let form = "(~buffer #:frames 512 #:wavetable)";
+        let table = read_spec(form).expect("wavetable");
+        assert_eq!(table.get("wavetable").and_then(Datum::as_bool), Some(true));
+        assert_eq!(s.write_spec("Buffer", &table).as_deref(), Some(form));
         // An unassigned sample is bare. An assigned one keeps the generic form.
         let sample = s.read_bare("~sample").expect("bare");
         assert_eq!(s.write_spec("Sample", &sample).as_deref(), Some("~sample"));

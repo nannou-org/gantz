@@ -13,7 +13,7 @@ impl NodeUi for Buffer {
     }
 
     fn description(&self) -> Option<&'static str> {
-        Some("A zeroed scratch buffer for units that write and read a buffer")
+        Some("A scratch buffer for units that write and read a buffer, or a table from a list")
     }
 
     fn ui(&mut self, _ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
@@ -27,7 +27,8 @@ impl NodeUi for Buffer {
         _ctx: &mut NodeCtx,
         body: &mut egui_extras::TableBody,
     ) -> InspectorRowsResponse {
-        // The shape is structural. A change gives a new zeroed buffer.
+        // The shape and the table format are structural. A change gives a new
+        // buffer.
         let mut resp = InspectorRowsResponse::default();
         let mut frames = self.frames();
         let frames_dv = egui::DragValue::new(&mut frames)
@@ -46,12 +47,33 @@ impl NodeUi for Buffer {
             self.set_channels(channels);
             resp.mark_changed();
         }
+        let mut wavetable = self.wavetable();
+        let row_h = gantz_egui::widget::node_inspector::table_row_h(body.ui_mut());
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("wavetable");
+            });
+            row.col(|ui| {
+                let hover = "convert the table to the wavetable format of `~osc` and `~cosc`";
+                if ui
+                    .checkbox(&mut wavetable, "")
+                    .on_hover_text(hover)
+                    .changed()
+                {
+                    self.set_wavetable(wavetable);
+                    resp.mark_changed();
+                }
+            });
+        });
         resp
     }
 
     fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         match kind {
-            SocketKind::Input => None,
+            SocketKind::Input => Some(
+                SocketDoc::ty("list")
+                    .with_description("a table of numbers to write into the buffer"),
+            ),
             SocketKind::Output => {
                 Some(SocketDoc::ty("buffer").with_description("the buffer, for a buffer socket"))
             }
