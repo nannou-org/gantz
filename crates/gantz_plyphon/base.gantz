@@ -79,7 +79,7 @@
   (demo-freeverb "Random impulses ring a resonator into a reverb. Dial the number for the wet mix.")
   (demo-pluck "Noise bursts pluck a Karplus-Strong string. Dial the numbers for the pluck rate and the string period.")
   (demo-ringmod "Two sines multiplied. Dial the numbers to sweep from tremolo to ring modulation.")
-  (demo-samplehold "A latch samples white noise on each impulse, scaled into a sine's frequency. Dial the numbers for the step rate and the pitch range.")
+  (demo-samplehold "A latch samples white noise on each impulse. The result sets the frequency of a sine. Dial the numbers for the step rate and the pitch range.")
   (demo-sine "A sine wave into the audio output - the simplest DSP graph.")
   (demo-waveshape "A sine into a tanh waveshaper. Dial the number to raise the drive."))
 

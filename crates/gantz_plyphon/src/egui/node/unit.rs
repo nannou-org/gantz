@@ -96,7 +96,7 @@ impl NodeUi for UnitNode {
                 In::Signal { .. } | In::Baked(_) => (),
             }
         }
-        // A fixed-rate row has no choice to offer.
+        // A fixed-rate row has no rate to choose.
         if desc.rate == UnitRate::Any {
             let mut rate = self.rate();
             if rate_row(body, &mut rate) {

@@ -26,17 +26,17 @@ use crate::units::{In, UnitDesc, UnitRate, unit_desc};
 /// live in the node weight.
 ///
 /// Deserialization validates the `unit` name against the descriptor table.
-/// An unknown unit fails to reify, like an unknown node type tag. So does a
-/// `rate` other than the one a [`UnitRate::Fixed`] row allows.
+/// An unknown unit fails to reify, like an unknown node type tag. A `rate`
+/// that a [`UnitRate::Fixed`] row does not allow also fails.
 #[derive(Clone, Debug, Serialize, Deserialize, NodeTag)]
 #[tag("Unit")]
 #[serde(try_from = "UnitNodeWire")]
 pub struct UnitNode {
     /// The plyphon unit name, the descriptor-table key, for example `"LPF"`.
     unit: String,
-    /// The ugen rate, `ar` or `kr`, the unit runs at. Absent means the row's
-    /// [`default_rate`](UnitDesc::default_rate), and an entry never holds it.
-    /// A [`UnitRate::Fixed`] row never carries an entry.
+    /// The ugen rate, `ar` or `kr`. `None` means the row's
+    /// [`default_rate`](UnitDesc::default_rate). An entry never holds the
+    /// default rate. A [`UnitRate::Fixed`] row never has an entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rate: Option<NodeRate>,
     /// Per-hybrid-param smoothing lags in seconds, keyed by param name.
@@ -62,9 +62,9 @@ struct UnitNodeWire {
     init: BTreeMap<String, f32>,
 }
 
-/// A [`UnitNode`] failed to deserialize. An unknown unit name, a lag or init
-/// key naming no such param in the unit's descriptor, or a rate a fixed-rate
-/// row does not allow.
+/// A [`UnitNode`] failed to deserialize. The cause is an unknown unit name,
+/// a lag or init key for a param that the descriptor does not have, or a
+/// rate that a fixed-rate row does not allow.
 #[derive(Debug)]
 pub struct InvalidUnitNode(String);
 
@@ -165,8 +165,8 @@ impl UnitNode {
     }
 
     /// Set the ugen rate. It is structural and affects the content address.
-    /// The row's default rate removes the entry, the canonical form. A
-    /// fixed-rate row ignores the call.
+    /// The default rate of the row removes the entry, which is the canonical
+    /// form. A fixed-rate row ignores the call.
     pub fn set_rate(&mut self, rate: NodeRate) {
         let desc = self.desc();
         self.rate = match desc.rate {
@@ -451,7 +451,7 @@ mod tests {
         node.set_init("maxdelay", 0.5);
         node.set_init("maxdelay", 0.2);
         assert_eq!(node, UnitNode::from_unit("CombC").expect("CombC row"));
-        // An explicit default rate is the same non-canonical spelling.
+        // An explicit default rate is also a non-canonical form.
         let node: UnitNode = from_datum(unit_datum("CombC", Some("ar"))).expect("deserialize");
         assert_eq!(node, UnitNode::from_unit("CombC").expect("CombC row"));
         let mut node = UnitNode::from_unit("CombC").expect("CombC row");
@@ -469,8 +469,9 @@ mod tests {
         Datum::Map(fields)
     }
 
-    /// The content-address form of the rate must not change, since addresses
-    /// fold it. A default rate is absent and a control rate is `"kr"`.
+    /// The content-address form of the rate must not change, because the
+    /// address includes it. A default rate is absent. A control rate is
+    /// `"kr"`.
     #[test]
     fn rate_wire_form_is_stable() {
         let mut node = UnitNode::from_unit("SinOsc").expect("SinOsc row");
@@ -486,12 +487,12 @@ mod tests {
     #[test]
     fn fixed_rate_rows_reify_bare_and_reject_the_other_rate() {
         let a2k = UnitNode::from_unit("A2K").expect("A2K row");
-        // The fixed rate spelled out is the non-canonical form of absent.
+        // An explicit fixed rate is a non-canonical form of no rate.
         let node: UnitNode = from_datum(unit_datum("A2K", Some("kr"))).expect("deserialize");
         assert_eq!(node, a2k);
         let err = from_datum::<UnitNode>(unit_datum("A2K", Some("ar"))).unwrap_err();
         assert!(err.to_string().contains("runs at `kr` only"), "{err}");
-        // The setter is inert.
+        // The setter does nothing.
         let mut node = a2k.clone();
         node.set_rate(NodeRate::Audio);
         assert_eq!(node, a2k);

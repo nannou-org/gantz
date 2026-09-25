@@ -1819,7 +1819,7 @@ fn every_descriptor_row_derives_and_builds() {
     }
 }
 
-/// A fixed-rate row emits its fixed plyphon rate whatever the weight says.
+/// A fixed-rate row emits its fixed plyphon rate. The weight has no effect.
 #[test]
 fn fixed_rate_rows_emit_their_rate() {
     let fixed = UNITS.iter().filter_map(|d| match d.rate {
@@ -1853,7 +1853,7 @@ fn fixed_rate_rows_emit_their_rate() {
     assert!(seen > 0, "the table has fixed-rate rows");
 }
 
-/// A control-rate row feeding `~out` is lifted to audio by the sink.
+/// When a control-rate row feeds `~out`, the sink lifts it to audio rate.
 #[test]
 fn kr_only_row_lifts_to_audio_at_out() {
     let mut g = Graph::<N>::default();
@@ -1868,8 +1868,8 @@ fn kr_only_row_lifts_to_audio_at_out() {
     assert!(names.contains(&"K2A"), "{names:?}");
 }
 
-/// The unit emitted by a lone row node, wired from a sine into socket 0 and
-/// on to `~out`.
+/// The unit that one row node emits. A sine feeds socket 0 and the node
+/// feeds `~out`.
 fn wired_row_unit(node: UnitNode) -> (Derived, UnitSpec) {
     let emitted = node.desc().emitted_unit();
     let mut g = Graph::<N>::default();
@@ -1889,8 +1889,8 @@ fn wired_row_unit(node: UnitNode) -> (Derived, UnitSpec) {
     (derived, unit)
 }
 
-/// `Median`'s window length is a plyphon build constant, so the row bakes it
-/// from the init value ahead of the signal socket.
+/// The `Median` window length must be a constant in plyphon. The row bakes it
+/// from the init value, before the signal socket.
 #[test]
 fn median_bakes_length_as_a_constant() {
     let median = UnitNode::from_unit("Median").expect("Median row");
@@ -1908,8 +1908,8 @@ fn median_bakes_length_as_a_constant() {
     );
 }
 
-/// `LFGauss` loops forever and never fires a done action, since gantz owns
-/// the synth's lifecycle. Both are baked constants after the three params.
+/// `LFGauss` always loops and never fires a done action, because gantz
+/// controls the synth lifecycle. Both are constants after the three params.
 #[test]
 fn lfgauss_bakes_loop_and_done_action() {
     let (_, unit) = wired_row_unit(UnitNode::from_unit("LFGauss").expect("LFGauss row"));
@@ -1924,8 +1924,8 @@ fn lfgauss_bakes_loop_and_done_action() {
     );
 }
 
-/// `Pluck` takes its excitation and trigger as wires, bakes the build-constant
-/// `maxdelay` between them, and keeps its remaining controls as params.
+/// `Pluck` takes its excitation and trigger as wires. It bakes the constant
+/// `maxdelay` after them. The other controls are params.
 #[test]
 fn pluck_bakes_maxdelay_and_takes_wires() {
     let mut g = Graph::<N>::default();
@@ -1955,8 +1955,8 @@ fn pluck_bakes_maxdelay_and_takes_wires() {
     }
 }
 
-/// A multi-output row yields one signal per unit output and asks plyphon for
-/// that many outputs.
+/// A multi-output row gives one signal for each unit output. It asks plyphon
+/// for the same number of outputs.
 #[test]
 fn multi_output_rows_expose_every_output() {
     for (unit, outputs) in [

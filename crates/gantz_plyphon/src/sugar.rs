@@ -456,7 +456,7 @@ mod tests {
     #[test]
     fn fixed_rate_rows_write_bare() {
         let s = PlyphonSugar;
-        // A fixed-rate row's own rate is dropped and any other is malformed.
+        // A fixed-rate row drops its own rate. Any other rate is malformed.
         let kr = read_spec("(~a2k #:rate kr)").expect("kr");
         assert!(kr.get("rate").is_none());
         assert_eq!(s.write_spec("Unit", &kr).as_deref(), Some("~a2k"));
@@ -469,7 +469,7 @@ mod tests {
                 .read_spec("~a2k", SugarArgs::new(&args[1..], "(~a2k #:rate ar)"))
                 .is_err(),
         );
-        // A hand-built datum carrying the fixed rate still writes bare.
+        // A hand-built datum with the fixed rate also writes bare.
         let datum = node_datum(
             "Unit",
             vec![
