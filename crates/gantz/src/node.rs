@@ -54,7 +54,6 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_plyphon::Sum,
             gantz_plyphon::Unpack,
             gantz_plyphon::Bus,
-            gantz_plyphon::PlayBuf,
             gantz_plyphon::Sample,
             gantz_plyphon::Buffer,
             gantz_pattern::Pmini,
@@ -216,7 +215,6 @@ mod tests {
             "~bus",
             "~out",
             "~pack",
-            "~playbuf",
             "~sample",
             "~scopeout",
             "~sum",
@@ -633,11 +631,6 @@ mod tests {
                 gantz_core::node::Ref::new(gantz_ca::ContentAddr([1; 32])),
             ),
         )));
-        nodes.push(erased(&gantz_plyphon::PlayBuf::new(
-            gantz_ca::ContentAddr([2; 32]),
-            2,
-            48_000.0,
-        )));
         nodes.push(erased(&gantz_plyphon::Sample::new(
             gantz_ca::ContentAddr([3; 32]),
             2,
@@ -793,10 +786,6 @@ mod tests {
             (
                 "Pack",
                 "36a4fded818932c8bbfad7cba2748c3ea369d697398a3c1e506e46f4e10ecb42",
-            ),
-            (
-                "PlayBuf",
-                "80f30968c0021ac5a72c7c136c2d946f22768831414028672580cc629649ff99",
             ),
             (
                 "Plot",
@@ -2737,11 +2726,11 @@ mod tests {
         });
     }
 
-    /// A `~playbuf`'s buffer reference wires audio blobs into reachability.
+    /// A `~sample`'s asset reference wires audio blobs into reachability.
     /// Prune and export keep exactly the buffers live graphs reference and
     /// drop the rest.
     #[test]
-    fn playbuf_buffers_ride_reachability() {
+    fn sample_buffers_ride_reachability() {
         use std::time::Duration;
 
         let mut registry = DataReg::default();
@@ -2750,7 +2739,7 @@ mod tests {
         let used_addr = gantz_plyphon::add_audio_asset(&mut registry, &used);
         let unused_addr = gantz_plyphon::add_audio_asset(&mut registry, &unused);
 
-        let dg = data_graph([erased(&gantz_plyphon::PlayBuf::new(used_addr, 1, 48_000.0))]);
+        let dg = data_graph([erased(&gantz_plyphon::Sample::from_asset(&used))]);
         let g_addr = gantz_ca::graph_addr(&dg);
         registry.add_graph(dg);
         let commit = registry.commit_graph(Duration::from_secs(1), None, g_addr, || {

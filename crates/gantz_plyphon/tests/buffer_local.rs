@@ -457,3 +457,46 @@ fn describe_lists_buffer_bindings() {
         "buffer line:\n{text}"
     );
 }
+
+#[test]
+fn playbuf_sizes_by_its_buffer_and_scales_its_speed() {
+    let mut g = Graph::<N>::default();
+    let s = g.add_node(N::Src(Src));
+    let p = g.add_node(N::Unit(UnitNode::from_unit("PlayBuf").expect("row")));
+    let o = g.add_node(N::Out(Out::default()));
+    edge(&mut g, s, p, 0);
+    edge(&mut g, p, o, 0);
+    let def = derive_synthdef(&g, 2, "t").expect("derive").def;
+    let playbuf = unit(&def, "PlayBuf");
+    assert_eq!(playbuf.num_outputs, 2, "one output per buffer channel");
+    assert_eq!(playbuf.inputs.len(), 6);
+    assert!(
+        matches!(playbuf.inputs[5], InputRef::Constant(c) if c == 0.0),
+        "doneAction"
+    );
+    // The speed input is the speed param times `BufRateScale` of the buffer.
+    let InputRef::Unit { unit: mul, .. } = playbuf.inputs[1] else {
+        panic!("speed is scaled");
+    };
+    let mul = &def.units[mul as usize];
+    assert_eq!((mul.name.as_str(), mul.special_index), ("BinaryOpUGen", 2));
+    let InputRef::Unit { unit: scale, .. } = mul.inputs[1] else {
+        panic!("by a unit");
+    };
+    let scale = &def.units[scale as usize];
+    assert_eq!(scale.name, "BufRateScale");
+    assert_eq!(param_of(&def, scale.inputs[0]), Some("0/bufnum"));
+}
+
+#[test]
+fn unconnected_playbuf_reads_minus_one_without_a_rate_scale() {
+    let mut g = Graph::<N>::default();
+    let p = g.add_node(N::Unit(UnitNode::from_unit("PlayBuf").expect("row")));
+    let o = g.add_node(N::Out(Out::default()));
+    edge(&mut g, p, o, 0);
+    let def = derive_synthdef(&g, 1, "t").expect("derive").def;
+    let playbuf = unit(&def, "PlayBuf");
+    assert!(is_minus_one(playbuf.inputs[0]));
+    assert_eq!(playbuf.num_outputs, 1);
+    assert!(def.units.iter().all(|u| u.name != "BufRateScale"));
+}

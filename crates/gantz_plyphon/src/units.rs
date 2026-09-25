@@ -389,6 +389,24 @@ const fn u(
     }
 }
 
+/// Size the row's output port by the buffer at `socket`. See
+/// [`Emit::BufferChannels`].
+const fn buf_channels(socket: &'static str, desc: UnitDesc) -> UnitDesc {
+    UnitDesc {
+        emit: Emit::BufferChannels { socket },
+        ..desc
+    }
+}
+
+/// Scale the row's `input` by the rate of the buffer at `buffer`. See
+/// [`RateScale`].
+const fn rate_scaled(input: &'static str, buffer: &'static str, desc: UnitDesc) -> UnitDesc {
+    UnitDesc {
+        rate_scale: Some(RateScale { input, buffer }),
+        ..desc
+    }
+}
+
 /// Constrain a row to audio rate.
 const fn ar_only(desc: UnitDesc) -> UnitDesc {
     UnitDesc {
@@ -2754,6 +2772,71 @@ pub static UNITS: &[UnitDesc] = &[
         &["buffer sample rate / engine sample rate"],
         "Playback rate that plays a buffer at its own pitch. Control rate only",
     )),
+    // Buffer playback. One output channel per buffer channel.
+    buf_channels(
+        "buf",
+        rate_scaled(
+            "speed",
+            "buf",
+            u(
+                "~playbuf",
+                "PlayBuf",
+                &[
+                    buf("buf", "buffer to play"),
+                    par(
+                        "speed",
+                        1.0,
+                        -4.0,
+                        4.0,
+                        "",
+                        "playback speed. 1 is the buffer's own pitch, negative plays backward",
+                    ),
+                    sig("trigger", "jump to start on a rising edge"),
+                    par(
+                        "start",
+                        0.0,
+                        0.0,
+                        10_000_000.0,
+                        " frames",
+                        "start position after a trigger",
+                    ),
+                    par("loop", 1.0, 0.0, 1.0, "", "1 loops, 0 plays once"),
+                    baked(0.0),
+                ],
+                &["one channel per buffer channel"],
+                "Play a buffer, looping by default",
+            ),
+        ),
+    ),
+    buf_channels(
+        "buf",
+        u(
+            "~bufrd",
+            "BufRd",
+            &[
+                buf("buf", "buffer to read"),
+                sig(
+                    "phase",
+                    "read position in frames, for example from a `~phasor`",
+                ),
+                par(
+                    "loop",
+                    1.0,
+                    0.0,
+                    1.0,
+                    "",
+                    "1 wraps the position, 0 clamps it",
+                ),
+                init(
+                    "interp",
+                    2.0,
+                    "interpolation. 1 none, 2 linear, 4 cubic. Re-derives",
+                ),
+            ],
+            &["one channel per buffer channel"],
+            "Read a buffer at a position that a signal sets",
+        ),
+    ),
     // Operators. One row per operator in plyphon's dispatch tables, which
     // follow SC's operator indices. Defaults for `b` are 1 for multiplicative
     // operators and 0 otherwise.

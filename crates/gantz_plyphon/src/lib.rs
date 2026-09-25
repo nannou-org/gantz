@@ -41,9 +41,7 @@ pub use instance::{
     BusKey, DefCache, GraphTemplate, InstancePart, Part, ResolvedBus, ResolvedPart, TemplateBus,
     TemplateRegion, VariantKey, derive_template, instantiate,
 };
-pub use node::{
-    Buffer, Bus, InvalidUnitNode, Out, Pack, PlayBuf, Sample, ScopeOut, Sum, UnitNode, Unpack,
-};
+pub use node::{Buffer, Bus, InvalidUnitNode, Out, Pack, Sample, ScopeOut, Sum, UnitNode, Unpack};
 pub use port_info::{RootPortInfo, root_port_info};
 pub use ref_ext::{DSP_REF_EXT_KEY, DspRefExt, dsp_graphs, is_dsp_graph};
 pub use sugar::PlyphonSugar;

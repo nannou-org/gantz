@@ -2527,16 +2527,12 @@ mod tests {
         );
     }
 
-    /// End-to-end. A `~playbuf -> ~out` graph plays a content-addressed asset.
-    /// Exercises the whole chain from node to derive to `BufferBinding` to
-    /// resident install to `PlayBuf` reading the buffer to `Out`, and confirms
-    /// it sounds.
+    /// End-to-end. A `~sample -> ~playbuf -> ~out` graph plays a
+    /// content-addressed asset. Exercises the whole chain from node to derive
+    /// to `BufferBinding` to resident install to `PlayBuf` reading the buffer
+    /// to `Out`, and confirms it sounds.
     #[test]
     fn playbuf_sounds_through_out() {
-        use gantz_core::edge::Edge;
-        use gantz_core::node::graph::Graph;
-        use gantz_plyphon::flatten::{Flat, RefKind, flatten};
-
         // An alternating +/-0.5 waveform with nonzero RMS, content-addressed and
         // placed in the store the driver reads.
         let samples = (0..64)
@@ -2547,19 +2543,7 @@ mod tests {
         let bytes = ca::Bytes::from(audio.encode());
         let assets: BufferBlobs = std::iter::once((addr, bytes)).collect();
 
-        let mut g = Graph::<TestN>::default();
-        let p = g.add_node(TestN::PlayBuf(gantz_plyphon::PlayBuf::new(
-            addr, 1, 48_000.0,
-        )));
-        let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
-        g.add_edge(p, o, Edge::new(0.into(), 0.into()));
-        let resolve =
-            |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
-        let flat: Graph<Flat<&TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
-
-        let mut cache = DefCache::new();
-        let template = derive_template(&flat, 1, &|_| None, &mut cache).expect("derive");
-        let part = instantiate(&template, &cache).into_iter().next().unwrap();
+        let part = playbuf_part(addr);
         let wiring = wiring_hash(&part);
 
         let (mut controller, _nrt, mut world) = plyphon::engine(plyphon::Options {
@@ -2594,16 +2578,18 @@ mod tests {
         assert!(rms > 0.05, "playbuf -> out must sound: rms={rms}");
     }
 
-    /// A `~playbuf -> ~out` part playing the asset at `addr`.
+    /// A `~sample -> ~playbuf -> ~out` part playing the mono asset at `addr`.
     fn playbuf_part(addr: ca::ContentAddr) -> ResolvedPart {
         use gantz_core::edge::Edge;
         use gantz_core::node::graph::Graph;
         use gantz_plyphon::flatten::{Flat, RefKind, flatten};
         let mut g = Graph::<TestN>::default();
-        let p = g.add_node(TestN::PlayBuf(gantz_plyphon::PlayBuf::new(
-            addr, 1, 48_000.0,
+        let s = g.add_node(TestN::Sample(gantz_plyphon::Sample::new(
+            addr, 1, 64, 48_000.0,
         )));
+        let p = g.add_node(unit("PlayBuf"));
         let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
+        g.add_edge(s, p, Edge::new(0.into(), 0.into()));
         g.add_edge(p, o, Edge::new(0.into(), 0.into()));
         let resolve =
             |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
@@ -2912,7 +2898,7 @@ mod tests {
         Out(gantz_plyphon::Out),
         Pack(gantz_plyphon::Pack),
         Unpack(gantz_plyphon::Unpack),
-        PlayBuf(gantz_plyphon::PlayBuf),
+        Sample(gantz_plyphon::Sample),
         Inlet,
         Outlet,
         Ref(gantz_ca::ContentAddr, usize, usize, bool),
@@ -2940,7 +2926,7 @@ mod tests {
                 TestN::Out(o) => erase_node_typed(o).unwrap(),
                 TestN::Pack(p) => erase_node_typed(p).unwrap(),
                 TestN::Unpack(u) => erase_node_typed(u).unwrap(),
-                TestN::PlayBuf(p) => erase_node_typed(p).unwrap(),
+                TestN::Sample(s) => erase_node_typed(s).unwrap(),
                 TestN::Inlet => {
                     erase_node_typed(&gantz_core::node::graph::Inlet::default()).unwrap()
                 }
@@ -2974,7 +2960,7 @@ mod tests {
                 TestN::Out(o) => Some(o),
                 TestN::Pack(p) => Some(p),
                 TestN::Unpack(u) => Some(u),
-                TestN::PlayBuf(p) => Some(p),
+                TestN::Sample(s) => Some(s),
                 TestN::Inlet | TestN::Outlet | TestN::Ref(..) => None,
             }
         }

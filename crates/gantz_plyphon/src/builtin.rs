@@ -1,6 +1,6 @@
 //! Builtin specs for the DSP node set.
 
-use crate::node::{Buffer, Bus, Out, Pack, PlayBuf, Sample, ScopeOut, Sum, UnitNode, Unpack};
+use crate::node::{Buffer, Bus, Out, Pack, Sample, ScopeOut, Sum, UnitNode, Unpack};
 use gantz_core::Builtin;
 
 /// Builtin specs for the DSP node set, the bespoke nodes plus one entry per
@@ -11,7 +11,6 @@ pub fn builtins() -> Vec<Builtin> {
         Builtin::new("~bus", &Bus::default()),
         Builtin::new("~out", &Out::default()),
         Builtin::new("~pack", &Pack::default()),
-        Builtin::new("~playbuf", &PlayBuf::default()),
         Builtin::new("~sample", &Sample::default()),
         Builtin::new("~scopeout", &ScopeOut::default()),
         Builtin::new("~sum", &Sum::default()),
