@@ -15,7 +15,11 @@
 //!
 //! The table excludes buffer-reading units, variable-arity units such as
 //! `EnvGen` and `Klang`, demand-rate units, FFT/PV units and IO/routing
-//! units. The bespoke nodes cover IO and routing.
+//! units. The bespoke nodes cover IO and routing. It also leaves out the
+//! node-lifecycle units such as `FreeSelf` and `Done`, since the audio
+//! driver owns every synth's lifecycle, and `GVerb`, whose plyphon 0.1.1
+//! port indexes its audio input directly and panics on a constant or
+//! control wire.
 //!
 //! Most rows run at either rate, chosen on the node. A row whose unit only
 //! makes sense at one rate, such as the `A2K`/`K2A` converters and the
