@@ -1,3 +1,34 @@
+(graph demo-freeverb
+  (comment0 (comment "Reverb.\nDial the wet mix." 100 30))
+  (number1 (number #:min 0.5 #:max 1))
+  (~dust2 ~dust)
+  (~ringz3 ~ringz)
+  (~freeverb4 ~freeverb)
+  (~out5 ~out)
+  (-> number1 (~freeverb4 1))
+  (-> ~dust2 ~ringz3)
+  (-> ~ringz3 ~freeverb4)
+  (-> ~freeverb4 ~out5))
+
+(graph demo-pluck
+  (comment0 (comment "Plucked string.\nDial the pluck rate and the string period." 200 30))
+  (number1 (number #:min 2))
+  (number2 (number #:min 0.0045 #:max 0.05))
+  (~whitenoise3 ~whitenoise)
+  (~dust4 ~dust)
+  (~pluck5 ~pluck)
+  (~out6 ~out)
+  (bang7 bang)
+  (tick-bang8 (tick-bang #:rate 30))
+  (-> number1 ~dust4)
+  (-> number2 (~pluck5 2))
+  (-> ~whitenoise3 ~pluck5)
+  (-> ~dust4 (~pluck5 1))
+  (-> ~pluck5 ~out6)
+  (-> bang7 number1)
+  (-> bang7 number2)
+  (-> tick-bang8 bang7))
+
 (graph demo-ringmod
   (comment0 (comment "Ring modulation.\nDial the two freqs." 130 30))
   (number1 (number #:min 220))
@@ -11,6 +42,32 @@
   (-> ~sinosc3 ~mul5)
   (-> ~sinosc4 (~mul5 1))
   (-> ~mul5 ~out6))
+
+(graph demo-samplehold
+  (comment0 (comment "Sample and hold.\nDial the step rate and the pitch range." 190 30))
+  (number1 (number #:min 8))
+  (number2 (number #:min 300))
+  (number3 (number #:min 500))
+  (~whitenoise4 ~whitenoise)
+  (~impulse5 ~impulse)
+  (~latch6 ~latch)
+  (~muladd7 ~muladd)
+  (~sinosc8 ~sinosc)
+  (~out9 ~out)
+  (tick-bang10 (tick-bang #:rate 30))
+  (bang11 bang)
+  (-> number1 ~impulse5)
+  (-> number2 (~muladd7 1))
+  (-> number3 (~muladd7 2))
+  (-> ~whitenoise4 ~latch6)
+  (-> ~impulse5 (~latch6 1))
+  (-> ~latch6 ~muladd7)
+  (-> ~muladd7 ~sinosc8)
+  (-> ~sinosc8 ~out9)
+  (-> tick-bang10 bang11)
+  (-> bang11 number1)
+  (-> bang11 number2)
+  (-> bang11 number3))
 
 (graph demo-sine
   (~sinosc0 ~sinosc)
@@ -30,9 +87,33 @@
   (-> ~tanh4 ~out5))
 
 (descriptions
+  (demo-freeverb "Random impulses ring a resonator into a reverb. Dial the number for the wet mix.")
+  (demo-pluck "Noise bursts pluck a Karplus-Strong string. Dial the numbers for the pluck rate and the string period.")
   (demo-ringmod "Two sines multiplied. Dial the numbers to sweep from tremolo to ring modulation.")
+  (demo-samplehold "A latch samples white noise on each impulse. The result sets the frequency of a sine. Dial the numbers for the step rate and the pitch range.")
   (demo-sine "A sine wave into the audio output - the simplest DSP graph.")
   (demo-waveshape "A sine into a tanh waveshaper. Dial the number to raise the drive."))
+
+(layout demo-freeverb
+  (comment0 -220 0)
+  (number1 113 86)
+  (~dust2 0 0)
+  (~freeverb4 0 160)
+  (~out5 0 240)
+  (~ringz3 0 80)
+  (camera 0 120 1))
+
+(layout demo-pluck
+  (bang7 114 -69)
+  (comment0 -235 2)
+  (number1 53 18)
+  (number2 114 70)
+  (tick-bang8 114 -109)
+  (~dust4 53 78)
+  (~out6 0 220)
+  (~pluck5 0 140)
+  (~whitenoise3 0 -97)
+  (camera 0 110 1))
 
 (layout demo-ringmod
   (comment0 -240 0)
@@ -43,6 +124,21 @@
   (~sinosc3 -70 60)
   (~sinosc4 70 60)
   (camera 0 110 1))
+
+(layout demo-samplehold
+  (bang11 183 -56)
+  (comment0 -260 0)
+  (number1 70 0)
+  (number2 81 135)
+  (number3 144 135)
+  (tick-bang10 183 -97)
+  (~impulse5 70 60)
+  (~latch6 0 120)
+  (~muladd7 0 200)
+  (~out9 0 360)
+  (~sinosc8 0 280)
+  (~whitenoise4 -70 0)
+  (camera 0 180 1))
 
 (layout demo-sine
   (~out1 0 80)

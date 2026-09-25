@@ -8,12 +8,15 @@
 //! [`crate::units`] descriptor-table keyword reads and writes the same way.
 //! A bare form is `~sinosc` or `~lpf`. A full form such as
 //! `(~combc #:delay-lag s #:maxdelay v #:rate kr)` carries the structural
-//! per-param lags, init-only values and ugen rate. Param values live in VM
-//! state, not the node weight, so they are not serialized and never appear
-//! here. Compose it with [`gantz_format::CoreSugar`] and the other crates'
-//! sugars via [`gantz_format::Sugars`].
+//! per-param lags, init-only values and ugen rate. A fixed-rate row such as
+//! `~a2k` accepts only its own rate and never writes one. Param values live
+//! in VM state, not the node weight, so they are not serialized and never
+//! appear here. Compose it with [`gantz_format::CoreSugar`] and the other
+//! crates' sugars via [`gantz_format::Sugars`].
 
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
+
+use crate::units::UnitRate;
 
 /// Keyword sugar for the plyphon DSP nodes. It covers the bespoke
 /// [`Out`](crate::Out), [`ScopeOut`](crate::ScopeOut), [`Pack`](crate::Pack),
@@ -117,10 +120,23 @@ impl Sugar for PlyphonSugar {
 /// [#:rate ar|kr])` form into a `Unit` node datum. Each map or field is
 /// carried only when its keyword is present, so a bare form stays bare.
 /// Fields are pushed in `UnitNode`'s serde order, that is unit, rate, lags,
-/// init.
+/// init. A fixed-rate row rejects any other rate and drops its own, so the
+/// datum stays canonical.
 fn unit_spec(desc: &'static crate::UnitDesc, args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let mut fields = vec![("unit", Datum::Str(desc.unit.into()))];
     push_rate(&mut fields, &args)?;
+    if let UnitRate::Fixed(fixed) = desc.rate {
+        if let Some(ix) = fields.iter().position(|(k, _)| *k == "rate") {
+            let (_, rate) = fields.remove(ix);
+            if rate.as_str() != Some(fixed.token()) {
+                return Err(FormatError::malformed(format!(
+                    "{} runs at `{}` only",
+                    desc.keyword,
+                    fixed.token()
+                )));
+            }
+        }
+    }
     let mut lags = Vec::new();
     for (name, _) in desc.hybrid_params() {
         if let Some(lag) = args.keyword_f64(&format!("{name}-lag"))? {
@@ -172,7 +188,9 @@ fn write_unit(node: &Datum) -> Option<String> {
             }
         }
     }
-    parts.extend(rate_part(node));
+    if desc.rate == UnitRate::Any {
+        parts.extend(rate_part(node));
+    }
     Some(write_form(desc.keyword, parts))
 }
 
@@ -433,6 +451,33 @@ mod tests {
                 .read_spec("~sinosc", SugarArgs::new(&args[1..], "(~sinosc #:rate dr)"))
                 .is_err(),
         );
+    }
+
+    #[test]
+    fn fixed_rate_rows_write_bare() {
+        let s = PlyphonSugar;
+        // A fixed-rate row drops its own rate. Any other rate is malformed.
+        let kr = read_spec("(~a2k #:rate kr)").expect("kr");
+        assert!(kr.get("rate").is_none());
+        assert_eq!(s.write_spec("Unit", &kr).as_deref(), Some("~a2k"));
+        let ar = read_spec("(~k2a #:rate ar)").expect("ar");
+        assert_eq!(s.write_spec("Unit", &ar).as_deref(), Some("~k2a"));
+        let exprs = sexpr::read("(~a2k #:rate ar)").expect("read");
+        let args = sexpr::list_args(&exprs[0]).expect("list");
+        assert!(
+            PlyphonSugar
+                .read_spec("~a2k", SugarArgs::new(&args[1..], "(~a2k #:rate ar)"))
+                .is_err(),
+        );
+        // A hand-built datum with the fixed rate also writes bare.
+        let datum = node_datum(
+            "Unit",
+            vec![
+                ("unit", Datum::Str("A2K".into())),
+                ("rate", Datum::Str("kr".into())),
+            ],
+        );
+        assert_eq!(s.write_spec("Unit", &datum).as_deref(), Some("~a2k"));
     }
 
     #[test]

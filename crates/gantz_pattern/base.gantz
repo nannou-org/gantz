@@ -273,7 +273,7 @@
   (tick-bang0 92 -326)
   (~out7 33 297)
   (~sinosc6 33 218)
-  (camera 203.54364 72.71521 1))
+  (camera 102.065186 -63.41565 1))
 
 (layout demo-pplot
   (comment19 -1583 22)

@@ -3,7 +3,7 @@
 use crate::egui::param::{param_row, params_state_row, rate_row, value_row};
 use crate::node::UnitNode;
 use crate::param::{param_value_keyed, params_state, with_param_value};
-use crate::units::In;
+use crate::units::{In, UnitRate};
 use gantz_egui::{
     Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
 };
@@ -96,10 +96,13 @@ impl NodeUi for UnitNode {
                 In::Signal { .. } | In::Baked(_) => (),
             }
         }
-        let mut rate = self.rate();
-        if rate_row(body, &mut rate) {
-            self.set_rate(rate);
-            resp.mark_changed();
+        // A fixed-rate row has no rate to choose.
+        if desc.rate == UnitRate::Any {
+            let mut rate = self.rate();
+            if rate_row(body, &mut rate) {
+                self.set_rate(rate);
+                resp.mark_changed();
+            }
         }
         resp
     }

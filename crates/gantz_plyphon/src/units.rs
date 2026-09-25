@@ -15,7 +15,19 @@
 //!
 //! The table excludes buffer-reading units, variable-arity units such as
 //! `EnvGen` and `Klang`, demand-rate units, FFT/PV units and IO/routing
-//! units. The bespoke nodes cover IO and routing.
+//! units. The bespoke nodes cover IO and routing. The table also excludes
+//! the node-lifecycle units such as `FreeSelf` and `Done`, because the audio
+//! driver controls the lifecycle of each synth. It excludes `GVerb` too. In
+//! plyphon 0.1.1, `GVerb` panics when its input is a constant or a control
+//! wire.
+//!
+//! Most rows can run at audio or control rate. The node sets the rate. Some
+//! units work correctly at one rate only, for example the `A2K` and `K2A`
+//! converters and the engine info units. Their rows have a
+//! [`UnitRate::Fixed`] rate. plyphon does not reject an incorrect rate, so
+//! the table must.
+
+use crate::dsp::NodeRate;
 
 /// How one plyphon input of a wrapped unit is fed.
 ///
@@ -97,6 +109,17 @@ pub struct Special {
     pub index: i16,
 }
 
+/// The ugen rates that a descriptor row can use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnitRate {
+    /// Audio or control rate. The node weight stores the rate. The default
+    /// is `ar`.
+    Any,
+    /// One rate only. The weight does not store a rate. The inspector shows
+    /// no rate row, and sugar does not write `#:rate`.
+    Fixed(NodeRate),
+}
+
 /// One wrapped plyphon unit generator, the descriptor that drives a
 /// [`UnitNode`](crate::UnitNode). The node names it by [`unit`](Self::unit).
 #[derive(Clone, Copy, Debug)]
@@ -110,6 +133,8 @@ pub struct UnitDesc {
     /// The emission override for operator-selector rows. `None` means
     /// [`unit`](Self::unit) is itself the emitted plyphon name.
     pub special: Option<Special>,
+    /// The rates that the unit can use.
+    pub rate: UnitRate,
     /// One entry per plyphon input, in plyphon input order.
     pub inputs: &'static [In],
     /// One doc line per unit output (the node's dsp output ports).
@@ -133,6 +158,15 @@ impl UnitDesc {
         match self.special {
             Some(Special { index, .. }) => index,
             None => 0,
+        }
+    }
+
+    /// The rate of a new node for this row. This is the fixed rate for a
+    /// [`UnitRate::Fixed`] row, and `ar` for all other rows.
+    pub fn default_rate(&self) -> NodeRate {
+        match self.rate {
+            UnitRate::Fixed(rate) => rate,
+            UnitRate::Any => NodeRate::default(),
         }
     }
 
@@ -242,9 +276,26 @@ const fn u(
         keyword,
         unit,
         special: None,
+        rate: UnitRate::Any,
         inputs,
         outputs,
         doc,
+    }
+}
+
+/// Constrain a row to audio rate.
+const fn ar_only(desc: UnitDesc) -> UnitDesc {
+    UnitDesc {
+        rate: UnitRate::Fixed(NodeRate::Audio),
+        ..desc
+    }
+}
+
+/// Constrain a row to control rate.
+const fn kr_only(desc: UnitDesc) -> UnitDesc {
+    UnitDesc {
+        rate: UnitRate::Fixed(NodeRate::Control),
+        ..desc
     }
 }
 
@@ -261,6 +312,7 @@ macro_rules! bop {
                 unit: "BinaryOpUGen",
                 index: $ix,
             }),
+            rate: UnitRate::Any,
             inputs: &[
                 sig("a", "left operand signal"),
                 par("b", $b, -10_000.0, 10_000.0, "", $b_doc),
@@ -282,6 +334,7 @@ macro_rules! uop {
                 unit: "UnaryOpUGen",
                 index: $ix,
             }),
+            rate: UnitRate::Any,
             inputs: &[sig("in", "input signal")],
             outputs: &[$out],
             doc: $doc,
@@ -292,6 +345,19 @@ macro_rules! uop {
 /// A hybrid oscillator/filter frequency param.
 const fn freq(default: f32, doc: &'static str) -> In {
     par("freq", default, 0.0, 20_000.0, " Hz", doc)
+}
+
+/// The iteration frequency of a chaotic map. The SC default is half the
+/// sample rate, so the range is larger than the audio band.
+const fn chaos_freq() -> In {
+    par(
+        "freq",
+        22_050.0,
+        0.0,
+        48_000.0,
+        " Hz",
+        "iteration frequency. The output holds between iterations",
+    )
 }
 
 /// The wrapped plyphon units, grouped by family. Signatures follow the
@@ -564,6 +630,179 @@ pub static UNITS: &[UnitDesc] = &[
         &["random +/-1 steps"],
         "Clipped step noise: random +/-1 values at a frequency",
     ),
+    u(
+        "~lfdnoise0",
+        "LFDNoise0",
+        &[freq(
+            500.0,
+            "value-change frequency. It can change at audio rate",
+        )],
+        &["stepped random signal"],
+        "Random steps. The frequency can change at audio rate",
+    ),
+    u(
+        "~lfdnoise1",
+        "LFDNoise1",
+        &[freq(
+            500.0,
+            "value-change frequency. It can change at audio rate",
+        )],
+        &["ramped random signal"],
+        "Random values with linear ramps. The frequency can change at audio rate",
+    ),
+    u(
+        "~lfdnoise3",
+        "LFDNoise3",
+        &[freq(
+            500.0,
+            "value-change frequency. It can change at audio rate",
+        )],
+        &["cubic random signal"],
+        "Random values with smooth curves. The frequency can change at audio rate",
+    ),
+    u(
+        "~lfdclipnoise",
+        "LFDClipNoise",
+        &[freq(
+            500.0,
+            "value-change frequency. It can change at audio rate",
+        )],
+        &["random +/-1 steps"],
+        "Random steps of +1 or -1. The frequency can change at audio rate",
+    ),
+    u(
+        "~lfgauss",
+        "LFGauss",
+        &[
+            par("duration", 1.0, 0.0, 60.0, " s", "length of one cycle"),
+            par(
+                "width",
+                0.1,
+                0.001,
+                1.0,
+                "",
+                "width of the curve, relative to the cycle",
+            ),
+            par("iphase", 0.0, -1.0, 1.0, "", "start phase"),
+            baked(1.0),
+            baked(0.0),
+        ],
+        &["gaussian curve"],
+        "Gaussian curve that repeats. Use it as an envelope or an LFO",
+    ),
+    u(
+        "~logistic",
+        "Logistic",
+        &[
+            par(
+                "chaos",
+                3.0,
+                0.0,
+                4.0,
+                "",
+                "growth rate. Chaotic above 3.57",
+            ),
+            freq(1000.0, "iteration frequency"),
+            init("init", 0.5, "start value, between 0 and 1. Set at spawn"),
+        ],
+        &["logistic map signal"],
+        "Logistic map, calculated at a frequency",
+    ),
+    u(
+        "~hasher",
+        "Hasher",
+        &[sig("in", "signal to hash")],
+        &["random value for each input sample"],
+        "Hash each input sample to a value from -1 to 1. The same input gives the same output",
+    ),
+    u(
+        "~mantissamask",
+        "MantissaMask",
+        &[
+            sig("in", "signal to reduce"),
+            par("bits", 3.0, 0.0, 23.0, "", "mantissa bits to keep"),
+        ],
+        &["bit-reduced signal"],
+        "Keep only the top mantissa bits. This gives a bit-crush effect",
+    ),
+    // Chaos. Chaotic maps that hold each value until the next iteration.
+    // plyphon reads the start values once at spawn, so they are init values.
+    u(
+        "~cuspn",
+        "CuspN",
+        &[
+            chaos_freq(),
+            par("a", 1.0, -10.0, 10.0, "", "map coefficient a"),
+            par("b", 1.9, -10.0, 10.0, "", "map coefficient b"),
+            init("xi", 0.0, "start value of x. Set at spawn"),
+        ],
+        &["cusp map signal"],
+        "Cusp map, x = a - b * sqrt(|x|)",
+    ),
+    u(
+        "~quadn",
+        "QuadN",
+        &[
+            chaos_freq(),
+            par("a", 1.0, -10.0, 10.0, "", "map coefficient a"),
+            par("b", -1.0, -10.0, 10.0, "", "map coefficient b"),
+            par("c", -0.75, -10.0, 10.0, "", "map coefficient c"),
+            init("xi", 0.0, "start value of x. Set at spawn"),
+        ],
+        &["quadratic map signal"],
+        "Quadratic map, x = a * x^2 + b * x + c",
+    ),
+    u(
+        "~lincongn",
+        "LinCongN",
+        &[
+            chaos_freq(),
+            par("a", 1.1, -10.0, 10.0, "", "multiplier"),
+            par("c", 0.13, -10.0, 10.0, "", "increment"),
+            par("m", 1.0, -10.0, 10.0, "", "modulus"),
+            init("xi", 0.0, "start value of x. Set at spawn"),
+        ],
+        &["linear congruential signal"],
+        "Linear congruential generator. The output is from -1 to 1",
+    ),
+    u(
+        "~gbmann",
+        "GbmanN",
+        &[
+            chaos_freq(),
+            init("xi", 1.2, "start value of x. Set at spawn"),
+            init("yi", 2.1, "start value of y. Set at spawn"),
+        ],
+        &["gingerbreadman map signal"],
+        "Gingerbreadman map",
+    ),
+    u(
+        "~standardn",
+        "StandardN",
+        &[
+            chaos_freq(),
+            par("k", 1.0, 0.0, 10.0, "", "perturbation amount"),
+            init("xi", 0.5, "start value of x. Set at spawn"),
+            init("yi", 0.0, "start value of y. Set at spawn"),
+        ],
+        &["standard map signal"],
+        "Standard map, also known as the kicked rotor. The output is from -1 to 1",
+    ),
+    u(
+        "~latoocarfiann",
+        "LatoocarfianN",
+        &[
+            chaos_freq(),
+            par("a", 1.0, -10.0, 10.0, "", "map coefficient a"),
+            par("b", 3.0, -10.0, 10.0, "", "map coefficient b"),
+            par("c", 0.5, -10.0, 10.0, "", "map coefficient c"),
+            par("d", 0.5, -10.0, 10.0, "", "map coefficient d"),
+            init("xi", 0.5, "start value of x. Set at spawn"),
+            init("yi", 0.5, "start value of y. Set at spawn"),
+        ],
+        &["latoocarfian map signal"],
+        "Latoocarfian map",
+    ),
     // Filters
     u(
         "~lpf",
@@ -798,6 +1037,109 @@ pub static UNITS: &[UnitDesc] = &[
         "Thrice-cascaded one-pole smoother",
     ),
     u(
+        "~lagud",
+        "LagUD",
+        &[
+            sig("in", "signal to smooth"),
+            par(
+                "up",
+                0.1,
+                0.0,
+                10.0,
+                " s",
+                "smoothing time when the input rises",
+            ),
+            par(
+                "dn",
+                0.1,
+                0.0,
+                10.0,
+                " s",
+                "smoothing time when the input falls",
+            ),
+        ],
+        &["smoothed signal"],
+        "One-pole smoother with different rise and fall times",
+    ),
+    u(
+        "~lag2ud",
+        "Lag2UD",
+        &[
+            sig("in", "signal to smooth"),
+            par(
+                "up",
+                0.1,
+                0.0,
+                10.0,
+                " s",
+                "smoothing time when the input rises",
+            ),
+            par(
+                "dn",
+                0.1,
+                0.0,
+                10.0,
+                " s",
+                "smoothing time when the input falls",
+            ),
+        ],
+        &["smoothed signal"],
+        "Two one-pole smoothers in series, with different rise and fall times",
+    ),
+    u(
+        "~lag3ud",
+        "Lag3UD",
+        &[
+            sig("in", "signal to smooth"),
+            par(
+                "up",
+                0.1,
+                0.0,
+                10.0,
+                " s",
+                "smoothing time when the input rises",
+            ),
+            par(
+                "dn",
+                0.1,
+                0.0,
+                10.0,
+                " s",
+                "smoothing time when the input falls",
+            ),
+        ],
+        &["smoothed signal"],
+        "Three one-pole smoothers in series, with different rise and fall times",
+    ),
+    u(
+        "~ramp",
+        "Ramp",
+        &[
+            sig("in", "signal to smooth"),
+            par(
+                "dur",
+                0.1,
+                0.0,
+                10.0,
+                " s",
+                "time between samples, and the ramp time",
+            ),
+        ],
+        &["linear ramps between samples"],
+        "Sample the input at intervals and ramp linearly to each new value",
+    ),
+    u(
+        "~varlag",
+        "VarLag",
+        &[
+            sig("in", "signal to smooth"),
+            par("dur", 0.1, 0.0, 10.0, " s", "ramp time to each new value"),
+            init("start", 0.0, "start value of the first ramp. Set at spawn"),
+        ],
+        &["smoothed signal"],
+        "Linear smoother. Ramp to each new input value over dur",
+    ),
+    u(
         "~mideq",
         "MidEQ",
         &[
@@ -848,6 +1190,196 @@ pub static UNITS: &[UnitDesc] = &[
         ],
         &["attack-decay envelope signal"],
         "Attack-decay integrator (smoothed impulse envelopes)",
+    ),
+    u(
+        "~lpz1",
+        "LPZ1",
+        &[sig("in", "signal to filter")],
+        &["low-passed signal"],
+        "Two-point average low-pass filter, 0.5 * (in + previous)",
+    ),
+    u(
+        "~hpz1",
+        "HPZ1",
+        &[sig("in", "signal to filter")],
+        &["high-passed signal"],
+        "Two-point difference high-pass filter, 0.5 * (in - previous)",
+    ),
+    u(
+        "~lpz2",
+        "LPZ2",
+        &[sig("in", "signal to filter")],
+        &["low-passed signal"],
+        "Two-zero low-pass filter with fixed coefficients",
+    ),
+    u(
+        "~hpz2",
+        "HPZ2",
+        &[sig("in", "signal to filter")],
+        &["high-passed signal"],
+        "Two-zero high-pass filter with fixed coefficients",
+    ),
+    u(
+        "~bpz2",
+        "BPZ2",
+        &[sig("in", "signal to filter")],
+        &["band-passed signal"],
+        "Two-zero band-pass filter with fixed coefficients. The center is at half \
+         the Nyquist frequency",
+    ),
+    u(
+        "~brz2",
+        "BRZ2",
+        &[sig("in", "signal to filter")],
+        &["band-rejected signal"],
+        "Two-zero band-reject filter with fixed coefficients. The center is at half \
+         the Nyquist frequency",
+    ),
+    u(
+        "~delay1",
+        "Delay1",
+        &[sig("in", "signal to delay")],
+        &["signal delayed one sample"],
+        "One-sample delay",
+    ),
+    u(
+        "~delay2",
+        "Delay2",
+        &[sig("in", "signal to delay")],
+        &["signal delayed two samples"],
+        "Two-sample delay",
+    ),
+    u(
+        "~slope",
+        "Slope",
+        &[sig("in", "signal to differentiate")],
+        &["slope per second"],
+        "Slope of the signal. This is the change for each sample, times the sample rate",
+    ),
+    u(
+        "~apf",
+        "APF",
+        &[
+            sig("in", "signal to filter"),
+            freq(440.0, "pole frequency"),
+            par("radius", 0.8, 0.0, 1.0, "", "pole radius"),
+        ],
+        &["all-passed signal"],
+        "Two-pole all-pass filter. It changes the phase but not the level",
+    ),
+    u(
+        "~twopole",
+        "TwoPole",
+        &[
+            sig("in", "signal to filter"),
+            freq(440.0, "resonant frequency"),
+            par(
+                "radius",
+                0.8,
+                0.0,
+                1.0,
+                "",
+                "pole radius. Higher values resonate more",
+            ),
+        ],
+        &["resonated signal"],
+        "Two-pole resonant filter",
+    ),
+    u(
+        "~twozero",
+        "TwoZero",
+        &[
+            sig("in", "signal to filter"),
+            freq(440.0, "notch frequency"),
+            par(
+                "radius",
+                0.8,
+                0.0,
+                1.0,
+                "",
+                "zero radius. Higher values make a deeper notch",
+            ),
+        ],
+        &["notched signal"],
+        "Two-zero filter",
+    ),
+    u(
+        "~integrator",
+        "Integrator",
+        &[
+            sig("in", "signal to integrate"),
+            par(
+                "coef",
+                1.0,
+                -1.0,
+                1.0,
+                "",
+                "leak coefficient. 1 gives no leak",
+            ),
+        ],
+        &["integrated signal"],
+        "Leaky integrator, in + coef * previous output",
+    ),
+    u(
+        "~fos",
+        "FOS",
+        &[
+            sig("in", "signal to filter"),
+            par("a0", 0.0, -2.0, 2.0, "", "feedforward coefficient for in"),
+            par(
+                "a1",
+                0.0,
+                -2.0,
+                2.0,
+                "",
+                "feedforward coefficient for in(-1)",
+            ),
+            par("b1", 0.0, -2.0, 2.0, "", "feedback coefficient for out(-1)"),
+        ],
+        &["filtered signal"],
+        "First-order filter section from raw coefficients",
+    ),
+    u(
+        "~sos",
+        "SOS",
+        &[
+            sig("in", "signal to filter"),
+            par("a0", 0.0, -2.0, 2.0, "", "feedforward coefficient for in"),
+            par(
+                "a1",
+                0.0,
+                -2.0,
+                2.0,
+                "",
+                "feedforward coefficient for in(-1)",
+            ),
+            par(
+                "a2",
+                0.0,
+                -2.0,
+                2.0,
+                "",
+                "feedforward coefficient for in(-2)",
+            ),
+            par("b1", 0.0, -2.0, 2.0, "", "feedback coefficient for out(-1)"),
+            par("b2", 0.0, -2.0, 2.0, "", "feedback coefficient for out(-2)"),
+        ],
+        &["filtered signal"],
+        "Second-order filter section, or biquad, from raw coefficients",
+    ),
+    u(
+        "~median",
+        "Median",
+        &[
+            init(
+                "length",
+                3.0,
+                "window length in samples. Use an odd value of 32 or less. Set at spawn",
+            ),
+            sig("in", "signal to filter"),
+        ],
+        &["running median"],
+        "Running median of the last length samples. It removes spikes",
     ),
     // Delays
     u(
@@ -1012,6 +1544,133 @@ pub static UNITS: &[UnitDesc] = &[
         &["all-passed signal"],
         "All-pass (phase-dispersing feedback) delay, cubic interpolation",
     ),
+    // Effects
+    u(
+        "~freeverb",
+        "FreeVerb",
+        &[
+            sig("in", "signal to reverberate"),
+            par(
+                "mix",
+                0.33,
+                0.0,
+                1.0,
+                "",
+                "dry and wet balance. 1 is fully wet",
+            ),
+            par("room", 0.5, 0.0, 1.0, "", "room size"),
+            par("damp", 0.5, 0.0, 1.0, "", "high-frequency damping"),
+        ],
+        &["reverberated signal"],
+        "Mono freeverb reverb",
+    ),
+    u(
+        "~freeverb2",
+        "FreeVerb2",
+        &[
+            sig("in", "left input signal"),
+            sig("in2", "right input signal"),
+            par(
+                "mix",
+                0.33,
+                0.0,
+                1.0,
+                "",
+                "dry and wet balance. 1 is fully wet",
+            ),
+            par("room", 0.5, 0.0, 1.0, "", "room size"),
+            par("damp", 0.5, 0.0, 1.0, "", "high-frequency damping"),
+        ],
+        &["left channel", "right channel"],
+        "Stereo freeverb reverb",
+    ),
+    u(
+        "~pitchshift",
+        "PitchShift",
+        &[
+            sig("in", "signal to transpose"),
+            init("windowsize", 0.2, "grain length in seconds. Set at spawn"),
+            par(
+                "pitchratio",
+                1.0,
+                0.0,
+                4.0,
+                "",
+                "pitch ratio. 2 is one octave up",
+            ),
+            par(
+                "pitchdispersion",
+                0.0,
+                0.0,
+                1.0,
+                "",
+                "random pitch change for each grain",
+            ),
+            par(
+                "timedispersion",
+                0.0,
+                0.0,
+                1.0,
+                "",
+                "random time change for each grain",
+            ),
+        ],
+        &["transposed signal"],
+        "Granular pitch shifter",
+    ),
+    u(
+        "~pluck",
+        "Pluck",
+        &[
+            sig("in", "excitation signal. Each pluck lets in one period"),
+            sig("trig", "pluck on each rising edge"),
+            init(
+                "maxdelay",
+                0.2,
+                "max delay time. Sizes the delay line and re-derives",
+            ),
+            par("delay", 0.2, 0.0, 1.0, " s", "string period, 1 / pitch"),
+            par("decay", 1.0, -60.0, 60.0, " s", "60 dB ring time"),
+            par("coef", 0.5, -1.0, 1.0, "", "damping of the feedback"),
+        ],
+        &["plucked string signal"],
+        "Karplus-Strong plucked string",
+    ),
+    u(
+        "~hilbert",
+        "Hilbert",
+        &[sig("in", "signal to analyse")],
+        &[
+            "real signal, in phase",
+            "imaginary signal, 90 degrees shifted",
+        ],
+        "Hilbert transform. Outputs the input and a copy with a 90 degree phase shift",
+    ),
+    u(
+        "~freqshift",
+        "FreqShift",
+        &[
+            sig("in", "signal to shift"),
+            par(
+                "freq",
+                0.0,
+                -20_000.0,
+                20_000.0,
+                " Hz",
+                "shift amount. Negative values shift down",
+            ),
+            par(
+                "phase",
+                0.0,
+                0.0,
+                6.2832,
+                "",
+                "modulator phase offset in radians",
+            ),
+        ],
+        &["frequency-shifted signal"],
+        "Single-sideband frequency shifter",
+    ),
     // Lines
     u(
         "~line",
@@ -1094,6 +1753,94 @@ pub static UNITS: &[UnitDesc] = &[
         ],
         &["amplitude envelope"],
         "Amplitude (envelope) follower",
+    ),
+    u(
+        "~compander",
+        "Compander",
+        &[
+            sig("in", "signal to process"),
+            sig(
+                "control",
+                "side-chain signal. Its amplitude sets the gain. Connect the input \
+                 here too for a plain compressor",
+            ),
+            par("thresh", 0.5, 0.0, 1.0, "", "amplitude threshold"),
+            par(
+                "slopebelow",
+                1.0,
+                0.0,
+                10.0,
+                "",
+                "gain slope below the threshold",
+            ),
+            par(
+                "slopeabove",
+                1.0,
+                0.0,
+                10.0,
+                "",
+                "gain slope above the threshold",
+            ),
+            par("clamptime", 0.01, 0.0, 1.0, " s", "follower attack time"),
+            par("relaxtime", 0.1, 0.0, 10.0, " s", "follower release time"),
+        ],
+        &["processed signal"],
+        "Compressor, expander or gate. A side-chain amplitude controls the gain",
+    ),
+    u(
+        "~detectsilence",
+        "DetectSilence",
+        &[
+            sig("in", "signal to watch"),
+            par("amp", 0.0001, 0.0, 1.0, "", "silence threshold"),
+            par(
+                "time",
+                0.1,
+                0.0,
+                60.0,
+                " s",
+                "time the input must stay silent",
+            ),
+            baked(0.0),
+        ],
+        &["1 once silent for time, else 0"],
+        "Output 1 when the input stays below a threshold for a time",
+    ),
+    // Physical models
+    u(
+        "~spring",
+        "Spring",
+        &[
+            sig("in", "driving force"),
+            par("spring", 1.0, 0.0, 100.0, "", "spring constant"),
+            par("damping", 0.0, 0.0, 1.0, "", "damping"),
+        ],
+        &["spring force"],
+        "Damped mass on a spring driven by the input force",
+    ),
+    u(
+        "~ball",
+        "Ball",
+        &[
+            sig("in", "floor position"),
+            par("gravity", 1.0, 0.0, 100.0, "", "gravity"),
+            par("damping", 0.0, 0.0, 1.0, "", "bounce damping"),
+            par("friction", 0.01, 0.0, 1.0, "", "friction"),
+        ],
+        &["ball height"],
+        "Ball bouncing on a moving floor under gravity",
+    ),
+    u(
+        "~tball",
+        "TBall",
+        &[
+            sig("in", "floor position"),
+            par("gravity", 10.0, 0.0, 100.0, "", "gravity"),
+            par("damping", 0.0, 0.0, 1.0, "", "bounce damping"),
+            par("friction", 0.01, 0.0, 1.0, "", "friction"),
+        ],
+        &["bounce velocity impulses"],
+        "Bouncing ball. Outputs the velocity at each bounce",
     ),
     // Pan and mix
     u(
@@ -1188,6 +1935,78 @@ pub static UNITS: &[UnitDesc] = &[
         &["rotated x", "rotated y"],
         "Rotate a two-channel sound field",
     ),
+    u(
+        "~linxfade2",
+        "LinXFade2",
+        &[
+            sig("a", "first input signal"),
+            sig("b", "second input signal"),
+            par(
+                "pan",
+                0.0,
+                -1.0,
+                1.0,
+                "",
+                "crossfade position. -1 is a, 1 is b",
+            ),
+        ],
+        &["crossfaded signal"],
+        "Linear two-signal crossfade",
+    ),
+    u(
+        "~pan4",
+        "Pan4",
+        &[
+            sig("in", "signal to pan"),
+            par("xpos", 0.0, -1.0, 1.0, "", "left-right position"),
+            par("ypos", 0.0, -1.0, 1.0, "", "back-front position"),
+            par("level", 1.0, 0.0, 2.0, "", "output level"),
+        ],
+        &["front left", "front right", "back left", "back right"],
+        "Equal-power quad panner",
+    ),
+    u(
+        "~panb",
+        "PanB",
+        &[
+            sig("in", "signal to encode"),
+            par("azimuth", 0.0, -3.1416, 3.1416, "", "azimuth in radians"),
+            par(
+                "elevation",
+                0.0,
+                -1.5708,
+                1.5708,
+                "",
+                "elevation in radians",
+            ),
+            par("gain", 1.0, 0.0, 2.0, "", "output gain"),
+        ],
+        &["W", "X", "Y", "Z"],
+        "First-order 3D ambisonic B-format encoder",
+    ),
+    u(
+        "~panb2",
+        "PanB2",
+        &[
+            sig("in", "signal to encode"),
+            par("azimuth", 0.0, -1.0, 1.0, "", "azimuth. 1 is half a turn"),
+            par("gain", 1.0, 0.0, 2.0, "", "output gain"),
+        ],
+        &["W", "X", "Y"],
+        "First-order 2D ambisonic B-format encoder",
+    ),
+    u(
+        "~bipanb2",
+        "BiPanB2",
+        &[
+            sig("a", "first signal"),
+            sig("b", "second signal, in the opposite direction"),
+            par("azimuth", 0.0, -1.0, 1.0, "", "azimuth. 1 is half a turn"),
+            par("gain", 1.0, 0.0, 2.0, "", "output gain"),
+        ],
+        &["W", "X", "Y"],
+        "2D ambisonic encoder for two signals in opposite directions",
+    ),
     // Math and range
     u(
         "~muladd",
@@ -1260,6 +2079,528 @@ pub static UNITS: &[UnitDesc] = &[
         &["folded signal"],
         "Fold (mirror) a signal into [lo, hi]",
     ),
+    u(
+        "~inrange",
+        "InRange",
+        &[
+            sig("in", "signal to test"),
+            par("lo", 0.0, -10_000.0, 10_000.0, "", "lower bound"),
+            par("hi", 1.0, -10_000.0, 10_000.0, "", "upper bound"),
+        ],
+        &["1 while lo <= in <= hi, else 0"],
+        "Output 1 when the input is in a range",
+    ),
+    u(
+        "~inrect",
+        "InRect",
+        &[
+            sig("x", "x coordinate"),
+            sig("y", "y coordinate"),
+            par("left", 0.0, -10_000.0, 10_000.0, "", "rectangle left edge"),
+            par("top", 0.0, -10_000.0, 10_000.0, "", "rectangle top edge"),
+            par(
+                "right",
+                1.0,
+                -10_000.0,
+                10_000.0,
+                "",
+                "rectangle right edge",
+            ),
+            par(
+                "bottom",
+                1.0,
+                -10_000.0,
+                10_000.0,
+                "",
+                "rectangle bottom edge",
+            ),
+        ],
+        &["1 while (x, y) is inside the rectangle, else 0"],
+        "Output 1 when a point is in a rectangle",
+    ),
+    u(
+        "~moddif",
+        "ModDif",
+        &[
+            sig("in", "signal to compare"),
+            par(
+                "dif",
+                0.0,
+                -10_000.0,
+                10_000.0,
+                "",
+                "value to compare against",
+            ),
+            par("mod", 1.0, 0.0001, 10_000.0, "", "modulus"),
+        ],
+        &["modular distance"],
+        "Smallest distance between in and dif on a ring of size mod",
+    ),
+    u(
+        "~unwrap",
+        "Unwrap",
+        &[
+            sig("in", "wrapped signal"),
+            init("lo", 0.0, "low end of the wrap range. Set at spawn"),
+            init("hi", 1.0, "high end of the wrap range. Set at spawn"),
+        ],
+        &["unwrapped signal"],
+        "Undo wrapping. The output stays continuous at each wrap",
+    ),
+    // Triggers. A trigger is a rising edge. This is a sample above 0 after a
+    // sample at or below 0.
+    u(
+        "~trig",
+        "Trig",
+        &[
+            sig("trig", "trigger signal"),
+            par("dur", 0.1, 0.0, 60.0, " s", "hold time after each trigger"),
+        ],
+        &["trigger value for dur after a trigger, else 0"],
+        "Hold the trigger value for dur after each rising edge",
+    ),
+    u(
+        "~trig1",
+        "Trig1",
+        &[
+            sig("trig", "trigger signal"),
+            par("dur", 0.1, 0.0, 60.0, " s", "hold time after each trigger"),
+        ],
+        &["1 for dur after a trigger, else 0"],
+        "Output 1 for dur after each rising edge",
+    ),
+    u(
+        "~tdelay",
+        "TDelay",
+        &[
+            sig("trig", "trigger signal"),
+            par("dur", 0.1, 0.0, 60.0, " s", "delay time"),
+        ],
+        &["delayed single-sample triggers"],
+        "Delay each rising edge by dur",
+    ),
+    u(
+        "~latch",
+        "Latch",
+        &[
+            sig("in", "signal to sample"),
+            sig("trig", "sample on each rising edge"),
+        ],
+        &["sampled and held signal"],
+        "Sample and hold. Sample the input on each trigger",
+    ),
+    u(
+        "~gate",
+        "Gate",
+        &[
+            sig("in", "signal to gate"),
+            sig("trig", "pass the input while above 0"),
+        ],
+        &["gated signal"],
+        "Pass the input while the gate is open. Hold the last value when it closes",
+    ),
+    u(
+        "~toggleff",
+        "ToggleFF",
+        &[sig("trig", "toggle on each rising edge")],
+        &["0 or 1"],
+        "Toggle flip-flop. Change between 0 and 1 on each trigger",
+    ),
+    u(
+        "~setresetff",
+        "SetResetFF",
+        &[
+            sig("trig", "set to 1 on a rising edge"),
+            sig("reset", "reset to 0 on a rising edge"),
+        ],
+        &["0 or 1"],
+        "Set-reset flip-flop. Reset wins when both fire",
+    ),
+    u(
+        "~schmidt",
+        "Schmidt",
+        &[
+            sig("in", "signal to threshold"),
+            par("lo", 0.0, -10_000.0, 10_000.0, "", "fall below to output 0"),
+            par("hi", 1.0, -10_000.0, 10_000.0, "", "rise above to output 1"),
+        ],
+        &["0 or 1 with hysteresis"],
+        "Schmitt trigger. Output 1 above hi and 0 below lo",
+    ),
+    // Timing. Counters and ramps driven by triggers.
+    u(
+        "~pulsecount",
+        "PulseCount",
+        &[
+            sig("trig", "count each rising edge"),
+            sig("reset", "zero the count on a rising edge"),
+        ],
+        &["trigger count"],
+        "Count rising edges",
+    ),
+    u(
+        "~pulsedivider",
+        "PulseDivider",
+        &[
+            sig("trig", "trigger signal"),
+            par("div", 2.0, 1.0, 1000.0, "", "pass every div-th trigger"),
+            par("start", 0.0, -1000.0, 1000.0, "", "starting count"),
+        ],
+        &["1 on every div-th trigger, else 0"],
+        "Pass every n-th rising edge",
+    ),
+    u(
+        "~stepper",
+        "Stepper",
+        &[
+            sig("trig", "step on each rising edge"),
+            sig("reset", "jump to resetval on a rising edge"),
+            par("min", 0.0, -10_000.0, 10_000.0, "", "lowest count"),
+            par("max", 7.0, -10_000.0, 10_000.0, "", "highest count"),
+            par("step", 1.0, -10_000.0, 10_000.0, "", "step per trigger"),
+            par(
+                "resetval",
+                0.0,
+                -10_000.0,
+                10_000.0,
+                "",
+                "count after a reset",
+            ),
+        ],
+        &["stepped integer count"],
+        "Counter that adds step on each trigger and wraps between min and max",
+    ),
+    u(
+        "~zerocrossing",
+        "ZeroCrossing",
+        &[sig("in", "signal to measure")],
+        &["estimated frequency in Hz"],
+        "Estimate the fundamental frequency from the zero-crossing period",
+    ),
+    u(
+        "~timer",
+        "Timer",
+        &[sig("trig", "trigger signal")],
+        &["seconds since the previous trigger"],
+        "Time in seconds between rising edges",
+    ),
+    u(
+        "~sweep",
+        "Sweep",
+        &[
+            sig("trig", "restart the ramp on a rising edge"),
+            par(
+                "speed",
+                1.0,
+                -10_000.0,
+                10_000.0,
+                "/s",
+                "ramp rate per second",
+            ),
+        ],
+        &["linear ramp"],
+        "Linear ramp that rises by speed each second. A trigger restarts it",
+    ),
+    u(
+        "~phasor",
+        "Phasor",
+        &[
+            sig("trig", "jump to resetpos on a rising edge"),
+            par(
+                "speed",
+                1.0,
+                -10_000.0,
+                10_000.0,
+                "",
+                "increment for each sample. At kr, the increment is for each block",
+            ),
+            par("start", 0.0, -10_000.0, 10_000.0, "", "wrap range start"),
+            par("end", 1.0, -10_000.0, 10_000.0, "", "wrap range end"),
+            par(
+                "resetpos",
+                0.0,
+                -10_000.0,
+                10_000.0,
+                "",
+                "position after a trigger",
+            ),
+        ],
+        &["wrapping ramp"],
+        "Ramp that adds speed on each sample and wraps between start and end",
+    ),
+    // Measurement. Running statistics of a signal.
+    u(
+        "~peak",
+        "Peak",
+        &[
+            sig("in", "signal to measure"),
+            sig("trig", "reset the peak on a rising edge"),
+        ],
+        &["running peak of |in|"],
+        "Running peak of the absolute value. A trigger resets it",
+    ),
+    u(
+        "~runningmin",
+        "RunningMin",
+        &[
+            sig("in", "signal to measure"),
+            sig("trig", "reset the minimum on a rising edge"),
+        ],
+        &["running minimum"],
+        "Running minimum. A trigger resets it",
+    ),
+    u(
+        "~runningmax",
+        "RunningMax",
+        &[
+            sig("in", "signal to measure"),
+            sig("trig", "reset the maximum on a rising edge"),
+        ],
+        &["running maximum"],
+        "Running maximum. A trigger resets it",
+    ),
+    u(
+        "~peakfollower",
+        "PeakFollower",
+        &[
+            sig("in", "signal to follow"),
+            par("decay", 0.999, 0.0, 1.0, "", "decay factor for each sample"),
+        ],
+        &["amplitude envelope"],
+        "Envelope follower with an instant attack and an exponential release",
+    ),
+    u(
+        "~mostchange",
+        "MostChange",
+        &[sig("a", "first signal"), sig("b", "second signal")],
+        &["the input that changed more"],
+        "Pass the input that changed more since the last sample",
+    ),
+    u(
+        "~leastchange",
+        "LeastChange",
+        &[sig("a", "first signal"), sig("b", "second signal")],
+        &["the input that changed less"],
+        "Pass the input that changed less since the last sample",
+    ),
+    u(
+        "~lastvalue",
+        "LastValue",
+        &[
+            sig("in", "signal to hold"),
+            par(
+                "diff",
+                0.01,
+                0.0,
+                10_000.0,
+                "",
+                "minimum change for a new value",
+            ),
+        ],
+        &["held value"],
+        "Hold the input until it changes by diff or more",
+    ),
+    // Diagnostics
+    u(
+        "~checkbadvalues",
+        "CheckBadValues",
+        &[sig("in", "signal to check"), baked(0.0), baked(0.0)],
+        &["0 normal, 1 NaN, 2 infinite, 3 denormal"],
+        "Classify each sample as normal, NaN, infinite or denormal",
+    ),
+    u(
+        "~sanitize",
+        "Sanitize",
+        &[
+            sig("in", "signal to guard"),
+            par(
+                "replace",
+                0.0,
+                -10_000.0,
+                10_000.0,
+                "",
+                "value that replaces a bad sample",
+            ),
+        ],
+        &["guarded signal"],
+        "Pass the signal. Replace NaN, infinite and denormal samples",
+    ),
+    // Amplitude compensation. The defaults are the SC defaults. The `root`
+    // default of 0 gives no gain until you set it.
+    u(
+        "~ampcomp",
+        "AmpComp",
+        &[
+            freq(0.0, "frequency to compensate. Usually a wire"),
+            par(
+                "root",
+                0.0,
+                0.0,
+                20_000.0,
+                " Hz",
+                "reference frequency with a gain of 1. The default of 0 gives no gain",
+            ),
+            par("exp", 0.3333, 0.0, 2.0, "", "power-law exponent"),
+        ],
+        &["compensating gain"],
+        "Loudness compensation with a power law, (root / freq) ^ exp",
+    ),
+    u(
+        "~ampcompa",
+        "AmpCompA",
+        &[
+            freq(1000.0, "frequency to compensate. Usually a wire"),
+            init(
+                "root",
+                0.0,
+                "reference frequency with a gain of rootamp. The default of 0 gives \
+                 no gain. Set at spawn",
+            ),
+            init(
+                "minamp",
+                0.32,
+                "gain at the minimum of the curve. Set at spawn",
+            ),
+            init("rootamp", 1.0, "gain at the root frequency. Set at spawn"),
+        ],
+        &["compensating gain"],
+        "Loudness compensation with an A-weighting curve",
+    ),
+    // Rate conversion. Each converter runs at its output rate only.
+    u(
+        "~dc",
+        "DC",
+        &[par("value", 0.0, -10_000.0, 10_000.0, "", "constant value")],
+        &["constant signal"],
+        "Constant signal",
+    ),
+    ar_only(u(
+        "~k2a",
+        "K2A",
+        &[sig("in", "control-rate signal to lift")],
+        &["audio-rate signal"],
+        "Change a control-rate signal to audio rate. It ramps linearly across each \
+         block. Audio rate only",
+    )),
+    kr_only(u(
+        "~a2k",
+        "A2K",
+        &[sig("in", "audio-rate signal to sample")],
+        &["control-rate signal"],
+        "Change an audio-rate signal to control rate. It uses the first sample of \
+         each block. Control rate only",
+    )),
+    ar_only(u(
+        "~t2a",
+        "T2A",
+        &[
+            sig("in", "control-rate trigger"),
+            par(
+                "offset",
+                0.0,
+                0.0,
+                64.0,
+                "",
+                "sample position of the trigger in the block",
+            ),
+        ],
+        &["audio-rate trigger"],
+        "Change a control-rate trigger to an audio-rate trigger at an exact \
+         sample. Audio rate only",
+    )),
+    kr_only(u(
+        "~t2k",
+        "T2K",
+        &[sig("in", "audio-rate trigger")],
+        &["control-rate trigger"],
+        "Change an audio-rate trigger to control rate. It uses the maximum of \
+         each block, so no trigger is lost. Control rate only",
+    )),
+    // Info. Engine values. Control rate only.
+    kr_only(u(
+        "~samplerate",
+        "SampleRate",
+        &[],
+        &["sample rate in Hz"],
+        "Audio sample rate of the engine. Control rate only",
+    )),
+    kr_only(u(
+        "~sampledur",
+        "SampleDur",
+        &[],
+        &["seconds per sample"],
+        "Duration of one audio sample. Control rate only",
+    )),
+    kr_only(u(
+        "~radianspersample",
+        "RadiansPerSample",
+        &[],
+        &["2 pi / sample rate"],
+        "Radians for each sample at the engine sample rate. Control rate only",
+    )),
+    kr_only(u(
+        "~controlrate",
+        "ControlRate",
+        &[],
+        &["control rate in Hz"],
+        "Control rate of the engine, in blocks each second. Control rate only",
+    )),
+    kr_only(u(
+        "~controldur",
+        "ControlDur",
+        &[],
+        &["seconds per control block"],
+        "Duration of one control block. Control rate only",
+    )),
+    kr_only(u(
+        "~numoutputbuses",
+        "NumOutputBuses",
+        &[],
+        &["output channel count"],
+        "Number of hardware output channels. Control rate only",
+    )),
+    kr_only(u(
+        "~numinputbuses",
+        "NumInputBuses",
+        &[],
+        &["input channel count"],
+        "Number of hardware input channels. Control rate only",
+    )),
+    kr_only(u(
+        "~numaudiobuses",
+        "NumAudioBuses",
+        &[],
+        &["audio bus count"],
+        "Total number of audio bus channels. Control rate only",
+    )),
+    kr_only(u(
+        "~numcontrolbuses",
+        "NumControlBuses",
+        &[],
+        &["control bus count"],
+        "Total number of control bus channels. Control rate only",
+    )),
+    kr_only(u(
+        "~numbuffers",
+        "NumBuffers",
+        &[],
+        &["buffer slot count"],
+        "Number of buffer slots. Control rate only",
+    )),
+    kr_only(u(
+        "~numrunningsynths",
+        "NumRunningSynths",
+        &[],
+        &["running synth count"],
+        "Number of running synths. Control rate only",
+    )),
+    kr_only(u(
+        "~subsampleoffset",
+        "SubsampleOffset",
+        &[],
+        &["sub-sample start offset, from 0 to 1"],
+        "Fractional sample offset at which the synth started. Control rate only",
+    )),
     // Operators. One row per operator in plyphon's dispatch tables, which
     // follow SC's operator indices. Defaults for `b` are 1 for multiplicative
     // operators and 0 otherwise.
@@ -1856,7 +3197,7 @@ pub static UNITS: &[UnitDesc] = &[
         "Triangle window over input phase 0..1",
     ),
     uop!(
-        "~ramp",
+        "~opramp",
         "OpRamp",
         52,
         "in clamped into [0, 1]",
@@ -1995,5 +3336,55 @@ mod tests {
         }
         assert!(unit_desc("NoSuchUnit").is_none());
         assert!(unit_desc_by_keyword("~nosuchunit").is_none());
+    }
+
+    /// The fixed-rate rows are the units that fail silently at the other
+    /// rate. Add new fixed-rate rows to this list.
+    #[test]
+    fn fixed_rate_rows_are_the_expected_set() {
+        use crate::dsp::NodeRate::{Audio, Control};
+        let fixed: Vec<(&str, NodeRate)> = UNITS
+            .iter()
+            .filter_map(|d| match d.rate {
+                UnitRate::Fixed(rate) => Some((d.unit, rate)),
+                UnitRate::Any => None,
+            })
+            .collect();
+        let expected = [
+            ("K2A", Audio),
+            ("A2K", Control),
+            ("T2A", Audio),
+            ("T2K", Control),
+            ("SampleRate", Control),
+            ("SampleDur", Control),
+            ("RadiansPerSample", Control),
+            ("ControlRate", Control),
+            ("ControlDur", Control),
+            ("NumOutputBuses", Control),
+            ("NumInputBuses", Control),
+            ("NumAudioBuses", Control),
+            ("NumControlBuses", Control),
+            ("NumBuffers", Control),
+            ("NumRunningSynths", Control),
+            ("SubsampleOffset", Control),
+        ];
+        assert_eq!(fixed, expected);
+        for (unit, rate) in expected {
+            assert_eq!(unit_desc(unit).unwrap().default_rate(), rate);
+        }
+        assert_eq!(unit_desc("SinOsc").unwrap().default_rate(), Audio);
+    }
+
+    /// An input named `rate` would conflict with the ugen rate inspector row
+    /// and the `#:rate` sugar keyword.
+    #[test]
+    fn no_input_is_named_rate() {
+        for desc in UNITS {
+            assert!(
+                desc.inputs.iter().all(|i| i.name() != Some("rate")),
+                "{}: an input is named `rate`",
+                desc.unit
+            );
+        }
     }
 }

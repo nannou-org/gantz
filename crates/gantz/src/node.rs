@@ -2945,7 +2945,14 @@ mod tests {
         };
         let a = parse();
         let b = parse();
-        for demo in ["demo-sine", "demo-ringmod", "demo-waveshape"] {
+        for demo in [
+            "demo-sine",
+            "demo-ringmod",
+            "demo-waveshape",
+            "demo-freeverb",
+            "demo-pluck",
+            "demo-samplehold",
+        ] {
             let ca_a = a.head(&name(demo)).expect(demo);
             let ca_b = b.head(&name(demo)).expect(demo);
             assert_eq!(ca_a, ca_b, "reset must resolve the startup commit address");
