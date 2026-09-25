@@ -2387,6 +2387,43 @@ pub static UNITS: &[UnitDesc] = &[
         &["guarded signal"],
         "Pass the signal, replacing NaN, infinite and denormal samples",
     ),
+    // Amplitude compensation. Defaults follow SC's class library, whose
+    // `root` of 0 gives no gain until it is set.
+    u(
+        "~ampcomp",
+        "AmpComp",
+        &[
+            freq(0.0, "frequency to compensate for. Usually a wire"),
+            par(
+                "root",
+                0.0,
+                0.0,
+                20_000.0,
+                " Hz",
+                "reference frequency with unity gain. 0 (the SC default) yields no gain",
+            ),
+            par("exp", 0.3333, 0.0, 2.0, "", "power-law exponent"),
+        ],
+        &["compensating gain"],
+        "Power-law loudness compensation: (root / freq) ^ exp",
+    ),
+    u(
+        "~ampcompa",
+        "AmpCompA",
+        &[
+            freq(1000.0, "frequency to compensate for. Usually a wire"),
+            init(
+                "root",
+                0.0,
+                "reference frequency with gain rootamp. 0 (the SC default) yields no \
+                 gain. Re-derives",
+            ),
+            init("minamp", 0.32, "gain at the curve's minimum. Re-derives"),
+            init("rootamp", 1.0, "gain at the root frequency. Re-derives"),
+        ],
+        &["compensating gain"],
+        "A-weighting equal-loudness compensation",
+    ),
     // Rate conversion. The converters run at their target rate only.
     u(
         "~dc",
