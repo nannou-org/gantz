@@ -1959,7 +1959,13 @@ fn pluck_bakes_maxdelay_and_takes_wires() {
 /// that many outputs.
 #[test]
 fn multi_output_rows_expose_every_output() {
-    for (unit, outputs) in [("Hilbert", 2), ("FreeVerb2", 2)] {
+    for (unit, outputs) in [
+        ("Hilbert", 2),
+        ("FreeVerb2", 2),
+        ("Pan4", 4),
+        ("PanB", 4),
+        ("PanB2", 3),
+    ] {
         let node = UnitNode::from_unit(unit).expect("row");
         assert_eq!(node.n_dsp_outputs(), outputs, "{unit}");
         let (_, spec) = wired_row_unit(node);

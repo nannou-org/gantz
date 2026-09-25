@@ -1897,6 +1897,78 @@ pub static UNITS: &[UnitDesc] = &[
         &["rotated x", "rotated y"],
         "Rotate a two-channel sound field",
     ),
+    u(
+        "~linxfade2",
+        "LinXFade2",
+        &[
+            sig("a", "first input signal"),
+            sig("b", "second input signal"),
+            par(
+                "pan",
+                0.0,
+                -1.0,
+                1.0,
+                "",
+                "crossfade position (-1 = a, 1 = b)",
+            ),
+        ],
+        &["crossfaded signal"],
+        "Linear two-signal crossfade",
+    ),
+    u(
+        "~pan4",
+        "Pan4",
+        &[
+            sig("in", "signal to pan"),
+            par("xpos", 0.0, -1.0, 1.0, "", "left-right position"),
+            par("ypos", 0.0, -1.0, 1.0, "", "back-front position"),
+            par("level", 1.0, 0.0, 2.0, "", "output level"),
+        ],
+        &["front left", "front right", "back left", "back right"],
+        "Equal-power quad panner",
+    ),
+    u(
+        "~panb",
+        "PanB",
+        &[
+            sig("in", "signal to encode"),
+            par("azimuth", 0.0, -3.1416, 3.1416, "", "azimuth in radians"),
+            par(
+                "elevation",
+                0.0,
+                -1.5708,
+                1.5708,
+                "",
+                "elevation in radians",
+            ),
+            par("gain", 1.0, 0.0, 2.0, "", "output gain"),
+        ],
+        &["W", "X", "Y", "Z"],
+        "First-order 3D ambisonic B-format encoder",
+    ),
+    u(
+        "~panb2",
+        "PanB2",
+        &[
+            sig("in", "signal to encode"),
+            par("azimuth", 0.0, -1.0, 1.0, "", "azimuth (1 = half a turn)"),
+            par("gain", 1.0, 0.0, 2.0, "", "output gain"),
+        ],
+        &["W", "X", "Y"],
+        "First-order 2D ambisonic B-format encoder",
+    ),
+    u(
+        "~bipanb2",
+        "BiPanB2",
+        &[
+            sig("a", "first signal"),
+            sig("b", "second signal, facing the opposite way"),
+            par("azimuth", 0.0, -1.0, 1.0, "", "azimuth (1 = half a turn)"),
+            par("gain", 1.0, 0.0, 2.0, "", "output gain"),
+        ],
+        &["W", "X", "Y"],
+        "2D ambisonic encoder for two anti-phase signals",
+    ),
     // Math and range
     u(
         "~muladd",
