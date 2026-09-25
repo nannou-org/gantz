@@ -42,6 +42,13 @@ pub enum Command {
     Check(CheckArgs),
     /// Print the Steel module compiled from one named graph.
     Compile(CompileArgs),
+    /// Join a collaborative session and mirror its graphs to a directory.
+    ///
+    /// Each top-level graph in the session becomes <DIR>/<NAME>.gantz. Saved
+    /// edits become commits announced to the session, and remote changes
+    /// rewrite the files. Runs until stopped.
+    #[cfg(feature = "collab")]
+    Join(JoinArgs),
 }
 
 /// How names a file does not define are resolved.
@@ -74,6 +81,23 @@ pub struct CheckArgs {
     /// The .gantz files to check.
     #[arg(required = true)]
     files: Vec<PathBuf>,
+}
+
+#[cfg(feature = "collab")]
+#[derive(Args)]
+pub struct JoinArgs {
+    /// The session invite ticket.
+    pub ticket: String,
+    /// The directory to mirror the session into. Created if absent.
+    pub dir: PathBuf,
+    /// The peer identity file: 32 secret key bytes, created if absent. Gives
+    /// the peer a stable id across runs. Without it the identity is new
+    /// each run.
+    #[arg(long, value_name = "FILE")]
+    pub identity: Option<PathBuf>,
+    /// A self-hosted relay URL instead of the default infrastructure.
+    #[arg(long, value_name = "URL")]
+    pub relay: Option<String>,
 }
 
 #[derive(Args)]
@@ -146,6 +170,8 @@ pub fn run(command: Command) -> i32 {
     // must reach the user. There is no Bevy log plugin here.
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let (files, mut output) = match command {
+        #[cfg(feature = "collab")]
+        Command::Join(args) => return crate::join::run(args),
         Command::Fmt(args) => {
             let output = with_sources(&args.seed, &args.files, |s, t| fmt(s, t, args.check));
             (args.files, output)
@@ -331,7 +357,7 @@ fn fmt(sources: &[Source], targets: Range<usize>, check: bool) -> Output {
 
 /// Render a parse failure as `label:line:col: message` when the error has a
 /// location, else `label: message`.
-fn parse_diagnostic(label: &str, err: &ParseExportError) -> String {
+pub(crate) fn parse_diagnostic(label: &str, err: &ParseExportError) -> String {
     match err {
         ParseExportError::Format(e) => match (e.line, e.col) {
             (Some(line), Some(col)) => format!("{label}:{line}:{col}: {}", e.kind),
