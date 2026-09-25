@@ -2041,6 +2041,74 @@ pub static UNITS: &[UnitDesc] = &[
         &["folded signal"],
         "Fold (mirror) a signal into [lo, hi]",
     ),
+    u(
+        "~inrange",
+        "InRange",
+        &[
+            sig("in", "signal to test"),
+            par("lo", 0.0, -10_000.0, 10_000.0, "", "lower bound"),
+            par("hi", 1.0, -10_000.0, 10_000.0, "", "upper bound"),
+        ],
+        &["1 while lo <= in <= hi, else 0"],
+        "Range test gate",
+    ),
+    u(
+        "~inrect",
+        "InRect",
+        &[
+            sig("x", "x coordinate"),
+            sig("y", "y coordinate"),
+            par("left", 0.0, -10_000.0, 10_000.0, "", "rectangle left edge"),
+            par("top", 0.0, -10_000.0, 10_000.0, "", "rectangle top edge"),
+            par(
+                "right",
+                1.0,
+                -10_000.0,
+                10_000.0,
+                "",
+                "rectangle right edge",
+            ),
+            par(
+                "bottom",
+                1.0,
+                -10_000.0,
+                10_000.0,
+                "",
+                "rectangle bottom edge",
+            ),
+        ],
+        &["1 while (x, y) is inside the rectangle, else 0"],
+        "Rectangle membership gate",
+    ),
+    u(
+        "~moddif",
+        "ModDif",
+        &[
+            sig("in", "signal to compare"),
+            par(
+                "dif",
+                0.0,
+                -10_000.0,
+                10_000.0,
+                "",
+                "value to compare against",
+            ),
+            par("mod", 1.0, 0.0001, 10_000.0, "", "modulus"),
+        ],
+        &["distance in modular space"],
+        "Smallest distance between in and dif on a ring of size mod",
+    ),
+    u(
+        "~unwrap",
+        "Unwrap",
+        &[
+            sig("in", "wrapped signal"),
+            init("lo", 0.0, "wrap range low. Re-derives"),
+            init("hi", 1.0, "wrap range high. Re-derives"),
+        ],
+        &["unwrapped signal"],
+        "Undo wrapping: keep the output continuous across wrap jumps",
+    ),
     // Triggers. A trigger is a rising edge, a sample above 0 after one at or
     // below 0.
     u(
