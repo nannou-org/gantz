@@ -3,26 +3,14 @@
 
 use crate::{
     CollabIdentity, CollabRuntime, CollabSessions, JoinSessionEvent, LeaveSessionEvent, SessionRef,
-    SessionState, ShareSessionEvent, sync::serve_scope,
+    ShareSessionEvent,
 };
 use bevy_ecs::prelude::*;
 use bevy_gantz::head;
 use bevy_gantz::reg::Registry;
 use bevy_log as log;
 use gantz_ca as ca;
-use gantz_collab::{
-    Command, Handle, Identity, Role, Session, SessionEntry, SessionId, SessionRegistry,
-};
-
-/// The fixed conflict policy for shared sessions. The last edit wins and
-/// edits beat deletes. It is symmetric, so independently merging peers
-/// converge.
-pub fn session_resolutions() -> ca::merge::Resolutions {
-    ca::merge::Resolutions {
-        both_modified: ca::merge::BothModified::KeepNewest,
-        delete_modify: ca::merge::EditOrDelete::KeepEdit,
-    }
-}
+use gantz_collab::{Handle, Identity};
 
 /// The runtime handle, spawned on first use with the user's collab
 /// configuration. A later config change applies when the app restarts.
@@ -32,16 +20,7 @@ fn ensure_runtime<'a>(
     config: &gantz_egui::collab::CollabConfig,
 ) -> &'a Handle {
     runtime.0.get_or_insert_with(|| {
-        let infra = match config.custom_relay.as_deref() {
-            // A custom relay means self-hosted infrastructure with nothing
-            // from n0. Peers reach each other via invite-ticket addresses and
-            // the relay itself, so no address-lookup service is required.
-            Some(url) => gantz_collab::Infra::Custom {
-                relays: vec![url.to_string()],
-                pkarr: None,
-            },
-            None => gantz_collab::Infra::N0,
-        };
+        let infra = gantz_collab_sync::infra(config.custom_relay.as_deref());
         gantz_collab::spawn(identity.clone(), gantz_collab::RuntimeConfig { infra })
     })
 }
@@ -71,34 +50,24 @@ pub fn on_share_session(
         log::warn!("ShareSession: only named graphs can be shared");
         return;
     };
-    let session = Session {
-        id: SessionId::generate(),
-        branch: branch.to_string(),
-        access: event.access.clone(),
-        resolutions: session_resolutions(),
-        role: Role::Host,
-    };
-    let id = session.id;
-    let scope = gantz_egui::sync::session_scope(&registry, branch);
-    let mut state = SessionState::new(session.clone());
-
     let handle = ensure_runtime(&mut runtime, &identity.0, &gui_state.0.collab);
-    let _ = handle.cmds.try_send(Command::Register(SessionEntry {
-        session,
-        store: SessionRegistry::default(),
-    }));
-    serve_scope(handle, &mut state, &registry, &scope);
-    state.last_announced = state.served_heads.clone();
-    sessions.sessions.insert(id, state);
+    let id = gantz_collab_sync::share(
+        &mut sessions.0,
+        &registry.0,
+        handle,
+        branch,
+        event.access.clone(),
+    );
     cmds.entity(event.head)
         .insert((SessionRef(id), bevy_gantz_egui::SessionHead));
-    if handle.cmds.try_send(Command::Share(id)).is_err() {
-        log::error!("ShareSession: collab runtime is gone");
-    }
 }
 
 /// Observer for [`JoinSessionEvent`]. Parses the ticket and asks the runtime
 /// to join. The snapshot lands via `poll_collab_events`.
+///
+/// The session's tab opens immediately. An unknown name shows the empty
+/// placeholder graph with the connecting overlay until the snapshot adopts
+/// over it. An existing local graph opens as-is and reconciles then.
 pub fn on_join_session(
     trigger: On<JoinSessionEvent>,
     mut runtime: ResMut<CollabRuntime>,
@@ -108,60 +77,20 @@ pub fn on_join_session(
     gui_state: Res<bevy_gantz_egui::GuiState>,
     mut cmds: Commands,
 ) {
-    let event = trigger.event();
     let Some(identity) = identity else {
         log::error!("JoinSession: no collab identity resource");
         return;
     };
-    let ticket: gantz_collab::SessionTicket = match event.ticket.trim().parse() {
-        Ok(ticket) => ticket,
-        Err(e) => {
-            log::warn!("JoinSession: invalid ticket: {e}");
-            return;
-        }
-    };
-    if ticket.proto != gantz_collab::PROTO_VERSION {
-        log::warn!(
-            "JoinSession: protocol mismatch (ticket v{}, this build v{})",
-            ticket.proto,
-            gantz_collab::PROTO_VERSION
-        );
-        return;
-    }
-    let session = Session {
-        id: ticket.session,
-        branch: ticket.name.clone(),
-        access: ticket.access.clone(),
-        resolutions: ticket.resolutions,
-        role: Role::Guest,
-    };
-    let id = session.id;
     let handle = ensure_runtime(&mut runtime, &identity.0, &gui_state.0.collab);
-    let _ = handle.cmds.try_send(Command::Register(SessionEntry {
-        session: session.clone(),
-        store: SessionRegistry::default(),
-    }));
-    let mut state = SessionState::new(session);
-
-    // Open the session's tab immediately. When the name is unknown locally,
-    // mint an empty placeholder graph for it and record it, so the snapshot
-    // adopts over it rather than renaming it aside. The empty scene shows the
-    // connecting overlay until then. An existing local graph opens as-is and
-    // reconciles when the snapshot lands, with no placeholder or overlay.
-    let branch: ca::Name = ticket.name.parse().expect("names parse infallibly");
-    if registry.head(&branch).is_none() {
-        let graph = ca::DataGraph::default();
-        let graph_ca = ca::graph_addr(&graph);
-        let placeholder =
-            registry.commit_graph(bevy_gantz::reg::timestamp(), None, graph_ca, || graph);
-        registry.set_head(branch.clone(), placeholder);
-        state.placeholder = Some(placeholder);
-    }
-    sessions.sessions.insert(id, state);
-    cmds.trigger(head::OpenEvent(ca::Head::Branch(branch)));
-
-    if handle.cmds.try_send(Command::Join(ticket)).is_err() {
-        log::error!("JoinSession: collab runtime is gone");
+    match gantz_collab_sync::join(
+        &mut sessions.0,
+        &mut registry.0,
+        handle,
+        &trigger.event().ticket,
+        bevy_gantz::reg::timestamp(),
+    ) {
+        Ok((_, branch)) => cmds.trigger(head::OpenEvent(ca::Head::Branch(branch))),
+        Err(e) => log::warn!("JoinSession: {e}"),
     }
 }
 
@@ -175,10 +104,11 @@ pub fn on_leave_session(
     mut cmds: Commands,
 ) {
     let id = trigger.event().session;
-    sessions.sessions.remove(&id);
-    if let Some(handle) = runtime.0.as_ref() {
-        let _ = handle.cmds.try_send(Command::Leave(id));
-        let _ = handle.cmds.try_send(Command::Forget(id));
+    match runtime.0.as_ref() {
+        Some(handle) => gantz_collab_sync::leave(&mut sessions.0, handle, id),
+        None => {
+            sessions.sessions.remove(&id);
+        }
     }
     for (entity, session_ref) in &refs {
         if session_ref.0 == id {

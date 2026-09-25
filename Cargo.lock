@@ -1071,6 +1071,7 @@ dependencies = [
  "bevy_log",
  "gantz_ca",
  "gantz_collab",
+ "gantz_collab_sync",
  "gantz_core",
  "gantz_egui",
  "ron 0.10.1",

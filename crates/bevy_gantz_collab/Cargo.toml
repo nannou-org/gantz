@@ -16,6 +16,7 @@ bevy_gantz.workspace = true
 bevy_gantz_egui.workspace = true
 gantz_ca.workspace = true
 gantz_collab.workspace = true
+gantz_collab_sync.workspace = true
 gantz_core.workspace = true
 gantz_egui.workspace = true
 ron.workspace = true
