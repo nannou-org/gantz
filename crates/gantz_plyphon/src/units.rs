@@ -412,6 +412,14 @@ const fn buf_channels(socket: &'static str, desc: UnitDesc) -> UnitDesc {
     }
 }
 
+/// Emit one unit for the row. See [`Emit::Single`].
+const fn single(desc: UnitDesc) -> UnitDesc {
+    UnitDesc {
+        emit: Emit::Single,
+        ..desc
+    }
+}
+
 /// Make the row a buffer-writing sink. See [`Emit::Sink`].
 const fn sink(desc: UnitDesc) -> UnitDesc {
     UnitDesc {
@@ -3032,6 +3040,142 @@ pub static UNITS: &[UnitDesc] = &[
         &["semitones"],
         "Map a scale degree to semitones through a scale in a table",
     ),
+    // Buffer delays. The delay line is a `~buffer`, so its length is the
+    // buffer's largest power-of-two prefix. One unit writes the buffer, so a
+    // multichannel input feeds its first channel.
+    single(u(
+        "~bufdelayn",
+        "BufDelayN",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to delay"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+        ],
+        &["delayed signal"],
+        "Delay line in a buffer, no interpolation",
+    )),
+    single(u(
+        "~bufdelayl",
+        "BufDelayL",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to delay"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+        ],
+        &["delayed signal"],
+        "Delay line in a buffer, linear interpolation",
+    )),
+    single(u(
+        "~bufdelayc",
+        "BufDelayC",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to delay"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+        ],
+        &["delayed signal"],
+        "Delay line in a buffer, cubic interpolation",
+    )),
+    single(u(
+        "~bufcombn",
+        "BufCombN",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to comb-filter"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+            par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
+        ],
+        &["comb-filtered signal"],
+        "Comb delay in a buffer, no interpolation",
+    )),
+    single(u(
+        "~bufcombl",
+        "BufCombL",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to comb-filter"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+            par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
+        ],
+        &["comb-filtered signal"],
+        "Comb delay in a buffer, linear interpolation",
+    )),
+    single(u(
+        "~bufcombc",
+        "BufCombC",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to comb-filter"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+            par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
+        ],
+        &["comb-filtered signal"],
+        "Comb delay in a buffer, cubic interpolation",
+    )),
+    single(u(
+        "~bufallpassn",
+        "BufAllpassN",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to diffuse"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+            par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
+        ],
+        &["all-passed signal"],
+        "All-pass delay in a buffer, no interpolation",
+    )),
+    single(u(
+        "~bufallpassl",
+        "BufAllpassL",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to diffuse"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+            par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
+        ],
+        &["all-passed signal"],
+        "All-pass delay in a buffer, linear interpolation",
+    )),
+    single(u(
+        "~bufallpassc",
+        "BufAllpassC",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to diffuse"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+            par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
+        ],
+        &["all-passed signal"],
+        "All-pass delay in a buffer, cubic interpolation",
+    )),
+    // Delay taps. One writer and any number of readers share a mono
+    // `~buffer` as one delay line.
+    ar_only(single(u(
+        "~deltapwr",
+        "DelTapWr",
+        &[
+            buf_mut("buf", "mono buffer for the delay line"),
+            sig("in", "signal to write"),
+        ],
+        &["write head, for the phase of `~deltaprd`"],
+        "Write a signal into a shared delay line. Audio rate only",
+    ))),
+    ar_only(u(
+        "~deltaprd",
+        "DelTapRd",
+        &[
+            buf("buf", "the buffer that `~deltapwr` writes"),
+            sig("phase", "write head, wired directly from `~deltapwr`"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay behind the write head"),
+            init(
+                "interp",
+                1.0,
+                "interpolation. 1 none, 2 linear, 4 cubic. Set at spawn",
+            ),
+        ],
+        &["delayed signal"],
+        "Read a shared delay line behind its write head. Audio rate only",
+    )),
     // Operators. One row per operator in plyphon's dispatch tables, which
     // follow SC's operator indices. Defaults for `b` are 1 for multiplicative
     // operators and 0 otherwise.
@@ -3864,6 +4008,8 @@ mod tests {
             ("BufChannels", Control),
             ("BufSampleRate", Control),
             ("BufRateScale", Control),
+            ("DelTapWr", Audio),
+            ("DelTapRd", Audio),
         ];
         assert_eq!(fixed, expected);
         for (unit, rate) in expected {

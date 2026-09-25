@@ -2669,6 +2669,85 @@ mod tests {
         assert!(rms > 0.05, "the recorded sine must play back: rms={rms}");
     }
 
+    /// End-to-end delay tap. A sine writes a `~buffer` delay line through
+    /// `~deltapwr`, and `~deltaprd` reads it behind the write head into
+    /// `~out`.
+    #[test]
+    fn delay_tap_reads_its_writer() {
+        use gantz_core::edge::Edge;
+        use gantz_core::node::graph::Graph;
+        use gantz_plyphon::flatten::{Flat, RefKind, flatten};
+
+        let socket = |unit: &str, name: &str| {
+            let desc = gantz_plyphon::unit_desc(unit).expect("row");
+            desc.sockets().position(|i| i.name() == Some(name)).unwrap() as u16
+        };
+        let mut g = Graph::<TestN>::default();
+        let sine = g.add_node(sinosc());
+        let buf = g.add_node(TestN::Buffer(gantz_plyphon::Buffer::new(8_192, 1)));
+        let wr = g.add_node(unit("DelTapWr"));
+        let rd = g.add_node(unit("DelTapRd"));
+        let out = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
+        g.add_edge(
+            sine,
+            wr,
+            Edge::new(0.into(), socket("DelTapWr", "in").into()),
+        );
+        g.add_edge(
+            buf,
+            wr,
+            Edge::new(0.into(), socket("DelTapWr", "buf").into()),
+        );
+        g.add_edge(
+            buf,
+            rd,
+            Edge::new(0.into(), socket("DelTapRd", "buf").into()),
+        );
+        g.add_edge(
+            wr,
+            rd,
+            Edge::new(0.into(), socket("DelTapRd", "phase").into()),
+        );
+        g.add_edge(rd, out, Edge::new(0.into(), 0.into()));
+        let resolve =
+            |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
+        let flat: Graph<Flat<&TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
+        let mut cache = DefCache::new();
+        let template = derive_template(&flat, 1, &|_| None, &mut cache).expect("derive");
+        let parts = instantiate(&template, &cache);
+        assert_eq!(parts.len(), 1, "the tap pulls its writer into one part");
+
+        let (mut controller, _nrt, mut world) = plyphon::engine(plyphon::Options {
+            sample_rate: 48_000.0,
+            output_channels: 1,
+            ..plyphon::Options::default()
+        });
+        let mut state = HeadSynths::default();
+        let entity = entities(1)[0];
+        let part = parts.into_iter().next().unwrap();
+        let wiring = wiring_hash(&part);
+        let _synth = spawn_part(
+            &mut controller,
+            &mut state,
+            &EMPTY_BUFFERS,
+            entity,
+            part,
+            wiring,
+            48_000.0,
+            None,
+            false,
+        )
+        .expect("spawn_part");
+
+        let mut out = vec![0.0f32; 48_000 / 2];
+        for block in out.chunks_mut(64) {
+            world.fill(block, 1);
+        }
+        let tail = &out[out.len() / 2..];
+        let rms = (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt();
+        assert!(rms > 0.05, "the delayed sine must sound: rms={rms}");
+    }
+
     /// A `~sample -> ~playbuf -> ~out` part playing the mono asset at `addr`.
     fn playbuf_part(addr: ca::ContentAddr) -> ResolvedPart {
         use gantz_core::edge::Edge;

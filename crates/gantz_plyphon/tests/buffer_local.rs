@@ -576,3 +576,25 @@ fn lookup_expands_per_channel_and_shares_the_table() {
     let bufnums = def.params.iter().filter(|p| p.name.ends_with("/bufnum"));
     assert_eq!(bufnums.count(), 1, "the source is emitted once per def");
 }
+
+#[test]
+fn buffer_delay_is_one_unit_for_a_wide_input() {
+    // One unit per channel would write one delay line twice. The row emits
+    // one unit, fed the first channel.
+    let mut g = Graph::<N>::default();
+    let s = g.add_node(N::Src(Src));
+    let rd = g.add_node(N::Unit(UnitNode::from_unit("BufRd").expect("row")));
+    let delay = g.add_node(N::Unit(UnitNode::from_unit("BufDelayC").expect("row")));
+    let o = g.add_node(N::Out(Out::default()));
+    edge(&mut g, s, rd, socket("BufRd", "buf"));
+    edge(&mut g, s, delay, socket("BufDelayC", "buf"));
+    edge(&mut g, rd, delay, socket("BufDelayC", "in"));
+    edge(&mut g, delay, o, 0);
+    let def = derive_synthdef(&g, 2, "t").expect("derive").def;
+    let delays: Vec<&UnitSpec> = def.units.iter().filter(|u| u.name == "BufDelayC").collect();
+    assert_eq!(delays.len(), 1);
+    assert!(matches!(
+        delays[0].inputs[1],
+        InputRef::Unit { output: 0, .. }
+    ));
+}
