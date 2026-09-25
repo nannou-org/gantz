@@ -636,6 +636,21 @@ mod tests {
     }
 
     #[test]
+    fn init_channels_round_trip() {
+        let s = PlyphonSugar;
+        let form = "(~grainbuf #:channels 4)";
+        let grains = read_spec(form).expect("grains");
+        assert_eq!(
+            grains
+                .get("init")
+                .and_then(|i| i.get("channels"))
+                .and_then(Datum::as_f64),
+            Some(4.0),
+        );
+        assert_eq!(s.write_spec("Unit", &grains).as_deref(), Some(form));
+    }
+
+    #[test]
     fn buffer_and_sample_round_trip() {
         let s = PlyphonSugar;
         let bare = s.read_bare("~buffer").expect("bare");

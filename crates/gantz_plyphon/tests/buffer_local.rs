@@ -598,3 +598,26 @@ fn buffer_delay_is_one_unit_for_a_wide_input() {
         InputRef::Unit { output: 0, .. }
     ));
 }
+
+#[test]
+fn grain_outputs_follow_the_channels_value() {
+    let derive_with = |channels: Option<f32>| {
+        let mut node = UnitNode::from_unit("GrainBuf").expect("row");
+        if let Some(n) = channels {
+            node.set_init("channels", n);
+        }
+        let mut g = Graph::<N>::default();
+        let s = g.add_node(N::Src(Src));
+        let grains = g.add_node(N::Unit(node));
+        let o = g.add_node(N::Out(Out::default()));
+        edge(&mut g, s, grains, socket("GrainBuf", "buf"));
+        edge(&mut g, grains, o, 0);
+        let def = derive_synthdef(&g, 2, "t").expect("derive").def;
+        let unit = unit(&def, "GrainBuf").clone();
+        (unit.num_outputs, unit.inputs.len())
+    };
+    // The channel count is not a unit input. Nine inputs either way.
+    assert_eq!(derive_with(None), (2, 9));
+    assert_eq!(derive_with(Some(4.0)), (4, 9));
+    assert_eq!(derive_with(Some(100.0)), (16, 9), "clamped to the max");
+}

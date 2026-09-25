@@ -420,6 +420,20 @@ const fn single(desc: UnitDesc) -> UnitDesc {
     }
 }
 
+/// Size the row's output port by an init-only `channels` value. See
+/// [`Emit::InitChannels`].
+const fn init_channels(default: f32, max: usize, desc: UnitDesc) -> UnitDesc {
+    UnitDesc {
+        emit: Emit::InitChannels {
+            name: "channels",
+            default,
+            max,
+            doc: "output channel count. Set at spawn",
+        },
+        ..desc
+    }
+}
+
 /// Make the row a buffer-writing sink. See [`Emit::Sink`].
 const fn sink(desc: UnitDesc) -> UnitDesc {
     UnitDesc {
@@ -3176,6 +3190,113 @@ pub static UNITS: &[UnitDesc] = &[
         &["delayed signal"],
         "Read a shared delay line behind its write head. Audio rate only",
     )),
+    // Granular. Grains read a mono buffer and pan across `channels` outputs.
+    // An unconnected `envbuf` uses a built-in Hann window.
+    init_channels(
+        2.0,
+        16,
+        ar_only(u(
+            "~grainbuf",
+            "GrainBuf",
+            &[
+                sig("trigger", "start a grain on each rising edge"),
+                par("dur", 0.1, 0.001, 10.0, " s", "grain length"),
+                buf("buf", "mono buffer to read grains from"),
+                par("speed", 1.0, -4.0, 4.0, "", "playback speed of each grain"),
+                par(
+                    "pos",
+                    0.0,
+                    0.0,
+                    1.0,
+                    "",
+                    "start position, 0 to 1 across the buffer",
+                ),
+                init(
+                    "interp",
+                    2.0,
+                    "interpolation. 1 none, 2 linear, 4 cubic. Set at spawn",
+                ),
+                par("pan", 0.0, -1.0, 1.0, "", "pan position across the outputs"),
+                buf("envbuf", "window buffer for each grain"),
+                init(
+                    "maxgrains",
+                    64.0,
+                    "most grains at one time, up to 64. Set at spawn",
+                ),
+            ],
+            &["grains panned across the output channels"],
+            "Granular synthesis from a buffer. Audio rate only",
+        )),
+    ),
+    init_channels(
+        2.0,
+        16,
+        ar_only(u(
+            "~tgrains",
+            "TGrains",
+            &[
+                sig("trigger", "start a grain on each rising edge"),
+                buf("buf", "mono buffer to read grains from"),
+                par("speed", 1.0, -4.0, 4.0, "", "playback speed of each grain"),
+                par("center", 0.0, 0.0, 3600.0, " s", "grain center position"),
+                par("dur", 0.1, 0.001, 10.0, " s", "grain length"),
+                par("pan", 0.0, -1.0, 1.0, "", "pan position across the outputs"),
+                par("amp", 0.1, 0.0, 1.0, "", "grain level"),
+                init(
+                    "interp",
+                    4.0,
+                    "interpolation. 1 none, 2 linear, 4 cubic. Set at spawn",
+                ),
+            ],
+            &["grains panned across the output channels"],
+            "Granular playback centered on a position in a buffer. Audio rate only",
+        )),
+    ),
+    init_channels(
+        1.0,
+        16,
+        ar_only(u(
+            "~warp1",
+            "Warp1",
+            &[
+                buf("buf", "mono buffer to stretch"),
+                par(
+                    "pointer",
+                    0.0,
+                    0.0,
+                    1.0,
+                    "",
+                    "read position, 0 to 1 across the buffer",
+                ),
+                par("freqscale", 1.0, 0.0, 4.0, "", "pitch ratio"),
+                par("windowsize", 0.2, 0.01, 2.0, " s", "grain length"),
+                buf("envbuf", "window buffer for each grain"),
+                par(
+                    "overlaps",
+                    8.0,
+                    1.0,
+                    32.0,
+                    "",
+                    "grains that overlap at one time",
+                ),
+                par(
+                    "windowrand",
+                    0.0,
+                    0.0,
+                    1.0,
+                    "",
+                    "random variation of the grain length",
+                ),
+                init(
+                    "interp",
+                    1.0,
+                    "interpolation. 1 none, 2 linear, 4 cubic. Set at spawn",
+                ),
+            ],
+            &["one independent grain cloud per output channel"],
+            "Granular time stretch and pitch shift of a buffer. Audio rate only",
+        )),
+    ),
     // Operators. One row per operator in plyphon's dispatch tables, which
     // follow SC's operator indices. Defaults for `b` are 1 for multiplicative
     // operators and 0 otherwise.
@@ -4010,6 +4131,9 @@ mod tests {
             ("BufRateScale", Control),
             ("DelTapWr", Audio),
             ("DelTapRd", Audio),
+            ("GrainBuf", Audio),
+            ("TGrains", Audio),
+            ("Warp1", Audio),
         ];
         assert_eq!(fixed, expected);
         for (unit, rate) in expected {
