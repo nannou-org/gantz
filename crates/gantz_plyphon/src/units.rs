@@ -1308,6 +1308,86 @@ pub static UNITS: &[UnitDesc] = &[
         &["folded signal"],
         "Fold (mirror) a signal into [lo, hi]",
     ),
+    // Triggers. A trigger is a rising edge, a sample above 0 after one at or
+    // below 0.
+    u(
+        "~trig",
+        "Trig",
+        &[
+            sig("trig", "trigger signal"),
+            par("dur", 0.1, 0.0, 60.0, " s", "hold time after each trigger"),
+        ],
+        &["the trigger's value held for dur, else 0"],
+        "Hold a trigger's value for a duration after each rising edge",
+    ),
+    u(
+        "~trig1",
+        "Trig1",
+        &[
+            sig("trig", "trigger signal"),
+            par("dur", 0.1, 0.0, 60.0, " s", "hold time after each trigger"),
+        ],
+        &["1 for dur after a trigger, else 0"],
+        "Output 1 for a duration after each rising edge",
+    ),
+    u(
+        "~tdelay",
+        "TDelay",
+        &[
+            sig("trig", "trigger signal"),
+            par("dur", 0.1, 0.0, 60.0, " s", "delay time"),
+        ],
+        &["delayed single-sample triggers"],
+        "Delay each rising edge by a duration",
+    ),
+    u(
+        "~latch",
+        "Latch",
+        &[
+            sig("in", "signal to sample"),
+            sig("trig", "sample on each rising edge"),
+        ],
+        &["sampled and held signal"],
+        "Sample and hold: sample the input on each trigger",
+    ),
+    u(
+        "~gate",
+        "Gate",
+        &[
+            sig("in", "signal to gate"),
+            sig("trig", "pass the input while above 0"),
+        ],
+        &["gated signal"],
+        "Pass the input while the gate is open, else hold the last value",
+    ),
+    u(
+        "~toggleff",
+        "ToggleFF",
+        &[sig("trig", "toggle on each rising edge")],
+        &["0 or 1"],
+        "Toggle flip-flop: flip between 0 and 1 on each trigger",
+    ),
+    u(
+        "~setresetff",
+        "SetResetFF",
+        &[
+            sig("trig", "set to 1 on a rising edge"),
+            sig("reset", "reset to 0 on a rising edge"),
+        ],
+        &["0 or 1"],
+        "Set-reset flip-flop (reset wins when both fire)",
+    ),
+    u(
+        "~schmidt",
+        "Schmidt",
+        &[
+            sig("in", "signal to threshold"),
+            par("lo", 0.0, -10_000.0, 10_000.0, "", "fall below to output 0"),
+            par("hi", 1.0, -10_000.0, 10_000.0, "", "rise above to output 1"),
+        ],
+        &["0 or 1 with hysteresis"],
+        "Schmitt trigger: 1 once above hi, 0 once below lo",
+    ),
     // Rate conversion. The converters run at their target rate only.
     u(
         "~dc",
