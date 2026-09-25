@@ -1,4 +1,4 @@
-//! Deriving a [`plyphon::SynthDef`] from a connected subgraph of [`NodeDsp`](crate::NodeDsp)
+//! Deriving a [`plyphon::SynthDef`] from a connected subgraph of [`NodeDsp`]
 //! nodes.
 
 use std::collections::{HashMap, HashSet};
@@ -133,7 +133,7 @@ pub struct Derived {
 /// [`pull_eval_order`], the same order Steel uses. The per-sink orders merge,
 /// first occurrence wins. The merge preserves a valid topological order of
 /// the whole DSP subgraph. Each node then emits its UGens via
-/// [`NodeDsp::ugens`](crate::NodeDsp::ugens) once, threading its outputs into
+/// [`NodeDsp::ugens`] once, threading its outputs into
 /// its consumers' inputs. A signal feeding both `~out` and a `~scopeout`
 /// therefore compiles into one shared unit chain.
 ///
@@ -144,7 +144,7 @@ pub struct Derived {
 /// sink transitively through dsp inputs contribute units, so a dsp chain
 /// wired into a control input emits nothing. Dead units would add params the
 /// driver drives and would churn [`structural_sig`]. A hybrid dsp input, see
-/// [`NodeDsp::n_dsp_inputs`](crate::NodeDsp::n_dsp_inputs), is part of the
+/// [`NodeDsp::n_dsp_inputs`], is part of the
 /// traversal. A dsp chain wired into it emits units and drives the input
 /// directly. Its fallback param is only baked while no dsp source is
 /// connected.

@@ -13,10 +13,16 @@
 //! emitted unit and its `special_index`, while its [`unit`](UnitDesc::unit)
 //! field holds a unique per-operator identity such as `"Mul"` or `"TanH"`.
 //!
-//! The table excludes buffer-reading units, variable-arity units such as
-//! `EnvGen` and `Klang`, demand-rate units, FFT/PV units and IO/routing
-//! units. The bespoke nodes cover IO and routing. The table also excludes
-//! the node-lifecycle units such as `FreeSelf` and `Done`, because the audio
+//! Buffer units take a buffer on an [`In::Buffer`] socket, from a `~sample`
+//! or a `~buffer` source node. A unit that writes its buffer accepts only a
+//! `~buffer`. See [`Emit`] for how rows size their outputs from a buffer or
+//! an init value, and how writer rows become sinks.
+//!
+//! The table excludes variable-arity units such as `EnvGen` and `Klang`,
+//! demand-rate units, FFT/PV units and IO/routing units. The bespoke nodes
+//! cover IO and routing. It excludes `VOsc` and `VOsc3`, which read a bank of
+//! buffers at consecutive bufnums. The table also excludes the
+//! node-lifecycle units such as `FreeSelf` and `Done`, because the audio
 //! driver controls the lifecycle of each synth. It excludes `GVerb` too. In
 //! plyphon 0.1.1, `GVerb` panics when its input is a constant or a control
 //! wire.
@@ -2874,7 +2880,7 @@ pub static UNITS: &[UnitDesc] = &[
                 init(
                     "interp",
                     2.0,
-                    "interpolation. 1 none, 2 linear, 4 cubic. Re-derives",
+                    "interpolation. 1 none, 2 linear, 4 cubic. Set at spawn",
                 ),
             ],
             &["one channel per buffer channel"],
