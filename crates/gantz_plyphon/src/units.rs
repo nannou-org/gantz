@@ -2923,6 +2923,115 @@ pub static UNITS: &[UnitDesc] = &[
         &[],
         "Record a signal into a buffer, looping by default",
     )),
+    // Wavetable oscillators. The table is one cycle in a mono buffer.
+    u(
+        "~osc",
+        "Osc",
+        &[
+            buf(
+                "table",
+                "wavetable in (a, b) format, mono, with power-of-two frames",
+            ),
+            freq(440.0, "frequency"),
+            par("phase", 0.0, 0.0, 6.2832, "", "phase offset in radians"),
+        ],
+        &["wavetable signal"],
+        "Wavetable oscillator with linear interpolation",
+    ),
+    u(
+        "~oscn",
+        "OscN",
+        &[
+            buf("table", "one cycle of plain samples, mono, of any length"),
+            freq(440.0, "frequency"),
+            par("phase", 0.0, 0.0, 6.2832, "", "phase offset in radians"),
+        ],
+        &["wavetable signal"],
+        "Wavetable oscillator without interpolation, for a harder sound",
+    ),
+    u(
+        "~cosc",
+        "COsc",
+        &[
+            buf(
+                "table",
+                "wavetable in (a, b) format, mono, with power-of-two frames",
+            ),
+            freq(440.0, "frequency"),
+            par(
+                "beats",
+                0.5,
+                0.0,
+                20.0,
+                " Hz",
+                "detune between the two voices",
+            ),
+        ],
+        &["chorused wavetable signal, up to twice the level"],
+        "Two detuned wavetable oscillators summed, for a chorus effect",
+    ),
+    // Table lookup. The table is a buffer of values.
+    u(
+        "~index",
+        "Index",
+        &[
+            buf("table", "table of values"),
+            sig("in", "index into the table"),
+        ],
+        &["table value"],
+        "Read a table at an index, clipped to the table",
+    ),
+    u(
+        "~indexl",
+        "IndexL",
+        &[
+            buf("table", "table of values"),
+            sig("in", "index into the table"),
+        ],
+        &["table value"],
+        "Read a table at an index, with linear interpolation",
+    ),
+    u(
+        "~wrapindex",
+        "WrapIndex",
+        &[
+            buf("table", "table of values"),
+            sig("in", "index into the table"),
+        ],
+        &["table value"],
+        "Read a table at an index, wrapped to the table",
+    ),
+    u(
+        "~foldindex",
+        "FoldIndex",
+        &[
+            buf("table", "table of values"),
+            sig("in", "index into the table"),
+        ],
+        &["table value"],
+        "Read a table at an index, folded back into the table",
+    ),
+    u(
+        "~shaper",
+        "Shaper",
+        &[
+            buf("table", "transfer function in (a, b) wavetable format"),
+            sig("in", "signal to shape, from -1 to 1"),
+        ],
+        &["shaped signal"],
+        "Waveshape a signal through a transfer function in a table",
+    ),
+    u(
+        "~degreetokey",
+        "DegreeToKey",
+        &[
+            buf("scale", "scale, one semitone offset for each degree"),
+            sig("in", "scale degree"),
+            par("octave", 12.0, 0.0, 48.0, "", "semitones in one octave"),
+        ],
+        &["semitones"],
+        "Map a scale degree to semitones through a scale in a table",
+    ),
     // Operators. One row per operator in plyphon's dispatch tables, which
     // follow SC's operator indices. Defaults for `b` are 1 for multiplicative
     // operators and 0 otherwise.

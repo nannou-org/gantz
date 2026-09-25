@@ -553,3 +553,26 @@ fn write_socket_rejects_an_asset() {
     let def = derive_synthdef(&g, 1, "t").expect("derive").def;
     assert!(is_minus_one(unit(&def, "RecordBuf").inputs[0]));
 }
+
+#[test]
+fn lookup_expands_per_channel_and_shares_the_table() {
+    // A two-channel reader output indexes the table twice, one unit per
+    // channel, both reading the same bufnum.
+    let mut g = Graph::<N>::default();
+    let s = g.add_node(N::Src(Src));
+    let rd = g.add_node(N::Unit(UnitNode::from_unit("BufRd").expect("row")));
+    let index = g.add_node(N::Unit(UnitNode::from_unit("Index").expect("row")));
+    let o = g.add_node(N::Out(Out::default()));
+    edge(&mut g, s, rd, socket("BufRd", "buf"));
+    edge(&mut g, s, index, socket("Index", "table"));
+    edge(&mut g, rd, index, socket("Index", "in"));
+    edge(&mut g, index, o, 0);
+    let def = derive_synthdef(&g, 2, "t").expect("derive").def;
+    let indexes: Vec<&UnitSpec> = def.units.iter().filter(|u| u.name == "Index").collect();
+    assert_eq!(indexes.len(), 2, "one unit per channel of the index signal");
+    for u in indexes {
+        assert_eq!(param_of(&def, u.inputs[0]), Some("0/bufnum"));
+    }
+    let bufnums = def.params.iter().filter(|p| p.name.ends_with("/bufnum"));
+    assert_eq!(bufnums.count(), 1, "the source is emitted once per def");
+}
