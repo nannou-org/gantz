@@ -47,6 +47,17 @@ pub struct AudioAsset {
     sample_rate: f64,
 }
 
+/// A failure decoding a WAV file into an [`AudioAsset`].
+#[derive(Debug, Error)]
+pub enum WavError {
+    /// The bytes are not a WAV file this build can read.
+    #[error("unreadable WAV file: {0}")]
+    Read(#[from] hound::Error),
+    /// The file declares no channels or a sample rate of zero.
+    #[error("WAV file has no channels or a sample rate of zero")]
+    Empty,
+}
+
 /// A failure decoding blob bytes into an [`AudioAsset`].
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum DecodeError {
@@ -73,6 +84,33 @@ impl AudioAsset {
             num_channels,
             sample_rate,
         }
+    }
+
+    /// Decode the bytes of a WAV file. Integer samples of any bit depth scale
+    /// to `-1..1`. Float samples are kept as they are. The file's channel
+    /// count and sample rate are kept, so the same audio from any source
+    /// format gives the same asset.
+    pub fn from_wav(bytes: &[u8]) -> Result<Self, WavError> {
+        let reader = hound::WavReader::new(std::io::Cursor::new(bytes))?;
+        let spec = reader.spec();
+        if spec.channels == 0 || spec.sample_rate == 0 {
+            return Err(WavError::Empty);
+        }
+        let samples: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Float => reader.into_samples::<f32>().collect::<Result<_, _>>()?,
+            hound::SampleFormat::Int => {
+                let scale = 1.0 / (1u64 << (spec.bits_per_sample.max(1) - 1)) as f32;
+                reader
+                    .into_samples::<i32>()
+                    .map(|s| s.map(|s| s as f32 * scale))
+                    .collect::<Result<_, _>>()?
+            }
+        };
+        Ok(AudioAsset::from_interleaved(
+            samples,
+            spec.channels as usize,
+            spec.sample_rate as f64,
+        ))
     }
 
     /// The frame-major interleaved samples.
@@ -231,6 +269,55 @@ mod tests {
             AudioAsset::decode(&bytes),
             Err(DecodeError::Malformed("sample count mismatch")),
         );
+    }
+
+    /// The bytes of a WAV file with the given spec and samples.
+    fn wav<S: hound::Sample + Copy>(spec: hound::WavSpec, samples: &[S]) -> Vec<u8> {
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        let mut writer = hound::WavWriter::new(&mut bytes, spec).unwrap();
+        for &s in samples {
+            writer.write_sample(s).unwrap();
+        }
+        writer.finalize().unwrap();
+        bytes.into_inner()
+    }
+
+    #[test]
+    fn from_wav_scales_integer_samples() {
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 44_100,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let bytes = wav::<i16>(spec, &[0, i16::MIN, 16_384, -16_384]);
+        let a = AudioAsset::from_wav(&bytes).unwrap();
+        assert_eq!(a.num_channels(), 2);
+        assert_eq!(a.num_frames(), 2);
+        assert_eq!(a.sample_rate(), 44_100.0);
+        assert_eq!(a.samples(), &[0.0, -1.0, 0.5, -0.5]);
+    }
+
+    #[test]
+    fn from_wav_keeps_float_samples() {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let bytes = wav::<f32>(spec, &[0.25, -0.75]);
+        let a = AudioAsset::from_wav(&bytes).unwrap();
+        assert_eq!(a.samples(), &[0.25, -0.75]);
+        assert_eq!(a.sample_rate(), 48_000.0);
+    }
+
+    #[test]
+    fn from_wav_rejects_other_bytes() {
+        assert!(matches!(
+            AudioAsset::from_wav(b"not a wav file"),
+            Err(WavError::Read(_))
+        ));
     }
 
     #[test]

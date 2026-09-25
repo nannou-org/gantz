@@ -18,7 +18,7 @@
 //! gets its own type and a descriptive name.
 
 pub use asset::{
-    AudioAsset, AudioBuffers, BUFFER_SECTION, DecodeError, add_audio_asset, audio_asset,
+    AudioAsset, AudioBuffers, BUFFER_SECTION, DecodeError, WavError, add_audio_asset, audio_asset,
 };
 pub use backend::{AddAction, Backend, BackendError, Embedded, ROOT_GROUP_ID};
 pub use builtin::builtins;

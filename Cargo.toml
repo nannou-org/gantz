@@ -75,6 +75,7 @@ gantz_plyphon = { version = "0.3.0", path = "crates/gantz_plyphon" }
 gantz_std = { version = "0.5.1", path = "crates/gantz_std" }
 gantz_ui = { version = "0.2.1", path = "crates/gantz_ui" }
 hex = "0.4"
+hound = "3.5"
 humantime = "2.3"
 iroh = { version = "1", default-features = false, features = ["tls-ring"] }
 iroh-gossip = { version = "0.101", default-features = false, features = ["net"] }
