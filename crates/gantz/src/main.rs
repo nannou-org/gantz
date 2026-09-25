@@ -12,6 +12,8 @@ use bevy_gantz_egui::{BuiltinNodes, GantzEguiPlugin, TraceCapture};
 use bevy_pkv::PkvStore;
 use storage::Pkv;
 
+#[cfg(test)]
+mod headless;
 mod node;
 mod persist;
 mod storage;
