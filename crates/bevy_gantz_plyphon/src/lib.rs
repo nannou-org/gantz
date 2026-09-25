@@ -56,6 +56,8 @@ pub use plyphon;
 /// [`plyphon::UnitRegistry`] at startup. See [`PlyphonPlugin::with_units`].
 type UnitRegistrar = Box<dyn Fn(&mut plyphon::UnitRegistry) + Send + Sync>;
 
+mod sample_load;
+
 use bevy_gantz::head::{HeadRef, HeadVms, OpenHead};
 use bevy_gantz::{EntrypointSet, EvalEpoch, Registry, VmSet};
 use bevy_gantz_egui::GraphCache;
@@ -217,6 +219,8 @@ impl Plugin for PlyphonPlugin {
             .init_resource::<GuiState>()
             .add_message::<DspSettingsChanged>()
             .register_response_with::<Config>(dispatch_dsp_settings)
+            .register_head_response::<gantz_plyphon::LoadSample>()
+            .add_observer(sample_load::on_load_sample)
             .add_systems(
                 PreUpdate,
                 (
@@ -239,6 +243,13 @@ impl Plugin for PlyphonPlugin {
         // have flushed, so the control values they queue are visible to the
         // param drain in the same frame.
         app.add_systems(Update, drive_synths.after(VmSet).after(EntrypointSet));
+        // Commit a loaded sample before the driver derives the new graph.
+        app.add_systems(
+            Update,
+            sample_load::poll_sample_load
+                .run_if(resource_exists::<sample_load::SampleLoadTask>)
+                .before(drive_synths),
+        );
         // Keep the web audio callback's epoch anchor fresh.
         #[cfg(target_arch = "wasm32")]
         app.add_systems(Update, refresh_clock_offset.before(drive_synths));
