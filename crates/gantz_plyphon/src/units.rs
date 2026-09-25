@@ -16,6 +16,14 @@
 //! The table excludes buffer-reading units, variable-arity units such as
 //! `EnvGen` and `Klang`, demand-rate units, FFT/PV units and IO/routing
 //! units. The bespoke nodes cover IO and routing.
+//!
+//! Most rows run at either rate, chosen on the node. A row whose unit only
+//! makes sense at one rate, such as the `A2K`/`K2A` converters and the
+//! engine info units, carries a [`UnitRate::Fixed`] constraint. plyphon
+//! accepts any rate at build time and misbehaves silently at the wrong one,
+//! so the constraint lives here.
+
+use crate::dsp::NodeRate;
 
 /// How one plyphon input of a wrapped unit is fed.
 ///
@@ -97,6 +105,16 @@ pub struct Special {
     pub index: i16,
 }
 
+/// The ugen rates a descriptor row may run at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnitRate {
+    /// Either rate. The node weight carries the choice, `ar` when absent.
+    Any,
+    /// Exactly one rate. The weight carries no choice, the inspector shows
+    /// no rate row and sugar never writes `#:rate`.
+    Fixed(NodeRate),
+}
+
 /// One wrapped plyphon unit generator, the descriptor that drives a
 /// [`UnitNode`](crate::UnitNode). The node names it by [`unit`](Self::unit).
 #[derive(Clone, Copy, Debug)]
@@ -110,6 +128,8 @@ pub struct UnitDesc {
     /// The emission override for operator-selector rows. `None` means
     /// [`unit`](Self::unit) is itself the emitted plyphon name.
     pub special: Option<Special>,
+    /// The rates the unit may run at.
+    pub rate: UnitRate,
     /// One entry per plyphon input, in plyphon input order.
     pub inputs: &'static [In],
     /// One doc line per unit output (the node's dsp output ports).
@@ -133,6 +153,15 @@ impl UnitDesc {
         match self.special {
             Some(Special { index, .. }) => index,
             None => 0,
+        }
+    }
+
+    /// The rate a fresh node of this row runs at. The fixed rate for a
+    /// [`UnitRate::Fixed`] row, else `ar`.
+    pub fn default_rate(&self) -> NodeRate {
+        match self.rate {
+            UnitRate::Fixed(rate) => rate,
+            UnitRate::Any => NodeRate::default(),
         }
     }
 
@@ -242,9 +271,26 @@ const fn u(
         keyword,
         unit,
         special: None,
+        rate: UnitRate::Any,
         inputs,
         outputs,
         doc,
+    }
+}
+
+/// Constrain a row to audio rate.
+const fn ar_only(desc: UnitDesc) -> UnitDesc {
+    UnitDesc {
+        rate: UnitRate::Fixed(NodeRate::Audio),
+        ..desc
+    }
+}
+
+/// Constrain a row to control rate.
+const fn kr_only(desc: UnitDesc) -> UnitDesc {
+    UnitDesc {
+        rate: UnitRate::Fixed(NodeRate::Control),
+        ..desc
     }
 }
 
@@ -261,6 +307,7 @@ macro_rules! bop {
                 unit: "BinaryOpUGen",
                 index: $ix,
             }),
+            rate: UnitRate::Any,
             inputs: &[
                 sig("a", "left operand signal"),
                 par("b", $b, -10_000.0, 10_000.0, "", $b_doc),
@@ -282,6 +329,7 @@ macro_rules! uop {
                 unit: "UnaryOpUGen",
                 index: $ix,
             }),
+            rate: UnitRate::Any,
             inputs: &[sig("in", "input signal")],
             outputs: &[$out],
             doc: $doc,
@@ -1260,6 +1308,60 @@ pub static UNITS: &[UnitDesc] = &[
         &["folded signal"],
         "Fold (mirror) a signal into [lo, hi]",
     ),
+    // Rate conversion. The converters run at their target rate only.
+    u(
+        "~dc",
+        "DC",
+        &[par(
+            "value",
+            0.0,
+            -10_000.0,
+            10_000.0,
+            "",
+            "the constant value",
+        )],
+        &["constant signal"],
+        "A constant signal at audio or control rate",
+    ),
+    ar_only(u(
+        "~k2a",
+        "K2A",
+        &[sig("in", "control-rate signal to lift")],
+        &["audio-rate signal"],
+        "Control to audio rate, ramping linearly across each block (ar only)",
+    )),
+    kr_only(u(
+        "~a2k",
+        "A2K",
+        &[sig("in", "audio-rate signal to sample")],
+        &["control-rate signal"],
+        "Audio to control rate, taking each block's first sample (kr only)",
+    )),
+    ar_only(u(
+        "~t2a",
+        "T2A",
+        &[
+            sig("in", "control-rate trigger"),
+            par(
+                "offset",
+                0.0,
+                0.0,
+                64.0,
+                "",
+                "sample offset within the block the trigger lands at",
+            ),
+        ],
+        &["audio-rate trigger"],
+        "Control-rate trigger to a sample-accurate audio trigger (ar only)",
+    )),
+    kr_only(u(
+        "~t2k",
+        "T2K",
+        &[sig("in", "audio-rate trigger")],
+        &["control-rate trigger"],
+        "Audio-rate trigger to control rate, keeping the block's maximum so no \
+         trigger is missed (kr only)",
+    )),
     // Operators. One row per operator in plyphon's dispatch tables, which
     // follow SC's operator indices. Defaults for `b` are 1 for multiplicative
     // operators and 0 otherwise.
@@ -1995,5 +2097,43 @@ mod tests {
         }
         assert!(unit_desc("NoSuchUnit").is_none());
         assert!(unit_desc_by_keyword("~nosuchunit").is_none());
+    }
+
+    /// The fixed-rate rows are exactly the units plyphon misbehaves with at
+    /// the other rate. Extend the list when adding one.
+    #[test]
+    fn fixed_rate_rows_are_the_expected_set() {
+        use crate::dsp::NodeRate::{Audio, Control};
+        let fixed: Vec<(&str, NodeRate)> = UNITS
+            .iter()
+            .filter_map(|d| match d.rate {
+                UnitRate::Fixed(rate) => Some((d.unit, rate)),
+                UnitRate::Any => None,
+            })
+            .collect();
+        let expected = [
+            ("K2A", Audio),
+            ("A2K", Control),
+            ("T2A", Audio),
+            ("T2K", Control),
+        ];
+        assert_eq!(fixed, expected);
+        for (unit, rate) in expected {
+            assert_eq!(unit_desc(unit).unwrap().default_rate(), rate);
+        }
+        assert_eq!(unit_desc("SinOsc").unwrap().default_rate(), Audio);
+    }
+
+    /// An input named `rate` would shadow the ugen-rate inspector row and the
+    /// `#:rate` sugar keyword.
+    #[test]
+    fn no_input_is_named_rate() {
+        for desc in UNITS {
+            assert!(
+                desc.inputs.iter().all(|i| i.name() != Some("rate")),
+                "{}: an input is named `rate`",
+                desc.unit
+            );
+        }
     }
 }

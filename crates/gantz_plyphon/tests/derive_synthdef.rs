@@ -6,8 +6,8 @@ use gantz_core::edge::Edge;
 use gantz_core::node::graph::Graph;
 use gantz_plyphon::{
     Backend, DeriveError, Derived, DspBuilder, Embedded, Finished, NodeDsp, NodeRate, Out, Pack,
-    PortShape, ScopeOut, Signal, Sum, ToNodeDsp, UNITS, UnitNode, Unpack, derive_synthdef,
-    structural_sig,
+    PortShape, ScopeOut, Signal, Sum, ToNodeDsp, UNITS, UnitNode, UnitRate, Unpack,
+    derive_synthdef, structural_sig,
 };
 use plyphon::synthdef::{InputRef, SynthDef, UnitSpec};
 use plyphon::{AddAction, Options, ROOT_GROUP_ID, Rate, World, engine};
@@ -1817,6 +1817,55 @@ fn every_descriptor_row_derives_and_builds() {
                 .unwrap_or_else(|e| panic!("{}: wired def failed to build: {e:?}", desc.unit));
         }
     }
+}
+
+/// A fixed-rate row emits its fixed plyphon rate whatever the weight says.
+#[test]
+fn fixed_rate_rows_emit_their_rate() {
+    let fixed = UNITS.iter().filter_map(|d| match d.rate {
+        UnitRate::Fixed(rate) => Some((d, rate)),
+        UnitRate::Any => None,
+    });
+    let mut seen = 0;
+    for (desc, rate) in fixed {
+        let other = match rate {
+            NodeRate::Audio => NodeRate::Control,
+            NodeRate::Control => NodeRate::Audio,
+        };
+        for attempt in [rate, other] {
+            let mut node = UnitNode::from_desc(desc);
+            node.set_rate(attempt);
+            let mut g = Graph::<N>::default();
+            let n = g.add_node(N::Unit(node));
+            let o = g.add_node(N::Out(Out::default()));
+            g.add_edge(n, o, Edge::new(0.into(), 0.into()));
+            let derived = derive_synthdef(&g, 1, "t").expect("derive");
+            let unit = derived
+                .def
+                .units
+                .iter()
+                .find(|u| u.name == desc.emitted_unit())
+                .expect("the row's unit");
+            assert_eq!(unit.rate, rate.to_plyphon(), "{}", desc.unit);
+        }
+        seen += 1;
+    }
+    assert!(seen > 0, "the table has fixed-rate rows");
+}
+
+/// A control-rate row feeding `~out` is lifted to audio by the sink.
+#[test]
+fn kr_only_row_lifts_to_audio_at_out() {
+    let mut g = Graph::<N>::default();
+    let s = g.add_node(sinosc());
+    let a = g.add_node(N::Unit(UnitNode::from_unit("A2K").expect("A2K row")));
+    let o = g.add_node(N::Out(Out::default()));
+    g.add_edge(s, a, Edge::new(0.into(), 0.into()));
+    g.add_edge(a, o, Edge::new(0.into(), 0.into()));
+    let derived = derive_synthdef(&g, 1, "t").expect("derive");
+    let names: Vec<&str> = derived.def.units.iter().map(|u| u.name.as_str()).collect();
+    assert!(names.contains(&"A2K"), "{names:?}");
+    assert!(names.contains(&"K2A"), "{names:?}");
 }
 
 /// An unconnected `UnitNode` bakes each hybrid as one keyed control param.

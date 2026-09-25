@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::dsp::{DspBuilder, NodeDsp, NodeRate, Signal, ToNodeDsp};
 use crate::param::{control_inputs_expr, param_name, params_state, plyphon_param};
-use crate::units::{In, UnitDesc, unit_desc};
+use crate::units::{In, UnitDesc, UnitRate, unit_desc};
 
 /// A node wrapping one plyphon unit generator, driven entirely by its
 /// [`UnitDesc`] descriptor row, see [`units`](crate::units). The descriptor
@@ -26,16 +26,19 @@ use crate::units::{In, UnitDesc, unit_desc};
 /// live in the node weight.
 ///
 /// Deserialization validates the `unit` name against the descriptor table.
-/// An unknown unit fails to reify, like an unknown node type tag.
+/// An unknown unit fails to reify, like an unknown node type tag. So does a
+/// `rate` other than the one a [`UnitRate::Fixed`] row allows.
 #[derive(Clone, Debug, Serialize, Deserialize, NodeTag)]
 #[tag("Unit")]
 #[serde(try_from = "UnitNodeWire")]
 pub struct UnitNode {
     /// The plyphon unit name, the descriptor-table key, for example `"LPF"`.
     unit: String,
-    /// The ugen rate, `ar` or `kr`, the unit runs at.
-    #[serde(default, skip_serializing_if = "crate::node::is_default")]
-    rate: NodeRate,
+    /// The ugen rate, `ar` or `kr`, the unit runs at. Absent means the row's
+    /// [`default_rate`](UnitDesc::default_rate), and an entry never holds it.
+    /// A [`UnitRate::Fixed`] row never carries an entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rate: Option<NodeRate>,
     /// Per-hybrid-param smoothing lags in seconds, keyed by param name.
     /// Absent means `0.0`, no smoothing. Entries never hold `0.0`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -52,15 +55,16 @@ pub struct UnitNode {
 struct UnitNodeWire {
     unit: String,
     #[serde(default)]
-    rate: NodeRate,
+    rate: Option<NodeRate>,
     #[serde(default)]
     lags: BTreeMap<String, f32>,
     #[serde(default)]
     init: BTreeMap<String, f32>,
 }
 
-/// A [`UnitNode`] failed to deserialize. Either an unknown unit name, or a
-/// lag or init key naming no such param in the unit's descriptor.
+/// A [`UnitNode`] failed to deserialize. An unknown unit name, a lag or init
+/// key naming no such param in the unit's descriptor, or a rate a fixed-rate
+/// row does not allow.
 #[derive(Debug)]
 pub struct InvalidUnitNode(String);
 
@@ -99,8 +103,18 @@ impl TryFrom<UnitNodeWire> for UnitNode {
                 )));
             }
         }
+        if let (UnitRate::Fixed(fixed), Some(rate)) = (desc.rate, rate) {
+            if rate != fixed {
+                return Err(InvalidUnitNode(format!(
+                    "unit `{unit}` runs at `{}` only, got `{}`",
+                    fixed.token(),
+                    rate.token()
+                )));
+            }
+        }
         // Normalise. Entries at their defaults are represented by absence, so
         // hand-authored data cannot land on a non-canonical content address.
+        let rate = rate.filter(|r| *r != desc.default_rate());
         let lags = lags.into_iter().filter(|(_, lag)| *lag != 0.0).collect();
         let init = init
             .into_iter()
@@ -123,7 +137,7 @@ impl UnitNode {
     pub fn from_desc(desc: &'static UnitDesc) -> Self {
         UnitNode {
             unit: desc.unit.to_string(),
-            rate: NodeRate::default(),
+            rate: None,
             lags: BTreeMap::new(),
             init: BTreeMap::new(),
         }
@@ -147,12 +161,18 @@ impl UnitNode {
 
     /// The ugen rate, `ar` or `kr`, the unit runs at.
     pub fn rate(&self) -> NodeRate {
-        self.rate
+        self.rate.unwrap_or_else(|| self.desc().default_rate())
     }
 
     /// Set the ugen rate. It is structural and affects the content address.
+    /// The row's default rate removes the entry, the canonical form. A
+    /// fixed-rate row ignores the call.
     pub fn set_rate(&mut self, rate: NodeRate) {
-        self.rate = rate;
+        let desc = self.desc();
+        self.rate = match desc.rate {
+            UnitRate::Fixed(_) => None,
+            UnitRate::Any => Some(rate).filter(|r| *r != desc.default_rate()),
+        };
     }
 
     /// The `name`d hybrid param's smoothing lag in seconds. `0.0` is none.
@@ -361,7 +381,7 @@ impl NodeDsp for UnitNode {
                     .collect();
                 b.push_unit(UnitSpec {
                     name: desc.emitted_unit().to_string(),
-                    rate: self.rate.to_plyphon(),
+                    rate: self.rate().to_plyphon(),
                     inputs: ins,
                     num_outputs: desc.outputs.len(),
                     special_index: desc.special_index(),
@@ -391,6 +411,7 @@ impl ToNodeDsp for UnitNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gantz_core::datum::{Datum, from_datum, to_datum};
 
     #[test]
     fn serde_round_trips() {
@@ -430,5 +451,50 @@ mod tests {
         node.set_init("maxdelay", 0.5);
         node.set_init("maxdelay", 0.2);
         assert_eq!(node, UnitNode::from_unit("CombC").expect("CombC row"));
+        // An explicit default rate is the same non-canonical spelling.
+        let node: UnitNode = from_datum(unit_datum("CombC", Some("ar"))).expect("deserialize");
+        assert_eq!(node, UnitNode::from_unit("CombC").expect("CombC row"));
+        let mut node = UnitNode::from_unit("CombC").expect("CombC row");
+        node.set_rate(NodeRate::Control);
+        node.set_rate(NodeRate::Audio);
+        assert_eq!(node, UnitNode::from_unit("CombC").expect("CombC row"));
+    }
+
+    /// A `Unit` datum in the content-address form, with an optional `rate`.
+    fn unit_datum(unit: &str, rate: Option<&str>) -> Datum {
+        let mut fields = vec![("unit".to_string(), Datum::Str(unit.to_string()))];
+        if let Some(rate) = rate {
+            fields.push(("rate".to_string(), Datum::Str(rate.to_string())));
+        }
+        Datum::Map(fields)
+    }
+
+    /// The content-address form of the rate must not change, since addresses
+    /// fold it. A default rate is absent and a control rate is `"kr"`.
+    #[test]
+    fn rate_wire_form_is_stable() {
+        let mut node = UnitNode::from_unit("SinOsc").expect("SinOsc row");
+        assert_eq!(to_datum(&node).unwrap(), unit_datum("SinOsc", None));
+        node.set_rate(NodeRate::Control);
+        assert_eq!(to_datum(&node).unwrap(), unit_datum("SinOsc", Some("kr")));
+        // A fixed-rate row serializes bare at its fixed rate.
+        let node = UnitNode::from_unit("A2K").expect("A2K row");
+        assert_eq!(node.rate(), NodeRate::Control);
+        assert_eq!(to_datum(&node).unwrap(), unit_datum("A2K", None));
+    }
+
+    #[test]
+    fn fixed_rate_rows_reify_bare_and_reject_the_other_rate() {
+        let a2k = UnitNode::from_unit("A2K").expect("A2K row");
+        // The fixed rate spelled out is the non-canonical form of absent.
+        let node: UnitNode = from_datum(unit_datum("A2K", Some("kr"))).expect("deserialize");
+        assert_eq!(node, a2k);
+        let err = from_datum::<UnitNode>(unit_datum("A2K", Some("ar"))).unwrap_err();
+        assert!(err.to_string().contains("runs at `kr` only"), "{err}");
+        // The setter is inert.
+        let mut node = a2k.clone();
+        node.set_rate(NodeRate::Audio);
+        assert_eq!(node, a2k);
+        assert_eq!(node.rate(), NodeRate::Control);
     }
 }
