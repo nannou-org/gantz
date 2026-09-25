@@ -441,3 +441,19 @@ fn table_row_buffer_socket_reads_the_source() {
     assert_eq!(derived.buffers.len(), 1);
     assert_eq!(derived.buffers[0].node_path, vec![s.index()]);
 }
+
+#[test]
+fn describe_lists_buffer_bindings() {
+    let mut g = Graph::<N>::default();
+    let s = g.add_node(N::Src(Src));
+    let r = g.add_node(N::Reader(Reader));
+    let o = g.add_node(N::Out(Out::default()));
+    edge(&mut g, s, r, 0);
+    edge(&mut g, r, o, 0);
+    let (t, cache) = template(&g, &HashMap::new());
+    let text = gantz_plyphon::describe_parts(&instantiate(&t, &cache));
+    assert!(
+        text.contains("buffer [0]: scratch 64 frames 2ch"),
+        "buffer line:\n{text}"
+    );
+}

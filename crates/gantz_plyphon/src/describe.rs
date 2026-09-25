@@ -75,6 +75,20 @@ fn describe_part(s: &mut String, i: usize, part: &ResolvedPart) {
     for b in &part.bus_reads {
         let _ = writeln!(s, "  reads {}", bus_str(b));
     }
+    for b in &part.buffers {
+        let source = match &b.source {
+            crate::BufferSource::Asset(addr) => {
+                let hex = addr.to_string();
+                format!("asset {}…", &hex[..hex.len().min(8)])
+            }
+            crate::BufferSource::Scratch { frames } => format!("scratch {frames} frames"),
+        };
+        let _ = writeln!(
+            s,
+            "  buffer {:?}: {source} {}ch (p{})",
+            b.node_path, b.channels, b.bufnum_param,
+        );
+    }
 
     if !part.shapes.is_empty() {
         let _ = writeln!(s, "  ports:");
