@@ -2478,6 +2478,91 @@ pub static UNITS: &[UnitDesc] = &[
         "Audio-rate trigger to control rate, keeping the block's maximum so no \
          trigger is missed (kr only)",
     )),
+    // Info. Engine constants, one value per block, control rate only.
+    kr_only(u(
+        "~samplerate",
+        "SampleRate",
+        &[],
+        &["sample rate in Hz"],
+        "The engine's audio sample rate (kr only)",
+    )),
+    kr_only(u(
+        "~sampledur",
+        "SampleDur",
+        &[],
+        &["seconds per sample"],
+        "The duration of one audio sample (kr only)",
+    )),
+    kr_only(u(
+        "~radianspersample",
+        "RadiansPerSample",
+        &[],
+        &["2 pi / sample rate"],
+        "Radians per sample at the engine's sample rate (kr only)",
+    )),
+    kr_only(u(
+        "~controlrate",
+        "ControlRate",
+        &[],
+        &["control rate in Hz"],
+        "The engine's control (block) rate (kr only)",
+    )),
+    kr_only(u(
+        "~controldur",
+        "ControlDur",
+        &[],
+        &["seconds per control block"],
+        "The duration of one control block (kr only)",
+    )),
+    kr_only(u(
+        "~numoutputbuses",
+        "NumOutputBuses",
+        &[],
+        &["output channel count"],
+        "The number of hardware output channels (kr only)",
+    )),
+    kr_only(u(
+        "~numinputbuses",
+        "NumInputBuses",
+        &[],
+        &["input channel count"],
+        "The number of hardware input channels (kr only)",
+    )),
+    kr_only(u(
+        "~numaudiobuses",
+        "NumAudioBuses",
+        &[],
+        &["audio bus count"],
+        "The total number of audio bus channels (kr only)",
+    )),
+    kr_only(u(
+        "~numcontrolbuses",
+        "NumControlBuses",
+        &[],
+        &["control bus count"],
+        "The total number of control bus channels (kr only)",
+    )),
+    kr_only(u(
+        "~numbuffers",
+        "NumBuffers",
+        &[],
+        &["buffer slot count"],
+        "The number of buffer slots (kr only)",
+    )),
+    kr_only(u(
+        "~numrunningsynths",
+        "NumRunningSynths",
+        &[],
+        &["running synth count"],
+        "The number of synths currently running (kr only)",
+    )),
+    kr_only(u(
+        "~subsampleoffset",
+        "SubsampleOffset",
+        &[],
+        &["sub-sample spawn offset in [0, 1)"],
+        "The fractional sample offset the synth was spawned at (kr only)",
+    )),
     // Operators. One row per operator in plyphon's dispatch tables, which
     // follow SC's operator indices. Defaults for `b` are 1 for multiplicative
     // operators and 0 otherwise.
@@ -3232,6 +3317,18 @@ mod tests {
             ("A2K", Control),
             ("T2A", Audio),
             ("T2K", Control),
+            ("SampleRate", Control),
+            ("SampleDur", Control),
+            ("RadiansPerSample", Control),
+            ("ControlRate", Control),
+            ("ControlDur", Control),
+            ("NumOutputBuses", Control),
+            ("NumInputBuses", Control),
+            ("NumAudioBuses", Control),
+            ("NumControlBuses", Control),
+            ("NumBuffers", Control),
+            ("NumRunningSynths", Control),
+            ("SubsampleOffset", Control),
         ];
         assert_eq!(fixed, expected);
         for (unit, rate) in expected {
