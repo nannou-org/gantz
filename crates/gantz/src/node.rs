@@ -2916,17 +2916,68 @@ mod tests {
         };
         let a = parse();
         let b = parse();
-        for demo in [
-            "demo-sine",
-            "demo-ringmod",
-            "demo-waveshape",
-            "demo-freeverb",
-            "demo-pluck",
-            "demo-samplehold",
-        ] {
+        for demo in PLYPHON_DEMOS {
             let ca_a = a.head(&name(demo)).expect(demo);
             let ca_b = b.head(&name(demo)).expect(demo);
             assert_eq!(ca_a, ca_b, "reset must resolve the startup commit address");
+        }
+    }
+
+    /// The demos in the plyphon base source.
+    const PLYPHON_DEMOS: [&str; 7] = [
+        "demo-sine",
+        "demo-ringmod",
+        "demo-waveshape",
+        "demo-freeverb",
+        "demo-pluck",
+        "demo-samplehold",
+        "demo-looper",
+    ];
+
+    /// Every plyphon base demo derives synthdefs that build in the real
+    /// engine. This catches a demo wired to a wrong socket index. The
+    /// looper's writer and reader must also both bind its buffer.
+    #[test]
+    fn plyphon_base_demos_derive_and_build() {
+        use bevy_gantz_plyphon::plyphon;
+
+        let registry: DataReg = gantz_egui::export::parse_export_at(
+            gantz_plyphon::BASE_BYTES,
+            bevy_gantz_egui::base::BASE_TIMESTAMP,
+            &super::codec(),
+        )
+        .expect("parse");
+        let reified = reify_all(&registry);
+        let (mut controller, _nrt, _world) = plyphon::engine(plyphon::Options::default());
+        for demo in PLYPHON_DEMOS {
+            let head = gantz_ca::Head::Branch(name(demo));
+            let graph = head_graph(&reified, &registry, &head).expect(demo);
+            let flat = gantz_plyphon::flatten_from_registry(graph, &reified).expect(demo);
+            let mut cache = gantz_plyphon::DefCache::new();
+            let template = gantz_plyphon::derive_template(&flat, 2, &|_| None, &mut cache)
+                .unwrap_or_else(|e| panic!("{demo}: derive failed: {e}"));
+            let parts = gantz_plyphon::instantiate(&template, &cache);
+            for part in &parts {
+                controller.add_synthdef((*part.def).clone());
+                controller
+                    .ensure_compiled(&part.def.name)
+                    .unwrap_or_else(|e| panic!("{demo}: def failed to build: {e:?}"));
+            }
+            if demo != "demo-looper" {
+                continue;
+            }
+            for unit in ["RecordBuf", "PlayBuf"] {
+                let part = parts
+                    .iter()
+                    .find(|p| p.def.units.iter().any(|u| u.name == unit))
+                    .unwrap_or_else(|| panic!("the looper emits `{unit}`"));
+                let spec = part.def.units.iter().find(|u| u.name == unit).unwrap();
+                assert!(
+                    matches!(spec.inputs[0], plyphon::synthdef::InputRef::Param(_)),
+                    "the looper's `{unit}` binds its buffer",
+                );
+                assert_eq!(part.buffers.len(), 1, "one binding per part");
+            }
         }
     }
 

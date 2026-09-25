@@ -10,6 +10,22 @@
   (-> ~ringz3 ~freeverb4)
   (-> ~freeverb4 ~out5))
 
+(graph demo-looper
+  (comment0 (comment "Looper.\nDial the playback speed." 110 30))
+  (number1 (number #:min 0.5))
+  (~dust2 ~dust)
+  (~ringz3 ~ringz)
+  (~buffer4 ~buffer)
+  (~recordbuf5 ~recordbuf)
+  (~playbuf6 ~playbuf)
+  (~out7 ~out)
+  (-> number1 (~playbuf6 1))
+  (-> ~dust2 ~ringz3)
+  (-> ~ringz3 (~recordbuf5 6))
+  (-> ~buffer4 ~recordbuf5)
+  (-> ~buffer4 ~playbuf6)
+  (-> ~playbuf6 ~out7))
+
 (graph demo-pluck
   (comment0 (comment "Plucked string.\nDial the pluck rate and the string period." 200 30))
   (number1 (number #:min 2))
@@ -88,6 +104,7 @@
 
 (descriptions
   (demo-freeverb "Random impulses ring a resonator into a reverb. Dial the number for the wet mix.")
+  (demo-looper "Random impulses record into a buffer that plays back at another speed. Dial the number for the playback speed.")
   (demo-pluck "Noise bursts pluck a Karplus-Strong string. Dial the numbers for the pluck rate and the string period.")
   (demo-ringmod "Two sines multiplied. Dial the numbers to sweep from tremolo to ring modulation.")
   (demo-samplehold "A latch samples white noise on each impulse. The result sets the frequency of a sine. Dial the numbers for the step rate and the pitch range.")
@@ -102,6 +119,17 @@
   (~out5 0 240)
   (~ringz3 0 80)
   (camera 0 120 1))
+
+(layout demo-looper
+  (comment0 -240 0)
+  (number1 120 160)
+  (~buffer4 -80 160)
+  (~dust2 0 0)
+  (~out7 0 320)
+  (~playbuf6 0 240)
+  (~recordbuf5 0 160)
+  (~ringz3 0 80)
+  (camera 0 160 1))
 
 (layout demo-pluck
   (bang7 114 -69)
