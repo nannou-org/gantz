@@ -2362,6 +2362,31 @@ pub static UNITS: &[UnitDesc] = &[
         &["held value"],
         "Sample and hold that steps only once the input moves by diff",
     ),
+    // Diagnostics
+    u(
+        "~checkbadvalues",
+        "CheckBadValues",
+        &[sig("in", "signal to check"), baked(0.0), baked(0.0)],
+        &["0 normal, 1 NaN, 2 infinite, 3 denormal"],
+        "Classify each sample as normal, NaN, infinite or denormal",
+    ),
+    u(
+        "~sanitize",
+        "Sanitize",
+        &[
+            sig("in", "signal to guard"),
+            par(
+                "replace",
+                0.0,
+                -10_000.0,
+                10_000.0,
+                "",
+                "value substituted for a bad sample",
+            ),
+        ],
+        &["guarded signal"],
+        "Pass the signal, replacing NaN, infinite and denormal samples",
+    ),
     // Rate conversion. The converters run at their target rate only.
     u(
         "~dc",
