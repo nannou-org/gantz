@@ -1363,10 +1363,13 @@ enum SpawnError {
     Permanent,
 }
 
-/// Hash of a part's bus wiring. Every read and write's key, width and param.
-/// Combined with the def's structural sig for the keep or replace decision. A
-/// re-route that keeps the def, for example an instance inlet fed from a
-/// different source, still respawns, crossfading onto the new buses.
+/// Hash of a part's bus and buffer wiring. Every bus read and write's key,
+/// width and param, and every buffer binding. Combined with the def's
+/// structural sig for the keep or replace decision. A re-route that keeps
+/// the def, for example an instance inlet fed from a different source, still
+/// respawns, crossfading onto the new buses. So does a new buffer, for
+/// example a `~playbuf` given another asset. The driver never rebinds a
+/// running synth to another buffer.
 fn wiring_hash(part: &ResolvedPart) -> u64 {
     use std::hash::{DefaultHasher, Hash, Hasher};
     let mut h = DefaultHasher::new();
@@ -1375,6 +1378,10 @@ fn wiring_hash(part: &ResolvedPart) -> u64 {
     }
     for b in &part.bus_writes {
         (1u8, &b.key, b.channels, b.param).hash(&mut h);
+    }
+    for b in &part.buffers {
+        let params = (b.bufnum_param, b.rate_param);
+        (2u8, &b.node_path, &b.asset, params, b.sample_rate.to_bits()).hash(&mut h);
     }
     h.finish()
 }
@@ -2417,6 +2424,39 @@ mod tests {
         }
         let rms = (out.iter().map(|v| v * v).sum::<f32>() / out.len() as f32).sqrt();
         assert!(rms > 0.05, "playbuf -> out must sound: rms={rms}");
+    }
+
+    /// A `~playbuf -> ~out` part playing the asset at `addr`.
+    fn playbuf_part(addr: ca::ContentAddr) -> ResolvedPart {
+        use gantz_core::edge::Edge;
+        use gantz_core::node::graph::Graph;
+        use gantz_plyphon::flatten::{Flat, RefKind, flatten};
+        let mut g = Graph::<TestN>::default();
+        let p = g.add_node(TestN::PlayBuf(gantz_plyphon::PlayBuf::new(
+            addr, 1, 48_000.0,
+        )));
+        let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
+        g.add_edge(p, o, Edge::new(0.into(), 0.into()));
+        let resolve =
+            |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
+        let flat: Graph<Flat<&TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
+        let mut cache = DefCache::new();
+        let template = derive_template(&flat, 1, &|_| None, &mut cache).expect("derive");
+        instantiate(&template, &cache).into_iter().next().unwrap()
+    }
+
+    /// A new asset on a `~playbuf` keeps the def, key and sig, since the
+    /// bufnum is a driver-set param. The wiring must still differ, or the
+    /// driver keeps the synth and it plays the old buffer.
+    #[test]
+    fn asset_swap_changes_the_wiring() {
+        let a = playbuf_part(ca::blob_addr(b"asset a"));
+        let b = playbuf_part(ca::blob_addr(b"asset b"));
+        assert_eq!(a.key, b.key);
+        assert_eq!(a.sig, b.sig);
+        assert_ne!(wiring_hash(&a), wiring_hash(&b));
+        let again = playbuf_part(ca::blob_addr(b"asset a"));
+        assert_eq!(wiring_hash(&a), wiring_hash(&again));
     }
 
     /// Multi-frame `structural_sync`. A `~sinosc -> ~out` head graph sounds,
