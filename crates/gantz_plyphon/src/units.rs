@@ -1958,7 +1958,7 @@ pub static UNITS: &[UnitDesc] = &[
         "Triangle window over input phase 0..1",
     ),
     uop!(
-        "~ramp",
+        "~opramp",
         "OpRamp",
         52,
         "in clamped into [0, 1]",
