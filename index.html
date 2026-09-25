@@ -205,6 +205,23 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
                 e.preventDefault();
             }
         });
+
+        // The same winit option also skips `preventDefault` on wheel events,
+        // so Ctrl+wheel (and trackpad pinch, which browsers report as
+        // Ctrl+wheel) would zoom the page as well as the graph scene.
+        // Document wheel listeners are passive by default, so opt out to be
+        // able to cancel the event.
+        document.addEventListener('wheel', (e) => {
+            if (e.ctrlKey) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        // Safari reports trackpad pinch as non-standard gesture events
+        // rather than Ctrl+wheel.
+        for (const name of ['gesturestart', 'gesturechange']) {
+            document.addEventListener(name, (e) => e.preventDefault());
+        }
     </script>
 </body>
 </html>
