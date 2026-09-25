@@ -62,8 +62,8 @@ use serde::de::DeserializeOwned;
 /// Parse a `.gantz` document into its [`Loaded`] registry, resolution context
 /// and preserved extra forms. Uses the node set's composite [`NodeSugar`].
 ///
-/// `now` provides the timestamp for any graph the `(commits ...)` table does not
-/// describe. Hand-authored graphs often have no commit entry.
+/// `now` provides the timestamp for hand-authored label graphs with no explicit
+/// commit. Concrete-addressed content never acquires invented history.
 pub fn from_str<N>(text: &str, now: Timestamp) -> Result<Loaded, FormatError>
 where
     N: Serialize + DeserializeOwned + Node + NodeSugar,
@@ -305,8 +305,8 @@ mod data_only_tests {
         registry.set_head("patch".parse().expect("valid name"), c_addr);
 
         let dumped = to_string_with(&registry, &CoreSugar, &[]).expect("raise from data alone");
-        let g = &gantz_ca::ContentAddr::from(g_addr).to_string()[..8];
-        let c = &gantz_ca::ContentAddr::from(c_addr).to_string()[..8];
+        let g = gantz_ca::ContentAddr::from(g_addr).to_string();
+        let c = gantz_ca::ContentAddr::from(c_addr).to_string();
         let expected = format!(
             "(graph \"{g}\"\n\
             \x20 (expr0 (expr (+ 1 2)))\n\

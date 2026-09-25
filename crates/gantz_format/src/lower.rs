@@ -71,7 +71,7 @@ struct Resolve<'a> {
 }
 
 /// Lower a parsed [`Document`] into a [`Loaded`] registry, synthesising root
-/// commits at `now` for any graph the `(commits ...)` table does not describe.
+/// commits at `now` for named label graphs with no explicit commit.
 pub fn lower<N>(doc: Document, now: Timestamp) -> Result<Loaded, FormatError>
 where
     N: Serialize + DeserializeOwned + gantz_core::Node,
@@ -107,15 +107,58 @@ pub fn lower_normalized(
 ) -> Result<Loaded, FormatError> {
     let Document {
         graphs,
-        commits,
-        names: name_decls,
+        mut commits,
+        names: mut name_decls,
         sections,
         extra,
     } = doc;
 
     // Index the document's three tables.
-    let graphs_by_id: HashMap<Addr, &GraphDef> = graphs.iter().map(|g| (g.id.clone(), g)).collect();
-    // The commit pointing at each graph id. At most one per graph.
+    let mut graphs_by_id = HashMap::new();
+    for graph in &graphs {
+        if graphs_by_id.insert(graph.id.clone(), graph).is_some() {
+            return Err(FormatError::malformed(format!(
+                "duplicate graph declaration {:?}",
+                graph.id
+            )));
+        }
+    }
+    let mut commit_declarations = HashMap::new();
+    for commit in &commits {
+        if commit_declarations.insert(commit.id.clone(), ()).is_some() {
+            return Err(FormatError::malformed(format!(
+                "duplicate commit declaration {:?}",
+                commit.id
+            )));
+        }
+    }
+    // Resolve prefixes against the complete declaration set before ordering.
+    // Looking only at already-built content makes ancestry and references
+    // depend on document order, and can hide an ambiguous prefix.
+    for commit in &mut commits {
+        for parent in commit.parent.iter_mut().chain(&mut commit.merge_parents) {
+            if let Some(id) = declared_id(parent, &commit_declarations)? {
+                *parent = id.clone();
+            }
+        }
+        if let Some(id) = declared_id(&commit.graph, &graphs_by_id)? {
+            commit.graph = id.clone();
+        }
+    }
+    let mut declared_names = std::collections::HashSet::new();
+    for name in &mut name_decls {
+        if !declared_names.insert(name.name.clone()) {
+            return Err(FormatError::malformed(format!(
+                "duplicate name declaration {:?}",
+                name.name
+            )));
+        }
+        if let Some(id) = declared_id(&name.commit, &commit_declarations)? {
+            name.commit = id.clone();
+        }
+    }
+    // The last declared commit for each graph supplies the friendly layout head.
+    // Every declared commit is retained independently below.
     let commit_for_graph: HashMap<Addr, &CommitDecl> =
         commits.iter().map(|c| (c.graph.clone(), c)).collect();
     // The graph id of each commit id.
@@ -123,19 +166,11 @@ pub fn lower_normalized(
         .iter()
         .map(|c| (c.id.clone(), c.graph.clone()))
         .collect();
-    // The names pointing at each commit id.
-    let mut names_of_commit: HashMap<Addr, Vec<String>> = HashMap::new();
-    for decl in &name_decls {
-        names_of_commit
-            .entry(decl.commit.clone())
-            .or_default()
-            .push(decl.name.clone());
-    }
 
     // The graph id of each name, used to order graphs by their references.
     let name_to_graph_id =
         compute_name_to_graph_id(&graphs, &name_decls, &commit_for_graph, &graph_of_commit);
-    let order = topo_order(&graphs, &graphs_by_id, &name_to_graph_id)?;
+    let order = topo_order(&graphs, &graphs_by_id, &name_to_graph_id, &graph_of_commit)?;
 
     let mut registry: Registry = Registry::default();
     let mut names: HashMap<String, CommitAddr> = HashMap::new();
@@ -146,6 +181,7 @@ pub fn lower_normalized(
     let mut known_graphs: Vec<GraphAddr> = Vec::new();
     let mut graph_head: HashMap<Addr, CommitAddr> = HashMap::new();
     let mut index: HashMap<Addr, HashMap<String, usize>> = HashMap::new();
+    let mut graph_ids = HashMap::new();
 
     for id in &order {
         let def = graphs_by_id[id];
@@ -159,42 +195,65 @@ pub fn lower_normalized(
         let g_addr = registry.add_graph(data_graph);
         known_graphs.push(g_addr);
         index.insert(id.clone(), index_map);
-
-        // Build the head commit from the table where present, else a fresh root.
-        let head = match commit_for_graph.get(id) {
-            Some(decl) => {
-                build_commit(&mut registry, decl, g_addr, &commit_ids, &mut known_commits)
-            }
-            None => {
-                let ca = registry.add_commit(Commit::new(now, None, g_addr));
-                known_commits.push(ca);
-                ca
-            }
-        };
-        graph_head.insert(id.clone(), head);
-
-        // Register names for this commit. Those are the explicit ones from the
-        // names table, plus an auto-name for a hand-authored label graph with
-        // no commit.
-        let mut register = |name: String| {
-            names.insert(name.clone(), head);
-            name_graphs.insert(name.clone(), g_addr);
-            registry.set_head(name.parse().expect("infallible"), head);
-        };
-        match commit_for_graph.get(id) {
-            Some(decl) => {
-                commit_ids.insert(decl.id.clone(), head);
-                commit_graphs.insert(decl.id.clone(), g_addr);
-                if let Some(ns) = names_of_commit.get(&decl.id) {
-                    ns.iter().for_each(|n| register(n.clone()));
-                }
-            }
-            None => {
-                if let Addr::Label(label) = id {
-                    register(label.clone());
-                }
+        graph_ids.insert(id.clone(), g_addr);
+        // References need graph identities, not commit identities. Register
+        // these before lowering history, whose parent order is independent.
+        for (name, graph_id) in &name_to_graph_id {
+            if graph_id == id {
+                name_graphs.insert(name.clone(), g_addr);
             }
         }
+        for decl in commits.iter().filter(|decl| &decl.graph == id) {
+            commit_graphs.insert(decl.id.clone(), g_addr);
+        }
+        if let Addr::Label(label) = id
+            && !commit_for_graph.contains_key(id)
+        {
+            let head = registry.add_commit(Commit::new(now, None, g_addr));
+            known_commits.push(head);
+            graph_head.insert(id.clone(), head);
+            names.insert(label.clone(), head);
+            registry.set_head(label.parse().expect("infallible"), head);
+        }
+    }
+
+    // Lower every commit only after its declared parents. Equal graph content,
+    // equal timestamps and merge parents must not collapse historical identity.
+    let declarations: HashMap<_, _> = commits.iter().map(|decl| (decl.id.clone(), decl)).collect();
+    let mut pending: Vec<_> = commits.iter().collect();
+    while !pending.is_empty() {
+        let before = pending.len();
+        let mut deferred = Vec::new();
+        for decl in pending {
+            if decl
+                .parent
+                .iter()
+                .chain(&decl.merge_parents)
+                .any(|parent| declarations.contains_key(parent) && !commit_ids.contains_key(parent))
+            {
+                deferred.push(decl);
+                continue;
+            }
+            let graph = graph_ids.get(&decl.graph).copied().ok_or_else(|| {
+                FormatError::new(ErrorKind::MissingDependency(format!("{:?}", decl.graph)))
+            })?;
+            let head = build_commit(&mut registry, decl, graph, &commit_ids, &mut known_commits);
+            commit_ids.insert(decl.id.clone(), head);
+        }
+        if deferred.len() == before {
+            return Err(FormatError::malformed("commit ancestry contains a cycle"));
+        }
+        pending = deferred;
+    }
+    for (id, decl) in &commit_for_graph {
+        graph_head.insert(id.clone(), commit_ids[&decl.id]);
+    }
+    for decl in name_decls {
+        let head = commit_ids.get(&decl.commit).copied().ok_or_else(|| {
+            FormatError::new(ErrorKind::MissingDependency(format!("{:?}", decl.commit)))
+        })?;
+        names.insert(decl.name.clone(), head);
+        registry.set_head(decl.name.parse().expect("infallible"), head);
     }
 
     // Apply generic metadata sections, semantics as declared in the text.
@@ -220,6 +279,26 @@ pub fn lower_normalized(
         names,
         extra,
     })
+}
+
+/// Resolve labels exactly and address prefixes uniquely across all declarations.
+fn declared_id<'a, T>(
+    address: &Addr,
+    declarations: &'a HashMap<Addr, T>,
+) -> Result<Option<&'a Addr>, FormatError> {
+    let Addr::Concrete(prefix) = address else {
+        return Ok(declarations.get_key_value(address).map(|(id, _)| id));
+    };
+    let mut matches = declarations.keys().filter(|id| {
+        matches!(id, Addr::Concrete(declared) if declared.starts_with(prefix) || prefix.starts_with(declared))
+    });
+    let first = matches.next();
+    if matches.next().is_some() {
+        return Err(FormatError::new(ErrorKind::BadAddr(format!(
+            "ambiguous address prefix {prefix:?}"
+        ))));
+    }
+    Ok(first)
 }
 
 /// Convert a text-form section key to a registry key. Malformed hex keys are
@@ -371,10 +450,8 @@ fn build_commit(
         .filter_map(|addr| resolve_parent(&Some(addr.clone()), commit_ids, known))
         .collect();
     let commit_ca = registry.add_commit(commit);
-    // A declared id may not match the recomputed address. The format keeps
-    // only the head commit per graph, so a dropped parent re-roots the commit
-    // and changes its hash. This is routine and refs recover by name in
-    // `resolve_ref_value`, so it is logged at debug rather than warned.
+    // A declared id may not match the recomputed address when a document omits
+    // a parent or normalization changes a node's canonical representation.
     if let Addr::Concrete(hex) = &decl.id {
         let computed = ContentAddr::from(commit_ca).to_string();
         if !computed.starts_with(hex.as_str()) {
@@ -389,13 +466,15 @@ fn build_commit(
 }
 
 /// Resolve a commit's declared parent to a present commit. A parent absent from
-/// the document re-roots the commit. This is routine, since the format keeps
-/// only the head commit per graph, so it is logged at debug rather than warned.
+/// the document re-roots the commit and is logged at debug rather than warned.
 fn resolve_parent(
     parent: &Option<Addr>,
     commit_ids: &HashMap<Addr, CommitAddr>,
     known: &[CommitAddr],
 ) -> Option<CommitAddr> {
+    if let Some(ca) = parent.as_ref().and_then(|addr| commit_ids.get(addr)) {
+        return Some(*ca);
+    }
     match parent {
         None => None,
         Some(addr @ Addr::Label(label)) => match commit_ids.get(addr) {
@@ -445,6 +524,7 @@ fn topo_order(
     graphs: &[GraphDef],
     graphs_by_id: &HashMap<Addr, &GraphDef>,
     name_to_graph_id: &HashMap<String, Addr>,
+    graph_of_commit: &HashMap<Addr, Addr>,
 ) -> Result<Vec<Addr>, FormatError> {
     let mut order = Vec::new();
     let mut state: HashMap<Addr, u8> = HashMap::new(); // 0 visiting, 1 done
@@ -453,6 +533,7 @@ fn topo_order(
             &def.id,
             graphs_by_id,
             name_to_graph_id,
+            graph_of_commit,
             &mut state,
             &mut order,
         )?;
@@ -464,6 +545,7 @@ fn visit(
     id: &Addr,
     graphs_by_id: &HashMap<Addr, &GraphDef>,
     name_to_graph_id: &HashMap<String, Addr>,
+    graph_of_commit: &HashMap<Addr, Addr>,
     state: &mut HashMap<Addr, u8>,
     order: &mut Vec<Addr>,
 ) -> Result<(), FormatError> {
@@ -478,10 +560,25 @@ fn visit(
     }
     state.insert(id.clone(), 0);
     if let Some(def) = graphs_by_id.get(id) {
-        for name in referenced_names(&def.body) {
-            if let Some(dep) = name_to_graph_id.get(&name) {
+        for node in &def.body.nodes {
+            let NodeSpec::Ref(reference) = &node.spec else {
+                continue;
+            };
+            let pinned = match &reference.addr {
+                Some(addr @ Addr::Label(_)) => graph_of_commit.get(addr),
+                Some(addr @ Addr::Concrete(_)) => declared_id(addr, graphs_by_id)?,
+                None => None,
+            };
+            if let Some(dep) = pinned.or_else(|| name_to_graph_id.get(&reference.name)) {
                 if graphs_by_id.contains_key(dep) {
-                    visit(dep, graphs_by_id, name_to_graph_id, state, order)?;
+                    visit(
+                        dep,
+                        graphs_by_id,
+                        name_to_graph_id,
+                        graph_of_commit,
+                        state,
+                        order,
+                    )?;
                 }
             }
         }
@@ -489,18 +586,6 @@ fn visit(
     state.insert(id.clone(), 1);
     order.push(id.clone());
     Ok(())
-}
-
-/// All names referenced by `ref` or `fn-ref` within a graph body.
-fn referenced_names(body: &GraphBody) -> Vec<String> {
-    let mut names = Vec::new();
-    for decl in &body.nodes {
-        match &decl.spec {
-            NodeSpec::Ref(r) => names.push(r.name.clone()),
-            NodeSpec::Value(_) => {}
-        }
-    }
-    names
 }
 
 /// Resolve a concrete address to a present commit. The address is full hex or

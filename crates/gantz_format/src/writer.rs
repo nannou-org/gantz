@@ -10,7 +10,7 @@ use crate::model::{
     Addr, CommitDecl, Conn, Document, Endpoint, GraphBody, NameDecl, NodeDecl, NodeSpec,
     SectionForm, SectionKey,
 };
-use crate::sexpr::quote;
+use crate::sexpr::{quote, symbol};
 use crate::sugar::Sugar;
 
 /// Serialize a [`Document`]'s registry forms to `.gantz` text, rendering node
@@ -70,8 +70,12 @@ fn write_graph_body(
 
 fn write_node_decl(out: &mut String, decl: &NodeDecl, sugar: &dyn Sugar) {
     match &decl.spec {
-        NodeSpec::Value(v) => out.push_str(&format!("({} {})", decl.name, value_spec(v, sugar))),
-        NodeSpec::Ref(r) => out.push_str(&format!("({} {})", decl.name, ref_spec(r))),
+        NodeSpec::Value(v) => out.push_str(&format!(
+            "({} {})",
+            symbol(&decl.name),
+            value_spec(v, sugar)
+        )),
+        NodeSpec::Ref(r) => out.push_str(&format!("({} {})", symbol(&decl.name), ref_spec(r))),
     }
 }
 
@@ -84,7 +88,7 @@ fn value_spec(v: &Datum, sugar: &dyn Sugar) -> String {
 
 fn ref_spec(r: &crate::model::RefSpec) -> String {
     let keyword = if r.func { "fn-ref" } else { "ref" };
-    let mut s = format!("({keyword} {}", r.name);
+    let mut s = format!("({keyword} {}", symbol(&r.name));
     if let Some(addr) = &r.addr {
         s.push(' ');
         s.push_str(&addr_text(addr));
@@ -125,9 +129,9 @@ fn conn_text(conn: &Conn) -> String {
 
 fn endpoint_text(ep: &Endpoint) -> String {
     if ep.port == 0 {
-        ep.node.clone()
+        symbol(&ep.node)
     } else {
-        format!("({} {})", ep.node, ep.port)
+        format!("({} {})", symbol(&ep.node), ep.port)
     }
 }
 
@@ -155,7 +159,11 @@ fn commit_text(c: &CommitDecl) -> String {
 fn write_names(out: &mut String, names: &[NameDecl]) {
     out.push_str("(names");
     for n in names {
-        out.push_str(&format!("\n  ({} {})", n.name, addr_text(&n.commit)));
+        out.push_str(&format!(
+            "\n  ({} {})",
+            symbol(&n.name),
+            addr_text(&n.commit)
+        ));
     }
     out.push(')');
 }
@@ -178,7 +186,7 @@ fn write_section(out: &mut String, section: &SectionForm) {
     ));
     for (key, value) in &section.entries {
         let key = match key {
-            SectionKey::Name(name) => format!("(name {name})"),
+            SectionKey::Name(name) => format!("(name {})", symbol(name)),
             SectionKey::Commit(hex) => format!("(commit {})", quote(hex)),
             SectionKey::Graph(hex) => format!("(graph {})", quote(hex)),
             SectionKey::Addr(hex) => format!("(addr {})", quote(hex)),
@@ -191,6 +199,6 @@ fn write_section(out: &mut String, section: &SectionForm) {
 fn addr_text(addr: &Addr) -> String {
     match addr {
         Addr::Concrete(hex) => quote(hex),
-        Addr::Label(label) => label.clone(),
+        Addr::Label(label) => symbol(label),
     }
 }
