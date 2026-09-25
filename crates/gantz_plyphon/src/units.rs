@@ -1768,6 +1768,42 @@ pub static UNITS: &[UnitDesc] = &[
         &["1 once silent for time, else 0"],
         "Flag once the input has stayed below a threshold for a duration",
     ),
+    // Physical models
+    u(
+        "~spring",
+        "Spring",
+        &[
+            sig("in", "driving force"),
+            par("spring", 1.0, 0.0, 100.0, "", "spring constant"),
+            par("damping", 0.0, 0.0, 1.0, "", "damping"),
+        ],
+        &["spring force"],
+        "Damped mass on a spring driven by the input force",
+    ),
+    u(
+        "~ball",
+        "Ball",
+        &[
+            sig("in", "floor position"),
+            par("gravity", 1.0, 0.0, 100.0, "", "gravity"),
+            par("damping", 0.0, 0.0, 1.0, "", "bounce damping"),
+            par("friction", 0.01, 0.0, 1.0, "", "friction"),
+        ],
+        &["ball height"],
+        "Ball bouncing on a moving floor under gravity",
+    ),
+    u(
+        "~tball",
+        "TBall",
+        &[
+            sig("in", "floor position"),
+            par("gravity", 10.0, 0.0, 100.0, "", "gravity"),
+            par("damping", 0.0, 0.0, 1.0, "", "bounce damping"),
+            par("friction", 0.01, 0.0, 1.0, "", "friction"),
+        ],
+        &["collision velocity impulses"],
+        "Bouncing ball as a trigger: the collision velocity at each bounce",
+    ),
     // Pan and mix
     u(
         "~pan2",
