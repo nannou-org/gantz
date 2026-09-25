@@ -402,7 +402,9 @@ fn apply_join_snapshot(
             // Adopt over the placeholder minted at join time. The resolve
             // path recognises it and navigates the open head.
             Some(local) if state.placeholder == Some(local) => {
-                resolve_tip(state, ctx, &name, tip, resolutions);
+                if resolve_tip(state, ctx, &name, tip, resolutions) {
+                    sessions.dirty = true;
+                }
             }
             Some(local) => match ca::plan_sync_step(ctx.registry.commits(), local, tip) {
                 ca::SyncStep::Unrelated => {
@@ -422,7 +424,9 @@ fn apply_join_snapshot(
                 _ => {
                     // Behind, ahead or diverged. Use the live convergence
                     // path.
-                    resolve_tip(state, ctx, &name, tip, resolutions);
+                    if resolve_tip(state, ctx, &name, tip, resolutions) {
+                        sessions.dirty = true;
+                    }
                 }
             },
         }
@@ -531,7 +535,9 @@ fn start_fetch(
     let want = compute_want(&ctx.registry, &mut pending);
     if want.is_empty() {
         let resolutions = state.session.resolutions;
-        resolve_tip(state, ctx, &name, tip, resolutions);
+        if resolve_tip(state, ctx, &name, tip, resolutions) {
+            sessions.dirty = true;
+        }
         return;
     }
     pending.last_want = Some(want.refs.clone());
@@ -634,7 +640,9 @@ fn feed_objects(
             let tip = pending.tip;
             match pending.staged.apply(&mut ctx.registry) {
                 Ok(_) => {
-                    resolve_tip(state, ctx, &name, tip, resolutions);
+                    if resolve_tip(state, ctx, &name, tip, resolutions) {
+                        sessions.dirty = true;
+                    }
                 }
                 Err(e) => log::warn!("fetch: closure for '{name}' failed to apply: {e}"),
             }
@@ -706,13 +714,16 @@ fn compute_want(registry: &ca::Registry, pending: &mut PendingTip) -> Want {
 /// migrates VM state, layout and selection and fires the committed
 /// machinery. Background names move headlessly, followed by a reference
 /// resync.
+///
+/// Returns whether a merge commit was minted. A minted merge is local
+/// content peers have not seen, so the caller marks the sessions dirty.
 fn resolve_tip(
     state: &mut SessionState,
     ctx: &mut SyncCtx<'_, '_>,
     name: &ca::Name,
     tip: ca::CommitAddr,
     resolutions: ca::merge::Resolutions,
-) {
+) -> bool {
     let SyncCtx {
         registry,
         open,
@@ -724,7 +735,7 @@ fn resolve_tip(
         registry.set_head(name.clone(), tip);
         state.last_announced.insert(name.clone(), tip);
         cmds.trigger(bevy_gantz_egui::ResyncRefsEvent);
-        return;
+        return false;
     };
     // The join flow's placeholder is unrelated to the session content it
     // awaits by design. Adopt over it rather than surface `Unrelated`.
@@ -735,12 +746,12 @@ fn resolve_tip(
         .find(|(_, hr)| matches!(&hr.0, ca::Head::Branch(n) if n == name))
         .map(|(entity, _)| entity);
     match (open_entity, plan) {
-        (_, ca::SyncStep::UpToDate) => (),
-        (_, ca::SyncStep::Adopt(t)) if t == local => (),
+        (_, ca::SyncStep::UpToDate) => false,
+        (_, ca::SyncStep::Adopt(t)) if t == local => false,
         (open_entity, ca::SyncStep::Unrelated) => {
             if !adopt_unrelated {
                 log::warn!("session: remote tip for '{name}' shares no local history; ignoring");
-                return;
+                return false;
             }
             state.placeholder = None;
             state.last_announced.insert(name.clone(), tip);
@@ -762,6 +773,7 @@ fn resolve_tip(
                     cmds.trigger(bevy_gantz_egui::ResyncRefsEvent);
                 }
             }
+            false
         }
         (Some(entity), plan) => {
             // Adoptions of received tips are not re-announced.
@@ -776,11 +788,13 @@ fn resolve_tip(
                     adopt_unrelated: false,
                 },
             });
+            false
         }
         (None, ca::SyncStep::FastForward(t) | ca::SyncStep::Adopt(t)) => {
             registry.set_head(name.clone(), t);
             state.last_announced.insert(name.clone(), t);
             cmds.trigger(bevy_gantz_egui::ResyncRefsEvent);
+            false
         }
         (None, ca::SyncStep::Merge { first, second }) => {
             match ca::merge_commits(registry, first, second, resolutions) {
@@ -809,11 +823,14 @@ fn resolve_tip(
                         &mut branch_head,
                     );
                     bevy_gantz_egui::seed_view(registry, minted, seeded);
-                    // A minted merge must be announced.
                     cmds.trigger(bevy_gantz_egui::ResyncRefsEvent);
+                    true
                 }
-                Ok(_) => (),
-                Err(e) => log::warn!("session: headless merge of '{name}' failed: {e}"),
+                Ok(_) => false,
+                Err(e) => {
+                    log::warn!("session: headless merge of '{name}' failed: {e}");
+                    false
+                }
             }
         }
     }
