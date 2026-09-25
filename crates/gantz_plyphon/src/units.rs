@@ -368,6 +368,20 @@ const fn buf(name: &'static str, doc: &'static str) -> In {
     }
 }
 
+/// A writable [`In::Buffer`] row entry. It accepts only a `~buffer`.
+const fn buf_mut(name: &'static str, doc: &'static str) -> In {
+    In::Buffer {
+        name,
+        doc,
+        access: BufferAccess::Write,
+    }
+}
+
+/// An [`In::Group`] row entry.
+const fn group(name: &'static str, doc: &'static str) -> In {
+    In::Group { name, doc }
+}
+
 /// A [`UnitDesc`] row.
 const fn u(
     keyword: &'static str,
@@ -394,6 +408,14 @@ const fn u(
 const fn buf_channels(socket: &'static str, desc: UnitDesc) -> UnitDesc {
     UnitDesc {
         emit: Emit::BufferChannels { socket },
+        ..desc
+    }
+}
+
+/// Make the row a buffer-writing sink. See [`Emit::Sink`].
+const fn sink(desc: UnitDesc) -> UnitDesc {
+    UnitDesc {
+        emit: Emit::Sink,
         ..desc
     }
 }
@@ -2837,6 +2859,70 @@ pub static UNITS: &[UnitDesc] = &[
             "Read a buffer at a position that a signal sets",
         ),
     ),
+    // Buffer writers. They write a `~buffer` and run without an `~out`.
+    sink(u(
+        "~bufwr",
+        "BufWr",
+        &[
+            buf_mut("buf", "buffer to write"),
+            sig(
+                "phase",
+                "write position in frames, for example from a `~phasor`",
+            ),
+            par(
+                "loop",
+                1.0,
+                0.0,
+                1.0,
+                "",
+                "1 wraps the position, 0 clamps it",
+            ),
+            group(
+                "in",
+                "signal to write, one buffer channel per signal channel",
+            ),
+        ],
+        &[],
+        "Write a signal into a buffer at a position that a signal sets",
+    )),
+    sink(u(
+        "~recordbuf",
+        "RecordBuf",
+        &[
+            buf_mut("buf", "buffer to record into"),
+            init(
+                "offset",
+                0.0,
+                "frame to start at, and to jump to on a trigger. Set at spawn",
+            ),
+            par("reclevel", 1.0, 0.0, 2.0, "", "level of the new signal"),
+            par(
+                "prelevel",
+                0.0,
+                0.0,
+                2.0,
+                "",
+                "level of the existing contents. Above 0 overdubs",
+            ),
+            par(
+                "run",
+                1.0,
+                -1.0,
+                1.0,
+                "",
+                "1 records forward, 0 pauses, -1 records backward",
+            ),
+            par("loop", 1.0, 0.0, 1.0, "", "1 loops, 0 stops at the end"),
+            sig("trigger", "jump to the offset on a rising edge"),
+            baked(0.0),
+            group(
+                "in",
+                "signal to record, one buffer channel per signal channel",
+            ),
+        ],
+        &[],
+        "Record a signal into a buffer, looping by default",
+    )),
     // Operators. One row per operator in plyphon's dispatch tables, which
     // follow SC's operator indices. Defaults for `b` are 1 for multiplicative
     // operators and 0 otherwise.

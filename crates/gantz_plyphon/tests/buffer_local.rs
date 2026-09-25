@@ -108,6 +108,7 @@ enum N {
     Src(Src),
     Reader(Reader),
     Writer(Writer),
+    Sample(gantz_plyphon::Sample),
     Unit(UnitNode),
     Out(Out),
     Bus(Bus),
@@ -124,6 +125,7 @@ impl ToNodeDsp for N {
             N::Src(n) => Some(n),
             N::Reader(n) => Some(n),
             N::Writer(n) => Some(n),
+            N::Sample(n) => Some(n),
             N::Unit(n) => Some(n),
             N::Out(n) => Some(n),
             N::Bus(n) => Some(n),
@@ -499,4 +501,55 @@ fn unconnected_playbuf_reads_minus_one_without_a_rate_scale() {
     assert!(is_minus_one(playbuf.inputs[0]));
     assert_eq!(playbuf.num_outputs, 1);
     assert!(def.units.iter().all(|u| u.name != "BufRateScale"));
+}
+
+/// The socket index of `name` on the table row for `unit`.
+fn socket(unit: &str, name: &str) -> u16 {
+    let desc = gantz_plyphon::unit_desc(unit).expect("row");
+    desc.sockets()
+        .position(|i| i.name() == Some(name))
+        .expect("socket") as u16
+}
+
+#[test]
+fn recordbuf_runs_without_out_and_broadcasts_its_input() {
+    // A mono sine into a two-channel buffer writes both channels.
+    let mut g = Graph::<N>::default();
+    let s = g.add_node(N::Src(Src));
+    let sine = g.add_node(sinosc());
+    let rec = g.add_node(N::Unit(UnitNode::from_unit("RecordBuf").expect("row")));
+    edge(&mut g, s, rec, socket("RecordBuf", "buf"));
+    edge(&mut g, sine, rec, socket("RecordBuf", "in"));
+    let derived = derive_synthdef(&g, 1, "t").expect("a writer is a sink");
+    let def = &derived.def;
+    let rec = unit(def, "RecordBuf");
+    assert_eq!(param_of(def, rec.inputs[0]), Some("0/bufnum"));
+    assert!(
+        matches!(rec.inputs[1], InputRef::Constant(c) if c == 0.0),
+        "offset"
+    );
+    assert!(
+        matches!(rec.inputs[7], InputRef::Constant(c) if c == 0.0),
+        "doneAction"
+    );
+    assert_eq!(rec.inputs.len(), 8 + 2, "one input per buffer channel");
+    assert!(matches!(rec.inputs[8], InputRef::Unit { .. }));
+    assert_eq!(
+        format!("{:?}", rec.inputs[8]),
+        format!("{:?}", rec.inputs[9])
+    );
+    assert_eq!(rec.num_outputs, 1);
+}
+
+#[test]
+fn write_socket_rejects_an_asset() {
+    let mut g = Graph::<N>::default();
+    let addr = gantz_ca::blob_addr(b"shared");
+    let s = g.add_node(N::Sample(gantz_plyphon::Sample::new(addr, 1, 64, 48_000.0)));
+    let sine = g.add_node(sinosc());
+    let rec = g.add_node(N::Unit(UnitNode::from_unit("RecordBuf").expect("row")));
+    edge(&mut g, s, rec, socket("RecordBuf", "buf"));
+    edge(&mut g, sine, rec, socket("RecordBuf", "in"));
+    let def = derive_synthdef(&g, 1, "t").expect("derive").def;
+    assert!(is_minus_one(unit(&def, "RecordBuf").inputs[0]));
 }

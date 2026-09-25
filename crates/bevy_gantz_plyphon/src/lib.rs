@@ -2578,6 +2578,97 @@ mod tests {
         assert!(rms > 0.05, "playbuf -> out must sound: rms={rms}");
     }
 
+    /// End-to-end looper. A sine records into a `~buffer` through
+    /// `~recordbuf`, and a `~playbuf` reads the same buffer into `~out`. The
+    /// writer and the reader are separate parts, so this also checks that
+    /// both parts bind one scratch buffer.
+    #[test]
+    fn recordbuf_and_playbuf_share_a_scratch_buffer() {
+        use gantz_core::edge::Edge;
+        use gantz_core::node::graph::Graph;
+        use gantz_plyphon::flatten::{Flat, RefKind, flatten};
+
+        let socket = |unit: &str, name: &str| {
+            let desc = gantz_plyphon::unit_desc(unit).expect("row");
+            desc.sockets().position(|i| i.name() == Some(name)).unwrap() as u16
+        };
+        let mut g = Graph::<TestN>::default();
+        let sine = g.add_node(sinosc());
+        let buf = g.add_node(TestN::Buffer(gantz_plyphon::Buffer::new(4_800, 1)));
+        let rec = g.add_node(unit("RecordBuf"));
+        let play = g.add_node(unit("PlayBuf"));
+        let out = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
+        g.add_edge(
+            sine,
+            rec,
+            Edge::new(0.into(), socket("RecordBuf", "in").into()),
+        );
+        g.add_edge(
+            buf,
+            rec,
+            Edge::new(0.into(), socket("RecordBuf", "buf").into()),
+        );
+        g.add_edge(
+            buf,
+            play,
+            Edge::new(0.into(), socket("PlayBuf", "buf").into()),
+        );
+        g.add_edge(play, out, Edge::new(0.into(), 0.into()));
+        let resolve =
+            |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
+        let flat: Graph<Flat<&TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
+        let mut cache = DefCache::new();
+        let template = derive_template(&flat, 1, &|_| None, &mut cache).expect("derive");
+        let parts = instantiate(&template, &cache);
+        assert_eq!(
+            parts.len(),
+            2,
+            "the writer and the reader are separate parts"
+        );
+
+        let (mut controller, _nrt, mut world) = plyphon::engine(plyphon::Options {
+            sample_rate: 48_000.0,
+            output_channels: 1,
+            ..plyphon::Options::default()
+        });
+        let mut state = HeadSynths::default();
+        let entity = entities(1)[0];
+        let mut synths = Vec::new();
+        for part in parts {
+            let wiring = wiring_hash(&part);
+            let synth = spawn_part(
+                &mut controller,
+                &mut state,
+                &EMPTY_BUFFERS,
+                entity,
+                part,
+                wiring,
+                48_000.0,
+                None,
+                false,
+            )
+            .expect("spawn_part");
+            synths.push(synth);
+        }
+        let key = BufferKey::Scratch {
+            head: entity,
+            path: vec![buf.index()],
+            frames: 4_800,
+            channels: 1,
+        };
+        assert_eq!(state.held.len(), 1, "one scratch buffer for both parts");
+        assert_eq!(state.held.get(&key).map(|h| h.refcount), Some(2));
+
+        let mut out = vec![0.0f32; 48_000 / 2];
+        for block in out.chunks_mut(64) {
+            world.fill(block, 1);
+        }
+        // Skip the first loop of the buffer, while it fills.
+        let tail = &out[out.len() / 2..];
+        let rms = (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt();
+        assert!(rms > 0.05, "the recorded sine must play back: rms={rms}");
+    }
+
     /// A `~sample -> ~playbuf -> ~out` part playing the mono asset at `addr`.
     fn playbuf_part(addr: ca::ContentAddr) -> ResolvedPart {
         use gantz_core::edge::Edge;
@@ -2899,6 +2990,7 @@ mod tests {
         Pack(gantz_plyphon::Pack),
         Unpack(gantz_plyphon::Unpack),
         Sample(gantz_plyphon::Sample),
+        Buffer(gantz_plyphon::Buffer),
         Inlet,
         Outlet,
         Ref(gantz_ca::ContentAddr, usize, usize, bool),
@@ -2927,6 +3019,7 @@ mod tests {
                 TestN::Pack(p) => erase_node_typed(p).unwrap(),
                 TestN::Unpack(u) => erase_node_typed(u).unwrap(),
                 TestN::Sample(s) => erase_node_typed(s).unwrap(),
+                TestN::Buffer(b) => erase_node_typed(b).unwrap(),
                 TestN::Inlet => {
                     erase_node_typed(&gantz_core::node::graph::Inlet::default()).unwrap()
                 }
@@ -2961,6 +3054,7 @@ mod tests {
                 TestN::Pack(p) => Some(p),
                 TestN::Unpack(u) => Some(u),
                 TestN::Sample(s) => Some(s),
+                TestN::Buffer(b) => Some(b),
                 TestN::Inlet | TestN::Outlet | TestN::Ref(..) => None,
             }
         }
