@@ -1723,6 +1723,51 @@ pub static UNITS: &[UnitDesc] = &[
         &["amplitude envelope"],
         "Amplitude (envelope) follower",
     ),
+    u(
+        "~compander",
+        "Compander",
+        &[
+            sig("in", "signal to process"),
+            sig(
+                "control",
+                "side-chain whose amplitude sets the gain. Wire in here too for a \
+                 plain compressor",
+            ),
+            par("thresh", 0.5, 0.0, 1.0, "", "amplitude threshold"),
+            par(
+                "slopebelow",
+                1.0,
+                0.0,
+                10.0,
+                "",
+                "gain slope below the threshold",
+            ),
+            par(
+                "slopeabove",
+                1.0,
+                0.0,
+                10.0,
+                "",
+                "gain slope above the threshold",
+            ),
+            par("clamptime", 0.01, 0.0, 1.0, " s", "follower attack time"),
+            par("relaxtime", 0.1, 0.0, 10.0, " s", "follower release time"),
+        ],
+        &["processed signal"],
+        "Compressor, expander or gate driven by a side-chain amplitude",
+    ),
+    u(
+        "~detectsilence",
+        "DetectSilence",
+        &[
+            sig("in", "signal to watch"),
+            par("amp", 0.0001, 0.0, 1.0, "", "silence threshold"),
+            par("time", 0.1, 0.0, 60.0, " s", "how long it must stay silent"),
+            baked(0.0),
+        ],
+        &["1 once silent for time, else 0"],
+        "Flag once the input has stayed below a threshold for a duration",
+    ),
     // Pan and mix
     u(
         "~pan2",
