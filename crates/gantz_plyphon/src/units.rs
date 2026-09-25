@@ -27,7 +27,7 @@
 //! [`UnitRate::Fixed`] rate. plyphon does not reject an incorrect rate, so
 //! the table must.
 
-use crate::dsp::NodeRate;
+use crate::dsp::{BufferAccess, NodeRate};
 
 /// How one plyphon input of a wrapped unit is fed.
 ///
@@ -79,21 +79,95 @@ pub enum In {
         /// The inspector row's doc line.
         doc: &'static str,
     },
+    /// A buffer socket. It takes the bufnum wire of one buffer source, such
+    /// as `~sample` or `~buffer`. Unconnected, fed any other wire, or fed a
+    /// source that `access` does not allow, it feeds `-1`, which reads an
+    /// empty buffer slot.
+    Buffer {
+        /// The socket's name.
+        name: &'static str,
+        /// The socket's doc line.
+        doc: &'static str,
+        /// Whether the unit only reads the buffer or also writes it.
+        access: BufferAccess,
+    },
+    /// A socket whose whole channel group feeds the unit as trailing inputs,
+    /// one input per channel, for example the signals `BufWr` writes. It
+    /// must be the last entry. If the row has a write buffer, the group is
+    /// cut or padded to the buffer's channel count, and a mono signal feeds
+    /// every channel.
+    Group {
+        /// The socket's name.
+        name: &'static str,
+        /// The socket's doc line.
+        doc: &'static str,
+    },
 }
 
 impl In {
     /// The entry's socket or inspector name. `Baked` has none.
     pub fn name(&self) -> Option<&'static str> {
         match self {
-            In::Signal { name, .. } | In::Param { name, .. } | In::Init { name, .. } => Some(name),
+            In::Signal { name, .. }
+            | In::Param { name, .. }
+            | In::Init { name, .. }
+            | In::Buffer { name, .. }
+            | In::Group { name, .. } => Some(name),
             In::Baked(_) => None,
         }
     }
 
     /// Whether this entry is a socket, a dsp input port.
     pub fn is_socket(&self) -> bool {
-        matches!(self, In::Signal { .. } | In::Param { .. })
+        matches!(
+            self,
+            In::Signal { .. } | In::Param { .. } | In::Buffer { .. } | In::Group { .. }
+        )
     }
+}
+
+/// How a row emits its unit and outputs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Emit {
+    /// One unit per channel of the widest connected input. Output port `j`
+    /// groups every unit's `j`th output. Most rows use this.
+    Expand,
+    /// One unit. Each wire feeds its first channel. Each output port is
+    /// mono. For units that write a buffer, where one unit per channel would
+    /// write the buffer more than once.
+    Single,
+    /// One unit whose output count is the channel count of the buffer at
+    /// the named buffer socket, one channel when the buffer is unknown. The
+    /// row has one output port, as wide as the buffer.
+    BufferChannels {
+        /// The name of the [`In::Buffer`] entry.
+        socket: &'static str,
+    },
+    /// One unit whose output count is an init-only value. The row has one
+    /// output port of that width. The value is not a unit input.
+    InitChannels {
+        /// The value's name, its inspector label and sugar keyword.
+        name: &'static str,
+        /// The value a fresh node starts at.
+        default: f32,
+        /// The largest allowed value.
+        max: usize,
+        /// The inspector row's doc line.
+        doc: &'static str,
+    },
+    /// One buffer-writing unit with one silent output and no output ports.
+    /// The node is a sink, so it runs without an `~out`.
+    Sink,
+}
+
+/// Scale a row's playback-rate input by `BufRateScale` of its buffer, so a
+/// rate of 1 plays the buffer at its own pitch at any engine sample rate.
+#[derive(Clone, Copy, Debug)]
+pub struct RateScale {
+    /// The name of the rate input.
+    pub input: &'static str,
+    /// The name of the [`In::Buffer`] entry.
+    pub buffer: &'static str,
 }
 
 /// A [`UnitDesc`] emission override for scsynth's operator-selector units.
@@ -137,10 +211,15 @@ pub struct UnitDesc {
     pub rate: UnitRate,
     /// One entry per plyphon input, in plyphon input order.
     pub inputs: &'static [In],
-    /// One doc line per unit output (the node's dsp output ports).
+    /// One doc line per dsp output port. For [`Emit::Expand`] and
+    /// [`Emit::Single`] rows this is one line per unit output.
     pub outputs: &'static [&'static str],
     /// The palette/inspector description.
     pub doc: &'static str,
+    /// How the row emits its unit and outputs.
+    pub emit: Emit,
+    /// The rate input to scale by the buffer's rate, if any.
+    pub rate_scale: Option<RateScale>,
 }
 
 impl UnitDesc {
@@ -197,12 +276,25 @@ impl UnitDesc {
         })
     }
 
-    /// The init-only entries as `(name, default)`.
+    /// The init-only values as `(name, default)`. These are the
+    /// [`In::Init`] entries, then an [`Emit::InitChannels`] value.
     pub fn init_params(&self) -> impl Iterator<Item = (&'static str, f32)> + '_ {
-        self.inputs.iter().filter_map(|i| match i {
-            In::Init { name, default, .. } => Some((*name, *default)),
+        let channels = match self.emit {
+            Emit::InitChannels { name, default, .. } => Some((name, default)),
             _ => None,
-        })
+        };
+        self.inputs
+            .iter()
+            .filter_map(|i| match i {
+                In::Init { name, default, .. } => Some((*name, *default)),
+                _ => None,
+            })
+            .chain(channels)
+    }
+
+    /// Whether the `ix`th socket is a buffer socket.
+    pub fn is_buffer_socket(&self, ix: usize) -> bool {
+        matches!(self.sockets().nth(ix), Some(In::Buffer { .. }))
     }
 
     /// The default value of the `name`d init-only entry, if any.
@@ -214,8 +306,11 @@ impl UnitDesc {
     /// The `ix`th input socket's doc line.
     pub fn socket_doc(&self, ix: usize) -> Option<&'static str> {
         self.sockets().nth(ix).map(|i| match i {
-            In::Signal { doc, .. } | In::Param { doc, .. } => *doc,
-            _ => unreachable!("sockets() yields only socketed entries"),
+            In::Signal { doc, .. }
+            | In::Param { doc, .. }
+            | In::Buffer { doc, .. }
+            | In::Group { doc, .. } => *doc,
+            In::Baked(_) | In::Init { .. } => unreachable!("sockets() yields only sockets"),
         })
     }
 }
@@ -264,6 +359,15 @@ const fn init(name: &'static str, default: f32, doc: &'static str) -> In {
     In::Init { name, default, doc }
 }
 
+/// A read-only [`In::Buffer`] row entry.
+const fn buf(name: &'static str, doc: &'static str) -> In {
+    In::Buffer {
+        name,
+        doc,
+        access: BufferAccess::Read,
+    }
+}
+
 /// A [`UnitDesc`] row.
 const fn u(
     keyword: &'static str,
@@ -280,6 +384,8 @@ const fn u(
         inputs,
         outputs,
         doc,
+        emit: Emit::Expand,
+        rate_scale: None,
     }
 }
 
@@ -319,6 +425,8 @@ macro_rules! bop {
             ],
             outputs: &[$out],
             doc: $doc,
+            emit: Emit::Expand,
+            rate_scale: None,
         }
     };
 }
@@ -338,6 +446,8 @@ macro_rules! uop {
             inputs: &[sig("in", "input signal")],
             outputs: &[$out],
             doc: $doc,
+            emit: Emit::Expand,
+            rate_scale: None,
         }
     };
 }
@@ -2601,6 +2711,49 @@ pub static UNITS: &[UnitDesc] = &[
         &["sub-sample start offset, from 0 to 1"],
         "Fractional sample offset at which the synth started. Control rate only",
     )),
+    // Buffer info. Values of the buffer at the `buf` socket, 0 without one.
+    kr_only(u(
+        "~bufframes",
+        "BufFrames",
+        &[buf("buf", "buffer to measure")],
+        &["frame count"],
+        "Number of frames in a buffer. Control rate only",
+    )),
+    kr_only(u(
+        "~bufsamples",
+        "BufSamples",
+        &[buf("buf", "buffer to measure")],
+        &["sample count"],
+        "Number of samples in a buffer, frames times channels. Control rate only",
+    )),
+    kr_only(u(
+        "~bufdur",
+        "BufDur",
+        &[buf("buf", "buffer to measure")],
+        &["duration in seconds"],
+        "Duration of a buffer at its own sample rate. Control rate only",
+    )),
+    kr_only(u(
+        "~bufchannels",
+        "BufChannels",
+        &[buf("buf", "buffer to measure")],
+        &["channel count"],
+        "Number of channels in a buffer. Control rate only",
+    )),
+    kr_only(u(
+        "~bufsamplerate",
+        "BufSampleRate",
+        &[buf("buf", "buffer to measure")],
+        &["sample rate in Hz"],
+        "Sample rate of a buffer. Control rate only",
+    )),
+    kr_only(u(
+        "~bufratescale",
+        "BufRateScale",
+        &[buf("buf", "buffer to measure")],
+        &["buffer sample rate / engine sample rate"],
+        "Playback rate that plays a buffer at its own pitch. Control rate only",
+    )),
     // Operators. One row per operator in plyphon's dispatch tables, which
     // follow SC's operator indices. Defaults for `b` are 1 for multiplicative
     // operators and 0 otherwise.
@@ -3292,12 +3445,72 @@ mod tests {
     #[test]
     fn rows_are_well_formed() {
         for desc in UNITS {
-            assert!(
-                !desc.outputs.is_empty(),
-                "{}: a unit node needs at least one output",
-                desc.unit
-            );
+            match desc.emit {
+                Emit::Sink => assert!(
+                    desc.outputs.is_empty(),
+                    "{}: a sink row has no output ports",
+                    desc.unit
+                ),
+                Emit::BufferChannels { .. } | Emit::InitChannels { .. } => assert_eq!(
+                    desc.outputs.len(),
+                    1,
+                    "{}: a channel-sized row has one output port",
+                    desc.unit
+                ),
+                Emit::Expand | Emit::Single => assert!(
+                    !desc.outputs.is_empty(),
+                    "{}: a unit node needs at least one output",
+                    desc.unit
+                ),
+            }
+            let is_buffer = |name: &str| {
+                desc.inputs
+                    .iter()
+                    .any(|i| matches!(i, In::Buffer { name: n, .. } if *n == name))
+            };
+            if let Emit::BufferChannels { socket } = desc.emit {
+                assert!(is_buffer(socket), "{}: `{socket}` is no buffer", desc.unit);
+            }
+            if let Emit::Sink = desc.emit {
+                let writes = desc.inputs.iter().any(|i| {
+                    matches!(
+                        i,
+                        In::Buffer {
+                            access: BufferAccess::Write,
+                            ..
+                        }
+                    )
+                });
+                assert!(writes, "{}: a sink row writes a buffer", desc.unit);
+            }
+            if let Some(rs) = desc.rate_scale {
+                assert!(
+                    is_buffer(rs.buffer),
+                    "{}: `{}` is no buffer",
+                    desc.unit,
+                    rs.buffer
+                );
+                let scales = desc.inputs.iter().any(|i| {
+                    matches!(i, In::Param { .. } | In::Signal { .. } if i.name() == Some(rs.input))
+                });
+                assert!(
+                    scales,
+                    "{}: `{}` is no signal or param",
+                    desc.unit, rs.input
+                );
+            }
+            // A group feeds trailing inputs, so it comes last, and it needs
+            // one unit.
+            for (ix, input) in desc.inputs.iter().enumerate() {
+                if let In::Group { .. } = input {
+                    assert_eq!(ix + 1, desc.inputs.len(), "{}: group is last", desc.unit);
+                    assert_ne!(desc.emit, Emit::Expand, "{}: group expands", desc.unit);
+                }
+            }
             let mut names = HashSet::new();
+            if let Emit::InitChannels { name, .. } = desc.emit {
+                names.insert(name);
+            }
             for input in desc.inputs {
                 let Some(name) = input.name() else { continue };
                 assert!(
@@ -3367,6 +3580,12 @@ mod tests {
             ("NumBuffers", Control),
             ("NumRunningSynths", Control),
             ("SubsampleOffset", Control),
+            ("BufFrames", Control),
+            ("BufSamples", Control),
+            ("BufDur", Control),
+            ("BufChannels", Control),
+            ("BufSampleRate", Control),
+            ("BufRateScale", Control),
         ];
         assert_eq!(fixed, expected);
         for (unit, rate) in expected {

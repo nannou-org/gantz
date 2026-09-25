@@ -11,12 +11,13 @@ use gantz_plyphon::instance::{
     BusKey, DefCache, GraphTemplate, Part, derive_template, instantiate,
 };
 use gantz_plyphon::{
-    Bus, DspBuilder, NodeDsp, Out, Signal, ToNodeDsp, UnitNode, derive_synthdef, derive_synthdefs,
+    BufferSource, Bus, DspBuilder, NodeDsp, Out, Signal, ToNodeDsp, UnitNode, derive_synthdef,
+    derive_synthdefs,
 };
 use plyphon::Rate;
 use plyphon::synthdef::{InputRef, SynthDef, UnitSpec};
 
-/// A buffer source. It pushes one driver-set bufnum param and emits it.
+/// A two-channel scratch buffer source.
 struct Src;
 
 impl NodeDsp for Src {
@@ -29,8 +30,7 @@ impl NodeDsp for Src {
     }
 
     fn ugens(&self, path: &[usize], _: &[Option<Signal>], b: &mut DspBuilder) -> Vec<Signal> {
-        let bufnum = b.push_control_param(path, "bufnum");
-        vec![Signal::mono(InputRef::Param(bufnum))]
+        vec![b.push_buffer(path, BufferSource::Scratch { frames: 64 }, 2)]
     }
 }
 
@@ -422,4 +422,22 @@ fn buffer_wire_into_an_inlet_reads_unconnected() {
         .find_map(|p| p.def.units.iter().find(|u| u.name == "Reader"))
         .expect("the child's reader derives");
     assert!(is_minus_one(reader.inputs[0]));
+}
+
+#[test]
+fn table_row_buffer_socket_reads_the_source() {
+    let mut g = Graph::<N>::default();
+    let s = g.add_node(N::Src(Src));
+    let frames = g.add_node(N::Unit(UnitNode::from_unit("BufFrames").expect("row")));
+    let o = g.add_node(N::Out(Out::default()));
+    edge(&mut g, s, frames, 0);
+    edge(&mut g, frames, o, 0);
+    let derived = derive_synthdef(&g, 1, "t").expect("derive");
+    let def = &derived.def;
+    assert_eq!(
+        param_of(def, unit(def, "BufFrames").inputs[0]),
+        Some("0/bufnum")
+    );
+    assert_eq!(derived.buffers.len(), 1);
+    assert_eq!(derived.buffers[0].node_path, vec![s.index()]);
 }

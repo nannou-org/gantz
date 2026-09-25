@@ -1,9 +1,10 @@
 //! [`UnitNode`]'s egui implementation, driven by its descriptor row.
 
+use crate::dsp::BufferAccess;
 use crate::egui::param::{param_row, params_state_row, rate_row, value_row};
 use crate::node::UnitNode;
 use crate::param::{param_value_keyed, params_state, with_param_value};
-use crate::units::{In, UnitRate};
+use crate::units::{Emit, In, UnitRate};
 use gantz_egui::{
     Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
 };
@@ -93,7 +94,20 @@ impl NodeUi for UnitNode {
                         resp.mark_changed();
                     }
                 }
-                In::Signal { .. } | In::Baked(_) => (),
+                In::Signal { .. } | In::Buffer { .. } | In::Group { .. } | In::Baked(_) => (),
+            }
+        }
+        // An init-sized output count changes the unit's outputs, so an edit is
+        // structural and re-derives.
+        if let Emit::InitChannels { name, max, .. } = desc.emit {
+            let mut value = self.init_value(name);
+            let dv = egui::DragValue::new(&mut value)
+                .range(1.0..=max as f32)
+                .speed(0.05)
+                .max_decimals(0);
+            if value_row(body, name, dv) {
+                self.set_init(name, value.round());
+                resp.mark_changed();
             }
         }
         // A fixed-rate row has no rate to choose.
@@ -120,6 +134,14 @@ impl NodeUi for UnitNode {
                              number overrides the inspector value"
                         )))
                     }
+                    In::Buffer { doc, access, .. } => {
+                        let note = match access {
+                            BufferAccess::Read => "a `~sample` or `~buffer`",
+                            BufferAccess::Write => "a `~buffer`. The unit writes it",
+                        };
+                        Some(SocketDoc::ty("buffer").with_description(format!("{doc} - {note}")))
+                    }
+                    In::Group { doc, .. } => Some(SocketDoc::ty("signal").with_description(*doc)),
                     In::Baked(_) | In::Init { .. } => None,
                 }
             }

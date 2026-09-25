@@ -45,7 +45,7 @@ pub use node::{Bus, InvalidUnitNode, Out, Pack, PlayBuf, ScopeOut, Sum, UnitNode
 pub use port_info::{RootPortInfo, root_port_info};
 pub use ref_ext::{DSP_REF_EXT_KEY, DspRefExt, dsp_graphs, is_dsp_graph};
 pub use sugar::PlyphonSugar;
-pub use units::{In, UNITS, UnitDesc, UnitRate, unit_desc, unit_desc_by_keyword};
+pub use units::{Emit, In, RateScale, UNITS, UnitDesc, UnitRate, unit_desc, unit_desc_by_keyword};
 // `self::` disambiguates from the extern `egui` crate at the crate root.
 #[cfg(feature = "egui")]
 pub use self::egui::{
