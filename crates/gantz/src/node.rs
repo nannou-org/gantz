@@ -2812,20 +2812,20 @@ mod tests {
     /// Steel-inert, so they compile like any other graph.
     #[test]
     fn merged_base_sources_all_compile() {
-        let mut merged = DataReg::default();
-        for bytes in [
-            gantz_base::BYTES,
-            gantz_plyphon::BASE_BYTES,
-            gantz_pattern::BASE_BYTES,
-        ] {
-            let export: DataReg = gantz_egui::export::parse_export_at(
-                bytes,
-                bevy_gantz_egui::base::BASE_TIMESTAMP,
-                &super::codec(),
-            )
-            .expect("parse source");
-            merged.merge(export);
+        let loaded = crate::headless::load_sources(
+            &crate::headless::base_sources(),
+            bevy_gantz_egui::base::BASE_TIMESTAMP,
+            &super::codec(),
+        );
+        for (source, parsed) in crate::headless::base_sources().iter().zip(&loaded.parsed) {
+            assert!(
+                parsed.is_ok(),
+                "{}: {:?}",
+                source.label,
+                parsed.as_ref().err()
+            );
         }
+        let merged = loaded.registry;
         let builtins = builtins_with_instances();
         let reified = reify_all(&merged);
         let codec = super::codec();
