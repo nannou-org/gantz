@@ -1868,6 +1868,46 @@ fn kr_only_row_lifts_to_audio_at_out() {
     assert!(names.contains(&"K2A"), "{names:?}");
 }
 
+/// The unit emitted by a lone row node, wired from a sine into socket 0 and
+/// on to `~out`.
+fn wired_row_unit(node: UnitNode) -> (Derived, UnitSpec) {
+    let emitted = node.desc().emitted_unit();
+    let mut g = Graph::<N>::default();
+    let s = g.add_node(sinosc());
+    let n = g.add_node(N::Unit(node));
+    let o = g.add_node(N::Out(Out::default()));
+    g.add_edge(s, n, Edge::new(0.into(), 0.into()));
+    g.add_edge(n, o, Edge::new(0.into(), 0.into()));
+    let derived = derive_synthdef(&g, 1, "t").expect("derive");
+    let unit = derived
+        .def
+        .units
+        .iter()
+        .find(|u| u.name == emitted)
+        .expect("the row's unit")
+        .clone();
+    (derived, unit)
+}
+
+/// `Median`'s window length is a plyphon build constant, so the row bakes it
+/// from the init value ahead of the signal socket.
+#[test]
+fn median_bakes_length_as_a_constant() {
+    let median = UnitNode::from_unit("Median").expect("Median row");
+    let (derived, unit) = wired_row_unit(median.clone());
+    assert!(matches!(unit.inputs[0], InputRef::Constant(c) if c == 3.0));
+    assert!(matches!(unit.inputs[1], InputRef::Unit { .. }));
+    let mut longer = median;
+    longer.set_init("length", 5.0);
+    let (derived5, unit5) = wired_row_unit(longer);
+    assert!(matches!(unit5.inputs[0], InputRef::Constant(c) if c == 5.0));
+    assert_ne!(
+        structural_sig(&derived.def),
+        structural_sig(&derived5.def),
+        "the length is structural",
+    );
+}
+
 /// An unconnected `UnitNode` bakes each hybrid as one keyed control param.
 #[test]
 fn unit_node_pushes_keyed_params() {
