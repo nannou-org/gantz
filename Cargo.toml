@@ -46,6 +46,7 @@ bevy_pkv = "0.16"
 bevy_time = "0.19"
 bevy_window = "0.19"
 blake3 = "1"
+clap = { version = "4.5", features = ["derive"] }
 cpal = "0.18"
 dyn-clone = "1"
 eframe = { version = "0.34", default-features = false, features = [
