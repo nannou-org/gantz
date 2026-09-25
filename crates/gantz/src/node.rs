@@ -1,4 +1,4 @@
-/// The `.ga.fi.filter(|&ix| (&*graph[ix] as &dyn std::any::Any).is::<gantz_pattern::Pplot>())d(|&ix| (&*graph[ix] as &dyn std::any::Any).is::<bevy_gantz_egui::node::tick_bang::TickBang>())tz` keyword sugar carrier for the app's node set. It composes
+/// The `.gantz` keyword sugar carrier composing
 /// every domain's node sugar.
 pub struct NodeSet;
 
