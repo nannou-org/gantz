@@ -1489,6 +1489,78 @@ pub static UNITS: &[UnitDesc] = &[
         &["wrapping ramp"],
         "Ramp advancing by an increment per sample and wrapping within [start, end)",
     ),
+    // Measurement. Running statistics of a signal.
+    u(
+        "~peak",
+        "Peak",
+        &[
+            sig("in", "signal to measure"),
+            sig("trig", "reset the peak on a rising edge"),
+        ],
+        &["running peak of |in|"],
+        "Running peak absolute value, reset by a trigger",
+    ),
+    u(
+        "~runningmin",
+        "RunningMin",
+        &[
+            sig("in", "signal to measure"),
+            sig("trig", "reset the minimum on a rising edge"),
+        ],
+        &["running minimum"],
+        "Running minimum, reset by a trigger",
+    ),
+    u(
+        "~runningmax",
+        "RunningMax",
+        &[
+            sig("in", "signal to measure"),
+            sig("trig", "reset the maximum on a rising edge"),
+        ],
+        &["running maximum"],
+        "Running maximum, reset by a trigger",
+    ),
+    u(
+        "~peakfollower",
+        "PeakFollower",
+        &[
+            sig("in", "signal to follow"),
+            par("decay", 0.999, 0.0, 1.0, "", "per-sample decay factor"),
+        ],
+        &["amplitude envelope"],
+        "Envelope follower with an instant attack and an exponential release",
+    ),
+    u(
+        "~mostchange",
+        "MostChange",
+        &[sig("a", "first signal"), sig("b", "second signal")],
+        &["whichever input changed more"],
+        "Pass whichever of two signals changed the most since the last sample",
+    ),
+    u(
+        "~leastchange",
+        "LeastChange",
+        &[sig("a", "first signal"), sig("b", "second signal")],
+        &["whichever input changed less"],
+        "Pass whichever of two signals changed the least since the last sample",
+    ),
+    u(
+        "~lastvalue",
+        "LastValue",
+        &[
+            sig("in", "signal to quantise"),
+            par(
+                "diff",
+                0.01,
+                0.0,
+                10_000.0,
+                "",
+                "change needed to accept a new value",
+            ),
+        ],
+        &["held value"],
+        "Sample and hold that steps only once the input moves by diff",
+    ),
     // Rate conversion. The converters run at their target rate only.
     u(
         "~dc",
