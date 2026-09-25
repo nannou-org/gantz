@@ -3954,6 +3954,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gantz_collab_sync"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "gantz_ca",
+ "gantz_collab",
+ "gantz_egui",
+ "log",
+ "web-time",
+]
+
+[[package]]
 name = "gantz_core"
 version = "0.6.0"
 dependencies = [
