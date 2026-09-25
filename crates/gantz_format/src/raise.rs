@@ -1,8 +1,8 @@
 //! Raises a registry into a [`Document`] and serializes it.
 //!
 //! The output mirrors the registry's three maps. Those are a
-//! `(graph "<addr>" ...)` body per graph, a flat `(commits ...)` table retaining
-//! every commit, and a `(names ...)` table. Nodes get generated
+//! `(graph "<addr>" ...)` body per graph, a flat `(commits ...)` table with one
+//! head commit per graph, and a `(names ...)` table. Nodes get generated
 //! `{keyword}{index}` labels and are written straight from their stored
 //! [`NodeData`] form. No node type is involved. The returned [`Dumped`] also
 //! exposes the id and node labels emitted per graph. An extender needs those
@@ -30,7 +30,7 @@ pub struct Dumped {
 
 /// The id string and node labels emitted for a single graph.
 pub struct GraphLabels {
-    /// The full content address or inline name used as the graph's file-local id.
+    /// The file-local id used in the text, a short content address.
     pub id: String,
     /// The generated label of each node index.
     pub labels: HashMap<usize, String>,
@@ -52,8 +52,11 @@ pub fn raise(
     let mut graphs = HashMap::new();
 
     // Write commits ascending by timestamp then address, and graphs by the
-    // newest commit pointing at them, to keep unordered registry output stable.
-    // Full addresses prevent distinct content from sharing a file-local id.
+    // newest commit pointing at them. The registry maps are unordered, but
+    // document order matters on load. A commit's parents, merge parents
+    // included, resolve only against already-built commits, and the last
+    // commit declared per graph wins as its head. See `lower`. Time order
+    // keeps ancestry intact across a round-trip and the output stable.
     let mut commits: Vec<_> = registry.commits().iter().collect();
     commits.sort_by_key(|&(ca, c)| (c.timestamp, *ca));
     let mut newest: HashMap<gantz_ca::GraphAddr, gantz_ca::Timestamp> = HashMap::new();
@@ -66,7 +69,7 @@ pub fn raise(
 
     for (g_addr, data_graph) in graph_entries {
         let (body, labels) = graph_to_body(data_graph, sugar, true)?;
-        let id = g_addr.to_string();
+        let id = short_hex(*g_addr);
         doc.graphs.push(GraphDef {
             id: Addr::Concrete(id.clone()),
             body,
@@ -76,23 +79,23 @@ pub fn raise(
 
     for (c_addr, commit) in commits {
         doc.commits.push(CommitDecl {
-            id: Addr::Concrete(c_addr.to_string()),
+            id: Addr::Concrete(short_hex(*c_addr)),
             secs: commit.timestamp.as_secs(),
             nanos: commit.timestamp.subsec_nanos(),
-            parent: commit.parent.map(|p| Addr::Concrete(p.to_string())),
+            parent: commit.parent.map(|p| Addr::Concrete(short_hex(p))),
             merge_parents: commit
                 .merge_parents
                 .iter()
-                .map(|p| Addr::Concrete(p.to_string()))
+                .map(|&p| Addr::Concrete(short_hex(p)))
                 .collect(),
-            graph: Addr::Concrete(commit.graph.to_string()),
+            graph: Addr::Concrete(short_hex(commit.graph)),
         });
     }
 
     for (name, c_addr) in registry.heads() {
         doc.names.push(NameDecl {
             name: name.to_string(),
-            commit: Addr::Concrete(c_addr.to_string()),
+            commit: Addr::Concrete(short_hex(c_addr)),
         });
     }
 
@@ -237,7 +240,7 @@ fn graph_to_body(
 
 /// Convert a node's serde [`Datum`] into a [`NodeSpec`] and a label keyword.
 ///
-/// `pin` controls whether a reference records its advisory pinned graph
+/// `pin` controls whether a reference records its advisory pinned commit
 /// address. The inline-name format omits it so refs resolve purely by name.
 fn node_spec_from_datum(
     value: Datum,
@@ -264,7 +267,7 @@ fn node_spec_from_datum(
             let hex = ref_
                 .and_then(|r| r.as_str().or_else(|| r.get("addr").and_then(Datum::as_str)))
                 .unwrap_or_default();
-            let addr = pin.then(|| Addr::Concrete(hex.to_string()));
+            let addr = pin.then(|| Addr::Concrete(hex.get(..8).unwrap_or(hex).to_string()));
             let ext = ref_.and_then(|r| r.get("ext")).cloned();
             let sync = value.get("sync").and_then(Datum::as_bool).unwrap_or(false);
             let spec = NodeSpec::Ref(RefSpec {
@@ -284,4 +287,10 @@ fn node_spec_from_datum(
             Ok((NodeSpec::Value(value), keyword))
         }
     }
+}
+
+/// The first 8 hex characters of an address.
+fn short_hex(addr: impl Into<ContentAddr>) -> String {
+    let hex = addr.into().to_string();
+    hex.get(..8).unwrap_or(&hex).to_string()
 }

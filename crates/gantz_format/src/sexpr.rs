@@ -113,7 +113,10 @@ pub fn quote(s: &str) -> String {
 
 /// Render a name as a Steel symbol, escaping it when plain text is ambiguous.
 pub fn symbol(s: &str) -> String {
-    if read(s).is_ok_and(|forms| forms.len() == 1 && as_symbol(&forms[0]).as_deref() == Some(s)) {
+    // Include a separator so a trailing escape cannot consume surrounding syntax.
+    if read(&format!("{s} "))
+        .is_ok_and(|forms| forms.len() == 1 && as_symbol(&forms[0]).as_deref() == Some(s))
+    {
         s.to_owned()
     } else {
         format!("|{}|", s.replace('\\', "\\\\").replace('|', "\\|"))

@@ -14,7 +14,7 @@ use crate::error::Span;
 pub struct Document {
     /// Graph bodies, in source order.
     pub graphs: Vec<GraphDef>,
-    /// The flat commit table, including distinct commits with equal graph content.
+    /// The flat commit table. At most one head commit per graph.
     pub commits: Vec<CommitDecl>,
     /// Name to commit mappings.
     pub names: Vec<NameDecl>,

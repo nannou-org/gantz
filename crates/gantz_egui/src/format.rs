@@ -86,15 +86,22 @@ fn registry_from_loaded(mut loaded: Loaded) -> Registry {
 /// Serialize a registry to a `.gantz` document, with the codec supplying the
 /// node set's keyword [`gantz_format::Sugar`] for the graph forms.
 pub fn to_string(registry: &Registry, codec: &NodeCodec) -> Result<String, FormatError> {
-    // Historical exports keep commit-keyed views in their native section. A
-    // graph-keyed layout cannot represent distinct views of the same graph.
-    let claimed = [crate::section::DESCRIPTIONS_ID, crate::section::DEMOS_ID];
-    let dumped = gantz_format::to_string_with(registry, &codec.sugars(), &claimed)?;
+    let dumped = gantz_format::to_string_with(registry, &codec.sugars(), CLAIMED)?;
     // Each top-level block is a section. Blank lines join them.
     let mut sections = vec![dumped.text.trim_end().to_string()];
 
     // `(descriptions ...)`, in name order.
     sections.extend(descriptions_text(registry));
+
+    // `(layout ...)` per commit that has a stored view, keyed by graph id.
+    for (commit_ca, view) in crate::section::views(registry) {
+        let Some(commit) = registry.commits().get(&commit_ca) else {
+            continue;
+        };
+        if let Some(labels) = dumped.graphs.get(&commit.graph) {
+            sections.push(layout_text(labels, &view, false));
+        }
+    }
 
     // `(demo <name> ...)` per named graph that has a demo, in name order.
     for (name, demo) in crate::section::demos(registry) {
@@ -337,6 +344,57 @@ mod tests {
         s.parse().unwrap()
     }
 
+    #[test]
+    fn escaped_names_round_trip() {
+        for label in [
+            "two words",
+            "fn",
+            "123",
+            "a|b\\c",
+            "tail\\",
+            "quoted \"name\"",
+            "",
+        ] {
+            let mut reg = Registry::default();
+            let mut leaf = TestGraph::default();
+            leaf.add_node(expr("1"));
+            let (ca, ga) = commit_named(&mut reg, Duration::ZERO, &leaf, &name(label));
+            let mut root = TestGraph::default();
+            root.add_node(named_ref(label, ga));
+            let (_, root_ga) = commit_named(&mut reg, Duration::ZERO, &root, &name("root"));
+            crate::section::set_description(&mut reg, name(label), "description".into());
+            crate::section::set_demo(&mut reg, name(label), "demo".into());
+            let mut view = crate::SceneView::default();
+            view.layout
+                .insert(egui_graph::NodeId(0), egui::pos2(3.0, 4.0));
+            crate::section::set_view(&mut reg, ca, &view);
+            for text in [
+                to_string(&reg, &codec()).unwrap(),
+                to_string_named(&reg, &codec()).unwrap(),
+            ] {
+                let parsed = from_str(&text, Duration::ZERO, &codec()).unwrap();
+                let head = parsed.head(&name(label)).expect("name survives");
+                assert_eq!(parsed.commits()[&head].graph, ga);
+                assert_eq!(
+                    parsed.commits()[&parsed.head(&name("root")).unwrap()].graph,
+                    root_ga
+                );
+                assert_eq!(
+                    crate::section::description(&parsed, &name(label)).as_deref(),
+                    Some("description")
+                );
+                assert_eq!(
+                    crate::section::demo(&parsed, &name(label)).as_deref(),
+                    Some("demo")
+                );
+                assert_eq!(
+                    crate::section::view(&parsed, &head).unwrap().layout,
+                    view.layout
+                );
+            }
+        }
+    }
+
     /// A registry with a `leaf` expr graph and a `root` graph referencing it.
     /// A description, demo and view are attached to `root`.
     fn test_registry() -> (Registry, CommitAddr) {
@@ -386,272 +444,21 @@ mod tests {
         assert_eq!(view.camera.zoom, 2.0);
     }
 
-    /// Descriptions, demos and commit-keyed views survive address-based text.
+    /// Descriptions, demos and views survive an address-based text
+    /// round-trip via their friendly forms.
     #[test]
     fn sections_round_trip_through_text() {
         let (reg, root_ca) = test_registry();
         let text = to_string(&reg, &codec()).unwrap();
-        assert!(text.contains("(section \"egui.view\""));
+        // Claimed sections must not also appear as generic forms.
+        assert!(!text.contains("(section"));
         assert!(text.contains("(descriptions"));
-        assert!(!text.lines().any(|line| line.starts_with("(layout ")));
+        assert!(text.contains("(layout"));
         assert!(text.contains("(demo root"));
         let parsed: Registry = from_str(&text, Duration::from_secs(9), &codec()).unwrap();
         // The commits table preserves the head commit exactly.
         assert_eq!(parsed.head(&name("root")), Some(root_ca));
         assert_sections_survive(&parsed);
-    }
-
-    #[test]
-    fn concrete_export_retains_commits_with_colliding_short_addresses() {
-        let mut registry = Registry::default();
-        let graph = registry.add_graph(gantz_ca::DataGraph::default());
-        let a = registry.add_commit(gantz_ca::Commit::new(
-            Duration::from_secs(27422),
-            None,
-            graph,
-        ));
-        let b = registry.add_commit(gantz_ca::Commit::new(
-            Duration::from_secs(79353),
-            None,
-            graph,
-        ));
-        assert_ne!(a, b);
-        assert_eq!(&a.to_string()[..8], &b.to_string()[..8]);
-        registry.set_head(name("a"), a);
-        registry.set_head(name("b"), b);
-        let mut merge = gantz_ca::Commit::new(Duration::from_secs(80000), Some(a), graph);
-        merge.merge_parents.push(b);
-        let merge = registry.add_commit(merge);
-        registry.set_head(name("merge"), merge);
-        let text = to_string(&registry, &codec()).unwrap();
-        for commit in [a, b, merge] {
-            assert!(text.contains(&format!("(\"{commit}\" (time")));
-        }
-        assert!(text.contains(&format!("(parent \"{a}\")")));
-        assert!(text.contains(&format!("(merge-parents \"{b}\")")));
-        assert!(text.contains(&format!("(graph \"{graph}\")")));
-        let parsed = from_str(&text, Duration::ZERO, &codec()).unwrap();
-        assert_eq!(parsed.commits(), registry.commits());
-        assert_eq!(parsed.head(&name("a")), Some(a));
-        assert_eq!(parsed.head(&name("b")), Some(b));
-        assert_eq!(parsed.head(&name("merge")), Some(merge));
-    }
-
-    #[test]
-    fn concrete_export_pins_full_graph_addresses_and_named_export_keeps_labels() {
-        let (registry, _) = test_registry();
-        let leaf = registry.head(&name("leaf")).unwrap();
-        let graph = registry.commits()[&leaf].graph;
-        let text = to_string(&registry, &codec()).unwrap();
-        assert!(text.contains(&format!("(graph \"{graph}\"")));
-        assert!(text.contains(&format!("(ref leaf \"{graph}\")")));
-        let named = to_string_named(&registry, &codec()).unwrap();
-        assert!(named.contains("(graph leaf"));
-        assert!(named.contains("(ref leaf)"));
-        assert!(!named.contains("(commits"));
-    }
-
-    #[test]
-    fn duplicate_graph_commit_and_name_declarations_are_rejected() {
-        for text in [
-            "(graph g) (graph g)",
-            "(graph \"ab\") (graph \"ab\")",
-            "(graph g) (commits (c (time 0 0) (graph g)) (c (time 1 0) (graph g)))",
-            "(graph g) (commits (\"ab\" (time 0 0) (graph g)) (\"ab\" (time 1 0) (graph g)))",
-            "(graph g) (commits (a (time 0 0) (graph g)) (b (time 1 0) (graph g))) (names (n a) (n b))",
-        ] {
-            let error = from_str(text, Duration::ZERO, &codec()).unwrap_err();
-            assert!(
-                matches!(error.kind, gantz_format::ErrorKind::Malformed(ref message) if message.starts_with("duplicate ")),
-                "{error}"
-            );
-        }
-    }
-
-    #[test]
-    fn history_retains_equal_graph_commits_merge_parents_and_distinct_views() {
-        let mut reg = Registry::default();
-        let mut graph = TestGraph::default();
-        graph.add_node(expr("1"));
-        let (first, ga) = commit_named(&mut reg, Duration::from_secs(2), &graph, &name("root"));
-        let (second, same_ga) =
-            commit_named(&mut reg, Duration::from_secs(1), &graph, &name("root"));
-        assert_eq!(ga, same_ga);
-        let detached = reg.add_commit(gantz_ca::Commit::new(Duration::ZERO, None, ga));
-        let mut merge = gantz_ca::Commit::new(Duration::from_secs(1), Some(second), ga);
-        merge.merge_parents.push(detached);
-        let merge = reg.add_commit(merge);
-        reg.set_head(name("root"), merge);
-        for (ca, x) in [(first, 1.0), (second, 2.0), (detached, 3.0), (merge, 4.0)] {
-            let mut view = crate::SceneView::default();
-            view.camera.center = egui::pos2(x, -x);
-            view.layout.insert(egui_graph::NodeId(0), egui::pos2(x, x));
-            crate::section::set_view(&mut reg, ca, &view);
-        }
-        let text = to_string(&reg, &codec()).unwrap();
-        let parsed = from_str(&text, Duration::from_secs(99), &codec()).unwrap();
-        assert_eq!(reg.commits(), parsed.commits());
-        assert_eq!(reg.head(&name("root")), parsed.head(&name("root")));
-        for ca in [first, second, detached, merge] {
-            assert_eq!(
-                crate::section::view(&reg, &ca),
-                crate::section::view(&parsed, &ca)
-            );
-        }
-    }
-
-    #[test]
-    fn concrete_content_only_graphs_do_not_acquire_synthetic_history() {
-        let mut graph = TestGraph::default();
-        graph.add_node(expr("1"));
-        let (data, address) = gantz_core::data::erase_with_addr(&graph).unwrap();
-        let mut registry = Registry::default();
-        registry.add_graph(data);
-        let text = to_string(&registry, &codec()).unwrap();
-        for now in [Duration::ZERO, Duration::from_secs(99)] {
-            let parsed = from_str(&text, now, &codec()).unwrap();
-            assert!(parsed.commits().is_empty());
-            assert!(parsed.heads().next().is_none());
-            assert_eq!(parsed.graphs().len(), 1);
-            assert!(parsed.graph(&address).is_some());
-        }
-        let authored = from_str(
-            "(graph authored (v (expr 1)))",
-            Duration::from_secs(99),
-            &codec(),
-        )
-        .unwrap();
-        let head = authored.head(&name("authored")).unwrap();
-        assert_eq!(authored.commits()[&head].timestamp, Duration::from_secs(99));
-    }
-
-    #[test]
-    fn abbreviated_parent_and_merge_parent_resolve_before_history_ordering() {
-        let graph = gantz_ca::graph_addr(&gantz_ca::DataGraph::default());
-        let parent = gantz_ca::commit_addr(&gantz_ca::Commit::new(Duration::ZERO, None, graph));
-        let other =
-            gantz_ca::commit_addr(&gantz_ca::Commit::new(Duration::from_secs(2), None, graph));
-        let parent_hex = parent.to_string();
-        let other_hex = other.to_string();
-        let child = format!(
-            "(child (time 1 0) (parent \"{}\") (merge-parents \"{}\") (graph g))",
-            &parent_hex[..8],
-            &other_hex[..8]
-        );
-        let parents =
-            format!("(\"{parent}\" (time 0 0) (graph g)) (\"{other}\" (time 2 0) (graph g))");
-        for entries in [format!("{child} {parents}"), format!("{parents} {child}")] {
-            let text = format!("(graph g) (commits {entries}) (names (child child))");
-            let parsed = from_str(&text, Duration::ZERO, &codec()).unwrap();
-            let head = parsed.head(&name("child")).unwrap();
-            let commit = &parsed.commits()[&head];
-            assert_eq!(commit.parent, Some(parent));
-            assert_eq!(commit.merge_parents, vec![other]);
-            assert_eq!(parsed.commits().len(), 3);
-        }
-    }
-
-    #[test]
-    fn ambiguous_declared_parent_prefix_is_rejected_before_history_ordering() {
-        for entries in [
-            "(child (time 2 0) (parent \"a\") (graph g)) (\"aa\" (time 0 0) (graph g)) (\"ab\" (time 1 0) (graph g))",
-            "(\"ab\" (time 1 0) (graph g)) (\"aa\" (time 0 0) (graph g)) (child (time 2 0) (merge-parents \"a\") (graph g))",
-        ] {
-            let error = from_str(
-                &format!("(graph g) (commits {entries})"),
-                Duration::ZERO,
-                &codec(),
-            )
-            .unwrap_err();
-            assert!(matches!(error.kind, gantz_format::ErrorKind::BadAddr(_)));
-        }
-    }
-
-    #[test]
-    fn ambiguous_graph_prefix_is_rejected_independently_of_hash_map_order() {
-        let mut prefixes = std::collections::BTreeMap::new();
-        let (a, ga, b, gb) = (0..17)
-            .find_map(|value| {
-                let mut graph = TestGraph::default();
-                graph.add_node(expr(&value.to_string()));
-                let (_, address) = gantz_core::data::erase_with_addr(&graph).unwrap();
-                let prefix = address.to_string().chars().next().unwrap();
-                prefixes
-                    .insert(prefix, (value, address))
-                    .map(|(other, other_address)| (other, other_address, value, address))
-            })
-            .expect("seventeen distinct graphs share a hexadecimal prefix");
-        assert_ne!(ga, gb);
-        let prefix = &ga.to_string()[..1];
-        let a = format!("(graph \"{ga}\" (v (expr {a})))");
-        let b = format!("(graph \"{gb}\" (v (expr {b})))");
-        for graphs in [format!("{a} {b}"), format!("{b} {a}")] {
-            let text = format!("(graph root (r (ref child \"{prefix}\"))) {graphs}");
-            for _ in 0..8 {
-                let error = from_str(&text, Duration::ZERO, &codec()).unwrap_err();
-                assert!(matches!(error.kind, gantz_format::ErrorKind::BadAddr(_)));
-            }
-        }
-    }
-
-    #[test]
-    fn historical_pinned_graph_is_not_replaced_by_current_name() {
-        let mut reg = Registry::default();
-        let mut child = TestGraph::default();
-        child.add_node(expr("1"));
-        let (_, old_graph) =
-            commit_named(&mut reg, Duration::from_secs(99), &child, &name("child"));
-        child[petgraph::graph::NodeIndex::new(0)] = expr("2");
-        commit_named(&mut reg, Duration::from_secs(1), &child, &name("child"));
-        let mut root = TestGraph::default();
-        root.add_node(named_ref("child", old_graph));
-        commit_named(&mut reg, Duration::from_secs(2), &root, &name("root"));
-        let text = to_string(&reg, &codec()).unwrap();
-        let parsed = from_str(&text, Duration::ZERO, &codec()).unwrap();
-        assert_eq!(parsed.commits(), reg.commits());
-        assert_eq!(parsed.head(&name("root")), reg.head(&name("root")));
-    }
-
-    #[test]
-    fn escaped_registry_names_round_trip_through_both_formats() {
-        for label in [
-            "Euclid Sequencer",
-            "if",
-            "123",
-            "a|b\\c",
-            "quoted \"name\"",
-            "",
-        ] {
-            let mut reg = Registry::default();
-            let mut leaf = TestGraph::default();
-            leaf.add_node(expr("1"));
-            let (_, ga) = commit_named(&mut reg, Duration::ZERO, &leaf, &name(label));
-            let mut root = TestGraph::default();
-            root.add_node(named_ref(label, ga));
-            commit_named(&mut reg, Duration::from_secs(1), &root, &name("root"));
-            crate::section::set_description(&mut reg, name(label), "description".into());
-            crate::section::set_demo(&mut reg, name(label), "demo".into());
-            for text in [
-                to_string(&reg, &codec()).unwrap(),
-                to_string_named(&reg, &codec()).unwrap(),
-            ] {
-                let parsed = from_str(&text, Duration::ZERO, &codec()).unwrap();
-                assert!(parsed.head(&name(label)).is_some(), "{label:?}: {text}");
-                assert_eq!(
-                    crate::section::description(&parsed, &name(label)).as_deref(),
-                    Some("description")
-                );
-                assert_eq!(
-                    crate::section::demo(&parsed, &name(label)).as_deref(),
-                    Some("demo")
-                );
-                let root = parsed.head(&name("root")).unwrap();
-                assert_eq!(
-                    parsed.commits()[&root].graph,
-                    reg.commits()[&reg.head(&name("root")).unwrap()].graph
-                );
-            }
-        }
     }
 
     /// The same sections survive the inline-name format, where commits are

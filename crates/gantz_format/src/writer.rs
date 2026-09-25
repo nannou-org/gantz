@@ -70,12 +70,8 @@ fn write_graph_body(
 
 fn write_node_decl(out: &mut String, decl: &NodeDecl, sugar: &dyn Sugar) {
     match &decl.spec {
-        NodeSpec::Value(v) => out.push_str(&format!(
-            "({} {})",
-            symbol(&decl.name),
-            value_spec(v, sugar)
-        )),
-        NodeSpec::Ref(r) => out.push_str(&format!("({} {})", symbol(&decl.name), ref_spec(r))),
+        NodeSpec::Value(v) => out.push_str(&format!("({} {})", decl.name, value_spec(v, sugar))),
+        NodeSpec::Ref(r) => out.push_str(&format!("({} {})", decl.name, ref_spec(r))),
     }
 }
 
@@ -129,9 +125,9 @@ fn conn_text(conn: &Conn) -> String {
 
 fn endpoint_text(ep: &Endpoint) -> String {
     if ep.port == 0 {
-        symbol(&ep.node)
+        ep.node.clone()
     } else {
-        format!("({} {})", symbol(&ep.node), ep.port)
+        format!("({} {})", ep.node, ep.port)
     }
 }
 

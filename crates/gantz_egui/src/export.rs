@@ -283,8 +283,8 @@ pub struct Copied {
 ///
 /// The payload registry carries the transitive closure of the graphs the
 /// selected nodes reference. It also carries the heads whose tips point at
-/// those graphs and their ancestry, with their `WithName` and `WithCommit`
-/// metadata. Pasting into another registry then restores names and views.
+/// those graphs, with their `WithName` and `WithCommit` metadata. Pasting
+/// into another registry then restores names and views.
 pub fn copy(
     registry: &gantz_ca::Registry,
     graph: &DataGraph,
@@ -352,14 +352,6 @@ pub fn copy(
             })
             .map(|(_, ca)| ca),
     );
-    // Export must retain these commits' parents and historical content too;
-    // pruning a parent would otherwise rewrite a retained commit's identity.
-    let history = gantz_ca::closure_from(registry, live.commits.iter().copied());
-    live.commits = history.commits;
-    live.graphs.extend(history.graphs);
-    for (section, blobs) in history.blobs {
-        live.blobs.entry(section).or_default().extend(blobs);
-    }
 
     Copied {
         registry: gantz_ca::export(registry, &live),
@@ -456,18 +448,7 @@ pub fn copied_from_str(text: &str, codec: &NodeCodec) -> Result<Copied, ParseCop
         .copied()
         .filter(|&ca| ca != clip_ca)
         .collect();
-    let mut live = gantz_ca::closure_from(&registry, dep_commits);
-    // A copied node can pin unnamed graph content or reference a blob without
-    // any dependency commit owning it. Keep the clipboard graph's outgoing
-    // content, but do not export the temporary clipboard graph itself.
-    let mut clipboard_live = gantz_ca::closure_from(&registry, [clip_ca]);
-    clipboard_live
-        .graphs
-        .remove(&registry.commits()[&clip_ca].graph);
-    live.graphs.extend(clipboard_live.graphs);
-    for (section, blobs) in clipboard_live.blobs {
-        live.blobs.entry(section).or_default().extend(blobs);
-    }
+    let live = gantz_ca::closure_from(&registry, dep_commits);
     let deps = gantz_ca::export(&registry, &live);
 
     Ok(Copied {
@@ -567,81 +548,6 @@ mod tests {
     /// Copying a `NamedRef` carries the referenced graph, its naming head
     /// and `WithName` metadata through the clipboard text round-trip.
     /// Positions ride the clipboard commit's view section entry.
-    #[test]
-    fn clipboard_keeps_dependency_ancestry_identity_and_historical_views() {
-        use crate::test_node::{TestGraph, codec, commit_named, expr, named_ref};
-
-        let mut registry = gantz_ca::Registry::default();
-        let mut dependency = TestGraph::default();
-        dependency.add_node(expr("1"));
-        let (old, old_graph) =
-            commit_named(&mut registry, Duration::ZERO, &dependency, &name("child"));
-        let mut old_view = crate::SceneView::default();
-        old_view.camera.center = egui::pos2(13.0, 17.0);
-        crate::section::set_view(&mut registry, old, &old_view);
-        dependency[node::graph::NodeIx::new(0)] = expr("2");
-        let (current, graph) = commit_named(
-            &mut registry,
-            Duration::from_secs(1),
-            &dependency,
-            &name("child"),
-        );
-        let mut selected = TestGraph::default();
-        selected.add_node(named_ref("child", graph));
-        let selected = gantz_core::data::erase(&selected).unwrap();
-        let copied = copy(
-            &registry,
-            &selected,
-            &selected.node_indices().collect(),
-            &Default::default(),
-        );
-        assert_eq!(copied.registry.commits(), registry.commits());
-        assert!(copied.registry.graph(&old_graph).is_some());
-        assert_eq!(
-            crate::section::view(&copied.registry, &old),
-            Some(old_view.clone())
-        );
-        let text = copied_to_string(&copied, &codec()).unwrap();
-        let restored = copied_from_str(&text, &codec()).unwrap();
-        assert_eq!(restored.registry.commits(), registry.commits());
-        assert_eq!(restored.registry.head(&name("child")), Some(current));
-        assert_eq!(restored.registry.commits()[&current].parent, Some(old));
-        assert_eq!(
-            crate::section::view(&restored.registry, &old),
-            Some(old_view)
-        );
-    }
-
-    #[test]
-    fn clipboard_round_trip_keeps_unnamed_content_only_pin() {
-        use crate::test_node::{TestGraph, codec, expr, named_ref};
-
-        let mut registry = gantz_ca::Registry::default();
-        let mut dependency = TestGraph::default();
-        dependency.add_node(expr("1"));
-        let graph = registry.add_graph(gantz_core::data::erase(&dependency).unwrap());
-        let mut selected = TestGraph::default();
-        selected.add_node(named_ref("not-a-live-name", graph));
-        let selected = gantz_core::data::erase(&selected).unwrap();
-        let copied = copy(
-            &registry,
-            &selected,
-            &selected.node_indices().collect(),
-            &Default::default(),
-        );
-        assert!(copied.registry.commits().is_empty());
-        assert!(copied.registry.graph(&graph).is_some());
-        let text = copied_to_string(&copied, &codec()).unwrap();
-        let restored = copied_from_str(&text, &codec()).unwrap();
-        assert!(restored.registry.graph(&graph).is_some());
-        assert!(restored.registry.commits().is_empty());
-        assert_eq!(
-            gantz_ca::graph_addr(&restored.graph),
-            gantz_ca::graph_addr(&selected)
-        );
-        assert!(restored.registry.head(&name(CLIPBOARD_NAME)).is_none());
-    }
-
     #[test]
     fn clipboard_round_trip_carries_positions_and_deps() {
         use crate::test_node::{TestGraph, codec, commit_named, expr, named_ref};
