@@ -15,6 +15,7 @@ bevy.workspace = true
 bevy_egui.workspace = true
 bevy_gantz.workspace = true
 bevy_gantz_collab = { workspace = true, optional = true }
+gantz_collab_sync = { workspace = true, optional = true }
 bevy_gantz_egui.workspace = true
 bevy_gantz_plyphon.workspace = true
 bevy_pkv.workspace = true
@@ -38,6 +39,7 @@ web-time.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 clap.workspace = true
 env_logger.workspace = true
+log.workspace = true
 
 [features]
 # cpal's AudioWorklet backend on the web - audio on a dedicated Web Audio thread, off the
@@ -51,7 +53,7 @@ audioworklet = ["bevy_gantz_plyphon/audioworklet"]
 # build with `--no-default-features` (or without this feature) to drop all p2p networking -
 # the collab UI (Graph Config row, Settings subtab) simply never renders. Everything
 # network-facing lives behind this one edge: only `main.rs` names the collab crates.
-collab = ["dep:bevy_gantz_collab", "dep:gantz_collab"]
+collab = ["dep:bevy_gantz_collab", "dep:gantz_collab", "dep:gantz_collab_sync"]
 
 [[bin]]
 name = "gantz"

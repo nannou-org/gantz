@@ -16,6 +16,8 @@ use storage::Pkv;
 mod cli;
 #[cfg(not(target_arch = "wasm32"))]
 mod headless;
+#[cfg(all(not(target_arch = "wasm32"), feature = "collab"))]
+mod mirror;
 mod node;
 mod persist;
 mod storage;
