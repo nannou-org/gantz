@@ -11,7 +11,7 @@
 
 use crate::headless::{self, Source};
 use bevy_gantz_egui::base::BASE_TIMESTAMP;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use gantz_egui::export::ParseExportError;
 use std::borrow::Cow;
 use std::ops::Range;
@@ -40,6 +40,8 @@ pub enum Command {
     /// Each graph's module is compiled and loaded into a fresh VM exactly as
     /// the app does on open, so its top-level forms are evaluated.
     Check(CheckArgs),
+    /// Print the Steel module compiled from one named graph.
+    Compile(CompileArgs),
 }
 
 /// How names a file does not define are resolved.
@@ -72,6 +74,31 @@ pub struct CheckArgs {
     /// The .gantz files to check.
     #[arg(required = true)]
     files: Vec<PathBuf>,
+}
+
+#[derive(Args)]
+pub struct CompileArgs {
+    #[command(flatten)]
+    seed: SeedArgs,
+    /// The .gantz file defining the graph.
+    file: PathBuf,
+    /// The graph to compile. Defaults to the file's unique root graph, the
+    /// one no other graph in the file references.
+    #[arg(long, value_name = "NAME")]
+    graph: Option<String>,
+    /// What to print.
+    #[arg(long, value_enum, default_value_t = Emit::Steel)]
+    emit: Emit,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Emit {
+    /// The Steel module text.
+    Steel,
+    /// The source map: one line per definition and identifier occurrence,
+    /// with line:col positions into the Steel module text and the node path
+    /// each refers to.
+    SourceMap,
 }
 
 /// What a subcommand core produced.
@@ -126,6 +153,13 @@ pub fn run(command: Command) -> i32 {
         Command::Check(args) => {
             let output = with_sources(&args.seed, &args.files, check);
             (args.files, output)
+        }
+        Command::Compile(args) => {
+            let files = vec![args.file];
+            let output = with_sources(&args.seed, &files, |s, t| {
+                compile(s, t.start, args.graph.as_deref(), args.emit)
+            });
+            (files, output)
         }
     };
     for (ix, text) in std::mem::take(&mut output.writes) {
@@ -371,9 +405,104 @@ fn check(sources: &[Source], targets: Range<usize>) -> Output {
     output
 }
 
+/// Compile the graph `name` names, or the target's unique root graph, and
+/// emit the module text or its source map.
+fn compile(sources: &[Source], target: usize, name: Option<&str>, emit: Emit) -> Output {
+    let (ready, mut output) = ready(sources, target..target + 1);
+    let label = &sources[target].label;
+    let Ok(parsed) = &ready.loaded.parsed[target] else {
+        return output;
+    };
+    let name = match name {
+        Some(name) => {
+            let name: gantz_ca::Name = name.parse().expect("infallible");
+            if !parsed.heads().any(|(n, _)| *n == name) {
+                output
+                    .diagnostics
+                    .push(format!("{label}: no graph named `{name}`"));
+                return output;
+            }
+            name
+        }
+        None => match gantz_egui::export::unique_root_name(parsed) {
+            Some(name) => name,
+            None => {
+                let names: Vec<String> = parsed.heads().map(|(n, _)| n.to_string()).collect();
+                output.diagnostics.push(format!(
+                    "{label}: no unique root graph, pass --graph <NAME>. Graphs: {}",
+                    names.join(", "),
+                ));
+                return output;
+            }
+        },
+    };
+    let env = ready.env();
+    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
+    let head = gantz_ca::Head::Branch(name.clone());
+    let Some(graph) = headless::head_graph(&ready.reified, &ready.loaded.registry, &head) else {
+        output
+            .diagnostics
+            .push(format!("{label}: graph `{name}`: no head graph"));
+        return output;
+    };
+    let entrypoints = headless::entrypoints(&get_node, graph);
+    let config = gantz_core::compile::Config::default();
+    let exprs = match gantz_core::compile::module(&get_node, graph, &entrypoints, &config) {
+        Ok(exprs) => exprs,
+        Err(e) => {
+            let e = gantz_core::vm::CompileError::Module(e);
+            output
+                .diagnostics
+                .extend(compile_diagnostics(label, &name, &e));
+            return output;
+        }
+    };
+    let mut src = gantz_core::vm::fmt_module(&exprs);
+    if !src.ends_with('\n') {
+        src.push('\n');
+    }
+    output.stdout = match emit {
+        Emit::Steel => src,
+        Emit::SourceMap => source_map_text(&src),
+    };
+    output
+}
+
+/// The source map as text. One `def` line per top-level form and one `ref`
+/// line per identifier occurrence, each with its `line:col-line:col` range
+/// into `src` and the `/`-joined path of the node it refers to, or `-`.
+fn source_map_text(src: &str) -> String {
+    let map = gantz_core::compile::SourceMap::parse(src);
+    let pos = |range: &Range<usize>| {
+        let (l1, c1) = gantz_format::line_col(src, range.start);
+        let (l2, c2) = gantz_format::line_col(src, range.end);
+        format!("{l1}:{c1}-{l2}:{c2}")
+    };
+    let path = |range: &Range<usize>| match map.node_at(range.clone()) {
+        Some(path) if !path.is_empty() => path_text(&path),
+        _ => "-".to_string(),
+    };
+    let defs = map
+        .defs()
+        .iter()
+        .map(|d| format!("def {} {}\n", pos(&d.range), path(&d.range)));
+    let refs = map
+        .occs()
+        .iter()
+        .map(|o| format!("ref {} {}\n", pos(&o.range), path(&o.range)));
+    defs.chain(refs).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A root graph with a push entrypoint, so its module has definitions.
+    const ROOT: &str = "\
+(graph root
+  (b bang)
+  (e (expr (begin $push 42)))
+  (-> b e))";
 
     /// A domain-style source wrapping the core `add` graph.
     const WRAP_ADD: &str = "\
@@ -444,6 +573,39 @@ mod tests {
         }];
         let output = fmt(&sources, 0..1, true);
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    }
+
+    #[test]
+    fn compile_emits_steel_for_root_graph() {
+        let (sources, targets) = with_base(vec![source("root.gantz", ROOT)]);
+        let output = compile(&sources, targets.start, None, Emit::Steel);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(output.stdout.contains("(define"), "{}", output.stdout);
+        assert!(output.stdout.ends_with('\n'));
+    }
+
+    #[test]
+    fn compile_rejects_ambiguous_root() {
+        let sources = headless::base_sources();
+        let output = compile(&sources, 0, None, Emit::Steel);
+        assert_eq!(output.diagnostics.len(), 1, "{:?}", output.diagnostics);
+        assert!(output.diagnostics[0].contains("no unique root graph"));
+        assert!(output.stdout.is_empty());
+    }
+
+    #[test]
+    fn compile_by_name_and_source_map() {
+        let (sources, targets) = with_base(vec![source("root.gantz", ROOT)]);
+        let output = compile(&sources, targets.start, Some("root"), Emit::SourceMap);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert!(
+            output.stdout.lines().any(|l| l.starts_with("def ")),
+            "{}",
+            output.stdout
+        );
+
+        let output = compile(&sources, targets.start, Some("nope"), Emit::Steel);
+        assert_eq!(output.diagnostics, ["root.gantz: no graph named `nope`"]);
     }
 
     #[test]
