@@ -91,7 +91,9 @@ pub(crate) fn derive_status_label(status: &DeriveStatus, ui: &mut egui::Ui) {
         DeriveStatus::Ok { parts } => {
             ui.label(format!("ok - {parts} part(s)"));
         }
-        DeriveStatus::FlattenError(e) | DeriveStatus::DeriveError(e) => {
+        DeriveStatus::FlattenError(e)
+        | DeriveStatus::DeriveError(e)
+        | DeriveStatus::SpawnError(e) => {
             // Errors can be long, so truncate to the available width.
             let text = egui::RichText::new(e).color(ui.visuals().error_fg_color);
             ui.add(egui::Label::new(text).truncate()).on_hover_text(e);

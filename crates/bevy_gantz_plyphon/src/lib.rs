@@ -129,6 +129,11 @@ const MAX_FADING_PER_HEAD: usize = 2;
 /// well above them.
 const FIRST_NODE_ID: i32 = 1 << 20;
 
+/// The most times the driver spawns a head's synths again after the engine
+/// fails to start one, before it stops until the graph changes. A lasting
+/// failure such as a full memory pool would otherwise retry every frame.
+const MAX_SPAWN_RETRIES: u32 = 2;
+
 /// The most timestamped param updates scheduled per frame across all heads.
 /// The engine's control ring holds 1024 commands and only drains at audio
 /// callbacks. This flood guard keeps a burst, such as a huge pattern window
@@ -370,14 +375,17 @@ struct HeadSynths {
 /// their node-tree order. Empty when the head's graph has no dsp sink.
 struct HeadParts {
     graph: ca::GraphAddr,
-    /// Re-run the structural sync next frame even though `graph` is current,
-    /// because a spawn failed transiently on a full command ring. The ring
-    /// drains within a block and the re-run is convergent. Already-spawned
+    /// Re-run the structural sync next frame even though `graph` is current.
+    /// A spawn failed transiently on a full command ring, or the engine
+    /// failed to start a synth. See [`drop_failed_synths`]. Already-spawned
     /// parts match by key, sig and wiring and are kept.
     retry: bool,
     parts: Vec<PartSynth>,
     /// The mute applied to the parts' `~out` fade gains.
     muted: bool,
+    /// The number of syncs of `graph` in which the engine failed to start a
+    /// synth. See [`drop_failed_synths`].
+    failures: u32,
 }
 
 /// A run of consecutive private audio-bus channels.
@@ -873,7 +881,8 @@ fn provide_dsp_edge_style(
 /// - Scope sync, every frame. Drain each `~scopeout`'s scope stream and append
 ///   its samples into the node's ring state, capped at the tap's `size`.
 ///
-/// Also tears down synths for closed heads.
+/// Also tears down synths for closed heads, and drops the synths the engine
+/// failed to start so their heads retry. See [`drop_failed_synths`].
 fn drive_synths(
     registry: Res<Registry>,
     reified: Res<GraphCache>,
@@ -908,7 +917,21 @@ fn drive_synths(
     // Tick NRT cleanup off the audio thread. Drops freed synths and surfaces
     // events.
     dsp.nrt.process();
-    while dsp.nrt.poll().is_some() {}
+    let failed = poll_failed_synths(&mut dsp.nrt);
+    for entity in drop_failed_synths(&mut dsp.controller, state, &failed) {
+        let msg = format!(
+            "the engine could not start a synth after {} tries. Its memory \
+             pool or node tree can be full",
+            MAX_SPAWN_RETRIES + 1,
+        );
+        log::error!("bevy_gantz_plyphon: {msg}");
+        cmds.entity(entity).insert(DspHead {
+            status: DeriveStatus::SpawnError(msg.clone()),
+            outputs: 0,
+            view: msg.into(),
+            shapes: Default::default(),
+        });
+    }
     // Drop retired compiled defs once the audio thread is done with them.
     // Frees without a follow-up install would otherwise linger in `retiring`.
     dsp.controller.reap_retired_defs();
@@ -1111,6 +1134,58 @@ fn drive_synths(
     state.bufnum_alloc.sweep(Instant::now());
 }
 
+/// Drain the engine's events. Returns the node ids of the synths it failed to
+/// start and drops the other events.
+fn poll_failed_synths(nrt: &mut Nrt) -> Vec<i32> {
+    std::iter::from_fn(|| nrt.poll())
+        .filter_map(|event| match event {
+            plyphon::Event::SynthFailed { id } => Some(id),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Drop each synth that the engine failed to start, by node id, from its head.
+/// For example, the engine's memory pool was full. No free is sent, since the
+/// node never existed. The part's def, buffer and scope references are
+/// released. Its bus runs stay allocated, as the respawn reuses them by key.
+/// A failed synth that was already replaced is left to its fade.
+///
+/// Each head with a dropped part respawns it next frame through a structural
+/// sync, at most [`MAX_SPAWN_RETRIES`] times per graph. Returns the heads that
+/// ran out of retries. They stay parked until their graph changes.
+fn drop_failed_synths(
+    controller: &mut Controller,
+    state: &mut HeadSynths,
+    failed: &[i32],
+) -> Vec<Entity> {
+    let now = Instant::now();
+    let mut failed_heads: Vec<Entity> = Vec::new();
+    for &id in failed {
+        let found = state.heads.iter_mut().find_map(|(&entity, head)| {
+            let ix = head.parts.iter().position(|p| p.node_id == id)?;
+            Some((entity, head.parts.remove(ix)))
+        });
+        let Some((entity, part)) = found else {
+            continue;
+        };
+        release_def(controller, &mut state.shared_defs, &part.def_name);
+        free_scopes(controller, &mut state.bufnum_alloc, part.scopes, now);
+        free_buffers(controller, state, &part.buffers, now);
+        if !failed_heads.contains(&entity) {
+            failed_heads.push(entity);
+        }
+    }
+    // Parts of one sync that fail together count as one failure.
+    failed_heads.retain(|entity| {
+        let head = state.heads.get_mut(entity).expect("found above");
+        head.failures += 1;
+        head.retry = head.failures <= MAX_SPAWN_RETRIES;
+        !head.retry
+    });
+    failed_heads
+}
+
 /// Split the fade backlog. Drains and returns the entries due for freeing.
 /// Those past their deadline, plus the oldest entries of any head whose
 /// backlog exceeds [`MAX_FADING_PER_HEAD`]. Entries are pushed in replacement
@@ -1167,6 +1242,7 @@ fn park_head(state: &mut HeadSynths, entity: Entity, graph_ca: ca::GraphAddr) {
                     retry: false,
                     parts: Vec::new(),
                     muted: false,
+                    failures: 0,
                 },
             );
         }
@@ -1246,6 +1322,7 @@ where
                     retry: false,
                     parts: Vec::new(),
                     muted,
+                    failures: 0,
                 },
             );
             return DspHead {
@@ -1313,6 +1390,12 @@ where
     }
     let prev = state.heads.remove(&entity);
     let prev_muted = prev.as_ref().map_or(muted, |h| h.muted);
+    // A retry of the same graph keeps counting failed spawns. A new graph
+    // starts again from zero.
+    let failures = prev
+        .as_ref()
+        .filter(|h| h.graph == graph_ca)
+        .map_or(0, |h| h.failures);
     let mut prev = prev.map(|h| h.parts).unwrap_or_default();
     let mut plans: Vec<Plan> = Vec::with_capacity(derived.len());
     for r in derived {
@@ -1418,6 +1501,7 @@ where
             retry: transient_failure,
             parts,
             muted: prev_muted,
+            failures,
         },
     );
 
@@ -3297,6 +3381,68 @@ mod tests {
         render_rms(&mut world, 48_000 / 4);
         let rms4 = render_rms(&mut world, 48_000 / 4);
         assert!(rms4 < 1e-3, "muted again, it must fall silent: rms={rms4}");
+    }
+
+    /// A synth the engine fails to start, here on a memory pool too small for
+    /// any synth, is dropped from its head, and the head retries with a new
+    /// node id. After `MAX_SPAWN_RETRIES` failed retries the head parks. A new
+    /// graph starts to count again from zero.
+    #[test]
+    fn failed_spawn_retries_then_parks() {
+        let g = sine_out_child();
+        let mut edited = sine_out_child();
+        edited.add_node(sinosc());
+        let map = HashMap::new();
+        let (mut controller, mut nrt, mut world) = plyphon::engine(plyphon::Options {
+            sample_rate: 48_000.0,
+            output_channels: 1,
+            pool_bytes: 16,
+            ..plyphon::Options::default()
+        });
+        let mut state = HeadSynths::default();
+        let entity = entities(1)[0];
+        let mut sync_and_fail = |g: &gantz_core::node::graph::Graph<TestN>| {
+            let (flat, children) = flatten_head(g, &map);
+            structural_sync(
+                &mut controller,
+                &mut state,
+                &Default::default(),
+                entity,
+                graph_addr(g),
+                &flat,
+                &children,
+                1,
+                48_000.0,
+                false,
+            );
+            let node_id = state.heads[&entity].parts[0].node_id;
+            world.fill(&mut [0.0; 64], 1);
+            nrt.process();
+            let failed = poll_failed_synths(&mut nrt);
+            assert_eq!(failed, [node_id], "the engine rejects the synth");
+            let parked = drop_failed_synths(&mut controller, &mut state, &failed);
+            let head = &state.heads[&entity];
+            assert!(head.parts.is_empty(), "the failed part is dropped");
+            assert!(state.shared_defs.is_empty(), "its def is released");
+            (node_id, head.failures, head.retry, parked)
+        };
+
+        let mut ids = HashSet::new();
+        for attempt in 1..=MAX_SPAWN_RETRIES {
+            let (id, failures, retry, parked) = sync_and_fail(&g);
+            assert!(ids.insert(id), "each retry spawns with a new node id");
+            assert_eq!(failures, attempt);
+            assert!(retry, "the head retries");
+            assert!(parked.is_empty());
+        }
+        let (_, failures, retry, parked) = sync_and_fail(&g);
+        assert_eq!(failures, MAX_SPAWN_RETRIES + 1);
+        assert!(!retry, "out of retries, the head parks");
+        assert_eq!(parked, [entity]);
+
+        let (_, failures, retry, _) = sync_and_fail(&edited);
+        assert_eq!(failures, 1, "a new graph counts from zero");
+        assert!(retry);
     }
 
     /// A structural edit within a stable-key region re-installs the def and
