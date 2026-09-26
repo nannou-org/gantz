@@ -1,9 +1,9 @@
-//! The Collab settings subtab. Identity, username, action rate and relay
-//! configuration. Joining a session lives with the graphs it creates, in the
-//! Graphs pane's join button.
+//! The Collab settings subtab. Identity, the vault link, username, action
+//! rate and relay configuration. Joining a session lives with the graphs it
+//! creates, in the Graphs pane's join button.
 
-use crate::Responses;
-use crate::collab::{CollabConfig, SessionConn};
+use crate::collab::{CollabConfig, SessionConn, VaultDisplay, VaultState};
+use crate::{CheckVault, Responses};
 
 /// The inputs for [`collab_config`].
 pub struct CollabSettings<'a> {
@@ -14,6 +14,8 @@ pub struct CollabSettings<'a> {
     /// The endpoint's home relays and their connection state. Empty until the
     /// collab runtime starts.
     pub relays: &'a [(String, bool)],
+    /// The vault link's state, while linked.
+    pub vault: Option<&'a VaultDisplay>,
 }
 
 /// The Collab settings subtab. Identity, username, action rate and relay
@@ -31,6 +33,8 @@ pub struct CollabSettingsTab {
     pub peer_id: Option<String>,
     /// The endpoint's home relays and their connection state.
     pub relays: Vec<(String, bool)>,
+    /// The vault link's state, while linked.
+    pub vault: Option<VaultDisplay>,
 }
 
 impl crate::widget::SettingsTab for CollabSettingsTab {
@@ -39,18 +43,19 @@ impl crate::widget::SettingsTab for CollabSettingsTab {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) -> Responses {
-        let mut responses = Responses::default();
         let before = self.config.clone();
-        egui::ScrollArea::vertical()
+        let mut responses = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let settings = CollabSettings {
                     config: &mut self.config,
                     peer_id: self.peer_id.as_deref(),
                     relays: &self.relays,
+                    vault: self.vault.as_ref(),
                 };
                 collab_config(settings, ui)
-            });
+            })
+            .inner;
         if self.config != before {
             responses.push(None, self.config.clone());
         }
@@ -58,13 +63,17 @@ impl crate::widget::SettingsTab for CollabSettingsTab {
     }
 }
 
-/// Render the collab configuration. The user's identity, their shared
-/// username, the live-action send rate and the relay configuration and status.
-pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) {
+/// Render the collab configuration. The user's identity, the vault link,
+/// their shared username, the live-action send rate and the relay
+/// configuration and status. Returns the actions the user took, such as
+/// [`CheckVault`].
+pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
+    let mut responses = Responses::default();
     let CollabSettings {
         config,
         peer_id,
         relays,
+        vault,
     } = settings;
     let control_w = (ui.available_width() - 64.0).max(64.0);
     egui::Grid::new("collab_config_grid")
@@ -93,6 +102,86 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) {
                 }
             }
             ui.end_row();
+
+            // The vault this device syncs all its named graphs with.
+            ui.label("vault");
+            match &config.vault {
+                Some(_) => {
+                    ui.horizontal(|ui| {
+                        let state = vault.map(|v| v.state.clone()).unwrap_or_default();
+                        let hover = vault
+                            .map(|v| v.hover_text())
+                            .unwrap_or_else(|| state.guidance().to_string());
+                        super::status_dot(ui, state.color()).on_hover_text(hover);
+                        let id = vault.map(|v| v.vault.as_str()).unwrap_or_default();
+                        ui.label(egui::RichText::new(id).weak());
+                        let settled = matches!(state, VaultState::Connecting | VaultState::Live);
+                        if !settled
+                            && ui
+                                .button("check again")
+                                .on_hover_text("link to the vault again now")
+                                .clicked()
+                        {
+                            responses.push(None, CheckVault);
+                        }
+                        if ui
+                            .button("unlink")
+                            .on_hover_text("stop syncing with the vault. Local graphs stay")
+                            .clicked()
+                        {
+                            config.vault = None;
+                        }
+                    });
+                }
+                None => {
+                    let ticket_id = ui.id().with("collab_vault_ticket");
+                    let mut ticket = ui
+                        .data(|d| d.get_temp::<String>(ticket_id))
+                        .unwrap_or_default();
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut ticket)
+                                .hint_text("paste a vault ticket")
+                                .desired_width((control_w - 48.0).max(48.0)),
+                        )
+                        .on_hover_text(
+                            "sync all your named graphs with a vault. \
+                             `gantz vault serve` prints its ticket",
+                        );
+                        let ready = ticket.trim().starts_with("gantzvault");
+                        if ui.add_enabled(ready, egui::Button::new("link")).clicked() {
+                            config.vault = Some(ticket.trim().to_string());
+                            ticket.clear();
+                        }
+                    });
+                    ui.data_mut(|d| d.insert_temp(ticket_id, ticket));
+                }
+            }
+            ui.end_row();
+            if let Some(vault) = vault.filter(|_| config.vault.is_some()) {
+                ui.label("");
+                ui.vertical(|ui| {
+                    ui.set_max_width(control_w);
+                    ui.label(vault.state.guidance());
+                    if let Some(reason) = vault.state.reason() {
+                        ui.label(egui::RichText::new(reason).weak());
+                    }
+                });
+                ui.end_row();
+                ui.label("versions");
+                ui.label(egui::RichText::new(vault.versions()).weak());
+                ui.end_row();
+                if !vault.failures.is_empty() {
+                    ui.label("not synced");
+                    ui.vertical(|ui| {
+                        ui.set_max_width(control_w);
+                        for (name, reason) in &vault.failures {
+                            ui.label(egui::RichText::new(format!("{name}: {reason}")).weak());
+                        }
+                    });
+                    ui.end_row();
+                }
+            }
 
             // The username shared with session peers.
             ui.label("username");
@@ -180,4 +269,5 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) {
                 ui.end_row();
             }
         });
+    responses
 }

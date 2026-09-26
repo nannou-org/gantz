@@ -47,6 +47,7 @@ pub(crate) fn sync_collab_settings(
         config: gui_state.0.collab.clone(),
         peer_id: ui.0.peer_id.clone(),
         relays: ui.0.relays.clone(),
+        vault: ui.0.vault.clone(),
     }));
 }
 

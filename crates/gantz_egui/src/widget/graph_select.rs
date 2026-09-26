@@ -433,6 +433,17 @@ impl<'a> GraphSelect<'a> {
                             ui.data_mut(|d| d.insert_temp(ticket_id, ticket));
                         });
                 }
+                // The vault link's state, while this device is linked. A mark
+                // flags a link that only the user can fix.
+                if let Some(vault) = self.collab.and_then(|c| c.vault.as_ref()) {
+                    let color = vault.state.color();
+                    let dot = crate::widget::status_dot(ui, color);
+                    let dot = match vault.state.needs_action() {
+                        true => dot | ui.label(egui::RichText::new("!").strong().color(color)),
+                        false => dot,
+                    };
+                    dot.on_hover_text(vault.hover_text());
+                }
                 // Fill remaining space with the "+" button.
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     if ui
