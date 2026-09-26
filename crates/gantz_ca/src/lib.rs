@@ -32,7 +32,9 @@ pub use name::{Name, SEP as NAME_SEP};
 #[doc(inline)]
 pub use node_data::{DataGraph, NodeData};
 #[doc(inline)]
-pub use reach::{LiveSet, OutRefs, closure, closure_from, data_graph_out, export, prune};
+pub use reach::{
+    LiveSet, OutRefs, closure, closure_diff, closure_from, data_graph_out, export, prune,
+};
 #[doc(inline)]
 pub use registry::{
     HEADS_ID, Heads, MergeReport, Moved, Registry, section_get, section_insert,
