@@ -1,7 +1,7 @@
 //! Apply-family tests covering each variant's whole derivation and the
 //! continuous-side degradation to a #f whole.
 
-mod common;
+use crate::common;
 
 use common::assert_pinned;
 

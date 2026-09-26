@@ -9,10 +9,6 @@
 //! and symbols, which `equal?` handles, and they also pin exactness. An
 //! accidental float shows up as `0.5` instead of `(1 2)`.
 
-// Each integration test binary compiles this module separately and uses
-// only a subset of the helpers.
-#![allow(dead_code)]
-
 use gantz_core::steel::SteelVal;
 use gantz_core::steel::steel_vm::engine::Engine;
 

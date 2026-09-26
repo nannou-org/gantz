@@ -3,7 +3,7 @@
 //! number. That is an unfired input's `'()` or a void-flavored binding.
 //! Every such case must be silent rather than an application error.
 
-mod common;
+use crate::common;
 
 use common::assert_pinned;
 

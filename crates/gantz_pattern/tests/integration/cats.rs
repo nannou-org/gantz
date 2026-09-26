@@ -1,6 +1,6 @@
 //! Rate, concatenation, shift and fit-span tests.
 
-mod common;
+use crate::common;
 
 use common::{assert_pinned, assert_steel_true};
 

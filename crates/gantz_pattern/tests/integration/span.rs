@@ -1,7 +1,7 @@
 //! Span-algebra and event-representation tests for the `gantz/pattern`
 //! Steel module.
 
-mod common;
+use crate::common;
 
 use common::{assert_pinned, assert_steel_true};
 

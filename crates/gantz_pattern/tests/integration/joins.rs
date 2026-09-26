@@ -1,7 +1,7 @@
 //! Join tests discriminating the three variants' whole and active
 //! derivation.
 
-mod common;
+use crate::common;
 
 use common::assert_pinned;
 

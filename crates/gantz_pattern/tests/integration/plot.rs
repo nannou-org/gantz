@@ -3,7 +3,7 @@
 //! `pat/plot-data` returns only floats, bools and lists, so its results
 //! compare with `equal?` directly.
 
-mod common;
+use crate::common;
 
 use common::assert_pinned;
 

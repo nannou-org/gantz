@@ -1,6 +1,6 @@
 //! Windower and delivery-helper tests.
 
-mod common;
+use crate::common;
 
 use common::{assert_pinned, assert_steel_true};
 

@@ -2,7 +2,7 @@
 //! evaluated against hand-built combinator expressions on the pin
 //! harness.
 
-mod common;
+use crate::common;
 
 use common::{assert_pinned, assert_steel_true};
 use gantz_pattern::mini::steel_src;

@@ -1,7 +1,7 @@
 //! Euclidean rhythm tests pinning the full bjorklund onset table and
 //! event-level behavior.
 
-mod common;
+use crate::common;
 
 use common::{assert_pinned, eval_in, new_pin_engine};
 use gantz_core::steel::SteelVal;
