@@ -66,7 +66,7 @@ impl Peer {
     /// sources, as every app has them, so edits can reference base graphs.
     pub fn new(identity: Identity, infra: Infra, dir: PathBuf, conf: &Conf) -> Self {
         let peer = identity.peer_id();
-        let handle = gantz_collab::spawn(identity, RuntimeConfig { infra });
+        let handle = gantz_collab::spawn(identity, RuntimeConfig { infra, port: None });
         let registry = crate::headless::load_sources(
             &crate::headless::base_sources(conf),
             gantz_egui::base::BASE_TIMESTAMP,

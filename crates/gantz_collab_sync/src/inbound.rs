@@ -8,7 +8,7 @@ use gantz_collab::{
     Command, ConnState, Event, GossipMsg, Handle, Object, ObjectRef, Objects, PeerId, SessionId,
     Want, proto,
 };
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Branch names the host has open as heads, with their live camera when the
 /// host has one. A headless host passes an empty map.
@@ -212,17 +212,48 @@ pub fn handle_event(
             }
             cx.effects.push(Effect::PeerDown { session, peer });
         }
-        Event::Error { session, message } => {
-            log::warn!("collab: {message}");
-            if let Some(state) = session.and_then(|s| sessions.get_mut(&s)) {
-                if state.conn == ConnState::Connecting {
-                    state.conn = ConnState::Degraded;
-                }
-                state.error = Some(message.clone());
+        Event::FetchFailed {
+            session,
+            want,
+            error,
+            ..
+        } => {
+            // Nothing will answer this want, so free its names for the next
+            // announcement.
+            if let Some(state) = sessions.get_mut(&session) {
+                state
+                    .pending
+                    .retain(|_, p| p.last_want.as_ref() != Some(&want.refs));
             }
-            cx.effects.push(Effect::Error { session, message });
+            error_event(sessions, &mut cx, Some(session), error);
         }
+        Event::Error { session, message } => error_event(sessions, &mut cx, session, message),
+        // Vaults are not sessions.
+        Event::VaultTicketReady { .. }
+        | Event::Paired { .. }
+        | Event::PushRequest { .. }
+        | Event::LinkUp { .. }
+        | Event::LinkChanged { .. }
+        | Event::LinkDown { .. }
+        | Event::Pushed { .. } => (),
     }
+}
+
+/// Surface a runtime error on its session, if any.
+fn error_event(
+    sessions: &mut HashMap<SessionId, SessionState>,
+    cx: &mut Cx<'_>,
+    session: Option<SessionId>,
+    message: String,
+) {
+    log::warn!("collab: {message}");
+    if let Some(state) = session.and_then(|s| sessions.get_mut(&s)) {
+        if state.conn == ConnState::Connecting {
+            state.conn = ConnState::Degraded;
+        }
+        state.error = Some(message.clone());
+    }
+    cx.effects.push(Effect::Error { session, message });
 }
 
 /// Apply a join snapshot. Validate it with grandfathered staging, reconcile

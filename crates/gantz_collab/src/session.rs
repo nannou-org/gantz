@@ -5,11 +5,15 @@
 //! Conversion to iroh's types is confined to the [`crate::runtime`].
 
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, fmt};
+use std::{collections::BTreeSet, fmt, str::FromStr};
 
 /// A peer's identity. Its ed25519 public key bytes, iroh's `EndpointId`.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 pub struct PeerId(pub [u8; 32]);
+
+/// A [`PeerId`] string that is not 64 hex characters.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParsePeerIdError;
 
 /// A session's unique identifier. 32 random bytes, minted by the sharing
 /// peer. Seeds the session's gossip topic and appears in tickets.
@@ -80,11 +84,35 @@ impl SessionId {
     }
 }
 
+impl PeerId {
+    /// The full lowercase hex form, 64 characters. [`FromStr`] parses it.
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.0)
+    }
+}
+
 impl fmt::Display for PeerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         display_short(&self.0, f)
     }
 }
+
+impl FromStr for PeerId {
+    type Err = ParsePeerIdError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut bytes = [0u8; 32];
+        hex::decode_to_slice(s.trim(), &mut bytes).map_err(|_| ParsePeerIdError)?;
+        Ok(Self(bytes))
+    }
+}
+
+impl fmt::Display for ParsePeerIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "a peer id is 64 hex characters")
+    }
+}
+
+impl std::error::Error for ParsePeerIdError {}
 
 impl fmt::Display for SessionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -98,4 +126,18 @@ fn display_short(bytes: &[u8; 32], f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{b:02x}")?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn peer_ids_round_trip_through_hex() {
+        let peer = PeerId([0x5c; 32]);
+        let hex = peer.to_hex();
+        assert_eq!(hex.len(), 64);
+        assert_eq!(hex.parse::<PeerId>(), Ok(peer));
+        assert!("5c5c".parse::<PeerId>().is_err());
+    }
 }

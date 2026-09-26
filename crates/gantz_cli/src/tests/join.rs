@@ -78,6 +78,7 @@ fn round_trip(infra: Infra) {
         Identity::generate(),
         RuntimeConfig {
             infra: infra.clone(),
+            port: None,
         },
     );
     wait_for(&host, |e| matches!(e, Event::Ready { .. }).then_some(()));

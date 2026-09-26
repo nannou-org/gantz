@@ -1,8 +1,10 @@
-//! The session invite ticket. The string a user shares to let others join.
+//! The invite tickets. A session ticket lets others join a shared graph. A
+//! vault ticket links a device to its owner's vault.
 
 use crate::{
     runtime::PROTO_VERSION,
-    session::{Access, SessionId},
+    session::{Access, PeerId, SessionId},
+    vault::{PairingSecret, VaultId},
 };
 use iroh::EndpointAddr;
 use iroh_tickets::{ParseError, Ticket};
@@ -31,6 +33,21 @@ pub struct SessionTicket {
     pub hosts: Vec<EndpointAddr>,
 }
 
+/// Everything a device needs to link to a vault. The vault's identity and
+/// dialable address, plus the secret that pairs a new device.
+///
+/// Encodes as a `gantzvault…` base32 string. It carries the pairing secret,
+/// so it is as sensitive as a password.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct VaultTicket {
+    pub vault: VaultId,
+    pub pairing: PairingSecret,
+    /// The protocol version the vault speaks.
+    pub proto: u32,
+    /// The vault's address when the ticket was minted.
+    pub host: EndpointAddr,
+}
+
 impl SessionTicket {
     /// A ticket for the current protocol version.
     pub fn new(
@@ -51,8 +68,37 @@ impl SessionTicket {
     }
 }
 
+impl VaultTicket {
+    /// A ticket for the current protocol version.
+    pub fn new(vault: VaultId, pairing: PairingSecret, host: EndpointAddr) -> Self {
+        Self {
+            vault,
+            pairing,
+            proto: PROTO_VERSION,
+            host,
+        }
+    }
+
+    /// The vault's identity.
+    pub fn host_id(&self) -> PeerId {
+        PeerId(*self.host.id.as_bytes())
+    }
+}
+
 impl Ticket for SessionTicket {
     const KIND: &'static str = "gantz";
+
+    fn encode_bytes(&self) -> Vec<u8> {
+        crate::proto::encode(self)
+    }
+
+    fn decode_bytes(bytes: &[u8]) -> Result<Self, ParseError> {
+        Ok(postcard::from_bytes(bytes)?)
+    }
+}
+
+impl Ticket for VaultTicket {
+    const KIND: &'static str = "gantzvault";
 
     fn encode_bytes(&self) -> Vec<u8> {
         crate::proto::encode(self)
@@ -69,7 +115,25 @@ impl fmt::Display for SessionTicket {
     }
 }
 
+impl fmt::Display for VaultTicket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.encode_string())
+    }
+}
+
 impl FromStr for SessionTicket {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // A vault ticket's kind extends the session kind. Reject it here
+        // rather than decode its body as a session.
+        if s.starts_with(VaultTicket::KIND) {
+            return Err(ParseError::wrong_prefix(Self::KIND));
+        }
+        Self::decode_string(s)
+    }
+}
+
+impl FromStr for VaultTicket {
     type Err = ParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::decode_string(s)
@@ -97,5 +161,27 @@ mod tests {
         assert_eq!(parsed.access, ticket.access);
         assert_eq!(parsed.resolutions, ticket.resolutions);
         assert_eq!(parsed.proto, PROTO_VERSION);
+    }
+
+    #[test]
+    fn vault_ticket_round_trips_and_never_parses_as_a_session() {
+        let host = EndpointAddr::from(crate::Identity::generate().secret_key().public());
+        let ticket = VaultTicket::new(SessionId([3; 32]), PairingSecret::generate(), host);
+        let s = ticket.to_string();
+        assert!(s.starts_with("gantzvault"));
+        let parsed = VaultTicket::from_str(&s).unwrap();
+        assert_eq!(parsed.vault, ticket.vault);
+        assert!(parsed.pairing.matches(&ticket.pairing));
+        assert_eq!(parsed.host_id(), ticket.host_id());
+        assert_eq!(parsed.proto, PROTO_VERSION);
+        assert!(SessionTicket::from_str(&s).is_err());
+        let session = SessionTicket::new(
+            SessionId([7; 32]),
+            "jam".to_string(),
+            Access::Public,
+            gantz_ca::merge::Resolutions::default(),
+            vec![],
+        );
+        assert!(VaultTicket::from_str(&session.to_string()).is_err());
     }
 }

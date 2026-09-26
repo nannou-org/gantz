@@ -24,6 +24,10 @@
 //! owns the served stores, so the application never blocks on a lock. Store
 //! content rides ordered [`Command::Register`] and [`Command::Update`] sends.
 //!
+//! A [`vault`] syncs all of a user's named graphs between their devices. It
+//! rides the request plane alone. Devices link to one vault peer, which
+//! referees every change to a name.
+//!
 //! [iroh]: https://docs.rs/iroh
 
 #[doc(inline)]
@@ -38,11 +42,13 @@ pub use runtime::{
     Command, Event, Handle, Infra, PROTO_VERSION, RuntimeConfig, SYNC_ALPN, TOPIC_DOMAIN, spawn,
 };
 #[doc(inline)]
-pub use session::{Access, ConnState, PeerId, Role, Session, SessionId};
+pub use session::{Access, ConnState, ParsePeerIdError, PeerId, Role, Session, SessionId};
 #[doc(inline)]
 pub use store::{SessionEntry, SessionRegistry};
 #[doc(inline)]
-pub use ticket::SessionTicket;
+pub use ticket::{SessionTicket, VaultTicket};
+#[doc(inline)]
+pub use vault::{PairingSecret, Push, PushReply, VaultEntry, VaultId, WatchMsg};
 
 pub mod identity;
 pub mod proto;
@@ -50,3 +56,4 @@ pub mod runtime;
 pub mod session;
 pub mod store;
 pub mod ticket;
+pub mod vault;

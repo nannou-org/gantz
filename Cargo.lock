@@ -3944,6 +3944,7 @@ dependencies = [
  "async-channel",
  "gantz_ca",
  "getrandom 0.3.4",
+ "hex",
  "iroh",
  "iroh-gossip",
  "iroh-tickets",

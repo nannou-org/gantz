@@ -17,7 +17,10 @@
 //!
 //! [postcard]: https://docs.rs/postcard
 
-use crate::session::{PeerId, SessionId};
+use crate::{
+    session::{PeerId, SessionId},
+    vault::{PairingSecret, Push},
+};
 use gantz_ca::{
     BlobLiveness, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Key, Liveness,
     MergePolicy, Name, SectionId, Value,
@@ -124,6 +127,15 @@ pub enum ObjectRef {
         id: SectionId,
         key: Key,
     },
+    /// Everything reachable from `tips` that is not reachable from `have`,
+    /// in one response. See `gantz_ca::closure_diff`. Commits come
+    /// newest-first with their graphs, blobs and keyed sections. A large
+    /// history is cut at a commit boundary, so the requester asks again for
+    /// the frontier it still misses.
+    Closure {
+        tips: Vec<CommitAddr>,
+        have: Vec<CommitAddr>,
+    },
 }
 
 /// A fetched object under its claimed reference.
@@ -185,16 +197,28 @@ pub struct WireCommit {
 
 /// A request over the [`crate::SYNC_ALPN`] plane. One request per QUIC
 /// bi-stream.
+///
+/// Variant order is part of the wire format. Append new variants at the end.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum SyncRequest {
-    /// Protocol negotiation and access check.
-    Hello { session: SessionId, proto: u32 },
+    /// Protocol negotiation and access check. A vault pairs an unknown peer
+    /// that presents its secret. See [`crate::vault`].
+    Hello {
+        session: SessionId,
+        proto: u32,
+        pairing: Option<PairingSecret>,
+    },
     /// The full served store, for a joiner's initial sync.
     Snapshot { session: SessionId },
     /// The scoped name to tip map, for anti-entropy pulls.
     Heads { session: SessionId },
     /// Specific missing objects.
     Want { session: SessionId, want: Want },
+    /// Follow a vault's heads. The stream stays open, carrying
+    /// length-prefixed [`WatchMsg`](crate::WatchMsg) frames.
+    Watch { session: SessionId },
+    /// Move one name on a vault. Answered with [`SyncResponse::Pushed`].
+    Push { session: SessionId, push: Push },
 }
 
 /// The response to a [`SyncRequest`].
@@ -216,6 +240,25 @@ pub enum SyncResponse {
     Denied {
         reason: String,
     },
+    /// The vault's head for the pushed name after the push. The push was
+    /// accepted exactly when this is its tip.
+    Pushed {
+        head: Option<CommitAddr>,
+    },
+}
+
+impl SyncRequest {
+    /// The session or vault the request addresses.
+    pub fn session(&self) -> SessionId {
+        match self {
+            Self::Hello { session, .. }
+            | Self::Snapshot { session }
+            | Self::Heads { session }
+            | Self::Want { session, .. }
+            | Self::Watch { session }
+            | Self::Push { session, .. } => *session,
+        }
+    }
 }
 
 impl Want {
@@ -475,5 +518,56 @@ mod tests {
         assert_eq!(a, b);
         let c = digest(&[("a", ca(9))]);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn vault_wire_types_round_trip_and_leave_other_variants_stable() {
+        let ca = CommitAddr::from(gantz_ca::ContentAddr::from([3; 32]));
+        let session = SessionId([2; 32]);
+        let closure = ObjectRef::Closure {
+            tips: vec![ca],
+            have: vec![],
+        };
+        assert_eq!(decode::<ObjectRef>(&encode(&closure)).unwrap(), closure);
+        assert_eq!(encode(&closure)[0], 4);
+
+        let push = SyncRequest::Push {
+            session,
+            push: Push {
+                name: name("jam"),
+                tip: Some(ca),
+                base: None,
+                objects: Objects::default(),
+            },
+        };
+        let SyncRequest::Push { push: decoded, .. } = decode(&encode(&push)).unwrap() else {
+            panic!("wrong variant");
+        };
+        assert_eq!(
+            (decoded.name, decoded.tip, decoded.base),
+            (name("jam"), Some(ca), None)
+        );
+        assert_eq!(encode(&SyncRequest::Watch { session })[0], 4);
+        assert_eq!(encode(&push)[0], 5);
+        assert_eq!(
+            encode(&SyncRequest::Want {
+                session,
+                want: Want::default()
+            })[0],
+            3
+        );
+
+        let pushed = SyncResponse::Pushed { head: Some(ca) };
+        let SyncResponse::Pushed { head } = decode(&encode(&pushed)).unwrap() else {
+            panic!("wrong variant");
+        };
+        assert_eq!(head, Some(ca));
+        assert_eq!(encode(&pushed)[0], 5);
+
+        let changed = crate::WatchMsg::Changed(vec![(name("jam"), None)]);
+        let crate::WatchMsg::Changed(decoded) = decode(&encode(&changed)).unwrap() else {
+            panic!("wrong variant");
+        };
+        assert_eq!(decoded, vec![(name("jam"), None)]);
     }
 }
