@@ -155,69 +155,73 @@ mod tests {
     }
 
     #[test]
-    fn ancestors_of_linear_chain() {
-        let mut commits = Commits::default();
-        let a = add(&mut commits, 1, None, 1);
-        let b = add(&mut commits, 2, Some(a), 2);
-        let c = add(&mut commits, 3, Some(b), 3);
-        assert_eq!(ancestors(&commits, c).collect::<Vec<_>>(), vec![c, b, a]);
-    }
-
-    #[test]
-    fn ancestors_follow_merge_parents() {
-        let mut commits = Commits::default();
-        let root = add(&mut commits, 1, None, 1);
-        let ours = add(&mut commits, 2, Some(root), 2);
-        let theirs = add(&mut commits, 3, Some(root), 3);
-        let merge = add_merge(&mut commits, 4, ours, theirs, 4);
-        let all: HashSet<_> = ancestors(&commits, merge).collect();
-        assert_eq!(all, [merge, ours, theirs, root].into_iter().collect());
-    }
-
-    #[test]
-    fn first_parent_chain_skips_merge_parents() {
-        let mut commits = Commits::default();
-        let root = add(&mut commits, 1, None, 1);
-        let ours = add(&mut commits, 2, Some(root), 2);
-        let theirs = add(&mut commits, 3, Some(root), 3);
-        let merge = add_merge(&mut commits, 4, ours, theirs, 4);
-        assert_eq!(
-            first_parent_chain(&commits, merge).collect::<Vec<_>>(),
-            vec![merge, ours, root],
-        );
-    }
-
-    #[test]
-    fn merge_base_of_diverged_tips() {
+    fn ancestry_walks_over_a_merge() {
         let mut commits = Commits::default();
         let root = add(&mut commits, 1, None, 1);
         let base = add(&mut commits, 2, Some(root), 2);
         let ours = add(&mut commits, 3, Some(base), 3);
         let theirs = add(&mut commits, 4, Some(base), 4);
-        assert_eq!(merge_base(&commits, ours, theirs), Some(base));
+        let merge = add_merge(&mut commits, 5, ours, theirs, 5);
         assert_eq!(
-            analyze(&commits, ours, theirs),
-            MergeAnalysis::Diverged(base)
+            ancestors(&commits, ours).collect::<Vec<_>>(),
+            vec![ours, base, root],
+            "linear chain",
+        );
+        let all: HashSet<_> = ancestors(&commits, merge).collect();
+        assert_eq!(
+            all,
+            [merge, ours, theirs, base, root].into_iter().collect(),
+            "ancestors follow merge parents",
+        );
+        assert_eq!(
+            first_parent_chain(&commits, merge).collect::<Vec<_>>(),
+            vec![merge, ours, base, root],
+            "first-parent chain skips merge parents",
         );
     }
 
     #[test]
-    fn merge_base_of_unrelated_roots() {
-        let mut commits = Commits::default();
-        let a = add(&mut commits, 1, None, 1);
-        let b = add(&mut commits, 2, None, 2);
-        assert_eq!(merge_base(&commits, a, b), None);
-        assert_eq!(analyze(&commits, a, b), MergeAnalysis::Unrelated);
-    }
-
-    #[test]
-    fn analyze_fast_forward_and_up_to_date() {
+    fn merge_base_and_analyze_cases() {
         let mut commits = Commits::default();
         let root = add(&mut commits, 1, None, 1);
-        let tip = add(&mut commits, 2, Some(root), 2);
-        assert_eq!(analyze(&commits, root, tip), MergeAnalysis::FastForward);
-        assert_eq!(analyze(&commits, tip, root), MergeAnalysis::AlreadyUpToDate);
-        assert_eq!(analyze(&commits, tip, tip), MergeAnalysis::AlreadyUpToDate);
+        let base = add(&mut commits, 2, Some(root), 2);
+        let ours = add(&mut commits, 3, Some(base), 3);
+        let theirs = add(&mut commits, 4, Some(base), 4);
+        let stray = add(&mut commits, 2, None, 5);
+        for (label, a, b, expected_base, expected) in [
+            (
+                "diverged",
+                ours,
+                theirs,
+                Some(base),
+                MergeAnalysis::Diverged(base),
+            ),
+            ("unrelated", root, stray, None, MergeAnalysis::Unrelated),
+            (
+                "fast-forward",
+                base,
+                ours,
+                Some(base),
+                MergeAnalysis::FastForward,
+            ),
+            (
+                "up to date",
+                ours,
+                base,
+                Some(base),
+                MergeAnalysis::AlreadyUpToDate,
+            ),
+            (
+                "same tip",
+                ours,
+                ours,
+                Some(ours),
+                MergeAnalysis::AlreadyUpToDate,
+            ),
+        ] {
+            assert_eq!(merge_base(&commits, a, b), expected_base, "{label}");
+            assert_eq!(analyze(&commits, a, b), expected, "{label}");
+        }
     }
 
     #[test]

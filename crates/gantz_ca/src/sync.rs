@@ -590,25 +590,21 @@ mod tests {
     }
 
     #[test]
-    fn canonical_tips_is_order_independent() {
+    fn canonical_tips_orders_by_timestamp_then_addr() {
         let mut commits = Commits::default();
         let root = add(&mut commits, 1, None, 1);
         let a = add(&mut commits, 2, Some(root), 2);
         let b = add(&mut commits, 3, Some(root), 3);
-        assert_eq!(canonical_tips(&commits, a, b), (a, b));
-        assert_eq!(canonical_tips(&commits, b, a), (a, b));
-    }
-
-    #[test]
-    fn canonical_tips_tie_breaks_on_addr() {
-        let mut commits = Commits::default();
-        let root = add(&mut commits, 1, None, 1);
-        // Same timestamp, different graphs. Only the addr differentiates.
-        let a = add(&mut commits, 2, Some(root), 2);
-        let b = add(&mut commits, 2, Some(root), 3);
-        let expected = if a < b { (a, b) } else { (b, a) };
-        assert_eq!(canonical_tips(&commits, a, b), expected);
-        assert_eq!(canonical_tips(&commits, b, a), expected);
+        // Same timestamp as `a`, different graph. Only the addr differentiates.
+        let tie = add(&mut commits, 2, Some(root), 3);
+        let tie_order = if a < tie { (a, tie) } else { (tie, a) };
+        for (label, x, y, expected) in [
+            ("older first", a, b, (a, b)),
+            ("same timestamp", a, tie, tie_order),
+        ] {
+            assert_eq!(canonical_tips(&commits, x, y), expected, "{label}");
+            assert_eq!(canonical_tips(&commits, y, x), expected, "{label} reversed");
+        }
     }
 
     #[test]
@@ -634,51 +630,32 @@ mod tests {
     }
 
     #[test]
-    fn plan_up_to_date_and_fast_forward() {
-        let mut commits = Commits::default();
-        let root = add(&mut commits, 1, None, 1);
-        let tip = add(&mut commits, 2, Some(root), 2);
-        assert_eq!(plan_sync_step(&commits, tip, tip), SyncStep::UpToDate);
-        assert_eq!(plan_sync_step(&commits, tip, root), SyncStep::UpToDate);
-        assert_eq!(
-            plan_sync_step(&commits, root, tip),
-            SyncStep::FastForward(tip)
-        );
-    }
-
-    #[test]
-    fn plan_unrelated() {
-        let mut commits = Commits::default();
-        let a = add(&mut commits, 1, None, 1);
-        let b = add(&mut commits, 2, None, 2);
-        assert_eq!(plan_sync_step(&commits, a, b), SyncStep::Unrelated);
-    }
-
-    #[test]
-    fn plan_adopts_twin_commits_without_merging() {
-        let mut commits = Commits::default();
-        let root = add(&mut commits, 1, None, 1);
-        // Two peers independently commit the same graph at different times.
-        let a = add(&mut commits, 2, Some(root), 2);
-        let b = add(&mut commits, 3, Some(root), 2);
-        // Both directions adopt the same winner, the newer commit.
-        assert_eq!(plan_sync_step(&commits, a, b), SyncStep::Adopt(b));
-        assert_eq!(plan_sync_step(&commits, b, a), SyncStep::Adopt(b));
-    }
-
-    #[test]
-    fn plan_merges_diverged_graphs_in_canonical_orientation() {
+    fn plan_sync_step_cases() {
         let mut commits = Commits::default();
         let root = add(&mut commits, 1, None, 1);
         let a = add(&mut commits, 2, Some(root), 2);
         let b = add(&mut commits, 3, Some(root), 3);
-        let expected = SyncStep::Merge {
+        // A second peer independently commits `a`'s graph at a later time.
+        let twin = add(&mut commits, 3, Some(root), 2);
+        let stray = add(&mut commits, 2, None, 2);
+        let merge = SyncStep::Merge {
             first: a,
             second: b,
         };
-        // The orientation is the same regardless of which side plans.
-        assert_eq!(plan_sync_step(&commits, a, b), expected);
-        assert_eq!(plan_sync_step(&commits, b, a), expected);
+        for (label, local, remote, expected) in [
+            ("same tip", a, a, SyncStep::UpToDate),
+            ("remote is an ancestor", a, root, SyncStep::UpToDate),
+            ("remote is a descendant", root, a, SyncStep::FastForward(a)),
+            ("unrelated roots", root, stray, SyncStep::Unrelated),
+            // Both directions adopt the same winner, the newer commit.
+            ("twin", a, twin, SyncStep::Adopt(twin)),
+            ("twin reversed", twin, a, SyncStep::Adopt(twin)),
+            // The orientation is the same regardless of which side plans.
+            ("diverged", a, b, merge),
+            ("diverged reversed", b, a, merge),
+        ] {
+            assert_eq!(plan_sync_step(&commits, local, remote), expected, "{label}");
+        }
     }
 
     #[test]
