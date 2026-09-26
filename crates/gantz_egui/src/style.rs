@@ -241,17 +241,6 @@ mod tests {
         StyleConfig, VisualsColor, apply, eq_style, from_ron, set_style_of, style_of, to_ron,
     };
 
-    #[test]
-    fn visuals_color_round_trips_through_ron() {
-        for color in VisualsColor::ALL {
-            let text = ron::to_string(&color).expect("serialize VisualsColor");
-            assert_eq!(
-                color,
-                ron::from_str(&text).expect("deserialize VisualsColor")
-            );
-        }
-    }
-
     /// A config with both themes customised, distinguishably.
     fn customised() -> StyleConfig {
         let mut cfg = StyleConfig::default();

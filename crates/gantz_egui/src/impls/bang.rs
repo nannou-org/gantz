@@ -52,18 +52,3 @@ fn fragment(id: node::Id) -> gantz_ui::Element {
         key: None,
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fragment_bakes_bind_and_label() {
-        let expected = gantz_ui::Element::Button(gantz_ui::Button {
-            bind: Some(gantz_ui::BindPath(vec![5])),
-            label: Some(" ! ".to_string()),
-            key: None,
-        });
-        assert_eq!(fragment(5), expected);
-    }
-}

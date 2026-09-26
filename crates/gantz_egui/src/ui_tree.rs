@@ -741,44 +741,64 @@ mod tests {
     }
 
     #[test]
-    fn keyed_children_keep_their_id_under_reorder() {
+    fn child_id_is_keyed_else_positional_beneath_the_parent() {
         let parent = egui::Id::new("parent");
-        let key = Key::Str("a".to_string());
-        assert_eq!(
-            child_id(parent, 0, Some(&key)),
-            child_id(parent, 5, Some(&key)),
-        );
-        assert_eq!(
-            child_id(parent, 0, Some(&Key::Int(3))),
-            child_id(parent, 9, Some(&Key::Int(3))),
-        );
-    }
-
-    #[test]
-    fn unkeyed_children_are_identified_by_position() {
-        let parent = egui::Id::new("parent");
-        assert_ne!(child_id(parent, 0, None), child_id(parent, 1, None));
-        assert_eq!(child_id(parent, 2, None), child_id(parent, 2, None));
-    }
-
-    #[test]
-    fn distinct_keys_are_distinct_ids() {
-        let parent = egui::Id::new("parent");
+        let (p1, p2) = (egui::Id::new("p1"), egui::Id::new("p2"));
         let a = Key::Str("a".to_string());
         let b = Key::Str("b".to_string());
-        assert_ne!(child_id(parent, 0, Some(&a)), child_id(parent, 0, Some(&b)));
-        assert_ne!(
-            child_id(parent, 0, Some(&Key::Int(1))),
-            child_id(parent, 0, Some(&Key::Int(2))),
-        );
-    }
-
-    #[test]
-    fn ids_derive_from_the_parent() {
-        let (p1, p2) = (egui::Id::new("p1"), egui::Id::new("p2"));
-        assert_ne!(child_id(p1, 0, None), child_id(p2, 0, None));
-        let key = Key::Str("a".to_string());
-        assert_ne!(child_id(p1, 0, Some(&key)), child_id(p2, 0, Some(&key)));
+        let cases = [
+            (
+                "a string key survives reorder",
+                child_id(parent, 0, Some(&a)),
+                child_id(parent, 5, Some(&a)),
+                true,
+            ),
+            (
+                "an int key survives reorder",
+                child_id(parent, 0, Some(&Key::Int(3))),
+                child_id(parent, 9, Some(&Key::Int(3))),
+                true,
+            ),
+            (
+                "unkeyed children differ by position",
+                child_id(parent, 0, None),
+                child_id(parent, 1, None),
+                false,
+            ),
+            (
+                "unkeyed children at one position are equal",
+                child_id(parent, 2, None),
+                child_id(parent, 2, None),
+                true,
+            ),
+            (
+                "distinct string keys are distinct",
+                child_id(parent, 0, Some(&a)),
+                child_id(parent, 0, Some(&b)),
+                false,
+            ),
+            (
+                "distinct int keys are distinct",
+                child_id(parent, 0, Some(&Key::Int(1))),
+                child_id(parent, 0, Some(&Key::Int(2))),
+                false,
+            ),
+            (
+                "unkeyed ids derive from the parent",
+                child_id(p1, 0, None),
+                child_id(p2, 0, None),
+                false,
+            ),
+            (
+                "keyed ids derive from the parent",
+                child_id(p1, 0, Some(&a)),
+                child_id(p2, 0, Some(&a)),
+                false,
+            ),
+        ];
+        for (case, x, y, equal) in cases {
+            assert_eq!(x == y, equal, "{case}");
+        }
     }
 
     fn list(items: Vec<SteelVal>) -> SteelVal {

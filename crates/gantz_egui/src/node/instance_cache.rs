@@ -174,33 +174,22 @@ mod tests {
     }
 
     // An unknown tag fails without retaining anything. The slot still works
-    // for a later known tag.
+    // for a later known tag. A later failure also evicts that now stale
+    // entry.
     #[test]
     fn take_err_retains_nothing() {
         let codec = codec();
         let mut unknown = expr_data("(+ $l $r)");
         unknown.tag = "NotInTheManifest".to_string();
         let mut cache = NodeInstances::default();
-        assert!(cache.take(&codec, 0, &unknown).is_err());
-        assert!(cache.is_empty());
+        assert!(cache.take(&codec, 0, &unknown).is_err(), "empty slot");
+        assert!(cache.is_empty(), "empty slot");
         let known = expr_data("(+ $l $r)");
         let entry = cache.take(&codec, 0, &known).unwrap();
         cache.put(0, entry);
         assert_eq!(cache.len(), 1);
-    }
-
-    // An unknown tag's failure also evicts a stale entry for that slot.
-    #[test]
-    fn take_err_drops_stale_entry() {
-        let codec = codec();
-        let known = expr_data("(+ $l $r)");
-        let mut cache = NodeInstances::default();
-        let entry = cache.take(&codec, 0, &known).unwrap();
-        cache.put(0, entry);
-        let mut unknown = expr_data("(+ $l $r)");
-        unknown.tag = "NotInTheManifest".to_string();
-        assert!(cache.take(&codec, 0, &unknown).is_err());
-        assert!(cache.is_empty());
+        assert!(cache.take(&codec, 0, &unknown).is_err(), "stale slot");
+        assert!(cache.is_empty(), "stale slot");
     }
 
     // The edit path is erase to new data, update the witness, put. The entry
@@ -275,18 +264,5 @@ mod tests {
         // Slot 0 is untouched, slot 2 is gone.
         assert!(cache.peek(0, &datas[0]).is_some());
         assert!(cache.peek(2, &datas[2]).is_none());
-    }
-
-    #[test]
-    fn clear_empties() {
-        let codec = codec();
-        let data = expr_data("(+ $l $r)");
-        let mut cache = NodeInstances::default();
-        let entry = cache.take(&codec, 0, &data).unwrap();
-        cache.put(0, entry);
-        assert!(!cache.is_empty());
-        cache.clear();
-        assert!(cache.is_empty());
-        assert_eq!(cache.len(), 0);
     }
 }

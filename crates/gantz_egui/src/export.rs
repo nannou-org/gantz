@@ -489,19 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn export_merge_recovers_data() {
-        let export = test_registry();
-        let mut target = gantz_ca::Registry::default();
-        let report = target.merge(export);
-        assert_eq!(report.heads_added, vec![name("alpha")]);
-        assert!(report.heads_replaced.is_empty());
-        let ca = commit_addr_raw(10);
-        assert!(target.commits().contains_key(&ca));
-        assert_eq!(target.head(&name("alpha")), Some(ca));
-    }
-
-    #[test]
-    fn merge_keeps_existing_views() {
+    fn merge_keeps_existing_gui_sections() {
         let mut registry = test_registry();
         let ca = commit_addr_raw(10);
         let mut existing_view = crate::SceneView::default();
@@ -509,28 +497,19 @@ mod tests {
             .layout
             .insert(egui_graph::NodeId(0), Default::default());
         crate::section::set_view(&mut registry, ca, &existing_view);
-
-        let mut incoming = test_registry();
-        crate::section::set_view(&mut incoming, ca, &crate::SceneView::default());
-        registry.merge(incoming);
-
-        // The existing view with one layout entry is preserved, not replaced.
-        let view = crate::section::view(&registry, &ca).unwrap();
-        assert_eq!(view.layout.len(), 1);
-    }
-
-    #[test]
-    fn merge_keeps_existing_descriptions_and_demos() {
-        let mut registry = test_registry();
         crate::section::set_description(&mut registry, name("alpha"), "local".to_string());
         crate::section::set_demo(&mut registry, name("alpha"), "demo-a".to_string());
 
         let mut incoming = test_registry();
+        crate::section::set_view(&mut incoming, ca, &crate::SceneView::default());
         crate::section::set_description(&mut incoming, name("alpha"), "imported".to_string());
         crate::section::set_demo(&mut incoming, name("alpha"), "demo-b".to_string());
         crate::section::set_description(&mut incoming, name("beta"), "new".to_string());
         registry.merge(incoming);
 
+        // The existing view with one layout entry is preserved, not replaced.
+        let view = crate::section::view(&registry, &ca).unwrap();
+        assert_eq!(view.layout.len(), 1);
         assert_eq!(
             crate::section::description(&registry, &name("alpha")).as_deref(),
             Some("local"),

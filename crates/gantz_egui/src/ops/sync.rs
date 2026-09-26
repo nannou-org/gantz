@@ -552,37 +552,6 @@ mod tests {
         )
     }
 
-    // The join flow's placeholder head adopts an unrelated remote tip
-    // instead of surfacing it.
-    #[test]
-    fn sync_remote_tip_adopts_unrelated_when_asked() {
-        let secs = |s| std::time::Duration::from_secs(s);
-        let mut reg = gantz_ca::Registry::default();
-        let g = test_graph(&[]);
-        let placeholder = reg.commit_graph(secs(1), None, gantz_ca::graph_addr(&g), || g);
-        let g = test_graph(&[9]);
-        let foreign = reg.commit_graph(secs(2), None, gantz_ca::graph_addr(&g), || g);
-        reg.set_head("alpha".parse().unwrap(), placeholder);
-        let mut head = gantz_ca::Head::Branch("alpha".parse().unwrap());
-        let mut graph = test_graph(&[]);
-        let mut vm = Engine::new_base();
-        let mut view = crate::SceneView::default();
-        let mut selection = Selection::default();
-        let outcome = sync_remote_tip(
-            &mut reg,
-            &mut head,
-            &mut graph,
-            &mut vm,
-            &mut view,
-            &mut selection,
-            foreign,
-            session_resolutions(),
-            true,
-        );
-        // Navigation is the caller's job. The outcome names the target.
-        assert!(matches!(outcome, SyncTipOutcome::Moved(t) if t == foreign));
-    }
-
     // Two peers of the same session merge the same diverged pair from
     // opposite sides. Each migrates its own side's indices, and both mint
     // the identical canonical merge commit.
@@ -665,121 +634,83 @@ mod tests {
         assert!(selection_2.nodes.contains(&NodeIx::new(2)));
     }
 
-    // Twin commits are independent mints of the same graph. They adopt the
-    // deterministic winner instead of merging. The loser side moves. The
-    // winner side is already up to date.
+    // Each non-merge sync step maps to an outcome with nothing mutated.
+    // Navigation is the caller's job. Twin commits are independent mints of
+    // the same graph. They adopt the deterministic newer winner instead of
+    // merging. The join flow's placeholder head adopts an unrelated remote
+    // tip instead of surfacing it.
     #[test]
-    fn sync_remote_tip_adopts_newer_twin() {
-        let secs = |s| std::time::Duration::from_secs(s);
+    fn sync_remote_tip_maps_each_sync_step_to_an_outcome() {
         let mut reg = gantz_ca::Registry::default();
-        let g = test_graph(&[1]);
-        let base_ca = reg.commit_graph(secs(1), None, gantz_ca::graph_addr(&g), || g);
-        let g = test_graph(&[1, 2]);
-        let twin_a = reg.commit_graph(secs(2), Some(base_ca), gantz_ca::graph_addr(&g), || g);
-        let g = test_graph(&[1, 2]);
-        let twin_b = reg.commit_graph(secs(3), Some(base_ca), gantz_ca::graph_addr(&g), || g);
-        reg.set_head("alpha".parse().unwrap(), twin_a);
-        let mut head = gantz_ca::Head::Branch("alpha".parse().unwrap());
-        let mut graph = test_graph(&[1, 2]);
-        let mut vm = Engine::new_base();
-        let mut view = crate::SceneView::default();
-        let mut selection = Selection::default();
-
-        let outcome = run_sync(
-            &mut reg,
-            &mut head,
-            &mut graph,
-            &mut vm,
-            &mut view,
-            &mut selection,
-            twin_b,
-        );
-        let SyncTipOutcome::Moved(target) = outcome else {
-            panic!("expected Moved, got {outcome:?}");
-        };
-        assert_eq!(target, twin_b, "the newer twin wins");
-        // Navigation is the caller's job. Nothing mutated yet.
-        assert_eq!(reg.head(&"alpha".parse().unwrap()), Some(twin_a));
-
-        // From the winner's side the same pair is already settled.
-        reg.set_head("alpha".parse().unwrap(), twin_b);
-        let outcome = run_sync(
-            &mut reg,
-            &mut head,
-            &mut graph,
-            &mut vm,
-            &mut view,
-            &mut selection,
-            twin_a,
-        );
-        assert!(matches!(outcome, SyncTipOutcome::UpToDate));
-    }
-
-    #[test]
-    fn sync_remote_tip_fast_forwards_and_reports_up_to_date() {
-        let secs = |s| std::time::Duration::from_secs(s);
-        let mut reg = gantz_ca::Registry::default();
-        let g = test_graph(&[1]);
-        let base_ca = reg.commit_graph(secs(1), None, gantz_ca::graph_addr(&g), || g);
-        let g = test_graph(&[1, 2]);
-        let child = reg.commit_graph(secs(2), Some(base_ca), gantz_ca::graph_addr(&g), || g);
-        reg.set_head("alpha".parse().unwrap(), base_ca);
-        let mut head = gantz_ca::Head::Branch("alpha".parse().unwrap());
-        let mut graph = test_graph(&[1]);
-        let mut vm = Engine::new_base();
-        let mut view = crate::SceneView::default();
-        let mut selection = Selection::default();
-
-        let outcome = run_sync(
-            &mut reg,
-            &mut head,
-            &mut graph,
-            &mut vm,
-            &mut view,
-            &mut selection,
-            child,
-        );
-        assert!(matches!(outcome, SyncTipOutcome::Moved(t) if t == child));
-
-        reg.set_head("alpha".parse().unwrap(), child);
-        let mut graph = test_graph(&[1, 2]);
-        let outcome = run_sync(
-            &mut reg,
-            &mut head,
-            &mut graph,
-            &mut vm,
-            &mut view,
-            &mut selection,
-            base_ca,
-        );
-        assert!(matches!(outcome, SyncTipOutcome::UpToDate));
-    }
-
-    #[test]
-    fn sync_remote_tip_surfaces_unrelated() {
-        let secs = |s| std::time::Duration::from_secs(s);
-        let mut reg = gantz_ca::Registry::default();
-        let g = test_graph(&[1]);
-        let local = reg.commit_graph(secs(1), None, gantz_ca::graph_addr(&g), || g);
-        let g = test_graph(&[9]);
-        let foreign = reg.commit_graph(secs(2), None, gantz_ca::graph_addr(&g), || g);
-        reg.set_head("alpha".parse().unwrap(), local);
-        let mut head = gantz_ca::Head::Branch("alpha".parse().unwrap());
-        let mut graph = test_graph(&[1]);
-        let mut vm = Engine::new_base();
-        let mut view = crate::SceneView::default();
-        let mut selection = Selection::default();
-
-        let outcome = run_sync(
-            &mut reg,
-            &mut head,
-            &mut graph,
-            &mut vm,
-            &mut view,
-            &mut selection,
-            foreign,
-        );
-        assert!(matches!(outcome, SyncTipOutcome::Unrelated));
-        assert_eq!(reg.head(&"alpha".parse().unwrap()), Some(local));
+        let base = commit_test_graph(&mut reg, 1, None, &test_graph(&[1]));
+        let twin_a = commit_test_graph(&mut reg, 2, Some(base), &test_graph(&[1, 2]));
+        let twin_b = commit_test_graph(&mut reg, 3, Some(base), &test_graph(&[1, 2]));
+        let placeholder = commit_test_graph(&mut reg, 1, None, &test_graph(&[]));
+        let foreign = commit_test_graph(&mut reg, 2, None, &test_graph(&[9]));
+        let cases = [
+            (
+                "fast forward",
+                base,
+                twin_a,
+                false,
+                SyncTipOutcome::Moved(twin_a),
+            ),
+            (
+                "remote is behind",
+                twin_a,
+                base,
+                false,
+                SyncTipOutcome::UpToDate,
+            ),
+            (
+                "older twin adopts the newer",
+                twin_a,
+                twin_b,
+                false,
+                SyncTipOutcome::Moved(twin_b),
+            ),
+            (
+                "newer twin is settled",
+                twin_b,
+                twin_a,
+                false,
+                SyncTipOutcome::UpToDate,
+            ),
+            (
+                "unrelated is surfaced",
+                base,
+                foreign,
+                false,
+                SyncTipOutcome::Unrelated,
+            ),
+            (
+                "unrelated is adopted when asked",
+                placeholder,
+                foreign,
+                true,
+                SyncTipOutcome::Moved(foreign),
+            ),
+        ];
+        for (case, local, remote, adopt_unrelated, expected) in cases {
+            reg.set_head("alpha".parse().unwrap(), local);
+            let mut head = gantz_ca::Head::Branch("alpha".parse().unwrap());
+            let mut graph = reg.commit_graph_ref(&local).unwrap().clone();
+            let mut vm = Engine::new_base();
+            let mut view = crate::SceneView::default();
+            let mut selection = Selection::default();
+            let outcome = sync_remote_tip(
+                &mut reg,
+                &mut head,
+                &mut graph,
+                &mut vm,
+                &mut view,
+                &mut selection,
+                remote,
+                session_resolutions(),
+                adopt_unrelated,
+            );
+            assert_eq!(format!("{outcome:?}"), format!("{expected:?}"), "{case}");
+            assert_eq!(reg.head(&"alpha".parse().unwrap()), Some(local), "{case}");
+        }
     }
 }

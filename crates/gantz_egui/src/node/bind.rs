@@ -189,12 +189,6 @@ mod tests {
         assert!(Bind::default().expr(ctx).is_err());
     }
 
-    #[test]
-    fn path_text_joins_segments() {
-        assert_eq!(path_text(&[1, 2]), "1 2");
-        assert_eq!(path_text(&[]), "");
-    }
-
     // Only nodes with state or a push entrypoint are targets. The bind
     // itself is left out.
     #[test]

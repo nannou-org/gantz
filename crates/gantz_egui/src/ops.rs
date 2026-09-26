@@ -1074,25 +1074,31 @@ mod tests {
         );
     }
 
-    // An empty live layout carries nothing. The scene's one-shot auto-layout
-    // is the right treatment for a genuinely layoutless graph.
+    // When nothing carries over, the result stays empty rather than cascading
+    // every node from the camera centre. The scene's one-shot auto-layout is
+    // the right treatment for a genuinely layoutless graph.
     #[test]
-    fn carry_layout_empty_live_yields_empty() {
-        let live = crate::SceneView::default();
-        let matching: gantz_ca::Matching = [(0, 0)].into_iter().collect();
-        let view = carry_layout(&live, &matching, 4);
-        assert!(view.layout.is_empty());
-    }
-
-    // When the matching carries no positions at all, the result stays empty
-    // rather than cascading every node from the camera centre.
-    #[test]
-    fn carry_layout_no_carried_positions_yields_empty() {
+    fn carry_layout_without_carried_positions_yields_empty() {
         let mut live = crate::SceneView::default();
         live.layout.insert(node_id(5), egui::pos2(1.0, 1.0));
-        let matching = gantz_ca::Matching::new();
-        let view = carry_layout(&live, &matching, 3);
-        assert!(view.layout.is_empty());
+        let cases = [
+            (
+                "empty live layout",
+                crate::SceneView::default(),
+                [(0, 0)].into_iter().collect(),
+                4,
+            ),
+            (
+                "matching carries no positions",
+                live,
+                gantz_ca::Matching::new(),
+                3,
+            ),
+        ];
+        for (case, live, matching, new_node_count) in cases {
+            let view = carry_layout(&live, &matching, new_node_count);
+            assert!(view.layout.is_empty(), "{case}");
+        }
     }
 
     // merged_view sources each merged node's position from the first tip's
