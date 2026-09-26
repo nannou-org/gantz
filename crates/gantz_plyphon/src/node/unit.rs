@@ -301,7 +301,7 @@ impl gantz_core::Node for UnitNode {
 /// Channel `c`'s wire of a connected input. Mono broadcasts its only channel
 /// across the whole group. A narrower multi-channel signal contributes
 /// silence past its width, per the [`Signal`] group conventions.
-fn channel_select(signal: &Signal, c: usize) -> InputRef {
+pub(crate) fn channel_select(signal: &Signal, c: usize) -> InputRef {
     match signal.width() {
         1 => signal.channel(0).expect("a `Signal` is never empty"),
         _ => signal.channel(c).unwrap_or(InputRef::Constant(0.0)),

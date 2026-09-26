@@ -19,7 +19,8 @@
 //!
 //! The table excludes variable-arity units such as `EnvGen` and `Klang`,
 //! demand-rate units, FFT/PV units and IO/routing units. The bespoke nodes
-//! cover IO and routing. It excludes `VOsc` and `VOsc3`, which read several
+//! cover IO and routing, and the bespoke `~envgen` covers `EnvGen`. It
+//! excludes `VOsc` and `VOsc3`, which read several
 //! buffers at consecutive bufnums. The table also excludes the
 //! node-lifecycle units such as `FreeSelf` and `Done`, because the audio
 //! driver controls the lifecycle of each synth. It excludes `GVerb` too. In

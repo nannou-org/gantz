@@ -8,6 +8,7 @@
 
 pub use buffer::Buffer;
 pub use bus::Bus;
+pub use envgen::Envgen;
 pub use out::Out;
 pub use pack::Pack;
 pub use sample::Sample;
@@ -18,6 +19,7 @@ pub use unpack::Unpack;
 
 pub mod buffer;
 pub mod bus;
+pub mod envgen;
 pub mod out;
 pub mod pack;
 pub mod sample;

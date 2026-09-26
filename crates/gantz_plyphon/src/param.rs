@@ -200,6 +200,35 @@ pub fn params_state(defaults: &[(&str, f64)]) -> SteelVal {
     SteelVal::HashMapV(Gc::new(map).into())
 }
 
+/// The keyed VM state of a node whose param set follows its node data. Each
+/// `keep` param keeps its value in `prev`, or starts at its default. Each
+/// `set` param takes the given value. Any other param in `prev` is dropped.
+/// Call it from the node's `register`, which runs again after each
+/// structural edit.
+pub fn sync_params_state(
+    prev: Option<&SteelVal>,
+    keep: &[(&str, f64)],
+    set: &[(String, f64)],
+) -> SteelVal {
+    let prev = match prev {
+        Some(SteelVal::HashMapV(map)) => Some(map),
+        _ => None,
+    };
+    let old = |name: &str| prev.and_then(|map| map.get(&sym(name))).cloned();
+    let map = keep.iter().fold(HashMap::new(), |map, (name, default)| {
+        let sub = old(name).unwrap_or_else(|| param_state(*default));
+        map.update(sym(name), sub)
+    });
+    let map = set.iter().fold(map, |map, (name, value)| {
+        let sub = match old(name) {
+            Some(sub) => with_value(sub, *value),
+            None => param_state(*value),
+        };
+        map.update(sym(name), sub)
+    });
+    SteelVal::HashMapV(Gc::new(map).into())
+}
+
 /// Read a DSP param's current `value` from its structured state, if present.
 pub fn param_value(state: &SteelVal) -> Option<f64> {
     match state {
@@ -478,6 +507,37 @@ mod tests {
         let state = with_param_value(state, "extra", 1.0);
         assert_eq!(param_value_keyed(&state, "extra"), Some(1.0));
         assert_eq!(pending_len_total(&state), 0);
+    }
+
+    #[test]
+    fn sync_params_state_follows_the_node_data() {
+        let prev = params_state(&[("gate", 1.0), ("level-0", 0.5), ("level-1", 0.2)]);
+        let prev = with_param_value(prev, "gate", 0.0);
+        let set = vec![("level-0".to_string(), 0.9)];
+        let state = sync_params_state(Some(&prev), &[("gate", 1.0), ("bias", 0.0)], &set);
+        assert_eq!(
+            param_value_keyed(&state, "gate"),
+            Some(0.0),
+            "a kept value stays"
+        );
+        assert_eq!(
+            param_value_keyed(&state, "bias"),
+            Some(0.0),
+            "a new param starts at its default"
+        );
+        assert_eq!(
+            param_value_keyed(&state, "level-0"),
+            Some(0.9),
+            "a set value is written"
+        );
+        assert_eq!(
+            param_value_keyed(&state, "level-1"),
+            None,
+            "a stale param is dropped"
+        );
+        let fresh = sync_params_state(None, &[("gate", 1.0)], &set);
+        assert_eq!(param_value_keyed(&fresh, "gate"), Some(1.0));
+        assert_eq!(param_value_keyed(&fresh, "level-0"), Some(0.9));
     }
 
     #[test]
