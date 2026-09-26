@@ -64,3 +64,6 @@ path = "src/main.rs"
 [[bin]]
 name = "update-base"
 path = "src/main_update_base.rs"
+# It shares the `node` and `storage` modules with the `gantz` bin, whose test
+# binary already runs their tests.
+test = false
