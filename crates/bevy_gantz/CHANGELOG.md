@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2](https://github.com/nannou-org/gantz/compare/bevy_gantz-v0.5.1...bevy_gantz-v0.5.2) - 2026-09-26
+
+### Other
+
+- apply review fixes to the comment cleanup
+- *(bevy_gantz)* simplify comments in bevy_gantz, collab and the app
+
 ## [0.5.1](https://github.com/nannou-org/gantz/compare/bevy_gantz-v0.5.0...bevy_gantz-v0.5.1) - 2026-08-26
 
 ### Added

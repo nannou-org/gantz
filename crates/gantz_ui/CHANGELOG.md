@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_ui-v0.2.1...gantz_ui-v0.3.0) - 2026-09-26
+
+### Added
+
+- *(gantz_ui)* add the gantz/ui Steel helper module
+- *(gantz_ui)* add an indenting pretty printer for SExpr
+
+### Fixed
+
+- *(gantz_base)* [**breaking**] prefix the gui element base graphs with ui
+
+### Other
+
+- apply review fixes to the comment cleanup
+- *(gantz_ui)* simplify comments and dedupe the UI tree model docs
+
 ## [0.2.1](https://github.com/nannou-org/gantz/compare/gantz_ui-v0.2.0...gantz_ui-v0.2.1) - 2026-08-26
 
 ### Other
