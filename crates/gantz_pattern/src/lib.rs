@@ -27,14 +27,15 @@ use gantz_core::vm::SteelModule;
 
 /// The `gantz/pattern` Steel module.
 ///
-/// Register via [`gantz_core::vm::new_engine`] or the app's steel-module
-/// collection, then `(require "gantz/pattern")` to use. All provided
-/// names carry the `pat/` prefix.
+/// It requires `gantz/rng`, so register it with the modules from
+/// [`modules`]. Register via [`gantz_core::vm::new_engine`] or the app's
+/// steel-module collection, then `(require "gantz/pattern")` to use. All
+/// provided names carry the `pat/` prefix.
 pub const MODULE: SteelModule = SteelModule::new("gantz/pattern", include_str!("pattern.scm"));
 
-/// The Steel modules provided by this domain.
+/// The Steel modules this domain needs: `gantz/rng` and `gantz/pattern`.
 pub fn modules() -> &'static [SteelModule] {
-    const MODULES: &[SteelModule] = &[MODULE];
+    const MODULES: &[SteelModule] = &[gantz_rng::MODULE, MODULE];
     MODULES
 }
 

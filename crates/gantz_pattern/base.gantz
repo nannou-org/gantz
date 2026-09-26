@@ -87,6 +87,17 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph pdegradeby
+  (expr0 (expr (pat/degrade-by $seed $prob $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "seed" "seed for the drops"))
+  (inlet2 (inlet "number" "probability of a drop"))
+  (inlet3 (inlet "pattern" "input pattern"))
+  (outlet4 (outlet "pattern" "the events that are not dropped"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
+
 (graph peuclid
   (expr0 (expr (pat/euclid (exact (round $k)) (exact (round $n))) #:require "gantz/pattern"))
   (inlet1 (inlet "number" "onset count"))
@@ -182,6 +193,13 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph prand
+  (expr0 (expr (pat/rand $seed) #:require "gantz/pattern"))
+  (inlet1 (inlet "seed" "seed for the values"))
+  (outlet2 (outlet "pattern" "random floats in [0, 1)"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
 (graph psaw
   (expr0 (expr (begin $b pat/saw) #:require "gantz/pattern"))
   (inlet1 (inlet "bang" "trigger"))
@@ -259,6 +277,7 @@
   (demo-pattern "A mini-notation frequency pattern queried per tick plays a sine and plots two cycles. Edit the string and dial the cps.")
   (demo-pplot "Every kind of event value in pplots. Numbers, symbols, overlapping symbols, bools, a signal, maps stacked and expanded, lists and opaque values.")
   (papp "Apply a pattern of functions to a pattern of values.")
+  (pdegradeby "Drop events at random with a given probability.")
   (peuclid "K onsets distributed over N slots per cycle.")
   (peuclidfull "Euclidean onsets elongated to fill the gaps.")
   (peuclidoff "Euclidean onsets rotated left by an offset.")
@@ -270,6 +289,7 @@
   (pmapevents "Map a function over a pattern's events, spans included.")
   (ppure "Repeat a value once per cycle.")
   (pquery "Query a pattern over a span for its sorted events.")
+  (prand "A seeded signal of random floats in [0, 1).")
   (psaw "A 0 to 1 ramp signal each cycle.")
   (psched "Window events as (seconds value) onset pairs for delivery.")
   (pshift "Shift a pattern later in time.")

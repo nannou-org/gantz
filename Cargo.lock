@@ -4066,6 +4066,7 @@ dependencies = [
  "gantz_egui",
  "gantz_format",
  "gantz_nodetag",
+ "gantz_rng",
  "num-rational",
  "num-traits",
  "petgraph",

@@ -10,6 +10,8 @@
 ;; forms only and defines the missing prelude list fns below. Names
 ;; prefixed `pat//` are internal helpers and are not provided.
 
+(require "gantz/rng")
+
 (provide pat/span
          pat/span-start
          pat/span-end
@@ -31,6 +33,7 @@
          pat/steady
          pat/saw
          pat/saw2
+         pat/rand
          pat/query
          pat/rationalize
          pat/fast
@@ -46,6 +49,7 @@
          pat/map-events
          pat/filter
          pat/filter-events
+         pat/degrade-by
          pat/join
          pat/inner-join
          pat/outer-join
@@ -146,6 +150,9 @@
 
 (define (pat/span-len s) (- (cdr s) (car s)))
 
+;; The midpoint of the span.
+(define (pat//span-mid s) (+ (car s) (/ (- (cdr s) (car s)) 2)))
+
 ;; Map both end points of the span with `f`.
 (define (pat/span-map f s) (cons (f (car s)) (f (cdr s))))
 
@@ -234,8 +241,7 @@
 (define (pat/signal sample)
   (lambda (span)
     (if (function? sample)
-        (let ((mid (+ (car span) (/ (- (cdr span) (car span)) 2))))
-          (list (pat/event (sample mid) span #f)))
+        (list (pat/event (sample (pat//span-mid span)) span #f))
         '())))
 
 ;; A continuous pattern of a constant value.
@@ -249,6 +255,12 @@
 ;; A signal ramping -1 to 1 over every cycle.
 (define pat/saw2
   (pat/signal (lambda (r) (- (* 2 (- r (floor r))) 1))))
+
+;; A signal of seeded random floats in [0, 1). The value at time `t` is
+;; `(rng/uniform (rng/fold-in seed t))`, so it depends only on the seed and
+;; the exact time.
+(define (pat/rand seed)
+  (pat/signal (lambda (t) (rng/uniform (rng/fold-in seed t)))))
 
 ;; Query the pattern over the span. Events are sorted by active-span start.
 (define (pat/query p span)
@@ -403,6 +415,20 @@
     (if (function? keep?)
         (pat//filter keep? (pat//events p span))
         '())))
+
+;; Drop each event of `p` with the probability `prob`, drawn from `seed`.
+;; The draw keys on the midpoint of the event's whole, or of its active
+;; span when it has no whole. So all fragments of an event agree, and an
+;; event is kept exactly when `(pat/rand seed)` at that midpoint is at
+;; least `prob`. A non-number `prob` yields silence.
+(define (pat/degrade-by seed prob p)
+  (if (number? prob)
+      (pat/filter-events
+       (lambda (e)
+         (let ((mid (pat//span-mid (pat/event-whole-or-active e))))
+           (not (rng/bernoulli (rng/fold-in seed mid) prob))))
+       p)
+      pat/silence))
 
 ;; The whole common to both events. It is the intersection of their wholes
 ;; when both are present. Otherwise, and when the wholes do not intersect,
